@@ -1,0 +1,30 @@
+name: Validate repository
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate JSON manifests
+        shell: bash
+        run: |
+          python -m json.tool assets/manifest.json >/dev/null
+          python -m json.tool profiles/index.json >/dev/null
+          python -m json.tool profiles/mm2.json >/dev/null
+          python -m json.tool profiles/trs.json >/dev/null
+
+      - name: Verify strict Luau headers
+        shell: bash
+        run: |
+          while IFS= read -r file; do
+            test "$(head -n 1 "$file")" = "--!strict"
+          done < <(find . -type f -name "*.luau" -print)
