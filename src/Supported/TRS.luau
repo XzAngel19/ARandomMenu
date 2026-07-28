@@ -12,7 +12,7 @@ local TRS: SupportedGame = {
     key = "TRS",
     displayName = "Realistic Street Soccer",
     gameId = 14315258385,
-    profilePath = "src/Profile/trs.json",
+    profilePath = "src/Profile/14315258385.lua",
     matches = function(self: SupportedGame, gameId: number, placeId: number): boolean
         return gameId == self.gameId or placeId == self.gameId
     end,
