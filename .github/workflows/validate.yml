@@ -17,17 +17,17 @@ jobs:
       - name: Validate JSON manifests
         shell: bash
         run: |
-          python -m json.tool src/assets/manifest.json >/dev/null
-          python -m json.tool src/Profile/index.json >/dev/null
-          python -m json.tool src/Profile/mm2.json >/dev/null
-          python -m json.tool src/Profile/trs.json >/dev/null
+          python -m json.tool src/gui/Current/Images/manifest.json >/dev/null
 
       - name: Verify source layout
         shell: bash
         run: |
           test -f src/Supported/MM2.luau
           test -f src/Supported/TRS.luau
-          test -f src/gui/Current/ARandomMenu.luau
+          test -f src/Profile/142823291.lua
+          test -f src/Profile/14315258385.lua
+          test -f src/gui/Current/gui.lua
+          test -d src/gui/Current/Images
           test -f src/library/AssetRegistry.luau
           test -f src/library/ProfileRegistry.luau
 
@@ -36,4 +36,4 @@ jobs:
         run: |
           while IFS= read -r file; do
             test "$(head -n 1 "$file")" = "--!strict"
-          done < <(find . -type f -name "*.luau" -print)
+          done < <(find . -type f \( -name "*.lua" -o -name "*.luau" \) -print)

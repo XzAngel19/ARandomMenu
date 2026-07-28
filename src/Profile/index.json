@@ -1,7 +1,0 @@
-{
-  "schemaVersion": 1,
-  "profiles": {
-    "142823291": "src/Profile/mm2.json",
-    "14315258385": "src/Profile/trs.json"
-  }
-}

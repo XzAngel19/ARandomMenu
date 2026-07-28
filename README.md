@@ -10,18 +10,17 @@ src/
 │   └── TRS.luau
 ├── gui/
 │   └── Current/
-│       └── ARandomMenu.luau
+│       ├── Images/
+│       │   └── manifest.json
+│       └── gui.lua
 ├── library/
 │   ├── AssetRegistry.luau
 │   └── ProfileRegistry.luau
-├── assets/
-│   ├── images/
-│   └── manifest.json
 └── Profile/
-    ├── index.json
-    ├── mm2.json
-    └── trs.json
+    ├── 142823291.lua
+    └── 14315258385.lua
 ```
 
 `Supported` contains the game modules enabled by default. Images belong in
-`src/assets/images`, while `src/gui/Current` contains the active interface.
+`src/gui/Current/Images`, while `src/gui/Current/gui.lua` contains the complete
+active interface. Profiles are named after their numeric game ID.

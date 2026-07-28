@@ -14,7 +14,7 @@ export type AssetRegistryApi = {
 }
 
 local MANIFEST_URL: string =
-    "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/main/src/assets/manifest.json"
+    "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/main/src/gui/Current/Images/manifest.json"
 
 local AssetRegistry: AssetRegistryApi = {} :: AssetRegistryApi
 local cachedManifest: AssetManifest? = nil
