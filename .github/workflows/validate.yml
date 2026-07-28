@@ -17,10 +17,19 @@ jobs:
       - name: Validate JSON manifests
         shell: bash
         run: |
-          python -m json.tool assets/manifest.json >/dev/null
-          python -m json.tool profiles/index.json >/dev/null
-          python -m json.tool profiles/mm2.json >/dev/null
-          python -m json.tool profiles/trs.json >/dev/null
+          python -m json.tool src/assets/manifest.json >/dev/null
+          python -m json.tool src/Profile/index.json >/dev/null
+          python -m json.tool src/Profile/mm2.json >/dev/null
+          python -m json.tool src/Profile/trs.json >/dev/null
+
+      - name: Verify source layout
+        shell: bash
+        run: |
+          test -f src/Supported/MM2.luau
+          test -f src/Supported/TRS.luau
+          test -f src/gui/Current/ARandomMenu.luau
+          test -f src/library/AssetRegistry.luau
+          test -f src/library/ProfileRegistry.luau
 
       - name: Verify strict Luau headers
         shell: bash

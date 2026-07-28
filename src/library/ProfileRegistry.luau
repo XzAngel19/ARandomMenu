@@ -32,7 +32,7 @@ local function fetchJson(path: string): any
 end
 
 function ProfileRegistry.get(gameId: number): Profile?
-    local index: ProfileIndex = fetchJson("profiles/index.json") :: ProfileIndex
+    local index: ProfileIndex = fetchJson("src/Profile/index.json") :: ProfileIndex
     local path: string? = index.profiles[tostring(gameId)]
     if path == nil then
         return nil
