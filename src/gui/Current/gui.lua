@@ -167,7 +167,7 @@ ScreenGui.ResetOnSpawn = false
 ScreenGui.IgnoreGuiInset = true
 ScreenGui.DisplayOrder = 999999
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-ScreenGui:SetAttribute("BuildId", "0001-S6")
+ScreenGui:SetAttribute("BuildId", "0001-S7")
 
 local function parentScreenGui()
     if type(gethui) == "function" then
@@ -660,6 +660,7 @@ local mm2Features = {}
 state.trsFeatures = {}
 local allFeatures = {}
 local featureConnections = {}
+local tooltipConnections: {RBXScriptConnection} = {}
 
 local function disconnectFeatureConnection(name)
     local connection = featureConnections[name]
@@ -692,12 +693,12 @@ local function refreshFeatureToggle(feature)
 end
 
 local function createUniversalFeature(
-    name,
-    description,
-    layoutOrder,
-    onToggle,
-    configuration
-)
+    name: string,
+    description: string,
+    layoutOrder: number,
+    onToggle: any,
+    configuration: any?
+): any
     configuration = configuration or {}
     local registry = configuration.registry or universalFeatures
     local sectionName = configuration.section
@@ -874,7 +875,7 @@ local function createUniversalFeature(
     return feature
 end
 
-local function createOptionRow(feature, labelText)
+local function createOptionRow(feature: any, labelText: string): Frame
     feature.optionCount = feature.optionCount + 1
 
     local option = create("Frame", {
@@ -896,15 +897,20 @@ local function createOptionRow(feature, labelText)
     label.Size = UDim2.new(0.48, -10, 1, 0)
 
     feature.updateExpandedSize()
-    return option
+    return option :: Frame
 end
 
-local function setOptionVisible(feature, option, visible)
+local function setOptionVisible(feature: any, option: GuiObject, visible: boolean): ()
     option.Visible = visible
     feature.updateExpandedSize()
 end
 
-local function addToggleOption(feature, labelText, defaultValue, callback)
+local function addToggleOption(
+    feature: any,
+    labelText: string,
+    defaultValue: boolean,
+    callback: (boolean) -> ()
+): TextButton
     local optionKey = feature.configKey .. "." .. labelText:gsub("%W", "")
     local enabled = configData.states[optionKey]
     if enabled == nil then
@@ -927,10 +933,14 @@ local function addToggleOption(feature, labelText, defaultValue, callback)
     end)
 
     callback(enabled)
-    return button
+    return button :: TextButton
 end
 
-local function addActionOption(feature, labelText, callback)
+local function addActionOption(
+    feature: any,
+    labelText: string,
+    callback: () -> ()
+): TextButton
     local option = createOptionRow(feature, labelText)
     local button = makeButton(option, "RUN", 11)
     button.Position = UDim2.new(0.72, 0, 0, 0)
@@ -941,10 +951,17 @@ local function addActionOption(feature, labelText, callback)
             warn("[Random Testing Menu] " .. labelText .. ": " .. tostring(message))
         end
     end)
-    return button
+    return button :: TextButton
 end
 
-local function addNumberOption(feature, labelText, defaultValue, minimum, maximum, callback)
+local function addNumberOption(
+    feature: any,
+    labelText: string,
+    defaultValue: number,
+    minimum: number,
+    maximum: number,
+    callback: (number) -> ()
+): TextBox
     local optionKey = feature.configKey .. "." .. labelText:gsub("%W", "")
     local storedValue = tonumber(configData.values[optionKey])
     local initialValue = math.clamp(
@@ -981,10 +998,16 @@ local function addNumberOption(feature, labelText, defaultValue, minimum, maximu
     end)
 
     callback(initialValue)
-    return box
+    return box :: TextBox
 end
 
-local function addCycleOption(feature, labelText, values, initialIndex, callback)
+local function addCycleOption(
+    feature: any,
+    labelText: string,
+    values: {string},
+    initialIndex: number?,
+    callback: (string) -> ()
+): TextButton
     local optionKey = feature.configKey .. "." .. labelText:gsub("%W", "")
     local storedValue = configData.values[optionKey]
     local option = createOptionRow(feature, labelText)
@@ -1010,10 +1033,15 @@ local function addCycleOption(feature, labelText, values, initialIndex, callback
     end)
 
     callback(values[index])
-    return button
+    return button :: TextButton
 end
 
-local function addKeyOption(feature, labelText, defaultKey, callback)
+local function addKeyOption(
+    feature: any,
+    labelText: string,
+    defaultKey: Enum.KeyCode,
+    callback: (Enum.KeyCode) -> ()
+): TextButton
     local optionKey = feature.configKey .. "." .. labelText:gsub("%W", "")
     local savedKey = nil
     local savedName = configData.values[optionKey]
@@ -1041,10 +1069,16 @@ local function addKeyOption(feature, labelText, defaultKey, callback)
     end)
 
     callback(initialKey)
-    return button
+    return button :: TextButton
 end
 
-local function addTextOption(feature, labelText, defaultText, callback, persist)
+local function addTextOption(
+    feature: any,
+    labelText: string,
+    defaultText: string,
+    callback: (string) -> (),
+    persist: boolean?
+): TextBox
     local optionKey = feature.configKey .. "." .. labelText:gsub("%W", "")
     local shouldPersist = persist ~= false
     local initialText = shouldPersist and configData.values[optionKey] or nil
@@ -1077,7 +1111,7 @@ local function addTextOption(feature, labelText, defaultText, callback, persist)
         queueConfigSave()
     end
     callback(initialText)
-    return box
+    return box :: TextBox
 end
 
 local colorPicker = {}
@@ -1375,7 +1409,7 @@ local function addColorOption(feature, labelText, defaultColor, callback)
     return swatch
 end
 
-local function addInformationOption(feature, text)
+local function addInformationOption(feature: any, text: string): ()
     local option = createOptionRow(feature, "")
     local label = makeTextLabel(option, text, 11)
     label.TextColor3 = Color3.fromRGB(155, 155, 155)
@@ -1384,159 +1418,383 @@ local function addInformationOption(feature, text)
     label.Size = UDim2.new(1, -8, 1, 0)
 end
 
-local flySettings = {
-    speed = 60,
+local FeatureTooltip: TextLabel = create("TextLabel", {
+    Parent = ScreenGui,
+    Name = "FeatureTooltip",
+    Active = false,
+    AutomaticSize = Enum.AutomaticSize.None,
+    BackgroundColor3 = Color3.fromRGB(15, 15, 15),
+    BackgroundTransparency = 0.04,
+    BorderColor3 = Color3.fromRGB(58, 58, 58),
+    BorderSizePixel = 1,
+    Font = Enum.Font.Gotham,
+    Size = UDim2.fromOffset(320, 30),
+    Text = "",
+    TextColor3 = Color3.fromRGB(205, 205, 205),
+    TextSize = 11,
+    TextWrapped = true,
+    Visible = false,
+    ZIndex = 250,
+}) :: TextLabel
+
+create("UICorner", {
+    Parent = FeatureTooltip,
+    CornerRadius = UDim.new(0, 4),
+})
+
+create("UIPadding", {
+    Parent = FeatureTooltip,
+    PaddingBottom = UDim.new(0, 5),
+    PaddingLeft = UDim.new(0, 8),
+    PaddingRight = UDim.new(0, 8),
+    PaddingTop = UDim.new(0, 5),
+})
+
+local tooltipToken: number = 0
+
+local function showFeatureTooltip(row: Frame, text: string, pointer: Vector2?): ()
+    tooltipToken = tooltipToken + 1
+    FeatureTooltip.Text = text
+
+    local width: number = math.clamp(#text * 5.5 + 24, 210, 520)
+    local lineCount: number = math.max(1, math.ceil((#text * 5.5) / (width - 20)))
+    local height: number = math.max(30, lineCount * 15 + 12)
+    FeatureTooltip.Size = UDim2.fromOffset(width, height)
+
+    local camera: Camera? = workspace.CurrentCamera
+    local viewport: Vector2 = camera and camera.ViewportSize or Vector2.new(1280, 720)
+    local anchor: Vector2 = pointer
+        or Vector2.new(
+            row.AbsolutePosition.X + 16,
+            row.AbsolutePosition.Y + row.AbsoluteSize.Y * 0.5
+        )
+    local x: number = math.clamp(anchor.X + 12, 8, math.max(8, viewport.X - width - 8))
+    local y: number = math.clamp(
+        anchor.Y - height - 8,
+        8,
+        math.max(8, viewport.Y - height - 8)
+    )
+
+    FeatureTooltip.Position = UDim2.fromOffset(x, y)
+    FeatureTooltip.Visible = true
+end
+
+local function hideFeatureTooltip(): ()
+    tooltipToken = tooltipToken + 1
+    FeatureTooltip.Visible = false
+end
+
+local function addFeatureTooltip(feature: any, text: string): ()
+    local row: Frame = feature.row :: Frame
+
+    table.insert(tooltipConnections, row.MouseEnter:Connect(function(): ()
+        showFeatureTooltip(row, text, UserInputService:GetMouseLocation())
+    end))
+
+    table.insert(tooltipConnections, row.MouseLeave:Connect(function(): ()
+        hideFeatureTooltip()
+    end))
+
+    table.insert(tooltipConnections, row.InputBegan:Connect(function(input: InputObject): ()
+        if input.UserInputType ~= Enum.UserInputType.Touch then
+            return
+        end
+
+        showFeatureTooltip(row, text, Vector2.new(input.Position.X, input.Position.Y))
+        local token: number = tooltipToken
+        task.delay(2.5, function(): ()
+            if tooltipToken == token then
+                hideFeatureTooltip()
+            end
+        end)
+    end))
+end
+
+type FlySettings = {
+    speed: number,
+    verticalSpeed: number,
+    acceleration: number,
+    navigation: string,
+    mode: string,
+    platformStand: boolean,
+    faceCamera: boolean,
+    upKey: Enum.KeyCode,
+    downKey: Enum.KeyCode,
+}
+
+local flySettings: FlySettings = {
+    speed = 70,
+    verticalSpeed = 50,
+    acceleration = 8,
     navigation = "Camera",
-    motion = "Smooth",
+    mode = "Velocity",
+    platformStand = true,
+    faceCamera = true,
     upKey = Enum.KeyCode.Space,
     downKey = Enum.KeyCode.LeftControl,
 }
-local flySmoothedVelocity = Vector3.zero
+local flySmoothedVelocity: Vector3 = Vector3.zero
+local flyImpulseClock: number = 0
+local flyTeleportClock: number = 0
+local originalFlyPlatformStand: boolean? = nil
 
-local function removeFlyObjects()
-    local character, humanoid, root = getCharacterParts()
-    if humanoid then
-        humanoid.PlatformStand = false
+local function removeFlyObjects(): ()
+    local _, humanoid, root = getCharacterParts()
+    if humanoid and originalFlyPlatformStand ~= nil then
+        humanoid.PlatformStand = originalFlyPlatformStand
     end
-    if root then
-        local velocity = root:FindFirstChild("RTM_FlyVelocity")
-        local gyro = root:FindFirstChild("RTM_FlyGyro")
-        if velocity then
-            velocity:Destroy()
-        end
-        if gyro then
-            gyro:Destroy()
+    originalFlyPlatformStand = nil
+
+    if not root then
+        return
+    end
+
+    for _, name in ipairs({
+        "RTM_FlyAttachment",
+        "RTM_FlyVelocity",
+        "RTM_FlyOrientation",
+    } :: {string}) do
+        local object: Instance? = root:FindFirstChild(name)
+        if object then
+            object:Destroy()
         end
     end
 end
 
-local function toggleFly(enabled)
+local function ensureFlyConstraints(root: BasePart): (LinearVelocity, AlignOrientation)
+    local attachment: Attachment? = root:FindFirstChild("RTM_FlyAttachment") :: Attachment?
+    if not attachment then
+        local newAttachment: Attachment = Instance.new("Attachment")
+        newAttachment.Name = "RTM_FlyAttachment"
+        newAttachment.Parent = root
+        attachment = newAttachment
+    end
+    local resolvedAttachment: Attachment = attachment :: Attachment
+
+    local velocity: LinearVelocity? = root:FindFirstChild("RTM_FlyVelocity") :: LinearVelocity?
+    if not velocity then
+        local newVelocity: LinearVelocity = Instance.new("LinearVelocity")
+        newVelocity.Name = "RTM_FlyVelocity"
+        newVelocity.Attachment0 = resolvedAttachment
+        newVelocity.MaxForce = math.huge
+        newVelocity.RelativeTo = Enum.ActuatorRelativeTo.World
+        newVelocity.VelocityConstraintMode = Enum.VelocityConstraintMode.Vector
+        newVelocity.Parent = root
+        velocity = newVelocity
+    end
+
+    local orientation: AlignOrientation? =
+        root:FindFirstChild("RTM_FlyOrientation") :: AlignOrientation?
+    if not orientation then
+        local newOrientation: AlignOrientation = Instance.new("AlignOrientation")
+        newOrientation.Name = "RTM_FlyOrientation"
+        newOrientation.Attachment0 = resolvedAttachment
+        newOrientation.MaxTorque = math.huge
+        newOrientation.Mode = Enum.OrientationAlignmentMode.OneAttachment
+        newOrientation.Responsiveness = 28
+        newOrientation.RigidityEnabled = false
+        newOrientation.Parent = root
+        orientation = newOrientation
+    end
+
+    return velocity :: LinearVelocity, orientation :: AlignOrientation
+end
+
+local function getFlyDirection(
+    humanoid: Humanoid,
+    camera: Camera
+): (Vector3, Vector3)
+    local cameraForward: Vector3 = Vector3.new(
+        camera.CFrame.LookVector.X,
+        0,
+        camera.CFrame.LookVector.Z
+    )
+    local cameraRight: Vector3 = Vector3.new(
+        camera.CFrame.RightVector.X,
+        0,
+        camera.CFrame.RightVector.Z
+    )
+    cameraForward = cameraForward.Magnitude > 0.001
+        and cameraForward.Unit
+        or Vector3.new(0, 0, -1)
+    cameraRight = cameraRight.Magnitude > 0.001
+        and cameraRight.Unit
+        or Vector3.new(1, 0, 0)
+
+    local horizontal: Vector3 = humanoid.MoveDirection
+    if flySettings.navigation == "World" then
+        horizontal = Vector3.zero
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then
+            horizontal = horizontal + Vector3.new(0, 0, -1)
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then
+            horizontal = horizontal + Vector3.new(0, 0, 1)
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then
+            horizontal = horizontal + Vector3.new(1, 0, 0)
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then
+            horizontal = horizontal + Vector3.new(-1, 0, 0)
+        end
+    elseif horizontal.Magnitude <= 0.001 then
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then
+            horizontal = horizontal + cameraForward
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then
+            horizontal = horizontal - cameraForward
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then
+            horizontal = horizontal + cameraRight
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then
+            horizontal = horizontal - cameraRight
+        end
+    end
+
+    if horizontal.Magnitude > 1 then
+        horizontal = horizontal.Unit
+    end
+
+    local vertical: number = 0
+    if UserInputService:IsKeyDown(flySettings.upKey) then
+        vertical = vertical + 1
+    end
+    if UserInputService:IsKeyDown(flySettings.downKey) then
+        vertical = vertical - 1
+    end
+
+    local targetVelocity: Vector3 = horizontal * flySettings.speed
+        + Vector3.new(0, vertical * flySettings.verticalSpeed, 0)
+    return targetVelocity, cameraForward
+end
+
+local function toggleFly(enabled: boolean): ()
     disconnectFeatureConnection("Fly")
     removeFlyObjects()
     flySmoothedVelocity = Vector3.zero
+    flyImpulseClock = 0
+    flyTeleportClock = 0
 
     if not enabled then
         return
     end
 
-    featureConnections.Fly = RunService.RenderStepped:Connect(function()
+    featureConnections.Fly = RunService.RenderStepped:Connect(function(deltaTime: number): ()
         local _, humanoid, root = getCharacterParts()
-        local camera = workspace.CurrentCamera
+        local camera: Camera? = workspace.CurrentCamera
         if not humanoid or not root or not camera then
             return
         end
 
-        local velocity = root:FindFirstChild("RTM_FlyVelocity")
-        if not velocity then
-            velocity = Instance.new("BodyVelocity")
-            velocity.Name = "RTM_FlyVelocity"
-            velocity.MaxForce = Vector3.new(9e9, 9e9, 9e9)
-            velocity.P = 1250
-            velocity.Parent = root
+        if originalFlyPlatformStand == nil then
+            originalFlyPlatformStand = humanoid.PlatformStand
         end
+        humanoid.PlatformStand = flySettings.platformStand
 
-        local gyro = root:FindFirstChild("RTM_FlyGyro")
-        if not gyro then
-            gyro = Instance.new("BodyGyro")
-            gyro.Name = "RTM_FlyGyro"
-            gyro.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
-            gyro.P = 3000
-            gyro.Parent = root
-        end
+        local velocity, orientation = ensureFlyConstraints(root)
+        local targetVelocity, cameraForward = getFlyDirection(humanoid, camera)
+        local alpha: number = 1 - math.exp(-flySettings.acceleration * deltaTime)
+        flySmoothedVelocity = flySmoothedVelocity:Lerp(targetVelocity, alpha)
 
-        local forward
-        local right
-        if flySettings.navigation == "Camera" then
-            forward = Vector3.new(
-                camera.CFrame.LookVector.X,
-                0,
-                camera.CFrame.LookVector.Z
+        velocity.Enabled = flySettings.mode == "Velocity"
+        velocity.VectorVelocity = flySmoothedVelocity
+
+        orientation.Enabled = flySettings.faceCamera
+        orientation.CFrame = CFrame.lookAt(Vector3.zero, cameraForward)
+
+        if flySettings.mode == "Impulse" then
+            local correction: Vector3 =
+                flySmoothedVelocity - root.AssemblyLinearVelocity
+            root:ApplyImpulse(
+                correction * root.AssemblyMass * math.clamp(deltaTime * 10, 0, 1)
             )
-            right = Vector3.new(
-                camera.CFrame.RightVector.X,
-                0,
-                camera.CFrame.RightVector.Z
-            )
-            forward = forward.Magnitude > 0 and forward.Unit or Vector3.new(0, 0, -1)
-            right = right.Magnitude > 0 and right.Unit or Vector3.new(1, 0, 0)
-        else
-            forward = Vector3.new(0, 0, -1)
-            right = Vector3.new(1, 0, 0)
+        elseif flySettings.mode == "CFrame" then
+            root.CFrame = root.CFrame + flySmoothedVelocity * deltaTime
+            root.AssemblyLinearVelocity = Vector3.zero
+        elseif flySettings.mode == "TP" then
+            flyTeleportClock = flyTeleportClock + deltaTime
+            if flyTeleportClock >= 0.12 then
+                root.CFrame = root.CFrame + flySmoothedVelocity * flyTeleportClock
+                root.AssemblyLinearVelocity = Vector3.zero
+                flyTeleportClock = 0
+            end
+        elseif flySettings.mode == "Pulse" then
+            flyImpulseClock = flyImpulseClock + deltaTime
+            if flyImpulseClock >= 0.18 then
+                local correction: Vector3 =
+                    flySmoothedVelocity - root.AssemblyLinearVelocity
+                root:ApplyImpulse(correction * root.AssemblyMass)
+                flyImpulseClock = 0
+            end
         end
-
-        local direction = Vector3.zero
-        if UserInputService:IsKeyDown(Enum.KeyCode.W) then
-            direction = direction + forward
-        end
-        if UserInputService:IsKeyDown(Enum.KeyCode.S) then
-            direction = direction - forward
-        end
-        if UserInputService:IsKeyDown(Enum.KeyCode.D) then
-            direction = direction + right
-        end
-        if UserInputService:IsKeyDown(Enum.KeyCode.A) then
-            direction = direction - right
-        end
-        if UserInputService:IsKeyDown(flySettings.upKey) then
-            direction = direction + Vector3.new(0, 1, 0)
-        end
-        if UserInputService:IsKeyDown(flySettings.downKey) then
-            direction = direction - Vector3.new(0, 1, 0)
-        end
-
-        local targetVelocity = direction.Magnitude > 0
-            and direction.Unit * flySettings.speed
-            or Vector3.zero
-
-        if flySettings.motion == "Smooth" then
-            flySmoothedVelocity = flySmoothedVelocity:Lerp(targetVelocity, 0.18)
-        else
-            flySmoothedVelocity = targetVelocity
-        end
-
-        humanoid.PlatformStand = true
-        velocity.Velocity = flySmoothedVelocity
-        gyro.CFrame = CFrame.lookAt(root.Position, root.Position + forward)
     end)
 end
 
-local hitboxSettings = {
-    size = 8,
-    targetParts = "Root",
-    transparency = 65,
+type HitboxSettings = {
+    bodyScale: number,
+    visibleTransparency: number,
 }
-local originalHitboxes = setmetatable({}, {__mode = "k"})
 
-local function restoreHitboxes()
-    for part, original in pairs(originalHitboxes) do
-        if part and part.Parent then
+type OriginalHitboxState = {
+    size: Vector3,
+    transparency: number,
+    canCollide: boolean,
+    massless: boolean,
+}
+
+local hitboxSettings: HitboxSettings = {
+    bodyScale = 2.25,
+    visibleTransparency = 30,
+}
+local originalHitboxes: {[BasePart]: OriginalHitboxState} =
+    setmetatable({}, {__mode = "k"}) :: any
+
+local function restoreHitboxes(): ()
+    for part: BasePart, original: OriginalHitboxState in pairs(originalHitboxes) do
+        if part.Parent then
             part.Size = original.size
             part.Transparency = original.transparency
             part.CanCollide = original.canCollide
+            part.Massless = original.massless
         end
     end
-    originalHitboxes = setmetatable({}, {__mode = "k"})
+    originalHitboxes = setmetatable({}, {__mode = "k"}) :: any
 end
 
-local function applyHitboxToPart(part)
-    if not originalHitboxes[part] then
-        originalHitboxes[part] = {
+local function isVisibleCharacterPart(part: BasePart): boolean
+    return part.Name ~= "HumanoidRootPart"
+        and not part:FindFirstAncestorOfClass("Accessory")
+        and not part:FindFirstAncestorOfClass("Tool")
+end
+
+local function applyHitboxToPart(part: BasePart): ()
+    local original: OriginalHitboxState? = originalHitboxes[part]
+    if not original then
+        original = {
             size = part.Size,
             transparency = part.Transparency,
             canCollide = part.CanCollide,
+            massless = part.Massless,
         }
+        originalHitboxes[part] = original
+    end
+    local resolvedOriginal: OriginalHitboxState = original :: OriginalHitboxState
+
+    if part.Name == "Head" then
+        part.Size = Vector3.new(8, 8, 8)
+    else
+        part.Size = resolvedOriginal.size * hitboxSettings.bodyScale
     end
 
-    part.Size = Vector3.new(
-        hitboxSettings.size,
-        hitboxSettings.size,
-        hitboxSettings.size
+    part.Transparency = math.min(
+        resolvedOriginal.transparency,
+        hitboxSettings.visibleTransparency / 100
     )
-    part.Transparency = hitboxSettings.transparency / 100
     part.CanCollide = false
+    part.Massless = true
 end
 
-local function toggleHitboxes(enabled)
+local function toggleHitboxes(enabled: boolean): ()
     disconnectFeatureConnection("Hitboxes")
     restoreHitboxes()
 
@@ -1544,26 +1802,19 @@ local function toggleHitboxes(enabled)
         return
     end
 
-    local elapsed = 0
-    featureConnections.Hitboxes = RunService.Heartbeat:Connect(function(deltaTime)
+    local elapsed: number = 0
+    featureConnections.Hitboxes = RunService.Heartbeat:Connect(function(deltaTime: number): ()
         elapsed = elapsed + deltaTime
         if elapsed < 0.1 then
             return
         end
         elapsed = 0
 
-        for _, player in ipairs(Players:GetPlayers()) do
+        for _, player: Player in ipairs(Players:GetPlayers()) do
             if player ~= LocalPlayer and player.Character then
-                if hitboxSettings.targetParts == "All" then
-                    for _, part in ipairs(player.Character:GetChildren()) do
-                        if part:IsA("BasePart") then
-                            applyHitboxToPart(part)
-                        end
-                    end
-                else
-                    local root = player.Character:FindFirstChild("HumanoidRootPart")
-                    if root and root:IsA("BasePart") then
-                        applyHitboxToPart(root)
+                for _, part: Instance in ipairs(player.Character:GetChildren()) do
+                    if part:IsA("BasePart") and isVisibleCharacterPart(part) then
+                        applyHitboxToPart(part)
                     end
                 end
             end
@@ -1571,34 +1822,85 @@ local function toggleHitboxes(enabled)
     end)
 end
 
-local antiVoidSettings = {
-    voidLevel = -50,
-    returnHeight = 6,
-}
-local lastSafeCFrame = nil
+local antiVoidPlatform: Part? = nil
+local antiVoidLastGroundY: number? = nil
+local antiVoidFreefallSeconds: number = 0
+local antiVoidPlatformToken: number = 0
 
-local function toggleAntiVoid(enabled)
+local function removeAntiVoidPlatform(): ()
+    antiVoidPlatformToken = antiVoidPlatformToken + 1
+    if antiVoidPlatform then
+        antiVoidPlatform:Destroy()
+        antiVoidPlatform = nil
+    end
+end
+
+local function createAntiVoidPlatform(root: BasePart, humanoid: Humanoid): ()
+    removeAntiVoidPlatform()
+
+    local platform: Part = Instance.new("Part")
+    platform.Name = "RTM_AntiVoidPlatform"
+    platform.Anchored = true
+    platform.CanCollide = true
+    platform.CanQuery = false
+    platform.CanTouch = false
+    platform.CastShadow = false
+    platform.Size = Vector3.new(42, 1, 42)
+    platform.Transparency = 1
+    platform.CFrame = CFrame.new(root.Position - Vector3.new(0, 4.25, 0))
+    platform.Parent = workspace
+    antiVoidPlatform = platform
+
+    local velocity: Vector3 = root.AssemblyLinearVelocity
+    root.AssemblyLinearVelocity = Vector3.new(velocity.X * 0.25, 0, velocity.Z * 0.25)
+    root.AssemblyAngularVelocity = Vector3.zero
+    humanoid:ChangeState(Enum.HumanoidStateType.Landed)
+
+    local token: number = antiVoidPlatformToken
+    task.delay(3, function(): ()
+        if antiVoidPlatformToken == token then
+            removeAntiVoidPlatform()
+        end
+    end)
+end
+
+local function toggleAntiVoid(enabled: boolean): ()
     disconnectFeatureConnection("AntiVoid")
-    lastSafeCFrame = nil
+    removeAntiVoidPlatform()
+    antiVoidLastGroundY = nil
+    antiVoidFreefallSeconds = 0
 
     if not enabled then
         return
     end
 
-    featureConnections.AntiVoid = RunService.Heartbeat:Connect(function()
+    featureConnections.AntiVoid = RunService.Heartbeat:Connect(function(deltaTime: number): ()
         local _, humanoid, root = getCharacterParts()
         if not humanoid or not root then
             return
         end
 
-        if root.Position.Y <= antiVoidSettings.voidLevel then
-            local safeCFrame = lastSafeCFrame or CFrame.new(0, 20, 0)
-            root.CFrame = safeCFrame + Vector3.new(0, antiVoidSettings.returnHeight, 0)
-            root.AssemblyLinearVelocity = Vector3.zero
-            root.AssemblyAngularVelocity = Vector3.zero
-        elseif humanoid.FloorMaterial ~= Enum.Material.Air
-            and root.Position.Y > antiVoidSettings.voidLevel + 10 then
-            lastSafeCFrame = root.CFrame
+        if humanoid.FloorMaterial ~= Enum.Material.Air then
+            antiVoidLastGroundY = root.Position.Y
+            antiVoidFreefallSeconds = 0
+            return
+        end
+
+        antiVoidFreefallSeconds = antiVoidFreefallSeconds + deltaTime
+        local destroyHeight: number = workspace.FallenPartsDestroyHeight
+        if destroyHeight ~= destroyHeight then
+            destroyHeight = -500
+        end
+
+        local nearDestroyLayer: boolean = root.Position.Y <= destroyHeight + 45
+        local fellFarFromGround: boolean = antiVoidLastGroundY ~= nil
+            and root.Position.Y <= (antiVoidLastGroundY :: number) - 120
+            and antiVoidFreefallSeconds >= 1.1
+            and root.AssemblyLinearVelocity.Y < -45
+
+        if nearDestroyLayer or fellFarFromGround then
+            createAntiVoidPlatform(root, humanoid)
+            antiVoidFreefallSeconds = 0
         end
     end)
 end
@@ -1762,6 +2064,213 @@ local function toggleWalkSpeed(enabled)
     end)
 end
 
+type PhysicsSpeedSettings = {
+    mode: string,
+    speed: number,
+    verticalSpeed: number,
+    platformStand: boolean,
+    customProperties: boolean,
+    motorTorque: number,
+}
+
+type VehicleSeatState = {
+    maxSpeed: number,
+    torque: number,
+    turnSpeed: number,
+}
+
+type HingeState = {
+    angularVelocity: number,
+    motorMaxTorque: number,
+}
+
+local physicsSpeedSettings: PhysicsSpeedSettings = {
+    mode = "Velocity",
+    speed = 50,
+    verticalSpeed = 50,
+    platformStand = false,
+    customProperties = true,
+    motorTorque = 50000,
+}
+local physicsSpeedTeleportClock: number = 0
+local physicsSpeedPulseClock: number = 0
+local originalPhysicsPlatformStand: boolean? = nil
+local originalVehicleSeats: {[VehicleSeat]: VehicleSeatState} =
+    setmetatable({}, {__mode = "k"}) :: any
+local originalMotorHinges: {[HingeConstraint]: HingeState} =
+    setmetatable({}, {__mode = "k"}) :: any
+
+local function restorePhysicsMotors(): ()
+    for seat: VehicleSeat, original: VehicleSeatState in pairs(originalVehicleSeats) do
+        if seat.Parent then
+            seat.MaxSpeed = original.maxSpeed
+            seat.Torque = original.torque
+            seat.TurnSpeed = original.turnSpeed
+        end
+    end
+    originalVehicleSeats = setmetatable({}, {__mode = "k"}) :: any
+
+    for hinge: HingeConstraint, original: HingeState in pairs(originalMotorHinges) do
+        if hinge.Parent then
+            hinge.AngularVelocity = original.angularVelocity
+            hinge.MotorMaxTorque = original.motorMaxTorque
+        end
+    end
+    originalMotorHinges = setmetatable({}, {__mode = "k"}) :: any
+end
+
+local function getPhysicsSpeedTarget(): (BasePart?, Humanoid?, VehicleSeat?)
+    local _, humanoid, root = getCharacterParts()
+    if not humanoid or not root then
+        return nil, humanoid, nil
+    end
+
+    local seatPart: BasePart? = humanoid.SeatPart
+    if seatPart and seatPart:IsA("VehicleSeat") then
+        return seatPart.AssemblyRootPart or seatPart, humanoid, seatPart
+    end
+    if seatPart then
+        return seatPart.AssemblyRootPart or seatPart, humanoid, nil
+    end
+
+    return root.AssemblyRootPart or root, humanoid, nil
+end
+
+local function tunePhysicsMotors(seat: VehicleSeat): ()
+    local model: Model? = seat:FindFirstAncestorOfClass("Model")
+    if not model then
+        return
+    end
+
+    for _, descendant: Instance in ipairs(model:GetDescendants()) do
+        if descendant:IsA("VehicleSeat") then
+            local original: VehicleSeatState? = originalVehicleSeats[descendant]
+            if not original then
+                original = {
+                    maxSpeed = descendant.MaxSpeed,
+                    torque = descendant.Torque,
+                    turnSpeed = descendant.TurnSpeed,
+                }
+                originalVehicleSeats[descendant] = original
+            end
+            local resolvedOriginal: VehicleSeatState = original :: VehicleSeatState
+            descendant.MaxSpeed = physicsSpeedSettings.speed
+            descendant.Torque = math.max(
+                resolvedOriginal.torque,
+                physicsSpeedSettings.motorTorque
+            )
+            descendant.TurnSpeed = math.max(
+                resolvedOriginal.turnSpeed,
+                physicsSpeedSettings.speed * 0.35
+            )
+        elseif descendant:IsA("HingeConstraint")
+            and descendant.ActuatorType == Enum.ActuatorType.Motor then
+            local original: HingeState? = originalMotorHinges[descendant]
+            if not original then
+                original = {
+                    angularVelocity = descendant.AngularVelocity,
+                    motorMaxTorque = descendant.MotorMaxTorque,
+                }
+                originalMotorHinges[descendant] = original
+            end
+            local resolvedOriginal: HingeState = original :: HingeState
+
+            local sign: number = resolvedOriginal.angularVelocity < 0 and -1 or 1
+            descendant.AngularVelocity = sign
+                * math.max(
+                    math.abs(resolvedOriginal.angularVelocity),
+                    physicsSpeedSettings.speed / 3
+                )
+            descendant.MotorMaxTorque = math.max(
+                resolvedOriginal.motorMaxTorque,
+                physicsSpeedSettings.motorTorque
+            )
+        end
+    end
+end
+
+local function togglePhysicsSpeed(enabled: boolean): ()
+    disconnectFeatureConnection("PhysicsSpeed")
+    restorePhysicsMotors()
+    physicsSpeedTeleportClock = 0
+    physicsSpeedPulseClock = 0
+
+    local _, humanoid = getCharacterParts()
+    if humanoid and originalPhysicsPlatformStand ~= nil then
+        humanoid.PlatformStand = originalPhysicsPlatformStand
+    end
+    originalPhysicsPlatformStand = nil
+
+    if not enabled then
+        return
+    end
+
+    featureConnections.PhysicsSpeed =
+        RunService.Heartbeat:Connect(function(deltaTime: number): ()
+            local assembly, currentHumanoid, vehicleSeat = getPhysicsSpeedTarget()
+            if not assembly or not currentHumanoid then
+                return
+            end
+
+            if originalPhysicsPlatformStand == nil then
+                originalPhysicsPlatformStand = currentHumanoid.PlatformStand
+            end
+            currentHumanoid.PlatformStand = physicsSpeedSettings.platformStand
+
+            if vehicleSeat and physicsSpeedSettings.customProperties then
+                tunePhysicsMotors(vehicleSeat)
+            end
+
+            local direction: Vector3 = currentHumanoid.MoveDirection
+            if vehicleSeat then
+                direction = vehicleSeat.CFrame.LookVector * vehicleSeat.ThrottleFloat
+            end
+            direction = Vector3.new(direction.X, 0, direction.Z)
+            if direction.Magnitude > 1 then
+                direction = direction.Unit
+            end
+
+            local currentVelocity: Vector3 = assembly.AssemblyLinearVelocity
+            local vertical: number = math.clamp(
+                currentVelocity.Y,
+                -physicsSpeedSettings.verticalSpeed,
+                physicsSpeedSettings.verticalSpeed
+            )
+            local targetVelocity: Vector3 = direction * physicsSpeedSettings.speed
+                + Vector3.new(0, vertical, 0)
+
+            if physicsSpeedSettings.mode == "Velocity" then
+                assembly.AssemblyLinearVelocity = targetVelocity
+            elseif physicsSpeedSettings.mode == "Impulse" then
+                local correction: Vector3 = targetVelocity - currentVelocity
+                assembly:ApplyImpulse(
+                    correction
+                        * assembly.AssemblyMass
+                        * math.clamp(deltaTime * 9, 0, 1)
+                )
+            elseif physicsSpeedSettings.mode == "CFrame" then
+                assembly.CFrame = assembly.CFrame
+                    + direction * physicsSpeedSettings.speed * deltaTime
+            elseif physicsSpeedSettings.mode == "TP" then
+                physicsSpeedTeleportClock = physicsSpeedTeleportClock + deltaTime
+                if physicsSpeedTeleportClock >= 0.14 then
+                    assembly.CFrame = assembly.CFrame
+                        + direction
+                            * physicsSpeedSettings.speed
+                            * physicsSpeedTeleportClock
+                    physicsSpeedTeleportClock = 0
+                end
+            elseif physicsSpeedSettings.mode == "Pulse" then
+                physicsSpeedPulseClock = physicsSpeedPulseClock + deltaTime
+                if physicsSpeedPulseClock >= 0.2 then
+                    local correction: Vector3 = targetVelocity - currentVelocity
+                    assembly:ApplyImpulse(correction * assembly.AssemblyMass)
+                    physicsSpeedPulseClock = 0
+                end
+            end
+        end)
+end
+
 local fovSettings = {value = 90}
 local originalFov = workspace.CurrentCamera and workspace.CurrentCamera.FieldOfView or 70
 
@@ -1865,7 +2374,7 @@ local function toggleAntiAfk(enabled)
 end
 
 local flingRunning = false
-state.isProtectedTarget = function()
+state.isProtectedTarget = function(_targetPlayer: Player): boolean
     return false
 end
 local antiFlingSettings = {velocityLimit = 120}
@@ -1939,24 +2448,29 @@ local function toggleLagSwitch(enabled)
     end)
 end
 
-local universalFlingSettings = {
-    target = "",
-    duration = 1.5,
+type UniversalFlingSettings = {
+    target: string,
 }
 
-local function findPlayerByText(text)
-    local query = string.lower(text or "")
+local universalFlingSettings: UniversalFlingSettings = {
+    target = "",
+}
+local MAX_FLING_SECONDS: number = 5
+
+local function findPlayerByText(text: string): Player?
+    local query: string = string.lower(text)
     if query == "" then
         local _, _, localRoot = getCharacterParts()
-        local nearest
-        local nearestDistance = math.huge
+        local nearest: Player? = nil
+        local nearestDistance: number = math.huge
 
         if localRoot then
-            for _, player in ipairs(Players:GetPlayers()) do
-                local root = player.Character
+            for _, player: Player in ipairs(Players:GetPlayers()) do
+                local root: BasePart? = player.Character
                     and player.Character:FindFirstChild("HumanoidRootPart")
+                    :: BasePart?
                 if player ~= LocalPlayer and root then
-                    local distance = (root.Position - localRoot.Position).Magnitude
+                    local distance: number = (root.Position - localRoot.Position).Magnitude
                     if distance < nearestDistance then
                         nearest = player
                         nearestDistance = distance
@@ -1967,10 +2481,10 @@ local function findPlayerByText(text)
         return nearest
     end
 
-    for _, player in ipairs(Players:GetPlayers()) do
+    for _, player: Player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer then
-            local username = string.lower(player.Name)
-            local displayName = string.lower(player.DisplayName)
+            local username: string = string.lower(player.Name)
+            local displayName: string = string.lower(player.DisplayName)
             if string.sub(username, 1, #query) == query
                 or string.sub(displayName, 1, #query) == query then
                 return player
@@ -1981,7 +2495,7 @@ local function findPlayerByText(text)
     return nil
 end
 
-local function performFling(targetPlayer)
+local function performFling(targetPlayer: Player): ()
     if state.isProtectedTarget(targetPlayer) then
         notify("That player is protected by FriendList.")
         return
@@ -1994,9 +2508,13 @@ local function performFling(targetPlayer)
     flingRunning = true
     task.spawn(function()
         local character, humanoid, root = getCharacterParts()
-        local targetCharacter = targetPlayer and targetPlayer.Character
-        local targetRoot = targetCharacter
+        local targetCharacter: Model? = targetPlayer.Character
+        local targetRoot: BasePart? = targetCharacter
             and targetCharacter:FindFirstChild("HumanoidRootPart")
+            :: BasePart?
+        local targetHumanoid: Humanoid? = targetCharacter
+            and targetCharacter:FindFirstChildOfClass("Humanoid")
+            :: Humanoid?
 
         if not character or not humanoid or not root or not targetRoot then
             flingRunning = false
@@ -2004,36 +2522,62 @@ local function performFling(targetPlayer)
             return
         end
 
-        local savedCFrame = root.CFrame
-        local savedCameraSubject = workspace.CurrentCamera
+        local savedCFrame: CFrame = root.CFrame
+        local savedCameraSubject: (Humanoid | BasePart)? = workspace.CurrentCamera
             and workspace.CurrentCamera.CameraSubject
-        local mover
-        local spinner
+            :: (Humanoid | BasePart)?
+        local mover: LinearVelocity? = nil
+        local spinner: AngularVelocity? = nil
+        local moverAttachment: Attachment? = nil
+        local targetReachedVoid: boolean = false
 
-        local success, errorMessage = pcall(function()
-            mover = Instance.new("BodyVelocity")
-            mover.Name = "RTM_FlingVelocity"
-            mover.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
-            mover.Velocity = Vector3.new(9e5, 9e5, 9e5)
-            mover.Parent = root
+        local success: boolean, errorMessage: any = pcall(function(): ()
+            local newAttachment: Attachment = Instance.new("Attachment")
+            newAttachment.Name = "RTM_FlingAttachment"
+            newAttachment.Parent = root
+            moverAttachment = newAttachment
 
-            spinner = Instance.new("BodyAngularVelocity")
-            spinner.Name = "RTM_FlingAngular"
-            spinner.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
-            spinner.AngularVelocity = Vector3.new(9e5, 9e5, 9e5)
-            spinner.Parent = root
+            local newMover: LinearVelocity = Instance.new("LinearVelocity")
+            newMover.Name = "RTM_FlingVelocity"
+            newMover.Attachment0 = newAttachment
+            newMover.MaxForce = math.huge
+            newMover.RelativeTo = Enum.ActuatorRelativeTo.World
+            newMover.VectorVelocity = Vector3.new(9e5, 9e5, 9e5)
+            newMover.Parent = root
+            mover = newMover
 
-            local startedAt = os.clock()
-            local step = 0
-            local flingDuration = math.min(universalFlingSettings.duration, 1.25)
-            while os.clock() - startedAt < flingDuration
+            local newSpinner: AngularVelocity = Instance.new("AngularVelocity")
+            newSpinner.Name = "RTM_FlingAngular"
+            newSpinner.Attachment0 = newAttachment
+            newSpinner.MaxTorque = math.huge
+            newSpinner.RelativeTo = Enum.ActuatorRelativeTo.World
+            newSpinner.AngularVelocity = Vector3.new(9e5, 9e5, 9e5)
+            newSpinner.Parent = root
+            spinner = newSpinner
+
+            local startedAt: number = os.clock()
+            local step: number = 0
+            local destroyHeight: number = workspace.FallenPartsDestroyHeight
+            if destroyHeight ~= destroyHeight then
+                destroyHeight = -500
+            end
+            local voidThreshold: number = destroyHeight + 35
+
+            while os.clock() - startedAt < MAX_FLING_SECONDS
                 and targetPlayer.Parent == Players
                 and targetRoot.Parent do
+                if targetRoot.Position.Y <= voidThreshold
+                    or (targetHumanoid and targetHumanoid.Health <= 0) then
+                    targetReachedVoid = true
+                    break
+                end
+
                 step = step + 1
-                local offset = CFrame.new(
-                    0,
-                    (step % 2 == 0) and 0.2 or -0.2,
-                    0
+                local phase: number = (step % 8) / 8 * math.pi * 2
+                local offset: CFrame = CFrame.new(
+                    math.cos(phase) * 1.35,
+                    (step % 2 == 0) and 0.75 or -0.75,
+                    math.sin(phase) * 1.35
                 )
                 root.CFrame = targetRoot.CFrame * offset
                 root.AssemblyLinearVelocity = Vector3.new(
@@ -2052,6 +2596,9 @@ local function performFling(targetPlayer)
         if spinner then
             spinner:Destroy()
         end
+        if moverAttachment then
+            moverAttachment:Destroy()
+        end
         if root and root.Parent then
             root.AssemblyLinearVelocity = Vector3.zero
             root.AssemblyAngularVelocity = Vector3.zero
@@ -2062,8 +2609,10 @@ local function performFling(targetPlayer)
         end
 
         flingRunning = false
-        if success then
-            notify("Fling finished: " .. targetPlayer.Name)
+        if success and targetReachedVoid then
+            notify("Fling completed: " .. targetPlayer.Name .. " reached the void.")
+        elseif success then
+            notify("Fling stopped after the 5 second safety limit.")
         else
             notify("Fling failed: " .. tostring(errorMessage))
         end
@@ -2112,18 +2661,50 @@ end
 
 local FlyFeature = createUniversalFeature(
     "Fly",
-    "Persistent directional flight",
+    "Multi-mode flight with independent horizontal and vertical control",
     1,
     toggleFly
 )
-addNumberOption(FlyFeature, "Speed", flySettings.speed, 10, 350, function(value)
+addCycleOption(
+    FlyFeature,
+    "Mode",
+    {"Velocity", "Impulse", "CFrame", "TP", "Pulse"},
+    1,
+    function(value)
+        flySettings.mode = value
+    end
+)
+addNumberOption(FlyFeature, "Speed", flySettings.speed, 10, 500, function(value)
     flySettings.speed = value
 end)
+addNumberOption(
+    FlyFeature,
+    "Vertical speed",
+    flySettings.verticalSpeed,
+    10,
+    300,
+    function(value)
+        flySettings.verticalSpeed = value
+    end
+)
+addNumberOption(
+    FlyFeature,
+    "Acceleration",
+    flySettings.acceleration,
+    1,
+    30,
+    function(value)
+        flySettings.acceleration = value
+    end
+)
 addCycleOption(FlyFeature, "Direction", {"Camera", "World"}, 1, function(value)
     flySettings.navigation = value
 end)
-addCycleOption(FlyFeature, "Motion", {"Smooth", "Direct"}, 1, function(value)
-    flySettings.motion = value
+addToggleOption(FlyFeature, "PlatformStand", flySettings.platformStand, function(value)
+    flySettings.platformStand = value
+end)
+addToggleOption(FlyFeature, "Face camera", flySettings.faceCamera, function(value)
+    flySettings.faceCamera = value
 end)
 addKeyOption(FlyFeature, "Up key", flySettings.upKey, function(value)
     flySettings.upKey = value
@@ -2131,6 +2712,11 @@ end)
 addKeyOption(FlyFeature, "Down key", flySettings.downKey, function(value)
     flySettings.downKey = value
 end)
+addFeatureTooltip(
+    FlyFeature,
+    "Velocity holds a smooth target speed. Impulse corrects speed with physics forces. "
+        .. "CFrame moves every frame. TP moves in short steps. Pulse applies controlled bursts."
+)
 
 local FlingFeature = createUniversalFeature(
     "Fling",
@@ -2149,55 +2735,54 @@ local FlingFeature = createUniversalFeature(
 addTextOption(FlingFeature, "Target player", universalFlingSettings.target, function(value)
     universalFlingSettings.target = value
 end, false)
-addNumberOption(
+addFeatureTooltip(
     FlingFeature,
-    "Duration",
-    universalFlingSettings.duration,
-    0.5,
-    4,
-    function(value)
-        universalFlingSettings.duration = value
-    end
+    "Runs until the target reaches the void or five seconds pass. Duration is automatic."
 )
 
 local HitboxFeature = createUniversalFeature(
     "Hitboxes",
-    "Expand other players' hitboxes",
+    "Extend visible character parts instead of an invisible root block",
     3,
     toggleHitboxes
 )
-addNumberOption(HitboxFeature, "Size", hitboxSettings.size, 1, 30, function(value)
-    hitboxSettings.size = value
-end)
-addCycleOption(HitboxFeature, "Parts", {"Root", "All"}, 1, function(value)
-    hitboxSettings.targetParts = value
-    if HitboxFeature.enabled then
-        restoreHitboxes()
-    end
-end)
 addNumberOption(
     HitboxFeature,
-    "Transparency %",
-    hitboxSettings.transparency,
-    0,
-    100,
+    "Body scale",
+    hitboxSettings.bodyScale,
+    1,
+    5,
     function(value)
-        hitboxSettings.transparency = value
+        hitboxSettings.bodyScale = value
     end
+)
+addNumberOption(
+    HitboxFeature,
+    "Visible transparency %",
+    hitboxSettings.visibleTransparency,
+    0,
+    60,
+    function(value)
+        hitboxSettings.visibleTransparency = value
+    end
+)
+addFeatureTooltip(
+    HitboxFeature,
+    "The real head is fixed at 8 studs. Arms, legs and torso keep their appearance "
+        .. "and are scaled visibly; HumanoidRootPart is never used."
 )
 
 local AntiVoidFeature = createUniversalFeature(
     "Anti-Void",
-    "Return to the last safe floor position",
+    "Create an invisible rescue platform only when death is imminent",
     4,
-    toggleAntiVoid
+    toggleAntiVoid,
+    {noOptions = true}
 )
-addNumberOption(AntiVoidFeature, "Void level", antiVoidSettings.voidLevel, -2000, 500, function(value)
-    antiVoidSettings.voidLevel = value
-end)
-addNumberOption(AntiVoidFeature, "Return height", antiVoidSettings.returnHeight, 1, 50, function(value)
-    antiVoidSettings.returnHeight = value
-end)
+addFeatureTooltip(
+    AntiVoidFeature,
+    "Detects a deep lethal fall and creates a temporary invisible platform beneath you."
+)
 
 local GravityFeature = createUniversalFeature(
     "Gravity",
@@ -2265,10 +2850,80 @@ addNumberOption(WalkSpeedFeature, "Speed", walkSpeedSettings.value, 0, 300, func
     walkSpeedSettings.value = value
 end)
 
+local PhysicsSpeedFeature = createUniversalFeature(
+    "Speed",
+    "Control local assembly and occupied vehicle physics",
+    9,
+    togglePhysicsSpeed
+)
+addCycleOption(
+    PhysicsSpeedFeature,
+    "Mode",
+    {"Velocity", "Impulse", "CFrame", "TP", "Pulse"},
+    1,
+    function(value)
+        physicsSpeedSettings.mode = value
+    end
+)
+addNumberOption(
+    PhysicsSpeedFeature,
+    "Speed",
+    physicsSpeedSettings.speed,
+    5,
+    500,
+    function(value)
+        physicsSpeedSettings.speed = value
+    end
+)
+addNumberOption(
+    PhysicsSpeedFeature,
+    "Vertical speed",
+    physicsSpeedSettings.verticalSpeed,
+    0,
+    300,
+    function(value)
+        physicsSpeedSettings.verticalSpeed = value
+    end
+)
+addToggleOption(
+    PhysicsSpeedFeature,
+    "PlatformStand",
+    physicsSpeedSettings.platformStand,
+    function(value)
+        physicsSpeedSettings.platformStand = value
+    end
+)
+addToggleOption(
+    PhysicsSpeedFeature,
+    "Custom properties",
+    physicsSpeedSettings.customProperties,
+    function(value)
+        physicsSpeedSettings.customProperties = value
+        if not value then
+            restorePhysicsMotors()
+        end
+    end
+)
+addNumberOption(
+    PhysicsSpeedFeature,
+    "Motor torque",
+    physicsSpeedSettings.motorTorque,
+    1000,
+    250000,
+    function(value)
+        physicsSpeedSettings.motorTorque = value
+    end
+)
+addFeatureTooltip(
+    PhysicsSpeedFeature,
+    "Velocity sets assembly speed. Impulse accelerates with forces. CFrame and TP move "
+        .. "directly. Pulse boosts in bursts. Custom properties tunes VehicleSeat and hinge motors."
+)
+
 local FovFeature = createUniversalFeature(
     "FOV",
     "Keep the camera field of view fixed",
-    9,
+    10,
     toggleFov
 )
 addNumberOption(FovFeature, "Field of view", fovSettings.value, 20, 120, function(value)
@@ -2278,31 +2933,36 @@ end)
 local NoclipFeature = createUniversalFeature(
     "Noclip",
     "Disable character collisions",
-    10,
-    toggleNoclip
+    11,
+    toggleNoclip,
+    {noOptions = true}
 )
-addInformationOption(NoclipFeature, "Collision is restored when this function is disabled.")
+addFeatureTooltip(NoclipFeature, "Disables collisions for every local character part. "
+    .. "Original collision states are restored when turned off.")
 
 local CtrlClickFeature = createUniversalFeature(
     "CTRL + Click Teleport",
     "Teleport to the position under the cursor",
-    11,
-    toggleCtrlClickTeleport
+    12,
+    toggleCtrlClickTeleport,
+    {noOptions = true}
 )
-addInformationOption(CtrlClickFeature, "Hold LeftControl and click a reachable world position.")
+addFeatureTooltip(CtrlClickFeature, "Hold LeftControl and click a reachable world position.")
 
 local AntiAfkFeature = createUniversalFeature(
     "Anti-AFK",
     "Prevent the local idle event from disconnecting",
-    12,
-    toggleAntiAfk
+    13,
+    toggleAntiAfk,
+    {noOptions = true}
 )
-addInformationOption(AntiAfkFeature, "Runs only while enabled and stops immediately when disabled.")
+addFeatureTooltip(AntiAfkFeature, "Responds only to Roblox's local idle event and "
+    .. "disconnects immediately when disabled.")
 
 local AntiFlingFeature = createUniversalFeature(
     "Anti-Fling",
     "Stop extreme local velocity and return to safety",
-    13,
+    14,
     toggleAntiFling
 )
 addNumberOption(
@@ -2319,7 +2979,7 @@ addNumberOption(
 local FullbrightFeature = createUniversalFeature(
     "Fullbright",
     "Keep the scene bright and remove global shadows",
-    14,
+    15,
     toggleFullbright
 )
 addNumberOption(
@@ -2346,7 +3006,7 @@ addNumberOption(
 local LagSwitchFeature = createUniversalFeature(
     "Lag Switch",
     "Simulate extreme incoming replication delay",
-    15,
+    16,
     toggleLagSwitch
 )
 addNumberOption(
@@ -6695,7 +7355,7 @@ gameStatus.Size = UDim2.fromScale(1, 1)
 
 local helpText = makeTextLabel(
     SettingsScroll,
-    "Build 0001-S6 | Active game module: "
+    "Build 0001-S7 | Active game module: "
         .. (GAME_CHECK.MM2Active and "MM2"
             or GAME_CHECK.TRSActive and "TRS"
             or "Universal")
@@ -7134,6 +7794,10 @@ ScreenGui.AncestryChanged:Connect(function(_, parent)
         for name in pairs(featureConnections) do
             disconnectFeatureConnection(name)
         end
+        for _, connection: RBXScriptConnection in ipairs(tooltipConnections) do
+            connection:Disconnect()
+        end
+        table.clear(tooltipConnections)
 
         if GlobalInputChangedConnection then
             GlobalInputChangedConnection:Disconnect()
@@ -7166,6 +7830,6 @@ end
 task.defer(saveConfigNow)
 
 print(
-    "A random Testing Menu # 0001 | Build 0001-S6 | Toggle key: "
+    "A random Testing Menu # 0001 | Build 0001-S7 | Toggle key: "
         .. state.toggleKey.Name
 )
