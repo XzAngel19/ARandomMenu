@@ -5091,16 +5091,15 @@ end
 
 local function getGunLeadSeconds(): (number, number)
     local roundTripTime: number = getEstimatedLatency()
-    -- Telemetry schema 2: 830 motion pairs favored 0.90 RTT horizontally
-    -- and 0.72 RTT vertically. Keeping the axes separate avoids the old
-    -- ping + one-frame overlead without inventing a bullet travel speed.
+    -- Schema 2 telemetry: 2,105 motion samples and 15 confirmed shots place
+    -- server acceptance about one render frame beyond the reported ping.
     local horizontalLead: number = math.clamp(
-        roundTripTime * 0.9 + mm2Settings.gunLeadBias,
+        roundTripTime * 0.98 + (1 / 60) + mm2Settings.gunLeadBias,
         0.025,
         0.3
     )
     local verticalLead: number = math.clamp(
-        roundTripTime * 0.72 + mm2Settings.gunLeadBias,
+        roundTripTime * 0.92 + (1 / 60) + mm2Settings.gunLeadBias,
         0.02,
         0.25
     )
@@ -5152,6 +5151,13 @@ local function solveLinearIntercept(
 end
 
 local function getGunOriginCFrame(character: Model, _gun: Tool?): CFrame?
+    local hand: BasePart? = (
+        character:FindFirstChild("RightHand")
+        or character:FindFirstChild("Right Arm")
+    ) :: BasePart?
+    if hand and hand:IsA("BasePart") then
+        return CFrame.new(hand.Position)
+    end
     local root: BasePart? = character:FindFirstChild("HumanoidRootPart") :: BasePart?
     local attachment: Attachment? = root
         and root:FindFirstChild("GunRaycastAttachment")
@@ -6500,7 +6506,7 @@ state.mm2SheriffCFrame.release = function(): ()
 end
 
 state.mm2SheriffCFrame.computeShot = function(
-    nativeOrigin: any
+    _nativeOrigin: any
 ): (Player?, Tool?, CFrame?, CFrame?)
     local runtime: any = state.mm2SheriffCFrame
     if not runtime.enabled then
@@ -6530,114 +6536,20 @@ state.mm2SheriffCFrame.computeShot = function(
     local targetRoot: BasePart? = targetCharacter
         and targetCharacter:FindFirstChild("HumanoidRootPart")
         :: BasePart?
-    local targetPart: BasePart? = targetCharacter
-        and (
-            targetCharacter:FindFirstChild("UpperTorso")
-            or targetCharacter:FindFirstChild("Torso")
-            or targetRoot
-        )
-        :: BasePart?
     if not target
         or state.isProtectedTarget(target)
         or not targetCharacter
         or not targetHumanoid
         or targetHumanoid.Health <= 0
-        or not targetRoot
-        or not targetPart
-        or not targetPart:IsA("BasePart") then
+        or not targetRoot then
         runtime.release()
         return nil, nil, nil, nil
     end
     runtime.target = target
-
-    local nativeOriginPosition: Vector3? =
-        state.mm2ShotFeedback.toPosition(nativeOrigin)
-    if not nativeOriginPosition then
-        local originCFrame: CFrame? = getGunOriginCFrame(character, gun)
-        nativeOriginPosition = originCFrame and originCFrame.Position or nil
-    end
-    if not nativeOriginPosition then
-        return nil, nil, nil, nil
-    end
-
-    local velocity: Vector3 = getFilteredVelocity(target, targetRoot)
-    local sample: MotionSample? = motionSamples[target]
-    local acceleration: Vector3 = sample and sample.acceleration or Vector3.zero
-    local grounded: boolean = sample and sample.grounded or false
-    local lead: number, verticalLead: number = getGunLeadSeconds()
-    lead = math.clamp(
-        lead + runtime.extraLead,
-        0.035,
-        0.38
-    )
-    verticalLead = math.clamp(
-        verticalLead + runtime.extraLead,
-        0.025,
-        0.32
-    )
-    local horizontalVelocity: Vector3 =
-        Vector3.new(velocity.X, 0, velocity.Z)
-    if horizontalVelocity.Magnitude < 1.5
-        and targetHumanoid.MoveDirection.Magnitude > 0.05 then
-        local desiredSpeed: number = targetHumanoid.WalkSpeed
-        local desiredVelocity: Vector3 =
-            targetHumanoid.MoveDirection.Unit * desiredSpeed
-        velocity = Vector3.new(
-            desiredVelocity.X,
-            velocity.Y,
-            desiredVelocity.Z
-        )
-    end
-
-    local horizontalAcceleration: Vector3 = Vector3.new(
-        acceleration.X,
-        0,
-        acceleration.Z
-    )
-    local displacement: Vector3 = Vector3.new(
-        velocity.X * lead,
-        0,
-        velocity.Z * lead
-    ) + horizontalAcceleration * (0.25 * lead * lead)
-    if grounded then
-        displacement = Vector3.new(
-            displacement.X,
-            math.clamp(velocity.Y, -2.5, 2.5) * verticalLead,
-            displacement.Z
-        )
-    else
-        displacement = Vector3.new(
-            displacement.X,
-            velocity.Y * verticalLead
-                - 0.5
-                    * workspace.Gravity
-                    * verticalLead
-                    * verticalLead,
-            displacement.Z
-        )
-    end
-
-    local predictedCenter: Vector3 = targetPart.Position + displacement
-    local incoming: Vector3 = predictedCenter - nativeOriginPosition
-    if incoming.Magnitude <= 0.05 then
-        return nil, nil, nil, nil
-    end
-    local direction: Vector3 = incoming.Unit
-    local localDirection: Vector3 =
-        targetPart.CFrame:VectorToObjectSpace(direction)
-    local radius: number = 0.5 * (
-        math.abs(localDirection.X) * targetPart.Size.X
-        + math.abs(localDirection.Y) * targetPart.Size.Y
-        + math.abs(localDirection.Z) * targetPart.Size.Z
-    )
-    local injectedOrigin: Vector3 =
-        predictedCenter - direction * (radius + 0.05)
-    local injectedEndpoint: Vector3 =
-        predictedCenter + direction * (radius + 0.35)
     return target,
         gun,
-        CFrame.lookAt(injectedOrigin, injectedEndpoint),
-        CFrame.lookAt(injectedEndpoint, injectedEndpoint + direction)
+        CFrame.new(targetRoot.Position + Vector3.new(0, 1, 0)),
+        CFrame.new(targetRoot.Position)
 end
 
 state.mm2SheriffCFrame.installHook = function(): boolean
@@ -6679,9 +6591,7 @@ state.mm2SheriffCFrame.installHook = function(): boolean
                     and injectedOrigin
                     and injectedTarget then
                     arguments[1] = injectedOrigin
-                    arguments[2] = typeof(arguments[2]) == "Vector3"
-                        and injectedTarget.Position
-                        or injectedTarget
+                    arguments[2] = injectedTarget
                     state.mm2ShotFeedback.queue(
                         target,
                         gun,
