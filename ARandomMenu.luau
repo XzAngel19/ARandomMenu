@@ -223,7 +223,7 @@ ScreenGui.ResetOnSpawn = false
 ScreenGui.IgnoreGuiInset = true
 ScreenGui.DisplayOrder = 999999
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-ScreenGui:SetAttribute("BuildId", "0001-S14")
+ScreenGui:SetAttribute("BuildId", "0001-S15")
 
 local function parentScreenGui()
     if type(gethui) == "function" then
@@ -806,6 +806,7 @@ type PendingMobilePlacement = {
     restoreMenu: boolean,
 }
 
+do
 local mobileActions: {[string]: MobileActionRecord} = {}
 local pendingMobilePlacement: PendingMobilePlacement? = nil
 
@@ -1257,6 +1258,14 @@ local function resetMobileActions(): ()
     queueConfigSave()
 end
 state.resetMobileActions = resetMobileActions
+state.mobileUi = {
+    actions = mobileActions,
+    setActionVisibility = setMobileActionVisibility,
+    resetActions = resetMobileActions,
+    clampButtonPosition = clampMobileButtonPosition,
+    saveActionPosition = saveMobileActionPosition,
+}
+end
 
 local function disconnectFeatureConnection(name)
     local connection = featureConnections[name]
@@ -9420,7 +9429,7 @@ MobileResetButton.Size = UDim2.fromScale(1, 1)
 
 local helpText = makeTextLabel(
     SettingsScroll,
-    "Build 0001-S14 | Active game module: "
+    "Build 0001-S15 | Active game module: "
         .. (GAME_CHECK.MM2Active and "MM2"
             or GAME_CHECK.TRSActive and "TRS"
             or "Universal")
@@ -9452,7 +9461,7 @@ state.setBlurVisible = setBlurVisible
 local function setMenuVisible(visible)
     state.visible = visible
     Main.Visible = visible
-    setMobileActionVisibility(visible)
+    state.mobileUi.setActionVisibility(visible)
     setBlurVisible(true)
 end
 state.setMenuVisible = setMenuVisible
@@ -9513,9 +9522,9 @@ MobileSizeButton.MouseButton1Click:Connect(function(): ()
     state.mobileButtonSize = nextSize
     configData.ui.mobileButtonSize = nextSize
     MobileSizeButton.Text = tostring(nextSize) .. " PX"
-    for _, record: MobileActionRecord in pairs(mobileActions) do
+    for _, record: MobileActionRecord in pairs(state.mobileUi.actions) do
         record.button.Size = UDim2.fromOffset(nextSize, nextSize)
-        local clamped: Vector2 = clampMobileButtonPosition(
+        local clamped: Vector2 = state.mobileUi.clampButtonPosition(
             Vector2.new(
                 record.button.Position.X.Offset,
                 record.button.Position.Y.Offset
@@ -9523,7 +9532,7 @@ MobileSizeButton.MouseButton1Click:Connect(function(): ()
             nextSize
         )
         record.button.Position = UDim2.fromOffset(clamped.X, clamped.Y)
-        saveMobileActionPosition(record)
+        state.mobileUi.saveActionPosition(record)
     end
     queueConfigSave()
 end)
@@ -9532,7 +9541,7 @@ MobileResetButton.MouseButton1Click:Connect(function(): ()
     if not state.isMobile then
         return
     end
-    resetMobileActions()
+    state.mobileUi.resetActions()
 end)
 
 KeybindButton.MouseButton1Click:Connect(function()
@@ -9583,7 +9592,7 @@ local function applyHeaderColor(color)
         KeybindButton.BackgroundColor3 = color
     end
 
-    for _, record: MobileActionRecord in pairs(mobileActions) do
+    for _, record: MobileActionRecord in pairs(state.mobileUi.actions) do
         record.button.BackgroundColor3 = color
     end
     if state.isMobile and state.mobileMenuButtonVisible then
@@ -9627,6 +9636,8 @@ end
 
 SectionManager.register("Config.", buildSettings)
 
+do
+local function initializeWindowInput(): ()
 local dragging = false
 local dragInput
 local dragStart
@@ -9898,6 +9909,9 @@ state.globalInputBeganConnection = UserInputService.InputBegan:Connect(function(
         end
     end
 end)
+end
+initializeWindowInput()
+end
 
 ScreenGui.AncestryChanged:Connect(function(_, parent)
     if not parent then
@@ -9953,6 +9967,6 @@ end
 task.defer(saveConfigNow)
 
 print(
-    "A random Testing Menu # 0001 | Build 0001-S14 | Toggle key: "
+    "A random Testing Menu # 0001 | Build 0001-S15 | Toggle key: "
         .. state.toggleKey.Name
 )
