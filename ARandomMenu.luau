@@ -73,8 +73,36 @@ local function resolveExternalImage(url: string, fileName: string): string
     end
 
     local path: string = ASSET_CACHE_FOLDER .. "/" .. fileName
+    local function ensureFolder(folder: string): boolean
+        if type(environment.isfolder) == "function" then
+            local checked: boolean, exists: boolean =
+                pcall(environment.isfolder, folder)
+            if checked and exists then
+                return true
+            end
+        end
+        if type(environment.makefolder) ~= "function" then
+            return false
+        end
+        local made: boolean = pcall(environment.makefolder, folder)
+        if type(environment.isfolder) ~= "function" then
+            return made
+        end
+        local verified: boolean, created: boolean =
+            pcall(environment.isfolder, folder)
+        return made or (verified and created)
+    end
+
     local cached: boolean, exists: boolean = pcall(environment.isfile, path)
-    if not cached or not exists then
+    local validCache: boolean = cached and exists
+    if validCache and type(environment.readfile) == "function" then
+        local readable: boolean, cachedPayload: any =
+            pcall(environment.readfile, path)
+        validCache = readable
+            and type(cachedPayload) == "string"
+            and #cachedPayload >= 64
+    end
+    if not validCache then
         local downloaded: boolean, payload: any = pcall(function(): string
             return (game :: any):HttpGet(url, true)
         end)
@@ -83,16 +111,11 @@ local function resolveExternalImage(url: string, fileName: string): string
         end
 
         local prepared: boolean = pcall(function(): ()
-            if type(environment.isfolder) == "function"
-                and type(environment.makefolder) == "function"
-                and not environment.isfolder(CONFIG_FOLDER) then
-                environment.makefolder(CONFIG_FOLDER)
-            end
-            if type(environment.isfolder) == "function"
-                and type(environment.makefolder) == "function"
-                and not environment.isfolder(ASSET_CACHE_FOLDER) then
-                environment.makefolder(ASSET_CACHE_FOLDER)
-            end
+            assert(ensureFolder(CONFIG_FOLDER), "Unable to create asset root")
+            assert(
+                ensureFolder(ASSET_CACHE_FOLDER),
+                "Unable to create asset cache"
+            )
             environment.writefile(path, payload)
         end)
         if not prepared then
@@ -101,7 +124,13 @@ local function resolveExternalImage(url: string, fileName: string): string
     end
 
     local resolved: boolean, contentId: any = pcall(assetFunction, path)
-    return resolved and type(contentId) == "string" and contentId or ""
+    if not resolved or type(contentId) ~= "string" or contentId == "" then
+        return ""
+    end
+    pcall(function(): ()
+        game:GetService("ContentProvider"):PreloadAsync({contentId})
+    end)
+    return contentId
 end
 
 local configData: any = {
@@ -5151,13 +5180,6 @@ local function solveLinearIntercept(
 end
 
 local function getGunOriginCFrame(character: Model, _gun: Tool?): CFrame?
-    local hand: BasePart? = (
-        character:FindFirstChild("RightHand")
-        or character:FindFirstChild("Right Arm")
-    ) :: BasePart?
-    if hand and hand:IsA("BasePart") then
-        return CFrame.new(hand.Position)
-    end
     local root: BasePart? = character:FindFirstChild("HumanoidRootPart") :: BasePart?
     local attachment: Attachment? = root
         and root:FindFirstChild("GunRaycastAttachment")
@@ -5366,16 +5388,6 @@ local function fireGunAtTarget(target: Player?): boolean
     gun = getPlayerWeapon(LocalPlayer, "Gun", true) or gun
     local remote: Instance? = gun and gun:FindFirstChild("Shoot")
     local origin: CFrame? = getGunOriginCFrame(character, gun)
-    local sheriffRuntime: any = (state :: any).mm2SheriffCFrame
-    local sheriffExclusive: boolean = sheriffRuntime ~= nil
-        and sheriffRuntime.enabled == true
-    if remote
-        and remote:IsA("RemoteEvent")
-        and origin
-        and sheriffExclusive then
-        remote:FireServer(origin, origin)
-        return true
-    end
 
     local aim: CFrame? = nil
     local prediction: GunPrediction? = nil
@@ -5660,10 +5672,7 @@ state.mm2ShotFeedback.handleGunFired = function(
     endpoint: any,
     hitPart: any
 ): ()
-    local sheriffRuntime: any = (state :: any).mm2SheriffCFrame
-    local sheriffExclusive: boolean = sheriffRuntime ~= nil
-        and sheriffRuntime.enabled == true
-    if not shootFeatureActive and not sheriffExclusive then
+    if not shootFeatureActive then
         return
     end
 
@@ -6155,10 +6164,7 @@ local function redirectedTargetCFrame(): (
 end
 
 local function getRedirectedWeaponCFrame(): CFrame?
-    local sheriffRuntime: any = (state :: any).mm2SheriffCFrame
-    local sheriffExclusive: boolean = sheriffRuntime ~= nil
-        and sheriffRuntime.enabled == true
-    if shootFeatureActive and not sheriffExclusive then
+    if shootFeatureActive then
         local redirectRequested: boolean =
             mm2Settings.shootMode == "Redirect" or manualShotRequested
         local targetCFrame: CFrame?,
@@ -6426,8 +6432,15 @@ local function triggerManualShot(): ()
     local _, humanoid = getCharacterParts()
     local backpack: Backpack? = LocalPlayer:FindFirstChildOfClass("Backpack")
     local gun: Tool? = getPlayerWeapon(LocalPlayer, "Gun")
+    local touchPreferred: boolean =
+        UserInputService.PreferredInput == Enum.PreferredInput.Touch
+    local activationHookReady: boolean = shootHookInstalled
+        and (not touchPreferred or shootTouchHookInstalled)
 
-    if gun and humanoid and humanoid:IsA("Humanoid") and shootHookInstalled then
+    if gun
+        and humanoid
+        and humanoid:IsA("Humanoid")
+        and activationHookReady then
         if gun.Parent == backpack then
             humanoid:EquipTool(gun)
             task.wait()
@@ -6487,183 +6500,6 @@ local function toggleShootMurderer(enabled: boolean): ()
             triggerManualShot()
         end
     end)
-end
-
-state.mm2SheriffCFrame = {
-    enabled = false,
-    extraLead = 0,
-    hookInstalled = false,
-    originalNamecall = nil :: any,
-    target = nil :: Player?,
-    computeShot = function(
-        _nativeOrigin: any
-    ): (Player?, Tool?, CFrame?, CFrame?) return nil, nil, nil, nil end,
-}
-
-state.mm2SheriffCFrame.release = function(): ()
-    local runtime: any = state.mm2SheriffCFrame
-    runtime.target = nil
-end
-
-state.mm2SheriffCFrame.computeShot = function(
-    _nativeOrigin: any
-): (Player?, Tool?, CFrame?, CFrame?)
-    local runtime: any = state.mm2SheriffCFrame
-    if not runtime.enabled then
-        return nil, nil, nil, nil
-    end
-    local role: string? = getPlayerRole(LocalPlayer)
-    local character: Model? = LocalPlayer.Character
-    local localHumanoid: Humanoid? = character
-        and character:FindFirstChildOfClass("Humanoid")
-        :: Humanoid?
-    local gun: Tool? = getPlayerWeapon(LocalPlayer, "Gun", true)
-    if (role ~= "Sheriff" and role ~= "Hero")
-        or not character
-        or not localHumanoid
-        or localHumanoid.Health <= 0
-        or not gun
-        or gun.Parent ~= character then
-        runtime.release()
-        return nil, nil, nil, nil
-    end
-
-    local target: Player? = findMurderer()
-    local targetCharacter: Model? = target and target.Character
-    local targetHumanoid: Humanoid? = targetCharacter
-        and targetCharacter:FindFirstChildOfClass("Humanoid")
-        :: Humanoid?
-    local targetRoot: BasePart? = targetCharacter
-        and targetCharacter:FindFirstChild("HumanoidRootPart")
-        :: BasePart?
-    if not target
-        or state.isProtectedTarget(target)
-        or not targetCharacter
-        or not targetHumanoid
-        or targetHumanoid.Health <= 0
-        or not targetRoot then
-        runtime.release()
-        return nil, nil, nil, nil
-    end
-    runtime.target = target
-    return target,
-        gun,
-        CFrame.new(targetRoot.Position + Vector3.new(0, 1, 0)),
-        CFrame.new(targetRoot.Position)
-end
-
-state.mm2SheriffCFrame.installHook = function(): boolean
-    local runtime: any = state.mm2SheriffCFrame
-    if runtime.hookInstalled then
-        return true
-    end
-    if type(state.hookMetamethod) ~= "function"
-        or type(state.getNamecallMethod) ~= "function" then
-        return false
-    end
-
-    local callback: any = function(remote: any, ...: any): any
-        local originalNamecall: any = runtime.originalNamecall
-        if not originalNamecall then
-            return nil
-        end
-        if runtime.enabled
-            and state.getNamecallMethod() == "FireServer"
-            and typeof(remote) == "Instance"
-            and remote:IsA("RemoteEvent")
-            and remote.Name == "Shoot" then
-            local character: Model? = LocalPlayer.Character
-            local equippedGun: Tool? =
-                getPlayerWeapon(LocalPlayer, "Gun", true)
-            local expectedRemote: Instance? = nil
-            if equippedGun and equippedGun.Parent == character then
-                expectedRemote = equippedGun:FindFirstChild("Shoot")
-            end
-            if remote == expectedRemote then
-                local arguments: {any} = {...}
-                local target: Player?,
-                    gun: Tool?,
-                    injectedOrigin: CFrame?,
-                    injectedTarget: CFrame? =
-                        runtime.computeShot(arguments[1])
-                if target
-                    and gun == equippedGun
-                    and injectedOrigin
-                    and injectedTarget then
-                    arguments[1] = injectedOrigin
-                    arguments[2] = injectedTarget
-                    state.mm2ShotFeedback.queue(
-                        target,
-                        gun,
-                        injectedOrigin,
-                        injectedTarget,
-                        nil,
-                        false
-                    )
-                    return originalNamecall(remote, unpack(arguments))
-                end
-
-                -- Sheriff CFrame is exclusive. If its validated payload cannot
-                -- be built, do not leak the cursor's native shot to the server.
-                return nil
-            end
-        end
-        return originalNamecall(remote, ...)
-    end
-    if type(state.newCClosure) == "function" then
-        callback = state.newCClosure(callback)
-    end
-    local installed: boolean, original: any = pcall(
-        state.hookMetamethod,
-        game,
-        "__namecall",
-        callback
-    )
-    if installed and original then
-        runtime.originalNamecall = original
-        runtime.hookInstalled = true
-        return true
-    end
-    return false
-end
-
-state.mm2SheriffCFrame.setEnabled = function(enabled: boolean): ()
-    local runtime: any = state.mm2SheriffCFrame
-    disconnectFeatureConnection("MM2SheriffCFrame")
-    runtime.release()
-    if enabled and not runtime.installHook() then
-        runtime.enabled = false
-        notify("Sheriff CFrame requires hookmetamethod support.")
-        return
-    end
-    runtime.enabled = enabled
-    state.mm2ShotFeedback.pending = nil
-    state.mm2ShotFeedback.lastAccepted = nil
-    if not enabled then
-        return
-    end
-
-    local weaponService: any = getWeaponServiceModule()
-    if type(weaponService) == "table" then
-        connectGunFiredSignal(weaponService)
-    end
-    local elapsed: number = 0
-    featureConnections.MM2SheriffCFrame =
-        RunService.Heartbeat:Connect(function(deltaTime: number): ()
-            elapsed += deltaTime
-            if elapsed < 1 / 30 then
-                return
-            end
-            elapsed = 0
-            local target: Player? = findMurderer()
-            local targetRoot: BasePart? = target
-                and target.Character
-                and target.Character:FindFirstChild("HumanoidRootPart")
-                :: BasePart?
-            if target and targetRoot and isPlayerAlive(target) then
-                getFilteredVelocity(target, targetRoot)
-            end
-        end)
 end
 
 local function teleportToMap()
@@ -6896,27 +6732,6 @@ addToggleOption(
 )
 refreshShootOptions()
 toggleShootMurderer(true)
-
-state.mm2SheriffCFrame.feature = createUniversalFeature(
-    "Sheriff CFrame",
-    "Exclusively injects each Gun shot through the predicted Murderer volume",
-    5,
-    state.mm2SheriffCFrame.setEnabled,
-    {
-        parent = MM2Scroll,
-        registry = mm2Features,
-    }
-)
-addNumberOption(
-    state.mm2SheriffCFrame.feature,
-    "Extra lead (s)",
-    0,
-    0,
-    0.25,
-    function(value: number): ()
-        state.mm2SheriffCFrame.extraLead = value
-    end
-)
 
 local KnifeFeature = createUniversalFeature(
     "Knife",
@@ -7254,7 +7069,6 @@ createUniversalFeature(
 cleanupMM2Runtime = function()
     toggleShootMurderer(false)
     state.mm2ShotFeedback.hide()
-    state.mm2SheriffCFrame.setEnabled(false)
     toggleKnifeAura(false)
     toggleKnifeRedirect(false)
     toggleSprint(false)
