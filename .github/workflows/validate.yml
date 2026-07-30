@@ -24,10 +24,14 @@ jobs:
         run: |
           test -f src/Supported/MM2.luau
           test -f src/Supported/TRS.luau
+          test -f src/Supported/Universal.luau
+          test -f src/Supported/Movement.luau
           test -f src/Profile/142823291.lua
           test -f src/Profile/14315258385.lua
           test -f src/gui/Current/gui.lua
           test -d src/gui/Current/Images
+          test -f src/gui/Current/Images/menu-toggle.png
+          test -f src/gui/Current/Images/aurora-background.jpg
           test -f src/library/AssetRegistry.luau
           test -f src/library/ProfileRegistry.luau
 

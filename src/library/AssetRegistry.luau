@@ -6,6 +6,7 @@ export type AssetManifest = {
     schemaVersion: number,
     rawBaseUrl: string,
     images: {[string]: string?},
+    attribution: {[string]: string}?,
 }
 
 export type AssetRegistryApi = {
@@ -23,9 +24,9 @@ local function getManifest(): AssetManifest
     if cachedManifest ~= nil then
         return cachedManifest
     end
-    local body: string = game:HttpGet(MANIFEST_URL)
+    local body: string = (game :: any):HttpGet(MANIFEST_URL)
     cachedManifest = HttpService:JSONDecode(body) :: AssetManifest
-    return cachedManifest
+    return cachedManifest :: AssetManifest
 end
 
 function AssetRegistry.getUrl(key: string): string?
