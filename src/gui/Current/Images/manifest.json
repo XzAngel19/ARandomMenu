@@ -2,12 +2,17 @@
   "schemaVersion": 1,
   "rawBaseUrl": "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/main/src/gui/Current/Images/",
   "images": {
-    "logo": null,
-    "menuBackground": null,
+    "logo": "menu-toggle.png",
+    "menuToggle": "menu-toggle.png",
+    "menuBackground": "aurora-background.jpg",
     "universalIcon": null,
     "movementIcon": null,
     "mm2Icon": null,
     "trsIcon": null,
     "settingsIcon": null
+  },
+  "attribution": {
+    "menuToggle": "User-provided image",
+    "menuBackground": "Khalil Benihoud / Unsplash (Unsplash License), https://unsplash.com/photos/aurora-borealis-umLAzmGNZbU"
   }
 }
