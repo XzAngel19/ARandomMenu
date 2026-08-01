@@ -6,18 +6,67 @@ type Compiler = (source: string, chunkName: string?) -> (Chunk?, string?)
 local SOURCE_URL: string =
     "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/main/ARandomMenu.luau"
 local HttpService: HttpService = game:GetService("HttpService")
-local source: string = game:HttpGet(
-    SOURCE_URL .. "?nocache=" .. HttpService:GenerateGUID(false),
-    true
-)
-local compiler: Compiler = (loadstring :: any) :: Compiler
-local chunk: Chunk?, compileError: string? = compiler(
-    source,
-    "@ARandomMenu.luau"
-)
-assert(
-    chunk,
-    "ARandomMenu failed to compile: " .. tostring(compileError)
-)
+local environment: any = getfenv()
 
-return (chunk :: Chunk)()
+local function isValidSource(candidate: any): boolean
+    if type(candidate) ~= "string" or #candidate < 64 then
+        return false
+    end
+    local lowered: string = string.lower(candidate)
+    return string.find(lowered, "404: not found", 1, true) == nil
+        and string.find(lowered, "<!doctype html", 1, true) == nil
+        and string.find(lowered, "<html", 1, true) == nil
+end
+
+local fetched: boolean, source: any = pcall(function(): string
+    return game:HttpGet(
+        SOURCE_URL .. "?nocache=" .. HttpService:GenerateGUID(false),
+        true
+    )
+end)
+
+if not fetched or not isValidSource(source) then
+    warn("[RTM:Loader] HttpGet falló o devolvió una respuesta inválida: " .. tostring(source))
+    local readFile: any = environment.readfile
+    local isFile: any = environment.isfile
+    if type(readFile) == "function"
+        and (type(isFile) ~= "function" or isFile("ARandomMenu.luau")) then
+        local localSuccess: boolean, localSource: any = pcall(readFile, "ARandomMenu.luau")
+        if localSuccess and isValidSource(localSource) then
+            source = localSource
+            fetched = true
+            warn("[RTM:Loader] Usando fallback local ARandomMenu.luau")
+        end
+    end
+end
+
+if not fetched or not isValidSource(source) then
+    warn("[RTM:Loader] No existe una fuente remota o local ejecutable")
+    return nil
+end
+
+local compiler: any = environment.loadstring
+if type(compiler) ~= "function" then
+    warn("[RTM:Loader] Este ejecutor no expone loadstring")
+    return nil
+end
+
+local chunk: Chunk?, compileError: string? = compiler(source, "@ARandomMenu.luau")
+if not chunk then
+    warn("[RTM:Loader] Error de compilación: " .. tostring(compileError))
+    return nil
+end
+
+local ran: boolean, result: any = xpcall(chunk :: Chunk, function(message: any): string
+    local text: string = tostring(message)
+    if debug and type(debug.traceback) == "function" then
+        return debug.traceback(text, 2)
+    end
+    return text
+end)
+if not ran then
+    warn("[RTM:Loader] Error de inicialización:\n" .. tostring(result))
+    return nil
+end
+
+return result

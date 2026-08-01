@@ -7,8 +7,10 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
 - `loadstring` downloads the current `ARandomMenu.luau` bootstrap.
 - `ARandomMenu.luau` creates the shared responsive UI, component factory,
   notifications, state and the single-heartbeat `TaskManager`.
-- The bootstrap reads `game.PlaceId` and downloads only
-  `src/games/<PlaceId>.luau` from the repository raw URL.
+- The bootstrap reads `game.PlaceId` and downloads the named game module from
+  the repository raw URL. MM2 and TRS resolve to `MM2.luau` and `TRS.luau`.
+- Failed or invalid HTTP responses are logged and may fall back to
+  `readfile("ARandomMenu/src/games/<Name>.luau")` when available.
 - A game module must return a `Module` table exporting `init(Runtime)`,
   `destroy()`, `Events`, `Name` and `PlaceId`.
 - `Runtime.Menu` exposes the live GUI, pages and component API. The module calls
@@ -22,21 +24,18 @@ TaskManager callback count and errors captured by `pcall`.
 
 ## Source layout
 
-- `src/games/142823291.luau`: MM2 implementation.
-- `src/games/14315258385.luau`: TRS implementation.
+- `src/games/Universal.luau`: universal and movement module contract.
+- `src/games/MM2.luau`: complete MM2 implementation.
+- `src/games/TRS.luau`: complete TRS implementation.
 - `src/gui/Current/gui.lua`: reusable presentation-only GUI controller.
-- `src/gui/Current/Images`: raw and EditableImage-ready UI assets.
-- `src/library/RemoteImageParser.luau`: asynchronous HTTP/PNG/EditableImage
-  bridge with a non-blocking fallback.
-- `src/vendor/png-luau`: vendored MIT `png-luau` v0.2.1 decoder.
-- `src/Supported` and `src/Profile`: compatibility metadata for older loaders.
+- `src/gui/Current/Images`: optional normal image assets.
+- `src/Profile`: compatibility data retained for older loaders.
 
-## Remote images
+## Images
 
-`RemoteImageParser` downloads bytes with `HttpService:GetAsync` inside `pcall`,
-falls back to the executor HTTP method when necessary, decodes PNG bytes, writes
-them into an `EditableImage`, and assigns `Content.fromObject(image)` to the
-target's `ImageContent`. A failed image never blocks the menu bootstrap.
+The bootstrap does not use `EditableImage` or a PNG byte decoder. Optional
+images use the normal `Image` property and executor-local asset registration;
+the text UI remains usable when an image cannot be loaded.
 
 The aurora background is by Khalil Benihoud and is available under the
 [Unsplash License](https://unsplash.com/photos/aurora-borealis-umLAzmGNZbU).

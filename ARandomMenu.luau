@@ -9,6 +9,7 @@
       - Drag any border or corner to resize the menu
 ]]
 
+local function bootstrap(): ()
 local executorGlobals: any = getfenv()
 
 local function cloneReference(instance: any): any
@@ -41,13 +42,8 @@ local CONFIG_FILE = CONFIG_PROFILE_FOLDER
     .. "/Game_"
     .. tostring(game.GameId > 0 and game.GameId or game.PlaceId)
     .. ".Config"
-local ASSET_CACHE_FOLDER = CONFIG_FOLDER .. "/Assets"
 local REPOSITORY_RAW_BASE =
     "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/main/"
-local MENU_ICON_URL = REPOSITORY_RAW_BASE
-    .. "src/gui/Current/Images/menu-toggle.editable.png"
-local MENU_BACKGROUND_URL = REPOSITORY_RAW_BASE
-    .. "src/gui/Current/Images/aurora-background.png"
 
 local GAME_MODULES: {[number]: string} = {
     [142823291] = "MM2",
@@ -87,80 +83,6 @@ local MINIMUM_SIZE = Vector2.new(560, 350)
 local MAXIMUM_SIZE = Vector2.new(1100, 760)
 local IS_MOBILE_DEVICE: boolean = UserInputService.TouchEnabled
     and not UserInputService.KeyboardEnabled
-
-type ExecutorAssetFunction = (path: string) -> string
-
-local function resolveExternalImage(url: string, fileName: string): string
-    local environment: any = getfenv()
-    local assetFunction: ExecutorAssetFunction? = (
-        environment.getcustomasset or environment.getsynasset
-    ) :: ExecutorAssetFunction?
-    if not assetFunction
-        or type(environment.writefile) ~= "function"
-        or type(environment.isfile) ~= "function" then
-        return ""
-    end
-
-    local path: string = ASSET_CACHE_FOLDER .. "/" .. fileName
-    local function ensureFolder(folder: string): boolean
-        if type(environment.isfolder) == "function" then
-            local checked: boolean, exists: boolean =
-                pcall(environment.isfolder, folder)
-            if checked and exists then
-                return true
-            end
-        end
-        if type(environment.makefolder) ~= "function" then
-            return false
-        end
-        local made: boolean = pcall(environment.makefolder, folder)
-        if type(environment.isfolder) ~= "function" then
-            return made
-        end
-        local verified: boolean, created: boolean =
-            pcall(environment.isfolder, folder)
-        return made or (verified and created)
-    end
-
-    local cached: boolean, exists: boolean = pcall(environment.isfile, path)
-    local validCache: boolean = cached and exists
-    if validCache and type(environment.readfile) == "function" then
-        local readable: boolean, cachedPayload: any =
-            pcall(environment.readfile, path)
-        validCache = readable
-            and type(cachedPayload) == "string"
-            and #cachedPayload >= 64
-    end
-    if not validCache then
-        local downloaded: boolean, payload: any = pcall(function(): string
-            return (game :: any):HttpGet(url, true)
-        end)
-        if not downloaded or type(payload) ~= "string" or #payload < 64 then
-            return ""
-        end
-
-        local prepared: boolean = pcall(function(): ()
-            assert(ensureFolder(CONFIG_FOLDER), "Unable to create asset root")
-            assert(
-                ensureFolder(ASSET_CACHE_FOLDER),
-                "Unable to create asset cache"
-            )
-            environment.writefile(path, payload)
-        end)
-        if not prepared then
-            return ""
-        end
-    end
-
-    local resolved: boolean, contentId: any = pcall(assetFunction, path)
-    if not resolved or type(contentId) ~= "string" or contentId == "" then
-        return ""
-    end
-    pcall(function(): ()
-        game:GetService("ContentProvider"):PreloadAsync({contentId})
-    end)
-    return contentId
-end
 
 local configData: any = {
     version = 1,
@@ -351,62 +273,7 @@ local state: any = {
     newCClosure = (getfenv() :: any).newcclosure,
     fireTouchInterest = (getfenv() :: any).firetouchinterest,
     requireModule = require,
-    remoteImageParser = nil,
 }
-
-state.loadRemoteImageAsync = function(
-    target: Instance,
-    url: string,
-    assetName: string,
-    fallbackFileName: string
-): ()
-    task.spawn(function(): ()
-        local loaded: boolean, loadError: any = pcall(function(): ()
-            if state.remoteImageParser == nil then
-                local parserSource: string = (game :: any):HttpGet(
-                    REPOSITORY_RAW_BASE
-                        .. "src/library/RemoteImageParser.luau"
-                        .. "?nocache="
-                        .. HttpService:GenerateGUID(false),
-                    true
-                )
-                assert(#parserSource > 64, "RemoteImageParser response was empty")
-                assert(
-                    not string.find(string.lower(parserSource), "404: not found", 1, true),
-                    "RemoteImageParser returned 404"
-                )
-                local compiler: any = (getfenv() :: any).loadstring
-                assert(type(compiler) == "function", "loadstring is unavailable")
-                local chunk: any, compileError: any = compiler(
-                    parserSource,
-                    "@RemoteImageParser.luau"
-                )
-                assert(type(chunk) == "function", tostring(compileError))
-                local parser: any = chunk()
-                assert(type(parser) == "table", "Invalid RemoteImageParser")
-                state.remoteImageParser = parser
-                print("[RTM:Assets] RemoteImageParser cargado")
-            end
-
-            local applied: boolean, parserError: string? =
-                state.remoteImageParser.apply_to(target, url)
-            assert(applied, parserError or "Image parser failed")
-            print("[RTM:Assets] Imagen aplicada: " .. assetName)
-        end)
-        if loaded then
-            return
-        end
-
-        warn("[RTM:Assets] " .. assetName .. " falló: " .. tostring(loadError))
-        local fallback: string = resolveExternalImage(url, fallbackFileName)
-        if fallback ~= "" and target.Parent then
-            pcall(function(): ()
-                (target :: any).Image = fallback
-            end)
-            print("[RTM:Assets] Fallback local aplicado: " .. assetName)
-        end
-    end)
-end
 
 local registeredText = {}
 local tabButtons = {}
@@ -752,12 +619,8 @@ local _BackgroundShade: Frame = (create("Frame", {
     Size = UDim2.fromScale(1, 1),
 }) :: any) :: Frame
 
-state.loadRemoteImageAsync(
-    BackgroundImage,
-    MENU_BACKGROUND_URL,
-    "aurora-background",
-    "aurora-background.png"
-)
+-- Remote image loading is intentionally disabled during bootstrap. The dark
+-- theme is the visual fallback and cannot delay UI initialization.
 
 local function centerMain()
     local camera = workspace.CurrentCamera
@@ -969,6 +832,13 @@ create("UIListLayout", {
     Padding = UDim.new(0, 9),
     SortOrder = Enum.SortOrder.LayoutOrder,
 })
+
+-- Make the shell usable before any optional feature/module initialization runs.
+-- A later runtime error must never leave every page hidden.
+UniversalScroll.Visible = true
+UniversalScroll.CanvasSize = UDim2.fromOffset(0, 0)
+setTab("Universal")
+print("[RTM:Bootstrap] GUI base visible; construyendo funciones universales")
 
 local universalFeatures = {}
 local movementFeatures = {}
@@ -1422,12 +1292,7 @@ create("UICorner", {
     CornerRadius = UDim.new(1, 0),
 })
 
-state.loadRemoteImageAsync(
-    MobileMenuImage,
-    MENU_ICON_URL,
-    "menu-toggle",
-    "menu-toggle.editable.png"
-)
+-- Keep the built-in RTM text visible; no byte parser or remote icon is needed.
 
 trackUiConnection(MobileMenuButton.MouseButton1Click:Connect(function(): ()
     if state.setMenuVisible then
@@ -4624,15 +4489,40 @@ local function loadGameModule(
         return nil, nil, diagnostics, "El ejecutor no admite loadstring/setfenv"
     end
 
+    local moduleName: string = GAME_MODULES[placeId] or tostring(placeId)
     local moduleUrl: string = REPOSITORY_RAW_BASE
         .. "src/games/"
-        .. tostring(placeId)
+        .. moduleName
         .. ".luau?nocache="
         .. HttpService:GenerateGUID(false)
     state.logBootstrap("Descargando módulo: " .. moduleUrl)
     local downloadSuccess: boolean, source: any = pcall(function(): string
         return (game :: any):HttpGet(moduleUrl, true)
     end)
+    if downloadSuccess and type(source) == "string" then
+        local candidate: string = string.lower(source)
+        if #source < 64
+            or string.find(candidate, "404: not found", 1, true)
+            or string.find(candidate, "<!doctype html", 1, true)
+            or string.find(candidate, "<html", 1, true) then
+            warn("[RTM:Bootstrap] Respuesta remota inválida para " .. moduleName)
+            downloadSuccess = false
+        end
+    end
+    if not downloadSuccess or type(source) ~= "string" then
+        local readFile: any = executorEnvironment.readfile
+        local isFile: any = executorEnvironment.isfile
+        local localPath: string = "ARandomMenu/src/games/" .. moduleName .. ".luau"
+        if type(readFile) == "function"
+            and (type(isFile) ~= "function" or isFile(localPath)) then
+            local localSuccess: boolean, localSource: any = pcall(readFile, localPath)
+            if localSuccess and type(localSource) == "string" then
+                source = localSource
+                downloadSuccess = true
+                warn("[RTM:Bootstrap] HTTP falló; usando fallback local " .. localPath)
+            end
+        end
+    end
     if not downloadSuccess or type(source) ~= "string" then
         return nil, nil, diagnostics, "Fallo HTTP: " .. tostring(source)
     end
@@ -4648,7 +4538,7 @@ local function loadGameModule(
     local chunk: any, compileError: any =
         executorEnvironment.loadstring(
             source,
-            "@src/games/" .. tostring(placeId) .. ".luau"
+            "@src/games/" .. moduleName .. ".luau"
         )
     if type(chunk) ~= "function" then
         return nil, nil, diagnostics,
@@ -5483,11 +5373,6 @@ ScreenGui.AncestryChanged:Connect(function(_, parent)
         end
         table.clear(state.uiConnections)
 
-        if state.remoteImageParser
-            and type(state.remoteImageParser.destroy) == "function" then
-            pcall(state.remoteImageParser.destroy)
-            state.remoteImageParser = nil
-        end
         TaskManager:Destroy()
         if state.globalInputChangedConnection then
             state.globalInputChangedConnection:Disconnect()
@@ -5523,3 +5408,16 @@ print(
     "A random Testing Menu # 0001 | Build 0001-S15 | Toggle key: "
         .. state.toggleKey.Name
 )
+end
+
+local initialized: boolean, bootstrapError: any = xpcall(bootstrap, function(message: any): string
+    local text: string = tostring(message)
+    if debug and type(debug.traceback) == "function" then
+        return debug.traceback("[RTM:Bootstrap] " .. text, 2)
+    end
+    return "[RTM:Bootstrap] " .. text
+end)
+
+if not initialized then
+    warn("[RTM:Bootstrap] Inicialización detenida:\n" .. tostring(bootstrapError))
+end

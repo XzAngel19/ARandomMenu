@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "rawBaseUrl": "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/main/src/gui/Current/Images/",
   "images": {
-    "logo": "menu-toggle.editable.png",
-    "menuToggle": "menu-toggle.editable.png",
+    "logo": "menu-toggle.png",
+    "menuToggle": "menu-toggle.png",
     "menuBackground": "aurora-background.png",
     "universalIcon": null,
     "movementIcon": null,
