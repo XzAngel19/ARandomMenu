@@ -5,7 +5,11 @@ type Compiler = (source: string, chunkName: string?) -> (Chunk?, string?)
 
 local SOURCE_URL: string =
     "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/main/ARandomMenu.luau"
-local source: string = game:HttpGet(SOURCE_URL)
+local HttpService: HttpService = game:GetService("HttpService")
+local source: string = game:HttpGet(
+    SOURCE_URL .. "?nocache=" .. HttpService:GenerateGUID(false),
+    true
+)
 local compiler: Compiler = (loadstring :: any) :: Compiler
 local chunk: Chunk?, compileError: string? = compiler(
     source,
