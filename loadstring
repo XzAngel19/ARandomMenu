@@ -1,72 +1,127 @@
 --!strict
 
-type Chunk = () -> any
-type Compiler = (source: string, chunkName: string?) -> (Chunk?, string?)
-
-local SOURCE_URL: string =
+local SOURCE_URL =
     "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/main/ARandomMenu.luau"
-local HttpService: HttpService = game:GetService("HttpService")
-local environment: any = getfenv()
+local HttpService = game:GetService("HttpService")
+local environment = getfenv()
 
-local function isValidSource(candidate: any): boolean
-    if type(candidate) ~= "string" or #candidate < 64 then
-        return false
+local function validateSource(candidate)
+    if type(candidate) ~= "string" then
+        return false, "la respuesta no es una cadena (tipo: " .. type(candidate) .. ")"
     end
-    local lowered: string = string.lower(candidate)
-    return string.find(lowered, "404: not found", 1, true) == nil
-        and string.find(lowered, "<!doctype html", 1, true) == nil
-        and string.find(lowered, "<html", 1, true) == nil
+    if #candidate == 0 then
+        return false, "la respuesta está vacía"
+    end
+    if #candidate < 64 then
+        return false, "la respuesta es demasiado corta (" .. tostring(#candidate) .. " bytes)"
+    end
+
+    -- Only inspect the response prefix. Searching the complete Lua source for
+    -- '<html' rejects valid scripts that contain that literal in their code.
+    local prefix = string.lower(string.sub(candidate, 1, 512))
+    prefix = string.gsub(prefix, "^\239\187\191", "")
+    prefix = string.gsub(prefix, "^%s+", "")
+
+    if string.find(prefix, "404: not found", 1, true) == 1 then
+        return false, "GitHub devolvió 404: Not Found"
+    end
+    if string.find(prefix, "<!doctype html", 1, true) == 1
+        or string.find(prefix, "<html", 1, true) == 1 then
+        return false, "el servidor devolvió HTML en lugar de Lua"
+    end
+    if string.match(prefix, '^%{%s*"message"%s*:') then
+        return false, "el servidor devolvió un error JSON"
+    end
+
+    return true, nil
 end
 
-local fetched: boolean, source: any = pcall(function(): string
+local function readLocalFallback()
+    local readFile = environment.readfile
+    local isFile = environment.isfile
+    local path = "ARandomMenu.luau"
+    if type(readFile) ~= "function" then
+        return nil, "readfile no está disponible"
+    end
+    if type(isFile) == "function" and not isFile(path) then
+        return nil, "no existe " .. path
+    end
+
+    local okRead, localSource = pcall(readFile, path)
+    if not okRead then
+        return nil, "readfile falló: " .. tostring(localSource)
+    end
+    local validLocal, localValidationError = validateSource(localSource)
+    if not validLocal then
+        return nil, "fallback inválido: " .. tostring(localValidationError)
+    end
+    return localSource, nil
+end
+
+print("[RTM:Loader] Descargando " .. SOURCE_URL)
+local okHttp, source = pcall(function()
     return game:HttpGet(
         SOURCE_URL .. "?nocache=" .. HttpService:GenerateGUID(false),
         true
     )
 end)
 
-if not fetched or not isValidSource(source) then
-    warn("[RTM:Loader] HttpGet falló o devolvió una respuesta inválida: " .. tostring(source))
-    local readFile: any = environment.readfile
-    local isFile: any = environment.isfile
-    if type(readFile) == "function"
-        and (type(isFile) ~= "function" or isFile("ARandomMenu.luau")) then
-        local localSuccess: boolean, localSource: any = pcall(readFile, "ARandomMenu.luau")
-        if localSuccess and isValidSource(localSource) then
-            source = localSource
-            fetched = true
-            warn("[RTM:Loader] Usando fallback local ARandomMenu.luau")
-        end
+if not okHttp then
+    warn("[RTM:Loader] Error HTTP: " .. tostring(source))
+    local fallbackSource, fallbackError = readLocalFallback()
+    if not fallbackSource then
+        warn("[RTM:Loader] Error de fallback local: " .. tostring(fallbackError))
+        return nil
     end
+    source = fallbackSource
+    print("[RTM:Loader] Usando fallback local ARandomMenu.luau")
 end
 
-if not fetched or not isValidSource(source) then
-    warn("[RTM:Loader] No existe una fuente remota o local ejecutable")
-    return nil
+local validSource, validationError = validateSource(source)
+if not validSource then
+    warn("[RTM:Loader] Error de validación: " .. tostring(validationError))
+    local fallbackSource, fallbackError = readLocalFallback()
+    if not fallbackSource then
+        warn("[RTM:Loader] Error de fallback local: " .. tostring(fallbackError))
+        return nil
+    end
+    source = fallbackSource
+    print("[RTM:Loader] Usando fallback local ARandomMenu.luau")
 end
+print("[RTM:Loader] Descarga válida: " .. tostring(#source) .. " bytes")
 
-local compiler: any = environment.loadstring
+local compiler = environment.loadstring or loadstring
 if type(compiler) ~= "function" then
-    warn("[RTM:Loader] Este ejecutor no expone loadstring")
+    warn("[RTM:Loader] Error de compilación: el executor no expone loadstring")
     return nil
 end
 
-local chunk: Chunk?, compileError: string? = compiler(source, "@ARandomMenu.luau")
+local okCompile, chunk, compileError = pcall(
+    compiler,
+    source,
+    "@ARandomMenu.luau"
+)
+if not okCompile then
+    warn("[RTM:Loader] Error al invocar loadstring: " .. tostring(chunk))
+    return nil
+end
 if not chunk then
     warn("[RTM:Loader] Error de compilación: " .. tostring(compileError))
     return nil
 end
+print("[RTM:Loader] Compilación correcta")
 
-local ran: boolean, result: any = xpcall(chunk :: Chunk, function(message: any): string
-    local text: string = tostring(message)
+local okRun, result = xpcall(chunk, function(message)
+    local text = tostring(message)
     if debug and type(debug.traceback) == "function" then
         return debug.traceback(text, 2)
     end
     return text
 end)
-if not ran then
-    warn("[RTM:Loader] Error de inicialización:\n" .. tostring(result))
+if not okRun then
+    warn("[RTM:Loader] Error durante la ejecución:\n" .. tostring(result))
     return nil
 end
 
+print("[RTM:Loader] Ejecución completada")
 return result
