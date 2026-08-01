@@ -850,6 +850,13 @@ state.tooltipConnections = {} :: {RBXScriptConnection}
 state.uiConnections = {} :: {RBXScriptConnection}
 state.bindFeatureTooltip = nil :: ((any, string) -> ())?
 
+local function trackUiConnection(
+    connection: RBXScriptConnection
+): RBXScriptConnection
+    table.insert(state.uiConnections, connection)
+    return connection
+end
+
 type MobileActionRecord = {
     id: string,
     label: string,
@@ -895,11 +902,6 @@ MobilePlacementLabel.TextXAlignment = Enum.TextXAlignment.Center
 MobilePlacementLabel.Position = UDim2.new(0.08, 0, 0.08, 0)
 MobilePlacementLabel.Size = UDim2.new(0.84, 0, 0, 54)
 MobilePlacementLabel.ZIndex = 201
-
-local function trackUiConnection(connection: RBXScriptConnection): RBXScriptConnection
-    table.insert(state.uiConnections, connection)
-    return connection
-end
 
 local function ensureMobileConfig(): {[string]: any}
     if type(configData.ui.mobileActions) ~= "table" then
@@ -1932,6 +1934,15 @@ type ActiveSlider = {
 }
 
 local activeSlider: ActiveSlider? = nil
+
+print(
+    "[RTM:Bootstrap] trackUiConnection valor=",
+    trackUiConnection,
+    "tipo=",
+    typeof(trackUiConnection),
+    "InputChanged tipo=",
+    typeof(UserInputService.InputChanged)
+)
 
 trackUiConnection(UserInputService.InputChanged:Connect(function(
     input: InputObject
