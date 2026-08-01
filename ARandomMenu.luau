@@ -43,7 +43,7 @@ local CONFIG_FILE = CONFIG_PROFILE_FOLDER
     .. tostring(game.GameId > 0 and game.GameId or game.PlaceId)
     .. ".Config"
 local REPOSITORY_RAW_BASE =
-    "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/main/"
+    "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/main/"
 
 local GAME_MODULES: {[number]: string} = {
     [142823291] = "MM2",
