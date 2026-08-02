@@ -5,3 +5,4 @@ Thumbs.db
 runtime-config/
 local-profiles/
 /compile-*.txt
+/register-stats.json

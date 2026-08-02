@@ -306,7 +306,8 @@ local function getEnvironmentValue(name: string): any
 end
 
 local AssetManager: any = {
-    cacheFolder = "MenuAssets",
+    cacheRoot = CONFIG_FOLDER,
+    cacheFolder = CONFIG_FOLDER .. "/Assets",
     manifest = {
         aurora = {
             url = REPOSITORY_RAW_BASE
@@ -361,21 +362,30 @@ end
 function AssetManager.ensureCacheFolder(): (boolean, string?)
     local isFolder: any = getEnvironmentValue("isfolder")
     local makeFolder: any = getEnvironmentValue("makefolder")
-    if type(isFolder) == "function" then
-        local checked: boolean, exists: any = pcall(isFolder, AssetManager.cacheFolder)
-        if checked and exists then
-            return true, nil
+    local function ensureOne(path: string): (boolean, string?)
+        if type(isFolder) == "function" then
+            local checked: boolean, exists: any = pcall(isFolder, path)
+            if checked and exists then
+                return true, nil
+            end
         end
+        if type(makeFolder) ~= "function" then
+            return false, "makefolder no está disponible"
+        end
+        local created: boolean, createError: any = pcall(makeFolder, path)
+        if not created then
+            return false, tostring(createError)
+        end
+        return true, nil
     end
-    if type(makeFolder) ~= "function" then
-        return false, "makefolder no está disponible"
+
+    local rootOk: boolean, rootError: string? = ensureOne(AssetManager.cacheRoot)
+    if not rootOk then
+        return false, "carpeta principal: " .. tostring(rootError)
     end
-    local created: boolean, createError: any = pcall(
-        makeFolder,
-        AssetManager.cacheFolder
-    )
-    if not created then
-        return false, tostring(createError)
+    local cacheOk: boolean, cacheError: string? = ensureOne(AssetManager.cacheFolder)
+    if not cacheOk then
+        return false, "carpeta Assets: " .. tostring(cacheError)
     end
     return true, nil
 end
@@ -4769,6 +4779,7 @@ local function toggleFullbright(enabled)
     end)
 end
 
+do
 local FlyFeature = createUniversalFeature(
     "Fly",
     "Multi-mode flight with independent horizontal and vertical control",
@@ -4827,7 +4838,9 @@ addFeatureTooltip(
     "Velocity holds a smooth target speed. Impulse corrects speed with physics forces. "
         .. "CFrame moves every frame. TP moves in short steps. Pulse applies controlled bursts."
 )
+end
 
+do
 local FlingFeature = createUniversalFeature(
     "Fling",
     "Fling a player, or the nearest player when blank",
@@ -4849,7 +4862,9 @@ addFeatureTooltip(
     FlingFeature,
     "Runs until the target reaches the void or five seconds pass. Duration is automatic."
 )
+end
 
+do
 local HitboxFeature = createUniversalFeature(
     "Hitboxes",
     "Extend visible character parts instead of an invisible root block",
@@ -4881,7 +4896,9 @@ addFeatureTooltip(
     "The real head is fixed at 8 studs. Arms, legs and torso keep their appearance "
         .. "and are scaled visibly; HumanoidRootPart is never used."
 )
+end
 
+do
 local AntiVoidFeature = createUniversalFeature(
     "Anti-Void",
     "Create an invisible rescue platform only when death is imminent",
@@ -4893,7 +4910,9 @@ addFeatureTooltip(
     AntiVoidFeature,
     "Detects a deep lethal fall and creates a temporary invisible platform beneath you."
 )
+end
 
+do
 local GravityFeature = createUniversalFeature(
     "Gravity",
     "Keep workspace gravity at a custom value",
@@ -4903,7 +4922,9 @@ local GravityFeature = createUniversalFeature(
 addNumberOption(GravityFeature, "Gravity value", gravitySettings.value, 0, 500, function(value)
     gravitySettings.value = value
 end)
+end
 
+do
 local JumpPowerFeature = createUniversalFeature(
     "Jump Power",
     "Keep character jump power at a custom value",
@@ -4913,7 +4934,9 @@ local JumpPowerFeature = createUniversalFeature(
 addNumberOption(JumpPowerFeature, "Power", jumpPowerSettings.value, 0, 500, function(value)
     jumpPowerSettings.value = value
 end)
+end
 
+do
 local InfiniteJumpFeature = createUniversalFeature(
     "Infinite Jump",
     "Choose continuous, accumulated, or fall-style jumping",
@@ -4949,7 +4972,9 @@ addNumberOption(
         infiniteJumpSettings.riseSpeed = value
     end
 )
+end
 
+do
 local WalkSpeedFeature = createUniversalFeature(
     "Walk Speed",
     "Keep character movement speed fixed",
@@ -4959,7 +4984,9 @@ local WalkSpeedFeature = createUniversalFeature(
 addNumberOption(WalkSpeedFeature, "Speed", walkSpeedSettings.value, 0, 300, function(value)
     walkSpeedSettings.value = value
 end)
+end
 
+do
 local PhysicsSpeedFeature = createUniversalFeature(
     "Speed",
     "Control local assembly and occupied vehicle physics",
@@ -5029,7 +5056,9 @@ addFeatureTooltip(
     "Velocity sets assembly speed. Impulse accelerates with forces. CFrame and TP move "
         .. "directly. Pulse boosts in bursts. Custom properties tunes VehicleSeat and hinge motors."
 )
+end
 
+do
 local FovFeature = createUniversalFeature(
     "FOV",
     "Keep the camera field of view fixed",
@@ -5039,7 +5068,9 @@ local FovFeature = createUniversalFeature(
 addNumberOption(FovFeature, "Field of view", fovSettings.value, 20, 120, function(value)
     fovSettings.value = value
 end)
+end
 
+do
 local NoclipFeature = createUniversalFeature(
     "Noclip",
     "Disable character collisions",
@@ -5049,7 +5080,9 @@ local NoclipFeature = createUniversalFeature(
 )
 addFeatureTooltip(NoclipFeature, "Disables collisions for every local character part. "
     .. "Original collision states are restored when turned off.")
+end
 
+do
 local CtrlClickFeature = createUniversalFeature(
     "CTRL + Click Teleport",
     "Teleport to the position under the cursor",
@@ -5058,7 +5091,9 @@ local CtrlClickFeature = createUniversalFeature(
     {noOptions = true}
 )
 addFeatureTooltip(CtrlClickFeature, "Hold LeftControl and click a reachable world position.")
+end
 
+do
 local AntiAfkFeature = createUniversalFeature(
     "Anti-AFK",
     "Prevent the local idle event from disconnecting",
@@ -5068,7 +5103,9 @@ local AntiAfkFeature = createUniversalFeature(
 )
 addFeatureTooltip(AntiAfkFeature, "Responds only to Roblox's local idle event and "
     .. "disconnects immediately when disabled.")
+end
 
+do
 local AntiFlingFeature = createUniversalFeature(
     "Anti-Fling",
     "Stop extreme local velocity and return to safety",
@@ -5085,7 +5122,9 @@ addNumberOption(
         antiFlingSettings.velocityLimit = value
     end
 )
+end
 
+do
 local FullbrightFeature = createUniversalFeature(
     "Fullbright",
     "Keep the scene bright and remove global shadows",
@@ -5112,7 +5151,9 @@ addNumberOption(
         fullbrightSettings.clockTime = value
     end
 )
+end
 
+do
 local LagSwitchFeature = createUniversalFeature(
     "Lag Switch",
     "Simulate extreme incoming replication delay",
@@ -5129,6 +5170,7 @@ addNumberOption(
         lagSwitchSettings.incomingLag = value
     end
 )
+end
 
 end
 
