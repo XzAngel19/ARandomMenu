@@ -13,6 +13,10 @@ local HttpService: HttpService =
 export type AssetEntry = {
     category: string,
     path: string,
+    localPath: string?,
+    url: string?,
+    version: number?,
+    type: string?,
     dimensions: {number},
     usage: string,
 }
@@ -49,7 +53,7 @@ function AssetRegistry.getUrl(key: string): string?
     if entry == nil or entry.path == "" then
         return nil
     end
-    return manifest.rawBaseUrl .. entry.path
+    return entry.url or (manifest.rawBaseUrl .. entry.path)
 end
 
 function AssetRegistry.clearCache(): ()

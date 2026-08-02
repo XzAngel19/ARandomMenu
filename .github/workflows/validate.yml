@@ -36,8 +36,23 @@ jobs:
           test -f src/gui/Current/Images/menu-toggle.editable.png
           test -f src/gui/Current/Assets/header-anime.png
           test -f src/gui/Current/Assets/Blossoms/blossom-spritesheet.png
+          test -f src/gui/Current/Assets/Header/anime-header.jpg
+          test -f src/gui/Current/Assets/Animations/blossoms-spritesheet.png
+          test -f src/gui/Current/Assets/Typography/title-logo.png
+          test -f src/gui/Current/Assets/Particles/snow-dot.png
+          test -f src/gui/Current/Assets/Particles/emo-star.png
+          test -f src/gui/Current/Assets/Particles/ash-fragment.png
+          test -f src/gui/Current/Assets/Particles/black-petal.png
+          test -f src/gui/Current/Assets/Decorations/spike-corner-left.png
+          test -f src/gui/Current/Assets/Decorations/spike-corner-right.png
+          test -f src/gui/Current/Assets/Decorations/chain-divider.png
+          test -f src/gui/Current/Assets/Decorations/ink-scratch.png
+          test -f src/gui/Current/Assets/Decorations/cross-small.png
+          test -f src/gui/Current/Assets/Decorations/halftone-fade.png
+          test -f src/gui/Current/Assets/Source/darkcore-asset-sheet.png
           test -f src/gui/Current/Assets/Icons/search.png
           test -f tools/process_manga_assets.py
+          test -f tools/generate_darkcore_assets.py
           test -f src/library/AssetRegistry.luau
           test -f src/library/ProfileRegistry.luau
 
