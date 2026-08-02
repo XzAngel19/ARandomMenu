@@ -1,0 +1,1108 @@
+{
+  "schemaVersion": 2,
+  "rawBaseUrl": "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/main/src/gui/Current/",
+  "assets": {
+    "header_eyes_frame": {
+      "category": "Frames",
+      "path": "Assets/Frames/header_eyes_frame.png",
+      "dimensions": [
+        709,
+        207
+      ],
+      "usage": "Header frame or featured card"
+    },
+    "eye_visuals": {
+      "category": "Icons",
+      "path": "Assets/Icons/eye_visuals.png",
+      "dimensions": [
+        195,
+        169
+      ],
+      "usage": "Visuals feature"
+    },
+    "blossom_branch_wide": {
+      "category": "Blossoms",
+      "path": "Assets/Blossoms/blossom_branch_wide.png",
+      "dimensions": [
+        774,
+        207
+      ],
+      "usage": "Header corner blossom ornament"
+    },
+    "progress_bar": {
+      "category": "Status",
+      "path": "Assets/Status/progress_bar.png",
+      "dimensions": [
+        747,
+        41
+      ],
+      "usage": "Loading and progress status"
+    },
+    "arrow_right": {
+      "category": "Arrows",
+      "path": "Assets/Arrows/arrow_right.png",
+      "dimensions": [
+        80,
+        55
+      ],
+      "usage": "Forward navigation"
+    },
+    "arrow_left": {
+      "category": "Arrows",
+      "path": "Assets/Arrows/arrow_left.png",
+      "dimensions": [
+        64,
+        39
+      ],
+      "usage": "Back navigation"
+    },
+    "arrow_up": {
+      "category": "Arrows",
+      "path": "Assets/Arrows/arrow_up.png",
+      "dimensions": [
+        63,
+        64
+      ],
+      "usage": "Expand upward"
+    },
+    "arrow_down": {
+      "category": "Arrows",
+      "path": "Assets/Arrows/arrow_down.png",
+      "dimensions": [
+        58,
+        65
+      ],
+      "usage": "Collapse downward"
+    },
+    "chevrons_right": {
+      "category": "Arrows",
+      "path": "Assets/Arrows/chevrons_right.png",
+      "dimensions": [
+        105,
+        48
+      ],
+      "usage": "Fast forward navigation"
+    },
+    "search": {
+      "category": "Icons",
+      "path": "Assets/Icons/search.png",
+      "dimensions": [
+        70,
+        68
+      ],
+      "usage": "Search field"
+    },
+    "close": {
+      "category": "Icons",
+      "path": "Assets/Icons/close.png",
+      "dimensions": [
+        53,
+        49
+      ],
+      "usage": "Close popup"
+    },
+    "plus": {
+      "category": "Icons",
+      "path": "Assets/Icons/plus.png",
+      "dimensions": [
+        50,
+        45
+      ],
+      "usage": "Add or expand"
+    },
+    "minus": {
+      "category": "Icons",
+      "path": "Assets/Icons/minus.png",
+      "dimensions": [
+        50,
+        18
+      ],
+      "usage": "Remove or collapse"
+    },
+    "menu": {
+      "category": "Icons",
+      "path": "Assets/Icons/menu.png",
+      "dimensions": [
+        51,
+        45
+      ],
+      "usage": "Menu options"
+    },
+    "ellipsis": {
+      "category": "Icons",
+      "path": "Assets/Icons/ellipsis.png",
+      "dimensions": [
+        62,
+        25
+      ],
+      "usage": "More actions"
+    },
+    "flame": {
+      "category": "Icons",
+      "path": "Assets/Icons/flame.png",
+      "dimensions": [
+        64,
+        70
+      ],
+      "usage": "Highlighted action"
+    },
+    "flame_halftone": {
+      "category": "Icons",
+      "path": "Assets/Icons/flame_halftone.png",
+      "dimensions": [
+        65,
+        74
+      ],
+      "usage": "Highlighted action alternate"
+    },
+    "user_small": {
+      "category": "Icons",
+      "path": "Assets/Icons/user_small.png",
+      "dimensions": [
+        52,
+        58
+      ],
+      "usage": "Player feature"
+    },
+    "user_large": {
+      "category": "Icons",
+      "path": "Assets/Icons/user_large.png",
+      "dimensions": [
+        57,
+        57
+      ],
+      "usage": "Player feature alternate"
+    },
+    "target_cross": {
+      "category": "Icons",
+      "path": "Assets/Icons/target_cross.png",
+      "dimensions": [
+        66,
+        66
+      ],
+      "usage": "Targeting feature"
+    },
+    "target_plus": {
+      "category": "Icons",
+      "path": "Assets/Icons/target_plus.png",
+      "dimensions": [
+        63,
+        66
+      ],
+      "usage": "Targeting feature alternate"
+    },
+    "target_open": {
+      "category": "Icons",
+      "path": "Assets/Icons/target_open.png",
+      "dimensions": [
+        57,
+        65
+      ],
+      "usage": "Target selection"
+    },
+    "target_ring": {
+      "category": "Icons",
+      "path": "Assets/Icons/target_ring.png",
+      "dimensions": [
+        65,
+        61
+      ],
+      "usage": "Target lock"
+    },
+    "toggle_texture": {
+      "category": "Status",
+      "path": "Assets/Status/toggle_texture.png",
+      "dimensions": [
+        85,
+        46
+      ],
+      "usage": "Toggle control decoration"
+    },
+    "status_success_circle": {
+      "category": "Status",
+      "path": "Assets/Status/status_success_circle.png",
+      "dimensions": [
+        61,
+        61
+      ],
+      "usage": "Success state"
+    },
+    "status_error_circle": {
+      "category": "Status",
+      "path": "Assets/Status/status_error_circle.png",
+      "dimensions": [
+        59,
+        59
+      ],
+      "usage": "Error state"
+    },
+    "send": {
+      "category": "Icons",
+      "path": "Assets/Icons/send.png",
+      "dimensions": [
+        50,
+        53
+      ],
+      "usage": "Submit action"
+    },
+    "home": {
+      "category": "Icons",
+      "path": "Assets/Icons/home.png",
+      "dimensions": [
+        52,
+        53
+      ],
+      "usage": "Home or universal tab"
+    },
+    "settings": {
+      "category": "Icons",
+      "path": "Assets/Icons/settings.png",
+      "dimensions": [
+        58,
+        61
+      ],
+      "usage": "Settings and config"
+    },
+    "tools": {
+      "category": "Icons",
+      "path": "Assets/Icons/tools.png",
+      "dimensions": [
+        56,
+        51
+      ],
+      "usage": "Utility feature"
+    },
+    "star": {
+      "category": "Icons",
+      "path": "Assets/Icons/star.png",
+      "dimensions": [
+        51,
+        48
+      ],
+      "usage": "Favorite feature"
+    },
+    "heart": {
+      "category": "Icons",
+      "path": "Assets/Icons/heart.png",
+      "dimensions": [
+        49,
+        49
+      ],
+      "usage": "Protection or favorite"
+    },
+    "button_main": {
+      "category": "Status",
+      "path": "Assets/Status/button_main.png",
+      "dimensions": [
+        186,
+        53
+      ],
+      "usage": "Main navigation button frame"
+    },
+    "button_visuals": {
+      "category": "Status",
+      "path": "Assets/Status/button_visuals.png",
+      "dimensions": [
+        190,
+        53
+      ],
+      "usage": "Visuals navigation button frame"
+    },
+    "button_enable": {
+      "category": "Status",
+      "path": "Assets/Status/button_enable.png",
+      "dimensions": [
+        184,
+        64
+      ],
+      "usage": "Enabled state frame"
+    },
+    "volume": {
+      "category": "Icons",
+      "path": "Assets/Icons/volume.png",
+      "dimensions": [
+        56,
+        47
+      ],
+      "usage": "Audio enabled"
+    },
+    "volume_muted": {
+      "category": "Icons",
+      "path": "Assets/Icons/volume_muted.png",
+      "dimensions": [
+        54,
+        45
+      ],
+      "usage": "Audio muted"
+    },
+    "bell_active": {
+      "category": "Icons",
+      "path": "Assets/Icons/bell_active.png",
+      "dimensions": [
+        51,
+        49
+      ],
+      "usage": "Notifications enabled"
+    },
+    "bell": {
+      "category": "Icons",
+      "path": "Assets/Icons/bell.png",
+      "dimensions": [
+        48,
+        50
+      ],
+      "usage": "Notifications"
+    },
+    "shield": {
+      "category": "Icons",
+      "path": "Assets/Icons/shield.png",
+      "dimensions": [
+        47,
+        49
+      ],
+      "usage": "Protection feature"
+    },
+    "button_player": {
+      "category": "Status",
+      "path": "Assets/Status/button_player.png",
+      "dimensions": [
+        187,
+        53
+      ],
+      "usage": "Player navigation button frame"
+    },
+    "button_misc": {
+      "category": "Status",
+      "path": "Assets/Status/button_misc.png",
+      "dimensions": [
+        189,
+        52
+      ],
+      "usage": "Misc navigation button frame"
+    },
+    "button_disable": {
+      "category": "Status",
+      "path": "Assets/Status/button_disable.png",
+      "dimensions": [
+        182,
+        65
+      ],
+      "usage": "Disabled state frame"
+    },
+    "spinner": {
+      "category": "Status",
+      "path": "Assets/Status/spinner.png",
+      "dimensions": [
+        58,
+        51
+      ],
+      "usage": "Loading indicator"
+    },
+    "list": {
+      "category": "Icons",
+      "path": "Assets/Icons/list.png",
+      "dimensions": [
+        54,
+        46
+      ],
+      "usage": "List or modules"
+    },
+    "warning": {
+      "category": "Icons",
+      "path": "Assets/Icons/warning.png",
+      "dimensions": [
+        56,
+        52
+      ],
+      "usage": "Warning and error"
+    },
+    "key": {
+      "category": "Icons",
+      "path": "Assets/Icons/key.png",
+      "dimensions": [
+        37,
+        47
+      ],
+      "usage": "Keybind setting"
+    },
+    "lock": {
+      "category": "Icons",
+      "path": "Assets/Icons/lock.png",
+      "dimensions": [
+        40,
+        50
+      ],
+      "usage": "Security or locked state"
+    },
+    "button_settings": {
+      "category": "Status",
+      "path": "Assets/Status/button_settings.png",
+      "dimensions": [
+        187,
+        53
+      ],
+      "usage": "Settings navigation button frame"
+    },
+    "separator_slash": {
+      "category": "Decorations",
+      "path": "Assets/Decorations/separator_slash.png",
+      "dimensions": [
+        179,
+        29
+      ],
+      "usage": "Manga separator"
+    },
+    "button_loading": {
+      "category": "Status",
+      "path": "Assets/Status/button_loading.png",
+      "dimensions": [
+        182,
+        64
+      ],
+      "usage": "Loading state frame"
+    },
+    "discord": {
+      "category": "Icons",
+      "path": "Assets/Icons/discord.png",
+      "dimensions": [
+        61,
+        47
+      ],
+      "usage": "Community link"
+    },
+    "twitter": {
+      "category": "Icons",
+      "path": "Assets/Icons/twitter.png",
+      "dimensions": [
+        52,
+        48
+      ],
+      "usage": "Social link"
+    },
+    "spotify": {
+      "category": "Icons",
+      "path": "Assets/Icons/spotify.png",
+      "dimensions": [
+        63,
+        59
+      ],
+      "usage": "Audio link"
+    },
+    "swirl": {
+      "category": "Icons",
+      "path": "Assets/Icons/swirl.png",
+      "dimensions": [
+        56,
+        53
+      ],
+      "usage": "Misc visual"
+    },
+    "masked_user": {
+      "category": "Icons",
+      "path": "Assets/Icons/masked_user.png",
+      "dimensions": [
+        50,
+        52
+      ],
+      "usage": "Player protection"
+    },
+    "manga_face": {
+      "category": "Icons",
+      "path": "Assets/Icons/manga_face.png",
+      "dimensions": [
+        71,
+        55
+      ],
+      "usage": "Manga profile decoration"
+    },
+    "chart": {
+      "category": "Icons",
+      "path": "Assets/Icons/chart.png",
+      "dimensions": [
+        65,
+        52
+      ],
+      "usage": "Performance statistics"
+    },
+    "separator_thin": {
+      "category": "Decorations",
+      "path": "Assets/Decorations/separator_thin.png",
+      "dimensions": [
+        177,
+        23
+      ],
+      "usage": "Thin manga separator"
+    },
+    "button_success": {
+      "category": "Status",
+      "path": "Assets/Status/button_success.png",
+      "dimensions": [
+        182,
+        63
+      ],
+      "usage": "Success state frame"
+    },
+    "frame_ink_circle": {
+      "category": "Frames",
+      "path": "Assets/Frames/frame_ink_circle.png",
+      "dimensions": [
+        75,
+        75
+      ],
+      "usage": "Circular icon frame"
+    },
+    "frame_ink_square": {
+      "category": "Frames",
+      "path": "Assets/Frames/frame_ink_square.png",
+      "dimensions": [
+        67,
+        66
+      ],
+      "usage": "Ink square frame"
+    },
+    "frame_corner_square": {
+      "category": "Frames",
+      "path": "Assets/Frames/frame_corner_square.png",
+      "dimensions": [
+        63,
+        69
+      ],
+      "usage": "Corner square frame"
+    },
+    "frame_round_square": {
+      "category": "Frames",
+      "path": "Assets/Frames/frame_round_square.png",
+      "dimensions": [
+        81,
+        80
+      ],
+      "usage": "Rounded icon frame"
+    },
+    "frame_cut_square": {
+      "category": "Frames",
+      "path": "Assets/Frames/frame_cut_square.png",
+      "dimensions": [
+        80,
+        81
+      ],
+      "usage": "Cut corner icon frame"
+    },
+    "frame_plain_square": {
+      "category": "Frames",
+      "path": "Assets/Frames/frame_plain_square.png",
+      "dimensions": [
+        81,
+        80
+      ],
+      "usage": "Plain icon frame"
+    },
+    "frame_compact_square": {
+      "category": "Frames",
+      "path": "Assets/Frames/frame_compact_square.png",
+      "dimensions": [
+        84,
+        80
+      ],
+      "usage": "Compact icon frame"
+    },
+    "separator_notched": {
+      "category": "Decorations",
+      "path": "Assets/Decorations/separator_notched.png",
+      "dimensions": [
+        181,
+        28
+      ],
+      "usage": "Notched manga separator"
+    },
+    "separator_short": {
+      "category": "Decorations",
+      "path": "Assets/Decorations/separator_short.png",
+      "dimensions": [
+        180,
+        27
+      ],
+      "usage": "Short manga separator"
+    },
+    "page_indicators": {
+      "category": "Status",
+      "path": "Assets/Status/page_indicators.png",
+      "dimensions": [
+        118,
+        25
+      ],
+      "usage": "Carousel indicators"
+    },
+    "button_warning": {
+      "category": "Status",
+      "path": "Assets/Status/button_warning.png",
+      "dimensions": [
+        183,
+        63
+      ],
+      "usage": "Warning state frame"
+    },
+    "button_error": {
+      "category": "Status",
+      "path": "Assets/Status/button_error.png",
+      "dimensions": [
+        182,
+        61
+      ],
+      "usage": "Error state frame"
+    },
+    "spinner_segmented": {
+      "category": "Status",
+      "path": "Assets/Status/spinner_segmented.png",
+      "dimensions": [
+        60,
+        56
+      ],
+      "usage": "Segmented loader"
+    },
+    "spinner_dotted": {
+      "category": "Status",
+      "path": "Assets/Status/spinner_dotted.png",
+      "dimensions": [
+        55,
+        52
+      ],
+      "usage": "Dotted loader"
+    },
+    "spinner_ring": {
+      "category": "Status",
+      "path": "Assets/Status/spinner_ring.png",
+      "dimensions": [
+        59,
+        58
+      ],
+      "usage": "Ring loader"
+    },
+    "spinner_minimal": {
+      "category": "Status",
+      "path": "Assets/Status/spinner_minimal.png",
+      "dimensions": [
+        49,
+        49
+      ],
+      "usage": "Minimal loader"
+    },
+    "spinner_broken": {
+      "category": "Status",
+      "path": "Assets/Status/spinner_broken.png",
+      "dimensions": [
+        49,
+        51
+      ],
+      "usage": "Broken ink loader"
+    },
+    "blossom_scatter_left": {
+      "category": "Blossoms",
+      "path": "Assets/Blossoms/blossom_scatter_left.png",
+      "dimensions": [
+        422,
+        182
+      ],
+      "usage": "Panel blossom decoration"
+    },
+    "blossom_scatter_right": {
+      "category": "Blossoms",
+      "path": "Assets/Blossoms/blossom_scatter_right.png",
+      "dimensions": [
+        291,
+        185
+      ],
+      "usage": "Panel blossom decoration alternate"
+    },
+    "panel_top": {
+      "category": "Frames",
+      "path": "Assets/Frames/panel_top.png",
+      "dimensions": [
+        471,
+        91
+      ],
+      "usage": "Top feature panel"
+    },
+    "panel_profile": {
+      "category": "Frames",
+      "path": "Assets/Frames/panel_profile.png",
+      "dimensions": [
+        478,
+        77
+      ],
+      "usage": "Profile panel"
+    },
+    "panel_cracked": {
+      "category": "Frames",
+      "path": "Assets/Frames/panel_cracked.png",
+      "dimensions": [
+        474,
+        88
+      ],
+      "usage": "Cracked highlight panel"
+    },
+    "panel_ink": {
+      "category": "Frames",
+      "path": "Assets/Frames/panel_ink.png",
+      "dimensions": [
+        477,
+        85
+      ],
+      "usage": "Ink highlight panel"
+    },
+    "panel_dark": {
+      "category": "Frames",
+      "path": "Assets/Frames/panel_dark.png",
+      "dimensions": [
+        479,
+        81
+      ],
+      "usage": "Dark highlight panel"
+    },
+    "panel_brush": {
+      "category": "Frames",
+      "path": "Assets/Frames/panel_brush.png",
+      "dimensions": [
+        477,
+        69
+      ],
+      "usage": "Brush highlight panel"
+    },
+    "panel_slash": {
+      "category": "Frames",
+      "path": "Assets/Frames/panel_slash.png",
+      "dimensions": [
+        472,
+        62
+      ],
+      "usage": "Slash separator panel"
+    },
+    "panel_notice": {
+      "category": "Frames",
+      "path": "Assets/Frames/panel_notice.png",
+      "dimensions": [
+        383,
+        78
+      ],
+      "usage": "Notification frame"
+    },
+    "panel_notice_icon": {
+      "category": "Frames",
+      "path": "Assets/Frames/panel_notice_icon.png",
+      "dimensions": [
+        93,
+        79
+      ],
+      "usage": "Notification icon frame"
+    },
+    "popup_left": {
+      "category": "Frames",
+      "path": "Assets/Frames/popup_left.png",
+      "dimensions": [
+        136,
+        104
+      ],
+      "usage": "Popup frame left"
+    },
+    "popup_center": {
+      "category": "Frames",
+      "path": "Assets/Frames/popup_center.png",
+      "dimensions": [
+        120,
+        103
+      ],
+      "usage": "Popup frame center"
+    },
+    "popup_right": {
+      "category": "Frames",
+      "path": "Assets/Frames/popup_right.png",
+      "dimensions": [
+        112,
+        100
+      ],
+      "usage": "Popup frame right"
+    },
+    "popup_tall": {
+      "category": "Frames",
+      "path": "Assets/Frames/popup_tall.png",
+      "dimensions": [
+        96,
+        100
+      ],
+      "usage": "Popup frame tall"
+    },
+    "header_anime": {
+      "category": "Header",
+      "path": "Assets/header-anime.png",
+      "dimensions": [
+        1536,
+        497
+      ],
+      "usage": "Responsive cropped menu header focused on the eyes"
+    },
+    "blossom_frame_01": {
+      "category": "Blossoms",
+      "path": "Assets/Blossoms/Frames/frame_01.png",
+      "dimensions": [
+        600,
+        211
+      ],
+      "usage": "Animated panel background frame"
+    },
+    "blossom_frame_02": {
+      "category": "Blossoms",
+      "path": "Assets/Blossoms/Frames/frame_02.png",
+      "dimensions": [
+        600,
+        211
+      ],
+      "usage": "Animated panel background frame"
+    },
+    "blossom_frame_03": {
+      "category": "Blossoms",
+      "path": "Assets/Blossoms/Frames/frame_03.png",
+      "dimensions": [
+        600,
+        211
+      ],
+      "usage": "Animated panel background frame"
+    },
+    "blossom_frame_04": {
+      "category": "Blossoms",
+      "path": "Assets/Blossoms/Frames/frame_04.png",
+      "dimensions": [
+        600,
+        211
+      ],
+      "usage": "Animated panel background frame"
+    },
+    "blossom_frame_05": {
+      "category": "Blossoms",
+      "path": "Assets/Blossoms/Frames/frame_05.png",
+      "dimensions": [
+        600,
+        211
+      ],
+      "usage": "Animated panel background frame"
+    },
+    "blossom_frame_06": {
+      "category": "Blossoms",
+      "path": "Assets/Blossoms/Frames/frame_06.png",
+      "dimensions": [
+        600,
+        211
+      ],
+      "usage": "Animated panel background frame"
+    },
+    "blossom_frame_07": {
+      "category": "Blossoms",
+      "path": "Assets/Blossoms/Frames/frame_07.png",
+      "dimensions": [
+        600,
+        211
+      ],
+      "usage": "Animated panel background frame"
+    },
+    "blossom_frame_08": {
+      "category": "Blossoms",
+      "path": "Assets/Blossoms/Frames/frame_08.png",
+      "dimensions": [
+        600,
+        211
+      ],
+      "usage": "Animated panel background frame"
+    },
+    "blossom_frame_09": {
+      "category": "Blossoms",
+      "path": "Assets/Blossoms/Frames/frame_09.png",
+      "dimensions": [
+        600,
+        211
+      ],
+      "usage": "Animated panel background frame"
+    },
+    "blossom_frame_10": {
+      "category": "Blossoms",
+      "path": "Assets/Blossoms/Frames/frame_10.png",
+      "dimensions": [
+        600,
+        211
+      ],
+      "usage": "Animated panel background frame"
+    },
+    "blossom_frame_11": {
+      "category": "Blossoms",
+      "path": "Assets/Blossoms/Frames/frame_11.png",
+      "dimensions": [
+        600,
+        211
+      ],
+      "usage": "Animated panel background frame"
+    },
+    "blossom_frame_12": {
+      "category": "Blossoms",
+      "path": "Assets/Blossoms/Frames/frame_12.png",
+      "dimensions": [
+        600,
+        211
+      ],
+      "usage": "Animated panel background frame"
+    },
+    "blossom_frame_13": {
+      "category": "Blossoms",
+      "path": "Assets/Blossoms/Frames/frame_13.png",
+      "dimensions": [
+        600,
+        211
+      ],
+      "usage": "Animated panel background frame"
+    },
+    "blossom_frame_14": {
+      "category": "Blossoms",
+      "path": "Assets/Blossoms/Frames/frame_14.png",
+      "dimensions": [
+        600,
+        211
+      ],
+      "usage": "Animated panel background frame"
+    },
+    "blossom_frame_15": {
+      "category": "Blossoms",
+      "path": "Assets/Blossoms/Frames/frame_15.png",
+      "dimensions": [
+        600,
+        211
+      ],
+      "usage": "Animated panel background frame"
+    },
+    "blossom_frame_16": {
+      "category": "Blossoms",
+      "path": "Assets/Blossoms/Frames/frame_16.png",
+      "dimensions": [
+        600,
+        211
+      ],
+      "usage": "Animated panel background frame"
+    },
+    "blossom_frame_17": {
+      "category": "Blossoms",
+      "path": "Assets/Blossoms/Frames/frame_17.png",
+      "dimensions": [
+        600,
+        211
+      ],
+      "usage": "Animated panel background frame"
+    },
+    "blossom_frame_18": {
+      "category": "Blossoms",
+      "path": "Assets/Blossoms/Frames/frame_18.png",
+      "dimensions": [
+        600,
+        211
+      ],
+      "usage": "Animated panel background frame"
+    },
+    "blossom_frame_19": {
+      "category": "Blossoms",
+      "path": "Assets/Blossoms/Frames/frame_19.png",
+      "dimensions": [
+        600,
+        211
+      ],
+      "usage": "Animated panel background frame"
+    },
+    "blossom_frame_20": {
+      "category": "Blossoms",
+      "path": "Assets/Blossoms/Frames/frame_20.png",
+      "dimensions": [
+        600,
+        211
+      ],
+      "usage": "Animated panel background frame"
+    },
+    "blossom_frame_21": {
+      "category": "Blossoms",
+      "path": "Assets/Blossoms/Frames/frame_21.png",
+      "dimensions": [
+        600,
+        211
+      ],
+      "usage": "Animated panel background frame"
+    },
+    "blossom_frame_22": {
+      "category": "Blossoms",
+      "path": "Assets/Blossoms/Frames/frame_22.png",
+      "dimensions": [
+        600,
+        211
+      ],
+      "usage": "Animated panel background frame"
+    },
+    "blossom_frame_23": {
+      "category": "Blossoms",
+      "path": "Assets/Blossoms/Frames/frame_23.png",
+      "dimensions": [
+        600,
+        211
+      ],
+      "usage": "Animated panel background frame"
+    },
+    "blossom_frame_24": {
+      "category": "Blossoms",
+      "path": "Assets/Blossoms/Frames/frame_24.png",
+      "dimensions": [
+        600,
+        211
+      ],
+      "usage": "Animated panel background frame"
+    },
+    "blossom_frame_25": {
+      "category": "Blossoms",
+      "path": "Assets/Blossoms/Frames/frame_25.png",
+      "dimensions": [
+        600,
+        211
+      ],
+      "usage": "Animated panel background frame"
+    },
+    "blossom_spritesheet": {
+      "category": "Blossoms",
+      "path": "Assets/Blossoms/blossom-spritesheet.png",
+      "dimensions": [
+        3000,
+        1055
+      ],
+      "usage": "Animated panel background using ImageRectOffset and ImageRectSize",
+      "frames": 25,
+      "columns": 5,
+      "rows": 5,
+      "frameDurationMilliseconds": 130,
+      "sourceDurationsMilliseconds": [
+        130,
+        130,
+        130,
+        130,
+        130,
+        130,
+        130,
+        130,
+        130,
+        130,
+        130,
+        130,
+        130,
+        130,
+        130,
+        130,
+        130,
+        130,
+        130,
+        130,
+        130,
+        130,
+        130,
+        130,
+        130
+      ]
+    }
+  }
+}

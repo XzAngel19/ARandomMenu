@@ -18,6 +18,7 @@ jobs:
         shell: bash
         run: |
           python -m json.tool src/gui/Current/Images/manifest.json >/dev/null
+          python -m json.tool src/gui/Current/Assets/manifest.json >/dev/null
 
       - name: Verify source layout
         shell: bash
@@ -33,6 +34,10 @@ jobs:
           test -f src/gui/Current/Images/aurora-background.jpg
           test -f src/gui/Current/Images/aurora-background.png
           test -f src/gui/Current/Images/menu-toggle.editable.png
+          test -f src/gui/Current/Assets/header-anime.png
+          test -f src/gui/Current/Assets/Blossoms/blossom-spritesheet.png
+          test -f src/gui/Current/Assets/Icons/search.png
+          test -f tools/process_manga_assets.py
           test -f src/library/AssetRegistry.luau
           test -f src/library/ProfileRegistry.luau
 
