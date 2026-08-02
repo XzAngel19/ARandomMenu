@@ -17,6 +17,8 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
   those shared factories to inject its controls and callbacks into the menu.
 - Imported per-frame callbacks use `Runtime.TaskManager`; they are multiplexed
   through one `RunService.Heartbeat` connection and remain alive until cleanup.
+- Registered sections initialize asynchronously after the GUI shell appears;
+  opening a tab is never used as the condition for constructing its content.
 
 Initialization logs use the `[RTM:Bootstrap]` prefix and include detected
 PlaceId, raw download status, downloaded byte count, UI callback count,
@@ -33,9 +35,12 @@ TaskManager callback count and errors captured by `pcall`.
 
 ## Images
 
-The bootstrap does not use `EditableImage` or a PNG byte decoder. Optional
-images use the normal `Image` property and executor-local asset registration;
-the text UI remains usable when an image cannot be loaded.
+The bootstrap does not use `EditableImage` or a PNG byte decoder. `AssetManager`
+selects a compatible executor HTTP alias, validates PNG bytes, retries failed
+downloads, writes versioned files under `MenuAssets`, verifies the cache and
+resolves local paths with `getcustomasset`/`getsynasset`. Every stage is logged
+with the `[RTM:Assets]` prefix, and the dark aurora gradient remains usable when
+an external image cannot be loaded.
 
 The aurora background is by Khalil Benihoud and is available under the
 [Unsplash License](https://unsplash.com/photos/aurora-borealis-umLAzmGNZbU).

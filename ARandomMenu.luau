@@ -62,17 +62,22 @@ local GAME_CHECK = {
 function GAME_CHECK.matches(identifier: number): boolean
     return game.PlaceId == identifier
 end
-local DEFAULT_HEADER_COLOR = Color3.fromRGB(86, 156, 255)
-local DEFAULT_MENU_COLOR = Color3.fromRGB(9, 12, 20)
-local DEFAULT_SURFACE_COLOR = Color3.fromRGB(18, 23, 34)
-local DEFAULT_BORDER_COLOR = Color3.fromRGB(48, 59, 78)
+local DEFAULT_HEADER_COLOR = Color3.fromRGB(105, 170, 255)
+local DEFAULT_MENU_COLOR = Color3.fromRGB(7, 10, 17)
+local DEFAULT_SURFACE_COLOR = Color3.fromRGB(15, 20, 30)
+local DEFAULT_BORDER_COLOR = Color3.fromRGB(45, 57, 77)
 
 local Theme = {
-    Background = Color3.fromRGB(9, 12, 20),
-    Surface = Color3.fromRGB(18, 23, 34),
-    SurfaceRaised = Color3.fromRGB(24, 30, 44),
-    Accent = Color3.fromRGB(86, 156, 255),
-    AccentSoft = Color3.fromRGB(45, 88, 148),
+    Background = Color3.fromRGB(7, 10, 17),
+    Surface = Color3.fromRGB(15, 20, 30),
+    SurfaceRaised = Color3.fromRGB(22, 28, 41),
+    SurfaceHover = Color3.fromRGB(28, 36, 52),
+    SurfacePressed = Color3.fromRGB(34, 43, 61),
+    Accent = Color3.fromRGB(105, 170, 255),
+    AccentCyan = Color3.fromRGB(92, 224, 229),
+    AccentViolet = Color3.fromRGB(151, 118, 255),
+    AccentPink = Color3.fromRGB(238, 132, 196),
+    AccentSoft = Color3.fromRGB(44, 76, 122),
     Text = Color3.fromRGB(241, 245, 252),
     TextMuted = Color3.fromRGB(148, 158, 177),
     Outline = Color3.fromRGB(48, 59, 78),
@@ -256,6 +261,7 @@ local state: any = {
     blurEnabled = configData.ui.blurEnabled ~= false,
     largeText = configData.ui.largeText == true,
     mobileMenuButtonVisible = true,
+    animationsEnabled = configData.ui.animationsEnabled ~= false,
     mobileButtonSize = math.clamp(
         tonumber(configData.ui.mobileButtonSize) or 52,
         42,
@@ -274,6 +280,283 @@ local state: any = {
     fireTouchInterest = (getfenv() :: any).firetouchinterest,
     requireModule = require,
 }
+
+type AssetDefinition = {
+    url: string,
+    fileName: string,
+    fallback: string,
+}
+
+do
+local generatedEnvironment: any = nil
+if type(executorGlobals.getgenv) == "function" then
+    local environmentOk: boolean, resolvedEnvironment: any = pcall(
+        executorGlobals.getgenv
+    )
+    if environmentOk and type(resolvedEnvironment) == "table" then
+        generatedEnvironment = resolvedEnvironment
+    end
+end
+
+local function getEnvironmentValue(name: string): any
+    if generatedEnvironment and generatedEnvironment[name] ~= nil then
+        return generatedEnvironment[name]
+    end
+    return executorGlobals[name]
+end
+
+local AssetManager: any = {
+    cacheFolder = "MenuAssets",
+    manifest = {
+        aurora = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Images/aurora-background.png",
+            fileName = "aurora-background-v3.png",
+            fallback = "",
+        },
+        menuToggle = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Images/menu-toggle.png",
+            fileName = "menu-toggle-v3.png",
+            fallback = "rbxassetid://6031094678",
+        },
+    } :: {[string]: AssetDefinition},
+}
+
+local function selectHttpRequest(): (any, string)
+    local synEnvironment: any = getEnvironmentValue("syn")
+    local candidates: {{any}} = {
+        {getEnvironmentValue("request"), "request"},
+        {getEnvironmentValue("http_request"), "http_request"},
+        {getEnvironmentValue("httprequest"), "httprequest"},
+        {synEnvironment and synEnvironment.request, "syn.request"},
+    }
+    for _, candidate: {any} in ipairs(candidates) do
+        if type(candidate[1]) == "function" then
+            return candidate[1], tostring(candidate[2])
+        end
+    end
+    return nil, "game:HttpGet"
+end
+
+local function validateImageBytes(bytes: any): (boolean, string?)
+    if type(bytes) ~= "string" then
+        return false, "respuesta no binaria: " .. type(bytes)
+    end
+    if #bytes < 64 then
+        return false, "respuesta demasiado corta: " .. tostring(#bytes) .. " bytes"
+    end
+    local prefix: string = string.lower(string.sub(bytes, 1, 128))
+    if string.find(prefix, "<!doctype html", 1, true)
+        or string.find(prefix, "<html", 1, true)
+        or string.find(prefix, "404: not found", 1, true) then
+        return false, "la respuesta contiene HTML/404"
+    end
+    if string.sub(bytes, 1, 8) ~= "\137PNG\r\n\26\n" then
+        return false, "firma PNG inválida"
+    end
+    return true, nil
+end
+
+function AssetManager.ensureCacheFolder(): (boolean, string?)
+    local isFolder: any = getEnvironmentValue("isfolder")
+    local makeFolder: any = getEnvironmentValue("makefolder")
+    if type(isFolder) == "function" then
+        local checked: boolean, exists: any = pcall(isFolder, AssetManager.cacheFolder)
+        if checked and exists then
+            return true, nil
+        end
+    end
+    if type(makeFolder) ~= "function" then
+        return false, "makefolder no está disponible"
+    end
+    local created: boolean, createError: any = pcall(
+        makeFolder,
+        AssetManager.cacheFolder
+    )
+    if not created then
+        return false, tostring(createError)
+    end
+    return true, nil
+end
+
+function AssetManager.readVerifiedCache(path: string): (string?, string?)
+    local isFile: any = getEnvironmentValue("isfile")
+    local readFile: any = getEnvironmentValue("readfile")
+    if type(isFile) ~= "function" or type(readFile) ~= "function" then
+        return nil, "isfile/readfile no están disponibles"
+    end
+    local checked: boolean, exists: any = pcall(isFile, path)
+    print("[RTM:Assets] isfile " .. path .. " = " .. tostring(checked and exists))
+    if not checked or not exists then
+        return nil, "archivo no encontrado"
+    end
+    local readOk: boolean, bytes: any = pcall(readFile, path)
+    if not readOk then
+        return nil, "readfile: " .. tostring(bytes)
+    end
+    local valid: boolean, validationError: string? = validateImageBytes(bytes)
+    if not valid then
+        return nil, validationError
+    end
+    return bytes, nil
+end
+
+function AssetManager.download(definition: AssetDefinition): (string?, string?)
+    local requestFunction: any, requestName: string = selectHttpRequest()
+    print("[RTM:Assets] URL: " .. definition.url)
+    print("[RTM:Assets] HTTP seleccionado: " .. requestName)
+
+    for attempt: number = 1, 3 do
+        local requestOk: boolean, response: any
+        if requestFunction then
+            requestOk, response = pcall(requestFunction, {
+                Url = definition.url,
+                Method = "GET",
+                Headers = {Accept = "image/png,image/*;q=0.9,*/*;q=0.1"},
+            })
+        else
+            requestOk, response = pcall(function(): any
+                return {
+                    StatusCode = 200,
+                    Body = (game :: any):HttpGet(definition.url, true),
+                }
+            end)
+        end
+
+        if requestOk then
+            local statusCode: number = 0
+            local bytes: any = nil
+            if type(response) == "string" then
+                statusCode = 200
+                bytes = response
+            elseif type(response) == "table" then
+                statusCode = tonumber(
+                    response.StatusCode or response.Status or response.status_code
+                ) or 0
+                bytes = response.Body or response.body or response.ResponseBody
+            end
+            print(
+                "[RTM:Assets] intento="
+                    .. tostring(attempt)
+                    .. " status="
+                    .. tostring(statusCode)
+                    .. " bytes="
+                    .. tostring(type(bytes) == "string" and #bytes or 0)
+            )
+            local valid: boolean, validationError: string? =
+                validateImageBytes(bytes)
+            if statusCode >= 200 and statusCode < 300 and valid then
+                return bytes, nil
+            end
+            response = "HTTP "
+                .. tostring(statusCode)
+                .. ": "
+                .. tostring(validationError)
+        end
+
+        warn(
+            "[RTM:Assets] intento "
+                .. tostring(attempt)
+                .. " falló: "
+                .. tostring(response)
+        )
+        if attempt < 3 then
+            task.wait(0.35 * attempt)
+        end
+    end
+    return nil, "descarga agotó tres intentos"
+end
+
+function AssetManager.resolve(logicalName: string): (string?, string?)
+    local definition: AssetDefinition? = AssetManager.manifest[logicalName]
+    if not definition then
+        return nil, "asset desconocido: " .. logicalName
+    end
+    local assetFunction: any = getEnvironmentValue("getcustomasset")
+        or getEnvironmentValue("getsynasset")
+    local writeFile: any = getEnvironmentValue("writefile")
+    if type(assetFunction) ~= "function" then
+        return nil, "getcustomasset/getsynasset no está disponible"
+    end
+    if type(writeFile) ~= "function" then
+        return nil, "writefile no está disponible"
+    end
+
+    local folderOk: boolean, folderError: string? =
+        AssetManager.ensureCacheFolder()
+    if not folderOk then
+        return nil, folderError
+    end
+    local path: string = AssetManager.cacheFolder .. "/" .. definition.fileName
+    local cachedBytes: string?, cacheError: string? =
+        AssetManager.readVerifiedCache(path)
+    if not cachedBytes then
+        print("[RTM:Assets] caché no reutilizable: " .. tostring(cacheError))
+        local downloaded: string?, downloadError: string? =
+            AssetManager.download(definition)
+        if not downloaded then
+            return nil, downloadError
+        end
+        print("[RTM:Assets] escribiendo " .. path)
+        local written: boolean, writeError: any = pcall(writeFile, path, downloaded)
+        if not written then
+            return nil, "writefile: " .. tostring(writeError)
+        end
+        local verified: string?, verifyError: string? =
+            AssetManager.readVerifiedCache(path)
+        if not verified then
+            return nil, "verificación posterior: " .. tostring(verifyError)
+        end
+    end
+
+    local assetOk: boolean, assetId: any = pcall(assetFunction, path)
+    print("[RTM:Assets] getcustomasset(" .. path .. ") = " .. tostring(assetId))
+    if not assetOk or type(assetId) ~= "string" or assetId == "" then
+        return nil, "getcustomasset: " .. tostring(assetId)
+    end
+    return assetId, nil
+end
+
+function AssetManager.loadAsync(logicalName: string, target: ImageLabel): ()
+    task.spawn(function(): ()
+        local assetId: string?, loadError: string? = AssetManager.resolve(logicalName)
+        local definition: AssetDefinition? = AssetManager.manifest[logicalName]
+        if assetId and target.Parent then
+            target.Image = assetId
+            print("[RTM:Assets] cargado " .. logicalName .. " -> " .. assetId)
+            return
+        end
+        if target.Parent and definition then
+            target.Image = definition.fallback
+        end
+        warn(
+            "[RTM:Assets] fallback para "
+                .. logicalName
+                .. ": "
+                .. tostring(loadError)
+        )
+    end)
+end
+
+function AssetManager.clear(logicalName: string): (boolean, string?)
+    local definition: AssetDefinition? = AssetManager.manifest[logicalName]
+    local deleteFile: any = getEnvironmentValue("delfile")
+    if not definition then
+        return false, "asset desconocido"
+    end
+    if type(deleteFile) ~= "function" then
+        return false, "delfile no está disponible; cambia la versión del filename"
+    end
+    local path: string = AssetManager.cacheFolder .. "/" .. definition.fileName
+    local deleted: boolean, deleteError: any = pcall(deleteFile, path)
+    if deleted then
+        return true, nil
+    end
+    return false, tostring(deleteError)
+end
+state.assetManager = AssetManager
+end
 
 local registeredText = {}
 local tabButtons = {}
@@ -323,10 +606,10 @@ function SectionManager.showStatus(page, message, isError)
     status.Parent = page
 end
 
-function SectionManager.initialize(sectionName)
+function SectionManager.initialize(sectionName: string): (boolean, string?)
     local entry = SectionManager.entries[sectionName]
     if not entry or entry.loaded or entry.loading then
-        return
+        return entry ~= nil and entry.loaded == true, nil
     end
 
     local page = pages[sectionName]
@@ -345,7 +628,10 @@ function SectionManager.initialize(sectionName)
     if success then
         entry.loaded = true
         SectionManager.clearStatus(page)
-        return
+        if state.refreshSearch then
+            state.refreshSearch()
+        end
+        return true, nil
     end
 
     warn(
@@ -362,6 +648,62 @@ function SectionManager.initialize(sectionName)
             .. "\n\nRe-execute the updated script after correcting this error.",
         true
     )
+    return false, tostring(errorMessage)
+end
+
+function SectionManager.initializeAllAsync(): ()
+    local sectionNames: {string} = {}
+    for sectionName: string in pairs(SectionManager.entries) do
+        table.insert(sectionNames, sectionName)
+    end
+    table.sort(sectionNames)
+
+    local total: number = #sectionNames
+    local completed: number = 0
+    local failures: number = 0
+    if state.loadingLabel then
+        state.loadingLabel.Text = "Loading modules 0/" .. tostring(total)
+        state.loadingLabel.Parent.Visible = total > 0
+    end
+
+    if total == 0 then
+        return
+    end
+
+    for _, sectionName: string in ipairs(sectionNames) do
+        task.spawn(function(): ()
+            print("[RTM:Bootstrap] Inicializando sección " .. sectionName)
+            local success: boolean, errorMessage: string? =
+                SectionManager.initialize(sectionName)
+            if not success then
+                failures += 1
+                warn(
+                    "[RTM:Bootstrap] Sección "
+                        .. sectionName
+                        .. " falló: "
+                        .. tostring(errorMessage)
+                )
+            end
+            completed += 1
+            if state.loadingLabel then
+                state.loadingLabel.Text = "Loading modules "
+                    .. tostring(completed)
+                    .. "/"
+                    .. tostring(total)
+            end
+            if completed >= total then
+                print(
+                    "[RTM:Bootstrap] Carga terminada · fallos="
+                        .. tostring(failures)
+                )
+                task.delay(0.35, function(): ()
+                    if state.loadingLabel and state.loadingLabel.Parent then
+                        state.loadingLabel.Parent.Visible = false
+                    end
+                end)
+            end
+        end)
+    end
 end
 
 local function create(className, properties)
@@ -378,6 +720,26 @@ local function create(className, properties)
     end
 
     return object
+end
+
+local function addRoundedStyle(
+    object: GuiObject,
+    radius: number,
+    strokeTransparency: number?
+): (UICorner, UIStroke)
+    local corner: UICorner = Instance.new("UICorner")
+    corner.Name = "StyleCorner"
+    corner.CornerRadius = UDim.new(0, radius)
+    corner.Parent = object
+
+    local stroke: UIStroke = Instance.new("UIStroke")
+    stroke.Name = "StyleStroke"
+    stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    stroke.Color = Theme.Outline
+    stroke.Thickness = 1
+    stroke.Transparency = strokeTransparency or 0.45
+    stroke.Parent = object
+    return corner, stroke
 end
 
 local function registerText(object, normalSize)
@@ -408,23 +770,24 @@ local function makeButton(parent, text, normalSize)
         Parent = parent,
         AutoButtonColor = false,
         BackgroundColor3 = DEFAULT_SURFACE_COLOR,
-        BorderColor3 = DEFAULT_BORDER_COLOR,
-        BorderSizePixel = 1,
-        Font = Enum.Font.Gotham,
+        BorderSizePixel = 0,
+        Font = Enum.Font.GothamMedium,
         Text = text,
         TextColor3 = Color3.fromRGB(240, 240, 240),
         TextXAlignment = Enum.TextXAlignment.Center,
         TextYAlignment = Enum.TextYAlignment.Center,
     }), normalSize or 14)
 
+    addRoundedStyle(button, 9, 0.48)
+
     button.MouseEnter:Connect(function()
-        if button:GetAttribute("NoHover") then
+        if button:GetAttribute("NoHover") or button:GetAttribute("Disabled") then
             return
         end
         TweenService:Create(
             button,
-            TweenInfo.new(0.1, Enum.EasingStyle.Linear),
-            {BackgroundColor3 = Color3.fromRGB(43, 43, 43)}
+            TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+            {BackgroundColor3 = Theme.SurfaceHover}
         ):Play()
     end)
 
@@ -432,13 +795,40 @@ local function makeButton(parent, text, normalSize)
         if button:GetAttribute("NoHover") then
             return
         end
-        local targetColor = button:GetAttribute("Selected")
-            and state.headerColor
+        local selectedColor: any = button:GetAttribute("SelectedColor")
+        local targetColor: Color3 = button:GetAttribute("Selected")
+            and (typeof(selectedColor) == "Color3" and selectedColor or Theme.AccentSoft)
             or DEFAULT_SURFACE_COLOR
 
         TweenService:Create(
             button,
-            TweenInfo.new(0.1, Enum.EasingStyle.Linear),
+            TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+            {BackgroundColor3 = targetColor}
+        ):Play()
+    end)
+
+    button.MouseButton1Down:Connect(function(): ()
+        if button:GetAttribute("Disabled") then
+            return
+        end
+        TweenService:Create(
+            button,
+            TweenInfo.new(0.08, Enum.EasingStyle.Quad),
+            {BackgroundColor3 = Theme.SurfacePressed}
+        ):Play()
+    end)
+
+    button.MouseButton1Up:Connect(function(): ()
+        if button:GetAttribute("Disabled") then
+            return
+        end
+        local selectedColor: any = button:GetAttribute("SelectedColor")
+        local targetColor: Color3 = button:GetAttribute("Selected")
+            and (typeof(selectedColor) == "Color3" and selectedColor or Theme.AccentSoft)
+            or Theme.SurfaceHover
+        TweenService:Create(
+            button,
+            TweenInfo.new(0.12, Enum.EasingStyle.Quad),
             {BackgroundColor3 = targetColor}
         ):Play()
     end)
@@ -447,18 +837,33 @@ local function makeButton(parent, text, normalSize)
 end
 
 local function makeTextBox(parent, defaultText)
-    return registerText(create("TextBox", {
+    local textBox: TextBox = (registerText(create("TextBox", {
         Parent = parent,
-        BackgroundColor3 = Color3.fromRGB(18, 18, 18),
-        BorderColor3 = DEFAULT_BORDER_COLOR,
-        BorderSizePixel = 1,
+        BackgroundColor3 = Theme.Surface,
+        BorderSizePixel = 0,
         ClearTextOnFocus = false,
         Font = Enum.Font.Gotham,
-        PlaceholderColor3 = Color3.fromRGB(130, 130, 130),
+        PlaceholderColor3 = Theme.TextMuted,
         Text = tostring(defaultText),
         TextColor3 = Color3.fromRGB(235, 235, 235),
         TextXAlignment = Enum.TextXAlignment.Center,
-    }), 13)
+    }), 13) :: any) :: TextBox
+    addRoundedStyle(textBox, 9, 0.5)
+    textBox.Focused:Connect(function(): ()
+        TweenService:Create(
+            textBox,
+            TweenInfo.new(0.16, Enum.EasingStyle.Quad),
+            {BackgroundColor3 = Theme.SurfaceRaised}
+        ):Play()
+    end)
+    textBox.FocusLost:Connect(function(): ()
+        TweenService:Create(
+            textBox,
+            TweenInfo.new(0.16, Enum.EasingStyle.Quad),
+            {BackgroundColor3 = Theme.Surface}
+        ):Play()
+    end)
+    return textBox
 end
 
 local ToastContainer: Frame = (create("Frame", {
@@ -578,8 +983,7 @@ local Main: Frame = (create("Frame", {
     Name = "Main",
     Active = true,
     BackgroundColor3 = state.menuColor,
-    BorderColor3 = Color3.fromRGB(12, 12, 12),
-    BorderSizePixel = 2,
+    BorderSizePixel = 0,
     ClipsDescendants = true,
     Position = UDim2.fromOffset(0, 0),
     Size = UDim2.fromOffset(
@@ -597,6 +1001,30 @@ local Main: Frame = (create("Frame", {
         )
     ),
 }) :: any) :: Frame
+
+do
+local _MainCorner: UICorner, MainStroke: UIStroke = addRoundedStyle(Main, 14, 0.2)
+MainStroke.Thickness = 1.2
+local MainStrokeGradient: UIGradient = Instance.new("UIGradient")
+MainStrokeGradient.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Theme.AccentViolet),
+    ColorSequenceKeypoint.new(0.35, Theme.Accent),
+    ColorSequenceKeypoint.new(0.68, Theme.AccentCyan),
+    ColorSequenceKeypoint.new(1, Theme.AccentPink),
+})
+MainStrokeGradient.Rotation = 8
+MainStrokeGradient.Parent = MainStroke
+local MainScale: UIScale = Instance.new("UIScale")
+MainScale.Scale = state.animationsEnabled and 0.96 or 1
+MainScale.Parent = Main
+if state.animationsEnabled then
+    TweenService:Create(
+        MainScale,
+        TweenInfo.new(0.28, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+        {Scale = 1}
+    ):Play()
+end
+end
 
 local BackgroundImage: ImageLabel = (create("ImageLabel", {
     Parent = Main,
@@ -619,8 +1047,8 @@ local _BackgroundShade: Frame = (create("Frame", {
     Size = UDim2.fromScale(1, 1),
 }) :: any) :: Frame
 
--- Remote image loading is intentionally disabled during bootstrap. The dark
--- theme is the visual fallback and cannot delay UI initialization.
+-- The image remains empty until AssetManager resolves it asynchronously; the
+-- dark gradient is a complete fallback and never delays UI initialization.
 
 local function centerMain()
     local camera = workspace.CurrentCamera
@@ -647,28 +1075,136 @@ local Header = create("Frame", {
     Parent = Main,
     Name = "Header",
     Active = true,
-    BackgroundColor3 = state.headerColor,
-    BorderColor3 = Color3.fromRGB(12, 12, 12),
+    BackgroundColor3 = Color3.fromRGB(12, 17, 27),
+    BackgroundTransparency = 0.08,
     BorderSizePixel = 0,
     Position = UDim2.fromOffset(0, 0),
     Size = UDim2.new(1, 0, 0, 52),
     ZIndex = 15,
 })
+Header.ClipsDescendants = true
+
+do
+local HeaderGradient: UIGradient = Instance.new("UIGradient")
+HeaderGradient.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(21, 35, 60)),
+    ColorSequenceKeypoint.new(0.32, Color3.fromRGB(28, 71, 95)),
+    ColorSequenceKeypoint.new(0.66, Color3.fromRGB(66, 42, 96)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(73, 35, 67)),
+})
+HeaderGradient.Offset = Vector2.new(-0.35, 0)
+HeaderGradient.Rotation = 6
+HeaderGradient.Parent = Header
+
+BackgroundImage.Parent = Header
+BackgroundImage.ImageTransparency = 0.82
+BackgroundImage.ImageColor3 = Color3.fromRGB(205, 220, 255)
+BackgroundImage.Size = UDim2.fromScale(1, 1)
+BackgroundImage.ZIndex = 16
+
+local AuroraFade: UIGradient = Instance.new("UIGradient")
+AuroraFade.Transparency = NumberSequence.new({
+    NumberSequenceKeypoint.new(0, 0.45),
+    NumberSequenceKeypoint.new(0.5, 0.72),
+    NumberSequenceKeypoint.new(1, 1),
+})
+AuroraFade.Parent = BackgroundImage
+state.assetManager.loadAsync("aurora", BackgroundImage)
 
 local Title = makeTextLabel(Header, "A random Testing Menu # 0001", 18)
 Title.Name = "Title"
-Title.Font = Enum.Font.GothamBold
+Title.Font = Enum.Font.GothamMedium
 Title.TextXAlignment = Enum.TextXAlignment.Center
 Title.Position = UDim2.fromOffset(10, 0)
 Title.Size = UDim2.new(1, -20, 1, 0)
-Title.ZIndex = 16
+Title.TextColor3 = Color3.fromRGB(245, 248, 255)
+Title.TextStrokeColor3 = Color3.fromRGB(95, 132, 205)
+Title.TextStrokeTransparency = 0.82
+Title.ZIndex = 18
+
+local TitleGradient: UIGradient = Instance.new("UIGradient")
+TitleGradient.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(220, 229, 255)),
+    ColorSequenceKeypoint.new(0.3, Theme.AccentCyan),
+    ColorSequenceKeypoint.new(0.64, Theme.AccentViolet),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 205, 235)),
+})
+TitleGradient.Offset = Vector2.new(-0.35, 0)
+TitleGradient.Parent = Title
+
+local HeaderSeparator: Frame = (create("Frame", {
+    Parent = Header,
+    Name = "AuroraSeparator",
+    AnchorPoint = Vector2.new(0, 1),
+    BackgroundColor3 = Color3.new(1, 1, 1),
+    BorderSizePixel = 0,
+    Position = UDim2.new(0, 0, 1, 0),
+    Size = UDim2.new(1, 0, 0, 1),
+    ZIndex = 19,
+}) :: any) :: Frame
+local SeparatorGradient: UIGradient = Instance.new("UIGradient")
+SeparatorGradient.Color = TitleGradient.Color
+SeparatorGradient.Transparency = NumberSequence.new({
+    NumberSequenceKeypoint.new(0, 1),
+    NumberSequenceKeypoint.new(0.2, 0.25),
+    NumberSequenceKeypoint.new(0.8, 0.25),
+    NumberSequenceKeypoint.new(1, 1),
+})
+SeparatorGradient.Parent = HeaderSeparator
+
+local BorderLight: Frame = (create("Frame", {
+    Parent = HeaderSeparator,
+    Name = "BorderLight",
+    BackgroundColor3 = Color3.fromRGB(235, 250, 255),
+    BackgroundTransparency = 0.12,
+    BorderSizePixel = 0,
+    Position = UDim2.new(0, -28, 0, -1),
+    Size = UDim2.fromOffset(28, 2),
+    ZIndex = 20,
+}) :: any) :: Frame
+local BorderLightCorner: UICorner = Instance.new("UICorner")
+BorderLightCorner.CornerRadius = UDim.new(1, 0)
+BorderLightCorner.Parent = BorderLight
+local BorderLightGradient: UIGradient = Instance.new("UIGradient")
+BorderLightGradient.Color = TitleGradient.Color
+BorderLightGradient.Transparency = NumberSequence.new({
+    NumberSequenceKeypoint.new(0, 1),
+    NumberSequenceKeypoint.new(0.5, 0),
+    NumberSequenceKeypoint.new(1, 1),
+})
+BorderLightGradient.Parent = BorderLight
+
+state.decorativeTweens = {} :: {Tween}
+local titleAuroraTween: Tween = TweenService:Create(
+        TitleGradient,
+        TweenInfo.new(10, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
+        {Offset = Vector2.new(0.35, 0)}
+    )
+local headerAuroraTween: Tween = TweenService:Create(
+        HeaderGradient,
+        TweenInfo.new(14, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
+        {Offset = Vector2.new(0.25, 0)}
+    )
+local borderLightTween: Tween = TweenService:Create(
+    BorderLight,
+    TweenInfo.new(9, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, false),
+    {Position = UDim2.new(1, 0, 0, -1)}
+)
+table.insert(state.decorativeTweens, titleAuroraTween)
+table.insert(state.decorativeTweens, headerAuroraTween)
+table.insert(state.decorativeTweens, borderLightTween)
+if state.animationsEnabled then
+    titleAuroraTween:Play()
+    headerAuroraTween:Play()
+    borderLightTween:Play()
+end
+end
 
 local Tabs = create("Frame", {
     Parent = Main,
     Name = "Tabs",
-    BackgroundColor3 = Color3.fromRGB(18, 23, 31),
-    BackgroundTransparency = 0.12,
-    BorderColor3 = Color3.fromRGB(12, 12, 12),
+    BackgroundColor3 = Color3.fromRGB(11, 15, 24),
+    BackgroundTransparency = 0.08,
     BorderSizePixel = 0,
     Position = UDim2.fromOffset(0, 52),
     Size = UDim2.new(1, 0, 0, 44),
@@ -696,31 +1232,71 @@ local function setTab(tabName)
     state.activeTab = tabName
 
     for name, page in pairs(pages) do
-        page.Visible = name == tabName
+        local selectedPage: boolean = name == tabName
+        page.Visible = selectedPage
+        if selectedPage and page:IsA("CanvasGroup") then
+            if state.animationsEnabled then
+                page.GroupTransparency = 1
+                TweenService:Create(
+                    page,
+                    TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+                    {GroupTransparency = 0}
+                ):Play()
+            else
+                page.GroupTransparency = 0
+            end
+        end
     end
 
     for name, button in pairs(tabButtons) do
         local selected = name == tabName
         button:SetAttribute("Selected", selected)
-        button.BackgroundColor3 = selected and state.headerColor or DEFAULT_SURFACE_COLOR
+        button.BackgroundColor3 = selected and Theme.SurfaceRaised or Theme.Surface
         button.TextColor3 = selected
             and Color3.fromRGB(255, 255, 255)
-            or Color3.fromRGB(205, 205, 205)
+            or Theme.TextMuted
+        local indicator: Frame? = button:FindFirstChild("SelectionIndicator") :: Frame?
+        if indicator then
+            TweenService:Create(
+                indicator,
+                TweenInfo.new(0.18, Enum.EasingStyle.Quad),
+                {BackgroundTransparency = selected and 0 or 1}
+            ):Play()
+        end
     end
-
-    SectionManager.initialize(tabName)
 end
 
 local function createTab(tabName, layoutOrder)
     local button = makeButton(Tabs, tabName, 14)
     button.Name = tabName .. "Tab"
     button.LayoutOrder = layoutOrder
-    button.Size = UDim2.new(0.16, 0, 1, 0)
-    button.BorderColor3 = Color3.fromRGB(10, 10, 10)
-    button.BorderSizePixel = 1
+    button.Size = UDim2.new(0.16, -4, 1, 0)
+    button.BackgroundColor3 = Theme.Surface
+    button:SetAttribute("SelectedColor", Theme.SurfaceRaised)
+    local indicator: Frame = (create("Frame", {
+        Parent = button,
+        Name = "SelectionIndicator",
+        AnchorPoint = Vector2.new(0, 1),
+        BackgroundColor3 = Theme.AccentCyan,
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Position = UDim2.new(0, 8, 1, -2),
+        Size = UDim2.new(1, -16, 0, 2),
+        ZIndex = button.ZIndex + 1,
+    }) :: any) :: Frame
+    local indicatorGradient: UIGradient = Instance.new("UIGradient")
+    indicatorGradient.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Theme.AccentCyan),
+        ColorSequenceKeypoint.new(0.55, Theme.AccentViolet),
+        ColorSequenceKeypoint.new(1, Theme.AccentPink),
+    })
+    indicatorGradient.Parent = indicator
+    local indicatorCorner: UICorner = Instance.new("UICorner")
+    indicatorCorner.CornerRadius = UDim.new(1, 0)
+    indicatorCorner.Parent = indicator
     tabButtons[tabName] = button
 
-    local page = create("Frame", {
+    local page = create("CanvasGroup", {
         Parent = Content,
         Name = tabName .. "Page",
         BackgroundColor3 = state.menuColor,
@@ -758,7 +1334,7 @@ local function configureGameTabs()
     local tabWidth = 0.8 / visibleCount
     for _, button in pairs(tabButtons) do
         if button.Visible then
-            button.Size = UDim2.new(tabWidth, 0, 1, 0)
+            button.Size = UDim2.new(tabWidth, -4, 1, 0)
         end
     end
 end
@@ -767,11 +1343,22 @@ configureGameTabs()
 
 local SearchBox = makeTextBox(Main, "")
 SearchBox.Name = "Search"
-SearchBox.PlaceholderText = "Search..."
+SearchBox.PlaceholderText = "Search modules..."
 SearchBox.Position = UDim2.new(0.8, 8, 0, 58)
 SearchBox.Size = UDim2.new(0.2, -16, 0, 32)
 SearchBox.TextXAlignment = Enum.TextXAlignment.Left
 SearchBox.ZIndex = 12
+create("UIPadding", {
+    Parent = SearchBox,
+    PaddingLeft = UDim.new(0, 28),
+    PaddingRight = UDim.new(0, 8),
+})
+local SearchIcon: TextLabel = (makeTextLabel(Main, "⌕", 16) :: any) :: TextLabel
+SearchIcon.Position = UDim2.new(0.8, 15, 0, 58)
+SearchIcon.Size = UDim2.fromOffset(18, 32)
+SearchIcon.TextColor3 = Theme.TextMuted
+SearchIcon.TextXAlignment = Enum.TextXAlignment.Center
+SearchIcon.ZIndex = 13
 
 local UniversalScroll = create("ScrollingFrame", {
     Parent = UniversalPage,
@@ -831,6 +1418,41 @@ create("UIListLayout", {
     HorizontalAlignment = Enum.HorizontalAlignment.Center,
     Padding = UDim.new(0, 9),
     SortOrder = Enum.SortOrder.LayoutOrder,
+})
+
+do
+local LoadingPanel: Frame = (create("Frame", {
+    Parent = Content,
+    Name = "LoadingPanel",
+    AnchorPoint = Vector2.new(0.5, 0),
+    BackgroundColor3 = Theme.SurfaceRaised,
+    BackgroundTransparency = 0.04,
+    BorderSizePixel = 0,
+    Position = UDim2.new(0.5, 0, 0, 14),
+    Size = UDim2.fromOffset(250, 44),
+    Visible = false,
+    ZIndex = 210,
+}) :: any) :: Frame
+addRoundedStyle(LoadingPanel, 11, 0.32)
+local LoadingLabel: TextLabel = (makeTextLabel(
+    LoadingPanel,
+    "Loading modules 0/0",
+    12
+) :: any) :: TextLabel
+LoadingLabel.Font = Enum.Font.GothamMedium
+LoadingLabel.Size = UDim2.fromScale(1, 1)
+LoadingLabel.TextColor3 = Theme.Text
+LoadingLabel.TextXAlignment = Enum.TextXAlignment.Center
+LoadingLabel.ZIndex = 211
+state.loadingLabel = LoadingLabel
+end
+
+create("UIPadding", {
+    Parent = Tabs,
+    PaddingBottom = UDim.new(0, 5),
+    PaddingLeft = UDim.new(0, 7),
+    PaddingRight = UDim.new(0, 7),
+    PaddingTop = UDim.new(0, 5),
 })
 
 -- Make the shell usable before any optional feature/module initialization runs.
@@ -1294,7 +1916,8 @@ create("UICorner", {
     CornerRadius = UDim.new(1, 0),
 })
 
--- Keep the built-in RTM text visible; no byte parser or remote icon is needed.
+-- The RTM text remains visible while the cached icon is prepared asynchronously.
+state.assetManager.loadAsync("menuToggle", MobileMenuImage)
 
 trackUiConnection(MobileMenuButton.MouseButton1Click:Connect(function(): ()
     if state.setMenuVisible then
@@ -1405,6 +2028,42 @@ TaskManager.connection = RunService.Heartbeat:Connect(function(
 end)
 
 state.taskManager = TaskManager
+local auroraParallaxClock: number = 0
+local auroraSlowFrames: number = 0
+state.auroraParallaxEnabled = true
+TaskManager:Connect(function(deltaTime: number): ()
+    if deltaTime > 0.045 then
+        auroraSlowFrames += 1
+    else
+        auroraSlowFrames = math.max(0, auroraSlowFrames - 1)
+    end
+    if auroraSlowFrames >= 18 and state.auroraParallaxEnabled then
+        state.auroraParallaxEnabled = false
+        warn("[RTM:UI] Parallax aurora desactivado por rendimiento")
+    end
+    if not state.animationsEnabled
+        or not state.auroraParallaxEnabled
+        or state.isMobile
+        or not BackgroundImage.Parent then
+        return
+    end
+    auroraParallaxClock += deltaTime
+    if auroraParallaxClock < 0.08 then
+        return
+    end
+    auroraParallaxClock = 0
+    local camera: Camera? = workspace.CurrentCamera
+    if not camera then
+        return
+    end
+    local viewport: Vector2 = camera.ViewportSize
+    local pointer: Vector2 = UserInputService:GetMouseLocation()
+    local offsetX: number = ((pointer.X / math.max(viewport.X, 1)) - 0.5) * 6
+    local offsetY: number = ((pointer.Y / math.max(viewport.Y, 1)) - 0.5) * 3
+    BackgroundImage.Position = UDim2.fromOffset(-4 + offsetX, -2 + offsetY)
+    BackgroundImage.Size = UDim2.new(1, 8, 1, 4)
+end)
+
 local function disconnectFeatureConnection(name)
     local connection = featureConnections[name]
     if connection then
@@ -1579,16 +2238,14 @@ local function createSwitch(parent: Instance, enabled: boolean): (TextButton, Fr
     local button: TextButton = (makeButton(parent, "", 1) :: any) :: TextButton
     button.AutoButtonColor = false
     button.Size = UDim2.fromOffset(state.isMobile and 58 or 48, state.isMobile and 34 or 28)
-    create("UICorner", {
-        Parent = button,
-        CornerRadius = UDim.new(1, 0),
-    })
-    create("UIStroke", {
-        Parent = button,
-        Color = Theme.Outline,
-        Transparency = 0.3,
-        Thickness = 1,
-    })
+    local switchCorner: UICorner? = button:FindFirstChild("StyleCorner") :: UICorner?
+    if switchCorner then
+        switchCorner.CornerRadius = UDim.new(1, 0)
+    end
+    local switchStroke: UIStroke? = button:FindFirstChild("StyleStroke") :: UIStroke?
+    if switchStroke then
+        switchStroke.Transparency = 0.3
+    end
 
     local knobSize: number = state.isMobile and 22 or 18
     local knob: Frame = (create("Frame", {
@@ -1617,6 +2274,76 @@ local function refreshFeatureToggle(feature: any): ()
         feature.enabled,
         true
     )
+    if feature.activeStripe then
+        TweenService:Create(
+            feature.activeStripe,
+            TweenInfo.new(0.18, Enum.EasingStyle.Quad),
+            {BackgroundTransparency = feature.enabled and 0.08 or 1}
+        ):Play()
+    end
+    if feature.stroke then
+        TweenService:Create(
+            feature.stroke,
+            TweenInfo.new(0.18, Enum.EasingStyle.Quad),
+            {
+                Color = feature.enabled and Theme.AccentSoft or Theme.Outline,
+                Transparency = feature.enabled and 0.12 or 0.42,
+            }
+        ):Play()
+    end
+end
+
+local function runActionButton(
+    button: TextButton,
+    idleText: string,
+    callback: () -> (),
+    successMessage: string,
+    errorPrefix: string
+): ()
+    if button:GetAttribute("Running") == true then
+        return
+    end
+    button:SetAttribute("Running", true)
+    button:SetAttribute("Disabled", true)
+    button.Active = false
+    button.Text = "Running…"
+    button.BackgroundColor3 = Theme.AccentSoft
+
+    task.spawn(function(): ()
+        local running: boolean = true
+        task.spawn(function(): ()
+            local frames: {string} = {"Running·", "Running··", "Running···"}
+            local frameIndex: number = 1
+            while running and button.Parent do
+                button.Text = frames[frameIndex]
+                frameIndex = frameIndex % #frames + 1
+                task.wait(0.22)
+            end
+        end)
+
+        local success: boolean, errorMessage: any = pcall(callback)
+        running = false
+        if button.Parent then
+            button.Text = success and "Done" or "Failed"
+            button.BackgroundColor3 = success and Theme.AccentSoft or Theme.Danger
+        end
+        if success then
+            notify(successMessage)
+        else
+            warn(errorPrefix .. ": " .. tostring(errorMessage))
+            notify("Error en " .. errorPrefix)
+        end
+        task.wait(0.45)
+        if button.Parent then
+            button.Text = idleText
+            button.Active = true
+            button:SetAttribute("Disabled", false)
+            button:SetAttribute("Running", false)
+            button.BackgroundColor3 = idleText == "RUN"
+                and Theme.AccentSoft
+                or Theme.Surface
+        end
+    end)
 end
 
 local function createUniversalFeature(
@@ -1648,6 +2375,7 @@ local function createUniversalFeature(
         collapsedHeight = state.isMobile and 86 or 76,
         onToggle = onToggle,
         configKey = configKey,
+        sectionName = sectionName,
         tooltipText = description,
         tooltipBound = false,
     }
@@ -1669,18 +2397,43 @@ local function createUniversalFeature(
         Parent = row,
         CornerRadius = UDim.new(0, 10),
     })
-    create("UIStroke", {
+    local cardStroke: UIStroke = (create("UIStroke", {
         Parent = row,
         Color = Theme.Outline,
         Transparency = 0.42,
         Thickness = 1,
+    }) :: any) :: UIStroke
+    feature.stroke = cardStroke
+
+    local activeStripe: Frame = (create("Frame", {
+        Parent = row,
+        Name = "AuroraActiveStripe",
+        BackgroundColor3 = Theme.AccentCyan,
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Position = UDim2.fromOffset(0, 10),
+        Size = UDim2.new(0, 3, 1, -20),
+        ZIndex = 3,
+    }) :: any) :: Frame
+    local stripeCorner: UICorner = Instance.new("UICorner")
+    stripeCorner.CornerRadius = UDim.new(1, 0)
+    stripeCorner.Parent = activeStripe
+    local stripeGradient: UIGradient = Instance.new("UIGradient")
+    stripeGradient.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Theme.AccentCyan),
+        ColorSequenceKeypoint.new(0.55, Theme.AccentViolet),
+        ColorSequenceKeypoint.new(1, Theme.AccentPink),
     })
+    stripeGradient.Rotation = 90
+    stripeGradient.Parent = activeStripe
+    feature.activeStripe = activeStripe
 
     local title: TextLabel = (makeTextLabel(row, name, 14) :: any) :: TextLabel
     title.Font = Enum.Font.GothamBold
     title.Position = UDim2.fromOffset(14, 9)
     title.Size = UDim2.new(1, -112, 0, 24)
     title.TextColor3 = Theme.Text
+    feature.title = title
 
     local subtitle: TextLabel =
         (makeTextLabel(row, description, 11) :: any) :: TextLabel
@@ -1721,6 +2474,34 @@ local function createUniversalFeature(
     arrow.Visible = configuration.noOptions ~= true
     feature.arrow = arrow
 
+    trackUiConnection(row.MouseEnter:Connect(function(): ()
+        if feature.enabled then
+            return
+        end
+        TweenService:Create(
+            row,
+            TweenInfo.new(0.16, Enum.EasingStyle.Quad),
+            {BackgroundColor3 = Theme.SurfaceHover}
+        ):Play()
+        TweenService:Create(
+            cardStroke,
+            TweenInfo.new(0.16, Enum.EasingStyle.Quad),
+            {Transparency = 0.22}
+        ):Play()
+    end))
+    trackUiConnection(row.MouseLeave:Connect(function(): ()
+        TweenService:Create(
+            row,
+            TweenInfo.new(0.16, Enum.EasingStyle.Quad),
+            {BackgroundColor3 = Theme.Surface}
+        ):Play()
+        TweenService:Create(
+            cardStroke,
+            TweenInfo.new(0.16, Enum.EasingStyle.Quad),
+            {Transparency = feature.enabled and 0.12 or 0.42}
+        ):Play()
+    end))
+
     local options: Frame = (create("Frame", {
         Parent = row,
         Name = "Options",
@@ -1751,7 +2532,7 @@ local function createUniversalFeature(
         SortOrder = Enum.SortOrder.LayoutOrder,
     })
 
-    local function updateExpandedSize(): ()
+    local function updateExpandedSize(animate: boolean?): ()
         local visibleOptions: number = 0
         for _, optionRow: GuiObject in ipairs(feature.optionRows) do
             if optionRow.Visible then
@@ -1759,8 +2540,8 @@ local function createUniversalFeature(
             end
         end
         local optionsHeight: number = visibleOptions * 44 + 14
-        options.Size = UDim2.new(1, -20, 0, optionsHeight)
-        row.Size = UDim2.new(
+        local targetOptionsSize: UDim2 = UDim2.new(1, -20, 0, optionsHeight)
+        local targetRowSize: UDim2 = UDim2.new(
             1,
             0,
             0,
@@ -1768,14 +2549,45 @@ local function createUniversalFeature(
                 and feature.collapsedHeight + optionsHeight + 10
                 or feature.collapsedHeight
         )
-        options.Visible = feature.expanded
-        arrow.Text = feature.expanded and "−" or "+"
+        if feature.expanded then
+            options.Visible = true
+        end
+        arrow.Text = "+"
+        if animate and state.animationsEnabled then
+            TweenService:Create(
+                options,
+                TweenInfo.new(0.2, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+                {Size = targetOptionsSize}
+            ):Play()
+            TweenService:Create(
+                row,
+                TweenInfo.new(0.2, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+                {Size = targetRowSize}
+            ):Play()
+            TweenService:Create(
+                arrow,
+                TweenInfo.new(0.2, Enum.EasingStyle.Quart),
+                {Rotation = feature.expanded and 45 or 0}
+            ):Play()
+            if not feature.expanded then
+                task.delay(0.21, function(): ()
+                    if not feature.expanded and options.Parent then
+                        options.Visible = false
+                    end
+                end)
+            end
+        else
+            options.Size = targetOptionsSize
+            row.Size = targetRowSize
+            arrow.Rotation = feature.expanded and 45 or 0
+            options.Visible = feature.expanded
+        end
     end
     feature.updateExpandedSize = updateExpandedSize
 
     trackUiConnection(arrow.MouseButton1Click:Connect(function(): ()
         feature.expanded = not feature.expanded
-        updateExpandedSize()
+        updateExpandedSize(true)
     end))
 
     trackUiConnection(toggle.MouseButton1Click:Connect(function(): ()
@@ -1783,13 +2595,13 @@ local function createUniversalFeature(
             return
         end
         if feature.isAction then
-            local success: boolean, errorMessage: any = pcall(feature.onToggle)
-            if success then
-                notify(name .. " ejecutado")
-            else
-                warn("[Random Testing Menu] " .. name .. ": " .. tostring(errorMessage))
-                notify("Error en " .. name)
-            end
+            runActionButton(
+                toggle,
+                "RUN",
+                feature.onToggle,
+                name .. " ejecutado",
+                "[Random Testing Menu] " .. name
+            )
             return
         end
 
@@ -1917,14 +2729,18 @@ local function addActionOption(
 ): TextButton
     local option = createOptionRow(feature, labelText)
     local button = makeButton(option, "RUN", 11)
+    button.BackgroundColor3 = Theme.AccentSoft
     button.Position = UDim2.new(0.72, 0, 0, 0)
     button.Size = UDim2.new(0.28, 0, 1, 0)
-    button.MouseButton1Click:Connect(function()
-        local success, message = pcall(callback)
-        if not success then
-            warn("[Random Testing Menu] " .. labelText .. ": " .. tostring(message))
-        end
-    end)
+    trackUiConnection(button.MouseButton1Click:Connect(function(): ()
+        runActionButton(
+            button,
+            "RUN",
+            callback,
+            labelText .. " completado",
+            "[Random Testing Menu] " .. labelText
+        )
+    end))
     return button :: TextButton
 end
 
@@ -1934,15 +2750,6 @@ type ActiveSlider = {
 }
 
 local activeSlider: ActiveSlider? = nil
-
-print(
-    "[RTM:Bootstrap] trackUiConnection valor=",
-    trackUiConnection,
-    "tipo=",
-    typeof(trackUiConnection),
-    "InputChanged tipo=",
-    typeof(UserInputService.InputChanged)
-)
 
 trackUiConnection(UserInputService.InputChanged:Connect(function(
     input: InputObject
@@ -1966,14 +2773,19 @@ trackUiConnection(UserInputService.InputEnded:Connect(function(
     end
 end))
 
-local function formatSliderValue(value: number, integerOnly: boolean): string
-    if integerOnly then
-        return tostring(math.round(value))
+local function isFiniteNumber(value: any): boolean
+    return type(value) == "number"
+        and value == value
+        and value ~= math.huge
+        and value ~= -math.huge
+end
+
+local function formatCompactNumber(value: number): string
+    local magnitude: number = math.abs(value)
+    if magnitude >= 1e9 or (magnitude > 0 and magnitude < 1e-4) then
+        return string.format("%.3e", value)
     end
-    local formatted: string = string.format("%.2f", value)
-    formatted = string.gsub(formatted, "0+$", "")
-    formatted = string.gsub(formatted, "%.$", "")
-    return formatted
+    return string.format("%.7g", value)
 end
 
 local function addNumberOption(
@@ -1987,11 +2799,9 @@ local function addNumberOption(
     local optionKey: string =
         feature.configKey .. "." .. labelText:gsub("%W", "")
     local storedValue: number? = tonumber(configData.values[optionKey])
-    local value: number = math.clamp(
-        storedValue or defaultValue,
-        minimum,
-        maximum
-    )
+    local value: number = isFiniteNumber(storedValue)
+        and (storedValue :: number)
+        or defaultValue
     local integerOnly: boolean = defaultValue % 1 == 0
         and minimum % 1 == 0
         and maximum % 1 == 0
@@ -2016,7 +2826,7 @@ local function addNumberOption(
         BackgroundColor3 = Theme.Outline,
         BorderSizePixel = 0,
         Position = UDim2.new(0, 4, 0.5, 0),
-        Size = UDim2.new(1, -54, 0, state.isMobile and 7 or 5),
+        Size = UDim2.new(1, -88, 0, state.isMobile and 7 or 5),
     }) :: any) :: Frame
     create("UICorner", {
         Parent = track,
@@ -2050,25 +2860,39 @@ local function addNumberOption(
         CornerRadius = UDim.new(1, 0),
     })
 
-    local valueLabel: TextLabel =
-        (makeTextLabel(slider, "", 11) :: any) :: TextLabel
-    valueLabel.AnchorPoint = Vector2.new(1, 0)
-    valueLabel.Position = UDim2.new(1, 0, 0, 0)
-    valueLabel.Size = UDim2.fromOffset(46, 38)
-    valueLabel.TextColor3 = Theme.Text
-    valueLabel.TextXAlignment = Enum.TextXAlignment.Right
+    local valueInput: TextBox = (makeTextBox(slider, "") :: any) :: TextBox
+    valueInput.Name = "NumericValue"
+    valueInput.AnchorPoint = Vector2.new(1, 0.5)
+    valueInput.Position = UDim2.new(1, 0, 0.5, 0)
+    valueInput.Size = UDim2.fromOffset(76, 30)
+    valueInput.TextColor3 = Theme.Text
+    valueInput.TextXAlignment = Enum.TextXAlignment.Center
+    valueInput.TextTruncate = Enum.TextTruncate.AtEnd
 
-    local function setValue(nextValue: number, persist: boolean): ()
-        value = math.clamp(nextValue, minimum, maximum)
-        if integerOnly then
-            value = math.round(value)
+    local editing: boolean = false
+    local function setValue(
+        nextValue: number,
+        persist: boolean,
+        fromSlider: boolean
+    ): ()
+        if not isFiniteNumber(nextValue) then
+            return
+        end
+        value = nextValue
+        if fromSlider then
+            value = math.clamp(value, minimum, maximum)
+            if integerOnly then
+                value = math.round(value)
+            end
         end
         local alpha: number = maximum == minimum
             and 0
-            or (value - minimum) / (maximum - minimum)
+            or math.clamp((value - minimum) / (maximum - minimum), 0, 1)
         fill.Size = UDim2.fromScale(alpha, 1)
         knob.Position = UDim2.fromScale(alpha, 0.5)
-        valueLabel.Text = formatSliderValue(value, integerOnly)
+        if not editing then
+            valueInput.Text = formatCompactNumber(value)
+        end
         callback(value)
         if persist then
             configData.values[optionKey] = value
@@ -2083,7 +2907,7 @@ local function addNumberOption(
             0,
             1
         )
-        setValue(minimum + (maximum - minimum) * alpha, true)
+        setValue(minimum + (maximum - minimum) * alpha, true, true)
     end
 
     trackUiConnection(slider.InputBegan:Connect(function(
@@ -2093,6 +2917,9 @@ local function addNumberOption(
             and input.UserInputType ~= Enum.UserInputType.Touch then
             return
         end
+        if input.Position.X > track.AbsolutePosition.X + track.AbsoluteSize.X then
+            return
+        end
         updateFromScreenX(input.Position.X)
         activeSlider = {
             update = updateFromScreenX,
@@ -2100,15 +2927,33 @@ local function addNumberOption(
                 notify(
                     labelText
                         .. ": "
-                        .. formatSliderValue(value, integerOnly)
+                        .. formatCompactNumber(value)
                 )
             end,
         }
     end))
 
+    trackUiConnection(valueInput.Focused:Connect(function(): ()
+        editing = true
+        valueInput.Text = tostring(value)
+        valueInput.CursorPosition = #valueInput.Text + 1
+    end))
+
+    trackUiConnection(valueInput.FocusLost:Connect(function(): ()
+        local parsed: number? = tonumber(valueInput.Text)
+        editing = false
+        if not isFiniteNumber(parsed) then
+            valueInput.Text = formatCompactNumber(value)
+            notify(labelText .. ": valor numérico inválido")
+            return
+        end
+        setValue(parsed :: number, true, false)
+        notify(labelText .. ": " .. formatCompactNumber(value))
+    end))
+
     task.defer(function(): ()
         if option.Parent then
-            setValue(value, false)
+            setValue(value, false, false)
         end
     end)
     return option
@@ -4574,25 +5419,22 @@ end
 local function registerPlaceModule(
     tabName: string,
     placeId: number
-): any
+): ()
     if game.PlaceId ~= placeId then
-        return nil
+        return
     end
 
     state.logBootstrap("PlaceId detectado: " .. tostring(game.PlaceId))
-    local loadedModule: GameModule?, moduleEnvironment: any,
-        diagnostics: ModuleDiagnostics, loadError: string? = loadGameModule(placeId)
-    if not loadedModule then
-        state.logBootstrapError(
-            "No se pudo cargar " .. tabName .. ": " .. tostring(loadError)
-        )
-        SectionManager.register(tabName, function(): ()
-            error(loadError or "No se pudo cargar el módulo")
-        end)
-        return nil
-    end
-
     SectionManager.register(tabName, function(): ()
+        local loadedModule: GameModule?, _moduleEnvironment: any,
+            diagnostics: ModuleDiagnostics, loadError: string? =
+            loadGameModule(placeId)
+        if not loadedModule then
+            state.logBootstrapError(
+                "No se pudo cargar " .. tabName .. ": " .. tostring(loadError)
+            )
+            error(loadError or "No se pudo cargar el módulo")
+        end
         local taskCountBefore: number = TaskManager.nextId
         local runtime: any = {
             Menu = {
@@ -4639,7 +5481,6 @@ local function registerPlaceModule(
             state.cleanupTRSRuntime = destroyModule
         end
     end)
-    return moduleEnvironment
 end
 
 state.logBootstrap(
@@ -4649,25 +5490,63 @@ state.logBootstrap(
         .. tostring(ACTIVE_GAME_MODULE or "Universal")
 )
 
-local _mm2ModuleEnvironment: any =
-    registerPlaceModule("MM2", GAME_CHECK.MM2)
+registerPlaceModule("MM2", GAME_CHECK.MM2)
+registerPlaceModule("TRS", GAME_CHECK.TRS)
 
-local _trsModuleEnvironment: any =
-    registerPlaceModule("TRS", GAME_CHECK.TRS)
+local noResultsLabels: {[string]: TextLabel} = {}
+for sectionName: string, page: GuiObject in pairs(pages) do
+    local label: TextLabel = (makeTextLabel(
+        page,
+        "No modules match your search",
+        13
+    ) :: any) :: TextLabel
+    label.Name = "NoSearchResults"
+    label.AnchorPoint = Vector2.new(0.5, 0.5)
+    label.Position = UDim2.fromScale(0.5, 0.5)
+    label.Size = UDim2.new(1, -50, 0, 40)
+    label.TextColor3 = Theme.TextMuted
+    label.TextXAlignment = Enum.TextXAlignment.Center
+    label.Visible = false
+    label.ZIndex = 90
+    noResultsLabels[sectionName] = label
+end
 
-SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
-    local query = string.lower(SearchBox.Text)
-    for _, feature in ipairs(allFeatures) do
-        local searchable = string.lower(feature.name .. " " .. feature.description)
-        for _, object in ipairs(feature.row:GetDescendants()) do
-            if object:IsA("TextLabel") then
-                searchable = searchable .. " " .. string.lower(object.Text)
+local function refreshSearch(): ()
+    local query: string = string.lower(SearchBox.Text)
+    local sectionMatches: {[string]: number} = {}
+    local sectionTotals: {[string]: number} = {}
+    for _, feature: any in ipairs(allFeatures) do
+        local sectionName: string = feature.sectionName or "Universal"
+        sectionTotals[sectionName] = (sectionTotals[sectionName] or 0) + 1
+        local searchable: string = string.lower(
+            feature.name .. " " .. feature.description
+        )
+        for _, object: Instance in ipairs(feature.row:GetDescendants()) do
+            if object:IsA("TextLabel") or object:IsA("TextButton") then
+                searchable ..= " " .. string.lower(object.Text)
             end
         end
-        feature.row.Visible = query == ""
+        local matches: boolean = query == ""
             or string.find(searchable, query, 1, true) ~= nil
+        feature.row.Visible = matches
+        if matches then
+            sectionMatches[sectionName] = (sectionMatches[sectionName] or 0) + 1
+        end
+        if feature.title then
+            feature.title.TextColor3 = query ~= "" and matches
+                and Theme.AccentCyan
+                or Theme.Text
+        end
     end
-end)
+
+    for sectionName: string, label: TextLabel in pairs(noResultsLabels) do
+        label.Visible = query ~= ""
+            and (sectionTotals[sectionName] or 0) > 0
+            and (sectionMatches[sectionName] or 0) == 0
+    end
+end
+state.refreshSearch = refreshSearch
+trackUiConnection(SearchBox:GetPropertyChangedSignal("Text"):Connect(refreshSearch))
 
 local function buildSettings()
 local SettingsScroll = create("ScrollingFrame", {
@@ -4770,11 +5649,22 @@ local BlurButton: TextButton, BlurKnob: Frame =
     createSwitch(blurControl, state.blurEnabled)
 BlurButton.AnchorPoint = Vector2.new(1, 0.5)
 BlurButton.Position = UDim2.new(1, 0, 0.5, 0)
+
+local animationRow, animationControl = createSettingRow(
+    "Interface animations",
+    "Disable decorative motion while keeping control feedback"
+)
+animationRow.LayoutOrder = 3
+local AnimationButton: TextButton, AnimationKnob: Frame =
+    createSwitch(animationControl, state.animationsEnabled)
+AnimationButton.AnchorPoint = Vector2.new(1, 0.5)
+AnimationButton.Position = UDim2.new(1, 0, 0.5, 0)
+
 local keyRow, keyControl = createSettingRow(
     "Menu key",
     "Choose the key used to show or hide"
 )
-keyRow.LayoutOrder = 3
+keyRow.LayoutOrder = 4
 
 local KeybindButton = makeButton(keyControl, state.toggleKey.Name, 13)
 KeybindButton.Size = UDim2.fromScale(1, 1)
@@ -4784,7 +5674,7 @@ local headerColorRow: Frame, headerColorControl: Frame = createSettingRow(
     "Accent color",
     "ColorPicker for selections, tabs and active switches"
 )
-headerColorRow.LayoutOrder = 4
+headerColorRow.LayoutOrder = 5
 local HeaderColorButton: TextButton =
     (makeButton(headerColorControl, "PICK COLOR", 12) :: any) :: TextButton
 HeaderColorButton.BackgroundColor3 = state.headerColor
@@ -4794,7 +5684,7 @@ local menuColorRow: Frame, menuColorControl: Frame = createSettingRow(
     "Panel color",
     "ColorPicker for the main dark surface"
 )
-menuColorRow.LayoutOrder = 5
+menuColorRow.LayoutOrder = 6
 local MenuColorButton: TextButton =
     (makeButton(menuColorControl, "PICK COLOR", 12) :: any) :: TextButton
 MenuColorButton.BackgroundColor3 = state.menuColor
@@ -4803,7 +5693,7 @@ local resetRow, resetControl = createSettingRow(
     "Reset appearance",
     "Restore the default grey and dark blue colors"
 )
-resetRow.LayoutOrder = 6
+resetRow.LayoutOrder = 7
 
 local ResetButton = makeButton(resetControl, "RESET", 13)
 ResetButton.Size = UDim2.fromScale(1, 1)
@@ -4812,7 +5702,7 @@ local gameRow, gameControl = createSettingRow(
     "Game check",
     "Only the matching game-specific module is loaded"
 )
-gameRow.LayoutOrder = 7
+gameRow.LayoutOrder = 8
 local gameStatus = makeTextLabel(
     gameControl,
     GAME_CHECK.MM2Active and "MM2 · 142823291"
@@ -4827,7 +5717,7 @@ local deviceRow, deviceControl = createSettingRow(
     "Device profile",
     "Automatically selected from touch and keyboard capabilities"
 )
-deviceRow.LayoutOrder = 8
+deviceRow.LayoutOrder = 9
 local deviceStatus = makeTextLabel(
     deviceControl,
     state.isMobile and "MOBILE · TOUCH" or "DESKTOP · KEYBOARD",
@@ -4840,7 +5730,7 @@ local mobileIconRow, mobileIconControl = createSettingRow(
     "Mobile menu icon",
     "Dog shortcut stays available so the menu cannot become unreachable"
 )
-mobileIconRow.LayoutOrder = 9
+mobileIconRow.LayoutOrder = 10
 mobileIconRow.Visible = UserInputService.TouchEnabled
 local MobileIconButton = makeButton(
     mobileIconControl,
@@ -4861,7 +5751,7 @@ local mobileSizeRow, mobileSizeControl = createSettingRow(
     "Mobile action size",
     "Circle size for placed Shoot and Grab Gun actions"
 )
-mobileSizeRow.LayoutOrder = 10
+mobileSizeRow.LayoutOrder = 11
 mobileSizeRow.Visible = UserInputService.TouchEnabled
 local MobileSizeButton = makeButton(
     mobileSizeControl,
@@ -4874,7 +5764,7 @@ local mobileResetRow, mobileResetControl = createSettingRow(
     "Mobile action buttons",
     "Hold an action option to place; hold its circle to remove"
 )
-mobileResetRow.LayoutOrder = 11
+mobileResetRow.LayoutOrder = 12
 mobileResetRow.Visible = UserInputService.TouchEnabled
 local MobileResetButton = makeButton(
     mobileResetControl,
@@ -4894,7 +5784,7 @@ local helpText = makeTextLabel(
             or " | Drag the header to move and any border to resize."),
     11
 )
-helpText.LayoutOrder = 12
+helpText.LayoutOrder = 13
 helpText.TextColor3 = Color3.fromRGB(145, 145, 145)
 helpText.TextXAlignment = Enum.TextXAlignment.Center
 helpText.Size = UDim2.new(1, -4, 0, 30)
@@ -4952,6 +5842,31 @@ trackUiConnection(BlurButton.MouseButton1Click:Connect(function(): ()
     queueConfigSave()
     notify(state.blurEnabled and "Desenfoque activado" or "Desenfoque desactivado")
 end))
+
+trackUiConnection(AnimationButton.MouseButton1Click:Connect(function(): ()
+    state.animationsEnabled = not state.animationsEnabled
+    setSwitchVisual(
+        AnimationButton,
+        AnimationKnob,
+        state.animationsEnabled,
+        true
+    )
+    for _, tween: Tween in ipairs(state.decorativeTweens or {}) do
+        if state.animationsEnabled then
+            tween:Play()
+        else
+            tween:Pause()
+        end
+    end
+    configData.ui.animationsEnabled = state.animationsEnabled
+    queueConfigSave()
+    notify(
+        state.animationsEnabled
+            and "Animaciones decorativas activadas"
+            or "Animaciones decorativas desactivadas"
+    )
+end))
+
 MobileIconButton.MouseButton1Click:Connect(function(): ()
     if not UserInputService.TouchEnabled then
         return
@@ -5007,11 +5922,10 @@ local function applyHeaderColor(color: Color3): ()
     Theme.Accent = color
     configData.ui.headerColor = colorToConfig(color)
     queueConfigSave()
-    Header.BackgroundColor3 = color
 
     for tabName, button in pairs(tabButtons) do
         if tabName == state.activeTab then
-            button.BackgroundColor3 = color
+            button.BackgroundColor3 = Theme.SurfaceRaised
         end
     end
 
@@ -5409,6 +6323,7 @@ ScreenGui.AncestryChanged:Connect(function(_, parent)
     end
 end)
 
+SectionManager.initializeAllAsync()
 setTab("Universal")
 if state.setBlurVisible then
     state.setBlurVisible(false)
@@ -5416,7 +6331,7 @@ end
 task.defer(saveConfigNow)
 
 print(
-    "A random Testing Menu # 0001 | Build 0001-S15 | Toggle key: "
+    "A random Testing Menu # 0001 | Build 0001-S16 | Toggle key: "
         .. state.toggleKey.Name
 )
 end

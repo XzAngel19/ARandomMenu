@@ -4,4 +4,4 @@ Thumbs.db
 .DS_Store
 runtime-config/
 local-profiles/
-/compile-main.txt
+/compile-*.txt
