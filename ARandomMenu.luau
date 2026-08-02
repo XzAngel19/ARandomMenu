@@ -1831,8 +1831,8 @@ local function createMobileAction(
         Name = "MobileAction_" .. id:gsub("%W", ""),
         Active = true,
         AutoButtonColor = false,
-        BackgroundColor3 = state.headerColor,
-        BackgroundTransparency = 0.18,
+        BackgroundColor3 = Theme.SurfaceRaised,
+        BackgroundTransparency = 0.08,
         BorderSizePixel = 0,
         Font = Enum.Font.GothamBold,
         Position = UDim2.fromOffset(selectedPosition.X, selectedPosition.Y),
@@ -1846,13 +1846,13 @@ local function createMobileAction(
     }) :: TextButton
     create("UICorner", {
         Parent = button,
-        CornerRadius = UDim.new(1, 0),
+        CornerRadius = UDim.new(0, 12),
     })
     create("UIStroke", {
         Parent = button,
-        Color = Color3.fromRGB(225, 235, 255),
-        Transparency = 0.28,
-        Thickness = 1.5,
+        Color = Color3.fromRGB(215, 215, 218),
+        Transparency = 0.34,
+        Thickness = 1,
     })
     create("UITextSizeConstraint", {
         Parent = button,
@@ -2045,7 +2045,7 @@ local function bindMobileActionPlacement(
     if not state.isMobile then
         return
     end
-    source.Text = "HOLD TO PLACE"
+    source.Text = "ADD"
     local activeInput: InputObject? = nil
     local startPosition: Vector2 = Vector2.zero
     local holdToken: number = 0
@@ -2376,7 +2376,7 @@ local function getFeatureCardParent(container: Instance): Instance
             local layout: UIListLayout = Instance.new("UIListLayout")
             layout.FillDirection = Enum.FillDirection.Vertical
             layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-            layout.Padding = UDim.new(0, 10)
+            layout.Padding = UDim.new(0, 7)
             layout.SortOrder = Enum.SortOrder.LayoutOrder
             layout.Parent = column
             layouts[columnIndex] = layout
@@ -2426,9 +2426,10 @@ local function setSwitchVisual(
 ): ()
     button:SetAttribute("Selected", enabled)
     local targetColor: Color3 = enabled and state.headerColor or Theme.SurfaceRaised
+    local knobSize: number = state.isMobile and 18 or 16
     local knobPosition: UDim2 = enabled
-        and UDim2.new(1, -23, 0.5, -9)
-        or UDim2.new(0, 5, 0.5, -9)
+        and UDim2.new(1, -(knobSize + 4), 0.5, -math.floor(knobSize / 2))
+        or UDim2.new(0, 4, 0.5, -math.floor(knobSize / 2))
     if animate then
         TweenService:Create(
             button,
@@ -2453,7 +2454,7 @@ end
 local function createSwitch(parent: Instance, enabled: boolean): (TextButton, Frame)
     local button: TextButton = (makeButton(parent, "", 1) :: any) :: TextButton
     button.AutoButtonColor = false
-    button.Size = UDim2.fromOffset(state.isMobile and 58 or 48, state.isMobile and 34 or 28)
+    button.Size = UDim2.fromOffset(state.isMobile and 46 or 42, state.isMobile and 28 or 24)
     local switchCorner: UICorner? = button:FindFirstChild("StyleCorner") :: UICorner?
     if switchCorner then
         switchCorner.CornerRadius = UDim.new(1, 0)
@@ -2463,7 +2464,7 @@ local function createSwitch(parent: Instance, enabled: boolean): (TextButton, Fr
         switchStroke.Transparency = 0.3
     end
 
-    local knobSize: number = state.isMobile and 22 or 18
+    local knobSize: number = state.isMobile and 18 or 16
     local knob: Frame = (create("Frame", {
         Parent = button,
         Name = "Knob",
@@ -2597,6 +2598,81 @@ local function selectFeatureIcon(name: string, description: string): string
     return "settings"
 end
 
+local function compactShortcutLabel(label: string): string
+    local compact: string = string.upper(label:gsub("[^%w]", ""))
+    if compact == "" then
+        return "ACT"
+    end
+    return string.sub(compact, 1, 6)
+end
+
+local function bindActionShortcut(
+    button: TextButton,
+    shortcutId: string,
+    label: string,
+    callback: () -> ()
+): ()
+    local optionKey: string = "Shortcut." .. shortcutId:gsub("%W", "")
+    local shortcutKey: Enum.KeyCode = Enum.KeyCode.Unknown
+    local savedName: any = configData.values[optionKey]
+    if type(savedName) == "string" and savedName ~= "" then
+        local savedKey: Enum.KeyCode? = Enum.KeyCode[savedName]
+        if savedKey then
+            shortcutKey = savedKey
+        end
+    end
+
+    local function refreshButtonText(): ()
+        if state.isMobile then
+            button.Text = "ADD"
+        else
+            button.Text = shortcutKey == Enum.KeyCode.Unknown
+                and "KEY"
+                or shortcutKey.Name
+        end
+    end
+
+    refreshButtonText()
+    if state.isMobile then
+        if state.bindMobileActionPlacement then
+            state.bindMobileActionPlacement(
+                button,
+                "Shortcut" .. shortcutId:gsub("%W", ""),
+                compactShortcutLabel(label),
+                callback
+            )
+        end
+        return
+    end
+
+    trackUiConnection(button.MouseButton1Click:Connect(function(): ()
+        button.Text = "..."
+        button.BackgroundColor3 = Theme.SurfacePressed
+        state.keyCaptureCallback = function(keyCode: Enum.KeyCode): ()
+            shortcutKey = keyCode
+            button.BackgroundColor3 = Theme.SurfaceRaised
+            configData.values[optionKey] = keyCode.Name
+            queueConfigSave()
+            refreshButtonText()
+        end
+    end))
+    trackUiConnection(UserInputService.InputBegan:Connect(function(
+        input: InputObject,
+        gameProcessed: boolean
+    ): ()
+        if gameProcessed
+            or shortcutKey == Enum.KeyCode.Unknown
+            or state.keyCaptureCallback
+            or UserInputService:GetFocusedTextBox() then
+            return
+        end
+        if input.UserInputType == Enum.UserInputType.Keyboard
+            and input.KeyCode == shortcutKey then
+            task.spawn(callback)
+        end
+    end))
+end
+
 local function createUniversalFeature(
     name: string,
     description: string,
@@ -2623,7 +2699,7 @@ local function createUniversalFeature(
         isCategory = configuration.category == true,
         optionCount = 0,
         optionRows = {},
-        collapsedHeight = state.isMobile and 86 or 76,
+        collapsedHeight = state.isMobile and 56 or 52,
         onToggle = onToggle,
         configKey = configKey,
         sectionName = sectionName,
@@ -2646,7 +2722,7 @@ local function createUniversalFeature(
     feature.row = row
     create("UICorner", {
         Parent = row,
-        CornerRadius = UDim.new(0, 10),
+        CornerRadius = UDim.new(0, 12),
     })
     local cardStroke: UIStroke = (create("UIStroke", {
         Parent = row,
@@ -2662,8 +2738,8 @@ local function createUniversalFeature(
         BackgroundColor3 = Color3.fromRGB(228, 228, 230),
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
-        Position = UDim2.fromOffset(0, 10),
-        Size = UDim2.new(0, 3, 1, -20),
+        Position = UDim2.fromOffset(0, 7),
+        Size = UDim2.new(0, 3, 1, -14),
         ZIndex = 3,
     }) :: any) :: Frame
     local stripeCorner: UICorner = Instance.new("UICorner")
@@ -2687,17 +2763,17 @@ local function createUniversalFeature(
         Image = "",
         ImageColor3 = Color3.fromRGB(218, 218, 220),
         ImageTransparency = 0.12,
-        Position = UDim2.fromOffset(12, 16),
+        Position = UDim2.fromOffset(11, state.isMobile and 16 or 14),
         ScaleType = Enum.ScaleType.Fit,
-        Size = UDim2.fromOffset(26, 26),
+        Size = UDim2.fromOffset(24, 24),
         ZIndex = 4,
     }) :: any) :: ImageLabel
     state.assetManager.loadAsync(selectFeatureIcon(name, description), featureIcon)
 
-    local title: TextLabel = (makeTextLabel(row, name, 14) :: any) :: TextLabel
-    title.Font = Enum.Font.GothamBold
-    title.Position = UDim2.fromOffset(48, 9)
-    title.Size = UDim2.new(1, -146, 0, 24)
+    local title: TextLabel = (makeTextLabel(row, name, 12) :: any) :: TextLabel
+    title.Font = Enum.Font.GothamMedium
+    title.Position = UDim2.fromOffset(44, 0)
+    title.Size = UDim2.new(1, -164, 1, 0)
     title.TextColor3 = Theme.Text
     feature.title = title
 
@@ -2709,13 +2785,14 @@ local function createUniversalFeature(
     subtitle.TextColor3 = Theme.TextMuted
     subtitle.TextTruncate = Enum.TextTruncate.AtEnd
     subtitle.TextWrapped = true
+    subtitle.Visible = false
 
     local toggle: TextButton
     local toggleKnob: Frame? = nil
     if feature.isAction then
         toggle = (makeButton(row, "RUN", 11) :: any) :: TextButton
         toggle.BackgroundColor3 = Theme.AccentSoft
-        toggle.Size = UDim2.fromOffset(state.isMobile and 68 or 58, 30)
+        toggle.Size = UDim2.fromOffset(state.isMobile and 52 or 46, state.isMobile and 28 or 24)
     else
         local createdToggle: TextButton, createdKnob: Frame =
             createSwitch(row, false)
@@ -2723,8 +2800,8 @@ local function createUniversalFeature(
         toggleKnob = createdKnob
     end
     toggle.Name = "Toggle"
-    toggle.AnchorPoint = Vector2.new(1, 0)
-    toggle.Position = UDim2.new(1, -44, 0, 12)
+    toggle.AnchorPoint = Vector2.new(1, 0.5)
+    toggle.Position = UDim2.new(1, -36, 0.5, 0)
     toggle.Visible = not feature.isCategory
     feature.toggle = toggle
     feature.toggleKnob = toggleKnob
@@ -2732,10 +2809,10 @@ local function createUniversalFeature(
     local arrow: TextButton =
         (makeButton(row, "", state.isMobile and 17 or 14) :: any) :: TextButton
     arrow.Name = "Expand"
-    arrow.AnchorPoint = Vector2.new(1, 0)
+    arrow.AnchorPoint = Vector2.new(1, 0.5)
     arrow.BackgroundTransparency = 1
-    arrow.Position = UDim2.new(1, -10, 0, 12)
-    arrow.Size = UDim2.fromOffset(state.isMobile and 38 or 30, 30)
+    arrow.Position = UDim2.new(1, -7, 0.5, 0)
+    arrow.Size = UDim2.fromOffset(state.isMobile and 28 or 24, state.isMobile and 28 or 24)
     arrow.TextColor3 = Theme.TextMuted
     arrow.Visible = configuration.noOptions ~= true
     feature.arrow = arrow
@@ -2869,7 +2946,7 @@ local function createUniversalFeature(
         updateExpandedSize(true)
     end))
 
-    trackUiConnection(toggle.MouseButton1Click:Connect(function(): ()
+    local function activateFeature(): ()
         if feature.isCategory then
             return
         end
@@ -2901,13 +2978,38 @@ local function createUniversalFeature(
             notify("No se pudo cambiar " .. name)
         end
         refreshFeatureToggle(feature)
-    end))
+    end
+    feature.activate = activateFeature
+
+    trackUiConnection(toggle.MouseButton1Click:Connect(activateFeature))
+    if not feature.isCategory then
+        local shortcutButton: TextButton =
+            (makeButton(row, "KEY", 9) :: any) :: TextButton
+        shortcutButton.Name = "Shortcut"
+        shortcutButton.AnchorPoint = Vector2.new(1, 0.5)
+        shortcutButton.BackgroundColor3 = Theme.SurfaceRaised
+        shortcutButton.Position = UDim2.new(1, -84, 0.5, 0)
+        shortcutButton.Size = UDim2.fromOffset(
+            state.isMobile and 42 or 38,
+            state.isMobile and 28 or 24
+        )
+        shortcutButton.TextScaled = true
+        create("UITextSizeConstraint", {
+            Parent = shortcutButton,
+            MaxTextSize = 9,
+            MinTextSize = 7,
+        })
+        feature.shortcutButton = shortcutButton
+        bindActionShortcut(
+            shortcutButton,
+            feature.configKey,
+            name,
+            activateFeature
+        )
+    end
 
     registry[name] = feature
     table.insert(allFeatures, feature)
-    if state.bindFeatureTooltip then
-        state.bindFeatureTooltip(feature, description)
-    end
 
     if not feature.isAction
         and not feature.isCategory
@@ -3011,7 +3113,7 @@ local function addActionOption(
     button.BackgroundColor3 = Theme.AccentSoft
     button.Position = UDim2.new(0.72, 0, 0, 0)
     button.Size = UDim2.new(0.28, 0, 1, 0)
-    trackUiConnection(button.MouseButton1Click:Connect(function(): ()
+    local function executeAction(): ()
         runActionButton(
             button,
             "RUN",
@@ -3019,7 +3121,25 @@ local function addActionOption(
             labelText .. " completado",
             "[Random Testing Menu] " .. labelText
         )
-    end))
+    end
+    trackUiConnection(button.MouseButton1Click:Connect(executeAction))
+    local shortcutButton: TextButton =
+        (makeButton(option, "KEY", 9) :: any) :: TextButton
+    shortcutButton.BackgroundColor3 = Theme.SurfaceRaised
+    shortcutButton.Position = UDim2.new(0.55, 0, 0, 0)
+    shortcutButton.Size = UDim2.new(0.15, 0, 1, 0)
+    shortcutButton.TextScaled = true
+    create("UITextSizeConstraint", {
+        Parent = shortcutButton,
+        MaxTextSize = 9,
+        MinTextSize = 7,
+    })
+    bindActionShortcut(
+        shortcutButton,
+        feature.configKey .. labelText,
+        labelText,
+        executeAction
+    )
     return button :: TextButton
 end
 
@@ -3834,7 +3954,11 @@ local function hideFeatureTooltip(): ()
     state.featureTooltip.Visible = false
 end
 
+local COMPACT_FEATURE_CARDS: boolean = true
 local function addFeatureTooltip(feature: any, text: string): ()
+    if COMPACT_FEATURE_CARDS then
+        return
+    end
     feature.tooltipText = text
     if feature.tooltipBound then
         return
@@ -3926,6 +4050,7 @@ local flySmoothedVelocity: Vector3 = Vector3.zero
 local flyImpulseClock: number = 0
 local flyTeleportClock: number = 0
 local originalFlyPlatformStand: boolean? = nil
+local flyTouchVertical: number = 0
 
 local function removeFlyObjects(): ()
     local _, humanoid, root = getCharacterParts()
@@ -4045,10 +4170,12 @@ local function getFlyDirection(
     end
 
     local vertical: number = 0
-    if UserInputService:IsKeyDown(flySettings.upKey) then
+    if UserInputService:IsKeyDown(flySettings.upKey)
+        or flyTouchVertical > 0 then
         vertical = vertical + 1
     end
-    if UserInputService:IsKeyDown(flySettings.downKey) then
+    if UserInputService:IsKeyDown(flySettings.downKey)
+        or flyTouchVertical < 0 then
         vertical = vertical - 1
     end
 
@@ -4063,6 +4190,7 @@ local function toggleFly(enabled: boolean): ()
     flySmoothedVelocity = Vector3.zero
     flyImpulseClock = 0
     flyTeleportClock = 0
+    flyTouchVertical = 0
 
     if not enabled then
         return
@@ -5096,12 +5224,30 @@ end)
 addToggleOption(FlyFeature, "Face camera", flySettings.faceCamera, function(value)
     flySettings.faceCamera = value
 end)
-addKeyOption(FlyFeature, "Up key", flySettings.upKey, function(value)
+local FlyUpKeyButton: TextButton = addKeyOption(FlyFeature, "Up key", flySettings.upKey, function(value)
     flySettings.upKey = value
 end)
-addKeyOption(FlyFeature, "Down key", flySettings.downKey, function(value)
+local FlyDownKeyButton: TextButton = addKeyOption(FlyFeature, "Down key", flySettings.downKey, function(value)
     flySettings.downKey = value
 end)
+if state.bindMobileActionPlacement then
+    state.bindMobileActionPlacement(
+        FlyUpKeyButton,
+        "UniversalFlyUp",
+        "UP",
+        function(): ()
+            flyTouchVertical = flyTouchVertical == 1 and 0 or 1
+        end
+    )
+    state.bindMobileActionPlacement(
+        FlyDownKeyButton,
+        "UniversalFlyDown",
+        "DOWN",
+        function(): ()
+            flyTouchVertical = flyTouchVertical == -1 and 0 or -1
+        end
+    )
+end
 addFeatureTooltip(
     FlyFeature,
     "Velocity holds a smooth target speed. Impulse corrects speed with physics forces. "
@@ -6100,7 +6246,7 @@ MobileIconButton.BackgroundColor3 = UserInputService.TouchEnabled
 
 local mobileSizeRow, mobileSizeControl = createSettingRow(
     "Mobile action size",
-    "Circle size for placed Shoot and Grab Gun actions"
+    "Size for placed mobile shortcuts"
 )
 mobileSizeRow.LayoutOrder = 15
 mobileSizeRow.Visible = UserInputService.TouchEnabled
@@ -6113,7 +6259,7 @@ MobileSizeButton.Size = UDim2.fromScale(1, 1)
 
 local mobileResetRow, mobileResetControl = createSettingRow(
     "Mobile action buttons",
-    "Hold an action option to place; hold its circle to remove"
+    "Hold ADD to place; hold a shortcut to remove it"
 )
 mobileResetRow.LayoutOrder = 16
 mobileResetRow.Visible = UserInputService.TouchEnabled
@@ -6131,7 +6277,7 @@ local helpText = makeTextLabel(
             or GAME_CHECK.TRSActive and "TRS"
             or "Universal")
         .. (state.isMobile
-            and " | Hold Manual Shoot or Get Gun to place a touch action."
+            and " | Hold ADD on any function or action to place its shortcut."
             or " | Drag the header to move and any border to resize."),
     11
 )

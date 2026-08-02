@@ -1150,6 +1150,7 @@ end
 local sprintTrailObjects: {Instance} = {}
 local sprintSpeedOriginal: {[Humanoid]: number} =
     setmetatable({}, {__mode = "k"}) :: any
+local sprintTouchActive: boolean = false
 
 local function clearSprintTrail(): ()
     for _, object: Instance in ipairs(sprintTrailObjects) do
@@ -1207,6 +1208,7 @@ local function toggleSprint(enabled: boolean): ()
         end
     end
     sprintSpeedOriginal = setmetatable({}, {__mode = "k"}) :: any
+    sprintTouchActive = state.isMobile and enabled
 
     if not enabled then
         return
@@ -1226,7 +1228,8 @@ local function toggleSprint(enabled: boolean): ()
         local trail: Trail = ensureSprintTrail(root)
         local direction: Vector3 = humanoid.MoveDirection
         local sprinting: boolean =
-            UserInputService:IsKeyDown(Enum.KeyCode.LeftControl)
+            (sprintTouchActive
+                or UserInputService:IsKeyDown(Enum.KeyCode.LeftControl))
             and direction.Magnitude > 0.05
         trail.Enabled = sprinting
 
