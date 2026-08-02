@@ -1014,7 +1014,8 @@ local Main: Frame = (create("Frame", {
 
 do
 local _MainCorner: UICorner, MainStroke: UIStroke = addRoundedStyle(Main, 14, 0.2)
-MainStroke.Thickness = 1.2
+MainStroke.Thickness = 1
+MainStroke.Transparency = 0.34
 local MainStrokeGradient: UIGradient = Instance.new("UIGradient")
 MainStrokeGradient.Color = ColorSequence.new({
     ColorSequenceKeypoint.new(0, Theme.AccentViolet),
@@ -1056,6 +1057,10 @@ local _BackgroundShade: Frame = (create("Frame", {
     BorderSizePixel = 0,
     Size = UDim2.fromScale(1, 1),
 }) :: any) :: Frame
+create("UICorner", {
+    Parent = _BackgroundShade,
+    CornerRadius = UDim.new(0, 14),
+})
 
 -- The image remains empty until AssetManager resolves it asynchronously; the
 -- dark gradient is a complete fallback and never delays UI initialization.
@@ -1093,6 +1098,10 @@ local Header = create("Frame", {
     ZIndex = 15,
 })
 Header.ClipsDescendants = true
+create("UICorner", {
+    Parent = Header,
+    CornerRadius = UDim.new(0, 14),
+})
 
 do
 local HeaderGradient: UIGradient = Instance.new("UIGradient")
@@ -1107,16 +1116,20 @@ HeaderGradient.Rotation = 6
 HeaderGradient.Parent = Header
 
 BackgroundImage.Parent = Header
-BackgroundImage.ImageTransparency = 0.82
+BackgroundImage.ImageTransparency = 0.46
 BackgroundImage.ImageColor3 = Color3.fromRGB(205, 220, 255)
 BackgroundImage.Size = UDim2.fromScale(1, 1)
 BackgroundImage.ZIndex = 16
+create("UICorner", {
+    Parent = BackgroundImage,
+    CornerRadius = UDim.new(0, 14),
+})
 
 local AuroraFade: UIGradient = Instance.new("UIGradient")
 AuroraFade.Transparency = NumberSequence.new({
-    NumberSequenceKeypoint.new(0, 0.45),
-    NumberSequenceKeypoint.new(0.5, 0.72),
-    NumberSequenceKeypoint.new(1, 1),
+    NumberSequenceKeypoint.new(0, 0.08),
+    NumberSequenceKeypoint.new(0.5, 0.34),
+    NumberSequenceKeypoint.new(1, 0.78),
 })
 AuroraFade.Parent = BackgroundImage
 state.assetManager.loadAsync("aurora", BackgroundImage)
@@ -1219,6 +1232,10 @@ local Tabs = create("Frame", {
     Position = UDim2.fromOffset(0, 52),
     Size = UDim2.new(1, 0, 0, 44),
 })
+create("UICorner", {
+    Parent = Tabs,
+    CornerRadius = UDim.new(0, 11),
+})
 
 create("UIListLayout", {
     Parent = Tabs,
@@ -1236,6 +1253,11 @@ local Content = create("Frame", {
     BorderSizePixel = 0,
     Position = UDim2.fromOffset(0, 96),
     Size = UDim2.new(1, 0, 1, -96),
+})
+Content.ClipsDescendants = true
+create("UICorner", {
+    Parent = Content,
+    CornerRadius = UDim.new(0, 14),
 })
 
 local function setTab(tabName)
@@ -1315,6 +1337,11 @@ local function createTab(tabName, layoutOrder)
         Size = UDim2.fromScale(1, 1),
         Visible = false,
     })
+    page.ClipsDescendants = true
+    create("UICorner", {
+        Parent = page,
+        CornerRadius = UDim.new(0, 14),
+    })
     pages[tabName] = page
 
     button.MouseButton1Click:Connect(function()
@@ -1360,15 +1387,9 @@ SearchBox.TextXAlignment = Enum.TextXAlignment.Left
 SearchBox.ZIndex = 12
 create("UIPadding", {
     Parent = SearchBox,
-    PaddingLeft = UDim.new(0, 28),
+    PaddingLeft = UDim.new(0, 12),
     PaddingRight = UDim.new(0, 8),
 })
-local SearchIcon: TextLabel = (makeTextLabel(Main, "⌕", 16) :: any) :: TextLabel
-SearchIcon.Position = UDim2.new(0.8, 15, 0, 58)
-SearchIcon.Size = UDim2.fromOffset(18, 32)
-SearchIcon.TextColor3 = Theme.TextMuted
-SearchIcon.TextXAlignment = Enum.TextXAlignment.Center
-SearchIcon.ZIndex = 13
 
 local UniversalScroll = create("ScrollingFrame", {
     Parent = UniversalPage,
