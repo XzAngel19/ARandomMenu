@@ -26,8 +26,10 @@ jobs:
           test -f src/games/Universal.luau
           test -f src/games/MM2.luau
           test -f src/games/TRS.luau
+          test -f src/games/VD.luau
           test -f src/Profile/142823291.lua
           test -f src/Profile/14315258385.lua
+          test -f src/Profile/93978595733734.lua
           test -f src/gui/Current/gui.lua
           test -d src/gui/Current/Images
           test -f src/gui/Current/Images/menu-toggle.png
@@ -59,7 +61,7 @@ jobs:
       - name: Verify game module contracts
         shell: bash
         run: |
-          for file in src/games/Universal.luau src/games/MM2.luau src/games/TRS.luau; do
+          for file in src/games/Universal.luau src/games/MM2.luau src/games/TRS.luau src/games/VD.luau; do
             grep -q 'return Module' "$file"
             grep -q 'function Module.init' "$file"
             grep -q 'function Module.destroy' "$file"
