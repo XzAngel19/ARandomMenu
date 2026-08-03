@@ -19,6 +19,10 @@ type SoundState = {
     volume: number,
 }
 
+type CollisionState = {
+    canCollide: boolean,
+}
+
 local VD_KILLER_COLOR: Color3 = Color3.fromRGB(166, 110, 255)
 local VD_ALERT_COLOR: Color3 = Color3.fromRGB(255, 190, 88)
 
@@ -29,45 +33,64 @@ local function buildVDFeatures(): ()
         generatorDistance = 1800,
         generatorTransparency = 0.82,
         proximityRange = 150,
-        proximityScale = 1,
-        showFacing = true,
-        worldAuras = true,
-        survivorAuras = true,
-        killerAura = true,
         autoGeneratorRange = 18,
         autoGeneratorInterval = 0.12,
+        autoGeneratorAnimation = true,
+        autoGeneratorGetOff = "Manual",
+        autoGeneratorMode = "Legit",
         autoParryRange = 18,
         hitAuraRange = 12,
-        hitAuraInterval = 0.28,
+        hitAuraInterval = 0.72,
+        hitAuraMode = "Legit",
+        hitAuraRun = false,
+        hitAuraBlatantReach = 34,
         vaultRange = 7,
-        vaultAlignment = 0.35,
+        vaultSpeed = 5,
+        actionSpeed = 4,
+        damageBoost = 5,
+        damageBoostDuration = 1,
+        walkSpeed = 16,
         lockerRange = 45,
         fov = 85,
-        noBlindStrength = 1,
     }
     local runtime: any = {
         generatorMarkers = {} :: {[Model]: MarkerRecord},
-        auraMarkers = {} :: {[Instance]: MarkerRecord},
-        survivorMarkers = {} :: {[Player]: MarkerRecord},
-        killerMarkers = {} :: {[Player]: MarkerRecord},
+        playerMarkers = {} :: {[Player]: MarkerRecord},
+        lockerMarkers = {} :: {[Player]: MarkerRecord},
         generatorStates = {} :: {[Model]: string},
         lockerAlerts = {} :: {[Player]: number},
         proximityGui = nil :: ScreenGui?,
         cooldownGui = nil :: ScreenGui?,
         visualFolder = nil :: Folder?,
         currentRepairPoint = nil :: BasePart?,
-        autoGeneratorCancelled = false,
+        manualGeneratorBlocked = false,
+        manualGeneratorLeft = false,
+        manualGeneratorOrigin = nil :: Vector3?,
+        repairAnimation = nil :: AnimationTrack?,
+        repairAnimationObject = nil :: Animation?,
         lastRepairFire = 0,
         boundKillerAnimator = nil :: Animator?,
         lastParry = 0,
         lastHit = 0,
         lastVaultInput = 0,
+        lastVaultPoint = nil :: BasePart?,
+        killerBaseWalkSpeed = nil :: number?,
+        walkSpeedBase = nil :: number?,
+        damageBoostToken = 0,
+        damageBoostUntil = 0,
+        damageOriginalSpeed = nil :: number?,
+        trackedHumanoid = nil :: Humanoid?,
+        actionAnimator = nil :: Animator?,
+        selectiveCollisions = {} :: {[BasePart]: CollisionState},
         originalFov = nil :: number?,
         lighting = nil :: any,
         effectStates = {} :: {[Instance]: any},
         soundStates = {} :: {[Sound]: SoundState},
         soundConnections = {} :: {[Sound]: RBXScriptConnection},
         silentStepsEnabled = false,
+        cooldownModifierEnabled = false,
+        damageBoostEnabled = false,
+        walkSpeedEnabled = false,
     }
 
     local ReplicatedStorageService: ReplicatedStorage =
@@ -97,6 +120,11 @@ local function buildVDFeatures(): ()
         end
         local teamName: string = lower(team.Name)
         return teamName == "survivors" or teamName == "killer"
+    end
+
+    local function isLocalKiller(): boolean
+        local team: Team? = LocalPlayer.Team
+        return team ~= nil and lower(team.Name) == "killer"
     end
 
     local function isRoundActive(): boolean
@@ -361,7 +389,7 @@ local function buildVDFeatures(): ()
         label.Font = Enum.Font.GothamSemibold
         label.Position = UDim2.fromOffset(12, 4)
         label.Size = UDim2.new(1, -24, 0, 25)
-        label.Text = "KILLER: NO SIGNAL"
+        label.Text = "NEAREST SURVIVOR: NO SIGNAL"
         label.TextColor3 = Theme.TextMuted
         label.TextSize = 14
         label.TextXAlignment = Enum.TextXAlignment.Left
@@ -402,105 +430,46 @@ local function buildVDFeatures(): ()
         local label: TextLabel = panel:WaitForChild("Distance") :: TextLabel
         local bar: Frame = (panel:WaitForChild("Track") :: Frame):WaitForChild("Bar") :: Frame
         featureConnections.VDKillerProximity = TaskManager:Connect(function(): ()
-            if not isRoundActive() then
-                label.Text = "KILLER: NO SIGNAL"
+            if not isRoundActive() or not isLocalKiller() then
+                gui.Enabled = false
+                label.Text = "NEAREST SURVIVOR: NO SIGNAL"
                 label.TextColor3 = Theme.TextMuted
                 bar.Size = UDim2.fromScale(0, 1)
                 return
             end
+            gui.Enabled = true
             local localRoot: BasePart? = getRoot(LocalPlayer.Character)
-            local _, killer: Model? = getKiller()
-            local killerRoot: BasePart? = getRoot(killer)
-            if not localRoot or not killerRoot then
-                label.Text = "KILLER: NO SIGNAL"
+            local nearestDistance: number? = nil
+            if localRoot then
+                for _, player: Player in ipairs(Players:GetPlayers()) do
+                    local team: Team? = player.Team
+                    local targetRoot: BasePart? = getRoot(player.Character)
+                    if player ~= LocalPlayer
+                        and team ~= nil
+                        and lower(team.Name) == "survivors"
+                        and targetRoot ~= nil then
+                        local distance: number = (targetRoot.Position - localRoot.Position).Magnitude
+                        if nearestDistance == nil or distance < nearestDistance then
+                            nearestDistance = distance
+                        end
+                    end
+                end
+            end
+            if not nearestDistance then
+                label.Text = "NEAREST SURVIVOR: NO SIGNAL"
                 label.TextColor3 = Theme.TextMuted
                 bar.Size = UDim2.fromScale(0, 1)
                 return
             end
-            local distance: number = (killerRoot.Position - localRoot.Position).Magnitude
+            local distance: number = nearestDistance
             local color: Color3 = if distance <= 25
                 then VD_KILLER_COLOR
                 elseif distance <= 60 then Color3.fromRGB(244, 190, 88)
                 else Theme.Success
-            label.Text = string.format("KILLER: %.1f STUDS", distance)
+            label.Text = string.format("NEAREST SURVIVOR: %.1f STUDS", distance)
             label.TextColor3 = color
             bar.BackgroundColor3 = color
             bar.Size = UDim2.fromScale(1 - math.clamp(distance / settings.proximityRange, 0, 1), 1)
-        end)
-    end
-
-    local function worldCategory(instance: Instance): (string?, Color3?)
-        local name: string = lower(instance.Name)
-        if isGenerator(instance) then
-            return "GENERATOR", Theme.AccentCyan
-        elseif instance:IsA("Model") and contains(name, "pallet") then
-            return "PALLET", Color3.fromRGB(244, 190, 88)
-        elseif instance:IsA("BasePart") and name == "vaulttrigger" then
-            return "VAULT", Theme.AccentViolet
-        elseif instance:IsA("Model") and name == "hook" then
-            return "HOOK", VD_KILLER_COLOR
-        elseif (instance:IsA("Model") or instance:IsA("BasePart"))
-            and (contains(name, "locker") or contains(name, "wardrobe")) then
-            return "LOCKER", Theme.Success
-        elseif (instance:IsA("Model") or instance:IsA("BasePart"))
-            and contains(name, "chest") then
-            return "CHEST", Color3.fromRGB(244, 205, 92)
-        elseif (instance:IsA("Model") or instance:IsA("BasePart"))
-            and (contains(name, "exitgate") or name == "gate") then
-            return "EXIT", Color3.fromRGB(110, 235, 180)
-        end
-        return nil, nil
-    end
-
-    local function clearAuraMarkers(): ()
-        for target: Instance, record: MarkerRecord in pairs(runtime.auraMarkers) do
-            destroyMarker(record)
-            runtime.auraMarkers[target] = nil
-        end
-    end
-
-    local function toggleWorldAuras(enabled: boolean): ()
-        disconnectFeatureConnection("VDWorldAuras")
-        clearAuraMarkers()
-        if not enabled then
-            return
-        end
-        local elapsed: number = 1
-        featureConnections.VDWorldAuras = TaskManager:Connect(function(deltaTime: number): ()
-            elapsed += deltaTime
-            if elapsed < 0.8 then
-                return
-            end
-            elapsed = 0
-            local map: Instance? = getMap()
-            if not map then
-                clearAuraMarkers()
-                return
-            end
-            for _, descendant: Instance in ipairs(map:GetDescendants()) do
-                local category: string?, color: Color3? = worldCategory(descendant)
-                if category and color and not runtime.auraMarkers[descendant] then
-                    local root: BasePart? = if descendant:IsA("Model")
-                        then getRoot(descendant)
-                        elseif descendant:IsA("BasePart") then descendant
-                        else nil
-                    if root then
-                        runtime.auraMarkers[descendant] = createMarker(
-                            descendant,
-                            root,
-                            color,
-                            category,
-                            1200
-                        )
-                    end
-                end
-            end
-            for target: Instance, record: MarkerRecord in pairs(runtime.auraMarkers) do
-                if not target.Parent then
-                    destroyMarker(record)
-                    runtime.auraMarkers[target] = nil
-                end
-            end
         end)
     end
 
@@ -539,10 +508,8 @@ local function buildVDFeatures(): ()
         end
     end
 
-    local function updateRoleESP(
-        markers: {[Player]: MarkerRecord},
-        showKiller: boolean
-    ): ()
+    local function updatePlayersESP(): ()
+        local markers: {[Player]: MarkerRecord} = runtime.playerMarkers
         if not getMap() then
             clearPlayerMarkers(markers)
             return
@@ -553,12 +520,14 @@ local function buildVDFeatures(): ()
             local root: BasePart? = getRoot(character)
             local record: MarkerRecord? = markers[player]
             local killer: boolean = isKillerCharacter(character)
-            local expectedTeam: boolean = if showKiller
-                then killer
-                else player.Team ~= nil and lower((player.Team :: Team).Name) == "survivors"
+            local survivor: boolean = player.Team ~= nil
+                and lower((player.Team :: Team).Name) == "survivors"
+            local expectedRole: boolean = if isLocalKiller()
+                then survivor
+                else killer or survivor
             local valid: boolean = player ~= LocalPlayer
                 and isPlayerInRound(player)
-                and expectedTeam
+                and expectedRole
                 and character ~= nil
                 and root ~= nil
                 and character:IsDescendantOf(workspace)
@@ -568,7 +537,7 @@ local function buildVDFeatures(): ()
                     else 0
                 local status: string
                 local color: Color3
-                if showKiller then
+                if killer then
                     status = "KILLER"
                     color = VD_KILLER_COLOR
                 else
@@ -604,59 +573,20 @@ local function buildVDFeatures(): ()
         end
     end
 
-    local function toggleKillerESP(enabled: boolean): ()
-        disconnectFeatureConnection("VDKillerESP")
-        clearPlayerMarkers(runtime.killerMarkers)
+    local function togglePlayersESP(enabled: boolean): ()
+        disconnectFeatureConnection("VDPlayersESP")
+        clearPlayerMarkers(runtime.playerMarkers)
         if not enabled then
             return
         end
         local elapsed: number = 1
-        featureConnections.VDKillerESP = TaskManager:Connect(function(deltaTime: number): ()
+        featureConnections.VDPlayersESP = TaskManager:Connect(function(deltaTime: number): ()
             elapsed += deltaTime
             if elapsed >= 0.12 then
                 elapsed = 0
-                updateRoleESP(runtime.killerMarkers, true)
+                updatePlayersESP()
             end
         end)
-    end
-
-    local function toggleSurvivorESP(enabled: boolean): ()
-        disconnectFeatureConnection("VDSurvivorESP")
-        clearPlayerMarkers(runtime.survivorMarkers)
-        if not enabled then
-            return
-        end
-        local elapsed: number = 1
-        featureConnections.VDSurvivorESP = TaskManager:Connect(function(deltaTime: number): ()
-            elapsed += deltaTime
-            if elapsed >= 0.12 then
-                elapsed = 0
-                updateRoleESP(runtime.survivorMarkers, false)
-            end
-        end)
-    end
-
-    local function pressSpace(): boolean
-        local environment: any = getfenv()
-        if type(environment.keypress) == "function"
-            and type(environment.keyrelease) == "function" then
-            environment.keypress(0x20)
-            task.delay(0.035, function(): ()
-                environment.keyrelease(0x20)
-            end)
-            return true
-        end
-        local ok: boolean, virtualInput: any = pcall(function(): any
-            return game:GetService("VirtualInputManager")
-        end)
-        if ok and virtualInput then
-            virtualInput:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
-            task.delay(0.035, function(): ()
-                virtualInput:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
-            end)
-            return true
-        end
-        return false
     end
 
     local function findRemoteEvent(folderName: string, eventName: string): RemoteEvent?
@@ -700,9 +630,66 @@ local function buildVDFeatures(): ()
     local function stopCurrentRepair(repairRemote: RemoteEvent?): ()
         local point: BasePart? = runtime.currentRepairPoint
         runtime.currentRepairPoint = nil
+        local animationTrack: AnimationTrack? = runtime.repairAnimation
+        if animationTrack then
+            animationTrack:Stop(0.12)
+            runtime.repairAnimation = nil
+        end
+        if runtime.repairAnimationObject then
+            runtime.repairAnimationObject:Destroy()
+            runtime.repairAnimationObject = nil
+        end
         if repairRemote and point and point.Parent then
             repairRemote:FireServer(point, false)
         end
+    end
+
+    local function maintainRepairAnimation(): ()
+        if not settings.autoGeneratorAnimation then
+            local current: AnimationTrack? = runtime.repairAnimation
+            if current then
+                current:Stop(0.12)
+                runtime.repairAnimation = nil
+            end
+            return
+        end
+        local track: AnimationTrack? = runtime.repairAnimation
+        if track and track.IsPlaying then
+            return
+        end
+        local character: Model? = LocalPlayer.Character
+        local humanoid: Humanoid? = if character
+            then character:FindFirstChildOfClass("Humanoid")
+            else nil
+        local animator: Animator? = if humanoid
+            then humanoid:FindFirstChildOfClass("Animator")
+            else nil
+        if not animator then
+            return
+        end
+        local animation: Animation = Instance.new("Animation")
+        animation.Name = "RTM_VD_RepairCrouch"
+        animation.AnimationId = "rbxassetid://73650663675588"
+        local ok: boolean, loaded: any = pcall(function(): AnimationTrack
+            return animator:LoadAnimation(animation)
+        end)
+        if not ok or not loaded then
+            animation:Destroy()
+            return
+        end
+        track = loaded :: AnimationTrack
+        track.Looped = true
+        track.Priority = Enum.AnimationPriority.Action
+        track:Play(0.12, 1, 1)
+        runtime.repairAnimationObject = animation
+        runtime.repairAnimation = track
+    end
+
+    local function killerInsideCriticalRange(root: BasePart): boolean
+        local _, killer: Model? = getKiller()
+        local killerRoot: BasePart? = getRoot(killer)
+        return killerRoot ~= nil
+            and (killerRoot.Position - root.Position).Magnitude < 4
     end
 
     local function toggleAutoGeneratorAura(enabled: boolean): ()
@@ -710,7 +697,9 @@ local function buildVDFeatures(): ()
         disconnectFeatureConnection("VDAutoGeneratorCancel")
         local repairRemote: RemoteEvent? = findRemoteEvent("Generator", "RepairEvent")
         stopCurrentRepair(repairRemote)
-        runtime.autoGeneratorCancelled = false
+        runtime.manualGeneratorBlocked = false
+        runtime.manualGeneratorLeft = false
+        runtime.manualGeneratorOrigin = nil
         if not enabled then
             return
         end
@@ -719,18 +708,21 @@ local function buildVDFeatures(): ()
             input: InputObject,
             _gameProcessed: boolean
         ): ()
-            if input.KeyCode == Enum.KeyCode.Space then
-                runtime.autoGeneratorCancelled = true
+            if input.KeyCode == Enum.KeyCode.Space
+                and settings.autoGeneratorGetOff == "Manual" then
+                local currentPoint: BasePart? = runtime.currentRepairPoint
+                local root: BasePart? = getRoot(LocalPlayer.Character)
+                runtime.manualGeneratorBlocked = true
+                runtime.manualGeneratorLeft = false
+                runtime.manualGeneratorOrigin = if currentPoint
+                    then currentPoint.Position
+                    elseif root then root.Position
+                    else nil
                 stopCurrentRepair(repairRemote)
-                disconnectFeatureConnection("VDAutoGeneratorAura")
-                disconnectFeatureConnection("VDAutoGeneratorCancel")
-                notify("Auto Generator Aura cancelled by Space.")
+                notify("Auto Generator paused; move 5 studs away and return.")
             end
         end)
         featureConnections.VDAutoGeneratorAura = TaskManager:Connect(function(): ()
-            if runtime.autoGeneratorCancelled then
-                return
-            end
             local team: Team? = LocalPlayer.Team
             local root: BasePart? = getRoot(LocalPlayer.Character)
             if not isRoundActive()
@@ -740,12 +732,44 @@ local function buildVDFeatures(): ()
                 stopCurrentRepair(repairRemote)
                 return
             end
+            if settings.autoGeneratorGetOff == "Smart"
+                and killerInsideCriticalRange(root) then
+                stopCurrentRepair(repairRemote)
+                return
+            end
+            if settings.autoGeneratorGetOff == "Manual"
+                and runtime.manualGeneratorBlocked then
+                local origin: Vector3? = runtime.manualGeneratorOrigin
+                local originDistance: number = if origin
+                    then (root.Position - origin).Magnitude
+                    else 0
+                if not runtime.manualGeneratorLeft and originDistance >= 5 then
+                    runtime.manualGeneratorLeft = true
+                elseif runtime.manualGeneratorLeft
+                    and originDistance <= settings.autoGeneratorRange then
+                    runtime.manualGeneratorBlocked = false
+                    runtime.manualGeneratorLeft = false
+                    runtime.manualGeneratorOrigin = nil
+                else
+                    stopCurrentRepair(repairRemote)
+                    return
+                end
+            end
             local point: BasePart? = nearestGeneratorPoint(root)
             if point ~= runtime.currentRepairPoint then
                 stopCurrentRepair(repairRemote)
                 runtime.currentRepairPoint = point
             end
-            if point and os.clock() - runtime.lastRepairFire >= settings.autoGeneratorInterval then
+            if not point then
+                stopCurrentRepair(repairRemote)
+                return
+            end
+            maintainRepairAnimation()
+            if settings.autoGeneratorMode == "Blatant" then
+                for _burstIndex: number = 1, 8 do
+                    repairRemote:FireServer(point, true)
+                end
+            elseif os.clock() - runtime.lastRepairFire >= settings.autoGeneratorInterval then
                 runtime.lastRepairFire = os.clock()
                 repairRemote:FireServer(point, true)
             end
@@ -842,9 +866,9 @@ local function buildVDFeatures(): ()
         end)
     end
 
-    local function nearestSurvivor(root: BasePart): BasePart?
+    local function nearestSurvivor(root: BasePart, maximumRange: number): BasePart?
         local best: BasePart? = nil
-        local bestDistance: number = settings.hitAuraRange
+        local bestDistance: number = maximumRange
         for _, player: Player in ipairs(Players:GetPlayers()) do
             local character: Model? = player.Character
             local humanoid: Humanoid? = if character then character:FindFirstChildOfClass("Humanoid") else nil
@@ -868,36 +892,59 @@ local function buildVDFeatures(): ()
     local function toggleKillerHitAura(enabled: boolean): ()
         disconnectFeatureConnection("VDKillerHitAura")
         if not enabled then
+            local character: Model? = LocalPlayer.Character
+            local humanoid: Humanoid? = if character
+                then character:FindFirstChildOfClass("Humanoid")
+                else nil
+            if humanoid and runtime.killerBaseWalkSpeed and not runtime.walkSpeedEnabled then
+                humanoid.WalkSpeed = runtime.killerBaseWalkSpeed
+            end
+            runtime.killerBaseWalkSpeed = nil
             return
         end
         local attackRemote: RemoteEvent? = findRemoteEvent("Attacks", "BasicAttack")
         assert(attackRemote, "VD Remotes.Attacks.BasicAttack is unavailable")
         featureConnections.VDKillerHitAura = TaskManager:Connect(function(): ()
             local team: Team? = LocalPlayer.Team
+            local character: Model? = LocalPlayer.Character
             local localRoot: BasePart? = getRoot(LocalPlayer.Character)
+            local humanoid: Humanoid? = if character
+                then character:FindFirstChildOfClass("Humanoid")
+                else nil
             if not isRoundActive()
                 or not team
                 or lower(team.Name) ~= "killer"
                 or not localRoot
-                or os.clock() - runtime.lastHit < settings.hitAuraInterval then
+                or not humanoid then
                 return
             end
-            local target: BasePart? = nearestSurvivor(localRoot)
+            if runtime.killerBaseWalkSpeed == nil then
+                runtime.killerBaseWalkSpeed = humanoid.WalkSpeed
+            end
+            local preventSlowdown: boolean = settings.hitAuraMode == "Blatant"
+                or settings.hitAuraRun == true
+            if preventSlowdown then
+                humanoid.WalkSpeed = math.max(
+                    humanoid.WalkSpeed,
+                    runtime.killerBaseWalkSpeed :: number
+                )
+            end
+            local attackRange: number = if settings.hitAuraMode == "Blatant"
+                then settings.hitAuraBlatantReach
+                else settings.hitAuraRange
+            local target: BasePart? = nearestSurvivor(localRoot, attackRange)
             if not target then
                 return
             end
-            runtime.lastHit = os.clock()
-            local flatTarget: Vector3 = Vector3.new(
-                target.Position.X,
-                localRoot.Position.Y,
-                target.Position.Z
-            )
-            localRoot.CFrame = CFrame.lookAt(localRoot.Position, flatTarget)
-            local camera: Camera? = workspace.CurrentCamera
-            if camera then
-                camera.CFrame = CFrame.lookAt(camera.CFrame.Position, target.Position)
+            if settings.hitAuraMode == "Blatant" then
+                for _burstIndex: number = 1, 4 do
+                    attackRemote:FireServer()
+                end
+                runtime.lastHit = os.clock()
+            elseif os.clock() - runtime.lastHit >= settings.hitAuraInterval then
+                runtime.lastHit = os.clock()
+                attackRemote:FireServer()
             end
-            attackRemote:FireServer()
         end)
     end
 
@@ -998,6 +1045,15 @@ local function buildVDFeatures(): ()
         if not enabled then
             return
         end
+        local vaultRemote: RemoteEvent? = findRemoteEvent("Window", "VaultEvent")
+        local fastVaultRemote: RemoteEvent? = findRemoteEvent("Window", "fastvault")
+        local completePartRemote: RemoteEvent? = findRemoteEvent(
+            "Window",
+            "VaultCompleteEventpart1"
+        )
+        local completeRemote: RemoteEvent? = findRemoteEvent("Window", "VaultCompleteEvent")
+        assert(vaultRemote, "VD Remotes.Window.VaultEvent is unavailable")
+        local verifiedVaultRemote: RemoteEvent = vaultRemote :: RemoteEvent
         featureConnections.VDFastVault = TaskManager:Connect(function(): ()
             local character: Model? = LocalPlayer.Character
             local root: BasePart? = getRoot(character)
@@ -1009,12 +1065,26 @@ local function buildVDFeatures(): ()
             if not trigger then
                 return
             end
-            local target: Vector3 = Vector3.new(trigger.Position.X, root.Position.Y, trigger.Position.Z)
-            local desired: CFrame = CFrame.lookAt(root.Position, target)
-            root.CFrame = root.CFrame:Lerp(desired, settings.vaultAlignment)
-            if os.clock() - runtime.lastVaultInput > 0.65 then
+            local repeatDelay: number = math.max(0.08, 0.55 / settings.vaultSpeed)
+            if trigger ~= runtime.lastVaultPoint
+                or os.clock() - runtime.lastVaultInput > repeatDelay then
                 runtime.lastVaultInput = os.clock()
-                pressSpace()
+                runtime.lastVaultPoint = trigger
+                local destination: CFrame = trigger.CFrame * CFrame.new(0, 2, -1)
+                root.CFrame = root.CFrame:Lerp(
+                    destination,
+                    math.clamp(settings.vaultSpeed / 10, 0.25, 1)
+                )
+                verifiedVaultRemote:FireServer(trigger, true)
+                if fastVaultRemote then
+                    fastVaultRemote:FireServer(LocalPlayer)
+                end
+                if completePartRemote then
+                    completePartRemote:FireServer()
+                end
+                if completeRemote then
+                    completeRemote:FireServer(trigger, false)
+                end
             end
         end)
     end
@@ -1091,9 +1161,17 @@ local function buildVDFeatures(): ()
         return lockerValue ~= nil
     end
 
+    local function clearLockerMarkers(): ()
+        for player: Player, record: MarkerRecord in pairs(runtime.lockerMarkers) do
+            destroyMarker(record)
+            runtime.lockerMarkers[player] = nil
+        end
+    end
+
     local function toggleLockerDetector(enabled: boolean): ()
         disconnectFeatureConnection("VDLockerDetector")
         table.clear(runtime.lockerAlerts)
+        clearLockerMarkers()
         if not enabled then
             return
         end
@@ -1106,21 +1184,290 @@ local function buildVDFeatures(): ()
             elapsed = 0
             local localRoot: BasePart? = getRoot(LocalPlayer.Character)
             if not getMap() or not localRoot then
+                clearLockerMarkers()
                 return
             end
             for _, player: Player in ipairs(Players:GetPlayers()) do
                 local character: Model? = player.Character
                 local root: BasePart? = getRoot(character)
-                if player ~= LocalPlayer and character and root
+                local record: MarkerRecord? = runtime.lockerMarkers[player]
+                local hidingInRange: boolean = player ~= LocalPlayer and character ~= nil and root ~= nil
                     and not isKillerCharacter(character)
                     and isHiding(player, character)
-                    and (root.Position - localRoot.Position).Magnitude <= settings.lockerRange then
+                    and (root.Position - localRoot.Position).Magnitude <= settings.lockerRange
+                if hidingInRange and character and root then
+                    local distance: number = (root.Position - localRoot.Position).Magnitude
+                    local text: string = string.format(
+                        "HIDDEN PLAYER\n%s · %.0f STUDS",
+                        player.DisplayName,
+                        distance
+                    )
+                    if not record or record.highlight.Adornee ~= character then
+                        destroyMarker(record)
+                        record = createMarker(character, root, Theme.AccentCyan, text, 600)
+                        record.highlight.FillTransparency = 0.3
+                        record.highlight.OutlineTransparency = 0
+                        runtime.lockerMarkers[player] = record
+                    elseif record.label then
+                        record.label.Text = text
+                    end
                     local lastAlert: number = runtime.lockerAlerts[player] or 0
                     if os.clock() - lastAlert > 8 then
                         runtime.lockerAlerts[player] = os.clock()
                         notify(player.DisplayName .. " entered a nearby locker/hideout.")
                     end
+                elseif record then
+                    destroyMarker(record)
+                    runtime.lockerMarkers[player] = nil
                 end
+            end
+            for player: Player, record: MarkerRecord in pairs(runtime.lockerMarkers) do
+                if not player.Parent then
+                    destroyMarker(record)
+                    runtime.lockerMarkers[player] = nil
+                end
+            end
+        end)
+    end
+
+    local function isAcceleratedAction(track: AnimationTrack): boolean
+        local animation: Animation? = track.Animation
+        local descriptor: string = lower(track.Name)
+            .. " "
+            .. lower(if animation then animation.AnimationId else "")
+        for _, keyword: string in ipairs({
+            "vault", "pallet", "break", "hook", "unhook", "rescue",
+            "repair", "heal", "interact", "open", "lever", "pickup",
+        }) do
+            if contains(descriptor, keyword) then
+                return true
+            end
+        end
+        return track.Priority == Enum.AnimationPriority.Action
+            or track.Priority == Enum.AnimationPriority.Action2
+            or track.Priority == Enum.AnimationPriority.Action3
+            or track.Priority == Enum.AnimationPriority.Action4
+    end
+
+    local function bindActionAnimator(animator: Animator?): ()
+        if runtime.actionAnimator == animator then
+            return
+        end
+        disconnectFeatureConnection("VDCooldownAnimation")
+        runtime.actionAnimator = animator
+        if not animator then
+            return
+        end
+        featureConnections.VDCooldownAnimation = animator.AnimationPlayed:Connect(function(
+            track: AnimationTrack
+        ): ()
+            if runtime.cooldownModifierEnabled and isAcceleratedAction(track) then
+                track:AdjustSpeed(settings.actionSpeed)
+            end
+        end)
+        for _, track: AnimationTrack in ipairs(animator:GetPlayingAnimationTracks()) do
+            if isAcceleratedAction(track) then
+                track:AdjustSpeed(settings.actionSpeed)
+            end
+        end
+    end
+
+    local function toggleCooldownModifier(enabled: boolean): ()
+        disconnectFeatureConnection("VDCooldownModifier")
+        disconnectFeatureConnection("VDCooldownAnimation")
+        runtime.cooldownModifierEnabled = enabled
+        runtime.actionAnimator = nil
+        if not enabled then
+            local character: Model? = LocalPlayer.Character
+            local humanoid: Humanoid? = if character
+                then character:FindFirstChildOfClass("Humanoid")
+                else nil
+            local animator: Animator? = if humanoid
+                then humanoid:FindFirstChildOfClass("Animator")
+                else nil
+            if animator then
+                for _, track: AnimationTrack in ipairs(animator:GetPlayingAnimationTracks()) do
+                    if isAcceleratedAction(track) then
+                        track:AdjustSpeed(1)
+                    end
+                end
+            end
+            return
+        end
+        featureConnections.VDCooldownModifier = TaskManager:Connect(function(): ()
+            local character: Model? = LocalPlayer.Character
+            local humanoid: Humanoid? = if character
+                then character:FindFirstChildOfClass("Humanoid")
+                else nil
+            local animator: Animator? = if humanoid
+                then humanoid:FindFirstChildOfClass("Animator")
+                else nil
+            bindActionAnimator(animator)
+        end)
+    end
+
+    local function bindDamageHumanoid(humanoid: Humanoid?): ()
+        if runtime.trackedHumanoid == humanoid then
+            return
+        end
+        disconnectFeatureConnection("VDDamageHealth")
+        runtime.trackedHumanoid = humanoid
+        if not humanoid then
+            return
+        end
+        local previousHealth: number = humanoid.Health
+        featureConnections.VDDamageHealth = humanoid.HealthChanged:Connect(function(
+            health: number
+        ): ()
+            if runtime.damageBoostEnabled and health < previousHealth and health > 0 then
+                runtime.damageBoostToken += 1
+                local boostToken: number = runtime.damageBoostToken
+                local originalSpeed: number = humanoid.WalkSpeed
+                runtime.damageOriginalSpeed = originalSpeed
+                runtime.damageBoostUntil = os.clock() + settings.damageBoostDuration
+                humanoid.WalkSpeed = math.max(
+                    humanoid.WalkSpeed,
+                    originalSpeed + settings.damageBoost
+                )
+                task.delay(settings.damageBoostDuration, function(): ()
+                    if runtime.damageBoostEnabled
+                        and runtime.damageBoostToken == boostToken
+                        and humanoid.Parent
+                        and not runtime.walkSpeedEnabled then
+                        humanoid.WalkSpeed = originalSpeed
+                        runtime.damageOriginalSpeed = nil
+                    end
+                end)
+            end
+            previousHealth = health
+        end)
+    end
+
+    local function toggleDamageBoost(enabled: boolean): ()
+        disconnectFeatureConnection("VDDamageBoost")
+        disconnectFeatureConnection("VDDamageHealth")
+        runtime.damageBoostEnabled = enabled
+        runtime.trackedHumanoid = nil
+        runtime.damageBoostToken += 1
+        runtime.damageBoostUntil = 0
+        if not enabled then
+            local character: Model? = LocalPlayer.Character
+            local humanoid: Humanoid? = if character
+                then character:FindFirstChildOfClass("Humanoid")
+                else nil
+            if humanoid and runtime.damageOriginalSpeed and not runtime.walkSpeedEnabled then
+                humanoid.WalkSpeed = runtime.damageOriginalSpeed
+            end
+            runtime.damageOriginalSpeed = nil
+            return
+        end
+        featureConnections.VDDamageBoost = TaskManager:Connect(function(): ()
+            local character: Model? = LocalPlayer.Character
+            local humanoid: Humanoid? = if character
+                then character:FindFirstChildOfClass("Humanoid")
+                else nil
+            bindDamageHumanoid(humanoid)
+        end)
+    end
+
+    local function isSelectiveNoclipPart(part: BasePart): boolean
+        local cursor: Instance? = part
+        for _depth: number = 1, 4 do
+            if not cursor then
+                break
+            end
+            local name: string = lower(cursor.Name)
+            if contains(name, "pallet")
+                or contains(name, "vault")
+                or contains(name, "window") then
+                return true
+            end
+            if cursor:IsA("Model")
+                and cursor:FindFirstChild("VaultTrigger") ~= nil then
+                return true
+            end
+            cursor = cursor.Parent
+        end
+        return false
+    end
+
+    local function restoreSelectiveCollisions(): ()
+        for part: BasePart, original: CollisionState in pairs(runtime.selectiveCollisions) do
+            if part.Parent then
+                part.CanCollide = original.canCollide
+            end
+            runtime.selectiveCollisions[part] = nil
+        end
+    end
+
+    local function toggleSelectiveNoclip(enabled: boolean): ()
+        disconnectFeatureConnection("VDSelectiveNoclip")
+        restoreSelectiveCollisions()
+        if not enabled then
+            return
+        end
+        local elapsed: number = 1
+        featureConnections.VDSelectiveNoclip = TaskManager:Connect(function(
+            deltaTime: number
+        ): ()
+            elapsed += deltaTime
+            if elapsed < 0.35 then
+                return
+            end
+            elapsed = 0
+            local map: Instance? = getMap()
+            if not map then
+                restoreSelectiveCollisions()
+                return
+            end
+            for _, descendant: Instance in ipairs(map:GetDescendants()) do
+                if descendant:IsA("BasePart")
+                    and descendant.CanCollide
+                    and isSelectiveNoclipPart(descendant) then
+                    if not runtime.selectiveCollisions[descendant] then
+                        runtime.selectiveCollisions[descendant] = {
+                            canCollide = descendant.CanCollide,
+                        }
+                    end
+                    descendant.CanCollide = false
+                end
+            end
+            for part: BasePart, original: CollisionState in pairs(runtime.selectiveCollisions) do
+                if not part:IsDescendantOf(map) then
+                    if part.Parent then
+                        part.CanCollide = original.canCollide
+                    end
+                    runtime.selectiveCollisions[part] = nil
+                end
+            end
+        end)
+    end
+
+    local function toggleWalkSpeed(enabled: boolean): ()
+        disconnectFeatureConnection("VDWalkSpeed")
+        runtime.walkSpeedEnabled = enabled
+        local character: Model? = LocalPlayer.Character
+        local humanoid: Humanoid? = if character
+            then character:FindFirstChildOfClass("Humanoid")
+            else nil
+        if not enabled then
+            if humanoid and runtime.walkSpeedBase then
+                humanoid.WalkSpeed = runtime.walkSpeedBase
+            end
+            runtime.walkSpeedBase = nil
+            return
+        end
+        runtime.walkSpeedBase = if humanoid then humanoid.WalkSpeed else settings.walkSpeed
+        featureConnections.VDWalkSpeed = TaskManager:Connect(function(): ()
+            local currentCharacter: Model? = LocalPlayer.Character
+            local currentHumanoid: Humanoid? = if currentCharacter
+                then currentCharacter:FindFirstChildOfClass("Humanoid")
+                else nil
+            if currentHumanoid and isRoundActive() then
+                local activeBoost: number = if os.clock() < runtime.damageBoostUntil
+                    then settings.damageBoost
+                    else 0
+                currentHumanoid.WalkSpeed = settings.walkSpeed + activeBoost
             end
         end)
     end
@@ -1220,8 +1567,30 @@ local function buildVDFeatures(): ()
         end)
     end
 
+    local function suppressBlindEffect(effect: Instance): ()
+        local name: string = lower(effect.Name)
+        if not contains(name, "blind")
+            and not contains(name, "flash")
+            and not contains(name, "whiteout") then
+            return
+        end
+        if effect:IsA("PostEffect") then
+            if runtime.effectStates[effect] == nil then
+                runtime.effectStates[effect] = effect.Enabled
+            end
+            effect.Enabled = false
+        elseif effect:IsA("GuiObject") and effect ~= ScreenGui then
+            if runtime.effectStates[effect] == nil then
+                runtime.effectStates[effect] = effect.Visible
+            end
+            effect.Visible = false
+        end
+    end
+
     local function toggleNoBlind(enabled: boolean): ()
-        disconnectFeatureConnection("VDNoBlind")
+        disconnectFeatureConnection("VDNoBlindLighting")
+        disconnectFeatureConnection("VDNoBlindGui")
+        disconnectFeatureConnection("VDNoBlindGuard")
         if not enabled then
             for effect: Instance, original: any in pairs(runtime.effectStates) do
                 if effect.Parent then
@@ -1235,23 +1604,29 @@ local function buildVDFeatures(): ()
             end
             return
         end
-        featureConnections.VDNoBlind = TaskManager:Connect(function(): ()
-            for _, root: Instance in ipairs({Lighting, PlayerGui}) do
-                for _, descendant: Instance in ipairs(root:GetDescendants()) do
-                    local name: string = lower(descendant.Name)
-                    if contains(name, "blind") or contains(name, "flash") or contains(name, "stun") then
-                        if descendant:IsA("PostEffect") then
-                            if runtime.effectStates[descendant] == nil then
-                                runtime.effectStates[descendant] = descendant.Enabled
-                            end
-                            descendant.Enabled = false
-                        elseif descendant:IsA("GuiObject") and descendant ~= ScreenGui then
-                            if runtime.effectStates[descendant] == nil then
-                                runtime.effectStates[descendant] = descendant.Visible
-                            end
-                            descendant.Visible = false
-                        end
-                    end
+        for _, root: Instance in ipairs({Lighting, PlayerGui}) do
+            for _, descendant: Instance in ipairs(root:GetDescendants()) do
+                suppressBlindEffect(descendant)
+            end
+        end
+        featureConnections.VDNoBlindLighting = Lighting.DescendantAdded:Connect(function(
+            descendant: Instance
+        ): ()
+            suppressBlindEffect(descendant)
+        end)
+        featureConnections.VDNoBlindGui = PlayerGui.DescendantAdded:Connect(function(
+            descendant: Instance
+        ): ()
+            suppressBlindEffect(descendant)
+        end)
+        featureConnections.VDNoBlindGuard = TaskManager:Connect(function(): ()
+            for effect: Instance, _original: any in pairs(runtime.effectStates) do
+                if not effect.Parent then
+                    runtime.effectStates[effect] = nil
+                elseif effect:IsA("PostEffect") then
+                    effect.Enabled = false
+                elseif effect:IsA("GuiObject") then
+                    effect.Visible = false
                 end
             end
         end)
@@ -1286,10 +1661,18 @@ local function buildVDFeatures(): ()
         end)
     end
 
+    createUniversalFeature(
+        "Players ESP",
+        "Role-aware player ESP; Killer sees Survivors only, Survivors see both roles",
+        1,
+        togglePlayersESP,
+        {parent = state.vdScroll, registry = state.vdFeatures}
+    )
+
     local GeneratorFeature: any = createUniversalFeature(
         "Generator & Objective ESP",
-        "Highlight active match generators with exact progress, state and distance",
-        1,
+        "Highlight match generators with exact progress, state and distance",
+        2,
         toggleGeneratorESP,
         {parent = state.vdScroll, registry = state.vdFeatures}
     )
@@ -1301,43 +1684,47 @@ local function buildVDFeatures(): ()
     end)
     addInformationOption(
         GeneratorFeature,
-        "Only scans workspace.Map while your team is Survivors or Killer; Lobby and Spectator are ignored."
-    )
-
-    createUniversalFeature(
-        "Killer ESP",
-        "Highlight the active killer with a clean distance label outside the Lobby",
-        2,
-        toggleKillerESP,
-        {parent = state.vdScroll, registry = state.vdFeatures}
-    )
-
-    createUniversalFeature(
-        "Survivor ESP",
-        "Highlight active survivors with health, recovery state and distance",
-        3,
-        toggleSurvivorESP,
-        {parent = state.vdScroll, registry = state.vdFeatures}
+        "workspace.Map only; Lobby and Spectator objects are ignored."
     )
 
     local GeneratorAuraFeature: any = createUniversalFeature(
-        "Auto Generator Aura",
-        "Continuously fires RepairEvent on the nearest in-range generator point; Space cancels instantly",
-        4,
+        "Auto Generator",
+        "Automatically maintains the native RepairEvent on a nearby generator point",
+        3,
         toggleAutoGeneratorAura,
         {parent = state.vdScroll, registry = state.vdFeatures}
     )
+    addToggleOption(GeneratorAuraFeature, "Animation", true, function(value: boolean): ()
+        settings.autoGeneratorAnimation = value
+    end)
+    addCycleOption(GeneratorAuraFeature, "Get Off", {"Manual", "Smart"}, 1, function(value: string): ()
+        settings.autoGeneratorGetOff = value
+        runtime.manualGeneratorBlocked = false
+        runtime.manualGeneratorLeft = false
+        runtime.manualGeneratorOrigin = nil
+    end)
     addNumberOption(GeneratorAuraFeature, "Interaction range", 18, 5, 30, function(value: number): ()
         settings.autoGeneratorRange = math.max(1, value)
     end)
-    addNumberOption(GeneratorAuraFeature, "Remote interval", 0.12, 0.03, 0.5, function(value: number): ()
-        settings.autoGeneratorInterval = math.max(0.01, value)
+    local GeneratorIntervalOption: Frame = addNumberOption(
+        GeneratorAuraFeature,
+        "Legit interval",
+        0.12,
+        0.03,
+        0.5,
+        function(value: number): ()
+            settings.autoGeneratorInterval = math.max(0.01, value)
+        end
+    )
+    addCycleOption(GeneratorAuraFeature, "Mode", {"Legit", "Blatant"}, 1, function(value: string): ()
+        settings.autoGeneratorMode = value
+        setOptionVisible(GeneratorAuraFeature, GeneratorIntervalOption, value == "Legit")
     end)
 
     local AutoParryFeature: any = createUniversalFeature(
         "Auto Parry / Auto Block",
-        "Fire the dagger parry remote when an in-range killer attack animation starts",
-        5,
+        "Fire the dagger parry remote when an in-range Killer attack starts",
+        4,
         toggleAutoParry,
         {parent = state.vdScroll, registry = state.vdFeatures}
     )
@@ -1347,71 +1734,160 @@ local function buildVDFeatures(): ()
 
     local HitAuraFeature: any = createUniversalFeature(
         "Killer Hit Aura",
-        "Aim at and fire BasicAttack when a living survivor enters weapon range",
-        6,
+        "Trigger the native BasicAttack without forcing camera or character rotation",
+        5,
         toggleKillerHitAura,
         {parent = state.vdScroll, registry = state.vdFeatures}
     )
-    addNumberOption(HitAuraFeature, "Attack range", 12, 3, 30, function(value: number): ()
-        settings.hitAuraRange = math.max(1, value)
+    local HitRunButton: TextButton = addToggleOption(
+        HitAuraFeature,
+        "Run",
+        false,
+        function(value: boolean): ()
+            settings.hitAuraRun = value
+        end
+    )
+    local HitRangeOption: Frame = addNumberOption(
+        HitAuraFeature,
+        "Legit range",
+        12,
+        3,
+        18,
+        function(value: number): ()
+            settings.hitAuraRange = math.max(1, value)
+        end
+    )
+    local HitIntervalOption: Frame = addNumberOption(
+        HitAuraFeature,
+        "Legit cooldown",
+        0.72,
+        0.2,
+        1.5,
+        function(value: number): ()
+            settings.hitAuraInterval = math.max(0.05, value)
+        end
+    )
+    local BlatantReachOption: Frame = addNumberOption(
+        HitAuraFeature,
+        "Blatant reach",
+        34,
+        12,
+        60,
+        function(value: number): ()
+            settings.hitAuraBlatantReach = math.max(1, value)
+        end
+    )
+    addCycleOption(HitAuraFeature, "Mode", {"Legit", "Blatant"}, 1, function(value: string): ()
+        settings.hitAuraMode = value
+        local legit: boolean = value == "Legit"
+        setOptionVisible(HitAuraFeature, HitRunButton.Parent :: GuiObject, legit)
+        setOptionVisible(HitAuraFeature, HitRangeOption, legit)
+        setOptionVisible(HitAuraFeature, HitIntervalOption, legit)
+        setOptionVisible(HitAuraFeature, BlatantReachOption, not legit)
     end)
-    addNumberOption(HitAuraFeature, "Attack interval", 0.28, 0.05, 1, function(value: number): ()
-        settings.hitAuraInterval = math.max(0.03, value)
-    end)
-
-    createUniversalFeature(
-        "Silent Steps / Anti-Sound",
-        "Stop and mute local running, walking, sprint and footstep sounds as they appear",
-        7,
-        toggleSilentSteps,
-        {parent = state.vdScroll, registry = state.vdFeatures}
-    )
-
-    local ProximityFeature: any = createUniversalFeature(
-        "Killer Proximity Visualizer",
-        "Display exact killer distance with a color-changing danger meter",
-        8,
-        toggleProximity,
-        {parent = state.vdScroll, registry = state.vdFeatures}
-    )
-    addNumberOption(ProximityFeature, "Safe range", 150, 50, 400, function(value: number): ()
-        settings.proximityRange = value
-    end)
-
-    createUniversalFeature(
-        "Line of Sight ESP",
-        "Draw a lightweight facing vector from every active-round character",
-        9,
-        toggleFacingESP,
-        {parent = state.vdScroll, registry = state.vdFeatures}
-    )
-
-    createUniversalFeature(
-        "World Aura ESP",
-        "Highlight pallets, vaults, hooks, lockers, chests, gates and generators",
-        10,
-        toggleWorldAuras,
-        {parent = state.vdScroll, registry = state.vdFeatures}
-    )
 
     local VaultFeature: any = createUniversalFeature(
         "Fast Vault Optimizer",
-        "Align toward VD VaultTrigger parts and send the native vault input at close range",
-        11,
+        "Use VD's verified vault sequence and accelerate local alignment",
+        6,
         toggleFastVault,
         {parent = state.vdScroll, registry = state.vdFeatures}
     )
     addNumberOption(VaultFeature, "Activation range", 7, 3, 12, function(value: number): ()
         settings.vaultRange = value
     end)
-    addNumberOption(VaultFeature, "Alignment strength", 0.35, 0.05, 1, function(value: number): ()
-        settings.vaultAlignment = math.clamp(value, 0.05, 1)
+    addNumberOption(VaultFeature, "Vault speed", 5, 1, 10, function(value: number): ()
+        settings.vaultSpeed = math.clamp(value, 1, 10)
     end)
+
+    local ActionFeature: any = createUniversalFeature(
+        "Cooldown Modifier",
+        "Accelerate vault, pallet, break, rescue and interaction action tracks",
+        7,
+        toggleCooldownModifier,
+        {parent = state.vdScroll, registry = state.vdFeatures}
+    )
+    addNumberOption(ActionFeature, "Action speed", 4, 1, 10, function(value: number): ()
+        settings.actionSpeed = math.clamp(value, 1, 10)
+    end)
+
+    local DamageFeature: any = createUniversalFeature(
+        "Damage Boost",
+        "Apply an immediate configurable WalkSpeed burst after losing health",
+        8,
+        toggleDamageBoost,
+        {parent = state.vdScroll, registry = state.vdFeatures}
+    )
+    addNumberOption(DamageFeature, "Speed boost", 5, 1, 20, function(value: number): ()
+        settings.damageBoost = math.max(0, value)
+    end)
+    addNumberOption(DamageFeature, "Boost duration", 1, 0.1, 4, function(value: number): ()
+        settings.damageBoostDuration = math.max(0.05, value)
+    end)
+
+    createUniversalFeature(
+        "Noclip (Vaults & Pallets)",
+        "Disable collision only on vault/window and pallet descendants, never floors or walls",
+        9,
+        toggleSelectiveNoclip,
+        {parent = state.vdScroll, registry = state.vdFeatures}
+    )
+
+    local currentCharacter: Model? = LocalPlayer.Character
+    local currentHumanoid: Humanoid? = if currentCharacter
+        then currentCharacter:FindFirstChildOfClass("Humanoid")
+        else nil
+    local defaultWalkSpeed: number = if currentHumanoid then currentHumanoid.WalkSpeed else 16
+    settings.walkSpeed = defaultWalkSpeed
+    local WalkSpeedFeature: any = createUniversalFeature(
+        "WalkSpeed Hack",
+        "Maintain a configurable movement speed from the game's current base up to 50",
+        10,
+        toggleWalkSpeed,
+        {parent = state.vdScroll, registry = state.vdFeatures}
+    )
+    addNumberOption(WalkSpeedFeature, "WalkSpeed", defaultWalkSpeed, 1, 50, function(value: number): ()
+        settings.walkSpeed = math.clamp(value, 1, 50)
+    end)
+
+    createUniversalFeature(
+        "Silent Steps / Anti-Sound",
+        "Stop and mute local running, walking, sprint and footstep sounds as they appear",
+        11,
+        toggleSilentSteps,
+        {parent = state.vdScroll, registry = state.vdFeatures}
+    )
+
+    local ProximityFeature: any = createUniversalFeature(
+        "Killer Proximity Visualizer",
+        "Killer-only widget showing the nearest active Survivor distance",
+        12,
+        toggleProximity,
+        {parent = state.vdScroll, registry = state.vdFeatures}
+    )
+    addNumberOption(ProximityFeature, "Safe range", 150, 50, 400, function(value: number): ()
+        settings.proximityRange = value
+    end)
+    local function updateProximityFeatureVisibility(): ()
+        ProximityFeature.row.Visible = isLocalKiller()
+    end
+    updateProximityFeatureVisibility()
+    featureConnections.VDProximityVisibility = LocalPlayer:GetPropertyChangedSignal("Team"):Connect(
+        updateProximityFeatureVisibility
+    )
+
+    createUniversalFeature(
+        "Line of Sight ESP",
+        "Draw a lightweight facing vector from every active-round character",
+        13,
+        toggleFacingESP,
+        {parent = state.vdScroll, registry = state.vdFeatures}
+    )
 
     local LockerFeature: any = createUniversalFeature(
         "Locker & Hideout Detector",
-        "Notify when a replicated survivor hiding state appears nearby",
-        12,
+        "Show a bright through-wall marker and Toast for nearby hidden Survivors",
+        14,
         toggleLockerDetector,
         {parent = state.vdScroll, registry = state.vdFeatures}
     )
@@ -1421,8 +1897,8 @@ local function buildVDFeatures(): ()
 
     createUniversalFeature(
         "Killer Power Cooldowns",
-        "Show replicated killer power, charge and cooldown attributes in a compact widget",
-        13,
+        "Show replicated Killer power, charge and cooldown attributes",
+        15,
         toggleCooldownTracker,
         {parent = state.vdScroll, registry = state.vdFeatures}
     )
@@ -1430,7 +1906,7 @@ local function buildVDFeatures(): ()
     local FovFeature: any = createUniversalFeature(
         "VD Field of View",
         "Keep a wider camera view while VD replaces camera properties",
-        14,
+        16,
         toggleFov,
         {parent = state.vdScroll, registry = state.vdFeatures}
     )
@@ -1439,9 +1915,9 @@ local function buildVDFeatures(): ()
     end)
 
     createUniversalFeature(
-        "No Blind / Flash Protection",
-        "Suppress local blind, flashlight and stun overlays without touching server state",
-        15,
+        "Optimize Blind / Flash Protection",
+        "Disable local flashlight, blind and whiteout overlays as soon as they appear",
+        17,
         toggleNoBlind,
         {parent = state.vdScroll, registry = state.vdFeatures}
     )
@@ -1449,32 +1925,35 @@ local function buildVDFeatures(): ()
     createUniversalFeature(
         "VD Fullbright",
         "Remove local darkness, fog and shadows and restore them when disabled",
-        16,
+        18,
         toggleVDFullbright,
         {parent = state.vdScroll, registry = state.vdFeatures}
     )
 
     state.cleanupVDRuntime = function(): ()
+        disconnectFeatureConnection("VDProximityVisibility")
         toggleGeneratorESP(false)
-        toggleKillerESP(false)
-        toggleSurvivorESP(false)
+        togglePlayersESP(false)
         toggleAutoGeneratorAura(false)
         toggleAutoParry(false)
         toggleKillerHitAura(false)
+        toggleFastVault(false)
+        toggleCooldownModifier(false)
+        toggleDamageBoost(false)
+        toggleSelectiveNoclip(false)
+        toggleWalkSpeed(false)
         toggleSilentSteps(false)
         toggleProximity(false)
-        toggleWorldAuras(false)
         toggleFacingESP(false)
-        toggleFastVault(false)
         toggleLockerDetector(false)
         toggleCooldownTracker(false)
         toggleFov(false)
         toggleNoBlind(false)
         toggleVDFullbright(false)
         clearFacing()
-        clearAuraMarkers()
-        clearPlayerMarkers(runtime.killerMarkers)
-        clearPlayerMarkers(runtime.survivorMarkers)
+        clearLockerMarkers()
+        clearPlayerMarkers(runtime.playerMarkers)
+        restoreSelectiveCollisions()
         if runtime.visualFolder then
             runtime.visualFolder:Destroy()
             runtime.visualFolder = nil
