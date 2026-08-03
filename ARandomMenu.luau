@@ -6,7 +6,6 @@
     Default controls:
       - RightShift: show/hide the menu
       - Drag the blue title bar to move the menu
-      - Drag any border or corner to resize the menu
 ]]
 
 local function bootstrap(): ()
@@ -30,6 +29,9 @@ local RunService: RunService = cloneReference(game:GetService("RunService"))
 local HttpService: HttpService = cloneReference(game:GetService("HttpService"))
 local CollectionService: CollectionService = cloneReference(game:GetService("CollectionService"))
 local Stats: Stats = cloneReference(game:GetService("Stats"))
+local ContentProvider: ContentProvider = cloneReference(
+    game:GetService("ContentProvider")
+)
 
 local LocalPlayer: Player = Players.LocalPlayer :: Player
 local PlayerGui: PlayerGui = LocalPlayer:WaitForChild("PlayerGui") :: PlayerGui
@@ -65,27 +67,27 @@ local GAME_CHECK = {
 function GAME_CHECK.matches(identifier: number): boolean
     return game.PlaceId == identifier
 end
-local DEFAULT_HEADER_COLOR = Color3.fromRGB(105, 170, 255)
-local DEFAULT_MENU_COLOR = Color3.fromRGB(7, 10, 17)
-local DEFAULT_SURFACE_COLOR = Color3.fromRGB(15, 20, 30)
-local DEFAULT_BORDER_COLOR = Color3.fromRGB(45, 57, 77)
+local DEFAULT_HEADER_COLOR: Color3 = Color3.fromRGB(226, 226, 226)
+local DEFAULT_MENU_COLOR: Color3 = Color3.fromRGB(6, 6, 7)
+local DEFAULT_SURFACE_COLOR: Color3 = Color3.fromRGB(18, 18, 20)
+local DEFAULT_BORDER_COLOR: Color3 = Color3.fromRGB(82, 82, 86)
 
-local Theme = {
-    Background = Color3.fromRGB(7, 10, 17),
-    Surface = Color3.fromRGB(15, 20, 30),
-    SurfaceRaised = Color3.fromRGB(22, 28, 41),
-    SurfaceHover = Color3.fromRGB(28, 36, 52),
-    SurfacePressed = Color3.fromRGB(34, 43, 61),
-    Accent = Color3.fromRGB(105, 170, 255),
-    AccentCyan = Color3.fromRGB(92, 224, 229),
-    AccentViolet = Color3.fromRGB(151, 118, 255),
-    AccentPink = Color3.fromRGB(238, 132, 196),
-    AccentSoft = Color3.fromRGB(44, 76, 122),
-    Text = Color3.fromRGB(241, 245, 252),
-    TextMuted = Color3.fromRGB(148, 158, 177),
-    Outline = Color3.fromRGB(48, 59, 78),
-    Success = Color3.fromRGB(82, 211, 145),
-    Danger = Color3.fromRGB(242, 104, 116),
+local Theme: {[string]: Color3} = {
+    Background = Color3.fromRGB(6, 6, 7),
+    Surface = Color3.fromRGB(18, 18, 20),
+    SurfaceRaised = Color3.fromRGB(27, 27, 30),
+    SurfaceHover = Color3.fromRGB(35, 35, 38),
+    SurfacePressed = Color3.fromRGB(43, 43, 47),
+    Accent = Color3.fromRGB(226, 226, 226),
+    AccentCyan = Color3.fromRGB(232, 232, 234),
+    AccentViolet = Color3.fromRGB(196, 196, 200),
+    AccentPink = Color3.fromRGB(164, 164, 170),
+    AccentSoft = Color3.fromRGB(64, 64, 69),
+    Text = Color3.fromRGB(242, 242, 244),
+    TextMuted = Color3.fromRGB(164, 164, 169),
+    Outline = Color3.fromRGB(89, 89, 94),
+    Success = Color3.fromRGB(222, 222, 224),
+    Danger = Color3.fromRGB(202, 202, 205),
 }
 local MINIMUM_SIZE = Vector2.new(560, 350)
 local MAXIMUM_SIZE = Vector2.new(1100, 760)
@@ -211,7 +213,7 @@ ScreenGui.ResetOnSpawn = false
 ScreenGui.IgnoreGuiInset = true
 ScreenGui.DisplayOrder = 999999
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-ScreenGui:SetAttribute("BuildId", "0001-S15")
+ScreenGui:SetAttribute("BuildId", "0001-S17")
 
 local function parentScreenGui()
     if type(gethui) == "function" then
@@ -244,6 +246,15 @@ end
 
 parentScreenGui()
 
+local PopupLayer: Frame = Instance.new("Frame")
+PopupLayer.Name = "PopupLayer"
+PopupLayer.Active = false
+PopupLayer.BackgroundTransparency = 1
+PopupLayer.BorderSizePixel = 0
+PopupLayer.Size = UDim2.fromScale(1, 1)
+PopupLayer.ZIndex = 150
+PopupLayer.Parent = ScreenGui
+
 local Blur = Instance.new("BlurEffect")
 Blur.Name = BLUR_NAME
 Blur.Size = 0
@@ -258,13 +269,27 @@ if type(configData.ui.toggleKey) == "string" then
     end)
 end
 
+local lowPerformancePreference: boolean = configData.ui.lowPerformanceMode == true
 local state: any = {
     visible = true,
     isMobile = IS_MOBILE_DEVICE,
     blurEnabled = configData.ui.blurEnabled ~= false,
     largeText = configData.ui.largeText == true,
     mobileMenuButtonVisible = true,
-    animationsEnabled = configData.ui.animationsEnabled ~= false,
+    animationsEnabled = configData.ui.animationsEnabled ~= false
+        and not lowPerformancePreference,
+    animationPreference = configData.ui.animationsEnabled ~= false,
+    animatedBlossomsEnabled = configData.ui.animatedBlossomsEnabled ~= false,
+    reducedBlossomSpeed = configData.ui.reducedMotion == true
+        or configData.ui.reducedBlossomSpeed == true,
+    atmosphereEffectsEnabled = configData.ui.atmosphereEffectsEnabled ~= false,
+    backgroundOpacity = math.clamp(
+        tonumber(configData.ui.backgroundOpacity) or 0.24,
+        0.18,
+        0.32
+    ),
+    decorativeTexturesEnabled = configData.ui.decorativeTexturesEnabled ~= false,
+    lowPerformanceMode = lowPerformancePreference,
     mobileButtonSize = math.clamp(
         tonumber(configData.ui.mobileButtonSize) or 52,
         42,
@@ -288,6 +313,8 @@ type AssetDefinition = {
     url: string,
     fileName: string,
     fallback: string,
+    version: number?,
+    assetType: string?,
 }
 
 do
@@ -311,11 +338,173 @@ end
 local AssetManager: any = {
     cacheRoot = CONFIG_FOLDER,
     cacheFolder = CONFIG_FOLDER .. "/Assets",
+    resolved = {} :: {[string]: string},
+    resolving = {} :: {[string]: boolean},
     manifest = {
-        aurora = {
+        headerAnime = {
             url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Images/aurora-background.png",
-            fileName = "aurora-background-v3.png",
+                .. "src/gui/Current/Assets/Header/anime-header.jpg",
+            fileName = "anime-header-v1.jpg",
+            fallback = "",
+            version = 1,
+            assetType = "image/jpeg",
+        },
+        blossomSheet = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Animations/blossoms-spritesheet.png",
+            fileName = "blossoms-spritesheet-v2.png",
+            fallback = "",
+            version = 2,
+            assetType = "image/png",
+        },
+        titleLogo = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Typography/title-logo.png",
+            fileName = "title-logo-v1.png",
+            fallback = "",
+        },
+        particleSnow = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Particles/snow-dot.png",
+            fileName = "particle-snow-v1.png",
+            fallback = "",
+        },
+        particleStar = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Particles/emo-star.png",
+            fileName = "particle-star-v1.png",
+            fallback = "",
+        },
+        particleAsh = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Particles/ash-fragment.png",
+            fileName = "particle-ash-v1.png",
+            fallback = "",
+        },
+        particlePetal = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Particles/black-petal.png",
+            fileName = "particle-petal-v1.png",
+            fallback = "",
+        },
+        spikeLeft = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Decorations/spike-corner-left.png",
+            fileName = "spike-left-v1.png",
+            fallback = "",
+        },
+        spikeRight = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Decorations/spike-corner-right.png",
+            fileName = "spike-right-v1.png",
+            fallback = "",
+        },
+        chainDivider = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Decorations/chain-divider.png",
+            fileName = "chain-divider-v1.png",
+            fallback = "",
+        },
+        inkScratch = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Decorations/ink-scratch.png",
+            fileName = "ink-scratch-v1.png",
+            fallback = "",
+        },
+        crossSmall = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Decorations/cross-small.png",
+            fileName = "cross-small-v1.png",
+            fallback = "",
+        },
+        halftoneFade = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Decorations/halftone-fade.png",
+            fileName = "halftone-fade-v1.png",
+            fallback = "",
+        },
+        blossomBranch = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Blossoms/blossom_branch_wide.png",
+            fileName = "blossom-branch-v1.png",
+            fallback = "",
+        },
+        blossomCorner = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Blossoms/blossom_scatter_right.png",
+            fileName = "blossom-corner-v1.png",
+            fallback = "",
+        },
+        search = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Icons/search.png",
+            fileName = "icon-search-v1.png",
+            fallback = "",
+        },
+        settings = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Icons/settings.png",
+            fileName = "icon-settings-v1.png",
+            fallback = "",
+        },
+        home = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Icons/home.png",
+            fileName = "icon-home-v1.png",
+            fallback = "",
+        },
+        user = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Icons/user_large.png",
+            fileName = "icon-user-v1.png",
+            fallback = "",
+        },
+        target = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Icons/target_cross.png",
+            fileName = "icon-target-v1.png",
+            fallback = "",
+        },
+        visuals = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Icons/eye_visuals.png",
+            fileName = "icon-visuals-v1.png",
+            fallback = "",
+        },
+        shield = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Icons/shield.png",
+            fileName = "icon-shield-v1.png",
+            fallback = "",
+        },
+        bell = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Icons/bell.png",
+            fileName = "icon-bell-v1.png",
+            fallback = "",
+        },
+        warning = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Icons/warning.png",
+            fileName = "icon-warning-v1.png",
+            fallback = "",
+        },
+        arrowDown = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Arrows/arrow_down.png",
+            fileName = "arrow-down-v1.png",
+            fallback = "",
+        },
+        separator = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Decorations/separator_thin.png",
+            fileName = "separator-thin-v1.png",
+            fallback = "",
+        },
+        noticeFrame = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Frames/panel_notice.png",
+            fileName = "notice-frame-v1.png",
             fallback = "",
         },
         menuToggle = {
@@ -356,7 +545,11 @@ local function validateImageBytes(bytes: any): (boolean, string?)
         or string.find(prefix, "404: not found", 1, true) then
         return false, "la respuesta contiene HTML/404"
     end
-    if string.sub(bytes, 1, 8) ~= "\137PNG\r\n\26\n" then
+    local isPng: boolean = string.sub(bytes, 1, 8) == "\137PNG\r\n\26\n"
+    local isJpeg: boolean = string.byte(bytes, 1) == 0xFF
+        and string.byte(bytes, 2) == 0xD8
+        and string.byte(bytes, 3) == 0xFF
+    if not isPng and not isJpeg then
         return false, "firma PNG inválida"
     end
     return true, nil
@@ -400,7 +593,6 @@ function AssetManager.readVerifiedCache(path: string): (string?, string?)
         return nil, "isfile/readfile no están disponibles"
     end
     local checked: boolean, exists: any = pcall(isFile, path)
-    print("[RTM:Assets] isfile " .. path .. " = " .. tostring(checked and exists))
     if not checked or not exists then
         return nil, "archivo no encontrado"
     end
@@ -416,10 +608,9 @@ function AssetManager.readVerifiedCache(path: string): (string?, string?)
 end
 
 function AssetManager.download(definition: AssetDefinition): (string?, string?)
-    local requestFunction: any, requestName: string = selectHttpRequest()
-    print("[RTM:Assets] URL: " .. definition.url)
-    print("[RTM:Assets] HTTP seleccionado: " .. requestName)
+    local requestFunction: any, _requestName: string = selectHttpRequest()
 
+    local lastError: string = "sin respuesta"
     for attempt: number = 1, 3 do
         local requestOk: boolean, response: any
         if requestFunction then
@@ -449,14 +640,6 @@ function AssetManager.download(definition: AssetDefinition): (string?, string?)
                 ) or 0
                 bytes = response.Body or response.body or response.ResponseBody
             end
-            print(
-                "[RTM:Assets] intento="
-                    .. tostring(attempt)
-                    .. " status="
-                    .. tostring(statusCode)
-                    .. " bytes="
-                    .. tostring(type(bytes) == "string" and #bytes or 0)
-            )
             local valid: boolean, validationError: string? =
                 validateImageBytes(bytes)
             if statusCode >= 200 and statusCode < 300 and valid then
@@ -468,20 +651,22 @@ function AssetManager.download(definition: AssetDefinition): (string?, string?)
                 .. tostring(validationError)
         end
 
-        warn(
-            "[RTM:Assets] intento "
-                .. tostring(attempt)
-                .. " falló: "
-                .. tostring(response)
-        )
+        lastError = "intento "
+            .. tostring(attempt)
+            .. ": "
+            .. tostring(response)
         if attempt < 3 then
             task.wait(0.35 * attempt)
         end
     end
-    return nil, "descarga agotó tres intentos"
+    return nil, "descarga agotó tres intentos; " .. lastError
 end
 
 function AssetManager.resolve(logicalName: string): (string?, string?)
+    local alreadyResolved: string? = AssetManager.resolved[logicalName]
+    if alreadyResolved then
+        return alreadyResolved, nil
+    end
     local definition: AssetDefinition? = AssetManager.manifest[logicalName]
     if not definition then
         return nil, "asset desconocido: " .. logicalName
@@ -502,6 +687,19 @@ function AssetManager.resolve(logicalName: string): (string?, string?)
         return nil, folderError
     end
     local path: string = AssetManager.cacheFolder .. "/" .. definition.fileName
+    local waitTime: number = 0
+    while AssetManager.resolving[logicalName] and waitTime < 12 do
+        task.wait(0.05)
+        waitTime += 0.05
+    end
+    alreadyResolved = AssetManager.resolved[logicalName]
+    if alreadyResolved then
+        return alreadyResolved, nil
+    end
+    if AssetManager.resolving[logicalName] then
+        return nil, "tiempo de espera agotado para " .. logicalName
+    end
+    AssetManager.resolving[logicalName] = true
     local cachedBytes: string?, cacheError: string? =
         AssetManager.readVerifiedCache(path)
     if not cachedBytes then
@@ -509,25 +707,29 @@ function AssetManager.resolve(logicalName: string): (string?, string?)
         local downloaded: string?, downloadError: string? =
             AssetManager.download(definition)
         if not downloaded then
+            AssetManager.resolving[logicalName] = false
             return nil, downloadError
         end
-        print("[RTM:Assets] escribiendo " .. path)
         local written: boolean, writeError: any = pcall(writeFile, path, downloaded)
         if not written then
+            AssetManager.resolving[logicalName] = false
             return nil, "writefile: " .. tostring(writeError)
         end
         local verified: string?, verifyError: string? =
             AssetManager.readVerifiedCache(path)
         if not verified then
+            AssetManager.resolving[logicalName] = false
             return nil, "verificación posterior: " .. tostring(verifyError)
         end
     end
 
     local assetOk: boolean, assetId: any = pcall(assetFunction, path)
-    print("[RTM:Assets] getcustomasset(" .. path .. ") = " .. tostring(assetId))
     if not assetOk or type(assetId) ~= "string" or assetId == "" then
+        AssetManager.resolving[logicalName] = false
         return nil, "getcustomasset: " .. tostring(assetId)
     end
+    AssetManager.resolved[logicalName] = assetId
+    AssetManager.resolving[logicalName] = false
     return assetId, nil
 end
 
@@ -537,8 +739,18 @@ function AssetManager.loadAsync(logicalName: string, target: ImageLabel): ()
         local definition: AssetDefinition? = AssetManager.manifest[logicalName]
         if assetId and target.Parent then
             target.Image = assetId
-            print("[RTM:Assets] cargado " .. logicalName .. " -> " .. assetId)
-            return
+            if target.Image == assetId then
+                local preloadOk: boolean = pcall(function(): ()
+                    ContentProvider:PreloadAsync({target})
+                end)
+                if preloadOk and target.Parent and target.Image == assetId then
+                    target:SetAttribute("AssetLoaded", true)
+                    return
+                end
+                loadError = "PreloadAsync no pudo cargar el recurso asignado"
+            else
+                loadError = "la propiedad Image no conservo el asset asignado"
+            end
         end
         if target.Parent and definition then
             target.Image = definition.fallback
@@ -880,7 +1092,7 @@ local function makeTextBox(parent, defaultText)
 end
 
 local ToastContainer: Frame = (create("Frame", {
-    Parent = ScreenGui,
+    Parent = PopupLayer,
     Name = "ToastContainer",
     AnchorPoint = Vector2.new(1, 1),
     BackgroundTransparency = 1,
@@ -928,6 +1140,20 @@ local function notify(message: any): ()
         Transparency = 0.22,
         Thickness = 1,
     })
+    local toastFrame: ImageLabel = (create("ImageLabel", {
+        Parent = toast,
+        Name = "MangaNoticeFrame",
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Image = "",
+        ImageColor3 = Color3.fromRGB(220, 220, 222),
+        ImageTransparency = 0.56,
+        ScaleType = Enum.ScaleType.Slice,
+        SliceCenter = Rect.new(24, 20, 359, 58),
+        Size = UDim2.fromScale(1, 1),
+        ZIndex = 302,
+    }) :: any) :: ImageLabel
+    state.assetManager.loadAsync("noticeFrame", toastFrame)
 
     local accent: Frame = (create("Frame", {
         Parent = toast,
@@ -948,7 +1174,7 @@ local function notify(message: any): ()
     label.Size = UDim2.new(1, -28, 0, 36)
     label.TextColor3 = Theme.Text
     label.TextWrapped = true
-    label.ZIndex = 302
+    label.ZIndex = 303
 
     TweenService:Create(
         toast,
@@ -1001,14 +1227,12 @@ local Main: Frame = (create("Frame", {
     Position = UDim2.fromOffset(0, 0),
     Size = UDim2.fromOffset(
         math.clamp(
-            tonumber(configData.ui.windowSize and configData.ui.windowSize[1])
-                or defaultWindowWidth,
+            defaultWindowWidth,
             activeMinimumSize.X,
             math.min(MAXIMUM_SIZE.X, initialViewport.X)
         ),
         math.clamp(
-            tonumber(configData.ui.windowSize and configData.ui.windowSize[2])
-                or defaultWindowHeight,
+            defaultWindowHeight,
             activeMinimumSize.Y,
             math.min(MAXIMUM_SIZE.Y, initialViewport.Y)
         )
@@ -1016,15 +1240,16 @@ local Main: Frame = (create("Frame", {
 }) :: any) :: Frame
 
 do
-local _MainCorner: UICorner, MainStroke: UIStroke = addRoundedStyle(Main, 14, 0.2)
+local _MainCorner: UICorner, MainStroke: UIStroke = addRoundedStyle(Main, 20, 0.2)
 MainStroke.Thickness = 1
-MainStroke.Transparency = 0.34
+MainStroke.Color = Color3.fromRGB(205, 205, 208)
+MainStroke.Transparency = 0.48
 local MainStrokeGradient: UIGradient = Instance.new("UIGradient")
 MainStrokeGradient.Color = ColorSequence.new({
-    ColorSequenceKeypoint.new(0, Theme.AccentViolet),
-    ColorSequenceKeypoint.new(0.35, Theme.Accent),
-    ColorSequenceKeypoint.new(0.68, Theme.AccentCyan),
-    ColorSequenceKeypoint.new(1, Theme.AccentPink),
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(72, 72, 76)),
+    ColorSequenceKeypoint.new(0.32, Color3.fromRGB(218, 218, 220)),
+    ColorSequenceKeypoint.new(0.61, Color3.fromRGB(112, 112, 116)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(190, 190, 193)),
 })
 MainStrokeGradient.Rotation = 8
 MainStrokeGradient.Parent = MainStroke
@@ -1040,33 +1265,7 @@ if state.animationsEnabled then
 end
 end
 
-local BackgroundImage: ImageLabel = (create("ImageLabel", {
-    Parent = Main,
-    Name = "AuroraBackground",
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    Image = "",
-    ImageColor3 = Color3.fromRGB(178, 205, 230),
-    ImageTransparency = 0.43,
-    ScaleType = Enum.ScaleType.Crop,
-    Size = UDim2.fromScale(1, 1),
-}) :: any) :: ImageLabel
-
-local _BackgroundShade: Frame = (create("Frame", {
-    Parent = Main,
-    Name = "BackgroundShade",
-    BackgroundColor3 = Color3.fromRGB(10, 13, 20),
-    BackgroundTransparency = 0.28,
-    BorderSizePixel = 0,
-    Size = UDim2.fromScale(1, 1),
-}) :: any) :: Frame
-create("UICorner", {
-    Parent = _BackgroundShade,
-    CornerRadius = UDim.new(0, 14),
-})
-
--- The image remains empty until AssetManager resolves it asynchronously; the
--- dark gradient is a complete fallback and never delays UI initialization.
+local BlossomBackground: ImageLabel = nil :: any
 
 local function centerMain()
     local camera = workspace.CurrentCamera
@@ -1091,76 +1290,126 @@ task.defer(centerMain)
 
 local Header = create("Frame", {
     Parent = Main,
-    Name = "Header",
+    Name = "AnimeHeader",
     Active = true,
-    BackgroundColor3 = Color3.fromRGB(12, 17, 27),
-    BackgroundTransparency = 0.08,
+    BackgroundColor3 = Color3.fromRGB(7, 7, 8),
+    BackgroundTransparency = 0,
     BorderSizePixel = 0,
     Position = UDim2.fromOffset(0, 0),
-    Size = UDim2.new(1, 0, 0, 52),
+    Size = UDim2.new(1, 0, 0, 84),
     ZIndex = 15,
 })
 Header.ClipsDescendants = true
 create("UICorner", {
     Parent = Header,
-    CornerRadius = UDim.new(0, 14),
+    CornerRadius = UDim.new(0, 20),
 })
 
 do
-local HeaderGradient: UIGradient = Instance.new("UIGradient")
-HeaderGradient.Color = ColorSequence.new({
-    ColorSequenceKeypoint.new(0, Color3.fromRGB(21, 35, 60)),
-    ColorSequenceKeypoint.new(0.32, Color3.fromRGB(28, 71, 95)),
-    ColorSequenceKeypoint.new(0.66, Color3.fromRGB(66, 42, 96)),
-    ColorSequenceKeypoint.new(1, Color3.fromRGB(73, 35, 67)),
-})
-HeaderGradient.Offset = Vector2.new(-0.35, 0)
-HeaderGradient.Rotation = 6
-HeaderGradient.Parent = Header
-
-BackgroundImage.Parent = Header
-BackgroundImage.ImageTransparency = 0.46
-BackgroundImage.ImageColor3 = Color3.fromRGB(205, 220, 255)
-BackgroundImage.Size = UDim2.fromScale(1, 1)
-BackgroundImage.ZIndex = 16
+local HeaderImage: ImageLabel = (create("ImageLabel", {
+    Parent = Header,
+    Name = "AnimeHeaderImage",
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    Image = "",
+    ImageColor3 = Color3.fromRGB(225, 225, 228),
+    ImageTransparency = 0.12,
+    ScaleType = Enum.ScaleType.Crop,
+    Size = UDim2.fromScale(1, 1),
+    ZIndex = 16,
+}) :: any) :: ImageLabel
 create("UICorner", {
-    Parent = BackgroundImage,
-    CornerRadius = UDim.new(0, 14),
+    Parent = HeaderImage,
+    CornerRadius = UDim.new(0, 20),
 })
-
-local AuroraFade: UIGradient = Instance.new("UIGradient")
-AuroraFade.Transparency = NumberSequence.new({
-    NumberSequenceKeypoint.new(0, 0.08),
-    NumberSequenceKeypoint.new(0.5, 0.34),
-    NumberSequenceKeypoint.new(1, 0.78),
+local HeaderEdgeFade: UIGradient = Instance.new("UIGradient")
+HeaderEdgeFade.Transparency = NumberSequence.new({
+    NumberSequenceKeypoint.new(0, 0.82),
+    NumberSequenceKeypoint.new(0.12, 0.08),
+    NumberSequenceKeypoint.new(0.5, 0),
+    NumberSequenceKeypoint.new(0.88, 0.08),
+    NumberSequenceKeypoint.new(1, 0.82),
 })
-AuroraFade.Parent = BackgroundImage
-state.assetManager.loadAsync("aurora", BackgroundImage)
+HeaderEdgeFade.Parent = HeaderImage
+state.assetManager.loadAsync("headerAnime", HeaderImage)
 
-local Title = makeTextLabel(Header, "A random Testing Menu # 0001", 18)
-Title.Name = "Title"
-Title.Font = Enum.Font.GothamMedium
-Title.TextXAlignment = Enum.TextXAlignment.Center
-Title.Position = UDim2.fromOffset(10, 0)
-Title.Size = UDim2.new(1, -20, 1, 0)
-Title.TextColor3 = Color3.fromRGB(245, 248, 255)
-Title.TextStrokeColor3 = Color3.fromRGB(95, 132, 205)
-Title.TextStrokeTransparency = 0.82
-Title.ZIndex = 18
-
-local TitleGradient: UIGradient = Instance.new("UIGradient")
-TitleGradient.Color = ColorSequence.new({
-    ColorSequenceKeypoint.new(0, Color3.fromRGB(220, 229, 255)),
-    ColorSequenceKeypoint.new(0.3, Theme.AccentCyan),
-    ColorSequenceKeypoint.new(0.64, Theme.AccentViolet),
-    ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 205, 235)),
+local HeaderShade: Frame = (create("Frame", {
+    Parent = Header,
+    Name = "HeaderDarkOverlay",
+    BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+    BackgroundTransparency = 0.38,
+    BorderSizePixel = 0,
+    Size = UDim2.fromScale(1, 1),
+    ZIndex = 17,
+}) :: any) :: Frame
+create("UICorner", {
+    Parent = HeaderShade,
+    CornerRadius = UDim.new(0, 20),
 })
-TitleGradient.Offset = Vector2.new(-0.35, 0)
-TitleGradient.Parent = Title
+local HeaderShadeGradient: UIGradient = Instance.new("UIGradient")
+HeaderShadeGradient.Transparency = NumberSequence.new({
+    NumberSequenceKeypoint.new(0, 0.05),
+    NumberSequenceKeypoint.new(0.28, 0.48),
+    NumberSequenceKeypoint.new(0.72, 0.48),
+    NumberSequenceKeypoint.new(1, 0.05),
+})
+HeaderShadeGradient.Parent = HeaderShade
+
+local HeaderBlossoms: ImageLabel = (create("ImageLabel", {
+    Parent = Header,
+    Name = "HeaderBlossoms",
+    AnchorPoint = Vector2.new(1, 0),
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    Image = "",
+    ImageColor3 = Color3.fromRGB(235, 235, 237),
+    ImageTransparency = state.decorativeTexturesEnabled and 0.58 or 1,
+    Position = UDim2.new(1, 10, 0, -12),
+    ScaleType = Enum.ScaleType.Fit,
+    Size = UDim2.new(0.48, 0, 1, 20),
+    ZIndex = 18,
+}) :: any) :: ImageLabel
+state.assetManager.loadAsync("blossomBranch", HeaderBlossoms)
+state.decorativeObjects = {HeaderBlossoms} :: {GuiObject}
+
+local TitleFallback: TextLabel = makeTextLabel(
+    Header,
+    "A random Testing Menu #0001",
+    18
+) :: TextLabel
+TitleFallback.Name = "TitleFallback"
+TitleFallback.Font = Enum.Font.GothamMedium
+TitleFallback.TextXAlignment = Enum.TextXAlignment.Center
+TitleFallback.Position = UDim2.fromOffset(20, 0)
+TitleFallback.Size = UDim2.new(1, -40, 1, 0)
+TitleFallback.TextColor3 = Color3.fromRGB(242, 242, 244)
+TitleFallback.TextStrokeColor3 = Color3.fromRGB(255, 255, 255)
+TitleFallback.TextStrokeTransparency = 0.9
+TitleFallback.ZIndex = 19
+local Title: ImageLabel = create("ImageLabel", {
+    Parent = Header,
+    Name = "Title",
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    Image = "",
+    ImageColor3 = Color3.fromRGB(245, 245, 247),
+    ImageTransparency = 0.03,
+    Position = UDim2.fromScale(0.5, 0.5),
+    ScaleType = Enum.ScaleType.Fit,
+    Size = UDim2.new(0.72, 0, 0, 42),
+    ZIndex = 20,
+}) :: ImageLabel
+state.assetManager.loadAsync("titleLogo", Title)
+Title:GetPropertyChangedSignal("Image"):Once(function(): ()
+    if Title.Image ~= "" then
+        TitleFallback.Visible = false
+    end
+end)
 
 local HeaderSeparator: Frame = (create("Frame", {
     Parent = Header,
-    Name = "AuroraSeparator",
+    Name = "MangaSeparator",
     AnchorPoint = Vector2.new(0, 1),
     BackgroundColor3 = Color3.new(1, 1, 1),
     BorderSizePixel = 0,
@@ -1169,7 +1418,10 @@ local HeaderSeparator: Frame = (create("Frame", {
     ZIndex = 19,
 }) :: any) :: Frame
 local SeparatorGradient: UIGradient = Instance.new("UIGradient")
-SeparatorGradient.Color = TitleGradient.Color
+SeparatorGradient.Color = ColorSequence.new(
+    Color3.fromRGB(82, 82, 86),
+    Color3.fromRGB(232, 232, 234)
+)
 SeparatorGradient.Transparency = NumberSequence.new({
     NumberSequenceKeypoint.new(0, 1),
     NumberSequenceKeypoint.new(0.2, 0.25),
@@ -1178,66 +1430,22 @@ SeparatorGradient.Transparency = NumberSequence.new({
 })
 SeparatorGradient.Parent = HeaderSeparator
 
-local BorderLight: Frame = (create("Frame", {
-    Parent = HeaderSeparator,
-    Name = "BorderLight",
-    BackgroundColor3 = Color3.fromRGB(235, 250, 255),
-    BackgroundTransparency = 0.12,
-    BorderSizePixel = 0,
-    Position = UDim2.new(0, -28, 0, -1),
-    Size = UDim2.fromOffset(28, 2),
-    ZIndex = 20,
-}) :: any) :: Frame
-local BorderLightCorner: UICorner = Instance.new("UICorner")
-BorderLightCorner.CornerRadius = UDim.new(1, 0)
-BorderLightCorner.Parent = BorderLight
-local BorderLightGradient: UIGradient = Instance.new("UIGradient")
-BorderLightGradient.Color = TitleGradient.Color
-BorderLightGradient.Transparency = NumberSequence.new({
-    NumberSequenceKeypoint.new(0, 1),
-    NumberSequenceKeypoint.new(0.5, 0),
-    NumberSequenceKeypoint.new(1, 1),
-})
-BorderLightGradient.Parent = BorderLight
-
 state.decorativeTweens = {} :: {Tween}
-local titleAuroraTween: Tween = TweenService:Create(
-        TitleGradient,
-        TweenInfo.new(10, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-        {Offset = Vector2.new(0.35, 0)}
-    )
-local headerAuroraTween: Tween = TweenService:Create(
-        HeaderGradient,
-        TweenInfo.new(14, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-        {Offset = Vector2.new(0.25, 0)}
-    )
-local borderLightTween: Tween = TweenService:Create(
-    BorderLight,
-    TweenInfo.new(9, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, false),
-    {Position = UDim2.new(1, 0, 0, -1)}
-)
-table.insert(state.decorativeTweens, titleAuroraTween)
-table.insert(state.decorativeTweens, headerAuroraTween)
-table.insert(state.decorativeTweens, borderLightTween)
-if state.animationsEnabled then
-    titleAuroraTween:Play()
-    headerAuroraTween:Play()
-    borderLightTween:Play()
-end
 end
 
 local Tabs = create("Frame", {
     Parent = Main,
     Name = "Tabs",
-    BackgroundColor3 = Color3.fromRGB(11, 15, 24),
-    BackgroundTransparency = 0.08,
+    BackgroundColor3 = Color3.fromRGB(11, 11, 13),
+    BackgroundTransparency = 0.03,
     BorderSizePixel = 0,
-    Position = UDim2.fromOffset(0, 52),
-    Size = UDim2.new(1, 0, 0, 44),
+    Position = UDim2.fromOffset(0, 84),
+    Size = UDim2.new(1, 0, 0, 48),
+    ZIndex = 10,
 })
 create("UICorner", {
     Parent = Tabs,
-    CornerRadius = UDim.new(0, 11),
+    CornerRadius = UDim.new(0, 12),
 })
 
 create("UIListLayout", {
@@ -1251,16 +1459,52 @@ local Content = create("Frame", {
     Parent = Main,
     Name = "Content",
     BackgroundColor3 = state.menuColor,
-    BackgroundTransparency = 0.24,
+    BackgroundTransparency = 0.4,
     BorderColor3 = Color3.fromRGB(14, 14, 14),
     BorderSizePixel = 0,
-    Position = UDim2.fromOffset(0, 96),
-    Size = UDim2.new(1, 0, 1, -96),
+    Position = UDim2.fromOffset(0, 132),
+    Size = UDim2.new(1, 0, 1, -132),
+    ZIndex = 3,
 })
 Content.ClipsDescendants = true
 create("UICorner", {
     Parent = Content,
-    CornerRadius = UDim.new(0, 14),
+    CornerRadius = UDim.new(0, 20),
+})
+BlossomBackground = (create("ImageLabel", {
+    Parent = Content,
+    Name = "AnimatedPanelBackground",
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    Image = "",
+    ImageColor3 = Color3.fromRGB(224, 224, 228),
+    ImageRectOffset = Vector2.new(0, 0),
+    ImageRectSize = Vector2.new(600, 211),
+    ImageTransparency = 1 - state.backgroundOpacity,
+    Position = UDim2.fromScale(0, 0),
+    ScaleType = Enum.ScaleType.Crop,
+    Size = UDim2.fromScale(1, 1),
+    ZIndex = 4,
+}) :: any) :: ImageLabel
+create("UICorner", {
+    Parent = BlossomBackground,
+    CornerRadius = UDim.new(0, 20),
+})
+state.assetManager.loadAsync("blossomSheet", BlossomBackground)
+
+local PanelDarkOverlay: Frame = create("Frame", {
+    Parent = Content,
+    Name = "PanelDarkOverlay",
+    Active = false,
+    BackgroundColor3 = Color3.fromRGB(3, 3, 5),
+    BackgroundTransparency = 0.56,
+    BorderSizePixel = 0,
+    Size = UDim2.fromScale(1, 1),
+    ZIndex = 4,
+}) :: Frame
+create("UICorner", {
+    Parent = PanelDarkOverlay,
+    CornerRadius = UDim.new(0, 20),
 })
 
 local function setTab(tabName)
@@ -1290,6 +1534,13 @@ local function setTab(tabName)
         button.TextColor3 = selected
             and Color3.fromRGB(255, 255, 255)
             or Theme.TextMuted
+        local tabStroke: UIStroke? = button:FindFirstChild("StyleStroke") :: UIStroke?
+        if tabStroke then
+            tabStroke.Color = selected
+                and Color3.fromRGB(220, 220, 222)
+                or Theme.Outline
+            tabStroke.Transparency = selected and 0.2 or 0.58
+        end
         local indicator: Frame? = button:FindFirstChild("SelectionIndicator") :: Frame?
         if indicator then
             TweenService:Create(
@@ -1307,12 +1558,34 @@ local function createTab(tabName, layoutOrder)
     button.LayoutOrder = layoutOrder
     button.Size = UDim2.new(0.16, -4, 1, 0)
     button.BackgroundColor3 = Theme.Surface
+    button.TextSize = state.isMobile and 10 or 14
+    button.ZIndex = 11
     button:SetAttribute("SelectedColor", Theme.SurfaceRaised)
+    local tabIconName: string = tabName == "Universal" and "home"
+        or tabName == "Movement" and "user"
+        or tabName == "Config." and "settings"
+        or "target"
+    local tabIcon: ImageLabel = (create("ImageLabel", {
+        Parent = button,
+        Name = "TabIcon",
+        AnchorPoint = Vector2.new(0, 0.5),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Image = "",
+        ImageColor3 = Color3.fromRGB(210, 210, 212),
+        ImageTransparency = 0.2,
+        Position = UDim2.new(0, 7, 0.5, 0),
+        ScaleType = Enum.ScaleType.Fit,
+        Size = UDim2.fromOffset(15, 15),
+        Visible = not state.isMobile,
+        ZIndex = button.ZIndex + 1,
+    }) :: any) :: ImageLabel
+    state.assetManager.loadAsync(tabIconName, tabIcon)
     local indicator: Frame = (create("Frame", {
         Parent = button,
         Name = "SelectionIndicator",
         AnchorPoint = Vector2.new(0, 1),
-        BackgroundColor3 = Theme.AccentCyan,
+        BackgroundColor3 = Color3.fromRGB(235, 235, 237),
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
         Position = UDim2.new(0, 8, 1, -2),
@@ -1320,11 +1593,10 @@ local function createTab(tabName, layoutOrder)
         ZIndex = button.ZIndex + 1,
     }) :: any) :: Frame
     local indicatorGradient: UIGradient = Instance.new("UIGradient")
-    indicatorGradient.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Theme.AccentCyan),
-        ColorSequenceKeypoint.new(0.55, Theme.AccentViolet),
-        ColorSequenceKeypoint.new(1, Theme.AccentPink),
-    })
+    indicatorGradient.Color = ColorSequence.new(
+        Color3.fromRGB(100, 100, 104),
+        Color3.fromRGB(240, 240, 242)
+    )
     indicatorGradient.Parent = indicator
     local indicatorCorner: UICorner = Instance.new("UICorner")
     indicatorCorner.CornerRadius = UDim.new(1, 0)
@@ -1335,15 +1607,16 @@ local function createTab(tabName, layoutOrder)
         Parent = Content,
         Name = tabName .. "Page",
         BackgroundColor3 = state.menuColor,
-        BackgroundTransparency = 0.18,
+        BackgroundTransparency = 0.46,
         BorderSizePixel = 0,
         Size = UDim2.fromScale(1, 1),
         Visible = false,
+        ZIndex = 5,
     })
     page.ClipsDescendants = true
     create("UICorner", {
         Parent = page,
-        CornerRadius = UDim.new(0, 14),
+        CornerRadius = UDim.new(0, 20),
     })
     pages[tabName] = page
 
@@ -1360,6 +1633,7 @@ local MM2Page = createTab("MM2", 3)
 createTab("TRS", 4)
 createTab("VD", 5)
 local SettingsPage = createTab("Config.", 6)
+local tabAreaScale: number = state.isMobile and 0.65 or 0.78
 
 local function configureGameTabs()
     tabButtons.MM2.Visible = GAME_CHECK.MM2Active
@@ -1376,7 +1650,7 @@ local function configureGameTabs()
     if GAME_CHECK.VDActive then
         visibleCount = visibleCount + 1
     end
-    local tabWidth = 0.8 / visibleCount
+    local tabWidth: number = tabAreaScale / visibleCount
     for _, button in pairs(tabButtons) do
         if button.Visible then
             button.Size = UDim2.new(tabWidth, -4, 1, 0)
@@ -1388,16 +1662,118 @@ configureGameTabs()
 
 local SearchBox = makeTextBox(Main, "")
 SearchBox.Name = "Search"
-SearchBox.PlaceholderText = "Search modules..."
-SearchBox.Position = UDim2.new(0.8, 8, 0, 58)
-SearchBox.Size = UDim2.new(0.2, -16, 0, 32)
+SearchBox.PlaceholderText = state.isMobile and "Search..." or "Search modules..."
+SearchBox.Position = UDim2.new(tabAreaScale, 8, 0, 92)
+SearchBox.Size = UDim2.new(1 - tabAreaScale, -16, 0, 32)
 SearchBox.TextXAlignment = Enum.TextXAlignment.Left
 SearchBox.ZIndex = 12
 create("UIPadding", {
     Parent = SearchBox,
-    PaddingLeft = UDim.new(0, 12),
+    PaddingLeft = UDim.new(0, 34),
     PaddingRight = UDim.new(0, 8),
 })
+local SearchIcon: ImageLabel = (create("ImageLabel", {
+    Parent = Main,
+    Name = "SearchIcon",
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    Image = "",
+    ImageColor3 = Color3.fromRGB(218, 218, 220),
+    ImageTransparency = 0.08,
+    Position = UDim2.new(tabAreaScale, 16, 0, 98),
+    ScaleType = Enum.ScaleType.Fit,
+    Size = UDim2.fromOffset(20, 20),
+    ZIndex = 13,
+}) :: any) :: ImageLabel
+state.assetManager.loadAsync("search", SearchIcon)
+
+local ParticleOverlay: Frame = create("Frame", {
+    Parent = Main,
+    Name = "ParticleOverlay",
+    Active = false,
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    ClipsDescendants = true,
+    Size = UDim2.fromScale(1, 1),
+    ZIndex = 28,
+}) :: Frame
+create("UICorner", {
+    Parent = ParticleOverlay,
+    CornerRadius = UDim.new(0, 20),
+})
+
+do
+local EdgeDecorations: Frame = create("Frame", {
+    Parent = Main,
+    Name = "EdgeDecorations",
+    Active = false,
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    Size = UDim2.fromScale(1, 1),
+    ZIndex = 29,
+}) :: Frame
+local function makeEdgeDecoration(
+    name: string,
+    assetName: string,
+    position: UDim2,
+    size: UDim2,
+    anchorPoint: Vector2
+): ImageLabel
+    local decoration: ImageLabel = create("ImageLabel", {
+        Parent = EdgeDecorations,
+        Name = name,
+        Active = false,
+        AnchorPoint = anchorPoint,
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Image = "",
+        ImageColor3 = Color3.fromRGB(214, 216, 224),
+        ImageTransparency = 0.66,
+        Position = position,
+        ScaleType = Enum.ScaleType.Fit,
+        Size = size,
+        ZIndex = 29,
+    }) :: ImageLabel
+    state.assetManager.loadAsync(assetName, decoration)
+    table.insert(state.decorativeObjects, decoration)
+    return decoration
+end
+makeEdgeDecoration(
+    "SpikeCornerLeft",
+    "spikeLeft",
+    UDim2.new(0, -2, 1, 2),
+    UDim2.fromOffset(132, 92),
+    Vector2.new(0, 1)
+)
+makeEdgeDecoration(
+    "SpikeCornerRight",
+    "spikeRight",
+    UDim2.new(1, 2, 1, 2),
+    UDim2.fromOffset(132, 92),
+    Vector2.new(1, 1)
+)
+makeEdgeDecoration(
+    "ChainDivider",
+    "chainDivider",
+    UDim2.new(0.5, 0, 0, 130),
+    UDim2.new(0.62, 0, 0, 22),
+    Vector2.new(0.5, 0)
+)
+makeEdgeDecoration(
+    "InkScratch",
+    "inkScratch",
+    UDim2.new(0.5, 0, 1, -4),
+    UDim2.new(0.5, 0, 0, 38),
+    Vector2.new(0.5, 1)
+)
+makeEdgeDecoration(
+    "CrossSmall",
+    "crossSmall",
+    UDim2.new(1, -16, 0, 146),
+    UDim2.fromOffset(22, 22),
+    Vector2.new(1, 0)
+)
+end
 
 local UniversalScroll = create("ScrollingFrame", {
     Parent = UniversalPage,
@@ -1574,7 +1950,7 @@ local mobileActions: {[string]: MobileActionRecord} = {}
 local pendingMobilePlacement: PendingMobilePlacement? = nil
 
 local MobilePlacementOverlay: Frame = (create("Frame", {
-    Parent = ScreenGui,
+    Parent = PopupLayer,
     Name = "MobilePlacementOverlay",
     Active = true,
     BackgroundColor3 = Color3.fromRGB(5, 8, 14),
@@ -1693,8 +2069,8 @@ local function createMobileAction(
         Name = "MobileAction_" .. id:gsub("%W", ""),
         Active = true,
         AutoButtonColor = false,
-        BackgroundColor3 = state.headerColor,
-        BackgroundTransparency = 0.18,
+        BackgroundColor3 = Theme.SurfaceRaised,
+        BackgroundTransparency = 0.08,
         BorderSizePixel = 0,
         Font = Enum.Font.GothamBold,
         Position = UDim2.fromOffset(selectedPosition.X, selectedPosition.Y),
@@ -1708,13 +2084,13 @@ local function createMobileAction(
     }) :: TextButton
     create("UICorner", {
         Parent = button,
-        CornerRadius = UDim.new(1, 0),
+        CornerRadius = UDim.new(0, 12),
     })
     create("UIStroke", {
         Parent = button,
-        Color = Color3.fromRGB(225, 235, 255),
-        Transparency = 0.28,
-        Thickness = 1.5,
+        Color = Color3.fromRGB(215, 215, 218),
+        Transparency = 0.34,
+        Thickness = 1,
     })
     create("UITextSizeConstraint", {
         Parent = button,
@@ -1849,6 +2225,7 @@ local function beginMobileActionPlacement(
         .. "\nHOLD THE CIRCLE LATER TO REMOVE IT"
     MobilePlacementOverlay.Visible = true
     Main.Visible = false
+    state.updateBlossomAnimationState()
     Blur.Size = 0
 
     local placement: PendingMobilePlacement =
@@ -1862,6 +2239,7 @@ local function beginMobileActionPlacement(
                     state.setMenuVisible(true)
                 else
                     Main.Visible = true
+                    state.updateBlossomAnimationState()
                 end
             end
             notify("Mobile button placement cancelled.")
@@ -1890,6 +2268,7 @@ trackUiConnection(MobilePlacementOverlay.InputBegan:Connect(function(
             state.setMenuVisible(true)
         else
             Main.Visible = true
+            state.updateBlossomAnimationState()
         end
     end
     notify(placement.label .. " mobile button placed.")
@@ -1904,7 +2283,7 @@ local function bindMobileActionPlacement(
     if not state.isMobile then
         return
     end
-    source.Text = "HOLD TO PLACE"
+    source.Text = "ADD"
     local activeInput: InputObject? = nil
     local startPosition: Vector2 = Vector2.zero
     local holdToken: number = 0
@@ -1995,6 +2374,7 @@ trackUiConnection(MobileMenuButton.MouseButton1Click:Connect(function(): ()
     else
         state.visible = not state.visible
         Main.Visible = state.visible
+        state.updateBlossomAnimationState()
         setMobileActionVisibility(state.visible)
     end
 end))
@@ -2098,41 +2478,199 @@ TaskManager.connection = RunService.Heartbeat:Connect(function(
 end)
 
 state.taskManager = TaskManager
-local auroraParallaxClock: number = 0
-local auroraSlowFrames: number = 0
-state.auroraParallaxEnabled = true
-TaskManager:Connect(function(deltaTime: number): ()
-    if deltaTime > 0.045 then
-        auroraSlowFrames += 1
-    else
-        auroraSlowFrames = math.max(0, auroraSlowFrames - 1)
+do
+type AtmosphereParticle = {
+    image: ImageLabel,
+    active: boolean,
+    x: number,
+    y: number,
+    speed: number,
+    drift: number,
+    spin: number,
+    age: number,
+    lifetime: number,
+    baseTransparency: number,
+}
+local particleAssetNames: {string} = {
+    "particleSnow",
+    "particleStar",
+    "particleAsh",
+    "particlePetal",
+}
+local particlePool: {AtmosphereParticle} = {}
+local particlePoolSize: number = state.isMobile and 12 or 24
+for index: number = 1, particlePoolSize do
+    local particleImage: ImageLabel = create("ImageLabel", {
+        Parent = ParticleOverlay,
+        Name = "AtmosphereParticle" .. tostring(index),
+        Active = false,
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Image = "",
+        ImageColor3 = Color3.fromRGB(220, 222, 228),
+        ImageTransparency = 1,
+        ScaleType = Enum.ScaleType.Fit,
+        Size = UDim2.fromOffset(10, 10),
+        Visible = false,
+        ZIndex = 28,
+    }) :: ImageLabel
+    state.assetManager.loadAsync(
+        particleAssetNames[((index - 1) % #particleAssetNames) + 1],
+        particleImage
+    )
+    table.insert(particlePool, {
+        image = particleImage,
+        active = false,
+        x = 0,
+        y = 0,
+        speed = 0,
+        drift = 0,
+        spin = 0,
+        age = 0,
+        lifetime = 1,
+        baseTransparency = 0.5,
+    })
+end
+
+local visualMotionConnection: RBXScriptConnection? = nil
+local blossomFrame: number = 0
+local blossomElapsed: number = 0
+local atmosphereElapsed: number = 0
+local function resetAtmosphereParticles(): ()
+    for _, particle: AtmosphereParticle in ipairs(particlePool) do
+        particle.active = false
+        particle.image.Visible = false
+        particle.image.ImageTransparency = 1
     end
-    if auroraSlowFrames >= 18 and state.auroraParallaxEnabled then
-        state.auroraParallaxEnabled = false
-        warn("[RTM:UI] Parallax aurora desactivado por rendimiento")
+end
+
+local function spawnAtmosphereParticle(maximumActive: number): ()
+    local activeCount: number = 0
+    local available: AtmosphereParticle? = nil
+    for _, particle: AtmosphereParticle in ipairs(particlePool) do
+        if particle.active then
+            activeCount += 1
+        elseif available == nil then
+            available = particle
+        end
     end
-    if not state.animationsEnabled
-        or not state.auroraParallaxEnabled
-        or state.isMobile
-        or not BackgroundImage.Parent then
+    if activeCount >= maximumActive or available == nil then
         return
     end
-    auroraParallaxClock += deltaTime
-    if auroraParallaxClock < 0.08 then
+    local particle: AtmosphereParticle = available :: AtmosphereParticle
+    local size: number = math.random(5, state.isMobile and 12 or 15)
+    particle.active = true
+    particle.x = math.random()
+    particle.y = -0.04
+    particle.speed = math.random(24, 48)
+    particle.drift = math.random(-12, 12)
+    particle.spin = math.random(-34, 34)
+    particle.age = 0
+    particle.lifetime = math.random(55, 95) / 10
+    particle.baseTransparency = math.random(42, 72) / 100
+    particle.image.Size = UDim2.fromOffset(size, size)
+    particle.image.Rotation = math.random(0, 359)
+    particle.image.ImageTransparency = 1
+    particle.image.Visible = true
+end
+
+local function updateVisualMotionState(): ()
+    local backgroundShouldAnimate: boolean = state.visible
+        and Main.Visible
+        and state.animatedBlossomsEnabled
+        and not state.lowPerformanceMode
+        and BlossomBackground.Parent ~= nil
+    local atmosphereShouldAnimate: boolean = state.visible
+        and Main.Visible
+        and state.blurEnabled
+        and state.atmosphereEffectsEnabled
+    BlossomBackground.ImageTransparency = state.animatedBlossomsEnabled
+        and (1 - state.backgroundOpacity)
+        or 1
+    ParticleOverlay.Visible = atmosphereShouldAnimate
+    if not backgroundShouldAnimate then
+        blossomFrame = 0
+        blossomElapsed = 0
+        BlossomBackground.ImageRectOffset = Vector2.new(0, 0)
+    end
+    if not atmosphereShouldAnimate then
+        resetAtmosphereParticles()
+    end
+    if not backgroundShouldAnimate and not atmosphereShouldAnimate then
+        if visualMotionConnection then
+            visualMotionConnection:Disconnect()
+            visualMotionConnection = nil
+        end
         return
     end
-    auroraParallaxClock = 0
-    local camera: Camera? = workspace.CurrentCamera
-    if not camera then
-        return
+    if visualMotionConnection then
+        visualMotionConnection:Disconnect()
+        visualMotionConnection = nil
     end
-    local viewport: Vector2 = camera.ViewportSize
-    local pointer: Vector2 = UserInputService:GetMouseLocation()
-    local offsetX: number = ((pointer.X / math.max(viewport.X, 1)) - 0.5) * 6
-    local offsetY: number = ((pointer.Y / math.max(viewport.Y, 1)) - 0.5) * 3
-    BackgroundImage.Position = UDim2.fromOffset(-4 + offsetX, -2 + offsetY)
-    BackgroundImage.Size = UDim2.new(1, 8, 1, 4)
-end)
+    visualMotionConnection = RunService.Heartbeat:Connect(function(deltaTime: number): ()
+        if backgroundShouldAnimate then
+            blossomElapsed += deltaTime
+            local frameDuration: number = state.reducedBlossomSpeed and 0.26 or 0.13
+            if blossomElapsed >= frameDuration then
+                blossomElapsed %= frameDuration
+                blossomFrame = (blossomFrame + 1) % 25
+                BlossomBackground.ImageRectOffset = Vector2.new(
+                    (blossomFrame % 5) * 600,
+                    math.floor(blossomFrame / 5) * 211
+                )
+            end
+        end
+        if atmosphereShouldAnimate then
+            atmosphereElapsed += deltaTime
+            local spawnInterval: number = state.lowPerformanceMode and 1.6
+                or state.reducedBlossomSpeed and 0.9
+                or state.isMobile and 0.68
+                or 0.34
+            local maximumActive: number = state.lowPerformanceMode and 3
+                or state.isMobile and 9
+                or 18
+            if atmosphereElapsed >= spawnInterval then
+                atmosphereElapsed %= spawnInterval
+                spawnAtmosphereParticle(maximumActive)
+            end
+            local panelHeight: number = math.max(1, ParticleOverlay.AbsoluteSize.Y)
+            local motionScale: number = state.reducedBlossomSpeed and 0.55 or 1
+            for _, particle: AtmosphereParticle in ipairs(particlePool) do
+                if not particle.active then
+                    continue
+                end
+                particle.age += deltaTime
+                particle.y += (particle.speed * motionScale * deltaTime) / panelHeight
+                particle.x += (particle.drift * motionScale * deltaTime)
+                    / math.max(1, ParticleOverlay.AbsoluteSize.X)
+                particle.image.Position = UDim2.fromScale(particle.x, particle.y)
+                particle.image.Rotation += particle.spin * deltaTime * motionScale
+                local lifeAlpha: number = math.min(
+                    math.clamp(particle.age / 0.55, 0, 1),
+                    math.clamp((particle.lifetime - particle.age) / 0.8, 0, 1)
+                )
+                particle.image.ImageTransparency = 1
+                    - ((1 - particle.baseTransparency) * lifeAlpha)
+                if particle.age >= particle.lifetime or particle.y > 1.06 then
+                    particle.active = false
+                    particle.image.Visible = false
+                end
+            end
+        end
+    end)
+end
+state.updateBlossomAnimationState = updateVisualMotionState
+state.updateVisualMotionState = updateVisualMotionState
+state.cleanupVisualMotion = function(): ()
+    if visualMotionConnection then
+        visualMotionConnection:Disconnect()
+        visualMotionConnection = nil
+    end
+    resetAtmosphereParticles()
+end
+updateVisualMotionState()
+end
 
 local function disconnectFeatureConnection(name)
     local connection = featureConnections[name]
@@ -2230,7 +2768,7 @@ local function getFeatureCardParent(container: Instance): Instance
             local layout: UIListLayout = Instance.new("UIListLayout")
             layout.FillDirection = Enum.FillDirection.Vertical
             layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-            layout.Padding = UDim.new(0, 10)
+            layout.Padding = UDim.new(0, 7)
             layout.SortOrder = Enum.SortOrder.LayoutOrder
             layout.Parent = column
             layouts[columnIndex] = layout
@@ -2280,9 +2818,10 @@ local function setSwitchVisual(
 ): ()
     button:SetAttribute("Selected", enabled)
     local targetColor: Color3 = enabled and state.headerColor or Theme.SurfaceRaised
+    local knobSize: number = state.isMobile and 18 or 16
     local knobPosition: UDim2 = enabled
-        and UDim2.new(1, -23, 0.5, -9)
-        or UDim2.new(0, 5, 0.5, -9)
+        and UDim2.new(1, -(knobSize + 4), 0.5, -math.floor(knobSize / 2))
+        or UDim2.new(0, 4, 0.5, -math.floor(knobSize / 2))
     if animate then
         TweenService:Create(
             button,
@@ -2307,7 +2846,7 @@ end
 local function createSwitch(parent: Instance, enabled: boolean): (TextButton, Frame)
     local button: TextButton = (makeButton(parent, "", 1) :: any) :: TextButton
     button.AutoButtonColor = false
-    button.Size = UDim2.fromOffset(state.isMobile and 58 or 48, state.isMobile and 34 or 28)
+    button.Size = UDim2.fromOffset(state.isMobile and 46 or 42, state.isMobile and 28 or 24)
     local switchCorner: UICorner? = button:FindFirstChild("StyleCorner") :: UICorner?
     if switchCorner then
         switchCorner.CornerRadius = UDim.new(1, 0)
@@ -2317,7 +2856,7 @@ local function createSwitch(parent: Instance, enabled: boolean): (TextButton, Fr
         switchStroke.Transparency = 0.3
     end
 
-    local knobSize: number = state.isMobile and 22 or 18
+    local knobSize: number = state.isMobile and 18 or 16
     local knob: Frame = (create("Frame", {
         Parent = button,
         Name = "Knob",
@@ -2416,6 +2955,116 @@ local function runActionButton(
     end)
 end
 
+local function selectFeatureIcon(name: string, description: string): string
+    local searchable: string = string.lower(name .. " " .. description)
+    if string.find(searchable, "visual", 1, true)
+        or string.find(searchable, "esp", 1, true)
+        or string.find(searchable, "cham", 1, true) then
+        return "visuals"
+    end
+    if string.find(searchable, "target", 1, true)
+        or string.find(searchable, "aim", 1, true)
+        or string.find(searchable, "shoot", 1, true)
+        or string.find(searchable, "gun", 1, true) then
+        return "target"
+    end
+    if string.find(searchable, "player", 1, true)
+        or string.find(searchable, "friend", 1, true)
+        or string.find(searchable, "character", 1, true) then
+        return "user"
+    end
+    if string.find(searchable, "protect", 1, true)
+        or string.find(searchable, "anti", 1, true)
+        or string.find(searchable, "shield", 1, true) then
+        return "shield"
+    end
+    if string.find(searchable, "notify", 1, true)
+        or string.find(searchable, "alert", 1, true) then
+        return "bell"
+    end
+    if string.find(searchable, "warning", 1, true)
+        or string.find(searchable, "error", 1, true)
+        or string.find(searchable, "danger", 1, true) then
+        return "warning"
+    end
+    return "settings"
+end
+
+local function compactShortcutLabel(label: string): string
+    local compact: string = string.upper(label:gsub("[^%w]", ""))
+    if compact == "" then
+        return "ACT"
+    end
+    return string.sub(compact, 1, 6)
+end
+
+local function bindActionShortcut(
+    button: TextButton,
+    shortcutId: string,
+    label: string,
+    callback: () -> ()
+): ()
+    local optionKey: string = "Shortcut." .. shortcutId:gsub("%W", "")
+    local shortcutKey: Enum.KeyCode = Enum.KeyCode.Unknown
+    local savedName: any = configData.values[optionKey]
+    if type(savedName) == "string" and savedName ~= "" then
+        local savedKey: Enum.KeyCode? = Enum.KeyCode[savedName]
+        if savedKey then
+            shortcutKey = savedKey
+        end
+    end
+
+    local function refreshButtonText(): ()
+        if state.isMobile then
+            button.Text = "ADD"
+        else
+            button.Text = shortcutKey == Enum.KeyCode.Unknown
+                and "KEY"
+                or shortcutKey.Name
+        end
+    end
+
+    refreshButtonText()
+    if state.isMobile then
+        if state.bindMobileActionPlacement then
+            state.bindMobileActionPlacement(
+                button,
+                "Shortcut" .. shortcutId:gsub("%W", ""),
+                compactShortcutLabel(label),
+                callback
+            )
+        end
+        return
+    end
+
+    trackUiConnection(button.MouseButton1Click:Connect(function(): ()
+        button.Text = "..."
+        button.BackgroundColor3 = Theme.SurfacePressed
+        state.keyCaptureCallback = function(keyCode: Enum.KeyCode): ()
+            shortcutKey = keyCode
+            button.BackgroundColor3 = Theme.SurfaceRaised
+            configData.values[optionKey] = keyCode.Name
+            queueConfigSave()
+            refreshButtonText()
+        end
+    end))
+    trackUiConnection(UserInputService.InputBegan:Connect(function(
+        input: InputObject,
+        gameProcessed: boolean
+    ): ()
+        if gameProcessed
+            or shortcutKey == Enum.KeyCode.Unknown
+            or state.keyCaptureCallback
+            or UserInputService:GetFocusedTextBox() then
+            return
+        end
+        if input.UserInputType == Enum.UserInputType.Keyboard
+            and input.KeyCode == shortcutKey then
+            task.spawn(callback)
+        end
+    end))
+end
+
 local function createUniversalFeature(
     name: string,
     description: string,
@@ -2443,7 +3092,7 @@ local function createUniversalFeature(
         isCategory = configuration.category == true,
         optionCount = 0,
         optionRows = {},
-        collapsedHeight = state.isMobile and 86 or 76,
+        collapsedHeight = state.isMobile and 56 or 52,
         onToggle = onToggle,
         configKey = configKey,
         sectionName = sectionName,
@@ -2466,7 +3115,7 @@ local function createUniversalFeature(
     feature.row = row
     create("UICorner", {
         Parent = row,
-        CornerRadius = UDim.new(0, 10),
+        CornerRadius = UDim.new(0, 12),
     })
     local cardStroke: UIStroke = (create("UIStroke", {
         Parent = row,
@@ -2478,12 +3127,12 @@ local function createUniversalFeature(
 
     local activeStripe: Frame = (create("Frame", {
         Parent = row,
-        Name = "AuroraActiveStripe",
-        BackgroundColor3 = Theme.AccentCyan,
+        Name = "MangaActiveStripe",
+        BackgroundColor3 = Color3.fromRGB(228, 228, 230),
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
-        Position = UDim2.fromOffset(0, 10),
-        Size = UDim2.new(0, 3, 1, -20),
+        Position = UDim2.fromOffset(0, 7),
+        Size = UDim2.new(0, 3, 1, -14),
         ZIndex = 3,
     }) :: any) :: Frame
     local stripeCorner: UICorner = Instance.new("UICorner")
@@ -2491,36 +3140,52 @@ local function createUniversalFeature(
     stripeCorner.Parent = activeStripe
     local stripeGradient: UIGradient = Instance.new("UIGradient")
     stripeGradient.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Theme.AccentCyan),
-        ColorSequenceKeypoint.new(0.55, Theme.AccentViolet),
-        ColorSequenceKeypoint.new(1, Theme.AccentPink),
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(92, 92, 96)),
+        ColorSequenceKeypoint.new(0.55, Color3.fromRGB(238, 238, 240)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(128, 128, 132)),
     })
     stripeGradient.Rotation = 90
     stripeGradient.Parent = activeStripe
     feature.activeStripe = activeStripe
 
-    local title: TextLabel = (makeTextLabel(row, name, 14) :: any) :: TextLabel
-    title.Font = Enum.Font.GothamBold
-    title.Position = UDim2.fromOffset(14, 9)
-    title.Size = UDim2.new(1, -112, 0, 24)
+    local featureIcon: ImageLabel = (create("ImageLabel", {
+        Parent = row,
+        Name = "FeatureIcon",
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Image = "",
+        ImageColor3 = Color3.fromRGB(218, 218, 220),
+        ImageTransparency = 0.12,
+        Position = UDim2.fromOffset(11, state.isMobile and 16 or 14),
+        ScaleType = Enum.ScaleType.Fit,
+        Size = UDim2.fromOffset(24, 24),
+        ZIndex = 4,
+    }) :: any) :: ImageLabel
+    state.assetManager.loadAsync(selectFeatureIcon(name, description), featureIcon)
+
+    local title: TextLabel = (makeTextLabel(row, name, 12) :: any) :: TextLabel
+    title.Font = Enum.Font.GothamMedium
+    title.Position = UDim2.fromOffset(44, 0)
+    title.Size = UDim2.new(1, -164, 1, 0)
     title.TextColor3 = Theme.Text
     feature.title = title
 
     local subtitle: TextLabel =
         (makeTextLabel(row, description, 11) :: any) :: TextLabel
     subtitle.Name = "Description"
-    subtitle.Position = UDim2.fromOffset(14, 34)
-    subtitle.Size = UDim2.new(1, -112, 0, 30)
+    subtitle.Position = UDim2.fromOffset(48, 34)
+    subtitle.Size = UDim2.new(1, -146, 0, 30)
     subtitle.TextColor3 = Theme.TextMuted
     subtitle.TextTruncate = Enum.TextTruncate.AtEnd
     subtitle.TextWrapped = true
+    subtitle.Visible = false
 
     local toggle: TextButton
     local toggleKnob: Frame? = nil
     if feature.isAction then
         toggle = (makeButton(row, "RUN", 11) :: any) :: TextButton
         toggle.BackgroundColor3 = Theme.AccentSoft
-        toggle.Size = UDim2.fromOffset(state.isMobile and 68 or 58, 30)
+        toggle.Size = UDim2.fromOffset(state.isMobile and 52 or 46, state.isMobile and 28 or 24)
     else
         local createdToggle: TextButton, createdKnob: Frame =
             createSwitch(row, false)
@@ -2528,22 +3193,36 @@ local function createUniversalFeature(
         toggleKnob = createdKnob
     end
     toggle.Name = "Toggle"
-    toggle.AnchorPoint = Vector2.new(1, 0)
-    toggle.Position = UDim2.new(1, -44, 0, 12)
+    toggle.AnchorPoint = Vector2.new(1, 0.5)
+    toggle.Position = UDim2.new(1, -36, 0.5, 0)
     toggle.Visible = not feature.isCategory
     feature.toggle = toggle
     feature.toggleKnob = toggleKnob
 
     local arrow: TextButton =
-        (makeButton(row, "+", state.isMobile and 17 or 14) :: any) :: TextButton
+        (makeButton(row, "", state.isMobile and 17 or 14) :: any) :: TextButton
     arrow.Name = "Expand"
-    arrow.AnchorPoint = Vector2.new(1, 0)
+    arrow.AnchorPoint = Vector2.new(1, 0.5)
     arrow.BackgroundTransparency = 1
-    arrow.Position = UDim2.new(1, -10, 0, 12)
-    arrow.Size = UDim2.fromOffset(state.isMobile and 38 or 30, 30)
+    arrow.Position = UDim2.new(1, -7, 0.5, 0)
+    arrow.Size = UDim2.fromOffset(state.isMobile and 28 or 24, state.isMobile and 28 or 24)
     arrow.TextColor3 = Theme.TextMuted
     arrow.Visible = configuration.noOptions ~= true
     feature.arrow = arrow
+    local arrowIcon: ImageLabel = (create("ImageLabel", {
+        Parent = arrow,
+        Name = "ArrowIcon",
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Image = "",
+        ImageColor3 = Theme.TextMuted,
+        Position = UDim2.fromScale(0.5, 0.5),
+        ScaleType = Enum.ScaleType.Fit,
+        Size = UDim2.fromOffset(16, 16),
+        ZIndex = arrow.ZIndex + 1,
+    }) :: any) :: ImageLabel
+    state.assetManager.loadAsync("arrowDown", arrowIcon)
 
     trackUiConnection(row.MouseEnter:Connect(function(): ()
         if feature.enabled then
@@ -2623,7 +3302,6 @@ local function createUniversalFeature(
         if feature.expanded then
             options.Visible = true
         end
-        arrow.Text = "+"
         if animate and state.animationsEnabled then
             TweenService:Create(
                 options,
@@ -2661,7 +3339,7 @@ local function createUniversalFeature(
         updateExpandedSize(true)
     end))
 
-    trackUiConnection(toggle.MouseButton1Click:Connect(function(): ()
+    local function activateFeature(): ()
         if feature.isCategory then
             return
         end
@@ -2693,13 +3371,38 @@ local function createUniversalFeature(
             notify("No se pudo cambiar " .. name)
         end
         refreshFeatureToggle(feature)
-    end))
+    end
+    feature.activate = activateFeature
+
+    trackUiConnection(toggle.MouseButton1Click:Connect(activateFeature))
+    if not feature.isCategory then
+        local shortcutButton: TextButton =
+            (makeButton(row, "KEY", 9) :: any) :: TextButton
+        shortcutButton.Name = "Shortcut"
+        shortcutButton.AnchorPoint = Vector2.new(1, 0.5)
+        shortcutButton.BackgroundColor3 = Theme.SurfaceRaised
+        shortcutButton.Position = UDim2.new(1, -84, 0.5, 0)
+        shortcutButton.Size = UDim2.fromOffset(
+            state.isMobile and 42 or 38,
+            state.isMobile and 28 or 24
+        )
+        shortcutButton.TextScaled = true
+        create("UITextSizeConstraint", {
+            Parent = shortcutButton,
+            MaxTextSize = 9,
+            MinTextSize = 7,
+        })
+        feature.shortcutButton = shortcutButton
+        bindActionShortcut(
+            shortcutButton,
+            feature.configKey,
+            name,
+            activateFeature
+        )
+    end
 
     registry[name] = feature
     table.insert(allFeatures, feature)
-    if state.bindFeatureTooltip then
-        state.bindFeatureTooltip(feature, description)
-    end
 
     if not feature.isAction
         and not feature.isCategory
@@ -2803,7 +3506,7 @@ local function addActionOption(
     button.BackgroundColor3 = Theme.AccentSoft
     button.Position = UDim2.new(0.72, 0, 0, 0)
     button.Size = UDim2.new(0.28, 0, 1, 0)
-    trackUiConnection(button.MouseButton1Click:Connect(function(): ()
+    local function executeAction(): ()
         runActionButton(
             button,
             "RUN",
@@ -2811,7 +3514,25 @@ local function addActionOption(
             labelText .. " completado",
             "[Random Testing Menu] " .. labelText
         )
-    end))
+    end
+    trackUiConnection(button.MouseButton1Click:Connect(executeAction))
+    local shortcutButton: TextButton =
+        (makeButton(option, "KEY", 9) :: any) :: TextButton
+    shortcutButton.BackgroundColor3 = Theme.SurfaceRaised
+    shortcutButton.Position = UDim2.new(0.55, 0, 0, 0)
+    shortcutButton.Size = UDim2.new(0.15, 0, 1, 0)
+    shortcutButton.TextScaled = true
+    create("UITextSizeConstraint", {
+        Parent = shortcutButton,
+        MaxTextSize = 9,
+        MinTextSize = 7,
+    })
+    bindActionShortcut(
+        shortcutButton,
+        feature.configKey .. labelText,
+        labelText,
+        executeAction
+    )
     return button :: TextButton
 end
 
@@ -3150,7 +3871,7 @@ local colorPicker = {}
 colorPicker.open = function(initialColor, onApply)
     if not colorPicker.panel then
         local panel = create("Frame", {
-            Parent = ScreenGui,
+            Parent = PopupLayer,
             Name = "ColorPicker",
             Active = true,
             BackgroundColor3 = Color3.fromRGB(22, 22, 22),
@@ -3561,7 +4282,7 @@ state.components = {
     addOptions = addConfiguredOptions,
 }
 state.featureTooltip = create("TextLabel", {
-    Parent = ScreenGui,
+    Parent = PopupLayer,
     Name = "FeatureTooltip",
     Active = false,
     AutomaticSize = Enum.AutomaticSize.None,
@@ -3626,7 +4347,11 @@ local function hideFeatureTooltip(): ()
     state.featureTooltip.Visible = false
 end
 
+local COMPACT_FEATURE_CARDS: boolean = true
 local function addFeatureTooltip(feature: any, text: string): ()
+    if COMPACT_FEATURE_CARDS then
+        return
+    end
     feature.tooltipText = text
     if feature.tooltipBound then
         return
@@ -3718,6 +4443,7 @@ local flySmoothedVelocity: Vector3 = Vector3.zero
 local flyImpulseClock: number = 0
 local flyTeleportClock: number = 0
 local originalFlyPlatformStand: boolean? = nil
+local flyTouchVertical: number = 0
 
 local function removeFlyObjects(): ()
     local _, humanoid, root = getCharacterParts()
@@ -3837,10 +4563,12 @@ local function getFlyDirection(
     end
 
     local vertical: number = 0
-    if UserInputService:IsKeyDown(flySettings.upKey) then
+    if UserInputService:IsKeyDown(flySettings.upKey)
+        or flyTouchVertical > 0 then
         vertical = vertical + 1
     end
-    if UserInputService:IsKeyDown(flySettings.downKey) then
+    if UserInputService:IsKeyDown(flySettings.downKey)
+        or flyTouchVertical < 0 then
         vertical = vertical - 1
     end
 
@@ -3855,6 +4583,7 @@ local function toggleFly(enabled: boolean): ()
     flySmoothedVelocity = Vector3.zero
     flyImpulseClock = 0
     flyTeleportClock = 0
+    flyTouchVertical = 0
 
     if not enabled then
         return
@@ -4888,12 +5617,30 @@ end)
 addToggleOption(FlyFeature, "Face camera", flySettings.faceCamera, function(value)
     flySettings.faceCamera = value
 end)
-addKeyOption(FlyFeature, "Up key", flySettings.upKey, function(value)
+local FlyUpKeyButton: TextButton = addKeyOption(FlyFeature, "Up key", flySettings.upKey, function(value)
     flySettings.upKey = value
 end)
-addKeyOption(FlyFeature, "Down key", flySettings.downKey, function(value)
+local FlyDownKeyButton: TextButton = addKeyOption(FlyFeature, "Down key", flySettings.downKey, function(value)
     flySettings.downKey = value
 end)
+if state.bindMobileActionPlacement then
+    state.bindMobileActionPlacement(
+        FlyUpKeyButton,
+        "UniversalFlyUp",
+        "UP",
+        function(): ()
+            flyTouchVertical = flyTouchVertical == 1 and 0 or 1
+        end
+    )
+    state.bindMobileActionPlacement(
+        FlyDownKeyButton,
+        "UniversalFlyDown",
+        "DOWN",
+        function(): ()
+            flyTouchVertical = flyTouchVertical == -1 and 0 or -1
+        end
+    )
+end
 addFeatureTooltip(
     FlyFeature,
     "Velocity holds a smooth target speed. Impulse corrects speed with physics forces. "
@@ -5763,15 +6510,92 @@ local animationRow, animationControl = createSettingRow(
 )
 animationRow.LayoutOrder = 3
 local AnimationButton: TextButton, AnimationKnob: Frame =
-    createSwitch(animationControl, state.animationsEnabled)
+    createSwitch(animationControl, state.animationPreference)
 AnimationButton.AnchorPoint = Vector2.new(1, 0.5)
 AnimationButton.Position = UDim2.new(1, 0, 0.5, 0)
+
+local blossomRow: Frame, blossomControl: Frame = createSettingRow(
+    "Animated background",
+    "Play the manga blossoms behind every content card"
+)
+blossomRow.LayoutOrder = 4
+local BlossomButton: TextButton, BlossomKnob: Frame =
+    createSwitch(blossomControl, state.animatedBlossomsEnabled)
+BlossomButton.AnchorPoint = Vector2.new(1, 0.5)
+BlossomButton.Position = UDim2.new(1, 0, 0.5, 0)
+
+local blossomSpeedRow: Frame, blossomSpeedControl: Frame = createSettingRow(
+    "Reduced motion",
+    "Slow blossoms, particles and decorative movement"
+)
+blossomSpeedRow.LayoutOrder = 5
+local BlossomSpeedButton: TextButton, BlossomSpeedKnob: Frame =
+    createSwitch(blossomSpeedControl, state.reducedBlossomSpeed)
+BlossomSpeedButton.AnchorPoint = Vector2.new(1, 0.5)
+BlossomSpeedButton.Position = UDim2.new(1, 0, 0.5, 0)
+
+local atmosphereRow: Frame, atmosphereControl: Frame = createSettingRow(
+    "Atmosphere effects",
+    "Control ash, petals, white specks and four-point stars"
+)
+atmosphereRow.LayoutOrder = 6
+local AtmosphereButton: TextButton, AtmosphereKnob: Frame =
+    createSwitch(atmosphereControl, state.atmosphereEffectsEnabled)
+AtmosphereButton.AnchorPoint = Vector2.new(1, 0.5)
+AtmosphereButton.Position = UDim2.new(1, 0, 0.5, 0)
+
+local opacityRow: Frame, opacityControl: Frame = createSettingRow(
+    "Background opacity",
+    "Adjust blossom visibility without changing the menu size"
+)
+opacityRow.LayoutOrder = 7
+local OpacityBar: TextButton = makeButton(opacityControl, "", 10) :: TextButton
+OpacityBar.AnchorPoint = Vector2.new(0, 0.5)
+OpacityBar.Position = UDim2.new(0, 0, 0.5, 0)
+OpacityBar.Size = UDim2.new(1, -44, 0, 8)
+OpacityBar.BackgroundColor3 = Color3.fromRGB(52, 52, 58)
+local OpacityFill: Frame = create("Frame", {
+    Parent = OpacityBar,
+    BackgroundColor3 = Color3.fromRGB(224, 224, 228),
+    BorderSizePixel = 0,
+    Size = UDim2.fromScale((state.backgroundOpacity - 0.18) / 0.14, 1),
+}) :: Frame
+create("UICorner", {Parent = OpacityFill, CornerRadius = UDim.new(1, 0)})
+local OpacityValue: TextLabel = makeTextLabel(
+    opacityControl,
+    tostring(math.round(state.backgroundOpacity * 100)) .. "%",
+    11
+) :: TextLabel
+OpacityValue.AnchorPoint = Vector2.new(1, 0.5)
+OpacityValue.Position = UDim2.new(1, 0, 0.5, 0)
+OpacityValue.Size = UDim2.fromOffset(38, 22)
+OpacityValue.TextXAlignment = Enum.TextXAlignment.Right
+
+local texturesRow: Frame, texturesControl: Frame = createSettingRow(
+    "Decorative textures",
+    "Show blossom ornaments and light grunge details"
+)
+texturesRow.LayoutOrder = 8
+local TexturesButton: TextButton, TexturesKnob: Frame =
+    createSwitch(texturesControl, state.decorativeTexturesEnabled)
+TexturesButton.AnchorPoint = Vector2.new(1, 0.5)
+TexturesButton.Position = UDim2.new(1, 0, 0.5, 0)
+
+local lowPerformanceRow: Frame, lowPerformanceControl: Frame = createSettingRow(
+    "Low performance mode",
+    "Use one static frame and disable complex transitions"
+)
+lowPerformanceRow.LayoutOrder = 9
+local LowPerformanceButton: TextButton, LowPerformanceKnob: Frame =
+    createSwitch(lowPerformanceControl, state.lowPerformanceMode)
+LowPerformanceButton.AnchorPoint = Vector2.new(1, 0.5)
+LowPerformanceButton.Position = UDim2.new(1, 0, 0.5, 0)
 
 local keyRow, keyControl = createSettingRow(
     "Menu key",
     "Choose the key used to show or hide"
 )
-keyRow.LayoutOrder = 4
+keyRow.LayoutOrder = 10
 
 local KeybindButton = makeButton(keyControl, state.toggleKey.Name, 13)
 KeybindButton.Size = UDim2.fromScale(1, 1)
@@ -5781,7 +6605,7 @@ local headerColorRow: Frame, headerColorControl: Frame = createSettingRow(
     "Accent color",
     "ColorPicker for selections, tabs and active switches"
 )
-headerColorRow.LayoutOrder = 5
+headerColorRow.LayoutOrder = 11
 local HeaderColorButton: TextButton =
     (makeButton(headerColorControl, "PICK COLOR", 12) :: any) :: TextButton
 HeaderColorButton.BackgroundColor3 = state.headerColor
@@ -5791,7 +6615,7 @@ local menuColorRow: Frame, menuColorControl: Frame = createSettingRow(
     "Panel color",
     "ColorPicker for the main dark surface"
 )
-menuColorRow.LayoutOrder = 6
+menuColorRow.LayoutOrder = 12
 local MenuColorButton: TextButton =
     (makeButton(menuColorControl, "PICK COLOR", 12) :: any) :: TextButton
 MenuColorButton.BackgroundColor3 = state.menuColor
@@ -5800,7 +6624,7 @@ local resetRow, resetControl = createSettingRow(
     "Reset appearance",
     "Restore the default grey and dark blue colors"
 )
-resetRow.LayoutOrder = 7
+resetRow.LayoutOrder = 13
 
 local ResetButton = makeButton(resetControl, "RESET", 13)
 ResetButton.Size = UDim2.fromScale(1, 1)
@@ -5809,7 +6633,7 @@ local gameRow, gameControl = createSettingRow(
     "Game check",
     "Only the matching game-specific module is loaded"
 )
-gameRow.LayoutOrder = 8
+gameRow.LayoutOrder = 14
 local gameStatus = makeTextLabel(
     gameControl,
     GAME_CHECK.MM2Active and "MM2 · 142823291"
@@ -5825,7 +6649,7 @@ local deviceRow, deviceControl = createSettingRow(
     "Device profile",
     "Automatically selected from touch and keyboard capabilities"
 )
-deviceRow.LayoutOrder = 9
+deviceRow.LayoutOrder = 15
 local deviceStatus = makeTextLabel(
     deviceControl,
     state.isMobile and "MOBILE · TOUCH" or "DESKTOP · KEYBOARD",
@@ -5838,7 +6662,7 @@ local mobileIconRow, mobileIconControl = createSettingRow(
     "Mobile menu icon",
     "Dog shortcut stays available so the menu cannot become unreachable"
 )
-mobileIconRow.LayoutOrder = 10
+mobileIconRow.LayoutOrder = 16
 mobileIconRow.Visible = UserInputService.TouchEnabled
 local MobileIconButton = makeButton(
     mobileIconControl,
@@ -5857,9 +6681,9 @@ MobileIconButton.BackgroundColor3 = UserInputService.TouchEnabled
 
 local mobileSizeRow, mobileSizeControl = createSettingRow(
     "Mobile action size",
-    "Circle size for placed Shoot and Grab Gun actions"
+    "Size for placed mobile shortcuts"
 )
-mobileSizeRow.LayoutOrder = 11
+mobileSizeRow.LayoutOrder = 17
 mobileSizeRow.Visible = UserInputService.TouchEnabled
 local MobileSizeButton = makeButton(
     mobileSizeControl,
@@ -5870,9 +6694,9 @@ MobileSizeButton.Size = UDim2.fromScale(1, 1)
 
 local mobileResetRow, mobileResetControl = createSettingRow(
     "Mobile action buttons",
-    "Hold an action option to place; hold its circle to remove"
+    "Hold ADD to place; hold a shortcut to remove it"
 )
-mobileResetRow.LayoutOrder = 12
+mobileResetRow.LayoutOrder = 18
 mobileResetRow.Visible = UserInputService.TouchEnabled
 local MobileResetButton = makeButton(
     mobileResetControl,
@@ -5883,17 +6707,17 @@ MobileResetButton.Size = UDim2.fromScale(1, 1)
 
 local helpText = makeTextLabel(
     getFeatureCardParent(SettingsScroll),
-    "Build 0001-S15 | Active game module: "
+    "Build 0001-S17 | Active game module: "
         .. (GAME_CHECK.MM2Active and "MM2"
             or GAME_CHECK.TRSActive and "TRS"
             or GAME_CHECK.VDActive and "VD"
             or "Universal")
         .. (state.isMobile
-            and " | Hold Manual Shoot or Get Gun to place a touch action."
-            or " | Drag the header to move and any border to resize."),
+            and " | Hold ADD on any function or action to place its shortcut."
+            or " | Drag the header to move the fixed-size menu."),
     11
 )
-helpText.LayoutOrder = 13
+helpText.LayoutOrder = 19
 helpText.TextColor3 = Color3.fromRGB(145, 145, 145)
 helpText.TextXAlignment = Enum.TextXAlignment.Center
 helpText.Size = UDim2.new(1, -4, 0, 30)
@@ -5913,11 +6737,12 @@ local function setBlurVisible(animate)
 end
 state.setBlurVisible = setBlurVisible
 
-local function setMenuVisible(visible)
+local function setMenuVisible(visible: boolean): ()
     state.visible = visible
     Main.Visible = visible
     state.mobileUi.setActionVisibility(visible)
     setBlurVisible(true)
+    state.updateBlossomAnimationState()
 end
 state.setMenuVisible = setMenuVisible
 
@@ -5947,17 +6772,20 @@ trackUiConnection(BlurButton.MouseButton1Click:Connect(function(): ()
     state.blurEnabled = not state.blurEnabled
     setSwitchVisual(BlurButton, BlurKnob, state.blurEnabled, true)
     setBlurVisible(true)
+    state.updateVisualMotionState()
     configData.ui.blurEnabled = state.blurEnabled
     queueConfigSave()
     notify(state.blurEnabled and "Desenfoque activado" or "Desenfoque desactivado")
 end))
 
 trackUiConnection(AnimationButton.MouseButton1Click:Connect(function(): ()
-    state.animationsEnabled = not state.animationsEnabled
+    state.animationPreference = not state.animationPreference
+    state.animationsEnabled = state.animationPreference
+        and not state.lowPerformanceMode
     setSwitchVisual(
         AnimationButton,
         AnimationKnob,
-        state.animationsEnabled,
+        state.animationPreference,
         true
     )
     for _, tween: Tween in ipairs(state.decorativeTweens or {}) do
@@ -5967,14 +6795,149 @@ trackUiConnection(AnimationButton.MouseButton1Click:Connect(function(): ()
             tween:Pause()
         end
     end
-    configData.ui.animationsEnabled = state.animationsEnabled
+    configData.ui.animationsEnabled = state.animationPreference
     queueConfigSave()
     notify(
-        state.animationsEnabled
+        state.animationPreference
             and "Animaciones decorativas activadas"
             or "Animaciones decorativas desactivadas"
     )
 end))
+
+local function updateDecorativeTextures(): ()
+    for _, object: GuiObject in ipairs(state.decorativeObjects or {}) do
+        if not object:IsA("ImageLabel") then
+            continue
+        end
+        if object.Name == "HeaderBlossoms" then
+            object.ImageTransparency = state.decorativeTexturesEnabled
+                and (state.lowPerformanceMode and 0.72 or 0.58)
+                or 1
+        else
+            object.ImageTransparency = state.decorativeTexturesEnabled
+                and not state.lowPerformanceMode
+                and 0.83
+                or 1
+        end
+    end
+end
+
+trackUiConnection(BlossomButton.MouseButton1Click:Connect(function(): ()
+    state.animatedBlossomsEnabled = not state.animatedBlossomsEnabled
+    setSwitchVisual(
+        BlossomButton,
+        BlossomKnob,
+        state.animatedBlossomsEnabled,
+        true
+    )
+    configData.ui.animatedBlossomsEnabled = state.animatedBlossomsEnabled
+    state.updateBlossomAnimationState()
+    queueConfigSave()
+end))
+
+trackUiConnection(BlossomSpeedButton.MouseButton1Click:Connect(function(): ()
+    state.reducedBlossomSpeed = not state.reducedBlossomSpeed
+    setSwitchVisual(
+        BlossomSpeedButton,
+        BlossomSpeedKnob,
+        state.reducedBlossomSpeed,
+        true
+    )
+    configData.ui.reducedMotion = state.reducedBlossomSpeed
+    state.updateVisualMotionState()
+    queueConfigSave()
+end))
+
+trackUiConnection(AtmosphereButton.MouseButton1Click:Connect(function(): ()
+    state.atmosphereEffectsEnabled = not state.atmosphereEffectsEnabled
+    setSwitchVisual(
+        AtmosphereButton,
+        AtmosphereKnob,
+        state.atmosphereEffectsEnabled,
+        true
+    )
+    configData.ui.atmosphereEffectsEnabled = state.atmosphereEffectsEnabled
+    state.updateVisualMotionState()
+    queueConfigSave()
+end))
+
+local opacityDragInput: InputObject? = nil
+local function setBackgroundOpacityFromX(pointerX: number): ()
+    local width: number = math.max(1, OpacityBar.AbsoluteSize.X)
+    local ratio: number = math.clamp(
+        (pointerX - OpacityBar.AbsolutePosition.X) / width,
+        0,
+        1
+    )
+    state.backgroundOpacity = 0.18 + ratio * 0.14
+    OpacityFill.Size = UDim2.fromScale(ratio, 1)
+    OpacityValue.Text = tostring(math.round(state.backgroundOpacity * 100)) .. "%"
+    BlossomBackground.ImageTransparency = state.animatedBlossomsEnabled
+        and (1 - state.backgroundOpacity)
+        or 1
+    configData.ui.backgroundOpacity = state.backgroundOpacity
+    queueConfigSave()
+end
+trackUiConnection(OpacityBar.InputBegan:Connect(function(input: InputObject): ()
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+        opacityDragInput = input
+        setBackgroundOpacityFromX(input.Position.X)
+    end
+end))
+trackUiConnection(UserInputService.InputChanged:Connect(function(input: InputObject): ()
+    if opacityDragInput == nil then
+        return
+    end
+    if input == opacityDragInput
+        or input.UserInputType == Enum.UserInputType.MouseMovement then
+        setBackgroundOpacityFromX(input.Position.X)
+    end
+end))
+trackUiConnection(UserInputService.InputEnded:Connect(function(input: InputObject): ()
+    if input == opacityDragInput
+        or input.UserInputType == Enum.UserInputType.MouseButton1 then
+        opacityDragInput = nil
+    end
+end))
+
+trackUiConnection(TexturesButton.MouseButton1Click:Connect(function(): ()
+    state.decorativeTexturesEnabled = not state.decorativeTexturesEnabled
+    setSwitchVisual(
+        TexturesButton,
+        TexturesKnob,
+        state.decorativeTexturesEnabled,
+        true
+    )
+    configData.ui.decorativeTexturesEnabled = state.decorativeTexturesEnabled
+    updateDecorativeTextures()
+    queueConfigSave()
+end))
+
+trackUiConnection(LowPerformanceButton.MouseButton1Click:Connect(function(): ()
+    state.lowPerformanceMode = not state.lowPerformanceMode
+    state.animationsEnabled = state.animationPreference
+        and not state.lowPerformanceMode
+    setSwitchVisual(
+        LowPerformanceButton,
+        LowPerformanceKnob,
+        state.lowPerformanceMode,
+        true
+    )
+    for _, tween: Tween in ipairs(state.decorativeTweens or {}) do
+        if state.animationsEnabled then
+            tween:Play()
+        else
+            tween:Pause()
+        end
+    end
+    configData.ui.lowPerformanceMode = state.lowPerformanceMode
+    updateDecorativeTextures()
+    state.updateBlossomAnimationState()
+    queueConfigSave()
+end))
+
+updateDecorativeTextures()
 
 MobileIconButton.MouseButton1Click:Connect(function(): ()
     if not UserInputService.TouchEnabled then
@@ -6159,6 +7122,7 @@ Header.InputChanged:Connect(function(input)
 end)
 
 local resizeState = nil
+local ALLOW_WINDOW_RESIZE: boolean = false
 
 local function viewportSize()
     local camera = workspace.CurrentCamera
@@ -6188,7 +7152,7 @@ local function addResizeHandle(name, mode, position, size)
     local handle = create("Frame", {
         Parent = Main,
         Name = name,
-        Active = true,
+        Active = ALLOW_WINDOW_RESIZE,
         BackgroundColor3 = Color3.fromRGB(115, 115, 115),
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
@@ -6197,12 +7161,14 @@ local function addResizeHandle(name, mode, position, size)
         ZIndex = 20,
     })
 
-    handle.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-            or input.UserInputType == Enum.UserInputType.Touch then
-            startResize(mode, input)
-        end
-    end)
+    if ALLOW_WINDOW_RESIZE then
+        handle.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1
+                or input.UserInputType == Enum.UserInputType.Touch then
+                startResize(mode, input)
+            end
+        end)
+    end
 
     return handle
 end
@@ -6377,6 +7343,7 @@ state.globalInputBeganConnection = UserInputService.InputBegan:Connect(function(
         else
             state.visible = not state.visible
             Main.Visible = state.visible
+            state.updateBlossomAnimationState()
         end
     end
 end)
@@ -6408,6 +7375,9 @@ ScreenGui.AncestryChanged:Connect(function(_, parent)
         table.clear(state.uiConnections)
 
         TaskManager:Destroy()
+        if state.cleanupVisualMotion then
+            state.cleanupVisualMotion()
+        end
         if state.globalInputChangedConnection then
             state.globalInputChangedConnection:Disconnect()
         end
@@ -6443,7 +7413,7 @@ end
 task.defer(saveConfigNow)
 
 print(
-    "A random Testing Menu # 0001 | Build 0001-S16 | Toggle key: "
+    "A random Testing Menu # 0001 | Build 0001-S17 | Toggle key: "
         .. state.toggleKey.Name
 )
 end

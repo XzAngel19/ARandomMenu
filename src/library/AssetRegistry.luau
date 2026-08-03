@@ -1,12 +1,30 @@
 --!strict
 
-local HttpService: HttpService = game:GetService("HttpService")
+local environment: any = getfenv()
+local cloneReference: (Instance) -> Instance = (
+    environment.cloneref
+    or function(instance: Instance): Instance
+        return instance
+    end
+) :: (Instance) -> Instance
+local HttpService: HttpService =
+    cloneReference(game:GetService("HttpService")) :: HttpService
+
+export type AssetEntry = {
+    category: string,
+    path: string,
+    localPath: string?,
+    url: string?,
+    version: number?,
+    type: string?,
+    dimensions: {number},
+    usage: string,
+}
 
 export type AssetManifest = {
     schemaVersion: number,
     rawBaseUrl: string,
-    images: {[string]: string?},
-    attribution: {[string]: string}?,
+    assets: {[string]: AssetEntry?},
 }
 
 export type AssetRegistryApi = {
@@ -15,7 +33,7 @@ export type AssetRegistryApi = {
 }
 
 local MANIFEST_URL: string =
-    "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/main/src/gui/Current/Images/manifest.json"
+    "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/main/src/gui/Current/Assets/manifest.json"
 
 local AssetRegistry: AssetRegistryApi = {} :: AssetRegistryApi
 local cachedManifest: AssetManifest? = nil
@@ -31,11 +49,11 @@ end
 
 function AssetRegistry.getUrl(key: string): string?
     local manifest: AssetManifest = getManifest()
-    local fileName: string? = manifest.images[key]
-    if fileName == nil or fileName == "" then
+    local entry: AssetEntry? = manifest.assets[key]
+    if entry == nil or entry.path == "" then
         return nil
     end
-    return manifest.rawBaseUrl .. fileName
+    return entry.url or (manifest.rawBaseUrl .. entry.path)
 end
 
 function AssetRegistry.clearCache(): ()
