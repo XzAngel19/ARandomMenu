@@ -2707,30 +2707,23 @@ local function updateCardGrid(record: CardGridRecord): ()
     local secondHeight: number = record.layouts[2].AbsoluteContentSize.Y
     local singleColumn: boolean = state.isMobile
         or record.container.AbsoluteSize.X < 690
+    local contentHeight: number
 
     if singleColumn then
         record.columns[1].Position = UDim2.fromOffset(0, 0)
         record.columns[1].Size = UDim2.new(1, 0, 0, firstHeight)
         record.columns[2].Position = UDim2.fromOffset(0, firstHeight + 10)
         record.columns[2].Size = UDim2.new(1, 0, 0, secondHeight)
-        record.root.Size = UDim2.new(
-            1,
-            -36,
-            0,
-            firstHeight + secondHeight + 10
-        )
+        contentHeight = firstHeight + secondHeight + 10
     else
         record.columns[1].Position = UDim2.fromOffset(0, 0)
         record.columns[1].Size = UDim2.new(0.5, -5, 0, firstHeight)
         record.columns[2].Position = UDim2.new(0.5, 5, 0, 0)
         record.columns[2].Size = UDim2.new(0.5, -5, 0, secondHeight)
-        record.root.Size = UDim2.new(
-            1,
-            -36,
-            0,
-            math.max(firstHeight, secondHeight)
-        )
+        contentHeight = math.max(firstHeight, secondHeight)
     end
+    record.root.Size = UDim2.new(1, -36, 0, contentHeight)
+    record.container.CanvasSize = UDim2.fromOffset(0, contentHeight + 54)
 end
 
 local function getFeatureCardParent(container: Instance): Instance
@@ -2740,6 +2733,7 @@ local function getFeatureCardParent(container: Instance): Instance
 
     local record: CardGridRecord? = cardGrids[container]
     if not record then
+        container.AutomaticCanvasSize = Enum.AutomaticSize.None
         local oldLayout: UIListLayout? =
             container:FindFirstChildOfClass("UIListLayout")
         if oldLayout then
@@ -3255,12 +3249,14 @@ local function createUniversalFeature(
     local options: Frame = (create("Frame", {
         Parent = row,
         Name = "Options",
+        Active = true,
         BackgroundColor3 = Theme.Background,
         BackgroundTransparency = 0.08,
         BorderSizePixel = 0,
         Position = UDim2.fromOffset(10, feature.collapsedHeight),
         Size = UDim2.new(1, -20, 0, 0),
         Visible = false,
+        ZIndex = row.ZIndex + 10,
     }) :: any) :: Frame
     feature.options = options
     create("UICorner", {
@@ -3274,13 +3270,13 @@ local function createUniversalFeature(
         PaddingRight = UDim.new(0, 7),
         PaddingTop = UDim.new(0, 7),
     })
-    create("UIListLayout", {
+    local optionsLayout: UIListLayout = (create("UIListLayout", {
         Parent = options,
         FillDirection = Enum.FillDirection.Vertical,
         HorizontalAlignment = Enum.HorizontalAlignment.Center,
         Padding = UDim.new(0, 6),
         SortOrder = Enum.SortOrder.LayoutOrder,
-    })
+    }) :: any) :: UIListLayout
 
     local function updateExpandedSize(animate: boolean?): ()
         local visibleOptions: number = 0
@@ -3289,7 +3285,12 @@ local function createUniversalFeature(
                 visibleOptions += 1
             end
         end
-        local optionsHeight: number = visibleOptions * 44 + 14
+        local measuredHeight: number = optionsLayout.AbsoluteContentSize.Y
+        if visibleOptions > 0 and measuredHeight <= 0 then
+            measuredHeight = visibleOptions * 38
+                + math.max(0, visibleOptions - 1) * 6
+        end
+        local optionsHeight: number = measuredHeight + 14
         local targetOptionsSize: UDim2 = UDim2.new(1, -20, 0, optionsHeight)
         local targetRowSize: UDim2 = UDim2.new(
             1,
@@ -3333,6 +3334,12 @@ local function createUniversalFeature(
         end
     end
     feature.updateExpandedSize = updateExpandedSize
+    trackUiConnection(
+        optionsLayout:GetPropertyChangedSignal("AbsoluteContentSize")
+            :Connect(function(): ()
+                updateExpandedSize(false)
+            end)
+    )
 
     trackUiConnection(arrow.MouseButton1Click:Connect(function(): ()
         feature.expanded = not feature.expanded
@@ -3439,6 +3446,7 @@ local function createOptionRow(feature: any, labelText: string): Frame
         BorderSizePixel = 0,
         LayoutOrder = feature.optionCount,
         Size = UDim2.new(1, 0, 0, 38),
+        ZIndex = feature.options.ZIndex + 1,
     }) :: any) :: Frame
     create("UICorner", {
         Parent = option,
