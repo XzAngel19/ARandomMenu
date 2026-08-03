@@ -48,6 +48,7 @@ local REPOSITORY_RAW_BASE =
 local GAME_MODULES: {[number]: string} = {
     [142823291] = "MM2",
     [14315258385] = "TRS",
+    [93978595733734] = "VD",
 }
 
 local ACTIVE_GAME_MODULE: string? = GAME_MODULES[game.PlaceId]
@@ -55,8 +56,10 @@ local ACTIVE_GAME_MODULE: string? = GAME_MODULES[game.PlaceId]
 local GAME_CHECK = {
     MM2 = 142823291,
     TRS = 14315258385,
+    VD = 93978595733734,
     MM2Active = ACTIVE_GAME_MODULE == "MM2",
     TRSActive = ACTIVE_GAME_MODULE == "TRS",
+    VDActive = ACTIVE_GAME_MODULE == "VD",
 }
 
 function GAME_CHECK.matches(identifier: number): boolean
@@ -1355,17 +1358,22 @@ local UniversalPage = createTab("Universal", 1)
 local MovementPage = createTab("Movement", 2)
 local MM2Page = createTab("MM2", 3)
 createTab("TRS", 4)
-local SettingsPage = createTab("Config.", 5)
+createTab("VD", 5)
+local SettingsPage = createTab("Config.", 6)
 
 local function configureGameTabs()
     tabButtons.MM2.Visible = GAME_CHECK.MM2Active
     tabButtons.TRS.Visible = GAME_CHECK.TRSActive
+    tabButtons.VD.Visible = GAME_CHECK.VDActive
 
     local visibleCount = 3
     if GAME_CHECK.MM2Active then
         visibleCount = visibleCount + 1
     end
     if GAME_CHECK.TRSActive then
+        visibleCount = visibleCount + 1
+    end
+    if GAME_CHECK.VDActive then
         visibleCount = visibleCount + 1
     end
     local tabWidth = 0.8 / visibleCount
@@ -1451,6 +1459,36 @@ create("UIListLayout", {
     SortOrder = Enum.SortOrder.LayoutOrder,
 })
 
+state.vdScroll = create("ScrollingFrame", {
+    Parent = pages.VD,
+    Name = "VDScroll",
+    Active = true,
+    AutomaticCanvasSize = Enum.AutomaticSize.Y,
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    CanvasSize = UDim2.fromOffset(0, 0),
+    ScrollBarImageColor3 = Color3.fromRGB(100, 100, 100),
+    ScrollBarThickness = 6,
+    ScrollingDirection = Enum.ScrollingDirection.Y,
+    Size = UDim2.fromScale(1, 1),
+})
+
+create("UIPadding", {
+    Parent = state.vdScroll,
+    PaddingBottom = UDim.new(0, 18),
+    PaddingLeft = UDim.new(0, 18),
+    PaddingRight = UDim.new(0, 18),
+    PaddingTop = UDim.new(0, 18),
+})
+
+create("UIListLayout", {
+    Parent = state.vdScroll,
+    FillDirection = Enum.FillDirection.Vertical,
+    HorizontalAlignment = Enum.HorizontalAlignment.Center,
+    Padding = UDim.new(0, 9),
+    SortOrder = Enum.SortOrder.LayoutOrder,
+})
+
 do
 local LoadingPanel: Frame = (create("Frame", {
     Parent = Content,
@@ -1497,6 +1535,7 @@ local universalFeatures = {}
 local movementFeatures = {}
 local mm2Features = {}
 state.trsFeatures = {}
+state.vdFeatures = {}
 local allFeatures = {}
 local featureConnections = {}
 state.tooltipConnections = {} :: {RBXScriptConnection}
@@ -2389,6 +2428,7 @@ local function createUniversalFeature(
     local sectionName: string = configuration.section
         or (registry == mm2Features and "MM2")
         or (registry == state.trsFeatures and "TRS")
+        or (registry == state.vdFeatures and "VD")
         or (registry == movementFeatures and "Movement")
         or "Universal"
     local configKey: string = configuration.configKey
@@ -5387,6 +5427,7 @@ local function createGameModuleEnvironment(
         performFling = performFling,
         MM2Scroll = MM2Scroll,
         mm2Features = mm2Features,
+        vdFeatures = state.vdFeatures,
         allFeatures = allFeatures,
         cleanupMM2Runtime = cleanupMM2Runtime,
     }
@@ -5542,6 +5583,8 @@ local function registerPlaceModule(
             cleanupMM2Runtime = destroyModule
         elseif tabName == "TRS" then
             state.cleanupTRSRuntime = destroyModule
+        elseif tabName == "VD" then
+            state.cleanupVDRuntime = destroyModule
         end
     end)
 end
@@ -5555,6 +5598,7 @@ state.logBootstrap(
 
 registerPlaceModule("MM2", GAME_CHECK.MM2)
 registerPlaceModule("TRS", GAME_CHECK.TRS)
+registerPlaceModule("VD", GAME_CHECK.VD)
 
 local noResultsLabels: {[string]: TextLabel} = {}
 for sectionName: string, page: GuiObject in pairs(pages) do
@@ -5770,6 +5814,7 @@ local gameStatus = makeTextLabel(
     gameControl,
     GAME_CHECK.MM2Active and "MM2 · 142823291"
         or GAME_CHECK.TRSActive and "TRS · 14315258385"
+        or GAME_CHECK.VDActive and "VD · 93978595733734"
         or "Universal only",
     12
 )
@@ -5841,6 +5886,7 @@ local helpText = makeTextLabel(
     "Build 0001-S15 | Active game module: "
         .. (GAME_CHECK.MM2Active and "MM2"
             or GAME_CHECK.TRSActive and "TRS"
+            or GAME_CHECK.VDActive and "VD"
             or "Universal")
         .. (state.isMobile
             and " | Hold Manual Shoot or Get Gun to place a touch action."
@@ -6377,6 +6423,9 @@ ScreenGui.AncestryChanged:Connect(function(_, parent)
         cleanupMM2Runtime()
         if state.cleanupTRSRuntime then
             state.cleanupTRSRuntime()
+        end
+        if state.cleanupVDRuntime then
+            state.cleanupVDRuntime()
         end
         saveConfigNow()
 

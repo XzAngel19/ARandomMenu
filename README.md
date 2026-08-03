@@ -8,7 +8,7 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
 - `ARandomMenu.luau` creates the shared responsive UI, component factory,
   notifications, state and the single-heartbeat `TaskManager`.
 - The bootstrap reads `game.PlaceId` and downloads the named game module from
-  the repository raw URL. MM2 and TRS resolve to `MM2.luau` and `TRS.luau`.
+  the repository raw URL. MM2, TRS and VD resolve to their named modules.
 - Failed or invalid HTTP responses are logged and may fall back to
   `readfile("ARandomMenu/src/games/<Name>.luau")` when available.
 - A game module must return a `Module` table exporting `init(Runtime)`,
@@ -29,6 +29,7 @@ TaskManager callback count and errors captured by `pcall`.
 - `src/games/Universal.luau`: universal and movement module contract.
 - `src/games/MM2.luau`: complete MM2 implementation.
 - `src/games/TRS.luau`: complete TRS implementation.
+- `src/games/VD.luau`: Violence District survivor, killer and visibility tools.
 - `src/gui/Current/gui.lua`: reusable presentation-only GUI controller.
 - `src/gui/Current/Images`: optional normal image assets.
 - `src/Profile`: compatibility data retained for older loaders.
