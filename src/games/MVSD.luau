@@ -9,20 +9,37 @@ local Module = {
     Runtime = nil :: any,
 }
 
+-- Blatant combat runtime for Murderers vs Sheriffs Duels.
+--
+-- Architecture notes (reverse engineered from the live game):
+--   * The weapon fires with workspace:Raycast from the camera through the mouse:
+--       MouseCast = CurrentCamera:ViewportPointToRay(mouse) -> workspace:Raycast(origin, dir*500, params)
+--   * The hit position is sent to the server through Remotes.Beam:FireServer().
+--   * Silent Aim therefore hooks workspace:Raycast (via game.__namecall) and
+--     redirects the direction vector to the predicted target part. Wall check OFF
+--     swaps the raycast params to an Include filter containing only the target part,
+--     which makes the ray ignore every map wall (blatant wallbang).
+--   * Auto Shoot simulates mouse1press/mouse1release so the game's own shot path is
+--     used, which guarantees the silent-aim redirect applies.
+
 type AimSettings = {
     aimEnabled: boolean,
+    autoShootEnabled: boolean,
     triggerCueEnabled: boolean,
     outlineEnabled: boolean,
     weaponHudEnabled: boolean,
     showCircle: boolean,
     dynamicFov: boolean,
     infiniteRange: boolean,
+    wallCheck: boolean,
+    aimOnClick: boolean,
     targetMode: string,
     targetPart: string,
     fovRadius: number,
     maxDistance: number,
     projectileSpeed: number,
     predictionMultiplier: number,
+    shotDelay: number,
     triggerTolerance: number,
     triggerDelay: number,
 }
@@ -60,6 +77,11 @@ type AimRuntime = {
     motion: {[Player]: MotionRecord},
     selected: TargetRecord?,
     triggerEnteredAt: number?,
+    hookInstalled: boolean,
+    originalNamecall: any,
+    suppressRaycast: boolean,
+    autoShootHeld: boolean,
+    autoShootNextAt: number,
 }
 
 local moduleCleanup: () -> () = function(): () end
@@ -67,18 +89,22 @@ local moduleCleanup: () -> () = function(): () end
 local function buildMVSDFeatures(): ()
     local settings: AimSettings = {
         aimEnabled = false,
+        autoShootEnabled = false,
         triggerCueEnabled = false,
         outlineEnabled = false,
         weaponHudEnabled = false,
         showCircle = true,
         dynamicFov = true,
         infiniteRange = false,
+        wallCheck = true,
+        aimOnClick = true,
         targetMode = "Closest to Cursor",
         targetPart = "Head",
         fovRadius = 180,
         maxDistance = 600,
         projectileSpeed = 350,
         predictionMultiplier = 1,
+        shotDelay = 0,
         triggerTolerance = 11,
         triggerDelay = 0,
     }
@@ -87,6 +113,11 @@ local function buildMVSDFeatures(): ()
         motion = {},
         selected = nil,
         triggerEnteredAt = nil,
+        hookInstalled = false,
+        originalNamecall = nil,
+        suppressRaycast = false,
+        autoShootHeld = false,
+        autoShootNextAt = 0,
     }
 
     local function getRoot(character: Model?): BasePart?
@@ -198,6 +229,10 @@ local function buildMVSDFeatures(): ()
         return record
     end
 
+    -- Predicts where the target part will be when the shot lands.
+    -- Lead time = (network ping + projectile travel time) * prediction multiplier,
+    -- then state-aware scaling: jumping targets get extra vertical lead, sprinting
+    -- and strafe-switching targets get a bigger horizontal lead.
     local function projectTarget(
         part: BasePart,
         motion: MotionRecord,
@@ -209,11 +244,37 @@ local function buildMVSDFeatures(): ()
         local leadTime: number = math.clamp(
             (ping + travelTime) * settings.predictionMultiplier,
             0,
-            0.65
+            0.75
         )
-        return part.Position
-            + motion.velocity * leadTime
-            + motion.acceleration * (0.5 * leadTime * leadTime)
+
+        local velocity: Vector3 = motion.velocity
+        local acceleration: Vector3 = motion.acceleration
+        local horizontalSpeed: number = (velocity * Vector3.new(1, 0, 1)).Magnitude
+        local verticalSpeed: number = math.abs(velocity.Y)
+        local accelMagnitude: number = acceleration.Magnitude
+
+        local stateScale: number = 1
+        if verticalSpeed > 12 then
+            -- Airborne: gravity arc means the target keeps rising then falls.
+            stateScale = 1.35
+        elseif horizontalSpeed > 22 then
+            -- Full sprint.
+            stateScale = 1.15
+        end
+        if accelMagnitude > 60 then
+            -- Rapid direction change / strafe: snap onto the new velocity sooner.
+            stateScale = math.min(stateScale * 1.35, 1.9)
+        end
+        leadTime = leadTime * stateScale
+
+        local projected: Vector3 = part.Position
+            + velocity * leadTime
+            + acceleration * (0.5 * leadTime * leadTime)
+        if verticalSpeed > 12 and velocity.Y > 0 then
+            -- Slight upward bias while the target is still climbing.
+            projected = projected + Vector3.new(0, math.min(0.25 * leadTime * velocity.Y, 3), 0)
+        end
+        return projected
     end
 
     local function hasLineOfSight(
@@ -230,11 +291,18 @@ local function buildMVSDFeatures(): ()
         end
         parameters.FilterDescendantsInstances = excluded
         local direction: Vector3 = position - camera.CFrame.Position
-        local result: RaycastResult? = workspace:Raycast(
-            camera.CFrame.Position,
-            direction,
-            parameters
-        )
+        runtime.suppressRaycast = true
+        local ok: boolean, result: any = pcall(function(): any
+            return workspace:Raycast(
+                camera.CFrame.Position,
+                direction,
+                parameters
+            )
+        end)
+        runtime.suppressRaycast = false
+        if not ok then
+            return true
+        end
         return result == nil or result.Instance:IsDescendantOf(character)
     end
 
@@ -265,11 +333,14 @@ local function buildMVSDFeatures(): ()
                             local screen: Vector2 = Vector2.new(point.X, point.Y)
                             local cursorDistance: number = (screen - crosshair).Magnitude
                             if cursorDistance <= radius then
-                                local visible: boolean = hasLineOfSight(
-                                    camera,
-                                    character,
-                                    part.Position
-                                )
+                                local visible: boolean = true
+                                if settings.wallCheck then
+                                    visible = hasLineOfSight(
+                                        camera,
+                                        character,
+                                        part.Position
+                                    )
+                                end
                                 if visible then
                                     local motion: MotionRecord = updateMotion(
                                         player,
@@ -305,6 +376,98 @@ local function buildMVSDFeatures(): ()
             end
         end
         return best
+    end
+
+    -- Redirects a weapon raycast toward the currently selected target.
+    -- Returns true when args were mutated and the call must be replayed.
+    local function tryRedirectRaycast(args: {any}): boolean
+        if not settings.aimEnabled then
+            return false
+        end
+        local target: TargetRecord? = runtime.selected
+        if not target then
+            return false
+        end
+        local origin: any = args[1]
+        local direction: any = args[2]
+        if typeof(origin) ~= "Vector3" or typeof(direction) ~= "Vector3" then
+            return false
+        end
+        -- Weapon rays are long camera-origin casts (MouseCast multiplies by 500).
+        if direction.Magnitude < 50 then
+            return false
+        end
+        local camera: Camera? = workspace.CurrentCamera
+        if not camera then
+            return false
+        end
+        if (origin - camera.CFrame.Position).Magnitude > 8 then
+            return false
+        end
+        -- Avoid hijacking pings / misc casts while the player is not shooting.
+        if settings.aimOnClick
+            and not settings.autoShootEnabled
+            and not UserInputService:IsMouseButtonPressed(
+                Enum.UserInputType.MouseButton1
+            ) then
+            return false
+        end
+
+        local aimPoint: Vector3 = target.predictedPosition
+        -- Reach the target even when it sits past the weapon's default ray length.
+        local reach: number = math.max(
+            direction.Magnitude,
+            (aimPoint - origin).Magnitude + 5
+        )
+        args[2] = CFrame.lookAt(origin, aimPoint).LookVector * reach
+
+        if not settings.wallCheck then
+            -- Blatant: only the target part is included, so map walls are ignored.
+            local wallbangParams: RaycastParams = RaycastParams.new()
+            wallbangParams.FilterType = Enum.RaycastFilterType.Include
+            wallbangParams.FilterDescendantsInstances = {target.part}
+            wallbangParams.IgnoreWater = true
+            wallbangParams.RespectCanCollide = false
+            args[3] = wallbangParams
+        end
+        return true
+    end
+
+    local function installSilentAimHook(): boolean
+        if runtime.hookInstalled then
+            return true
+        end
+        if type(hookmetamethod) ~= "function"
+            or type(getnamecallmethod) ~= "function" then
+            return false
+        end
+        local callback = function(self, ...)
+            local method = getnamecallmethod()
+            if (self :: any) == workspace and method == "Raycast" then
+                if not runtime.suppressRaycast then
+                    local args: {any} = {...}
+                    if tryRedirectRaycast(args) then
+                        return runtime.originalNamecall(self, unpack(args))
+                    end
+                end
+            end
+            return runtime.originalNamecall(self, ...)
+        end
+        local wrapped: any = callback
+        if type(newcclosure) == "function" then
+            wrapped = newcclosure(callback)
+        end
+        runtime.originalNamecall = hookmetamethod(game, "__namecall", wrapped)
+        runtime.hookInstalled = runtime.originalNamecall ~= nil
+        return runtime.hookInstalled
+    end
+
+    local function uninstallSilentAimHook(): ()
+        if runtime.hookInstalled and runtime.originalNamecall ~= nil then
+            pcall(hookmetamethod, game, "__namecall", runtime.originalNamecall)
+        end
+        runtime.hookInstalled = false
+        runtime.originalNamecall = nil
     end
 
     local function makeRounded(frame: GuiObject, radius: number): ()
@@ -424,13 +587,13 @@ local function buildMVSDFeatures(): ()
     end
 
     local function getVisuals(): VisualRecord
-        local visuals: VisualRecord? = runtime.visuals
-        if visuals and visuals.root.Parent then
-            return visuals
+        local existing: VisualRecord? = runtime.visuals
+        if existing and existing.root.Parent then
+            return existing
         end
-        visuals = createVisuals()
-        runtime.visuals = visuals
-        return visuals
+        local created: VisualRecord = createVisuals()
+        runtime.visuals = created
+        return created
     end
 
     local function equippedTool(): Tool?
@@ -478,17 +641,63 @@ local function buildMVSDFeatures(): ()
         visuals.trajectory.Visible = length > 2
     end
 
+    -- Instant triggerbot: holds / releases the fire button while a valid target
+    -- is inside the FOV. Zero delay (default) clicks every frame for max RoF.
+    local function updateAutoShoot(target: TargetRecord?): ()
+        if not settings.autoShootEnabled then
+            if runtime.autoShootHeld then
+                if type(mouse1release) == "function" then
+                    pcall(mouse1release)
+                end
+                runtime.autoShootHeld = false
+            end
+            runtime.autoShootNextAt = os.clock()
+            return
+        end
+
+        local canFire: boolean = target ~= nil
+            and target.cursorDistance <= settings.fovRadius
+        if canFire then
+            local now: number = os.clock()
+            if now >= runtime.autoShootNextAt then
+                if not runtime.autoShootHeld then
+                    if type(mouse1press) == "function" then
+                        if pcall(mouse1press) then
+                            runtime.autoShootHeld = true
+                        end
+                    end
+                else
+                    if type(mouse1release) == "function" then
+                        pcall(mouse1release)
+                    end
+                    runtime.autoShootHeld = false
+                    runtime.autoShootNextAt = now + math.max(settings.shotDelay, 0)
+                end
+            end
+        else
+            if runtime.autoShootHeld then
+                if type(mouse1release) == "function" then
+                    pcall(mouse1release)
+                end
+                runtime.autoShootHeld = false
+            end
+        end
+    end
+
     local function updateCore(deltaTime: number): ()
         local visuals: VisualRecord = getVisuals()
         local camera: Camera? = workspace.CurrentCamera
         if not camera or type(LocalPlayer:GetAttribute("Game")) ~= "string" then
             visuals.circle.Visible = false
-            visuals.status.Visible = settings.aimEnabled or settings.triggerCueEnabled
+            visuals.status.Visible = settings.aimEnabled
+                or settings.autoShootEnabled
+                or settings.triggerCueEnabled
             visuals.status.Text = "MVSD · WAITING FOR ACTIVE MATCH"
             visuals.status.TextColor3 = Theme.TextMuted
             visuals.weapon.Visible = settings.weaponHudEnabled
             visuals.weapon.Text = formatWeaponStatus()
             hideTargetVisuals(visuals)
+            updateAutoShoot(nil)
             return
         end
 
@@ -497,15 +706,20 @@ local function buildMVSDFeatures(): ()
         local crosshair: Vector2 = getCrosshair(camera)
         visuals.circle.Position = UDim2.fromOffset(crosshair.X, crosshair.Y)
         visuals.circle.Size = UDim2.fromOffset(radius * 2, radius * 2)
-        visuals.circle.Visible = settings.aimEnabled and settings.showCircle
-        visuals.status.Visible = settings.aimEnabled or settings.triggerCueEnabled
+        visuals.circle.Visible = (settings.aimEnabled or settings.autoShootEnabled)
+            and settings.showCircle
+        visuals.status.Visible = settings.aimEnabled
+            or settings.autoShootEnabled
+            or settings.triggerCueEnabled
         visuals.weapon.Visible = settings.weaponHudEnabled
         visuals.weapon.Text = formatWeaponStatus()
 
         if not settings.aimEnabled
+            and not settings.autoShootEnabled
             and not settings.triggerCueEnabled
             and not settings.outlineEnabled then
             hideTargetVisuals(visuals)
+            updateAutoShoot(nil)
             return
         end
 
@@ -518,6 +732,7 @@ local function buildMVSDFeatures(): ()
             )
             visuals.status.TextColor3 = Theme.TextMuted
             hideTargetVisuals(visuals)
+            updateAutoShoot(nil)
             return
         end
 
@@ -525,6 +740,7 @@ local function buildMVSDFeatures(): ()
             camera:WorldToViewportPoint(target.predictedPosition)
         if not predictedOnScreen or predictedPoint.Z <= 0 then
             hideTargetVisuals(visuals)
+            updateAutoShoot(nil)
             return
         end
         local predictedScreen: Vector2 = Vector2.new(predictedPoint.X, predictedPoint.Y)
@@ -535,6 +751,7 @@ local function buildMVSDFeatures(): ()
 
         visuals.highlight.Adornee = target.character
         visuals.highlight.Enabled = settings.outlineEnabled and target.visible
+
         local insideTrigger: boolean = target.cursorDistance <= settings.triggerTolerance
         if settings.triggerCueEnabled and insideTrigger then
             if runtime.triggerEnteredAt == nil then
@@ -547,12 +764,17 @@ local function buildMVSDFeatures(): ()
             and insideTrigger
             and runtime.triggerEnteredAt ~= nil
             and os.clock() - (runtime.triggerEnteredAt :: number) >= settings.triggerDelay
+
+        updateAutoShoot(target)
+
+        local modeText: string = if settings.aimEnabled then "SILENT AIM" else "AUTO SHOOT"
         local accent: Color3 = if triggerReady then Theme.Success else Theme.AccentCyan
         visuals.markerStroke.Color = accent
         visuals.circleStroke.Color = accent
         visuals.status.TextColor3 = accent
         visuals.status.Text = string.format(
-            "%s · %s · %.0f STUDS · %.0f MS%s",
+            "%s · %s · %s · %.0f STUDS · %.0f MS%s",
+            modeText,
             target.player.DisplayName,
             tostring(target.player:GetAttribute("Team") or "FFA"),
             target.distance,
@@ -563,6 +785,7 @@ local function buildMVSDFeatures(): ()
 
     local function anyFeatureEnabled(): boolean
         return settings.aimEnabled
+            or settings.autoShootEnabled
             or settings.triggerCueEnabled
             or settings.outlineEnabled
             or settings.weaponHudEnabled
@@ -571,6 +794,7 @@ local function buildMVSDFeatures(): ()
     local function syncCoreTask(): ()
         disconnectFeatureConnection("MVSDAimCore")
         if not anyFeatureEnabled() then
+            uninstallSilentAimHook()
             if runtime.visuals then
                 runtime.visuals.root:Destroy()
                 runtime.visuals = nil
@@ -579,13 +803,21 @@ local function buildMVSDFeatures(): ()
             table.clear(runtime.motion)
             return
         end
+        if settings.aimEnabled and not runtime.hookInstalled then
+            if not installSilentAimHook() then
+                notify("MVSD · Silent Aim requiere hookmetamethod")
+                settings.aimEnabled = false
+            end
+        elseif not settings.aimEnabled and runtime.hookInstalled then
+            uninstallSilentAimHook()
+        end
         getVisuals()
         featureConnections.MVSDAimCore = TaskManager:Connect(updateCore)
     end
 
-    local AimFeature: any = createUniversalFeature(
-        "Aim Prediction Assistant",
-        "Visual FOV and latency-aware movement prediction for visible match opponents",
+    local SilentAimFeature: any = createUniversalFeature(
+        "Silent Aim",
+        "Blatant silent aim: redirects the weapon raycast to the predicted target part",
         1,
         function(enabled: boolean): ()
             settings.aimEnabled = enabled
@@ -593,17 +825,23 @@ local function buildMVSDFeatures(): ()
         end,
         {parent = state.mvsdScroll, registry = state.mvsdFeatures}
     )
-    addToggleOption(AimFeature, "Show FOV circle", true, function(value: boolean): ()
+    addToggleOption(SilentAimFeature, "Show FOV circle", true, function(value: boolean): ()
         settings.showCircle = value
     end)
-    addToggleOption(AimFeature, "Dynamic FOV", true, function(value: boolean): ()
+    addToggleOption(SilentAimFeature, "Dynamic FOV", true, function(value: boolean): ()
         settings.dynamicFov = value
     end)
-    addToggleOption(AimFeature, "Infinite visual range", false, function(value: boolean): ()
+    addToggleOption(SilentAimFeature, "Infinite range", false, function(value: boolean): ()
         settings.infiniteRange = value
     end)
+    addToggleOption(SilentAimFeature, "Wall check", true, function(value: boolean): ()
+        settings.wallCheck = value
+    end)
+    addToggleOption(SilentAimFeature, "Aim only while clicking", true, function(value: boolean): ()
+        settings.aimOnClick = value
+    end)
     addCycleOption(
-        AimFeature,
+        SilentAimFeature,
         "Target selection",
         {"Closest to Cursor", "Closest Distance"},
         1,
@@ -611,30 +849,48 @@ local function buildMVSDFeatures(): ()
             settings.targetMode = value
         end
     )
-    addCycleOption(AimFeature, "Target part", {"Head", "HumanoidRootPart"}, 1, function(value: string): ()
+    addCycleOption(SilentAimFeature, "Target part", {"Head", "HumanoidRootPart"}, 1, function(value: string): ()
         settings.targetPart = value
     end)
-    addNumberOption(AimFeature, "FOV radius", 180, 35, 520, function(value: number): ()
+    addNumberOption(SilentAimFeature, "FOV radius", 180, 35, 520, function(value: number): ()
         settings.fovRadius = math.clamp(value, 20, 800)
     end)
-    addNumberOption(AimFeature, "Maximum distance", 600, 50, 3000, function(value: number): ()
+    addNumberOption(SilentAimFeature, "Maximum distance", 600, 50, 3000, function(value: number): ()
         settings.maxDistance = math.max(1, value)
     end)
-    addNumberOption(AimFeature, "Projectile speed", 350, 50, 3000, function(value: number): ()
+    addNumberOption(SilentAimFeature, "Projectile speed", 350, 50, 3000, function(value: number): ()
         settings.projectileSpeed = math.max(1, value)
     end)
-    addNumberOption(AimFeature, "Prediction multiplier", 1, 0, 3, function(value: number): ()
+    addNumberOption(SilentAimFeature, "Prediction multiplier", 1, 0, 3, function(value: number): ()
         settings.predictionMultiplier = math.clamp(value, 0, 8)
     end)
     addInformationOption(
-        AimFeature,
-        "Prediction is visual only. It never changes camera, weapon raycasts, clicks or RemoteEvent arguments."
+        SilentAimFeature,
+        "Hooks workspace:Raycast to force Head/Root hits. Wall check OFF ignores every map wall."
+    )
+
+    local AutoShootFeature: any = createUniversalFeature(
+        "Auto Shoot",
+        "Instant triggerbot: fires the weapon the moment a target enters the FOV",
+        2,
+        function(enabled: boolean): ()
+            settings.autoShootEnabled = enabled
+            syncCoreTask()
+        end,
+        {parent = state.mvsdScroll, registry = state.mvsdFeatures}
+    )
+    addNumberOption(AutoShootFeature, "Shot delay", 0, 0, 1, function(value: number): ()
+        settings.shotDelay = math.clamp(value, 0, 2)
+    end)
+    addInformationOption(
+        AutoShootFeature,
+        "Simulates mouse clicks. Combine with Silent Aim for guaranteed redirect hits."
     )
 
     local TriggerFeature: any = createUniversalFeature(
         "Trigger Opportunity",
         "Show a SHOT WINDOW cue when a visible opponent overlaps the center reticle",
-        2,
+        3,
         function(enabled: boolean): ()
             settings.triggerCueEnabled = enabled
             syncCoreTask()
@@ -651,7 +907,7 @@ local function buildMVSDFeatures(): ()
     createUniversalFeature(
         "Visible Target Outline",
         "Apply an occluded Highlight only while the selected opponent has real line of sight",
-        3,
+        4,
         function(enabled: boolean): ()
             settings.outlineEnabled = enabled
             syncCoreTask()
@@ -662,7 +918,7 @@ local function buildMVSDFeatures(): ()
     createUniversalFeature(
         "Weapon Status HUD",
         "Display the equipped tool and any replicated ammo, reload or cooldown attributes",
-        4,
+        5,
         function(enabled: boolean): ()
             settings.weaponHudEnabled = enabled
             syncCoreTask()
@@ -672,6 +928,7 @@ local function buildMVSDFeatures(): ()
 
     state.cleanupMVSDRuntime = function(): ()
         disconnectFeatureConnection("MVSDAimCore")
+        uninstallSilentAimHook()
         if runtime.visuals then
             runtime.visuals.root:Destroy()
             runtime.visuals = nil

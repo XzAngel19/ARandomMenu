@@ -1,0 +1,4 @@
+{
+    "languageMode": "strict",
+    "definitions": ["env.d.luau"]
+}
