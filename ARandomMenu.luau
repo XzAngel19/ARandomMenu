@@ -51,6 +51,7 @@ local GAME_MODULES: {[number]: string} = {
     [142823291] = "MM2",
     [14315258385] = "TRS",
     [93978595733734] = "VD",
+    [135856908115931] = "MVSD",
 }
 
 local ACTIVE_GAME_MODULE: string? = GAME_MODULES[game.PlaceId]
@@ -59,9 +60,11 @@ local GAME_CHECK = {
     MM2 = 142823291,
     TRS = 14315258385,
     VD = 93978595733734,
+    MVSD = 135856908115931,
     MM2Active = ACTIVE_GAME_MODULE == "MM2",
     TRSActive = ACTIVE_GAME_MODULE == "TRS",
     VDActive = ACTIVE_GAME_MODULE == "VD",
+    MVSDActive = ACTIVE_GAME_MODULE == "MVSD",
 }
 
 function GAME_CHECK.matches(identifier: number): boolean
@@ -1632,13 +1635,15 @@ local MovementPage = createTab("Movement", 2)
 local MM2Page = createTab("MM2", 3)
 createTab("TRS", 4)
 createTab("VD", 5)
-local SettingsPage = createTab("Config.", 6)
+createTab("MVSD", 6)
+local SettingsPage = createTab("Config.", 7)
 local tabAreaScale: number = state.isMobile and 0.65 or 0.78
 
 local function configureGameTabs()
     tabButtons.MM2.Visible = GAME_CHECK.MM2Active
     tabButtons.TRS.Visible = GAME_CHECK.TRSActive
     tabButtons.VD.Visible = GAME_CHECK.VDActive
+    tabButtons.MVSD.Visible = GAME_CHECK.MVSDActive
 
     local visibleCount = 3
     if GAME_CHECK.MM2Active then
@@ -1648,6 +1653,9 @@ local function configureGameTabs()
         visibleCount = visibleCount + 1
     end
     if GAME_CHECK.VDActive then
+        visibleCount = visibleCount + 1
+    end
+    if GAME_CHECK.MVSDActive then
         visibleCount = visibleCount + 1
     end
     local tabWidth: number = tabAreaScale / visibleCount
@@ -1865,6 +1873,36 @@ create("UIListLayout", {
     SortOrder = Enum.SortOrder.LayoutOrder,
 })
 
+state.mvsdScroll = create("ScrollingFrame", {
+    Parent = pages.MVSD,
+    Name = "MVSDScroll",
+    Active = true,
+    AutomaticCanvasSize = Enum.AutomaticSize.Y,
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    CanvasSize = UDim2.fromOffset(0, 0),
+    ScrollBarImageColor3 = Color3.fromRGB(100, 100, 100),
+    ScrollBarThickness = 6,
+    ScrollingDirection = Enum.ScrollingDirection.Y,
+    Size = UDim2.fromScale(1, 1),
+})
+
+create("UIPadding", {
+    Parent = state.mvsdScroll,
+    PaddingBottom = UDim.new(0, 18),
+    PaddingLeft = UDim.new(0, 18),
+    PaddingRight = UDim.new(0, 18),
+    PaddingTop = UDim.new(0, 18),
+})
+
+create("UIListLayout", {
+    Parent = state.mvsdScroll,
+    FillDirection = Enum.FillDirection.Vertical,
+    HorizontalAlignment = Enum.HorizontalAlignment.Center,
+    Padding = UDim.new(0, 9),
+    SortOrder = Enum.SortOrder.LayoutOrder,
+})
+
 do
 local LoadingPanel: Frame = (create("Frame", {
     Parent = Content,
@@ -1912,6 +1950,7 @@ local movementFeatures = {}
 local mm2Features = {}
 state.trsFeatures = {}
 state.vdFeatures = {}
+state.mvsdFeatures = {}
 local allFeatures = {}
 local featureConnections = {}
 state.tooltipConnections = {} :: {RBXScriptConnection}
@@ -3072,6 +3111,7 @@ local function createUniversalFeature(
         or (registry == mm2Features and "MM2")
         or (registry == state.trsFeatures and "TRS")
         or (registry == state.vdFeatures and "VD")
+        or (registry == state.mvsdFeatures and "MVSD")
         or (registry == movementFeatures and "Movement")
         or "Universal"
     local configKey: string = configuration.configKey
@@ -3174,6 +3214,7 @@ local function createUniversalFeature(
     subtitle.TextWrapped = true
     subtitle.Visible = false
 
+    local headerControlTop: number = if state.isMobile then 10 else 9
     local toggle: TextButton
     local toggleKnob: Frame? = nil
     if feature.isAction then
@@ -3187,8 +3228,8 @@ local function createUniversalFeature(
         toggleKnob = createdKnob
     end
     toggle.Name = "Toggle"
-    toggle.AnchorPoint = Vector2.new(1, 0.5)
-    toggle.Position = UDim2.new(1, -36, 0.5, 0)
+    toggle.AnchorPoint = Vector2.new(1, 0)
+    toggle.Position = UDim2.new(1, -36, 0, headerControlTop)
     toggle.Visible = not feature.isCategory
     feature.toggle = toggle
     feature.toggleKnob = toggleKnob
@@ -3196,9 +3237,9 @@ local function createUniversalFeature(
     local arrow: TextButton =
         (makeButton(row, "", state.isMobile and 17 or 14) :: any) :: TextButton
     arrow.Name = "Expand"
-    arrow.AnchorPoint = Vector2.new(1, 0.5)
+    arrow.AnchorPoint = Vector2.new(1, 0)
     arrow.BackgroundTransparency = 1
-    arrow.Position = UDim2.new(1, -7, 0.5, 0)
+    arrow.Position = UDim2.new(1, -7, 0, headerControlTop)
     arrow.Size = UDim2.fromOffset(state.isMobile and 28 or 24, state.isMobile and 28 or 24)
     arrow.TextColor3 = Theme.TextMuted
     arrow.Visible = configuration.noOptions ~= true
@@ -3386,9 +3427,9 @@ local function createUniversalFeature(
         local shortcutButton: TextButton =
             (makeButton(row, "KEY", 9) :: any) :: TextButton
         shortcutButton.Name = "Shortcut"
-        shortcutButton.AnchorPoint = Vector2.new(1, 0.5)
+        shortcutButton.AnchorPoint = Vector2.new(1, 0)
         shortcutButton.BackgroundColor3 = Theme.SurfaceRaised
-        shortcutButton.Position = UDim2.new(1, -84, 0.5, 0)
+        shortcutButton.Position = UDim2.new(1, -84, 0, headerControlTop)
         shortcutButton.Size = UDim2.fromOffset(
             state.isMobile and 42 or 38,
             state.isMobile and 28 or 24
@@ -6183,6 +6224,7 @@ local function createGameModuleEnvironment(
         MM2Scroll = MM2Scroll,
         mm2Features = mm2Features,
         vdFeatures = state.vdFeatures,
+        mvsdFeatures = state.mvsdFeatures,
         allFeatures = allFeatures,
         cleanupMM2Runtime = cleanupMM2Runtime,
     }
@@ -6340,6 +6382,8 @@ local function registerPlaceModule(
             state.cleanupTRSRuntime = destroyModule
         elseif tabName == "VD" then
             state.cleanupVDRuntime = destroyModule
+        elseif tabName == "MVSD" then
+            state.cleanupMVSDRuntime = destroyModule
         end
     end)
 end
@@ -6354,6 +6398,7 @@ state.logBootstrap(
 registerPlaceModule("MM2", GAME_CHECK.MM2)
 registerPlaceModule("TRS", GAME_CHECK.TRS)
 registerPlaceModule("VD", GAME_CHECK.VD)
+registerPlaceModule("MVSD", GAME_CHECK.MVSD)
 
 local noResultsLabels: {[string]: TextLabel} = {}
 for sectionName: string, page: GuiObject in pairs(pages) do
@@ -6647,6 +6692,7 @@ local gameStatus = makeTextLabel(
     GAME_CHECK.MM2Active and "MM2 · 142823291"
         or GAME_CHECK.TRSActive and "TRS · 14315258385"
         or GAME_CHECK.VDActive and "VD · 93978595733734"
+        or GAME_CHECK.MVSDActive and "MVSD · 135856908115931"
         or "Universal only",
     12
 )
@@ -6719,6 +6765,7 @@ local helpText = makeTextLabel(
         .. (GAME_CHECK.MM2Active and "MM2"
             or GAME_CHECK.TRSActive and "TRS"
             or GAME_CHECK.VDActive and "VD"
+            or GAME_CHECK.MVSDActive and "MVSD"
             or "Universal")
         .. (state.isMobile
             and " | Hold ADD on any function or action to place its shortcut."
@@ -7404,6 +7451,9 @@ ScreenGui.AncestryChanged:Connect(function(_, parent)
         end
         if state.cleanupVDRuntime then
             state.cleanupVDRuntime()
+        end
+        if state.cleanupMVSDRuntime then
+            state.cleanupMVSDRuntime()
         end
         saveConfigNow()
 
