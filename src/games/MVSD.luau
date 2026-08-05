@@ -48,6 +48,9 @@ type AimSettings = {
     infiniteRange: boolean,
     wallCheck: boolean,
     aimOnClick: boolean,
+    hitChance: number,
+    headshotChance: number,
+    maxAimAngle: number,
     targetMode: string,
     targetPart: string,
     fovRadius: number,
@@ -55,6 +58,7 @@ type AimSettings = {
     projectileSpeed: number,
     predictionMultiplier: number,
     shotDelay: number,
+    humanizeDelay: number,
     triggerTolerance: number,
     triggerDelay: number,
 }
@@ -137,6 +141,9 @@ local function buildMVSDFeatures(): ()
         infiniteRange = false,
         wallCheck = true,
         aimOnClick = false,
+        hitChance = 95,
+        headshotChance = 75,
+        maxAimAngle = 25,
         targetMode = "Closest to Cursor",
         targetPart = "Head",
         fovRadius = 180,
@@ -144,6 +151,7 @@ local function buildMVSDFeatures(): ()
         projectileSpeed = 350,
         predictionMultiplier = 1,
         shotDelay = 0,
+        humanizeDelay = 0.04,
         triggerTolerance = 11,
         triggerDelay = 0,
     }
@@ -469,7 +477,43 @@ local function buildMVSDFeatures(): ()
         if direction.Magnitude < 1 then
             return nil
         end
-        local aimPoint: Vector3 = target.predictedPosition
+        -- Plausibility: hit chance occasionally lets a real shot pass through
+        -- unredirected, so not every shot is a perfect hit.
+        if (math.random() * 100) > settings.hitChance then
+            return nil
+        end
+        -- Plausibility: only redirect when the target is near the crosshair
+        -- direction. Redirecting to a target far off to the side is the classic
+        -- impossible-shot pattern the server validation flags.
+        local toTarget: Vector3 = target.predictedPosition - origin
+        local toUnit: Vector3 = toTarget.Unit
+        local look: Vector3 = camera.CFrame.LookVector
+        local dot: number = math.clamp(look:Dot(toUnit), -1, 1)
+        local degrees: number = math.deg(math.acos(dot))
+        if degrees > settings.maxAimAngle then
+            return nil
+        end
+        -- Headshot chance: downgrade to the root part occasionally so the hit
+        -- distribution stays plausible instead of 100% headshots.
+        local aimPart: BasePart = target.part
+        if settings.targetPart == "Head"
+            and (math.random() * 100) > settings.headshotChance then
+            local rootPart: BasePart? = getRoot(target.character)
+            if rootPart then
+                aimPart = rootPart
+            end
+        end
+        local aimPoint: Vector3
+        if aimPart == target.part then
+            aimPoint = target.predictedPosition
+        else
+            local motion: MotionRecord? = runtime.motion[target.player]
+            if motion then
+                aimPoint = projectTarget(aimPart, motion, origin, getPingSeconds())
+            else
+                aimPoint = aimPart.Position
+            end
+        end
         local reach: number = math.max(
             direction.Magnitude,
             (aimPoint - origin).Magnitude + 5
@@ -821,6 +865,21 @@ local function buildMVSDFeatures(): ()
         table.clear(runtime.esp)
     end
 
+    -- The game weapon exposes cooldown attributes on the equipped tool. Respecting
+    -- them stops auto shoot from firing faster than the game allows, which is a
+    -- detectable macro pattern.
+    local function weaponCanFire(): boolean
+        local character: Model? = LocalPlayer.Character
+        local tool: Tool? = character and character:FindFirstChildWhichIsA("Tool") or nil
+        if not tool then
+            return true
+        end
+        if tool:GetAttribute("CanShoot") == false then
+            return false
+        end
+        return true
+    end
+
     -- Instant triggerbot: holds/releases fire while a valid opponent is locked
     -- in the FOV. Zero delay (default) toggles the click every frame for max RoF.
     local function updateAutoShoot(): ()
@@ -835,7 +894,7 @@ local function buildMVSDFeatures(): ()
             return
         end
 
-        local canFire: boolean = runtime.selected ~= nil
+        local canFire: boolean = runtime.selected ~= nil and weaponCanFire()
         if canFire then
             local now: number = os.clock()
             if now >= runtime.autoShootNextAt then
@@ -850,7 +909,11 @@ local function buildMVSDFeatures(): ()
                         pcall(mouse1release)
                     end
                     runtime.autoShootHeld = false
-                    runtime.autoShootNextAt = now + math.max(settings.shotDelay, 0)
+                    -- Humanize: small random jitter between bursts so the fire
+                    -- rate is not a constant machine-gun pattern.
+                    local delay: number = math.max(settings.shotDelay, 0)
+                        + math.random() * math.max(settings.humanizeDelay, 0)
+                    runtime.autoShootNextAt = now + delay
                 end
             end
         else
@@ -1048,6 +1111,15 @@ local function buildMVSDFeatures(): ()
     addToggleOption(SilentAimFeature, "Wall check", true, function(value: boolean): ()
         settings.wallCheck = value
     end)
+    addNumberOption(SilentAimFeature, "Hit chance", 95, 1, 100, function(value: number): ()
+        settings.hitChance = math.clamp(value, 1, 100)
+    end)
+    addNumberOption(SilentAimFeature, "Headshot chance", 75, 1, 100, function(value: number): ()
+        settings.headshotChance = math.clamp(value, 1, 100)
+    end)
+    addNumberOption(SilentAimFeature, "Max aim angle", 25, 1, 180, function(value: number): ()
+        settings.maxAimAngle = math.clamp(value, 1, 180)
+    end)
     addCycleOption(
         SilentAimFeature,
         "Target selection",
@@ -1074,7 +1146,7 @@ local function buildMVSDFeatures(): ()
     end)
     addInformationOption(
         SilentAimFeature,
-        "Hooks Ray.new and workspace:Raycast. Wall check OFF ignores every map wall (blatant)."
+        "Hooks Ray.new and workspace:Raycast. Hit/headshot chance and max aim angle keep shots plausible."
     )
 
     local AutoShootFeature: any = createUniversalFeature(
@@ -1092,6 +1164,9 @@ local function buildMVSDFeatures(): ()
     end)
     addNumberOption(AutoShootFeature, "Shot delay", 0, 0, 1, function(value: number): ()
         settings.shotDelay = math.clamp(value, 0, 2)
+    end)
+    addNumberOption(AutoShootFeature, "Humanize delay", 0.04, 0, 0.2, function(value: number): ()
+        settings.humanizeDelay = math.clamp(value, 0, 0.5)
     end)
     addInformationOption(
         AutoShootFeature,
