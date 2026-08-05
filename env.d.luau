@@ -1,3 +1,4 @@
+--!strict
 -- Definitions for the ARandomMenu executor + menu runtime environment.
 -- These globals are injected at runtime; the type-check needs them declared
 -- so it can focus on real logic errors inside the game modules.

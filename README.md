@@ -18,7 +18,16 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
 - Imported per-frame callbacks use `Runtime.TaskManager`; they are multiplexed
   through one `RunService.Heartbeat` connection and remain alive until cleanup.
 - Registered sections initialize asynchronously after the GUI shell appears;
+  a short darkcore loading curtain reports progress until they are ready, and
   opening a tab is never used as the condition for constructing its content.
+- The desktop window uses a fixed responsive footprint (72% × 78% of the
+  viewport), can only be dragged, and keeps itself inside the visible screen.
+- Feature rows and option groups are transparent so the animated blossom panel
+  remains visible. Full-screen ash, petals, chains and spines accompany the
+  blur while the menu is open.
+- Universal Fly uses one stable camera-relative velocity preset. The UI exposes
+  only speed and the ascend/descend keys; orientation and smoothing are handled
+  automatically.
 
 Initialization logs use the `[RTM:Bootstrap]` prefix and include detected
 PlaceId, raw download status, downloaded byte count, UI callback count,

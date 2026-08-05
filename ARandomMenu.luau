@@ -1,11 +1,11 @@
 --!strict
 --[[
-    A random Testing Menu # 0001
+    A Random Menu
     Standalone, client-sided Roblox GUI.
 
     Default controls:
       - RightShift: show/hide the menu
-      - Drag the blue title bar to move the menu
+      - Drag the title bar to move the fixed-size menu
 ]]
 
 local function bootstrap(): ()
@@ -92,8 +92,17 @@ local Theme: {[string]: Color3} = {
     Success = Color3.fromRGB(222, 222, 224),
     Danger = Color3.fromRGB(202, 202, 205),
 }
-local MINIMUM_SIZE = Vector2.new(560, 350)
-local MAXIMUM_SIZE = Vector2.new(1100, 760)
+local TITLE_FONT: Font = Font.fromEnum(Enum.Font.Fondamento)
+local THIN_FONT: Font = Font.new(
+    "rbxasset://fonts/families/GothamSSm.json",
+    Enum.FontWeight.Light,
+    Enum.FontStyle.Normal
+)
+local CONTROL_FONT: Font = Font.new(
+    "rbxasset://fonts/families/GothamSSm.json",
+    Enum.FontWeight.Medium,
+    Enum.FontStyle.Normal
+)
 local IS_MOBILE_DEVICE: boolean = UserInputService.TouchEnabled
     and not UserInputService.KeyboardEnabled
 
@@ -287,9 +296,9 @@ local state: any = {
         or configData.ui.reducedBlossomSpeed == true,
     atmosphereEffectsEnabled = configData.ui.atmosphereEffectsEnabled ~= false,
     backgroundOpacity = math.clamp(
-        tonumber(configData.ui.backgroundOpacity) or 0.24,
-        0.18,
-        0.32
+        tonumber(configData.ui.backgroundOpacity) or 0.48,
+        0.30,
+        0.62
     ),
     decorativeTexturesEnabled = configData.ui.decorativeTexturesEnabled ~= false,
     lowPerformanceMode = lowPerformancePreference,
@@ -364,6 +373,12 @@ local AssetManager: any = {
             url = REPOSITORY_RAW_BASE
                 .. "src/gui/Current/Assets/Typography/title-logo.png",
             fileName = "title-logo-v1.png",
+            fallback = "",
+        },
+        loadingSpinner = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Status/spinner_minimal.png",
+            fileName = "loading-spinner-v1.png",
             fallback = "",
         },
         particleSnow = {
@@ -891,10 +906,15 @@ function SectionManager.initializeAllAsync(): ()
     local failures: number = 0
     if state.loadingLabel then
         state.loadingLabel.Text = "Loading modules 0/" .. tostring(total)
-        state.loadingLabel.Parent.Visible = total > 0
+    end
+    if state.loadingProgressFill then
+        state.loadingProgressFill.Size = UDim2.fromScale(0, 1)
     end
 
     if total == 0 then
+        if state.finishLoadingIntro then
+            state.finishLoadingIntro(0)
+        end
         return
     end
 
@@ -919,14 +939,25 @@ function SectionManager.initializeAllAsync(): ()
                     .. "/"
                     .. tostring(total)
             end
+            if state.loadingProgressFill then
+                TweenService:Create(
+                    state.loadingProgressFill,
+                    TweenInfo.new(
+                        0.2,
+                        Enum.EasingStyle.Quart,
+                        Enum.EasingDirection.Out
+                    ),
+                    {Size = UDim2.fromScale(completed / total, 1)}
+                ):Play()
+            end
             if completed >= total then
                 print(
                     "[RTM:Bootstrap] Carga terminada · fallos="
                         .. tostring(failures)
                 )
                 task.delay(0.35, function(): ()
-                    if state.loadingLabel and state.loadingLabel.Parent then
-                        state.loadingLabel.Parent.Visible = false
+                    if state.finishLoadingIntro then
+                        state.finishLoadingIntro(failures)
                     end
                 end)
             end
@@ -980,26 +1011,34 @@ local function registerText(object, normalSize)
     return object
 end
 
-local function makeTextLabel(parent, text, normalSize)
+local function makeTextLabel(
+    parent: Instance,
+    text: string,
+    normalSize: number?
+): TextLabel
     return registerText(create("TextLabel", {
         Parent = parent,
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
-        Font = Enum.Font.Gotham,
+        FontFace = THIN_FONT,
         Text = text,
         TextColor3 = Color3.fromRGB(235, 235, 235),
         TextXAlignment = Enum.TextXAlignment.Left,
         TextYAlignment = Enum.TextYAlignment.Center,
-    }), normalSize or 14)
+    }), normalSize or 14) :: TextLabel
 end
 
-local function makeButton(parent, text, normalSize)
+local function makeButton(
+    parent: Instance,
+    text: string,
+    normalSize: number?
+): TextButton
     local button = registerText(create("TextButton", {
         Parent = parent,
         AutoButtonColor = false,
         BackgroundColor3 = DEFAULT_SURFACE_COLOR,
         BorderSizePixel = 0,
-        Font = Enum.Font.GothamMedium,
+        FontFace = CONTROL_FONT,
         Text = text,
         TextColor3 = Color3.fromRGB(240, 240, 240),
         TextXAlignment = Enum.TextXAlignment.Center,
@@ -1061,16 +1100,16 @@ local function makeButton(parent, text, normalSize)
         ):Play()
     end)
 
-    return button
+    return button :: TextButton
 end
 
-local function makeTextBox(parent, defaultText)
+local function makeTextBox(parent: Instance, defaultText: any): TextBox
     local textBox: TextBox = (registerText(create("TextBox", {
         Parent = parent,
         BackgroundColor3 = Theme.Surface,
         BorderSizePixel = 0,
         ClearTextOnFocus = false,
-        Font = Enum.Font.Gotham,
+        FontFace = THIN_FONT,
         PlaceholderColor3 = Theme.TextMuted,
         Text = tostring(defaultText),
         TextColor3 = Color3.fromRGB(235, 235, 235),
@@ -1207,18 +1246,9 @@ local initialCamera: Camera? = workspace.CurrentCamera
 local initialViewport: Vector2 = initialCamera
     and initialCamera.ViewportSize
     or Vector2.new(1280, 720)
-local activeMinimumSize: Vector2 = state.isMobile
-    and Vector2.new(
-        math.min(330, initialViewport.X),
-        math.min(300, initialViewport.Y)
-    )
-    or MINIMUM_SIZE
-local defaultWindowWidth: number = state.isMobile
-    and math.max(330, math.floor(initialViewport.X * 0.92))
-    or 760
-local defaultWindowHeight: number = state.isMobile
-    and math.max(300, math.floor(initialViewport.Y * 0.78))
-    or 470
+local fixedWindowScale: Vector2 = state.isMobile
+    and Vector2.new(0.94, 0.84)
+    or Vector2.new(0.72, 0.78)
 
 local Main: Frame = (create("Frame", {
     Parent = ScreenGui,
@@ -1228,18 +1258,7 @@ local Main: Frame = (create("Frame", {
     BorderSizePixel = 0,
     ClipsDescendants = true,
     Position = UDim2.fromOffset(0, 0),
-    Size = UDim2.fromOffset(
-        math.clamp(
-            defaultWindowWidth,
-            activeMinimumSize.X,
-            math.min(MAXIMUM_SIZE.X, initialViewport.X)
-        ),
-        math.clamp(
-            defaultWindowHeight,
-            activeMinimumSize.Y,
-            math.min(MAXIMUM_SIZE.Y, initialViewport.Y)
-        )
-    ),
+    Size = UDim2.fromScale(fixedWindowScale.X, fixedWindowScale.Y),
 }) :: any) :: Frame
 
 do
@@ -1270,12 +1289,14 @@ end
 
 local BlossomBackground: ImageLabel = nil :: any
 
-local function centerMain()
-    local camera = workspace.CurrentCamera
-    local viewport = camera and camera.ViewportSize or Vector2.new(1280, 720)
-    local size = Main.AbsoluteSize
+local function centerMain(): ()
+    local camera: Camera? = workspace.CurrentCamera
+    local viewport: Vector2 = camera
+        and camera.ViewportSize
+        or Vector2.new(1280, 720)
+    local size: Vector2 = Main.AbsoluteSize
 
-    local savedPosition = configData.ui.windowPosition
+    local savedPosition: any = configData.ui.windowPosition
     if type(savedPosition) == "table" then
         Main.Position = UDim2.fromOffset(
             math.clamp(tonumber(savedPosition[1]) or 0, 0, math.max(0, viewport.X - size.X)),
@@ -1375,40 +1396,29 @@ local HeaderBlossoms: ImageLabel = (create("ImageLabel", {
 state.assetManager.loadAsync("blossomBranch", HeaderBlossoms)
 state.decorativeObjects = {HeaderBlossoms} :: {GuiObject}
 
-local TitleFallback: TextLabel = makeTextLabel(
-    Header,
-    "A random Testing Menu #0001",
-    18
-) :: TextLabel
-TitleFallback.Name = "TitleFallback"
-TitleFallback.Font = Enum.Font.GothamMedium
-TitleFallback.TextXAlignment = Enum.TextXAlignment.Center
-TitleFallback.Position = UDim2.fromOffset(20, 0)
-TitleFallback.Size = UDim2.new(1, -40, 1, 0)
-TitleFallback.TextColor3 = Color3.fromRGB(242, 242, 244)
-TitleFallback.TextStrokeColor3 = Color3.fromRGB(255, 255, 255)
-TitleFallback.TextStrokeTransparency = 0.9
-TitleFallback.ZIndex = 19
-local Title: ImageLabel = create("ImageLabel", {
+local Title: TextLabel = create("TextLabel", {
     Parent = Header,
     Name = "Title",
     AnchorPoint = Vector2.new(0.5, 0.5),
     BackgroundTransparency = 1,
     BorderSizePixel = 0,
-    Image = "",
-    ImageColor3 = Color3.fromRGB(245, 245, 247),
-    ImageTransparency = 0.03,
+    FontFace = TITLE_FONT,
     Position = UDim2.fromScale(0.5, 0.5),
-    ScaleType = Enum.ScaleType.Fit,
-    Size = UDim2.new(0.72, 0, 0, 42),
+    Size = UDim2.new(0.82, 0, 0, 56),
+    Text = "A Random Menu",
+    TextColor3 = Color3.fromRGB(248, 248, 250),
+    TextScaled = true,
+    TextStrokeColor3 = Color3.fromRGB(0, 0, 0),
+    TextStrokeTransparency = 0.32,
+    TextXAlignment = Enum.TextXAlignment.Center,
+    TextYAlignment = Enum.TextYAlignment.Center,
     ZIndex = 20,
-}) :: ImageLabel
-state.assetManager.loadAsync("titleLogo", Title)
-Title:GetPropertyChangedSignal("Image"):Once(function(): ()
-    if Title.Image ~= "" then
-        TitleFallback.Visible = false
-    end
-end)
+}) :: TextLabel
+create("UITextSizeConstraint", {
+    Parent = Title,
+    MinTextSize = 24,
+    MaxTextSize = state.isMobile and 34 or 42,
+})
 
 local HeaderSeparator: Frame = (create("Frame", {
     Parent = Header,
@@ -1500,7 +1510,7 @@ local PanelDarkOverlay: Frame = create("Frame", {
     Name = "PanelDarkOverlay",
     Active = false,
     BackgroundColor3 = Color3.fromRGB(3, 3, 5),
-    BackgroundTransparency = 0.56,
+    BackgroundTransparency = 0.72,
     BorderSizePixel = 0,
     Size = UDim2.fromScale(1, 1),
     ZIndex = 4,
@@ -1696,7 +1706,7 @@ local SearchIcon: ImageLabel = (create("ImageLabel", {
 state.assetManager.loadAsync("search", SearchIcon)
 
 local ParticleOverlay: Frame = create("Frame", {
-    Parent = Main,
+    Parent = ScreenGui,
     Name = "ParticleOverlay",
     Active = false,
     BackgroundTransparency = 1,
@@ -1705,10 +1715,79 @@ local ParticleOverlay: Frame = create("Frame", {
     Size = UDim2.fromScale(1, 1),
     ZIndex = 28,
 }) :: Frame
-create("UICorner", {
-    Parent = ParticleOverlay,
-    CornerRadius = UDim.new(0, 20),
-})
+
+local ScreenDarkcoreDecorations: Frame = create("Frame", {
+    Parent = ScreenGui,
+    Name = "ScreenDarkcoreDecorations",
+    Active = false,
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    ClipsDescendants = true,
+    Size = UDim2.fromScale(1, 1),
+    ZIndex = 27,
+}) :: Frame
+
+local function makeScreenDecoration(
+    name: string,
+    assetName: string,
+    position: UDim2,
+    size: UDim2,
+    anchorPoint: Vector2,
+    rotation: number
+): ImageLabel
+    local decoration: ImageLabel = create("ImageLabel", {
+        Parent = ScreenDarkcoreDecorations,
+        Name = name,
+        Active = false,
+        AnchorPoint = anchorPoint,
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Image = "",
+        ImageColor3 = Color3.fromRGB(190, 192, 200),
+        ImageTransparency = 0.78,
+        Position = position,
+        Rotation = rotation,
+        ScaleType = Enum.ScaleType.Stretch,
+        Size = size,
+        ZIndex = 27,
+    }) :: ImageLabel
+    state.assetManager.loadAsync(assetName, decoration)
+    table.insert(state.decorativeObjects, decoration)
+    return decoration
+end
+
+makeScreenDecoration(
+    "HangingChainLeft",
+    "chainDivider",
+    UDim2.fromScale(0.035, 0.5),
+    UDim2.new(1.12, 0, 0, 24),
+    Vector2.new(0.5, 0.5),
+    90
+)
+makeScreenDecoration(
+    "HangingChainRight",
+    "chainDivider",
+    UDim2.fromScale(0.965, 0.5),
+    UDim2.new(1.12, 0, 0, 24),
+    Vector2.new(0.5, 0.5),
+    90
+)
+makeScreenDecoration(
+    "TopSpinesLeft",
+    "spikeLeft",
+    UDim2.fromOffset(-8, -4),
+    UDim2.fromOffset(190, 132),
+    Vector2.zero,
+    180
+)
+makeScreenDecoration(
+    "TopSpinesRight",
+    "spikeRight",
+    UDim2.new(1, 8, 0, -4),
+    UDim2.fromOffset(190, 132),
+    Vector2.new(1, 0),
+    180
+)
 
 do
 local EdgeDecorations: Frame = create("Frame", {
@@ -1904,30 +1983,145 @@ create("UIListLayout", {
 })
 
 do
-local LoadingPanel: Frame = (create("Frame", {
-    Parent = Content,
-    Name = "LoadingPanel",
-    AnchorPoint = Vector2.new(0.5, 0),
-    BackgroundColor3 = Theme.SurfaceRaised,
-    BackgroundTransparency = 0.04,
+local LoadingCurtain: CanvasGroup = (create("CanvasGroup", {
+    Parent = Main,
+    Name = "LoadingIntro",
+    Active = true,
+    BackgroundColor3 = Color3.fromRGB(4, 4, 6),
+    BackgroundTransparency = 0.02,
     BorderSizePixel = 0,
-    Position = UDim2.new(0.5, 0, 0, 14),
-    Size = UDim2.fromOffset(250, 44),
-    Visible = false,
-    ZIndex = 210,
-}) :: any) :: Frame
-addRoundedStyle(LoadingPanel, 11, 0.32)
+    Size = UDim2.fromScale(1, 1),
+    ZIndex = 500,
+}) :: any) :: CanvasGroup
+create("UICorner", {
+    Parent = LoadingCurtain,
+    CornerRadius = UDim.new(0, 20),
+})
+
+local LoadingTexture: ImageLabel = create("ImageLabel", {
+    Parent = LoadingCurtain,
+    Name = "InkTexture",
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    Image = "",
+    ImageColor3 = Color3.fromRGB(112, 114, 122),
+    ImageTransparency = 0.58,
+    Position = UDim2.fromScale(0.08, 0.16),
+    Rotation = -4,
+    ScaleType = Enum.ScaleType.Fit,
+    Size = UDim2.fromScale(0.84, 0.68),
+    ZIndex = 501,
+}) :: ImageLabel
+state.assetManager.loadAsync("inkScratch", LoadingTexture)
+
+local LoadingSpinner: ImageLabel = create("ImageLabel", {
+    Parent = LoadingCurtain,
+    Name = "Spinner",
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    Image = "",
+    ImageColor3 = Color3.fromRGB(224, 224, 228),
+    Position = UDim2.fromScale(0.5, 0.37),
+    ScaleType = Enum.ScaleType.Fit,
+    Size = UDim2.fromOffset(state.isMobile and 48 or 58, state.isMobile and 48 or 58),
+    ZIndex = 503,
+}) :: ImageLabel
+state.assetManager.loadAsync("loadingSpinner", LoadingSpinner)
+
+local LoadingSpinnerTween: Tween = TweenService:Create(
+    LoadingSpinner,
+    TweenInfo.new(
+        1.05,
+        Enum.EasingStyle.Linear,
+        Enum.EasingDirection.InOut,
+        -1
+    ),
+    {Rotation = 360}
+)
+LoadingSpinnerTween:Play()
+
+local LoadingTitle: TextLabel = makeTextLabel(
+    LoadingCurtain,
+    "A Random Menu",
+    state.isMobile and 28 or 34
+) :: TextLabel
+LoadingTitle.AnchorPoint = Vector2.new(0.5, 0.5)
+LoadingTitle.FontFace = TITLE_FONT
+LoadingTitle.Position = UDim2.fromScale(0.5, 0.52)
+LoadingTitle.Size = UDim2.new(0.8, 0, 0, 48)
+LoadingTitle.TextColor3 = Theme.Text
+LoadingTitle.TextXAlignment = Enum.TextXAlignment.Center
+LoadingTitle.ZIndex = 503
+
 local LoadingLabel: TextLabel = (makeTextLabel(
-    LoadingPanel,
+    LoadingCurtain,
     "Loading modules 0/0",
     12
 ) :: any) :: TextLabel
-LoadingLabel.Font = Enum.Font.GothamMedium
-LoadingLabel.Size = UDim2.fromScale(1, 1)
-LoadingLabel.TextColor3 = Theme.Text
+LoadingLabel.AnchorPoint = Vector2.new(0.5, 0)
+LoadingLabel.FontFace = THIN_FONT
+LoadingLabel.Position = UDim2.fromScale(0.5, 0.61)
+LoadingLabel.Size = UDim2.new(0.72, 0, 0, 28)
+LoadingLabel.TextColor3 = Theme.TextMuted
 LoadingLabel.TextXAlignment = Enum.TextXAlignment.Center
-LoadingLabel.ZIndex = 211
+LoadingLabel.ZIndex = 503
 state.loadingLabel = LoadingLabel
+
+local LoadingTrack: Frame = create("Frame", {
+    Parent = LoadingCurtain,
+    Name = "ProgressTrack",
+    AnchorPoint = Vector2.new(0.5, 0),
+    BackgroundColor3 = Color3.fromRGB(40, 40, 46),
+    BorderSizePixel = 0,
+    Position = UDim2.fromScale(0.5, 0.69),
+    Size = UDim2.new(0.48, 0, 0, 3),
+    ZIndex = 503,
+}) :: Frame
+create("UICorner", {Parent = LoadingTrack, CornerRadius = UDim.new(1, 0)})
+local LoadingProgressFill: Frame = create("Frame", {
+    Parent = LoadingTrack,
+    Name = "Progress",
+    BackgroundColor3 = Theme.Accent,
+    BorderSizePixel = 0,
+    Size = UDim2.fromScale(0, 1),
+    ZIndex = 504,
+}) :: Frame
+create("UICorner", {Parent = LoadingProgressFill, CornerRadius = UDim.new(1, 0)})
+state.loadingProgressFill = LoadingProgressFill
+
+local loadingIntroFinished: boolean = false
+state.finishLoadingIntro = function(failureCount: number): ()
+    if loadingIntroFinished or not LoadingCurtain.Parent then
+        return
+    end
+    loadingIntroFinished = true
+    if failureCount > 0 then
+        LoadingLabel.Text = tostring(failureCount) .. " module(s) loaded with warnings"
+    else
+        LoadingLabel.Text = "Ready"
+    end
+    LoadingProgressFill.Size = UDim2.fromScale(1, 1)
+    task.delay(0.22, function(): ()
+        if not LoadingCurtain.Parent then
+            return
+        end
+        local exitTween: Tween = TweenService:Create(
+            LoadingCurtain,
+            TweenInfo.new(
+                0.38,
+                Enum.EasingStyle.Quart,
+                Enum.EasingDirection.Out
+            ),
+            {GroupTransparency = 1}
+        )
+        exitTween:Play()
+        exitTween.Completed:Once(function(): ()
+            LoadingSpinnerTween:Cancel()
+            LoadingCurtain:Destroy()
+        end)
+    end)
+end
 end
 
 create("UIPadding", {
@@ -2622,12 +2816,14 @@ local function updateVisualMotionState(): ()
         and BlossomBackground.Parent ~= nil
     local atmosphereShouldAnimate: boolean = state.visible
         and Main.Visible
-        and state.blurEnabled
         and state.atmosphereEffectsEnabled
     BlossomBackground.ImageTransparency = state.animatedBlossomsEnabled
         and (1 - state.backgroundOpacity)
         or 1
     ParticleOverlay.Visible = atmosphereShouldAnimate
+    ScreenDarkcoreDecorations.Visible = atmosphereShouldAnimate
+        and state.decorativeTexturesEnabled
+        and not state.lowPerformanceMode
     if not backgroundShouldAnimate then
         blossomFrame = 0
         blossomElapsed = 0
@@ -2929,7 +3125,7 @@ local function refreshFeatureToggle(feature: any): ()
             TweenInfo.new(0.18, Enum.EasingStyle.Quad),
             {
                 Color = feature.enabled and Theme.AccentSoft or Theme.Outline,
-                Transparency = feature.enabled and 0.12 or 0.42,
+                Transparency = 1,
             }
         ):Play()
     end
@@ -3140,7 +3336,8 @@ local function createUniversalFeature(
         Parent = getFeatureCardParent(requestedParent),
         Name = name:gsub("%W", "") .. "Feature",
         Active = true,
-        BackgroundColor3 = Theme.Surface,
+        BackgroundColor3 = Theme.Background,
+        BackgroundTransparency = 1,
         BorderSizePixel = 0,
         ClipsDescendants = true,
         LayoutOrder = layoutOrder,
@@ -3154,7 +3351,7 @@ local function createUniversalFeature(
     local cardStroke: UIStroke = (create("UIStroke", {
         Parent = row,
         Color = Theme.Outline,
-        Transparency = 0.42,
+        Transparency = 1,
         Thickness = 1,
     }) :: any) :: UIStroke
     feature.stroke = cardStroke
@@ -3198,7 +3395,7 @@ local function createUniversalFeature(
     state.assetManager.loadAsync(selectFeatureIcon(name, description), featureIcon)
 
     local title: TextLabel = (makeTextLabel(row, name, 12) :: any) :: TextLabel
-    title.Font = Enum.Font.GothamMedium
+    title.FontFace = CONTROL_FONT
     title.Position = UDim2.fromOffset(44, 0)
     title.Size = UDim2.new(1, -164, 1, 0)
     title.TextColor3 = Theme.Text
@@ -3266,24 +3463,20 @@ local function createUniversalFeature(
         TweenService:Create(
             row,
             TweenInfo.new(0.16, Enum.EasingStyle.Quad),
-            {BackgroundColor3 = Theme.SurfaceHover}
-        ):Play()
-        TweenService:Create(
-            cardStroke,
-            TweenInfo.new(0.16, Enum.EasingStyle.Quad),
-            {Transparency = 0.22}
+            {
+                BackgroundColor3 = Theme.SurfaceHover,
+                BackgroundTransparency = 0.78,
+            }
         ):Play()
     end))
     trackUiConnection(row.MouseLeave:Connect(function(): ()
         TweenService:Create(
             row,
             TweenInfo.new(0.16, Enum.EasingStyle.Quad),
-            {BackgroundColor3 = Theme.Surface}
-        ):Play()
-        TweenService:Create(
-            cardStroke,
-            TweenInfo.new(0.16, Enum.EasingStyle.Quad),
-            {Transparency = feature.enabled and 0.12 or 0.42}
+            {
+                BackgroundColor3 = Theme.Background,
+                BackgroundTransparency = 1,
+            }
         ):Play()
     end))
 
@@ -3292,7 +3485,7 @@ local function createUniversalFeature(
         Name = "Options",
         Active = true,
         BackgroundColor3 = Theme.Background,
-        BackgroundTransparency = 0.08,
+        BackgroundTransparency = 0.66,
         BorderSizePixel = 0,
         Position = UDim2.fromOffset(10, feature.collapsedHeight),
         Size = UDim2.new(1, -20, 0, 0),
@@ -3482,8 +3675,8 @@ local function createOptionRow(feature: any, labelText: string): Frame
     feature.optionCount += 1
     local option: Frame = (create("Frame", {
         Parent = feature.options,
-        BackgroundColor3 = Theme.SurfaceRaised,
-        BackgroundTransparency = 0.2,
+        BackgroundColor3 = Theme.Background,
+        BackgroundTransparency = 1,
         BorderSizePixel = 0,
         LayoutOrder = feature.optionCount,
         Size = UDim2.new(1, 0, 0, 38),
@@ -3492,6 +3685,17 @@ local function createOptionRow(feature: any, labelText: string): Frame
     create("UICorner", {
         Parent = option,
         CornerRadius = UDim.new(0, 7),
+    })
+    create("Frame", {
+        Parent = option,
+        Name = "OptionDivider",
+        AnchorPoint = Vector2.new(0, 1),
+        BackgroundColor3 = Theme.Outline,
+        BackgroundTransparency = 0.72,
+        BorderSizePixel = 0,
+        Position = UDim2.fromScale(0, 1),
+        Size = UDim2.new(1, 0, 0, 1),
+        ZIndex = option.ZIndex + 1,
     })
     table.insert(feature.optionRows, option)
 
@@ -4461,10 +4665,7 @@ state.bindFeatureTooltip = addFeatureTooltip
 
 type FlySettings = {
     speed: number,
-    verticalSpeed: number,
     acceleration: number,
-    navigation: string,
-    mode: string,
     platformStand: boolean,
     faceCamera: boolean,
     upKey: Enum.KeyCode,
@@ -4479,18 +4680,13 @@ local performFling: (Player) -> () = function(_target: Player): () end
 do
 local flySettings: FlySettings = {
     speed = 70,
-    verticalSpeed = 50,
-    acceleration = 8,
-    navigation = "Camera",
-    mode = "Velocity",
+    acceleration = 10,
     platformStand = true,
     faceCamera = true,
     upKey = Enum.KeyCode.Space,
     downKey = Enum.KeyCode.LeftControl,
 }
 local flySmoothedVelocity: Vector3 = Vector3.zero
-local flyImpulseClock: number = 0
-local flyTeleportClock: number = 0
 local originalFlyPlatformStand: boolean? = nil
 local flyTouchVertical: number = 0
 
@@ -4578,21 +4774,7 @@ local function getFlyDirection(
         or Vector3.new(1, 0, 0)
 
     local horizontal: Vector3 = humanoid.MoveDirection
-    if flySettings.navigation == "World" then
-        horizontal = Vector3.zero
-        if UserInputService:IsKeyDown(Enum.KeyCode.W) then
-            horizontal = horizontal + Vector3.new(0, 0, -1)
-        end
-        if UserInputService:IsKeyDown(Enum.KeyCode.S) then
-            horizontal = horizontal + Vector3.new(0, 0, 1)
-        end
-        if UserInputService:IsKeyDown(Enum.KeyCode.D) then
-            horizontal = horizontal + Vector3.new(1, 0, 0)
-        end
-        if UserInputService:IsKeyDown(Enum.KeyCode.A) then
-            horizontal = horizontal + Vector3.new(-1, 0, 0)
-        end
-    elseif horizontal.Magnitude <= 0.001 then
+    if horizontal.Magnitude <= 0.001 then
         if UserInputService:IsKeyDown(Enum.KeyCode.W) then
             horizontal = horizontal + cameraForward
         end
@@ -4621,8 +4803,9 @@ local function getFlyDirection(
         vertical = vertical - 1
     end
 
+    local verticalSpeed: number = flySettings.speed * 0.8
     local targetVelocity: Vector3 = horizontal * flySettings.speed
-        + Vector3.new(0, vertical * flySettings.verticalSpeed, 0)
+        + Vector3.new(0, vertical * verticalSpeed, 0)
     return targetVelocity, cameraForward
 end
 
@@ -4630,8 +4813,6 @@ local function toggleFly(enabled: boolean): ()
     disconnectFeatureConnection("Fly")
     removeFlyObjects()
     flySmoothedVelocity = Vector3.zero
-    flyImpulseClock = 0
-    flyTeleportClock = 0
     flyTouchVertical = 0
 
     if not enabled then
@@ -4655,37 +4836,12 @@ local function toggleFly(enabled: boolean): ()
         local alpha: number = 1 - math.exp(-flySettings.acceleration * deltaTime)
         flySmoothedVelocity = flySmoothedVelocity:Lerp(targetVelocity, alpha)
 
-        velocity.Enabled = flySettings.mode == "Velocity"
+        velocity.Enabled = true
         velocity.VectorVelocity = flySmoothedVelocity
 
         orientation.Enabled = flySettings.faceCamera
         orientation.CFrame = CFrame.lookAt(Vector3.zero, cameraForward)
 
-        if flySettings.mode == "Impulse" then
-            local correction: Vector3 =
-                flySmoothedVelocity - root.AssemblyLinearVelocity
-            root:ApplyImpulse(
-                correction * root.AssemblyMass * math.clamp(deltaTime * 10, 0, 1)
-            )
-        elseif flySettings.mode == "CFrame" then
-            root.CFrame = root.CFrame + flySmoothedVelocity * deltaTime
-            root.AssemblyLinearVelocity = Vector3.zero
-        elseif flySettings.mode == "TP" then
-            flyTeleportClock = flyTeleportClock + deltaTime
-            if flyTeleportClock >= 0.12 then
-                root.CFrame = root.CFrame + flySmoothedVelocity * flyTeleportClock
-                root.AssemblyLinearVelocity = Vector3.zero
-                flyTeleportClock = 0
-            end
-        elseif flySettings.mode == "Pulse" then
-            flyImpulseClock = flyImpulseClock + deltaTime
-            if flyImpulseClock >= 0.18 then
-                local correction: Vector3 =
-                    flySmoothedVelocity - root.AssemblyLinearVelocity
-                root:ApplyImpulse(correction * root.AssemblyMass)
-                flyImpulseClock = 0
-            end
-        end
     end)
 end
 
@@ -5621,50 +5777,12 @@ end
 do
 local FlyFeature = createUniversalFeature(
     "Fly",
-    "Multi-mode flight with independent horizontal and vertical control",
+    "Smooth camera flight with a simple speed control",
     1,
     toggleFly
 )
-addCycleOption(
-    FlyFeature,
-    "Mode",
-    {"Velocity", "Impulse", "CFrame", "TP", "Pulse"},
-    1,
-    function(value)
-        flySettings.mode = value
-    end
-)
 addNumberOption(FlyFeature, "Speed", flySettings.speed, 10, 500, function(value)
     flySettings.speed = value
-end)
-addNumberOption(
-    FlyFeature,
-    "Vertical speed",
-    flySettings.verticalSpeed,
-    10,
-    300,
-    function(value)
-        flySettings.verticalSpeed = value
-    end
-)
-addNumberOption(
-    FlyFeature,
-    "Acceleration",
-    flySettings.acceleration,
-    1,
-    30,
-    function(value)
-        flySettings.acceleration = value
-    end
-)
-addCycleOption(FlyFeature, "Direction", {"Camera", "World"}, 1, function(value)
-    flySettings.navigation = value
-end)
-addToggleOption(FlyFeature, "PlatformStand", flySettings.platformStand, function(value)
-    flySettings.platformStand = value
-end)
-addToggleOption(FlyFeature, "Face camera", flySettings.faceCamera, function(value)
-    flySettings.faceCamera = value
 end)
 local FlyUpKeyButton: TextButton = addKeyOption(FlyFeature, "Up key", flySettings.upKey, function(value)
     flySettings.upKey = value
@@ -5692,8 +5810,8 @@ if state.bindMobileActionPlacement then
 end
 addFeatureTooltip(
     FlyFeature,
-    "Velocity holds a smooth target speed. Impulse corrects speed with physics forces. "
-        .. "CFrame moves every frame. TP moves in short steps. Pulse applies controlled bursts."
+    "Use WASD to move, Space to rise and LeftControl to descend. "
+        .. "The safe velocity preset handles orientation and acceleration automatically."
 )
 end
 
@@ -6611,7 +6729,7 @@ local OpacityFill: Frame = create("Frame", {
     Parent = OpacityBar,
     BackgroundColor3 = Color3.fromRGB(224, 224, 228),
     BorderSizePixel = 0,
-    Size = UDim2.fromScale((state.backgroundOpacity - 0.18) / 0.14, 1),
+    Size = UDim2.fromScale((state.backgroundOpacity - 0.30) / 0.32, 1),
 }) :: Frame
 create("UICorner", {Parent = OpacityFill, CornerRadius = UDim.new(1, 0)})
 local OpacityValue: TextLabel = makeTextLabel(
@@ -6761,7 +6879,7 @@ MobileResetButton.Size = UDim2.fromScale(1, 1)
 
 local helpText = makeTextLabel(
     getFeatureCardParent(SettingsScroll),
-    "Build 0001-S17 | Active game module: "
+    "Darkcore build | Active game module: "
         .. (GAME_CHECK.MM2Active and "MM2"
             or GAME_CHECK.TRSActive and "TRS"
             or GAME_CHECK.VDActive and "VD"
@@ -6924,7 +7042,7 @@ local function setBackgroundOpacityFromX(pointerX: number): ()
         0,
         1
     )
-    state.backgroundOpacity = 0.18 + ratio * 0.14
+    state.backgroundOpacity = 0.30 + ratio * 0.32
     OpacityFill.Size = UDim2.fromScale(ratio, 1)
     OpacityValue.Text = tostring(math.round(state.backgroundOpacity * 100)) .. "%"
     BlossomBackground.ImageTransparency = state.animatedBlossomsEnabled
@@ -7126,237 +7244,104 @@ SectionManager.register("Config.", buildSettings)
 
 do
 local function initializeWindowInput(): ()
-local dragging = false
-local dragInput
-local dragStart
-local dragStartPosition
+local dragging: boolean = false
+local dragInput: InputObject? = nil
+local dragStart: Vector2 = Vector2.zero
+local dragStartPosition: Vector2 = Vector2.zero
 
-local function getPointerPosition(input)
+local function getPointerPosition(input: InputObject?): Vector2
     if input and input.UserInputType == Enum.UserInputType.Touch then
-        return input.Position
+        return Vector2.new(input.Position.X, input.Position.Y)
     end
     return UserInputService:GetMouseLocation()
 end
 
-local function saveWindowGeometry()
+local function viewportSize(): Vector2
+    local camera: Camera? = workspace.CurrentCamera
+    return camera and camera.ViewportSize or Vector2.new(1280, 720)
+end
+
+local function clampMainPosition(position: Vector2): Vector2
+    local screenSize: Vector2 = viewportSize()
+    local mainSize: Vector2 = Main.AbsoluteSize
+    return Vector2.new(
+        math.clamp(position.X, 0, math.max(0, screenSize.X - mainSize.X)),
+        math.clamp(position.Y, 0, math.max(0, screenSize.Y - mainSize.Y))
+    )
+end
+
+local function saveWindowGeometry(): ()
     configData.ui.windowPosition = {
         Main.Position.X.Offset,
         Main.Position.Y.Offset,
     }
-    configData.ui.windowSize = {
-        Main.Size.X.Offset,
-        Main.Size.Y.Offset,
-    }
+    configData.ui.windowSize = nil
     queueConfigSave()
 end
 
-Header.InputBegan:Connect(function(input)
+trackUiConnection(Header.InputBegan:Connect(function(input: InputObject): ()
     if input.UserInputType == Enum.UserInputType.MouseButton1
         or input.UserInputType == Enum.UserInputType.Touch then
         dragging = true
+        dragInput = input.UserInputType == Enum.UserInputType.Touch
+            and input
+            or dragInput
         dragStart = getPointerPosition(input)
         dragStartPosition = Vector2.new(
             Main.Position.X.Offset,
             Main.Position.Y.Offset
         )
-
-        input.Changed:Connect(function()
-            if input.UserInputState == Enum.UserInputState.End then
-                dragging = false
-                saveWindowGeometry()
-            end
-        end)
     end
-end)
+end))
 
-Header.InputChanged:Connect(function(input)
+trackUiConnection(Header.InputChanged:Connect(function(input: InputObject): ()
     if input.UserInputType == Enum.UserInputType.MouseMovement
         or input.UserInputType == Enum.UserInputType.Touch then
         dragInput = input
     end
-end)
+end))
 
-local resizeState = nil
-local ALLOW_WINDOW_RESIZE: boolean = false
-
-local function viewportSize()
-    local camera = workspace.CurrentCamera
-    return camera and camera.ViewportSize or Vector2.new(1280, 720)
-end
-
-local function startResize(mode, input)
-    resizeState = {
-        mode = mode,
-        startPointer = getPointerPosition(input),
-        startPosition = Vector2.new(
-            Main.Position.X.Offset,
-            Main.Position.Y.Offset
-        ),
-        startSize = Main.AbsoluteSize,
-    }
-
-    input.Changed:Connect(function()
-        if input.UserInputState == Enum.UserInputState.End then
-            resizeState = nil
-            saveWindowGeometry()
-        end
-    end)
-end
-
-local function addResizeHandle(name, mode, position, size)
-    local handle = create("Frame", {
-        Parent = Main,
-        Name = name,
-        Active = ALLOW_WINDOW_RESIZE,
-        BackgroundColor3 = Color3.fromRGB(115, 115, 115),
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        Position = position,
-        Size = size,
-        ZIndex = 20,
-    })
-
-    if ALLOW_WINDOW_RESIZE then
-        handle.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1
-                or input.UserInputType == Enum.UserInputType.Touch then
-                startResize(mode, input)
-            end
-        end)
-    end
-
-    return handle
-end
-
-local ResizeTopHandle = addResizeHandle(
-    "ResizeTop",
-    "top",
-    UDim2.fromOffset(9, 0),
-    UDim2.new(1, -18, 0, 5)
-)
-ResizeTopHandle.ZIndex = 14
-addResizeHandle(
-    "ResizeBottom",
-    "bottom",
-    UDim2.new(0, 9, 1, -5),
-    UDim2.new(1, -18, 0, 5)
-)
-addResizeHandle(
-    "ResizeLeft",
-    "left",
-    UDim2.fromOffset(0, 9),
-    UDim2.new(0, 5, 1, -18)
-)
-addResizeHandle(
-    "ResizeRight",
-    "right",
-    UDim2.new(1, -5, 0, 9),
-    UDim2.new(0, 5, 1, -18)
-)
-addResizeHandle(
-    "ResizeTopLeft",
-    "top-left",
-    UDim2.fromOffset(0, 0),
-    UDim2.fromOffset(10, 10)
-)
-addResizeHandle(
-    "ResizeTopRight",
-    "top-right",
-    UDim2.new(1, -10, 0, 0),
-    UDim2.fromOffset(10, 10)
-)
-addResizeHandle(
-    "ResizeBottomLeft",
-    "bottom-left",
-    UDim2.new(0, 0, 1, -10),
-    UDim2.fromOffset(10, 10)
-)
-addResizeHandle(
-    "ResizeBottomRight",
-    "bottom-right",
-    UDim2.new(1, -10, 1, -10),
-    UDim2.fromOffset(10, 10)
-)
-
-local function updateResize(pointerPosition)
-    if not resizeState then
-        return
-    end
-
-    local mode = resizeState.mode
-    local delta = pointerPosition - resizeState.startPointer
-    local startSize = resizeState.startSize
-    local startPosition = resizeState.startPosition
-    local screenSize = viewportSize()
-
-    local newWidth = startSize.X
-    local newHeight = startSize.Y
-    local newX = startPosition.X
-    local newY = startPosition.Y
-
-    if string.find(mode, "right", 1, true) then
-        newWidth = math.clamp(
-            startSize.X + delta.X,
-            activeMinimumSize.X,
-            math.min(MAXIMUM_SIZE.X, screenSize.X)
-        )
-    elseif string.find(mode, "left", 1, true) then
-        newWidth = math.clamp(
-            startSize.X - delta.X,
-            activeMinimumSize.X,
-            math.min(MAXIMUM_SIZE.X, screenSize.X)
-        )
-        newX = startPosition.X + (startSize.X - newWidth)
-    end
-
-    if string.find(mode, "bottom", 1, true) then
-        newHeight = math.clamp(
-            startSize.Y + delta.Y,
-            activeMinimumSize.Y,
-            math.min(MAXIMUM_SIZE.Y, screenSize.Y)
-        )
-    elseif string.find(mode, "top", 1, true) then
-        newHeight = math.clamp(
-            startSize.Y - delta.Y,
-            activeMinimumSize.Y,
-            math.min(MAXIMUM_SIZE.Y, screenSize.Y)
-        )
-        newY = startPosition.Y + (startSize.Y - newHeight)
-    end
-
-    newX = math.clamp(newX, 0, math.max(0, screenSize.X - newWidth))
-    newY = math.clamp(newY, 0, math.max(0, screenSize.Y - newHeight))
-
-    Main.Position = UDim2.fromOffset(newX, newY)
-    Main.Size = UDim2.fromOffset(newWidth, newHeight)
-end
-
-state.globalInputChangedConnection = UserInputService.InputChanged:Connect(function(input)
+state.globalInputChangedConnection = UserInputService.InputChanged:Connect(function(
+    input: InputObject
+): ()
     if dragging and input == dragInput then
-        local delta = getPointerPosition(input) - dragStart
-        local screenSize = viewportSize()
-        local mainSize = Main.AbsoluteSize
-
-        Main.Position = UDim2.fromOffset(
-            math.clamp(
-                dragStartPosition.X + delta.X,
-                0,
-                math.max(0, screenSize.X - mainSize.X)
-            ),
-            math.clamp(
-                dragStartPosition.Y + delta.Y,
-                0,
-                math.max(0, screenSize.Y - mainSize.Y)
-            )
+        local delta: Vector2 = getPointerPosition(input) - dragStart
+        local nextPosition: Vector2 = clampMainPosition(
+            dragStartPosition + delta
         )
-    end
-
-    if resizeState
-        and (input.UserInputType == Enum.UserInputType.MouseMovement
-            or input.UserInputType == Enum.UserInputType.Touch) then
-        updateResize(getPointerPosition(input))
+        Main.Position = UDim2.fromOffset(nextPosition.X, nextPosition.Y)
     end
 end)
+
+state.globalInputEndedConnection = UserInputService.InputEnded:Connect(function(
+    input: InputObject
+): ()
+    if dragging
+        and (input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch) then
+        dragging = false
+        dragInput = nil
+        saveWindowGeometry()
+    end
+end)
+
+local camera: Camera? = workspace.CurrentCamera
+if camera then
+    trackUiConnection(camera:GetPropertyChangedSignal("ViewportSize"):Connect(
+        function(): ()
+            task.defer(function(): ()
+                if not Main.Parent then
+                    return
+                end
+                local clamped: Vector2 = clampMainPosition(Vector2.new(
+                    Main.Position.X.Offset,
+                    Main.Position.Y.Offset
+                ))
+                Main.Position = UDim2.fromOffset(clamped.X, clamped.Y)
+            end)
+        end
+    ))
+end
 
 state.globalInputBeganConnection = UserInputService.InputBegan:Connect(function(input)
     if state.keyCaptureCallback then
@@ -7436,6 +7421,9 @@ ScreenGui.AncestryChanged:Connect(function(_, parent)
         if state.globalInputChangedConnection then
             state.globalInputChangedConnection:Disconnect()
         end
+        if state.globalInputEndedConnection then
+            state.globalInputEndedConnection:Disconnect()
+        end
         if state.globalInputBeganConnection then
             state.globalInputBeganConnection:Disconnect()
         end
@@ -7471,7 +7459,7 @@ end
 task.defer(saveConfigNow)
 
 print(
-    "A random Testing Menu # 0001 | Build 0001-S17 | Toggle key: "
+    "A Random Menu | Darkcore build | Toggle key: "
         .. state.toggleKey.Name
 )
 end
