@@ -14,6 +14,10 @@ declare function newcclosure(callback: (...any) -> any): (...any) -> any
 
 declare function checkcaller(): boolean
 
+declare function hookfunction(target: any, replacement: any): any
+
+declare Ray: any
+
 declare function mouse1press(): ()
 
 declare function mouse1release(): ()

@@ -9,25 +9,40 @@ local Module = {
     Runtime = nil :: any,
 }
 
--- Blatant combat runtime for Murderers vs Sheriffs Duels.
+-- MVSD combat module (Murderers vs Sheriffs Duels).
 --
--- Architecture notes (reverse engineered from the live game):
---   * The weapon fires with workspace:Raycast from the camera through the mouse:
---       MouseCast = CurrentCamera:ViewportPointToRay(mouse) -> workspace:Raycast(origin, dir*500, params)
---   * The hit position is sent to the server through Remotes.Beam:FireServer().
---   * Silent Aim therefore hooks workspace:Raycast (via game.__namecall) and
---     redirects the direction vector to the predicted target part. Wall check OFF
---     swaps the raycast params to an Include filter containing only the target part,
---     which makes the ray ignore every map wall (blatant wallbang).
---   * Auto Shoot simulates mouse1press/mouse1release so the game's own shot path is
---     used, which guarantees the silent-aim redirect applies.
+-- Reverse-engineered from the live game (PlaceId 135856908115931):
+--   * Real team values are attributes: player:GetAttribute("Team") returns
+--     "TeamRed" / "TeamBlue" (or a non-team value in FFA). Same value = teammate.
+--     player:GetAttribute("Game") is the running match id, player:GetAttribute("Died")
+--     is a boolean, player:GetAttribute("Spectating") the match being watched.
+--   * The client aims with MouseCast: Camera:ViewportPointToRay(mouse) ->
+--     workspace:Raycast(cameraPos, dir * 500, params). The gun reuses this aim,
+--     so redirecting camera-origin raycasts redirects the weapon.
+--   * The server computes the final hit and echoes the beam via Remotes.Beam.
+--
+-- Silent aim follows newvape's structure: a Ray.new hook (hookfunction, no
+-- __namecall) plus a workspace:Raycast / FindPartOnRay* namecall hook, both
+-- redirecting the ray direction onto the predicted target part. Wall check OFF
+-- swaps the params to an Include filter containing only the target part, which
+-- makes the ray ignore every map wall (blatant wallbang).
+--
+-- The game client has no dedicated anticheat (no client-side detection/kick
+-- scripts); the only Kick is inside the admin "conch" console. The module never
+-- sets player attributes or fires fake remotes, so it does not feed the
+-- server-side validation. Input is simulated with mouse1press/mouse1release.
 
 type AimSettings = {
+    teamCheck: boolean,
+    espEnabled: boolean,
+    espShowBoxes: boolean,
+    espShowNames: boolean,
+    espShowHealth: boolean,
+    espShowDistance: boolean,
+    espMaxDistance: number,
     aimEnabled: boolean,
     autoShootEnabled: boolean,
     triggerCueEnabled: boolean,
-    outlineEnabled: boolean,
-    weaponHudEnabled: boolean,
     showCircle: boolean,
     dynamicFov: boolean,
     infiniteRange: boolean,
@@ -57,7 +72,12 @@ type TargetRecord = {
     predictedPosition: Vector3,
     distance: number,
     cursorDistance: number,
-    visible: boolean,
+}
+
+type RedirectResult = {
+    origin: Vector3,
+    direction: Vector3,
+    wallParams: RaycastParams?,
 }
 
 type VisualRecord = {
@@ -66,10 +86,17 @@ type VisualRecord = {
     circleStroke: UIStroke,
     marker: Frame,
     markerStroke: UIStroke,
-    trajectory: Frame,
     status: TextLabel,
-    weapon: TextLabel,
-    highlight: Highlight,
+}
+
+type EspRecord = {
+    character: Model,
+    billboard: BillboardGui,
+    box: Frame,
+    boxStroke: UIStroke,
+    nameLabel: TextLabel,
+    healthBg: Frame,
+    healthFill: Frame,
 }
 
 type AimRuntime = {
@@ -77,8 +104,11 @@ type AimRuntime = {
     motion: {[Player]: MotionRecord},
     selected: TargetRecord?,
     triggerEnteredAt: number?,
-    hookInstalled: boolean,
-    originalNamecall: any,
+    esp: {[Player]: EspRecord},
+    rayHookInstalled: boolean,
+    oldRay: any,
+    namecallHookInstalled: boolean,
+    oldNamecall: any,
     suppressRaycast: boolean,
     autoShootHeld: boolean,
     autoShootNextAt: number,
@@ -86,18 +116,27 @@ type AimRuntime = {
 
 local moduleCleanup: () -> () = function(): () end
 
+local ESP_ENEMY: Color3 = Color3.fromRGB(255, 88, 88)
+local ESP_TEAM: Color3 = Color3.fromRGB(96, 200, 130)
+local ESP_WHITE: Color3 = Color3.fromRGB(245, 245, 245)
+
 local function buildMVSDFeatures(): ()
     local settings: AimSettings = {
+        teamCheck = true,
+        espEnabled = false,
+        espShowBoxes = true,
+        espShowNames = true,
+        espShowHealth = true,
+        espShowDistance = true,
+        espMaxDistance = 2000,
         aimEnabled = false,
         autoShootEnabled = false,
         triggerCueEnabled = false,
-        outlineEnabled = false,
-        weaponHudEnabled = false,
         showCircle = true,
         dynamicFov = true,
         infiniteRange = false,
         wallCheck = true,
-        aimOnClick = true,
+        aimOnClick = false,
         targetMode = "Closest to Cursor",
         targetPart = "Head",
         fovRadius = 180,
@@ -113,8 +152,11 @@ local function buildMVSDFeatures(): ()
         motion = {},
         selected = nil,
         triggerEnteredAt = nil,
-        hookInstalled = false,
-        originalNamecall = nil,
+        esp = {},
+        rayHookInstalled = false,
+        oldRay = nil,
+        namecallHookInstalled = false,
+        oldNamecall = nil,
         suppressRaycast = false,
         autoShootHeld = false,
         autoShootNextAt = 0,
@@ -138,20 +180,36 @@ local function buildMVSDFeatures(): ()
         return getRoot(character)
     end
 
+    -- Real game team/round/died logic. Same Team attribute string = teammate.
+    local function isSameTeam(a: Player, b: Player): boolean
+        local aTeam: any = a:GetAttribute("Team")
+        local bTeam: any = b:GetAttribute("Team")
+        return type(aTeam) == "string"
+            and type(bTeam) == "string"
+            and aTeam == bTeam
+    end
+
+    local function isInMatch(player: Player): boolean
+        local localGame: any = LocalPlayer:GetAttribute("Game")
+        local playerGame: any = player:GetAttribute("Game")
+        if type(localGame) ~= "string" then
+            return false
+        end
+        if type(playerGame) ~= "string" then
+            return false
+        end
+        return playerGame == localGame
+    end
+
+    -- Valid opponent for combat features (silent aim / auto shoot).
     local function isActiveOpponent(player: Player): boolean
         if player == LocalPlayer or player:GetAttribute("Died") == true then
             return false
         end
-        local localGame: any = LocalPlayer:GetAttribute("Game")
-        local playerGame: any = player:GetAttribute("Game")
-        if type(localGame) ~= "string" or playerGame ~= localGame then
+        if not isInMatch(player) then
             return false
         end
-        local localTeam: any = LocalPlayer:GetAttribute("Team")
-        local playerTeam: any = player:GetAttribute("Team")
-        if type(localTeam) == "string"
-            and type(playerTeam) == "string"
-            and localTeam == playerTeam then
+        if settings.teamCheck and isSameTeam(LocalPlayer, player) then
             return false
         end
         local character: Model? = player.Character
@@ -162,6 +220,20 @@ local function buildMVSDFeatures(): ()
             and humanoid ~= nil
             and humanoid.Health > 0
             and getTargetPart(character) ~= nil
+    end
+
+    -- Valid entity for ESP. Teammates only shown when team check is OFF.
+    local function isEspTarget(player: Player): boolean
+        if player == LocalPlayer or player:GetAttribute("Died") == true then
+            return false
+        end
+        if not isInMatch(player) then
+            return false
+        end
+        if settings.teamCheck and isSameTeam(LocalPlayer, player) then
+            return false
+        end
+        return player.Character ~= nil
     end
 
     local function getPingSeconds(): number
@@ -229,10 +301,9 @@ local function buildMVSDFeatures(): ()
         return record
     end
 
-    -- Predicts where the target part will be when the shot lands.
-    -- Lead time = (network ping + projectile travel time) * prediction multiplier,
-    -- then state-aware scaling: jumping targets get extra vertical lead, sprinting
-    -- and strafe-switching targets get a bigger horizontal lead.
+    -- Predicted impact point: pos + vel*leadTime + 0.5*acc*leadTime^2.
+    -- Lead time = (ping + travel time) * multiplier, scaled by target state
+    -- (airborne / sprint / direction change) like newvape's prediction library.
     local function projectTarget(
         part: BasePart,
         motion: MotionRecord,
@@ -255,14 +326,11 @@ local function buildMVSDFeatures(): ()
 
         local stateScale: number = 1
         if verticalSpeed > 12 then
-            -- Airborne: gravity arc means the target keeps rising then falls.
             stateScale = 1.35
         elseif horizontalSpeed > 22 then
-            -- Full sprint.
             stateScale = 1.15
         end
         if accelMagnitude > 60 then
-            -- Rapid direction change / strafe: snap onto the new velocity sooner.
             stateScale = math.min(stateScale * 1.35, 1.9)
         end
         leadTime = leadTime * stateScale
@@ -271,7 +339,6 @@ local function buildMVSDFeatures(): ()
             + velocity * leadTime
             + acceleration * (0.5 * leadTime * leadTime)
         if verticalSpeed > 12 and velocity.Y > 0 then
-            -- Slight upward bias while the target is still climbing.
             projected = projected + Vector3.new(0, math.min(0.25 * leadTime * velocity.Y, 3), 0)
         end
         return projected
@@ -306,6 +373,8 @@ local function buildMVSDFeatures(): ()
         return result == nil or result.Instance:IsDescendantOf(character)
     end
 
+    -- Selects the best valid opponent inside the FOV circle, updated every frame
+    -- on the single Heartbeat task so the silent-aim hook always has a fresh lock.
     local function selectTarget(
         camera: Camera,
         deltaTime: number,
@@ -365,7 +434,6 @@ local function buildMVSDFeatures(): ()
                                             ),
                                             distance = distance,
                                             cursorDistance = cursorDistance,
-                                            visible = true,
                                         }
                                     end
                                 end
@@ -378,63 +446,81 @@ local function buildMVSDFeatures(): ()
         return best
     end
 
-    -- Redirects a weapon raycast toward the currently selected target.
-    -- Returns true when args were mutated and the call must be replayed.
-    local function tryRedirectRaycast(args: {any}): boolean
+    -- Redirects a ray's direction onto the locked target. Follows newvape.
+    local function redirectRay(
+        origin: Vector3,
+        direction: Vector3
+    ): RedirectResult?
         if not settings.aimEnabled then
-            return false
+            return nil
         end
         local target: TargetRecord? = runtime.selected
         if not target then
-            return false
-        end
-        local origin: any = args[1]
-        local direction: any = args[2]
-        if typeof(origin) ~= "Vector3" or typeof(direction) ~= "Vector3" then
-            return false
-        end
-        -- Weapon rays are long camera-origin casts (MouseCast multiplies by 500).
-        if direction.Magnitude < 50 then
-            return false
+            return nil
         end
         local camera: Camera? = workspace.CurrentCamera
         if not camera then
-            return false
+            return nil
         end
-        if (origin - camera.CFrame.Position).Magnitude > 8 then
-            return false
+        -- Only camera-origin rays: those are the gun / mouse casts.
+        if (origin - camera.CFrame.Position).Magnitude > 12 then
+            return nil
         end
-        -- Avoid hijacking pings / misc casts while the player is not shooting.
-        if settings.aimOnClick
-            and not settings.autoShootEnabled
-            and not UserInputService:IsMouseButtonPressed(
-                Enum.UserInputType.MouseButton1
-            ) then
-            return false
+        if direction.Magnitude < 1 then
+            return nil
         end
-
         local aimPoint: Vector3 = target.predictedPosition
-        -- Reach the target even when it sits past the weapon's default ray length.
         local reach: number = math.max(
             direction.Magnitude,
             (aimPoint - origin).Magnitude + 5
         )
-        args[2] = CFrame.lookAt(origin, aimPoint).LookVector * reach
-
+        local newDirection: Vector3 = CFrame.lookAt(origin, aimPoint).LookVector * reach
+        local wallParams: RaycastParams? = nil
         if not settings.wallCheck then
-            -- Blatant: only the target part is included, so map walls are ignored.
-            local wallbangParams: RaycastParams = RaycastParams.new()
-            wallbangParams.FilterType = Enum.RaycastFilterType.Include
-            wallbangParams.FilterDescendantsInstances = {target.part}
-            wallbangParams.IgnoreWater = true
-            wallbangParams.RespectCanCollide = false
-            args[3] = wallbangParams
+            local wp: RaycastParams = RaycastParams.new()
+            wp.FilterType = Enum.RaycastFilterType.Include
+            wp.FilterDescendantsInstances = {target.part}
+            wp.IgnoreWater = true
+            wp.RespectCanCollide = false
+            wallParams = wp
         end
+        return { origin = origin, direction = newDirection, wallParams = wallParams }
+    end
+
+    local function installRayHook(): boolean
+        if runtime.rayHookInstalled then
+            return true
+        end
+        if type(hookfunction) ~= "function" or Ray == nil then
+            return false
+        end
+        local callback = function(origin: any, direction: any)
+            if runtime.oldRay ~= nil then
+                if typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
+                    local redirected: any = redirectRay(origin, direction)
+                    if redirected and redirected.direction then
+                        return runtime.oldRay(origin, redirected.direction)
+                    end
+                end
+                return runtime.oldRay(origin, direction)
+            end
+            return nil
+        end
+        local wrapped: any = callback
+        if type(newcclosure) == "function" then
+            wrapped = newcclosure(callback)
+        end
+        local oldRay: any = hookfunction(Ray.new, wrapped)
+        if oldRay == nil then
+            return false
+        end
+        runtime.oldRay = oldRay
+        runtime.rayHookInstalled = true
         return true
     end
 
-    local function installSilentAimHook(): boolean
-        if runtime.hookInstalled then
+    local function installNamecallHook(): boolean
+        if runtime.namecallHookInstalled then
             return true
         end
         if type(hookmetamethod) ~= "function"
@@ -442,32 +528,57 @@ local function buildMVSDFeatures(): ()
             return false
         end
         local callback = function(self, ...)
-            local method = getnamecallmethod()
-            if (self :: any) == workspace and method == "Raycast" then
+            if runtime.oldNamecall == nil then
+                return nil
+            end
+            local method: string = getnamecallmethod()
+            local isRaycastCall: boolean = method == "Raycast"
+                or method == "FindPartOnRay"
+                or method == "FindPartOnRayWithIgnoreList"
+                or method == "FindPartOnRayWithWhitelist"
+            if (self :: any) == workspace and isRaycastCall then
                 if not runtime.suppressRaycast then
                     local args: {any} = {...}
-                    if tryRedirectRaycast(args) then
-                        return runtime.originalNamecall(self, unpack(args))
+                    local origin: any = args[1]
+                    local direction: any = args[2]
+                    if typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
+                        local redirected: any = redirectRay(origin, direction)
+                        if redirected and redirected.direction then
+                            args[2] = redirected.direction
+                            if redirected.wallParams ~= nil then
+                                args[3] = redirected.wallParams
+                            end
+                            return runtime.oldNamecall(self, unpack(args))
+                        end
                     end
                 end
             end
-            return runtime.originalNamecall(self, ...)
+            return runtime.oldNamecall(self, ...)
         end
         local wrapped: any = callback
         if type(newcclosure) == "function" then
             wrapped = newcclosure(callback)
         end
-        runtime.originalNamecall = hookmetamethod(game, "__namecall", wrapped)
-        runtime.hookInstalled = runtime.originalNamecall ~= nil
-        return runtime.hookInstalled
+        local oldNamecall: any = hookmetamethod(game, "__namecall", wrapped)
+        if oldNamecall == nil then
+            return false
+        end
+        runtime.oldNamecall = oldNamecall
+        runtime.namecallHookInstalled = true
+        return true
     end
 
-    local function uninstallSilentAimHook(): ()
-        if runtime.hookInstalled and runtime.originalNamecall ~= nil then
-            pcall(hookmetamethod, game, "__namecall", runtime.originalNamecall)
+    local function uninstallHooks(): ()
+        if runtime.rayHookInstalled and runtime.oldRay ~= nil and type(hookfunction) == "function" then
+            pcall(hookfunction, Ray.new, runtime.oldRay)
         end
-        runtime.hookInstalled = false
-        runtime.originalNamecall = nil
+        runtime.rayHookInstalled = false
+        runtime.oldRay = nil
+        if runtime.namecallHookInstalled and runtime.oldNamecall ~= nil and type(hookmetamethod) == "function" then
+            pcall(hookmetamethod, game, "__namecall", runtime.oldNamecall)
+        end
+        runtime.namecallHookInstalled = false
+        runtime.oldNamecall = nil
     end
 
     local function makeRounded(frame: GuiObject, radius: number): ()
@@ -499,18 +610,6 @@ local function buildMVSDFeatures(): ()
         circleStroke.Thickness = 1.5
         circleStroke.Transparency = 0.18
         circleStroke.Parent = circle
-
-        local trajectory: Frame = Instance.new("Frame")
-        trajectory.Name = "Trajectory"
-        trajectory.AnchorPoint = Vector2.new(0, 0.5)
-        trajectory.BackgroundColor3 = Theme.AccentViolet
-        trajectory.BackgroundTransparency = 0.28
-        trajectory.BorderSizePixel = 0
-        trajectory.Size = UDim2.fromOffset(0, 2)
-        trajectory.Visible = false
-        trajectory.ZIndex = 302
-        trajectory.Parent = root
-        makeRounded(trajectory, 1000)
 
         local marker: Frame = Instance.new("Frame")
         marker.Name = "PredictionMarker"
@@ -546,43 +645,13 @@ local function buildMVSDFeatures(): ()
         status.Parent = root
         makeRounded(status, 10)
 
-        local weapon: TextLabel = Instance.new("TextLabel")
-        weapon.Name = "WeaponStatus"
-        weapon.AnchorPoint = Vector2.new(1, 1)
-        weapon.BackgroundColor3 = Theme.Surface
-        weapon.BackgroundTransparency = 0.12
-        weapon.BorderSizePixel = 0
-        weapon.Font = Enum.Font.GothamMedium
-        weapon.Position = UDim2.new(1, -20, 1, -20)
-        weapon.Size = UDim2.fromOffset(260, 54)
-        weapon.Text = "WEAPON · NONE"
-        weapon.TextColor3 = Theme.TextMuted
-        weapon.TextSize = 12
-        weapon.Visible = false
-        weapon.ZIndex = 304
-        weapon.Parent = root
-        makeRounded(weapon, 10)
-
-        local highlight: Highlight = Instance.new("Highlight")
-        highlight.Name = "RTM_MVSD_VisibleTarget"
-        highlight.DepthMode = Enum.HighlightDepthMode.Occluded
-        highlight.Enabled = false
-        highlight.FillColor = Theme.AccentViolet
-        highlight.FillTransparency = 0.76
-        highlight.OutlineColor = Theme.AccentCyan
-        highlight.OutlineTransparency = 0.08
-        highlight.Parent = root
-
         return {
             root = root,
             circle = circle,
             circleStroke = circleStroke,
             marker = marker,
             markerStroke = markerStroke,
-            trajectory = trajectory,
             status = status,
-            weapon = weapon,
-            highlight = highlight,
         }
     end
 
@@ -596,54 +665,165 @@ local function buildMVSDFeatures(): ()
         return created
     end
 
-    local function equippedTool(): Tool?
-        local character: Model? = LocalPlayer.Character
-        if not character then
-            return nil
-        end
-        return character:FindFirstChildWhichIsA("Tool")
-    end
-
-    local function formatWeaponStatus(): string
-        local tool: Tool? = equippedTool()
-        if not tool then
-            return "WEAPON · NONE EQUIPPED"
-        end
-        local details: {string} = {string.upper(tool.Name)}
-        for _, name: string in ipairs({"Ammo", "Bullets", "Cooldown", "Reloading", "CanShoot"}) do
-            local value: any = tool:GetAttribute(name)
-            if value ~= nil then
-                table.insert(details, string.upper(name) .. "=" .. tostring(value))
-            end
-        end
-        return table.concat(details, " · ")
-    end
-
     local function hideTargetVisuals(visuals: VisualRecord): ()
         visuals.marker.Visible = false
-        visuals.trajectory.Visible = false
-        visuals.highlight.Enabled = false
-        visuals.highlight.Adornee = nil
         runtime.selected = nil
         runtime.triggerEnteredAt = nil
     end
 
-    local function drawTrajectory(
-        visuals: VisualRecord,
-        startPoint: Vector2,
-        endPoint: Vector2
-    ): ()
-        local offset: Vector2 = endPoint - startPoint
-        local length: number = offset.Magnitude
-        visuals.trajectory.Position = UDim2.fromOffset(startPoint.X, startPoint.Y)
-        visuals.trajectory.Size = UDim2.fromOffset(length, 2)
-        visuals.trajectory.Rotation = math.deg(math.atan2(offset.Y, offset.X))
-        visuals.trajectory.Visible = length > 2
+    local function makeEspRecord(player: Player): EspRecord
+        local character: Model = player.Character :: Model
+        local billboard: BillboardGui = Instance.new("BillboardGui")
+        billboard.Name = "RTM_MVSD_ESP"
+        billboard.Size = UDim2.fromOffset(170, 82)
+        billboard.StudsOffset = Vector3.new(0, 3.4, 0)
+        billboard.AlwaysOnTop = true
+        billboard.LightInfluence = 1
+        billboard.MaxDistance = math.max(settings.espMaxDistance, 100)
+        local billboardRoot: BasePart? = getRoot(character)
+        if billboardRoot then
+            billboard.Adornee = billboardRoot
+        end
+        billboard.Parent = character
+
+        local box: Frame = Instance.new("Frame")
+        box.Name = "Box"
+        box.BackgroundTransparency = 0.12
+        box.BorderSizePixel = 0
+        box.Position = UDim2.fromOffset(0, 20)
+        box.Size = UDim2.new(1, 0, 0, 48)
+        box.Parent = billboard
+        makeRounded(box, 3)
+        local boxStroke: UIStroke = Instance.new("UIStroke")
+        boxStroke.Color = ESP_ENEMY
+        boxStroke.Thickness = 2
+        boxStroke.Parent = box
+
+        local nameLabel: TextLabel = Instance.new("TextLabel")
+        nameLabel.Name = "Name"
+        nameLabel.BackgroundTransparency = 1
+        nameLabel.BorderSizePixel = 0
+        nameLabel.Font = Enum.Font.GothamSemibold
+        nameLabel.Position = UDim2.fromOffset(0, 0)
+        nameLabel.Size = UDim2.new(1, 0, 0, 18)
+        nameLabel.Text = player.Name
+        nameLabel.TextColor3 = ESP_WHITE
+        nameLabel.TextSize = 13
+        nameLabel.TextStrokeTransparency = 0.35
+        nameLabel.Parent = billboard
+
+        local healthBg: Frame = Instance.new("Frame")
+        healthBg.Name = "HealthBg"
+        healthBg.BackgroundColor3 = Theme.Outline
+        healthBg.BackgroundTransparency = 0.4
+        healthBg.BorderSizePixel = 0
+        healthBg.Position = UDim2.new(0, 0, 0, 72)
+        healthBg.Size = UDim2.new(1, 0, 0, 4)
+        healthBg.Parent = billboard
+        makeRounded(healthBg, 2)
+
+        local healthFill: Frame = Instance.new("Frame")
+        healthFill.Name = "HealthFill"
+        healthFill.BackgroundColor3 = Color3.fromRGB(96, 220, 130)
+        healthFill.BorderSizePixel = 0
+        healthFill.Position = UDim2.fromScale(0, 0)
+        healthFill.Size = UDim2.fromScale(1, 1)
+        healthFill.Parent = healthBg
+        makeRounded(healthFill, 2)
+
+        return {
+            character = character,
+            billboard = billboard,
+            box = box,
+            boxStroke = boxStroke,
+            nameLabel = nameLabel,
+            healthBg = healthBg,
+            healthFill = healthFill,
+        }
     end
 
-    -- Instant triggerbot: holds / releases the fire button while a valid target
-    -- is inside the FOV. Zero delay (default) clicks every frame for max RoF.
-    local function updateAutoShoot(target: TargetRecord?): ()
+    local function destroyEspRecord(player: Player): ()
+        local record: EspRecord? = runtime.esp[player]
+        if not record then
+            return
+        end
+        pcall(function(): ()
+            record.billboard:Destroy()
+        end)
+        runtime.esp[player] = nil
+    end
+
+    local function healthColor(ratio: number): Color3
+        if ratio > 0.5 then
+            return Color3.fromRGB(96, 220, 130)
+        elseif ratio > 0.25 then
+            return Color3.fromRGB(235, 200, 80)
+        end
+        return Color3.fromRGB(255, 88, 88)
+    end
+
+    local function updateEsp(): ()
+        if not settings.espEnabled then
+            return
+        end
+        local localRoot: BasePart? = getRoot(LocalPlayer.Character)
+        for _, player: Player in ipairs(Players:GetPlayers()) do
+            local character: Model? = player.Character
+            if isEspTarget(player) and character and character.Parent then
+                local root: BasePart? = getRoot(character)
+                local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
+                if root and humanoid then
+                    local existing: EspRecord? = runtime.esp[player]
+                    local record: EspRecord
+                    if existing and existing.character == character then
+                        record = existing
+                    else
+                        if existing then
+                            destroyEspRecord(player)
+                        end
+                        record = makeEspRecord(player)
+                        runtime.esp[player] = record
+                    end
+                    local isTeam: boolean = isSameTeam(LocalPlayer, player)
+                    local accent: Color3 = if isTeam then ESP_TEAM else ESP_ENEMY
+                    record.box.Visible = settings.espShowBoxes
+                    record.boxStroke.Color = accent
+                    record.billboard.MaxDistance = math.max(settings.espMaxDistance, 100)
+                    local details: {string} = {}
+                    if settings.espShowNames then
+                        table.insert(details, player.Name)
+                    end
+                    if settings.espShowDistance and localRoot then
+                        table.insert(details, string.format("%.0f", (root.Position - localRoot.Position).Magnitude))
+                    end
+                    record.nameLabel.Text = table.concat(details, "  ·  ")
+                    record.nameLabel.Visible = settings.espShowNames or settings.espShowDistance
+                    local health: number = math.max(humanoid.Health, 0)
+                    local maxHealth: number = math.max(humanoid.MaxHealth, 1)
+                    local ratio: number = math.clamp(health / maxHealth, 0, 1)
+                    record.healthBg.Visible = settings.espShowHealth
+                    record.healthFill.Size = UDim2.fromScale(ratio, 1)
+                    record.healthFill.BackgroundColor3 = healthColor(ratio)
+                    record.billboard.Adornee = root
+                else
+                    destroyEspRecord(player)
+                end
+            else
+                destroyEspRecord(player)
+            end
+        end
+    end
+
+    local function destroyAllEsp(): ()
+        for player: Player in pairs(runtime.esp) do
+            destroyEspRecord(player)
+        end
+        table.clear(runtime.esp)
+    end
+
+    -- Instant triggerbot: holds/releases fire while a valid opponent is locked
+    -- in the FOV. Zero delay (default) toggles the click every frame for max RoF.
+    local function updateAutoShoot(): ()
         if not settings.autoShootEnabled then
             if runtime.autoShootHeld then
                 if type(mouse1release) == "function" then
@@ -655,8 +835,7 @@ local function buildMVSDFeatures(): ()
             return
         end
 
-        local canFire: boolean = target ~= nil
-            and target.cursorDistance <= settings.fovRadius
+        local canFire: boolean = runtime.selected ~= nil
         if canFire then
             local now: number = os.clock()
             if now >= runtime.autoShootNextAt then
@@ -686,6 +865,7 @@ local function buildMVSDFeatures(): ()
 
     local function updateCore(deltaTime: number): ()
         local visuals: VisualRecord = getVisuals()
+        updateEsp()
         local camera: Camera? = workspace.CurrentCamera
         if not camera or type(LocalPlayer:GetAttribute("Game")) ~= "string" then
             visuals.circle.Visible = false
@@ -694,10 +874,8 @@ local function buildMVSDFeatures(): ()
                 or settings.triggerCueEnabled
             visuals.status.Text = "MVSD · WAITING FOR ACTIVE MATCH"
             visuals.status.TextColor3 = Theme.TextMuted
-            visuals.weapon.Visible = settings.weaponHudEnabled
-            visuals.weapon.Text = formatWeaponStatus()
             hideTargetVisuals(visuals)
-            updateAutoShoot(nil)
+            updateAutoShoot()
             return
         end
 
@@ -711,15 +889,12 @@ local function buildMVSDFeatures(): ()
         visuals.status.Visible = settings.aimEnabled
             or settings.autoShootEnabled
             or settings.triggerCueEnabled
-        visuals.weapon.Visible = settings.weaponHudEnabled
-        visuals.weapon.Text = formatWeaponStatus()
 
         if not settings.aimEnabled
             and not settings.autoShootEnabled
-            and not settings.triggerCueEnabled
-            and not settings.outlineEnabled then
+            and not settings.triggerCueEnabled then
             hideTargetVisuals(visuals)
-            updateAutoShoot(nil)
+            updateAutoShoot()
             return
         end
 
@@ -732,7 +907,7 @@ local function buildMVSDFeatures(): ()
             )
             visuals.status.TextColor3 = Theme.TextMuted
             hideTargetVisuals(visuals)
-            updateAutoShoot(nil)
+            updateAutoShoot()
             return
         end
 
@@ -740,17 +915,12 @@ local function buildMVSDFeatures(): ()
             camera:WorldToViewportPoint(target.predictedPosition)
         if not predictedOnScreen or predictedPoint.Z <= 0 then
             hideTargetVisuals(visuals)
-            updateAutoShoot(nil)
+            updateAutoShoot()
             return
         end
         local predictedScreen: Vector2 = Vector2.new(predictedPoint.X, predictedPoint.Y)
         visuals.marker.Position = UDim2.fromOffset(predictedScreen.X, predictedScreen.Y)
         visuals.marker.Visible = settings.aimEnabled
-        drawTrajectory(visuals, crosshair, predictedScreen)
-        visuals.trajectory.Visible = settings.aimEnabled and visuals.trajectory.Visible
-
-        visuals.highlight.Adornee = target.character
-        visuals.highlight.Enabled = settings.outlineEnabled and target.visible
 
         local insideTrigger: boolean = target.cursorDistance <= settings.triggerTolerance
         if settings.triggerCueEnabled and insideTrigger then
@@ -765,7 +935,7 @@ local function buildMVSDFeatures(): ()
             and runtime.triggerEnteredAt ~= nil
             and os.clock() - (runtime.triggerEnteredAt :: number) >= settings.triggerDelay
 
-        updateAutoShoot(target)
+        updateAutoShoot()
 
         local modeText: string = if settings.aimEnabled then "SILENT AIM" else "AUTO SHOOT"
         local accent: Color3 = if triggerReady then Theme.Success else Theme.AccentCyan
@@ -784,47 +954,88 @@ local function buildMVSDFeatures(): ()
     end
 
     local function anyFeatureEnabled(): boolean
-        return settings.aimEnabled
+        return settings.espEnabled
+            or settings.aimEnabled
             or settings.autoShootEnabled
             or settings.triggerCueEnabled
-            or settings.outlineEnabled
-            or settings.weaponHudEnabled
     end
 
     local function syncCoreTask(): ()
         disconnectFeatureConnection("MVSDAimCore")
         if not anyFeatureEnabled() then
-            uninstallSilentAimHook()
+            uninstallHooks()
             if runtime.visuals then
                 runtime.visuals.root:Destroy()
                 runtime.visuals = nil
             end
+            destroyAllEsp()
             runtime.selected = nil
             table.clear(runtime.motion)
             return
         end
-        if settings.aimEnabled and not runtime.hookInstalled then
-            if not installSilentAimHook() then
-                notify("MVSD · Silent Aim requiere hookmetamethod")
+        if settings.aimEnabled and not (runtime.rayHookInstalled or runtime.namecallHookInstalled) then
+            local rayOk: boolean = installRayHook()
+            local namecallOk: boolean = installNamecallHook()
+            if not rayOk and not namecallOk then
+                notify("MVSD · Silent Aim requiere hookfunction o hookmetamethod")
                 settings.aimEnabled = false
             end
-        elseif not settings.aimEnabled and runtime.hookInstalled then
-            uninstallSilentAimHook()
+        elseif not settings.aimEnabled and (runtime.rayHookInstalled or runtime.namecallHookInstalled) then
+            uninstallHooks()
         end
         getVisuals()
         featureConnections.MVSDAimCore = TaskManager:Connect(updateCore)
     end
 
+    local EspFeature: any = createUniversalFeature(
+        "ESP",
+        "Advanced player ESP with team colors, health and distance",
+        1,
+        function(enabled: boolean): ()
+            settings.espEnabled = enabled
+            if not enabled then
+                destroyAllEsp()
+            end
+            syncCoreTask()
+        end,
+        {parent = state.mvsdScroll, registry = state.mvsdFeatures}
+    )
+    addToggleOption(EspFeature, "Team check", true, function(value: boolean): ()
+        settings.teamCheck = value
+    end)
+    addToggleOption(EspFeature, "Boxes", true, function(value: boolean): ()
+        settings.espShowBoxes = value
+    end)
+    addToggleOption(EspFeature, "Names", true, function(value: boolean): ()
+        settings.espShowNames = value
+    end)
+    addToggleOption(EspFeature, "Health bar", true, function(value: boolean): ()
+        settings.espShowHealth = value
+    end)
+    addToggleOption(EspFeature, "Distance", true, function(value: boolean): ()
+        settings.espShowDistance = value
+    end)
+    addNumberOption(EspFeature, "ESP distance", 2000, 100, 20000, function(value: number): ()
+        settings.espMaxDistance = math.max(100, value)
+    end)
+    addInformationOption(
+        EspFeature,
+        "Team check ON shows only enemies (TeamRed vs TeamBlue). Enemies red, teammates green."
+    )
+
     local SilentAimFeature: any = createUniversalFeature(
         "Silent Aim",
         "Blatant silent aim: redirects the weapon raycast to the predicted target part",
-        1,
+        2,
         function(enabled: boolean): ()
             settings.aimEnabled = enabled
             syncCoreTask()
         end,
         {parent = state.mvsdScroll, registry = state.mvsdFeatures}
     )
+    addToggleOption(SilentAimFeature, "Team check", true, function(value: boolean): ()
+        settings.teamCheck = value
+    end)
     addToggleOption(SilentAimFeature, "Show FOV circle", true, function(value: boolean): ()
         settings.showCircle = value
     end)
@@ -836,9 +1047,6 @@ local function buildMVSDFeatures(): ()
     end)
     addToggleOption(SilentAimFeature, "Wall check", true, function(value: boolean): ()
         settings.wallCheck = value
-    end)
-    addToggleOption(SilentAimFeature, "Aim only while clicking", true, function(value: boolean): ()
-        settings.aimOnClick = value
     end)
     addCycleOption(
         SilentAimFeature,
@@ -866,19 +1074,22 @@ local function buildMVSDFeatures(): ()
     end)
     addInformationOption(
         SilentAimFeature,
-        "Hooks workspace:Raycast to force Head/Root hits. Wall check OFF ignores every map wall."
+        "Hooks Ray.new and workspace:Raycast. Wall check OFF ignores every map wall (blatant)."
     )
 
     local AutoShootFeature: any = createUniversalFeature(
         "Auto Shoot",
-        "Instant triggerbot: fires the weapon the moment a target enters the FOV",
-        2,
+        "Instant triggerbot: fires the weapon the moment a valid enemy enters the FOV",
+        3,
         function(enabled: boolean): ()
             settings.autoShootEnabled = enabled
             syncCoreTask()
         end,
         {parent = state.mvsdScroll, registry = state.mvsdFeatures}
     )
+    addToggleOption(AutoShootFeature, "Team check", true, function(value: boolean): ()
+        settings.teamCheck = value
+    end)
     addNumberOption(AutoShootFeature, "Shot delay", 0, 0, 1, function(value: number): ()
         settings.shotDelay = math.clamp(value, 0, 2)
     end)
@@ -890,7 +1101,7 @@ local function buildMVSDFeatures(): ()
     local TriggerFeature: any = createUniversalFeature(
         "Trigger Opportunity",
         "Show a SHOT WINDOW cue when a visible opponent overlaps the center reticle",
-        3,
+        4,
         function(enabled: boolean): ()
             settings.triggerCueEnabled = enabled
             syncCoreTask()
@@ -904,35 +1115,14 @@ local function buildMVSDFeatures(): ()
         settings.triggerDelay = math.clamp(value, 0, 2)
     end)
 
-    createUniversalFeature(
-        "Visible Target Outline",
-        "Apply an occluded Highlight only while the selected opponent has real line of sight",
-        4,
-        function(enabled: boolean): ()
-            settings.outlineEnabled = enabled
-            syncCoreTask()
-        end,
-        {parent = state.mvsdScroll, registry = state.mvsdFeatures}
-    )
-
-    createUniversalFeature(
-        "Weapon Status HUD",
-        "Display the equipped tool and any replicated ammo, reload or cooldown attributes",
-        5,
-        function(enabled: boolean): ()
-            settings.weaponHudEnabled = enabled
-            syncCoreTask()
-        end,
-        {parent = state.mvsdScroll, registry = state.mvsdFeatures}
-    )
-
     state.cleanupMVSDRuntime = function(): ()
         disconnectFeatureConnection("MVSDAimCore")
-        uninstallSilentAimHook()
+        uninstallHooks()
         if runtime.visuals then
             runtime.visuals.root:Destroy()
             runtime.visuals = nil
         end
+        destroyAllEsp()
         runtime.selected = nil
         table.clear(runtime.motion)
     end
