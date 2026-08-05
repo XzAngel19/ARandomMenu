@@ -21,11 +21,11 @@ local Module = {
 --     so redirecting camera-origin raycasts redirects the weapon.
 --   * The server computes the final hit and echoes the beam via Remotes.Beam.
 --
--- Silent aim follows newvape's structure: a Ray.new hook (hookfunction, no
--- __namecall) plus a workspace:Raycast / FindPartOnRay* namecall hook, both
--- redirecting the ray direction onto the predicted target part. Wall check OFF
--- swaps the params to an Include filter containing only the target part, which
--- makes the ray ignore every map wall (blatant wallbang).
+-- Silent aim avoids __namecall entirely: it hooks Ray.new (hookfunction on the
+-- constructor) and hooks workspace.Raycast by replacing the instance method
+-- closure with hookfunction. Both redirect the ray direction onto the predicted
+-- target part. Wall check OFF swaps the params to an Include filter containing
+-- only the target part, which makes the ray ignore every map wall.
 --
 -- The game client has no dedicated anticheat (no client-side detection/kick
 -- scripts); the only Kick is inside the admin "conch" console. The module never
@@ -111,8 +111,8 @@ type AimRuntime = {
     esp: {[Player]: EspRecord},
     rayHookInstalled: boolean,
     oldRay: any,
-    namecallHookInstalled: boolean,
-    oldNamecall: any,
+    raycastHookInstalled: boolean,
+    oldRaycast: any,
     suppressRaycast: boolean,
     autoShootHeld: boolean,
     autoShootNextAt: number,
@@ -163,8 +163,8 @@ local function buildMVSDFeatures(): ()
         esp = {},
         rayHookInstalled = false,
         oldRay = nil,
-        namecallHookInstalled = false,
-        oldNamecall = nil,
+        raycastHookInstalled = false,
+        oldRaycast = nil,
         suppressRaycast = false,
         autoShootHeld = false,
         autoShootNextAt = 0,
@@ -563,52 +563,53 @@ local function buildMVSDFeatures(): ()
         return true
     end
 
-    local function installNamecallHook(): boolean
-        if runtime.namecallHookInstalled then
+    -- Hooks workspace.Raycast by replacing the instance method closure with
+    -- hookfunction (no __namecall / no getnamecallmethod). All
+    -- workspace:Raycast(...) calls from the game (including the weapon's
+    -- MouseCast) resolve through this closure, so a dot/colon call with
+    -- (self, origin, direction, params) reaches the redirect.
+    local function installRaycastHook(): boolean
+        if runtime.raycastHookInstalled then
             return true
         end
-        if type(hookmetamethod) ~= "function"
-            or type(getnamecallmethod) ~= "function" then
+        if type(hookfunction) ~= "function" then
+            return false
+        end
+        local raycastMethod: any = workspace and workspace.Raycast
+        if type(raycastMethod) ~= "function" then
             return false
         end
         local callback = function(self, ...)
-            if runtime.oldNamecall == nil then
+            if runtime.oldRaycast == nil then
                 return nil
             end
-            local method: string = getnamecallmethod()
-            local isRaycastCall: boolean = method == "Raycast"
-                or method == "FindPartOnRay"
-                or method == "FindPartOnRayWithIgnoreList"
-                or method == "FindPartOnRayWithWhitelist"
-            if (self :: any) == workspace and isRaycastCall then
-                if not runtime.suppressRaycast then
-                    local args: {any} = {...}
-                    local origin: any = args[1]
-                    local direction: any = args[2]
-                    if typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
-                        local redirected: any = redirectRay(origin, direction)
-                        if redirected and redirected.direction then
-                            args[2] = redirected.direction
-                            if redirected.wallParams ~= nil then
-                                args[3] = redirected.wallParams
-                            end
-                            return runtime.oldNamecall(self, unpack(args))
+            if not runtime.suppressRaycast then
+                local args: {any} = {...}
+                local origin: any = args[1]
+                local direction: any = args[2]
+                if typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
+                    local redirected: any = redirectRay(origin, direction)
+                    if redirected and redirected.direction then
+                        args[2] = redirected.direction
+                        if redirected.wallParams ~= nil then
+                            args[3] = redirected.wallParams
                         end
+                        return runtime.oldRaycast(self, unpack(args))
                     end
                 end
             end
-            return runtime.oldNamecall(self, ...)
+            return runtime.oldRaycast(self, ...)
         end
         local wrapped: any = callback
         if type(newcclosure) == "function" then
             wrapped = newcclosure(callback)
         end
-        local oldNamecall: any = hookmetamethod(game, "__namecall", wrapped)
-        if oldNamecall == nil then
+        local oldRaycast: any = hookfunction(raycastMethod, wrapped)
+        if oldRaycast == nil then
             return false
         end
-        runtime.oldNamecall = oldNamecall
-        runtime.namecallHookInstalled = true
+        runtime.oldRaycast = oldRaycast
+        runtime.raycastHookInstalled = true
         return true
     end
 
@@ -618,11 +619,13 @@ local function buildMVSDFeatures(): ()
         end
         runtime.rayHookInstalled = false
         runtime.oldRay = nil
-        if runtime.namecallHookInstalled and runtime.oldNamecall ~= nil and type(hookmetamethod) == "function" then
-            pcall(hookmetamethod, game, "__namecall", runtime.oldNamecall)
+        if runtime.raycastHookInstalled and runtime.oldRaycast ~= nil
+            and type(hookfunction) == "function"
+            and workspace and workspace.Raycast then
+            pcall(hookfunction, workspace.Raycast, runtime.oldRaycast)
         end
-        runtime.namecallHookInstalled = false
-        runtime.oldNamecall = nil
+        runtime.raycastHookInstalled = false
+        runtime.oldRaycast = nil
     end
 
     local function makeRounded(frame: GuiObject, radius: number): ()
@@ -1036,14 +1039,14 @@ local function buildMVSDFeatures(): ()
             table.clear(runtime.motion)
             return
         end
-        if settings.aimEnabled and not (runtime.rayHookInstalled or runtime.namecallHookInstalled) then
+        if settings.aimEnabled and not (runtime.rayHookInstalled or runtime.raycastHookInstalled) then
             local rayOk: boolean = installRayHook()
-            local namecallOk: boolean = installNamecallHook()
-            if not rayOk and not namecallOk then
-                notify("MVSD · Silent Aim requiere hookfunction o hookmetamethod")
+            local raycastOk: boolean = installRaycastHook()
+            if not rayOk and not raycastOk then
+                notify("MVSD · Silent Aim requiere hookfunction")
                 settings.aimEnabled = false
             end
-        elseif not settings.aimEnabled and (runtime.rayHookInstalled or runtime.namecallHookInstalled) then
+        elseif not settings.aimEnabled and (runtime.rayHookInstalled or runtime.raycastHookInstalled) then
             uninstallHooks()
         end
         getVisuals()
