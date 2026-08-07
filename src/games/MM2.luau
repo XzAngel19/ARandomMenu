@@ -1601,6 +1601,743 @@ local function getGunOriginCFrame(character: Model, _gun: Tool?): CFrame?
     return nil
 end
 
+-- Event-driven adaptation of MM2 Trajectory Extractor 0001. It observes only
+-- local gun activations confirmed by WeaponService.GunFired and locally-owned
+-- ThrowingKnife projectiles. It never rewrites a ray, CFrame, or remote payload.
+local function createTrajectoryCalibration(): any
+    type RunningStats = {
+        count: number,
+        mean: number,
+        m2: number,
+        minimum: number,
+        maximum: number,
+    }
+    type PendingGun = {
+        tool: Tool,
+        activatedAt: number,
+        origin: Vector3?,
+        pingMs: number,
+    }
+    type PendingKnife = {
+        tool: Tool,
+        activatedAt: number,
+        origin: Vector3?,
+        pingMs: number,
+    }
+    type KnifeTrack = {
+        startedAt: number,
+        previousAt: number?,
+        previousPosition: Vector3?,
+        speeds: {number},
+        rawSpeed: number?,
+        spawnDelayMs: number,
+        pingMs: number,
+        destroyConnection: RBXScriptConnection?,
+    }
+    type CalibrationEvent = {
+        kind: string,
+        serverTime: number,
+        pingMs: number,
+        latencyMs: number?,
+        speed: number?,
+        rawSpeed: number?,
+        samples: number?,
+        reason: string?,
+    }
+    type Estimates = {
+        gunAcceptanceMs: number?,
+        knifeSpeed: number?,
+        confirmedShots: number,
+        confirmedThrows: number,
+    }
+    type Controller = {
+        start: (self: Controller) -> (),
+        save: (self: Controller, reason: string?) -> boolean,
+        reset: (self: Controller) -> (),
+        destroy: (self: Controller) -> (),
+        status: (self: Controller) -> string,
+        getEstimates: (self: Controller) -> Estimates,
+    }
+
+    local OUTPUT_ROOT: string = "RandomTestingMenu0001"
+    local OUTPUT_FOLDER: string = OUTPUT_ROOT .. "/Telemetry"
+    local OUTPUT_PATH: string = OUTPUT_FOLDER
+        .. "/MM2_Trajectory_Calibration.json"
+    local MAX_EVENTS: number = 240
+    local MAX_PENDING_AGE: number = 2.5
+    local environment: {[string]: any} = getfenv() :: any
+    local runtime: any = {
+        active = false,
+        dirty = false,
+        saveScheduled = false,
+        startedAt = os.clock(),
+        sessionGunAttempts = 0,
+        sessionGunConfirmed = 0,
+        sessionKnifeAttempts = 0,
+        sessionKnifeConfirmed = 0,
+        pendingGuns = {} :: {PendingGun},
+        pendingKnives = {} :: {PendingKnife},
+        tracks = {} :: {[Instance]: KnifeTrack},
+        observedTools = setmetatable({}, {__mode = "k"}) :: {[Tool]: boolean},
+        connections = {} :: {RBXScriptConnection},
+        events = {} :: {CalibrationEvent},
+        gunAcceptance = nil :: RunningStats?,
+        knifeSpeed = nil :: RunningStats?,
+        knifeSpawnDelay = nil :: RunningStats?,
+    }
+    local controller: Controller
+    local saveSnapshot: (reason: string) -> boolean
+
+    local function newStats(): RunningStats
+        return {
+            count = 0,
+            mean = 0,
+            m2 = 0,
+            minimum = math.huge,
+            maximum = -math.huge,
+        }
+    end
+
+    runtime.gunAcceptance = newStats()
+    runtime.knifeSpeed = newStats()
+    runtime.knifeSpawnDelay = newStats()
+
+    local function finite(value: number): boolean
+        return value == value and value > -math.huge and value < math.huge
+    end
+
+    local function addSample(stats: RunningStats, value: number): ()
+        if not finite(value) then
+            return
+        end
+        stats.count += 1
+        local delta: number = value - stats.mean
+        stats.mean += delta / stats.count
+        stats.m2 += delta * (value - stats.mean)
+        stats.minimum = math.min(stats.minimum, value)
+        stats.maximum = math.max(stats.maximum, value)
+    end
+
+    local function statsPayload(stats: RunningStats): {[string]: number}
+        return {
+            count = stats.count,
+            mean = stats.mean,
+            m2 = stats.m2,
+            minimum = stats.count > 0 and stats.minimum or 0,
+            maximum = stats.count > 0 and stats.maximum or 0,
+        }
+    end
+
+    local function restoreStats(value: any): RunningStats
+        local restored: RunningStats = newStats()
+        if type(value) ~= "table" then
+            return restored
+        end
+        local count: number = math.max(0, math.floor(tonumber(value.count) or 0))
+        local mean: number = tonumber(value.mean) or 0
+        local m2: number = math.max(0, tonumber(value.m2) or 0)
+        if count > 0 and finite(mean) and finite(m2) then
+            restored.count = count
+            restored.mean = mean
+            restored.m2 = m2
+            restored.minimum = tonumber(value.minimum) or mean
+            restored.maximum = tonumber(value.maximum) or mean
+        end
+        return restored
+    end
+
+    local function getPingMilliseconds(): number
+        local pingMs: number = 0
+        pcall(function(): ()
+            local network: Instance? = Stats:FindFirstChild("Network")
+            local serverItems: Instance? = network
+                and network:FindFirstChild("ServerStatsItem")
+            local pingItem: any = serverItems
+                and serverItems:FindFirstChild("Data Ping")
+            if pingItem and type(pingItem.GetValue) == "function" then
+                pingMs = tonumber(pingItem:GetValue()) or 0
+            end
+        end)
+        return math.max(0, pingMs)
+    end
+
+    local function worldPosition(value: any): Vector3?
+        if typeof(value) == "Vector3" then
+            return value
+        elseif typeof(value) == "CFrame" then
+            return value.Position
+        elseif typeof(value) == "Instance" then
+            if value:IsA("Attachment") then
+                return value.WorldPosition
+            elseif value:IsA("BasePart") then
+                return value.Position
+            elseif value:IsA("Model") then
+                return value:GetPivot().Position
+            end
+        end
+        return nil
+    end
+
+    local function projectilePosition(projectile: Instance): Vector3?
+        local visual: Instance? = projectile:FindFirstChild("KnifeVisual", true)
+        if visual and visual:IsA("BasePart") then
+            return visual.Position
+        end
+        local blade: Instance? = projectile:FindFirstChild("BladePosition", true)
+        local bladePosition: Vector3? = worldPosition(blade)
+        if bladePosition then
+            return bladePosition
+        end
+        return worldPosition(projectile)
+    end
+
+    local function toolOrigin(tool: Tool): Vector3?
+        local handle: Instance? = tool:FindFirstChild("Handle")
+        return worldPosition(handle)
+    end
+
+    local function appendEvent(record: CalibrationEvent): ()
+        if #runtime.events >= MAX_EVENTS then
+            table.remove(runtime.events, 1)
+        end
+        table.insert(runtime.events, record)
+        runtime.dirty = true
+        if runtime.saveScheduled then
+            return
+        end
+        runtime.saveScheduled = true
+        task.delay(0.8, function(): ()
+            runtime.saveScheduled = false
+            if runtime.active and runtime.dirty then
+                saveSnapshot("autosave")
+            end
+        end)
+    end
+
+    local function trackConnection(connection: RBXScriptConnection): ()
+        table.insert(runtime.connections, connection)
+    end
+
+    local function compactPending(queue: {any}, now: number): ()
+        while #queue > 0 and now - queue[1].activatedAt > MAX_PENDING_AGE do
+            table.remove(queue, 1)
+        end
+        while #queue > 12 do
+            table.remove(queue, 1)
+        end
+    end
+
+    local function median(values: {number}): number?
+        if #values == 0 then
+            return nil
+        end
+        local sorted: {number} = table.clone(values)
+        table.sort(sorted)
+        local middle: number = math.floor((#sorted + 1) / 2)
+        if #sorted % 2 == 1 then
+            return sorted[middle]
+        end
+        return (sorted[middle] + sorted[middle + 1]) * 0.5
+    end
+
+    local function estimates(): Estimates
+        local gunStats: RunningStats = runtime.gunAcceptance
+        local speedStats: RunningStats = runtime.knifeSpeed
+        return {
+            gunAcceptanceMs = gunStats.count > 0 and gunStats.mean or nil,
+            knifeSpeed = speedStats.count > 0 and speedStats.mean or nil,
+            confirmedShots = gunStats.count,
+            confirmedThrows = speedStats.count,
+        }
+    end
+
+    saveSnapshot = function(reason: string): boolean
+        if type(environment.writefile) ~= "function" then
+            warn("[RTM:MM2:Trajectory] writefile no está disponible; no se pudo guardar.")
+            return false
+        end
+        local payload: {[string]: any} = {
+            schema = 1,
+            placeId = game.PlaceId,
+            savedAt = DateTime.now():ToIsoDate(),
+            reason = reason,
+            aggregate = {
+                gunAcceptanceMs = statsPayload(runtime.gunAcceptance),
+                knifeSpeedStudsPerSecond = statsPayload(runtime.knifeSpeed),
+                knifeSpawnDelayMs = statsPayload(runtime.knifeSpawnDelay),
+            },
+            estimator = estimates(),
+            session = {
+                elapsedSeconds = os.clock() - runtime.startedAt,
+                gunAttempts = runtime.sessionGunAttempts,
+                gunConfirmed = runtime.sessionGunConfirmed,
+                knifeAttempts = runtime.sessionKnifeAttempts,
+                knifeConfirmed = runtime.sessionKnifeConfirmed,
+                events = runtime.events,
+            },
+        }
+        local encodedOk: boolean, encoded: any = pcall(
+            HttpService.JSONEncode,
+            HttpService,
+            payload
+        )
+        if not encodedOk or type(encoded) ~= "string" then
+            warn("[RTM:MM2:Trajectory] JSONEncode falló: " .. tostring(encoded))
+            return false
+        end
+        if type(environment.makefolder) == "function" then
+            pcall(environment.makefolder, OUTPUT_ROOT)
+            pcall(environment.makefolder, OUTPUT_FOLDER)
+        end
+        local writeOk: boolean, writeError: any = pcall(
+            environment.writefile,
+            OUTPUT_PATH,
+            encoded
+        )
+        if not writeOk then
+            warn("[RTM:MM2:Trajectory] writefile falló: " .. tostring(writeError))
+            return false
+        end
+        runtime.dirty = false
+        print(
+            "[RTM:MM2:Trajectory] Guardado "
+                .. OUTPUT_PATH
+                .. " ("
+                .. tostring(#encoded)
+                .. " bytes)"
+        )
+        return true
+    end
+
+    local function loadSnapshot(): ()
+        if type(environment.readfile) ~= "function" then
+            return
+        end
+        if type(environment.isfile) == "function" then
+            local existsOk: boolean, exists: any = pcall(environment.isfile, OUTPUT_PATH)
+            if not existsOk or exists ~= true then
+                return
+            end
+        end
+        local readOk: boolean, encoded: any = pcall(environment.readfile, OUTPUT_PATH)
+        if not readOk or type(encoded) ~= "string" or encoded == "" then
+            return
+        end
+        local decodeOk: boolean, decoded: any = pcall(
+            HttpService.JSONDecode,
+            HttpService,
+            encoded
+        )
+        if not decodeOk or type(decoded) ~= "table" or decoded.placeId ~= game.PlaceId then
+            warn("[RTM:MM2:Trajectory] Caché ignorada: formato o PlaceId inválido.")
+            return
+        end
+        local aggregate: any = decoded.aggregate
+        if type(aggregate) == "table" then
+            runtime.gunAcceptance = restoreStats(aggregate.gunAcceptanceMs)
+            runtime.knifeSpeed = restoreStats(aggregate.knifeSpeedStudsPerSecond)
+            runtime.knifeSpawnDelay = restoreStats(aggregate.knifeSpawnDelayMs)
+        end
+        print("[RTM:MM2:Trajectory] Perfil acumulativo restaurado.")
+    end
+
+    local function normalizeGun(value: any): Tool?
+        if typeof(value) ~= "Instance" then
+            return nil
+        end
+        if value:IsA("Tool") then
+            return value
+        end
+        return value:FindFirstAncestorOfClass("Tool")
+    end
+
+    local function handleGunFired(
+        eventGun: any,
+        eventOriginValue: any,
+        _endpointValue: any,
+        _hitPartValue: any
+    ): ()
+        if not runtime.active then
+            return
+        end
+        local now: number = os.clock()
+        compactPending(runtime.pendingGuns, now)
+        local eventTool: Tool? = normalizeGun(eventGun)
+        local eventOrigin: Vector3? = worldPosition(eventOriginValue)
+        local selectedIndex: number? = nil
+        for index: number = #runtime.pendingGuns, 1, -1 do
+            local pending: PendingGun = runtime.pendingGuns[index]
+            local toolMatches: boolean = eventTool == pending.tool
+            local originMatches: boolean = eventOrigin ~= nil
+                and pending.origin ~= nil
+                and (eventOrigin - pending.origin).Magnitude <= 8
+            if toolMatches or (eventTool == nil and originMatches) then
+                selectedIndex = index
+                break
+            end
+        end
+        if not selectedIndex then
+            return
+        end
+        local pending: PendingGun = table.remove(runtime.pendingGuns, selectedIndex)
+        local latencyMs: number = math.max(0, (now - pending.activatedAt) * 1000)
+        addSample(runtime.gunAcceptance, latencyMs)
+        runtime.sessionGunConfirmed += 1
+        appendEvent({
+            kind = "gun",
+            serverTime = workspace:GetServerTimeNow(),
+            pingMs = pending.pingMs,
+            latencyMs = latencyMs,
+        })
+    end
+
+    local finishKnifeTrack: (projectile: Instance, reason: string) -> ()
+    local function stopKnifeSamplerIfIdle(): ()
+        if next(runtime.tracks) == nil then
+            disconnectFeatureConnection("MM2TrajectorySampler")
+        end
+    end
+
+    finishKnifeTrack = function(projectile: Instance, reason: string): ()
+        local track: KnifeTrack? = runtime.tracks[projectile]
+        if not track then
+            return
+        end
+        runtime.tracks[projectile] = nil
+        if track.destroyConnection then
+            track.destroyConnection:Disconnect()
+            track.destroyConnection = nil
+        end
+        local measuredSpeed: number? = median(track.speeds)
+        local resolvedSpeed: number? = track.rawSpeed or measuredSpeed
+        if resolvedSpeed and resolvedSpeed >= 24 and resolvedSpeed <= 300 then
+            addSample(runtime.knifeSpeed, resolvedSpeed)
+            runtime.sessionKnifeConfirmed += 1
+            appendEvent({
+                kind = "knife",
+                serverTime = workspace:GetServerTimeNow(),
+                pingMs = track.pingMs,
+                latencyMs = track.spawnDelayMs,
+                speed = resolvedSpeed,
+                rawSpeed = track.rawSpeed,
+                samples = #track.speeds,
+                reason = reason,
+            })
+        end
+        stopKnifeSamplerIfIdle()
+    end
+
+    local function ensureKnifeSampler(): ()
+        if featureConnections.MM2TrajectorySampler then
+            return
+        end
+        featureConnections.MM2TrajectorySampler = TaskManager:Connect(function(
+            _deltaTime: number
+        ): ()
+            local now: number = os.clock()
+            local completed: {Instance} = {}
+            for projectile: Instance, track: KnifeTrack in pairs(runtime.tracks) do
+                if not projectile.Parent or now - track.startedAt >= 1.25 then
+                    table.insert(completed, projectile)
+                    continue
+                end
+                local position: Vector3? = projectilePosition(projectile)
+                if position and track.previousPosition and track.previousAt then
+                    local sampleDelta: number = now - track.previousAt
+                    local displacement: number = (position - track.previousPosition).Magnitude
+                    if sampleDelta >= 1 / 240 and displacement >= 0.01 then
+                        local speed: number = displacement / sampleDelta
+                        if speed >= 24 and speed <= 300 then
+                            table.insert(track.speeds, speed)
+                        end
+                    end
+                end
+                if position then
+                    track.previousPosition = position
+                    track.previousAt = now
+                end
+            end
+            for _, projectile: Instance in ipairs(completed) do
+                finishKnifeTrack(projectile, "sample-window-complete")
+            end
+        end)
+    end
+
+    local function resolveKnifeProjectile(projectile: Instance): ()
+        task.spawn(function(): ()
+            local linkedHandle: Instance? = nil
+            for _attempt: number = 1, 20 do
+                if not runtime.active or not projectile.Parent then
+                    return
+                end
+                local handleLink: Instance? = projectile:FindFirstChild(
+                    "HandleLink",
+                    true
+                )
+                if handleLink and handleLink:IsA("ObjectValue") and handleLink.Value then
+                    linkedHandle = handleLink.Value
+                    break
+                end
+                task.wait(0.05)
+            end
+            if not linkedHandle then
+                return
+            end
+            local now: number = os.clock()
+            compactPending(runtime.pendingKnives, now)
+            local selectedIndex: number? = nil
+            for index: number = #runtime.pendingKnives, 1, -1 do
+                local pending: PendingKnife = runtime.pendingKnives[index]
+                local handle: Instance? = pending.tool:FindFirstChild("Handle")
+                if linkedHandle == handle
+                    or linkedHandle:IsDescendantOf(pending.tool) then
+                    selectedIndex = index
+                    break
+                end
+            end
+            if not selectedIndex or runtime.tracks[projectile] then
+                return
+            end
+            local pending: PendingKnife = table.remove(
+                runtime.pendingKnives,
+                selectedIndex
+            )
+            local spawnDelayMs: number = math.max(
+                0,
+                (now - pending.activatedAt) * 1000
+            )
+            addSample(runtime.knifeSpawnDelay, spawnDelayMs)
+            local rawSpeed: number? = tonumber(projectile:GetAttribute("ThrowSpeed"))
+            if rawSpeed and (rawSpeed < 24 or rawSpeed > 300) then
+                rawSpeed = nil
+            end
+            local track: KnifeTrack = {
+                startedAt = now,
+                previousAt = now,
+                previousPosition = projectilePosition(projectile),
+                speeds = {},
+                rawSpeed = rawSpeed,
+                spawnDelayMs = spawnDelayMs,
+                pingMs = pending.pingMs,
+                destroyConnection = nil,
+            }
+            runtime.tracks[projectile] = track
+            track.destroyConnection = projectile.Destroying:Connect(function(): ()
+                finishKnifeTrack(projectile, "destroyed")
+            end)
+            ensureKnifeSampler()
+        end)
+    end
+
+    local function isGun(tool: Tool): boolean
+        return tool.Name == "Gun"
+            or CollectionService:HasTag(tool, "Weapon_Gun")
+            or tool:FindFirstChild("Shoot") ~= nil
+    end
+
+    local function isKnife(tool: Tool): boolean
+        return tool.Name == "Knife"
+            or CollectionService:HasTag(tool, "Weapon_Knife")
+            or tool:FindFirstChild("Events") ~= nil
+    end
+
+    local function observeTool(tool: Tool): ()
+        if runtime.observedTools[tool] then
+            return
+        end
+        local gun: boolean = isGun(tool)
+        local knife: boolean = isKnife(tool)
+        if not gun and not knife then
+            return
+        end
+        runtime.observedTools[tool] = true
+        trackConnection(tool.Activated:Connect(function(): ()
+            if not runtime.active then
+                return
+            end
+            local now: number = os.clock()
+            if gun then
+                runtime.sessionGunAttempts += 1
+                table.insert(runtime.pendingGuns, {
+                    tool = tool,
+                    activatedAt = now,
+                    origin = toolOrigin(tool),
+                    pingMs = getPingMilliseconds(),
+                })
+                compactPending(runtime.pendingGuns, now)
+            elseif knife then
+                runtime.sessionKnifeAttempts += 1
+                table.insert(runtime.pendingKnives, {
+                    tool = tool,
+                    activatedAt = now,
+                    origin = toolOrigin(tool),
+                    pingMs = getPingMilliseconds(),
+                })
+                compactPending(runtime.pendingKnives, now)
+            end
+        end))
+    end
+
+    local function observeContainer(container: Instance?): ()
+        if not container then
+            return
+        end
+        for _, child: Instance in ipairs(container:GetChildren()) do
+            if child:IsA("Tool") then
+                observeTool(child)
+            end
+        end
+        trackConnection(container.ChildAdded:Connect(function(child: Instance): ()
+            if child:IsA("Tool") then
+                observeTool(child)
+            end
+        end))
+    end
+
+    local function installGunConfirmation(): ()
+        task.spawn(function(): ()
+            local clientServices: Instance? = nil
+            local weaponModule: Instance? = nil
+            for _attempt: number = 1, 20 do
+                if not runtime.active then
+                    return
+                end
+                clientServices = game:GetService("ReplicatedStorage")
+                    :FindFirstChild("ClientServices")
+                weaponModule = clientServices
+                    and clientServices:FindFirstChild("WeaponService")
+                if weaponModule then
+                    break
+                end
+                task.wait(0.25)
+            end
+            if not weaponModule then
+                warn("[RTM:MM2:Trajectory] WeaponService no apareció; Knife sigue activo.")
+                return
+            end
+            local loaded: boolean, weaponService: any = pcall(
+                state.requireModule,
+                weaponModule
+            )
+            if not loaded or type(weaponService) ~= "table" then
+                warn(
+                    "[RTM:MM2:Trajectory] No se pudo observar WeaponService: "
+                        .. tostring(weaponService)
+                )
+                return
+            end
+            local connected: boolean, connection: any = pcall(function(): any
+                return weaponService.GunFired.OnClientEvent:Connect(handleGunFired)
+            end)
+            if connected and connection then
+                trackConnection(connection :: RBXScriptConnection)
+                print("[RTM:MM2:Trajectory] Confirmación GunFired conectada.")
+            else
+                warn(
+                    "[RTM:MM2:Trajectory] GunFired no es compatible: "
+                        .. tostring(connection)
+                )
+            end
+        end)
+    end
+
+    controller = {} :: Controller
+
+    function controller:start(): ()
+        if runtime.active then
+            return
+        end
+        if game.PlaceId ~= Module.PlaceId then
+            warn("[RTM:MM2:Trajectory] Inicio omitido fuera de MM2.")
+            return
+        end
+        runtime.active = true
+        runtime.startedAt = os.clock()
+        loadSnapshot()
+        observeContainer(LocalPlayer:FindFirstChildOfClass("Backpack"))
+        observeContainer(LocalPlayer.Character)
+        trackConnection(LocalPlayer.CharacterAdded:Connect(function(
+            character: Model
+        ): ()
+            observeContainer(character)
+        end))
+        trackConnection(
+            CollectionService:GetInstanceAddedSignal("ThrowingKnife"):Connect(
+                resolveKnifeProjectile
+            )
+        )
+        installGunConfirmation()
+        print("[RTM:MM2:Trajectory] Calibración pasiva iniciada en segundo plano.")
+    end
+
+    function controller:save(reason: string?): boolean
+        return saveSnapshot(reason or "manual")
+    end
+
+    function controller:reset(): ()
+        runtime.gunAcceptance = newStats()
+        runtime.knifeSpeed = newStats()
+        runtime.knifeSpawnDelay = newStats()
+        runtime.events = {}
+        runtime.sessionGunAttempts = 0
+        runtime.sessionGunConfirmed = 0
+        runtime.sessionKnifeAttempts = 0
+        runtime.sessionKnifeConfirmed = 0
+        runtime.dirty = true
+        saveSnapshot("reset")
+    end
+
+    function controller:getEstimates(): Estimates
+        return estimates()
+    end
+
+    function controller:status(): string
+        local current: Estimates = estimates()
+        local gunText: string = current.gunAcceptanceMs
+                and string.format("%.1f ms", current.gunAcceptanceMs)
+            or "learning"
+        local knifeText: string = current.knifeSpeed
+                and string.format("%.2f studs/s", current.knifeSpeed)
+            or "learning"
+        return string.format(
+            "Gun %s (%d) · Knife %s (%d)",
+            gunText,
+            current.confirmedShots,
+            knifeText,
+            current.confirmedThrows
+        )
+    end
+
+    function controller:destroy(): ()
+        if not runtime.active then
+            return
+        end
+        if runtime.dirty then
+            saveSnapshot("module-destroy")
+        end
+        runtime.active = false
+        disconnectFeatureConnection("MM2TrajectorySampler")
+        for projectile: Instance, track: KnifeTrack in pairs(runtime.tracks) do
+            if track.destroyConnection then
+                track.destroyConnection:Disconnect()
+            end
+            runtime.tracks[projectile] = nil
+        end
+        for _, connection: RBXScriptConnection in ipairs(runtime.connections) do
+            connection:Disconnect()
+        end
+        table.clear(runtime.connections)
+        table.clear(runtime.pendingGuns)
+        table.clear(runtime.pendingKnives)
+    end
+
+    return controller
+end
+
+local trajectoryCalibration: any = createTrajectoryCalibration()
+state.mm2TrajectoryCalibration = trajectoryCalibration
+trajectoryCalibration:start()
+
 type GunPrediction = {
     aimPart: BasePart,
     targetPosition: Vector3,
@@ -3212,6 +3949,36 @@ addToggleOption(
 refreshShootOptions()
 toggleShootMurderer(true)
 
+local TrajectoryFeature: any = createUniversalFeature(
+    "Trajectory Calibration",
+    "Passive event-driven calibration for your own confirmed shots and knife throws",
+    5,
+    function(): () end,
+    {
+        category = true,
+        parent = MM2Scroll,
+        registry = mm2Features,
+    }
+)
+addActionOption(TrajectoryFeature, "Show learned profile", function(): ()
+    notify(trajectoryCalibration:status())
+end)
+addActionOption(TrajectoryFeature, "Save calibration", function(): ()
+    if trajectoryCalibration:save("manual") then
+        notify("Trajectory calibration saved in the executor workspace.")
+    else
+        notify("Trajectory calibration could not be saved; check F9.")
+    end
+end)
+addActionOption(TrajectoryFeature, "Reset calibration", function(): ()
+    trajectoryCalibration:reset()
+    notify("Trajectory calibration was reset.")
+end)
+addInformationOption(
+    TrajectoryFeature,
+    "Auto-starts only in MM2. Records no continuous player-motion stream and never changes weapon arguments."
+)
+
 local KnifeFeature = createUniversalFeature(
     "Knife",
     "Normal projectile redirect and extended native stab detection",
@@ -3546,6 +4313,7 @@ createUniversalFeature(
 )
 
 cleanupMM2Runtime = function()
+    trajectoryCalibration:destroy()
     toggleShootMurderer(false)
     state.mm2ShotFeedback.hide()
     toggleKnifeAura(false)
