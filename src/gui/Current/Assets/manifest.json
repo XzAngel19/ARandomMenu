@@ -1748,6 +1748,19 @@
         124
       ],
       "usage": "Ink scratch accent"
+    },
+    "cosmic_controls_sheet": {
+      "category": "Source",
+      "path": "Assets/Source/cosmic-controls-sheet.png",
+      "localPath": "Assets\\Source\\cosmic-controls-sheet.png",
+      "url": "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/main/src/gui/Current/Assets/Source/cosmic-controls-sheet.png",
+      "version": 1,
+      "type": "image/png",
+      "dimensions": [
+        1488,
+        1086
+      ],
+      "usage": "Sprite source for the static cosmic header divider"
     }
   }
 }

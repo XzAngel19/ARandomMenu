@@ -52,6 +52,7 @@ jobs:
           test -f src/gui/Current/Assets/Decorations/cross-small.png
           test -f src/gui/Current/Assets/Decorations/halftone-fade.png
           test -f src/gui/Current/Assets/Source/darkcore-asset-sheet.png
+          test -f src/gui/Current/Assets/Source/cosmic-controls-sheet.png
           test -f src/gui/Current/Assets/Icons/search.png
           test -f tools/process_manga_assets.py
           test -f tools/generate_darkcore_assets.py

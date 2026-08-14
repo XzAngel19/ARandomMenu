@@ -71,12 +71,12 @@ function GAME_CHECK.matches(identifier: number): boolean
     return game.PlaceId == identifier
 end
 local DEFAULT_HEADER_COLOR: Color3 = Color3.fromRGB(226, 226, 226)
-local DEFAULT_MENU_COLOR: Color3 = Color3.fromRGB(6, 6, 7)
+local DEFAULT_MENU_COLOR: Color3 = Color3.fromRGB(0, 0, 0)
 local DEFAULT_SURFACE_COLOR: Color3 = Color3.fromRGB(18, 18, 20)
 local DEFAULT_BORDER_COLOR: Color3 = Color3.fromRGB(82, 82, 86)
 
 local Theme: {[string]: Color3} = {
-    Background = Color3.fromRGB(6, 6, 7),
+    Background = Color3.fromRGB(0, 0, 0),
     Surface = Color3.fromRGB(18, 18, 20),
     SurfaceRaised = Color3.fromRGB(27, 27, 30),
     SurfaceHover = Color3.fromRGB(35, 35, 38),
@@ -281,27 +281,21 @@ if type(configData.ui.toggleKey) == "string" then
     end)
 end
 
-local lowPerformancePreference: boolean = configData.ui.lowPerformanceMode == true
 local state: any = {
     visible = true,
     isMobile = IS_MOBILE_DEVICE,
     blurEnabled = configData.ui.blurEnabled ~= false,
-    largeText = configData.ui.largeText == true,
-    mobileMenuButtonVisible = true,
-    animationsEnabled = configData.ui.animationsEnabled ~= false
-        and not lowPerformancePreference,
-    animationPreference = configData.ui.animationsEnabled ~= false,
-    animatedBlossomsEnabled = configData.ui.animatedBlossomsEnabled ~= false,
-    reducedBlossomSpeed = configData.ui.reducedMotion == true
-        or configData.ui.reducedBlossomSpeed == true,
-    atmosphereEffectsEnabled = configData.ui.atmosphereEffectsEnabled ~= false,
-    backgroundOpacity = math.clamp(
-        tonumber(configData.ui.backgroundOpacity) or 0.48,
-        0.30,
-        0.62
+    textScale = math.clamp(
+        tonumber(configData.ui.textScale)
+            or (configData.ui.largeText == true and 1.25 or 1),
+        0.85,
+        1.35
     ),
-    decorativeTexturesEnabled = configData.ui.decorativeTexturesEnabled ~= false,
-    lowPerformanceMode = lowPerformancePreference,
+    mobileMenuButtonVisible = true,
+    animationsEnabled = true,
+    animatedBlossomsEnabled = false,
+    atmosphereEffectsEnabled = false,
+    decorativeTexturesEnabled = true,
     mobileButtonSize = math.clamp(
         tonumber(configData.ui.mobileButtonSize) or 52,
         42,
@@ -311,8 +305,8 @@ local state: any = {
     waitingForKey = false,
     keyCaptureCallback = nil,
     activeTab = "Universal",
-    headerColor = colorFromConfig(configData.ui.headerColor, DEFAULT_HEADER_COLOR),
-    menuColor = colorFromConfig(configData.ui.menuColor, DEFAULT_MENU_COLOR),
+    headerColor = DEFAULT_HEADER_COLOR,
+    menuColor = DEFAULT_MENU_COLOR,
     hookFunction = (getfenv() :: any).hookfunction,
     hookMetamethod = (getfenv() :: any).hookmetamethod,
     getNamecallMethod = (getfenv() :: any).getnamecallmethod,
@@ -380,6 +374,14 @@ local AssetManager: any = {
                 .. "src/gui/Current/Assets/Status/spinner_minimal.png",
             fileName = "loading-spinner-v1.png",
             fallback = "",
+        },
+        cosmicControls = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Source/cosmic-controls-sheet.png",
+            fileName = "cosmic-controls-sheet-v1.png",
+            fallback = "",
+            version = 1,
+            assetType = "image/png",
         },
         particleSnow = {
             url = REPOSITORY_RAW_BASE
@@ -1007,7 +1009,7 @@ local function registerText(object, normalSize)
         normalSize = normalSize,
     })
 
-    object.TextSize = state.largeText and normalSize + 4 or normalSize
+    object.TextSize = math.round(normalSize * state.textScale)
     return object
 end
 
@@ -1254,7 +1256,7 @@ local Main: Frame = (create("Frame", {
     Parent = ScreenGui,
     Name = "Main",
     Active = true,
-    BackgroundColor3 = state.menuColor,
+    BackgroundColor3 = Color3.fromRGB(0, 0, 0),
     BorderSizePixel = 0,
     ClipsDescendants = true,
     Position = UDim2.fromOffset(0, 0),
@@ -1276,15 +1278,8 @@ MainStrokeGradient.Color = ColorSequence.new({
 MainStrokeGradient.Rotation = 8
 MainStrokeGradient.Parent = MainStroke
 local MainScale: UIScale = Instance.new("UIScale")
-MainScale.Scale = state.animationsEnabled and 0.96 or 1
+MainScale.Scale = 1
 MainScale.Parent = Main
-if state.animationsEnabled then
-    TweenService:Create(
-        MainScale,
-        TweenInfo.new(0.28, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-        {Scale = 1}
-    ):Play()
-end
 end
 
 local BlossomBackground: ImageLabel = nil :: any
@@ -1387,13 +1382,12 @@ local HeaderBlossoms: ImageLabel = (create("ImageLabel", {
     BorderSizePixel = 0,
     Image = "",
     ImageColor3 = Color3.fromRGB(235, 235, 237),
-    ImageTransparency = state.decorativeTexturesEnabled and 0.58 or 1,
+    ImageTransparency = 1,
     Position = UDim2.new(1, 10, 0, -12),
     ScaleType = Enum.ScaleType.Fit,
     Size = UDim2.new(0.48, 0, 1, 20),
     ZIndex = 18,
 }) :: any) :: ImageLabel
-state.assetManager.loadAsync("blossomBranch", HeaderBlossoms)
 state.decorativeObjects = {HeaderBlossoms} :: {GuiObject}
 
 local Title: TextLabel = create("TextLabel", {
@@ -1419,6 +1413,24 @@ create("UITextSizeConstraint", {
     MinTextSize = 24,
     MaxTextSize = state.isMobile and 34 or 42,
 })
+
+local HeaderOrnament: ImageLabel = (create("ImageLabel", {
+    Parent = Header,
+    Name = "CosmicDivider",
+    AnchorPoint = Vector2.new(0.5, 1),
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    Image = "",
+    ImageColor3 = Color3.fromRGB(235, 235, 238),
+    ImageRectOffset = Vector2.new(630, 286),
+    ImageRectSize = Vector2.new(430, 64),
+    ImageTransparency = 0.14,
+    Position = UDim2.new(0.5, 0, 1, -3),
+    ScaleType = Enum.ScaleType.Stretch,
+    Size = UDim2.new(0.58, 0, 0, 31),
+    ZIndex = 19,
+}) :: any) :: ImageLabel
+state.assetManager.loadAsync("cosmicControls", HeaderOrnament)
 
 local HeaderSeparator: Frame = (create("Frame", {
     Parent = Header,
@@ -1471,8 +1483,8 @@ create("UIListLayout", {
 local Content = create("Frame", {
     Parent = Main,
     Name = "Content",
-    BackgroundColor3 = state.menuColor,
-    BackgroundTransparency = 0.4,
+    BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+    BackgroundTransparency = 0,
     BorderColor3 = Color3.fromRGB(14, 14, 14),
     BorderSizePixel = 0,
     Position = UDim2.fromOffset(0, 132),
@@ -1493,7 +1505,7 @@ BlossomBackground = (create("ImageLabel", {
     ImageColor3 = Color3.fromRGB(224, 224, 228),
     ImageRectOffset = Vector2.new(0, 0),
     ImageRectSize = Vector2.new(600, 211),
-    ImageTransparency = 1 - state.backgroundOpacity,
+    ImageTransparency = 1,
     Position = UDim2.fromScale(0, 0),
     ScaleType = Enum.ScaleType.Crop,
     Size = UDim2.fromScale(1, 1),
@@ -1503,14 +1515,13 @@ create("UICorner", {
     Parent = BlossomBackground,
     CornerRadius = UDim.new(0, 20),
 })
-state.assetManager.loadAsync("blossomSheet", BlossomBackground)
 
 local PanelDarkOverlay: Frame = create("Frame", {
     Parent = Content,
     Name = "PanelDarkOverlay",
     Active = false,
-    BackgroundColor3 = Color3.fromRGB(3, 3, 5),
-    BackgroundTransparency = 0.72,
+    BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+    BackgroundTransparency = 0,
     BorderSizePixel = 0,
     Size = UDim2.fromScale(1, 1),
     ZIndex = 4,
@@ -1527,16 +1538,7 @@ local function setTab(tabName)
         local selectedPage: boolean = name == tabName
         page.Visible = selectedPage
         if selectedPage and page:IsA("CanvasGroup") then
-            if state.animationsEnabled then
-                page.GroupTransparency = 1
-                TweenService:Create(
-                    page,
-                    TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-                    {GroupTransparency = 0}
-                ):Play()
-            else
-                page.GroupTransparency = 0
-            end
+            page.GroupTransparency = 0
         end
     end
 
@@ -1619,8 +1621,8 @@ local function createTab(tabName, layoutOrder)
     local page = create("CanvasGroup", {
         Parent = Content,
         Name = tabName .. "Page",
-        BackgroundColor3 = state.menuColor,
-        BackgroundTransparency = 0.46,
+        BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+        BackgroundTransparency = 0,
         BorderSizePixel = 0,
         Size = UDim2.fromScale(1, 1),
         Visible = false,
@@ -1756,39 +1758,6 @@ local function makeScreenDecoration(
     return decoration
 end
 
-makeScreenDecoration(
-    "HangingChainLeft",
-    "chainDivider",
-    UDim2.fromScale(0.035, 0.5),
-    UDim2.new(1.12, 0, 0, 24),
-    Vector2.new(0.5, 0.5),
-    90
-)
-makeScreenDecoration(
-    "HangingChainRight",
-    "chainDivider",
-    UDim2.fromScale(0.965, 0.5),
-    UDim2.new(1.12, 0, 0, 24),
-    Vector2.new(0.5, 0.5),
-    90
-)
-makeScreenDecoration(
-    "TopSpinesLeft",
-    "spikeLeft",
-    UDim2.fromOffset(-8, -4),
-    UDim2.fromOffset(190, 132),
-    Vector2.zero,
-    180
-)
-makeScreenDecoration(
-    "TopSpinesRight",
-    "spikeRight",
-    UDim2.new(1, 8, 0, -4),
-    UDim2.fromOffset(190, 132),
-    Vector2.new(1, 0),
-    180
-)
-
 do
 local EdgeDecorations: Frame = create("Frame", {
     Parent = Main,
@@ -1825,41 +1794,6 @@ local function makeEdgeDecoration(
     table.insert(state.decorativeObjects, decoration)
     return decoration
 end
-makeEdgeDecoration(
-    "SpikeCornerLeft",
-    "spikeLeft",
-    UDim2.new(0, -2, 1, 2),
-    UDim2.fromOffset(132, 92),
-    Vector2.new(0, 1)
-)
-makeEdgeDecoration(
-    "SpikeCornerRight",
-    "spikeRight",
-    UDim2.new(1, 2, 1, 2),
-    UDim2.fromOffset(132, 92),
-    Vector2.new(1, 1)
-)
-makeEdgeDecoration(
-    "ChainDivider",
-    "chainDivider",
-    UDim2.new(0.5, 0, 0, 130),
-    UDim2.new(0.62, 0, 0, 22),
-    Vector2.new(0.5, 0)
-)
-makeEdgeDecoration(
-    "InkScratch",
-    "inkScratch",
-    UDim2.new(0.5, 0, 1, -4),
-    UDim2.new(0.5, 0, 0, 38),
-    Vector2.new(0.5, 1)
-)
-makeEdgeDecoration(
-    "CrossSmall",
-    "crossSmall",
-    UDim2.new(1, -16, 0, 146),
-    UDim2.fromOffset(22, 22),
-    Vector2.new(1, 0)
-)
 end
 
 local UniversalScroll = create("ScrollingFrame", {
@@ -2731,7 +2665,7 @@ local particleAssetNames: {string} = {
     "particlePetal",
 }
 local particlePool: {AtmosphereParticle} = {}
-local particlePoolSize: number = state.isMobile and 12 or 24
+local particlePoolSize: number = 0
 for index: number = 1, particlePoolSize do
     local particleImage: ImageLabel = create("ImageLabel", {
         Parent = ParticleOverlay,
@@ -2809,91 +2743,18 @@ local function spawnAtmosphereParticle(maximumActive: number): ()
 end
 
 local function updateVisualMotionState(): ()
-    local backgroundShouldAnimate: boolean = state.visible
-        and Main.Visible
-        and state.animatedBlossomsEnabled
-        and not state.lowPerformanceMode
-        and BlossomBackground.Parent ~= nil
-    local atmosphereShouldAnimate: boolean = state.visible
-        and Main.Visible
-        and state.atmosphereEffectsEnabled
-    BlossomBackground.ImageTransparency = state.animatedBlossomsEnabled
-        and (1 - state.backgroundOpacity)
-        or 1
-    ParticleOverlay.Visible = atmosphereShouldAnimate
-    ScreenDarkcoreDecorations.Visible = atmosphereShouldAnimate
-        and state.decorativeTexturesEnabled
-        and not state.lowPerformanceMode
-    if not backgroundShouldAnimate then
-        blossomFrame = 0
-        blossomElapsed = 0
-        BlossomBackground.ImageRectOffset = Vector2.new(0, 0)
-    end
-    if not atmosphereShouldAnimate then
-        resetAtmosphereParticles()
-    end
-    if not backgroundShouldAnimate and not atmosphereShouldAnimate then
-        if visualMotionConnection then
-            visualMotionConnection:Disconnect()
-            visualMotionConnection = nil
-        end
-        return
-    end
     if visualMotionConnection then
         visualMotionConnection:Disconnect()
         visualMotionConnection = nil
     end
-    visualMotionConnection = RunService.Heartbeat:Connect(function(deltaTime: number): ()
-        if backgroundShouldAnimate then
-            blossomElapsed += deltaTime
-            local frameDuration: number = state.reducedBlossomSpeed and 0.26 or 0.13
-            if blossomElapsed >= frameDuration then
-                blossomElapsed %= frameDuration
-                blossomFrame = (blossomFrame + 1) % 25
-                BlossomBackground.ImageRectOffset = Vector2.new(
-                    (blossomFrame % 5) * 600,
-                    math.floor(blossomFrame / 5) * 211
-                )
-            end
-        end
-        if atmosphereShouldAnimate then
-            atmosphereElapsed += deltaTime
-            local spawnInterval: number = state.lowPerformanceMode and 1.6
-                or state.reducedBlossomSpeed and 0.9
-                or state.isMobile and 0.68
-                or 0.34
-            local maximumActive: number = state.lowPerformanceMode and 3
-                or state.isMobile and 9
-                or 18
-            if atmosphereElapsed >= spawnInterval then
-                atmosphereElapsed %= spawnInterval
-                spawnAtmosphereParticle(maximumActive)
-            end
-            local panelHeight: number = math.max(1, ParticleOverlay.AbsoluteSize.Y)
-            local motionScale: number = state.reducedBlossomSpeed and 0.55 or 1
-            for _, particle: AtmosphereParticle in ipairs(particlePool) do
-                if not particle.active then
-                    continue
-                end
-                particle.age += deltaTime
-                particle.y += (particle.speed * motionScale * deltaTime) / panelHeight
-                particle.x += (particle.drift * motionScale * deltaTime)
-                    / math.max(1, ParticleOverlay.AbsoluteSize.X)
-                particle.image.Position = UDim2.fromScale(particle.x, particle.y)
-                particle.image.Rotation += particle.spin * deltaTime * motionScale
-                local lifeAlpha: number = math.min(
-                    math.clamp(particle.age / 0.55, 0, 1),
-                    math.clamp((particle.lifetime - particle.age) / 0.8, 0, 1)
-                )
-                particle.image.ImageTransparency = 1
-                    - ((1 - particle.baseTransparency) * lifeAlpha)
-                if particle.age >= particle.lifetime or particle.y > 1.06 then
-                    particle.active = false
-                    particle.image.Visible = false
-                end
-            end
-        end
-    end)
+    blossomFrame = 0
+    blossomElapsed = 0
+    atmosphereElapsed = 0
+    BlossomBackground.Image = ""
+    BlossomBackground.ImageTransparency = 1
+    ParticleOverlay.Visible = false
+    ScreenDarkcoreDecorations.Visible = false
+    resetAtmosphereParticles()
 end
 state.updateBlossomAnimationState = updateVisualMotionState
 state.updateVisualMotionState = updateVisualMotionState
@@ -3116,7 +2977,26 @@ local function refreshFeatureToggle(feature: any): ()
         TweenService:Create(
             feature.activeStripe,
             TweenInfo.new(0.18, Enum.EasingStyle.Quad),
-            {BackgroundTransparency = feature.enabled and 0.08 or 1}
+            {BackgroundTransparency = feature.enabled and 0 or 1}
+        ):Play()
+    end
+    if feature.row then
+        TweenService:Create(
+            feature.row,
+            TweenInfo.new(0.18, Enum.EasingStyle.Quad),
+            {
+                BackgroundColor3 = feature.enabled
+                    and Color3.fromRGB(31, 31, 35)
+                    or Theme.Background,
+                BackgroundTransparency = feature.enabled and 0.08 or 1,
+            }
+        ):Play()
+    end
+    if feature.title then
+        TweenService:Create(
+            feature.title,
+            TweenInfo.new(0.18, Enum.EasingStyle.Quad),
+            {TextColor3 = feature.enabled and Color3.fromRGB(255, 255, 255) or Theme.Text}
         ):Play()
     end
     if feature.stroke then
@@ -3124,8 +3004,10 @@ local function refreshFeatureToggle(feature: any): ()
             feature.stroke,
             TweenInfo.new(0.18, Enum.EasingStyle.Quad),
             {
-                Color = feature.enabled and Theme.AccentSoft or Theme.Outline,
-                Transparency = 1,
+                Color = feature.enabled
+                    and Color3.fromRGB(225, 225, 230)
+                    or Theme.Outline,
+                Transparency = feature.enabled and 0.18 or 1,
             }
         ):Play()
     end
@@ -3182,41 +3064,6 @@ local function runActionButton(
                 or Theme.Surface
         end
     end)
-end
-
-local function selectFeatureIcon(name: string, description: string): string
-    local searchable: string = string.lower(name .. " " .. description)
-    if string.find(searchable, "visual", 1, true)
-        or string.find(searchable, "esp", 1, true)
-        or string.find(searchable, "cham", 1, true) then
-        return "visuals"
-    end
-    if string.find(searchable, "target", 1, true)
-        or string.find(searchable, "aim", 1, true)
-        or string.find(searchable, "shoot", 1, true)
-        or string.find(searchable, "gun", 1, true) then
-        return "target"
-    end
-    if string.find(searchable, "player", 1, true)
-        or string.find(searchable, "friend", 1, true)
-        or string.find(searchable, "character", 1, true) then
-        return "user"
-    end
-    if string.find(searchable, "protect", 1, true)
-        or string.find(searchable, "anti", 1, true)
-        or string.find(searchable, "shield", 1, true) then
-        return "shield"
-    end
-    if string.find(searchable, "notify", 1, true)
-        or string.find(searchable, "alert", 1, true) then
-        return "bell"
-    end
-    if string.find(searchable, "warning", 1, true)
-        or string.find(searchable, "error", 1, true)
-        or string.find(searchable, "danger", 1, true) then
-        return "warning"
-    end
-    return "settings"
 end
 
 local function compactShortcutLabel(label: string): string
@@ -3379,33 +3226,18 @@ local function createUniversalFeature(
     stripeGradient.Parent = activeStripe
     feature.activeStripe = activeStripe
 
-    local featureIcon: ImageLabel = (create("ImageLabel", {
-        Parent = row,
-        Name = "FeatureIcon",
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        Image = "",
-        ImageColor3 = Color3.fromRGB(218, 218, 220),
-        ImageTransparency = 0.12,
-        Position = UDim2.fromOffset(11, state.isMobile and 16 or 14),
-        ScaleType = Enum.ScaleType.Fit,
-        Size = UDim2.fromOffset(24, 24),
-        ZIndex = 4,
-    }) :: any) :: ImageLabel
-    state.assetManager.loadAsync(selectFeatureIcon(name, description), featureIcon)
-
     local title: TextLabel = (makeTextLabel(row, name, 12) :: any) :: TextLabel
     title.FontFace = CONTROL_FONT
-    title.Position = UDim2.fromOffset(44, 0)
-    title.Size = UDim2.new(1, -164, 1, 0)
+    title.Position = UDim2.fromOffset(16, 0)
+    title.Size = UDim2.new(1, -136, 1, 0)
     title.TextColor3 = Theme.Text
     feature.title = title
 
     local subtitle: TextLabel =
         (makeTextLabel(row, description, 11) :: any) :: TextLabel
     subtitle.Name = "Description"
-    subtitle.Position = UDim2.fromOffset(48, 34)
-    subtitle.Size = UDim2.new(1, -146, 0, 30)
+    subtitle.Position = UDim2.fromOffset(16, 34)
+    subtitle.Size = UDim2.new(1, -118, 0, 30)
     subtitle.TextColor3 = Theme.TextMuted
     subtitle.TextTruncate = Enum.TextTruncate.AtEnd
     subtitle.TextWrapped = true
@@ -3432,7 +3264,7 @@ local function createUniversalFeature(
     feature.toggleKnob = toggleKnob
 
     local arrow: TextButton =
-        (makeButton(row, "", state.isMobile and 17 or 14) :: any) :: TextButton
+        (makeButton(row, "•••", state.isMobile and 16 or 13) :: any) :: TextButton
     arrow.Name = "Expand"
     arrow.AnchorPoint = Vector2.new(1, 0)
     arrow.BackgroundTransparency = 1
@@ -3441,20 +3273,6 @@ local function createUniversalFeature(
     arrow.TextColor3 = Theme.TextMuted
     arrow.Visible = configuration.noOptions ~= true
     feature.arrow = arrow
-    local arrowIcon: ImageLabel = (create("ImageLabel", {
-        Parent = arrow,
-        Name = "ArrowIcon",
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        Image = "",
-        ImageColor3 = Theme.TextMuted,
-        Position = UDim2.fromScale(0.5, 0.5),
-        ScaleType = Enum.ScaleType.Fit,
-        Size = UDim2.fromOffset(16, 16),
-        ZIndex = arrow.ZIndex + 1,
-    }) :: any) :: ImageLabel
-    state.assetManager.loadAsync("arrowDown", arrowIcon)
 
     trackUiConnection(row.MouseEnter:Connect(function(): ()
         if feature.enabled then
@@ -3474,8 +3292,10 @@ local function createUniversalFeature(
             row,
             TweenInfo.new(0.16, Enum.EasingStyle.Quad),
             {
-                BackgroundColor3 = Theme.Background,
-                BackgroundTransparency = 1,
+                BackgroundColor3 = feature.enabled
+                    and Color3.fromRGB(31, 31, 35)
+                    or Theme.Background,
+                BackgroundTransparency = feature.enabled and 0.08 or 1,
             }
         ):Play()
     end))
@@ -3548,11 +3368,7 @@ local function createUniversalFeature(
                 TweenInfo.new(0.2, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
                 {Size = targetRowSize}
             ):Play()
-            TweenService:Create(
-                arrow,
-                TweenInfo.new(0.2, Enum.EasingStyle.Quart),
-                {Rotation = feature.expanded and 45 or 0}
-            ):Play()
+            arrow.TextColor3 = feature.expanded and Theme.Text or Theme.TextMuted
             if not feature.expanded then
                 task.delay(0.21, function(): ()
                     if not feature.expanded and options.Parent then
@@ -3563,7 +3379,7 @@ local function createUniversalFeature(
         else
             options.Size = targetOptionsSize
             row.Size = targetRowSize
-            arrow.Rotation = feature.expanded and 45 or 0
+            arrow.TextColor3 = feature.expanded and Theme.Text or Theme.TextMuted
             options.Visible = feature.expanded
         end
     end
@@ -6649,20 +6465,66 @@ end
 
 local textRow, textControl = createSettingRow(
     "Text size",
-    "Use larger text throughout the menu"
+    "Drag the linear control to scale every label"
 )
 textRow.LayoutOrder = 1
-
-local TextSizeButton = makeButton(
+local textScaleRatio: number = (state.textScale - 0.85) / 0.5
+local TextSizeTrack: TextButton = create("TextButton", {
+    Parent = textControl,
+    Name = "TextSizeTrack",
+    Active = true,
+    AutoButtonColor = false,
+    AnchorPoint = Vector2.new(0, 0.5),
+    BackgroundColor3 = Color3.fromRGB(45, 45, 49),
+    BorderSizePixel = 0,
+    Position = UDim2.new(0, 0, 0.5, 0),
+    Size = UDim2.new(1, -58, 0, 4),
+    Text = "",
+}) :: TextButton
+create("UICorner", {
+    Parent = TextSizeTrack,
+    CornerRadius = UDim.new(1, 0),
+})
+local TextSizeFill: Frame = create("Frame", {
+    Parent = TextSizeTrack,
+    Name = "Fill",
+    BackgroundColor3 = Color3.fromRGB(238, 238, 242),
+    BorderSizePixel = 0,
+    Size = UDim2.fromScale(textScaleRatio, 1),
+}) :: Frame
+create("UICorner", {
+    Parent = TextSizeFill,
+    CornerRadius = UDim.new(1, 0),
+})
+local TextSizeKnob: Frame = create("Frame", {
+    Parent = TextSizeTrack,
+    Name = "Knob",
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    BackgroundColor3 = Color3.fromRGB(250, 250, 252),
+    BorderSizePixel = 0,
+    Position = UDim2.fromScale(textScaleRatio, 0.5),
+    Size = UDim2.fromOffset(14, 14),
+    ZIndex = TextSizeTrack.ZIndex + 2,
+}) :: Frame
+create("UICorner", {
+    Parent = TextSizeKnob,
+    CornerRadius = UDim.new(1, 0),
+})
+create("UIStroke", {
+    Parent = TextSizeKnob,
+    Color = Color3.fromRGB(120, 120, 126),
+    Transparency = 0.12,
+    Thickness = 1,
+})
+local TextSizeValue: TextLabel = makeTextLabel(
     textControl,
-    state.largeText and "LARGE" or "NORMAL",
-    13
-)
-TextSizeButton.Size = UDim2.fromScale(1, 1)
-TextSizeButton:SetAttribute("Selected", state.largeText)
-TextSizeButton.BackgroundColor3 = state.largeText
-    and state.headerColor
-    or DEFAULT_SURFACE_COLOR
+    tostring(math.round(state.textScale * 100)) .. "%",
+    11
+) :: TextLabel
+TextSizeValue.AnchorPoint = Vector2.new(1, 0.5)
+TextSizeValue.Position = UDim2.new(1, 0, 0.5, 0)
+TextSizeValue.Size = UDim2.fromOffset(48, 22)
+TextSizeValue.TextXAlignment = Enum.TextXAlignment.Right
 
 local blurRow, blurControl = createSettingRow(
     "Blur mode",
@@ -6675,136 +6537,21 @@ local BlurButton: TextButton, BlurKnob: Frame =
 BlurButton.AnchorPoint = Vector2.new(1, 0.5)
 BlurButton.Position = UDim2.new(1, 0, 0.5, 0)
 
-local animationRow, animationControl = createSettingRow(
-    "Interface animations",
-    "Disable decorative motion while keeping control feedback"
-)
-animationRow.LayoutOrder = 3
-local AnimationButton: TextButton, AnimationKnob: Frame =
-    createSwitch(animationControl, state.animationPreference)
-AnimationButton.AnchorPoint = Vector2.new(1, 0.5)
-AnimationButton.Position = UDim2.new(1, 0, 0.5, 0)
-
-local blossomRow: Frame, blossomControl: Frame = createSettingRow(
-    "Animated background",
-    "Play the manga blossoms behind every content card"
-)
-blossomRow.LayoutOrder = 4
-local BlossomButton: TextButton, BlossomKnob: Frame =
-    createSwitch(blossomControl, state.animatedBlossomsEnabled)
-BlossomButton.AnchorPoint = Vector2.new(1, 0.5)
-BlossomButton.Position = UDim2.new(1, 0, 0.5, 0)
-
-local blossomSpeedRow: Frame, blossomSpeedControl: Frame = createSettingRow(
-    "Reduced motion",
-    "Slow blossoms, particles and decorative movement"
-)
-blossomSpeedRow.LayoutOrder = 5
-local BlossomSpeedButton: TextButton, BlossomSpeedKnob: Frame =
-    createSwitch(blossomSpeedControl, state.reducedBlossomSpeed)
-BlossomSpeedButton.AnchorPoint = Vector2.new(1, 0.5)
-BlossomSpeedButton.Position = UDim2.new(1, 0, 0.5, 0)
-
-local atmosphereRow: Frame, atmosphereControl: Frame = createSettingRow(
-    "Atmosphere effects",
-    "Control ash, petals, white specks and four-point stars"
-)
-atmosphereRow.LayoutOrder = 6
-local AtmosphereButton: TextButton, AtmosphereKnob: Frame =
-    createSwitch(atmosphereControl, state.atmosphereEffectsEnabled)
-AtmosphereButton.AnchorPoint = Vector2.new(1, 0.5)
-AtmosphereButton.Position = UDim2.new(1, 0, 0.5, 0)
-
-local opacityRow: Frame, opacityControl: Frame = createSettingRow(
-    "Background opacity",
-    "Adjust blossom visibility without changing the menu size"
-)
-opacityRow.LayoutOrder = 7
-local OpacityBar: TextButton = makeButton(opacityControl, "", 10) :: TextButton
-OpacityBar.AnchorPoint = Vector2.new(0, 0.5)
-OpacityBar.Position = UDim2.new(0, 0, 0.5, 0)
-OpacityBar.Size = UDim2.new(1, -44, 0, 8)
-OpacityBar.BackgroundColor3 = Color3.fromRGB(52, 52, 58)
-local OpacityFill: Frame = create("Frame", {
-    Parent = OpacityBar,
-    BackgroundColor3 = Color3.fromRGB(224, 224, 228),
-    BorderSizePixel = 0,
-    Size = UDim2.fromScale((state.backgroundOpacity - 0.30) / 0.32, 1),
-}) :: Frame
-create("UICorner", {Parent = OpacityFill, CornerRadius = UDim.new(1, 0)})
-local OpacityValue: TextLabel = makeTextLabel(
-    opacityControl,
-    tostring(math.round(state.backgroundOpacity * 100)) .. "%",
-    11
-) :: TextLabel
-OpacityValue.AnchorPoint = Vector2.new(1, 0.5)
-OpacityValue.Position = UDim2.new(1, 0, 0.5, 0)
-OpacityValue.Size = UDim2.fromOffset(38, 22)
-OpacityValue.TextXAlignment = Enum.TextXAlignment.Right
-
-local texturesRow: Frame, texturesControl: Frame = createSettingRow(
-    "Decorative textures",
-    "Show blossom ornaments and light grunge details"
-)
-texturesRow.LayoutOrder = 8
-local TexturesButton: TextButton, TexturesKnob: Frame =
-    createSwitch(texturesControl, state.decorativeTexturesEnabled)
-TexturesButton.AnchorPoint = Vector2.new(1, 0.5)
-TexturesButton.Position = UDim2.new(1, 0, 0.5, 0)
-
-local lowPerformanceRow: Frame, lowPerformanceControl: Frame = createSettingRow(
-    "Low performance mode",
-    "Use one static frame and disable complex transitions"
-)
-lowPerformanceRow.LayoutOrder = 9
-local LowPerformanceButton: TextButton, LowPerformanceKnob: Frame =
-    createSwitch(lowPerformanceControl, state.lowPerformanceMode)
-LowPerformanceButton.AnchorPoint = Vector2.new(1, 0.5)
-LowPerformanceButton.Position = UDim2.new(1, 0, 0.5, 0)
-
 local keyRow, keyControl = createSettingRow(
     "Menu key",
     "Choose the key used to show or hide"
 )
-keyRow.LayoutOrder = 10
+keyRow.LayoutOrder = 3
 
 local KeybindButton = makeButton(keyControl, state.toggleKey.Name, 13)
 KeybindButton.Size = UDim2.fromScale(1, 1)
 state.keybindButton = KeybindButton
 
-local headerColorRow: Frame, headerColorControl: Frame = createSettingRow(
-    "Accent color",
-    "ColorPicker for selections, tabs and active switches"
-)
-headerColorRow.LayoutOrder = 11
-local HeaderColorButton: TextButton =
-    (makeButton(headerColorControl, "PICK COLOR", 12) :: any) :: TextButton
-HeaderColorButton.BackgroundColor3 = state.headerColor
-HeaderColorButton.Size = UDim2.fromScale(1, 1)
-
-local menuColorRow: Frame, menuColorControl: Frame = createSettingRow(
-    "Panel color",
-    "ColorPicker for the main dark surface"
-)
-menuColorRow.LayoutOrder = 12
-local MenuColorButton: TextButton =
-    (makeButton(menuColorControl, "PICK COLOR", 12) :: any) :: TextButton
-MenuColorButton.BackgroundColor3 = state.menuColor
-MenuColorButton.Size = UDim2.fromScale(1, 1)
-local resetRow, resetControl = createSettingRow(
-    "Reset appearance",
-    "Restore the default grey and dark blue colors"
-)
-resetRow.LayoutOrder = 13
-
-local ResetButton = makeButton(resetControl, "RESET", 13)
-ResetButton.Size = UDim2.fromScale(1, 1)
-
 local gameRow, gameControl = createSettingRow(
     "Game check",
     "Only the matching game-specific module is loaded"
 )
-gameRow.LayoutOrder = 14
+gameRow.LayoutOrder = 4
 local gameStatus = makeTextLabel(
     gameControl,
     GAME_CHECK.MM2Active and "MM2 · 142823291"
@@ -6817,24 +6564,11 @@ local gameStatus = makeTextLabel(
 gameStatus.TextXAlignment = Enum.TextXAlignment.Center
 gameStatus.Size = UDim2.fromScale(1, 1)
 
-local deviceRow, deviceControl = createSettingRow(
-    "Device profile",
-    "Automatically selected from touch and keyboard capabilities"
-)
-deviceRow.LayoutOrder = 15
-local deviceStatus = makeTextLabel(
-    deviceControl,
-    state.isMobile and "MOBILE · TOUCH" or "DESKTOP · KEYBOARD",
-    12
-)
-deviceStatus.TextXAlignment = Enum.TextXAlignment.Center
-deviceStatus.Size = UDim2.fromScale(1, 1)
-
 local mobileIconRow, mobileIconControl = createSettingRow(
     "Mobile menu icon",
     "Dog shortcut stays available so the menu cannot become unreachable"
 )
-mobileIconRow.LayoutOrder = 16
+mobileIconRow.LayoutOrder = 5
 mobileIconRow.Visible = UserInputService.TouchEnabled
 local MobileIconButton = makeButton(
     mobileIconControl,
@@ -6855,7 +6589,7 @@ local mobileSizeRow, mobileSizeControl = createSettingRow(
     "Mobile action size",
     "Size for placed mobile shortcuts"
 )
-mobileSizeRow.LayoutOrder = 17
+mobileSizeRow.LayoutOrder = 6
 mobileSizeRow.Visible = UserInputService.TouchEnabled
 local MobileSizeButton = makeButton(
     mobileSizeControl,
@@ -6868,7 +6602,7 @@ local mobileResetRow, mobileResetControl = createSettingRow(
     "Mobile action buttons",
     "Hold ADD to place; hold a shortcut to remove it"
 )
-mobileResetRow.LayoutOrder = 18
+mobileResetRow.LayoutOrder = 7
 mobileResetRow.Visible = UserInputService.TouchEnabled
 local MobileResetButton = makeButton(
     mobileResetControl,
@@ -6890,7 +6624,7 @@ local helpText = makeTextLabel(
             or " | Drag the header to move the fixed-size menu."),
     11
 )
-helpText.LayoutOrder = 19
+helpText.LayoutOrder = 8
 helpText.TextColor3 = Color3.fromRGB(145, 145, 145)
 helpText.TextXAlignment = Enum.TextXAlignment.Center
 helpText.Size = UDim2.new(1, -4, 0, 30)
@@ -6919,27 +6653,53 @@ local function setMenuVisible(visible: boolean): ()
 end
 state.setMenuVisible = setMenuVisible
 
-local function updateTextSizes()
+local function updateTextSizes(): ()
     for _, item in ipairs(registeredText) do
         if item.object and item.object.Parent then
-            item.object.TextSize = state.largeText
-                and item.normalSize + 4
-                or item.normalSize
+            item.object.TextSize = math.round(item.normalSize * state.textScale)
         end
     end
 end
 
-TextSizeButton.MouseButton1Click:Connect(function()
-    state.largeText = not state.largeText
-    TextSizeButton.Text = state.largeText and "LARGE" or "NORMAL"
-    TextSizeButton:SetAttribute("Selected", state.largeText)
-    TextSizeButton.BackgroundColor3 = state.largeText
-        and state.headerColor
-        or DEFAULT_SURFACE_COLOR
+local textSizeDragInput: InputObject? = nil
+local function setTextScaleFromX(pointerX: number): ()
+    local width: number = math.max(1, TextSizeTrack.AbsoluteSize.X)
+    local ratio: number = math.clamp(
+        (pointerX - TextSizeTrack.AbsolutePosition.X) / width,
+        0,
+        1
+    )
+    state.textScale = math.round((0.85 + ratio * 0.5) * 100) / 100
+    TextSizeFill.Size = UDim2.fromScale(ratio, 1)
+    TextSizeKnob.Position = UDim2.fromScale(ratio, 0.5)
+    TextSizeValue.Text = tostring(math.round(state.textScale * 100)) .. "%"
     updateTextSizes()
-    configData.ui.largeText = state.largeText
+    configData.ui.largeText = nil
+    configData.ui.textScale = state.textScale
     queueConfigSave()
-end)
+end
+trackUiConnection(TextSizeTrack.InputBegan:Connect(function(input: InputObject): ()
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+        textSizeDragInput = input
+        setTextScaleFromX(input.Position.X)
+    end
+end))
+trackUiConnection(UserInputService.InputChanged:Connect(function(input: InputObject): ()
+    if textSizeDragInput == nil then
+        return
+    end
+    if input == textSizeDragInput
+        or input.UserInputType == Enum.UserInputType.MouseMovement then
+        setTextScaleFromX(input.Position.X)
+    end
+end))
+trackUiConnection(UserInputService.InputEnded:Connect(function(input: InputObject): ()
+    if input == textSizeDragInput
+        or input.UserInputType == Enum.UserInputType.MouseButton1 then
+        textSizeDragInput = nil
+    end
+end))
 
 trackUiConnection(BlurButton.MouseButton1Click:Connect(function(): ()
     state.blurEnabled = not state.blurEnabled
@@ -6950,167 +6710,6 @@ trackUiConnection(BlurButton.MouseButton1Click:Connect(function(): ()
     queueConfigSave()
     notify(state.blurEnabled and "Desenfoque activado" or "Desenfoque desactivado")
 end))
-
-trackUiConnection(AnimationButton.MouseButton1Click:Connect(function(): ()
-    state.animationPreference = not state.animationPreference
-    state.animationsEnabled = state.animationPreference
-        and not state.lowPerformanceMode
-    setSwitchVisual(
-        AnimationButton,
-        AnimationKnob,
-        state.animationPreference,
-        true
-    )
-    for _, tween: Tween in ipairs(state.decorativeTweens or {}) do
-        if state.animationsEnabled then
-            tween:Play()
-        else
-            tween:Pause()
-        end
-    end
-    configData.ui.animationsEnabled = state.animationPreference
-    queueConfigSave()
-    notify(
-        state.animationPreference
-            and "Animaciones decorativas activadas"
-            or "Animaciones decorativas desactivadas"
-    )
-end))
-
-local function updateDecorativeTextures(): ()
-    for _, object: GuiObject in ipairs(state.decorativeObjects or {}) do
-        if not object:IsA("ImageLabel") then
-            continue
-        end
-        if object.Name == "HeaderBlossoms" then
-            object.ImageTransparency = state.decorativeTexturesEnabled
-                and (state.lowPerformanceMode and 0.72 or 0.58)
-                or 1
-        else
-            object.ImageTransparency = state.decorativeTexturesEnabled
-                and not state.lowPerformanceMode
-                and 0.83
-                or 1
-        end
-    end
-end
-
-trackUiConnection(BlossomButton.MouseButton1Click:Connect(function(): ()
-    state.animatedBlossomsEnabled = not state.animatedBlossomsEnabled
-    setSwitchVisual(
-        BlossomButton,
-        BlossomKnob,
-        state.animatedBlossomsEnabled,
-        true
-    )
-    configData.ui.animatedBlossomsEnabled = state.animatedBlossomsEnabled
-    state.updateBlossomAnimationState()
-    queueConfigSave()
-end))
-
-trackUiConnection(BlossomSpeedButton.MouseButton1Click:Connect(function(): ()
-    state.reducedBlossomSpeed = not state.reducedBlossomSpeed
-    setSwitchVisual(
-        BlossomSpeedButton,
-        BlossomSpeedKnob,
-        state.reducedBlossomSpeed,
-        true
-    )
-    configData.ui.reducedMotion = state.reducedBlossomSpeed
-    state.updateVisualMotionState()
-    queueConfigSave()
-end))
-
-trackUiConnection(AtmosphereButton.MouseButton1Click:Connect(function(): ()
-    state.atmosphereEffectsEnabled = not state.atmosphereEffectsEnabled
-    setSwitchVisual(
-        AtmosphereButton,
-        AtmosphereKnob,
-        state.atmosphereEffectsEnabled,
-        true
-    )
-    configData.ui.atmosphereEffectsEnabled = state.atmosphereEffectsEnabled
-    state.updateVisualMotionState()
-    queueConfigSave()
-end))
-
-local opacityDragInput: InputObject? = nil
-local function setBackgroundOpacityFromX(pointerX: number): ()
-    local width: number = math.max(1, OpacityBar.AbsoluteSize.X)
-    local ratio: number = math.clamp(
-        (pointerX - OpacityBar.AbsolutePosition.X) / width,
-        0,
-        1
-    )
-    state.backgroundOpacity = 0.30 + ratio * 0.32
-    OpacityFill.Size = UDim2.fromScale(ratio, 1)
-    OpacityValue.Text = tostring(math.round(state.backgroundOpacity * 100)) .. "%"
-    BlossomBackground.ImageTransparency = state.animatedBlossomsEnabled
-        and (1 - state.backgroundOpacity)
-        or 1
-    configData.ui.backgroundOpacity = state.backgroundOpacity
-    queueConfigSave()
-end
-trackUiConnection(OpacityBar.InputBegan:Connect(function(input: InputObject): ()
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-        or input.UserInputType == Enum.UserInputType.Touch then
-        opacityDragInput = input
-        setBackgroundOpacityFromX(input.Position.X)
-    end
-end))
-trackUiConnection(UserInputService.InputChanged:Connect(function(input: InputObject): ()
-    if opacityDragInput == nil then
-        return
-    end
-    if input == opacityDragInput
-        or input.UserInputType == Enum.UserInputType.MouseMovement then
-        setBackgroundOpacityFromX(input.Position.X)
-    end
-end))
-trackUiConnection(UserInputService.InputEnded:Connect(function(input: InputObject): ()
-    if input == opacityDragInput
-        or input.UserInputType == Enum.UserInputType.MouseButton1 then
-        opacityDragInput = nil
-    end
-end))
-
-trackUiConnection(TexturesButton.MouseButton1Click:Connect(function(): ()
-    state.decorativeTexturesEnabled = not state.decorativeTexturesEnabled
-    setSwitchVisual(
-        TexturesButton,
-        TexturesKnob,
-        state.decorativeTexturesEnabled,
-        true
-    )
-    configData.ui.decorativeTexturesEnabled = state.decorativeTexturesEnabled
-    updateDecorativeTextures()
-    queueConfigSave()
-end))
-
-trackUiConnection(LowPerformanceButton.MouseButton1Click:Connect(function(): ()
-    state.lowPerformanceMode = not state.lowPerformanceMode
-    state.animationsEnabled = state.animationPreference
-        and not state.lowPerformanceMode
-    setSwitchVisual(
-        LowPerformanceButton,
-        LowPerformanceKnob,
-        state.lowPerformanceMode,
-        true
-    )
-    for _, tween: Tween in ipairs(state.decorativeTweens or {}) do
-        if state.animationsEnabled then
-            tween:Play()
-        else
-            tween:Pause()
-        end
-    end
-    configData.ui.lowPerformanceMode = state.lowPerformanceMode
-    updateDecorativeTextures()
-    state.updateBlossomAnimationState()
-    queueConfigSave()
-end))
-
-updateDecorativeTextures()
 
 MobileIconButton.MouseButton1Click:Connect(function(): ()
     if not UserInputService.TouchEnabled then
@@ -7162,82 +6761,6 @@ KeybindButton.MouseButton1Click:Connect(function()
     KeybindButton.BackgroundColor3 = state.headerColor
 end)
 
-local function applyHeaderColor(color: Color3): ()
-    state.headerColor = color
-    Theme.Accent = color
-    configData.ui.headerColor = colorToConfig(color)
-    queueConfigSave()
-
-    for tabName, button in pairs(tabButtons) do
-        if tabName == state.activeTab then
-            button.BackgroundColor3 = Theme.SurfaceRaised
-        end
-    end
-
-    if state.blurEnabled then
-        setSwitchVisual(BlurButton, BlurKnob, true, false)
-    end
-
-    if state.largeText then
-        TextSizeButton.BackgroundColor3 = color
-    end
-
-    if state.waitingForKey then
-        KeybindButton.BackgroundColor3 = color
-    end
-
-    for _, record: MobileActionRecord in pairs(state.mobileUi.actions) do
-        record.button.BackgroundColor3 = color
-    end
-    if UserInputService.TouchEnabled and state.mobileMenuButtonVisible then
-        MobileIconButton.BackgroundColor3 = color
-    end
-
-    for _, object: Instance in ipairs(ScreenGui:GetDescendants()) do
-        if object:IsA("TextButton") and object:GetAttribute("Selected") == true then
-            object.BackgroundColor3 = color
-        elseif object:IsA("Frame") and object.Name == "Fill"
-            and object.Parent and object.Parent.Name == "Track" then
-            object.BackgroundColor3 = color
-        end
-    end
-end
-
-local function applyMenuColor(color: Color3): ()
-    state.menuColor = color
-    configData.ui.menuColor = colorToConfig(color)
-    queueConfigSave()
-    Main.BackgroundColor3 = color
-    Content.BackgroundColor3 = color
-
-    for _, page in pairs(pages) do
-        page.BackgroundColor3 = color
-    end
-end
-
-trackUiConnection(HeaderColorButton.MouseButton1Click:Connect(function(): ()
-    colorPicker.open(state.headerColor, function(color: Color3): ()
-        applyHeaderColor(color)
-        HeaderColorButton.BackgroundColor3 = color
-        notify("Color de acento actualizado")
-    end)
-end))
-
-trackUiConnection(MenuColorButton.MouseButton1Click:Connect(function(): ()
-    colorPicker.open(state.menuColor, function(color: Color3): ()
-        applyMenuColor(color)
-        MenuColorButton.BackgroundColor3 = color
-        notify("Color del panel actualizado")
-    end)
-end))
-
-trackUiConnection(ResetButton.MouseButton1Click:Connect(function(): ()
-    applyHeaderColor(DEFAULT_HEADER_COLOR)
-    applyMenuColor(DEFAULT_MENU_COLOR)
-    HeaderColorButton.BackgroundColor3 = DEFAULT_HEADER_COLOR
-    MenuColorButton.BackgroundColor3 = DEFAULT_MENU_COLOR
-    notify("Apariencia restaurada")
-end))
 end
 
 SectionManager.register("Config.", buildSettings)
