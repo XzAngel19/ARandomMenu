@@ -26,6 +26,8 @@ local UNIVERSAL_FEATURES: {FeatureDefinition} = table.freeze({
     {id = "lagSwitch", name = "Lag Switch", order = 6},
     {id = "xray", name = "X-Ray", order = 7},
     {id = "rejoinServer", name = "Rejoin Server", order = 8},
+    {id = "zoomUnlocker", name = "Zoom Unlocker", order = 9},
+    {id = "interactExtender", name = "Interact Extender", order = 10},
 })
 
 local MOVEMENT_FEATURES: {FeatureDefinition} = table.freeze({

@@ -39,9 +39,10 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
   are supported and retain a procedural outlined fallback on other executors.
 - Universal Fly provides Balanced, Direct and Precise response presets,
   independent horizontal/vertical speed and progressive advanced controls.
-  Speed provides Smooth, Boost and Teleport modes plus wall safety, auto-jump
-  and vehicle tuning. Player ESP, X-Ray, High Jump, Spider, Safe Walk and a
-  Rejoin action extend the universal toolkit.
+  Speed provides Adaptive, Smooth, Boost and Teleport modes plus acceleration,
+  air control, sprint, momentum retention, wall safety, auto-jump and vehicle
+  tuning. Player ESP, X-Ray, High Jump, Spider, Safe Walk, Zoom Unlocker,
+  Interact Extender and a Rejoin action extend the universal toolkit.
 
 Initialization logs use the `[RTM:Bootstrap]` prefix and include detected
 PlaceId, raw download status, downloaded byte count, UI callback count,
