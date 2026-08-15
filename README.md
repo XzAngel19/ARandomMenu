@@ -22,9 +22,11 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
   opening a tab is never used as the condition for constructing its content.
 - The desktop window uses a fixed responsive footprint (72% × 78% of the
   viewport), can only be dragged, and keeps itself inside the visible screen.
-- Feature rows and option groups are transparent so the animated blossom panel
-  remains visible. Full-screen ash, petals, chains and spines accompany the
-  blur while the menu is open.
+- The content panel is solid black. Feature rows stay quiet while idle and use
+  a brighter stripe, surface and outline when enabled.
+- The reusable `gui.lua` owns its image catalog, executor-safe asset cache,
+  settings, draggable shell, tabs and `createModule()` component API. Game
+  modules only provide their controls and callbacks.
 - Universal Fly uses one stable camera-relative velocity preset. The UI exposes
   only speed and the ascend/descend keys; orientation and smoothing are handled
   automatically.
@@ -49,8 +51,8 @@ The bootstrap does not use `EditableImage` or a PNG byte decoder. `AssetManager`
 selects a compatible executor HTTP alias, validates PNG bytes, retries failed
 downloads, writes versioned files under `MenuAssets`, verifies the cache and
 resolves local paths with `getcustomasset`/`getsynasset`. Every stage is logged
-with the `[RTM:Assets]` prefix, and the dark aurora gradient remains usable when
-an external image cannot be loaded.
+with the `[RTM:Assets]` prefix. The current GUI also declares Roblox asset IDs
+as immediate fallbacks for its header, ornament sheet and mobile toggle.
 
 The aurora background is by Khalil Benihoud and is available under the
 [Unsplash License](https://unsplash.com/photos/aurora-borealis-umLAzmGNZbU).
