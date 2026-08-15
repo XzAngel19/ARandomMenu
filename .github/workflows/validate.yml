@@ -49,12 +49,16 @@ jobs:
           test -f src/gui/Current/Assets/Decorations/spike-corner-right.png
           test -f src/gui/Current/Assets/Decorations/chain-divider.png
           test -f src/gui/Current/Assets/Decorations/ink-scratch.png
+          test -f src/gui/Current/Assets/Status/spinner_minimal.png
           test -f src/gui/Current/Assets/Decorations/cross-small.png
           test -f src/gui/Current/Assets/Decorations/halftone-fade.png
           test -f src/gui/Current/Assets/Source/darkcore-asset-sheet.png
           test -f src/gui/Current/Assets/Source/cosmic-controls-sheet.png
           test -f src/gui/Current/Assets/Frames/keybind-pill-hd.png
           test -f src/gui/Current/Assets/Icons/search.png
+          test -f src/gui/Current/Assets/Icons/home.png
+          test -f src/gui/Current/Assets/Icons/settings.png
+          test -f src/gui/Current/Assets/Icons/target_cross.png
           test -f tools/process_manga_assets.py
           test -f tools/generate_darkcore_assets.py
           test -f src/library/AssetRegistry.luau
