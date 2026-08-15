@@ -1749,6 +1749,19 @@
       ],
       "usage": "Ink scratch accent"
     },
+    "keybind_pill_hd": {
+      "category": "Frames",
+      "path": "Assets/Frames/keybind-pill-hd.png",
+      "localPath": "Assets\\Frames\\keybind-pill-hd.png",
+      "url": "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/main/src/gui/Current/Assets/Frames/keybind-pill-hd.png",
+      "version": 1,
+      "type": "image/png",
+      "dimensions": [
+        2172,
+        724
+      ],
+      "usage": "High-resolution nine-slice frame for keyboard shortcut controls"
+    },
     "cosmic_controls_sheet": {
       "category": "Source",
       "path": "Assets/Source/cosmic-controls-sheet.png",

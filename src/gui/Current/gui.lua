@@ -19,6 +19,8 @@ local UserInputService: UserInputService =
 local TweenService: TweenService =
     cloneReference(game:GetService("TweenService")) :: TweenService
 local Lighting: Lighting = cloneReference(game:GetService("Lighting")) :: Lighting
+local HttpService: HttpService =
+    cloneReference(game:GetService("HttpService")) :: HttpService
 
 local RAW_BASE: string =
     "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/main/"
@@ -46,6 +48,7 @@ export type GuiOptions = {
     title: string?,
     initiallyVisible: boolean?,
     parent: Instance?,
+    reinjectUrl: string?,
 }
 
 export type FeatureController = {
@@ -61,6 +64,12 @@ export type FeatureController = {
         initial: number,
         callback: (number) -> ()
     ) -> (),
+    addKeybind: (
+        self: FeatureController,
+        label: string,
+        initial: Enum.KeyCode,
+        callback: (Enum.KeyCode) -> ()
+    ) -> TextButton,
     setEnabled: (self: FeatureController, enabled: boolean) -> (),
     setExpanded: (self: FeatureController, expanded: boolean) -> (),
 }
@@ -134,6 +143,11 @@ local ASSETS: {[string]: AssetSource} = table.freeze({
             .. "src/gui/Current/Assets/Source/cosmic-controls-sheet.png",
         fileName = "cosmic-controls-sheet-v1.png",
         fallback = "rbxassetid://6031094678",
+    },
+    KeybindPill = {
+        url = RAW_BASE .. "src/gui/Current/Assets/Frames/keybind-pill-hd.png",
+        fileName = "keybind-pill-hd-v1.png",
+        fallback = "",
     },
     MobileToggle = {
         url = RAW_BASE .. "src/gui/Current/Images/menu-toggle.png",
@@ -298,6 +312,36 @@ local function makeButton(
     return button
 end
 
+local function applyKeySlotStyle(button: TextButton): ImageLabel
+    button.BackgroundTransparency = 1
+    local corner: UICorner? = button:FindFirstChildOfClass("UICorner")
+    if corner then
+        corner.Enabled = false
+    end
+    local buttonStroke: UIStroke? = button:FindFirstChildOfClass("UIStroke")
+    if buttonStroke then
+        buttonStroke.Enabled = false
+    end
+    local frame: ImageLabel = create("ImageLabel", {
+        Name = "KeySlotFrame",
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Image = ASSETS.KeybindPill.fallback,
+        ImageColor3 = THEME.Text,
+        ImageTransparency = 0.06,
+        Position = UDim2.fromScale(0.5, 0.5),
+        ScaleType = Enum.ScaleType.Slice,
+        SliceCenter = Rect.new(360, 190, 1812, 534),
+        SliceScale = 0.08,
+        Size = UDim2.new(1, 8, 1, 8),
+        ZIndex = button.ZIndex + 1,
+        Parent = button,
+    })
+    loadImage(frame, "KeybindPill")
+    return frame
+end
+
 local function getPointer(input: InputObject): Vector2
     return Vector2.new(input.Position.X, input.Position.Y)
 end
@@ -460,7 +504,7 @@ function Gui.new(options: GuiOptions?): GuiController
         featureConnections = {},
         activeTab = nil,
         visible = resolved.initiallyVisible ~= false,
-        textScale = 1,
+        textScale = 1.08,
         blurEnabled = true,
         createModule = nil :: any,
         setTab = nil :: any,
@@ -510,7 +554,7 @@ function Gui.new(options: GuiOptions?): GuiController
         layoutOrder: number
     ): ModuleController
         assert(self.modules[id] == nil, "Duplicate module: " .. id)
-        local tabButton: TextButton = makeButton(tabs, label, 12, self.textScale)
+        local tabButton: TextButton = makeButton(tabs, label, 13, self.textScale)
         tabButton.Name = id .. "Tab"
         tabButton.LayoutOrder = layoutOrder
         tabButton.Size = UDim2.fromOffset(isMobile and 106 or 124, 42)
@@ -593,7 +637,7 @@ function Gui.new(options: GuiOptions?): GuiController
             local featureTitle: TextLabel = makeLabel(
                 row,
                 featureLabel,
-                12,
+                13,
                 controller.textScale
             )
             featureTitle.Font = Enum.Font.GothamMedium
@@ -602,7 +646,7 @@ function Gui.new(options: GuiOptions?): GuiController
             local featureDescription: TextLabel = makeLabel(
                 row,
                 description,
-                10,
+                11,
                 controller.textScale
             )
             featureDescription.Position = UDim2.fromOffset(16, 27)
@@ -675,6 +719,7 @@ function Gui.new(options: GuiOptions?): GuiController
                 enabled = false,
                 expanded = false,
                 addSlider = nil :: any,
+                addKeybind = nil :: any,
                 setEnabled = nil :: any,
                 setExpanded = nil :: any,
             }
@@ -823,6 +868,70 @@ function Gui.new(options: GuiOptions?): GuiController
                 )
             end
 
+            function feature:addKeybind(
+                keybindLabel: string,
+                initial: Enum.KeyCode,
+                keybindCallback: (Enum.KeyCode) -> ()
+            ): TextButton
+                local selected: Enum.KeyCode = initial
+                local capturing: boolean = false
+                local option: Frame = create("Frame", {
+                    BackgroundTransparency = 1,
+                    BorderSizePixel = 0,
+                    Size = UDim2.new(1, 0, 0, 38),
+                    Parent = optionsFrame,
+                })
+                local optionLabel: TextLabel = makeLabel(
+                    option,
+                    keybindLabel,
+                    11,
+                    controller.textScale
+                )
+                optionLabel.Size = UDim2.new(0.48, 0, 1, 0)
+                local keyButton: TextButton = makeButton(
+                    option,
+                    selected.Name,
+                    11,
+                    controller.textScale
+                )
+                keyButton.AnchorPoint = Vector2.new(1, 0.5)
+                keyButton.Position = UDim2.new(1, -4, 0.5, 0)
+                keyButton.Size = UDim2.new(0.45, 0, 0, 30)
+                local keyFrame: ImageLabel = applyKeySlotStyle(keyButton)
+                table.insert(controller.featureConnections,
+                    keyButton.MouseButton1Click:Connect(function(): ()
+                        capturing = true
+                        keyButton.Text = "PRESS A KEY…"
+                        tween(keyFrame, {
+                            ImageColor3 = Color3.new(1, 1, 1),
+                            ImageTransparency = 0,
+                        })
+                    end)
+                )
+                table.insert(controller.featureConnections,
+                    UserInputService.InputBegan:Connect(function(
+                        input: InputObject,
+                        processed: boolean
+                    ): ()
+                        if not capturing or processed
+                            or input.UserInputType ~= Enum.UserInputType.Keyboard
+                            or input.KeyCode == Enum.KeyCode.Unknown then
+                            return
+                        end
+                        capturing = false
+                        selected = input.KeyCode
+                        keyButton.Text = selected.Name
+                        tween(keyFrame, {
+                            ImageColor3 = THEME.Text,
+                            ImageTransparency = 0.06,
+                        })
+                        keybindCallback(selected)
+                    end)
+                )
+                keybindCallback(selected)
+                return keyButton
+            end
+
             table.insert(controller.connections, more.MouseButton1Click:Connect(function(): ()
                 feature:setExpanded(not feature.expanded)
             end))
@@ -944,7 +1053,7 @@ function Gui.new(options: GuiOptions?): GuiController
     if textMore and textMore:IsA("GuiObject") then
         textMore.Visible = false
     end
-    textSetting:addSlider("Scale", 85, 135, 100, function(value: number): ()
+    textSetting:addSlider("Scale", 85, 135, 108, function(value: number): ()
         controller:setTextScale(value / 100)
     end)
     task.defer(function(): ()
@@ -961,6 +1070,97 @@ function Gui.new(options: GuiOptions?): GuiController
         end
     )
     blurSetting:setEnabled(true)
+
+    local menuKey: Enum.KeyCode = Enum.KeyCode.RightShift
+    local menuKeySetting: FeatureController = settings:addAction(
+        "MenuKey",
+        "Menu key",
+        "Choose the key used to show or hide this interface",
+        function(): () end
+    )
+    local menuKeyAction: Instance? = menuKeySetting.row:FindFirstChild("Toggle")
+    if menuKeyAction and menuKeyAction:IsA("GuiObject") then
+        menuKeyAction.Visible = false
+    end
+    menuKeySetting:addKeybind(
+        "Show / hide",
+        menuKey,
+        function(selected: Enum.KeyCode): ()
+            menuKey = selected
+        end
+    )
+    task.defer(function(): ()
+        menuKeySetting:setExpanded(true)
+    end)
+
+    local reinjectButton: TextButton? = nil
+    local reinjecting: boolean = false
+    local _reinjectSetting: FeatureController = settings:addAction(
+        "Reinject",
+        "Reinject latest",
+        "Download and restart the newest main build",
+        function(): ()
+            if reinjecting then
+                return
+            end
+            local compiler: any = executorEnvironment.loadstring
+            if type(compiler) ~= "function" then
+                warn("[ARandomMenu] Reinject requires loadstring support")
+                return
+            end
+            reinjecting = true
+            if reinjectButton then
+                reinjectButton.Text = "DOWNLOADING…"
+            end
+            local sourceUrl: string = resolved.reinjectUrl
+                or (RAW_BASE .. "ARandomMenu.luau?nocache="
+                    .. HttpService:GenerateGUID(false))
+            local downloaded: boolean, sourceOrError: any = pcall(function(): string
+                return (game :: any):HttpGet(sourceUrl, true)
+            end)
+            if not downloaded or type(sourceOrError) ~= "string"
+                or #sourceOrError < 1024 or not sourceOrError:find("%-%-!strict", 1) then
+                reinjecting = false
+                if reinjectButton then
+                    reinjectButton.Text = "REINJECT"
+                end
+                warn("[ARandomMenu] Reinject download: " .. tostring(sourceOrError))
+                return
+            end
+            local compiledOk: boolean, compiledOrError: any, returnedError: any = pcall(
+                compiler,
+                sourceOrError,
+                "@ARandomMenu.luau"
+            )
+            if not compiledOk or type(compiledOrError) ~= "function" then
+                reinjecting = false
+                if reinjectButton then
+                    reinjectButton.Text = "REINJECT"
+                end
+                warn("[ARandomMenu] Reinject compile: "
+                    .. tostring(compiledOk and returnedError or compiledOrError))
+                return
+            end
+            if reinjectButton then
+                reinjectButton.Text = "RESTARTING…"
+            end
+            controller:destroy()
+            task.defer(function(): ()
+                local executed: boolean, executionError: any = xpcall(
+                    compiledOrError,
+                    debug.traceback
+                )
+                if not executed then
+                    warn("[ARandomMenu] Reinject runtime: " .. tostring(executionError))
+                end
+            end)
+        end
+    )
+    reinjectButton = _reinjectSetting.row:FindFirstChild("Toggle") :: TextButton?
+    if reinjectButton then
+        reinjectButton.Text = "REINJECT"
+        reinjectButton.Size = UDim2.fromOffset(86, 27)
+    end
 
     local dragging: boolean = false
     local dragInput: InputObject? = nil
@@ -1010,7 +1210,7 @@ function Gui.new(options: GuiOptions?): GuiController
         input: InputObject,
         processed: boolean
     ): ()
-        if not processed and input.KeyCode == Enum.KeyCode.RightShift then
+        if not processed and input.KeyCode == menuKey then
             controller:setVisible(not controller.visible)
         end
     end))
