@@ -27,6 +27,8 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
 - The reusable `gui.lua` owns its image catalog, executor-safe asset cache,
   settings, draggable shell, tabs and `createModule()` component API. Game
   modules only provide their controls and callbacks.
+- Settings includes a cache-busted **Reinject latest** control. Keyboard
+  shortcuts use the transparent 2172×724 HD key-slot frame in the asset catalog.
 - Universal Fly uses one stable camera-relative velocity preset. The UI exposes
   only speed and the ascend/descend keys; orientation and smoothing are handled
   automatically.

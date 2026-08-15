@@ -95,7 +95,7 @@ local Theme: {[string]: Color3} = {
 local TITLE_FONT: Font = Font.fromEnum(Enum.Font.Fondamento)
 local THIN_FONT: Font = Font.new(
     "rbxasset://fonts/families/GothamSSm.json",
-    Enum.FontWeight.Light,
+    Enum.FontWeight.Regular,
     Enum.FontStyle.Normal
 )
 local CONTROL_FONT: Font = Font.new(
@@ -287,7 +287,7 @@ local state: any = {
     blurEnabled = configData.ui.blurEnabled ~= false,
     textScale = math.clamp(
         tonumber(configData.ui.textScale)
-            or (configData.ui.largeText == true and 1.25 or 1),
+            or (configData.ui.largeText == true and 1.25 or 1.08),
         0.85,
         1.35
     ),
@@ -379,6 +379,14 @@ local AssetManager: any = {
             url = REPOSITORY_RAW_BASE
                 .. "src/gui/Current/Assets/Source/cosmic-controls-sheet.png",
             fileName = "cosmic-controls-sheet-v1.png",
+            fallback = "",
+            version = 1,
+            assetType = "image/png",
+        },
+        keybindPill = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Frames/keybind-pill-hd.png",
+            fileName = "keybind-pill-hd-v1.png",
             fallback = "",
             version = 1,
             assetType = "image/png",
@@ -1103,6 +1111,53 @@ local function makeButton(
     end)
 
     return button :: TextButton
+end
+
+local function applyKeySlotStyle(button: TextButton): ImageLabel
+    button.BackgroundTransparency = 1
+    button.TextColor3 = Color3.fromRGB(250, 250, 252)
+    button:SetAttribute("NoHover", true)
+    local corner: UICorner? = button:FindFirstChildOfClass("UICorner")
+    if corner then
+        corner.Enabled = false
+    end
+    local buttonStroke: UIStroke? = button:FindFirstChildOfClass("UIStroke")
+    if buttonStroke then
+        buttonStroke.Enabled = false
+    end
+    local frame: ImageLabel = create("ImageLabel", {
+        Parent = button,
+        Name = "KeySlotFrame",
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Image = "",
+        ImageColor3 = Color3.fromRGB(244, 244, 248),
+        ImageTransparency = 0.06,
+        Position = UDim2.fromScale(0.5, 0.5),
+        ScaleType = Enum.ScaleType.Slice,
+        SliceCenter = Rect.new(360, 190, 1812, 534),
+        SliceScale = 0.08,
+        Size = UDim2.new(1, 8, 1, 8),
+        ZIndex = button.ZIndex + 1,
+    }) :: ImageLabel
+    state.assetManager.loadAsync("keybindPill", frame)
+    return frame
+end
+
+local function setKeySlotCapture(button: TextButton, active: boolean): ()
+    local frame: ImageLabel? = button:FindFirstChild("KeySlotFrame") :: ImageLabel?
+    if frame then
+        TweenService:Create(
+            frame,
+            TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+            {
+                ImageColor3 = active and Color3.fromRGB(255, 255, 255)
+                    or Color3.fromRGB(244, 244, 248),
+                ImageTransparency = active and 0 or 0.06,
+            }
+        ):Play()
+    end
 end
 
 local function makeTextBox(parent: Instance, defaultText: any): TextBox
@@ -3115,10 +3170,10 @@ local function bindActionShortcut(
 
     trackUiConnection(button.MouseButton1Click:Connect(function(): ()
         button.Text = "..."
-        button.BackgroundColor3 = Theme.SurfacePressed
+        setKeySlotCapture(button, true)
         state.keyCaptureCallback = function(keyCode: Enum.KeyCode): ()
             shortcutKey = keyCode
-            button.BackgroundColor3 = Theme.SurfaceRaised
+            setKeySlotCapture(button, false)
             configData.values[optionKey] = keyCode.Name
             queueConfigSave()
             refreshButtonText()
@@ -3440,9 +3495,10 @@ local function createUniversalFeature(
         shortcutButton.BackgroundColor3 = Theme.SurfaceRaised
         shortcutButton.Position = UDim2.new(1, -84, 0, headerControlTop)
         shortcutButton.Size = UDim2.fromOffset(
-            state.isMobile and 42 or 38,
-            state.isMobile and 28 or 24
+            state.isMobile and 48 or 44,
+            state.isMobile and 30 or 27
         )
+        applyKeySlotStyle(shortcutButton)
         shortcutButton.TextScaled = true
         create("UITextSizeConstraint", {
             Parent = shortcutButton,
@@ -3590,6 +3646,7 @@ local function addActionOption(
     shortcutButton.BackgroundColor3 = Theme.SurfaceRaised
     shortcutButton.Position = UDim2.new(0.55, 0, 0, 0)
     shortcutButton.Size = UDim2.new(0.15, 0, 1, 0)
+    applyKeySlotStyle(shortcutButton)
     shortcutButton.TextScaled = true
     create("UITextSizeConstraint", {
         Parent = shortcutButton,
@@ -3873,16 +3930,17 @@ local function addKeyOption(
     local button = makeButton(option, initialKey.Name, 11)
     button.Position = UDim2.new(0.5, 0, 0, 0)
     button.Size = UDim2.new(0.5, 0, 1, 0)
+    applyKeySlotStyle(button)
 
     button.MouseButton1Click:Connect(function()
         if state.isMobile then
             return
         end
         button.Text = "PRESIONA UNA TECLA…"
-        button.BackgroundColor3 = state.headerColor
+        setKeySlotCapture(button, true)
         state.keyCaptureCallback = function(keyCode)
             button.Text = keyCode.Name
-            button.BackgroundColor3 = DEFAULT_SURFACE_COLOR
+            setKeySlotCapture(button, false)
             callback(keyCode)
             configData.values[optionKey] = keyCode.Name
             queueConfigSave()
@@ -6432,13 +6490,13 @@ local function createSettingRow(
         Size = UDim2.new(1, -4, 0, height or 62),
     })
 
-    local title = makeTextLabel(row, titleText, 14)
+    local title = makeTextLabel(row, titleText, 15)
     title.Font = Enum.Font.GothamBold
     title.Position = UDim2.fromOffset(14, 7)
     title.Size = UDim2.new(0.46, -14, 0, 24)
 
-    local description = makeTextLabel(row, descriptionText, 11)
-    description.TextColor3 = Color3.fromRGB(160, 160, 160)
+    local description = makeTextLabel(row, descriptionText, 12)
+    description.TextColor3 = Color3.fromRGB(176, 176, 182)
     description.Position = UDim2.fromOffset(14, 30)
     description.Size = UDim2.new(0.48, -14, 0, 22)
 
@@ -6457,7 +6515,7 @@ local function createSettingRow(
     create("UIStroke", {
         Parent = row,
         Color = Theme.Outline,
-        Transparency = 0.42,
+        Transparency = 0.28,
         Thickness = 1,
     })
     return (row :: any) :: Frame, (control :: any) :: Frame
@@ -6545,13 +6603,27 @@ keyRow.LayoutOrder = 3
 
 local KeybindButton = makeButton(keyControl, state.toggleKey.Name, 13)
 KeybindButton.Size = UDim2.fromScale(1, 1)
+applyKeySlotStyle(KeybindButton)
 state.keybindButton = KeybindButton
+
+local reinjectRow, reinjectControl = createSettingRow(
+    "Reinject latest",
+    "Download and restart the newest main build"
+)
+reinjectRow.LayoutOrder = 4
+local ReinjectButton: TextButton = makeButton(
+    reinjectControl,
+    "REINJECT LATEST",
+    12
+)
+ReinjectButton.Size = UDim2.fromScale(1, 1)
+ReinjectButton.BackgroundColor3 = Color3.fromRGB(29, 29, 33)
 
 local gameRow, gameControl = createSettingRow(
     "Game check",
     "Only the matching game-specific module is loaded"
 )
-gameRow.LayoutOrder = 4
+gameRow.LayoutOrder = 5
 local gameStatus = makeTextLabel(
     gameControl,
     GAME_CHECK.MM2Active and "MM2 · 142823291"
@@ -6568,7 +6640,7 @@ local mobileIconRow, mobileIconControl = createSettingRow(
     "Mobile menu icon",
     "Dog shortcut stays available so the menu cannot become unreachable"
 )
-mobileIconRow.LayoutOrder = 5
+mobileIconRow.LayoutOrder = 6
 mobileIconRow.Visible = UserInputService.TouchEnabled
 local MobileIconButton = makeButton(
     mobileIconControl,
@@ -6589,7 +6661,7 @@ local mobileSizeRow, mobileSizeControl = createSettingRow(
     "Mobile action size",
     "Size for placed mobile shortcuts"
 )
-mobileSizeRow.LayoutOrder = 6
+mobileSizeRow.LayoutOrder = 7
 mobileSizeRow.Visible = UserInputService.TouchEnabled
 local MobileSizeButton = makeButton(
     mobileSizeControl,
@@ -6602,7 +6674,7 @@ local mobileResetRow, mobileResetControl = createSettingRow(
     "Mobile action buttons",
     "Hold ADD to place; hold a shortcut to remove it"
 )
-mobileResetRow.LayoutOrder = 7
+mobileResetRow.LayoutOrder = 8
 mobileResetRow.Visible = UserInputService.TouchEnabled
 local MobileResetButton = makeButton(
     mobileResetControl,
@@ -6624,7 +6696,7 @@ local helpText = makeTextLabel(
             or " | Drag the header to move the fixed-size menu."),
     11
 )
-helpText.LayoutOrder = 8
+helpText.LayoutOrder = 9
 helpText.TextColor3 = Color3.fromRGB(145, 145, 145)
 helpText.TextXAlignment = Enum.TextXAlignment.Center
 helpText.Size = UDim2.new(1, -4, 0, 30)
@@ -6711,6 +6783,72 @@ trackUiConnection(BlurButton.MouseButton1Click:Connect(function(): ()
     notify(state.blurEnabled and "Desenfoque activado" or "Desenfoque desactivado")
 end))
 
+local reinjectBusy: boolean = false
+trackUiConnection(ReinjectButton.MouseButton1Click:Connect(function(): ()
+    if reinjectBusy then
+        return
+    end
+    local compiler: any = executorGlobals.loadstring
+    if type(compiler) ~= "function" then
+        notify("Reinject no disponible: el ejecutor no admite loadstring")
+        return
+    end
+    reinjectBusy = true
+    ReinjectButton:SetAttribute("Disabled", true)
+    ReinjectButton.Text = "DOWNLOADING…"
+    local sourceUrl: string = REPOSITORY_RAW_BASE
+        .. "ARandomMenu.luau?nocache="
+        .. HttpService:GenerateGUID(false)
+    local downloaded: boolean, sourceOrError: any = pcall(function(): string
+        return (game :: any):HttpGet(sourceUrl, true)
+    end)
+    if not downloaded or type(sourceOrError) ~= "string"
+        or #sourceOrError < 1024 or not sourceOrError:find("%-%-!strict", 1) then
+        reinjectBusy = false
+        ReinjectButton:SetAttribute("Disabled", false)
+        ReinjectButton.Text = "REINJECT LATEST"
+        notify("No se pudo descargar la versión más reciente")
+        warn("[Random Testing Menu] Reinject download: " .. tostring(sourceOrError))
+        return
+    end
+    local compiled: any = nil
+    local compileError: any = nil
+    local compiledOk: boolean, compileResult: any, returnedError: any = pcall(
+        compiler,
+        sourceOrError,
+        "@ARandomMenu.luau"
+    )
+    if compiledOk then
+        compiled = compileResult
+        compileError = returnedError
+    else
+        compileError = compileResult
+    end
+    if type(compiled) ~= "function" then
+        reinjectBusy = false
+        ReinjectButton:SetAttribute("Disabled", false)
+        ReinjectButton.Text = "REINJECT LATEST"
+        notify("La versión descargada no pudo compilarse")
+        warn("[Random Testing Menu] Reinject compile: " .. tostring(compileError))
+        return
+    end
+    ReinjectButton.Text = "RESTARTING…"
+    task.defer(function(): ()
+        local executed: boolean, executionError: any = xpcall(
+            compiled,
+            debug.traceback
+        )
+        if not executed then
+            reinjectBusy = false
+            if ReinjectButton.Parent then
+                ReinjectButton:SetAttribute("Disabled", false)
+                ReinjectButton.Text = "REINJECT LATEST"
+            end
+            warn("[Random Testing Menu] Reinject runtime: " .. tostring(executionError))
+        end
+    end)
+end))
+
 MobileIconButton.MouseButton1Click:Connect(function(): ()
     if not UserInputService.TouchEnabled then
         return
@@ -6758,7 +6896,7 @@ end)
 KeybindButton.MouseButton1Click:Connect(function()
     state.waitingForKey = true
     KeybindButton.Text = "PRESIONA UNA TECLA…"
-    KeybindButton.BackgroundColor3 = state.headerColor
+    setKeySlotCapture(KeybindButton, true)
 end)
 
 end
@@ -6884,7 +7022,7 @@ state.globalInputBeganConnection = UserInputService.InputBegan:Connect(function(
             state.waitingForKey = false
             if state.keybindButton then
                 state.keybindButton.Text = input.KeyCode.Name
-                state.keybindButton.BackgroundColor3 = DEFAULT_SURFACE_COLOR
+                setKeySlotCapture(state.keybindButton, false)
             end
             configData.ui.toggleKey = input.KeyCode.Name
             queueConfigSave()
