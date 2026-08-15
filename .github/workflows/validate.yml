@@ -76,6 +76,14 @@ jobs:
             test "$(head -n 1 "$file")" = "--!strict"
           done < <(find . -type f \( -name "*.lua" -o -name "*.luau" \) -print)
 
+      - name: Verify loader freshness guard
+        shell: bash
+        run: |
+          grep -q 'REQUIRED_RUNTIME_MARKER' loadstring
+          grep -q 'RUNTIME_SAFETY_SOURCE_URL' ARandomMenu.luau
+          ! grep -q 'corner.Enabled' ARandomMenu.luau
+          ! grep -q 'corner.Enabled' src/gui/Current/gui.lua
+
       - name: Compile Luau sources
         shell: bash
         run: |
