@@ -9,6 +9,11 @@
 ]]
 
 local bootstrapStatusLabel: TextLabel? = nil
+local RUNTIME_COMPATIBILITY_MARKER: string =
+    "Initialization error — check executor console"
+local RUNTIME_SAFETY_SOURCE_URL: string =
+    "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/4b10e4bfe00aa356afb3e0420a72e745327f6259/ARandomMenu.luau"
+local RUNTIME_BUILD_LABEL: string = "loader-v3"
 
 local function bootstrap(): ()
 local executorGlobals: any = getfenv()
@@ -2047,7 +2052,7 @@ LoadingTitle.ZIndex = 503
 
 local LoadingLabel: TextLabel = (makeTextLabel(
     LoadingCurtain,
-    "Loading modules 0/0",
+    "Preparing modules · " .. RUNTIME_BUILD_LABEL,
     12
 ) :: any) :: TextLabel
 LoadingLabel.AnchorPoint = Vector2.new(0.5, 0)
@@ -6799,19 +6804,38 @@ trackUiConnection(ReinjectButton.MouseButton1Click:Connect(function(): ()
     reinjectBusy = true
     ReinjectButton:SetAttribute("Disabled", true)
     ReinjectButton.Text = "DOWNLOADING…"
-    local sourceUrl: string = REPOSITORY_RAW_BASE
-        .. "ARandomMenu.luau?nocache="
-        .. HttpService:GenerateGUID(false)
-    local downloaded: boolean, sourceOrError: any = pcall(function(): string
-        return (game :: any):HttpGet(sourceUrl, true)
-    end)
-    if not downloaded or type(sourceOrError) ~= "string"
-        or #sourceOrError < 1024 or not sourceOrError:find("%-%-!strict", 1) then
+    local sourceUrls: {string} = {
+        REPOSITORY_RAW_BASE .. "ARandomMenu.luau",
+        RUNTIME_SAFETY_SOURCE_URL,
+    }
+    local sourceOrError: any = nil
+    local downloaded: boolean = false
+    local downloadFailures: {string} = {}
+    for _, candidateUrl: string in ipairs(sourceUrls) do
+        local requestUrl: string = candidateUrl
+            .. "?reinject=v3&nocache="
+            .. HttpService:GenerateGUID(false)
+        local requestOk: boolean, bodyOrError: any = pcall(function(): string
+            return (game :: any):HttpGet(requestUrl, true)
+        end)
+        local current: boolean = requestOk
+            and type(bodyOrError) == "string"
+            and #bodyOrError >= 1024
+            and bodyOrError:find(RUNTIME_COMPATIBILITY_MARKER, 1, true) ~= nil
+        if current then
+            downloaded = true
+            sourceOrError = bodyOrError
+            break
+        end
+        table.insert(downloadFailures, tostring(bodyOrError))
+    end
+    if not downloaded then
         reinjectBusy = false
         ReinjectButton:SetAttribute("Disabled", false)
         ReinjectButton.Text = "REINJECT LATEST"
         notify("No se pudo descargar la versión más reciente")
-        warn("[Random Testing Menu] Reinject download: " .. tostring(sourceOrError))
+        warn("[Random Testing Menu] Reinject download: "
+            .. table.concat(downloadFailures, " | "))
         return
     end
     local compiled: any = nil

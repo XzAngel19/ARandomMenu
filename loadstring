@@ -1,27 +1,46 @@
 --!strict
 
-local SOURCE_URL =
+local executorEnvironment: any = getfenv()
+local cloneReference: (Instance) -> Instance = (
+    executorEnvironment.cloneref
+    or function(instance: Instance): Instance
+        return instance
+    end
+) :: (Instance) -> Instance
+local HttpService: HttpService =
+    cloneReference(game:GetService("HttpService")) :: HttpService
+
+local REQUIRED_RUNTIME_MARKER: string =
+    "Initialization error — check executor console"
+local MAIN_SOURCE_URL: string =
     "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/main/ARandomMenu.luau"
-local HttpService = game:GetService("HttpService")
-local environment = getfenv()
+local SAFETY_SOURCE_URL: string =
+    "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/4b10e4bfe00aa356afb3e0420a72e745327f6259/ARandomMenu.luau"
 
-local function validateSource(candidate)
+type SourceCandidate = {
+    label: string,
+    url: string,
+}
+
+local SOURCE_CANDIDATES: {SourceCandidate} = {
+    {label = "main", url = MAIN_SOURCE_URL},
+    {label = "known-good snapshot", url = SAFETY_SOURCE_URL},
+}
+
+local function validateSource(candidate: any): (boolean, string?)
     if type(candidate) ~= "string" then
-        return false, "la respuesta no es una cadena (tipo: " .. type(candidate) .. ")"
+        return false, "la respuesta no es una cadena (tipo: "
+            .. type(candidate) .. ")"
     end
-    if #candidate == 0 then
-        return false, "la respuesta está vacía"
-    end
-    if #candidate < 64 then
-        return false, "la respuesta es demasiado corta (" .. tostring(#candidate) .. " bytes)"
+    local source: string = candidate
+    if #source < 1024 then
+        return false, "la respuesta es demasiado corta ("
+            .. tostring(#source) .. " bytes)"
     end
 
-    -- Only inspect the response prefix. Searching the complete Lua source for
-    -- '<html' rejects valid scripts that contain that literal in their code.
-    local prefix = string.lower(string.sub(candidate, 1, 512))
+    local prefix: string = string.lower(string.sub(source, 1, 512))
     prefix = string.gsub(prefix, "^\239\187\191", "")
     prefix = string.gsub(prefix, "^%s+", "")
-
     if string.find(prefix, "404: not found", 1, true) == 1 then
         return false, "GitHub devolvió 404: Not Found"
     end
@@ -32,96 +51,105 @@ local function validateSource(candidate)
     if string.match(prefix, '^%{%s*"message"%s*:') then
         return false, "el servidor devolvió un error JSON"
     end
-
+    if string.find(source, REQUIRED_RUNTIME_MARKER, 1, true) == nil then
+        return false, "runtime obsoleto: falta el marcador del hotfix 0/0"
+    end
     return true, nil
 end
 
-local function readLocalFallback()
-    local readFile = environment.readfile
-    local isFile = environment.isfile
-    local path = "ARandomMenu.luau"
+local function downloadCurrentSource(): (string?, string?)
+    local failures: {string} = {}
+    for _, candidate: SourceCandidate in ipairs(SOURCE_CANDIDATES) do
+        local requestUrl: string = candidate.url
+            .. "?loader=v3&nocache="
+            .. HttpService:GenerateGUID(false)
+        print("[RTM:Loader] Descargando " .. candidate.label)
+        local downloaded: boolean, bodyOrError: any = pcall(function(): string
+            return (game :: any):HttpGet(requestUrl, true)
+        end)
+        if downloaded then
+            local valid: boolean, validationError: string? =
+                validateSource(bodyOrError)
+            if valid then
+                print("[RTM:Loader] Runtime válido: "
+                    .. candidate.label .. " · " .. tostring(#bodyOrError) .. " bytes")
+                return bodyOrError :: string, nil
+            end
+            table.insert(failures, candidate.label .. ": "
+                .. tostring(validationError))
+        else
+            table.insert(failures, candidate.label .. ": HTTP "
+                .. tostring(bodyOrError))
+        end
+    end
+    return nil, table.concat(failures, " | ")
+end
+
+local function readLocalFallback(): (string?, string?)
+    local readFile: any = executorEnvironment.readfile
+    local isFile: any = executorEnvironment.isfile
+    local path: string = "ARandomMenu.luau"
     if type(readFile) ~= "function" then
         return nil, "readfile no está disponible"
     end
     if type(isFile) == "function" and not isFile(path) then
         return nil, "no existe " .. path
     end
-
-    local okRead, localSource = pcall(readFile, path)
-    if not okRead then
+    local readOk: boolean, localSource: any = pcall(readFile, path)
+    if not readOk then
         return nil, "readfile falló: " .. tostring(localSource)
     end
-    local validLocal, localValidationError = validateSource(localSource)
-    if not validLocal then
-        return nil, "fallback inválido: " .. tostring(localValidationError)
+    local valid: boolean, validationError: string? = validateSource(localSource)
+    if not valid then
+        return nil, "fallback local rechazado: " .. tostring(validationError)
     end
-    return localSource, nil
+    return localSource :: string, nil
 end
 
-print("[RTM:Loader] Descargando " .. SOURCE_URL)
-local okHttp, source = pcall(function()
-    return game:HttpGet(
-        SOURCE_URL .. "?nocache=" .. HttpService:GenerateGUID(false),
-        true
-    )
-end)
-
-if not okHttp then
-    warn("[RTM:Loader] Error HTTP: " .. tostring(source))
-    local fallbackSource, fallbackError = readLocalFallback()
-    if not fallbackSource then
-        warn("[RTM:Loader] Error de fallback local: " .. tostring(fallbackError))
+local source: string? = nil
+local remoteError: string? = nil
+source, remoteError = downloadCurrentSource()
+if source == nil then
+    warn("[RTM:Loader] Remotos no disponibles: " .. tostring(remoteError))
+    local fallbackSource: string?, fallbackError: string? = readLocalFallback()
+    if fallbackSource == nil then
+        warn("[RTM:Loader] Sin runtime seguro: " .. tostring(fallbackError))
         return nil
     end
     source = fallbackSource
-    print("[RTM:Loader] Usando fallback local ARandomMenu.luau")
+    print("[RTM:Loader] Usando fallback local verificado")
 end
 
-local validSource, validationError = validateSource(source)
-if not validSource then
-    warn("[RTM:Loader] Error de validación: " .. tostring(validationError))
-    local fallbackSource, fallbackError = readLocalFallback()
-    if not fallbackSource then
-        warn("[RTM:Loader] Error de fallback local: " .. tostring(fallbackError))
-        return nil
-    end
-    source = fallbackSource
-    print("[RTM:Loader] Usando fallback local ARandomMenu.luau")
-end
-print("[RTM:Loader] Descarga válida: " .. tostring(#source) .. " bytes")
-
-local compiler = environment.loadstring or loadstring
+local compiler: any = executorEnvironment.loadstring or loadstring
 if type(compiler) ~= "function" then
-    warn("[RTM:Loader] Error de compilación: el executor no expone loadstring")
+    warn("[RTM:Loader] El executor no expone loadstring")
     return nil
 end
-
-local okCompile, chunk, compileError = pcall(
+local invoked: boolean, chunkOrError: any, returnedError: any = pcall(
     compiler,
     source,
     "@ARandomMenu.luau"
 )
-if not okCompile then
-    warn("[RTM:Loader] Error al invocar loadstring: " .. tostring(chunk))
+if not invoked or type(chunkOrError) ~= "function" then
+    warn("[RTM:Loader] Error de compilación: "
+        .. tostring(invoked and returnedError or chunkOrError))
     return nil
 end
-if not chunk then
-    warn("[RTM:Loader] Error de compilación: " .. tostring(compileError))
-    return nil
-end
-print("[RTM:Loader] Compilación correcta")
+print("[RTM:Loader] Compilación correcta · loader v3")
 
-local okRun, result = xpcall(chunk, function(message)
-    local text = tostring(message)
-    if debug and type(debug.traceback) == "function" then
-        return debug.traceback(text, 2)
+local executed: boolean, result: any = xpcall(
+    chunkOrError,
+    function(message: any): string
+        local text: string = tostring(message)
+        if debug and type(debug.traceback) == "function" then
+            return debug.traceback(text, 2)
+        end
+        return text
     end
-    return text
-end)
-if not okRun then
+)
+if not executed then
     warn("[RTM:Loader] Error durante la ejecución:\n" .. tostring(result))
     return nil
 end
-
 print("[RTM:Loader] Ejecución completada")
 return result

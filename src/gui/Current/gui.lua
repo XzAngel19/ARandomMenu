@@ -25,6 +25,10 @@ local HttpService: HttpService =
 local RAW_BASE: string =
     "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/main/"
 local CACHE_ROOT: string = "ARandomMenu/Assets"
+local RUNTIME_COMPATIBILITY_MARKER: string =
+    "Initialization error — check executor console"
+local RUNTIME_SAFETY_SOURCE_URL: string =
+    "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/4b10e4bfe00aa356afb3e0420a72e745327f6259/ARandomMenu.luau"
 
 export type Theme = {
     Background: Color3,
@@ -1112,19 +1116,42 @@ function Gui.new(options: GuiOptions?): GuiController
             if reinjectButton then
                 reinjectButton.Text = "DOWNLOADING…"
             end
-            local sourceUrl: string = resolved.reinjectUrl
-                or (RAW_BASE .. "ARandomMenu.luau?nocache="
-                    .. HttpService:GenerateGUID(false))
-            local downloaded: boolean, sourceOrError: any = pcall(function(): string
-                return (game :: any):HttpGet(sourceUrl, true)
-            end)
-            if not downloaded or type(sourceOrError) ~= "string"
-                or #sourceOrError < 1024 or not sourceOrError:find("%-%-!strict", 1) then
+            local sourceUrls: {string} = {
+                resolved.reinjectUrl or (RAW_BASE .. "ARandomMenu.luau"),
+                RUNTIME_SAFETY_SOURCE_URL,
+            }
+            local downloaded: boolean = false
+            local sourceOrError: any = nil
+            local downloadFailures: {string} = {}
+            for _, candidateUrl: string in ipairs(sourceUrls) do
+                local requestUrl: string = candidateUrl
+                    .. "?reinject=v3&nocache="
+                    .. HttpService:GenerateGUID(false)
+                local requestOk: boolean, bodyOrError: any = pcall(function(): string
+                    return (game :: any):HttpGet(requestUrl, true)
+                end)
+                local current: boolean = requestOk
+                    and type(bodyOrError) == "string"
+                    and #bodyOrError >= 1024
+                    and bodyOrError:find(
+                        RUNTIME_COMPATIBILITY_MARKER,
+                        1,
+                        true
+                    ) ~= nil
+                if current then
+                    downloaded = true
+                    sourceOrError = bodyOrError
+                    break
+                end
+                table.insert(downloadFailures, tostring(bodyOrError))
+            end
+            if not downloaded then
                 reinjecting = false
                 if reinjectButton then
                     reinjectButton.Text = "REINJECT"
                 end
-                warn("[ARandomMenu] Reinject download: " .. tostring(sourceOrError))
+                warn("[ARandomMenu] Reinject download: "
+                    .. table.concat(downloadFailures, " | "))
                 return
             end
             local compiledOk: boolean, compiledOrError: any, returnedError: any = pcall(

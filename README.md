@@ -5,6 +5,9 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
 ## Runtime architecture
 
 - `loadstring` downloads the current `ARandomMenu.luau` bootstrap.
+- Loader v3 rejects the stale `0/0` runtime, retries a known-good immutable
+  snapshot when GitHub's branch CDN has not propagated, and never runs an
+  outdated local fallback.
 - `ARandomMenu.luau` creates the shared responsive UI, component factory,
   notifications, state and the single-heartbeat `TaskManager`.
 - The bootstrap reads `game.PlaceId` and downloads the named game module from
