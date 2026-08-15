@@ -77,7 +77,7 @@ local GAME_CHECK = {
 function GAME_CHECK.matches(identifier: number): boolean
     return game.PlaceId == identifier
 end
-local DEFAULT_HEADER_COLOR: Color3 = Color3.fromRGB(226, 226, 226)
+local DEFAULT_HEADER_COLOR: Color3 = Color3.fromRGB(76, 214, 255)
 local DEFAULT_MENU_COLOR: Color3 = Color3.fromRGB(0, 0, 0)
 local DEFAULT_SURFACE_COLOR: Color3 = Color3.fromRGB(18, 18, 20)
 local DEFAULT_BORDER_COLOR: Color3 = Color3.fromRGB(82, 82, 86)
@@ -88,11 +88,11 @@ local Theme: {[string]: Color3} = {
     SurfaceRaised = Color3.fromRGB(27, 27, 30),
     SurfaceHover = Color3.fromRGB(35, 35, 38),
     SurfacePressed = Color3.fromRGB(43, 43, 47),
-    Accent = Color3.fromRGB(226, 226, 226),
-    AccentCyan = Color3.fromRGB(232, 232, 234),
-    AccentViolet = Color3.fromRGB(196, 196, 200),
-    AccentPink = Color3.fromRGB(164, 164, 170),
-    AccentSoft = Color3.fromRGB(64, 64, 69),
+    Accent = Color3.fromRGB(76, 214, 255),
+    AccentCyan = Color3.fromRGB(76, 214, 255),
+    AccentViolet = Color3.fromRGB(145, 112, 255),
+    AccentPink = Color3.fromRGB(255, 93, 174),
+    AccentSoft = Color3.fromRGB(35, 86, 104),
     Text = Color3.fromRGB(242, 242, 244),
     TextMuted = Color3.fromRGB(164, 164, 169),
     Outline = Color3.fromRGB(89, 89, 94),
@@ -299,10 +299,10 @@ local state: any = {
         1.35
     ),
     mobileMenuButtonVisible = true,
-    animationsEnabled = true,
+    animationsEnabled = configData.ui.animationsEnabled ~= false,
     animatedBlossomsEnabled = false,
     atmosphereEffectsEnabled = false,
-    decorativeTexturesEnabled = true,
+    decorativeTexturesEnabled = configData.ui.decorativeTexturesEnabled ~= false,
     mobileButtonSize = math.clamp(
         tonumber(configData.ui.mobileButtonSize) or 52,
         42,
@@ -1330,8 +1330,8 @@ local initialViewport: Vector2 = initialCamera
     and initialCamera.ViewportSize
     or Vector2.new(1280, 720)
 local fixedWindowScale: Vector2 = state.isMobile
-    and Vector2.new(0.94, 0.84)
-    or Vector2.new(0.72, 0.78)
+    and Vector2.new(0.96, 0.88)
+    or Vector2.new(0.78, 0.82)
 
 local Main: Frame = (create("Frame", {
     Parent = ScreenGui,
@@ -1345,16 +1345,16 @@ local Main: Frame = (create("Frame", {
 }) :: any) :: Frame
 
 do
-local _MainCorner: UICorner, MainStroke: UIStroke = addRoundedStyle(Main, 20, 0.2)
+local _MainCorner: UICorner, MainStroke: UIStroke = addRoundedStyle(Main, 14, 0.2)
 MainStroke.Thickness = 1
-MainStroke.Color = Color3.fromRGB(205, 205, 208)
-MainStroke.Transparency = 0.48
+MainStroke.Color = Theme.Accent
+MainStroke.Transparency = 0.42
 local MainStrokeGradient: UIGradient = Instance.new("UIGradient")
 MainStrokeGradient.Color = ColorSequence.new({
-    ColorSequenceKeypoint.new(0, Color3.fromRGB(72, 72, 76)),
-    ColorSequenceKeypoint.new(0.32, Color3.fromRGB(218, 218, 220)),
-    ColorSequenceKeypoint.new(0.61, Color3.fromRGB(112, 112, 116)),
-    ColorSequenceKeypoint.new(1, Color3.fromRGB(190, 190, 193)),
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(24, 62, 76)),
+    ColorSequenceKeypoint.new(0.32, Theme.Accent),
+    ColorSequenceKeypoint.new(0.61, Theme.AccentViolet),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(34, 91, 109)),
 })
 MainStrokeGradient.Rotation = 8
 MainStrokeGradient.Parent = MainStroke
@@ -1390,152 +1390,64 @@ task.defer(centerMain)
 
 local Header = create("Frame", {
     Parent = Main,
-    Name = "AnimeHeader",
+    Name = "TechnicalHeader",
     Active = true,
     BackgroundColor3 = Color3.fromRGB(7, 7, 8),
     BackgroundTransparency = 0,
     BorderSizePixel = 0,
     Position = UDim2.fromOffset(0, 0),
-    Size = UDim2.new(1, 0, 0, 84),
+    Size = UDim2.new(1, 0, 0, 64),
     ZIndex = 15,
 })
 Header.ClipsDescendants = true
 create("UICorner", {
     Parent = Header,
-    CornerRadius = UDim.new(0, 20),
+    CornerRadius = UDim.new(0, 14),
 })
 
 do
-local HeaderImage: ImageLabel = (create("ImageLabel", {
-    Parent = Header,
-    Name = "AnimeHeaderImage",
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    Image = "",
-    ImageColor3 = Color3.fromRGB(225, 225, 228),
-    ImageTransparency = 0.12,
-    ScaleType = Enum.ScaleType.Crop,
-    Size = UDim2.fromScale(1, 1),
-    ZIndex = 16,
-}) :: any) :: ImageLabel
-create("UICorner", {
-    Parent = HeaderImage,
-    CornerRadius = UDim.new(0, 20),
-})
-local HeaderEdgeFade: UIGradient = Instance.new("UIGradient")
-HeaderEdgeFade.Transparency = NumberSequence.new({
-    NumberSequenceKeypoint.new(0, 0.82),
-    NumberSequenceKeypoint.new(0.12, 0.08),
-    NumberSequenceKeypoint.new(0.5, 0),
-    NumberSequenceKeypoint.new(0.88, 0.08),
-    NumberSequenceKeypoint.new(1, 0.82),
-})
-HeaderEdgeFade.Parent = HeaderImage
-state.assetManager.loadAsync("headerAnime", HeaderImage)
-
-local HeaderShade: Frame = (create("Frame", {
-    Parent = Header,
-    Name = "HeaderDarkOverlay",
-    BackgroundColor3 = Color3.fromRGB(0, 0, 0),
-    BackgroundTransparency = 0.38,
-    BorderSizePixel = 0,
-    Size = UDim2.fromScale(1, 1),
-    ZIndex = 17,
-}) :: any) :: Frame
-create("UICorner", {
-    Parent = HeaderShade,
-    CornerRadius = UDim.new(0, 20),
-})
-local HeaderShadeGradient: UIGradient = Instance.new("UIGradient")
-HeaderShadeGradient.Transparency = NumberSequence.new({
-    NumberSequenceKeypoint.new(0, 0.05),
-    NumberSequenceKeypoint.new(0.28, 0.48),
-    NumberSequenceKeypoint.new(0.72, 0.48),
-    NumberSequenceKeypoint.new(1, 0.05),
-})
-HeaderShadeGradient.Parent = HeaderShade
-
-local HeaderBlossoms: ImageLabel = (create("ImageLabel", {
-    Parent = Header,
-    Name = "HeaderBlossoms",
-    AnchorPoint = Vector2.new(1, 0),
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    Image = "",
-    ImageColor3 = Color3.fromRGB(235, 235, 237),
-    ImageTransparency = 1,
-    Position = UDim2.new(1, 10, 0, -12),
-    ScaleType = Enum.ScaleType.Fit,
-    Size = UDim2.new(0.48, 0, 1, 20),
-    ZIndex = 18,
-}) :: any) :: ImageLabel
-state.decorativeObjects = {HeaderBlossoms} :: {GuiObject}
+state.decorativeObjects = {} :: {GuiObject}
 
 local Title: TextLabel = create("TextLabel", {
     Parent = Header,
     Name = "Title",
-    AnchorPoint = Vector2.new(0.5, 0.5),
+    AnchorPoint = Vector2.new(0, 0.5),
     BackgroundTransparency = 1,
     BorderSizePixel = 0,
-    FontFace = TITLE_FONT,
-    Position = UDim2.fromScale(0.5, 0.5),
-    Size = UDim2.new(0.82, 0, 0, 56),
-    Text = "A Random Menu",
+    FontFace = CONTROL_FONT,
+    Position = UDim2.new(0, 20, 0.5, -5),
+    Size = UDim2.new(0, state.isMobile and 130 or 280, 0, 28),
+    Text = "A RANDOM MENU",
     TextColor3 = Color3.fromRGB(248, 248, 250),
-    TextScaled = true,
-    TextStrokeColor3 = Color3.fromRGB(0, 0, 0),
-    TextStrokeTransparency = 0.32,
-    TextXAlignment = Enum.TextXAlignment.Center,
+    TextSize = state.isMobile and 17 or 19,
+    TextXAlignment = Enum.TextXAlignment.Left,
     TextYAlignment = Enum.TextYAlignment.Center,
     ZIndex = 20,
 }) :: TextLabel
-create("UITextSizeConstraint", {
-    Parent = Title,
-    MinTextSize = 24,
-    MaxTextSize = state.isMobile and 34 or 42,
-})
-
-local HeaderOrnament: ImageLabel = (create("ImageLabel", {
+local BuildLabel: TextLabel = create("TextLabel", {
     Parent = Header,
-    Name = "CosmicDivider",
-    AnchorPoint = Vector2.new(0.5, 1),
+    Name = "BuildLabel",
     BackgroundTransparency = 1,
     BorderSizePixel = 0,
-    Image = "",
-    ImageColor3 = Color3.fromRGB(235, 235, 238),
-    ImageRectOffset = Vector2.new(666, 298),
-    ImageRectSize = Vector2.new(171, 48),
-    ImageTransparency = 0.14,
-    Position = UDim2.new(0.5, 0, 1, -3),
-    ScaleType = Enum.ScaleType.Stretch,
-    Size = UDim2.new(0.58, 0, 0, 31),
-    ZIndex = 19,
-}) :: any) :: ImageLabel
-state.assetManager.loadAsync("cosmicControls", HeaderOrnament)
-
+    FontFace = THIN_FONT,
+    Position = UDim2.new(0, 20, 0.5, 13),
+    Size = UDim2.new(0, state.isMobile and 130 or 280, 0, 18),
+    Text = "UNIVERSAL / TECHNICAL BUILD",
+    TextColor3 = Theme.Accent,
+    TextSize = 9,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    ZIndex = 20,
+}) :: TextLabel
 local HeaderSeparator: Frame = (create("Frame", {
     Parent = Header,
     Name = "MangaSeparator",
     AnchorPoint = Vector2.new(0, 1),
-    BackgroundColor3 = Color3.new(1, 1, 1),
+    BackgroundColor3 = Theme.Accent,
     BorderSizePixel = 0,
     Position = UDim2.new(0, 0, 1, 0),
     Size = UDim2.new(1, 0, 0, 1),
     ZIndex = 19,
 }) :: any) :: Frame
-local SeparatorGradient: UIGradient = Instance.new("UIGradient")
-SeparatorGradient.Color = ColorSequence.new(
-    Color3.fromRGB(82, 82, 86),
-    Color3.fromRGB(232, 232, 234)
-)
-SeparatorGradient.Transparency = NumberSequence.new({
-    NumberSequenceKeypoint.new(0, 1),
-    NumberSequenceKeypoint.new(0.2, 0.25),
-    NumberSequenceKeypoint.new(0.8, 0.25),
-    NumberSequenceKeypoint.new(1, 1),
-})
-SeparatorGradient.Parent = HeaderSeparator
-
 state.decorativeTweens = {} :: {Tween}
 end
 
@@ -1545,20 +1457,27 @@ local Tabs = create("Frame", {
     BackgroundColor3 = Color3.fromRGB(11, 11, 13),
     BackgroundTransparency = 0.03,
     BorderSizePixel = 0,
-    Position = UDim2.fromOffset(0, 84),
-    Size = UDim2.new(1, 0, 0, 48),
+    Position = UDim2.fromOffset(0, 64),
+    Size = UDim2.new(0, state.isMobile and 136 or 172, 1, -64),
     ZIndex = 10,
 })
 create("UICorner", {
     Parent = Tabs,
-    CornerRadius = UDim.new(0, 12),
+    CornerRadius = UDim.new(0, 10),
 })
 
 create("UIListLayout", {
     Parent = Tabs,
-    FillDirection = Enum.FillDirection.Horizontal,
+    FillDirection = Enum.FillDirection.Vertical,
     HorizontalAlignment = Enum.HorizontalAlignment.Left,
+    Padding = UDim.new(0, 6),
     SortOrder = Enum.SortOrder.LayoutOrder,
+})
+create("UIPadding", {
+    Parent = Tabs,
+    PaddingLeft = UDim.new(0, 6),
+    PaddingRight = UDim.new(0, 6),
+    PaddingTop = UDim.new(0, 10),
 })
 
 local Content = create("Frame", {
@@ -1568,14 +1487,14 @@ local Content = create("Frame", {
     BackgroundTransparency = 0,
     BorderColor3 = Color3.fromRGB(14, 14, 14),
     BorderSizePixel = 0,
-    Position = UDim2.fromOffset(0, 132),
-    Size = UDim2.new(1, 0, 1, -132),
+    Position = UDim2.fromOffset(state.isMobile and 136 or 172, 64),
+    Size = UDim2.new(1, state.isMobile and -136 or -172, 1, -64),
     ZIndex = 3,
 })
 Content.ClipsDescendants = true
 create("UICorner", {
     Parent = Content,
-    CornerRadius = UDim.new(0, 20),
+    CornerRadius = UDim.new(0, 10),
 })
 BlossomBackground = (create("ImageLabel", {
     Parent = Content,
@@ -1652,9 +1571,10 @@ local function createTab(tabName, layoutOrder)
     local button = makeButton(Tabs, tabName, 14)
     button.Name = tabName .. "Tab"
     button.LayoutOrder = layoutOrder
-    button.Size = UDim2.new(0.16, -4, 1, 0)
+    button.Size = UDim2.new(1, -12, 0, state.isMobile and 40 or 44)
     button.BackgroundColor3 = Theme.Surface
     button.TextSize = state.isMobile and 10 or 14
+    button.TextXAlignment = Enum.TextXAlignment.Left
     button.ZIndex = 11
     button:SetAttribute("SelectedColor", Theme.SurfaceRaised)
     local tabIconName: string = tabName == "Universal" and "home"
@@ -1670,7 +1590,7 @@ local function createTab(tabName, layoutOrder)
         Image = "",
         ImageColor3 = Color3.fromRGB(210, 210, 212),
         ImageTransparency = 0.2,
-        Position = UDim2.new(0, 7, 0.5, 0),
+        Position = UDim2.new(0, 14, 0.5, 0),
         ScaleType = Enum.ScaleType.Fit,
         Size = UDim2.fromOffset(15, 15),
         Visible = not state.isMobile,
@@ -1680,12 +1600,12 @@ local function createTab(tabName, layoutOrder)
     local indicator: Frame = (create("Frame", {
         Parent = button,
         Name = "SelectionIndicator",
-        AnchorPoint = Vector2.new(0, 1),
-        BackgroundColor3 = Color3.fromRGB(235, 235, 237),
+        AnchorPoint = Vector2.new(0, 0.5),
+        BackgroundColor3 = Theme.Accent,
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
-        Position = UDim2.new(0, 8, 1, -2),
-        Size = UDim2.new(1, -16, 0, 2),
+        Position = UDim2.new(0, 3, 0.5, 0),
+        Size = UDim2.new(0, 3, 0, 22),
         ZIndex = button.ZIndex + 1,
     }) :: any) :: Frame
     local indicatorGradient: UIGradient = Instance.new("UIGradient")
@@ -1697,6 +1617,11 @@ local function createTab(tabName, layoutOrder)
     local indicatorCorner: UICorner = Instance.new("UICorner")
     indicatorCorner.CornerRadius = UDim.new(1, 0)
     indicatorCorner.Parent = indicator
+    create("UIPadding", {
+        Parent = button,
+        PaddingLeft = UDim.new(0, state.isMobile and 14 or 42),
+        PaddingRight = UDim.new(0, 8),
+    })
     tabButtons[tabName] = button
 
     local page = create("CanvasGroup", {
@@ -1730,31 +1655,15 @@ createTab("TRS", 4)
 createTab("VD", 5)
 createTab("MVSD", 6)
 local SettingsPage = createTab("Config.", 7)
-local tabAreaScale: number = state.isMobile and 0.65 or 0.78
-
-local function configureGameTabs()
+local function configureGameTabs(): ()
     tabButtons.MM2.Visible = GAME_CHECK.MM2Active
     tabButtons.TRS.Visible = GAME_CHECK.TRSActive
     tabButtons.VD.Visible = GAME_CHECK.VDActive
     tabButtons.MVSD.Visible = GAME_CHECK.MVSDActive
 
-    local visibleCount = 3
-    if GAME_CHECK.MM2Active then
-        visibleCount = visibleCount + 1
-    end
-    if GAME_CHECK.TRSActive then
-        visibleCount = visibleCount + 1
-    end
-    if GAME_CHECK.VDActive then
-        visibleCount = visibleCount + 1
-    end
-    if GAME_CHECK.MVSDActive then
-        visibleCount = visibleCount + 1
-    end
-    local tabWidth: number = tabAreaScale / visibleCount
     for _, button in pairs(tabButtons) do
         if button.Visible then
-            button.Size = UDim2.new(tabWidth, -4, 1, 0)
+            button.Size = UDim2.new(1, -12, 0, state.isMobile and 40 or 44)
         end
     end
 end
@@ -1764,8 +1673,9 @@ configureGameTabs()
 local SearchBox = makeTextBox(Main, "")
 SearchBox.Name = "Search"
 SearchBox.PlaceholderText = state.isMobile and "Search..." or "Search modules..."
-SearchBox.Position = UDim2.new(tabAreaScale, 8, 0, 92)
-SearchBox.Size = UDim2.new(1 - tabAreaScale, -16, 0, 32)
+SearchBox.AnchorPoint = Vector2.new(1, 0.5)
+SearchBox.Position = UDim2.new(1, -18, 0, 32)
+SearchBox.Size = UDim2.new(0, state.isMobile and 150 or 240, 0, 34)
 SearchBox.TextXAlignment = Enum.TextXAlignment.Left
 SearchBox.ZIndex = 12
 create("UIPadding", {
@@ -1781,7 +1691,8 @@ local SearchIcon: ImageLabel = (create("ImageLabel", {
     Image = "",
     ImageColor3 = Color3.fromRGB(218, 218, 220),
     ImageTransparency = 0.08,
-    Position = UDim2.new(tabAreaScale, 16, 0, 98),
+    AnchorPoint = Vector2.new(1, 0.5),
+    Position = UDim2.new(1, state.isMobile and -138 or -228, 0, 32),
     ScaleType = Enum.ScaleType.Fit,
     Size = UDim2.fromOffset(20, 20),
     ZIndex = 13,
@@ -2010,7 +1921,7 @@ local LoadingCurtain: CanvasGroup = (create("CanvasGroup", {
 }) :: any) :: CanvasGroup
 create("UICorner", {
     Parent = LoadingCurtain,
-    CornerRadius = UDim.new(0, 20),
+    CornerRadius = UDim.new(0, 10),
 })
 
 local LoadingTexture: ImageLabel = create("ImageLabel", {
@@ -4565,8 +4476,11 @@ end
 state.bindFeatureTooltip = addFeatureTooltip
 
 type FlySettings = {
+    preset: string,
     speed: number,
-    acceleration: number,
+    verticalSpeed: number,
+    response: number,
+    wallCheck: boolean,
     platformStand: boolean,
     faceCamera: boolean,
     upKey: Enum.KeyCode,
@@ -4580,8 +4494,11 @@ local performFling: (Player) -> () = function(_target: Player): () end
 
 do
 local flySettings: FlySettings = {
+    preset = "Balanced",
     speed = 70,
-    acceleration = 10,
+    verticalSpeed = 56,
+    response = 1,
+    wallCheck = true,
     platformStand = true,
     faceCamera = true,
     upKey = Enum.KeyCode.Space,
@@ -4704,9 +4621,8 @@ local function getFlyDirection(
         vertical = vertical - 1
     end
 
-    local verticalSpeed: number = flySettings.speed * 0.8
     local targetVelocity: Vector3 = horizontal * flySettings.speed
-        + Vector3.new(0, vertical * verticalSpeed, 0)
+        + Vector3.new(0, vertical * flySettings.verticalSpeed, 0)
     return targetVelocity, cameraForward
 end
 
@@ -4734,7 +4650,32 @@ local function toggleFly(enabled: boolean): ()
 
         local velocity, orientation = ensureFlyConstraints(root)
         local targetVelocity, cameraForward = getFlyDirection(humanoid, camera)
-        local alpha: number = 1 - math.exp(-flySettings.acceleration * deltaTime)
+        if flySettings.wallCheck then
+            local horizontalVelocity: Vector3 = Vector3.new(
+                targetVelocity.X,
+                0,
+                targetVelocity.Z
+            )
+            if horizontalVelocity.Magnitude > 0.001 then
+                local raycastParams: RaycastParams = RaycastParams.new()
+                raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+                raycastParams.FilterDescendantsInstances = {root.Parent :: Instance}
+                local wallHit: RaycastResult? = workspace:Raycast(
+                    root.Position,
+                    horizontalVelocity.Unit * 2.75,
+                    raycastParams
+                )
+                if wallHit then
+                    targetVelocity = Vector3.new(0, targetVelocity.Y, 0)
+                end
+            end
+        end
+        local presetResponse: number = flySettings.preset == "Direct" and 28
+            or flySettings.preset == "Precise" and 7
+            or 12
+        local alpha: number = 1 - math.exp(
+            -presetResponse * flySettings.response * deltaTime
+        )
         flySmoothedVelocity = flySmoothedVelocity:Lerp(targetVelocity, alpha)
 
         velocity.Enabled = true
@@ -5087,6 +5028,9 @@ type PhysicsSpeedSettings = {
     platformStand: boolean,
     customProperties: boolean,
     motorTorque: number,
+    wallCheck: boolean,
+    autoJump: boolean,
+    jumpVelocity: number,
 }
 
 type VehicleSeatState = {
@@ -5101,15 +5045,17 @@ type HingeState = {
 }
 
 local physicsSpeedSettings: PhysicsSpeedSettings = {
-    mode = "Velocity",
+    mode = "Smooth",
     speed = 50,
     verticalSpeed = 50,
     platformStand = false,
     customProperties = true,
     motorTorque = 50000,
+    wallCheck = true,
+    autoJump = false,
+    jumpVelocity = 45,
 }
 local physicsSpeedTeleportClock: number = 0
-local physicsSpeedPulseClock: number = 0
 local originalPhysicsPlatformStand: boolean? = nil
 local originalVehicleSeats: {[VehicleSeat]: VehicleSeatState} =
     setmetatable({}, {__mode = "k"}) :: any
@@ -5209,7 +5155,6 @@ local function togglePhysicsSpeed(enabled: boolean): ()
     disconnectFeatureConnection("PhysicsSpeed")
     restorePhysicsMotors()
     physicsSpeedTeleportClock = 0
-    physicsSpeedPulseClock = 0
 
     local _, humanoid = getCharacterParts()
     if humanoid and originalPhysicsPlatformStand ~= nil then
@@ -5246,6 +5191,36 @@ local function togglePhysicsSpeed(enabled: boolean): ()
                 direction = direction.Unit
             end
 
+            if physicsSpeedSettings.wallCheck
+                and direction.Magnitude > 0.001 then
+                local raycastParams: RaycastParams = RaycastParams.new()
+                raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+                raycastParams.FilterDescendantsInstances = {
+                    currentHumanoid.Parent :: Instance,
+                }
+                local wallHit: RaycastResult? = workspace:Raycast(
+                    assembly.Position,
+                    direction.Unit * 2.75,
+                    raycastParams
+                )
+                if wallHit then
+                    direction = Vector3.zero
+                end
+            end
+
+            if not vehicleSeat
+                and physicsSpeedSettings.autoJump
+                and direction.Magnitude > 0.001
+                and currentHumanoid.FloorMaterial ~= Enum.Material.Air then
+                currentHumanoid.Jump = true
+                local jumpVelocity: Vector3 = assembly.AssemblyLinearVelocity
+                assembly.AssemblyLinearVelocity = Vector3.new(
+                    jumpVelocity.X,
+                    math.max(jumpVelocity.Y, physicsSpeedSettings.jumpVelocity),
+                    jumpVelocity.Z
+                )
+            end
+
             local currentVelocity: Vector3 = assembly.AssemblyLinearVelocity
             local vertical: number = math.clamp(
                 currentVelocity.Y,
@@ -5255,19 +5230,16 @@ local function togglePhysicsSpeed(enabled: boolean): ()
             local targetVelocity: Vector3 = direction * physicsSpeedSettings.speed
                 + Vector3.new(0, vertical, 0)
 
-            if physicsSpeedSettings.mode == "Velocity" then
+            if physicsSpeedSettings.mode == "Smooth" then
                 assembly.AssemblyLinearVelocity = targetVelocity
-            elseif physicsSpeedSettings.mode == "Impulse" then
+            elseif physicsSpeedSettings.mode == "Boost" then
                 local correction: Vector3 = targetVelocity - currentVelocity
                 assembly:ApplyImpulse(
                     correction
                         * assembly.AssemblyMass
                         * math.clamp(deltaTime * 9, 0, 1)
                 )
-            elseif physicsSpeedSettings.mode == "CFrame" then
-                assembly.CFrame = assembly.CFrame
-                    + direction * physicsSpeedSettings.speed * deltaTime
-            elseif physicsSpeedSettings.mode == "TP" then
+            elseif physicsSpeedSettings.mode == "Teleport" then
                 physicsSpeedTeleportClock = physicsSpeedTeleportClock + deltaTime
                 if physicsSpeedTeleportClock >= 0.14 then
                     assembly.CFrame = assembly.CFrame
@@ -5275,13 +5247,6 @@ local function togglePhysicsSpeed(enabled: boolean): ()
                             * physicsSpeedSettings.speed
                             * physicsSpeedTeleportClock
                     physicsSpeedTeleportClock = 0
-                end
-            elseif physicsSpeedSettings.mode == "Pulse" then
-                physicsSpeedPulseClock = physicsSpeedPulseClock + deltaTime
-                if physicsSpeedPulseClock >= 0.2 then
-                    local correction: Vector3 = targetVelocity - currentVelocity
-                    assembly:ApplyImpulse(correction * assembly.AssemblyMass)
-                    physicsSpeedPulseClock = 0
                 end
             end
         end)
@@ -5676,21 +5641,326 @@ local function toggleFullbright(enabled)
 end
 
 do
+type EspSettings = {
+    includeTeam: boolean,
+    fillTransparency: number,
+}
+
+local espSettings: EspSettings = {
+    includeTeam = false,
+    fillTransparency = 0.72,
+}
+local espClock: number = 0
+
+local function clearPlayerEsp(): ()
+    for _, player: Player in ipairs(Players:GetPlayers()) do
+        local character: Model? = player.Character
+        local highlight: Instance? = character and character:FindFirstChild("RTM_PlayerESP")
+        if highlight then
+            highlight:Destroy()
+        end
+    end
+end
+
+local function togglePlayerEsp(enabled: boolean): ()
+    disconnectFeatureConnection("PlayerESP")
+    clearPlayerEsp()
+    espClock = 0
+    if not enabled then
+        return
+    end
+
+    featureConnections.PlayerESP = TaskManager:Connect(function(deltaTime: number): ()
+        espClock += deltaTime
+        if espClock < 0.35 then
+            return
+        end
+        espClock = 0
+        for _, player: Player in ipairs(Players:GetPlayers()) do
+            local character: Model? = player.Character
+            local shouldShow: boolean = player ~= LocalPlayer
+                and character ~= nil
+                and (espSettings.includeTeam or player.Team ~= LocalPlayer.Team)
+            local existing: Highlight? = character
+                and character:FindFirstChild("RTM_PlayerESP") :: Highlight?
+            if shouldShow and character then
+                local highlight: Highlight = existing or Instance.new("Highlight")
+                highlight.Name = "RTM_PlayerESP"
+                highlight.Adornee = character
+                highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                highlight.FillColor = Theme.AccentCyan
+                highlight.FillTransparency = espSettings.fillTransparency
+                highlight.OutlineColor = Color3.fromRGB(244, 249, 255)
+                highlight.OutlineTransparency = 0.08
+                highlight.Parent = character
+            elseif existing then
+                existing:Destroy()
+            end
+        end
+    end)
+end
+
+local originalXrayTransparency: {[BasePart]: number} =
+    setmetatable({}, {__mode = "k"}) :: any
+local xrayEnabled: boolean = false
+
+local function restoreXray(): ()
+    for part: BasePart, transparency: number in pairs(originalXrayTransparency) do
+        if part.Parent then
+            part.LocalTransparencyModifier = transparency
+        end
+    end
+    originalXrayTransparency = setmetatable({}, {__mode = "k"}) :: any
+end
+
+local function toggleXray(enabled: boolean): ()
+    disconnectFeatureConnection("Xray")
+    xrayEnabled = false
+    restoreXray()
+    if not enabled then
+        return
+    end
+
+    xrayEnabled = true
+    local function applyToInstance(descendant: Instance): ()
+        if not xrayEnabled or not descendant:IsA("BasePart") then
+            return
+        end
+        local localCharacter: Model? = LocalPlayer.Character
+        local ancestorModel: Model? = descendant:FindFirstAncestorOfClass("Model")
+        if (localCharacter and descendant:IsDescendantOf(localCharacter))
+            or descendant:FindFirstAncestorOfClass("Tool")
+            or (ancestorModel and ancestorModel:FindFirstChildOfClass("Humanoid")) then
+            return
+        end
+        if originalXrayTransparency[descendant] == nil then
+            originalXrayTransparency[descendant] = descendant.LocalTransparencyModifier
+        end
+        descendant.LocalTransparencyModifier = math.max(
+            descendant.LocalTransparencyModifier,
+            0.72
+        )
+    end
+
+    featureConnections.Xray = workspace.DescendantAdded:Connect(applyToInstance)
+    task.spawn(function(): ()
+        for index: number, descendant: Instance in ipairs(workspace:GetDescendants()) do
+            if not xrayEnabled then
+                return
+            end
+            applyToInstance(descendant)
+            if index % 240 == 0 then
+                task.wait()
+            end
+        end
+    end)
+end
+
+local highJumpSettings: {velocity: number} = {velocity = 72}
+local function toggleHighJump(enabled: boolean): ()
+    disconnectFeatureConnection("HighJump")
+    if not enabled then
+        return
+    end
+    featureConnections.HighJump = UserInputService.JumpRequest:Connect(function(): ()
+        local _, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
+        if humanoid and root and humanoid.FloorMaterial ~= Enum.Material.Air then
+            local current: Vector3 = root.AssemblyLinearVelocity
+            root.AssemblyLinearVelocity = Vector3.new(
+                current.X,
+                highJumpSettings.velocity,
+                current.Z
+            )
+        end
+    end)
+end
+
+local spiderSettings: {climbSpeed: number} = {climbSpeed = 38}
+local function toggleSpider(enabled: boolean): ()
+    disconnectFeatureConnection("Spider")
+    if not enabled then
+        return
+    end
+    featureConnections.Spider = TaskManager:Connect(function(): ()
+        local character: Model?, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
+        if not character or not humanoid or not root or humanoid.MoveDirection.Magnitude < 0.05 then
+            return
+        end
+        local raycastParams: RaycastParams = RaycastParams.new()
+        raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+        raycastParams.FilterDescendantsInstances = {character}
+        local wall: RaycastResult? = workspace:Raycast(
+            root.Position,
+            humanoid.MoveDirection.Unit * 2.6,
+            raycastParams
+        )
+        if wall and math.abs(wall.Normal.Y) < 0.35 then
+            local velocity: Vector3 = root.AssemblyLinearVelocity
+            root.AssemblyLinearVelocity = Vector3.new(
+                velocity.X,
+                spiderSettings.climbSpeed,
+                velocity.Z
+            )
+        end
+    end)
+end
+
+local safeWalkSettings: {lookAhead: number} = {lookAhead = 2.8}
+local function toggleSafeWalk(enabled: boolean): ()
+    disconnectFeatureConnection("SafeWalk")
+    if not enabled then
+        return
+    end
+    featureConnections.SafeWalk = TaskManager:Connect(function(): ()
+        local character: Model?, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
+        if not character or not humanoid or not root
+            or humanoid.MoveDirection.Magnitude < 0.05
+            or humanoid.FloorMaterial == Enum.Material.Air then
+            return
+        end
+        local params: RaycastParams = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        params.FilterDescendantsInstances = {character}
+        local probeOrigin: Vector3 = root.Position
+            + humanoid.MoveDirection.Unit * safeWalkSettings.lookAhead
+        local ground: RaycastResult? = workspace:Raycast(
+            probeOrigin,
+            Vector3.new(0, -5.2, 0),
+            params
+        )
+        if not ground then
+            local velocity: Vector3 = root.AssemblyLinearVelocity
+            root.AssemblyLinearVelocity = Vector3.new(0, velocity.Y, 0)
+        end
+    end)
+end
+
+local function rejoinCurrentServer(): ()
+    local teleportService: TeleportService = cloneReference(
+        game:GetService("TeleportService")
+    )
+    teleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
+end
+
+state.universalToolkit = {
+    espSettings = espSettings,
+    togglePlayerEsp = togglePlayerEsp,
+    toggleXray = toggleXray,
+    highJumpSettings = highJumpSettings,
+    toggleHighJump = toggleHighJump,
+    spiderSettings = spiderSettings,
+    toggleSpider = toggleSpider,
+    safeWalkSettings = safeWalkSettings,
+    toggleSafeWalk = toggleSafeWalk,
+    rejoinCurrentServer = rejoinCurrentServer,
+}
+end
+
+do
 local FlyFeature = createUniversalFeature(
     "Fly",
-    "Smooth camera flight with a simple speed control",
+    "Preset-based flight with independent vertical control",
     1,
     toggleFly
 )
-addNumberOption(FlyFeature, "Speed", flySettings.speed, 10, 500, function(value)
-    flySettings.speed = value
-end)
-local FlyUpKeyButton: TextButton = addKeyOption(FlyFeature, "Up key", flySettings.upKey, function(value)
-    flySettings.upKey = value
-end)
-local FlyDownKeyButton: TextButton = addKeyOption(FlyFeature, "Down key", flySettings.downKey, function(value)
-    flySettings.downKey = value
-end)
+local FlyPresetButton: TextButton = addCycleOption(
+    FlyFeature,
+    "Preset",
+    {"Balanced", "Direct", "Precise"},
+    1,
+    function(value: string): ()
+        flySettings.preset = value
+    end
+)
+local FlySpeedRow: Frame = addNumberOption(
+    FlyFeature,
+    "Horizontal speed",
+    flySettings.speed,
+    10,
+    500,
+    function(value: number): ()
+        flySettings.speed = value
+    end
+)
+local FlyVerticalRow: Frame = addNumberOption(
+    FlyFeature,
+    "Vertical speed",
+    flySettings.verticalSpeed,
+    10,
+    350,
+    function(value: number): ()
+        flySettings.verticalSpeed = value
+    end
+)
+local FlyResponseRow: Frame = addNumberOption(
+    FlyFeature,
+    "Response multiplier",
+    flySettings.response,
+    0.5,
+    2,
+    function(value: number): ()
+        flySettings.response = value
+    end
+)
+local FlyWallButton: TextButton = addToggleOption(
+    FlyFeature,
+    "Wall check",
+    flySettings.wallCheck,
+    function(value: boolean): ()
+        flySettings.wallCheck = value
+    end
+)
+local FlyPlatformButton: TextButton = addToggleOption(
+    FlyFeature,
+    "PlatformStand",
+    flySettings.platformStand,
+    function(value: boolean): ()
+        flySettings.platformStand = value
+    end
+)
+local FlyFaceButton: TextButton = addToggleOption(
+    FlyFeature,
+    "Face camera",
+    flySettings.faceCamera,
+    function(value: boolean): ()
+        flySettings.faceCamera = value
+    end
+)
+local FlyUpKeyButton: TextButton = addKeyOption(
+    FlyFeature,
+    "Up key",
+    flySettings.upKey,
+    function(value: Enum.KeyCode): ()
+        flySettings.upKey = value
+    end
+)
+local FlyDownKeyButton: TextButton = addKeyOption(
+    FlyFeature,
+    "Down key",
+    flySettings.downKey,
+    function(value: Enum.KeyCode): ()
+        flySettings.downKey = value
+    end
+)
+local FlyAdvancedButton: TextButton = addToggleOption(
+    FlyFeature,
+    "Advanced settings",
+    false,
+    function(value: boolean): ()
+        setOptionVisible(FlyFeature, FlyResponseRow, value)
+        setOptionVisible(FlyFeature, FlyWallButton.Parent :: GuiObject, value)
+        setOptionVisible(FlyFeature, FlyPlatformButton.Parent :: GuiObject, value)
+        setOptionVisible(FlyFeature, FlyFaceButton.Parent :: GuiObject, value)
+        setOptionVisible(FlyFeature, FlyUpKeyButton.Parent :: GuiObject, value)
+        setOptionVisible(FlyFeature, FlyDownKeyButton.Parent :: GuiObject, value)
+    end
+)
+local FlyPresetRow: GuiObject = FlyPresetButton.Parent :: GuiObject
+local FlyAdvancedRow: GuiObject = FlyAdvancedButton.Parent :: GuiObject
+FlyPresetRow.LayoutOrder = 1
+FlySpeedRow.LayoutOrder = 2
+FlyVerticalRow.LayoutOrder = 3
+FlyAdvancedRow.LayoutOrder = 4
 if state.bindMobileActionPlacement then
     state.bindMobileActionPlacement(
         FlyUpKeyButton,
@@ -5865,72 +6135,129 @@ end
 do
 local PhysicsSpeedFeature = createUniversalFeature(
     "Speed",
-    "Control local assembly and occupied vehicle physics",
+    "Fast movement for characters and occupied vehicles",
     9,
     togglePhysicsSpeed
 )
-addCycleOption(
+local SpeedModeButton: TextButton = addCycleOption(
     PhysicsSpeedFeature,
     "Mode",
-    {"Velocity", "Impulse", "CFrame", "TP", "Pulse"},
+    {"Smooth", "Boost", "Teleport"},
     1,
-    function(value)
+    function(value: string): ()
         physicsSpeedSettings.mode = value
     end
 )
-addNumberOption(
+local SpeedValueRow: Frame = addNumberOption(
     PhysicsSpeedFeature,
     "Speed",
     physicsSpeedSettings.speed,
     5,
     500,
-    function(value)
+    function(value: number): ()
         physicsSpeedSettings.speed = value
     end
 )
-addNumberOption(
+local SpeedVerticalRow: Frame = addNumberOption(
     PhysicsSpeedFeature,
     "Vertical speed",
     physicsSpeedSettings.verticalSpeed,
     0,
     300,
-    function(value)
+    function(value: number): ()
         physicsSpeedSettings.verticalSpeed = value
     end
 )
-addToggleOption(
+local SpeedPlatformButton: TextButton = addToggleOption(
     PhysicsSpeedFeature,
     "PlatformStand",
     physicsSpeedSettings.platformStand,
-    function(value)
+    function(value: boolean): ()
         physicsSpeedSettings.platformStand = value
     end
 )
-addToggleOption(
-    PhysicsSpeedFeature,
-    "Custom properties",
-    physicsSpeedSettings.customProperties,
-    function(value)
-        physicsSpeedSettings.customProperties = value
-        if not value then
-            restorePhysicsMotors()
-        end
-    end
-)
-addNumberOption(
+local SpeedMotorRow: Frame = addNumberOption(
     PhysicsSpeedFeature,
     "Motor torque",
     physicsSpeedSettings.motorTorque,
     1000,
     250000,
-    function(value)
+    function(value: number): ()
         physicsSpeedSettings.motorTorque = value
     end
 )
+local speedAdvancedVisible: boolean = false
+local SpeedCustomButton: TextButton = addToggleOption(
+    PhysicsSpeedFeature,
+    "Custom properties",
+    physicsSpeedSettings.customProperties,
+    function(value: boolean): ()
+        physicsSpeedSettings.customProperties = value
+        setOptionVisible(
+            PhysicsSpeedFeature,
+            SpeedMotorRow,
+            speedAdvancedVisible and value
+        )
+        if not value then
+            restorePhysicsMotors()
+        end
+    end
+)
+local SpeedWallButton: TextButton = addToggleOption(
+    PhysicsSpeedFeature,
+    "Wall check",
+    physicsSpeedSettings.wallCheck,
+    function(value: boolean): ()
+        physicsSpeedSettings.wallCheck = value
+    end
+)
+local SpeedJumpRow: Frame = addNumberOption(
+    PhysicsSpeedFeature,
+    "Auto-jump velocity",
+    physicsSpeedSettings.jumpVelocity,
+    20,
+    120,
+    function(value: number): ()
+        physicsSpeedSettings.jumpVelocity = value
+    end
+)
+local SpeedAutoJumpButton: TextButton = addToggleOption(
+    PhysicsSpeedFeature,
+    "Auto jump",
+    physicsSpeedSettings.autoJump,
+    function(value: boolean): ()
+        physicsSpeedSettings.autoJump = value
+        setOptionVisible(
+            PhysicsSpeedFeature,
+            SpeedJumpRow,
+            speedAdvancedVisible and value
+        )
+    end
+)
+local SpeedAdvancedButton: TextButton = addToggleOption(
+    PhysicsSpeedFeature,
+    "Advanced settings",
+    false,
+    function(value: boolean): ()
+        speedAdvancedVisible = value
+        setOptionVisible(PhysicsSpeedFeature, SpeedVerticalRow, value)
+        setOptionVisible(PhysicsSpeedFeature, SpeedPlatformButton.Parent :: GuiObject, value)
+        setOptionVisible(PhysicsSpeedFeature, SpeedCustomButton.Parent :: GuiObject, value)
+        setOptionVisible(PhysicsSpeedFeature, SpeedMotorRow, value and physicsSpeedSettings.customProperties)
+        setOptionVisible(PhysicsSpeedFeature, SpeedWallButton.Parent :: GuiObject, value)
+        setOptionVisible(PhysicsSpeedFeature, SpeedAutoJumpButton.Parent :: GuiObject, value)
+        setOptionVisible(PhysicsSpeedFeature, SpeedJumpRow, value and physicsSpeedSettings.autoJump)
+    end
+)
+local SpeedModeRow: GuiObject = SpeedModeButton.Parent :: GuiObject
+local SpeedAdvancedRow: GuiObject = SpeedAdvancedButton.Parent :: GuiObject
+SpeedModeRow.LayoutOrder = 1
+SpeedValueRow.LayoutOrder = 2
+SpeedAdvancedRow.LayoutOrder = 3
 addFeatureTooltip(
     PhysicsSpeedFeature,
-    "Velocity sets assembly speed. Impulse accelerates with forces. CFrame and TP move "
-        .. "directly. Pulse boosts in bursts. Custom properties tunes VehicleSeat and hinge motors."
+    "Smooth holds a stable velocity, Boost uses physical impulse, and Teleport advances in "
+        .. "short steps. Advanced controls expose safety checks, auto-jump, and vehicle tuning."
 )
 end
 
@@ -6045,6 +6372,110 @@ addNumberOption(
     function(value)
         lagSwitchSettings.incomingLag = value
     end
+)
+end
+
+do
+local PlayerEspFeature = createUniversalFeature(
+    "Player ESP",
+    "Technical outline for visible and hidden players",
+    17,
+    state.universalToolkit.togglePlayerEsp
+)
+addToggleOption(
+    PlayerEspFeature,
+    "Include team",
+    state.universalToolkit.espSettings.includeTeam,
+    function(value: boolean): ()
+        state.universalToolkit.espSettings.includeTeam = value
+    end
+)
+addNumberOption(
+    PlayerEspFeature,
+    "Fill transparency %",
+    state.universalToolkit.espSettings.fillTransparency * 100,
+    0,
+    100,
+    function(value: number): ()
+        state.universalToolkit.espSettings.fillTransparency = value / 100
+    end
+)
+end
+
+do
+createUniversalFeature(
+    "X-Ray",
+    "Fade map geometry locally while keeping your character clear",
+    18,
+    state.universalToolkit.toggleXray,
+    {noOptions = true}
+)
+end
+
+do
+local HighJumpFeature = createUniversalFeature(
+    "High Jump",
+    "Apply a stronger grounded jump without changing global gravity",
+    19,
+    state.universalToolkit.toggleHighJump
+)
+addNumberOption(
+    HighJumpFeature,
+    "Jump velocity",
+    state.universalToolkit.highJumpSettings.velocity,
+    25,
+    220,
+    function(value: number): ()
+        state.universalToolkit.highJumpSettings.velocity = value
+    end
+)
+end
+
+do
+local SpiderFeature = createUniversalFeature(
+    "Spider",
+    "Climb a wall automatically while moving into it",
+    20,
+    state.universalToolkit.toggleSpider
+)
+addNumberOption(
+    SpiderFeature,
+    "Climb speed",
+    state.universalToolkit.spiderSettings.climbSpeed,
+    10,
+    120,
+    function(value: number): ()
+        state.universalToolkit.spiderSettings.climbSpeed = value
+    end
+)
+end
+
+do
+local SafeWalkFeature = createUniversalFeature(
+    "Safe Walk",
+    "Stop horizontal movement before walking over an edge",
+    21,
+    state.universalToolkit.toggleSafeWalk
+)
+addNumberOption(
+    SafeWalkFeature,
+    "Edge look-ahead",
+    state.universalToolkit.safeWalkSettings.lookAhead,
+    1.5,
+    6,
+    function(value: number): ()
+        state.universalToolkit.safeWalkSettings.lookAhead = value
+    end
+)
+end
+
+do
+createUniversalFeature(
+    "Rejoin Server",
+    "Reconnect to the current server instance",
+    22,
+    state.universalToolkit.rejoinCurrentServer,
+    {action = true, noOptions = true}
 )
 end
 
@@ -6622,11 +7053,31 @@ local BlurButton: TextButton, BlurKnob: Frame =
 BlurButton.AnchorPoint = Vector2.new(1, 0.5)
 BlurButton.Position = UDim2.new(1, 0, 0.5, 0)
 
+local motionRow, motionControl = createSettingRow(
+    "Interface motion",
+    "Smooth transitions for cards, tabs, and menu controls"
+)
+motionRow.LayoutOrder = 3
+local MotionButton: TextButton, MotionKnob: Frame =
+    createSwitch(motionControl, state.animationsEnabled)
+MotionButton.AnchorPoint = Vector2.new(1, 0.5)
+MotionButton.Position = UDim2.new(1, 0, 0.5, 0)
+
+local decorationRow, decorationControl = createSettingRow(
+    "Decorative layer",
+    "Show the optional darkcore texture and ambient details"
+)
+decorationRow.LayoutOrder = 4
+local DecorationButton: TextButton, DecorationKnob: Frame =
+    createSwitch(decorationControl, state.decorativeTexturesEnabled)
+DecorationButton.AnchorPoint = Vector2.new(1, 0.5)
+DecorationButton.Position = UDim2.new(1, 0, 0.5, 0)
+
 local keyRow, keyControl = createSettingRow(
     "Menu key",
     "Choose the key used to show or hide"
 )
-keyRow.LayoutOrder = 3
+keyRow.LayoutOrder = 5
 
 local KeybindButton = makeButton(keyControl, state.toggleKey.Name, 13)
 KeybindButton.Size = UDim2.fromScale(1, 1)
@@ -6637,7 +7088,7 @@ local reinjectRow, reinjectControl = createSettingRow(
     "Reinject latest",
     "Download and restart the newest main build"
 )
-reinjectRow.LayoutOrder = 4
+reinjectRow.LayoutOrder = 6
 local ReinjectButton: TextButton = makeButton(
     reinjectControl,
     "REINJECT LATEST",
@@ -6650,7 +7101,7 @@ local gameRow, gameControl = createSettingRow(
     "Game check",
     "Only the matching game-specific module is loaded"
 )
-gameRow.LayoutOrder = 5
+gameRow.LayoutOrder = 7
 local gameStatus = makeTextLabel(
     gameControl,
     GAME_CHECK.MM2Active and "MM2 · 142823291"
@@ -6667,7 +7118,7 @@ local mobileIconRow, mobileIconControl = createSettingRow(
     "Mobile menu icon",
     "Dog shortcut stays available so the menu cannot become unreachable"
 )
-mobileIconRow.LayoutOrder = 6
+mobileIconRow.LayoutOrder = 8
 mobileIconRow.Visible = UserInputService.TouchEnabled
 local MobileIconButton = makeButton(
     mobileIconControl,
@@ -6688,7 +7139,7 @@ local mobileSizeRow, mobileSizeControl = createSettingRow(
     "Mobile action size",
     "Size for placed mobile shortcuts"
 )
-mobileSizeRow.LayoutOrder = 7
+mobileSizeRow.LayoutOrder = 9
 mobileSizeRow.Visible = UserInputService.TouchEnabled
 local MobileSizeButton = makeButton(
     mobileSizeControl,
@@ -6701,7 +7152,7 @@ local mobileResetRow, mobileResetControl = createSettingRow(
     "Mobile action buttons",
     "Hold ADD to place; hold a shortcut to remove it"
 )
-mobileResetRow.LayoutOrder = 8
+mobileResetRow.LayoutOrder = 10
 mobileResetRow.Visible = UserInputService.TouchEnabled
 local MobileResetButton = makeButton(
     mobileResetControl,
@@ -6712,7 +7163,7 @@ MobileResetButton.Size = UDim2.fromScale(1, 1)
 
 local helpText = makeTextLabel(
     getFeatureCardParent(SettingsScroll),
-    "Darkcore build | Active game module: "
+    "Technical universal build | Active game module: "
         .. (GAME_CHECK.MM2Active and "MM2"
             or GAME_CHECK.TRSActive and "TRS"
             or GAME_CHECK.VDActive and "VD"
@@ -6723,7 +7174,7 @@ local helpText = makeTextLabel(
             or " | Drag the header to move the fixed-size menu."),
     11
 )
-helpText.LayoutOrder = 9
+helpText.LayoutOrder = 11
 helpText.TextColor3 = Color3.fromRGB(145, 145, 145)
 helpText.TextXAlignment = Enum.TextXAlignment.Center
 helpText.Size = UDim2.new(1, -4, 0, 30)
@@ -6808,6 +7259,26 @@ trackUiConnection(BlurButton.MouseButton1Click:Connect(function(): ()
     configData.ui.blurEnabled = state.blurEnabled
     queueConfigSave()
     notify(state.blurEnabled and "Desenfoque activado" or "Desenfoque desactivado")
+end))
+
+trackUiConnection(MotionButton.MouseButton1Click:Connect(function(): ()
+    state.animationsEnabled = not state.animationsEnabled
+    setSwitchVisual(MotionButton, MotionKnob, state.animationsEnabled, true)
+    configData.ui.animationsEnabled = state.animationsEnabled
+    queueConfigSave()
+end))
+
+trackUiConnection(DecorationButton.MouseButton1Click:Connect(function(): ()
+    state.decorativeTexturesEnabled = not state.decorativeTexturesEnabled
+    setSwitchVisual(
+        DecorationButton,
+        DecorationKnob,
+        state.decorativeTexturesEnabled,
+        true
+    )
+    configData.ui.decorativeTexturesEnabled = state.decorativeTexturesEnabled
+    state.updateVisualMotionState()
+    queueConfigSave()
 end))
 
 local reinjectBusy: boolean = false
@@ -7166,7 +7637,7 @@ end
 task.defer(saveConfigNow)
 
 print(
-    "A Random Menu | Darkcore build | Toggle key: "
+    "A Random Menu | Technical universal build | Toggle key: "
         .. state.toggleKey.Name
 )
 end

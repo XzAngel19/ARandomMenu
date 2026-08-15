@@ -23,8 +23,8 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
 - Registered sections initialize asynchronously after the GUI shell appears;
   a short darkcore loading curtain reports progress until they are ready, and
   opening a tab is never used as the condition for constructing its content.
-- The desktop window uses a fixed responsive footprint (72% × 78% of the
-  viewport), can only be dragged, and keeps itself inside the visible screen.
+- The technical desktop shell uses a fixed responsive footprint (78% × 82% of
+  the viewport), vertical navigation, header search, and bounded dragging.
 - The content panel is solid black. Feature rows stay quiet while idle and use
   a brighter stripe, surface and outline when enabled.
 - The reusable `gui.lua` owns its image catalog, executor-safe asset cache,
@@ -33,12 +33,15 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
 - Its asset cache verifies PNG/JPEG signatures, tab icons use the real files
   under `Assets/Icons`, and text scaling updates a creation-time registry
   instead of walking the complete GUI during every slider movement.
-- Settings includes a cache-busted **Reinject latest** control. Keyboard
+- Settings includes text scale, blur, interface motion, decorative-layer and a
+  cache-busted **Reinject latest** control. Keyboard
   shortcuts use the transparent 2172×724 HD key-slot frame when custom assets
   are supported and retain a procedural outlined fallback on other executors.
-- Universal Fly uses one stable camera-relative velocity preset. The UI exposes
-  only speed and the ascend/descend keys; orientation and smoothing are handled
-  automatically.
+- Universal Fly provides Balanced, Direct and Precise response presets,
+  independent horizontal/vertical speed and progressive advanced controls.
+  Speed provides Smooth, Boost and Teleport modes plus wall safety, auto-jump
+  and vehicle tuning. Player ESP, X-Ray, High Jump, Spider, Safe Walk and a
+  Rejoin action extend the universal toolkit.
 
 Initialization logs use the `[RTM:Bootstrap]` prefix and include detected
 PlaceId, raw download status, downloaded byte count, UI callback count,
