@@ -8,6 +8,8 @@
       - Drag the title bar to move the fixed-size menu
 ]]
 
+local bootstrapStatusLabel: TextLabel? = nil
+
 local function bootstrap(): ()
 local executorGlobals: any = getfenv()
 
@@ -1119,11 +1121,11 @@ local function applyKeySlotStyle(button: TextButton): ImageLabel
     button:SetAttribute("NoHover", true)
     local corner: UICorner? = button:FindFirstChildOfClass("UICorner")
     if corner then
-        corner.Enabled = false
+        corner:Destroy()
     end
     local buttonStroke: UIStroke? = button:FindFirstChildOfClass("UIStroke")
     if buttonStroke then
-        buttonStroke.Enabled = false
+        buttonStroke:Destroy()
     end
     local frame: ImageLabel = create("ImageLabel", {
         Parent = button,
@@ -2056,6 +2058,7 @@ LoadingLabel.TextColor3 = Theme.TextMuted
 LoadingLabel.TextXAlignment = Enum.TextXAlignment.Center
 LoadingLabel.ZIndex = 503
 state.loadingLabel = LoadingLabel
+bootstrapStatusLabel = LoadingLabel
 
 local LoadingTrack: Frame = create("Frame", {
     Parent = LoadingCurtain,
@@ -7134,5 +7137,9 @@ local initialized: boolean, bootstrapError: any = xpcall(bootstrap, function(mes
 end)
 
 if not initialized then
+    if bootstrapStatusLabel and bootstrapStatusLabel.Parent then
+        bootstrapStatusLabel.Text = "Initialization error — check executor console"
+        bootstrapStatusLabel.TextColor3 = Color3.fromRGB(230, 105, 105)
+    end
     warn("[RTM:Bootstrap] Inicialización detenida:\n" .. tostring(bootstrapError))
 end
