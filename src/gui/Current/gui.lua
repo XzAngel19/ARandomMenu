@@ -316,11 +316,11 @@ local function applyKeySlotStyle(button: TextButton): ImageLabel
     button.BackgroundTransparency = 1
     local corner: UICorner? = button:FindFirstChildOfClass("UICorner")
     if corner then
-        corner.Enabled = false
+        corner:Destroy()
     end
     local buttonStroke: UIStroke? = button:FindFirstChildOfClass("UIStroke")
     if buttonStroke then
-        buttonStroke.Enabled = false
+        buttonStroke:Destroy()
     end
     local frame: ImageLabel = create("ImageLabel", {
         Name = "KeySlotFrame",
