@@ -21,21 +21,19 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
 - Imported per-frame callbacks use `Runtime.TaskManager`; they are multiplexed
   through one `RunService.Heartbeat` connection and remain alive until cleanup.
 - Registered sections initialize asynchronously after the GUI shell appears;
-  a short darkcore loading curtain reports progress until they are ready, and
-  opening a tab is never used as the condition for constructing its content.
-- The technical desktop shell uses a fixed responsive footprint (78% × 82% of
-  the viewport), vertical navigation and bounded dragging. Settings switches
-  live between `DARK` (the technical header and darkcore presentation) and
-  `Default` (a headerless aurora panel with sidebar search and drag strip).
-- `DARK` keeps its solid black content panel. `Default` blends the checked-in
-  aurora image through translucent pages while preserving control contrast.
-  Feature rows stay quiet while idle and use a brighter stripe, surface and
-  outline when enabled.
+  a short style-aware loading curtain reports progress until they are ready,
+  and opening a tab is never used as the condition for constructing content.
+- Two independent fixed-size shells share only module state and callbacks.
+  `Default` is the startup shell and has its own headerless aurora panel,
+  sidebar search, navigation, clean glass cards, notifications and drag strip.
+  `DARK` is opt-in and keeps its separate black header and navigation.
+- Settings switches between the shells live and persists an explicit `DARK`
+  choice. With no saved choice, every injection opens `Default`.
 - The reusable `gui.lua` owns its image catalog, executor-safe asset cache,
   settings, draggable shell, tabs and `createModule()` component API. Game
   modules only provide their controls and callbacks.
-- Its asset cache verifies PNG/JPEG signatures, tab icons use the real files
-  under `Assets/Icons`, and text scaling updates a creation-time registry
+- Its asset cache verifies PNG/JPEG signatures, interface assets use the real
+  files under `Assets`, and text scaling updates a creation-time registry
   instead of walking the complete GUI during every slider movement.
 - Settings includes the persistent GUI selector, text scale, blur, interface
   motion, decorative-layer and a cache-busted **Reinject latest** control. Keyboard
