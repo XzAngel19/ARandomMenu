@@ -117,6 +117,7 @@ export type GuiController = {
         layoutOrder: number
     ) -> ModuleController,
     setTab: (self: GuiController, id: string) -> (),
+    setTabIcon: (self: GuiController, id: string, assetKey: string) -> (),
     setTextScale: (self: GuiController, scale: number) -> (),
     setVisible: (self: GuiController, visible: boolean) -> (),
     destroy: (self: GuiController) -> (),
@@ -155,9 +156,46 @@ local ASSETS: {[string]: AssetSource} = table.freeze({
     },
     MobileToggle = {
         url = RAW_BASE .. "src/gui/Current/Images/menu-toggle.png",
-        fileName = "menu-toggle-v1.png",
+        fileName = "menu-toggle-v3.png",
         fallback = "rbxassetid://6031094678",
     },
+    InkScratch = {
+        url = RAW_BASE .. "src/gui/Current/Assets/Decorations/ink-scratch.png",
+        fileName = "ink-scratch-v1.png",
+        fallback = "rbxassetid://6031280882",
+    },
+    Spinner = {
+        url = RAW_BASE .. "src/gui/Current/Assets/Status/spinner_minimal.png",
+        fileName = "spinner-minimal-v1.png",
+        fallback = "rbxassetid://6031094678",
+    },
+    IconHome = {
+        url = RAW_BASE .. "src/gui/Current/Assets/Icons/home.png",
+        fileName = "icon-home-v1.png",
+        fallback = "rbxassetid://6026568198",
+    },
+    IconSearch = {
+        url = RAW_BASE .. "src/gui/Current/Assets/Icons/search.png",
+        fileName = "icon-search-v1.png",
+        fallback = "rbxassetid://6031154871",
+    },
+    IconSettings = {
+        url = RAW_BASE .. "src/gui/Current/Assets/Icons/settings.png",
+        fileName = "icon-settings-v1.png",
+        fallback = "rbxassetid://6031280882",
+    },
+    IconTarget = {
+        url = RAW_BASE .. "src/gui/Current/Assets/Icons/target_cross.png",
+        fileName = "icon-target-v1.png",
+        fallback = "rbxassetid://6034287594",
+    },
+})
+
+local DEFAULT_TAB_ICONS: {[string]: string} = table.freeze({
+    Universal = "IconHome",
+    Movement = "IconTarget",
+    Search = "IconSearch",
+    Settings = "IconSettings",
 })
 
 local function create<T>(className: string, properties: {[string]: any}): T
@@ -223,21 +261,45 @@ local function getAssetResolver(): ((string) -> string)?
     return type(resolver) == "function" and resolver or nil
 end
 
+local function isSupportedImageBody(body: any): boolean
+    if type(body) ~= "string" or #body < 256 then
+        return false
+    end
+    local header: string = body:sub(1, 8)
+    local isPng: boolean = header == "\137PNG\r\n\26\n"
+    local isJpg: boolean = header:sub(1, 3) == "\255\216\255"
+    return isPng or isJpg
+end
+
 local function resolveAsset(source: AssetSource): string
     local resolver: ((string) -> string)? = getAssetResolver()
     local writeFile: any = executorEnvironment.writefile
     local isFile: any = executorEnvironment.isfile
+    local readFile: any = executorEnvironment.readfile
     if resolver == nil or type(writeFile) ~= "function" then
         return source.fallback
     end
     ensureCacheFolder()
     local path: string = CACHE_ROOT .. "/" .. source.fileName
-    local cached: boolean = type(isFile) == "function" and isFile(path)
+    local cached: boolean = false
+    local checked: boolean = false
+    local exists: any = false
+    if type(isFile) == "function" then
+        checked, exists = pcall(isFile, path)
+    end
+    if checked and exists == true then
+        if type(readFile) == "function" then
+            local readOk: boolean, cachedBody: any = pcall(readFile, path)
+            cached = readOk and isSupportedImageBody(cachedBody)
+        else
+            cached = true
+        end
+    end
     if not cached then
         local downloaded: boolean, body: any = pcall(function(): string
-            return (game :: any):HttpGet(source.url)
+            return (game :: any):HttpGet(source.url, true)
         end)
-        if not downloaded or type(body) ~= "string" or #body < 32 then
+        if not downloaded or not isSupportedImageBody(body) then
             return source.fallback
         end
         if not pcall(writeFile, path, body) then
@@ -248,16 +310,27 @@ local function resolveAsset(source: AssetSource): string
     return resolved and type(asset) == "string" and asset or source.fallback
 end
 
-local function loadImage(target: ImageLabel | ImageButton, key: string): ()
+local function loadImage(
+    target: ImageLabel | ImageButton,
+    key: string,
+    onResolved: ((boolean) -> ())?
+): ()
     local source: AssetSource? = ASSETS[key]
     if source == nil then
         return
     end
-    target.Image = source.fallback
+    if source.fallback ~= "" then
+        target.Image = source.fallback
+    end
     task.spawn(function(): ()
         local asset: string = resolveAsset(source :: AssetSource)
-        if target.Parent then
+        if asset ~= "" and target.Parent ~= nil then
             target.Image = asset
+            if onResolved then
+                onResolved(true)
+            end
+        elseif onResolved then
+            onResolved(false)
         end
     end)
 end
@@ -277,7 +350,8 @@ local function makeLabel(
     parent: Instance,
     text: string,
     size: number,
-    scale: number
+    scale: number,
+    registry: {Instance}?
 ): TextLabel
     local label: TextLabel = create("TextLabel", {
         BackgroundTransparency = 1,
@@ -291,6 +365,9 @@ local function makeLabel(
         Parent = parent,
     })
     label:SetAttribute("BaseTextSize", size)
+    if registry then
+        table.insert(registry, label)
+    end
     return label
 end
 
@@ -298,7 +375,8 @@ local function makeButton(
     parent: Instance,
     text: string,
     size: number,
-    scale: number
+    scale: number,
+    registry: {Instance}?
 ): TextButton
     local button: TextButton = create("TextButton", {
         AutoButtonColor = false,
@@ -311,21 +389,18 @@ local function makeButton(
         Parent = parent,
     })
     button:SetAttribute("BaseTextSize", size)
+    if registry then
+        table.insert(registry, button)
+    end
     round(button, 8)
     stroke(button, 0.52)
     return button
 end
 
 local function applyKeySlotStyle(button: TextButton): ImageLabel
-    button.BackgroundTransparency = 1
+    button.ZIndex = math.max(2, button.ZIndex)
     local corner: UICorner? = button:FindFirstChildOfClass("UICorner")
-    if corner then
-        corner:Destroy()
-    end
     local buttonStroke: UIStroke? = button:FindFirstChildOfClass("UIStroke")
-    if buttonStroke then
-        buttonStroke:Destroy()
-    end
     local frame: ImageLabel = create("ImageLabel", {
         Name = "KeySlotFrame",
         AnchorPoint = Vector2.new(0.5, 0.5),
@@ -336,13 +411,24 @@ local function applyKeySlotStyle(button: TextButton): ImageLabel
         ImageTransparency = 0.06,
         Position = UDim2.fromScale(0.5, 0.5),
         ScaleType = Enum.ScaleType.Slice,
-        SliceCenter = Rect.new(360, 190, 1812, 534),
-        SliceScale = 0.08,
-        Size = UDim2.new(1, 8, 1, 8),
-        ZIndex = button.ZIndex + 1,
+        SliceCenter = Rect.new(300, 300, 1870, 420),
+        SliceScale = 0.5,
+        Size = UDim2.new(1, 10, 1, 10),
+        ZIndex = button.ZIndex - 1,
         Parent = button,
     })
-    loadImage(frame, "KeybindPill")
+    loadImage(frame, "KeybindPill", function(loaded: boolean): ()
+        if not loaded or button.Parent == nil then
+            return
+        end
+        button.BackgroundTransparency = 1
+        if corner and corner.Parent then
+            corner:Destroy()
+        end
+        if buttonStroke and buttonStroke.Parent then
+            buttonStroke:Destroy()
+        end
+    end)
     return frame
 end
 
@@ -365,6 +451,8 @@ function Gui.new(options: GuiOptions?): GuiController
     local viewport: Vector2 = camera and camera.ViewportSize or Vector2.new(1280, 720)
     local width: number = math.floor(viewport.X * (isMobile and 0.94 or 0.72))
     local height: number = math.floor(viewport.Y * (isMobile and 0.84 or 0.78))
+    local textObjects: {Instance} = {}
+    local capturingKeybind: boolean = false
 
     local screenGui: ScreenGui = create("ScreenGui", {
         Name = resolved.name or "ARandomMenuGui",
@@ -433,7 +521,8 @@ function Gui.new(options: GuiOptions?): GuiController
         header,
         resolved.title or "A Random Menu",
         isMobile and 25 or 31,
-        1
+        1,
+        textObjects
     )
     title.Font = Enum.Font.Fondamento
     title.Position = UDim2.fromOffset(26, 2)
@@ -450,8 +539,8 @@ function Gui.new(options: GuiOptions?): GuiController
         BorderSizePixel = 0,
         Image = ASSETS.CosmicControls.fallback,
         ImageColor3 = THEME.Text,
-        ImageRectOffset = Vector2.new(630, 286),
-        ImageRectSize = Vector2.new(430, 64),
+        ImageRectOffset = Vector2.new(666, 298),
+        ImageRectSize = Vector2.new(171, 48),
         ImageTransparency = 0.12,
         Position = UDim2.new(0.5, 0, 1, -2),
         ScaleType = Enum.ScaleType.Stretch,
@@ -486,6 +575,23 @@ function Gui.new(options: GuiOptions?): GuiController
         PaddingRight = UDim.new(0, 8),
         Parent = tabs,
     })
+    local tabDivider: ImageLabel = create("ImageLabel", {
+        Name = "TabDivider",
+        AnchorPoint = Vector2.new(0.5, 0),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Image = ASSETS.InkScratch.fallback,
+        ImageColor3 = THEME.Outline,
+        ImageRectOffset = Vector2.new(0, 0),
+        ImageRectSize = Vector2.new(489, 124),
+        ImageTransparency = 0.35,
+        Position = UDim2.new(0.5, 0, 0, 126),
+        ScaleType = Enum.ScaleType.Stretch,
+        Size = UDim2.new(0.82, 0, 0, 14),
+        ZIndex = 4,
+        Parent = window,
+    })
+    loadImage(tabDivider, "InkScratch")
     local content: Frame = create("Frame", {
         Name = "Content",
         BackgroundColor3 = THEME.Background,
@@ -512,6 +618,7 @@ function Gui.new(options: GuiOptions?): GuiController
         blurEnabled = true,
         createModule = nil :: any,
         setTab = nil :: any,
+        setTabIcon = nil :: any,
         setTextScale = nil :: any,
         setVisible = nil :: any,
         destroy = nil :: any,
@@ -536,17 +643,63 @@ function Gui.new(options: GuiOptions?): GuiController
             if indicator then
                 tween(indicator, {BackgroundTransparency = selected and 0 or 1})
             end
+            local icon: ImageLabel? = button:FindFirstChild("TabIcon") :: ImageLabel?
+            if icon then
+                tween(icon, {
+                    ImageColor3 = selected and THEME.Text or THEME.MutedText,
+                })
+            end
+        end
+    end
+
+    function controller:setTabIcon(id: string, assetKey: string): ()
+        local button: TextButton? = self.tabButtons[id]
+        local source: AssetSource? = ASSETS[assetKey]
+        if button == nil or source == nil then
+            return
+        end
+        local existing: Instance? = button:FindFirstChild("TabIcon")
+        if existing then
+            existing:Destroy()
+        end
+        local icon: ImageLabel = create("ImageLabel", {
+            Name = "TabIcon",
+            AnchorPoint = Vector2.new(0, 0.5),
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Image = (source :: AssetSource).fallback,
+            ImageColor3 = self.activeTab == id and THEME.Text or THEME.MutedText,
+            Position = UDim2.new(0, 10, 0.5, 0),
+            ScaleType = Enum.ScaleType.Fit,
+            Size = UDim2.fromOffset(16, 16),
+            ZIndex = button.ZIndex + 1,
+            Parent = button,
+        })
+        loadImage(icon, assetKey)
+        button.TextXAlignment = Enum.TextXAlignment.Left
+        local padding: UIPadding? = button:FindFirstChildOfClass("UIPadding")
+        if padding == nil then
+            create("UIPadding", {
+                PaddingLeft = UDim.new(0, 32),
+                Parent = button,
+            })
         end
     end
 
     function controller:setTextScale(scale: number): ()
-        self.textScale = math.clamp(scale, 0.85, 1.35)
-        for _, descendant: Instance in ipairs(screenGui:GetDescendants()) do
-            if descendant:IsA("TextLabel") or descendant:IsA("TextButton")
-                or descendant:IsA("TextBox") then
-                local baseSize: any = descendant:GetAttribute("BaseTextSize")
+        local nextScale: number = math.clamp(scale, 0.85, 1.35)
+        if math.abs(nextScale - self.textScale) < 0.0001 then
+            return
+        end
+        self.textScale = nextScale
+        for index: number = #textObjects, 1, -1 do
+            local textObject: Instance = textObjects[index]
+            if textObject.Parent == nil then
+                table.remove(textObjects, index)
+            else
+                local baseSize: any = textObject:GetAttribute("BaseTextSize")
                 if type(baseSize) == "number" then
-                    descendant.TextSize = math.round(baseSize * self.textScale)
+                    (textObject :: any).TextSize = math.round(baseSize * nextScale)
                 end
             end
         end
@@ -558,7 +711,13 @@ function Gui.new(options: GuiOptions?): GuiController
         layoutOrder: number
     ): ModuleController
         assert(self.modules[id] == nil, "Duplicate module: " .. id)
-        local tabButton: TextButton = makeButton(tabs, label, 13, self.textScale)
+        local tabButton: TextButton = makeButton(
+            tabs,
+            label,
+            13,
+            self.textScale,
+            textObjects
+        )
         tabButton.Name = id .. "Tab"
         tabButton.LayoutOrder = layoutOrder
         tabButton.Size = UDim2.fromOffset(isMobile and 106 or 124, 42)
@@ -642,7 +801,8 @@ function Gui.new(options: GuiOptions?): GuiController
                 row,
                 featureLabel,
                 13,
-                controller.textScale
+                controller.textScale,
+                textObjects
             )
             featureTitle.Font = Enum.Font.GothamMedium
             featureTitle.Position = UDim2.fromOffset(16, 0)
@@ -651,7 +811,8 @@ function Gui.new(options: GuiOptions?): GuiController
                 row,
                 description,
                 11,
-                controller.textScale
+                controller.textScale,
+                textObjects
             )
             featureDescription.Position = UDim2.fromOffset(16, 27)
             featureDescription.Size = UDim2.new(1, -148, 0, 21)
@@ -662,7 +823,8 @@ function Gui.new(options: GuiOptions?): GuiController
                 row,
                 isAction and "RUN" or "",
                 10,
-                controller.textScale
+                controller.textScale,
+                textObjects
             )
             toggle.Name = "Toggle"
             toggle.AnchorPoint = Vector2.new(1, 0.5)
@@ -685,7 +847,8 @@ function Gui.new(options: GuiOptions?): GuiController
                 row,
                 "•••",
                 12,
-                controller.textScale
+                controller.textScale,
+                textObjects
             )
             more.Name = "More"
             more.AnchorPoint = Vector2.new(1, 0.5)
@@ -727,6 +890,7 @@ function Gui.new(options: GuiOptions?): GuiController
                 setEnabled = nil :: any,
                 setExpanded = nil :: any,
             }
+            local resizing: boolean = false
 
             local function refreshEnabled(): ()
                 local enabled: boolean = feature.enabled
@@ -791,14 +955,16 @@ function Gui.new(options: GuiOptions?): GuiController
                     option,
                     sliderLabel,
                     10,
-                    controller.textScale
+                    controller.textScale,
+                    textObjects
                 )
                 optionLabel.Size = UDim2.new(0.38, 0, 1, 0)
                 local valueLabel: TextLabel = makeLabel(
                     option,
                     tostring(math.round(value)),
                     10,
-                    controller.textScale
+                    controller.textScale,
+                    textObjects
                 )
                 valueLabel.AnchorPoint = Vector2.new(1, 0)
                 valueLabel.Position = UDim2.new(1, 0, 0, 0)
@@ -865,7 +1031,8 @@ function Gui.new(options: GuiOptions?): GuiController
                 table.insert(controller.featureConnections,
                     UserInputService.InputEnded:Connect(function(input: InputObject): ()
                         if input == dragInput
-                            or input.UserInputType == Enum.UserInputType.MouseButton1 then
+                            or input.UserInputType == Enum.UserInputType.MouseButton1
+                            or input.UserInputType == Enum.UserInputType.Touch then
                             dragInput = nil
                         end
                     end)
@@ -889,14 +1056,16 @@ function Gui.new(options: GuiOptions?): GuiController
                     option,
                     keybindLabel,
                     11,
-                    controller.textScale
+                    controller.textScale,
+                    textObjects
                 )
                 optionLabel.Size = UDim2.new(0.48, 0, 1, 0)
                 local keyButton: TextButton = makeButton(
                     option,
                     selected.Name,
                     11,
-                    controller.textScale
+                    controller.textScale,
+                    textObjects
                 )
                 keyButton.AnchorPoint = Vector2.new(1, 0.5)
                 keyButton.Position = UDim2.new(1, -4, 0.5, 0)
@@ -905,6 +1074,7 @@ function Gui.new(options: GuiOptions?): GuiController
                 table.insert(controller.featureConnections,
                     keyButton.MouseButton1Click:Connect(function(): ()
                         capturing = true
+                        capturingKeybind = true
                         keyButton.Text = "PRESS A KEY…"
                         tween(keyFrame, {
                             ImageColor3 = Color3.new(1, 1, 1),
@@ -915,9 +1085,9 @@ function Gui.new(options: GuiOptions?): GuiController
                 table.insert(controller.featureConnections,
                     UserInputService.InputBegan:Connect(function(
                         input: InputObject,
-                        processed: boolean
+                        _processed: boolean
                     ): ()
-                        if not capturing or processed
+                        if not capturing
                             or input.UserInputType ~= Enum.UserInputType.Keyboard
                             or input.KeyCode == Enum.KeyCode.Unknown then
                             return
@@ -930,6 +1100,9 @@ function Gui.new(options: GuiOptions?): GuiController
                             ImageTransparency = 0.06,
                         })
                         keybindCallback(selected)
+                        task.defer(function(): ()
+                            capturingKeybind = false
+                        end)
                     end)
                 )
                 keybindCallback(selected)
@@ -964,8 +1137,10 @@ function Gui.new(options: GuiOptions?): GuiController
             table.insert(controller.connections,
                 optionsLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(
                     function(): ()
-                        if feature.expanded then
+                        if feature.expanded and not resizing then
+                            resizing = true
                             feature:setExpanded(true)
+                            resizing = false
                         end
                     end
                 )
@@ -994,6 +1169,10 @@ function Gui.new(options: GuiOptions?): GuiController
         self.modules[id] = module
         self.pages[id] = page
         self.tabButtons[id] = tabButton
+        local defaultIcon: string? = DEFAULT_TAB_ICONS[id]
+        if defaultIcon then
+            self:setTabIcon(id, defaultIcon)
+        end
         table.insert(self.connections, tabButton.MouseButton1Click:Connect(function(): ()
             self:setTab(id)
         end))
@@ -1018,10 +1197,12 @@ function Gui.new(options: GuiOptions?): GuiController
     function controller:setVisible(visible: boolean): ()
         self.visible = visible
         window.Visible = visible
-        blur.Size = visible and self.blurEnabled and 14 or 0
+        blur.Enabled = visible and self.blurEnabled
+        blur.Size = (visible and self.blurEnabled) and 14 or 0
     end
 
     function controller:destroy(): ()
+        capturingKeybind = false
         for _, connection: RBXScriptConnection in ipairs(self.featureConnections) do
             connection:Disconnect()
         end
@@ -1030,6 +1211,7 @@ function Gui.new(options: GuiOptions?): GuiController
             connection:Disconnect()
         end
         table.clear(self.connections)
+        table.clear(textObjects)
         if blur.Parent then
             blur:Destroy()
         end
@@ -1070,7 +1252,8 @@ function Gui.new(options: GuiOptions?): GuiController
         "Blur the game while the menu is visible",
         function(enabled: boolean): ()
             controller.blurEnabled = enabled
-            blur.Size = controller.visible and enabled and 14 or 0
+            blur.Enabled = controller.visible and enabled
+            blur.Size = (controller.visible and enabled) and 14 or 0
         end
     )
     blurSetting:setEnabled(true)
@@ -1237,7 +1420,11 @@ function Gui.new(options: GuiOptions?): GuiController
         input: InputObject,
         processed: boolean
     ): ()
-        if not processed and input.KeyCode == menuKey then
+        if capturingKeybind or processed then
+            return
+        end
+        if input.UserInputType == Enum.UserInputType.Keyboard
+            and input.KeyCode == menuKey then
             controller:setVisible(not controller.visible)
         end
     end))
@@ -1253,18 +1440,43 @@ function Gui.new(options: GuiOptions?): GuiController
             Position = UDim2.new(1, -18, 0, 18),
             ScaleType = Enum.ScaleType.Crop,
             Size = UDim2.fromOffset(52, 52),
+            ClipsDescendants = true,
             ZIndex = 100,
             Parent = screenGui,
         })
         round(menuButton, 26)
         stroke(menuButton, 0.18, 1.2)
         loadImage(menuButton, "MobileToggle")
-        table.insert(controller.connections, menuButton.MouseButton1Click:Connect(
+        table.insert(controller.connections, menuButton.Activated:Connect(
             function(): ()
                 controller:setVisible(not controller.visible)
             end
         ))
     end
+
+    local spinner: ImageLabel = create("ImageLabel", {
+        Name = "LoadingSpinner",
+        AnchorPoint = Vector2.new(1, 0.5),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Image = ASSETS.Spinner.fallback,
+        ImageColor3 = THEME.MutedText,
+        Position = UDim2.new(1, -16, 0, 41),
+        Size = UDim2.fromOffset(18, 18),
+        ZIndex = 25,
+        Parent = header,
+    })
+    loadImage(spinner, "Spinner")
+    task.spawn(function(): ()
+        local elapsed: number = 0
+        while elapsed < 6 and spinner.Parent ~= nil do
+            elapsed += task.wait(0.05)
+            spinner.Rotation = (spinner.Rotation + 9) % 360
+        end
+        if spinner.Parent ~= nil then
+            spinner:Destroy()
+        end
+    end)
 
     controller:setVisible(resolved.initiallyVisible ~= false)
     return controller

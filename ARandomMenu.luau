@@ -768,7 +768,11 @@ function AssetManager.resolve(logicalName: string): (string?, string?)
     return assetId, nil
 end
 
-function AssetManager.loadAsync(logicalName: string, target: ImageLabel): ()
+function AssetManager.loadAsync(
+    logicalName: string,
+    target: ImageLabel,
+    onResolved: ((boolean) -> ())?
+): ()
     task.spawn(function(): ()
         local assetId: string?, loadError: string? = AssetManager.resolve(logicalName)
         local definition: AssetDefinition? = AssetManager.manifest[logicalName]
@@ -780,6 +784,9 @@ function AssetManager.loadAsync(logicalName: string, target: ImageLabel): ()
                 end)
                 if preloadOk and target.Parent and target.Image == assetId then
                     target:SetAttribute("AssetLoaded", true)
+                    if onResolved then
+                        onResolved(true)
+                    end
                     return
                 end
                 loadError = "PreloadAsync no pudo cargar el recurso asignado"
@@ -789,6 +796,9 @@ function AssetManager.loadAsync(logicalName: string, target: ImageLabel): ()
         end
         if target.Parent and definition then
             target.Image = definition.fallback
+        end
+        if onResolved then
+            onResolved(false)
         end
         warn(
             "[RTM:Assets] fallback para "
@@ -1121,17 +1131,11 @@ local function makeButton(
 end
 
 local function applyKeySlotStyle(button: TextButton): ImageLabel
-    button.BackgroundTransparency = 1
+    button.ZIndex = math.max(2, button.ZIndex)
     button.TextColor3 = Color3.fromRGB(250, 250, 252)
     button:SetAttribute("NoHover", true)
     local corner: UICorner? = button:FindFirstChildOfClass("UICorner")
-    if corner then
-        corner:Destroy()
-    end
     local buttonStroke: UIStroke? = button:FindFirstChildOfClass("UIStroke")
-    if buttonStroke then
-        buttonStroke:Destroy()
-    end
     local frame: ImageLabel = create("ImageLabel", {
         Parent = button,
         Name = "KeySlotFrame",
@@ -1143,12 +1147,27 @@ local function applyKeySlotStyle(button: TextButton): ImageLabel
         ImageTransparency = 0.06,
         Position = UDim2.fromScale(0.5, 0.5),
         ScaleType = Enum.ScaleType.Slice,
-        SliceCenter = Rect.new(360, 190, 1812, 534),
-        SliceScale = 0.08,
-        Size = UDim2.new(1, 8, 1, 8),
-        ZIndex = button.ZIndex + 1,
+        SliceCenter = Rect.new(300, 300, 1870, 420),
+        SliceScale = 0.5,
+        Size = UDim2.new(1, 10, 1, 10),
+        ZIndex = button.ZIndex - 1,
     }) :: ImageLabel
-    state.assetManager.loadAsync("keybindPill", frame)
+    state.assetManager.loadAsync(
+        "keybindPill",
+        frame,
+        function(loaded: boolean): ()
+            if not loaded or button.Parent == nil then
+                return
+            end
+            button.BackgroundTransparency = 1
+            if corner and corner.Parent then
+                corner:Destroy()
+            end
+            if buttonStroke and buttonStroke.Parent then
+                buttonStroke:Destroy()
+            end
+        end
+    )
     return frame
 end
 
@@ -1484,8 +1503,8 @@ local HeaderOrnament: ImageLabel = (create("ImageLabel", {
     BorderSizePixel = 0,
     Image = "",
     ImageColor3 = Color3.fromRGB(235, 235, 238),
-    ImageRectOffset = Vector2.new(630, 286),
-    ImageRectSize = Vector2.new(430, 64),
+    ImageRectOffset = Vector2.new(666, 298),
+    ImageRectSize = Vector2.new(171, 48),
     ImageTransparency = 0.14,
     Position = UDim2.new(0.5, 0, 1, -3),
     ScaleType = Enum.ScaleType.Stretch,
