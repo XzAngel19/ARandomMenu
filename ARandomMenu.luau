@@ -5031,6 +5031,11 @@ type PhysicsSpeedSettings = {
     wallCheck: boolean,
     autoJump: boolean,
     jumpVelocity: number,
+    acceleration: number,
+    airControl: number,
+    sprintMultiplier: number,
+    sprintKey: Enum.KeyCode,
+    preserveMomentum: boolean,
 }
 
 type VehicleSeatState = {
@@ -5054,6 +5059,11 @@ local physicsSpeedSettings: PhysicsSpeedSettings = {
     wallCheck = true,
     autoJump = false,
     jumpVelocity = 45,
+    acceleration = 14,
+    airControl = 0.72,
+    sprintMultiplier = 1.65,
+    sprintKey = Enum.KeyCode.LeftShift,
+    preserveMomentum = false,
 }
 local physicsSpeedTeleportClock: number = 0
 local originalPhysicsPlatformStand: boolean? = nil
@@ -5191,6 +5201,7 @@ local function togglePhysicsSpeed(enabled: boolean): ()
                 direction = direction.Unit
             end
 
+            local wallBlocked: boolean = false
             if physicsSpeedSettings.wallCheck
                 and direction.Magnitude > 0.001 then
                 local raycastParams: RaycastParams = RaycastParams.new()
@@ -5205,6 +5216,7 @@ local function togglePhysicsSpeed(enabled: boolean): ()
                 )
                 if wallHit then
                     direction = Vector3.zero
+                    wallBlocked = true
                 end
             end
 
@@ -5222,16 +5234,45 @@ local function togglePhysicsSpeed(enabled: boolean): ()
             end
 
             local currentVelocity: Vector3 = assembly.AssemblyLinearVelocity
+            local grounded: boolean = currentHumanoid.FloorMaterial ~= Enum.Material.Air
+            local sprinting: boolean = not state.isMobile
+                and UserInputService:IsKeyDown(physicsSpeedSettings.sprintKey)
+            local resolvedSpeed: number = physicsSpeedSettings.speed
+                * (sprinting and physicsSpeedSettings.sprintMultiplier or 1)
+            if physicsSpeedSettings.mode == "Adaptive" and not grounded then
+                resolvedSpeed *= physicsSpeedSettings.airControl
+            end
             local vertical: number = math.clamp(
                 currentVelocity.Y,
                 -physicsSpeedSettings.verticalSpeed,
                 physicsSpeedSettings.verticalSpeed
             )
-            local targetVelocity: Vector3 = direction * physicsSpeedSettings.speed
+            local currentHorizontal: Vector3 = Vector3.new(
+                currentVelocity.X,
+                0,
+                currentVelocity.Z
+            )
+            local keepMomentum: boolean = physicsSpeedSettings.preserveMomentum
+                or physicsSpeedSettings.mode == "Adaptive"
+            local targetHorizontal: Vector3 = not wallBlocked
+                    and direction.Magnitude > 0.001
+                    and direction * resolvedSpeed
+                or not wallBlocked and keepMomentum and currentHorizontal
+                or Vector3.zero
+            local targetVelocity: Vector3 = targetHorizontal
                 + Vector3.new(0, vertical, 0)
 
-            if physicsSpeedSettings.mode == "Smooth" then
-                assembly.AssemblyLinearVelocity = targetVelocity
+            if physicsSpeedSettings.mode == "Smooth"
+                or physicsSpeedSettings.mode == "Adaptive" then
+                local alpha: number = 1 - math.exp(
+                    -physicsSpeedSettings.acceleration * deltaTime
+                )
+                local smoothedHorizontal: Vector3 = currentHorizontal:Lerp(
+                    targetHorizontal,
+                    alpha
+                )
+                assembly.AssemblyLinearVelocity = smoothedHorizontal
+                    + Vector3.new(0, vertical, 0)
             elseif physicsSpeedSettings.mode == "Boost" then
                 local correction: Vector3 = targetVelocity - currentVelocity
                 assembly:ApplyImpulse(
@@ -5244,7 +5285,7 @@ local function togglePhysicsSpeed(enabled: boolean): ()
                 if physicsSpeedTeleportClock >= 0.14 then
                     assembly.CFrame = assembly.CFrame
                         + direction
-                            * physicsSpeedSettings.speed
+                            * resolvedSpeed
                             * physicsSpeedTeleportClock
                     physicsSpeedTeleportClock = 0
                 end
@@ -5857,6 +5898,181 @@ state.universalToolkit = {
 end
 
 do
+type ZoomSettings = {
+    minDistance: number,
+    maxDistance: number,
+    unlockFirstPerson: boolean,
+}
+type ZoomState = {
+    minDistance: number,
+    maxDistance: number,
+    cameraMode: Enum.CameraMode,
+}
+local zoomSettings: ZoomSettings = {
+    minDistance = 0.5,
+    maxDistance = 400,
+    unlockFirstPerson = true,
+}
+local originalZoomState: ZoomState? = nil
+
+local function toggleZoomUnlocker(enabled: boolean): ()
+    disconnectFeatureConnection("ZoomUnlocker")
+    if originalZoomState then
+        LocalPlayer.CameraMinZoomDistance = originalZoomState.minDistance
+        LocalPlayer.CameraMaxZoomDistance = originalZoomState.maxDistance
+        LocalPlayer.CameraMode = originalZoomState.cameraMode
+        originalZoomState = nil
+    end
+    if not enabled then
+        return
+    end
+    originalZoomState = {
+        minDistance = LocalPlayer.CameraMinZoomDistance,
+        maxDistance = LocalPlayer.CameraMaxZoomDistance,
+        cameraMode = LocalPlayer.CameraMode,
+    }
+    featureConnections.ZoomUnlocker = TaskManager:Connect(function(): ()
+        LocalPlayer.CameraMinZoomDistance = math.min(
+            zoomSettings.minDistance,
+            zoomSettings.maxDistance
+        )
+        LocalPlayer.CameraMaxZoomDistance = math.max(
+            zoomSettings.minDistance,
+            zoomSettings.maxDistance
+        )
+        if zoomSettings.unlockFirstPerson then
+            LocalPlayer.CameraMode = Enum.CameraMode.Classic
+        elseif originalZoomState then
+            LocalPlayer.CameraMode = originalZoomState.cameraMode
+        end
+    end)
+end
+
+state.universalToolkit.zoomSettings = zoomSettings
+state.universalToolkit.toggleZoomUnlocker = toggleZoomUnlocker
+end
+
+do
+type InteractionSettings = {
+    distance: number,
+    instantPrompts: boolean,
+    proximityPrompts: boolean,
+    clickDetectors: boolean,
+}
+type PromptState = {distance: number, holdDuration: number}
+local interactionSettings: InteractionSettings = {
+    distance = 32,
+    instantPrompts = false,
+    proximityPrompts = true,
+    clickDetectors = true,
+}
+local originalPrompts: {[ProximityPrompt]: PromptState} =
+    setmetatable({}, {__mode = "k"}) :: any
+local originalClickDetectors: {[ClickDetector]: number} =
+    setmetatable({}, {__mode = "k"}) :: any
+local interactionExtenderEnabled: boolean = false
+local interactionRefreshClock: number = 0
+
+local function refreshInteractionExtender(): ()
+    for prompt: ProximityPrompt, original: PromptState in pairs(originalPrompts) do
+        if prompt.Parent then
+            prompt.MaxActivationDistance = interactionExtenderEnabled
+                    and interactionSettings.proximityPrompts
+                    and interactionSettings.distance
+                or original.distance
+            prompt.HoldDuration = interactionExtenderEnabled
+                    and interactionSettings.proximityPrompts
+                    and interactionSettings.instantPrompts
+                    and 0
+                or original.holdDuration
+        end
+    end
+    for detector: ClickDetector, originalDistance: number in pairs(originalClickDetectors) do
+        if detector.Parent then
+            detector.MaxActivationDistance = interactionExtenderEnabled
+                    and interactionSettings.clickDetectors
+                    and interactionSettings.distance
+                or originalDistance
+        end
+    end
+end
+
+local function applyInteractionExtension(instance: Instance): ()
+    if not interactionExtenderEnabled then
+        return
+    end
+    if instance:IsA("ProximityPrompt") then
+        if originalPrompts[instance] == nil then
+            originalPrompts[instance] = {
+                distance = instance.MaxActivationDistance,
+                holdDuration = instance.HoldDuration,
+            }
+        end
+        local original: PromptState = originalPrompts[instance]
+        instance.MaxActivationDistance = interactionSettings.proximityPrompts
+                and interactionSettings.distance
+            or original.distance
+        instance.HoldDuration = interactionSettings.proximityPrompts
+                and interactionSettings.instantPrompts
+                and 0
+            or original.holdDuration
+    elseif instance:IsA("ClickDetector") then
+        if originalClickDetectors[instance] == nil then
+            originalClickDetectors[instance] = instance.MaxActivationDistance
+        end
+        instance.MaxActivationDistance = interactionSettings.clickDetectors
+                and interactionSettings.distance
+            or originalClickDetectors[instance]
+    end
+end
+
+local function restoreInteractionExtender(): ()
+    interactionExtenderEnabled = false
+    refreshInteractionExtender()
+    originalPrompts = setmetatable({}, {__mode = "k"}) :: any
+    originalClickDetectors = setmetatable({}, {__mode = "k"}) :: any
+end
+
+local function toggleInteractionExtender(enabled: boolean): ()
+    disconnectFeatureConnection("InteractExtender")
+    disconnectFeatureConnection("InteractExtenderRefresh")
+    restoreInteractionExtender()
+    interactionRefreshClock = 0
+    if not enabled then
+        return
+    end
+    interactionExtenderEnabled = true
+    featureConnections.InteractExtender = workspace.DescendantAdded:Connect(
+        applyInteractionExtension
+    )
+    featureConnections.InteractExtenderRefresh = TaskManager:Connect(
+        function(deltaTime: number): ()
+            interactionRefreshClock += deltaTime
+            if interactionRefreshClock >= 0.5 then
+                interactionRefreshClock = 0
+                refreshInteractionExtender()
+            end
+        end
+    )
+    task.spawn(function(): ()
+        for index: number, instance: Instance in ipairs(workspace:GetDescendants()) do
+            if not interactionExtenderEnabled then
+                return
+            end
+            applyInteractionExtension(instance)
+            if index % 240 == 0 then
+                task.wait()
+            end
+        end
+    end)
+end
+
+state.universalToolkit.interactionSettings = interactionSettings
+state.universalToolkit.refreshInteractionExtender = refreshInteractionExtender
+state.universalToolkit.toggleInteractionExtender = toggleInteractionExtender
+end
+
+do
 local FlyFeature = createUniversalFeature(
     "Fly",
     "Preset-based flight with independent vertical control",
@@ -6142,7 +6358,7 @@ local PhysicsSpeedFeature = createUniversalFeature(
 local SpeedModeButton: TextButton = addCycleOption(
     PhysicsSpeedFeature,
     "Mode",
-    {"Smooth", "Boost", "Teleport"},
+    {"Adaptive", "Smooth", "Boost", "Teleport"},
     1,
     function(value: string): ()
         physicsSpeedSettings.mode = value
@@ -6211,6 +6427,53 @@ local SpeedWallButton: TextButton = addToggleOption(
         physicsSpeedSettings.wallCheck = value
     end
 )
+local SpeedDynamics: any = {}
+SpeedDynamics.acceleration = addNumberOption(
+    PhysicsSpeedFeature,
+    "Acceleration",
+    physicsSpeedSettings.acceleration,
+    1,
+    40,
+    function(value: number): ()
+        physicsSpeedSettings.acceleration = value
+    end
+)
+SpeedDynamics.airControl = addNumberOption(
+    PhysicsSpeedFeature,
+    "Air control %",
+    physicsSpeedSettings.airControl * 100,
+    10,
+    150,
+    function(value: number): ()
+        physicsSpeedSettings.airControl = value / 100
+    end
+)
+SpeedDynamics.sprintMultiplier = addNumberOption(
+    PhysicsSpeedFeature,
+    "Sprint multiplier",
+    physicsSpeedSettings.sprintMultiplier,
+    1,
+    4,
+    function(value: number): ()
+        physicsSpeedSettings.sprintMultiplier = value
+    end
+)
+SpeedDynamics.sprintKey = addKeyOption(
+    PhysicsSpeedFeature,
+    "Sprint key",
+    physicsSpeedSettings.sprintKey,
+    function(value: Enum.KeyCode): ()
+        physicsSpeedSettings.sprintKey = value
+    end
+)
+SpeedDynamics.preserveMomentum = addToggleOption(
+    PhysicsSpeedFeature,
+    "Preserve momentum",
+    physicsSpeedSettings.preserveMomentum,
+    function(value: boolean): ()
+        physicsSpeedSettings.preserveMomentum = value
+    end
+)
 local SpeedJumpRow: Frame = addNumberOption(
     PhysicsSpeedFeature,
     "Auto-jump velocity",
@@ -6245,6 +6508,11 @@ local SpeedAdvancedButton: TextButton = addToggleOption(
         setOptionVisible(PhysicsSpeedFeature, SpeedCustomButton.Parent :: GuiObject, value)
         setOptionVisible(PhysicsSpeedFeature, SpeedMotorRow, value and physicsSpeedSettings.customProperties)
         setOptionVisible(PhysicsSpeedFeature, SpeedWallButton.Parent :: GuiObject, value)
+        setOptionVisible(PhysicsSpeedFeature, SpeedDynamics.acceleration, value)
+        setOptionVisible(PhysicsSpeedFeature, SpeedDynamics.airControl, value)
+        setOptionVisible(PhysicsSpeedFeature, SpeedDynamics.sprintMultiplier, value)
+        setOptionVisible(PhysicsSpeedFeature, SpeedDynamics.sprintKey.Parent :: GuiObject, value)
+        setOptionVisible(PhysicsSpeedFeature, SpeedDynamics.preserveMomentum.Parent :: GuiObject, value)
         setOptionVisible(PhysicsSpeedFeature, SpeedAutoJumpButton.Parent :: GuiObject, value)
         setOptionVisible(PhysicsSpeedFeature, SpeedJumpRow, value and physicsSpeedSettings.autoJump)
     end
@@ -6256,8 +6524,9 @@ SpeedValueRow.LayoutOrder = 2
 SpeedAdvancedRow.LayoutOrder = 3
 addFeatureTooltip(
     PhysicsSpeedFeature,
-    "Smooth holds a stable velocity, Boost uses physical impulse, and Teleport advances in "
-        .. "short steps. Advanced controls expose safety checks, auto-jump, and vehicle tuning."
+    "Adaptive changes air authority and retains flow. Smooth accelerates predictably, Boost "
+        .. "uses physical impulse, and Teleport advances in short steps. Sprint, momentum, "
+        .. "wall safety, auto-jump, and vehicle tuning are independently configurable."
 )
 end
 
@@ -6476,6 +6745,90 @@ createUniversalFeature(
     22,
     state.universalToolkit.rejoinCurrentServer,
     {action = true, noOptions = true}
+)
+end
+
+do
+local ZoomFeature = createUniversalFeature(
+    "Zoom Unlocker",
+    "Extend camera zoom and optionally leave forced first person",
+    23,
+    state.universalToolkit.toggleZoomUnlocker
+)
+addNumberOption(
+    ZoomFeature,
+    "Maximum distance",
+    state.universalToolkit.zoomSettings.maxDistance,
+    25,
+    2000,
+    function(value: number): ()
+        state.universalToolkit.zoomSettings.maxDistance = value
+    end
+)
+addNumberOption(
+    ZoomFeature,
+    "Minimum distance",
+    state.universalToolkit.zoomSettings.minDistance,
+    0.5,
+    50,
+    function(value: number): ()
+        state.universalToolkit.zoomSettings.minDistance = value
+    end
+)
+addToggleOption(
+    ZoomFeature,
+    "Unlock forced first person",
+    state.universalToolkit.zoomSettings.unlockFirstPerson,
+    function(value: boolean): ()
+        state.universalToolkit.zoomSettings.unlockFirstPerson = value
+    end
+)
+end
+
+do
+local InteractFeature = createUniversalFeature(
+    "Interact Extender",
+    "Extend prompt and click interaction range without auto-firing",
+    24,
+    state.universalToolkit.toggleInteractionExtender
+)
+addNumberOption(
+    InteractFeature,
+    "Interaction distance",
+    state.universalToolkit.interactionSettings.distance,
+    8,
+    250,
+    function(value: number): ()
+        state.universalToolkit.interactionSettings.distance = value
+        state.universalToolkit.refreshInteractionExtender()
+    end
+)
+addToggleOption(
+    InteractFeature,
+    "Instant prompts",
+    state.universalToolkit.interactionSettings.instantPrompts,
+    function(value: boolean): ()
+        state.universalToolkit.interactionSettings.instantPrompts = value
+        state.universalToolkit.refreshInteractionExtender()
+    end
+)
+addToggleOption(
+    InteractFeature,
+    "Proximity prompts",
+    state.universalToolkit.interactionSettings.proximityPrompts,
+    function(value: boolean): ()
+        state.universalToolkit.interactionSettings.proximityPrompts = value
+        state.universalToolkit.refreshInteractionExtender()
+    end
+)
+addToggleOption(
+    InteractFeature,
+    "Click detectors",
+    state.universalToolkit.interactionSettings.clickDetectors,
+    function(value: boolean): ()
+        state.universalToolkit.interactionSettings.clickDetectors = value
+        state.universalToolkit.refreshInteractionExtender()
+    end
 )
 end
 
