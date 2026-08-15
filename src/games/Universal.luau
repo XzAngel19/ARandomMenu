@@ -24,6 +24,8 @@ local UNIVERSAL_FEATURES: {FeatureDefinition} = table.freeze({
     {id = "antiVoid", name = "Anti Void", order = 4},
     {id = "fullbright", name = "Fullbright", order = 5},
     {id = "lagSwitch", name = "Lag Switch", order = 6},
+    {id = "xray", name = "X-Ray", order = 7},
+    {id = "rejoinServer", name = "Rejoin Server", order = 8},
 })
 
 local MOVEMENT_FEATURES: {FeatureDefinition} = table.freeze({
@@ -39,6 +41,9 @@ local MOVEMENT_FEATURES: {FeatureDefinition} = table.freeze({
     {id = "noclip", name = "Noclip", order = 10},
     {id = "clickTeleport", name = "Click Teleport", order = 11},
     {id = "freezeMovements", name = "Freeze Movements", order = 12},
+    {id = "highJump", name = "High Jump", order = 13},
+    {id = "spider", name = "Spider", order = 14},
+    {id = "safeWalk", name = "Safe Walk", order = 15},
 })
 
 function Module.matches(_placeId: number): boolean
