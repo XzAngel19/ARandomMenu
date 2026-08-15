@@ -5,7 +5,7 @@
 
     Default controls:
       - RightShift: show/hide the menu
-      - Drag the title bar to move the fixed-size menu
+      - Drag the DARK title bar or Default side strip to move the fixed-size menu
 ]]
 
 local bootstrapStatusLabel: TextLabel? = nil
@@ -291,6 +291,7 @@ end
 local state: any = {
     visible = true,
     isMobile = IS_MOBILE_DEVICE,
+    guiStyle = configData.ui.guiStyle == "Default" and "Default" or "DARK",
     blurEnabled = configData.ui.blurEnabled ~= false,
     textScale = math.clamp(
         tonumber(configData.ui.textScale)
@@ -354,6 +355,14 @@ local AssetManager: any = {
     resolved = {} :: {[string]: string},
     resolving = {} :: {[string]: boolean},
     manifest = {
+        auroraBackground = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Images/aurora-background.jpg",
+            fileName = "aurora-background-v1.jpg",
+            fallback = "",
+            version = 1,
+            assetType = "image/jpeg",
+        },
         headerAnime = {
             url = REPOSITORY_RAW_BASE
                 .. "src/gui/Current/Assets/Header/anime-header.jpg",
@@ -1364,6 +1373,7 @@ MainScale.Parent = Main
 end
 
 local BlossomBackground: ImageLabel = nil :: any
+local DefaultPanelBackground: ImageLabel = nil :: any
 
 local function centerMain(): ()
     local camera: Camera? = workspace.CurrentCamera
@@ -1496,6 +1506,25 @@ create("UICorner", {
     Parent = Content,
     CornerRadius = UDim.new(0, 10),
 })
+DefaultPanelBackground = (create("ImageLabel", {
+    Parent = Content,
+    Name = "DefaultAuroraBackground",
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    Image = "",
+    ImageColor3 = Color3.fromRGB(224, 236, 240),
+    ImageTransparency = 1,
+    Position = UDim2.fromScale(0, 0),
+    ScaleType = Enum.ScaleType.Crop,
+    Size = UDim2.fromScale(1, 1),
+    Visible = false,
+    ZIndex = 4,
+}) :: any) :: ImageLabel
+create("UICorner", {
+    Parent = DefaultPanelBackground,
+    CornerRadius = UDim.new(0, 10),
+})
+state.assetManager.loadAsync("auroraBackground", DefaultPanelBackground)
 BlossomBackground = (create("ImageLabel", {
     Parent = Content,
     Name = "AnimatedPanelBackground",
@@ -1698,6 +1727,18 @@ local SearchIcon: ImageLabel = (create("ImageLabel", {
     ZIndex = 13,
 }) :: any) :: ImageLabel
 state.assetManager.loadAsync("search", SearchIcon)
+
+local DefaultDragZone: Frame = create("Frame", {
+    Parent = Main,
+    Name = "DefaultDragZone",
+    Active = true,
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    Position = UDim2.fromOffset(0, 0),
+    Size = UDim2.new(0, state.isMobile and 136 or 172, 0, 52),
+    Visible = false,
+    ZIndex = 11,
+}) :: Frame
 
 local ParticleOverlay: Frame = create("Frame", {
     Parent = ScreenGui,
@@ -2758,7 +2799,62 @@ state.cleanupVisualMotion = function(): ()
     end
     resetAtmosphereParticles()
 end
+
+local function applyGuiStyle(styleName: string, animate: boolean): ()
+    local normalizedStyle: string = styleName == "Default" and "Default" or "DARK"
+    local isDefault: boolean = normalizedStyle == "Default"
+    local sidebarWidth: number = state.isMobile and 136 or 172
+    local topInset: number = isDefault and 52 or 64
+    local transitionInfo: TweenInfo = TweenInfo.new(
+        state.animationsEnabled and animate and 0.28 or 0,
+        Enum.EasingStyle.Quart,
+        Enum.EasingDirection.Out
+    )
+    local tabsGoal: {[string]: any} = {
+        Position = UDim2.fromOffset(0, topInset),
+        Size = UDim2.new(0, sidebarWidth, 1, -topInset),
+        BackgroundTransparency = isDefault and 0.16 or 0.03,
+    }
+    local contentGoal: {[string]: any} = {
+        Position = UDim2.fromOffset(sidebarWidth, isDefault and 0 or 64),
+        Size = UDim2.new(1, -sidebarWidth, 1, isDefault and 0 or -64),
+    }
+
+    state.guiStyle = normalizedStyle
+    Header.Visible = not isDefault
+    DefaultDragZone.Visible = isDefault
+    DefaultPanelBackground.Visible = isDefault
+    DefaultPanelBackground.ImageTransparency = isDefault and 0.08 or 1
+    PanelDarkOverlay.BackgroundTransparency = isDefault and 0.34 or 0
+    BlossomBackground.Visible = not isDefault
+
+    SearchBox.AnchorPoint = isDefault and Vector2.new(0, 0.5)
+        or Vector2.new(1, 0.5)
+    SearchIcon.AnchorPoint = SearchBox.AnchorPoint
+    SearchBox.Size = isDefault
+        and UDim2.new(0, sidebarWidth - 20, 0, 34)
+        or UDim2.new(0, state.isMobile and 150 or 240, 0, 34)
+    SearchBox.Position = isDefault
+        and UDim2.fromOffset(10, 26)
+        or UDim2.new(1, -18, 0, 32)
+    SearchIcon.Position = isDefault
+        and UDim2.fromOffset(18, 26)
+        or UDim2.new(1, state.isMobile and -138 or -228, 0, 32)
+
+    TweenService:Create(Tabs, transitionInfo, tabsGoal):Play()
+    TweenService:Create(Content, transitionInfo, contentGoal):Play()
+    for _, page: CanvasGroup in pairs(pages) do
+        page.BackgroundTransparency = isDefault and 0.48 or 0
+    end
+    for _, button: TextButton in pairs(tabButtons) do
+        button.BackgroundTransparency = isDefault and 0.22 or 0
+    end
+    updateVisualMotionState()
+end
+state.applyGuiStyle = applyGuiStyle
+
 updateVisualMotionState()
+applyGuiStyle(state.guiStyle, false)
 end
 
 local function disconnectFeatureConnection(name)
@@ -7612,11 +7708,40 @@ local function createSettingRow(
     return (row :: any) :: Frame, (control :: any) :: Frame
 end
 
+local guiRow: Frame, guiControl: Frame = createSettingRow(
+    "GUI style",
+    "Switch instantly between the dark and aurora layouts"
+)
+guiRow.LayoutOrder = 1
+local DarkGuiButton: TextButton = makeButton(guiControl, "DARK", 12)
+DarkGuiButton.Position = UDim2.fromScale(0, 0)
+DarkGuiButton.Size = UDim2.new(0.5, -4, 1, 0)
+DarkGuiButton:SetAttribute("SelectedColor", Theme.AccentSoft)
+local DefaultGuiButton: TextButton = makeButton(guiControl, "DEFAULT", 12)
+DefaultGuiButton.Position = UDim2.new(0.5, 4, 0, 0)
+DefaultGuiButton.Size = UDim2.new(0.5, -4, 1, 0)
+DefaultGuiButton:SetAttribute("SelectedColor", Theme.AccentSoft)
+
+local function updateGuiStyleButtons(): ()
+    local darkSelected: boolean = state.guiStyle == "DARK"
+    DarkGuiButton:SetAttribute("Selected", darkSelected)
+    DefaultGuiButton:SetAttribute("Selected", not darkSelected)
+    DarkGuiButton.BackgroundColor3 = darkSelected
+        and Theme.AccentSoft
+        or Theme.SurfaceRaised
+    DefaultGuiButton.BackgroundColor3 = darkSelected
+        and Theme.SurfaceRaised
+        or Theme.AccentSoft
+    DarkGuiButton.TextColor3 = darkSelected and Theme.Text or Theme.TextMuted
+    DefaultGuiButton.TextColor3 = darkSelected and Theme.TextMuted or Theme.Text
+end
+updateGuiStyleButtons()
+
 local textRow, textControl = createSettingRow(
     "Text size",
     "Drag the linear control to scale every label"
 )
-textRow.LayoutOrder = 1
+textRow.LayoutOrder = 2
 local textScaleRatio: number = (state.textScale - 0.85) / 0.5
 local TextSizeTrack: TextButton = create("TextButton", {
     Parent = textControl,
@@ -7679,7 +7804,7 @@ local blurRow, blurControl = createSettingRow(
     "Blur mode",
     "Blur the game while the menu is visible"
 )
-blurRow.LayoutOrder = 2
+blurRow.LayoutOrder = 3
 
 local BlurButton: TextButton, BlurKnob: Frame =
     createSwitch(blurControl, state.blurEnabled)
@@ -7690,7 +7815,7 @@ local motionRow, motionControl = createSettingRow(
     "Interface motion",
     "Smooth transitions for cards, tabs, and menu controls"
 )
-motionRow.LayoutOrder = 3
+motionRow.LayoutOrder = 4
 local MotionButton: TextButton, MotionKnob: Frame =
     createSwitch(motionControl, state.animationsEnabled)
 MotionButton.AnchorPoint = Vector2.new(1, 0.5)
@@ -7700,7 +7825,7 @@ local decorationRow, decorationControl = createSettingRow(
     "Decorative layer",
     "Show the optional darkcore texture and ambient details"
 )
-decorationRow.LayoutOrder = 4
+decorationRow.LayoutOrder = 5
 local DecorationButton: TextButton, DecorationKnob: Frame =
     createSwitch(decorationControl, state.decorativeTexturesEnabled)
 DecorationButton.AnchorPoint = Vector2.new(1, 0.5)
@@ -7710,7 +7835,7 @@ local keyRow, keyControl = createSettingRow(
     "Menu key",
     "Choose the key used to show or hide"
 )
-keyRow.LayoutOrder = 5
+keyRow.LayoutOrder = 6
 
 local KeybindButton = makeButton(keyControl, state.toggleKey.Name, 13)
 KeybindButton.Size = UDim2.fromScale(1, 1)
@@ -7721,7 +7846,7 @@ local reinjectRow, reinjectControl = createSettingRow(
     "Reinject latest",
     "Download and restart the newest main build"
 )
-reinjectRow.LayoutOrder = 6
+reinjectRow.LayoutOrder = 7
 local ReinjectButton: TextButton = makeButton(
     reinjectControl,
     "REINJECT LATEST",
@@ -7734,7 +7859,7 @@ local gameRow, gameControl = createSettingRow(
     "Game check",
     "Only the matching game-specific module is loaded"
 )
-gameRow.LayoutOrder = 7
+gameRow.LayoutOrder = 8
 local gameStatus = makeTextLabel(
     gameControl,
     GAME_CHECK.MM2Active and "MM2 · 142823291"
@@ -7751,7 +7876,7 @@ local mobileIconRow, mobileIconControl = createSettingRow(
     "Mobile menu icon",
     "Dog shortcut stays available so the menu cannot become unreachable"
 )
-mobileIconRow.LayoutOrder = 8
+mobileIconRow.LayoutOrder = 9
 mobileIconRow.Visible = UserInputService.TouchEnabled
 local MobileIconButton = makeButton(
     mobileIconControl,
@@ -7772,7 +7897,7 @@ local mobileSizeRow, mobileSizeControl = createSettingRow(
     "Mobile action size",
     "Size for placed mobile shortcuts"
 )
-mobileSizeRow.LayoutOrder = 9
+mobileSizeRow.LayoutOrder = 10
 mobileSizeRow.Visible = UserInputService.TouchEnabled
 local MobileSizeButton = makeButton(
     mobileSizeControl,
@@ -7785,7 +7910,7 @@ local mobileResetRow, mobileResetControl = createSettingRow(
     "Mobile action buttons",
     "Hold ADD to place; hold a shortcut to remove it"
 )
-mobileResetRow.LayoutOrder = 10
+mobileResetRow.LayoutOrder = 11
 mobileResetRow.Visible = UserInputService.TouchEnabled
 local MobileResetButton = makeButton(
     mobileResetControl,
@@ -7804,10 +7929,10 @@ local helpText = makeTextLabel(
             or "Universal")
         .. (state.isMobile
             and " | Hold ADD on any function or action to place its shortcut."
-            or " | Drag the header to move the fixed-size menu."),
+            or " | Drag the header or Default side strip to move the menu."),
     11
 )
-helpText.LayoutOrder = 11
+helpText.LayoutOrder = 12
 helpText.TextColor3 = Color3.fromRGB(145, 145, 145)
 helpText.TextXAlignment = Enum.TextXAlignment.Center
 helpText.Size = UDim2.new(1, -4, 0, 30)
@@ -7882,6 +8007,27 @@ trackUiConnection(UserInputService.InputEnded:Connect(function(input: InputObjec
         or input.UserInputType == Enum.UserInputType.MouseButton1 then
         textSizeDragInput = nil
     end
+end))
+
+local function selectGuiStyle(styleName: string): ()
+    local normalizedStyle: string = styleName == "Default" and "Default" or "DARK"
+    if state.guiStyle == normalizedStyle then
+        return
+    end
+    state.applyGuiStyle(normalizedStyle, true)
+    configData.ui.guiStyle = normalizedStyle
+    updateGuiStyleButtons()
+    queueConfigSave()
+    notify(normalizedStyle == "Default"
+        and "GUI Default activada"
+        or "GUI DARK activada")
+end
+
+trackUiConnection(DarkGuiButton.MouseButton1Click:Connect(function(): ()
+    selectGuiStyle("DARK")
+end))
+trackUiConnection(DefaultGuiButton.MouseButton1Click:Connect(function(): ()
+    selectGuiStyle("Default")
 end))
 
 trackUiConnection(BlurButton.MouseButton1Click:Connect(function(): ()
@@ -8090,27 +8236,32 @@ local function saveWindowGeometry(): ()
     queueConfigSave()
 end
 
-trackUiConnection(Header.InputBegan:Connect(function(input: InputObject): ()
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-        or input.UserInputType == Enum.UserInputType.Touch then
-        dragging = true
-        dragInput = input.UserInputType == Enum.UserInputType.Touch
-            and input
-            or dragInput
-        dragStart = getPointerPosition(input)
-        dragStartPosition = Vector2.new(
-            Main.Position.X.Offset,
-            Main.Position.Y.Offset
-        )
-    end
-end))
+local function bindDragHandle(handle: GuiObject): ()
+    trackUiConnection(handle.InputBegan:Connect(function(input: InputObject): ()
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragInput = input.UserInputType == Enum.UserInputType.Touch
+                and input
+                or dragInput
+            dragStart = getPointerPosition(input)
+            dragStartPosition = Vector2.new(
+                Main.Position.X.Offset,
+                Main.Position.Y.Offset
+            )
+        end
+    end))
 
-trackUiConnection(Header.InputChanged:Connect(function(input: InputObject): ()
-    if input.UserInputType == Enum.UserInputType.MouseMovement
-        or input.UserInputType == Enum.UserInputType.Touch then
-        dragInput = input
-    end
-end))
+    trackUiConnection(handle.InputChanged:Connect(function(input: InputObject): ()
+        if input.UserInputType == Enum.UserInputType.MouseMovement
+            or input.UserInputType == Enum.UserInputType.Touch then
+            dragInput = input
+        end
+    end))
+end
+
+bindDragHandle(Header)
+bindDragHandle(DefaultDragZone)
 
 state.globalInputChangedConnection = UserInputService.InputChanged:Connect(function(
     input: InputObject

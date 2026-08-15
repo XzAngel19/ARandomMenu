@@ -2,6 +2,19 @@
   "schemaVersion": 3,
   "rawBaseUrl": "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/main/src/gui/Current/",
   "assets": {
+    "aurora_background": {
+      "category": "Backgrounds",
+      "path": "Images/aurora-background.jpg",
+      "dimensions": [
+        1600,
+        900
+      ],
+      "usage": "Default GUI content-panel background",
+      "localPath": "Images\\aurora-background.jpg",
+      "url": "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/main/src/gui/Current/Images/aurora-background.jpg",
+      "version": 1,
+      "type": "image/jpeg"
+    },
     "header_eyes_frame": {
       "category": "Frames",
       "path": "Assets/Frames/header_eyes_frame.png",

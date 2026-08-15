@@ -24,17 +24,21 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
   a short darkcore loading curtain reports progress until they are ready, and
   opening a tab is never used as the condition for constructing its content.
 - The technical desktop shell uses a fixed responsive footprint (78% × 82% of
-  the viewport), vertical navigation, header search, and bounded dragging.
-- The content panel is solid black. Feature rows stay quiet while idle and use
-  a brighter stripe, surface and outline when enabled.
+  the viewport), vertical navigation and bounded dragging. Settings switches
+  live between `DARK` (the technical header and darkcore presentation) and
+  `Default` (a headerless aurora panel with sidebar search and drag strip).
+- `DARK` keeps its solid black content panel. `Default` blends the checked-in
+  aurora image through translucent pages while preserving control contrast.
+  Feature rows stay quiet while idle and use a brighter stripe, surface and
+  outline when enabled.
 - The reusable `gui.lua` owns its image catalog, executor-safe asset cache,
   settings, draggable shell, tabs and `createModule()` component API. Game
   modules only provide their controls and callbacks.
 - Its asset cache verifies PNG/JPEG signatures, tab icons use the real files
   under `Assets/Icons`, and text scaling updates a creation-time registry
   instead of walking the complete GUI during every slider movement.
-- Settings includes text scale, blur, interface motion, decorative-layer and a
-  cache-busted **Reinject latest** control. Keyboard
+- Settings includes the persistent GUI selector, text scale, blur, interface
+  motion, decorative-layer and a cache-busted **Reinject latest** control. Keyboard
   shortcuts use the transparent 2172×724 HD key-slot frame when custom assets
   are supported and retain a procedural outlined fallback on other executors.
 - Universal Fly provides Balanced, Direct and Precise response presets,
