@@ -42,7 +42,10 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
   Speed provides Adaptive, Smooth, Boost and Teleport modes plus acceleration,
   air control, sprint, momentum retention, wall safety, auto-jump and vehicle
   tuning. Player ESP, X-Ray, High Jump, Spider, Safe Walk, Zoom Unlocker,
-  Interact Extender and a Rejoin action extend the universal toolkit.
+  Interact Extender, collision-aware Phase Dash, Soft Landing and a Rejoin
+  action extend the universal toolkit.
+- Universal runtime toolkits initialize inside isolated function scopes so
+  older executor compilers stay safely below Luau's 200-register ceiling.
 
 Initialization logs use the `[RTM:Bootstrap]` prefix and include detected
 PlaceId, raw download status, downloaded byte count, UI callback count,

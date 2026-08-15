@@ -5681,7 +5681,7 @@ local function toggleFullbright(enabled)
     end)
 end
 
-do
+state.universalToolkit = (function(): any
 type EspSettings = {
     includeTeam: boolean,
     fillTransparency: number,
@@ -5883,7 +5883,7 @@ local function rejoinCurrentServer(): ()
     teleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
 end
 
-state.universalToolkit = {
+return {
     espSettings = espSettings,
     togglePlayerEsp = togglePlayerEsp,
     toggleXray = toggleXray,
@@ -5895,9 +5895,10 @@ state.universalToolkit = {
     toggleSafeWalk = toggleSafeWalk,
     rejoinCurrentServer = rejoinCurrentServer,
 }
-end
+end)()
 
 do
+(function(): ()
 type ZoomSettings = {
     minDistance: number,
     maxDistance: number,
@@ -5950,9 +5951,11 @@ end
 
 state.universalToolkit.zoomSettings = zoomSettings
 state.universalToolkit.toggleZoomUnlocker = toggleZoomUnlocker
+end)()
 end
 
 do
+(function(): ()
 type InteractionSettings = {
     distance: number,
     instantPrompts: boolean,
@@ -6070,9 +6073,176 @@ end
 state.universalToolkit.interactionSettings = interactionSettings
 state.universalToolkit.refreshInteractionExtender = refreshInteractionExtender
 state.universalToolkit.toggleInteractionExtender = toggleInteractionExtender
+end)()
 end
 
 do
+(function(): ()
+type PhaseDashSettings = {
+    distance: number,
+    cooldown: number,
+    exitSpeed: number,
+    preserveVelocity: boolean,
+    key: Enum.KeyCode,
+}
+local phaseDashSettings: PhaseDashSettings = {
+    distance = 20,
+    cooldown = 0.8,
+    exitSpeed = 42,
+    preserveVelocity = true,
+    key = Enum.KeyCode.Q,
+}
+local lastPhaseDash: number = -math.huge
+
+local function createPhaseFlash(character: Model): ()
+    local oldFlash: Instance? = character:FindFirstChild("RTM_PhaseDashFlash")
+    if oldFlash then
+        oldFlash:Destroy()
+    end
+    local flash: Highlight = Instance.new("Highlight")
+    flash.Name = "RTM_PhaseDashFlash"
+    flash.Adornee = character
+    flash.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    flash.FillColor = Theme.AccentViolet
+    flash.FillTransparency = 0.42
+    flash.OutlineColor = Theme.AccentCyan
+    flash.OutlineTransparency = 0.05
+    flash.Parent = character
+    local fade: Tween = TweenService:Create(
+        flash,
+        TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+        {FillTransparency = 1, OutlineTransparency = 1}
+    )
+    fade:Play()
+    fade.Completed:Once(function(): ()
+        if flash.Parent then
+            flash:Destroy()
+        end
+    end)
+end
+
+local function performPhaseDash(): ()
+    local now: number = os.clock()
+    if now - lastPhaseDash < phaseDashSettings.cooldown then
+        return
+    end
+    local character: Model?, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
+    local camera: Camera? = workspace.CurrentCamera
+    if not character or not humanoid or not root or not camera then
+        return
+    end
+    local direction: Vector3 = humanoid.MoveDirection
+    if direction.Magnitude < 0.05 then
+        direction = Vector3.new(
+            camera.CFrame.LookVector.X,
+            0,
+            camera.CFrame.LookVector.Z
+        )
+    end
+    if direction.Magnitude < 0.05 then
+        return
+    end
+    direction = direction.Unit
+    local params: RaycastParams = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = {character}
+    local collision: RaycastResult? = workspace:Raycast(
+        root.Position,
+        direction * phaseDashSettings.distance,
+        params
+    )
+    local safeDistance: number = collision
+            and math.max(0, collision.Distance - 2.25)
+        or phaseDashSettings.distance
+    if safeDistance <= 0.1 then
+        return
+    end
+    lastPhaseDash = now
+    local previousVelocity: Vector3 = root.AssemblyLinearVelocity
+    root.CFrame = root.CFrame + direction * safeDistance
+    if not phaseDashSettings.preserveVelocity then
+        root.AssemblyLinearVelocity = direction * phaseDashSettings.exitSpeed
+            + Vector3.new(0, previousVelocity.Y, 0)
+    end
+    createPhaseFlash(character)
+end
+
+local function togglePhaseDash(enabled: boolean): ()
+    disconnectFeatureConnection("PhaseDash")
+    if not enabled then
+        return
+    end
+    featureConnections.PhaseDash = UserInputService.InputBegan:Connect(function(
+        input: InputObject,
+        gameProcessed: boolean
+    ): ()
+        if gameProcessed or UserInputService:GetFocusedTextBox() then
+            return
+        end
+        if input.UserInputType == Enum.UserInputType.Keyboard
+            and input.KeyCode == phaseDashSettings.key then
+            performPhaseDash()
+        end
+    end)
+end
+
+type SoftLandingSettings = {
+    triggerSpeed: number,
+    scanDistance: number,
+    landingSpeed: number,
+}
+local softLandingSettings: SoftLandingSettings = {
+    triggerSpeed = 62,
+    scanDistance = 16,
+    landingSpeed = 11,
+}
+
+local function toggleSoftLanding(enabled: boolean): ()
+    disconnectFeatureConnection("SoftLanding")
+    if not enabled then
+        return
+    end
+    featureConnections.SoftLanding = TaskManager:Connect(function(): ()
+        local character: Model?, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
+        if not character or not humanoid or not root or humanoid.SeatPart then
+            return
+        end
+        local velocity: Vector3 = root.AssemblyLinearVelocity
+        if velocity.Y > -softLandingSettings.triggerSpeed then
+            return
+        end
+        local params: RaycastParams = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        params.FilterDescendantsInstances = {character}
+        local probeDistance: number = math.max(
+            softLandingSettings.scanDistance,
+            math.abs(velocity.Y) * 0.18
+        )
+        local ground: RaycastResult? = workspace:Raycast(
+            root.Position,
+            Vector3.new(0, -probeDistance, 0),
+            params
+        )
+        if ground then
+            root.AssemblyLinearVelocity = Vector3.new(
+                velocity.X,
+                -softLandingSettings.landingSpeed,
+                velocity.Z
+            )
+        end
+    end)
+end
+
+state.universalToolkit.phaseDashSettings = phaseDashSettings
+state.universalToolkit.togglePhaseDash = togglePhaseDash
+state.universalToolkit.performPhaseDash = performPhaseDash
+state.universalToolkit.softLandingSettings = softLandingSettings
+state.universalToolkit.toggleSoftLanding = toggleSoftLanding
+end)()
+end
+
+do
+(function(): ()
 local FlyFeature = createUniversalFeature(
     "Fly",
     "Preset-based flight with independent vertical control",
@@ -6200,6 +6370,7 @@ addFeatureTooltip(
     "Use WASD to move, Space to rise and LeftControl to descend. "
         .. "The safe velocity preset handles orientation and acceleration automatically."
 )
+end)()
 end
 
 do
@@ -6349,6 +6520,7 @@ end)
 end
 
 do
+(function(): ()
 local PhysicsSpeedFeature = createUniversalFeature(
     "Speed",
     "Fast movement for characters and occupied vehicles",
@@ -6528,6 +6700,7 @@ addFeatureTooltip(
         .. "uses physical impulse, and Teleport advances in short steps. Sprint, momentum, "
         .. "wall safety, auto-jump, and vehicle tuning are independently configurable."
 )
+end)()
 end
 
 do
@@ -6828,6 +7001,113 @@ addToggleOption(
     function(value: boolean): ()
         state.universalToolkit.interactionSettings.clickDetectors = value
         state.universalToolkit.refreshInteractionExtender()
+    end
+)
+end
+
+do
+local PhaseDashFeature = createUniversalFeature(
+    "Phase Dash",
+    "Collision-aware directional blink with a technical phase flash",
+    25,
+    state.universalToolkit.togglePhaseDash
+)
+addNumberOption(
+    PhaseDashFeature,
+    "Dash distance",
+    state.universalToolkit.phaseDashSettings.distance,
+    4,
+    80,
+    function(value: number): ()
+        state.universalToolkit.phaseDashSettings.distance = value
+    end
+)
+addNumberOption(
+    PhaseDashFeature,
+    "Cooldown",
+    state.universalToolkit.phaseDashSettings.cooldown,
+    0.1,
+    5,
+    function(value: number): ()
+        state.universalToolkit.phaseDashSettings.cooldown = value
+    end
+)
+addNumberOption(
+    PhaseDashFeature,
+    "Exit speed",
+    state.universalToolkit.phaseDashSettings.exitSpeed,
+    0,
+    180,
+    function(value: number): ()
+        state.universalToolkit.phaseDashSettings.exitSpeed = value
+    end
+)
+addToggleOption(
+    PhaseDashFeature,
+    "Preserve velocity",
+    state.universalToolkit.phaseDashSettings.preserveVelocity,
+    function(value: boolean): ()
+        state.universalToolkit.phaseDashSettings.preserveVelocity = value
+    end
+)
+local PhaseDashKeyButton: TextButton = addKeyOption(
+    PhaseDashFeature,
+    "Dash key",
+    state.universalToolkit.phaseDashSettings.key,
+    function(value: Enum.KeyCode): ()
+        state.universalToolkit.phaseDashSettings.key = value
+    end
+)
+local PhaseDashAction: TextButton = addActionOption(
+    PhaseDashFeature,
+    "Dash now",
+    state.universalToolkit.performPhaseDash
+)
+if state.bindMobileActionPlacement then
+    state.bindMobileActionPlacement(
+        PhaseDashAction,
+        "UniversalPhaseDash",
+        "DASH",
+        state.universalToolkit.performPhaseDash
+    )
+end
+end
+
+do
+local SoftLandingFeature = createUniversalFeature(
+    "Soft Landing",
+    "Detect nearby ground and damp dangerous downward velocity",
+    26,
+    state.universalToolkit.toggleSoftLanding
+)
+addNumberOption(
+    SoftLandingFeature,
+    "Trigger fall speed",
+    state.universalToolkit.softLandingSettings.triggerSpeed,
+    25,
+    180,
+    function(value: number): ()
+        state.universalToolkit.softLandingSettings.triggerSpeed = value
+    end
+)
+addNumberOption(
+    SoftLandingFeature,
+    "Ground scan distance",
+    state.universalToolkit.softLandingSettings.scanDistance,
+    5,
+    50,
+    function(value: number): ()
+        state.universalToolkit.softLandingSettings.scanDistance = value
+    end
+)
+addNumberOption(
+    SoftLandingFeature,
+    "Landing speed",
+    state.universalToolkit.softLandingSettings.landingSpeed,
+    2,
+    35,
+    function(value: number): ()
+        state.universalToolkit.softLandingSettings.landingSpeed = value
     end
 )
 end

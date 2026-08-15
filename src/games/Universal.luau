@@ -28,6 +28,8 @@ local UNIVERSAL_FEATURES: {FeatureDefinition} = table.freeze({
     {id = "rejoinServer", name = "Rejoin Server", order = 8},
     {id = "zoomUnlocker", name = "Zoom Unlocker", order = 9},
     {id = "interactExtender", name = "Interact Extender", order = 10},
+    {id = "phaseDash", name = "Phase Dash", order = 11},
+    {id = "softLanding", name = "Soft Landing", order = 12},
 })
 
 local MOVEMENT_FEATURES: {FeatureDefinition} = table.freeze({

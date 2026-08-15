@@ -96,6 +96,8 @@ jobs:
           unzip -q /tmp/luau.zip -d /tmp/luau
           while IFS= read -r file; do
             /tmp/luau/luau-compile "$file" >/dev/null
+            /tmp/luau/luau-compile -O0 "$file" >/dev/null
           done < <(find . -type f \( -name "*.lua" -o -name "*.luau" \) \
             ! -name "*.d.luau" -print)
           /tmp/luau/luau-compile loadstring >/dev/null
+          /tmp/luau/luau-compile -O0 loadstring >/dev/null
