@@ -36,9 +36,13 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
   files under `Assets`, and text scaling updates a creation-time registry
   instead of walking the complete GUI during every slider movement.
 - Settings includes the persistent GUI selector, text scale, blur, interface
-  motion, decorative-layer and a cache-busted **Reinject latest** control. Keyboard
-  shortcuts use the transparent 2172×724 HD key-slot frame when custom assets
-  are supported and retain a procedural outlined fallback on other executors.
+  motion, cache-busted **Reinject latest**, and an idempotent **Destruct** action
+  that disables features and releases every tracked runtime connection. The
+  Default shell uses simple blue key/action controls; the custom key-slot frame
+  remains exclusive to DARK.
+- Desktop shells use integer-pixel, aspect-fitted dimensions capped near 60% of
+  wide displays instead of scaling the complete canvas, which keeps text and
+  strokes crisp while preserving drag boundaries on viewport changes.
 - Universal Fly provides Balanced, Direct and Precise response presets,
   independent horizontal/vertical speed and progressive advanced controls.
   Speed provides Adaptive, Smooth, Boost and Teleport modes plus acceleration,

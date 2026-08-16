@@ -97,6 +97,9 @@ local Theme: {[string]: Color3} = {
     DefaultSidebar = Color3.fromRGB(15, 25, 29),
     DefaultSurface = Color3.fromRGB(25, 38, 43),
     DefaultSurfaceHover = Color3.fromRGB(38, 56, 62),
+    DefaultButton = Color3.fromRGB(28, 101, 137),
+    DefaultButtonHover = Color3.fromRGB(38, 126, 164),
+    DefaultButtonPressed = Color3.fromRGB(22, 82, 112),
     DefaultOutline = Color3.fromRGB(108, 137, 145),
     DefaultAccent = Color3.fromRGB(112, 218, 205),
     DefaultText = Color3.fromRGB(240, 247, 246),
@@ -309,9 +312,6 @@ local state: any = {
     ),
     mobileMenuButtonVisible = true,
     animationsEnabled = configData.ui.animationsEnabled ~= false,
-    animatedBlossomsEnabled = false,
-    atmosphereEffectsEnabled = false,
-    decorativeTexturesEnabled = configData.ui.decorativeTexturesEnabled ~= false,
     mobileButtonSize = math.clamp(
         tonumber(configData.ui.mobileButtonSize) or 52,
         42,
@@ -330,6 +330,8 @@ local state: any = {
     fireTouchInterest = (getfenv() :: any).firetouchinterest,
     requireModule = require,
     uiConnections = {} :: {RBXScriptConnection},
+    styledButtons = {} :: {TextButton},
+    styledTextBoxes = {} :: {TextBox},
 }
 
 local function trackUiConnection(
@@ -387,14 +389,6 @@ local AssetManager: any = {
             version = 1,
             assetType = "image/jpeg",
         },
-        blossomSheet = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Animations/blossoms-spritesheet.png",
-            fileName = "blossoms-spritesheet-v2.png",
-            fallback = "",
-            version = 2,
-            assetType = "image/png",
-        },
         titleLogo = {
             url = REPOSITORY_RAW_BASE
                 .. "src/gui/Current/Assets/Typography/title-logo.png",
@@ -422,54 +416,6 @@ local AssetManager: any = {
             fallback = "",
             version = 1,
             assetType = "image/png",
-        },
-        particleSnow = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Particles/snow-dot.png",
-            fileName = "particle-snow-v1.png",
-            fallback = "",
-        },
-        particleStar = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Particles/emo-star.png",
-            fileName = "particle-star-v1.png",
-            fallback = "",
-        },
-        particleAsh = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Particles/ash-fragment.png",
-            fileName = "particle-ash-v1.png",
-            fallback = "",
-        },
-        particlePetal = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Particles/black-petal.png",
-            fileName = "particle-petal-v1.png",
-            fallback = "",
-        },
-        spikeLeft = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Decorations/spike-corner-left.png",
-            fileName = "spike-left-v1.png",
-            fallback = "",
-        },
-        spikeRight = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Decorations/spike-corner-right.png",
-            fileName = "spike-right-v1.png",
-            fallback = "",
-        },
-        chainDivider = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Decorations/chain-divider.png",
-            fileName = "chain-divider-v1.png",
-            fallback = "",
-        },
-        inkScratch = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Decorations/ink-scratch.png",
-            fileName = "ink-scratch-v1.png",
-            fallback = "",
         },
         crossSmall = {
             url = REPOSITORY_RAW_BASE
@@ -1086,19 +1032,37 @@ local function makeButton(
     text: string,
     normalSize: number?
 ): TextButton
+    local isDefaultStyle: boolean = state.guiStyle == "Default"
     local button = registerText(create("TextButton", {
         Parent = parent,
         AutoButtonColor = false,
-        BackgroundColor3 = DEFAULT_SURFACE_COLOR,
+        BackgroundColor3 = isDefaultStyle
+            and Theme.DefaultButton
+            or DEFAULT_SURFACE_COLOR,
         BorderSizePixel = 0,
         FontFace = CONTROL_FONT,
         Text = text,
-        TextColor3 = Color3.fromRGB(240, 240, 240),
+        TextColor3 = isDefaultStyle
+            and Theme.DefaultText
+            or Color3.fromRGB(240, 240, 240),
         TextXAlignment = Enum.TextXAlignment.Center,
         TextYAlignment = Enum.TextYAlignment.Center,
     }), normalSize or 14)
 
     addRoundedStyle(button, 9, 0.48)
+    button:SetAttribute(
+        "IdleColor",
+        isDefaultStyle and Theme.DefaultButton or DEFAULT_SURFACE_COLOR
+    )
+    button:SetAttribute(
+        "HoverColor",
+        isDefaultStyle and Theme.DefaultButtonHover or Theme.SurfaceHover
+    )
+    button:SetAttribute(
+        "PressedColor",
+        isDefaultStyle and Theme.DefaultButtonPressed or Theme.SurfacePressed
+    )
+    table.insert(state.styledButtons, button)
 
     trackUiConnection(button.MouseEnter:Connect(function()
         if button:GetAttribute("NoHover") or button:GetAttribute("Disabled") then
@@ -1135,18 +1099,24 @@ local function makeButton(
     end))
 
     trackUiConnection(button.MouseButton1Down:Connect(function(): ()
-        if button:GetAttribute("Disabled") then
+        if button:GetAttribute("Disabled")
+            or button:GetAttribute("NoPressEffect") then
             return
         end
+        local configuredPressed: any = button:GetAttribute("PressedColor")
+        local pressedColor: Color3 = typeof(configuredPressed) == "Color3"
+            and configuredPressed
+            or Theme.SurfacePressed
         TweenService:Create(
             button,
             TweenInfo.new(0.08, Enum.EasingStyle.Quad),
-            {BackgroundColor3 = Theme.SurfacePressed}
+            {BackgroundColor3 = pressedColor}
         ):Play()
     end))
 
     trackUiConnection(button.MouseButton1Up:Connect(function(): ()
-        if button:GetAttribute("Disabled") then
+        if button:GetAttribute("Disabled")
+            or button:GetAttribute("NoPressEffect") then
             return
         end
         local selectedColor: any = button:GetAttribute("SelectedColor")
@@ -1169,8 +1139,7 @@ end
 local function applyKeySlotStyle(button: TextButton): ImageLabel
     button.ZIndex = math.max(2, button.ZIndex)
     button.TextColor3 = Color3.fromRGB(250, 250, 252)
-    button:SetAttribute("NoHover", true)
-    local corner: UICorner? = button:FindFirstChildOfClass("UICorner")
+    button:SetAttribute("ThemeRole", "KeySlot")
     local buttonStroke: UIStroke? = button:FindFirstChildOfClass("UIStroke")
     local frame: ImageLabel = create("ImageLabel", {
         Parent = button,
@@ -1186,6 +1155,7 @@ local function applyKeySlotStyle(button: TextButton): ImageLabel
         SliceCenter = Rect.new(300, 300, 1870, 420),
         SliceScale = 0.5,
         Size = UDim2.new(1, 10, 1, 10),
+        Visible = state.guiStyle == "DARK",
         ZIndex = button.ZIndex - 1,
     }) :: ImageLabel
     state.assetManager.loadAsync(
@@ -1195,16 +1165,56 @@ local function applyKeySlotStyle(button: TextButton): ImageLabel
             if not loaded or button.Parent == nil then
                 return
             end
-            button.BackgroundTransparency = 1
-            if corner and corner.Parent then
-                corner:Destroy()
-            end
+            local darkStyle: boolean = state.guiStyle == "DARK"
+            frame.Visible = darkStyle
+            button.BackgroundTransparency = darkStyle and 1 or 0
             if buttonStroke and buttonStroke.Parent then
-                buttonStroke:Destroy()
+                buttonStroke.Enabled = not darkStyle
             end
         end
     )
     return frame
+end
+
+state.restyleButtons = function(isDefault: boolean): ()
+    for _, button: TextButton in ipairs(state.styledButtons) do
+        if button.Parent then
+            local role: any = button:GetAttribute("ThemeRole")
+            if role ~= "Navigation" and role ~= "Icon" and role ~= "Switch" then
+                local idleColor: Color3 = isDefault
+                    and Theme.DefaultButton
+                    or DEFAULT_SURFACE_COLOR
+                button:SetAttribute("IdleColor", idleColor)
+                button:SetAttribute(
+                    "HoverColor",
+                    isDefault and Theme.DefaultButtonHover or Theme.SurfaceHover
+                )
+                button:SetAttribute(
+                    "PressedColor",
+                    isDefault and Theme.DefaultButtonPressed or Theme.SurfacePressed
+                )
+                if button:GetAttribute("Selected") ~= true then
+                    button.BackgroundColor3 = idleColor
+                end
+                button.TextColor3 = isDefault and Theme.DefaultText or Theme.Text
+                local stroke: UIStroke? =
+                    button:FindFirstChild("StyleStroke") :: UIStroke?
+                if stroke then
+                    stroke.Enabled = true
+                    stroke.Color = isDefault and Theme.DefaultOutline or Theme.Outline
+                    stroke.Transparency = isDefault and 0.32 or 0.48
+                end
+                if role == "KeySlot" then
+                    local frame: ImageLabel? =
+                        button:FindFirstChild("KeySlotFrame") :: ImageLabel?
+                    if frame then
+                        frame.Visible = not isDefault
+                    end
+                    button.BackgroundTransparency = isDefault and 0 or 1
+                end
+            end
+        end
+    end
 end
 
 local function setKeySlotCapture(button: TextButton, active: boolean): ()
@@ -1223,24 +1233,32 @@ local function setKeySlotCapture(button: TextButton, active: boolean): ()
 end
 
 local function makeTextBox(parent: Instance, defaultText: any): TextBox
+    local isDefaultStyle: boolean = state.guiStyle == "Default"
     local textBox: TextBox = (registerText(create("TextBox", {
         Parent = parent,
-        BackgroundColor3 = Theme.Surface,
+        BackgroundColor3 = isDefaultStyle
+            and Theme.DefaultButtonPressed
+            or Theme.Surface,
         BorderSizePixel = 0,
         ClearTextOnFocus = false,
         FontFace = THIN_FONT,
-        PlaceholderColor3 = Theme.TextMuted,
+        PlaceholderColor3 = isDefaultStyle
+            and Theme.DefaultTextMuted
+            or Theme.TextMuted,
         Text = tostring(defaultText),
-        TextColor3 = Color3.fromRGB(235, 235, 235),
+        TextColor3 = isDefaultStyle
+            and Theme.DefaultText
+            or Color3.fromRGB(235, 235, 235),
         TextXAlignment = Enum.TextXAlignment.Center,
     }), 13) :: any) :: TextBox
     addRoundedStyle(textBox, 9, 0.5)
+    table.insert(state.styledTextBoxes, textBox)
     trackUiConnection(textBox.Focused:Connect(function(): ()
         TweenService:Create(
             textBox,
             TweenInfo.new(0.16, Enum.EasingStyle.Quad),
             {BackgroundColor3 = state.guiStyle == "Default"
-                and Theme.DefaultSurfaceHover
+                and Theme.DefaultButtonHover
                 or Theme.SurfaceRaised}
         ):Play()
     end))
@@ -1249,11 +1267,31 @@ local function makeTextBox(parent: Instance, defaultText: any): TextBox
             textBox,
             TweenInfo.new(0.16, Enum.EasingStyle.Quad),
             {BackgroundColor3 = state.guiStyle == "Default"
-                and Theme.DefaultSurface
+                and Theme.DefaultButtonPressed
                 or Theme.Surface}
         ):Play()
     end))
     return textBox
+end
+
+state.restyleTextBoxes = function(isDefault: boolean): ()
+    for _, textBox: TextBox in ipairs(state.styledTextBoxes) do
+        if textBox.Parent then
+            textBox.BackgroundColor3 = isDefault
+                and Theme.DefaultButtonPressed
+                or Theme.Surface
+            textBox.TextColor3 = isDefault and Theme.DefaultText or Theme.Text
+            textBox.PlaceholderColor3 = isDefault
+                and Theme.DefaultTextMuted
+                or Theme.TextMuted
+            local stroke: UIStroke? =
+                textBox:FindFirstChild("StyleStroke") :: UIStroke?
+            if stroke then
+                stroke.Color = isDefault and Theme.DefaultOutline or Theme.Outline
+                stroke.Transparency = isDefault and 0.3 or 0.5
+            end
+        end
+    end
 end
 
 local ToastContainer: Frame = (create("Frame", {
@@ -1378,9 +1416,32 @@ local initialCamera: Camera? = workspace.CurrentCamera
 local initialViewport: Vector2 = initialCamera
     and initialCamera.ViewportSize
     or Vector2.new(1280, 720)
-local fixedWindowScale: Vector2 = state.isMobile
-    and Vector2.new(0.96, 0.88)
-    or Vector2.new(0.78, 0.82)
+
+local function calculateWindowSize(viewport: Vector2): Vector2
+    if state.isMobile then
+        return Vector2.new(
+            math.max(280, math.min(viewport.X - 8, math.round(viewport.X * 0.96))),
+            math.max(320, math.min(viewport.Y - 8, math.round(viewport.Y * 0.88)))
+        )
+    end
+    local widthRatio: number = viewport.X >= 1600 and 0.6 or 0.78
+    local availableWidth: number = math.min(
+        1120,
+        viewport.X * widthRatio,
+        math.max(420, viewport.X - 36)
+    )
+    local availableHeight: number = math.min(
+        700,
+        viewport.Y * 0.82,
+        math.max(360, viewport.Y - 36)
+    )
+    local aspectRatio: number = viewport.X >= 1200 and 1.6 or 1.35
+    local width: number = math.min(availableWidth, availableHeight * aspectRatio)
+    local height: number = width / aspectRatio
+    return Vector2.new(math.round(width), math.round(height))
+end
+
+local initialWindowSize: Vector2 = calculateWindowSize(initialViewport)
 
 local Main: Frame = (create("Frame", {
     Parent = ScreenGui,
@@ -1390,7 +1451,7 @@ local Main: Frame = (create("Frame", {
     BorderSizePixel = 0,
     ClipsDescendants = true,
     Position = UDim2.fromOffset(0, 0),
-    Size = UDim2.fromScale(fixedWindowScale.X, fixedWindowScale.Y),
+    Size = UDim2.fromOffset(initialWindowSize.X, initialWindowSize.Y),
 }) :: any) :: Frame
 
 do
@@ -1409,12 +1470,8 @@ MainStrokeGradient.Rotation = 8
 MainStrokeGradient.Parent = MainStroke
 state.mainStroke = MainStroke
 state.mainStrokeGradient = MainStrokeGradient
-local MainScale: UIScale = Instance.new("UIScale")
-MainScale.Scale = 1
-MainScale.Parent = Main
 end
 
-local BlossomBackground: ImageLabel = nil :: any
 local DefaultPanelBackground: ImageLabel = nil :: any
 local Header: Frame = nil :: any
 local Content: Frame = nil :: any
@@ -1444,9 +1501,6 @@ end
 task.defer(centerMain)
 
 do
-state.decorativeObjects = {} :: {GuiObject}
-state.decorativeTweens = {} :: {Tween}
-
 local sidebarWidth: number = state.isMobile and 136 or 172
 local DarkShell: CanvasGroup = create("CanvasGroup", {
     Parent = Main,
@@ -1558,20 +1612,6 @@ create("UICorner", {
     Parent = DarkContentHost,
     CornerRadius = UDim.new(0, 10),
 })
-BlossomBackground = (create("ImageLabel", {
-    Parent = DarkContentHost,
-    Name = "AnimatedPanelBackground",
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    Image = "",
-    ImageColor3 = Color3.fromRGB(224, 224, 228),
-    ImageRectOffset = Vector2.new(0, 0),
-    ImageRectSize = Vector2.new(600, 211),
-    ImageTransparency = 1,
-    ScaleType = Enum.ScaleType.Crop,
-    Size = UDim2.fromScale(1, 1),
-    ZIndex = 4,
-}) :: any) :: ImageLabel
 create("Frame", {
     Parent = DarkContentHost,
     Name = "DarkReadabilityLayer",
@@ -1737,14 +1777,6 @@ local function setTab(tabName: string): ()
             or Theme.DefaultSidebar
         button.BackgroundTransparency = selected and 0.16 or 1
         button.TextColor3 = selected and Theme.DefaultText or Theme.DefaultTextMuted
-        local indicator: Frame? = button:FindFirstChild("SelectionIndicator") :: Frame?
-        if indicator then
-            TweenService:Create(
-                indicator,
-                TweenInfo.new(0.18, Enum.EasingStyle.Quad),
-                {BackgroundTransparency = selected and 0 or 1}
-            ):Play()
-        end
         local tabStroke: UIStroke? = button:FindFirstChild("StyleStroke") :: UIStroke?
         if tabStroke then
             tabStroke.Color = Theme.DefaultOutline
@@ -1762,6 +1794,7 @@ local function createTab(tabName: string, layoutOrder: number): CanvasGroup
     button.TextSize = state.isMobile and 10 or 14
     button.TextXAlignment = Enum.TextXAlignment.Left
     button.ZIndex = 11
+    button:SetAttribute("ThemeRole", "Navigation")
     button:SetAttribute("SelectedColor", Theme.SurfaceRaised)
     local indicator: Frame = (create("Frame", {
         Parent = button,
@@ -1804,26 +1837,16 @@ local function createTab(tabName: string, layoutOrder: number): CanvasGroup
     defaultButton.TextColor3 = Theme.DefaultTextMuted
     defaultButton.TextXAlignment = Enum.TextXAlignment.Left
     defaultButton.ZIndex = 12
+    defaultButton:SetAttribute("ThemeRole", "Navigation")
     defaultButton:SetAttribute("SelectedColor", Theme.DefaultSurface)
     defaultButton:SetAttribute("IdleColor", Theme.DefaultSidebar)
     defaultButton:SetAttribute("HoverColor", Theme.DefaultSurfaceHover)
     local defaultPadding: UIPadding = create("UIPadding", {
         Parent = defaultButton,
-        PaddingLeft = UDim.new(0, 18),
+        PaddingLeft = UDim.new(0, 12),
         PaddingRight = UDim.new(0, 10),
     }) :: UIPadding
     defaultPadding.Name = "DefaultTabPadding"
-    create("Frame", {
-        Parent = defaultButton,
-        Name = "SelectionIndicator",
-        AnchorPoint = Vector2.new(0, 0.5),
-        BackgroundColor3 = Theme.DefaultAccent,
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        Position = UDim2.new(0, 5, 0.5, 0),
-        Size = UDim2.fromOffset(3, 18),
-        ZIndex = 13,
-    })
     defaultTabButtons[tabName] = defaultButton
 
     local page: CanvasGroup = create("CanvasGroup", {
@@ -1918,95 +1941,6 @@ create("UIPadding", {
 state.shells.darkSearchBox = DarkSearchBox
 state.shells.defaultSearchBox = DefaultSearchBox
 state.searchQuery = ""
-end
-
-local ParticleOverlay: Frame = create("Frame", {
-    Parent = ScreenGui,
-    Name = "ParticleOverlay",
-    Active = false,
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    ClipsDescendants = true,
-    Size = UDim2.fromScale(1, 1),
-    ZIndex = 28,
-}) :: Frame
-
-local ScreenDarkcoreDecorations: Frame = create("Frame", {
-    Parent = ScreenGui,
-    Name = "ScreenDarkcoreDecorations",
-    Active = false,
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    ClipsDescendants = true,
-    Size = UDim2.fromScale(1, 1),
-    ZIndex = 27,
-}) :: Frame
-
-local function makeScreenDecoration(
-    name: string,
-    assetName: string,
-    position: UDim2,
-    size: UDim2,
-    anchorPoint: Vector2,
-    rotation: number
-): ImageLabel
-    local decoration: ImageLabel = create("ImageLabel", {
-        Parent = ScreenDarkcoreDecorations,
-        Name = name,
-        Active = false,
-        AnchorPoint = anchorPoint,
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        Image = "",
-        ImageColor3 = Color3.fromRGB(190, 192, 200),
-        ImageTransparency = 0.78,
-        Position = position,
-        Rotation = rotation,
-        ScaleType = Enum.ScaleType.Stretch,
-        Size = size,
-        ZIndex = 27,
-    }) :: ImageLabel
-    state.assetManager.loadAsync(assetName, decoration)
-    table.insert(state.decorativeObjects, decoration)
-    return decoration
-end
-
-do
-local EdgeDecorations: Frame = create("Frame", {
-    Parent = Main,
-    Name = "EdgeDecorations",
-    Active = false,
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    Size = UDim2.fromScale(1, 1),
-    ZIndex = 29,
-}) :: Frame
-local function makeEdgeDecoration(
-    name: string,
-    assetName: string,
-    position: UDim2,
-    size: UDim2,
-    anchorPoint: Vector2
-): ImageLabel
-    local decoration: ImageLabel = create("ImageLabel", {
-        Parent = EdgeDecorations,
-        Name = name,
-        Active = false,
-        AnchorPoint = anchorPoint,
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        Image = "",
-        ImageColor3 = Color3.fromRGB(214, 216, 224),
-        ImageTransparency = 0.66,
-        Position = position,
-        ScaleType = Enum.ScaleType.Fit,
-        Size = size,
-        ZIndex = 29,
-    }) :: ImageLabel
-    state.assetManager.loadAsync(assetName, decoration)
-    table.insert(state.decorativeObjects, decoration)
-    return decoration
-end
 end
 
 local UniversalScroll = create("ScrollingFrame", {
@@ -2146,23 +2080,6 @@ create("UICorner", {
     Parent = LoadingCurtain,
     CornerRadius = UDim.new(0, 10),
 })
-
-local LoadingTexture: ImageLabel = create("ImageLabel", {
-    Parent = LoadingCurtain,
-    Name = "InkTexture",
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    Image = "",
-    ImageColor3 = Color3.fromRGB(112, 114, 122),
-    ImageTransparency = 0.58,
-    Position = UDim2.fromScale(0.08, 0.16),
-    Rotation = -4,
-    ScaleType = Enum.ScaleType.Fit,
-    Size = UDim2.fromScale(0.84, 0.68),
-    Visible = state.guiStyle ~= "Default",
-    ZIndex = 501,
-}) :: ImageLabel
-state.assetManager.loadAsync("inkScratch", LoadingTexture)
 
 local LoadingSpinner: ImageLabel = create("ImageLabel", {
     Parent = LoadingCurtain,
@@ -2603,7 +2520,6 @@ local function beginMobileActionPlacement(
         .. "\nHOLD THE CIRCLE LATER TO REMOVE IT"
     MobilePlacementOverlay.Visible = true
     Main.Visible = false
-    state.updateBlossomAnimationState()
     Blur.Size = 0
 
     local placement: PendingMobilePlacement =
@@ -2617,7 +2533,6 @@ local function beginMobileActionPlacement(
                     state.setMenuVisible(true)
                 else
                     Main.Visible = true
-                    state.updateBlossomAnimationState()
                 end
             end
             notify("Mobile button placement cancelled.")
@@ -2646,7 +2561,6 @@ trackUiConnection(MobilePlacementOverlay.InputBegan:Connect(function(
             state.setMenuVisible(true)
         else
             Main.Visible = true
-            state.updateBlossomAnimationState()
         end
     end
     notify(placement.label .. " mobile button placed.")
@@ -2752,7 +2666,6 @@ trackUiConnection(MobileMenuButton.MouseButton1Click:Connect(function(): ()
     else
         state.visible = not state.visible
         Main.Visible = state.visible
-        state.updateBlossomAnimationState()
         setMobileActionVisibility(state.visible)
     end
 end))
@@ -2857,126 +2770,6 @@ end)
 
 state.taskManager = TaskManager
 do
-type AtmosphereParticle = {
-    image: ImageLabel,
-    active: boolean,
-    x: number,
-    y: number,
-    speed: number,
-    drift: number,
-    spin: number,
-    age: number,
-    lifetime: number,
-    baseTransparency: number,
-}
-local particleAssetNames: {string} = {
-    "particleSnow",
-    "particleStar",
-    "particleAsh",
-    "particlePetal",
-}
-local particlePool: {AtmosphereParticle} = {}
-local particlePoolSize: number = 0
-for index: number = 1, particlePoolSize do
-    local particleImage: ImageLabel = create("ImageLabel", {
-        Parent = ParticleOverlay,
-        Name = "AtmosphereParticle" .. tostring(index),
-        Active = false,
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        Image = "",
-        ImageColor3 = Color3.fromRGB(220, 222, 228),
-        ImageTransparency = 1,
-        ScaleType = Enum.ScaleType.Fit,
-        Size = UDim2.fromOffset(10, 10),
-        Visible = false,
-        ZIndex = 28,
-    }) :: ImageLabel
-    state.assetManager.loadAsync(
-        particleAssetNames[((index - 1) % #particleAssetNames) + 1],
-        particleImage
-    )
-    table.insert(particlePool, {
-        image = particleImage,
-        active = false,
-        x = 0,
-        y = 0,
-        speed = 0,
-        drift = 0,
-        spin = 0,
-        age = 0,
-        lifetime = 1,
-        baseTransparency = 0.5,
-    })
-end
-
-local visualMotionConnection: RBXScriptConnection? = nil
-local blossomFrame: number = 0
-local blossomElapsed: number = 0
-local atmosphereElapsed: number = 0
-local function resetAtmosphereParticles(): ()
-    for _, particle: AtmosphereParticle in ipairs(particlePool) do
-        particle.active = false
-        particle.image.Visible = false
-        particle.image.ImageTransparency = 1
-    end
-end
-
-local function spawnAtmosphereParticle(maximumActive: number): ()
-    local activeCount: number = 0
-    local available: AtmosphereParticle? = nil
-    for _, particle: AtmosphereParticle in ipairs(particlePool) do
-        if particle.active then
-            activeCount += 1
-        elseif available == nil then
-            available = particle
-        end
-    end
-    if activeCount >= maximumActive or available == nil then
-        return
-    end
-    local particle: AtmosphereParticle = available :: AtmosphereParticle
-    local size: number = math.random(5, state.isMobile and 12 or 15)
-    particle.active = true
-    particle.x = math.random()
-    particle.y = -0.04
-    particle.speed = math.random(24, 48)
-    particle.drift = math.random(-12, 12)
-    particle.spin = math.random(-34, 34)
-    particle.age = 0
-    particle.lifetime = math.random(55, 95) / 10
-    particle.baseTransparency = math.random(42, 72) / 100
-    particle.image.Size = UDim2.fromOffset(size, size)
-    particle.image.Rotation = math.random(0, 359)
-    particle.image.ImageTransparency = 1
-    particle.image.Visible = true
-end
-
-local function updateVisualMotionState(): ()
-    if visualMotionConnection then
-        visualMotionConnection:Disconnect()
-        visualMotionConnection = nil
-    end
-    blossomFrame = 0
-    blossomElapsed = 0
-    atmosphereElapsed = 0
-    BlossomBackground.Image = ""
-    BlossomBackground.ImageTransparency = 1
-    ParticleOverlay.Visible = false
-    ScreenDarkcoreDecorations.Visible = false
-    resetAtmosphereParticles()
-end
-state.updateBlossomAnimationState = updateVisualMotionState
-state.updateVisualMotionState = updateVisualMotionState
-state.cleanupVisualMotion = function(): ()
-    if visualMotionConnection then
-        visualMotionConnection:Disconnect()
-        visualMotionConnection = nil
-    end
-    resetAtmosphereParticles()
-end
-
 local function applyGuiStyle(styleName: string, animate: boolean): ()
     local normalizedStyle: string = styleName == "DARK" and "DARK" or "Default"
     local isDefault: boolean = normalizedStyle == "Default"
@@ -3010,7 +2803,6 @@ local function applyGuiStyle(styleName: string, animate: boolean): ()
     state.mainStroke.Color = isDefault and Theme.DefaultOutline or Theme.Accent
     state.mainStroke.Transparency = isDefault and 0.5 or 0.42
     DefaultPanelBackground.ImageTransparency = 0.04
-    BlossomBackground.Visible = not isDefault
     for _, page: CanvasGroup in pairs(pages) do
         page.BackgroundColor3 = isDefault and Theme.DefaultBackground or Theme.Background
         page.BackgroundTransparency = isDefault and 1 or 0
@@ -3025,6 +2817,12 @@ local function applyGuiStyle(styleName: string, animate: boolean): ()
     for _, button: TextButton in pairs(tabButtons) do
         button.BackgroundTransparency = 0
     end
+    if state.restyleButtons then
+        state.restyleButtons(isDefault)
+    end
+    if state.restyleTextBoxes then
+        state.restyleTextBoxes(isDefault)
+    end
     if state.restyleAllFeatures then
         state.restyleAllFeatures(isDefault)
     end
@@ -3035,11 +2833,9 @@ local function applyGuiStyle(styleName: string, animate: boolean): ()
         state.refreshCardGrids()
     end
     setTab(state.activeTab)
-    updateVisualMotionState()
 end
 state.applyGuiStyle = applyGuiStyle
 
-updateVisualMotionState()
 applyGuiStyle(state.guiStyle, false)
 end
 
@@ -3217,9 +3013,9 @@ local function setSwitchVisual(
     button:SetAttribute("Selected", enabled)
     local isDefault: boolean = state.guiStyle == "Default"
     local targetColor: Color3 = enabled
-        and (isDefault and Theme.DefaultAccent or state.headerColor)
-        or (isDefault and Theme.DefaultSurface or Theme.SurfaceRaised)
-    local knobSize: number = state.isMobile and 18 or 16
+        and (isDefault and Theme.DefaultButtonHover or state.headerColor)
+        or (isDefault and Theme.DefaultButton or Theme.SurfaceRaised)
+    local knobSize: number = state.isMobile and 20 or 18
     local knobPosition: UDim2 = enabled
         and UDim2.new(1, -(knobSize + 4), 0.5, -math.floor(knobSize / 2))
         or UDim2.new(0, 4, 0.5, -math.floor(knobSize / 2))
@@ -3233,21 +3029,36 @@ local function setSwitchVisual(
             TweenService:Create(
                 knob,
                 TweenInfo.new(0.18, Enum.EasingStyle.Quart),
-                {Position = knobPosition}
+                {
+                    Position = knobPosition,
+                    BackgroundColor3 = isDefault
+                        and Theme.DefaultText
+                        or Theme.Text,
+                }
             ):Play()
         end
     else
         button.BackgroundColor3 = targetColor
         if knob then
             knob.Position = knobPosition
+            knob.BackgroundColor3 = isDefault and Theme.DefaultText or Theme.Text
         end
+    end
+    local switchStroke: UIStroke? =
+        button:FindFirstChild("StyleStroke") :: UIStroke?
+    if switchStroke then
+        switchStroke.Color = isDefault and Theme.DefaultOutline or Theme.Outline
+        switchStroke.Transparency = enabled and 0.16 or 0.34
     end
 end
 
 local function createSwitch(parent: Instance, enabled: boolean): (TextButton, Frame)
     local button: TextButton = (makeButton(parent, "", 1) :: any) :: TextButton
     button.AutoButtonColor = false
-    button.Size = UDim2.fromOffset(state.isMobile and 46 or 42, state.isMobile and 28 or 24)
+    button:SetAttribute("ThemeRole", "Switch")
+    button:SetAttribute("NoHover", true)
+    button:SetAttribute("NoPressEffect", true)
+    button.Size = UDim2.fromOffset(state.isMobile and 50 or 46, state.isMobile and 28 or 26)
     local switchCorner: UICorner? = button:FindFirstChild("StyleCorner") :: UICorner?
     if switchCorner then
         switchCorner.CornerRadius = UDim.new(1, 0)
@@ -3257,7 +3068,7 @@ local function createSwitch(parent: Instance, enabled: boolean): (TextButton, Fr
         switchStroke.Transparency = 0.3
     end
 
-    local knobSize: number = state.isMobile and 18 or 16
+    local knobSize: number = state.isMobile and 20 or 18
     local knob: Frame = (create("Frame", {
         Parent = button,
         Name = "Knob",
@@ -3269,6 +3080,12 @@ local function createSwitch(parent: Instance, enabled: boolean): (TextButton, Fr
     create("UICorner", {
         Parent = knob,
         CornerRadius = UDim.new(1, 0),
+    })
+    create("UIStroke", {
+        Parent = knob,
+        Color = Color3.fromRGB(255, 255, 255),
+        Transparency = 0.55,
+        Thickness = 1,
     })
     setSwitchVisual(button, knob, enabled, false)
     return button, knob
@@ -3323,10 +3140,10 @@ local function applyFeaturePresentation(feature: any, isDefault: boolean): ()
     if feature.toggle then
         if feature.isAction then
             feature.toggle.BackgroundColor3 = isDefault
-                and Theme.DefaultAccent
+                and Theme.DefaultButtonHover
                 or Theme.AccentSoft
             feature.toggle.TextColor3 = isDefault
-                and Theme.DefaultBackground
+                and Theme.DefaultText
                 or Theme.Text
         elseif not feature.isCategory then
             setSwitchVisual(feature.toggle, feature.toggleKnob, enabled, false)
@@ -3339,9 +3156,9 @@ local function applyFeaturePresentation(feature: any, isDefault: boolean): ()
             slotFrame.Visible = not isDefault
         end
         feature.shortcutButton.BackgroundColor3 = isDefault
-            and Theme.DefaultSurface
+            and Theme.DefaultButton
             or Theme.SurfaceRaised
-        feature.shortcutButton.BackgroundTransparency = isDefault and 0.08 or 1
+        feature.shortcutButton.BackgroundTransparency = isDefault and 0 or 1
         feature.shortcutButton.TextColor3 = isDefault
             and Theme.DefaultText
             or Theme.Text
@@ -3431,7 +3248,9 @@ local function runActionButton(
     button:SetAttribute("Disabled", true)
     button.Active = false
     button.Text = "Running…"
-    button.BackgroundColor3 = Theme.AccentSoft
+    button.BackgroundColor3 = state.guiStyle == "Default"
+        and Theme.DefaultButtonHover
+        or Theme.AccentSoft
 
     task.spawn(function(): ()
         local running: boolean = true
@@ -3641,7 +3460,7 @@ local function createUniversalFeature(
     local title: TextLabel = (makeTextLabel(row, name, 12) :: any) :: TextLabel
     title.FontFace = CONTROL_FONT
     title.Position = UDim2.fromOffset(16, 0)
-    title.Size = UDim2.new(1, -136, 1, 0)
+    title.Size = UDim2.new(1, -136, 0, feature.collapsedHeight)
     title.TextColor3 = state.guiStyle == "Default"
         and Theme.DefaultText
         or Theme.Text
@@ -3665,7 +3484,9 @@ local function createUniversalFeature(
     local toggleKnob: Frame? = nil
     if feature.isAction then
         toggle = (makeButton(row, "RUN", 11) :: any) :: TextButton
-        toggle.BackgroundColor3 = Theme.AccentSoft
+        toggle.BackgroundColor3 = state.guiStyle == "Default"
+            and Theme.DefaultButtonHover
+            or Theme.AccentSoft
         toggle.Size = UDim2.fromOffset(state.isMobile and 52 or 46, state.isMobile and 28 or 24)
     else
         local createdToggle: TextButton, createdKnob: Frame =
@@ -3683,6 +3504,8 @@ local function createUniversalFeature(
     local arrow: TextButton =
         (makeButton(row, "•••", state.isMobile and 16 or 13) :: any) :: TextButton
     arrow.Name = "Expand"
+    arrow:SetAttribute("ThemeRole", "Icon")
+    arrow:SetAttribute("NoPressEffect", true)
     arrow.AnchorPoint = Vector2.new(1, 0)
     arrow.BackgroundTransparency = 1
     arrow.Position = UDim2.new(1, -7, 0, headerControlTop)
@@ -3870,7 +3693,9 @@ local function createUniversalFeature(
             (makeButton(row, "KEY", 9) :: any) :: TextButton
         shortcutButton.Name = "Shortcut"
         shortcutButton.AnchorPoint = Vector2.new(1, 0)
-        shortcutButton.BackgroundColor3 = Theme.SurfaceRaised
+        shortcutButton.BackgroundColor3 = state.guiStyle == "Default"
+            and Theme.DefaultButton
+            or Theme.SurfaceRaised
         shortcutButton.Position = UDim2.new(1, -84, 0, headerControlTop)
         shortcutButton.Size = UDim2.fromOffset(
             state.isMobile and 48 or 44,
@@ -4007,7 +3832,9 @@ local function addActionOption(
 ): TextButton
     local option = createOptionRow(feature, labelText)
     local button = makeButton(option, "RUN", 11)
-    button.BackgroundColor3 = Theme.AccentSoft
+    button.BackgroundColor3 = state.guiStyle == "Default"
+        and Theme.DefaultButtonHover
+        or Theme.AccentSoft
     button.Position = UDim2.new(0.72, 0, 0, 0)
     button.Size = UDim2.new(0.28, 0, 1, 0)
     local function executeAction(): ()
@@ -4022,7 +3849,9 @@ local function addActionOption(
     trackUiConnection(button.MouseButton1Click:Connect(executeAction))
     local shortcutButton: TextButton =
         (makeButton(option, "KEY", 9) :: any) :: TextButton
-    shortcutButton.BackgroundColor3 = Theme.SurfaceRaised
+    shortcutButton.BackgroundColor3 = state.guiStyle == "Default"
+        and Theme.DefaultButton
+        or Theme.SurfaceRaised
     shortcutButton.Position = UDim2.new(0.55, 0, 0, 0)
     shortcutButton.Size = UDim2.new(0.15, 0, 1, 0)
     applyKeySlotStyle(shortcutButton)
@@ -8169,7 +7998,9 @@ local TextSizeTrack: TextButton = create("TextButton", {
     Active = true,
     AutoButtonColor = false,
     AnchorPoint = Vector2.new(0, 0.5),
-    BackgroundColor3 = Color3.fromRGB(45, 45, 49),
+    BackgroundColor3 = state.guiStyle == "Default"
+        and Theme.DefaultButtonPressed
+        or Color3.fromRGB(45, 45, 49),
     BorderSizePixel = 0,
     Position = UDim2.new(0, 0, 0.5, 0),
     Size = UDim2.new(1, -58, 0, 4),
@@ -8182,7 +8013,9 @@ create("UICorner", {
 local TextSizeFill: Frame = create("Frame", {
     Parent = TextSizeTrack,
     Name = "Fill",
-    BackgroundColor3 = Color3.fromRGB(238, 238, 242),
+    BackgroundColor3 = state.guiStyle == "Default"
+        and Theme.DefaultButtonHover
+        or Color3.fromRGB(238, 238, 242),
     BorderSizePixel = 0,
     Size = UDim2.fromScale(textScaleRatio, 1),
 }) :: Frame
@@ -8194,7 +8027,9 @@ local TextSizeKnob: Frame = create("Frame", {
     Parent = TextSizeTrack,
     Name = "Knob",
     AnchorPoint = Vector2.new(0.5, 0.5),
-    BackgroundColor3 = Color3.fromRGB(250, 250, 252),
+    BackgroundColor3 = state.guiStyle == "Default"
+        and Theme.DefaultText
+        or Color3.fromRGB(250, 250, 252),
     BorderSizePixel = 0,
     Position = UDim2.fromScale(textScaleRatio, 0.5),
     Size = UDim2.fromOffset(14, 14),
@@ -8210,6 +8045,19 @@ create("UIStroke", {
     Transparency = 0.12,
     Thickness = 1,
 })
+local baseRestyleSettings: (boolean) -> () = state.restyleSettings
+state.restyleSettings = function(isDefault: boolean): ()
+    baseRestyleSettings(isDefault)
+    TextSizeTrack.BackgroundColor3 = isDefault
+        and Theme.DefaultButtonPressed
+        or Color3.fromRGB(45, 45, 49)
+    TextSizeFill.BackgroundColor3 = isDefault
+        and Theme.DefaultButtonHover
+        or Color3.fromRGB(238, 238, 242)
+    TextSizeKnob.BackgroundColor3 = isDefault
+        and Theme.DefaultText
+        or Color3.fromRGB(250, 250, 252)
+end
 local TextSizeValue: TextLabel = makeTextLabel(
     textControl,
     tostring(math.round(state.textScale * 100)) .. "%",
@@ -8241,21 +8089,11 @@ local MotionButton: TextButton, MotionKnob: Frame =
 MotionButton.AnchorPoint = Vector2.new(1, 0.5)
 MotionButton.Position = UDim2.new(1, 0, 0.5, 0)
 
-local decorationRow, decorationControl = createSettingRow(
-    "DARK decorative layer",
-    "Optional texture and ambient details used only by the DARK GUI"
-)
-decorationRow.LayoutOrder = 5
-local DecorationButton: TextButton, DecorationKnob: Frame =
-    createSwitch(decorationControl, state.decorativeTexturesEnabled)
-DecorationButton.AnchorPoint = Vector2.new(1, 0.5)
-DecorationButton.Position = UDim2.new(1, 0, 0.5, 0)
-
 local keyRow, keyControl = createSettingRow(
     "Menu key",
     "Choose the key used to show or hide"
 )
-keyRow.LayoutOrder = 6
+keyRow.LayoutOrder = 5
 
 local KeybindButton = makeButton(keyControl, state.toggleKey.Name, 13)
 KeybindButton.Size = UDim2.fromScale(1, 1)
@@ -8266,14 +8104,25 @@ local reinjectRow, reinjectControl = createSettingRow(
     "Reinject latest",
     "Download and restart the newest main build"
 )
-reinjectRow.LayoutOrder = 7
+reinjectRow.LayoutOrder = 6
 local ReinjectButton: TextButton = makeButton(
     reinjectControl,
     "REINJECT LATEST",
     12
 )
 ReinjectButton.Size = UDim2.fromScale(1, 1)
-ReinjectButton.BackgroundColor3 = Color3.fromRGB(29, 29, 33)
+
+local destructRow, destructControl = createSettingRow(
+    "Destruct",
+    "Disable every function and completely remove the menu from this client"
+)
+destructRow.LayoutOrder = 7
+local DestructButton: TextButton = makeButton(
+    destructControl,
+    "DESTRUCT",
+    12
+)
+DestructButton.Size = UDim2.fromScale(1, 1)
 
 local gameRow, gameControl = createSettingRow(
     "Game check",
@@ -8339,24 +8188,6 @@ local MobileResetButton = makeButton(
 )
 MobileResetButton.Size = UDim2.fromScale(1, 1)
 
-local helpText = makeTextLabel(
-    getFeatureCardParent(SettingsScroll),
-    "Active game module: "
-        .. (GAME_CHECK.MM2Active and "MM2"
-            or GAME_CHECK.TRSActive and "TRS"
-            or GAME_CHECK.VDActive and "VD"
-            or GAME_CHECK.MVSDActive and "MVSD"
-            or "Universal")
-        .. (state.isMobile
-            and " | Hold ADD on any function or action to place its shortcut."
-            or " | Drag the header or Default side strip to move the menu."),
-    11
-)
-helpText.LayoutOrder = 12
-helpText.TextColor3 = Color3.fromRGB(145, 145, 145)
-helpText.TextXAlignment = Enum.TextXAlignment.Center
-helpText.Size = UDim2.new(1, -4, 0, 30)
-
 local function setBlurVisible(animate)
     local targetSize = state.visible and state.blurEnabled and 16 or 0
 
@@ -8377,7 +8208,6 @@ local function setMenuVisible(visible: boolean): ()
     Main.Visible = visible
     state.mobileUi.setActionVisibility(visible)
     setBlurVisible(true)
-    state.updateBlossomAnimationState()
 end
 state.setMenuVisible = setMenuVisible
 
@@ -8454,7 +8284,6 @@ trackUiConnection(BlurButton.MouseButton1Click:Connect(function(): ()
     state.blurEnabled = not state.blurEnabled
     setSwitchVisual(BlurButton, BlurKnob, state.blurEnabled, true)
     setBlurVisible(true)
-    state.updateVisualMotionState()
     configData.ui.blurEnabled = state.blurEnabled
     queueConfigSave()
     notify(state.blurEnabled and "Desenfoque activado" or "Desenfoque desactivado")
@@ -8464,19 +8293,6 @@ trackUiConnection(MotionButton.MouseButton1Click:Connect(function(): ()
     state.animationsEnabled = not state.animationsEnabled
     setSwitchVisual(MotionButton, MotionKnob, state.animationsEnabled, true)
     configData.ui.animationsEnabled = state.animationsEnabled
-    queueConfigSave()
-end))
-
-trackUiConnection(DecorationButton.MouseButton1Click:Connect(function(): ()
-    state.decorativeTexturesEnabled = not state.decorativeTexturesEnabled
-    setSwitchVisual(
-        DecorationButton,
-        DecorationKnob,
-        state.decorativeTexturesEnabled,
-        true
-    )
-    configData.ui.decorativeTexturesEnabled = state.decorativeTexturesEnabled
-    state.updateVisualMotionState()
     queueConfigSave()
 end))
 
@@ -8565,14 +8381,24 @@ trackUiConnection(ReinjectButton.MouseButton1Click:Connect(function(): ()
     end)
 end))
 
-MobileIconButton.MouseButton1Click:Connect(function(): ()
+trackUiConnection(DestructButton.MouseButton1Click:Connect(function(): ()
+    DestructButton:SetAttribute("Disabled", true)
+    DestructButton.Text = "REMOVING…"
+    task.defer(function(): ()
+        if state.destruct then
+            state.destruct()
+        end
+    end)
+end))
+
+trackUiConnection(MobileIconButton.MouseButton1Click:Connect(function(): ()
     if not UserInputService.TouchEnabled then
         return
     end
     notify("The mobile menu icon remains enabled so the menu is always reachable.")
-end)
+end))
 
-MobileSizeButton.MouseButton1Click:Connect(function(): ()
+trackUiConnection(MobileSizeButton.MouseButton1Click:Connect(function(): ()
     if not UserInputService.TouchEnabled then
         return
     end
@@ -8600,20 +8426,20 @@ MobileSizeButton.MouseButton1Click:Connect(function(): ()
         state.mobileUi.saveActionPosition(record)
     end
     queueConfigSave()
-end)
+end))
 
-MobileResetButton.MouseButton1Click:Connect(function(): ()
+trackUiConnection(MobileResetButton.MouseButton1Click:Connect(function(): ()
     if not UserInputService.TouchEnabled then
         return
     end
     state.mobileUi.resetActions()
-end)
+end))
 
-KeybindButton.MouseButton1Click:Connect(function()
+trackUiConnection(KeybindButton.MouseButton1Click:Connect(function(): ()
     state.waitingForKey = true
     KeybindButton.Text = "PRESIONA UNA TECLA…"
     setKeySlotCapture(KeybindButton, true)
-end)
+end))
 
 end
 
@@ -8715,6 +8541,8 @@ if camera then
                 if not Main.Parent then
                     return
                 end
+                local resized: Vector2 = calculateWindowSize(viewportSize())
+                Main.Size = UDim2.fromOffset(resized.X, resized.Y)
                 local clamped: Vector2 = clampMainPosition(Vector2.new(
                     Main.Position.X.Offset,
                     Main.Position.Y.Offset
@@ -8765,7 +8593,6 @@ state.globalInputBeganConnection = UserInputService.InputBegan:Connect(function(
         else
             state.visible = not state.visible
             Main.Visible = state.visible
-            state.updateBlossomAnimationState()
         end
     end
 end)
@@ -8773,8 +8600,12 @@ end
 initializeWindowInput()
 end
 
-ScreenGui.AncestryChanged:Connect(function(_, parent)
-    if not parent then
+local runtimeCleaned: boolean = false
+local function cleanupRuntime(): ()
+    if runtimeCleaned then
+        return
+    end
+    runtimeCleaned = true
         for _, feature in ipairs(allFeatures) do
             if feature.enabled then
                 pcall(function()
@@ -8797,9 +8628,6 @@ ScreenGui.AncestryChanged:Connect(function(_, parent)
         table.clear(state.uiConnections)
 
         TaskManager:Destroy()
-        if state.cleanupVisualMotion then
-            state.cleanupVisualMotion()
-        end
         if state.globalInputChangedConnection then
             state.globalInputChangedConnection:Disconnect()
         end
@@ -8830,6 +8658,18 @@ ScreenGui.AncestryChanged:Connect(function(_, parent)
         if Blur.Parent then
             Blur:Destroy()
         end
+end
+
+state.destruct = function(): ()
+    cleanupRuntime()
+    if ScreenGui.Parent then
+        ScreenGui:Destroy()
+    end
+end
+
+ScreenGui.AncestryChanged:Connect(function(_: Instance, parent: Instance?): ()
+    if not parent then
+        cleanupRuntime()
     end
 end)
 
