@@ -39,9 +39,12 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
 - Desktop shells use integer-pixel, aspect-fitted dimensions capped near 60% of
   wide displays instead of scaling the complete canvas, which keeps text and
   strokes crisp while preserving drag boundaries on viewport changes.
-- Runtime typography uses Builder Sans through `FontFace` for consistent,
-  crisp rendering; `Assets/Typography/title-logo.png` remains source artwork,
-  not an installable font family.
+- Runtime controls use native Builder Sans through `FontFace` for crisp text at
+  small sizes. The cached Candy Fruits font is reserved for the large loading
+  title, where a decorative OTF can render cleanly without softening controls.
+- The permanent shell and tab pages are ordinary `Frame` instances rather than
+  nested `CanvasGroup` textures, preventing Roblox from rasterizing interface
+  text at a reduced intermediate resolution.
 - Universal Fly provides Balanced, Direct and Precise response presets,
   independent horizontal/vertical speed and progressive advanced controls.
   Speed provides Adaptive, Smooth, Boost and Teleport modes plus acceleration,
