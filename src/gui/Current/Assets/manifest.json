@@ -15,6 +15,24 @@
       "version": 1,
       "type": "image/jpeg"
     },
+    "candy_font": {
+      "category": "Typography",
+      "path": "Assets/Typography/CandyFruits.otf",
+      "usage": "Main menu title and loading title",
+      "localPath": "Assets\\Typography\\CandyFruits.otf",
+      "url": "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/main/src/gui/Current/Assets/Typography/CandyFruits.otf",
+      "version": 1,
+      "type": "font/otf"
+    },
+    "valve_font": {
+      "category": "Typography",
+      "path": "Assets/Typography/ValveBD.otf",
+      "usage": "Tabs, module titles and controls",
+      "localPath": "Assets\\Typography\\ValveBD.otf",
+      "url": "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/main/src/gui/Current/Assets/Typography/ValveBD.otf",
+      "version": 1,
+      "type": "font/otf"
+    },
     "header_eyes_frame": {
       "category": "Frames",
       "path": "Assets/Frames/header_eyes_frame.png",

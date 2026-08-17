@@ -1605,6 +1605,17 @@ end
 -- local gun activations confirmed by WeaponService.GunFired and locally-owned
 -- ThrowingKnife projectiles. It never rewrites a ray, CFrame, or remote payload.
 local function createTrajectoryCalibration(): any
+    type TrajectoryPoint = {
+        dt: number,
+        serverTime: number,
+        pingMs: number,
+        position: {number},
+        velocity: {number},
+        moveDirection: {number},
+        humanoidState: string,
+        grounded: boolean,
+        jumping: boolean,
+    }
     type RunningStats = {
         count: number,
         mean: number,
@@ -1616,13 +1627,27 @@ local function createTrajectoryCalibration(): any
         tool: Tool,
         activatedAt: number,
         origin: Vector3?,
+        requestedAim: Vector3?,
         pingMs: number,
+        targetUserId: number?,
+        targetName: string?,
+        targetTrajectory: {TrajectoryPoint},
+        lastTrajectorySampleAt: number,
+        confirmedAt: number?,
+        latencyMs: number?,
+        confirmedEndpoint: Vector3?,
+        confirmedHitTarget: boolean?,
     }
     type PendingKnife = {
         tool: Tool,
         activatedAt: number,
         origin: Vector3?,
+        requestedAim: Vector3?,
         pingMs: number,
+        targetUserId: number?,
+        targetName: string?,
+        targetTrajectory: {TrajectoryPoint},
+        lastTrajectorySampleAt: number,
     }
     type KnifeTrack = {
         startedAt: number,
@@ -1632,6 +1657,10 @@ local function createTrajectoryCalibration(): any
         rawSpeed: number?,
         spawnDelayMs: number,
         pingMs: number,
+        targetUserId: number?,
+        targetName: string?,
+        targetTrajectory: {TrajectoryPoint},
+        lastTrajectorySampleAt: number,
         destroyConnection: RBXScriptConnection?,
     }
     type CalibrationEvent = {
@@ -1643,6 +1672,21 @@ local function createTrajectoryCalibration(): any
         rawSpeed: number?,
         samples: number?,
         reason: string?,
+        targetUserId: number?,
+        targetName: string?,
+        targetState: string?,
+        targetJumped: boolean?,
+        targetTrajectory: {TrajectoryPoint}?,
+        observedDisplacement: {number}?,
+        constantVelocityResidual: {number}?,
+        horizontalLeadSeconds: number?,
+        verticalLeadSeconds: number?,
+        endpoint: {number}?,
+        hitTarget: boolean?,
+        pingBucket: string?,
+        bestMotionModel: string?,
+        motionModelErrors: {[string]: number}?,
+        evaluationSeconds: number?,
     }
     type Estimates = {
         gunAcceptanceMs: number?,
@@ -1666,6 +1710,7 @@ local function createTrajectoryCalibration(): any
     local MAX_EVENTS: number = 240
     local MAX_PENDING_AGE: number = 2.5
     local environment: {[string]: any} = getfenv() :: any
+    local playerMouse: Mouse = LocalPlayer:GetMouse()
     local runtime: any = {
         active = false,
         dirty = false,
@@ -1684,9 +1729,13 @@ local function createTrajectoryCalibration(): any
         gunAcceptance = nil :: RunningStats?,
         knifeSpeed = nil :: RunningStats?,
         knifeSpawnDelay = nil :: RunningStats?,
+        motionBuckets = {} :: {[string]: any},
+        trajectorySampler = nil :: any,
     }
     local controller: Controller
     local saveSnapshot: (reason: string) -> boolean
+    local compactPending: (queue: {any}, now: number) -> ()
+    local finalizeGunCapture: (pending: PendingGun) -> ()
 
     local function newStats(): RunningStats
         return {
@@ -1704,6 +1753,143 @@ local function createTrajectoryCalibration(): any
 
     local function finite(value: number): boolean
         return value == value and value > -math.huge and value < math.huge
+    end
+
+    local function vectorArray(value: Vector3): {number}
+        return {value.X, value.Y, value.Z}
+    end
+
+    local function pingBucketKey(pingMs: number): string
+        if pingMs > 250 then
+            return "250+"
+        end
+        local lower: number = math.clamp(math.floor(pingMs / 5) * 5, 0, 245)
+        return string.format("%03d-%03d", lower, lower + 5)
+    end
+
+    local function getTargetRoot(player: Player?): BasePart?
+        return player
+            and player.Character
+            and player.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+    end
+
+    local function getTargetHumanoid(player: Player?): Humanoid?
+        return player
+            and player.Character
+            and player.Character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+    end
+
+    local function captureTrajectoryPoint(
+        player: Player,
+        activatedAt: number,
+        pingMs: number
+    ): TrajectoryPoint?
+        local root: BasePart? = getTargetRoot(player)
+        local humanoid: Humanoid? = getTargetHumanoid(player)
+        if not root or not humanoid or humanoid.Health <= 0 then
+            return nil
+        end
+        local stateName: string = humanoid:GetState().Name
+        local grounded: boolean = humanoid.FloorMaterial ~= Enum.Material.Air
+        local jumping: boolean = stateName == "Jumping"
+            or stateName == "Freefall"
+            or not grounded
+        return {
+            dt = os.clock() - activatedAt,
+            serverTime = workspace:GetServerTimeNow(),
+            pingMs = pingMs,
+            position = vectorArray(root.Position),
+            velocity = vectorArray(root.AssemblyLinearVelocity),
+            moveDirection = vectorArray(humanoid.MoveDirection),
+            humanoidState = stateName,
+            grounded = grounded,
+            jumping = jumping,
+        }
+    end
+
+    local function findKnifeAnalysisTarget(aimPosition: Vector3?): Player?
+        local selected: Player? = nil
+        local selectedScore: number = math.huge
+        for _, player: Player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer
+                and isPlayerAlive(player)
+                and getPlayerRole(player) ~= "Murderer"
+                and not state.isProtectedTarget(player) then
+                local root: BasePart? = getTargetRoot(player)
+                if root then
+                    local score: number = aimPosition
+                            and (root.Position - aimPosition).Magnitude
+                        or (root.Position - (LocalPlayer.Character
+                                and LocalPlayer.Character:GetPivot().Position
+                            or Vector3.zero)).Magnitude
+                    if score < selectedScore then
+                        selected = player
+                        selectedScore = score
+                    end
+                end
+            end
+        end
+        return selected
+    end
+
+    local function getRequestedAim(): Vector3?
+        local aim: Vector3? = nil
+        pcall(function(): ()
+            aim = playerMouse.Hit.Position
+        end)
+        return aim
+    end
+
+    local function samplePendingTrajectories(): ()
+        local now: number = os.clock()
+        local function sampleQueue(queue: {any}): ()
+            for _, pending: any in ipairs(queue) do
+                if pending.targetUserId
+                    and now - pending.lastTrajectorySampleAt >= 1 / 30 then
+                    local target: Player? = Players:GetPlayerByUserId(
+                        pending.targetUserId
+                    )
+                    local point: TrajectoryPoint? = target
+                        and captureTrajectoryPoint(
+                            target,
+                            pending.activatedAt,
+                            pending.pingMs
+                        )
+                        or nil
+                    if point and #pending.targetTrajectory < 120 then
+                        table.insert(pending.targetTrajectory, point)
+                    end
+                    pending.lastTrajectorySampleAt = now
+                end
+            end
+        end
+        sampleQueue(runtime.pendingGuns)
+        sampleQueue(runtime.pendingKnives)
+        for index: number = #runtime.pendingGuns, 1, -1 do
+            local pending: PendingGun = runtime.pendingGuns[index]
+            if pending.confirmedAt and now - pending.confirmedAt >= 0.5 then
+                table.remove(runtime.pendingGuns, index)
+                finalizeGunCapture(pending)
+            end
+        end
+        if #runtime.pendingGuns == 0 and #runtime.pendingKnives == 0
+            and runtime.trajectorySampler then
+            runtime.trajectorySampler:Disconnect()
+            runtime.trajectorySampler = nil
+        end
+    end
+
+    local function ensureTrajectorySampler(): ()
+        if runtime.trajectorySampler then
+            return
+        end
+        runtime.trajectorySampler = TaskManager:Connect(function(
+            _deltaTime: number
+        ): ()
+            compactPending(runtime.pendingGuns, os.clock())
+            compactPending(runtime.pendingKnives, os.clock())
+            samplePendingTrajectories()
+        end)
     end
 
     local function addSample(stats: RunningStats, value: number): ()
@@ -1818,13 +2004,211 @@ local function createTrajectoryCalibration(): any
         table.insert(runtime.connections, connection)
     end
 
-    local function compactPending(queue: {any}, now: number): ()
+    compactPending = function(queue: {any}, now: number): ()
         while #queue > 0 and now - queue[1].activatedAt > MAX_PENDING_AGE do
             table.remove(queue, 1)
         end
         while #queue > 12 do
             table.remove(queue, 1)
         end
+    end
+
+    local function vectorFromArray(value: {number}): Vector3
+        return Vector3.new(value[1] or 0, value[2] or 0, value[3] or 0)
+    end
+
+    local function analyzeTargetTrajectory(
+        trajectory: {TrajectoryPoint},
+        pingMs: number,
+        eventKind: string,
+        evaluationSeconds: number?
+    ): {[string]: any}
+        if #trajectory < 2 then
+            return {
+                pingBucket = pingBucketKey(pingMs),
+                sampleCount = #trajectory,
+            }
+        end
+        local first: TrajectoryPoint = trajectory[1]
+        local last: TrajectoryPoint = trajectory[#trajectory]
+        if evaluationSeconds then
+            local desiredDt: number = first.dt + evaluationSeconds
+            local closestDistance: number = math.huge
+            for _, point: TrajectoryPoint in ipairs(trajectory) do
+                local distance: number = math.abs(point.dt - desiredDt)
+                if distance < closestDistance then
+                    last = point
+                    closestDistance = distance
+                end
+            end
+        end
+        local initialPosition: Vector3 = vectorFromArray(first.position)
+        local finalPosition: Vector3 = vectorFromArray(last.position)
+        local initialVelocity: Vector3 = vectorFromArray(first.velocity)
+        local duration: number = math.max(0.0001, last.dt - first.dt)
+        local displacement: Vector3 = finalPosition - initialPosition
+        local residual: Vector3 = displacement - initialVelocity * duration
+        local constantVelocityPrediction: Vector3 = initialPosition
+            + initialVelocity * duration
+        local observedAcceleration: Vector3 = Vector3.zero
+        if #trajectory >= 3 then
+            local second: TrajectoryPoint = trajectory[2]
+            local accelerationDelta: number = math.max(
+                1 / 240,
+                second.dt - first.dt
+            )
+            observedAcceleration = (
+                vectorFromArray(second.velocity) - initialVelocity
+            ) / accelerationDelta
+            if observedAcceleration.Magnitude > 500 then
+                observedAcceleration = observedAcceleration.Unit * 500
+            end
+        end
+        local accelerationPrediction: Vector3 = initialPosition
+            + initialVelocity * duration
+            + observedAcceleration * (0.5 * duration * duration)
+        local ballisticPrediction: Vector3 = initialPosition
+            + initialVelocity * duration
+            + Vector3.new(0, -workspace.Gravity, 0)
+                * (0.5 * duration * duration)
+        local modelErrors: {[string]: number} = {
+            constantVelocity = (constantVelocityPrediction - finalPosition).Magnitude,
+            observedAcceleration = (accelerationPrediction - finalPosition).Magnitude,
+            airborneBallistic = (ballisticPrediction - finalPosition).Magnitude,
+        }
+        local bestMotionModel: string = "constantVelocity"
+        local bestMotionError: number = modelErrors.constantVelocity
+        for modelName: string, modelError: number in pairs(modelErrors) do
+            if modelError < bestMotionError then
+                bestMotionModel = modelName
+                bestMotionError = modelError
+            end
+        end
+        local horizontalVelocity: Vector3 = Vector3.new(
+            initialVelocity.X,
+            0,
+            initialVelocity.Z
+        )
+        local horizontalDisplacement: Vector3 = Vector3.new(
+            displacement.X,
+            0,
+            displacement.Z
+        )
+        local horizontalLead: number? = nil
+        if horizontalVelocity.Magnitude > 0.75 then
+            horizontalLead = math.clamp(
+                horizontalDisplacement:Dot(horizontalVelocity)
+                    / horizontalVelocity:Dot(horizontalVelocity),
+                -0.15,
+                0.6
+            )
+        end
+        local verticalLead: number? = nil
+        if math.abs(initialVelocity.Y) > 0.75 then
+            verticalLead = math.clamp(
+                displacement.Y / initialVelocity.Y,
+                -0.15,
+                0.6
+            )
+        end
+        local jumped: boolean = false
+        for _, point: TrajectoryPoint in ipairs(trajectory) do
+            if point.jumping then
+                jumped = true
+                break
+            end
+        end
+        local stateName: string = jumped and "Airborne" or "Grounded"
+        local bucketKey: string = eventKind
+            .. ":"
+            .. pingBucketKey(pingMs)
+            .. ":"
+            .. stateName
+        local bucket: any = runtime.motionBuckets[bucketKey]
+        if type(bucket) ~= "table" then
+            bucket = {
+                count = 0,
+                horizontalLeadSum = 0,
+                horizontalLeadCount = 0,
+                verticalLeadSum = 0,
+                verticalLeadCount = 0,
+                residualXSum = 0,
+                residualYSum = 0,
+                residualZSum = 0,
+                durationSum = 0,
+                constantVelocityErrorSum = 0,
+                observedAccelerationErrorSum = 0,
+                airborneBallisticErrorSum = 0,
+            }
+            runtime.motionBuckets[bucketKey] = bucket
+        end
+        bucket.count += 1
+        bucket.durationSum += duration
+        bucket.residualXSum += residual.X
+        bucket.residualYSum += residual.Y
+        bucket.residualZSum += residual.Z
+        bucket.constantVelocityErrorSum += modelErrors.constantVelocity
+        bucket.observedAccelerationErrorSum += modelErrors.observedAcceleration
+        bucket.airborneBallisticErrorSum += modelErrors.airborneBallistic
+        if horizontalLead then
+            bucket.horizontalLeadSum += horizontalLead
+            bucket.horizontalLeadCount += 1
+        end
+        if verticalLead then
+            bucket.verticalLeadSum += verticalLead
+            bucket.verticalLeadCount += 1
+        end
+        return {
+            pingBucket = pingBucketKey(pingMs),
+            sampleCount = #trajectory,
+            initialState = first.humanoidState,
+            finalState = last.humanoidState,
+            jumped = jumped,
+            durationSeconds = duration,
+            evaluationSeconds = evaluationSeconds or duration,
+            displacement = vectorArray(displacement),
+            constantVelocityResidual = vectorArray(residual),
+            horizontalLeadSeconds = horizontalLead,
+            verticalLeadSeconds = verticalLead,
+            bestMotionModel = bestMotionModel,
+            motionModelErrors = modelErrors,
+        }
+    end
+
+    local function motionModelPayload(): {[string]: any}
+        local payload: {[string]: any} = {}
+        for key: string, bucket: any in pairs(runtime.motionBuckets) do
+            local count: number = math.max(1, tonumber(bucket.count) or 1)
+            local horizontalCount: number = math.max(
+                1,
+                tonumber(bucket.horizontalLeadCount) or 0
+            )
+            local verticalCount: number = math.max(
+                1,
+                tonumber(bucket.verticalLeadCount) or 0
+            )
+            payload[key] = {
+                count = bucket.count,
+                meanDurationSeconds = bucket.durationSum / count,
+                meanHorizontalLeadSeconds = bucket.horizontalLeadCount > 0
+                        and bucket.horizontalLeadSum / horizontalCount
+                    or nil,
+                meanVerticalLeadSeconds = bucket.verticalLeadCount > 0
+                        and bucket.verticalLeadSum / verticalCount
+                    or nil,
+                meanConstantVelocityResidual = {
+                    bucket.residualXSum / count,
+                    bucket.residualYSum / count,
+                    bucket.residualZSum / count,
+                },
+                meanModelError = {
+                    constantVelocity = bucket.constantVelocityErrorSum / count,
+                    observedAcceleration = bucket.observedAccelerationErrorSum / count,
+                    airborneBallistic = bucket.airborneBallisticErrorSum / count,
+                },
+            }
+        end
+        return payload
     end
 
     local function median(values: {number}): number?
@@ -1857,7 +2241,8 @@ local function createTrajectoryCalibration(): any
             return false
         end
         local payload: {[string]: any} = {
-            schema = 1,
+            schema = 2,
+            kind = "mm2-trajectory-analytics",
             placeId = game.PlaceId,
             savedAt = DateTime.now():ToIsoDate(),
             reason = reason,
@@ -1867,6 +2252,16 @@ local function createTrajectoryCalibration(): any
                 knifeSpawnDelayMs = statsPayload(runtime.knifeSpawnDelay),
             },
             estimator = estimates(),
+            analytics = {
+                bucketSpec = {
+                    metric = "Data Ping",
+                    widthMs = 5,
+                    minimumMs = 0,
+                    maximumMs = 250,
+                    states = {"Grounded", "Airborne"},
+                },
+                motionModel = motionModelPayload(),
+            },
             session = {
                 elapsedSeconds = os.clock() - runtime.startedAt,
                 gunAttempts = runtime.sessionGunAttempts,
@@ -1928,8 +2323,26 @@ local function createTrajectoryCalibration(): any
             HttpService,
             encoded
         )
-        if not decodeOk or type(decoded) ~= "table" or decoded.placeId ~= game.PlaceId then
-            warn("[RTM:MM2:Trajectory] Caché ignorada: formato o PlaceId inválido.")
+        if not decodeOk
+            or type(decoded) ~= "table"
+            or decoded.placeId ~= game.PlaceId
+            or decoded.schema ~= 2
+            or decoded.kind ~= "mm2-trajectory-analytics" then
+            if decodeOk
+                and type(decoded) == "table"
+                and decoded.placeId == game.PlaceId
+                and decoded.schema == 1
+                and type(environment.writefile) == "function" then
+                pcall(
+                    environment.writefile,
+                    OUTPUT_FOLDER
+                        .. "/MM2_Trajectory_Calibration.schema1.backup.json",
+                    encoded
+                )
+            end
+            warn(
+                "[RTM:MM2:Trajectory] Caché schema 1 ignorada; schema 2 inicia limpio."
+            )
             return
         end
         local aggregate: any = decoded.aggregate
@@ -1937,6 +2350,47 @@ local function createTrajectoryCalibration(): any
             runtime.gunAcceptance = restoreStats(aggregate.gunAcceptanceMs)
             runtime.knifeSpeed = restoreStats(aggregate.knifeSpeedStudsPerSecond)
             runtime.knifeSpawnDelay = restoreStats(aggregate.knifeSpawnDelayMs)
+        end
+        local analytics: any = decoded.analytics
+        if type(analytics) == "table"
+            and type(analytics.motionModel) == "table" then
+            for key: string, bucket: any in pairs(analytics.motionModel) do
+                local count: number = math.max(0, tonumber(bucket.count) or 0)
+                local residual: any = bucket.meanConstantVelocityResidual
+                local errors: any = bucket.meanModelError
+                runtime.motionBuckets[key] = {
+                    count = count,
+                    horizontalLeadSum = (tonumber(bucket.meanHorizontalLeadSeconds) or 0)
+                        * count,
+                    horizontalLeadCount = bucket.meanHorizontalLeadSeconds ~= nil
+                            and count
+                        or 0,
+                    verticalLeadSum = (tonumber(bucket.meanVerticalLeadSeconds) or 0)
+                        * count,
+                    verticalLeadCount = bucket.meanVerticalLeadSeconds ~= nil
+                            and count
+                        or 0,
+                    residualXSum = type(residual) == "table"
+                            and (tonumber(residual[1]) or 0) * count
+                        or 0,
+                    residualYSum = type(residual) == "table"
+                            and (tonumber(residual[2]) or 0) * count
+                        or 0,
+                    residualZSum = type(residual) == "table"
+                            and (tonumber(residual[3]) or 0) * count
+                        or 0,
+                    durationSum = (tonumber(bucket.meanDurationSeconds) or 0) * count,
+                    constantVelocityErrorSum = type(errors) == "table"
+                            and (tonumber(errors.constantVelocity) or 0) * count
+                        or 0,
+                    observedAccelerationErrorSum = type(errors) == "table"
+                            and (tonumber(errors.observedAcceleration) or 0) * count
+                        or 0,
+                    airborneBallisticErrorSum = type(errors) == "table"
+                            and (tonumber(errors.airborneBallistic) or 0) * count
+                        or 0,
+                }
+            end
         end
         print("[RTM:MM2:Trajectory] Perfil acumulativo restaurado.")
     end
@@ -1951,11 +2405,43 @@ local function createTrajectoryCalibration(): any
         return value:FindFirstAncestorOfClass("Tool")
     end
 
+    finalizeGunCapture = function(pending: PendingGun): ()
+        local analysis: {[string]: any} = analyzeTargetTrajectory(
+            pending.targetTrajectory,
+            pending.pingMs,
+            "gun",
+            (pending.latencyMs or 0) / 1000
+        )
+        appendEvent({
+            kind = "gun",
+            serverTime = workspace:GetServerTimeNow(),
+            pingMs = pending.pingMs,
+            latencyMs = pending.latencyMs,
+            targetUserId = pending.targetUserId,
+            targetName = pending.targetName,
+            targetState = analysis.initialState,
+            targetJumped = analysis.jumped,
+            targetTrajectory = pending.targetTrajectory,
+            observedDisplacement = analysis.displacement,
+            constantVelocityResidual = analysis.constantVelocityResidual,
+            horizontalLeadSeconds = analysis.horizontalLeadSeconds,
+            verticalLeadSeconds = analysis.verticalLeadSeconds,
+            endpoint = pending.confirmedEndpoint
+                    and vectorArray(pending.confirmedEndpoint)
+                or nil,
+            hitTarget = pending.confirmedHitTarget,
+            pingBucket = analysis.pingBucket,
+            bestMotionModel = analysis.bestMotionModel,
+            motionModelErrors = analysis.motionModelErrors,
+            evaluationSeconds = analysis.evaluationSeconds,
+        })
+    end
+
     local function handleGunFired(
         eventGun: any,
         eventOriginValue: any,
-        _endpointValue: any,
-        _hitPartValue: any
+        endpointValue: any,
+        hitPartValue: any
     ): ()
         if not runtime.active then
             return
@@ -1967,11 +2453,13 @@ local function createTrajectoryCalibration(): any
         local selectedIndex: number? = nil
         for index: number = #runtime.pendingGuns, 1, -1 do
             local pending: PendingGun = runtime.pendingGuns[index]
-            local toolMatches: boolean = eventTool == pending.tool
+            local toolMatches: boolean = not pending.confirmedAt
+                and eventTool == pending.tool
             local originMatches: boolean = eventOrigin ~= nil
                 and pending.origin ~= nil
                 and (eventOrigin - pending.origin).Magnitude <= 8
-            if toolMatches or (eventTool == nil and originMatches) then
+            if not pending.confirmedAt
+                and (toolMatches or (eventTool == nil and originMatches)) then
                 selectedIndex = index
                 break
             end
@@ -1979,16 +2467,33 @@ local function createTrajectoryCalibration(): any
         if not selectedIndex then
             return
         end
-        local pending: PendingGun = table.remove(runtime.pendingGuns, selectedIndex)
+        local pending: PendingGun = runtime.pendingGuns[selectedIndex]
         local latencyMs: number = math.max(0, (now - pending.activatedAt) * 1000)
+        local target: Player? = pending.targetUserId
+            and Players:GetPlayerByUserId(pending.targetUserId)
+            or nil
+        if target then
+            local finalPoint: TrajectoryPoint? = captureTrajectoryPoint(
+                target,
+                pending.activatedAt,
+                pending.pingMs
+            )
+            if finalPoint then
+                table.insert(pending.targetTrajectory, finalPoint)
+            end
+        end
+        local endpoint: Vector3? = worldPosition(endpointValue)
+        local targetCharacter: Model? = target and target.Character
+        local hitTarget: boolean = typeof(hitPartValue) == "Instance"
+            and targetCharacter ~= nil
+            and hitPartValue:IsDescendantOf(targetCharacter)
         addSample(runtime.gunAcceptance, latencyMs)
         runtime.sessionGunConfirmed += 1
-        appendEvent({
-            kind = "gun",
-            serverTime = workspace:GetServerTimeNow(),
-            pingMs = pending.pingMs,
-            latencyMs = latencyMs,
-        })
+        pending.confirmedAt = now
+        pending.latencyMs = latencyMs
+        pending.confirmedEndpoint = endpoint
+        pending.confirmedHitTarget = hitTarget
+        ensureTrajectorySampler()
     end
 
     local finishKnifeTrack: (projectile: Instance, reason: string) -> ()
@@ -2011,6 +2516,12 @@ local function createTrajectoryCalibration(): any
         local measuredSpeed: number? = median(track.speeds)
         local resolvedSpeed: number? = track.rawSpeed or measuredSpeed
         if resolvedSpeed and resolvedSpeed >= 24 and resolvedSpeed <= 300 then
+            local analysis: {[string]: any} = analyzeTargetTrajectory(
+                track.targetTrajectory,
+                track.pingMs,
+                "knife",
+                nil
+            )
             addSample(runtime.knifeSpeed, resolvedSpeed)
             runtime.sessionKnifeConfirmed += 1
             appendEvent({
@@ -2022,6 +2533,19 @@ local function createTrajectoryCalibration(): any
                 rawSpeed = track.rawSpeed,
                 samples = #track.speeds,
                 reason = reason,
+                targetUserId = track.targetUserId,
+                targetName = track.targetName,
+                targetState = analysis.initialState,
+                targetJumped = analysis.jumped,
+                targetTrajectory = track.targetTrajectory,
+                observedDisplacement = analysis.displacement,
+                constantVelocityResidual = analysis.constantVelocityResidual,
+                horizontalLeadSeconds = analysis.horizontalLeadSeconds,
+                verticalLeadSeconds = analysis.verticalLeadSeconds,
+                pingBucket = analysis.pingBucket,
+                bestMotionModel = analysis.bestMotionModel,
+                motionModelErrors = analysis.motionModelErrors,
+                evaluationSeconds = analysis.evaluationSeconds,
             })
         end
         stopKnifeSamplerIfIdle()
@@ -2055,6 +2579,23 @@ local function createTrajectoryCalibration(): any
                 if position then
                     track.previousPosition = position
                     track.previousAt = now
+                end
+                if track.targetUserId
+                    and now - track.lastTrajectorySampleAt >= 1 / 30 then
+                    local target: Player? = Players:GetPlayerByUserId(
+                        track.targetUserId
+                    )
+                    local point: TrajectoryPoint? = target
+                        and captureTrajectoryPoint(
+                            target,
+                            track.startedAt - track.spawnDelayMs / 1000,
+                            track.pingMs
+                        )
+                        or nil
+                    if point and #track.targetTrajectory < 120 then
+                        table.insert(track.targetTrajectory, point)
+                    end
+                    track.lastTrajectorySampleAt = now
                 end
             end
             for _, projectile: Instance in ipairs(completed) do
@@ -2119,6 +2660,10 @@ local function createTrajectoryCalibration(): any
                 rawSpeed = rawSpeed,
                 spawnDelayMs = spawnDelayMs,
                 pingMs = pending.pingMs,
+                targetUserId = pending.targetUserId,
+                targetName = pending.targetName,
+                targetTrajectory = pending.targetTrajectory,
+                lastTrajectorySampleAt = now,
                 destroyConnection = nil,
             }
             runtime.tracks[projectile] = track
@@ -2156,13 +2701,34 @@ local function createTrajectoryCalibration(): any
                 return
             end
             local now: number = os.clock()
+            local requestedAim: Vector3? = getRequestedAim()
+            local pingMs: number = getPingMilliseconds()
+            local target: Player? = gun
+                    and findMurderer()
+                or findKnifeAnalysisTarget(requestedAim)
+            local targetTrajectory: {TrajectoryPoint} = {}
+            if target then
+                local initialPoint: TrajectoryPoint? = captureTrajectoryPoint(
+                    target,
+                    now,
+                    pingMs
+                )
+                if initialPoint then
+                    table.insert(targetTrajectory, initialPoint)
+                end
+            end
             if gun then
                 runtime.sessionGunAttempts += 1
                 table.insert(runtime.pendingGuns, {
                     tool = tool,
                     activatedAt = now,
                     origin = toolOrigin(tool),
-                    pingMs = getPingMilliseconds(),
+                    requestedAim = requestedAim,
+                    pingMs = pingMs,
+                    targetUserId = target and target.UserId or nil,
+                    targetName = target and target.Name or nil,
+                    targetTrajectory = targetTrajectory,
+                    lastTrajectorySampleAt = now,
                 })
                 compactPending(runtime.pendingGuns, now)
             elseif knife then
@@ -2171,10 +2737,16 @@ local function createTrajectoryCalibration(): any
                     tool = tool,
                     activatedAt = now,
                     origin = toolOrigin(tool),
-                    pingMs = getPingMilliseconds(),
+                    requestedAim = requestedAim,
+                    pingMs = pingMs,
+                    targetUserId = target and target.UserId or nil,
+                    targetName = target and target.Name or nil,
+                    targetTrajectory = targetTrajectory,
+                    lastTrajectorySampleAt = now,
                 })
                 compactPending(runtime.pendingKnives, now)
             end
+            ensureTrajectorySampler()
         end))
     end
 
@@ -2278,6 +2850,7 @@ local function createTrajectoryCalibration(): any
         runtime.gunAcceptance = newStats()
         runtime.knifeSpeed = newStats()
         runtime.knifeSpawnDelay = newStats()
+        runtime.motionBuckets = {}
         runtime.events = {}
         runtime.sessionGunAttempts = 0
         runtime.sessionGunConfirmed = 0
@@ -2293,18 +2866,19 @@ local function createTrajectoryCalibration(): any
 
     function controller:status(): string
         local current: Estimates = estimates()
-        local gunText: string = current.gunAcceptanceMs
-                and string.format("%.1f ms", current.gunAcceptanceMs)
-            or "learning"
         local knifeText: string = current.knifeSpeed
                 and string.format("%.2f studs/s", current.knifeSpeed)
             or "learning"
+        local bucketCount: number = 0
+        for _key: string in pairs(runtime.motionBuckets) do
+            bucketCount += 1
+        end
         return string.format(
-            "Gun %s (%d) · Knife %s (%d)",
-            gunText,
+            "MM2 analytics · shots %d · throws %d · motion buckets %d · knife %s",
             current.confirmedShots,
-            knifeText,
-            current.confirmedThrows
+            current.confirmedThrows,
+            bucketCount,
+            knifeText
         )
     end
 
@@ -2317,6 +2891,10 @@ local function createTrajectoryCalibration(): any
         end
         runtime.active = false
         disconnectFeatureConnection("MM2TrajectorySampler")
+        if runtime.trajectorySampler then
+            runtime.trajectorySampler:Disconnect()
+            runtime.trajectorySampler = nil
+        end
         for projectile: Instance, track: KnifeTrack in pairs(runtime.tracks) do
             if track.destroyConnection then
                 track.destroyConnection:Disconnect()
@@ -3951,7 +4529,7 @@ toggleShootMurderer(true)
 
 local TrajectoryFeature: any = createUniversalFeature(
     "Trajectory Calibration",
-    "Passive event-driven calibration for your own confirmed shots and knife throws",
+    "MM2-only target motion, jump, ping, endpoint and knife-flight analytics",
     5,
     function(): () end,
     {
@@ -3976,7 +4554,7 @@ addActionOption(TrajectoryFeature, "Reset calibration", function(): ()
 end)
 addInformationOption(
     TrajectoryFeature,
-    "Auto-starts only in MM2. Records no continuous player-motion stream and never changes weapon arguments."
+    "Schema 2 records 30 Hz target windows only around your shots/throws. It stays isolated from Universal analytics and never changes weapon arguments."
 )
 
 local KnifeFeature = createUniversalFeature(
