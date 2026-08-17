@@ -111,8 +111,10 @@ type AimRuntime = {
     esp: {[Player]: EspRecord},
     rayHookInstalled: boolean,
     oldRay: any,
+    rayHookWrapper: any,
     raycastHookInstalled: boolean,
     oldRaycast: any,
+    raycastHookWrapper: any,
     suppressRaycast: boolean,
     autoShootHeld: boolean,
     autoShootNextAt: number,
@@ -163,8 +165,10 @@ local function buildMVSDFeatures(): ()
         esp = {},
         rayHookInstalled = false,
         oldRay = nil,
+        rayHookWrapper = nil,
         raycastHookInstalled = false,
         oldRaycast = nil,
+        raycastHookWrapper = nil,
         suppressRaycast = false,
         autoShootHeld = false,
         autoShootNextAt = 0,
@@ -538,15 +542,16 @@ local function buildMVSDFeatures(): ()
         if type(hookfunction) ~= "function" or Ray == nil then
             return false
         end
+        local predecessor: any = nil
         local callback = function(origin: any, direction: any)
-            if runtime.oldRay ~= nil then
+            if predecessor ~= nil then
                 if typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
                     local redirected: any = redirectRay(origin, direction)
                     if redirected and redirected.direction then
-                        return runtime.oldRay(origin, redirected.direction)
+                        return predecessor(origin, redirected.direction)
                     end
                 end
-                return runtime.oldRay(origin, direction)
+                return predecessor(origin, direction)
             end
             return nil
         end
@@ -554,11 +559,12 @@ local function buildMVSDFeatures(): ()
         if type(newcclosure) == "function" then
             wrapped = newcclosure(callback)
         end
-        local oldRay: any = hookfunction(Ray.new, wrapped)
-        if oldRay == nil then
+        predecessor = hookfunction(Ray.new, wrapped)
+        if predecessor == nil then
             return false
         end
-        runtime.oldRay = oldRay
+        runtime.oldRay = predecessor
+        runtime.rayHookWrapper = wrapped
         runtime.rayHookInstalled = true
         return true
     end
@@ -579,8 +585,9 @@ local function buildMVSDFeatures(): ()
         if type(raycastMethod) ~= "function" then
             return false
         end
+        local predecessor: any = nil
         local callback = function(self, ...)
-            if runtime.oldRaycast == nil then
+            if predecessor == nil then
                 return nil
             end
             if not runtime.suppressRaycast then
@@ -594,38 +601,63 @@ local function buildMVSDFeatures(): ()
                         if redirected.wallParams ~= nil then
                             args[3] = redirected.wallParams
                         end
-                        return runtime.oldRaycast(self, unpack(args))
+                        return predecessor(self, unpack(args))
                     end
                 end
             end
-            return runtime.oldRaycast(self, ...)
+            return predecessor(self, ...)
         end
         local wrapped: any = callback
         if type(newcclosure) == "function" then
             wrapped = newcclosure(callback)
         end
-        local oldRaycast: any = hookfunction(raycastMethod, wrapped)
-        if oldRaycast == nil then
+        predecessor = hookfunction(raycastMethod, wrapped)
+        if predecessor == nil then
             return false
         end
-        runtime.oldRaycast = oldRaycast
+        runtime.oldRaycast = predecessor
+        runtime.raycastHookWrapper = wrapped
         runtime.raycastHookInstalled = true
         return true
     end
 
     local function uninstallHooks(): ()
+        local rayRestored: boolean = not runtime.rayHookInstalled
         if runtime.rayHookInstalled and runtime.oldRay ~= nil and type(hookfunction) == "function" then
-            pcall(hookfunction, Ray.new, runtime.oldRay)
+            local restored: boolean, displaced: any = pcall(
+                hookfunction,
+                Ray.new,
+                runtime.oldRay
+            )
+            rayRestored = restored and displaced == runtime.rayHookWrapper
+            if restored and not rayRestored and type(displaced) == "function" then
+                pcall(hookfunction, Ray.new, displaced)
+            end
         end
-        runtime.rayHookInstalled = false
-        runtime.oldRay = nil
+        if rayRestored then
+            runtime.rayHookInstalled = false
+            runtime.oldRay = nil
+            runtime.rayHookWrapper = nil
+        end
+        local raycastRestored: boolean = not runtime.raycastHookInstalled
         if runtime.raycastHookInstalled and runtime.oldRaycast ~= nil
             and type(hookfunction) == "function"
             and workspace and workspace.Raycast then
-            pcall(hookfunction, workspace.Raycast, runtime.oldRaycast)
+            local restored: boolean, displaced: any = pcall(
+                hookfunction,
+                workspace.Raycast,
+                runtime.oldRaycast
+            )
+            raycastRestored = restored and displaced == runtime.raycastHookWrapper
+            if restored and not raycastRestored and type(displaced) == "function" then
+                pcall(hookfunction, workspace.Raycast, displaced)
+            end
         end
-        runtime.raycastHookInstalled = false
-        runtime.oldRaycast = nil
+        if raycastRestored then
+            runtime.raycastHookInstalled = false
+            runtime.oldRaycast = nil
+            runtime.raycastHookWrapper = nil
+        end
     end
 
     local function makeRounded(frame: GuiObject, radius: number): ()
@@ -885,15 +917,32 @@ local function buildMVSDFeatures(): ()
 
     -- Instant triggerbot: holds/releases fire while a valid opponent is locked
     -- in the FOV. Zero delay (default) toggles the click every frame for max RoF.
+    local function releaseAutoShoot(): boolean
+        if not runtime.autoShootHeld then
+            runtime.autoShootNextAt = os.clock()
+            return true
+        end
+        if type(mouse1release) ~= "function" then
+            return false
+        end
+        local released: boolean = false
+        for _attempt: number = 1, 3 do
+            if pcall(mouse1release) then
+                released = true
+                break
+            end
+        end
+        if not released then
+            return false
+        end
+        runtime.autoShootHeld = false
+        runtime.autoShootNextAt = os.clock()
+        return true
+    end
+
     local function updateAutoShoot(): ()
         if not settings.autoShootEnabled then
-            if runtime.autoShootHeld then
-                if type(mouse1release) == "function" then
-                    pcall(mouse1release)
-                end
-                runtime.autoShootHeld = false
-            end
-            runtime.autoShootNextAt = os.clock()
+            releaseAutoShoot()
             return
         end
 
@@ -902,16 +951,17 @@ local function buildMVSDFeatures(): ()
             local now: number = os.clock()
             if now >= runtime.autoShootNextAt then
                 if not runtime.autoShootHeld then
-                    if type(mouse1press) == "function" then
-                        if pcall(mouse1press) then
+                    if type(mouse1press) == "function"
+                        and type(mouse1release) == "function" then
+                        local releaseReady: boolean = pcall(mouse1release)
+                        if releaseReady and pcall(mouse1press) then
                             runtime.autoShootHeld = true
                         end
                     end
                 else
-                    if type(mouse1release) == "function" then
-                        pcall(mouse1release)
+                    if not releaseAutoShoot() then
+                        return
                     end
-                    runtime.autoShootHeld = false
                     -- Humanize: small random jitter between bursts so the fire
                     -- rate is not a constant machine-gun pattern.
                     local delay: number = math.max(settings.shotDelay, 0)
@@ -920,12 +970,7 @@ local function buildMVSDFeatures(): ()
                 end
             end
         else
-            if runtime.autoShootHeld then
-                if type(mouse1release) == "function" then
-                    pcall(mouse1release)
-                end
-                runtime.autoShootHeld = false
-            end
+            releaseAutoShoot()
         end
     end
 
@@ -1029,6 +1074,7 @@ local function buildMVSDFeatures(): ()
     local function syncCoreTask(): ()
         disconnectFeatureConnection("MVSDAimCore")
         if not anyFeatureEnabled() then
+            releaseAutoShoot()
             uninstallHooks()
             if runtime.visuals then
                 runtime.visuals.root:Destroy()
@@ -1158,6 +1204,9 @@ local function buildMVSDFeatures(): ()
         3,
         function(enabled: boolean): ()
             settings.autoShootEnabled = enabled
+            if not enabled then
+                releaseAutoShoot()
+            end
             syncCoreTask()
         end,
         {parent = state.mvsdScroll, registry = state.mvsdFeatures}
@@ -1195,6 +1244,7 @@ local function buildMVSDFeatures(): ()
 
     state.cleanupMVSDRuntime = function(): ()
         disconnectFeatureConnection("MVSDAimCore")
+        releaseAutoShoot()
         uninstallHooks()
         if runtime.visuals then
             runtime.visuals.root:Destroy()

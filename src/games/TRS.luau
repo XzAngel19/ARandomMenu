@@ -63,11 +63,14 @@ local function buildTRSFeatures()
     local nativeHeaderContext = nil
     local shotHookInstalled = false
     local originalNamecall = nil
+    local shotHookWrapper = nil
     local pickupRemote = nil
     local trajectoryParts = {}
     local landingMarker = nil
     local lastGoalkeeperAction = 0
     local lastHeaderAction = 0
+    local autoTackleEnabled = false
+    local autoPickupEnabled = false
     local goalVisualObjects = {}
 
     local function getWorldBools()
@@ -452,6 +455,7 @@ local function buildTRSFeatures()
     end
 
     local function toggleAutoTackle(enabled)
+        autoTackleEnabled = enabled
         disconnectFeatureConnection("TRSAutoTackle")
         clearTackleBox()
         if not enabled then
@@ -517,6 +521,9 @@ local function buildTRSFeatures()
             if disarm and disarm:IsA("RemoteEvent") then
                 for _, delayTime in ipairs({0.06, 0.16}) do
                     task.delay(delayTime, function()
+                        if not autoTackleEnabled then
+                            return
+                        end
                         local currentOwner, currentBall = getBallOwner()
                         if currentOwner == owner
                             and currentBall
@@ -579,6 +586,8 @@ local function buildTRSFeatures()
         end)
     end
 
+    local uninstallShotHook: () -> () = function(): () end
+
     local function installShotHook()
         if shotHookInstalled then
             return true
@@ -595,6 +604,7 @@ local function buildTRSFeatures()
         if not shoot then
             return false
         end
+        local predecessor = nil
         local callback = function(self, ...)
             local method = getnamecallmethod()
             if self == shoot and method == "FireServer" then
@@ -628,16 +638,49 @@ local function buildTRSFeatures()
                 elseif settings.power and getBallOwner() == LocalPlayer then
                     arguments[3] = settings.powerValue
                 end
-                return originalNamecall(self, unpack(arguments))
+                return predecessor(self, unpack(arguments))
             end
-            return originalNamecall(self, ...)
+            return predecessor(self, ...)
         end
         if type(newcclosure) == "function" then
             callback = newcclosure(callback)
         end
-        originalNamecall = hookmetamethod(game, "__namecall", callback)
+        shotHookWrapper = callback
+        predecessor = hookmetamethod(game, "__namecall", callback)
+        originalNamecall = predecessor
         shotHookInstalled = originalNamecall ~= nil
         return shotHookInstalled
+    end
+
+    uninstallShotHook = function(): ()
+        local restored: boolean = not shotHookInstalled
+        if shotHookInstalled
+            and originalNamecall
+            and type(hookmetamethod) == "function" then
+            local hookSucceeded, displaced = pcall(
+                hookmetamethod,
+                game,
+                "__namecall",
+                originalNamecall
+            )
+            restored = hookSucceeded and displaced == shotHookWrapper
+            if hookSucceeded and not restored and type(displaced) == "function" then
+                pcall(hookmetamethod, game, "__namecall", displaced)
+            end
+        end
+        if restored then
+            shotHookInstalled = false
+            originalNamecall = nil
+            shotHookWrapper = nil
+        end
+    end
+
+    local function releaseShotHookIfIdle(): ()
+        if not settings.power
+            and nativeShotContext == nil
+            and nativeHeaderContext == nil then
+            uninstallShotHook()
+        end
     end
 
     local function toggleMaxPower(enabled)
@@ -645,6 +688,8 @@ local function buildTRSFeatures()
         if enabled and not installShotHook() then
             settings.power = false
             error("This executor does not support the local ShootTheBall hook.")
+        elseif not enabled then
+            releaseShotHookIfIdle()
         end
     end
 
@@ -808,6 +853,7 @@ local function buildTRSFeatures()
             function(input, processed)
                 if processed
                     or state.keyCaptureCallback
+                    or state.waitingForKey
                     or UserInputService:GetFocusedTextBox() then
                     return
                 end
@@ -823,6 +869,9 @@ local function buildTRSFeatures()
         disconnectFeatureConnection("TRSShootKey")
         if enabled then
             connectShotKey("TRSShootKey", "shootKey", "Normal")
+        else
+            nativeShotContext = nil
+            releaseShotHookIfIdle()
         end
     end
 
@@ -830,6 +879,9 @@ local function buildTRSFeatures()
         disconnectFeatureConnection("TRSPowerShotKey")
         if enabled then
             connectShotKey("TRSPowerShotKey", "powerShotKey", "Power")
+        else
+            nativeShotContext = nil
+            releaseShotHookIfIdle()
         end
     end
 
@@ -837,6 +889,9 @@ local function buildTRSFeatures()
         disconnectFeatureConnection("TRSLongShotKey")
         if enabled then
             connectShotKey("TRSLongShotKey", "longShotKey", "Long")
+        else
+            nativeShotContext = nil
+            releaseShotHookIfIdle()
         end
     end
 
@@ -1071,6 +1126,7 @@ local function buildTRSFeatures()
             function(input, processed)
                 if processed
                     or state.keyCaptureCallback
+                    or state.waitingForKey
                     or UserInputService:GetFocusedTextBox() then
                     return
                 end
@@ -1168,6 +1224,9 @@ local function buildTRSFeatures()
 
         if settings.pickupDeke then
             task.delay(0.06, function()
+                if not autoPickupEnabled then
+                    return
+                end
                 local owner = getBallOwner()
                 local currentCharacter = LocalPlayer.Character
                 local localBools = currentCharacter
@@ -1187,6 +1246,7 @@ local function buildTRSFeatures()
     end
 
     local function toggleAutoPickup(enabled)
+        autoPickupEnabled = enabled
         disconnectFeatureConnection("TRSPickupKey")
         disconnectFeatureConnection("TRSPickupLoop")
         if not enabled then
@@ -1197,6 +1257,7 @@ local function buildTRSFeatures()
             function(input, processed)
                 if processed
                     or state.keyCaptureCallback
+                    or state.waitingForKey
                     or UserInputService:GetFocusedTextBox() then
                     return
                 end
@@ -1422,6 +1483,7 @@ local function buildTRSFeatures()
         disconnectFeatureConnection("TRSAutoHeader")
         if not enabled then
             nativeHeaderContext = nil
+            releaseShotHookIfIdle()
             return
         end
 
@@ -1803,8 +1865,11 @@ local function buildTRSFeatures()
 
     state.cleanupTRSRuntime = function()
         settings.power = false
+        autoTackleEnabled = false
+        autoPickupEnabled = false
         nativeShotContext = nil
         nativeHeaderContext = nil
+        uninstallShotHook()
         disconnectFeatureConnection("TRSAutoTackle")
         disconnectFeatureConnection("TRSAutoDribble")
         disconnectFeatureConnection("TRSPickupKey")

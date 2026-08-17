@@ -3143,6 +3143,8 @@ local shootHookInstalled: boolean = false
 local shootTouchHookInstalled: boolean = false
 local shootHookOriginal: any = nil
 local shootTouchHookOriginal: any = nil
+local shootHookWrapper: any = nil
+local shootTouchHookWrapper: any = nil
 local weaponServiceModule: any = nil
 type PendingShot = {
     target: Player,
@@ -4053,38 +4055,96 @@ local function installShootRedirectHook(): boolean
     end
 
     local mouseHooked: boolean = pcall(function(): ()
-        shootHookOriginal = state.hookFunction(
-            weaponService.GetMouseTargetCFrame,
-            function(self: any, ...: any): any
-                local targetCFrame: CFrame? = getRedirectedWeaponCFrame()
-                if targetCFrame then
-                    return targetCFrame
-                end
-                return shootHookOriginal(self, ...)
+        local predecessor: any = nil
+        local wrapper: any = nil
+        wrapper = function(self: any, ...: any): any
+            local targetCFrame: CFrame? = getRedirectedWeaponCFrame()
+            if targetCFrame then
+                return targetCFrame
             end
+            return predecessor(self, ...)
+        end
+        predecessor = state.hookFunction(
+            weaponService.GetMouseTargetCFrame,
+            wrapper
         )
+        shootHookOriginal = predecessor
+        shootHookWrapper = wrapper
     end)
-    if not mouseHooked then
+    if not mouseHooked or type(shootHookOriginal) ~= "function" then
         return false
     end
 
     shootHookInstalled = true
     if type(weaponService.GetTargetPosition) == "function" then
         shootTouchHookInstalled = pcall(function(): ()
-            shootTouchHookOriginal = state.hookFunction(
-                weaponService.GetTargetPosition,
-                function(self: any, ...: any): any
-                    local targetCFrame: CFrame? = getRedirectedWeaponCFrame()
-                    if targetCFrame then
-                        return targetCFrame.Position
-                    end
-                    return shootTouchHookOriginal(self, ...)
+            local predecessor: any = nil
+            local wrapper: any = nil
+            wrapper = function(self: any, ...: any): any
+                local targetCFrame: CFrame? = getRedirectedWeaponCFrame()
+                if targetCFrame then
+                    return targetCFrame.Position
                 end
+                return predecessor(self, ...)
+            end
+            predecessor = state.hookFunction(
+                weaponService.GetTargetPosition,
+                wrapper
             )
+            shootTouchHookOriginal = predecessor
+            shootTouchHookWrapper = wrapper
         end)
+        shootTouchHookInstalled = shootTouchHookInstalled
+            and type(shootTouchHookOriginal) == "function"
     end
 
     return not touchPreferred or shootTouchHookInstalled
+end
+
+local function uninstallShootRedirectHook(): ()
+    local weaponService: any = weaponServiceModule
+    local touchRestored: boolean = not shootTouchHookInstalled
+    local mouseRestored: boolean = not shootHookInstalled
+    if type(state.hookFunction) == "function" and type(weaponService) == "table" then
+        if shootTouchHookInstalled
+            and shootTouchHookOriginal
+            and type(weaponService.GetTargetPosition) == "function" then
+            local restored: boolean, displaced: any = pcall(
+                state.hookFunction,
+                weaponService.GetTargetPosition,
+                shootTouchHookOriginal
+            )
+            touchRestored = restored and displaced == shootTouchHookWrapper
+            if restored and not touchRestored and type(displaced) == "function" then
+                pcall(state.hookFunction, weaponService.GetTargetPosition, displaced)
+            end
+        end
+        if shootHookInstalled
+            and shootHookOriginal
+            and type(weaponService.GetMouseTargetCFrame) == "function" then
+            local restored: boolean, displaced: any = pcall(
+                state.hookFunction,
+                weaponService.GetMouseTargetCFrame,
+                shootHookOriginal
+            )
+            mouseRestored = restored and displaced == shootHookWrapper
+            if restored and not mouseRestored and type(displaced) == "function" then
+                pcall(state.hookFunction, weaponService.GetMouseTargetCFrame, displaced)
+            end
+        end
+    end
+    if touchRestored then
+        shootTouchHookInstalled = false
+        shootTouchHookOriginal = nil
+        shootTouchHookWrapper = nil
+    end
+    if mouseRestored then
+        shootHookInstalled = false
+        shootHookOriginal = nil
+        shootHookWrapper = nil
+    end
+    disconnectFeatureConnection("MM2GunFired")
+    state.mm2ShotFeedback.gunFiredConnected = false
 end
 local function processKnifeAura(): ()
     local knife: Tool?, localRoot: BasePart? = canUseEquippedKnife()
@@ -4129,7 +4189,8 @@ local function processKnifeAura(): ()
             :: BasePart?
         local currentHandle: BasePart? =
             knife:FindFirstChild("Handle") :: BasePart?
-        if currentKnife ~= knife
+        if not knifeSettings.aura
+            or currentKnife ~= knife
             or not currentLocalRoot
             or not currentCharacter
             or not currentRoot
@@ -4216,6 +4277,9 @@ local function toggleKnifeRedirect(enabled: boolean): ()
         state.mm2KnifeRuntime.velocitySampleAt = 0
     end
     refreshKnifeController()
+    if not enabled and not shootFeatureActive then
+        uninstallShootRedirectHook()
+    end
 end
 
 local function toggleKnifeAura(enabled: boolean): ()
@@ -4258,6 +4322,9 @@ local function toggleShootMurderer(enabled: boolean): ()
         state.mm2ShotFeedback.pending = nil
         state.mm2ShotFeedback.lastAccepted = nil
         state.mm2ShotFeedback.hide()
+        if not knifeSettings.redirect then
+            uninstallShootRedirectHook()
+        end
         return
     end
 
@@ -4287,6 +4354,8 @@ local function toggleShootMurderer(enabled: boolean): ()
         processed
     )
         if not processed
+            and not state.keyCaptureCallback
+            and not state.waitingForKey
             and not UserInputService:GetFocusedTextBox()
             and (mm2Settings.shootMode == "Manual"
                 or mm2Settings.shootMode == "Custom")
@@ -4451,9 +4520,8 @@ local ShootFeature = createUniversalFeature(
     "Shoot",
     "Hitscan aim with filtered motion, RTT compensation, and miss feedback",
     4,
-    function(): () end,
+    toggleShootMurderer,
     {
-        category = true,
         parent = MM2Scroll,
         registry = mm2Features,
     }
@@ -4484,7 +4552,9 @@ addCycleOption(
     1,
     function(value: string): ()
         mm2Settings.shootMode = value
-        if value == "Redirect" and not installShootRedirectHook() then
+        if shootFeatureActive
+            and value == "Redirect"
+            and not installShootRedirectHook() then
             notify("Shoot Redirect is unavailable; Manual mode still works.")
         end
         refreshShootOptions()
@@ -4525,7 +4595,6 @@ addToggleOption(
     end
 )
 refreshShootOptions()
-toggleShootMurderer(true)
 
 local TrajectoryFeature: any = createUniversalFeature(
     "Trajectory Calibration",
@@ -4732,6 +4801,7 @@ featureConnections.MM2GetGunKey = UserInputService.InputBegan:Connect(
     function(input, gameProcessed)
         if gameProcessed
             or state.keyCaptureCallback
+            or state.waitingForKey
             or UserInputService:GetFocusedTextBox() then
             return
         end
@@ -4896,13 +4966,31 @@ cleanupMM2Runtime = function()
     state.mm2ShotFeedback.hide()
     toggleKnifeAura(false)
     toggleKnifeRedirect(false)
+    uninstallShootRedirectHook()
+    toggleRoleEsp(false)
+    toggleGunEsp(false)
+    toggleLoopAllInteract(false)
     toggleSprint(false)
     toggleHideNames(false)
     toggleAutoGetGun(false)
+    toggleImproveFps(false)
+    toggleAlwaysShowTimer(false)
     toggleCoinChams(false)
     toggleTrapEsp(false)
     toggleMuteOtherRadios(false)
     toggleMuteTrapSounds(false)
+    for _, connectionName: string in ipairs({
+        "MM2FriendPlayerAdded",
+        "MM2PlayerDataChanged",
+        "MM2TimerTrackerStart",
+        "MM2TimerTrackerEnd",
+        "MM2GetGunKey",
+    }) do
+        disconnectFeatureConnection(connectionName)
+    end
+    state.isProtectedTarget = function(player: Player?): boolean
+        return player == nil or player == LocalPlayer
+    end
     if AutoPlaySound then
         AutoPlaySound:Stop()
         AutoPlaySound:Destroy()

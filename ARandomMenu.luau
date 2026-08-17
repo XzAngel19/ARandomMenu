@@ -420,6 +420,24 @@ local AssetManager: any = {
             fileName = "icon-search-v1.png",
             fallback = "",
         },
+        star = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Icons/star.png",
+            fileName = "icon-star-v1.png",
+            fallback = "",
+        },
+        ellipsis = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Icons/ellipsis.png",
+            fileName = "icon-ellipsis-v1.png",
+            fallback = "",
+        },
+        overlays = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Icons/list.png",
+            fileName = "icon-overlays-v1.png",
+            fallback = "",
+        },
         settings = {
             url = REPOSITORY_RAW_BASE
                 .. "src/gui/Current/Assets/Icons/settings.png",
@@ -1249,6 +1267,46 @@ local function setKeySlotCapture(button: TextButton, active: boolean): ()
     end
 end
 
+local function beginKeyCapture(
+    button: TextButton,
+    callback: (Enum.KeyCode) -> ()
+): ()
+    if state.waitingForKey then
+        state.waitingForKey = false
+        if state.keybindButton then
+            state.keybindButton.Text = state.toggleKey.Name
+            setKeySlotCapture(state.keybindButton, false)
+        end
+    end
+    if state.keyCaptureCancel then
+        state.keyCaptureCancel()
+    end
+    button.Text = "..."
+    setKeySlotCapture(button, true)
+    local cancelled: boolean = false
+    state.keyCaptureCancel = function(): ()
+        if cancelled then
+            return
+        end
+        cancelled = true
+        state.keyCaptureCallback = nil
+        state.keyCaptureCancel = nil
+        setKeySlotCapture(button, false)
+        if button.Parent and button:GetAttribute("CaptureIdleText") then
+            button.Text = tostring(button:GetAttribute("CaptureIdleText"))
+        end
+    end
+    state.keyCaptureCallback = function(keyCode: Enum.KeyCode): ()
+        if cancelled then
+            return
+        end
+        cancelled = true
+        state.keyCaptureCancel = nil
+        setKeySlotCapture(button, false)
+        callback(keyCode)
+    end
+end
+
 local function makeTextBox(parent: Instance, defaultText: any): TextBox
     local isDefaultStyle: boolean = state.guiStyle == "Default"
     local textBox: TextBox = (registerText(create("TextBox", {
@@ -1739,14 +1797,18 @@ configureGameTabs()
 do
 local DefaultSearchBox: TextBox = makeTextBox(state.shells.defaultSidebar, "")
 DefaultSearchBox.Name = "DefaultSearch"
-DefaultSearchBox.PlaceholderText = "Search modules"
+DefaultSearchBox.PlaceholderText = "Search"
 DefaultSearchBox.Position = UDim2.fromOffset(12, 16)
 DefaultSearchBox.Size = UDim2.new(1, -24, 0, 40)
 DefaultSearchBox.BackgroundColor3 = Theme.DefaultSurface
 DefaultSearchBox.BackgroundTransparency = 0.38
 DefaultSearchBox.TextColor3 = Theme.DefaultText
-DefaultSearchBox.PlaceholderColor3 = Theme.DefaultTextMuted
+DefaultSearchBox.PlaceholderColor3 = Theme.DefaultTextMuted:Lerp(
+    Theme.DefaultSurface,
+    0.42
+)
 DefaultSearchBox.TextXAlignment = Enum.TextXAlignment.Left
+DefaultSearchBox.TextYAlignment = Enum.TextYAlignment.Center
 DefaultSearchBox.ZIndex = 14
 create("UIPadding", {
     Parent = DefaultSearchBox,
@@ -3498,6 +3560,824 @@ local function createCheckControl(
     return button, mark
 end
 
+do
+type FloatingWindowRecord = {
+    id: string,
+    root: Frame,
+    body: Frame,
+    closeButton: TextButton,
+}
+
+local FloatingUi: any = {
+    favorites = {},
+    favoriteRows = {},
+    overlays = {},
+    featureRows = {},
+    windows = {},
+}
+state.floatingUi = FloatingUi
+
+if type(configData.ui.favorites) ~= "table" then
+    configData.ui.favorites = {}
+end
+if type(configData.ui.overlays) ~= "table" then
+    configData.ui.overlays = {}
+end
+if type(configData.ui.floatingPositions) ~= "table" then
+    configData.ui.floatingPositions = {}
+end
+
+local function getFloatingViewport(): Vector2
+    local camera: Camera? = workspace.CurrentCamera
+    return camera and camera.ViewportSize or Vector2.new(1280, 720)
+end
+
+local function clampFloatingPosition(
+    position: Vector2,
+    size: Vector2
+): Vector2
+    local viewport: Vector2 = getFloatingViewport()
+    return Vector2.new(
+        math.clamp(position.X, 6, math.max(6, viewport.X - size.X - 6)),
+        math.clamp(position.Y, 6, math.max(6, viewport.Y - size.Y - 6))
+    )
+end
+
+local function bringFloatingToFront(record: FloatingWindowRecord): ()
+    for index: number = #FloatingUi.windows, 1, -1 do
+        if FloatingUi.windows[index] == record then
+            table.remove(FloatingUi.windows, index)
+            break
+        end
+    end
+    table.insert(FloatingUi.windows, record)
+    for index: number, window: FloatingWindowRecord in ipairs(FloatingUi.windows) do
+        local baseZ: number = 148 + index * 5
+        window.root.ZIndex = baseZ
+        for _, descendant: Instance in ipairs(window.root:GetDescendants()) do
+            if descendant:IsA("GuiObject") then
+                local relative: number =
+                    tonumber(descendant:GetAttribute("FloatingDepth")) or 1
+                descendant.ZIndex = baseZ + relative
+            end
+        end
+    end
+end
+
+local function createFloatingWindow(
+    id: string,
+    titleText: string,
+    size: Vector2,
+    defaultPosition: Vector2,
+    onClose: (() -> ())?
+): FloatingWindowRecord
+    local saved: any = configData.ui.floatingPositions[id]
+    local position: Vector2 = type(saved) == "table"
+        and Vector2.new(
+            tonumber(saved[1]) or defaultPosition.X,
+            tonumber(saved[2]) or defaultPosition.Y
+        )
+        or defaultPosition
+    position = clampFloatingPosition(position, size)
+
+    local root: Frame = create("Frame", {
+        Parent = PopupLayer,
+        Name = "Floating_" .. id,
+        Active = true,
+        BackgroundColor3 = Theme.DefaultBackground,
+        BackgroundTransparency = 0.08,
+        BorderSizePixel = 0,
+        ClipsDescendants = true,
+        Position = UDim2.fromOffset(position.X, position.Y),
+        Size = UDim2.fromOffset(size.X, size.Y),
+        Visible = false,
+        ZIndex = 150,
+    }) :: Frame
+    create("UICorner", {
+        Parent = root,
+        CornerRadius = UDim.new(0, 10),
+    })
+    local stroke: UIStroke = create("UIStroke", {
+        Parent = root,
+        Color = Theme.DefaultOutline,
+        Transparency = 0.38,
+        Thickness = 1,
+    }) :: UIStroke
+    create("UIGradient", {
+        Parent = stroke,
+        Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Theme.AccentCyan),
+            ColorSequenceKeypoint.new(0.5, Theme.AccentViolet),
+            ColorSequenceKeypoint.new(1, Theme.AccentPink),
+        }),
+        Rotation = 12,
+    })
+
+    local background: ImageLabel = create("ImageLabel", {
+        Parent = root,
+        Name = "AuroraBackground",
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Image = "",
+        ImageColor3 = Color3.fromRGB(156, 126, 195),
+        ImageTransparency = 0.73,
+        ScaleType = Enum.ScaleType.Crop,
+        Size = UDim2.fromScale(1, 1),
+    }) :: ImageLabel
+    background:SetAttribute("FloatingDepth", 1)
+    state.assetManager.loadAsync("purpleBackground", background)
+    local shade: Frame = create("Frame", {
+        Parent = root,
+        Name = "Readability",
+        BackgroundColor3 = Theme.DefaultBackground,
+        BackgroundTransparency = 0.28,
+        BorderSizePixel = 0,
+        Size = UDim2.fromScale(1, 1),
+    }) :: Frame
+    shade:SetAttribute("FloatingDepth", 2)
+
+    local header: Frame = create("Frame", {
+        Parent = root,
+        Name = "Header",
+        Active = true,
+        BackgroundColor3 = Theme.DefaultSurface,
+        BackgroundTransparency = 0.24,
+        BorderSizePixel = 0,
+        Size = UDim2.new(1, 0, 0, 36),
+    }) :: Frame
+    header:SetAttribute("FloatingDepth", 3)
+    local accent: Frame = create("Frame", {
+        Parent = header,
+        BackgroundColor3 = Theme.DefaultAccent,
+        BorderSizePixel = 0,
+        Position = UDim2.fromOffset(0, 35),
+        Size = UDim2.new(1, 0, 0, 1),
+    }) :: Frame
+    accent:SetAttribute("FloatingDepth", 1)
+    create("UIGradient", {
+        Parent = accent,
+        Color = ColorSequence.new(Theme.AccentCyan, Theme.AccentPink),
+    })
+    local title: TextLabel = makeTextLabel(header, titleText, 11)
+    title.FontFace = CONTROL_FONT
+    title.Position = UDim2.fromOffset(13, 0)
+    title.Size = UDim2.new(1, -50, 1, 0)
+    title.TextColor3 = Theme.DefaultText
+    title:SetAttribute("FloatingDepth", 2)
+
+    local closeButton: TextButton = makeButton(header, "x", 10)
+    closeButton.Name = "Close"
+    closeButton.AnchorPoint = Vector2.new(1, 0.5)
+    closeButton.BackgroundTransparency = 1
+    closeButton.Position = UDim2.new(1, -7, 0.5, 0)
+    closeButton.Size = UDim2.fromOffset(28, 28)
+    closeButton.TextColor3 = Theme.DefaultTextMuted
+    closeButton:SetAttribute("ThemeRole", "Icon")
+    closeButton:SetAttribute("FloatingDepth", 3)
+    local closeStroke: UIStroke? = closeButton:FindFirstChild("StyleStroke") :: UIStroke?
+    if closeStroke then
+        closeStroke.Enabled = false
+    end
+
+    local body: Frame = create("Frame", {
+        Parent = root,
+        Name = "Body",
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Position = UDim2.fromOffset(0, 36),
+        Size = UDim2.new(1, 0, 1, -36),
+    }) :: Frame
+    body:SetAttribute("FloatingDepth", 4)
+
+    local record: FloatingWindowRecord = {
+        id = id,
+        root = root,
+        body = body,
+        closeButton = closeButton,
+    }
+    local dragging: boolean = false
+    local dragInput: InputObject? = nil
+    local dragStart: Vector2 = Vector2.zero
+    local startPosition: Vector2 = position
+
+    trackUiConnection(root.InputBegan:Connect(function(): ()
+        bringFloatingToFront(record)
+    end))
+    trackUiConnection(header.InputBegan:Connect(function(input: InputObject): ()
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragInput = input
+            dragStart = Vector2.new(input.Position.X, input.Position.Y)
+            startPosition = Vector2.new(root.Position.X.Offset, root.Position.Y.Offset)
+            bringFloatingToFront(record)
+        end
+    end))
+    trackUiConnection(UserInputService.InputChanged:Connect(function(input: InputObject): ()
+        if not dragging then
+            return
+        end
+        if input == dragInput
+            or (dragInput
+                and dragInput.UserInputType == Enum.UserInputType.MouseButton1
+                and input.UserInputType == Enum.UserInputType.MouseMovement) then
+            local pointer: Vector2 = Vector2.new(input.Position.X, input.Position.Y)
+            local nextPosition: Vector2 = clampFloatingPosition(
+                startPosition + pointer - dragStart,
+                root.AbsoluteSize
+            )
+            root.Position = UDim2.fromOffset(nextPosition.X, nextPosition.Y)
+        end
+    end))
+    trackUiConnection(UserInputService.InputEnded:Connect(function(input: InputObject): ()
+        if dragging
+            and (input == dragInput
+                or input.UserInputType == Enum.UserInputType.MouseButton1) then
+            dragging = false
+            dragInput = nil
+            configData.ui.floatingPositions[id] = {
+                root.Position.X.Offset,
+                root.Position.Y.Offset,
+            }
+            queueConfigSave()
+        end
+    end))
+    trackUiConnection(closeButton.MouseButton1Click:Connect(function(): ()
+        root.Visible = false
+        if onClose then
+            onClose()
+        end
+    end))
+    bringFloatingToFront(record)
+    return record
+end
+
+function FloatingUi.reclamp(): ()
+    for _, record: FloatingWindowRecord in ipairs(FloatingUi.windows) do
+        local position: Vector2 = clampFloatingPosition(
+            Vector2.new(record.root.Position.X.Offset, record.root.Position.Y.Offset),
+            record.root.AbsoluteSize
+        )
+        record.root.Position = UDim2.fromOffset(position.X, position.Y)
+    end
+end
+
+local FavoritesWindow: FloatingWindowRecord = createFloatingWindow(
+    "Favorites",
+    "★  Favorites",
+    Vector2.new(state.isMobile and 260 or 285, 250),
+    Vector2.new(40, 90),
+    function(): ()
+        configData.ui.favoritesWindowOpen = false
+        queueConfigSave()
+    end
+)
+local FavoritesList: ScrollingFrame = create("ScrollingFrame", {
+    Parent = FavoritesWindow.body,
+    Name = "FavoriteModules",
+    Active = true,
+    AutomaticCanvasSize = Enum.AutomaticSize.Y,
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    CanvasSize = UDim2.fromOffset(0, 0),
+    Position = UDim2.fromOffset(8, 8),
+    ScrollBarImageColor3 = Theme.DefaultOutline,
+    ScrollBarThickness = 3,
+    Size = UDim2.new(1, -16, 1, -16),
+}) :: ScrollingFrame
+FavoritesList:SetAttribute("FloatingDepth", 2)
+create("UIListLayout", {
+    Parent = FavoritesList,
+    Padding = UDim.new(0, 5),
+    SortOrder = Enum.SortOrder.LayoutOrder,
+})
+
+local function syncFavoriteButton(feature: any): ()
+    if not feature.favoriteButton then
+        return
+    end
+    local selected: boolean = configData.ui.favorites[feature.configKey] == true
+    feature.favoriteButton.Text = selected and "★" or "☆"
+    feature.favoriteButton.TextColor3 = selected
+        and Theme.DefaultAccent
+        or Theme.DefaultTextMuted
+    feature.favoriteButton.TextTransparency = selected and 0 or 0.34
+end
+
+local function refreshFavorites(): ()
+    for _, row: GuiObject in ipairs(FloatingUi.favoriteRows) do
+        row:Destroy()
+    end
+    table.clear(FloatingUi.favoriteRows)
+    local order: number = 0
+    for _, feature: any in ipairs(allFeatures) do
+        if configData.ui.favorites[feature.configKey] == true
+            and not feature.isCategory then
+            order += 1
+            local row: TextButton = create("TextButton", {
+                Parent = FavoritesList,
+                Name = feature.configKey:gsub("%W", ""),
+                AutoButtonColor = false,
+                BackgroundColor3 = Theme.DefaultSurface,
+                BackgroundTransparency = 0.38,
+                BorderSizePixel = 0,
+                FontFace = THIN_FONT,
+                LayoutOrder = order,
+                Size = UDim2.new(1, -4, 0, 36),
+                Text = feature.name,
+                TextColor3 = feature.enabled
+                    and Theme.DefaultAccent
+                    or Theme.DefaultText,
+                TextSize = 13,
+                TextXAlignment = Enum.TextXAlignment.Left,
+            }) :: TextButton
+            create("UICorner", {
+                Parent = row,
+                CornerRadius = UDim.new(0, 8),
+            })
+            row:SetAttribute("FloatingDepth", 3)
+            create("UIPadding", {
+                Parent = row,
+                PaddingLeft = UDim.new(0, 12),
+                PaddingRight = UDim.new(0, 38),
+            })
+            local status: TextLabel = create("TextLabel", {
+                Parent = row,
+                Name = "Status",
+                AnchorPoint = Vector2.new(1, 0),
+                BackgroundTransparency = 1,
+                FontFace = THIN_FONT,
+                Position = UDim2.new(1, -10, 0, 0),
+                Size = UDim2.fromOffset(22, 36),
+                Text = feature.enabled and "●" or "○",
+                TextColor3 = feature.enabled
+                    and Theme.AccentCyan
+                    or Theme.DefaultTextMuted,
+                TextSize = 12,
+                TextXAlignment = Enum.TextXAlignment.Center,
+            }) :: TextLabel
+            status:SetAttribute("FloatingDepth", 2)
+            row.MouseButton1Click:Connect(function(): ()
+                feature.activate()
+            end)
+            table.insert(FloatingUi.favoriteRows, row)
+        end
+    end
+    if order == 0 then
+        local empty: TextLabel = create("TextLabel", {
+            Parent = FavoritesList,
+            BackgroundTransparency = 1,
+            FontFace = THIN_FONT,
+            LayoutOrder = 1,
+            Size = UDim2.new(1, -4, 0, 52),
+            Text = "Star a module to keep it here",
+            TextColor3 = Theme.DefaultTextMuted,
+            TextSize = 13,
+            TextTransparency = 0.28,
+            TextXAlignment = Enum.TextXAlignment.Center,
+        }) :: TextLabel
+        empty:SetAttribute("FloatingDepth", 3)
+        table.insert(FloatingUi.favoriteRows, empty)
+    end
+end
+
+function FloatingUi.toggleFavorite(feature: any): ()
+    local nextValue: boolean = configData.ui.favorites[feature.configKey] ~= true
+    configData.ui.favorites[feature.configKey] = nextValue and true or nil
+    syncFavoriteButton(feature)
+    refreshFavorites()
+    queueConfigSave()
+end
+
+function FloatingUi.registerFeature(feature: any): ()
+    FloatingUi.favorites[feature.configKey] = feature
+    syncFavoriteButton(feature)
+    if configData.ui.favorites[feature.configKey] == true then
+        refreshFavorites()
+    end
+end
+
+function FloatingUi.unregisterFeature(feature: any): ()
+    FloatingUi.favorites[feature.configKey] = nil
+    if configData.ui.favorites[feature.configKey] == true then
+        refreshFavorites()
+    end
+end
+
+function FloatingUi.refreshFeature(feature: any): ()
+    if configData.ui.favorites[feature.configKey] == true then
+        refreshFavorites()
+    end
+end
+
+local OverlayMenu: FloatingWindowRecord = createFloatingWindow(
+    "OverlayMenu",
+    "▥  Overlays",
+    Vector2.new(state.isMobile and 250 or 270, 232),
+    Vector2.new(340, 90),
+    function(): ()
+        configData.ui.overlayMenuOpen = false
+        queueConfigSave()
+    end
+)
+local OverlayList: Frame = create("Frame", {
+    Parent = OverlayMenu.body,
+    BackgroundTransparency = 1,
+    Position = UDim2.fromOffset(8, 8),
+    Size = UDim2.new(1, -16, 1, -16),
+}) :: Frame
+OverlayList:SetAttribute("FloatingDepth", 2)
+create("UIListLayout", {
+    Parent = OverlayList,
+    Padding = UDim.new(0, 5),
+    SortOrder = Enum.SortOrder.LayoutOrder,
+})
+
+local overlayDefinitions: {any} = {
+    {id = "SessionInfo", title = "Session Info", size = Vector2.new(230, 112), position = Vector2.new(40, 360)},
+    {id = "TextGUI", title = "Text GUI", size = Vector2.new(250, 190), position = Vector2.new(285, 360)},
+    {id = "TargetInfo", title = "Target Info", size = Vector2.new(270, 132), position = Vector2.new(550, 360)},
+    {id = "Radar", title = "Radar", size = Vector2.new(220, 250), position = Vector2.new(835, 330)},
+}
+
+local function setOverlayEnabled(id: string, enabled: boolean): ()
+    local overlay: any = FloatingUi.overlays[id]
+    if not overlay then
+        return
+    end
+    overlay.enabled = enabled
+    overlay.window.root.Visible = enabled
+    overlay.toggle.Text = enabled and "ON" or "OFF"
+    overlay.toggle.TextColor3 = enabled
+        and Theme.AccentCyan
+        or Theme.DefaultTextMuted
+    overlay.toggle.BackgroundColor3 = enabled
+        and Theme.AccentSoft
+        or Theme.DefaultSurface
+    configData.ui.overlays[id] = enabled
+    queueConfigSave()
+    if enabled then
+        bringFloatingToFront(overlay.window)
+    end
+end
+
+for index: number, definition: any in ipairs(overlayDefinitions) do
+    local overlayId: string = definition.id
+    local overlayWindow: FloatingWindowRecord
+    overlayWindow = createFloatingWindow(
+        overlayId,
+        definition.title,
+        definition.size,
+        definition.position,
+        function(): ()
+            setOverlayEnabled(overlayId, false)
+        end
+    )
+    local managerRow: Frame = create("Frame", {
+        Parent = OverlayList,
+        BackgroundColor3 = Theme.DefaultSurface,
+        BackgroundTransparency = 0.48,
+        BorderSizePixel = 0,
+        LayoutOrder = index,
+        Size = UDim2.new(1, 0, 0, 40),
+    }) :: Frame
+    managerRow:SetAttribute("FloatingDepth", 3)
+    create("UICorner", {
+        Parent = managerRow,
+        CornerRadius = UDim.new(0, 8),
+    })
+    local managerLabel: TextLabel = makeTextLabel(managerRow, definition.title, 10)
+    managerLabel.Position = UDim2.fromOffset(10, 0)
+    managerLabel.Size = UDim2.new(1, -78, 1, 0)
+    managerLabel.TextColor3 = Theme.DefaultTextMuted
+    managerLabel:SetAttribute("FloatingDepth", 1)
+    local toggle: TextButton = makeButton(managerRow, "OFF", 8)
+    toggle.AnchorPoint = Vector2.new(1, 0.5)
+    toggle.Position = UDim2.new(1, -7, 0.5, 0)
+    toggle.Size = UDim2.fromOffset(52, 25)
+    toggle:SetAttribute("FloatingDepth", 2)
+    FloatingUi.overlays[overlayId] = {
+        window = overlayWindow,
+        toggle = toggle,
+        enabled = false,
+    }
+    trackUiConnection(toggle.MouseButton1Click:Connect(function(): ()
+        setOverlayEnabled(overlayId, not FloatingUi.overlays[overlayId].enabled)
+    end))
+end
+
+local SessionText: TextLabel = makeTextLabel(
+    FloatingUi.overlays.SessionInfo.window.body,
+    "Time Played: 00:00:00",
+    11
+)
+SessionText.Position = UDim2.fromOffset(12, 7)
+SessionText.Size = UDim2.new(1, -24, 1, -14)
+SessionText.TextColor3 = Theme.DefaultText
+SessionText:SetAttribute("FloatingDepth", 2)
+
+local TextGuiLabel: TextLabel = makeTextLabel(
+    FloatingUi.overlays.TextGUI.window.body,
+    "No active modules",
+    10
+)
+TextGuiLabel.Position = UDim2.fromOffset(12, 8)
+TextGuiLabel.Size = UDim2.new(1, -24, 1, -16)
+TextGuiLabel.TextColor3 = Theme.AccentCyan
+TextGuiLabel.TextWrapped = true
+TextGuiLabel.TextYAlignment = Enum.TextYAlignment.Top
+TextGuiLabel:SetAttribute("FloatingDepth", 2)
+
+local TargetName: TextLabel = makeTextLabel(
+    FloatingUi.overlays.TargetInfo.window.body,
+    "No target",
+    12
+)
+TargetName.FontFace = CONTROL_FONT
+TargetName.Position = UDim2.fromOffset(12, 6)
+TargetName.Size = UDim2.new(1, -24, 0, 32)
+TargetName:SetAttribute("FloatingDepth", 2)
+local TargetHealthTrack: Frame = create("Frame", {
+    Parent = FloatingUi.overlays.TargetInfo.window.body,
+    BackgroundColor3 = Color3.fromRGB(7, 5, 13),
+    BackgroundTransparency = 0.18,
+    BorderSizePixel = 0,
+    Position = UDim2.fromOffset(12, 48),
+    Size = UDim2.new(1, -24, 0, 10),
+}) :: Frame
+TargetHealthTrack:SetAttribute("FloatingDepth", 2)
+create("UICorner", {Parent = TargetHealthTrack, CornerRadius = UDim.new(1, 0)})
+local TargetHealthFill: Frame = create("Frame", {
+    Parent = TargetHealthTrack,
+    BackgroundColor3 = Theme.AccentCyan,
+    BorderSizePixel = 0,
+    Size = UDim2.fromScale(0, 1),
+}) :: Frame
+TargetHealthFill:SetAttribute("FloatingDepth", 1)
+create("UICorner", {Parent = TargetHealthFill, CornerRadius = UDim.new(1, 0)})
+local TargetDetails: TextLabel = makeTextLabel(
+    FloatingUi.overlays.TargetInfo.window.body,
+    "Waiting for a nearby player",
+    9
+)
+TargetDetails.Position = UDim2.fromOffset(12, 62)
+TargetDetails.Size = UDim2.new(1, -24, 0, 24)
+TargetDetails.TextColor3 = Theme.DefaultTextMuted
+TargetDetails:SetAttribute("FloatingDepth", 2)
+
+local RadarSurface: Frame = create("Frame", {
+    Parent = FloatingUi.overlays.Radar.window.body,
+    Name = "Surface",
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    BackgroundColor3 = Theme.DefaultSurface,
+    BackgroundTransparency = 0.34,
+    BorderSizePixel = 0,
+    Position = UDim2.fromScale(0.5, 0.5),
+    Size = UDim2.fromOffset(180, 180),
+}) :: Frame
+RadarSurface:SetAttribute("FloatingDepth", 2)
+create("UICorner", {Parent = RadarSurface, CornerRadius = UDim.new(1, 0)})
+create("UIStroke", {
+    Parent = RadarSurface,
+    Color = Theme.DefaultOutline,
+    Transparency = 0.48,
+})
+for _, rotation: number in ipairs({0, 90}) do
+    local axis: Frame = create("Frame", {
+        Parent = RadarSurface,
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        BackgroundColor3 = Theme.DefaultOutline,
+        BackgroundTransparency = 0.72,
+        BorderSizePixel = 0,
+        Position = UDim2.fromScale(0.5, 0.5),
+        Rotation = rotation,
+        Size = UDim2.new(1, -16, 0, 1),
+    }) :: Frame
+    axis:SetAttribute("FloatingDepth", 1)
+end
+local RadarCenter: Frame = create("Frame", {
+    Parent = RadarSurface,
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    BackgroundColor3 = Theme.AccentCyan,
+    BorderSizePixel = 0,
+    Position = UDim2.fromScale(0.5, 0.5),
+    Size = UDim2.fromOffset(7, 7),
+}) :: Frame
+RadarCenter:SetAttribute("FloatingDepth", 3)
+create("UICorner", {Parent = RadarCenter, CornerRadius = UDim.new(1, 0)})
+local radarBlips: {[Player]: Frame} = {}
+local sessionStartedAt: number = os.clock()
+local overlayElapsed: number = 1
+
+TaskManager:Connect(function(deltaTime: number): ()
+    overlayElapsed += deltaTime
+    if overlayElapsed < 0.12 then
+        return
+    end
+    overlayElapsed = 0
+    local elapsed: number = math.max(0, math.floor(os.clock() - sessionStartedAt))
+    SessionText.Text = string.format(
+        "Time Played: %02d:%02d:%02d",
+        math.floor(elapsed / 3600),
+        math.floor(elapsed / 60) % 60,
+        elapsed % 60
+    )
+
+    if FloatingUi.overlays.TextGUI.enabled then
+        local enabledNames: {string} = {}
+        for _, feature: any in ipairs(allFeatures) do
+            if feature.enabled and not feature.isCategory and not feature.isAction then
+                table.insert(enabledNames, feature.name)
+            end
+        end
+        table.sort(enabledNames)
+        TextGuiLabel.Text = #enabledNames > 0
+            and table.concat(enabledNames, "\n")
+            or "No active modules"
+    end
+
+    local localCharacter: Model? = LocalPlayer.Character
+    local localRoot: BasePart? = localCharacter
+        and localCharacter:FindFirstChild("HumanoidRootPart") :: BasePart?
+    local nearest: Player? = nil
+    local nearestDistance: number = math.huge
+    local targetOverlayEnabled: boolean = FloatingUi.overlays.TargetInfo.enabled
+    local radarOverlayEnabled: boolean = FloatingUi.overlays.Radar.enabled
+    if targetOverlayEnabled and localRoot then
+        for _, player: Player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer then
+                local character: Model? = player.Character
+                local humanoid: Humanoid? = character
+                    and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+                local root: BasePart? = character
+                    and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+                if humanoid and humanoid.Health > 0 and root then
+                    local distance: number = (root.Position - localRoot.Position).Magnitude
+                    if distance < nearestDistance then
+                        nearest = player
+                        nearestDistance = distance
+                    end
+                end
+            end
+        end
+    end
+    if targetOverlayEnabled then
+        local targetHumanoid: Humanoid? = nearest
+            and nearest.Character
+            and nearest.Character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+        if nearest and targetHumanoid then
+            local ratio: number = math.clamp(
+                targetHumanoid.Health / math.max(1, targetHumanoid.MaxHealth),
+                0,
+                1
+            )
+            TargetName.Text = nearest.DisplayName
+            TargetDetails.Text = string.format(
+                "@%s  ·  %.0f studs  ·  %.0f HP",
+                nearest.Name,
+                nearestDistance,
+                targetHumanoid.Health
+            )
+            TargetHealthFill.Size = UDim2.fromScale(ratio, 1)
+            TargetHealthFill.BackgroundColor3 = ratio > 0.5
+                and Theme.AccentCyan
+                or (ratio > 0.25 and Theme.AccentViolet or Theme.AccentPink)
+        else
+            TargetName.Text = "No target"
+            TargetDetails.Text = "Waiting for a nearby player"
+            TargetHealthFill.Size = UDim2.fromScale(0, 1)
+        end
+    end
+    if radarOverlayEnabled then
+        local activePlayers: {[Player]: boolean} = {}
+        for _, player: Player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer and localRoot then
+                local targetRoot: BasePart? = player.Character
+                    and player.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+                if targetRoot then
+                    activePlayers[player] = true
+                    local blip: Frame? = radarBlips[player]
+                    if not blip then
+                        blip = create("Frame", {
+                            Parent = RadarSurface,
+                            AnchorPoint = Vector2.new(0.5, 0.5),
+                            BackgroundColor3 = Theme.AccentPink,
+                            BorderSizePixel = 0,
+                            Size = UDim2.fromOffset(6, 6),
+                        }) :: Frame
+                        blip:SetAttribute("FloatingDepth", 4)
+                        create("UICorner", {
+                            Parent = blip,
+                            CornerRadius = UDim.new(1, 0),
+                        })
+                        radarBlips[player] = blip
+                    end
+                    local relative: Vector3 = localRoot.CFrame:PointToObjectSpace(
+                        targetRoot.Position
+                    )
+                    local radarScale: number = 78 / 200
+                    local offset: Vector2 = Vector2.new(
+                        relative.X * radarScale,
+                        relative.Z * radarScale
+                    )
+                    if offset.Magnitude > 78 then
+                        offset = offset.Unit * 78
+                    end
+                    blip.Position = UDim2.fromOffset(90 + offset.X, 90 + offset.Y)
+                end
+            end
+        end
+        for player: Player, blip: Frame in pairs(radarBlips) do
+            if not activePlayers[player] then
+                blip:Destroy()
+                radarBlips[player] = nil
+            end
+        end
+    end
+end)
+
+local FloatingButtons: Frame = create("Frame", {
+    Parent = state.shells.defaultSidebar,
+    Name = "FloatingWindowButtons",
+    AnchorPoint = Vector2.new(0, 1),
+    BackgroundColor3 = Theme.DefaultSurface,
+    BackgroundTransparency = 0.42,
+    BorderSizePixel = 0,
+    Position = UDim2.new(0, 12, 1, -12),
+    Size = UDim2.fromOffset(76, 34),
+    ZIndex = 24,
+}) :: Frame
+create("UICorner", {Parent = FloatingButtons, CornerRadius = UDim.new(0, 9)})
+create("UIStroke", {
+    Parent = FloatingButtons,
+    Color = Theme.DefaultOutline,
+    Transparency = 0.72,
+})
+create("UIListLayout", {
+    Parent = FloatingButtons,
+    FillDirection = Enum.FillDirection.Horizontal,
+    HorizontalAlignment = Enum.HorizontalAlignment.Center,
+    VerticalAlignment = Enum.VerticalAlignment.Center,
+    Padding = UDim.new(0, 4),
+})
+
+local function createFloatingLauncher(
+    name: string,
+    assetName: string,
+    fallbackText: string,
+    callback: () -> ()
+): TextButton
+    local button: TextButton = makeButton(FloatingButtons, fallbackText, 12)
+    button.Name = name
+    button.BackgroundTransparency = 1
+    button.Size = UDim2.fromOffset(32, 28)
+    button.ZIndex = 25
+    button:SetAttribute("ThemeRole", "Icon")
+    local stroke: UIStroke? = button:FindFirstChild("StyleStroke") :: UIStroke?
+    if stroke then
+        stroke.Enabled = false
+    end
+    local icon: ImageLabel = create("ImageLabel", {
+        Parent = button,
+        BackgroundTransparency = 1,
+        Image = "",
+        ImageColor3 = Theme.DefaultTextMuted,
+        Position = UDim2.fromOffset(7, 5),
+        ScaleType = Enum.ScaleType.Fit,
+        Size = UDim2.fromOffset(18, 18),
+        ZIndex = 26,
+    }) :: ImageLabel
+    state.assetManager.loadAsync(assetName, icon)
+    trackUiConnection(button.MouseButton1Click:Connect(callback))
+    return button
+end
+
+createFloatingLauncher("Favorites", "star", "★", function(): ()
+    FavoritesWindow.root.Visible = not FavoritesWindow.root.Visible
+    configData.ui.favoritesWindowOpen = FavoritesWindow.root.Visible
+    if FavoritesWindow.root.Visible then
+        refreshFavorites()
+        bringFloatingToFront(FavoritesWindow)
+    end
+    queueConfigSave()
+end)
+createFloatingLauncher("Overlays", "overlays", "▥", function(): ()
+    OverlayMenu.root.Visible = not OverlayMenu.root.Visible
+    configData.ui.overlayMenuOpen = OverlayMenu.root.Visible
+    if OverlayMenu.root.Visible then
+        bringFloatingToFront(OverlayMenu)
+    end
+    queueConfigSave()
+end)
+
+FavoritesWindow.root.Visible = configData.ui.favoritesWindowOpen == true
+OverlayMenu.root.Visible = configData.ui.overlayMenuOpen == true
+for overlayId: string, overlay: any in pairs(FloatingUi.overlays) do
+    setOverlayEnabled(overlayId, configData.ui.overlays[overlayId] == true)
+end
+refreshFavorites()
+end
+
 local function applyFeaturePresentation(feature: any, isDefault: boolean): ()
     local enabled: boolean = feature.enabled == true
     if feature.row then
@@ -3618,6 +4498,9 @@ local function refreshFeatureToggle(feature: any): ()
             }
         ):Play()
     end
+    if state.floatingUi then
+        state.floatingUi.refreshFeature(feature)
+    end
 end
 
 local function runActionButton(
@@ -3707,6 +4590,7 @@ local function bindActionShortcut(
                 and "KEY"
                 or shortcutKey.Name
         end
+        button:SetAttribute("CaptureIdleText", button.Text)
     end
 
     refreshButtonText()
@@ -3723,15 +4607,14 @@ local function bindActionShortcut(
     end
 
     trackUiConnection(button.MouseButton1Click:Connect(function(): ()
-        button.Text = "..."
-        setKeySlotCapture(button, true)
-        state.keyCaptureCallback = function(keyCode: Enum.KeyCode): ()
-            shortcutKey = keyCode
-            setKeySlotCapture(button, false)
-            configData.values[optionKey] = keyCode.Name
+        beginKeyCapture(button, function(keyCode: Enum.KeyCode): ()
+            shortcutKey = keyCode == shortcutKey
+                and Enum.KeyCode.Unknown
+                or keyCode
+            configData.values[optionKey] = shortcutKey.Name
             queueConfigSave()
             refreshButtonText()
-        end
+        end)
     end))
     trackUiConnection(UserInputService.InputBegan:Connect(function(
         input: InputObject,
@@ -3740,6 +4623,7 @@ local function bindActionShortcut(
         if gameProcessed
             or shortcutKey == Enum.KeyCode.Unknown
             or state.keyCaptureCallback
+            or state.waitingForKey
             or UserInputService:GetFocusedTextBox() then
             return
         end
@@ -3781,6 +4665,7 @@ local function createUniversalFeature(
         collapsedHeight = state.isMobile and 56 or 52,
         onToggle = onToggle,
         configKey = configKey,
+        registry = registry,
         sectionName = sectionName,
         tooltipText = description,
         tooltipBound = false,
@@ -3819,7 +4704,13 @@ local function createUniversalFeature(
     local title: TextLabel = (makeTextLabel(row, name, 13) :: any) :: TextLabel
     title.FontFace = CONTROL_FONT
     title.Position = UDim2.fromOffset(18, 0)
-    title.Size = UDim2.new(1, -112, 0, feature.collapsedHeight)
+    title.Size = UDim2.new(
+        1,
+        feature.isCategory and -62
+            or (configuration.noOptions == true and -108 or -140),
+        0,
+        feature.collapsedHeight
+    )
     title.TextColor3 = state.guiStyle == "Default"
         and Theme.DefaultText
         or Theme.Text
@@ -3829,7 +4720,13 @@ local function createUniversalFeature(
         (makeTextLabel(row, description, 11) :: any) :: TextLabel
     subtitle.Name = "Description"
     subtitle.Position = UDim2.fromOffset(16, 34)
-    subtitle.Size = UDim2.new(1, -118, 0, 30)
+    subtitle.Size = UDim2.new(
+        1,
+        feature.isCategory and -68
+            or (configuration.noOptions == true and -114 or -146),
+        0,
+        30
+    )
     subtitle.TextColor3 = state.guiStyle == "Default"
         and Theme.DefaultTextMuted
         or Theme.TextMuted
@@ -3840,7 +4737,7 @@ local function createUniversalFeature(
 
     local headerControlTop: number = if state.isMobile then 10 else 9
     local arrow: TextButton =
-        (makeButton(row, "⌄", state.isMobile and 17 or 15) :: any) :: TextButton
+        (makeButton(row, "⋮", state.isMobile and 17 or 15) :: any) :: TextButton
     arrow.Name = "Expand"
     arrow:SetAttribute("ThemeRole", "Icon")
     arrow:SetAttribute("NoPressEffect", true)
@@ -3867,7 +4764,13 @@ local function createUniversalFeature(
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
         Position = UDim2.fromOffset(0, 0),
-        Size = UDim2.new(1, -92, 0, feature.collapsedHeight),
+        Size = UDim2.new(
+            1,
+            feature.isCategory and -42
+                or (configuration.noOptions == true and -94 or -128),
+            0,
+            feature.collapsedHeight
+        ),
         Text = "",
         ZIndex = 6,
     }) :: TextButton
@@ -3967,7 +4870,7 @@ local function createUniversalFeature(
         if feature.expanded then
             options.Visible = true
         end
-        arrow.Text = feature.expanded and "⌃" or "⌄"
+        arrow.Text = "⋮"
         if animate and state.animationsEnabled then
             TweenService:Create(
                 options,
@@ -4057,6 +4960,35 @@ local function createUniversalFeature(
 
     trackUiConnection(activationTarget.MouseButton1Click:Connect(activateFeature))
     if not feature.isCategory then
+        local favoriteButton: TextButton =
+            (makeButton(row, "☆", state.isMobile and 16 or 15) :: any) :: TextButton
+        favoriteButton.Name = "Favorite"
+        favoriteButton:SetAttribute("ThemeRole", "Icon")
+        favoriteButton:SetAttribute("NoPressEffect", true)
+        favoriteButton.AnchorPoint = Vector2.new(1, 0)
+        favoriteButton.BackgroundTransparency = 1
+        favoriteButton.Position = UDim2.new(
+            1,
+            configuration.noOptions == true and -60 or -94,
+            0,
+            headerControlTop
+        )
+        favoriteButton.Size = UDim2.fromOffset(
+            state.isMobile and 30 or 28,
+            state.isMobile and 30 or 27
+        )
+        favoriteButton.ZIndex = 9
+        local favoriteStroke: UIStroke? =
+            favoriteButton:FindFirstChild("StyleStroke") :: UIStroke?
+        if favoriteStroke then
+            favoriteStroke.Enabled = false
+        end
+        feature.favoriteButton = favoriteButton
+        trackUiConnection(favoriteButton.MouseButton1Click:Connect(function(): ()
+            state.floatingUi.toggleFavorite(feature)
+        end))
+    end
+    if not feature.isCategory then
         local shortcutButton: TextButton =
             (makeButton(row, "KEY", 9) :: any) :: TextButton
         shortcutButton.Name = "Shortcut"
@@ -4064,7 +4996,12 @@ local function createUniversalFeature(
         shortcutButton.BackgroundColor3 = state.guiStyle == "Default"
             and Theme.DefaultSurface
             or Theme.SurfaceRaised
-        shortcutButton.Position = UDim2.new(1, -42, 0, headerControlTop)
+        shortcutButton.Position = UDim2.new(
+            1,
+            configuration.noOptions == true and -8 or -42,
+            0,
+            headerControlTop
+        )
         shortcutButton.Size = UDim2.fromOffset(
             state.isMobile and 48 or 44,
             state.isMobile and 30 or 27
@@ -4088,6 +5025,7 @@ local function createUniversalFeature(
 
     registry[name] = feature
     table.insert(allFeatures, feature)
+    state.floatingUi.registerFeature(feature)
     applyFeaturePresentation(feature, state.guiStyle == "Default")
 
     if not feature.isAction
@@ -4533,28 +5471,37 @@ local function addKeyOption(
         end)
     end
     local initialKey = savedKey or defaultKey
+    local currentKey: Enum.KeyCode = initialKey
     local option = createOptionRow(feature, labelText)
-    local button = makeButton(option, initialKey.Name, 11)
+    local button = makeButton(
+        option,
+        currentKey == Enum.KeyCode.Unknown and "NONE" or currentKey.Name,
+        11
+    )
     button.Position = UDim2.new(0.5, 0, 0, 0)
     button.Size = UDim2.new(0.5, 0, 1, 0)
     applyKeySlotStyle(button)
+    button:SetAttribute("CaptureIdleText", button.Text)
 
     button.MouseButton1Click:Connect(function()
         if state.isMobile then
             return
         end
-        button.Text = "PRESIONA UNA TECLA…"
-        setKeySlotCapture(button, true)
-        state.keyCaptureCallback = function(keyCode)
-            button.Text = keyCode.Name
-            setKeySlotCapture(button, false)
-            callback(keyCode)
-            configData.values[optionKey] = keyCode.Name
+        beginKeyCapture(button, function(keyCode: Enum.KeyCode): ()
+            currentKey = keyCode == currentKey
+                and Enum.KeyCode.Unknown
+                or keyCode
+            button.Text = currentKey == Enum.KeyCode.Unknown
+                and "NONE"
+                or currentKey.Name
+            button:SetAttribute("CaptureIdleText", button.Text)
+            callback(currentKey)
+            configData.values[optionKey] = currentKey.Name
             queueConfigSave()
-        end
+        end)
     end)
 
-    callback(initialKey)
+    callback(currentKey)
     return button :: TextButton
 end
 
@@ -5174,30 +6121,62 @@ local flySettings: FlySettings = {
     downKey = Enum.KeyCode.LeftControl,
 }
 local flySmoothedVelocity: Vector3 = Vector3.zero
-local originalFlyPlatformStand: boolean? = nil
+state.platformStandController = {
+    owners = {},
+    baselines = setmetatable({}, {__mode = "k"}),
+    sequence = 0,
+}
+state.platformStandController.set = function(ownerId: string, value: boolean?): ()
+    local controller: any = state.platformStandController
+    if value == nil then
+        controller.owners[ownerId] = nil
+        if next(controller.owners) == nil then
+            for humanoid: Humanoid, baseline: boolean in pairs(controller.baselines) do
+                if humanoid.Parent then
+                    humanoid.PlatformStand = baseline
+                end
+            end
+            controller.baselines = setmetatable({}, {__mode = "k"})
+        end
+        return
+    end
+    local owner: any = controller.owners[ownerId]
+    if not owner then
+        controller.sequence += 1
+        owner = {sequence = controller.sequence, value = value}
+        controller.owners[ownerId] = owner
+    else
+        owner.value = value
+    end
+end
+state.platformStandController.apply = function(humanoid: Humanoid): ()
+    local controller: any = state.platformStandController
+    if controller.baselines[humanoid] == nil then
+        controller.baselines[humanoid] = humanoid.PlatformStand
+    end
+    local selected: any = nil
+    for _, owner: any in pairs(controller.owners) do
+        if not selected or owner.sequence > selected.sequence then
+            selected = owner
+        end
+    end
+    if selected then
+        humanoid.PlatformStand = selected.value
+    end
+end
+local flyObjects: {[Instance]: boolean} =
+    setmetatable({}, {__mode = "k"}) :: any
 local flyTouchVertical: number = 0
 
 local function removeFlyObjects(): ()
-    local _, humanoid, root = getCharacterParts()
-    if humanoid and originalFlyPlatformStand ~= nil then
-        humanoid.PlatformStand = originalFlyPlatformStand
-    end
-    originalFlyPlatformStand = nil
+    state.platformStandController.set("Fly", nil)
 
-    if not root then
-        return
-    end
-
-    for _, name in ipairs({
-        "RTM_FlyAttachment",
-        "RTM_FlyVelocity",
-        "RTM_FlyOrientation",
-    } :: {string}) do
-        local object: Instance? = root:FindFirstChild(name)
-        if object then
+    for object: Instance in pairs(flyObjects) do
+        if object.Parent then
             object:Destroy()
         end
     end
+    flyObjects = setmetatable({}, {__mode = "k"}) :: any
 end
 
 local function ensureFlyConstraints(root: BasePart): (LinearVelocity, AlignOrientation)
@@ -5209,6 +6188,7 @@ local function ensureFlyConstraints(root: BasePart): (LinearVelocity, AlignOrien
         attachment = newAttachment
     end
     local resolvedAttachment: Attachment = attachment :: Attachment
+    flyObjects[resolvedAttachment] = true
 
     local velocity: LinearVelocity? = root:FindFirstChild("RTM_FlyVelocity") :: LinearVelocity?
     if not velocity then
@@ -5221,6 +6201,7 @@ local function ensureFlyConstraints(root: BasePart): (LinearVelocity, AlignOrien
         newVelocity.Parent = root
         velocity = newVelocity
     end
+    flyObjects[velocity :: LinearVelocity] = true
 
     local orientation: AlignOrientation? =
         root:FindFirstChild("RTM_FlyOrientation") :: AlignOrientation?
@@ -5235,6 +6216,7 @@ local function ensureFlyConstraints(root: BasePart): (LinearVelocity, AlignOrien
         newOrientation.Parent = root
         orientation = newOrientation
     end
+    flyObjects[orientation :: AlignOrientation] = true
 
     return velocity :: LinearVelocity, orientation :: AlignOrientation
 end
@@ -5312,10 +6294,8 @@ local function toggleFly(enabled: boolean): ()
             return
         end
 
-        if originalFlyPlatformStand == nil then
-            originalFlyPlatformStand = humanoid.PlatformStand
-        end
-        humanoid.PlatformStand = flySettings.platformStand
+        state.platformStandController.set("Fly", flySettings.platformStand)
+        state.platformStandController.apply(humanoid)
 
         local velocity, orientation = ensureFlyConstraints(root)
         local targetVelocity, cameraForward = getFlyDirection(humanoid, camera)
@@ -5606,6 +6586,8 @@ local function toggleInfiniteJump(enabled)
         processed
     )
         if processed
+            or state.keyCaptureCallback
+            or state.waitingForKey
             or input.KeyCode ~= Enum.KeyCode.Space
             or UserInputService:GetFocusedTextBox()
             or infiniteJumpSettings.mode == "Rise" then
@@ -5735,7 +6717,6 @@ local physicsSpeedSettings: PhysicsSpeedSettings = {
     preserveMomentum = false,
 }
 local physicsSpeedTeleportClock: number = 0
-local originalPhysicsPlatformStand: boolean? = nil
 local originalVehicleSeats: {[VehicleSeat]: VehicleSeatState} =
     setmetatable({}, {__mode = "k"}) :: any
 local originalMotorHinges: {[HingeConstraint]: HingeState} =
@@ -5835,11 +6816,7 @@ local function togglePhysicsSpeed(enabled: boolean): ()
     restorePhysicsMotors()
     physicsSpeedTeleportClock = 0
 
-    local _, humanoid = getCharacterParts()
-    if humanoid and originalPhysicsPlatformStand ~= nil then
-        humanoid.PlatformStand = originalPhysicsPlatformStand
-    end
-    originalPhysicsPlatformStand = nil
+    state.platformStandController.set("PhysicsSpeed", nil)
 
     if not enabled then
         return
@@ -5852,10 +6829,11 @@ local function togglePhysicsSpeed(enabled: boolean): ()
                 return
             end
 
-            if originalPhysicsPlatformStand == nil then
-                originalPhysicsPlatformStand = currentHumanoid.PlatformStand
-            end
-            currentHumanoid.PlatformStand = physicsSpeedSettings.platformStand
+            state.platformStandController.set(
+                "PhysicsSpeed",
+                physicsSpeedSettings.platformStand
+            )
+            state.platformStandController.apply(currentHumanoid)
 
             if vehicleSeat and physicsSpeedSettings.customProperties then
                 tunePhysicsMotors(vehicleSeat)
@@ -5963,26 +6941,63 @@ local function togglePhysicsSpeed(enabled: boolean): ()
 end
 
 local fovSettings = {value = 90}
-local originalFov = workspace.CurrentCamera and workspace.CurrentCamera.FieldOfView or 70
-
-local function toggleFov(enabled)
-    disconnectFeatureConnection("FOV")
-
-    if not enabled then
-        if workspace.CurrentCamera then
-            workspace.CurrentCamera.FieldOfView = originalFov
+state.fovController = state.fovController or {
+    owners = {},
+    baselines = setmetatable({}, {__mode = "k"}),
+    sequence = 0,
+}
+state.fovController.set = function(ownerId: string, value: number?): ()
+    local controller: any = state.fovController
+    if value == nil then
+        controller.owners[ownerId] = nil
+        if next(controller.owners) == nil then
+            for camera: Camera, baseline: number in pairs(controller.baselines) do
+                if camera.Parent then
+                    camera.FieldOfView = baseline
+                end
+            end
+            controller.baselines = setmetatable({}, {__mode = "k"})
         end
         return
     end
+    local owner: any = controller.owners[ownerId]
+    if not owner then
+        controller.sequence += 1
+        owner = {sequence = controller.sequence, value = value}
+        controller.owners[ownerId] = owner
+    else
+        owner.value = value
+    end
+end
+state.fovController.apply = function(camera: Camera?): ()
+    if not camera then
+        return
+    end
+    local controller: any = state.fovController
+    if controller.baselines[camera] == nil then
+        controller.baselines[camera] = camera.FieldOfView
+    end
+    local selected: any = nil
+    for _, owner: any in pairs(controller.owners) do
+        if not selected or owner.sequence > selected.sequence then
+            selected = owner
+        end
+    end
+    if selected then
+        camera.FieldOfView = selected.value
+    end
+end
 
-    if workspace.CurrentCamera then
-        originalFov = workspace.CurrentCamera.FieldOfView
+local function toggleFov(enabled)
+    disconnectFeatureConnection("FOV")
+    state.fovController.set("Universal", enabled and fovSettings.value or nil)
+    if not enabled then
+        return
     end
 
     featureConnections.FOV = TaskManager:Connect(function()
-        if workspace.CurrentCamera then
-            workspace.CurrentCamera.FieldOfView = fovSettings.value
-        end
+        state.fovController.set("Universal", fovSettings.value)
+        state.fovController.apply(workspace.CurrentCamera)
     end)
 end
 
@@ -6032,6 +7047,8 @@ local function toggleCtrlClickTeleport(enabled)
     featureConnections.CtrlClickTeleport = UserInputService.InputBegan:Connect(
         function(input, processed)
             if processed
+                or state.keyCaptureCallback
+                or state.waitingForKey
                 or input.UserInputType ~= Enum.UserInputType.MouseButton1
                 or not UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
                 return
@@ -6473,6 +7490,9 @@ local function toggleHighJump(enabled: boolean): ()
         return
     end
     featureConnections.HighJump = UserInputService.JumpRequest:Connect(function(): ()
+        if state.keyCaptureCallback or state.waitingForKey then
+            return
+        end
         local _, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
         if humanoid and root and humanoid.FloorMaterial ~= Enum.Material.Air then
             local current: Vector3 = root.AssemblyLinearVelocity
@@ -6762,6 +7782,7 @@ local phaseDashSettings: PhaseDashSettings = {
     key = Enum.KeyCode.Q,
 }
 local lastPhaseDash: number = -math.huge
+local phaseDashEnabled: boolean = false
 
 local function createPhaseFlash(character: Model): ()
     local oldFlash: Instance? = character:FindFirstChild("RTM_PhaseDashFlash")
@@ -6791,6 +7812,9 @@ local function createPhaseFlash(character: Model): ()
 end
 
 local function performPhaseDash(): ()
+    if not phaseDashEnabled then
+        return
+    end
     local now: number = os.clock()
     if now - lastPhaseDash < phaseDashSettings.cooldown then
         return
@@ -6838,6 +7862,7 @@ end
 
 local function togglePhaseDash(enabled: boolean): ()
     disconnectFeatureConnection("PhaseDash")
+    phaseDashEnabled = enabled
     if not enabled then
         return
     end
@@ -6845,7 +7870,10 @@ local function togglePhaseDash(enabled: boolean): ()
         input: InputObject,
         gameProcessed: boolean
     ): ()
-        if gameProcessed or UserInputService:GetFocusedTextBox() then
+        if gameProcessed
+            or state.keyCaptureCallback
+            or state.waitingForKey
+            or UserInputService:GetFocusedTextBox() then
             return
         end
         if input.UserInputType == Enum.UserInputType.Keyboard
@@ -7727,14 +8755,9 @@ local PhaseDashKeyButton: TextButton = addKeyOption(
         state.universalToolkit.phaseDashSettings.key = value
     end
 )
-local PhaseDashAction: TextButton = addActionOption(
-    PhaseDashFeature,
-    "Dash now",
-    state.universalToolkit.performPhaseDash
-)
 if state.bindMobileActionPlacement then
     state.bindMobileActionPlacement(
-        PhaseDashAction,
+        PhaseDashKeyButton,
         "UniversalPhaseDash",
         "DASH",
         state.universalToolkit.performPhaseDash
@@ -8117,6 +9140,11 @@ local function registerPlaceModule(
             error(loadError or "No se pudo cargar el módulo")
         end
         local taskCountBefore: number = TaskManager.nextId
+        local featureCountBefore: number = #allFeatures
+        local connectionsBefore: {[string]: boolean} = {}
+        for connectionName: string in pairs(featureConnections) do
+            connectionsBefore[connectionName] = true
+        end
         local runtime: any = {
             Menu = {
                 Root = Main,
@@ -8134,6 +9162,41 @@ local function registerPlaceModule(
             runtime
         )
         if not initialized then
+            loadedModule.Initialized = true
+            local rolledBack: boolean, rollbackError: any = pcall(
+                loadedModule.destroy
+            )
+            if not rolledBack then
+                state.logBootstrapError(
+                    tabName .. " rollback falló: " .. tostring(rollbackError)
+                )
+            end
+            for connectionName: string in pairs(featureConnections) do
+                if not connectionsBefore[connectionName] then
+                    disconnectFeatureConnection(connectionName)
+                end
+            end
+            for taskId: number, scheduled: ScheduledTask in pairs(TaskManager.tasks) do
+                if taskId > taskCountBefore then
+                    scheduled.handle:Disconnect()
+                end
+            end
+            for index: number = #allFeatures, featureCountBefore + 1, -1 do
+                local feature: any = allFeatures[index]
+                if feature.enabled then
+                    pcall(feature.onToggle, false)
+                end
+                if feature.registry then
+                    feature.registry[feature.name] = nil
+                end
+                if feature.row and feature.row.Parent then
+                    feature.row:Destroy()
+                end
+                table.remove(allFeatures, index)
+                if state.floatingUi and state.floatingUi.unregisterFeature then
+                    state.floatingUi.unregisterFeature(feature)
+                end
+            end
             state.logBootstrapError(tabName .. " init falló: " .. tostring(initError))
             error(initError)
         end
@@ -8779,6 +9842,9 @@ trackUiConnection(MobileResetButton.MouseButton1Click:Connect(function(): ()
 end))
 
 trackUiConnection(KeybindButton.MouseButton1Click:Connect(function(): ()
+    if state.keyCaptureCancel then
+        state.keyCaptureCancel()
+    end
     state.waitingForKey = true
     KeybindButton.Text = "PRESIONA UNA TECLA…"
     setKeySlotCapture(KeybindButton, true)
@@ -8890,6 +9956,9 @@ if camera then
                     Main.Position.Y.Offset
                 ))
                 Main.Position = UDim2.fromOffset(clamped.X, clamped.Y)
+                if state.floatingUi and state.floatingUi.reclamp then
+                    state.floatingUi.reclamp()
+                end
             end)
         end
     ))
@@ -8899,9 +9968,19 @@ state.globalInputBeganConnection = UserInputService.InputBegan:Connect(function(
     if state.keyCaptureCallback then
         if input.UserInputType == Enum.UserInputType.Keyboard
             and input.KeyCode ~= Enum.KeyCode.Unknown then
+            if input.KeyCode == Enum.KeyCode.Escape then
+                if state.keyCaptureCancel then
+                    state.keyCaptureCancel()
+                end
+                return
+            end
             local callback = state.keyCaptureCallback
-            state.keyCaptureCallback = nil
             callback(input.KeyCode)
+            task.defer(function(): ()
+                if state.keyCaptureCallback == callback then
+                    state.keyCaptureCallback = nil
+                end
+            end)
         end
         return
     end
@@ -8909,8 +9988,15 @@ state.globalInputBeganConnection = UserInputService.InputBegan:Connect(function(
     if state.waitingForKey then
         if input.UserInputType == Enum.UserInputType.Keyboard
             and input.KeyCode ~= Enum.KeyCode.Unknown then
+            if input.KeyCode == Enum.KeyCode.Escape then
+                state.waitingForKey = false
+                if state.keybindButton then
+                    state.keybindButton.Text = state.toggleKey.Name
+                    setKeySlotCapture(state.keybindButton, false)
+                end
+                return
+            end
             state.toggleKey = input.KeyCode
-            state.waitingForKey = false
             if state.keybindButton then
                 state.keybindButton.Text = input.KeyCode.Name
                 setKeySlotCapture(state.keybindButton, false)
@@ -8918,6 +10004,9 @@ state.globalInputBeganConnection = UserInputService.InputBegan:Connect(function(
             configData.ui.toggleKey = input.KeyCode.Name
             queueConfigSave()
             notify("Tecla del menú: " .. input.KeyCode.Name)
+            task.defer(function(): ()
+                state.waitingForKey = false
+            end)
         end
         return
     end

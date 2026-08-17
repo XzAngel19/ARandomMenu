@@ -82,7 +82,6 @@ local function buildVDFeatures(): ()
         trackedHumanoid = nil :: Humanoid?,
         actionAnimator = nil :: Animator?,
         selectiveCollisions = {} :: {[BasePart]: CollisionState},
-        originalFov = nil :: number?,
         lighting = nil :: any,
         effectStates = {} :: {[Instance]: any},
         soundStates = {} :: {[Sound]: SoundState},
@@ -708,7 +707,9 @@ local function buildVDFeatures(): ()
             input: InputObject,
             _gameProcessed: boolean
         ): ()
-            if input.KeyCode == Enum.KeyCode.Space
+            if not state.keyCaptureCallback
+                and not state.waitingForKey
+                and input.KeyCode == Enum.KeyCode.Space
                 and settings.autoGeneratorGetOff == "Manual" then
                 local currentPoint: BasePart? = runtime.currentRepairPoint
                 local root: BasePart? = getRoot(LocalPlayer.Character)
@@ -1550,20 +1551,13 @@ local function buildVDFeatures(): ()
 
     local function toggleFov(enabled: boolean): ()
         disconnectFeatureConnection("VDFOV")
-        local camera: Camera? = workspace.CurrentCamera
+        state.fovController.set("VD", enabled and settings.fov or nil)
         if not enabled then
-            if camera and runtime.originalFov then
-                camera.FieldOfView = runtime.originalFov
-            end
-            runtime.originalFov = nil
             return
         end
-        runtime.originalFov = if camera then camera.FieldOfView else 70
         featureConnections.VDFOV = TaskManager:Connect(function(): ()
-            local current: Camera? = workspace.CurrentCamera
-            if current then
-                current.FieldOfView = settings.fov
-            end
+            state.fovController.set("VD", settings.fov)
+            state.fovController.apply(workspace.CurrentCamera)
         end)
     end
 
