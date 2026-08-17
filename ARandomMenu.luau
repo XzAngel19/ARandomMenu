@@ -125,6 +125,7 @@ local CONTROL_FONT: Font = Font.new(
     Enum.FontWeight.SemiBold,
     Enum.FontStyle.Normal
 )
+local DISPLAY_FONT: Font = TITLE_FONT
 local TEXT_BASE_MULTIPLIER: number = 1.35
 local TEXT_SCALE_MINIMUM: number = 0.8
 local TEXT_SCALE_MAXIMUM: number = 1.2
@@ -386,9 +387,9 @@ local AssetManager: any = {
         purpleBackground = {
             url = REPOSITORY_RAW_BASE
                 .. "src/gui/Current/Images/purple-panel-background.png",
-            fileName = "purple-panel-background-v2.png",
+            fileName = "purple-panel-background-v3.png",
             fallback = "",
-            version = 2,
+            version = 3,
             assetType = "image/png",
         },
         candyFont = {
@@ -815,16 +816,10 @@ function AssetManager.clear(logicalName: string): (boolean, string?)
     end
     return false, tostring(deleteError)
 end
-    TITLE_FONT = AssetManager.resolveFont(
+    DISPLAY_FONT = AssetManager.resolveFont(
         "candyFont",
         TITLE_FONT,
         Enum.FontWeight.Regular,
-        Enum.FontStyle.Normal
-    )
-    CONTROL_FONT = AssetManager.resolveFont(
-        "valveFont",
-        CONTROL_FONT,
-        Enum.FontWeight.Bold,
         Enum.FontStyle.Normal
     )
     state.assetManager = AssetManager
@@ -1508,7 +1503,7 @@ task.defer(centerMain)
 
 do
 local sidebarWidth: number = state.isMobile and 136 or 172
-local DefaultShell: CanvasGroup = create("CanvasGroup", {
+local DefaultShell: Frame = create("Frame", {
     Parent = Main,
     Name = "DefaultShell",
     BackgroundColor3 = Theme.DefaultBackground,
@@ -1516,7 +1511,8 @@ local DefaultShell: CanvasGroup = create("CanvasGroup", {
     Size = UDim2.fromScale(1, 1),
     Visible = true,
     ZIndex = 2,
-}) :: CanvasGroup
+}) :: Frame
+DefaultShell.ClipsDescendants = true
 create("UICorner", {
     Parent = DefaultShell,
     CornerRadius = UDim.new(0, 14),
@@ -1527,7 +1523,7 @@ local DefaultSidebar: Frame = create("Frame", {
     Name = "DefaultSidebar",
     Active = true,
     BackgroundColor3 = Theme.DefaultSidebar,
-    BackgroundTransparency = 0.56,
+    BackgroundTransparency = 1,
     BorderSizePixel = 0,
     Size = UDim2.new(0, sidebarWidth, 1, 0),
     ZIndex = 10,
@@ -1536,14 +1532,23 @@ create("UICorner", {
     Parent = DefaultSidebar,
     CornerRadius = UDim.new(0, 14),
 })
-local DefaultSidebarStroke: UIStroke = create("UIStroke", {
-    Parent = DefaultSidebar,
-    ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-    Color = Theme.DefaultOutline,
-    Thickness = 1,
-    Transparency = 1,
-}) :: UIStroke
-DefaultSidebarStroke.Name = "DefaultSidebarStroke"
+local SidebarAtmosphere: Frame = create("Frame", {
+    Parent = DefaultShell,
+    Name = "SidebarAtmosphere",
+    BackgroundColor3 = Theme.DefaultBackground,
+    BorderSizePixel = 0,
+    Size = UDim2.new(0, sidebarWidth + 72, 1, 0),
+    ZIndex = 5,
+}) :: Frame
+create("UIGradient", {
+    Parent = SidebarAtmosphere,
+    Rotation = 0,
+    Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.18),
+        NumberSequenceKeypoint.new(0.64, 0.36),
+        NumberSequenceKeypoint.new(1, 1),
+    }),
+})
 
 local DefaultTabs: Frame = create("Frame", {
     Parent = DefaultSidebar,
@@ -1576,7 +1581,7 @@ local DefaultContentHost: Frame = create("Frame", {
     BorderSizePixel = 0,
     Position = UDim2.fromOffset(sidebarWidth, 0),
     Size = UDim2.new(1, -sidebarWidth, 1, 0),
-    ZIndex = 3,
+    ZIndex = 20,
 }) :: Frame
 DefaultContentHost.ClipsDescendants = true
 create("UICorner", {
@@ -1593,7 +1598,7 @@ DefaultPanelBackground = (create("ImageLabel", {
     ImageTransparency = 0.02,
     ScaleType = Enum.ScaleType.Crop,
     Size = UDim2.fromScale(1, 1),
-    ZIndex = 3,
+    ZIndex = 1,
 }) :: any) :: ImageLabel
 create("Frame", {
     Parent = DefaultShell,
@@ -1602,7 +1607,7 @@ create("Frame", {
     BackgroundTransparency = 0.58,
     BorderSizePixel = 0,
     Size = UDim2.fromScale(1, 1),
-    ZIndex = 4,
+    ZIndex = 2,
 })
 state.assetManager.loadAsync("purpleBackground", DefaultPanelBackground)
 
@@ -1612,7 +1617,7 @@ Content = create("Frame", {
     BackgroundTransparency = 1,
     BorderSizePixel = 0,
     Size = UDim2.fromScale(1, 1),
-    ZIndex = 5,
+    ZIndex = 21,
 }) :: Frame
 Content.ClipsDescendants = true
 
@@ -1640,9 +1645,6 @@ local function setTab(tabName: string): ()
     for name, page in pairs(pages) do
         local selectedPage: boolean = name == tabName
         page.Visible = selectedPage
-        if selectedPage and page:IsA("CanvasGroup") then
-            page.GroupTransparency = 0
-        end
     end
 
     for name: string, button: TextButton in pairs(defaultTabButtons) do
@@ -1661,7 +1663,7 @@ local function setTab(tabName: string): ()
     end
 end
 
-local function createTab(tabName: string, layoutOrder: number): CanvasGroup
+local function createTab(tabName: string, layoutOrder: number): Frame
     local defaultLabel: string = tabName == "Config." and "Settings" or tabName
     local defaultButton: TextButton = makeButton(
         state.shells.defaultTabs,
@@ -1688,7 +1690,7 @@ local function createTab(tabName: string, layoutOrder: number): CanvasGroup
     defaultPadding.Name = "DefaultTabPadding"
     defaultTabButtons[tabName] = defaultButton
 
-    local page: CanvasGroup = create("CanvasGroup", {
+    local page: Frame = create("Frame", {
         Parent = Content,
         Name = tabName .. "Page",
         BackgroundColor3 = Theme.Background,
@@ -1696,7 +1698,7 @@ local function createTab(tabName: string, layoutOrder: number): CanvasGroup
         BorderSizePixel = 0,
         Size = UDim2.fromScale(1, 1),
         Visible = false,
-        ZIndex = 5,
+        ZIndex = 22,
     })
     page.ClipsDescendants = true
     create("UICorner", {
@@ -1955,7 +1957,7 @@ local LoadingTitle: TextLabel = makeTextLabel(
     state.isMobile and 28 or 34
 ) :: TextLabel
 LoadingTitle.AnchorPoint = Vector2.new(0.5, 0.5)
-LoadingTitle.FontFace = state.guiStyle == "Default" and CONTROL_FONT or TITLE_FONT
+LoadingTitle.FontFace = DISPLAY_FONT
 LoadingTitle.Position = UDim2.fromScale(0.5, 0.52)
 LoadingTitle.Size = UDim2.new(0.8, 0, 0, 48)
 LoadingTitle.TextColor3 = state.guiStyle == "Default"
@@ -3236,27 +3238,19 @@ end)()
 state.universalProjectileCalibration:setEnabled(true)
 do
 local function applyGuiStyle(_: string, animate: boolean): ()
-    local activeShell: CanvasGroup = state.shells.default
+    local activeShell: Frame = state.shells.default
     state.guiStyle = "Default"
     Content.Parent = state.shells.defaultContentHost
     Content.Position = UDim2.fromScale(0, 0)
     Content.Size = UDim2.fromScale(1, 1)
     activeShell.Visible = true
-    activeShell.GroupTransparency = state.animationsEnabled and animate and 1 or 0
-    if activeShell.GroupTransparency > 0 then
-        TweenService:Create(
-            activeShell,
-            TweenInfo.new(0.24, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-            {GroupTransparency = 0}
-        ):Play()
-    end
 
     Main.BackgroundColor3 = Theme.DefaultBackground
     state.mainStrokeGradient.Enabled = false
     state.mainStroke.Color = Theme.DefaultOutline
     state.mainStroke.Transparency = 0.58
     DefaultPanelBackground.ImageTransparency = 0.02
-    for _, page: CanvasGroup in pairs(pages) do
+    for _, page: Frame in pairs(pages) do
         page.BackgroundColor3 = Theme.DefaultBackground
         page.BackgroundTransparency = 1
         for _, descendant: Instance in ipairs(page:GetDescendants()) do
