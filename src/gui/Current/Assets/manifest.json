@@ -2,18 +2,18 @@
   "schemaVersion": 3,
   "rawBaseUrl": "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/main/src/gui/Current/",
   "assets": {
-    "aurora_background": {
+    "purple_panel_background": {
       "category": "Backgrounds",
-      "path": "Images/aurora-background.jpg",
+      "path": "Images/purple-panel-background.png",
       "dimensions": [
-        1600,
-        900
+        1672,
+        941
       ],
-      "usage": "Default GUI content-panel background",
-      "localPath": "Images\\aurora-background.jpg",
-      "url": "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/main/src/gui/Current/Images/aurora-background.jpg",
-      "version": 1,
-      "type": "image/jpeg"
+      "usage": "Purple GUI background shared by the navigation and content panel",
+      "localPath": "Images\\purple-panel-background.png",
+      "url": "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/main/src/gui/Current/Images/purple-panel-background.png",
+      "version": 2,
+      "type": "image/png"
     },
     "header_eyes_frame": {
       "category": "Frames",
@@ -1695,7 +1695,7 @@
         64,
         64
       ],
-      "usage": "Small non-interactive darkcore cross"
+      "usage": "Small non-interactive decorative cross"
     },
     "decor_halftone_fade": {
       "category": "Decorations",
