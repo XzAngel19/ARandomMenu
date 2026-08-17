@@ -5,7 +5,7 @@
 
     Default controls:
       - RightShift: show/hide the menu
-      - Drag the DARK title bar or Default side strip to move the fixed-size menu
+      - Drag the left navigation surface to move the fixed-size menu
 ]]
 
 local bootstrapStatusLabel: TextLabel? = nil
@@ -77,50 +77,57 @@ local GAME_CHECK = {
 function GAME_CHECK.matches(identifier: number): boolean
     return game.PlaceId == identifier
 end
-local DEFAULT_HEADER_COLOR: Color3 = Color3.fromRGB(76, 214, 255)
-local DEFAULT_MENU_COLOR: Color3 = Color3.fromRGB(0, 0, 0)
-local DEFAULT_SURFACE_COLOR: Color3 = Color3.fromRGB(18, 18, 20)
-local DEFAULT_BORDER_COLOR: Color3 = Color3.fromRGB(82, 82, 86)
+local DEFAULT_HEADER_COLOR: Color3 = Color3.fromRGB(177, 116, 255)
+local DEFAULT_MENU_COLOR: Color3 = Color3.fromRGB(12, 7, 22)
+local DEFAULT_SURFACE_COLOR: Color3 = Color3.fromRGB(35, 23, 53)
+local DEFAULT_BORDER_COLOR: Color3 = Color3.fromRGB(132, 97, 170)
 
 local Theme: {[string]: Color3} = {
-    Background = Color3.fromRGB(0, 0, 0),
-    Surface = Color3.fromRGB(18, 18, 20),
-    SurfaceRaised = Color3.fromRGB(27, 27, 30),
-    SurfaceHover = Color3.fromRGB(35, 35, 38),
-    SurfacePressed = Color3.fromRGB(43, 43, 47),
-    Accent = Color3.fromRGB(76, 214, 255),
+    Background = Color3.fromRGB(12, 7, 22),
+    Surface = Color3.fromRGB(35, 23, 53),
+    SurfaceRaised = Color3.fromRGB(44, 29, 65),
+    SurfaceHover = Color3.fromRGB(55, 35, 82),
+    SurfacePressed = Color3.fromRGB(67, 42, 99),
+    Accent = Color3.fromRGB(177, 116, 255),
     AccentCyan = Color3.fromRGB(76, 214, 255),
     AccentViolet = Color3.fromRGB(145, 112, 255),
     AccentPink = Color3.fromRGB(255, 93, 174),
-    AccentSoft = Color3.fromRGB(35, 86, 104),
-    DefaultBackground = Color3.fromRGB(10, 17, 21),
-    DefaultSidebar = Color3.fromRGB(15, 25, 29),
-    DefaultSurface = Color3.fromRGB(25, 38, 43),
-    DefaultSurfaceHover = Color3.fromRGB(38, 56, 62),
-    DefaultButton = Color3.fromRGB(28, 101, 137),
-    DefaultButtonHover = Color3.fromRGB(38, 126, 164),
-    DefaultButtonPressed = Color3.fromRGB(22, 82, 112),
-    DefaultOutline = Color3.fromRGB(108, 137, 145),
-    DefaultAccent = Color3.fromRGB(112, 218, 205),
-    DefaultText = Color3.fromRGB(240, 247, 246),
-    DefaultTextMuted = Color3.fromRGB(168, 188, 190),
-    Text = Color3.fromRGB(242, 242, 244),
-    TextMuted = Color3.fromRGB(164, 164, 169),
-    Outline = Color3.fromRGB(89, 89, 94),
+    AccentSoft = Color3.fromRGB(82, 52, 119),
+    DefaultBackground = Color3.fromRGB(12, 7, 22),
+    DefaultSidebar = Color3.fromRGB(21, 12, 35),
+    DefaultSurface = Color3.fromRGB(35, 23, 53),
+    DefaultSurfaceHover = Color3.fromRGB(55, 35, 82),
+    DefaultButton = Color3.fromRGB(54, 36, 78),
+    DefaultButtonHover = Color3.fromRGB(82, 52, 119),
+    DefaultButtonPressed = Color3.fromRGB(67, 42, 99),
+    DefaultOutline = Color3.fromRGB(132, 97, 170),
+    DefaultAccent = Color3.fromRGB(177, 116, 255),
+    DefaultText = Color3.fromRGB(249, 245, 255),
+    DefaultTextMuted = Color3.fromRGB(202, 184, 220),
+    Text = Color3.fromRGB(249, 245, 255),
+    TextMuted = Color3.fromRGB(202, 184, 220),
+    Outline = Color3.fromRGB(132, 97, 170),
     Success = Color3.fromRGB(222, 222, 224),
     Danger = Color3.fromRGB(202, 202, 205),
 }
-local TITLE_FONT: Font = Font.fromEnum(Enum.Font.Fondamento)
+local TITLE_FONT: Font = Font.new(
+    "rbxasset://fonts/families/BuilderSans.json",
+    Enum.FontWeight.Bold,
+    Enum.FontStyle.Normal
+)
 local THIN_FONT: Font = Font.new(
-    "rbxasset://fonts/families/GothamSSm.json",
+    "rbxasset://fonts/families/BuilderSans.json",
     Enum.FontWeight.Regular,
     Enum.FontStyle.Normal
 )
 local CONTROL_FONT: Font = Font.new(
-    "rbxasset://fonts/families/GothamSSm.json",
-    Enum.FontWeight.Medium,
+    "rbxasset://fonts/families/BuilderSans.json",
+    Enum.FontWeight.SemiBold,
     Enum.FontStyle.Normal
 )
+local TEXT_BASE_MULTIPLIER: number = 1.35
+local TEXT_SCALE_MINIMUM: number = 0.8
+local TEXT_SCALE_MAXIMUM: number = 1.2
 local IS_MOBILE_DEVICE: boolean = UserInputService.TouchEnabled
     and not UserInputService.KeyboardEnabled
 
@@ -302,14 +309,15 @@ end
 local state: any = {
     visible = true,
     isMobile = IS_MOBILE_DEVICE,
-    guiStyle = configData.ui.guiStyle == "DARK" and "DARK" or "Default",
+    guiStyle = "Default",
     blurEnabled = configData.ui.blurEnabled ~= false,
-    textScale = math.clamp(
-        tonumber(configData.ui.textScale)
-            or (configData.ui.largeText == true and 1.25 or 1.08),
-        0.85,
-        1.35
-    ),
+    textScale = configData.ui.textScaleCalibrationVersion == 2
+        and math.clamp(
+            tonumber(configData.ui.textScale) or 1,
+            TEXT_SCALE_MINIMUM,
+            TEXT_SCALE_MAXIMUM
+        )
+        or 1,
     mobileMenuButtonVisible = true,
     animationsEnabled = configData.ui.animationsEnabled ~= false,
     mobileButtonSize = math.clamp(
@@ -333,6 +341,8 @@ local state: any = {
     styledButtons = {} :: {TextButton},
     styledTextBoxes = {} :: {TextBox},
 }
+configData.ui.guiStyle = nil
+configData.ui.textScaleCalibrationVersion = 2
 
 local function trackUiConnection(
     connection: RBXScriptConnection
@@ -373,27 +383,13 @@ local AssetManager: any = {
     resolved = {} :: {[string]: string},
     resolving = {} :: {[string]: boolean},
     manifest = {
-        auroraBackground = {
+        purpleBackground = {
             url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Images/aurora-background.jpg",
-            fileName = "aurora-background-v1.jpg",
+                .. "src/gui/Current/Images/purple-panel-background.png",
+            fileName = "purple-panel-background-v2.png",
             fallback = "",
-            version = 1,
-            assetType = "image/jpeg",
-        },
-        headerAnime = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Header/anime-header.jpg",
-            fileName = "anime-header-v1.jpg",
-            fallback = "",
-            version = 1,
-            assetType = "image/jpeg",
-        },
-        titleLogo = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Typography/title-logo.png",
-            fileName = "title-logo-v1.png",
-            fallback = "",
+            version = 2,
+            assetType = "image/png",
         },
         candyFont = {
             url = REPOSITORY_RAW_BASE
@@ -415,46 +411,6 @@ local AssetManager: any = {
             url = REPOSITORY_RAW_BASE
                 .. "src/gui/Current/Assets/Status/spinner_minimal.png",
             fileName = "loading-spinner-v1.png",
-            fallback = "",
-        },
-        cosmicControls = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Source/cosmic-controls-sheet.png",
-            fileName = "cosmic-controls-sheet-v1.png",
-            fallback = "",
-            version = 1,
-            assetType = "image/png",
-        },
-        keybindPill = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Frames/keybind-pill-hd.png",
-            fileName = "keybind-pill-hd-v1.png",
-            fallback = "",
-            version = 1,
-            assetType = "image/png",
-        },
-        crossSmall = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Decorations/cross-small.png",
-            fileName = "cross-small-v1.png",
-            fallback = "",
-        },
-        halftoneFade = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Decorations/halftone-fade.png",
-            fileName = "halftone-fade-v1.png",
-            fallback = "",
-        },
-        blossomBranch = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Blossoms/blossom_branch_wide.png",
-            fileName = "blossom-branch-v1.png",
-            fallback = "",
-        },
-        blossomCorner = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Blossoms/blossom_scatter_right.png",
-            fileName = "blossom-corner-v1.png",
             fallback = "",
         },
         search = {
@@ -521,12 +477,6 @@ local AssetManager: any = {
             url = REPOSITORY_RAW_BASE
                 .. "src/gui/Current/Assets/Decorations/separator_thin.png",
             fileName = "separator-thin-v1.png",
-            fallback = "",
-        },
-        noticeFrame = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Frames/panel_notice.png",
-            fileName = "notice-frame-v1.png",
             fallback = "",
         },
         menuToggle = {
@@ -881,7 +831,6 @@ end
 end
 
 local registeredText = {}
-local tabButtons = {}
 local defaultTabButtons = {}
 local pages = {}
 local SectionManager = {
@@ -911,16 +860,16 @@ function SectionManager.showStatus(page, message, isError)
 
     local status = Instance.new("TextLabel")
     status.Name = "SectionStatus"
-    status.BackgroundColor3 = Color3.fromRGB(27, 27, 27)
+    status.BackgroundColor3 = Theme.DefaultSurface
     status.BackgroundTransparency = isError and 0.05 or 0.2
     status.BorderSizePixel = 0
-    status.Font = Enum.Font.Code
+    status.FontFace = CONTROL_FONT
     status.Position = UDim2.fromOffset(18, 18)
     status.Size = UDim2.new(1, -36, 0, isError and 150 or 46)
     status.Text = message
     status.TextColor3 = isError
-        and Color3.fromRGB(225, 85, 85)
-        or Color3.fromRGB(180, 180, 180)
+        and Color3.fromRGB(255, 170, 190)
+        or Theme.DefaultText
     status.TextSize = 13
     status.TextWrapped = true
     status.TextXAlignment = Enum.TextXAlignment.Left
@@ -1081,13 +1030,18 @@ local function addRoundedStyle(
     return corner, stroke
 end
 
-local function registerText(object, normalSize)
+local function registerText(
+    object: TextLabel | TextButton | TextBox,
+    normalSize: number
+): TextLabel | TextButton | TextBox
     table.insert(registeredText, {
         object = object,
         normalSize = normalSize,
     })
 
-    object.TextSize = math.round(normalSize * state.textScale)
+    object.TextSize = math.round(
+        normalSize * TEXT_BASE_MULTIPLIER * state.textScale
+    )
     return object
 end
 
@@ -1217,51 +1171,27 @@ local function makeButton(
     return button :: TextButton
 end
 
-local function applyKeySlotStyle(button: TextButton): ImageLabel
+local function applyKeySlotStyle(button: TextButton): ()
     button.ZIndex = math.max(2, button.ZIndex)
-    button.TextColor3 = Color3.fromRGB(250, 250, 252)
+    button.BackgroundColor3 = Theme.DefaultSurface
+    button.BackgroundTransparency = 0.54
+    button.TextColor3 = Theme.DefaultTextMuted
     button:SetAttribute("ThemeRole", "KeySlot")
+    button:SetAttribute("IdleColor", Theme.DefaultSurface)
+    button:SetAttribute("HoverColor", Theme.DefaultSurfaceHover)
+    button:SetAttribute("PressedColor", Theme.DefaultButtonPressed)
     local buttonStroke: UIStroke? = button:FindFirstChildOfClass("UIStroke")
-    local frame: ImageLabel = create("ImageLabel", {
-        Parent = button,
-        Name = "KeySlotFrame",
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        Image = "",
-        ImageColor3 = Color3.fromRGB(244, 244, 248),
-        ImageTransparency = 0.06,
-        Position = UDim2.fromScale(0.5, 0.5),
-        ScaleType = Enum.ScaleType.Slice,
-        SliceCenter = Rect.new(300, 300, 1870, 420),
-        SliceScale = 0.5,
-        Size = UDim2.new(1, 10, 1, 10),
-        Visible = state.guiStyle == "DARK",
-        ZIndex = button.ZIndex - 1,
-    }) :: ImageLabel
-    state.assetManager.loadAsync(
-        "keybindPill",
-        frame,
-        function(loaded: boolean): ()
-            if not loaded or button.Parent == nil then
-                return
-            end
-            local darkStyle: boolean = state.guiStyle == "DARK"
-            frame.Visible = darkStyle
-            button.BackgroundTransparency = darkStyle and 1 or 0
-            if buttonStroke and buttonStroke.Parent then
-                buttonStroke.Enabled = not darkStyle
-            end
-        end
-    )
-    return frame
+    if buttonStroke then
+        buttonStroke.Color = Theme.DefaultOutline
+        buttonStroke.Transparency = 0.78
+    end
 end
 
 state.restyleButtons = function(isDefault: boolean): ()
     for _, button: TextButton in ipairs(state.styledButtons) do
         if button.Parent then
             local role: any = button:GetAttribute("ThemeRole")
-            if role ~= "Navigation" and role ~= "Icon" and role ~= "Switch" then
+            if role ~= "Navigation" and role ~= "Icon" then
                 local idleColor: Color3 = isDefault
                     and Theme.DefaultButton
                     or DEFAULT_SURFACE_COLOR
@@ -1286,12 +1216,15 @@ state.restyleButtons = function(isDefault: boolean): ()
                     stroke.Transparency = isDefault and 0.32 or 0.48
                 end
                 if role == "KeySlot" then
-                    local frame: ImageLabel? =
-                        button:FindFirstChild("KeySlotFrame") :: ImageLabel?
-                    if frame then
-                        frame.Visible = not isDefault
+                    button.BackgroundColor3 = Theme.DefaultSurface
+                    button.BackgroundTransparency = 0.54
+                    button.TextColor3 = Theme.DefaultTextMuted
+                    local keyStroke: UIStroke? =
+                        button:FindFirstChild("StyleStroke") :: UIStroke?
+                    if keyStroke then
+                        keyStroke.Color = Theme.DefaultOutline
+                        keyStroke.Transparency = 0.78
                     end
-                    button.BackgroundTransparency = isDefault and 0 or 1
                 end
             end
         end
@@ -1299,16 +1232,24 @@ state.restyleButtons = function(isDefault: boolean): ()
 end
 
 local function setKeySlotCapture(button: TextButton, active: boolean): ()
-    local frame: ImageLabel? = button:FindFirstChild("KeySlotFrame") :: ImageLabel?
-    if frame then
+    local stroke: UIStroke? = button:FindFirstChild("StyleStroke") :: UIStroke?
+    TweenService:Create(
+        button,
+        TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+        {
+            BackgroundColor3 = active
+                and Theme.DefaultButtonPressed
+                or Theme.DefaultSurface,
+            TextColor3 = active
+                and Theme.DefaultText
+                or Theme.DefaultTextMuted,
+        }
+    ):Play()
+    if stroke then
         TweenService:Create(
-            frame,
+            stroke,
             TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-            {
-                ImageColor3 = active and Color3.fromRGB(255, 255, 255)
-                    or Color3.fromRGB(244, 244, 248),
-                ImageTransparency = active and 0 or 0.06,
-            }
+            {Transparency = active and 0.38 or 0.78}
         ):Play()
     end
 end
@@ -1428,22 +1369,6 @@ local function notify(message: any): ()
         Transparency = state.guiStyle == "Default" and 0.42 or 0.22,
         Thickness = 1,
     })
-    local toastFrame: ImageLabel = (create("ImageLabel", {
-        Parent = toast,
-        Name = "MangaNoticeFrame",
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        Image = "",
-        ImageColor3 = Color3.fromRGB(220, 220, 222),
-        ImageTransparency = 0.56,
-        ScaleType = Enum.ScaleType.Slice,
-        SliceCenter = Rect.new(24, 20, 359, 58),
-        Size = UDim2.fromScale(1, 1),
-        Visible = state.guiStyle ~= "Default",
-        ZIndex = 302,
-    }) :: any) :: ImageLabel
-    state.assetManager.loadAsync("noticeFrame", toastFrame)
-
     local accent: Frame = (create("Frame", {
         Parent = toast,
         BackgroundColor3 = state.guiStyle == "Default"
@@ -1505,7 +1430,7 @@ local function calculateWindowSize(viewport: Vector2): Vector2
             math.max(320, math.min(viewport.Y - 8, math.round(viewport.Y * 0.88)))
         )
     end
-    local widthRatio: number = viewport.X >= 1600 and 0.6 or 0.78
+    local widthRatio: number = 0.6
     local availableWidth: number = math.min(
         1120,
         viewport.X * widthRatio,
@@ -1528,7 +1453,7 @@ local Main: Frame = (create("Frame", {
     Parent = ScreenGui,
     Name = "Main",
     Active = true,
-    BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+    BackgroundColor3 = Theme.DefaultBackground,
     BorderSizePixel = 0,
     ClipsDescendants = true,
     Position = UDim2.fromOffset(0, 0),
@@ -1538,8 +1463,8 @@ local Main: Frame = (create("Frame", {
 do
 local _MainCorner: UICorner, MainStroke: UIStroke = addRoundedStyle(Main, 14, 0.2)
 MainStroke.Thickness = 1
-MainStroke.Color = Theme.Accent
-MainStroke.Transparency = 0.42
+MainStroke.Color = Theme.DefaultOutline
+MainStroke.Transparency = 0.58
 local MainStrokeGradient: UIGradient = Instance.new("UIGradient")
 MainStrokeGradient.Color = ColorSequence.new({
     ColorSequenceKeypoint.new(0, Color3.fromRGB(24, 62, 76)),
@@ -1549,12 +1474,12 @@ MainStrokeGradient.Color = ColorSequence.new({
 })
 MainStrokeGradient.Rotation = 8
 MainStrokeGradient.Parent = MainStroke
+MainStrokeGradient.Enabled = false
 state.mainStroke = MainStroke
 state.mainStrokeGradient = MainStrokeGradient
 end
 
 local DefaultPanelBackground: ImageLabel = nil :: any
-local Header: Frame = nil :: any
 local Content: Frame = nil :: any
 local DefaultDragZone: Frame = nil :: any
 
@@ -1583,15 +1508,6 @@ task.defer(centerMain)
 
 do
 local sidebarWidth: number = state.isMobile and 136 or 172
-local DarkShell: CanvasGroup = create("CanvasGroup", {
-    Parent = Main,
-    Name = "DarkShell",
-    BackgroundColor3 = Theme.Background,
-    BorderSizePixel = 0,
-    Size = UDim2.fromScale(1, 1),
-    Visible = false,
-    ZIndex = 2,
-}) :: CanvasGroup
 local DefaultShell: CanvasGroup = create("CanvasGroup", {
     Parent = Main,
     Name = "DefaultShell",
@@ -1602,104 +1518,8 @@ local DefaultShell: CanvasGroup = create("CanvasGroup", {
     ZIndex = 2,
 }) :: CanvasGroup
 create("UICorner", {
-    Parent = DarkShell,
-    CornerRadius = UDim.new(0, 14),
-})
-create("UICorner", {
     Parent = DefaultShell,
     CornerRadius = UDim.new(0, 14),
-})
-
-Header = create("Frame", {
-    Parent = DarkShell,
-    Name = "DarkHeader",
-    Active = true,
-    BackgroundColor3 = Color3.fromRGB(7, 7, 8),
-    BorderSizePixel = 0,
-    Size = UDim2.new(1, 0, 0, 58),
-    ZIndex = 15,
-}) :: Frame
-Header.ClipsDescendants = true
-create("UICorner", {
-    Parent = Header,
-    CornerRadius = UDim.new(0, 14),
-})
-create("TextLabel", {
-    Parent = Header,
-    Name = "Title",
-    AnchorPoint = Vector2.new(0, 0.5),
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    FontFace = CONTROL_FONT,
-    Position = UDim2.new(0, 20, 0.5, 0),
-    Size = UDim2.new(0, state.isMobile and 130 or 280, 0, 28),
-    Text = "A RANDOM MENU",
-    TextColor3 = Theme.Text,
-    TextSize = state.isMobile and 17 or 19,
-    TextXAlignment = Enum.TextXAlignment.Left,
-    TextYAlignment = Enum.TextYAlignment.Center,
-    ZIndex = 20,
-})
-create("Frame", {
-    Parent = Header,
-    Name = "HeaderSeparator",
-    AnchorPoint = Vector2.new(0, 1),
-    BackgroundColor3 = Theme.Accent,
-    BorderSizePixel = 0,
-    Position = UDim2.new(0, 0, 1, 0),
-    Size = UDim2.new(1, 0, 0, 1),
-    ZIndex = 19,
-})
-
-local DarkTabs: Frame = create("Frame", {
-    Parent = DarkShell,
-    Name = "DarkNavigation",
-    BackgroundColor3 = Color3.fromRGB(11, 11, 13),
-    BackgroundTransparency = 0.03,
-    BorderSizePixel = 0,
-    Position = UDim2.fromOffset(0, 58),
-    Size = UDim2.new(0, sidebarWidth, 1, -58),
-    ZIndex = 10,
-}) :: Frame
-create("UICorner", {
-    Parent = DarkTabs,
-    CornerRadius = UDim.new(0, 10),
-})
-create("UIListLayout", {
-    Parent = DarkTabs,
-    FillDirection = Enum.FillDirection.Vertical,
-    HorizontalAlignment = Enum.HorizontalAlignment.Left,
-    Padding = UDim.new(0, 6),
-    SortOrder = Enum.SortOrder.LayoutOrder,
-})
-create("UIPadding", {
-    Parent = DarkTabs,
-    PaddingLeft = UDim.new(0, 6),
-    PaddingRight = UDim.new(0, 6),
-    PaddingTop = UDim.new(0, 10),
-})
-
-local DarkContentHost: Frame = create("Frame", {
-    Parent = DarkShell,
-    Name = "DarkContentHost",
-    BackgroundColor3 = Theme.Background,
-    BorderSizePixel = 0,
-    Position = UDim2.fromOffset(sidebarWidth, 58),
-    Size = UDim2.new(1, -sidebarWidth, 1, -58),
-    ZIndex = 3,
-}) :: Frame
-DarkContentHost.ClipsDescendants = true
-create("UICorner", {
-    Parent = DarkContentHost,
-    CornerRadius = UDim.new(0, 10),
-})
-create("Frame", {
-    Parent = DarkContentHost,
-    Name = "DarkReadabilityLayer",
-    BackgroundColor3 = Theme.Background,
-    BorderSizePixel = 0,
-    Size = UDim2.fromScale(1, 1),
-    ZIndex = 4,
 })
 
 local DefaultSidebar: Frame = create("Frame", {
@@ -1707,7 +1527,7 @@ local DefaultSidebar: Frame = create("Frame", {
     Name = "DefaultSidebar",
     Active = true,
     BackgroundColor3 = Theme.DefaultSidebar,
-    BackgroundTransparency = 0.08,
+    BackgroundTransparency = 0.56,
     BorderSizePixel = 0,
     Size = UDim2.new(0, sidebarWidth, 1, 0),
     ZIndex = 10,
@@ -1721,7 +1541,7 @@ local DefaultSidebarStroke: UIStroke = create("UIStroke", {
     ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
     Color = Theme.DefaultOutline,
     Thickness = 1,
-    Transparency = 0.62,
+    Transparency = 1,
 }) :: UIStroke
 DefaultSidebarStroke.Name = "DefaultSidebarStroke"
 
@@ -1752,6 +1572,7 @@ local DefaultContentHost: Frame = create("Frame", {
     Parent = DefaultShell,
     Name = "DefaultContentHost",
     BackgroundColor3 = Theme.DefaultBackground,
+    BackgroundTransparency = 1,
     BorderSizePixel = 0,
     Position = UDim2.fromOffset(sidebarWidth, 0),
     Size = UDim2.new(1, -sidebarWidth, 1, 0),
@@ -1763,27 +1584,27 @@ create("UICorner", {
     CornerRadius = UDim.new(0, 14),
 })
 DefaultPanelBackground = (create("ImageLabel", {
-    Parent = DefaultContentHost,
-    Name = "AuroraPanelBackground",
+    Parent = DefaultShell,
+    Name = "PurplePanelBackground",
     BackgroundTransparency = 1,
     BorderSizePixel = 0,
     Image = "",
-    ImageColor3 = Color3.fromRGB(226, 239, 239),
-    ImageTransparency = 0.04,
+    ImageColor3 = Color3.fromRGB(255, 255, 255),
+    ImageTransparency = 0.02,
     ScaleType = Enum.ScaleType.Crop,
     Size = UDim2.fromScale(1, 1),
     ZIndex = 3,
 }) :: any) :: ImageLabel
 create("Frame", {
-    Parent = DefaultContentHost,
+    Parent = DefaultShell,
     Name = "DefaultReadabilityLayer",
     BackgroundColor3 = Theme.DefaultBackground,
-    BackgroundTransparency = 0.46,
+    BackgroundTransparency = 0.58,
     BorderSizePixel = 0,
     Size = UDim2.fromScale(1, 1),
     ZIndex = 4,
 })
-state.assetManager.loadAsync("auroraBackground", DefaultPanelBackground)
+state.assetManager.loadAsync("purpleBackground", DefaultPanelBackground)
 
 Content = create("Frame", {
     Parent = DefaultContentHost,
@@ -1806,11 +1627,8 @@ DefaultDragZone = create("Frame", {
 }) :: Frame
 
 state.shells = {
-    dark = DarkShell,
     default = DefaultShell,
-    darkTabs = DarkTabs,
     defaultTabs = DefaultTabs,
-    darkContentHost = DarkContentHost,
     defaultContentHost = DefaultContentHost,
     defaultSidebar = DefaultSidebar,
 }
@@ -1827,83 +1645,23 @@ local function setTab(tabName: string): ()
         end
     end
 
-    for name: string, button: TextButton in pairs(tabButtons) do
-        local selected: boolean = name == tabName
-        button:SetAttribute("Selected", selected)
-        button.BackgroundColor3 = selected and Theme.SurfaceRaised or Theme.Surface
-        button.TextColor3 = selected
-            and Color3.fromRGB(255, 255, 255)
-            or Theme.TextMuted
-        local tabStroke: UIStroke? = button:FindFirstChild("StyleStroke") :: UIStroke?
-        if tabStroke then
-            tabStroke.Color = selected
-                and Color3.fromRGB(220, 220, 222)
-                or Theme.Outline
-            tabStroke.Transparency = selected and 0.2 or 0.58
-        end
-        local indicator: Frame? = button:FindFirstChild("SelectionIndicator") :: Frame?
-        if indicator then
-            TweenService:Create(
-                indicator,
-                TweenInfo.new(0.18, Enum.EasingStyle.Quad),
-                {BackgroundTransparency = selected and 0 or 1}
-            ):Play()
-        end
-    end
     for name: string, button: TextButton in pairs(defaultTabButtons) do
         local selected: boolean = name == tabName
         button:SetAttribute("Selected", selected)
         button.BackgroundColor3 = selected
             and Theme.DefaultSurface
             or Theme.DefaultSidebar
-        button.BackgroundTransparency = selected and 0.16 or 1
+        button.BackgroundTransparency = selected and 0.34 or 1
         button.TextColor3 = selected and Theme.DefaultText or Theme.DefaultTextMuted
         local tabStroke: UIStroke? = button:FindFirstChild("StyleStroke") :: UIStroke?
         if tabStroke then
             tabStroke.Color = Theme.DefaultOutline
-            tabStroke.Transparency = selected and 0.54 or 1
+            tabStroke.Transparency = selected and 0.78 or 1
         end
     end
 end
 
 local function createTab(tabName: string, layoutOrder: number): CanvasGroup
-    local button: TextButton = makeButton(state.shells.darkTabs, tabName, 14)
-    button.Name = tabName .. "Tab"
-    button.LayoutOrder = layoutOrder
-    button.Size = UDim2.new(1, -12, 0, state.isMobile and 40 or 44)
-    button.BackgroundColor3 = Theme.Surface
-    button.TextSize = state.isMobile and 10 or 14
-    button.TextXAlignment = Enum.TextXAlignment.Left
-    button.ZIndex = 11
-    button:SetAttribute("ThemeRole", "Navigation")
-    button:SetAttribute("SelectedColor", Theme.SurfaceRaised)
-    local indicator: Frame = (create("Frame", {
-        Parent = button,
-        Name = "SelectionIndicator",
-        AnchorPoint = Vector2.new(0, 0.5),
-        BackgroundColor3 = Theme.Accent,
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        Position = UDim2.new(0, 3, 0.5, 0),
-        Size = UDim2.new(0, 3, 0, 22),
-        ZIndex = button.ZIndex + 1,
-    }) :: any) :: Frame
-    local indicatorGradient: UIGradient = Instance.new("UIGradient")
-    indicatorGradient.Color = ColorSequence.new(
-        Color3.fromRGB(100, 100, 104),
-        Color3.fromRGB(240, 240, 242)
-    )
-    indicatorGradient.Parent = indicator
-    local indicatorCorner: UICorner = Instance.new("UICorner")
-    indicatorCorner.CornerRadius = UDim.new(1, 0)
-    indicatorCorner.Parent = indicator
-    create("UIPadding", {
-        Parent = button,
-        PaddingLeft = UDim.new(0, 14),
-        PaddingRight = UDim.new(0, 8),
-    })
-    tabButtons[tabName] = button
-
     local defaultLabel: string = tabName == "Config." and "Settings" or tabName
     local defaultButton: TextButton = makeButton(
         state.shells.defaultTabs,
@@ -1947,9 +1705,6 @@ local function createTab(tabName: string, layoutOrder: number): CanvasGroup
     })
     pages[tabName] = page
 
-    trackUiConnection(button.MouseButton1Click:Connect(function(): ()
-        setTab(tabName)
-    end))
     trackUiConnection(defaultButton.MouseButton1Click:Connect(function(): ()
         setTab(tabName)
     end))
@@ -1965,20 +1720,11 @@ createTab("VD", 5)
 createTab("MVSD", 6)
 local SettingsPage = createTab("Config.", 7)
 local function configureGameTabs(): ()
-    tabButtons.MM2.Visible = GAME_CHECK.MM2Active
-    tabButtons.TRS.Visible = GAME_CHECK.TRSActive
-    tabButtons.VD.Visible = GAME_CHECK.VDActive
-    tabButtons.MVSD.Visible = GAME_CHECK.MVSDActive
     defaultTabButtons.MM2.Visible = GAME_CHECK.MM2Active
     defaultTabButtons.TRS.Visible = GAME_CHECK.TRSActive
     defaultTabButtons.VD.Visible = GAME_CHECK.VDActive
     defaultTabButtons.MVSD.Visible = GAME_CHECK.MVSDActive
 
-    for _, button: TextButton in pairs(tabButtons) do
-        if button.Visible then
-            button.Size = UDim2.new(1, -12, 0, state.isMobile and 40 or 44)
-        end
-    end
     for _, button: TextButton in pairs(defaultTabButtons) do
         if button.Visible then
             button.Size = UDim2.new(1, 0, 0, state.isMobile and 38 or 42)
@@ -1989,37 +1735,49 @@ end
 configureGameTabs()
 
 do
-local DarkSearchBox: TextBox = makeTextBox(Header, "")
-DarkSearchBox.Name = "DarkSearch"
-DarkSearchBox.PlaceholderText = state.isMobile and "Search..." or "Search modules..."
-DarkSearchBox.AnchorPoint = Vector2.new(1, 0.5)
-DarkSearchBox.Position = UDim2.new(1, -18, 0.5, 0)
-DarkSearchBox.Size = UDim2.new(0, state.isMobile and 150 or 240, 0, 34)
-DarkSearchBox.TextXAlignment = Enum.TextXAlignment.Left
-DarkSearchBox.ZIndex = 21
-create("UIPadding", {
-    Parent = DarkSearchBox,
-    PaddingLeft = UDim.new(0, 12),
-    PaddingRight = UDim.new(0, 8),
-})
-
 local DefaultSearchBox: TextBox = makeTextBox(state.shells.defaultSidebar, "")
 DefaultSearchBox.Name = "DefaultSearch"
-DefaultSearchBox.PlaceholderText = "Search"
-DefaultSearchBox.Position = UDim2.fromOffset(10, 20)
-DefaultSearchBox.Size = UDim2.new(1, -20, 0, 34)
+DefaultSearchBox.PlaceholderText = "Search modules"
+DefaultSearchBox.Position = UDim2.fromOffset(12, 16)
+DefaultSearchBox.Size = UDim2.new(1, -24, 0, 40)
 DefaultSearchBox.BackgroundColor3 = Theme.DefaultSurface
-DefaultSearchBox.BackgroundTransparency = 0.22
+DefaultSearchBox.BackgroundTransparency = 0.38
 DefaultSearchBox.TextColor3 = Theme.DefaultText
 DefaultSearchBox.PlaceholderColor3 = Theme.DefaultTextMuted
 DefaultSearchBox.TextXAlignment = Enum.TextXAlignment.Left
 DefaultSearchBox.ZIndex = 14
 create("UIPadding", {
     Parent = DefaultSearchBox,
-    PaddingLeft = UDim.new(0, 12),
-    PaddingRight = UDim.new(0, 8),
+    PaddingLeft = UDim.new(0, 36),
+    PaddingRight = UDim.new(0, 12),
 })
-state.shells.darkSearchBox = DarkSearchBox
+local DefaultSearchCorner: UICorner? =
+    DefaultSearchBox:FindFirstChild("StyleCorner") :: UICorner?
+if DefaultSearchCorner then
+    DefaultSearchCorner.CornerRadius = UDim.new(0, 12)
+end
+local DefaultSearchStroke: UIStroke? =
+    DefaultSearchBox:FindFirstChild("StyleStroke") :: UIStroke?
+if DefaultSearchStroke then
+    DefaultSearchStroke.Color = Theme.DefaultOutline
+    DefaultSearchStroke.Transparency = 0.72
+end
+local DefaultSearchIcon: ImageLabel = create("ImageLabel", {
+    Parent = DefaultSearchBox,
+    Name = "SearchIcon",
+    Active = false,
+    AnchorPoint = Vector2.new(0, 0.5),
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    Image = "",
+    ImageColor3 = Theme.DefaultTextMuted,
+    ImageTransparency = 0.14,
+    Position = UDim2.new(0, 11, 0.5, 0),
+    ScaleType = Enum.ScaleType.Fit,
+    Size = UDim2.fromOffset(15, 15),
+    ZIndex = 15,
+}) :: ImageLabel
+state.assetManager.loadAsync("search", DefaultSearchIcon)
 state.shells.defaultSearchBox = DefaultSearchBox
 state.searchQuery = ""
 end
@@ -2032,7 +1790,7 @@ local UniversalScroll = create("ScrollingFrame", {
     BackgroundTransparency = 1,
     BorderSizePixel = 0,
     CanvasSize = UDim2.fromOffset(0, 0),
-    ScrollBarImageColor3 = Color3.fromRGB(100, 100, 100),
+    ScrollBarImageColor3 = Theme.DefaultOutline,
     ScrollBarThickness = 6,
     ScrollingDirection = Enum.ScrollingDirection.Y,
     Size = UDim2.fromScale(1, 1),
@@ -2062,7 +1820,7 @@ state.trsScroll = create("ScrollingFrame", {
     BackgroundTransparency = 1,
     BorderSizePixel = 0,
     CanvasSize = UDim2.fromOffset(0, 0),
-    ScrollBarImageColor3 = Color3.fromRGB(100, 100, 100),
+    ScrollBarImageColor3 = Theme.DefaultOutline,
     ScrollBarThickness = 6,
     ScrollingDirection = Enum.ScrollingDirection.Y,
     Size = UDim2.fromScale(1, 1),
@@ -2092,7 +1850,7 @@ state.vdScroll = create("ScrollingFrame", {
     BackgroundTransparency = 1,
     BorderSizePixel = 0,
     CanvasSize = UDim2.fromOffset(0, 0),
-    ScrollBarImageColor3 = Color3.fromRGB(100, 100, 100),
+    ScrollBarImageColor3 = Theme.DefaultOutline,
     ScrollBarThickness = 6,
     ScrollingDirection = Enum.ScrollingDirection.Y,
     Size = UDim2.fromScale(1, 1),
@@ -2122,7 +1880,7 @@ state.mvsdScroll = create("ScrollingFrame", {
     BackgroundTransparency = 1,
     BorderSizePixel = 0,
     CanvasSize = UDim2.fromOffset(0, 0),
-    ScrollBarImageColor3 = Color3.fromRGB(100, 100, 100),
+    ScrollBarImageColor3 = Theme.DefaultOutline,
     ScrollBarThickness = 6,
     ScrollingDirection = Enum.ScrollingDirection.Y,
     Size = UDim2.fromScale(1, 1),
@@ -2329,7 +2087,7 @@ local MobilePlacementOverlay: Frame = (create("Frame", {
     Parent = PopupLayer,
     Name = "MobilePlacementOverlay",
     Active = true,
-    BackgroundColor3 = Color3.fromRGB(5, 8, 14),
+    BackgroundColor3 = Theme.DefaultBackground,
     BackgroundTransparency = 0.2,
     BorderSizePixel = 0,
     Size = UDim2.fromScale(1, 1),
@@ -2341,7 +2099,7 @@ local MobilePlacementLabel = makeTextLabel(
     "TOUCH WHERE THE ACTION BUTTON SHOULD GO",
     16
 )
-MobilePlacementLabel.Font = Enum.Font.GothamBold
+MobilePlacementLabel.FontFace = CONTROL_FONT
 MobilePlacementLabel.TextXAlignment = Enum.TextXAlignment.Center
 MobilePlacementLabel.Position = UDim2.new(0.08, 0, 0.08, 0)
 MobilePlacementLabel.Size = UDim2.new(0.84, 0, 0, 54)
@@ -2448,7 +2206,7 @@ local function createMobileAction(
         BackgroundColor3 = Theme.SurfaceRaised,
         BackgroundTransparency = 0.08,
         BorderSizePixel = 0,
-        Font = Enum.Font.GothamBold,
+        FontFace = CONTROL_FONT,
         Position = UDim2.fromOffset(selectedPosition.X, selectedPosition.Y),
         AnchorPoint = Vector2.new(0.5, 0.5),
         Size = UDim2.fromOffset(size, size),
@@ -2702,7 +2460,7 @@ local MobileMenuButton = create("TextButton", {
     BackgroundColor3 = Color3.fromRGB(17, 21, 29),
     BackgroundTransparency = 0.12,
     BorderSizePixel = 0,
-    Font = Enum.Font.GothamBold,
+    FontFace = CONTROL_FONT,
     Position = UDim2.new(1, -18, 0, 18),
     AnchorPoint = Vector2.new(1, 0),
     Size = UDim2.fromOffset(52, 52),
@@ -3477,24 +3235,12 @@ state.universalProjectileCalibration = (function(): any
 end)()
 state.universalProjectileCalibration:setEnabled(true)
 do
-local function applyGuiStyle(styleName: string, animate: boolean): ()
-    local normalizedStyle: string = styleName == "DARK" and "DARK" or "Default"
-    local isDefault: boolean = normalizedStyle == "Default"
-    local activeShell: CanvasGroup = isDefault
-        and state.shells.default
-        or state.shells.dark
-    local inactiveShell: CanvasGroup = isDefault
-        and state.shells.dark
-        or state.shells.default
-    local contentHost: Frame = isDefault
-        and state.shells.defaultContentHost
-        or state.shells.darkContentHost
-
-    state.guiStyle = normalizedStyle
-    Content.Parent = contentHost
+local function applyGuiStyle(_: string, animate: boolean): ()
+    local activeShell: CanvasGroup = state.shells.default
+    state.guiStyle = "Default"
+    Content.Parent = state.shells.defaultContentHost
     Content.Position = UDim2.fromScale(0, 0)
     Content.Size = UDim2.fromScale(1, 1)
-    inactiveShell.Visible = false
     activeShell.Visible = true
     activeShell.GroupTransparency = state.animationsEnabled and animate and 1 or 0
     if activeShell.GroupTransparency > 0 then
@@ -3505,36 +3251,31 @@ local function applyGuiStyle(styleName: string, animate: boolean): ()
         ):Play()
     end
 
-    Main.BackgroundColor3 = isDefault and Theme.DefaultBackground or Theme.Background
-    state.mainStrokeGradient.Enabled = not isDefault
-    state.mainStroke.Color = isDefault and Theme.DefaultOutline or Theme.Accent
-    state.mainStroke.Transparency = isDefault and 0.5 or 0.42
-    DefaultPanelBackground.ImageTransparency = 0.04
+    Main.BackgroundColor3 = Theme.DefaultBackground
+    state.mainStrokeGradient.Enabled = false
+    state.mainStroke.Color = Theme.DefaultOutline
+    state.mainStroke.Transparency = 0.58
+    DefaultPanelBackground.ImageTransparency = 0.02
     for _, page: CanvasGroup in pairs(pages) do
-        page.BackgroundColor3 = isDefault and Theme.DefaultBackground or Theme.Background
-        page.BackgroundTransparency = isDefault and 1 or 0
+        page.BackgroundColor3 = Theme.DefaultBackground
+        page.BackgroundTransparency = 1
         for _, descendant: Instance in ipairs(page:GetDescendants()) do
             if descendant:IsA("ScrollingFrame") then
-                descendant.ScrollBarImageColor3 = isDefault
-                    and Theme.DefaultOutline
-                    or Color3.fromRGB(100, 100, 100)
+                descendant.ScrollBarImageColor3 = Theme.DefaultOutline
             end
         end
     end
-    for _, button: TextButton in pairs(tabButtons) do
-        button.BackgroundTransparency = 0
-    end
     if state.restyleButtons then
-        state.restyleButtons(isDefault)
+        state.restyleButtons(true)
     end
     if state.restyleTextBoxes then
-        state.restyleTextBoxes(isDefault)
+        state.restyleTextBoxes(true)
     end
     if state.restyleAllFeatures then
-        state.restyleAllFeatures(isDefault)
+        state.restyleAllFeatures(true)
     end
     if state.restyleSettings then
-        state.restyleSettings(isDefault)
+        state.restyleSettings(true)
     end
     if state.refreshCardGrids then
         state.refreshCardGrids()
@@ -3711,91 +3452,56 @@ local function getFeatureCardParent(container: Instance): Instance
     return record.columns[selectedColumn]
 end
 
-local function setSwitchVisual(
+local function setCheckVisual(
     button: TextButton,
-    knob: Frame?,
+    mark: TextLabel,
     enabled: boolean,
     animate: boolean?
 ): ()
-    button:SetAttribute("Selected", enabled)
-    local isDefault: boolean = state.guiStyle == "Default"
+    button:SetAttribute("Checked", enabled)
+    mark.Text = enabled and "✓" or "○"
     local targetColor: Color3 = enabled
-        and (isDefault and Theme.DefaultButtonHover or state.headerColor)
-        or (isDefault and Theme.DefaultButton or Theme.SurfaceRaised)
-    local knobSize: number = state.isMobile and 20 or 18
-    local knobPosition: UDim2 = enabled
-        and UDim2.new(1, -(knobSize + 4), 0.5, -math.floor(knobSize / 2))
-        or UDim2.new(0, 4, 0.5, -math.floor(knobSize / 2))
+        and Theme.DefaultAccent
+        or Theme.DefaultTextMuted
+    local targetTransparency: number = enabled and 0 or 0.42
     if animate then
         TweenService:Create(
-            button,
-            TweenInfo.new(0.18, Enum.EasingStyle.Quart),
-            {BackgroundColor3 = targetColor}
+            mark,
+            TweenInfo.new(0.16, Enum.EasingStyle.Quart),
+            {
+                TextColor3 = targetColor,
+                TextTransparency = targetTransparency,
+            }
         ):Play()
-        if knob then
-            TweenService:Create(
-                knob,
-                TweenInfo.new(0.18, Enum.EasingStyle.Quart),
-                {
-                    Position = knobPosition,
-                    BackgroundColor3 = isDefault
-                        and Theme.DefaultText
-                        or Theme.Text,
-                }
-            ):Play()
-        end
     else
-        button.BackgroundColor3 = targetColor
-        if knob then
-            knob.Position = knobPosition
-            knob.BackgroundColor3 = isDefault and Theme.DefaultText or Theme.Text
-        end
-    end
-    local switchStroke: UIStroke? =
-        button:FindFirstChild("StyleStroke") :: UIStroke?
-    if switchStroke then
-        switchStroke.Color = isDefault and Theme.DefaultOutline or Theme.Outline
-        switchStroke.Transparency = enabled and 0.16 or 0.34
+        mark.TextColor3 = targetColor
+        mark.TextTransparency = targetTransparency
     end
 end
 
-local function createSwitch(parent: Instance, enabled: boolean): (TextButton, Frame)
-    local button: TextButton = (makeButton(parent, "", 1) :: any) :: TextButton
-    button.AutoButtonColor = false
-    button:SetAttribute("ThemeRole", "Switch")
-    button:SetAttribute("NoHover", true)
-    button:SetAttribute("NoPressEffect", true)
-    button.Size = UDim2.fromOffset(state.isMobile and 50 or 46, state.isMobile and 28 or 26)
-    local switchCorner: UICorner? = button:FindFirstChild("StyleCorner") :: UICorner?
-    if switchCorner then
-        switchCorner.CornerRadius = UDim.new(1, 0)
-    end
-    local switchStroke: UIStroke? = button:FindFirstChild("StyleStroke") :: UIStroke?
-    if switchStroke then
-        switchStroke.Transparency = 0.3
-    end
-
-    local knobSize: number = state.isMobile and 20 or 18
-    local knob: Frame = (create("Frame", {
-        Parent = button,
-        Name = "Knob",
-        AnchorPoint = Vector2.new(0, 0),
-        BackgroundColor3 = Theme.Text,
+local function createCheckControl(
+    parent: Instance,
+    enabled: boolean
+): (TextButton, TextLabel)
+    local button: TextButton = create("TextButton", {
+        Parent = parent,
+        Active = true,
+        AutoButtonColor = false,
+        BackgroundTransparency = 1,
         BorderSizePixel = 0,
-        Size = UDim2.fromOffset(knobSize, knobSize),
-    }) :: any) :: Frame
-    create("UICorner", {
-        Parent = knob,
-        CornerRadius = UDim.new(1, 0),
-    })
-    create("UIStroke", {
-        Parent = knob,
-        Color = Color3.fromRGB(255, 255, 255),
-        Transparency = 0.55,
-        Thickness = 1,
-    })
-    setSwitchVisual(button, knob, enabled, false)
-    return button, knob
+        Size = UDim2.fromOffset(state.isMobile and 38 or 34, state.isMobile and 32 or 28),
+        Text = "",
+    }) :: TextButton
+    button.AutoButtonColor = false
+    local mark: TextLabel = makeTextLabel(button, "", state.isMobile and 16 or 15)
+    mark.Name = "CheckMark"
+    mark.AnchorPoint = Vector2.new(0.5, 0.5)
+    mark.Position = UDim2.fromScale(0.5, 0.5)
+    mark.Size = UDim2.fromScale(1, 1)
+    mark.TextXAlignment = Enum.TextXAlignment.Center
+    mark.ZIndex = button.ZIndex + 1
+    setCheckVisual(button, mark, enabled, false)
+    return button, mark
 end
 
 local function applyFeaturePresentation(feature: any, isDefault: boolean): ()
@@ -3805,7 +3511,7 @@ local function applyFeaturePresentation(feature: any, isDefault: boolean): ()
             and (enabled and Theme.DefaultSurfaceHover or Theme.DefaultSurface)
             or (enabled and Color3.fromRGB(31, 31, 35) or Theme.Background)
         feature.row.BackgroundTransparency = isDefault
-            and (enabled and 0.12 or 0.28)
+            and (enabled and 0.5 or 0.82)
             or (enabled and 0.08 or 1)
     end
     if feature.stroke then
@@ -3813,7 +3519,7 @@ local function applyFeaturePresentation(feature: any, isDefault: boolean): ()
             and Theme.DefaultOutline
             or (enabled and Color3.fromRGB(225, 225, 230) or Theme.Outline)
         feature.stroke.Transparency = isDefault
-            and (enabled and 0.34 or 0.62)
+            and (enabled and 0.68 or 1)
             or (enabled and 0.18 or 1)
     end
     if feature.activeStripe then
@@ -3826,7 +3532,9 @@ local function applyFeaturePresentation(feature: any, isDefault: boolean): ()
         feature.activeStripeGradient.Enabled = not isDefault
     end
     if feature.title then
-        feature.title.TextColor3 = isDefault and Theme.DefaultText or Theme.Text
+        feature.title.TextColor3 = isDefault
+            and (enabled and Theme.DefaultAccent or Theme.DefaultText)
+            or Theme.Text
     end
     if feature.subtitle then
         feature.subtitle.TextColor3 = isDefault
@@ -3837,35 +3545,18 @@ local function applyFeaturePresentation(feature: any, isDefault: boolean): ()
         feature.options.BackgroundColor3 = isDefault
             and Theme.DefaultBackground
             or Theme.Background
-        feature.options.BackgroundTransparency = isDefault and 0.18 or 0.66
+        feature.options.BackgroundTransparency = isDefault and 0.62 or 0.66
     end
     if feature.arrow then
         feature.arrow.TextColor3 = isDefault
             and Theme.DefaultTextMuted
             or Theme.TextMuted
     end
-    if feature.toggle then
-        if feature.isAction then
-            feature.toggle.BackgroundColor3 = isDefault
-                and Theme.DefaultButtonHover
-                or Theme.AccentSoft
-            feature.toggle.TextColor3 = isDefault
-                and Theme.DefaultText
-                or Theme.Text
-        elseif not feature.isCategory then
-            setSwitchVisual(feature.toggle, feature.toggleKnob, enabled, false)
-        end
-    end
     if feature.shortcutButton then
-        local slotFrame: ImageLabel? =
-            feature.shortcutButton:FindFirstChild("KeySlotFrame") :: ImageLabel?
-        if slotFrame then
-            slotFrame.Visible = not isDefault
-        end
         feature.shortcutButton.BackgroundColor3 = isDefault
-            and Theme.DefaultButton
+            and Theme.DefaultSurface
             or Theme.SurfaceRaised
-        feature.shortcutButton.BackgroundTransparency = isDefault and 0 or 1
+        feature.shortcutButton.BackgroundTransparency = isDefault and 0.54 or 1
         feature.shortcutButton.TextColor3 = isDefault
             and Theme.DefaultText
             or Theme.Text
@@ -3881,12 +3572,6 @@ local function refreshFeatureToggle(feature: any): ()
     if feature.isCategory or feature.isAction then
         return
     end
-    setSwitchVisual(
-        feature.toggle,
-        feature.toggleKnob,
-        feature.enabled,
-        true
-    )
     if feature.activeStripe then
         TweenService:Create(
             feature.activeStripe,
@@ -3907,7 +3592,7 @@ local function refreshFeatureToggle(feature: any): ()
                         and Theme.DefaultSurface
                         or Theme.Background),
                 BackgroundTransparency = state.guiStyle == "Default"
-                    and (feature.enabled and 0.12 or 0.28)
+                    and (feature.enabled and 0.5 or 0.82)
                     or (feature.enabled and 0.08 or 1),
             }
         ):Play()
@@ -3917,7 +3602,7 @@ local function refreshFeatureToggle(feature: any): ()
             feature.title,
             TweenInfo.new(0.18, Enum.EasingStyle.Quad),
             {TextColor3 = state.guiStyle == "Default"
-                and Theme.DefaultText
+                and (feature.enabled and Theme.DefaultAccent or Theme.DefaultText)
                 or (feature.enabled and Color3.fromRGB(255, 255, 255) or Theme.Text)}
         ):Play()
     end
@@ -3934,7 +3619,7 @@ local function refreshFeatureToggle(feature: any): ()
                         and Theme.DefaultOutline
                         or Theme.Outline),
                 Transparency = state.guiStyle == "Default"
-                    and (feature.enabled and 0.34 or 0.62)
+                    and (feature.enabled and 0.68 or 1)
                     or (feature.enabled and 0.18 or 1),
             }
         ):Play()
@@ -4116,7 +3801,7 @@ local function createUniversalFeature(
         BackgroundColor3 = state.guiStyle == "Default"
             and Theme.DefaultSurface
             or Theme.Background,
-        BackgroundTransparency = state.guiStyle == "Default" and 0.28 or 1,
+        BackgroundTransparency = state.guiStyle == "Default" and 0.82 or 1,
         BorderSizePixel = 0,
         ClipsDescendants = true,
         LayoutOrder = layoutOrder,
@@ -4125,49 +3810,22 @@ local function createUniversalFeature(
     feature.row = row
     create("UICorner", {
         Parent = row,
-        CornerRadius = UDim.new(0, 12),
+        CornerRadius = UDim.new(0, 10),
     })
     local cardStroke: UIStroke = (create("UIStroke", {
         Parent = row,
         Color = state.guiStyle == "Default"
             and Theme.DefaultOutline
             or Theme.Outline,
-        Transparency = state.guiStyle == "Default" and 0.62 or 1,
+        Transparency = 1,
         Thickness = 1,
     }) :: any) :: UIStroke
     feature.stroke = cardStroke
 
-    local activeStripe: Frame = (create("Frame", {
-        Parent = row,
-        Name = "ActiveAccent",
-        BackgroundColor3 = state.guiStyle == "Default"
-            and Theme.DefaultAccent
-            or Color3.fromRGB(228, 228, 230),
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        Position = UDim2.fromOffset(0, 7),
-        Size = UDim2.new(0, 3, 1, -14),
-        ZIndex = 3,
-    }) :: any) :: Frame
-    local stripeCorner: UICorner = Instance.new("UICorner")
-    stripeCorner.CornerRadius = UDim.new(1, 0)
-    stripeCorner.Parent = activeStripe
-    local stripeGradient: UIGradient = Instance.new("UIGradient")
-    stripeGradient.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(92, 92, 96)),
-        ColorSequenceKeypoint.new(0.55, Color3.fromRGB(238, 238, 240)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(128, 128, 132)),
-    })
-    stripeGradient.Rotation = 90
-    stripeGradient.Parent = activeStripe
-    stripeGradient.Enabled = state.guiStyle ~= "Default"
-    feature.activeStripe = activeStripe
-    feature.activeStripeGradient = stripeGradient
-
-    local title: TextLabel = (makeTextLabel(row, name, 12) :: any) :: TextLabel
+    local title: TextLabel = (makeTextLabel(row, name, 13) :: any) :: TextLabel
     title.FontFace = CONTROL_FONT
-    title.Position = UDim2.fromOffset(16, 0)
-    title.Size = UDim2.new(1, -136, 0, feature.collapsedHeight)
+    title.Position = UDim2.fromOffset(18, 0)
+    title.Size = UDim2.new(1, -112, 0, feature.collapsedHeight)
     title.TextColor3 = state.guiStyle == "Default"
         and Theme.DefaultText
         or Theme.Text
@@ -4187,41 +3845,40 @@ local function createUniversalFeature(
     feature.subtitle = subtitle
 
     local headerControlTop: number = if state.isMobile then 10 else 9
-    local toggle: TextButton
-    local toggleKnob: Frame? = nil
-    if feature.isAction then
-        toggle = (makeButton(row, "RUN", 11) :: any) :: TextButton
-        toggle.BackgroundColor3 = state.guiStyle == "Default"
-            and Theme.DefaultButtonHover
-            or Theme.AccentSoft
-        toggle.Size = UDim2.fromOffset(state.isMobile and 52 or 46, state.isMobile and 28 or 24)
-    else
-        local createdToggle: TextButton, createdKnob: Frame =
-            createSwitch(row, false)
-        toggle = createdToggle
-        toggleKnob = createdKnob
-    end
-    toggle.Name = "Toggle"
-    toggle.AnchorPoint = Vector2.new(1, 0)
-    toggle.Position = UDim2.new(1, -36, 0, headerControlTop)
-    toggle.Visible = not feature.isCategory
-    feature.toggle = toggle
-    feature.toggleKnob = toggleKnob
-
     local arrow: TextButton =
-        (makeButton(row, "•••", state.isMobile and 16 or 13) :: any) :: TextButton
+        (makeButton(row, "⌄", state.isMobile and 17 or 15) :: any) :: TextButton
     arrow.Name = "Expand"
     arrow:SetAttribute("ThemeRole", "Icon")
     arrow:SetAttribute("NoPressEffect", true)
     arrow.AnchorPoint = Vector2.new(1, 0)
     arrow.BackgroundTransparency = 1
-    arrow.Position = UDim2.new(1, -7, 0, headerControlTop)
-    arrow.Size = UDim2.fromOffset(state.isMobile and 28 or 24, state.isMobile and 28 or 24)
+    arrow.Position = UDim2.new(1, -8, 0, headerControlTop)
+    arrow.Size = UDim2.fromOffset(state.isMobile and 30 or 26, state.isMobile and 30 or 26)
     arrow.TextColor3 = state.guiStyle == "Default"
         and Theme.DefaultTextMuted
         or Theme.TextMuted
     arrow.Visible = configuration.noOptions ~= true
+    arrow.ZIndex = 9
+    local arrowStroke: UIStroke? = arrow:FindFirstChild("StyleStroke") :: UIStroke?
+    if arrowStroke then
+        arrowStroke.Enabled = false
+    end
     feature.arrow = arrow
+
+    local activationTarget: TextButton = create("TextButton", {
+        Parent = row,
+        Name = "ActivationTarget",
+        Active = true,
+        AutoButtonColor = false,
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Position = UDim2.fromOffset(0, 0),
+        Size = UDim2.new(1, -92, 0, feature.collapsedHeight),
+        Text = "",
+        ZIndex = 6,
+    }) :: TextButton
+    feature.activationTarget = activationTarget
+    title.ZIndex = 7
 
     trackUiConnection(row.MouseEnter:Connect(function(): ()
         if feature.enabled then
@@ -4234,7 +3891,7 @@ local function createUniversalFeature(
                 BackgroundColor3 = state.guiStyle == "Default"
                     and Theme.DefaultSurfaceHover
                     or Theme.SurfaceHover,
-                BackgroundTransparency = state.guiStyle == "Default" and 0.12 or 0.78,
+                BackgroundTransparency = state.guiStyle == "Default" and 0.66 or 0.78,
             }
         ):Play()
     end))
@@ -4251,7 +3908,7 @@ local function createUniversalFeature(
                         and Theme.DefaultSurface
                         or Theme.Background),
                 BackgroundTransparency = state.guiStyle == "Default"
-                    and (feature.enabled and 0.12 or 0.28)
+                    and (feature.enabled and 0.5 or 0.82)
                     or (feature.enabled and 0.08 or 1),
             }
         ):Play()
@@ -4264,7 +3921,7 @@ local function createUniversalFeature(
         BackgroundColor3 = state.guiStyle == "Default"
             and Theme.DefaultBackground
             or Theme.Background,
-        BackgroundTransparency = state.guiStyle == "Default" and 0.18 or 0.66,
+        BackgroundTransparency = state.guiStyle == "Default" and 0.62 or 0.66,
         BorderSizePixel = 0,
         Position = UDim2.fromOffset(10, feature.collapsedHeight),
         Size = UDim2.new(1, -20, 0, 0),
@@ -4316,6 +3973,7 @@ local function createUniversalFeature(
         if feature.expanded then
             options.Visible = true
         end
+        arrow.Text = feature.expanded and "⌃" or "⌄"
         if animate and state.animationsEnabled then
             TweenService:Create(
                 options,
@@ -4361,16 +4019,25 @@ local function createUniversalFeature(
 
     local function activateFeature(): ()
         if feature.isCategory then
+            feature.expanded = not feature.expanded
+            updateExpandedSize(true)
             return
         end
         if feature.isAction then
-            runActionButton(
-                toggle,
-                "RUN",
-                feature.onToggle,
-                name .. " ejecutado",
-                "[Random Testing Menu] " .. name
-            )
+            if feature.actionRunning then
+                return
+            end
+            feature.actionRunning = true
+            task.spawn(function(): ()
+                local success: boolean, errorMessage: any = pcall(feature.onToggle)
+                feature.actionRunning = false
+                if success then
+                    notify(name .. " ejecutado")
+                else
+                    warn("[Random Testing Menu] " .. name .. ": " .. tostring(errorMessage))
+                    notify("No se pudo ejecutar " .. name)
+                end
+            end)
             return
         end
 
@@ -4394,25 +4061,26 @@ local function createUniversalFeature(
     end
     feature.activate = activateFeature
 
-    trackUiConnection(toggle.MouseButton1Click:Connect(activateFeature))
+    trackUiConnection(activationTarget.MouseButton1Click:Connect(activateFeature))
     if not feature.isCategory then
         local shortcutButton: TextButton =
             (makeButton(row, "KEY", 9) :: any) :: TextButton
         shortcutButton.Name = "Shortcut"
         shortcutButton.AnchorPoint = Vector2.new(1, 0)
         shortcutButton.BackgroundColor3 = state.guiStyle == "Default"
-            and Theme.DefaultButton
+            and Theme.DefaultSurface
             or Theme.SurfaceRaised
-        shortcutButton.Position = UDim2.new(1, -84, 0, headerControlTop)
+        shortcutButton.Position = UDim2.new(1, -42, 0, headerControlTop)
         shortcutButton.Size = UDim2.fromOffset(
             state.isMobile and 48 or 44,
             state.isMobile and 30 or 27
         )
+        shortcutButton.ZIndex = 9
         applyKeySlotStyle(shortcutButton)
         shortcutButton.TextScaled = true
         create("UITextSizeConstraint", {
             Parent = shortcutButton,
-            MaxTextSize = 9,
+            MaxTextSize = 11,
             MinTextSize = 7,
         })
         feature.shortcutButton = shortcutButton
@@ -4484,9 +4152,12 @@ local function createOptionRow(feature: any, labelText: string): Frame
 
     local label: TextLabel =
         (makeTextLabel(option, labelText, 11) :: any) :: TextLabel
+    label.Name = "OptionLabel"
     label.Position = UDim2.fromOffset(10, 0)
     label.Size = UDim2.new(0.52, -10, 1, 0)
-    label.TextColor3 = Theme.TextMuted
+    label.TextColor3 = state.guiStyle == "Default"
+        and Theme.DefaultTextMuted
+        or Theme.TextMuted
 
     feature.updateExpandedSize()
     return option
@@ -4515,20 +4186,47 @@ local function addToggleOption(
     end
 
     local option: Frame = createOptionRow(feature, labelText)
-    local button: TextButton, knob: Frame =
-        createSwitch(option, enabled :: boolean)
-    button.AnchorPoint = Vector2.new(1, 0.5)
-    button.Position = UDim2.new(1, -8, 0.5, 0)
+    local button: TextButton = create("TextButton", {
+        Parent = option,
+        Name = "OptionClickTarget",
+        Active = true,
+        AutoButtonColor = false,
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Size = UDim2.fromScale(1, 1),
+        Text = "",
+        ZIndex = option.ZIndex + 2,
+    }) :: TextButton
+    local mark: TextLabel = makeTextLabel(option, "✓", 12)
+    mark.AnchorPoint = Vector2.new(1, 0.5)
+    mark.Position = UDim2.new(1, -12, 0.5, 0)
+    mark.Size = UDim2.fromOffset(24, 24)
+    mark.TextColor3 = Theme.DefaultAccent
+    mark.TextXAlignment = Enum.TextXAlignment.Center
+    mark.Visible = enabled :: boolean
+    mark.ZIndex = option.ZIndex + 3
+    local optionLabel: TextLabel? =
+        option:FindFirstChild("OptionLabel") :: TextLabel?
+
+    local function refreshOptionState(): ()
+        mark.Visible = enabled :: boolean
+        if optionLabel then
+            optionLabel.TextColor3 = (enabled :: boolean)
+                and Theme.DefaultText
+                or Theme.DefaultTextMuted
+        end
+    end
 
     trackUiConnection(button.MouseButton1Click:Connect(function(): ()
         enabled = not enabled
-        setSwitchVisual(button, knob, enabled :: boolean, true)
+        refreshOptionState()
         configData.states[optionKey] = enabled
         callback(enabled :: boolean)
         queueConfigSave()
         notify(labelText .. ((enabled :: boolean) and " activado" or " desactivado"))
     end))
 
+    refreshOptionState()
     callback(enabled :: boolean)
     return button
 end
@@ -4565,7 +4263,7 @@ local function addActionOption(
     shortcutButton.TextScaled = true
     create("UITextSizeConstraint", {
         Parent = shortcutButton,
-        MaxTextSize = 9,
+        MaxTextSize = 11,
         MinTextSize = 7,
     })
     bindActionShortcut(
@@ -4916,8 +4614,8 @@ colorPicker.open = function(initialColor, onApply)
             Parent = PopupLayer,
             Name = "ColorPicker",
             Active = true,
-            BackgroundColor3 = Color3.fromRGB(22, 22, 22),
-            BorderColor3 = Color3.fromRGB(72, 72, 72),
+            BackgroundColor3 = Theme.DefaultSurface,
+            BorderColor3 = Theme.DefaultOutline,
             BorderSizePixel = 1,
             Position = UDim2.new(0.5, -170, 0.5, -135),
             Size = UDim2.fromOffset(340, 270),
@@ -4930,7 +4628,7 @@ colorPicker.open = function(initialColor, onApply)
         })
 
         local title = makeTextLabel(panel, "COLOR", 14)
-        title.Font = Enum.Font.GothamBold
+        title.FontFace = CONTROL_FONT
         title.Position = UDim2.fromOffset(15, 8)
         title.Size = UDim2.new(1, -60, 0, 28)
         title.ZIndex = 81
@@ -4956,7 +4654,7 @@ colorPicker.open = function(initialColor, onApply)
         })
         local shade = create("Frame", {
             Parent = sv,
-            BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+            BackgroundColor3 = Theme.DefaultBackground,
             BorderSizePixel = 0,
             Size = UDim2.fromScale(1, 1),
             ZIndex = 82,
@@ -4973,7 +4671,7 @@ colorPicker.open = function(initialColor, onApply)
             Parent = sv,
             AnchorPoint = Vector2.new(0.5, 0.5),
             BackgroundColor3 = Color3.fromRGB(255, 255, 255),
-            BorderColor3 = Color3.fromRGB(15, 15, 15),
+            BorderColor3 = Theme.DefaultSurface,
             BorderSizePixel = 2,
             Size = UDim2.fromOffset(12, 12),
             ZIndex = 83,
@@ -5006,7 +4704,7 @@ colorPicker.open = function(initialColor, onApply)
             Parent = hue,
             AnchorPoint = Vector2.new(0.5, 0.5),
             BackgroundColor3 = Color3.fromRGB(245, 245, 245),
-            BorderColor3 = Color3.fromRGB(15, 15, 15),
+            BorderColor3 = Theme.DefaultSurface,
             BorderSizePixel = 1,
             Position = UDim2.new(0.5, 0, 0, 0),
             Size = UDim2.new(1, 6, 0, 5),
@@ -5328,11 +5026,11 @@ state.featureTooltip = create("TextLabel", {
     Name = "FeatureTooltip",
     Active = false,
     AutomaticSize = Enum.AutomaticSize.None,
-    BackgroundColor3 = Color3.fromRGB(15, 15, 15),
+    BackgroundColor3 = Theme.DefaultSurface,
     BackgroundTransparency = 0.04,
     BorderColor3 = Color3.fromRGB(58, 58, 58),
     BorderSizePixel = 1,
-    Font = Enum.Font.Gotham,
+    FontFace = THIN_FONT,
     Size = UDim2.fromOffset(320, 30),
     Text = "",
     TextColor3 = Color3.fromRGB(205, 205, 205),
@@ -8128,7 +7826,7 @@ local function createPageScroll(page, name)
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
         CanvasSize = UDim2.fromOffset(0, 0),
-        ScrollBarImageColor3 = Color3.fromRGB(100, 100, 100),
+        ScrollBarImageColor3 = Theme.DefaultOutline,
         ScrollBarThickness = 6,
         ScrollingDirection = Enum.ScrollingDirection.Y,
         Size = UDim2.fromScale(1, 1),
@@ -8545,36 +8243,11 @@ local function refreshSearch(): ()
     end
 end
 state.refreshSearch = refreshSearch
-local synchronizingSearch: boolean = false
-local function updateSearchFrom(source: TextBox, target: TextBox): ()
-    if synchronizingSearch then
-        return
-    end
-    synchronizingSearch = true
-    state.searchQuery = source.Text
-    if target.Text ~= source.Text then
-        target.Text = source.Text
-    end
-    synchronizingSearch = false
-    refreshSearch()
-end
-trackUiConnection(
-    state.shells.darkSearchBox:GetPropertyChangedSignal("Text"):Connect(
-        function(): ()
-            updateSearchFrom(
-                state.shells.darkSearchBox,
-                state.shells.defaultSearchBox
-            )
-        end
-    )
-)
 trackUiConnection(
     state.shells.defaultSearchBox:GetPropertyChangedSignal("Text"):Connect(
         function(): ()
-            updateSearchFrom(
-                state.shells.defaultSearchBox,
-                state.shells.darkSearchBox
-            )
+            state.searchQuery = state.shells.defaultSearchBox.Text
+            refreshSearch()
         end
     )
 )
@@ -8589,7 +8262,7 @@ local SettingsScroll = create("ScrollingFrame", {
     BackgroundTransparency = 1,
     BorderSizePixel = 0,
     CanvasSize = UDim2.fromOffset(0, 0),
-    ScrollBarImageColor3 = Color3.fromRGB(100, 100, 100),
+    ScrollBarImageColor3 = Theme.DefaultOutline,
     ScrollBarThickness = 6,
     ScrollingDirection = Enum.ScrollingDirection.Y,
     Size = UDim2.fromScale(1, 1),
@@ -8621,13 +8294,13 @@ local function createSettingRow(
         BackgroundColor3 = state.guiStyle == "Default"
             and Theme.DefaultSurface
             or Theme.Surface,
-        BackgroundTransparency = state.guiStyle == "Default" and 0.18 or 0,
+        BackgroundTransparency = state.guiStyle == "Default" and 0.58 or 0,
         BorderSizePixel = 0,
         Size = UDim2.new(1, -4, 0, height or 62),
     })
 
     local title = makeTextLabel(row, titleText, 15)
-    title.Font = Enum.Font.GothamBold
+    title.FontFace = CONTROL_FONT
     title.Position = UDim2.fromOffset(14, 7)
     title.Size = UDim2.new(0.46, -14, 0, 24)
 
@@ -8654,7 +8327,7 @@ local function createSettingRow(
         Color = state.guiStyle == "Default"
             and Theme.DefaultOutline
             or Theme.Outline,
-        Transparency = state.guiStyle == "Default" and 0.48 or 0.28,
+        Transparency = state.guiStyle == "Default" and 0.82 or 0.28,
         Thickness = 1,
     })
     table.insert(state.settingRows, row)
@@ -8667,66 +8340,22 @@ state.restyleSettings = function(isDefault: boolean): ()
         or Color3.fromRGB(100, 100, 100)
     for _, row: Frame in ipairs(state.settingRows) do
         row.BackgroundColor3 = isDefault and Theme.DefaultSurface or Theme.Surface
-        row.BackgroundTransparency = isDefault and 0.18 or 0
+        row.BackgroundTransparency = isDefault and 0.58 or 0
         local rowStroke: UIStroke? = row:FindFirstChild("SettingStroke") :: UIStroke?
         if rowStroke then
             rowStroke.Color = isDefault and Theme.DefaultOutline or Theme.Outline
-            rowStroke.Transparency = isDefault and 0.48 or 0.28
+            rowStroke.Transparency = isDefault and 0.82 or 0.28
         end
     end
 end
-
-local guiRow: Frame, guiControl: Frame = createSettingRow(
-    "GUI style",
-    "Switch instantly between the dark and aurora layouts"
-)
-guiRow.LayoutOrder = 1
-local DarkGuiButton: TextButton = makeButton(guiControl, "DARK", 12)
-DarkGuiButton.Position = UDim2.fromScale(0, 0)
-DarkGuiButton.Size = UDim2.new(0.5, -4, 1, 0)
-DarkGuiButton:SetAttribute("SelectedColor", Theme.AccentSoft)
-local DefaultGuiButton: TextButton = makeButton(guiControl, "DEFAULT", 12)
-DefaultGuiButton.Position = UDim2.new(0.5, 4, 0, 0)
-DefaultGuiButton.Size = UDim2.new(0.5, -4, 1, 0)
-DefaultGuiButton:SetAttribute("SelectedColor", Theme.AccentSoft)
-
-local function updateGuiStyleButtons(): ()
-    local darkSelected: boolean = state.guiStyle == "DARK"
-    local idleColor: Color3 = darkSelected
-        and Theme.SurfaceRaised
-        or Theme.DefaultSurface
-    local hoverColor: Color3 = darkSelected
-        and Theme.SurfaceHover
-        or Theme.DefaultSurfaceHover
-    DarkGuiButton:SetAttribute("SelectedColor", Theme.AccentSoft)
-    DefaultGuiButton:SetAttribute("SelectedColor", Theme.DefaultAccent)
-    DarkGuiButton:SetAttribute("IdleColor", idleColor)
-    DefaultGuiButton:SetAttribute("IdleColor", idleColor)
-    DarkGuiButton:SetAttribute("HoverColor", hoverColor)
-    DefaultGuiButton:SetAttribute("HoverColor", hoverColor)
-    DarkGuiButton:SetAttribute("Selected", darkSelected)
-    DefaultGuiButton:SetAttribute("Selected", not darkSelected)
-    DarkGuiButton.BackgroundColor3 = darkSelected
-        and Theme.AccentSoft
-        or idleColor
-    DefaultGuiButton.BackgroundColor3 = darkSelected
-        and idleColor
-        or Theme.DefaultAccent
-    DarkGuiButton.TextColor3 = darkSelected
-        and Theme.Text
-        or Theme.DefaultTextMuted
-    DefaultGuiButton.TextColor3 = darkSelected
-        and Theme.TextMuted
-        or Theme.DefaultBackground
-end
-updateGuiStyleButtons()
 
 local textRow, textControl = createSettingRow(
     "Text size",
     "Drag the linear control to scale every label"
 )
-textRow.LayoutOrder = 2
-local textScaleRatio: number = (state.textScale - 0.85) / 0.5
+textRow.LayoutOrder = 1
+local textScaleRatio: number = (state.textScale - TEXT_SCALE_MINIMUM)
+    / (TEXT_SCALE_MAXIMUM - TEXT_SCALE_MINIMUM)
 local TextSizeTrack: TextButton = create("TextButton", {
     Parent = textControl,
     Name = "TextSizeTrack",
@@ -8807,10 +8436,10 @@ local blurRow, blurControl = createSettingRow(
     "Blur mode",
     "Blur the game while the menu is visible"
 )
-blurRow.LayoutOrder = 3
+blurRow.LayoutOrder = 2
 
-local BlurButton: TextButton, BlurKnob: Frame =
-    createSwitch(blurControl, state.blurEnabled)
+local BlurButton: TextButton, BlurMark: TextLabel =
+    createCheckControl(blurControl, state.blurEnabled)
 BlurButton.AnchorPoint = Vector2.new(1, 0.5)
 BlurButton.Position = UDim2.new(1, 0, 0.5, 0)
 
@@ -8818,9 +8447,9 @@ local motionRow, motionControl = createSettingRow(
     "Interface motion",
     "Smooth transitions for cards, tabs, and menu controls"
 )
-motionRow.LayoutOrder = 4
-local MotionButton: TextButton, MotionKnob: Frame =
-    createSwitch(motionControl, state.animationsEnabled)
+motionRow.LayoutOrder = 3
+local MotionButton: TextButton, MotionMark: TextLabel =
+    createCheckControl(motionControl, state.animationsEnabled)
 MotionButton.AnchorPoint = Vector2.new(1, 0.5)
 MotionButton.Position = UDim2.new(1, 0, 0.5, 0)
 
@@ -8828,7 +8457,7 @@ local keyRow, keyControl = createSettingRow(
     "Menu key",
     "Choose the key used to show or hide"
 )
-keyRow.LayoutOrder = 5
+keyRow.LayoutOrder = 4
 
 local KeybindButton = makeButton(keyControl, state.toggleKey.Name, 13)
 KeybindButton.Size = UDim2.fromScale(1, 1)
@@ -8839,7 +8468,7 @@ local reinjectRow, reinjectControl = createSettingRow(
     "Reinject latest",
     "Download and restart the newest main build"
 )
-reinjectRow.LayoutOrder = 6
+reinjectRow.LayoutOrder = 5
 local ReinjectButton: TextButton = makeButton(
     reinjectControl,
     "REINJECT LATEST",
@@ -8851,7 +8480,7 @@ local destructRow, destructControl = createSettingRow(
     "Destruct",
     "Disable every function and completely remove the menu from this client"
 )
-destructRow.LayoutOrder = 7
+destructRow.LayoutOrder = 6
 local DestructButton: TextButton = makeButton(
     destructControl,
     "DESTRUCT",
@@ -8863,7 +8492,7 @@ local gameRow, gameControl = createSettingRow(
     "Game check",
     "Only the matching game-specific module is loaded"
 )
-gameRow.LayoutOrder = 8
+gameRow.LayoutOrder = 7
 local gameStatus = makeTextLabel(
     gameControl,
     GAME_CHECK.MM2Active and "MM2 · 142823291"
@@ -8880,7 +8509,7 @@ local mobileIconRow, mobileIconControl = createSettingRow(
     "Mobile menu icon",
     "Dog shortcut stays available so the menu cannot become unreachable"
 )
-mobileIconRow.LayoutOrder = 9
+mobileIconRow.LayoutOrder = 8
 mobileIconRow.Visible = UserInputService.TouchEnabled
 local MobileIconButton = makeButton(
     mobileIconControl,
@@ -8901,7 +8530,7 @@ local mobileSizeRow, mobileSizeControl = createSettingRow(
     "Mobile action size",
     "Size for placed mobile shortcuts"
 )
-mobileSizeRow.LayoutOrder = 10
+mobileSizeRow.LayoutOrder = 9
 mobileSizeRow.Visible = UserInputService.TouchEnabled
 local MobileSizeButton = makeButton(
     mobileSizeControl,
@@ -8914,7 +8543,7 @@ local mobileResetRow, mobileResetControl = createSettingRow(
     "Mobile action buttons",
     "Hold ADD to place; hold a shortcut to remove it"
 )
-mobileResetRow.LayoutOrder = 11
+mobileResetRow.LayoutOrder = 10
 mobileResetRow.Visible = UserInputService.TouchEnabled
 local MobileResetButton = makeButton(
     mobileResetControl,
@@ -8949,7 +8578,9 @@ state.setMenuVisible = setMenuVisible
 local function updateTextSizes(): ()
     for _, item in ipairs(registeredText) do
         if item.object and item.object.Parent then
-            item.object.TextSize = math.round(item.normalSize * state.textScale)
+            item.object.TextSize = math.round(
+                item.normalSize * TEXT_BASE_MULTIPLIER * state.textScale
+            )
         end
     end
 end
@@ -8962,13 +8593,17 @@ local function setTextScaleFromX(pointerX: number): ()
         0,
         1
     )
-    state.textScale = math.round((0.85 + ratio * 0.5) * 100) / 100
+    state.textScale = math.round((
+        TEXT_SCALE_MINIMUM
+            + ratio * (TEXT_SCALE_MAXIMUM - TEXT_SCALE_MINIMUM)
+    ) * 100) / 100
     TextSizeFill.Size = UDim2.fromScale(ratio, 1)
     TextSizeKnob.Position = UDim2.fromScale(ratio, 0.5)
     TextSizeValue.Text = tostring(math.round(state.textScale * 100)) .. "%"
     updateTextSizes()
     configData.ui.largeText = nil
     configData.ui.textScale = state.textScale
+    configData.ui.textScaleCalibrationVersion = 2
     queueConfigSave()
 end
 trackUiConnection(TextSizeTrack.InputBegan:Connect(function(input: InputObject): ()
@@ -8994,30 +8629,9 @@ trackUiConnection(UserInputService.InputEnded:Connect(function(input: InputObjec
     end
 end))
 
-local function selectGuiStyle(styleName: string): ()
-    local normalizedStyle: string = styleName == "Default" and "Default" or "DARK"
-    if state.guiStyle == normalizedStyle then
-        return
-    end
-    state.applyGuiStyle(normalizedStyle, true)
-    configData.ui.guiStyle = normalizedStyle
-    updateGuiStyleButtons()
-    queueConfigSave()
-    notify(normalizedStyle == "Default"
-        and "GUI Default activada"
-        or "GUI DARK activada")
-end
-
-trackUiConnection(DarkGuiButton.MouseButton1Click:Connect(function(): ()
-    selectGuiStyle("DARK")
-end))
-trackUiConnection(DefaultGuiButton.MouseButton1Click:Connect(function(): ()
-    selectGuiStyle("Default")
-end))
-
 trackUiConnection(BlurButton.MouseButton1Click:Connect(function(): ()
     state.blurEnabled = not state.blurEnabled
-    setSwitchVisual(BlurButton, BlurKnob, state.blurEnabled, true)
+    setCheckVisual(BlurButton, BlurMark, state.blurEnabled, true)
     setBlurVisible(true)
     configData.ui.blurEnabled = state.blurEnabled
     queueConfigSave()
@@ -9026,7 +8640,7 @@ end))
 
 trackUiConnection(MotionButton.MouseButton1Click:Connect(function(): ()
     state.animationsEnabled = not state.animationsEnabled
-    setSwitchVisual(MotionButton, MotionKnob, state.animationsEnabled, true)
+    setCheckVisual(MotionButton, MotionMark, state.animationsEnabled, true)
     configData.ui.animationsEnabled = state.animationsEnabled
     queueConfigSave()
 end))
@@ -9241,7 +8855,6 @@ local function bindDragHandle(handle: GuiObject): ()
     end))
 end
 
-bindDragHandle(Header)
 bindDragHandle(DefaultDragZone)
 
 state.globalInputChangedConnection = UserInputService.InputChanged:Connect(function(

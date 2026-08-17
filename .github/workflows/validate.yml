@@ -33,8 +33,7 @@ jobs:
           test -f src/gui/Current/gui.lua
           test -d src/gui/Current/Images
           test -f src/gui/Current/Images/menu-toggle.png
-          test -f src/gui/Current/Images/aurora-background.jpg
-          test -f src/gui/Current/Images/aurora-background.png
+          test -f src/gui/Current/Images/purple-panel-background.png
           test -f src/gui/Current/Images/menu-toggle.editable.png
           test -f src/gui/Current/Assets/header-anime.png
           test -f src/gui/Current/Assets/Blossoms/blossom-spritesheet.png
@@ -52,7 +51,6 @@ jobs:
           test -f src/gui/Current/Assets/Status/spinner_minimal.png
           test -f src/gui/Current/Assets/Decorations/cross-small.png
           test -f src/gui/Current/Assets/Decorations/halftone-fade.png
-          test -f src/gui/Current/Assets/Source/darkcore-asset-sheet.png
           test -f src/gui/Current/Assets/Source/cosmic-controls-sheet.png
           test -f src/gui/Current/Assets/Frames/keybind-pill-hd.png
           test -f src/gui/Current/Assets/Icons/search.png
@@ -60,7 +58,6 @@ jobs:
           test -f src/gui/Current/Assets/Icons/settings.png
           test -f src/gui/Current/Assets/Icons/target_cross.png
           test -f tools/process_manga_assets.py
-          test -f tools/generate_darkcore_assets.py
           test -f src/library/AssetRegistry.luau
           test -f src/library/ProfileRegistry.luau
 

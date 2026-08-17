@@ -4,7 +4,7 @@
   "images": {
     "logo": "menu-toggle.png",
     "menuToggle": "menu-toggle.png",
-    "menuBackground": "aurora-background.png",
+    "menuBackground": "purple-panel-background.png",
     "universalIcon": null,
     "movementIcon": null,
     "mm2Icon": null,
@@ -13,6 +13,6 @@
   },
   "attribution": {
     "menuToggle": "User-provided image",
-    "menuBackground": "Khalil Benihoud / Unsplash (Unsplash License), https://unsplash.com/photos/aurora-borealis-umLAzmGNZbU"
+    "menuBackground": "User-provided purple background, refined for high-resolution UI use"
   }
 }

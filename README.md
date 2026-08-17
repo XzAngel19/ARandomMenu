@@ -23,26 +23,25 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
 - Registered sections initialize asynchronously after the GUI shell appears;
   a short style-aware loading curtain reports progress until they are ready,
   and opening a tab is never used as the condition for constructing content.
-- Two independent fixed-size shells share only module state and callbacks.
-  `Default` is the startup shell and has its own headerless aurora panel,
-  sidebar search, navigation, clean glass cards, notifications and drag strip.
-  `DARK` is opt-in and keeps its separate black header and navigation.
-- Settings switches between the shells live and persists an explicit `DARK`
-  choice. With no saved choice, every injection opens `Default`.
+- The fixed-size headerless purple shell owns sidebar search, navigation,
+  translucent cards, notifications and a drag strip. It is the only visual
+  theme, so every injection opens the same coherent interface.
 - The reusable `gui.lua` owns its image catalog, executor-safe asset cache,
   settings, draggable shell, tabs and `createModule()` component API. Game
   modules only provide their controls and callbacks.
 - Its asset cache verifies PNG/JPEG signatures, interface assets use the real
   files under `Assets`, and text scaling updates a creation-time registry
   instead of walking the complete GUI during every slider movement.
-- Settings includes the persistent GUI selector, text scale, blur, interface
-  motion, cache-busted **Reinject latest**, and an idempotent **Destruct** action
+- Settings includes calibrated text scale, blur, interface motion,
+  cache-busted **Reinject latest**, and an idempotent **Destruct** action
   that disables features and releases every tracked runtime connection. The
-  Default shell uses simple blue key/action controls; the custom key-slot frame
-  remains exclusive to DARK.
+  key/action controls blend into the purple glass surface without image frames.
 - Desktop shells use integer-pixel, aspect-fitted dimensions capped near 60% of
   wide displays instead of scaling the complete canvas, which keeps text and
   strokes crisp while preserving drag boundaries on viewport changes.
+- Runtime typography uses Builder Sans through `FontFace` for consistent,
+  crisp rendering; `Assets/Typography/title-logo.png` remains source artwork,
+  not an installable font family.
 - Universal Fly provides Balanced, Direct and Precise response presets,
   independent horizontal/vertical speed and progressive advanced controls.
   Speed provides Adaptive, Smooth, Boost and Teleport modes plus acceleration,
@@ -73,8 +72,8 @@ The bootstrap does not use `EditableImage` or a PNG byte decoder. `AssetManager`
 selects a compatible executor HTTP alias, validates PNG bytes, retries failed
 downloads, writes versioned files under `MenuAssets`, verifies the cache and
 resolves local paths with `getcustomasset`/`getsynasset`. Every stage is logged
-with the `[RTM:Assets]` prefix. The current GUI also declares Roblox asset IDs
-as immediate fallbacks for its header, ornament sheet and mobile toggle.
+with the `[RTM:Assets]` prefix. The current GUI keeps a Roblox asset ID as an
+immediate fallback only for the mobile menu shortcut.
 
-The aurora background is by Khalil Benihoud and is available under the
-[Unsplash License](https://unsplash.com/photos/aurora-borealis-umLAzmGNZbU).
+The current purple panel background is user-provided and stored locally in the
+repository so executor asset caches can resolve it without Roblox Studio.
