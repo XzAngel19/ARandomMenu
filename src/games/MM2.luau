@@ -37,6 +37,8 @@ local mm2GameplayRemotes: Instance? = nil
 local mm2RoleRemote: RemoteFunction? = nil
 local roleRefreshRunning: boolean = false
 local lastRoleRefreshAt: number = -math.huge
+local roundLifecycleActive: boolean? = nil
+local roleRefreshGeneration: number = 0
 
 pcall(function()
     local replicatedStorage: ReplicatedStorage =
@@ -278,6 +280,7 @@ local function requestRoleRefresh(): ()
     end
 
     roleRefreshRunning = true
+    local generation: number = roleRefreshGeneration
     task.spawn(function(): ()
         local success: boolean, result: any = pcall(
             mm2RoleRemote.InvokeServer,
@@ -285,7 +288,10 @@ local function requestRoleRefresh(): ()
         )
         roleRefreshRunning = false
         lastRoleRefreshAt = os.clock()
-        if success and type(result) == "table" then
+        if success
+            and generation == roleRefreshGeneration
+            and roundLifecycleActive ~= false
+            and type(result) == "table" then
             mm2RoundData = result
         end
     end)
@@ -328,10 +334,14 @@ local function findPlayerByRoundRole(role: string): Player?
 end
 
 local function hasActiveRoundRoles(): boolean
-    requestRoleRefresh()
+    if roundLifecycleActive == false then
+        return false
+    end
     if findMM2Role("Knife") or findMM2Role("Gun") then
+        roundLifecycleActive = true
         return true
     end
+    requestRoleRefresh()
 
     -- A table containing only Innocents can be residual countdown/lobby data.
     -- Requiring a round-defining role keeps every cham off in the lobby.
@@ -559,9 +569,11 @@ if mm2GameplayRemotes then
     local playerDataChanged = mm2GameplayRemotes:FindFirstChild("PlayerDataChanged")
     if playerDataChanged and playerDataChanged:IsA("RemoteEvent") then
         featureConnections.MM2PlayerDataChanged = playerDataChanged.OnClientEvent:Connect(function(newData)
-            if type(newData) == "table" then
+            if type(newData) == "table" and roundLifecycleActive ~= false then
                 mm2RoundData = newData
                 lastRoleRefreshAt = os.clock()
+            else
+                mm2RoundData = {}
             end
             rebuildRoleEsp()
 
@@ -1365,18 +1377,36 @@ local timerRemotes = game:GetService("ReplicatedStorage"):FindFirstChild("Remote
 local timerGameplay = timerRemotes and timerRemotes:FindFirstChild("Gameplay")
 local timerRoundStart = timerGameplay and timerGameplay:FindFirstChild("RoundStart")
 local timerRoundEnd = timerGameplay and timerGameplay:FindFirstChild("RoundEndFade")
+local sessionRoundActive = false
 
 if timerRoundStart and timerRoundStart:IsA("RemoteEvent") then
     featureConnections.MM2TimerTrackerStart = timerRoundStart.OnClientEvent:Connect(
         function(duration)
             duration = tonumber(duration)
             timerEndsAt = duration and os.clock() + duration or nil
+            mm2RoundData = {}
+            roundLifecycleActive = duration ~= nil and duration > 0
+            if not duration or duration <= 0 then
+                sessionRoundActive = false
+            end
+            roleRefreshGeneration += 1
+            if duration and duration > 0
+                and not sessionRoundActive
+                and state.sessionInfo
+                and state.sessionInfo.addRound then
+                sessionRoundActive = true
+                state.sessionInfo.addRound()
+            end
         end
     )
 end
 if timerRoundEnd and timerRoundEnd:IsA("RemoteEvent") then
     featureConnections.MM2TimerTrackerEnd = timerRoundEnd.OnClientEvent:Connect(function()
         timerEndsAt = nil
+        sessionRoundActive = false
+        roundLifecycleActive = false
+        roleRefreshGeneration += 1
+        mm2RoundData = {}
         TimerDisplay.Visible = false
     end)
 end
@@ -4101,6 +4131,100 @@ local function installShootRedirectHook(): boolean
     return not touchPreferred or shootTouchHookInstalled
 end
 
+local function mm2RoleProvider(player: Player): string?
+    if roundLifecycleActive == false then
+        return nil
+    end
+    return getPlayerRole(player)
+end
+
+local function mm2TargetProvider(): any
+    if not hasActiveRoundRoles() then
+        return nil
+    end
+    local localRole: string? = getPlayerRole(LocalPlayer)
+    local target: Player? = nil
+    local source: string = "MM2 role priority"
+    if localRole == "Sheriff" or localRole == "Hero" then
+        target = findMurderer()
+        source = "Sheriff priority · Murderer"
+    elseif localRole == "Murderer" then
+        target = findSheriff()
+        source = target and "Murderer priority · Sheriff/Hero" or "Murderer priority"
+        if not target then
+            local redirected: Player? = state.mm2KnifeRuntime
+                and state.mm2KnifeRuntime.redirectTarget
+                or nil
+            if redirected
+                and isPlayerAlive(redirected)
+                and not state.isProtectedTarget(redirected) then
+                target = redirected
+                source = "Knife lock"
+            end
+        end
+        if not target then
+            for _, player: Player in ipairs(Players:GetPlayers()) do
+                if player ~= LocalPlayer
+                    and isPlayerAlive(player)
+                    and not state.isProtectedTarget(player) then
+                    target = player
+                    break
+                end
+            end
+        end
+    else
+        target = findMurderer()
+        source = "Threat priority · Murderer"
+    end
+    if state.mm2ShotFeedback then
+        local pending: any = state.mm2ShotFeedback.pending
+            or state.mm2ShotFeedback.lastAccepted
+        local pendingRole: string? = pending and pending.target
+            and getPlayerRole(pending.target)
+            or nil
+        local preservesRolePriority: boolean = localRole ~= "Sheriff"
+            and localRole ~= "Hero"
+            or pendingRole == "Murderer"
+        local selectedRole: string? = target and getPlayerRole(target) or nil
+        if localRole == "Murderer"
+            and (selectedRole == "Sheriff" or selectedRole == "Hero") then
+            preservesRolePriority = pendingRole == "Sheriff" or pendingRole == "Hero"
+        end
+        if pending
+            and pending.target
+            and isPlayerAlive(pending.target)
+            and preservesRolePriority then
+            target = pending.target
+            source = "Recent shot target"
+        end
+    end
+    if not target then
+        return nil
+    end
+    local role: string? = getPlayerRole(target)
+    return {
+        player = target,
+        role = role,
+        source = source,
+        accent = role == "Murderer"
+            and Theme.Danger
+            or ((role == "Sheriff" or role == "Hero")
+                and Theme.AccentCyan
+                or Theme.Success),
+    }
+end
+
+state.gameRoleProvider = mm2RoleProvider
+state.gameTargetProvider = mm2TargetProvider
+moduleCleanup = function(): ()
+    if state.gameRoleProvider == mm2RoleProvider then
+        state.gameRoleProvider = nil
+    end
+    if state.gameTargetProvider == mm2TargetProvider then
+        state.gameTargetProvider = nil
+    end
+end
+
 local function uninstallShootRedirectHook(): ()
     local weaponService: any = weaponServiceModule
     local touchRestored: boolean = not shootTouchHookInstalled
@@ -4961,6 +5085,12 @@ createUniversalFeature(
 )
 
 cleanupMM2Runtime = function()
+    if state.gameRoleProvider == mm2RoleProvider then
+        state.gameRoleProvider = nil
+    end
+    if state.gameTargetProvider == mm2TargetProvider then
+        state.gameTargetProvider = nil
+    end
     trajectoryCalibration:destroy()
     toggleShootMurderer(false)
     state.mm2ShotFeedback.hide()
@@ -5008,7 +5138,11 @@ function Module.init(runtime: any): any
 
     Module.Menu = runtime.Menu
     Module.Runtime = runtime
-    buildMM2Features()
+    local success: boolean, buildError: any = pcall(buildMM2Features)
+    if not success then
+        moduleCleanup()
+        error(buildError, 0)
+    end
     local environment: any = getfenv()
     if type(environment.cleanupMM2Runtime) == "function" then
         moduleCleanup = environment.cleanupMM2Runtime

@@ -107,8 +107,8 @@ local Theme: {[string]: Color3} = {
     Text = Color3.fromRGB(249, 245, 255),
     TextMuted = Color3.fromRGB(202, 184, 220),
     Outline = Color3.fromRGB(132, 97, 170),
-    Success = Color3.fromRGB(222, 222, 224),
-    Danger = Color3.fromRGB(202, 202, 205),
+    Success = Color3.fromRGB(91, 240, 205),
+    Danger = Color3.fromRGB(255, 91, 155),
 }
 local TITLE_FONT: Font = Font.new(
     "rbxasset://fonts/families/BuilderSans.json",
@@ -126,6 +126,7 @@ local CONTROL_FONT: Font = Font.new(
     Enum.FontStyle.Normal
 )
 local DISPLAY_FONT: Font = TITLE_FONT
+local VALVE_FONT: Font = CONTROL_FONT
 local TEXT_BASE_MULTIPLIER: number = 1.35
 local TEXT_SCALE_MINIMUM: number = 0.8
 local TEXT_SCALE_MAXIMUM: number = 1.2
@@ -438,6 +439,72 @@ local AssetManager: any = {
             fileName = "icon-overlays-v1.png",
             fallback = "",
         },
+        close = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Icons/close.png",
+            fileName = "icon-close-v1.png",
+            fallback = "",
+        },
+        key = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Icons/key.png",
+            fileName = "icon-key-v1.png",
+            fallback = "",
+        },
+        keybindPill = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Frames/keybind-pill-hd.png",
+            fileName = "frame-keybind-pill-v1.png",
+            fallback = "",
+        },
+        toggleTexture = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Status/toggle_texture.png",
+            fileName = "toggle-texture-v1.png",
+            fallback = "",
+        },
+        iconFrame = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Frames/frame_ink_square.png",
+            fileName = "frame-ink-square-v1.png",
+            fallback = "",
+        },
+        panelSlash = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Frames/panel_slash.png",
+            fileName = "panel-slash-v1.png",
+            fallback = "",
+        },
+        emoStar = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Particles/emo-star.png",
+            fileName = "sticker-emo-star-v1.png",
+            fallback = "",
+        },
+        targetRing = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Icons/target_ring.png",
+            fileName = "icon-target-ring-v1.png",
+            fallback = "",
+        },
+        mangaFace = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Icons/manga_face.png",
+            fileName = "sticker-manga-face-v1.png",
+            fallback = "",
+        },
+        chart = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Icons/chart.png",
+            fileName = "icon-chart-v1.png",
+            fallback = "",
+        },
+        flame = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Icons/flame.png",
+            fileName = "icon-flame-v1.png",
+            fallback = "",
+        },
         settings = {
             url = REPOSITORY_RAW_BASE
                 .. "src/gui/Current/Assets/Icons/settings.png",
@@ -448,6 +515,12 @@ local AssetManager: any = {
             url = REPOSITORY_RAW_BASE
                 .. "src/gui/Current/Assets/Icons/home.png",
             fileName = "icon-home-v1.png",
+            fallback = "",
+        },
+        tools = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Icons/tools.png",
+            fileName = "icon-tools-v1.png",
             fallback = "",
         },
         user = {
@@ -840,6 +913,12 @@ end
         Enum.FontWeight.Regular,
         Enum.FontStyle.Normal
     )
+    VALVE_FONT = AssetManager.resolveFont(
+        "valveFont",
+        CONTROL_FONT,
+        Enum.FontWeight.Bold,
+        Enum.FontStyle.Normal
+    )
     state.assetManager = AssetManager
 end
 
@@ -1184,6 +1263,137 @@ local function makeButton(
     return button :: TextButton
 end
 
+local function makeAssetIcon(
+    parent: Instance,
+    assetName: string,
+    color: Color3,
+    size: UDim2?,
+    position: UDim2?,
+    zIndex: number?,
+    onResolved: ((boolean) -> ())?
+): ImageLabel
+    local icon: ImageLabel = create("ImageLabel", {
+        Parent = parent,
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Image = "",
+        ImageColor3 = color,
+        Position = position or UDim2.fromScale(0, 0),
+        ScaleType = Enum.ScaleType.Fit,
+        Size = size or UDim2.fromScale(1, 1),
+        ZIndex = zIndex or ((parent:IsA("GuiObject") and parent.ZIndex or 1) + 1),
+    }) :: ImageLabel
+    state.assetManager.loadAsync(assetName, icon, onResolved)
+    return icon
+end
+
+local function decorateKeySlot(button: TextButton): ()
+    if button:FindFirstChild("AstraKeyFrame") then
+        return
+    end
+    local frame: ImageLabel = makeAssetIcon(
+        button,
+        "keybindPill",
+        Theme.DefaultText,
+        UDim2.fromScale(1, 1),
+        UDim2.fromScale(0, 0),
+        button.ZIndex,
+        nil
+    )
+    frame.Name = "AstraKeyFrame"
+    frame.ImageTransparency = 0.48
+    frame.ScaleType = Enum.ScaleType.Slice
+    frame.SliceCenter = Rect.new(300, 300, 1870, 420)
+    frame.SliceScale = 0.5
+end
+
+local function setAuroraSwitch(button: TextButton, enabled: boolean, animate: boolean?): ()
+    button:SetAttribute("Checked", enabled)
+    local track: Frame? = button:FindFirstChild("SwitchTrack") :: Frame?
+    local knob: Frame? = track and track:FindFirstChild("Knob") :: Frame?
+    if not track or not knob then
+        return
+    end
+    local targetColor: Color3 = enabled and Theme.AccentSoft or Color3.fromRGB(24, 16, 36)
+    local targetPosition: UDim2 = enabled
+        and UDim2.new(1, -3, 0.5, 0)
+        or UDim2.new(0, 3, 0.5, 0)
+    local targetKnobColor: Color3 = enabled and Theme.AccentCyan or Theme.DefaultTextMuted
+    if animate and state.animationsEnabled then
+        TweenService:Create(track, TweenInfo.new(0.18, Enum.EasingStyle.Quart), {
+            BackgroundColor3 = targetColor,
+        }):Play()
+        TweenService:Create(knob, TweenInfo.new(0.18, Enum.EasingStyle.Quart), {
+            Position = targetPosition,
+            BackgroundColor3 = targetKnobColor,
+        }):Play()
+    else
+        track.BackgroundColor3 = targetColor
+        knob.Position = targetPosition
+        knob.BackgroundColor3 = targetKnobColor
+    end
+end
+
+local function createAuroraSwitch(
+    parent: Instance,
+    enabled: boolean,
+    width: number?
+): TextButton
+    local switchWidth: number = width or (state.isMobile and 50 or 44)
+    local switchHeight: number = state.isMobile and 28 or 24
+    local button: TextButton = create("TextButton", {
+        Parent = parent,
+        Active = true,
+        AutoButtonColor = false,
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Size = UDim2.fromOffset(switchWidth, math.max(32, switchHeight)),
+        Text = "",
+    }) :: TextButton
+    local track: Frame = create("Frame", {
+        Parent = button,
+        Name = "SwitchTrack",
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        BackgroundColor3 = Color3.fromRGB(24, 16, 36),
+        BorderSizePixel = 0,
+        Position = UDim2.fromScale(0.5, 0.5),
+        Size = UDim2.fromOffset(switchWidth, switchHeight),
+        ZIndex = button.ZIndex + 1,
+    }) :: Frame
+    create("UICorner", {Parent = track, CornerRadius = UDim.new(1, 0)})
+    local texture: ImageLabel = makeAssetIcon(
+        track,
+        "toggleTexture",
+        Theme.DefaultText,
+        UDim2.fromScale(1, 1),
+        UDim2.fromScale(0, 0),
+        track.ZIndex + 1,
+        nil
+    )
+    texture.Name = "Texture"
+    texture.ImageTransparency = 0.68
+    local knobSize: number = switchHeight - 6
+    local knob: Frame = create("Frame", {
+        Parent = track,
+        Name = "Knob",
+        AnchorPoint = Vector2.new(0, 0.5),
+        BackgroundColor3 = Theme.DefaultTextMuted,
+        BorderSizePixel = 0,
+        Position = UDim2.new(0, 3, 0.5, 0),
+        Size = UDim2.fromOffset(knobSize, knobSize),
+        ZIndex = track.ZIndex + 2,
+    }) :: Frame
+    create("UICorner", {Parent = knob, CornerRadius = UDim.new(1, 0)})
+    create("UIStroke", {
+        Parent = knob,
+        Color = Theme.DefaultText,
+        Transparency = 0.42,
+        Thickness = 1,
+    })
+    setAuroraSwitch(button, enabled, false)
+    return button
+end
+
 local function applyKeySlotStyle(button: TextButton): ()
     button.ZIndex = math.max(2, button.ZIndex)
     button.BackgroundColor3 = Theme.DefaultSurface
@@ -1193,6 +1403,7 @@ local function applyKeySlotStyle(button: TextButton): ()
     button:SetAttribute("IdleColor", Theme.DefaultSurface)
     button:SetAttribute("HoverColor", Theme.DefaultSurfaceHover)
     button:SetAttribute("PressedColor", Theme.DefaultButtonPressed)
+    decorateKeySlot(button)
     local buttonStroke: UIStroke? = button:FindFirstChildOfClass("UIStroke")
     if buttonStroke then
         buttonStroke.Color = Theme.DefaultOutline
@@ -1560,7 +1771,7 @@ end
 task.defer(centerMain)
 
 do
-local sidebarWidth: number = state.isMobile and 136 or 172
+local sidebarWidth: number = state.isMobile and 112 or 172
 local DefaultShell: Frame = create("Frame", {
     Parent = Main,
     Name = "DefaultShell",
@@ -1713,6 +1924,11 @@ local function setTab(tabName: string): ()
             or Theme.DefaultSidebar
         button.BackgroundTransparency = selected and 0.34 or 1
         button.TextColor3 = selected and Theme.DefaultText or Theme.DefaultTextMuted
+        local tabIcon: ImageLabel? = button:FindFirstChild("TabIcon") :: ImageLabel?
+        if tabIcon then
+            tabIcon.ImageColor3 = selected and Theme.AccentCyan or Theme.DefaultTextMuted
+            tabIcon.ImageTransparency = selected and 0 or 0.28
+        end
         local tabStroke: UIStroke? = button:FindFirstChild("StyleStroke") :: UIStroke?
         if tabStroke then
             tabStroke.Color = Theme.DefaultOutline
@@ -1742,10 +1958,27 @@ local function createTab(tabName: string, layoutOrder: number): Frame
     defaultButton:SetAttribute("HoverColor", Theme.DefaultSurfaceHover)
     local defaultPadding: UIPadding = create("UIPadding", {
         Parent = defaultButton,
-        PaddingLeft = UDim.new(0, 12),
+        PaddingLeft = UDim.new(0, 36),
         PaddingRight = UDim.new(0, 10),
     }) :: UIPadding
     defaultPadding.Name = "DefaultTabPadding"
+    local tabAsset: string = tabName == "Universal" and "home"
+        or (tabName == "Movement" and "tools")
+        or (tabName == "MM2" and "target")
+        or (tabName == "TRS" and "user")
+        or (tabName == "VD" and "shield")
+        or (tabName == "MVSD" and "visuals")
+        or "settings"
+    local tabIcon: ImageLabel = makeAssetIcon(
+        defaultButton,
+        tabAsset,
+        Theme.DefaultTextMuted,
+        UDim2.fromOffset(17, 17),
+        UDim2.new(0, 11, 0.5, -8),
+        13,
+        nil
+    )
+    tabIcon.Name = "TabIcon"
     defaultTabButtons[tabName] = defaultButton
 
     local page: Frame = create("Frame", {
@@ -1813,7 +2046,7 @@ DefaultSearchBox.ZIndex = 14
 create("UIPadding", {
     Parent = DefaultSearchBox,
     PaddingLeft = UDim.new(0, 36),
-    PaddingRight = UDim.new(0, 12),
+    PaddingRight = UDim.new(0, 36),
 })
 local DefaultSearchCorner: UICorner? =
     DefaultSearchBox:FindFirstChild("StyleCorner") :: UICorner?
@@ -1842,7 +2075,58 @@ local DefaultSearchIcon: ImageLabel = create("ImageLabel", {
     ZIndex = 15,
 }) :: ImageLabel
 state.assetManager.loadAsync("search", DefaultSearchIcon)
+local SearchClear: TextButton = makeButton(DefaultSearchBox, "x", 9)
+SearchClear.Name = "ClearSearch"
+SearchClear.AnchorPoint = Vector2.new(1, 0.5)
+SearchClear.BackgroundTransparency = 1
+SearchClear.Position = UDim2.new(1, -6, 0.5, 0)
+SearchClear.Size = UDim2.fromOffset(28, 28)
+SearchClear.TextTransparency = 0.45
+SearchClear.Visible = false
+SearchClear.ZIndex = 16
+SearchClear:SetAttribute("ThemeRole", "Icon")
+local SearchClearStroke: UIStroke? =
+    SearchClear:FindFirstChild("StyleStroke") :: UIStroke?
+if SearchClearStroke then
+    SearchClearStroke.Enabled = false
+end
+makeAssetIcon(
+    SearchClear,
+    "close",
+    Theme.DefaultTextMuted,
+    UDim2.fromOffset(12, 12),
+    UDim2.new(0.5, -6, 0.5, -6),
+    17,
+    function(success: boolean): ()
+        if success and SearchClear.Parent then
+            SearchClear.Text = ""
+        end
+    end
+)
+trackUiConnection(SearchClear.MouseButton1Click:Connect(function(): ()
+    DefaultSearchBox.Text = ""
+    DefaultSearchBox:ReleaseFocus()
+end))
+trackUiConnection(DefaultSearchBox.Focused:Connect(function(): ()
+    if DefaultSearchStroke then
+        TweenService:Create(DefaultSearchStroke, TweenInfo.new(0.16), {
+            Transparency = 0.28,
+            Color = Theme.AccentViolet,
+        }):Play()
+    end
+    DefaultSearchIcon.ImageColor3 = Theme.AccentCyan
+end))
+trackUiConnection(DefaultSearchBox.FocusLost:Connect(function(): ()
+    if DefaultSearchStroke then
+        TweenService:Create(DefaultSearchStroke, TweenInfo.new(0.16), {
+            Transparency = 0.72,
+            Color = Theme.DefaultOutline,
+        }):Play()
+    end
+    DefaultSearchIcon.ImageColor3 = Theme.DefaultTextMuted
+end))
 state.shells.defaultSearchBox = DefaultSearchBox
+state.shells.searchClear = SearchClear
 state.searchQuery = ""
 end
 
@@ -3514,41 +3798,16 @@ local function setCheckVisual(
     enabled: boolean,
     animate: boolean?
 ): ()
-    button:SetAttribute("Checked", enabled)
-    mark.Text = enabled and "✓" or "○"
-    local targetColor: Color3 = enabled
-        and Theme.DefaultAccent
-        or Theme.DefaultTextMuted
-    local targetTransparency: number = enabled and 0 or 0.42
-    if animate then
-        TweenService:Create(
-            mark,
-            TweenInfo.new(0.16, Enum.EasingStyle.Quart),
-            {
-                TextColor3 = targetColor,
-                TextTransparency = targetTransparency,
-            }
-        ):Play()
-    else
-        mark.TextColor3 = targetColor
-        mark.TextTransparency = targetTransparency
-    end
+    mark.Text = ""
+    mark.Visible = false
+    setAuroraSwitch(button, enabled, animate)
 end
 
 local function createCheckControl(
     parent: Instance,
     enabled: boolean
 ): (TextButton, TextLabel)
-    local button: TextButton = create("TextButton", {
-        Parent = parent,
-        Active = true,
-        AutoButtonColor = false,
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        Size = UDim2.fromOffset(state.isMobile and 38 or 34, state.isMobile and 32 or 28),
-        Text = "",
-    }) :: TextButton
-    button.AutoButtonColor = false
+    local button: TextButton = createAuroraSwitch(parent, enabled, nil)
     local mark: TextLabel = makeTextLabel(button, "", state.isMobile and 16 or 15)
     mark.Name = "CheckMark"
     mark.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -3586,6 +3845,59 @@ end
 if type(configData.ui.floatingPositions) ~= "table" then
     configData.ui.floatingPositions = {}
 end
+if type(configData.ui.overlaySettings) ~= "table" then
+    configData.ui.overlaySettings = {}
+end
+local overlaySettings: any = configData.ui.overlaySettings
+overlaySettings.TextGUI = type(overlaySettings.TextGUI) == "table"
+    and overlaySettings.TextGUI
+    or {}
+overlaySettings.SessionInfo = type(overlaySettings.SessionInfo) == "table"
+    and overlaySettings.SessionInfo
+    or {}
+overlaySettings.TargetInfo = type(overlaySettings.TargetInfo) == "table"
+    and overlaySettings.TargetInfo
+    or {}
+overlaySettings.Radar = type(overlaySettings.Radar) == "table"
+    and overlaySettings.Radar
+    or {}
+local textGuiSettings: any = overlaySettings.TextGUI
+textGuiSettings.sort = textGuiSettings.sort or "Alphabetical"
+textGuiSettings.font = textGuiSettings.font or "Builder Sans"
+textGuiSettings.colorMode = textGuiSettings.colorMode or "Match GUI"
+textGuiSettings.scale = math.clamp(tonumber(textGuiSettings.scale) or 1, 0.75, 2)
+textGuiSettings.shadow = textGuiSettings.shadow ~= false
+textGuiSettings.gradient = textGuiSettings.gradient == true
+textGuiSettings.v4Gradient = textGuiSettings.v4Gradient == true
+textGuiSettings.animations = textGuiSettings.animations ~= false
+textGuiSettings.watermark = textGuiSettings.watermark == true
+textGuiSettings.background = textGuiSettings.background == true
+textGuiSettings.hideModules = textGuiSettings.hideModules == true
+textGuiSettings.hideRender = textGuiSettings.hideRender == true
+textGuiSettings.customText = tostring(textGuiSettings.customText or "")
+local sessionSettings: any = overlaySettings.SessionInfo
+sessionSettings.showPerformance = sessionSettings.showPerformance ~= false
+sessionSettings.showServer = sessionSettings.showServer ~= false
+sessionSettings.showRole = sessionSettings.showRole ~= false
+sessionSettings.showDeaths = sessionSettings.showDeaths ~= false
+sessionSettings.showWins = sessionSettings.showWins ~= false
+local targetSettings: any = overlaySettings.TargetInfo
+targetSettings.mode = targetSettings.mode or "Smart Priority"
+targetSettings.showAvatar = targetSettings.showAvatar ~= false
+targetSettings.showHealth = targetSettings.showHealth ~= false
+targetSettings.showDistance = targetSettings.showDistance ~= false
+local radarSettings: any = overlaySettings.Radar
+radarSettings.range = math.clamp(tonumber(radarSettings.range) or 250, 25, 2000)
+radarSettings.size = math.clamp(tonumber(radarSettings.size) or 190, 140, 280)
+radarSettings.rotation = radarSettings.rotation or "Camera"
+radarSettings.colorMode = radarSettings.colorMode or "Smart"
+radarSettings.outOfRange = radarSettings.outOfRange or "Clamp"
+radarSettings.showNames = radarSettings.showNames == true
+radarSettings.showDistance = radarSettings.showDistance == true
+radarSettings.showTeam = radarSettings.showTeam ~= false
+radarSettings.aliveOnly = radarSettings.aliveOnly ~= false
+radarSettings.grid = radarSettings.grid ~= false
+radarSettings.rings = radarSettings.rings ~= false
 
 local function getFloatingViewport(): Vector2
     local camera: Camera? = workspace.CurrentCamera
@@ -3612,7 +3924,7 @@ local function bringFloatingToFront(record: FloatingWindowRecord): ()
     end
     table.insert(FloatingUi.windows, record)
     for index: number, window: FloatingWindowRecord in ipairs(FloatingUi.windows) do
-        local baseZ: number = 148 + index * 5
+        local baseZ: number = 108 + index * 4
         window.root.ZIndex = baseZ
         for _, descendant: Instance in ipairs(window.root:GetDescendants()) do
             if descendant:IsA("GuiObject") then
@@ -3718,10 +4030,20 @@ local function createFloatingWindow(
         Parent = accent,
         Color = ColorSequence.new(Theme.AccentCyan, Theme.AccentPink),
     })
+    local headerSticker: ImageLabel = makeAssetIcon(
+        header,
+        "emoStar",
+        Theme.AccentCyan,
+        UDim2.fromOffset(16, 16),
+        UDim2.new(0, 11, 0.5, -8),
+        root.ZIndex + 5,
+        nil
+    )
+    headerSticker.Name = "AstraSticker"
     local title: TextLabel = makeTextLabel(header, titleText, 11)
     title.FontFace = CONTROL_FONT
-    title.Position = UDim2.fromOffset(13, 0)
-    title.Size = UDim2.new(1, -50, 1, 0)
+    title.Position = UDim2.fromOffset(34, 0)
+    title.Size = UDim2.new(1, -76, 1, 0)
     title.TextColor3 = Theme.DefaultText
     title:SetAttribute("FloatingDepth", 2)
 
@@ -3738,6 +4060,19 @@ local function createFloatingWindow(
     if closeStroke then
         closeStroke.Enabled = false
     end
+    makeAssetIcon(
+        closeButton,
+        "close",
+        Theme.DefaultTextMuted,
+        UDim2.fromOffset(13, 13),
+        UDim2.new(0.5, -6, 0.5, -6),
+        root.ZIndex + 6,
+        function(success: boolean): ()
+            if success and closeButton.Parent then
+                closeButton.Text = ""
+            end
+        end
+    )
 
     local body: Frame = create("Frame", {
         Parent = root,
@@ -3824,7 +4159,7 @@ end
 
 local FavoritesWindow: FloatingWindowRecord = createFloatingWindow(
     "Favorites",
-    "★  Favorites",
+    "Favorites",
     Vector2.new(state.isMobile and 260 or 285, 250),
     Vector2.new(40, 90),
     function(): ()
@@ -3857,11 +4192,19 @@ local function syncFavoriteButton(feature: any): ()
         return
     end
     local selected: boolean = configData.ui.favorites[feature.configKey] == true
-    feature.favoriteButton.Text = selected and "★" or "☆"
+    if not feature.favoriteButton:FindFirstChild("Icon") then
+        feature.favoriteButton.Text = selected and "★" or "☆"
+    end
     feature.favoriteButton.TextColor3 = selected
         and Theme.DefaultAccent
         or Theme.DefaultTextMuted
     feature.favoriteButton.TextTransparency = selected and 0 or 0.34
+    if feature.favoriteIcon then
+        feature.favoriteIcon.ImageColor3 = selected
+            and Theme.AccentPink
+            or Theme.DefaultTextMuted
+        feature.favoriteIcon.ImageTransparency = selected and 0 or 0.3
+    end
 end
 
 local function refreshFavorites(): ()
@@ -3871,8 +4214,7 @@ local function refreshFavorites(): ()
     table.clear(FloatingUi.favoriteRows)
     local order: number = 0
     for _, feature: any in ipairs(allFeatures) do
-        if configData.ui.favorites[feature.configKey] == true
-            and not feature.isCategory then
+        if configData.ui.favorites[feature.configKey] == true then
             order += 1
             local row: TextButton = create("TextButton", {
                 Parent = FavoritesList,
@@ -3901,23 +4243,27 @@ local function refreshFavorites(): ()
                 PaddingLeft = UDim.new(0, 12),
                 PaddingRight = UDim.new(0, 38),
             })
-            local status: TextLabel = create("TextLabel", {
+            local status: Frame = create("Frame", {
                 Parent = row,
                 Name = "Status",
-                AnchorPoint = Vector2.new(1, 0),
-                BackgroundTransparency = 1,
-                FontFace = THIN_FONT,
-                Position = UDim2.new(1, -10, 0, 0),
-                Size = UDim2.fromOffset(22, 36),
-                Text = feature.enabled and "●" or "○",
-                TextColor3 = feature.enabled
+                AnchorPoint = Vector2.new(1, 0.5),
+                BackgroundColor3 = feature.enabled
                     and Theme.AccentCyan
                     or Theme.DefaultTextMuted,
-                TextSize = 12,
-                TextXAlignment = Enum.TextXAlignment.Center,
-            }) :: TextLabel
+                BackgroundTransparency = feature.enabled and 0 or 0.58,
+                BorderSizePixel = 0,
+                Position = UDim2.new(1, -14, 0.5, 0),
+                Size = UDim2.fromOffset(feature.enabled and 9 or 7, feature.enabled and 9 or 7),
+            }) :: Frame
+            create("UICorner", {Parent = status, CornerRadius = UDim.new(1, 0)})
             status:SetAttribute("FloatingDepth", 2)
             row.MouseButton1Click:Connect(function(): ()
+                if feature.isCategory then
+                    if state.setMenuVisible then
+                        state.setMenuVisible(true)
+                    end
+                    setTab(feature.sectionName)
+                end
                 feature.activate()
             end)
             table.insert(FloatingUi.favoriteRows, row)
@@ -3972,7 +4318,7 @@ end
 
 local OverlayMenu: FloatingWindowRecord = createFloatingWindow(
     "OverlayMenu",
-    "▥  Overlays",
+    "Overlays",
     Vector2.new(state.isMobile and 250 or 270, 232),
     Vector2.new(340, 90),
     function(): ()
@@ -3994,10 +4340,10 @@ create("UIListLayout", {
 })
 
 local overlayDefinitions: {any} = {
-    {id = "SessionInfo", title = "Session Info", size = Vector2.new(230, 112), position = Vector2.new(40, 360)},
-    {id = "TextGUI", title = "Text GUI", size = Vector2.new(250, 190), position = Vector2.new(285, 360)},
-    {id = "TargetInfo", title = "Target Info", size = Vector2.new(270, 132), position = Vector2.new(550, 360)},
-    {id = "Radar", title = "Radar", size = Vector2.new(220, 250), position = Vector2.new(835, 330)},
+    {id = "SessionInfo", title = "Session Info", size = Vector2.new(270, 210), position = Vector2.new(40, 330)},
+    {id = "TextGUI", title = "Text GUI", size = Vector2.new(300, 260), position = Vector2.new(325, 330)},
+    {id = "TargetInfo", title = "Target Info", size = Vector2.new(330, 180), position = Vector2.new(640, 330)},
+    {id = "Radar", title = "Radar", size = Vector2.new(240, 285), position = Vector2.new(985, 300)},
 }
 
 local function setOverlayEnabled(id: string, enabled: boolean): ()
@@ -4007,17 +4353,22 @@ local function setOverlayEnabled(id: string, enabled: boolean): ()
     end
     overlay.enabled = enabled
     overlay.window.root.Visible = enabled
-    overlay.toggle.Text = enabled and "ON" or "OFF"
-    overlay.toggle.TextColor3 = enabled
-        and Theme.AccentCyan
-        or Theme.DefaultTextMuted
-    overlay.toggle.BackgroundColor3 = enabled
-        and Theme.AccentSoft
-        or Theme.DefaultSurface
+    setAuroraSwitch(overlay.toggle, enabled, true)
     configData.ui.overlays[id] = enabled
     queueConfigSave()
     if enabled then
         bringFloatingToFront(overlay.window)
+    end
+end
+
+FloatingUi.settingsWindows = {}
+FloatingUi.openSettings = function(id: string): ()
+    local window: FloatingWindowRecord? = FloatingUi.settingsWindows[id]
+    if window then
+        window.root.Visible = not window.root.Visible
+        if window.root.Visible then
+            bringFloatingToFront(window)
+        end
     end
 end
 
@@ -4048,13 +4399,37 @@ for index: number, definition: any in ipairs(overlayDefinitions) do
     })
     local managerLabel: TextLabel = makeTextLabel(managerRow, definition.title, 10)
     managerLabel.Position = UDim2.fromOffset(10, 0)
-    managerLabel.Size = UDim2.new(1, -78, 1, 0)
+    managerLabel.Size = UDim2.new(1, -112, 1, 0)
     managerLabel.TextColor3 = Theme.DefaultTextMuted
     managerLabel:SetAttribute("FloatingDepth", 1)
-    local toggle: TextButton = makeButton(managerRow, "OFF", 8)
+    local settingsButton: TextButton = makeButton(managerRow, "...", 9)
+    settingsButton.Name = "Settings"
+    settingsButton.AnchorPoint = Vector2.new(1, 0.5)
+    settingsButton.BackgroundTransparency = 1
+    settingsButton.Position = UDim2.new(1, -58, 0.5, 0)
+    settingsButton.Size = UDim2.fromOffset(28, 28)
+    settingsButton:SetAttribute("FloatingDepth", 2)
+    local settingsStroke: UIStroke? =
+        settingsButton:FindFirstChild("StyleStroke") :: UIStroke?
+    if settingsStroke then
+        settingsStroke.Enabled = false
+    end
+    makeAssetIcon(
+        settingsButton,
+        "settings",
+        Theme.DefaultTextMuted,
+        UDim2.fromOffset(16, 16),
+        UDim2.new(0.5, -8, 0.5, -8),
+        managerRow.ZIndex + 3,
+        function(success: boolean): ()
+            if success and settingsButton.Parent then
+                settingsButton.Text = ""
+            end
+        end
+    )
+    local toggle: TextButton = createAuroraSwitch(managerRow, false, 42)
     toggle.AnchorPoint = Vector2.new(1, 0.5)
     toggle.Position = UDim2.new(1, -7, 0.5, 0)
-    toggle.Size = UDim2.fromOffset(52, 25)
     toggle:SetAttribute("FloatingDepth", 2)
     FloatingUi.overlays[overlayId] = {
         window = overlayWindow,
@@ -4064,18 +4439,231 @@ for index: number, definition: any in ipairs(overlayDefinitions) do
     trackUiConnection(toggle.MouseButton1Click:Connect(function(): ()
         setOverlayEnabled(overlayId, not FloatingUi.overlays[overlayId].enabled)
     end))
+    trackUiConnection(settingsButton.MouseButton1Click:Connect(function(): ()
+        FloatingUi.openSettings(overlayId)
+    end))
+end
+
+local function createOverlaySettingsWindow(
+    id: string,
+    title: string,
+    height: number,
+    position: Vector2
+): (FloatingWindowRecord, ScrollingFrame)
+    local window: FloatingWindowRecord = createFloatingWindow(
+        id .. "Settings",
+        title,
+        Vector2.new(state.isMobile and 286 or 310, height),
+        position,
+        nil
+    )
+    local scroll: ScrollingFrame = create("ScrollingFrame", {
+        Parent = window.body,
+        Active = true,
+        AutomaticCanvasSize = Enum.AutomaticSize.Y,
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        CanvasSize = UDim2.fromOffset(0, 0),
+        Position = UDim2.fromOffset(8, 8),
+        ScrollBarImageColor3 = Theme.AccentViolet,
+        ScrollBarThickness = 3,
+        Size = UDim2.new(1, -16, 1, -16),
+    }) :: ScrollingFrame
+    scroll:SetAttribute("FloatingDepth", 2)
+    create("UIListLayout", {
+        Parent = scroll,
+        Padding = UDim.new(0, 5),
+        SortOrder = Enum.SortOrder.LayoutOrder,
+    })
+    FloatingUi.settingsWindows[id] = window
+    return window, scroll
+end
+
+local function createCompactSettingRow(parent: Instance, labelText: string): Frame
+    local row: Frame = create("Frame", {
+        Parent = parent,
+        BackgroundColor3 = Theme.DefaultSurface,
+        BackgroundTransparency = 0.44,
+        BorderSizePixel = 0,
+        Size = UDim2.new(1, -4, 0, 38),
+    }) :: Frame
+    create("UICorner", {Parent = row, CornerRadius = UDim.new(0, 8)})
+    local label: TextLabel = makeTextLabel(row, labelText, 9)
+    label.Position = UDim2.fromOffset(10, 0)
+    label.Size = UDim2.new(0.48, -10, 1, 0)
+    label.TextColor3 = Theme.DefaultTextMuted
+    return row
+end
+
+local function addCompactCycle(
+    parent: Instance,
+    labelText: string,
+    values: {string},
+    currentValue: string,
+    callback: (string) -> ()
+): ()
+    local row: Frame = createCompactSettingRow(parent, labelText)
+    local index: number = table.find(values, currentValue) or 1
+    local button: TextButton = makeButton(row, values[index], 8)
+    button.Position = UDim2.new(0.48, 4, 0, 4)
+    button.Size = UDim2.new(0.52, -8, 1, -8)
+    trackUiConnection(button.MouseButton1Click:Connect(function(): ()
+        index = index % #values + 1
+        button.Text = values[index]
+        callback(values[index])
+        queueConfigSave()
+    end))
+end
+
+local function addCompactToggle(
+    parent: Instance,
+    labelText: string,
+    initial: boolean,
+    callback: (boolean) -> ()
+): ()
+    local row: Frame = createCompactSettingRow(parent, labelText)
+    local enabled: boolean = initial
+    local toggle: TextButton = createAuroraSwitch(row, enabled, 42)
+    toggle.AnchorPoint = Vector2.new(1, 0.5)
+    toggle.Position = UDim2.new(1, -8, 0.5, 0)
+    trackUiConnection(toggle.MouseButton1Click:Connect(function(): ()
+        enabled = not enabled
+        setAuroraSwitch(toggle, enabled, true)
+        callback(enabled)
+        queueConfigSave()
+    end))
+end
+
+local function addCompactText(
+    parent: Instance,
+    labelText: string,
+    initial: string,
+    callback: (string) -> ()
+): ()
+    local row: Frame = createCompactSettingRow(parent, labelText)
+    local box: TextBox = makeTextBox(row, initial)
+    box.Position = UDim2.new(0.48, 4, 0, 4)
+    box.Size = UDim2.new(0.52, -8, 1, -8)
+    box.PlaceholderText = "Custom text"
+    box.TextXAlignment = Enum.TextXAlignment.Left
+    trackUiConnection(box.FocusLost:Connect(function(): ()
+        callback(string.sub(box.Text, 1, 80))
+        queueConfigSave()
+    end))
+end
+
+local textSettingsWindow: FloatingWindowRecord = nil :: any
+local radarSettingsWindow: FloatingWindowRecord = nil :: any
+local sessionSettingsWindow: FloatingWindowRecord = nil :: any
+local targetSettingsWindow: FloatingWindowRecord = nil :: any
+
+do
+    local textSettingsScroll: ScrollingFrame
+    textSettingsWindow, textSettingsScroll = createOverlaySettingsWindow(
+        "TextGUI",
+        "Text GUI Studio",
+        state.isMobile and 520 or 560,
+        Vector2.new(300, 70)
+    )
+    addCompactCycle(textSettingsScroll, "Sort", {"Alphabetical", "Length", "Enabled order", "Section"}, textGuiSettings.sort, function(value: string): () textGuiSettings.sort = value end)
+    addCompactCycle(textSettingsScroll, "Font", {"Builder Sans", "Source Sans", "Gotham", "Code", "Valve"}, textGuiSettings.font, function(value: string): () textGuiSettings.font = value end)
+    addCompactCycle(textSettingsScroll, "Color mode", {"Match GUI", "Static cyan", "Aurora", "Rainbow", "By section"}, textGuiSettings.colorMode, function(value: string): () textGuiSettings.colorMode = value end)
+    addCompactCycle(textSettingsScroll, "Scale", {"0.75", "1", "1.25", "1.5", "2"}, tostring(textGuiSettings.scale), function(value: string): () textGuiSettings.scale = tonumber(value) or 1 end)
+    addCompactToggle(textSettingsScroll, "Shadow", textGuiSettings.shadow, function(value: boolean): () textGuiSettings.shadow = value end)
+    addCompactToggle(textSettingsScroll, "Gradient", textGuiSettings.gradient, function(value: boolean): () textGuiSettings.gradient = value end)
+    addCompactToggle(textSettingsScroll, "V4 gradient", textGuiSettings.v4Gradient, function(value: boolean): () textGuiSettings.v4Gradient = value end)
+    addCompactToggle(textSettingsScroll, "Animations", textGuiSettings.animations, function(value: boolean): () textGuiSettings.animations = value end)
+    addCompactToggle(textSettingsScroll, "Watermark", textGuiSettings.watermark, function(value: boolean): () textGuiSettings.watermark = value end)
+    addCompactToggle(textSettingsScroll, "Render background", textGuiSettings.background, function(value: boolean): () textGuiSettings.background = value end)
+    addCompactToggle(textSettingsScroll, "Hide modules", textGuiSettings.hideModules, function(value: boolean): () textGuiSettings.hideModules = value end)
+    addCompactToggle(textSettingsScroll, "Hide render", textGuiSettings.hideRender, function(value: boolean): () textGuiSettings.hideRender = value end)
+    addCompactText(textSettingsScroll, "Custom text", textGuiSettings.customText, function(value: string): () textGuiSettings.customText = value end)
+end
+
+do
+    local radarSettingsScroll: ScrollingFrame
+    radarSettingsWindow, radarSettingsScroll = createOverlaySettingsWindow(
+        "Radar",
+        "Radar Studio",
+        500,
+        Vector2.new(630, 70)
+    )
+    addCompactCycle(radarSettingsScroll, "Range", {"75", "150", "250", "500", "1000", "2000"}, tostring(radarSettings.range), function(value: string): () radarSettings.range = tonumber(value) or 250 end)
+    addCompactCycle(radarSettingsScroll, "Radar size", {"160", "190", "220", "250", "280"}, tostring(radarSettings.size), function(value: string): () radarSettings.size = tonumber(value) or 190 end)
+    addCompactCycle(radarSettingsScroll, "Rotation", {"Camera", "Player", "North"}, radarSettings.rotation, function(value: string): () radarSettings.rotation = value end)
+    addCompactCycle(radarSettingsScroll, "Color mode", {"Smart", "Team", "Health", "MM2 role", "Aurora"}, radarSettings.colorMode, function(value: string): () radarSettings.colorMode = value end)
+    addCompactCycle(radarSettingsScroll, "Out of range", {"Clamp", "Hide"}, radarSettings.outOfRange, function(value: string): () radarSettings.outOfRange = value end)
+    addCompactToggle(radarSettingsScroll, "Alive only", radarSettings.aliveOnly, function(value: boolean): () radarSettings.aliveOnly = value end)
+    addCompactToggle(radarSettingsScroll, "Show team", radarSettings.showTeam, function(value: boolean): () radarSettings.showTeam = value end)
+    addCompactToggle(radarSettingsScroll, "Show names", radarSettings.showNames, function(value: boolean): () radarSettings.showNames = value end)
+    addCompactToggle(radarSettingsScroll, "Show distance", radarSettings.showDistance, function(value: boolean): () radarSettings.showDistance = value end)
+    addCompactToggle(radarSettingsScroll, "Grid", radarSettings.grid, function(value: boolean): () radarSettings.grid = value end)
+    addCompactToggle(radarSettingsScroll, "Range rings", radarSettings.rings, function(value: boolean): () radarSettings.rings = value end)
+end
+
+do
+    local sessionSettingsScroll: ScrollingFrame
+    sessionSettingsWindow, sessionSettingsScroll = createOverlaySettingsWindow(
+        "SessionInfo",
+        "Session Metrics",
+        310,
+        Vector2.new(960, 70)
+    )
+    addCompactToggle(sessionSettingsScroll, "Performance", sessionSettings.showPerformance, function(value: boolean): () sessionSettings.showPerformance = value end)
+    addCompactToggle(sessionSettingsScroll, "Server data", sessionSettings.showServer, function(value: boolean): () sessionSettings.showServer = value end)
+    addCompactToggle(sessionSettingsScroll, "Role and team", sessionSettings.showRole, function(value: boolean): () sessionSettings.showRole = value end)
+    addCompactToggle(sessionSettingsScroll, "Deaths", sessionSettings.showDeaths, function(value: boolean): () sessionSettings.showDeaths = value end)
+    addCompactToggle(sessionSettingsScroll, "Wins / rounds", sessionSettings.showWins, function(value: boolean): () sessionSettings.showWins = value end)
+end
+
+do
+    local targetSettingsScroll: ScrollingFrame
+    targetSettingsWindow, targetSettingsScroll = createOverlaySettingsWindow(
+        "TargetInfo",
+        "Target Priority",
+        280,
+        Vector2.new(960, 395)
+    )
+    addCompactCycle(targetSettingsScroll, "Selection", {"Smart Priority", "Nearest cursor", "Nearest distance"}, targetSettings.mode, function(value: string): () targetSettings.mode = value end)
+    addCompactToggle(targetSettingsScroll, "Avatar portrait", targetSettings.showAvatar, function(value: boolean): () targetSettings.showAvatar = value end)
+    addCompactToggle(targetSettingsScroll, "Health bar", targetSettings.showHealth, function(value: boolean): () targetSettings.showHealth = value end)
+    addCompactToggle(targetSettingsScroll, "Distance", targetSettings.showDistance, function(value: boolean): () targetSettings.showDistance = value end)
 end
 
 local SessionText: TextLabel = makeTextLabel(
     FloatingUi.overlays.SessionInfo.window.body,
-    "Time Played: 00:00:00",
-    11
+    "Session initializing...",
+    9
 )
-SessionText.Position = UDim2.fromOffset(12, 7)
-SessionText.Size = UDim2.new(1, -24, 1, -14)
+SessionText.Position = UDim2.fromOffset(42, 8)
+SessionText.Size = UDim2.new(1, -54, 1, -16)
 SessionText.TextColor3 = Theme.DefaultText
+SessionText.TextYAlignment = Enum.TextYAlignment.Top
 SessionText:SetAttribute("FloatingDepth", 2)
+local SessionIcon: ImageLabel = makeAssetIcon(
+    FloatingUi.overlays.SessionInfo.window.body,
+    "chart",
+    Theme.AccentCyan,
+    UDim2.fromOffset(22, 22),
+    UDim2.fromOffset(12, 10),
+    3,
+    nil
+)
+SessionIcon:SetAttribute("FloatingDepth", 3)
 
+local TextGuiBody: Frame = FloatingUi.overlays.TextGUI.window.body
+local TextGuiShadow: TextLabel = makeTextLabel(
+    TextGuiBody,
+    "No active modules",
+    10
+)
+TextGuiShadow.Position = UDim2.fromOffset(14, 10)
+TextGuiShadow.Size = UDim2.new(1, -24, 1, -16)
+TextGuiShadow.TextColor3 = Color3.fromRGB(0, 0, 0)
+TextGuiShadow.TextTransparency = 0.16
+TextGuiShadow.TextWrapped = true
+TextGuiShadow.TextYAlignment = Enum.TextYAlignment.Top
+TextGuiShadow:SetAttribute("FloatingDepth", 1)
 local TextGuiLabel: TextLabel = makeTextLabel(
     FloatingUi.overlays.TextGUI.window.body,
     "No active modules",
@@ -4087,23 +4675,77 @@ TextGuiLabel.TextColor3 = Theme.AccentCyan
 TextGuiLabel.TextWrapped = true
 TextGuiLabel.TextYAlignment = Enum.TextYAlignment.Top
 TextGuiLabel:SetAttribute("FloatingDepth", 2)
+local TextGuiGradient: UIGradient = create("UIGradient", {
+    Parent = TextGuiLabel,
+    Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Theme.AccentCyan),
+        ColorSequenceKeypoint.new(0.5, Theme.AccentViolet),
+        ColorSequenceKeypoint.new(1, Theme.AccentPink),
+    }),
+    Rotation = 90,
+    Enabled = false,
+}) :: UIGradient
 
+local TargetBody: Frame = FloatingUi.overlays.TargetInfo.window.body
+local TargetPortraitFrame: Frame = create("Frame", {
+    Parent = TargetBody,
+    BackgroundColor3 = Theme.DefaultSurface,
+    BackgroundTransparency = 0.18,
+    BorderSizePixel = 0,
+    Position = UDim2.fromOffset(12, 12),
+    Size = UDim2.fromOffset(66, 66),
+}) :: Frame
+TargetPortraitFrame:SetAttribute("FloatingDepth", 2)
+create("UICorner", {Parent = TargetPortraitFrame, CornerRadius = UDim.new(0, 12)})
+create("UIStroke", {
+    Parent = TargetPortraitFrame,
+    Color = Theme.AccentViolet,
+    Transparency = 0.24,
+    Thickness = 1,
+})
+local TargetPortrait: ImageLabel = create("ImageLabel", {
+    Parent = TargetPortraitFrame,
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    Image = "",
+    Position = UDim2.fromOffset(4, 4),
+    ScaleType = Enum.ScaleType.Crop,
+    Size = UDim2.new(1, -8, 1, -8),
+    ZIndex = 3,
+}) :: ImageLabel
+TargetPortrait:SetAttribute("FloatingDepth", 3)
+create("UICorner", {Parent = TargetPortrait, CornerRadius = UDim.new(0, 10)})
+local TargetPlaceholder: ImageLabel = makeAssetIcon(
+    TargetPortraitFrame,
+    "mangaFace",
+    Theme.DefaultTextMuted,
+    UDim2.fromOffset(40, 32),
+    UDim2.new(0.5, -20, 0.5, -16),
+    4,
+    nil
+)
+TargetPlaceholder.ImageTransparency = 0.28
 local TargetName: TextLabel = makeTextLabel(
-    FloatingUi.overlays.TargetInfo.window.body,
+    TargetBody,
     "No target",
-    12
+    11
 )
 TargetName.FontFace = CONTROL_FONT
-TargetName.Position = UDim2.fromOffset(12, 6)
-TargetName.Size = UDim2.new(1, -24, 0, 32)
+TargetName.Position = UDim2.fromOffset(88, 8)
+TargetName.Size = UDim2.new(1, -100, 0, 28)
 TargetName:SetAttribute("FloatingDepth", 2)
+local TargetRole: TextLabel = makeTextLabel(TargetBody, "No priority target", 8)
+TargetRole.Position = UDim2.fromOffset(88, 34)
+TargetRole.Size = UDim2.new(1, -100, 0, 22)
+TargetRole.TextColor3 = Theme.AccentViolet
+TargetRole:SetAttribute("FloatingDepth", 2)
 local TargetHealthTrack: Frame = create("Frame", {
-    Parent = FloatingUi.overlays.TargetInfo.window.body,
+    Parent = TargetBody,
     BackgroundColor3 = Color3.fromRGB(7, 5, 13),
     BackgroundTransparency = 0.18,
     BorderSizePixel = 0,
-    Position = UDim2.fromOffset(12, 48),
-    Size = UDim2.new(1, -24, 0, 10),
+    Position = UDim2.fromOffset(88, 62),
+    Size = UDim2.new(1, -100, 0, 10),
 }) :: Frame
 TargetHealthTrack:SetAttribute("FloatingDepth", 2)
 create("UICorner", {Parent = TargetHealthTrack, CornerRadius = UDim.new(1, 0)})
@@ -4116,12 +4758,12 @@ local TargetHealthFill: Frame = create("Frame", {
 TargetHealthFill:SetAttribute("FloatingDepth", 1)
 create("UICorner", {Parent = TargetHealthFill, CornerRadius = UDim.new(1, 0)})
 local TargetDetails: TextLabel = makeTextLabel(
-    FloatingUi.overlays.TargetInfo.window.body,
+    TargetBody,
     "Waiting for a nearby player",
     9
 )
-TargetDetails.Position = UDim2.fromOffset(12, 62)
-TargetDetails.Size = UDim2.new(1, -24, 0, 24)
+TargetDetails.Position = UDim2.fromOffset(12, 88)
+TargetDetails.Size = UDim2.new(1, -24, 0, 38)
 TargetDetails.TextColor3 = Theme.DefaultTextMuted
 TargetDetails:SetAttribute("FloatingDepth", 2)
 
@@ -4133,7 +4775,7 @@ local RadarSurface: Frame = create("Frame", {
     BackgroundTransparency = 0.34,
     BorderSizePixel = 0,
     Position = UDim2.fromScale(0.5, 0.5),
-    Size = UDim2.fromOffset(180, 180),
+    Size = UDim2.fromOffset(radarSettings.size, radarSettings.size),
 }) :: Frame
 RadarSurface:SetAttribute("FloatingDepth", 2)
 create("UICorner", {Parent = RadarSurface, CornerRadius = UDim.new(1, 0)})
@@ -4142,6 +4784,7 @@ create("UIStroke", {
     Color = Theme.DefaultOutline,
     Transparency = 0.48,
 })
+local radarAxes: {Frame} = {}
 for _, rotation: number in ipairs({0, 90}) do
     local axis: Frame = create("Frame", {
         Parent = RadarSurface,
@@ -4154,7 +4797,34 @@ for _, rotation: number in ipairs({0, 90}) do
         Size = UDim2.new(1, -16, 0, 1),
     }) :: Frame
     axis:SetAttribute("FloatingDepth", 1)
+    table.insert(radarAxes, axis)
 end
+local radarRings: {Frame} = {}
+for _, scale: number in ipairs({0.34, 0.67}) do
+    local ring: Frame = create("Frame", {
+        Parent = RadarSurface,
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        BackgroundTransparency = 1,
+        Position = UDim2.fromScale(0.5, 0.5),
+        Size = UDim2.fromScale(scale, scale),
+    }) :: Frame
+    ring:SetAttribute("FloatingDepth", 1)
+    create("UICorner", {Parent = ring, CornerRadius = UDim.new(1, 0)})
+    create("UIStroke", {
+        Parent = ring,
+        Color = Theme.DefaultOutline,
+        Transparency = 0.76,
+        Thickness = 1,
+    })
+    table.insert(radarRings, ring)
+end
+local RadarNorth: TextLabel = makeTextLabel(RadarSurface, "N", 8)
+RadarNorth.AnchorPoint = Vector2.new(0.5, 0)
+RadarNorth.Position = UDim2.new(0.5, 0, 0, 5)
+RadarNorth.Size = UDim2.fromOffset(20, 18)
+RadarNorth.TextColor3 = Theme.AccentCyan
+RadarNorth.TextXAlignment = Enum.TextXAlignment.Center
+RadarNorth:SetAttribute("FloatingDepth", 3)
 local RadarCenter: Frame = create("Frame", {
     Parent = RadarSurface,
     AnchorPoint = Vector2.new(0.5, 0.5),
@@ -4165,45 +4835,310 @@ local RadarCenter: Frame = create("Frame", {
 }) :: Frame
 RadarCenter:SetAttribute("FloatingDepth", 3)
 create("UICorner", {Parent = RadarCenter, CornerRadius = UDim.new(1, 0)})
-local radarBlips: {[Player]: Frame} = {}
+local radarBlips: {[Player]: any} = {}
 local sessionStartedAt: number = os.clock()
 local overlayElapsed: number = 1
+local sessionFps: number = 60
+local sessionStats: any = {
+    deaths = 0,
+    wins = 0,
+    rounds = 0,
+    winsAvailable = false,
+    roundsAvailable = false,
+    role = nil,
+}
+state.sessionInfo = {
+    setRole = function(role: string?): () sessionStats.role = role end,
+    addWin = function(): ()
+        sessionStats.winsAvailable = true
+        sessionStats.wins += 1
+    end,
+    addRound = function(): ()
+        sessionStats.roundsAvailable = true
+        sessionStats.rounds += 1
+    end,
+}
+local deathConnection: RBXScriptConnection? = nil
+local sessionBindGeneration: number = 0
+local sessionTrackingActive: boolean = true
+local function bindSessionCharacter(character: Model): ()
+    sessionBindGeneration += 1
+    local generation: number = sessionBindGeneration
+    if deathConnection then
+        deathConnection:Disconnect()
+        deathConnection = nil
+    end
+    local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
+        or character:WaitForChild("Humanoid", 8) :: Humanoid?
+    if humanoid
+        and sessionTrackingActive
+        and generation == sessionBindGeneration
+        and character == LocalPlayer.Character then
+        deathConnection = humanoid.Died:Connect(function(): ()
+            sessionStats.deaths += 1
+        end)
+    end
+end
+if LocalPlayer.Character then
+    task.defer(bindSessionCharacter, LocalPlayer.Character)
+end
+trackUiConnection(LocalPlayer.CharacterAdded:Connect(bindSessionCharacter))
+local thumbnailCache: {[number]: string} = {}
+local thumbnailGeneration: number = 0
+local displayedTargetUserId: number = 0
+local currentOverlayTarget: Player? = nil
+state.getOverlayTarget = function(): Player? return currentOverlayTarget end
 
+local function requestTargetThumbnail(player: Player?): ()
+    local userId: number = player and player.UserId or 0
+    if userId == displayedTargetUserId then
+        return
+    end
+    displayedTargetUserId = userId
+    thumbnailGeneration += 1
+    local generation: number = thumbnailGeneration
+    TargetPortrait.Image = userId > 0 and (thumbnailCache[userId] or "") or ""
+    TargetPlaceholder.Visible = TargetPortrait.Image == ""
+    if userId <= 0 or thumbnailCache[userId] then
+        return
+    end
+    task.spawn(function(): ()
+        local success: boolean, image: any, ready: any = pcall(
+            Players.GetUserThumbnailAsync,
+            Players,
+            userId,
+            Enum.ThumbnailType.HeadShot,
+            Enum.ThumbnailSize.Size180x180
+        )
+        if success and ready == true and type(image) == "string" and image ~= "" then
+            thumbnailCache[userId] = image
+            if generation == thumbnailGeneration and TargetPortrait.Parent then
+                TargetPortrait.Image = image
+                TargetPlaceholder.Visible = false
+            end
+        elseif generation == thumbnailGeneration then
+            task.delay(1, function(): ()
+                if generation == thumbnailGeneration then
+                    displayedTargetUserId = 0
+                end
+            end)
+        end
+    end)
+end
+
+local function getTextGuiFont(): Font
+    if textGuiSettings.font == "Source Sans" then
+        return Font.fromEnum(Enum.Font.SourceSans)
+    elseif textGuiSettings.font == "Gotham" then
+        return Font.fromEnum(Enum.Font.Gotham)
+    elseif textGuiSettings.font == "Code" then
+        return Font.fromEnum(Enum.Font.Code)
+    elseif textGuiSettings.font == "Valve" then
+        return VALVE_FONT
+    end
+    return CONTROL_FONT
+end
+
+local function getSessionPing(): number?
+    local success: boolean, value: any = pcall(function(): number
+        local network: any = Stats:FindFirstChild("Network")
+        local serverStats: any = network and network:FindFirstChild("ServerStatsItem")
+        local ping: any = serverStats and serverStats:FindFirstChild("Data Ping")
+        return ping and ping:GetValue() or 0
+    end)
+    return success and tonumber(value) or nil
+end
+
+local lastTextGuiText: string = ""
 TaskManager:Connect(function(deltaTime: number): ()
+    sessionFps += ((1 / math.max(deltaTime, 1 / 240)) - sessionFps) * 0.12
     overlayElapsed += deltaTime
     if overlayElapsed < 0.12 then
         return
     end
     overlayElapsed = 0
-    local elapsed: number = math.max(0, math.floor(os.clock() - sessionStartedAt))
-    SessionText.Text = string.format(
-        "Time Played: %02d:%02d:%02d",
-        math.floor(elapsed / 3600),
-        math.floor(elapsed / 60) % 60,
-        elapsed % 60
-    )
+    local now: number = os.clock()
+    local elapsed: number = math.max(0, math.floor(now - sessionStartedAt))
 
-    if FloatingUi.overlays.TextGUI.enabled then
-        local enabledNames: {string} = {}
-        for _, feature: any in ipairs(allFeatures) do
-            if feature.enabled and not feature.isCategory and not feature.isAction then
-                table.insert(enabledNames, feature.name)
+    if FloatingUi.overlays.SessionInfo.enabled then
+        local role: string? = sessionStats.role
+        if state.gameRoleProvider then
+            local success: boolean, resolved: any = pcall(
+                state.gameRoleProvider,
+                LocalPlayer
+            )
+            if success and type(resolved) == "string" then
+                role = resolved
             end
         end
-        table.sort(enabledNames)
-        TextGuiLabel.Text = #enabledNames > 0
-            and table.concat(enabledNames, "\n")
-            or "No active modules"
+        local lines: {string} = {
+            string.format(
+                "Injected  %02d:%02d:%02d",
+                math.floor(elapsed / 3600),
+                math.floor(elapsed / 60) % 60,
+                elapsed % 60
+            ),
+        }
+        if sessionSettings.showDeaths then
+            table.insert(lines, "Deaths    " .. tostring(sessionStats.deaths))
+        end
+        if sessionSettings.showWins then
+            table.insert(lines, "Wins      " .. (sessionStats.winsAvailable and tostring(sessionStats.wins) or "N/A"))
+            table.insert(lines, "Rounds    " .. (sessionStats.roundsAvailable and tostring(sessionStats.rounds) or "N/A"))
+        end
+        if sessionSettings.showRole then
+            table.insert(lines, "Role      " .. tostring(role or "N/A"))
+            table.insert(lines, "Team      " .. tostring(LocalPlayer.Team and LocalPlayer.Team.Name or "None"))
+        end
+        if sessionSettings.showPerformance then
+            local ping: number? = getSessionPing()
+            table.insert(lines, string.format("FPS       %.0f", math.clamp(sessionFps, 0, 999)))
+            table.insert(lines, "Ping      " .. (ping and string.format("%.0f ms", ping) or "N/A"))
+        end
+        if sessionSettings.showServer then
+            table.insert(lines, string.format("Players   %d/%d", #Players:GetPlayers(), Players.MaxPlayers))
+            table.insert(lines, "Game      " .. tostring(ACTIVE_GAME_MODULE or "Universal"))
+        end
+        SessionText.Text = table.concat(lines, "\n")
     end
 
+    if FloatingUi.overlays.TextGUI.enabled then
+        local enabledFeatures: {any} = {}
+        if not textGuiSettings.hideModules then
+            for _, feature: any in ipairs(allFeatures) do
+                local lowerName: string = string.lower(feature.name)
+                local renderLike: boolean = string.find(lowerName, "esp", 1, true) ~= nil
+                    or string.find(lowerName, "visual", 1, true) ~= nil
+                    or string.find(lowerName, "x-ray", 1, true) ~= nil
+                    or string.find(lowerName, "fov", 1, true) ~= nil
+                    or string.find(lowerName, "fullbright", 1, true) ~= nil
+                if feature.enabled
+                    and not feature.isCategory
+                    and not feature.isAction
+                    and (not textGuiSettings.hideRender or not renderLike) then
+                    table.insert(enabledFeatures, feature)
+                end
+            end
+        end
+        table.sort(enabledFeatures, function(left: any, right: any): boolean
+            if textGuiSettings.sort == "Length" then
+                return #left.name > #right.name
+            elseif textGuiSettings.sort == "Enabled order" then
+                return (left.enabledAt or 0) < (right.enabledAt or 0)
+            elseif textGuiSettings.sort == "Section" then
+                local leftKey: string = left.sectionName .. left.name
+                local rightKey: string = right.sectionName .. right.name
+                return leftKey < rightKey
+            end
+            return string.lower(left.name) < string.lower(right.name)
+        end)
+        local textLines: {string} = {}
+        if textGuiSettings.watermark then
+            table.insert(textLines, "ASTRA & AURORA")
+        end
+        if textGuiSettings.customText ~= "" then
+            table.insert(textLines, textGuiSettings.customText)
+        end
+        for _, feature: any in ipairs(enabledFeatures) do
+            table.insert(textLines, feature.name)
+        end
+        if #textLines == 0 then
+            table.insert(textLines, "No active modules")
+        end
+        local nextText: string = table.concat(textLines, "\n")
+        if nextText ~= lastTextGuiText then
+            lastTextGuiText = nextText
+            TextGuiLabel.Text = nextText
+            TextGuiShadow.Text = nextText
+            if textGuiSettings.animations then
+                TextGuiLabel.TextTransparency = 0.5
+                TweenService:Create(TextGuiLabel, TweenInfo.new(0.2), {
+                    TextTransparency = 0,
+                }):Play()
+            end
+        end
+        TextGuiLabel.FontFace = getTextGuiFont()
+        TextGuiShadow.FontFace = TextGuiLabel.FontFace
+        TextGuiLabel.TextSize = math.round(14 * textGuiSettings.scale)
+        TextGuiShadow.TextSize = TextGuiLabel.TextSize
+        TextGuiShadow.Visible = textGuiSettings.shadow
+        TextGuiBody.BackgroundColor3 = Theme.DefaultBackground
+        TextGuiBody.BackgroundTransparency = textGuiSettings.background and 0.42 or 1
+        local textWindowRoot: Frame = FloatingUi.overlays.TextGUI.window.root
+        local textHeader: Frame? = textWindowRoot:FindFirstChild("Header") :: Frame?
+        local textBackground: ImageLabel? =
+            textWindowRoot:FindFirstChild("AuroraBackground") :: ImageLabel?
+        local textShade: Frame? = textWindowRoot:FindFirstChild("Readability") :: Frame?
+        local textStroke: UIStroke? = textWindowRoot:FindFirstChildOfClass("UIStroke")
+        if textHeader then textHeader.Visible = state.visible end
+        if textBackground then textBackground.Visible = state.visible end
+        if textShade then textShade.Visible = state.visible or textGuiSettings.background end
+        if textStroke then textStroke.Transparency = state.visible and 0.38 or 1 end
+        textWindowRoot.Active = state.visible
+        textWindowRoot.BackgroundTransparency = state.visible and 0.08 or 1
+        TextGuiBody.Position = state.visible and UDim2.fromOffset(0, 36)
+            or UDim2.fromOffset(0, 0)
+        TextGuiBody.Size = state.visible and UDim2.new(1, 0, 1, -36)
+            or UDim2.fromScale(1, 1)
+        local gradientEnabled: boolean = textGuiSettings.gradient
+            or textGuiSettings.v4Gradient
+            or textGuiSettings.colorMode == "Aurora"
+            or textGuiSettings.colorMode == "Rainbow"
+        TextGuiGradient.Enabled = gradientEnabled
+        if textGuiSettings.v4Gradient then
+            TextGuiGradient.Color = ColorSequence.new({
+                ColorSequenceKeypoint.new(0, Theme.AccentCyan),
+                ColorSequenceKeypoint.new(0.34, Theme.AccentViolet),
+                ColorSequenceKeypoint.new(0.68, Theme.AccentPink),
+                ColorSequenceKeypoint.new(1, Theme.DefaultAccent),
+            })
+            TextGuiGradient.Rotation = (now * 45) % 360
+        elseif textGuiSettings.colorMode == "Rainbow" then
+            local hue: number = (now * 0.12) % 1
+            TextGuiLabel.TextColor3 = Color3.fromHSV(hue, 0.72, 1)
+            TextGuiGradient.Enabled = false
+        elseif textGuiSettings.colorMode == "Static cyan" then
+            TextGuiLabel.TextColor3 = Theme.AccentCyan
+        elseif textGuiSettings.colorMode == "By section" then
+            TextGuiLabel.TextColor3 = Theme.AccentViolet
+        else
+            TextGuiLabel.TextColor3 = Theme.DefaultAccent
+            TextGuiGradient.Rotation = 90
+        end
+    end
+
+    local targetInfoEnabled: boolean = FloatingUi.overlays.TargetInfo.enabled
     local localCharacter: Model? = LocalPlayer.Character
     local localRoot: BasePart? = localCharacter
         and localCharacter:FindFirstChild("HumanoidRootPart") :: BasePart?
-    local nearest: Player? = nil
-    local nearestDistance: number = math.huge
-    local targetOverlayEnabled: boolean = FloatingUi.overlays.TargetInfo.enabled
-    local radarOverlayEnabled: boolean = FloatingUi.overlays.Radar.enabled
-    if targetOverlayEnabled and localRoot then
+    local camera: Camera? = workspace.CurrentCamera
+    local selectedTarget: Player? = nil
+    local targetRole: string? = nil
+    local targetSource: string = "Nearest player"
+    local targetAccent: Color3 = Theme.AccentViolet
+    if targetInfoEnabled
+        and targetSettings.mode == "Smart Priority"
+        and state.gameTargetProvider then
+        local success: boolean, snapshot: any = pcall(state.gameTargetProvider)
+        if success then
+            if typeof(snapshot) == "Instance" and snapshot:IsA("Player") then
+                selectedTarget = snapshot
+            elseif type(snapshot) == "table"
+                and typeof(snapshot.player) == "Instance"
+                and snapshot.player:IsA("Player") then
+                selectedTarget = snapshot.player
+                targetRole = snapshot.role
+                targetSource = tostring(snapshot.source or "Game priority")
+                if typeof(snapshot.accent) == "Color3" then
+                    targetAccent = snapshot.accent
+                end
+            end
+        end
+    end
+    if targetInfoEnabled and not selectedTarget and localRoot then
+        local bestScore: number = math.huge
+        local pointer: Vector2 = state.isMobile and getFloatingViewport() / 2
+            or UserInputService:GetMouseLocation()
         for _, player: Player in ipairs(Players:GetPlayers()) do
             if player ~= LocalPlayer then
                 local character: Model? = player.Character
@@ -4213,83 +5148,184 @@ TaskManager:Connect(function(deltaTime: number): ()
                     and character:FindFirstChild("HumanoidRootPart") :: BasePart?
                 if humanoid and humanoid.Health > 0 and root then
                     local distance: number = (root.Position - localRoot.Position).Magnitude
-                    if distance < nearestDistance then
-                        nearest = player
-                        nearestDistance = distance
+                    local score: number = distance
+                    if targetSettings.mode ~= "Nearest distance" and camera then
+                        local screenPoint: Vector3, visible: boolean =
+                            camera:WorldToViewportPoint(root.Position)
+                        score = visible and (Vector2.new(screenPoint.X, screenPoint.Y) - pointer).Magnitude
+                            or math.huge
+                    end
+                    if score < bestScore then
+                        bestScore = score
+                        selectedTarget = player
                     end
                 end
             end
         end
+        targetSource = targetSettings.mode
     end
-    if targetOverlayEnabled then
-        local targetHumanoid: Humanoid? = nearest
-            and nearest.Character
-            and nearest.Character:FindFirstChildOfClass("Humanoid") :: Humanoid?
-        if nearest and targetHumanoid then
+    currentOverlayTarget = targetInfoEnabled and selectedTarget or nil
+    if selectedTarget and state.gameRoleProvider and not targetRole then
+        local success: boolean, role: any = pcall(state.gameRoleProvider, selectedTarget)
+        targetRole = success and type(role) == "string" and role or nil
+    end
+    if targetRole then
+        targetAccent = targetRole == "Murderer" and Theme.Danger
+            or ((targetRole == "Sheriff" or targetRole == "Hero")
+                and Theme.AccentCyan
+                or Theme.Success)
+    end
+    if targetInfoEnabled then
+        local targetCharacter: Model? = selectedTarget and selectedTarget.Character
+        local targetHumanoid: Humanoid? = targetCharacter
+            and targetCharacter:FindFirstChildOfClass("Humanoid") :: Humanoid?
+        local targetRoot: BasePart? = targetCharacter
+            and targetCharacter:FindFirstChild("HumanoidRootPart") :: BasePart?
+        if selectedTarget and targetHumanoid then
             local ratio: number = math.clamp(
                 targetHumanoid.Health / math.max(1, targetHumanoid.MaxHealth),
                 0,
                 1
             )
-            TargetName.Text = nearest.DisplayName
+            local distance: number? = localRoot and targetRoot
+                and (targetRoot.Position - localRoot.Position).Magnitude
+                or nil
+            TargetName.Text = selectedTarget.DisplayName .. "  @" .. selectedTarget.Name
+            TargetRole.Text = tostring(targetRole or "Player") .. "  ·  " .. targetSource
+            TargetRole.TextColor3 = targetAccent
             TargetDetails.Text = string.format(
-                "@%s  ·  %.0f studs  ·  %.0f HP",
-                nearest.Name,
-                nearestDistance,
-                targetHumanoid.Health
+                "Health %.0f / %.0f%s",
+                targetHumanoid.Health,
+                targetHumanoid.MaxHealth,
+                targetSettings.showDistance and distance
+                    and string.format("  ·  %.0f studs", distance)
+                    or ""
             )
+            TargetHealthTrack.Visible = targetSettings.showHealth
             TargetHealthFill.Size = UDim2.fromScale(ratio, 1)
             TargetHealthFill.BackgroundColor3 = ratio > 0.5
                 and Theme.AccentCyan
                 or (ratio > 0.25 and Theme.AccentViolet or Theme.AccentPink)
+            TargetPortraitFrame.Visible = targetSettings.showAvatar
+            requestTargetThumbnail(selectedTarget)
         else
             TargetName.Text = "No target"
-            TargetDetails.Text = "Waiting for a nearby player"
+            TargetRole.Text = "No priority target"
+            TargetDetails.Text = "Waiting for a valid player"
             TargetHealthFill.Size = UDim2.fromScale(0, 1)
+            TargetHealthTrack.Visible = targetSettings.showHealth
+            TargetPortraitFrame.Visible = targetSettings.showAvatar
+            requestTargetThumbnail(nil)
         end
     end
-    if radarOverlayEnabled then
+
+    if FloatingUi.overlays.Radar.enabled then
+        local radarSize: number = radarSettings.size
+        RadarSurface.Size = UDim2.fromOffset(radarSize, radarSize)
+        local radarWindow: FloatingWindowRecord = FloatingUi.overlays.Radar.window
+        local nextRadarSize: UDim2 = UDim2.fromOffset(radarSize + 32, radarSize + 76)
+        if radarWindow.root.Size ~= nextRadarSize then
+            radarWindow.root.Size = nextRadarSize
+            FloatingUi.reclamp()
+        end
+        for _, axis: Frame in ipairs(radarAxes) do axis.Visible = radarSettings.grid end
+        for _, ring: Frame in ipairs(radarRings) do ring.Visible = radarSettings.rings end
+        RadarNorth.Visible = radarSettings.rotation == "North"
         local activePlayers: {[Player]: boolean} = {}
+        local basis: CFrame? = localRoot and localRoot.CFrame or nil
+        if localRoot and radarSettings.rotation == "Camera" and camera then
+            local look: Vector3 = Vector3.new(camera.CFrame.LookVector.X, 0, camera.CFrame.LookVector.Z)
+            if look.Magnitude > 0.01 then
+                basis = CFrame.lookAt(localRoot.Position, localRoot.Position + look.Unit)
+            end
+        elseif localRoot and radarSettings.rotation == "North" then
+            basis = CFrame.new(localRoot.Position)
+        end
         for _, player: Player in ipairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer and localRoot then
-                local targetRoot: BasePart? = player.Character
-                    and player.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
-                if targetRoot then
-                    activePlayers[player] = true
-                    local blip: Frame? = radarBlips[player]
-                    if not blip then
-                        blip = create("Frame", {
-                            Parent = RadarSurface,
-                            AnchorPoint = Vector2.new(0.5, 0.5),
-                            BackgroundColor3 = Theme.AccentPink,
-                            BorderSizePixel = 0,
-                            Size = UDim2.fromOffset(6, 6),
-                        }) :: Frame
-                        blip:SetAttribute("FloatingDepth", 4)
-                        create("UICorner", {
-                            Parent = blip,
-                            CornerRadius = UDim.new(1, 0),
-                        })
-                        radarBlips[player] = blip
+            if player ~= LocalPlayer and localRoot and basis then
+                local character: Model? = player.Character
+                local humanoid: Humanoid? = character
+                    and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+                local targetRoot: BasePart? = character
+                    and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+                local sameTeam: boolean = LocalPlayer.Team ~= nil and player.Team == LocalPlayer.Team
+                local allowed: boolean = targetRoot ~= nil
+                    and (not radarSettings.aliveOnly or (humanoid ~= nil and humanoid.Health > 0))
+                    and (radarSettings.showTeam or not sameTeam)
+                if allowed and targetRoot then
+                    local relative: Vector3 = (basis :: CFrame):PointToObjectSpace(targetRoot.Position)
+                    local distance: number = Vector2.new(relative.X, relative.Z).Magnitude
+                    if distance <= radarSettings.range or radarSettings.outOfRange == "Clamp" then
+                        activePlayers[player] = true
+                        local record: any = radarBlips[player]
+                        if not record then
+                            local blip: Frame = create("Frame", {
+                                Parent = RadarSurface,
+                                AnchorPoint = Vector2.new(0.5, 0.5),
+                                BackgroundColor3 = Theme.AccentPink,
+                                BorderSizePixel = 0,
+                                Size = UDim2.fromOffset(7, 7),
+                            }) :: Frame
+                            blip:SetAttribute("FloatingDepth", 4)
+                            create("UICorner", {Parent = blip, CornerRadius = UDim.new(1, 0)})
+                            local targetRing: UIStroke = create("UIStroke", {
+                                Parent = blip,
+                                Color = Theme.AccentCyan,
+                                Transparency = 1,
+                                Thickness = 2,
+                            }) :: UIStroke
+                            local label: TextLabel = makeTextLabel(blip, "", 7)
+                            label.AnchorPoint = Vector2.new(0.5, 0)
+                            label.Position = UDim2.new(0.5, 0, 1, 3)
+                            label.Size = UDim2.fromOffset(100, 18)
+                            label.TextColor3 = Theme.DefaultText
+                            label.TextXAlignment = Enum.TextXAlignment.Center
+                            record = {blip = blip, label = label, ring = targetRing}
+                            radarBlips[player] = record
+                        end
+                        local radius: number = radarSize / 2 - 12
+                        local offset: Vector2 = Vector2.new(relative.X, relative.Z)
+                            * (radius / radarSettings.range)
+                        if offset.Magnitude > radius then offset = offset.Unit * radius end
+                        record.blip.Position = UDim2.fromOffset(
+                            radarSize / 2 + offset.X,
+                            radarSize / 2 + offset.Y
+                        )
+                        local role: string? = nil
+                        if state.gameRoleProvider then
+                            local roleOk: boolean, roleValue: any = pcall(state.gameRoleProvider, player)
+                            role = roleOk and type(roleValue) == "string" and roleValue or nil
+                        end
+                        local color: Color3 = Theme.AccentPink
+                        if radarSettings.colorMode == "Health" and humanoid then
+                            local healthRatio: number = humanoid.Health / math.max(1, humanoid.MaxHealth)
+                            color = Color3.fromHSV(healthRatio * 0.34, 0.8, 1)
+                        elseif radarSettings.colorMode == "Team" or radarSettings.colorMode == "Smart" then
+                            color = sameTeam and Theme.Success or Theme.Danger
+                        end
+                        if (radarSettings.colorMode == "MM2 role" or radarSettings.colorMode == "Smart") and role then
+                            color = role == "Murderer" and Theme.Danger
+                                or ((role == "Sheriff" or role == "Hero") and Theme.AccentCyan
+                                    or Theme.Success)
+                        elseif radarSettings.colorMode == "Aurora" then
+                            color = Color3.fromHSV((now * 0.1 + player.UserId % 10 / 10) % 1, 0.7, 1)
+                        end
+                        record.blip.BackgroundColor3 = color
+                        record.ring.Transparency = player == currentOverlayTarget and 0 or 1
+                        record.blip.Size = UDim2.fromOffset(
+                            player == currentOverlayTarget and 10 or 7,
+                            player == currentOverlayTarget and 10 or 7
+                        )
+                        record.label.Visible = radarSettings.showNames or radarSettings.showDistance
+                        record.label.Text = (radarSettings.showNames and player.DisplayName or "")
+                            .. (radarSettings.showDistance and string.format(" %.0f", distance) or "")
                     end
-                    local relative: Vector3 = localRoot.CFrame:PointToObjectSpace(
-                        targetRoot.Position
-                    )
-                    local radarScale: number = 78 / 200
-                    local offset: Vector2 = Vector2.new(
-                        relative.X * radarScale,
-                        relative.Z * radarScale
-                    )
-                    if offset.Magnitude > 78 then
-                        offset = offset.Unit * 78
-                    end
-                    blip.Position = UDim2.fromOffset(90 + offset.X, 90 + offset.Y)
                 end
             end
         end
-        for player: Player, blip: Frame in pairs(radarBlips) do
+        for player: Player, record: any in pairs(radarBlips) do
             if not activePlayers[player] then
-                blip:Destroy()
+                record.blip:Destroy()
                 radarBlips[player] = nil
             end
         end
@@ -4337,17 +5373,29 @@ local function createFloatingLauncher(
     if stroke then
         stroke.Enabled = false
     end
-    local icon: ImageLabel = create("ImageLabel", {
-        Parent = button,
-        BackgroundTransparency = 1,
-        Image = "",
-        ImageColor3 = Theme.DefaultTextMuted,
-        Position = UDim2.fromOffset(7, 5),
-        ScaleType = Enum.ScaleType.Fit,
-        Size = UDim2.fromOffset(18, 18),
-        ZIndex = 26,
-    }) :: ImageLabel
-    state.assetManager.loadAsync(assetName, icon)
+    local frame: ImageLabel = makeAssetIcon(
+        button,
+        "iconFrame",
+        Theme.AccentViolet,
+        UDim2.fromOffset(28, 28),
+        UDim2.fromOffset(2, 0),
+        25,
+        nil
+    )
+    frame.ImageTransparency = 0.36
+    local icon: ImageLabel = makeAssetIcon(
+        button,
+        assetName,
+        Theme.DefaultTextMuted,
+        UDim2.fromOffset(17, 17),
+        UDim2.fromOffset(8, 5),
+        26,
+        function(success: boolean): ()
+            if success and button.Parent then
+                button.Text = ""
+            end
+        end
+    )
     trackUiConnection(button.MouseButton1Click:Connect(callback))
     return button
 end
@@ -4397,10 +5445,12 @@ local function applyFeaturePresentation(feature: any, isDefault: boolean): ()
             or (enabled and 0.18 or 1)
     end
     if feature.activeStripe then
-        feature.activeStripe.BackgroundColor3 = isDefault
-            and Theme.DefaultAccent
-            or Color3.fromRGB(228, 228, 230)
-        feature.activeStripe.BackgroundTransparency = enabled and 0 or 1
+        feature.activeStripe.BackgroundColor3 = feature.isAction
+            and Theme.AccentPink
+            or (feature.isCategory and Theme.AccentViolet or Theme.DefaultAccent)
+        feature.activeStripe.BackgroundTransparency = enabled
+            and 0
+            or ((feature.isAction or feature.isCategory) and 0.42 or 1)
     end
     if feature.activeStripeGradient then
         feature.activeStripeGradient.Enabled = not isDefault
@@ -4662,11 +5712,12 @@ local function createUniversalFeature(
         isCategory = configuration.category == true,
         optionCount = 0,
         optionRows = {},
-        collapsedHeight = state.isMobile and 56 or 52,
+        collapsedHeight = 56,
         onToggle = onToggle,
         configKey = configKey,
         registry = registry,
         sectionName = sectionName,
+        searchText = string.lower(name .. " " .. description .. " " .. sectionName),
         tooltipText = description,
         tooltipBound = false,
     }
@@ -4700,17 +5751,48 @@ local function createUniversalFeature(
         Thickness = 1,
     }) :: any) :: UIStroke
     feature.stroke = cardStroke
+    local activeStripe: Frame = create("Frame", {
+        Parent = row,
+        Name = "ActiveStripe",
+        AnchorPoint = Vector2.new(0, 0.5),
+        BackgroundColor3 = Theme.DefaultAccent,
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Position = UDim2.new(0, 0, 0.5, 0),
+        Size = UDim2.new(0, 3, 1, -16),
+        ZIndex = 8,
+    }) :: Frame
+    create("UICorner", {Parent = activeStripe, CornerRadius = UDim.new(1, 0)})
+    feature.activeStripeGradient = create("UIGradient", {
+        Parent = activeStripe,
+        Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Theme.AccentCyan),
+            ColorSequenceKeypoint.new(0.5, Theme.AccentViolet),
+            ColorSequenceKeypoint.new(1, Theme.AccentPink),
+        }),
+        Rotation = 90,
+    })
+    feature.activeStripe = activeStripe
+    if feature.isAction or feature.isCategory then
+        local decoration: ImageLabel = makeAssetIcon(
+            row,
+            "panelSlash",
+            feature.isAction and Theme.AccentPink or Theme.AccentViolet,
+            UDim2.new(0.42, 0, 1, 0),
+            UDim2.new(0.58, 0, 0, 0),
+            2,
+            nil
+        )
+        decoration.Name = "AstraCardDecoration"
+        decoration.ImageTransparency = 0.88
+        decoration.ScaleType = Enum.ScaleType.Crop
+    end
 
     local title: TextLabel = (makeTextLabel(row, name, 13) :: any) :: TextLabel
     title.FontFace = CONTROL_FONT
     title.Position = UDim2.fromOffset(18, 0)
-    title.Size = UDim2.new(
-        1,
-        feature.isCategory and -62
-            or (configuration.noOptions == true and -108 or -140),
-        0,
-        feature.collapsedHeight
-    )
+    title.Size = UDim2.new(1, state.isMobile and -116 or -164, 0, feature.collapsedHeight)
+    title.TextTruncate = Enum.TextTruncate.AtEnd
     title.TextColor3 = state.guiStyle == "Default"
         and Theme.DefaultText
         or Theme.Text
@@ -4720,13 +5802,7 @@ local function createUniversalFeature(
         (makeTextLabel(row, description, 11) :: any) :: TextLabel
     subtitle.Name = "Description"
     subtitle.Position = UDim2.fromOffset(16, 34)
-    subtitle.Size = UDim2.new(
-        1,
-        feature.isCategory and -68
-            or (configuration.noOptions == true and -114 or -146),
-        0,
-        30
-    )
+    subtitle.Size = UDim2.new(1, state.isMobile and -116 or -164, 0, 30)
     subtitle.TextColor3 = state.guiStyle == "Default"
         and Theme.DefaultTextMuted
         or Theme.TextMuted
@@ -4735,24 +5811,59 @@ local function createUniversalFeature(
     subtitle.Visible = false
     feature.subtitle = subtitle
 
-    local headerControlTop: number = if state.isMobile then 10 else 9
+    local headerControls: Frame = create("Frame", {
+        Parent = row,
+        Name = "HeaderControls",
+        AnchorPoint = Vector2.new(1, 0.5),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Position = UDim2.new(1, -10, 0, feature.collapsedHeight / 2),
+        Size = UDim2.fromOffset(state.isMobile and 88 or 124, state.isMobile and 34 or 30),
+        ZIndex = 9,
+    }) :: Frame
+    create("UIListLayout", {
+        Parent = headerControls,
+        FillDirection = Enum.FillDirection.Horizontal,
+        HorizontalAlignment = Enum.HorizontalAlignment.Right,
+        VerticalAlignment = Enum.VerticalAlignment.Center,
+        Padding = UDim.new(0, state.isMobile and 4 or 8),
+        SortOrder = Enum.SortOrder.LayoutOrder,
+    })
     local arrow: TextButton =
-        (makeButton(row, "⋮", state.isMobile and 17 or 15) :: any) :: TextButton
+        (makeButton(headerControls, "...", 10) :: any) :: TextButton
     arrow.Name = "Expand"
+    arrow.LayoutOrder = 3
     arrow:SetAttribute("ThemeRole", "Icon")
     arrow:SetAttribute("NoPressEffect", true)
-    arrow.AnchorPoint = Vector2.new(1, 0)
     arrow.BackgroundTransparency = 1
-    arrow.Position = UDim2.new(1, -8, 0, headerControlTop)
-    arrow.Size = UDim2.fromOffset(state.isMobile and 30 or 26, state.isMobile and 30 or 26)
+    arrow.Size = UDim2.fromOffset(state.isMobile and 24 or 28, state.isMobile and 24 or 28)
     arrow.TextColor3 = state.guiStyle == "Default"
         and Theme.DefaultTextMuted
         or Theme.TextMuted
-    arrow.Visible = configuration.noOptions ~= true
+    arrow.Active = configuration.noOptions ~= true
+    arrow.TextTransparency = 0.35
     arrow.ZIndex = 9
     local arrowStroke: UIStroke? = arrow:FindFirstChild("StyleStroke") :: UIStroke?
     if arrowStroke then
         arrowStroke.Enabled = false
+    end
+    local arrowIcon: ImageLabel = makeAssetIcon(
+        arrow,
+        "ellipsis",
+        Theme.DefaultTextMuted,
+        UDim2.fromOffset(18, 12),
+        UDim2.new(0.5, -9, 0.5, -6),
+        10,
+        function(success: boolean): ()
+            if success and arrow.Parent then
+                arrow.Text = ""
+            end
+        end
+    )
+    arrowIcon.Name = "Icon"
+    if configuration.noOptions == true then
+        arrow.Text = ""
+        arrowIcon.ImageTransparency = 1
     end
     feature.arrow = arrow
 
@@ -4764,13 +5875,7 @@ local function createUniversalFeature(
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
         Position = UDim2.fromOffset(0, 0),
-        Size = UDim2.new(
-            1,
-            feature.isCategory and -42
-                or (configuration.noOptions == true and -94 or -128),
-            0,
-            feature.collapsedHeight
-        ),
+        Size = UDim2.new(1, 0, 0, feature.collapsedHeight),
         Text = "",
         ZIndex = 6,
     }) :: TextButton
@@ -4870,7 +5975,6 @@ local function createUniversalFeature(
         if feature.expanded then
             options.Visible = true
         end
-        arrow.Text = "⋮"
         if animate and state.animationsEnabled then
             TweenService:Create(
                 options,
@@ -4945,6 +6049,9 @@ local function createUniversalFeature(
         )
         if success then
             feature.enabled = requestedState
+            if requestedState then
+                feature.enabledAt = os.clock()
+            end
             configData.states[feature.configKey] = requestedState
             queueConfigSave()
             notify(name .. (requestedState and " activado" or " desactivado"))
@@ -4959,30 +6066,36 @@ local function createUniversalFeature(
     feature.activate = activateFeature
 
     trackUiConnection(activationTarget.MouseButton1Click:Connect(activateFeature))
-    if not feature.isCategory then
+    do
         local favoriteButton: TextButton =
-            (makeButton(row, "☆", state.isMobile and 16 or 15) :: any) :: TextButton
+            (makeButton(headerControls, "*", 11) :: any) :: TextButton
         favoriteButton.Name = "Favorite"
+        favoriteButton.LayoutOrder = 1
         favoriteButton:SetAttribute("ThemeRole", "Icon")
         favoriteButton:SetAttribute("NoPressEffect", true)
-        favoriteButton.AnchorPoint = Vector2.new(1, 0)
         favoriteButton.BackgroundTransparency = 1
-        favoriteButton.Position = UDim2.new(
-            1,
-            configuration.noOptions == true and -60 or -94,
-            0,
-            headerControlTop
-        )
-        favoriteButton.Size = UDim2.fromOffset(
-            state.isMobile and 30 or 28,
-            state.isMobile and 30 or 27
-        )
+        favoriteButton.Size = UDim2.fromOffset(state.isMobile and 24 or 28, state.isMobile and 24 or 28)
         favoriteButton.ZIndex = 9
         local favoriteStroke: UIStroke? =
             favoriteButton:FindFirstChild("StyleStroke") :: UIStroke?
         if favoriteStroke then
             favoriteStroke.Enabled = false
         end
+        local favoriteIcon: ImageLabel = makeAssetIcon(
+            favoriteButton,
+            "star",
+            Theme.DefaultTextMuted,
+            UDim2.fromOffset(18, 18),
+            UDim2.new(0.5, -9, 0.5, -9),
+            10,
+            function(success: boolean): ()
+                if success and favoriteButton.Parent then
+                    favoriteButton.Text = ""
+                end
+            end
+        )
+        favoriteIcon.Name = "Icon"
+        feature.favoriteIcon = favoriteIcon
         feature.favoriteButton = favoriteButton
         trackUiConnection(favoriteButton.MouseButton1Click:Connect(function(): ()
             state.floatingUi.toggleFavorite(feature)
@@ -4990,22 +6103,13 @@ local function createUniversalFeature(
     end
     if not feature.isCategory then
         local shortcutButton: TextButton =
-            (makeButton(row, "KEY", 9) :: any) :: TextButton
+            (makeButton(headerControls, "KEY", 9) :: any) :: TextButton
         shortcutButton.Name = "Shortcut"
-        shortcutButton.AnchorPoint = Vector2.new(1, 0)
+        shortcutButton.LayoutOrder = 2
         shortcutButton.BackgroundColor3 = state.guiStyle == "Default"
             and Theme.DefaultSurface
             or Theme.SurfaceRaised
-        shortcutButton.Position = UDim2.new(
-            1,
-            configuration.noOptions == true and -8 or -42,
-            0,
-            headerControlTop
-        )
-        shortcutButton.Size = UDim2.fromOffset(
-            state.isMobile and 48 or 44,
-            state.isMobile and 30 or 27
-        )
+        shortcutButton.Size = UDim2.fromOffset(state.isMobile and 32 or 52, state.isMobile and 28 or 28)
         shortcutButton.ZIndex = 9
         applyKeySlotStyle(shortcutButton)
         shortcutButton.TextScaled = true
@@ -5038,6 +6142,7 @@ local function createUniversalFeature(
             )
             if success then
                 feature.enabled = true
+                feature.enabledAt = os.clock()
                 refreshFeatureToggle(feature)
             else
                 configData.states[feature.configKey] = false
@@ -5056,6 +6161,7 @@ end
 
 local function createOptionRow(feature: any, labelText: string): Frame
     feature.optionCount += 1
+    feature.searchText ..= " " .. string.lower(labelText)
     local option: Frame = (create("Frame", {
         Parent = feature.options,
         BackgroundColor3 = Theme.Background,
@@ -5129,19 +6235,21 @@ local function addToggleOption(
         Text = "",
         ZIndex = option.ZIndex + 2,
     }) :: TextButton
-    local mark: TextLabel = makeTextLabel(option, "✓", 12)
-    mark.AnchorPoint = Vector2.new(1, 0.5)
-    mark.Position = UDim2.new(1, -12, 0.5, 0)
-    mark.Size = UDim2.fromOffset(24, 24)
-    mark.TextColor3 = Theme.DefaultAccent
-    mark.TextXAlignment = Enum.TextXAlignment.Center
-    mark.Visible = enabled :: boolean
-    mark.ZIndex = option.ZIndex + 3
+    local switch: TextButton = createAuroraSwitch(option, enabled :: boolean, nil)
+    switch.Name = "OptionSwitch"
+    switch.AnchorPoint = Vector2.new(1, 0.5)
+    switch.Position = UDim2.new(1, -8, 0.5, 0)
+    switch.ZIndex = option.ZIndex + 3
+    for _, descendant: Instance in ipairs(switch:GetDescendants()) do
+        if descendant:IsA("GuiObject") then
+            descendant.ZIndex += option.ZIndex + 2
+        end
+    end
     local optionLabel: TextLabel? =
         option:FindFirstChild("OptionLabel") :: TextLabel?
 
     local function refreshOptionState(): ()
-        mark.Visible = enabled :: boolean
+        setAuroraSwitch(switch, enabled :: boolean, true)
         if optionLabel then
             optionLabel.TextColor3 = (enabled :: boolean)
                 and Theme.DefaultText
@@ -5149,14 +6257,16 @@ local function addToggleOption(
         end
     end
 
-    trackUiConnection(button.MouseButton1Click:Connect(function(): ()
+    local function toggleOption(): ()
         enabled = not enabled
         refreshOptionState()
         configData.states[optionKey] = enabled
         callback(enabled :: boolean)
         queueConfigSave()
         notify(labelText .. ((enabled :: boolean) and " activado" or " desactivado"))
-    end))
+    end
+    trackUiConnection(button.MouseButton1Click:Connect(toggleOption))
+    trackUiConnection(switch.MouseButton1Click:Connect(toggleOption))
 
     refreshOptionState()
     callback(enabled :: boolean)
@@ -5174,6 +6284,16 @@ local function addActionOption(
         or Theme.AccentSoft
     button.Position = UDim2.new(0.72, 0, 0, 0)
     button.Size = UDim2.new(0.28, 0, 1, 0)
+    local actionIcon: ImageLabel = makeAssetIcon(
+        button,
+        "flame",
+        Theme.AccentPink,
+        UDim2.fromOffset(13, 15),
+        UDim2.new(0, 7, 0.5, -7),
+        button.ZIndex + 1,
+        nil
+    )
+    actionIcon.ImageTransparency = 0.12
     local function executeAction(): ()
         runActionButton(
             button,
@@ -5306,6 +6426,14 @@ local function addNumberOption(
     create("UICorner", {
         Parent = fill,
         CornerRadius = UDim.new(1, 0),
+    })
+    create("UIGradient", {
+        Parent = fill,
+        Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Theme.AccentCyan),
+            ColorSequenceKeypoint.new(0.52, Theme.AccentViolet),
+            ColorSequenceKeypoint.new(1, Theme.AccentPink),
+        }),
     })
 
     local knobSize: number = state.isMobile and 18 or 14
@@ -5443,6 +6571,16 @@ local function addCycleOption(
     local button = makeButton(option, values[index], 11)
     button.Position = UDim2.new(0.5, 0, 0, 0)
     button.Size = UDim2.new(0.5, 0, 1, 0)
+    local cycleIcon: ImageLabel = makeAssetIcon(
+        button,
+        "arrowDown",
+        Theme.DefaultTextMuted,
+        UDim2.fromOffset(11, 11),
+        UDim2.new(1, -18, 0.5, -5),
+        button.ZIndex + 1,
+        nil
+    )
+    cycleIcon.ImageTransparency = 0.18
 
     button.MouseButton1Click:Connect(function()
         index = index % #values + 1
@@ -9263,19 +10401,13 @@ end
 
 local function refreshSearch(): ()
     local query: string = string.lower(tostring(state.searchQuery or ""))
+    query = string.match(query, "^%s*(.-)%s*$") or ""
     local sectionMatches: {[string]: number} = {}
     local sectionTotals: {[string]: number} = {}
     for _, feature: any in ipairs(allFeatures) do
         local sectionName: string = feature.sectionName or "Universal"
         sectionTotals[sectionName] = (sectionTotals[sectionName] or 0) + 1
-        local searchable: string = string.lower(
-            feature.name .. " " .. feature.description
-        )
-        for _, object: Instance in ipairs(feature.row:GetDescendants()) do
-            if object:IsA("TextLabel") or object:IsA("TextButton") then
-                searchable ..= " " .. string.lower(object.Text)
-            end
-        end
+        local searchable: string = feature.searchText
         local matches: boolean = query == ""
             or string.find(searchable, query, 1, true) ~= nil
         feature.row.Visible = matches
@@ -9283,13 +10415,11 @@ local function refreshSearch(): ()
             sectionMatches[sectionName] = (sectionMatches[sectionName] or 0) + 1
         end
         if feature.title then
-            feature.title.TextColor3 = query ~= "" and matches
-                and (state.guiStyle == "Default"
-                    and Theme.DefaultAccent
-                    or Theme.AccentCyan)
-                or (state.guiStyle == "Default"
-                    and Theme.DefaultText
-                    or Theme.Text)
+            if query ~= "" and matches and not feature.enabled then
+                feature.title.TextColor3 = Theme.AccentCyan
+            else
+                applyFeaturePresentation(feature, state.guiStyle == "Default")
+            end
         end
     end
 
@@ -9300,11 +10430,19 @@ local function refreshSearch(): ()
     end
 end
 state.refreshSearch = refreshSearch
+local searchRefreshToken: number = 0
 trackUiConnection(
     state.shells.defaultSearchBox:GetPropertyChangedSignal("Text"):Connect(
         function(): ()
             state.searchQuery = state.shells.defaultSearchBox.Text
-            refreshSearch()
+            state.shells.searchClear.Visible = state.searchQuery ~= ""
+            searchRefreshToken += 1
+            local token: number = searchRefreshToken
+            task.delay(0.06, function(): ()
+                if token == searchRefreshToken then
+                    refreshSearch()
+                end
+            end)
         end
     )
 )
@@ -9628,6 +10766,17 @@ local function setMenuVisible(visible: boolean): ()
     state.visible = visible
     Main.Visible = visible
     state.mobileUi.setActionVisibility(visible)
+    FloatingUi.overlays.TextGUI.window.root.Active = visible
+    if not visible then
+        for _, settingsWindow: FloatingWindowRecord in ipairs({
+            textSettingsWindow,
+            radarSettingsWindow,
+            sessionSettingsWindow,
+            targetSettingsWindow,
+        }) do
+            settingsWindow.root.Visible = false
+        end
+    end
     setBlurVisible(true)
 end
 state.setMenuVisible = setMenuVisible
@@ -10037,6 +11186,14 @@ local function cleanupRuntime(): ()
         return
     end
     runtimeCleaned = true
+        sessionTrackingActive = false
+        sessionBindGeneration += 1
+        if deathConnection then
+            deathConnection:Disconnect()
+            deathConnection = nil
+        end
+        state.sessionInfo = nil
+        state.getOverlayTarget = nil
         for _, feature in ipairs(allFeatures) do
             if feature.enabled then
                 pcall(function()
