@@ -1144,19 +1144,83 @@ AutoPlaySound.Name = "RTM_MM2_AutoPlay"
 AutoPlaySound.Looped = true
 AutoPlaySound.Volume = 0.6
 AutoPlaySound.Parent = game:GetService("SoundService")
+local autoPlayLoadConnection: RBXScriptConnection? = nil
+local autoPlayGeneration: number = 0
+local autoPlayInput: TextBox? = nil
+local autoPlayConfigKey = "MM2.AutoPlayID.PlayID"
+local autoPlayStateKey = "MM2.AutoPlayID"
 
-local function toggleAutoPlayId(enabled)
+local function stopAutoPlaySound(): ()
+    autoPlayGeneration += 1
+    if autoPlayLoadConnection then
+        autoPlayLoadConnection:Disconnect()
+        autoPlayLoadConnection = nil
+    end
     AutoPlaySound:Stop()
-    if not enabled then
+    AutoPlaySound.SoundId = ""
+end
+
+local function clearAutoPlaySetting(message: string): ()
+    stopAutoPlaySound()
+    mm2Settings.autoPlayId = ""
+    if type(configData) == "table" then
+        if type(configData.values) == "table" then
+            configData.values[autoPlayConfigKey] = nil
+        end
+        if type(configData.states) == "table" then
+            configData.states[autoPlayStateKey] = false
+        end
+    end
+    if autoPlayInput and autoPlayInput.Parent then
+        autoPlayInput.Text = ""
+    end
+    queueConfigSave()
+    notify(message)
+end
+
+local function playConfiguredSound(): ()
+    stopAutoPlaySound()
+    local numericId = string.match(mm2Settings.autoPlayId, "%d+")
+    if not numericId then
+        clearAutoPlaySetting("Audio ID inválido; reproducción desactivada")
         return
     end
 
-    local numericId = string.match(mm2Settings.autoPlayId, "%d+")
-    if not numericId then
-        error("Enter a valid Roblox audio ID first.")
-    end
     AutoPlaySound.SoundId = "rbxassetid://" .. numericId
-    AutoPlaySound:Play()
+    local generation: number = autoPlayGeneration
+    local function playWhenLoaded(): ()
+        if generation ~= autoPlayGeneration or not AutoPlaySound.Parent then
+            return
+        end
+        if not AutoPlaySound.IsLoaded then
+            return
+        end
+        if autoPlayLoadConnection then
+            autoPlayLoadConnection:Disconnect()
+            autoPlayLoadConnection = nil
+        end
+        pcall(AutoPlaySound.Play, AutoPlaySound)
+    end
+
+    if AutoPlaySound.IsLoaded then
+        playWhenLoaded()
+        return
+    end
+
+    autoPlayLoadConnection = AutoPlaySound.Loaded:Connect(playWhenLoaded)
+    task.delay(4, function(): ()
+        if generation == autoPlayGeneration and not AutoPlaySound.IsLoaded then
+            clearAutoPlaySetting("Audio ID no autorizado o no disponible")
+        end
+    end)
+end
+
+local function toggleAutoPlayId(enabled: boolean): ()
+    if not enabled then
+        stopAutoPlaySound()
+        return
+    end
+    playConfiguredSound()
 end
 
 local sprintTrailObjects: {Instance} = {}
@@ -4820,16 +4884,13 @@ local AutoPlayFeature = createUniversalFeature(
     {
         parent = MM2Scroll,
         registry = mm2Features,
+        restore = false,
     }
 )
-addTextOption(AutoPlayFeature, "Play ID", mm2Settings.autoPlayId, function(value)
+autoPlayInput = addTextOption(AutoPlayFeature, "Play ID", mm2Settings.autoPlayId, function(value)
     mm2Settings.autoPlayId = value
     if AutoPlaySound.Playing then
-        local numericId = string.match(value, "%d+")
-        if numericId then
-            AutoPlaySound.SoundId = "rbxassetid://" .. numericId
-            AutoPlaySound:Play()
-        end
+        playConfiguredSound()
     end
 end)
 
@@ -5122,7 +5183,7 @@ cleanupMM2Runtime = function()
         return player == nil or player == LocalPlayer
     end
     if AutoPlaySound then
-        AutoPlaySound:Stop()
+        stopAutoPlaySound()
         AutoPlaySound:Destroy()
     end
 end
