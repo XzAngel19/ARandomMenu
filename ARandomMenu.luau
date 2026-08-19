@@ -1271,11 +1271,11 @@ local function setAuroraSwitch(button: TextButton, enabled: boolean, animate: bo
         return
     end
     local knobWidth: number = knob.Size.X.Offset
-    local targetColor: Color3 = enabled and Theme.AccentSoft or Color3.fromRGB(24, 16, 36)
+    local targetColor: Color3 = enabled and Theme.AccentViolet or Color3.fromRGB(24, 16, 36)
     local targetPosition: UDim2 = enabled
         and UDim2.new(1, -knobWidth - 3, 0.5, 0)
         or UDim2.new(0, 3, 0.5, 0)
-    local targetKnobColor: Color3 = enabled and Theme.AccentCyan or Theme.DefaultTextMuted
+    local targetKnobColor: Color3 = enabled and Theme.DefaultText or Theme.DefaultTextMuted
     if animate and state.animationsEnabled then
         TweenService:Create(track, TweenInfo.new(0.18, Enum.EasingStyle.Quart), {
             BackgroundColor3 = targetColor,
@@ -1318,6 +1318,12 @@ local function createAuroraSwitch(
         ZIndex = button.ZIndex + 1,
     }) :: Frame
     create("UICorner", {Parent = track, CornerRadius = UDim.new(1, 0)})
+    create("UIStroke", {
+        Parent = track,
+        Color = Theme.DefaultOutline,
+        Transparency = 0.58,
+        Thickness = 1,
+    })
     local knobSize: number = switchHeight - 6
     local knob: Frame = create("Frame", {
         Parent = track,
@@ -1332,8 +1338,8 @@ local function createAuroraSwitch(
     create("UICorner", {Parent = knob, CornerRadius = UDim.new(1, 0)})
     create("UIStroke", {
         Parent = knob,
-        Color = Theme.DefaultText,
-        Transparency = 0.42,
+        Color = Theme.DefaultOutline,
+        Transparency = 0.35,
         Thickness = 1,
     })
     setAuroraSwitch(button, enabled, false)
