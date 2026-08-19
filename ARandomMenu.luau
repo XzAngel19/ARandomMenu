@@ -1270,9 +1270,10 @@ local function setAuroraSwitch(button: TextButton, enabled: boolean, animate: bo
     if not track or not knob then
         return
     end
+    local knobWidth: number = knob.Size.X.Offset
     local targetColor: Color3 = enabled and Theme.AccentSoft or Color3.fromRGB(24, 16, 36)
     local targetPosition: UDim2 = enabled
-        and UDim2.new(1, -3, 0.5, 0)
+        and UDim2.new(1, -knobWidth - 3, 0.5, 0)
         or UDim2.new(0, 3, 0.5, 0)
     local targetKnobColor: Color3 = enabled and Theme.AccentCyan or Theme.DefaultTextMuted
     if animate and state.animationsEnabled then
