@@ -1067,8 +1067,11 @@ end
 -- The multiplier and clamp are inlined on purpose: `bootstrap()` is a single
 -- enormous function scope and is close to Luau's 200 local-register ceiling,
 -- so named constants here would cost registers for no benefit.
+-- The window itself passes a larger radius so the shell reads as one smooth,
+-- pill-shaped surface; the 30 cap keeps small controls from turning into
+-- circles.
 local function cornerRadius(radius: number): UDim
-    return UDim.new(0, math.clamp(math.round(radius * 1.3), 5, 18))
+    return UDim.new(0, math.clamp(math.round(radius * 1.3), 5, 30))
 end
 
 local function addRoundedStyle(
@@ -1902,10 +1905,14 @@ state.mainFrame = Main
 Main.Visible = state.visible
 
 do
-local _MainCorner: UICorner, MainStroke: UIStroke = addRoundedStyle(Main, 14, 0.2)
+-- The window carries no visible outline: the drag surface is a fully
+-- transparent strip (see DefaultDragZone) and the only chrome is the rounded
+-- shell itself. `MainStroke` is kept on `state` for restyle compatibility,
+-- but always stays fully transparent so no grey border ever frames the menu.
+local _MainCorner: UICorner, MainStroke: UIStroke = addRoundedStyle(Main, 22, 1)
 MainStroke.Thickness = 1
 MainStroke.Color = Theme.DefaultOutline
-MainStroke.Transparency = 0.58
+MainStroke.Transparency = 1
 state.mainStroke = MainStroke
 end
 
@@ -1949,7 +1956,7 @@ local DefaultShell: Frame = create("Frame", {
 DefaultShell.ClipsDescendants = true
 create("UICorner", {
     Parent = DefaultShell,
-    CornerRadius = cornerRadius(14),
+    CornerRadius = cornerRadius(22),
 })
 
 local DefaultSidebar: Frame = create("Frame", {
@@ -1964,7 +1971,7 @@ local DefaultSidebar: Frame = create("Frame", {
 }) :: Frame
 create("UICorner", {
     Parent = DefaultSidebar,
-    CornerRadius = cornerRadius(14),
+    CornerRadius = cornerRadius(22),
 })
 local SidebarAtmosphere: Frame = create("Frame", {
     Parent = DefaultShell,
@@ -2020,7 +2027,7 @@ local DefaultContentHost: Frame = create("Frame", {
 DefaultContentHost.ClipsDescendants = true
 create("UICorner", {
     Parent = DefaultContentHost,
-    CornerRadius = cornerRadius(14),
+    CornerRadius = cornerRadius(22),
 })
 create("Frame", {
     Parent = DefaultShell,
@@ -2042,13 +2049,18 @@ Content = create("Frame", {
 }) :: Frame
 Content.ClipsDescendants = true
 
+-- The whole top edge is an invisible drag surface. It renders nothing (fully
+-- transparent, no border, no stroke) so the menu can be moved without any
+-- visible grey strip or corner handle; the rounded shell is the only chrome.
+-- It sits above the search field so the first ~14px of the window always
+-- grabs the window instead of a control underneath.
 DefaultDragZone = create("Frame", {
     Parent = DefaultShell,
     Name = "DefaultDragStrip",
     Active = true,
     BackgroundTransparency = 1,
     BorderSizePixel = 0,
-    Size = UDim2.new(1, 0, 0, 10),
+    Size = UDim2.new(1, 0, 0, 14),
     ZIndex = 30,
 }) :: Frame
 
@@ -2124,7 +2136,7 @@ local function createTab(tabName: string, layoutOrder: number): Frame
     page.ClipsDescendants = true
     create("UICorner", {
         Parent = page,
-        CornerRadius = cornerRadius(20),
+        CornerRadius = cornerRadius(22),
     })
     pages[tabName] = page
 
@@ -3353,6 +3365,21 @@ state.universalProjectileCalibration = (function(): any
         delete: (self: Controller) -> boolean,
         status: (self: Controller) -> string,
         destroy: (self: Controller) -> (),
+        settings: {[string]: number},
+    }
+
+    -- Live-tuning knobs for the analyser. The option panel mutates these
+    -- while the tracker keeps running, so a calibration session can be
+    -- refined without restarting it.
+    local settings: {[string]: number} = {
+        bucketWidthMs = 5,
+        maxBucketMs = 250,
+        sampleWindowSeconds = 2.5,
+        maxSamplesPerTrack = 150,
+        minProjectileSpeed = 10,
+        matchDistanceStuds = 40,
+        maxPendingActivations = 10,
+        candidateLifetimeSeconds = 1.1,
     }
 
     local executorEnvironment: {[string]: any} = getfenv() :: any
@@ -3406,11 +3433,17 @@ state.universalProjectileCalibration = (function(): any
     end
 
     local function pingBucketKey(pingMs: number): string
-        if pingMs > 250 then
-            return "250+"
+        local width: number = math.max(1, settings.bucketWidthMs)
+        local ceiling: number = math.max(width, settings.maxBucketMs)
+        if pingMs > ceiling then
+            return tostring(ceiling) .. "+"
         end
-        local lower: number = math.clamp(math.floor(pingMs / 5) * 5, 0, 245)
-        local upper: number = lower + 5
+        local lower: number = math.clamp(
+            math.floor(pingMs / width) * width,
+            0,
+            math.max(0, ceiling - width)
+        )
+        local upper: number = lower + width
         return string.format("%03d-%03d", lower, upper)
     end
 
@@ -3491,10 +3524,10 @@ state.universalProjectileCalibration = (function(): any
             reason = reason,
             bucketSpec = {
                 metric = "Data Ping",
-                widthMs = 5,
+                widthMs = settings.bucketWidthMs,
                 minimumMs = 0,
-                maximumMs = 250,
-                overflow = "250+",
+                maximumMs = settings.maxBucketMs,
+                overflow = tostring(settings.maxBucketMs) .. "+",
             },
             summary = {
                 activations = runtime.totalActivations,
@@ -3561,10 +3594,11 @@ state.universalProjectileCalibration = (function(): any
 
     local function compactPending(now: number): ()
         while #runtime.pending > 0
-            and now - runtime.pending[1].activatedAt > 1.1 do
+            and now - runtime.pending[1].activatedAt
+                > settings.candidateLifetimeSeconds do
             table.remove(runtime.pending, 1)
         end
-        while #runtime.pending > 10 do
+        while #runtime.pending > settings.maxPendingActivations do
             table.remove(runtime.pending, 1)
         end
     end
@@ -3618,7 +3652,8 @@ state.universalProjectileCalibration = (function(): any
             local now: number = os.clock()
             local completed: {BasePart} = {}
             for part: BasePart, track: ProjectileTrack in pairs(runtime.tracks) do
-                if not part.Parent or now - track.startedAt >= 2.5 then
+                if not part.Parent
+                    or now - track.startedAt >= settings.sampleWindowSeconds then
                     table.insert(completed, part)
                     continue
                 end
@@ -3652,7 +3687,7 @@ state.universalProjectileCalibration = (function(): any
                         track.distance += (position - track.previousPosition).Magnitude
                     end
                 end
-                if #track.samples < 150 then
+                if #track.samples < settings.maxSamplesPerTrack then
                     table.insert(track.samples, {
                         t = now - track.startedAt,
                         position = vectorArray(position),
@@ -3728,7 +3763,7 @@ state.universalProjectileCalibration = (function(): any
         end
         local hinted: boolean = hasProjectileHint(part)
         local speed: number = part.AssemblyLinearVelocity.Magnitude
-        if not hinted and speed < 10 then
+        if not hinted and speed < settings.minProjectileSpeed then
             return
         end
         local selectedIndex: number? = nil
@@ -3846,6 +3881,7 @@ state.universalProjectileCalibration = (function(): any
     end
 
     controller = {} :: Controller
+    controller.settings = settings
 
     function controller:setEnabled(enabled: boolean): ()
         if runtime.enabled == enabled then
@@ -3870,7 +3906,9 @@ state.universalProjectileCalibration = (function(): any
             considerCandidate
         ))
         print(
-            "[RTM:UniversalTrajectory] Activa · buckets 5 ms · salida "
+            "[RTM:UniversalTrajectory] Activa · buckets "
+                .. tostring(settings.bucketWidthMs)
+                .. " ms · salida "
                 .. outputPath
         )
     end
@@ -3944,7 +3982,7 @@ local function applyGuiStyle(_: string, animate: boolean): ()
 
     Main.BackgroundColor3 = Theme.DefaultBackground
     state.mainStroke.Color = Theme.DefaultOutline
-    state.mainStroke.Transparency = 0.58
+    state.mainStroke.Transparency = 1
     for _, page: Frame in pairs(pages) do
         page.BackgroundColor3 = Theme.DefaultBackground
         page.BackgroundTransparency = 1
@@ -4512,10 +4550,12 @@ local function createFloatingWindow(
         Parent = root,
         CornerRadius = cornerRadius(10),
     })
+    -- Hairline only: the floating windows share the borderless look of the
+    -- main shell, so no grey frame draws attention at their corners either.
     local stroke: UIStroke = create("UIStroke", {
         Parent = root,
         Color = Theme.DefaultOutline,
-        Transparency = 0.55,
+        Transparency = 0.78,
         Thickness = 1,
     }) :: UIStroke
 
@@ -6112,6 +6152,13 @@ local function bindActionShortcut(
     end))
 end
 
+-- Forward declaration for the automatic "Toggle key" row every universal
+-- module without an explicit key option receives. It cannot be a plain local
+-- function here because it is implemented after `createOptionRow` (which sits
+-- below `createUniversalFeature`); `createUniversalFeature` only schedules it
+-- with `task.defer`, so by the time it runs the implementation is assigned.
+local addToggleKeyOption: (feature: any) -> () = nil :: any
+
 local function createUniversalFeature(
     name: string,
     description: string,
@@ -6524,36 +6571,59 @@ local function createUniversalFeature(
             state.floatingUi.toggleFavorite(feature)
         end))
     end
-    if not feature.isCategory then
-        local shortcutButton: TextButton =
-            (makeButton(headerControls, "KEY", 9) :: any) :: TextButton
-        shortcutButton.Name = "Shortcut"
-        shortcutButton.LayoutOrder = 2
-        shortcutButton.BackgroundColor3 = state.guiStyle == "Default"
-            and Theme.DefaultSurface
-            or Theme.SurfaceRaised
-        shortcutButton.Size = UDim2.fromOffset(state.isMobile and 32 or 52, state.isMobile and 28 or 28)
-        shortcutButton.ZIndex = 9
-        applyKeySlotStyle(shortcutButton)
-        shortcutButton.TextScaled = true
-        create("UITextSizeConstraint", {
-            Parent = shortcutButton,
-            MaxTextSize = 11,
-            MinTextSize = 7,
-        })
-        feature.shortcutButton = shortcutButton
-        bindActionShortcut(
-            shortcutButton,
-            feature.configKey,
-            name,
-            activateFeature
-        )
-    end
+    -- Every card header carries the same three controls — favourite, key
+    -- slot, expand — so the whole list reads as one symmetric grid no matter
+    -- whether the module is a toggle, an action or a category. The key slot
+    -- toggles regular modules, runs actions, and expands/collapses category
+    -- headers (the same path `activateFeature` already provides).
+    local shortcutButton: TextButton =
+        (makeButton(headerControls, "KEY", 9) :: any) :: TextButton
+    shortcutButton.Name = "Shortcut"
+    shortcutButton.LayoutOrder = 2
+    shortcutButton.BackgroundColor3 = state.guiStyle == "Default"
+        and Theme.DefaultSurface
+        or Theme.SurfaceRaised
+    shortcutButton.Size = UDim2.fromOffset(state.isMobile and 32 or 52, state.isMobile and 28 or 28)
+    shortcutButton.ZIndex = 9
+    applyKeySlotStyle(shortcutButton)
+    shortcutButton.TextScaled = true
+    create("UITextSizeConstraint", {
+        Parent = shortcutButton,
+        MaxTextSize = 11,
+        MinTextSize = 7,
+    })
+    feature.shortcutButton = shortcutButton
+    bindActionShortcut(
+        shortcutButton,
+        feature.configKey,
+        name,
+        activateFeature
+    )
 
     registry[name] = feature
     table.insert(allFeatures, feature)
     state.floatingUi.registerFeature(feature)
     applyFeaturePresentation(feature, state.guiStyle == "Default")
+
+    -- Symmetry pass: every interactive universal/movement module that does
+    -- not already expose a key option gets a standard "Toggle key" row, so no
+    -- panel is ever the odd one out. Deferred so the row lands after all the
+    -- module's own options, at the bottom of its panel. Game modules declare
+    -- their own layouts and opt out through their registry.
+    if configuration.autoToggleKey ~= false
+        and configuration.noOptions ~= true
+        and not feature.isAction
+        and not feature.isCategory
+        and registry ~= mm2Features
+        and registry ~= state.trsFeatures
+        and registry ~= state.vdFeatures
+        and registry ~= state.mvsdFeatures then
+        task.defer(function(): ()
+            if type(addToggleKeyOption) == "function" then
+                addToggleKeyOption(feature)
+            end
+        end)
+    end
 
     if not feature.isAction
         and not feature.isCategory
@@ -6588,7 +6658,10 @@ end
 -- Rows are no longer all the same height, so the vertical band a control may
 -- occupy is published by `createOptionRow` as attributes rather than being
 -- assumed. Every add*Option goes through this so sliders, cycle buttons, key
--- slots and text boxes all line up on the exact same edge.
+-- slots and text boxes all line up on the exact same edge: every row, in
+-- every module, ends with a control band that starts at 50% of the row width
+-- and finishes 10px from the right edge. That shared geometry is what keeps
+-- panels with keybinds, sliders, toggles or actions visually symmetric.
 --
 -- Published on `state` instead of held in a local: `bootstrap()` is a single
 -- function scope and is at Luau's 200 local-register ceiling.
@@ -6600,6 +6673,9 @@ state.layoutOptionControl = function(
     local top: number = tonumber(option:GetAttribute("ControlTop")) or 0
     local height: number = tonumber(option:GetAttribute("ControlHeight"))
         or option.Size.Y.Offset
+    -- The canonical control band. 0.5 is the default so every row type shares
+    -- the same rectangle; rows that stack several controls (action pairs)
+    -- subdivide this same band instead of drawing outside it.
     local scale: number = widthScale or 0.5
     control.AnchorPoint = Vector2.new(1, 0)
     control.Position = UDim2.new(1, -10, 0, top)
@@ -6688,7 +6764,7 @@ local function createOptionRow(
         -- Label and hint stack on the left; the control keeps the top band so
         -- it stays aligned with the rows above and below that have no hint.
         label.Position = UDim2.fromOffset(12, 4)
-        label.Size = UDim2.new(0.52, -12, 0, 20)
+        label.Size = UDim2.new(0.48, -12, 0, 20)
 
         local hint: TextLabel = (makeTextLabel(
             option,
@@ -6707,8 +6783,11 @@ local function createOptionRow(
         option:SetAttribute("ControlTop", 5)
         option:SetAttribute("ControlHeight", 30)
     else
+        -- The label column always ends at 48% of the row; the control band
+        -- starts at 50%, so no label ever collides with any control type and
+        -- the left edge of every control is the same in every module.
         label.Position = UDim2.fromOffset(12, 0)
-        label.Size = UDim2.new(0.52, -12, 1, 0)
+        label.Size = UDim2.new(0.48, -12, 1, 0)
 
         option:SetAttribute("ControlTop", 6)
         option:SetAttribute("ControlHeight", rowHeight - 12)
@@ -6810,14 +6889,17 @@ local function addToggleOption(
     }) :: TextButton
     local switch: TextButton = createToggleSwitch(option, enabled :: boolean, nil)
     switch.Name = "OptionSwitch"
-    -- The switch keeps its intrinsic size, so it is pinned to the control band
-    -- rather than stretched across it like the other controls.
-    switch.AnchorPoint = Vector2.new(1, 0)
+    -- The switch keeps its intrinsic size, so it is pinned to the right edge
+    -- of the control band rather than stretched across it. Its right edge
+    -- lands on exactly the same x as every other control type, which keeps
+    -- toggle-only modules visually aligned with keybind and slider modules.
+    switch.AnchorPoint = Vector2.new(1, 0.5)
     switch.Position = UDim2.new(
         1,
         -10,
         0,
-        tonumber(option:GetAttribute("ControlTop")) or 6
+        (tonumber(option:GetAttribute("ControlTop")) or 6)
+            + (tonumber(option:GetAttribute("ControlHeight")) or 30) / 2
     )
     switch.ZIndex = option.ZIndex + 3
     for _, descendant: Instance in ipairs(switch:GetDescendants()) do
@@ -6863,7 +6945,11 @@ local function addActionOption(
     button.BackgroundColor3 = state.guiStyle == "Default"
         and Theme.DefaultButtonHover
         or Theme.AccentSoft
-    state.layoutOptionControl(option, button, 0.3)
+    -- The action pair subdivides the same control band every other row uses:
+    -- RUN hugs the band's right edge and KEY fills the band's left half, so
+    -- action rows share the exact same outer rectangle as toggles, sliders,
+    -- cycle buttons and key slots.
+    state.layoutOptionControl(option, button, 0.26)
     local function executeAction(): ()
         runActionButton(
             button,
@@ -6879,13 +6965,15 @@ local function addActionOption(
     shortcutButton.BackgroundColor3 = state.guiStyle == "Default"
         and Theme.DefaultButton
         or Theme.SurfaceRaised
-    -- Sits immediately left of the RUN button, in the same band. Positioned
+    -- Sits immediately left of the RUN button inside the same band, positioned
     -- with the pair's combined scale rather than off RUN's AbsoluteSize, which
-    -- is still zero on the frame the row is built.
-    state.layoutOptionControl(option, shortcutButton, 0.18)
+    -- is still zero on the frame the row is built. 0.24 width + 0.26 width
+    -- with a 6px gap reproduces the 0.5-wide band of every other row type, so
+    -- the pair never breaks the shared left/right edges.
+    state.layoutOptionControl(option, shortcutButton, 0.24)
     shortcutButton.Position = UDim2.new(
-        0.7,
-        -10,
+        0.74,
+        -16,
         shortcutButton.Position.Y.Scale,
         shortcutButton.Position.Y.Offset
     )
@@ -7198,6 +7286,9 @@ local function addKeyOption(
     callback: (Enum.KeyCode) -> (),
     hintText: string?
 ): TextButton
+    -- Flag used by the symmetry pass: modules that already expose an explicit
+    -- key row are not given the automatic "Toggle key" row.
+    feature.hasKeyOption = true
     local optionKey = feature.configKey .. "." .. labelText:gsub("%W", "")
     local savedKey = nil
     local savedName = configData.values[optionKey]
@@ -7238,6 +7329,80 @@ local function addKeyOption(
 
     callback(currentKey)
     return button :: TextButton
+end
+
+-- The automatic "Toggle key" row. Modules that declare their own key options
+-- never receive it; every other interactive universal/movement module gets
+-- one, appended as its final row, so a panel with sliders or toggles alone
+-- still ends with the same key slot a keybind-heavy panel has. Pressing the
+-- bound key runs `feature.activate()` — the identical path the header key
+-- slot uses — so the menu never has to be open for the key to work.
+addToggleKeyOption = function(feature: any): ()
+    if state.isMobile
+        or feature.isAction
+        or feature.isCategory
+        or feature.hasKeyOption
+        or feature.optionRows == nil
+        or feature.options == nil
+        or not feature.options.Parent then
+        return
+    end
+    local optionKey: string = feature.configKey .. ".ToggleKey"
+    local currentKey: Enum.KeyCode = Enum.KeyCode.Unknown
+    local savedName: any = configData.values[optionKey]
+    if type(savedName) == "string" and savedName ~= "" then
+        local saved: Enum.KeyCode? = Enum.KeyCode[savedName]
+        if saved then
+            currentKey = saved
+        end
+    end
+    local option = createOptionRow(feature, "Toggle key")
+    local button = makeButton(
+        option,
+        currentKey == Enum.KeyCode.Unknown and "NONE" or currentKey.Name,
+        11
+    )
+    state.layoutOptionControl(option, button, 0.5)
+    applyKeySlotStyle(button)
+    button:SetAttribute("CaptureIdleText", button.Text)
+
+    button.MouseButton1Click:Connect(function(): ()
+        if state.isMobile then
+            return
+        end
+        beginKeyCapture(button, function(keyCode: Enum.KeyCode): ()
+            currentKey = keyCode == currentKey
+                and Enum.KeyCode.Unknown
+                or keyCode
+            button.Text = currentKey == Enum.KeyCode.Unknown
+                and "NONE"
+                or currentKey.Name
+            button:SetAttribute("CaptureIdleText", button.Text)
+            configData.values[optionKey] = currentKey.Name
+            queueConfigSave()
+        end)
+    end)
+
+    trackUiConnection(UserInputService.InputBegan:Connect(function(
+        input: InputObject,
+        gameProcessed: boolean
+    ): ()
+        if gameProcessed
+            or currentKey == Enum.KeyCode.Unknown
+            or state.keyCaptureCallback
+            or state.waitingForKey
+            or UserInputService:GetFocusedTextBox() then
+            return
+        end
+        if input.UserInputType == Enum.UserInputType.Keyboard
+            and input.KeyCode == currentKey then
+            task.spawn(function(): ()
+                if type(feature.activate) == "function" then
+                    feature.activate()
+                end
+            end)
+        end
+    end))
 end
 
 local function addTextOption(
@@ -8078,9 +8243,37 @@ local function toggleFly(enabled: boolean): ()
     end)
 end
 
+-- Hitbox engine rewrite.
+--
+-- The old implementation had one fixed behaviour (scale visible parts, head
+-- pinned to 8 studs, everything forced transparent, collision and mass always
+-- stripped) and re-scanned every character on a hard-coded 0.1 s timer. The
+-- rewrite makes the whole pipeline configurable while keeping a single,
+-- cheap, idempotent sweep:
+--
+--   * Mode: "Visible" scales the visible body (the classic expanded look),
+--     "Root" scales only the invisible HumanoidRootPart (the classic
+--     phantom hitbox) and "Hybrid" does both.
+--   * Original states are recorded once per part and restored exactly when
+--     the feature is disabled or when the mode stops targeting that part,
+--     so switching Visible → Root never leaves stale stretched limbs.
+--   * Characters are tracked in a weak set and only alive characters are
+--     swept; dead/respawned characters drop out automatically instead of
+--     being re-applied forever.
+--   * Transparency, collision, mass, accessories and the refresh interval
+--     are all independent options instead of hard-coded side effects.
+
 type HitboxSettings = {
+    mode: string,
     bodyScale: number,
+    headSize: number,
+    rootSize: number,
     visibleTransparency: number,
+    forceVisible: boolean,
+    noCollision: boolean,
+    massless: boolean,
+    excludeAccessories: boolean,
+    updateInterval: number,
 }
 
 type OriginalHitboxState = {
@@ -8091,10 +8284,20 @@ type OriginalHitboxState = {
 }
 
 local hitboxSettings: HitboxSettings = {
+    mode = "Visible",
     bodyScale = 2.25,
+    headSize = 8,
+    rootSize = 12,
     visibleTransparency = 30,
+    forceVisible = true,
+    noCollision = true,
+    massless = true,
+    excludeAccessories = true,
+    updateInterval = 0.1,
 }
 local originalHitboxes: {[BasePart]: OriginalHitboxState} =
+    setmetatable({}, {__mode = "k"}) :: any
+local hitboxCharacters: {[Model]: boolean} =
     setmetatable({}, {__mode = "k"}) :: any
 
 local function restoreHitboxes(): ()
@@ -8107,12 +8310,21 @@ local function restoreHitboxes(): ()
         end
     end
     originalHitboxes = setmetatable({}, {__mode = "k"}) :: any
+    hitboxCharacters = setmetatable({}, {__mode = "k"}) :: any
 end
 
-local function isVisibleCharacterPart(part: BasePart): boolean
-    return part.Name ~= "HumanoidRootPart"
-        and not part:FindFirstAncestorOfClass("Accessory")
-        and not part:FindFirstAncestorOfClass("Tool")
+local function isScaledBodyPart(part: BasePart): boolean
+    if part.Name == "HumanoidRootPart" then
+        return false
+    end
+    if part:FindFirstAncestorOfClass("Tool") then
+        return false
+    end
+    if hitboxSettings.excludeAccessories
+        and part:FindFirstAncestorOfClass("Accessory") then
+        return false
+    end
+    return true
 end
 
 local function applyHitboxToPart(part: BasePart): ()
@@ -8128,18 +8340,92 @@ local function applyHitboxToPart(part: BasePart): ()
     end
     local resolvedOriginal: OriginalHitboxState = original :: OriginalHitboxState
 
-    if part.Name == "Head" then
-        part.Size = Vector3.new(8, 8, 8)
+    if part.Name == "HumanoidRootPart" then
+        part.Size = Vector3.new(
+            hitboxSettings.rootSize,
+            hitboxSettings.rootSize,
+            hitboxSettings.rootSize
+        )
+        part.Transparency = 1
     else
-        part.Size = resolvedOriginal.size * hitboxSettings.bodyScale
+        if part.Name == "Head" then
+            part.Size = Vector3.new(
+                hitboxSettings.headSize,
+                hitboxSettings.headSize,
+                hitboxSettings.headSize
+            )
+        else
+            part.Size = resolvedOriginal.size * hitboxSettings.bodyScale
+        end
+        if hitboxSettings.forceVisible then
+            part.Transparency = math.min(
+                resolvedOriginal.transparency,
+                hitboxSettings.visibleTransparency / 100
+            )
+        end
     end
 
-    part.Transparency = math.min(
-        resolvedOriginal.transparency,
-        hitboxSettings.visibleTransparency / 100
-    )
-    part.CanCollide = false
-    part.Massless = true
+    part.CanCollide = hitboxSettings.noCollision
+        and false
+        or resolvedOriginal.canCollide
+    part.Massless = hitboxSettings.massless
+end
+
+-- Restores every part the current mode no longer targets. Keeps the world
+-- clean when the user flips the mode slider mid-flight: switching to "Root"
+-- unwinds all stretched visible parts and vice versa.
+local function refreshHitboxMode(): ()
+    for part: BasePart, original: OriginalHitboxState in pairs(originalHitboxes) do
+        if not part.Parent then
+            continue
+        end
+        local isRoot: boolean = part.Name == "HumanoidRootPart"
+        local stillTargeted: boolean = isRoot
+            and hitboxSettings.mode ~= "Visible"
+            or (not isRoot and hitboxSettings.mode ~= "Root")
+        if not stillTargeted then
+            part.Size = original.size
+            part.Transparency = original.transparency
+            part.CanCollide = original.canCollide
+            part.Massless = original.massless
+            originalHitboxes[part] = nil
+        end
+    end
+end
+
+local function sweepHitboxes(): ()
+    -- Track every alive enemy character; respawns are picked up on the next
+    -- sweep and dead characters drop out of the weak set.
+    for _, player: Player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character then
+            local character: Model = player.Character
+            local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
+            if humanoid and humanoid.Health > 0 and character.Parent then
+                hitboxCharacters[character] = true
+            end
+        end
+    end
+
+    for character: Model in pairs(hitboxCharacters) do
+        local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
+        if character.Parent == nil or not humanoid or humanoid.Health <= 0 then
+            hitboxCharacters[character] = nil
+            continue
+        end
+        for _, part: Instance in ipairs(character:GetChildren()) do
+            if not part:IsA("BasePart") then
+                continue
+            end
+            local isRoot: boolean = part.Name == "HumanoidRootPart"
+            if isRoot then
+                if hitboxSettings.mode ~= "Visible" then
+                    applyHitboxToPart(part)
+                end
+            elseif hitboxSettings.mode ~= "Root" and isScaledBodyPart(part) then
+                applyHitboxToPart(part)
+            end
+        end
+    end
 end
 
 local function toggleHitboxes(enabled: boolean): ()
@@ -8153,20 +8439,11 @@ local function toggleHitboxes(enabled: boolean): ()
     local elapsed: number = 0
     featureConnections.Hitboxes = TaskManager:Connect(function(deltaTime: number): ()
         elapsed = elapsed + deltaTime
-        if elapsed < 0.1 then
+        if elapsed < hitboxSettings.updateInterval then
             return
         end
         elapsed = 0
-
-        for _, player: Player in ipairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer and player.Character then
-                for _, part: Instance in ipairs(player.Character:GetChildren()) do
-                    if part:IsA("BasePart") and isVisibleCharacterPart(part) then
-                        applyHitboxToPart(part)
-                    end
-                end
-            end
-        end
+        sweepHitboxes()
     end)
 end
 
@@ -9069,28 +9346,28 @@ performFling = function(targetPlayer: Player): ()
     end)
 end
 
-local fullbrightSettings = {
+state.fullbrightSettings = {
     brightness = 3,
     clockTime = 14,
 }
-local originalLighting = nil
+state.originalLighting = nil
 
-local function toggleFullbright(enabled)
+state.toggleFullbright = function(enabled)
     disconnectFeatureConnection("Fullbright")
 
     if not enabled then
-        if originalLighting then
-            Lighting.Brightness = originalLighting.brightness
-            Lighting.ClockTime = originalLighting.clockTime
-            Lighting.GlobalShadows = originalLighting.globalShadows
-            Lighting.FogEnd = originalLighting.fogEnd
-            Lighting.Ambient = originalLighting.ambient
-            Lighting.OutdoorAmbient = originalLighting.outdoorAmbient
+        if state.originalLighting then
+            Lighting.Brightness = state.originalLighting.brightness
+            Lighting.ClockTime = state.originalLighting.clockTime
+            Lighting.GlobalShadows = state.originalLighting.globalShadows
+            Lighting.FogEnd = state.originalLighting.fogEnd
+            Lighting.Ambient = state.originalLighting.ambient
+            Lighting.OutdoorAmbient = state.originalLighting.outdoorAmbient
         end
         return
     end
 
-    originalLighting = {
+    state.originalLighting = {
         brightness = Lighting.Brightness,
         clockTime = Lighting.ClockTime,
         globalShadows = Lighting.GlobalShadows,
@@ -9100,8 +9377,8 @@ local function toggleFullbright(enabled)
     }
 
     featureConnections.Fullbright = TaskManager:Connect(function()
-        Lighting.Brightness = fullbrightSettings.brightness
-        Lighting.ClockTime = fullbrightSettings.clockTime
+        Lighting.Brightness = state.fullbrightSettings.brightness
+        Lighting.ClockTime = state.fullbrightSettings.clockTime
         Lighting.GlobalShadows = false
         Lighting.FogEnd = 100000
         Lighting.Ambient = Color3.fromRGB(178, 178, 178)
@@ -9510,16 +9787,24 @@ end
 do
 (function(): ()
 type PhaseDashSettings = {
+    mode: string,
     distance: number,
     cooldown: number,
     exitSpeed: number,
+    slideSpeed: number,
+    collisionPadding: number,
+    flashDuration: number,
     preserveVelocity: boolean,
     key: Enum.KeyCode,
 }
 local phaseDashSettings: PhaseDashSettings = {
+    mode = "Blink",
     distance = 20,
     cooldown = 0.8,
     exitSpeed = 42,
+    slideSpeed = 60,
+    collisionPadding = 2.25,
+    flashDuration = 0.28,
     preserveVelocity = true,
     key = Enum.KeyCode.Q,
 }
@@ -9542,7 +9827,11 @@ local function createPhaseFlash(character: Model): ()
     flash.Parent = character
     local fade: Tween = TweenService:Create(
         flash,
-        TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+        TweenInfo.new(
+            math.clamp(phaseDashSettings.flashDuration, 0.05, 1.2),
+            Enum.EasingStyle.Quad,
+            Enum.EasingDirection.Out
+        ),
         {FillTransparency = 1, OutlineTransparency = 1}
     )
     fade:Play()
@@ -9578,6 +9867,23 @@ local function performPhaseDash(): ()
         return
     end
     direction = direction.Unit
+    lastPhaseDash = now
+    local previousVelocity: Vector3 = root.AssemblyLinearVelocity
+    local padding: number = math.clamp(
+        phaseDashSettings.collisionPadding,
+        0,
+        8
+    )
+    if phaseDashSettings.mode == "Slide" then
+        -- Slide: a velocity burst instead of a teleport. No raycast, no wall
+        -- stop — the dash pushes the character and the game physics handles
+        -- the rest, which keeps the dash usable on uneven terrain.
+        root.AssemblyLinearVelocity = direction * phaseDashSettings.slideSpeed
+            + Vector3.new(0, previousVelocity.Y, 0)
+        createPhaseFlash(character)
+        return
+    end
+    -- Blink: collision-aware teleport along the dash line.
     local params: RaycastParams = RaycastParams.new()
     params.FilterType = Enum.RaycastFilterType.Exclude
     params.FilterDescendantsInstances = {character}
@@ -9587,13 +9893,11 @@ local function performPhaseDash(): ()
         params
     )
     local safeDistance: number = collision
-            and math.max(0, collision.Distance - 2.25)
+            and math.max(0, collision.Distance - padding)
         or phaseDashSettings.distance
     if safeDistance <= 0.1 then
         return
     end
-    lastPhaseDash = now
-    local previousVelocity: Vector3 = root.AssemblyLinearVelocity
     root.CFrame = root.CFrame + direction * safeDistance
     if not phaseDashSettings.preserveVelocity then
         root.AssemblyLinearVelocity = direction * phaseDashSettings.exitSpeed
@@ -9626,14 +9930,20 @@ local function togglePhaseDash(enabled: boolean): ()
 end
 
 type SoftLandingSettings = {
+    mode: string,
     triggerSpeed: number,
     scanDistance: number,
     landingSpeed: number,
+    glideSpeed: number,
+    preserveMomentum: boolean,
 }
 local softLandingSettings: SoftLandingSettings = {
+    mode = "Landing",
     triggerSpeed = 62,
     scanDistance = 16,
     landingSpeed = 11,
+    glideSpeed = 16,
+    preserveMomentum = true,
 }
 
 local function toggleSoftLanding(enabled: boolean): ()
@@ -9650,24 +9960,52 @@ local function toggleSoftLanding(enabled: boolean): ()
         if velocity.Y > -softLandingSettings.triggerSpeed then
             return
         end
-        local params: RaycastParams = RaycastParams.new()
-        params.FilterType = Enum.RaycastFilterType.Exclude
-        params.FilterDescendantsInstances = {character}
-        local probeDistance: number = math.max(
-            softLandingSettings.scanDistance,
-            math.abs(velocity.Y) * 0.18
-        )
-        local ground: RaycastResult? = workspace:Raycast(
-            root.Position,
-            Vector3.new(0, -probeDistance, 0),
-            params
-        )
-        if ground then
-            root.AssemblyLinearVelocity = Vector3.new(
-                velocity.X,
-                -softLandingSettings.landingSpeed,
-                velocity.Z
+        local damped: boolean = false
+        -- Feather / Auto: cap the fall speed outright, no ground required.
+        if softLandingSettings.mode == "Feather"
+            or softLandingSettings.mode == "Auto" then
+            if velocity.Y < -softLandingSettings.glideSpeed then
+                velocity = Vector3.new(
+                    velocity.X,
+                    -softLandingSettings.glideSpeed,
+                    velocity.Z
+                )
+                damped = true
+            end
+        end
+        -- Landing / Auto: only dampen when ground is actually close.
+        if softLandingSettings.mode == "Landing"
+            or softLandingSettings.mode == "Auto" then
+            local params: RaycastParams = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Exclude
+            params.FilterDescendantsInstances = {character}
+            local probeDistance: number = math.max(
+                softLandingSettings.scanDistance,
+                math.abs(velocity.Y) * 0.18
             )
+            local ground: RaycastResult? = workspace:Raycast(
+                root.Position,
+                Vector3.new(0, -probeDistance, 0),
+                params
+            )
+            if ground then
+                velocity = Vector3.new(
+                    velocity.X,
+                    -softLandingSettings.landingSpeed,
+                    velocity.Z
+                )
+                damped = true
+            end
+        end
+        if damped then
+            if not softLandingSettings.preserveMomentum then
+                velocity = Vector3.new(
+                    velocity.X * 0.3,
+                    velocity.Y,
+                    velocity.Z * 0.3
+                )
+            end
+            root.AssemblyLinearVelocity = velocity
         end
     end)
 end
@@ -9868,9 +10206,19 @@ end
 do
 local HitboxFeature = createUniversalFeature(
     "Hitboxes",
-    "Extend visible character parts instead of an invisible root block",
+    "Scalable visible and phantom hitboxes for enemy characters",
     3,
     toggleHitboxes
+)
+addCycleOption(
+    HitboxFeature,
+    "Mode",
+    {"Visible", "Root", "Hybrid"},
+    1,
+    function(value: string)
+        hitboxSettings.mode = value
+        refreshHitboxMode()
+    end
 )
 addNumberOption(
     HitboxFeature,
@@ -9884,6 +10232,26 @@ addNumberOption(
 )
 addNumberOption(
     HitboxFeature,
+    "Head size",
+    hitboxSettings.headSize,
+    2,
+    12,
+    function(value)
+        hitboxSettings.headSize = value
+    end
+)
+addNumberOption(
+    HitboxFeature,
+    "Root size",
+    hitboxSettings.rootSize,
+    3,
+    24,
+    function(value)
+        hitboxSettings.rootSize = value
+    end
+)
+addNumberOption(
+    HitboxFeature,
     "Visible transparency %",
     hitboxSettings.visibleTransparency,
     0,
@@ -9892,10 +10260,52 @@ addNumberOption(
         hitboxSettings.visibleTransparency = value
     end
 )
+addToggleOption(
+    HitboxFeature,
+    "Reveal parts",
+    hitboxSettings.forceVisible,
+    function(value)
+        hitboxSettings.forceVisible = value
+    end
+)
+addToggleOption(
+    HitboxFeature,
+    "No collision",
+    hitboxSettings.noCollision,
+    function(value)
+        hitboxSettings.noCollision = value
+    end
+)
+addToggleOption(
+    HitboxFeature,
+    "Massless",
+    hitboxSettings.massless,
+    function(value)
+        hitboxSettings.massless = value
+    end
+)
+addToggleOption(
+    HitboxFeature,
+    "Exclude accessories",
+    hitboxSettings.excludeAccessories,
+    function(value)
+        hitboxSettings.excludeAccessories = value
+    end
+)
+addNumberOption(
+    HitboxFeature,
+    "Update interval (s)",
+    hitboxSettings.updateInterval,
+    0.03,
+    0.5,
+    function(value)
+        hitboxSettings.updateInterval = value
+    end
+)
 addFeatureTooltip(
     HitboxFeature,
-    "The real head is fixed at 8 studs. Arms, legs and torso keep their appearance "
-        .. "and are scaled visibly; HumanoidRootPart is never used."
+    "Visible scales the body and pins the head; Root expands only the invisible "
+        .. "HumanoidRootPart; Hybrid does both. Originals are restored exactly on disable."
 )
 end
 
@@ -10242,26 +10652,26 @@ local FullbrightFeature = createUniversalFeature(
     "Fullbright",
     "Keep the scene bright and remove global shadows",
     15,
-    toggleFullbright
+    state.toggleFullbright
 )
 addNumberOption(
     FullbrightFeature,
     "Brightness",
-    fullbrightSettings.brightness,
+    state.fullbrightSettings.brightness,
     0,
     10,
     function(value)
-        fullbrightSettings.brightness = value
+        state.fullbrightSettings.brightness = value
     end
 )
 addNumberOption(
     FullbrightFeature,
     "Clock time",
-    fullbrightSettings.clockTime,
+    state.fullbrightSettings.clockTime,
     0,
     24,
     function(value)
-        fullbrightSettings.clockTime = value
+        state.fullbrightSettings.clockTime = value
     end
 )
 end
@@ -10476,9 +10886,18 @@ end
 do
 local PhaseDashFeature = createUniversalFeature(
     "Phase Dash",
-    "Collision-aware directional blink with a technical phase flash",
+    "Directional dash: collision-aware blink or a velocity slide",
     25,
     state.universalToolkit.togglePhaseDash
+)
+addCycleOption(
+    PhaseDashFeature,
+    "Mode",
+    {"Blink", "Slide"},
+    1,
+    function(value: string): ()
+        state.universalToolkit.phaseDashSettings.mode = value
+    end
 )
 addNumberOption(
     PhaseDashFeature,
@@ -10510,6 +10929,36 @@ addNumberOption(
         state.universalToolkit.phaseDashSettings.exitSpeed = value
     end
 )
+addNumberOption(
+    PhaseDashFeature,
+    "Slide speed",
+    state.universalToolkit.phaseDashSettings.slideSpeed,
+    20,
+    250,
+    function(value: number): ()
+        state.universalToolkit.phaseDashSettings.slideSpeed = value
+    end
+)
+addNumberOption(
+    PhaseDashFeature,
+    "Collision padding",
+    state.universalToolkit.phaseDashSettings.collisionPadding,
+    0,
+    8,
+    function(value: number): ()
+        state.universalToolkit.phaseDashSettings.collisionPadding = value
+    end
+)
+addNumberOption(
+    PhaseDashFeature,
+    "Flash duration (s)",
+    state.universalToolkit.phaseDashSettings.flashDuration,
+    0.05,
+    1.2,
+    function(value: number): ()
+        state.universalToolkit.phaseDashSettings.flashDuration = value
+    end
+)
 addToggleOption(
     PhaseDashFeature,
     "Preserve velocity",
@@ -10518,7 +10967,7 @@ addToggleOption(
         state.universalToolkit.phaseDashSettings.preserveVelocity = value
     end
 )
-local PhaseDashKeyButton: TextButton = addKeyOption(
+state.phaseDashKeyButton = addKeyOption(
     PhaseDashFeature,
     "Dash key",
     state.universalToolkit.phaseDashSettings.key,
@@ -10528,7 +10977,7 @@ local PhaseDashKeyButton: TextButton = addKeyOption(
 )
 if state.bindMobileActionPlacement then
     state.bindMobileActionPlacement(
-        PhaseDashKeyButton,
+        state.phaseDashKeyButton,
         "UniversalPhaseDash",
         "DASH",
         state.universalToolkit.performPhaseDash
@@ -10539,9 +10988,18 @@ end
 do
 local SoftLandingFeature = createUniversalFeature(
     "Soft Landing",
-    "Detect nearby ground and damp dangerous downward velocity",
+    "Dampen dangerous falls near ground or glide the whole descent",
     26,
     state.universalToolkit.toggleSoftLanding
+)
+addCycleOption(
+    SoftLandingFeature,
+    "Mode",
+    {"Landing", "Feather", "Auto"},
+    1,
+    function(value: string): ()
+        state.universalToolkit.softLandingSettings.mode = value
+    end
 )
 addNumberOption(
     SoftLandingFeature,
@@ -10573,16 +11031,99 @@ addNumberOption(
         state.universalToolkit.softLandingSettings.landingSpeed = value
     end
 )
+addNumberOption(
+    SoftLandingFeature,
+    "Glide speed",
+    state.universalToolkit.softLandingSettings.glideSpeed,
+    8,
+    40,
+    function(value: number): ()
+        state.universalToolkit.softLandingSettings.glideSpeed = value
+    end
+)
+addToggleOption(
+    SoftLandingFeature,
+    "Preserve momentum",
+    state.universalToolkit.softLandingSettings.preserveMomentum,
+    function(value: boolean): ()
+        state.universalToolkit.softLandingSettings.preserveMomentum = value
+    end
+)
 end
 
 do
 local ProjectileCalibrationFeature: any = createUniversalFeature(
     "Projectile Calibration",
-    "Automatic per-game projectile analytics with isolated 5 ms ping buckets",
+    "Automatic per-game projectile analytics with tunable ping buckets",
     17,
     function(_enabled: boolean): () end,
     {category = true}
 )
+state.projectileSettings =
+    state.universalProjectileCalibration.settings
+addNumberOption(
+    ProjectileCalibrationFeature,
+    "Bucket width (ms)",
+    state.projectileSettings.bucketWidthMs,
+    1,
+    25,
+    function(value: number): ()
+        state.projectileSettings.bucketWidthMs = math.round(value)
+    end
+)
+addNumberOption(
+    ProjectileCalibrationFeature,
+    "Bucket ceiling (ms)",
+    state.projectileSettings.maxBucketMs,
+    25,
+    500,
+    function(value: number): ()
+        state.projectileSettings.maxBucketMs = math.round(value)
+    end
+)
+addNumberOption(
+    ProjectileCalibrationFeature,
+    "Sample window (s)",
+    state.projectileSettings.sampleWindowSeconds,
+    1,
+    6,
+    function(value: number): ()
+        state.projectileSettings.sampleWindowSeconds = value
+    end
+)
+addNumberOption(
+    ProjectileCalibrationFeature,
+    "Max samples / track",
+    state.projectileSettings.maxSamplesPerTrack,
+    30,
+    600,
+    function(value: number): ()
+        state.projectileSettings.maxSamplesPerTrack = math.round(value)
+    end
+)
+addNumberOption(
+    ProjectileCalibrationFeature,
+    "Match radius (studs)",
+    state.projectileSettings.matchDistanceStuds,
+    10,
+    120,
+    function(value: number): ()
+        state.projectileSettings.matchDistanceStuds = math.round(value)
+    end
+)
+addNumberOption(
+    ProjectileCalibrationFeature,
+    "Min projectile speed",
+    state.projectileSettings.minProjectileSpeed,
+    1,
+    100,
+    function(value: number): ()
+        state.projectileSettings.minProjectileSpeed = math.round(value)
+    end
+)
+addActionOption(ProjectileCalibrationFeature, "Show status", function(): ()
+    notify(state.universalProjectileCalibration:status())
+end)
 addActionOption(ProjectileCalibrationFeature, "Save analytics", function(): ()
     if state.universalProjectileCalibration:save("manual") then
         notify("Universal projectile analytics saved in the executor workspace.")

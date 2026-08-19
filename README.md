@@ -35,8 +35,12 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
   curtain if the sequence thread ever dies, and a failed bootstrap keeps the
   curtain up so its error message stays readable.
 - The fixed-size headerless shell owns sidebar search, navigation,
-  translucent cards, notifications and a drag strip. It is the only visual
-  theme, so every injection opens the same coherent interface.
+  translucent cards, notifications and an invisible drag surface. The window
+  is fully borderless: there is no stroke, frame or grip handle anywhere —
+  the first 14 px of the shell are a completely transparent drag zone, so the
+  menu moves by grabbing its rounded top edge without any visible grey strip
+  or corner border. It is the only visual theme, so every injection opens the
+  same coherent interface.
 - The interface is deliberately neutral: a single monochrome palette built from
   near-black surfaces, grey outlines and one off-white accent, defined once in
   the `Theme` table. There is no decorative background art, mascot or branded
@@ -44,10 +48,11 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
   failures) rather than menu chrome.
 - Every square-ish surface rounds its corners through one `cornerRadius()`
   helper instead of hard-coding `UDim.new(0, n)`, so the shell, the overlay
-  windows and every card share a single silhouette. The curve is deliberately
-  restrained — corners read as circular arcs, never as pills. Genuine
-  pills and circles (switch tracks, knobs, progress bars, radar, blips) keep
-  using `UDim.new(1, 0)` and are untouched by the helper.
+  windows and every card share a single silhouette. The main window and its
+  shell round generously (≈29 px) so the whole menu reads as one smooth,
+  circular-cornered surface; small controls stay restrained. Genuine pills
+  and circles (switch tracks, knobs, progress bars, radar, blips) keep using
+  `UDim.new(1, 0)` and are untouched by the helper.
 - Modules are filed under categories (Player, Combat, Visuals, Protection,
   Utility, and a `General` catch-all that always sorts last) and sorted
   alphabetically inside each one. A card publishes its category and sort name
@@ -58,10 +63,19 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
 - Module customisation panels are made of self-contained rows: each setting is
   its own rounded card with a hairline border and a hover highlight, an
   optional second line explaining what it does, and a control aligned to a
-  shared right-hand band. Cycle buttons carry an `n/total` counter, numeric
-  fields advertise their accepted interval as placeholder text, and long panels
-  can be broken up with section headings that fold away together with the
-  controls they label. Fly is the reference layout.
+  shared right-hand band. Every row in every module shares the same geometry —
+  labels end at 48% of the row, controls occupy the exact same 50%→edge
+  rectangle whether they are switches, sliders, key slots, text boxes or
+  action pairs — so panels with and without keybinds look symmetric. Cycle
+  buttons carry an `n/total` counter, numeric fields advertise their accepted
+  interval as placeholder text, and long panels can be broken up with section
+  headings that fold away together with the controls they label. Fly is the
+  reference layout.
+- Every interactive Universal/Movement module without its own key option
+  automatically receives a standard **Toggle key** row as its final row, and
+  every card header carries the same favourite / key-slot / expand trio
+  (actions run and categories expand from their key slot too), so no module
+  ever looks like the odd one out in the list.
 - The reusable `gui.lua` owns its image catalog, executor-safe asset cache,
   settings, draggable shell, tabs and `createModule()` component API. Game
   modules only provide their controls and callbacks.
@@ -102,8 +116,21 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
   Speed provides Adaptive, Smooth, Boost and Teleport modes plus acceleration,
   air control, sprint, momentum retention, wall safety, auto-jump and vehicle
   tuning. Player ESP, X-Ray, High Jump, Spider, Safe Walk, Zoom Unlocker,
-  Interact Extender, collision-aware Phase Dash, Soft Landing and a Rejoin
-  action extend the universal toolkit.
+  Interact Extender, a Rejoin action and a rewritten Hitboxes engine extend
+  the universal toolkit.
+- **Hitboxes** were rewritten around a mode system — Visible (scaled body,
+  pinned head), Root (phantom HumanoidRootPart block) and Hybrid — with
+  independent head/root sizes, reveal/transparency, collision, mass,
+  accessory handling and a tunable refresh interval. Original part states are
+  recorded once and restored exactly, and switching modes unwinds the parts
+  the new mode no longer targets.
+- **Phase Dash** now offers Blink (collision-aware teleport) and Slide
+  (velocity burst) modes plus collision padding, flash duration and a
+  separate slide speed. **Soft Landing** gained Landing / Feather / Auto
+  modes, a glide speed and momentum preservation. **Projectile Calibration**
+  exposes live-tunable analysis knobs — ping bucket width and ceiling,
+  sample window, per-track sample cap, match radius, minimum projectile
+  speed — alongside Save / Delete / Show-status actions.
 - Universal runtime toolkits initialize inside isolated function scopes so
   older executor compilers stay safely below Luau's 200-register ceiling.
 
