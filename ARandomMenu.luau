@@ -1263,50 +1263,6 @@ local function makeButton(
     return button :: TextButton
 end
 
-local function makeAssetIcon(
-    parent: Instance,
-    assetName: string,
-    color: Color3,
-    size: UDim2?,
-    position: UDim2?,
-    zIndex: number?,
-    onResolved: ((boolean) -> ())?
-): ImageLabel
-    local icon: ImageLabel = create("ImageLabel", {
-        Parent = parent,
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        Image = "",
-        ImageColor3 = color,
-        Position = position or UDim2.fromScale(0, 0),
-        ScaleType = Enum.ScaleType.Fit,
-        Size = size or UDim2.fromScale(1, 1),
-        ZIndex = zIndex or ((parent:IsA("GuiObject") and parent.ZIndex or 1) + 1),
-    }) :: ImageLabel
-    state.assetManager.loadAsync(assetName, icon, onResolved)
-    return icon
-end
-
-local function decorateKeySlot(button: TextButton): ()
-    if button:FindFirstChild("AstraKeyFrame") then
-        return
-    end
-    local frame: ImageLabel = makeAssetIcon(
-        button,
-        "keybindPill",
-        Theme.DefaultText,
-        UDim2.fromScale(1, 1),
-        UDim2.fromScale(0, 0),
-        button.ZIndex,
-        nil
-    )
-    frame.Name = "AstraKeyFrame"
-    frame.ImageTransparency = 0.48
-    frame.ScaleType = Enum.ScaleType.Slice
-    frame.SliceCenter = Rect.new(300, 300, 1870, 420)
-    frame.SliceScale = 0.5
-end
-
 local function setAuroraSwitch(button: TextButton, enabled: boolean, animate: boolean?): ()
     button:SetAttribute("Checked", enabled)
     local track: Frame? = button:FindFirstChild("SwitchTrack") :: Frame?
@@ -1361,17 +1317,6 @@ local function createAuroraSwitch(
         ZIndex = button.ZIndex + 1,
     }) :: Frame
     create("UICorner", {Parent = track, CornerRadius = UDim.new(1, 0)})
-    local texture: ImageLabel = makeAssetIcon(
-        track,
-        "toggleTexture",
-        Theme.DefaultText,
-        UDim2.fromScale(1, 1),
-        UDim2.fromScale(0, 0),
-        track.ZIndex + 1,
-        nil
-    )
-    texture.Name = "Texture"
-    texture.ImageTransparency = 0.68
     local knobSize: number = switchHeight - 6
     local knob: Frame = create("Frame", {
         Parent = track,
@@ -1403,7 +1348,6 @@ local function applyKeySlotStyle(button: TextButton): ()
     button:SetAttribute("IdleColor", Theme.DefaultSurface)
     button:SetAttribute("HoverColor", Theme.DefaultSurfaceHover)
     button:SetAttribute("PressedColor", Theme.DefaultButtonPressed)
-    decorateKeySlot(button)
     local buttonStroke: UIStroke? = button:FindFirstChildOfClass("UIStroke")
     if buttonStroke then
         buttonStroke.Color = Theme.DefaultOutline
@@ -1729,21 +1673,9 @@ local _MainCorner: UICorner, MainStroke: UIStroke = addRoundedStyle(Main, 14, 0.
 MainStroke.Thickness = 1
 MainStroke.Color = Theme.DefaultOutline
 MainStroke.Transparency = 0.58
-local MainStrokeGradient: UIGradient = Instance.new("UIGradient")
-MainStrokeGradient.Color = ColorSequence.new({
-    ColorSequenceKeypoint.new(0, Color3.fromRGB(24, 62, 76)),
-    ColorSequenceKeypoint.new(0.32, Theme.Accent),
-    ColorSequenceKeypoint.new(0.61, Theme.AccentViolet),
-    ColorSequenceKeypoint.new(1, Color3.fromRGB(34, 91, 109)),
-})
-MainStrokeGradient.Rotation = 8
-MainStrokeGradient.Parent = MainStroke
-MainStrokeGradient.Enabled = false
 state.mainStroke = MainStroke
-state.mainStrokeGradient = MainStrokeGradient
 end
 
-local DefaultPanelBackground: ImageLabel = nil :: any
 local Content: Frame = nil :: any
 local DefaultDragZone: Frame = nil :: any
 
@@ -1857,18 +1789,6 @@ create("UICorner", {
     Parent = DefaultContentHost,
     CornerRadius = UDim.new(0, 14),
 })
-DefaultPanelBackground = (create("ImageLabel", {
-    Parent = DefaultShell,
-    Name = "PurplePanelBackground",
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    Image = "",
-    ImageColor3 = Color3.fromRGB(255, 255, 255),
-    ImageTransparency = 0.02,
-    ScaleType = Enum.ScaleType.Crop,
-    Size = UDim2.fromScale(1, 1),
-    ZIndex = 1,
-}) :: any) :: ImageLabel
 create("Frame", {
     Parent = DefaultShell,
     Name = "DefaultReadabilityLayer",
@@ -1878,7 +1798,6 @@ create("Frame", {
     Size = UDim2.fromScale(1, 1),
     ZIndex = 2,
 })
-state.assetManager.loadAsync("purpleBackground", DefaultPanelBackground)
 
 Content = create("Frame", {
     Parent = DefaultContentHost,
@@ -1924,11 +1843,6 @@ local function setTab(tabName: string): ()
             or Theme.DefaultSidebar
         button.BackgroundTransparency = selected and 0.34 or 1
         button.TextColor3 = selected and Theme.DefaultText or Theme.DefaultTextMuted
-        local tabIcon: ImageLabel? = button:FindFirstChild("TabIcon") :: ImageLabel?
-        if tabIcon then
-            tabIcon.ImageColor3 = selected and Theme.AccentCyan or Theme.DefaultTextMuted
-            tabIcon.ImageTransparency = selected and 0 or 0.28
-        end
         local tabStroke: UIStroke? = button:FindFirstChild("StyleStroke") :: UIStroke?
         if tabStroke then
             tabStroke.Color = Theme.DefaultOutline
@@ -1958,27 +1872,10 @@ local function createTab(tabName: string, layoutOrder: number): Frame
     defaultButton:SetAttribute("HoverColor", Theme.DefaultSurfaceHover)
     local defaultPadding: UIPadding = create("UIPadding", {
         Parent = defaultButton,
-        PaddingLeft = UDim.new(0, 36),
+        PaddingLeft = UDim.new(0, 14),
         PaddingRight = UDim.new(0, 10),
     }) :: UIPadding
     defaultPadding.Name = "DefaultTabPadding"
-    local tabAsset: string = tabName == "Universal" and "home"
-        or (tabName == "Movement" and "tools")
-        or (tabName == "MM2" and "target")
-        or (tabName == "TRS" and "user")
-        or (tabName == "VD" and "shield")
-        or (tabName == "MVSD" and "visuals")
-        or "settings"
-    local tabIcon: ImageLabel = makeAssetIcon(
-        defaultButton,
-        tabAsset,
-        Theme.DefaultTextMuted,
-        UDim2.fromOffset(17, 17),
-        UDim2.new(0, 11, 0.5, -8),
-        13,
-        nil
-    )
-    tabIcon.Name = "TabIcon"
     defaultTabButtons[tabName] = defaultButton
 
     local page: Frame = create("Frame", {
@@ -2045,7 +1942,7 @@ DefaultSearchBox.TextYAlignment = Enum.TextYAlignment.Center
 DefaultSearchBox.ZIndex = 14
 create("UIPadding", {
     Parent = DefaultSearchBox,
-    PaddingLeft = UDim.new(0, 36),
+    PaddingLeft = UDim.new(0, 14),
     PaddingRight = UDim.new(0, 36),
 })
 local DefaultSearchCorner: UICorner? =
@@ -2059,22 +1956,6 @@ if DefaultSearchStroke then
     DefaultSearchStroke.Color = Theme.DefaultOutline
     DefaultSearchStroke.Transparency = 0.72
 end
-local DefaultSearchIcon: ImageLabel = create("ImageLabel", {
-    Parent = DefaultSearchBox,
-    Name = "SearchIcon",
-    Active = false,
-    AnchorPoint = Vector2.new(0, 0.5),
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    Image = "",
-    ImageColor3 = Theme.DefaultTextMuted,
-    ImageTransparency = 0.14,
-    Position = UDim2.new(0, 11, 0.5, 0),
-    ScaleType = Enum.ScaleType.Fit,
-    Size = UDim2.fromOffset(15, 15),
-    ZIndex = 15,
-}) :: ImageLabel
-state.assetManager.loadAsync("search", DefaultSearchIcon)
 local SearchClear: TextButton = makeButton(DefaultSearchBox, "x", 9)
 SearchClear.Name = "ClearSearch"
 SearchClear.AnchorPoint = Vector2.new(1, 0.5)
@@ -2090,19 +1971,6 @@ local SearchClearStroke: UIStroke? =
 if SearchClearStroke then
     SearchClearStroke.Enabled = false
 end
-makeAssetIcon(
-    SearchClear,
-    "close",
-    Theme.DefaultTextMuted,
-    UDim2.fromOffset(12, 12),
-    UDim2.new(0.5, -6, 0.5, -6),
-    17,
-    function(success: boolean): ()
-        if success and SearchClear.Parent then
-            SearchClear.Text = ""
-        end
-    end
-)
 trackUiConnection(SearchClear.MouseButton1Click:Connect(function(): ()
     DefaultSearchBox.Text = ""
     DefaultSearchBox:ReleaseFocus()
@@ -2110,20 +1978,16 @@ end))
 trackUiConnection(DefaultSearchBox.Focused:Connect(function(): ()
     if DefaultSearchStroke then
         TweenService:Create(DefaultSearchStroke, TweenInfo.new(0.16), {
-            Transparency = 0.28,
-            Color = Theme.AccentViolet,
+            Transparency = 0.32,
         }):Play()
     end
-    DefaultSearchIcon.ImageColor3 = Theme.AccentCyan
 end))
 trackUiConnection(DefaultSearchBox.FocusLost:Connect(function(): ()
     if DefaultSearchStroke then
         TweenService:Create(DefaultSearchStroke, TweenInfo.new(0.16), {
             Transparency = 0.72,
-            Color = Theme.DefaultOutline,
         }):Play()
     end
-    DefaultSearchIcon.ImageColor3 = Theme.DefaultTextMuted
 end))
 state.shells.defaultSearchBox = DefaultSearchBox
 state.shells.searchClear = SearchClear
@@ -2268,22 +2132,35 @@ create("UICorner", {
     CornerRadius = UDim.new(0, 10),
 })
 
-local LoadingSpinner: ImageLabel = create("ImageLabel", {
+local LoadingSpinner: Frame = create("Frame", {
     Parent = LoadingCurtain,
     Name = "Spinner",
     AnchorPoint = Vector2.new(0.5, 0.5),
     BackgroundTransparency = 1,
     BorderSizePixel = 0,
-    Image = "",
-    ImageColor3 = state.guiStyle == "Default"
+    Position = UDim2.fromScale(0.5, 0.37),
+    Size = UDim2.fromOffset(state.isMobile and 36 or 40, state.isMobile and 36 or 40),
+    ZIndex = 503,
+}) :: Frame
+create("UICorner", {Parent = LoadingSpinner, CornerRadius = UDim.new(1, 0)})
+create("UIStroke", {
+    Parent = LoadingSpinner,
+    Color = Theme.DefaultOutline,
+    Transparency = 0.55,
+    Thickness = 3,
+})
+local LoadingSpinnerHead: Frame = create("Frame", {
+    Parent = LoadingSpinner,
+    AnchorPoint = Vector2.new(0.5, 0),
+    BackgroundColor3 = state.guiStyle == "Default"
         and Theme.DefaultAccent
         or Color3.fromRGB(224, 224, 228),
-    Position = UDim2.fromScale(0.5, 0.37),
-    ScaleType = Enum.ScaleType.Fit,
-    Size = UDim2.fromOffset(state.isMobile and 48 or 58, state.isMobile and 48 or 58),
-    ZIndex = 503,
-}) :: ImageLabel
-state.assetManager.loadAsync("loadingSpinner", LoadingSpinner)
+    BorderSizePixel = 0,
+    Position = UDim2.new(0.5, 0, 0, 2),
+    Size = UDim2.fromOffset(6, 6),
+    ZIndex = 504,
+}) :: Frame
+create("UICorner", {Parent = LoadingSpinnerHead, CornerRadius = UDim.new(1, 0)})
 
 local LoadingSpinnerTween: Tween = TweenService:Create(
     LoadingSpinner,
@@ -2570,8 +2447,8 @@ local function createMobileAction(
     })
     create("UIStroke", {
         Parent = button,
-        Color = Color3.fromRGB(215, 215, 218),
-        Transparency = 0.34,
+        Color = Theme.DefaultOutline,
+        Transparency = 0.55,
         Thickness = 1,
     })
     create("UITextSizeConstraint", {
@@ -2824,29 +2701,12 @@ create("UICorner", {
 })
 create("UIStroke", {
     Parent = MobileMenuButton,
-    Color = Color3.fromRGB(225, 235, 255),
-    Transparency = 0.22,
-    Thickness = 1.5,
-})
-local MobileMenuImage = create("ImageLabel", {
-    Parent = MobileMenuButton,
-    Name = "Icon",
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    Image = "",
-    ScaleType = Enum.ScaleType.Crop,
-    Position = UDim2.fromOffset(3, 3),
-    Size = UDim2.new(1, -6, 1, -6),
-    ZIndex = 191,
-}) :: ImageLabel
-create("UICorner", {
-    Parent = MobileMenuImage,
-    CornerRadius = UDim.new(1, 0),
+    Color = Theme.DefaultOutline,
+    Transparency = 0.55,
+    Thickness = 1,
 })
 
--- The RTM text remains visible while the cached icon is prepared asynchronously.
-state.assetManager.loadAsync("menuToggle", MobileMenuImage)
-
+-- The RTM text remains visible as the button label.
 trackUiConnection(MobileMenuButton.MouseButton1Click:Connect(function(): ()
     if state.setMenuVisible then
         state.setMenuVisible(not state.visible)
@@ -3592,10 +3452,8 @@ local function applyGuiStyle(_: string, animate: boolean): ()
     activeShell.Visible = true
 
     Main.BackgroundColor3 = Theme.DefaultBackground
-    state.mainStrokeGradient.Enabled = false
     state.mainStroke.Color = Theme.DefaultOutline
     state.mainStroke.Transparency = 0.58
-    DefaultPanelBackground.ImageTransparency = 0.02
     for _, page: Frame in pairs(pages) do
         page.BackgroundColor3 = Theme.DefaultBackground
         page.BackgroundTransparency = 1
@@ -3972,32 +3830,10 @@ local function createFloatingWindow(
     local stroke: UIStroke = create("UIStroke", {
         Parent = root,
         Color = Theme.DefaultOutline,
-        Transparency = 0.38,
+        Transparency = 0.55,
         Thickness = 1,
     }) :: UIStroke
-    create("UIGradient", {
-        Parent = stroke,
-        Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Theme.AccentCyan),
-            ColorSequenceKeypoint.new(0.5, Theme.AccentViolet),
-            ColorSequenceKeypoint.new(1, Theme.AccentPink),
-        }),
-        Rotation = 12,
-    })
 
-    local background: ImageLabel = create("ImageLabel", {
-        Parent = root,
-        Name = "AuroraBackground",
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        Image = "",
-        ImageColor3 = Color3.fromRGB(156, 126, 195),
-        ImageTransparency = 0.73,
-        ScaleType = Enum.ScaleType.Crop,
-        Size = UDim2.fromScale(1, 1),
-    }) :: ImageLabel
-    background:SetAttribute("FloatingDepth", 1)
-    state.assetManager.loadAsync("purpleBackground", background)
     local shade: Frame = create("Frame", {
         Parent = root,
         Name = "Readability",
@@ -4020,30 +3856,17 @@ local function createFloatingWindow(
     header:SetAttribute("FloatingDepth", 3)
     local accent: Frame = create("Frame", {
         Parent = header,
-        BackgroundColor3 = Theme.DefaultAccent,
+        BackgroundColor3 = Theme.DefaultOutline,
+        BackgroundTransparency = 0.55,
         BorderSizePixel = 0,
         Position = UDim2.fromOffset(0, 35),
         Size = UDim2.new(1, 0, 0, 1),
     }) :: Frame
     accent:SetAttribute("FloatingDepth", 1)
-    create("UIGradient", {
-        Parent = accent,
-        Color = ColorSequence.new(Theme.AccentCyan, Theme.AccentPink),
-    })
-    local headerSticker: ImageLabel = makeAssetIcon(
-        header,
-        "emoStar",
-        Theme.AccentCyan,
-        UDim2.fromOffset(16, 16),
-        UDim2.new(0, 11, 0.5, -8),
-        root.ZIndex + 5,
-        nil
-    )
-    headerSticker.Name = "AstraSticker"
     local title: TextLabel = makeTextLabel(header, titleText, 11)
     title.FontFace = CONTROL_FONT
-    title.Position = UDim2.fromOffset(34, 0)
-    title.Size = UDim2.new(1, -76, 1, 0)
+    title.Position = UDim2.fromOffset(12, 0)
+    title.Size = UDim2.new(1, -48, 1, 0)
     title.TextColor3 = Theme.DefaultText
     title:SetAttribute("FloatingDepth", 2)
 
@@ -4060,19 +3883,6 @@ local function createFloatingWindow(
     if closeStroke then
         closeStroke.Enabled = false
     end
-    makeAssetIcon(
-        closeButton,
-        "close",
-        Theme.DefaultTextMuted,
-        UDim2.fromOffset(13, 13),
-        UDim2.new(0.5, -6, 0.5, -6),
-        root.ZIndex + 6,
-        function(success: boolean): ()
-            if success and closeButton.Parent then
-                closeButton.Text = ""
-            end
-        end
-    )
 
     local body: Frame = create("Frame", {
         Parent = root,
@@ -4192,19 +4002,11 @@ local function syncFavoriteButton(feature: any): ()
         return
     end
     local selected: boolean = configData.ui.favorites[feature.configKey] == true
-    if not feature.favoriteButton:FindFirstChild("Icon") then
-        feature.favoriteButton.Text = selected and "★" or "☆"
-    end
+    feature.favoriteButton.Text = selected and "★" or "☆"
     feature.favoriteButton.TextColor3 = selected
         and Theme.DefaultAccent
         or Theme.DefaultTextMuted
     feature.favoriteButton.TextTransparency = selected and 0 or 0.34
-    if feature.favoriteIcon then
-        feature.favoriteIcon.ImageColor3 = selected
-            and Theme.AccentPink
-            or Theme.DefaultTextMuted
-        feature.favoriteIcon.ImageTransparency = selected and 0 or 0.3
-    end
 end
 
 local function refreshFavorites(): ()
@@ -4414,19 +4216,6 @@ for index: number, definition: any in ipairs(overlayDefinitions) do
     if settingsStroke then
         settingsStroke.Enabled = false
     end
-    makeAssetIcon(
-        settingsButton,
-        "settings",
-        Theme.DefaultTextMuted,
-        UDim2.fromOffset(16, 16),
-        UDim2.new(0.5, -8, 0.5, -8),
-        managerRow.ZIndex + 3,
-        function(success: boolean): ()
-            if success and settingsButton.Parent then
-                settingsButton.Text = ""
-            end
-        end
-    )
     local toggle: TextButton = createAuroraSwitch(managerRow, false, 42)
     toggle.AnchorPoint = Vector2.new(1, 0.5)
     toggle.Position = UDim2.new(1, -7, 0.5, 0)
@@ -4635,21 +4424,11 @@ local SessionText: TextLabel = makeTextLabel(
     "Session initializing...",
     9
 )
-SessionText.Position = UDim2.fromOffset(42, 8)
-SessionText.Size = UDim2.new(1, -54, 1, -16)
+SessionText.Position = UDim2.fromOffset(12, 8)
+SessionText.Size = UDim2.new(1, -24, 1, -16)
 SessionText.TextColor3 = Theme.DefaultText
 SessionText.TextYAlignment = Enum.TextYAlignment.Top
 SessionText:SetAttribute("FloatingDepth", 2)
-local SessionIcon: ImageLabel = makeAssetIcon(
-    FloatingUi.overlays.SessionInfo.window.body,
-    "chart",
-    Theme.AccentCyan,
-    UDim2.fromOffset(22, 22),
-    UDim2.fromOffset(12, 10),
-    3,
-    nil
-)
-SessionIcon:SetAttribute("FloatingDepth", 3)
 
 local TextGuiBody: Frame = FloatingUi.overlays.TextGUI.window.body
 local TextGuiShadow: TextLabel = makeTextLabel(
@@ -4699,8 +4478,8 @@ TargetPortraitFrame:SetAttribute("FloatingDepth", 2)
 create("UICorner", {Parent = TargetPortraitFrame, CornerRadius = UDim.new(0, 12)})
 create("UIStroke", {
     Parent = TargetPortraitFrame,
-    Color = Theme.AccentViolet,
-    Transparency = 0.24,
+    Color = Theme.DefaultOutline,
+    Transparency = 0.55,
     Thickness = 1,
 })
 local TargetPortrait: ImageLabel = create("ImageLabel", {
@@ -4715,16 +4494,6 @@ local TargetPortrait: ImageLabel = create("ImageLabel", {
 }) :: ImageLabel
 TargetPortrait:SetAttribute("FloatingDepth", 3)
 create("UICorner", {Parent = TargetPortrait, CornerRadius = UDim.new(0, 10)})
-local TargetPlaceholder: ImageLabel = makeAssetIcon(
-    TargetPortraitFrame,
-    "mangaFace",
-    Theme.DefaultTextMuted,
-    UDim2.fromOffset(40, 32),
-    UDim2.new(0.5, -20, 0.5, -16),
-    4,
-    nil
-)
-TargetPlaceholder.ImageTransparency = 0.28
 local TargetName: TextLabel = makeTextLabel(
     TargetBody,
     "No target",
@@ -4782,7 +4551,7 @@ create("UICorner", {Parent = RadarSurface, CornerRadius = UDim.new(1, 0)})
 create("UIStroke", {
     Parent = RadarSurface,
     Color = Theme.DefaultOutline,
-    Transparency = 0.48,
+    Transparency = 0.55,
 })
 local radarAxes: {Frame} = {}
 for _, rotation: number in ipairs({0, 90}) do
@@ -4813,7 +4582,7 @@ for _, scale: number in ipairs({0.34, 0.67}) do
     create("UIStroke", {
         Parent = ring,
         Color = Theme.DefaultOutline,
-        Transparency = 0.76,
+        Transparency = 0.7,
         Thickness = 1,
     })
     table.insert(radarRings, ring)
@@ -4898,7 +4667,6 @@ local function requestTargetThumbnail(player: Player?): ()
     thumbnailGeneration += 1
     local generation: number = thumbnailGeneration
     TargetPortrait.Image = userId > 0 and (thumbnailCache[userId] or "") or ""
-    TargetPlaceholder.Visible = TargetPortrait.Image == ""
     if userId <= 0 or thumbnailCache[userId] then
         return
     end
@@ -4914,7 +4682,6 @@ local function requestTargetThumbnail(player: Player?): ()
             thumbnailCache[userId] = image
             if generation == thumbnailGeneration and TargetPortrait.Parent then
                 TargetPortrait.Image = image
-                TargetPlaceholder.Visible = false
             end
         elseif generation == thumbnailGeneration then
             task.delay(1, function(): ()
@@ -5066,12 +4833,9 @@ TaskManager:Connect(function(deltaTime: number): ()
         TextGuiBody.BackgroundTransparency = textGuiSettings.background and 0.42 or 1
         local textWindowRoot: Frame = FloatingUi.overlays.TextGUI.window.root
         local textHeader: Frame? = textWindowRoot:FindFirstChild("Header") :: Frame?
-        local textBackground: ImageLabel? =
-            textWindowRoot:FindFirstChild("AuroraBackground") :: ImageLabel?
         local textShade: Frame? = textWindowRoot:FindFirstChild("Readability") :: Frame?
         local textStroke: UIStroke? = textWindowRoot:FindFirstChildOfClass("UIStroke")
         if textHeader then textHeader.Visible = state.visible end
-        if textBackground then textBackground.Visible = state.visible end
         if textShade then textShade.Visible = state.visible or textGuiSettings.background end
         if textStroke then textStroke.Transparency = state.visible and 0.38 or 1 end
         textWindowRoot.Active = state.visible
@@ -5347,7 +5111,7 @@ create("UICorner", {Parent = FloatingButtons, CornerRadius = UDim.new(0, 9)})
 create("UIStroke", {
     Parent = FloatingButtons,
     Color = Theme.DefaultOutline,
-    Transparency = 0.72,
+    Transparency = 0.55,
 })
 create("UIListLayout", {
     Parent = FloatingButtons,
@@ -5359,11 +5123,10 @@ create("UIListLayout", {
 
 local function createFloatingLauncher(
     name: string,
-    assetName: string,
     fallbackText: string,
     callback: () -> ()
 ): TextButton
-    local button: TextButton = makeButton(FloatingButtons, fallbackText, 12)
+    local button: TextButton = makeButton(FloatingButtons, fallbackText, 9)
     button.Name = name
     button.BackgroundTransparency = 1
     button.Size = UDim2.fromOffset(32, 28)
@@ -5373,34 +5136,11 @@ local function createFloatingLauncher(
     if stroke then
         stroke.Enabled = false
     end
-    local frame: ImageLabel = makeAssetIcon(
-        button,
-        "iconFrame",
-        Theme.AccentViolet,
-        UDim2.fromOffset(28, 28),
-        UDim2.fromOffset(2, 0),
-        25,
-        nil
-    )
-    frame.ImageTransparency = 0.36
-    local icon: ImageLabel = makeAssetIcon(
-        button,
-        assetName,
-        Theme.DefaultTextMuted,
-        UDim2.fromOffset(17, 17),
-        UDim2.fromOffset(8, 5),
-        26,
-        function(success: boolean): ()
-            if success and button.Parent then
-                button.Text = ""
-            end
-        end
-    )
     trackUiConnection(button.MouseButton1Click:Connect(callback))
     return button
 end
 
-createFloatingLauncher("Favorites", "star", "★", function(): ()
+createFloatingLauncher("Favorites", "FAV", function(): ()
     FavoritesWindow.root.Visible = not FavoritesWindow.root.Visible
     configData.ui.favoritesWindowOpen = FavoritesWindow.root.Visible
     if FavoritesWindow.root.Visible then
@@ -5409,7 +5149,7 @@ createFloatingLauncher("Favorites", "star", "★", function(): ()
     end
     queueConfigSave()
 end)
-createFloatingLauncher("Overlays", "overlays", "▥", function(): ()
+createFloatingLauncher("Overlays", "OVR", function(): ()
     OverlayMenu.root.Visible = not OverlayMenu.root.Visible
     configData.ui.overlayMenuOpen = OverlayMenu.root.Visible
     if OverlayMenu.root.Visible then
@@ -5773,20 +5513,6 @@ local function createUniversalFeature(
         Rotation = 90,
     })
     feature.activeStripe = activeStripe
-    if feature.isAction or feature.isCategory then
-        local decoration: ImageLabel = makeAssetIcon(
-            row,
-            "panelSlash",
-            feature.isAction and Theme.AccentPink or Theme.AccentViolet,
-            UDim2.new(0.42, 0, 1, 0),
-            UDim2.new(0.58, 0, 0, 0),
-            2,
-            nil
-        )
-        decoration.Name = "AstraCardDecoration"
-        decoration.ImageTransparency = 0.88
-        decoration.ScaleType = Enum.ScaleType.Crop
-    end
 
     local title: TextLabel = (makeTextLabel(row, name, 13) :: any) :: TextLabel
     title.FontFace = CONTROL_FONT
@@ -5847,23 +5573,8 @@ local function createUniversalFeature(
     if arrowStroke then
         arrowStroke.Enabled = false
     end
-    local arrowIcon: ImageLabel = makeAssetIcon(
-        arrow,
-        "ellipsis",
-        Theme.DefaultTextMuted,
-        UDim2.fromOffset(18, 12),
-        UDim2.new(0.5, -9, 0.5, -6),
-        10,
-        function(success: boolean): ()
-            if success and arrow.Parent then
-                arrow.Text = ""
-            end
-        end
-    )
-    arrowIcon.Name = "Icon"
     if configuration.noOptions == true then
         arrow.Text = ""
-        arrowIcon.ImageTransparency = 1
     end
     feature.arrow = arrow
 
@@ -6068,7 +5779,7 @@ local function createUniversalFeature(
     trackUiConnection(activationTarget.MouseButton1Click:Connect(activateFeature))
     do
         local favoriteButton: TextButton =
-            (makeButton(headerControls, "*", 11) :: any) :: TextButton
+            (makeButton(headerControls, "☆", 11) :: any) :: TextButton
         favoriteButton.Name = "Favorite"
         favoriteButton.LayoutOrder = 1
         favoriteButton:SetAttribute("ThemeRole", "Icon")
@@ -6081,21 +5792,6 @@ local function createUniversalFeature(
         if favoriteStroke then
             favoriteStroke.Enabled = false
         end
-        local favoriteIcon: ImageLabel = makeAssetIcon(
-            favoriteButton,
-            "star",
-            Theme.DefaultTextMuted,
-            UDim2.fromOffset(18, 18),
-            UDim2.new(0.5, -9, 0.5, -9),
-            10,
-            function(success: boolean): ()
-                if success and favoriteButton.Parent then
-                    favoriteButton.Text = ""
-                end
-            end
-        )
-        favoriteIcon.Name = "Icon"
-        feature.favoriteIcon = favoriteIcon
         feature.favoriteButton = favoriteButton
         trackUiConnection(favoriteButton.MouseButton1Click:Connect(function(): ()
             state.floatingUi.toggleFavorite(feature)
@@ -6134,6 +5830,7 @@ local function createUniversalFeature(
 
     if not feature.isAction
         and not feature.isCategory
+        and configuration.restore ~= false
         and configData.states[feature.configKey] == true then
         task.defer(function(): ()
             local success: boolean, errorMessage: any = pcall(
@@ -6284,16 +5981,6 @@ local function addActionOption(
         or Theme.AccentSoft
     button.Position = UDim2.new(0.72, 0, 0, 0)
     button.Size = UDim2.new(0.28, 0, 1, 0)
-    local actionIcon: ImageLabel = makeAssetIcon(
-        button,
-        "flame",
-        Theme.AccentPink,
-        UDim2.fromOffset(13, 15),
-        UDim2.new(0, 7, 0.5, -7),
-        button.ZIndex + 1,
-        nil
-    )
-    actionIcon.ImageTransparency = 0.12
     local function executeAction(): ()
         runActionButton(
             button,
@@ -6571,16 +6258,6 @@ local function addCycleOption(
     local button = makeButton(option, values[index], 11)
     button.Position = UDim2.new(0.5, 0, 0, 0)
     button.Size = UDim2.new(0.5, 0, 1, 0)
-    local cycleIcon: ImageLabel = makeAssetIcon(
-        button,
-        "arrowDown",
-        Theme.DefaultTextMuted,
-        UDim2.fromOffset(11, 11),
-        UDim2.new(1, -18, 0.5, -5),
-        button.ZIndex + 1,
-        nil
-    )
-    cycleIcon.ImageTransparency = 0.18
 
     button.MouseButton1Click:Connect(function()
         index = index % #values + 1
@@ -10600,8 +10277,8 @@ create("UICorner", {
 })
 create("UIStroke", {
     Parent = TextSizeKnob,
-    Color = Color3.fromRGB(120, 120, 126),
-    Transparency = 0.12,
+    Color = Theme.DefaultOutline,
+    Transparency = 0.55,
     Thickness = 1,
 })
 local baseRestyleSettings: (boolean) -> () = state.restyleSettings
