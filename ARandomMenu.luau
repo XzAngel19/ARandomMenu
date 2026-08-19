@@ -9346,13 +9346,13 @@ performFling = function(targetPlayer: Player): ()
     end)
 end
 
-local fullbrightSettings = {
+state.fullbrightSettings = {
     brightness = 3,
     clockTime = 14,
 }
 state.originalLighting = nil
 
-local function toggleFullbright(enabled)
+state.toggleFullbright = function(enabled)
     disconnectFeatureConnection("Fullbright")
 
     if not enabled then
@@ -9377,8 +9377,8 @@ local function toggleFullbright(enabled)
     }
 
     featureConnections.Fullbright = TaskManager:Connect(function()
-        Lighting.Brightness = fullbrightSettings.brightness
-        Lighting.ClockTime = fullbrightSettings.clockTime
+        Lighting.Brightness = state.fullbrightSettings.brightness
+        Lighting.ClockTime = state.fullbrightSettings.clockTime
         Lighting.GlobalShadows = false
         Lighting.FogEnd = 100000
         Lighting.Ambient = Color3.fromRGB(178, 178, 178)
@@ -10652,26 +10652,26 @@ local FullbrightFeature = createUniversalFeature(
     "Fullbright",
     "Keep the scene bright and remove global shadows",
     15,
-    toggleFullbright
+    state.toggleFullbright
 )
 addNumberOption(
     FullbrightFeature,
     "Brightness",
-    fullbrightSettings.brightness,
+    state.fullbrightSettings.brightness,
     0,
     10,
     function(value)
-        fullbrightSettings.brightness = value
+        state.fullbrightSettings.brightness = value
     end
 )
 addNumberOption(
     FullbrightFeature,
     "Clock time",
-    fullbrightSettings.clockTime,
+    state.fullbrightSettings.clockTime,
     0,
     24,
     function(value)
-        fullbrightSettings.clockTime = value
+        state.fullbrightSettings.clockTime = value
     end
 )
 end
