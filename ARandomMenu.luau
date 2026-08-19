@@ -11059,66 +11059,66 @@ local ProjectileCalibrationFeature: any = createUniversalFeature(
     function(_enabled: boolean): () end,
     {category = true}
 )
-local ProjectileSettings: {[string]: number} =
+state.projectileSettings =
     state.universalProjectileCalibration.settings
 addNumberOption(
     ProjectileCalibrationFeature,
     "Bucket width (ms)",
-    ProjectileSettings.bucketWidthMs,
+    state.projectileSettings.bucketWidthMs,
     1,
     25,
     function(value: number): ()
-        ProjectileSettings.bucketWidthMs = math.round(value)
+        state.projectileSettings.bucketWidthMs = math.round(value)
     end
 )
 addNumberOption(
     ProjectileCalibrationFeature,
     "Bucket ceiling (ms)",
-    ProjectileSettings.maxBucketMs,
+    state.projectileSettings.maxBucketMs,
     25,
     500,
     function(value: number): ()
-        ProjectileSettings.maxBucketMs = math.round(value)
+        state.projectileSettings.maxBucketMs = math.round(value)
     end
 )
 addNumberOption(
     ProjectileCalibrationFeature,
     "Sample window (s)",
-    ProjectileSettings.sampleWindowSeconds,
+    state.projectileSettings.sampleWindowSeconds,
     1,
     6,
     function(value: number): ()
-        ProjectileSettings.sampleWindowSeconds = value
+        state.projectileSettings.sampleWindowSeconds = value
     end
 )
 addNumberOption(
     ProjectileCalibrationFeature,
     "Max samples / track",
-    ProjectileSettings.maxSamplesPerTrack,
+    state.projectileSettings.maxSamplesPerTrack,
     30,
     600,
     function(value: number): ()
-        ProjectileSettings.maxSamplesPerTrack = math.round(value)
+        state.projectileSettings.maxSamplesPerTrack = math.round(value)
     end
 )
 addNumberOption(
     ProjectileCalibrationFeature,
     "Match radius (studs)",
-    ProjectileSettings.matchDistanceStuds,
+    state.projectileSettings.matchDistanceStuds,
     10,
     120,
     function(value: number): ()
-        ProjectileSettings.matchDistanceStuds = math.round(value)
+        state.projectileSettings.matchDistanceStuds = math.round(value)
     end
 )
 addNumberOption(
     ProjectileCalibrationFeature,
     "Min projectile speed",
-    ProjectileSettings.minProjectileSpeed,
+    state.projectileSettings.minProjectileSpeed,
     1,
     100,
     function(value: number): ()
-        ProjectileSettings.minProjectileSpeed = math.round(value)
+        state.projectileSettings.minProjectileSpeed = math.round(value)
     end
 )
 addActionOption(ProjectileCalibrationFeature, "Show status", function(): ()
