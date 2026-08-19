@@ -21,8 +21,19 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
 - Imported per-frame callbacks use `Runtime.TaskManager`; they are multiplexed
   through one `RunService.Heartbeat` connection and remain alive until cleanup.
 - Registered sections initialize asynchronously after the GUI shell appears;
-  a short style-aware loading curtain reports progress until they are ready,
-  and opening a tab is never used as the condition for constructing content.
+  a staged loading curtain reports progress until they are ready, and opening a
+  tab is never used as the condition for constructing content.
+- The loading intro is a scripted sequence rather than a spinner that vanishes
+  on the last callback: a drifting backdrop glow, the wordmark rising into
+  place, a hairline rule drawing out beneath it, then counter-rotating rings
+  over a narrated status line and progress bar, and finally a held "Ready"
+  before the curtain lifts. Roughly 1.1 s of animation runs before any
+  narration, so the intro reads as an intro even when every module loads
+  instantly, and a slow load simply keeps the status stage on screen for
+  longer — nothing here ever delays a slow load further. The narration yields
+  the moment the loader has real `x/y` counts to display, a watchdog lifts the
+  curtain if the sequence thread ever dies, and a failed bootstrap keeps the
+  curtain up so its error message stays readable.
 - The fixed-size headerless shell owns sidebar search, navigation,
   translucent cards, notifications and a drag strip. It is the only visual
   theme, so every injection opens the same coherent interface.
@@ -31,6 +42,26 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
   the `Theme` table. There is no decorative background art, mascot or branded
   watermark, and status colours are reserved for gameplay data (roles, health,
   failures) rather than menu chrome.
+- Every square-ish surface rounds its corners through one `cornerRadius()`
+  helper instead of hard-coding `UDim.new(0, n)`, so the shell, the overlay
+  windows and every card share a single silhouette. The curve is deliberately
+  restrained — corners read as circular arcs, never as pills. Genuine
+  pills and circles (switch tracks, knobs, progress bars, radar, blips) keep
+  using `UDim.new(1, 0)` and are untouched by the helper.
+- Modules are filed under categories (Player, Combat, Visuals, Protection,
+  Utility, and a `General` catch-all that always sorts last) and sorted
+  alphabetically inside each one. A card publishes its category and sort name
+  as attributes; the card grid materialises one header strip per category,
+  writes every `LayoutOrder` explicitly so the layout never has to break a tie,
+  and hides a header whose cards the active search filtered away. Pages with
+  headers stay single-column, since a header labels everything that follows it.
+- Module customisation panels are made of self-contained rows: each setting is
+  its own rounded card with a hairline border and a hover highlight, an
+  optional second line explaining what it does, and a control aligned to a
+  shared right-hand band. Cycle buttons carry an `n/total` counter, numeric
+  fields advertise their accepted interval as placeholder text, and long panels
+  can be broken up with section headings that fold away together with the
+  controls they label. Fly is the reference layout.
 - The reusable `gui.lua` owns its image catalog, executor-safe asset cache,
   settings, draggable shell, tabs and `createModule()` component API. Game
   modules only provide their controls and callbacks.
@@ -47,6 +78,14 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
   shortcut placement, destruct) goes through it. The effect is switched off —
   not merely resized to `0` — whenever the menu is hidden, so closing the menu
   can never leave the screen blurred.
+- **Falling hail** drifts over the blur, from the top edge of the screen down
+  past the bottom, on a full-screen layer below the menu window. It is driven
+  entirely by the same blur controller through `state.registerBlurDecoration`,
+  so it can never outlive the blur: closing the menu, disabling Blur mode or
+  destructing all stop it, disconnect its `RenderStepped` loop and hide the
+  layer. It also follows the Animations setting, since it is motion, and the
+  per-frame step clamps its delta so a backgrounded client does not teleport
+  every stone off screen at once.
 - Desktop shells use integer-pixel, aspect-fitted dimensions capped near 60% of
   wide displays instead of scaling the complete canvas, which keeps text and
   strokes crisp while preserving drag boundaries on viewport changes.
@@ -57,7 +96,9 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
   nested `CanvasGroup` textures, preventing Roblox from rasterizing interface
   text at a reduced intermediate resolution.
 - Universal Fly provides Balanced, Direct and Precise response presets,
-  independent horizontal/vertical speed and progressive advanced controls.
+  independent horizontal/vertical speed and progressive advanced controls, each
+  annotated with a one-line explanation and grouped under Flight / Advanced
+  headings.
   Speed provides Adaptive, Smooth, Boost and Teleport modes plus acceleration,
   air control, sprint, momentum retention, wall safety, auto-jump and vehicle
   tuning. Player ESP, X-Ray, High Jump, Spider, Safe Walk, Zoom Unlocker,
