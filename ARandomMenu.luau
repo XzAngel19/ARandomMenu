@@ -36,10 +36,6 @@ local RunService: RunService = cloneReference(game:GetService("RunService"))
 local HttpService: HttpService = cloneReference(game:GetService("HttpService"))
 local CollectionService: CollectionService = cloneReference(game:GetService("CollectionService"))
 local Stats: Stats = cloneReference(game:GetService("Stats"))
-local ContentProvider: ContentProvider = cloneReference(
-    game:GetService("ContentProvider")
-)
-
 local LocalPlayer: Player = Players.LocalPlayer :: Player
 local PlayerGui: PlayerGui = LocalPlayer:WaitForChild("PlayerGui") :: PlayerGui
 
@@ -77,38 +73,44 @@ local GAME_CHECK = {
 function GAME_CHECK.matches(identifier: number): boolean
     return game.PlaceId == identifier
 end
-local DEFAULT_HEADER_COLOR: Color3 = Color3.fromRGB(177, 116, 255)
-local DEFAULT_MENU_COLOR: Color3 = Color3.fromRGB(12, 7, 22)
-local DEFAULT_SURFACE_COLOR: Color3 = Color3.fromRGB(35, 23, 53)
-local DEFAULT_BORDER_COLOR: Color3 = Color3.fromRGB(132, 97, 170)
+-- Neutral monochrome palette. The interface is intentionally themeless: every
+-- surface is a shade of black/grey and the single accent is plain white, so no
+-- decorative identity leaks into the runtime.
+local DEFAULT_HEADER_COLOR: Color3 = Color3.fromRGB(236, 236, 238)
+local DEFAULT_MENU_COLOR: Color3 = Color3.fromRGB(8, 8, 9)
+local DEFAULT_SURFACE_COLOR: Color3 = Color3.fromRGB(26, 26, 28)
+local DEFAULT_BORDER_COLOR: Color3 = Color3.fromRGB(92, 92, 98)
 
 local Theme: {[string]: Color3} = {
-    Background = Color3.fromRGB(12, 7, 22),
-    Surface = Color3.fromRGB(35, 23, 53),
-    SurfaceRaised = Color3.fromRGB(44, 29, 65),
-    SurfaceHover = Color3.fromRGB(55, 35, 82),
-    SurfacePressed = Color3.fromRGB(67, 42, 99),
-    Accent = Color3.fromRGB(177, 116, 255),
-    AccentCyan = Color3.fromRGB(76, 214, 255),
-    AccentViolet = Color3.fromRGB(145, 112, 255),
-    AccentPink = Color3.fromRGB(255, 93, 174),
-    AccentSoft = Color3.fromRGB(82, 52, 119),
-    DefaultBackground = Color3.fromRGB(12, 7, 22),
-    DefaultSidebar = Color3.fromRGB(21, 12, 35),
-    DefaultSurface = Color3.fromRGB(35, 23, 53),
-    DefaultSurfaceHover = Color3.fromRGB(55, 35, 82),
-    DefaultButton = Color3.fromRGB(54, 36, 78),
-    DefaultButtonHover = Color3.fromRGB(82, 52, 119),
-    DefaultButtonPressed = Color3.fromRGB(67, 42, 99),
-    DefaultOutline = Color3.fromRGB(132, 97, 170),
-    DefaultAccent = Color3.fromRGB(177, 116, 255),
-    DefaultText = Color3.fromRGB(249, 245, 255),
-    DefaultTextMuted = Color3.fromRGB(202, 184, 220),
-    Text = Color3.fromRGB(249, 245, 255),
-    TextMuted = Color3.fromRGB(202, 184, 220),
-    Outline = Color3.fromRGB(132, 97, 170),
-    Success = Color3.fromRGB(91, 240, 205),
-    Danger = Color3.fromRGB(255, 91, 155),
+    Background = Color3.fromRGB(8, 8, 9),
+    Surface = Color3.fromRGB(26, 26, 28),
+    SurfaceRaised = Color3.fromRGB(32, 32, 35),
+    SurfaceHover = Color3.fromRGB(40, 40, 44),
+    SurfacePressed = Color3.fromRGB(48, 48, 52),
+    Accent = Color3.fromRGB(236, 236, 238),
+    AccentCyan = Color3.fromRGB(236, 236, 238),
+    AccentViolet = Color3.fromRGB(196, 196, 202),
+    AccentPink = Color3.fromRGB(160, 160, 168),
+    AccentSoft = Color3.fromRGB(52, 52, 56),
+    DefaultBackground = Color3.fromRGB(8, 8, 9),
+    DefaultSidebar = Color3.fromRGB(13, 13, 14),
+    DefaultSurface = Color3.fromRGB(26, 26, 28),
+    DefaultSurfaceHover = Color3.fromRGB(40, 40, 44),
+    DefaultButton = Color3.fromRGB(32, 32, 35),
+    DefaultButtonHover = Color3.fromRGB(46, 46, 50),
+    DefaultButtonPressed = Color3.fromRGB(56, 56, 61),
+    DefaultOutline = Color3.fromRGB(92, 92, 98),
+    DefaultAccent = Color3.fromRGB(236, 236, 238),
+    DefaultText = Color3.fromRGB(245, 245, 247),
+    DefaultTextMuted = Color3.fromRGB(158, 158, 166),
+    Text = Color3.fromRGB(245, 245, 247),
+    TextMuted = Color3.fromRGB(158, 158, 166),
+    Outline = Color3.fromRGB(92, 92, 98),
+    -- Status colours stay semantic: they label gameplay data (roles, health,
+    -- failures) rather than the menu chrome, so they remain readable while the
+    -- interface itself stays monochrome.
+    Success = Color3.fromRGB(126, 196, 138),
+    Danger = Color3.fromRGB(214, 106, 106),
 }
 local TITLE_FONT: Font = Font.new(
     "rbxasset://fonts/families/BuilderSans.json",
@@ -294,10 +296,14 @@ PopupLayer.Size = UDim2.fromScale(1, 1)
 PopupLayer.ZIndex = 150
 PopupLayer.Parent = ScreenGui
 
+local BLUR_STRENGTH: number = 16
 local Blur = Instance.new("BlurEffect")
 Blur.Name = BLUR_NAME
 Blur.Size = 0
-Blur.Enabled = true
+-- Start disabled. An enabled BlurEffect that merely has Size 0 still keeps the
+-- blur pass alive, so the effect is only ever enabled while it is actually
+-- being used and is switched off again the moment the menu hides.
+Blur.Enabled = false
 Blur.Parent = Lighting
 
 local savedToggleKey = Enum.KeyCode.RightShift
@@ -353,6 +359,96 @@ local function trackUiConnection(
     return connection
 end
 
+-- Single owner of the blur effect.
+--
+-- The blur exists only to dim the game *while the menu is on screen*. It is
+-- defined here, next to the shared state, because it must be reachable from
+-- every path that can show or hide the menu (keyboard toggle, mobile button,
+-- mobile-shortcut placement, destruct). Previously it lived inside the
+-- Settings tab builder, which runs asynchronously and much later: any toggle
+-- that happened before -- or instead of -- that builder fell through to a
+-- fallback branch that flipped `Main.Visible` without ever touching the blur,
+-- leaving the screen blurred with the menu closed.
+local blurTween: Tween? = nil
+local function applyBlur(animate: boolean?): ()
+    local shouldBlur: boolean = state.visible == true
+        and state.blurEnabled == true
+    local targetSize: number = shouldBlur and BLUR_STRENGTH or 0
+
+    if blurTween then
+        blurTween:Cancel()
+        blurTween = nil
+    end
+    if not Blur.Parent then
+        return
+    end
+
+    if shouldBlur then
+        -- Enable before tweening in so the ramp is visible.
+        Blur.Enabled = true
+    end
+
+    if animate and state.animationsEnabled ~= false then
+        local tween: Tween = TweenService:Create(
+            Blur,
+            TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+            {Size = targetSize}
+        )
+        blurTween = tween
+        tween.Completed:Once(function(): ()
+            if blurTween == tween then
+                blurTween = nil
+            end
+            -- Release the blur pass once it has finished fading out.
+            if not shouldBlur and Blur.Parent then
+                Blur.Size = 0
+                Blur.Enabled = false
+            end
+        end)
+        tween:Play()
+    else
+        Blur.Size = targetSize
+        Blur.Enabled = shouldBlur
+    end
+end
+state.setBlurVisible = applyBlur
+
+-- Force the blur off regardless of the menu state. Used when the menu is
+-- temporarily hidden by an overlay flow and during teardown.
+local function suspendBlur(): ()
+    if blurTween then
+        blurTween:Cancel()
+        blurTween = nil
+    end
+    if Blur.Parent then
+        Blur.Size = 0
+        Blur.Enabled = false
+    end
+end
+state.suspendBlur = suspendBlur
+
+-- Authoritative menu visibility entry point. Subsystems (mobile buttons,
+-- floating windows) attach their own side effects as listeners as soon as they
+-- are built, so this is safe to call at any point during startup and the blur
+-- is updated even when a subsystem has not initialized yet.
+local menuVisibilityListeners: {(boolean) -> ()} = {}
+state.addMenuVisibilityListener = function(listener: (boolean) -> ()): ()
+    table.insert(menuVisibilityListeners, listener)
+end
+
+local function setMenuVisibleCore(visible: boolean): ()
+    state.visible = visible
+    if state.mainFrame then
+        state.mainFrame.Visible = visible
+    end
+    for _, listener: (boolean) -> () in ipairs(menuVisibilityListeners) do
+        -- One faulty listener must never leave the blur stuck on.
+        pcall(listener, visible)
+    end
+    applyBlur(true)
+end
+state.setMenuVisible = setMenuVisibleCore
+
 type AssetDefinition = {
     url: string,
     fileName: string,
@@ -384,15 +480,10 @@ local AssetManager: any = {
     cacheFolder = CONFIG_FOLDER .. "/Assets",
     resolved = {} :: {[string]: string},
     resolving = {} :: {[string]: boolean},
+    -- Only the two decorative fonts are still resolved at runtime; every
+    -- other entry pointed at themed artwork that the neutral interface no
+    -- longer renders.
     manifest = {
-        purpleBackground = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Images/purple-panel-background.png",
-            fileName = "purple-panel-background-v3.png",
-            fallback = "",
-            version = 3,
-            assetType = "image/png",
-        },
         candyFont = {
             url = REPOSITORY_RAW_BASE
                 .. "src/gui/Current/Assets/Typography/CandyFruits.otf",
@@ -408,174 +499,6 @@ local AssetManager: any = {
             fallback = "",
             version = 1,
             assetType = "font/otf",
-        },
-        loadingSpinner = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Status/spinner_minimal.png",
-            fileName = "loading-spinner-v1.png",
-            fallback = "",
-        },
-        search = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Icons/search.png",
-            fileName = "icon-search-v1.png",
-            fallback = "",
-        },
-        star = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Icons/star.png",
-            fileName = "icon-star-v1.png",
-            fallback = "",
-        },
-        ellipsis = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Icons/ellipsis.png",
-            fileName = "icon-ellipsis-v1.png",
-            fallback = "",
-        },
-        overlays = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Icons/list.png",
-            fileName = "icon-overlays-v1.png",
-            fallback = "",
-        },
-        close = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Icons/close.png",
-            fileName = "icon-close-v1.png",
-            fallback = "",
-        },
-        key = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Icons/key.png",
-            fileName = "icon-key-v1.png",
-            fallback = "",
-        },
-        keybindPill = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Frames/keybind-pill-hd.png",
-            fileName = "frame-keybind-pill-v1.png",
-            fallback = "",
-        },
-        toggleTexture = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Status/toggle_texture.png",
-            fileName = "toggle-texture-v1.png",
-            fallback = "",
-        },
-        iconFrame = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Frames/frame_ink_square.png",
-            fileName = "frame-ink-square-v1.png",
-            fallback = "",
-        },
-        panelSlash = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Frames/panel_slash.png",
-            fileName = "panel-slash-v1.png",
-            fallback = "",
-        },
-        emoStar = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Particles/emo-star.png",
-            fileName = "sticker-emo-star-v1.png",
-            fallback = "",
-        },
-        targetRing = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Icons/target_ring.png",
-            fileName = "icon-target-ring-v1.png",
-            fallback = "",
-        },
-        mangaFace = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Icons/manga_face.png",
-            fileName = "sticker-manga-face-v1.png",
-            fallback = "",
-        },
-        chart = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Icons/chart.png",
-            fileName = "icon-chart-v1.png",
-            fallback = "",
-        },
-        flame = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Icons/flame.png",
-            fileName = "icon-flame-v1.png",
-            fallback = "",
-        },
-        settings = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Icons/settings.png",
-            fileName = "icon-settings-v1.png",
-            fallback = "",
-        },
-        home = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Icons/home.png",
-            fileName = "icon-home-v1.png",
-            fallback = "",
-        },
-        tools = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Icons/tools.png",
-            fileName = "icon-tools-v1.png",
-            fallback = "",
-        },
-        user = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Icons/user_large.png",
-            fileName = "icon-user-v1.png",
-            fallback = "",
-        },
-        target = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Icons/target_cross.png",
-            fileName = "icon-target-v1.png",
-            fallback = "",
-        },
-        visuals = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Icons/eye_visuals.png",
-            fileName = "icon-visuals-v1.png",
-            fallback = "",
-        },
-        shield = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Icons/shield.png",
-            fileName = "icon-shield-v1.png",
-            fallback = "",
-        },
-        bell = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Icons/bell.png",
-            fileName = "icon-bell-v1.png",
-            fallback = "",
-        },
-        warning = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Icons/warning.png",
-            fileName = "icon-warning-v1.png",
-            fallback = "",
-        },
-        arrowDown = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Arrows/arrow_down.png",
-            fileName = "arrow-down-v1.png",
-            fallback = "",
-        },
-        separator = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Decorations/separator_thin.png",
-            fileName = "separator-thin-v1.png",
-            fallback = "",
-        },
-        menuToggle = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Images/menu-toggle.png",
-            fileName = "menu-toggle-v3.png",
-            fallback = "rbxassetid://6031094678",
         },
     } :: {[string]: AssetDefinition},
 }
@@ -815,47 +738,6 @@ function AssetManager.resolve(logicalName: string): (string?, string?)
     return assetId, nil
 end
 
-function AssetManager.loadAsync(
-    logicalName: string,
-    target: ImageLabel,
-    onResolved: ((boolean) -> ())?
-): ()
-    task.spawn(function(): ()
-        local assetId: string?, loadError: string? = AssetManager.resolve(logicalName)
-        local definition: AssetDefinition? = AssetManager.manifest[logicalName]
-        if assetId and target.Parent then
-            target.Image = assetId
-            if target.Image == assetId then
-                local preloadOk: boolean = pcall(function(): ()
-                    ContentProvider:PreloadAsync({target})
-                end)
-                if preloadOk and target.Parent and target.Image == assetId then
-                    target:SetAttribute("AssetLoaded", true)
-                    if onResolved then
-                        onResolved(true)
-                    end
-                    return
-                end
-                loadError = "PreloadAsync no pudo cargar el recurso asignado"
-            else
-                loadError = "la propiedad Image no conservo el asset asignado"
-            end
-        end
-        if target.Parent and definition then
-            target.Image = definition.fallback
-        end
-        if onResolved then
-            onResolved(false)
-        end
-        warn(
-            "[RTM:Assets] fallback para "
-                .. logicalName
-                .. ": "
-                .. tostring(loadError)
-        )
-    end)
-end
-
 function AssetManager.resolveFont(
     logicalName: string,
     fallbackFont: Font,
@@ -891,22 +773,6 @@ function AssetManager.resolveFont(
     return fontFace
 end
 
-function AssetManager.clear(logicalName: string): (boolean, string?)
-    local definition: AssetDefinition? = AssetManager.manifest[logicalName]
-    local deleteFile: any = getEnvironmentValue("delfile")
-    if not definition then
-        return false, "asset desconocido"
-    end
-    if type(deleteFile) ~= "function" then
-        return false, "delfile no está disponible; cambia la versión del filename"
-    end
-    local path: string = AssetManager.cacheFolder .. "/" .. definition.fileName
-    local deleted: boolean, deleteError: any = pcall(deleteFile, path)
-    if deleted then
-        return true, nil
-    end
-    return false, tostring(deleteError)
-end
     DISPLAY_FONT = AssetManager.resolveFont(
         "candyFont",
         TITLE_FONT,
@@ -960,7 +826,7 @@ function SectionManager.showStatus(page, message, isError)
     status.Size = UDim2.new(1, -36, 0, isError and 150 or 46)
     status.Text = message
     status.TextColor3 = isError
-        and Color3.fromRGB(255, 170, 190)
+        and Theme.Danger
         or Theme.DefaultText
     status.TextSize = 13
     status.TextWrapped = true
@@ -1148,7 +1014,7 @@ local function makeTextLabel(
         BorderSizePixel = 0,
         FontFace = THIN_FONT,
         Text = text,
-        TextColor3 = Color3.fromRGB(235, 235, 235),
+        TextColor3 = Theme.Text,
         TextXAlignment = Enum.TextXAlignment.Left,
         TextYAlignment = Enum.TextYAlignment.Center,
     }), normalSize or 14) :: TextLabel
@@ -1171,7 +1037,7 @@ local function makeButton(
         Text = text,
         TextColor3 = isDefaultStyle
             and Theme.DefaultText
-            or Color3.fromRGB(240, 240, 240),
+            or Theme.Text,
         TextXAlignment = Enum.TextXAlignment.Center,
         TextYAlignment = Enum.TextYAlignment.Center,
     }), normalSize or 14)
@@ -1263,7 +1129,7 @@ local function makeButton(
     return button :: TextButton
 end
 
-local function setAuroraSwitch(button: TextButton, enabled: boolean, animate: boolean?): ()
+local function setToggleSwitch(button: TextButton, enabled: boolean, animate: boolean?): ()
     button:SetAttribute("Checked", enabled)
     local track: Frame? = button:FindFirstChild("SwitchTrack") :: Frame?
     local knob: Frame? = track and track:FindFirstChild("Knob") :: Frame?
@@ -1271,7 +1137,7 @@ local function setAuroraSwitch(button: TextButton, enabled: boolean, animate: bo
         return
     end
     local knobWidth: number = knob.Size.X.Offset
-    local targetColor: Color3 = enabled and Theme.AccentViolet or Color3.fromRGB(24, 16, 36)
+    local targetColor: Color3 = enabled and Theme.DefaultAccent or Theme.SurfacePressed
     local targetPosition: UDim2 = enabled
         and UDim2.new(1, -knobWidth - 3, 0.5, 0)
         or UDim2.new(0, 3, 0.5, 0)
@@ -1291,7 +1157,7 @@ local function setAuroraSwitch(button: TextButton, enabled: boolean, animate: bo
     end
 end
 
-local function createAuroraSwitch(
+local function createToggleSwitch(
     parent: Instance,
     enabled: boolean,
     width: number?
@@ -1311,7 +1177,7 @@ local function createAuroraSwitch(
         Parent = button,
         Name = "SwitchTrack",
         AnchorPoint = Vector2.new(0.5, 0.5),
-        BackgroundColor3 = Color3.fromRGB(24, 16, 36),
+        BackgroundColor3 = Theme.SurfacePressed,
         BorderSizePixel = 0,
         Position = UDim2.fromScale(0.5, 0.5),
         Size = UDim2.fromOffset(switchWidth, switchHeight),
@@ -1342,7 +1208,7 @@ local function createAuroraSwitch(
         Transparency = 0.35,
         Thickness = 1,
     })
-    setAuroraSwitch(button, enabled, false)
+    setToggleSwitch(button, enabled, false)
     return button
 end
 
@@ -1485,7 +1351,7 @@ local function makeTextBox(parent: Instance, defaultText: any): TextBox
         Text = tostring(defaultText),
         TextColor3 = isDefaultStyle
             and Theme.DefaultText
-            or Color3.fromRGB(235, 235, 235),
+            or Theme.Text,
         TextXAlignment = Enum.TextXAlignment.Center,
     }), 13) :: any) :: TextBox
     addRoundedStyle(textBox, 9, 0.5)
@@ -1674,6 +1540,11 @@ local Main: Frame = (create("Frame", {
     Position = UDim2.fromOffset(0, 0),
     Size = UDim2.fromOffset(initialWindowSize.X, initialWindowSize.Y),
 }) :: any) :: Frame
+
+-- Publish the window so the shared visibility controller defined above can
+-- drive it without depending on later initialization order.
+state.mainFrame = Main
+Main.Visible = state.visible
 
 do
 local _MainCorner: UICorner, MainStroke: UIStroke = addRoundedStyle(Main, 14, 0.2)
@@ -2443,7 +2314,7 @@ local function createMobileAction(
         AnchorPoint = Vector2.new(0.5, 0.5),
         Size = UDim2.fromOffset(size, size),
         Text = label,
-        TextColor3 = Color3.fromRGB(255, 255, 255),
+        TextColor3 = Theme.Text,
         TextScaled = true,
         Visible = not state.visible,
         ZIndex = 180,
@@ -2591,7 +2462,9 @@ local function beginMobileActionPlacement(
         .. "\nHOLD THE CIRCLE LATER TO REMOVE IT"
     MobilePlacementOverlay.Visible = true
     Main.Visible = false
-    Blur.Size = 0
+    -- The menu is hidden for placement, so drop the blur rather than leaving
+    -- the screen dimmed behind the overlay.
+    state.suspendBlur()
 
     local placement: PendingMobilePlacement =
         pendingMobilePlacement :: PendingMobilePlacement
@@ -2600,11 +2473,7 @@ local function beginMobileActionPlacement(
             pendingMobilePlacement = nil
             MobilePlacementOverlay.Visible = false
             if placement.restoreMenu then
-                if state.setMenuVisible then
-                    state.setMenuVisible(true)
-                else
-                    Main.Visible = true
-                end
+                state.setMenuVisible(true)
             end
             notify("Mobile button placement cancelled.")
         end
@@ -2628,11 +2497,7 @@ trackUiConnection(MobilePlacementOverlay.InputBegan:Connect(function(
         Vector2.new(input.Position.X, input.Position.Y)
     )
     if placement.restoreMenu then
-        if state.setMenuVisible then
-            state.setMenuVisible(true)
-        else
-            Main.Visible = true
-        end
+        state.setMenuVisible(true)
     end
     notify(placement.label .. " mobile button placed.")
 end))
@@ -2689,7 +2554,7 @@ local MobileMenuButton = create("TextButton", {
     Parent = ScreenGui,
     Name = "MobileMenuButton",
     AutoButtonColor = false,
-    BackgroundColor3 = Color3.fromRGB(17, 21, 29),
+    BackgroundColor3 = Theme.DefaultSurface,
     BackgroundTransparency = 0.12,
     BorderSizePixel = 0,
     FontFace = CONTROL_FONT,
@@ -2697,7 +2562,7 @@ local MobileMenuButton = create("TextButton", {
     AnchorPoint = Vector2.new(1, 0),
     Size = UDim2.fromOffset(52, 52),
     Text = "RTM",
-    TextColor3 = Color3.fromRGB(240, 240, 240),
+    TextColor3 = Theme.Text,
     TextSize = 11,
     Visible = state.isMobile,
     ZIndex = 190,
@@ -2715,13 +2580,7 @@ create("UIStroke", {
 
 -- The RTM text remains visible as the button label.
 trackUiConnection(MobileMenuButton.MouseButton1Click:Connect(function(): ()
-    if state.setMenuVisible then
-        state.setMenuVisible(not state.visible)
-    else
-        state.visible = not state.visible
-        Main.Visible = state.visible
-        setMobileActionVisibility(state.visible)
-    end
+    state.setMenuVisible(not state.visible)
 end))
 
 local function resetMobileActions(): ()
@@ -2743,6 +2602,9 @@ state.mobileUi = {
     clampButtonPosition = clampMobileButtonPosition,
     saveActionPosition = saveMobileActionPosition,
 }
+-- Placed mobile shortcuts are the inverse of the menu, and this is wired up as
+-- soon as the mobile layer exists rather than waiting for the Settings tab.
+state.addMenuVisibilityListener(setMobileActionVisibility)
 end
 
 type TaskHandle = {
@@ -3665,14 +3527,14 @@ local function setCheckVisual(
 ): ()
     mark.Text = ""
     mark.Visible = false
-    setAuroraSwitch(button, enabled, animate)
+    setToggleSwitch(button, enabled, animate)
 end
 
 local function createCheckControl(
     parent: Instance,
     enabled: boolean
 ): (TextButton, TextLabel)
-    local button: TextButton = createAuroraSwitch(parent, enabled, nil)
+    local button: TextButton = createToggleSwitch(parent, enabled, nil)
     local mark: TextLabel = makeTextLabel(button, "", state.isMobile and 16 or 15)
     mark.Name = "CheckMark"
     mark.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -4068,9 +3930,7 @@ local function refreshFavorites(): ()
             status:SetAttribute("FloatingDepth", 2)
             row.MouseButton1Click:Connect(function(): ()
                 if feature.isCategory then
-                    if state.setMenuVisible then
-                        state.setMenuVisible(true)
-                    end
+                    state.setMenuVisible(true)
                     setTab(feature.sectionName)
                 end
                 feature.activate()
@@ -4162,7 +4022,7 @@ local function setOverlayEnabled(id: string, enabled: boolean): ()
     end
     overlay.enabled = enabled
     overlay.window.root.Visible = enabled
-    setAuroraSwitch(overlay.toggle, enabled, true)
+    setToggleSwitch(overlay.toggle, enabled, true)
     configData.ui.overlays[id] = enabled
     queueConfigSave()
     if enabled then
@@ -4223,7 +4083,7 @@ for index: number, definition: any in ipairs(overlayDefinitions) do
     if settingsStroke then
         settingsStroke.Enabled = false
     end
-    local toggle: TextButton = createAuroraSwitch(managerRow, false, 42)
+    local toggle: TextButton = createToggleSwitch(managerRow, false, 42)
     toggle.AnchorPoint = Vector2.new(1, 0.5)
     toggle.Position = UDim2.new(1, -7, 0.5, 0)
     toggle:SetAttribute("FloatingDepth", 2)
@@ -4319,12 +4179,12 @@ local function addCompactToggle(
 ): ()
     local row: Frame = createCompactSettingRow(parent, labelText)
     local enabled: boolean = initial
-    local toggle: TextButton = createAuroraSwitch(row, enabled, 42)
+    local toggle: TextButton = createToggleSwitch(row, enabled, 42)
     toggle.AnchorPoint = Vector2.new(1, 0.5)
     toggle.Position = UDim2.new(1, -8, 0.5, 0)
     trackUiConnection(toggle.MouseButton1Click:Connect(function(): ()
         enabled = not enabled
-        setAuroraSwitch(toggle, enabled, true)
+        setToggleSwitch(toggle, enabled, true)
         callback(enabled)
         queueConfigSave()
     end))
@@ -4363,7 +4223,7 @@ do
     )
     addCompactCycle(textSettingsScroll, "Sort", {"Alphabetical", "Length", "Enabled order", "Section"}, textGuiSettings.sort, function(value: string): () textGuiSettings.sort = value end)
     addCompactCycle(textSettingsScroll, "Font", {"Builder Sans", "Source Sans", "Gotham", "Code", "Valve"}, textGuiSettings.font, function(value: string): () textGuiSettings.font = value end)
-    addCompactCycle(textSettingsScroll, "Color mode", {"Match GUI", "Static cyan", "Aurora", "Rainbow", "By section"}, textGuiSettings.colorMode, function(value: string): () textGuiSettings.colorMode = value end)
+    addCompactCycle(textSettingsScroll, "Color mode", {"Match GUI", "Solid white", "Greyscale", "Rainbow", "By section"}, textGuiSettings.colorMode, function(value: string): () textGuiSettings.colorMode = value end)
     addCompactCycle(textSettingsScroll, "Scale", {"0.75", "1", "1.25", "1.5", "2"}, tostring(textGuiSettings.scale), function(value: string): () textGuiSettings.scale = tonumber(value) or 1 end)
     addCompactToggle(textSettingsScroll, "Shadow", textGuiSettings.shadow, function(value: boolean): () textGuiSettings.shadow = value end)
     addCompactToggle(textSettingsScroll, "Gradient", textGuiSettings.gradient, function(value: boolean): () textGuiSettings.gradient = value end)
@@ -4387,7 +4247,7 @@ do
     addCompactCycle(radarSettingsScroll, "Range", {"75", "150", "250", "500", "1000", "2000"}, tostring(radarSettings.range), function(value: string): () radarSettings.range = tonumber(value) or 250 end)
     addCompactCycle(radarSettingsScroll, "Radar size", {"160", "190", "220", "250", "280"}, tostring(radarSettings.size), function(value: string): () radarSettings.size = tonumber(value) or 190 end)
     addCompactCycle(radarSettingsScroll, "Rotation", {"Camera", "Player", "North"}, radarSettings.rotation, function(value: string): () radarSettings.rotation = value end)
-    addCompactCycle(radarSettingsScroll, "Color mode", {"Smart", "Team", "Health", "MM2 role", "Aurora"}, radarSettings.colorMode, function(value: string): () radarSettings.colorMode = value end)
+    addCompactCycle(radarSettingsScroll, "Color mode", {"Smart", "Team", "Health", "MM2 role", "Spectrum"}, radarSettings.colorMode, function(value: string): () radarSettings.colorMode = value end)
     addCompactCycle(radarSettingsScroll, "Out of range", {"Clamp", "Hide"}, radarSettings.outOfRange, function(value: string): () radarSettings.outOfRange = value end)
     addCompactToggle(radarSettingsScroll, "Alive only", radarSettings.aliveOnly, function(value: boolean): () radarSettings.aliveOnly = value end)
     addCompactToggle(radarSettingsScroll, "Show team", radarSettings.showTeam, function(value: boolean): () radarSettings.showTeam = value end)
@@ -4464,7 +4324,7 @@ TextGuiLabel:SetAttribute("FloatingDepth", 2)
 local TextGuiGradient: UIGradient = create("UIGradient", {
     Parent = TextGuiLabel,
     Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Theme.AccentCyan),
+        ColorSequenceKeypoint.new(0, Theme.DefaultAccent),
         ColorSequenceKeypoint.new(0.5, Theme.AccentViolet),
         ColorSequenceKeypoint.new(1, Theme.AccentPink),
     }),
@@ -4517,7 +4377,7 @@ TargetRole.TextColor3 = Theme.AccentViolet
 TargetRole:SetAttribute("FloatingDepth", 2)
 local TargetHealthTrack: Frame = create("Frame", {
     Parent = TargetBody,
-    BackgroundColor3 = Color3.fromRGB(7, 5, 13),
+    BackgroundColor3 = Theme.Background,
     BackgroundTransparency = 0.18,
     BorderSizePixel = 0,
     Position = UDim2.fromOffset(88, 62),
@@ -4808,7 +4668,7 @@ TaskManager:Connect(function(deltaTime: number): ()
         end)
         local textLines: {string} = {}
         if textGuiSettings.watermark then
-            table.insert(textLines, "ASTRA & AURORA")
+            table.insert(textLines, "A Random Menu")
         end
         if textGuiSettings.customText ~= "" then
             table.insert(textLines, textGuiSettings.customText)
@@ -4853,12 +4713,12 @@ TaskManager:Connect(function(deltaTime: number): ()
             or UDim2.fromScale(1, 1)
         local gradientEnabled: boolean = textGuiSettings.gradient
             or textGuiSettings.v4Gradient
-            or textGuiSettings.colorMode == "Aurora"
+            or textGuiSettings.colorMode == "Greyscale"
             or textGuiSettings.colorMode == "Rainbow"
         TextGuiGradient.Enabled = gradientEnabled
         if textGuiSettings.v4Gradient then
             TextGuiGradient.Color = ColorSequence.new({
-                ColorSequenceKeypoint.new(0, Theme.AccentCyan),
+                ColorSequenceKeypoint.new(0, Theme.DefaultAccent),
                 ColorSequenceKeypoint.new(0.34, Theme.AccentViolet),
                 ColorSequenceKeypoint.new(0.68, Theme.AccentPink),
                 ColorSequenceKeypoint.new(1, Theme.DefaultAccent),
@@ -4868,7 +4728,11 @@ TaskManager:Connect(function(deltaTime: number): ()
             local hue: number = (now * 0.12) % 1
             TextGuiLabel.TextColor3 = Color3.fromHSV(hue, 0.72, 1)
             TextGuiGradient.Enabled = false
-        elseif textGuiSettings.colorMode == "Static cyan" then
+        elseif textGuiSettings.colorMode == "Greyscale" then
+            local pulse: number = 0.72 + 0.28 * math.sin(now * 1.6)
+            TextGuiLabel.TextColor3 = Color3.fromHSV(0, 0, pulse)
+            TextGuiGradient.Enabled = false
+        elseif textGuiSettings.colorMode == "Solid white" then
             TextGuiLabel.TextColor3 = Theme.AccentCyan
         elseif textGuiSettings.colorMode == "By section" then
             TextGuiLabel.TextColor3 = Theme.AccentViolet
@@ -5078,7 +4942,7 @@ TaskManager:Connect(function(deltaTime: number): ()
                             color = role == "Murderer" and Theme.Danger
                                 or ((role == "Sheriff" or role == "Hero") and Theme.AccentCyan
                                     or Theme.Success)
-                        elseif radarSettings.colorMode == "Aurora" then
+                        elseif radarSettings.colorMode == "Spectrum" then
                             color = Color3.fromHSV((now * 0.1 + player.UserId % 10 / 10) % 1, 0.7, 1)
                         end
                         record.blip.BackgroundColor3 = color
@@ -5195,6 +5059,7 @@ local function applyFeaturePresentation(feature: any, isDefault: boolean): ()
         feature.activeStripe.BackgroundColor3 = feature.isAction
             and Theme.AccentPink
             or (feature.isCategory and Theme.AccentViolet or Theme.DefaultAccent)
+
         feature.activeStripe.BackgroundTransparency = enabled
             and 0
             or ((feature.isAction or feature.isCategory) and 0.42 or 1)
@@ -5340,7 +5205,7 @@ local function runActionButton(
             notify(successMessage)
         else
             warn(errorPrefix .. ": " .. tostring(errorMessage))
-            notify("Error en " .. errorPrefix)
+            notify("Error in " .. errorPrefix)
         end
         task.wait(0.45)
         if button.Parent then
@@ -5513,7 +5378,7 @@ local function createUniversalFeature(
     feature.activeStripeGradient = create("UIGradient", {
         Parent = activeStripe,
         Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Theme.AccentCyan),
+            ColorSequenceKeypoint.new(0, Theme.DefaultAccent),
             ColorSequenceKeypoint.new(0.5, Theme.AccentViolet),
             ColorSequenceKeypoint.new(1, Theme.AccentPink),
         }),
@@ -5754,7 +5619,7 @@ local function createUniversalFeature(
                     notify(name .. " ejecutado")
                 else
                     warn("[Random Testing Menu] " .. name .. ": " .. tostring(errorMessage))
-                    notify("No se pudo ejecutar " .. name)
+                    notify("Could not run " .. name)
                 end
             end)
             return
@@ -5777,7 +5642,7 @@ local function createUniversalFeature(
             warn("[Random Testing Menu] " .. name .. ": " .. tostring(errorMessage))
             feature.enabled = false
             pcall(feature.onToggle, false)
-            notify("No se pudo cambiar " .. name)
+            notify("Could not toggle " .. name)
         end
         refreshFeatureToggle(feature)
     end
@@ -5939,7 +5804,7 @@ local function addToggleOption(
         Text = "",
         ZIndex = option.ZIndex + 2,
     }) :: TextButton
-    local switch: TextButton = createAuroraSwitch(option, enabled :: boolean, nil)
+    local switch: TextButton = createToggleSwitch(option, enabled :: boolean, nil)
     switch.Name = "OptionSwitch"
     switch.AnchorPoint = Vector2.new(1, 0.5)
     switch.Position = UDim2.new(1, -8, 0.5, 0)
@@ -5953,7 +5818,7 @@ local function addToggleOption(
         option:FindFirstChild("OptionLabel") :: TextLabel?
 
     local function refreshOptionState(): ()
-        setAuroraSwitch(switch, enabled :: boolean, true)
+        setToggleSwitch(switch, enabled :: boolean, true)
         if optionLabel then
             optionLabel.TextColor3 = (enabled :: boolean)
                 and Theme.DefaultText
@@ -6124,7 +5989,7 @@ local function addNumberOption(
     create("UIGradient", {
         Parent = fill,
         Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Theme.AccentCyan),
+            ColorSequenceKeypoint.new(0, Theme.DefaultAccent),
             ColorSequenceKeypoint.new(0.52, Theme.AccentViolet),
             ColorSequenceKeypoint.new(1, Theme.AccentPink),
         }),
@@ -6229,7 +6094,7 @@ local function addNumberOption(
         editing = false
         if not isFiniteNumber(parsed) then
             valueInput.Text = formatCompactNumber(value)
-            notify(labelText .. ": valor numérico inválido")
+            notify(labelText .. ": invalid numeric value")
             return
         end
         setValue(parsed :: number, true, false)
@@ -10431,25 +10296,13 @@ local MobileResetButton = makeButton(
 )
 MobileResetButton.Size = UDim2.fromScale(1, 1)
 
-local function setBlurVisible(animate)
-    local targetSize = state.visible and state.blurEnabled and 16 or 0
+local setBlurVisible = state.setBlurVisible
 
-    if animate then
-        TweenService:Create(
-            Blur,
-            TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-            {Size = targetSize}
-        ):Play()
-    else
-        Blur.Size = targetSize
-    end
-end
-state.setBlurVisible = setBlurVisible
-
-local function setMenuVisible(visible: boolean): ()
-    state.visible = visible
-    Main.Visible = visible
-    state.mobileUi.setActionVisibility(visible)
+-- Contribute the Settings/overlay-specific side effects to the shared
+-- visibility controller instead of replacing it. `state.setMenuVisible` stays
+-- the single entry point and always updates the blur, even if this builder
+-- never runs.
+state.addMenuVisibilityListener(function(visible: boolean): ()
     FloatingUi.overlays.TextGUI.window.root.Active = visible
     if not visible then
         for _, settingsWindow: FloatingWindowRecord in ipairs({
@@ -10461,9 +10314,7 @@ local function setMenuVisible(visible: boolean): ()
             settingsWindow.root.Visible = false
         end
     end
-    setBlurVisible(true)
-end
-state.setMenuVisible = setMenuVisible
+end)
 
 local function updateTextSizes(): ()
     for _, item in ipairs(registeredText) do
@@ -10525,7 +10376,7 @@ trackUiConnection(BlurButton.MouseButton1Click:Connect(function(): ()
     setBlurVisible(true)
     configData.ui.blurEnabled = state.blurEnabled
     queueConfigSave()
-    notify(state.blurEnabled and "Desenfoque activado" or "Desenfoque desactivado")
+    notify(state.blurEnabled and "Blur mode enabled" or "Blur mode disabled")
 end))
 
 trackUiConnection(MotionButton.MouseButton1Click:Connect(function(): ()
@@ -10542,7 +10393,7 @@ trackUiConnection(ReinjectButton.MouseButton1Click:Connect(function(): ()
     end
     local compiler: any = executorGlobals.loadstring
     if type(compiler) ~= "function" then
-        notify("Reinject no disponible: el ejecutor no admite loadstring")
+        notify("Reinject unavailable: this executor has no loadstring")
         return
     end
     reinjectBusy = true
@@ -10577,7 +10428,7 @@ trackUiConnection(ReinjectButton.MouseButton1Click:Connect(function(): ()
         reinjectBusy = false
         ReinjectButton:SetAttribute("Disabled", false)
         ReinjectButton.Text = "REINJECT LATEST"
-        notify("No se pudo descargar la versión más reciente")
+        notify("Could not download the latest build")
         warn("[Random Testing Menu] Reinject download: "
             .. table.concat(downloadFailures, " | "))
         return
@@ -10599,7 +10450,7 @@ trackUiConnection(ReinjectButton.MouseButton1Click:Connect(function(): ()
         reinjectBusy = false
         ReinjectButton:SetAttribute("Disabled", false)
         ReinjectButton.Text = "REINJECT LATEST"
-        notify("La versión descargada no pudo compilarse")
+        notify("The downloaded build could not be compiled")
         warn("[Random Testing Menu] Reinject compile: " .. tostring(compileError))
         return
     end
@@ -10679,7 +10530,7 @@ trackUiConnection(KeybindButton.MouseButton1Click:Connect(function(): ()
         state.keyCaptureCancel()
     end
     state.waitingForKey = true
-    KeybindButton.Text = "PRESIONA UNA TECLA…"
+    KeybindButton.Text = "PRESS A KEY…"
     setKeySlotCapture(KeybindButton, true)
 end))
 
@@ -10836,7 +10687,7 @@ state.globalInputBeganConnection = UserInputService.InputBegan:Connect(function(
             end
             configData.ui.toggleKey = input.KeyCode.Name
             queueConfigSave()
-            notify("Tecla del menú: " .. input.KeyCode.Name)
+            notify("Menu key: " .. input.KeyCode.Name)
             task.defer(function(): ()
                 state.waitingForKey = false
             end)
@@ -10852,12 +10703,7 @@ state.globalInputBeganConnection = UserInputService.InputBegan:Connect(function(
 
     if input.UserInputType == Enum.UserInputType.Keyboard
         and input.KeyCode == state.toggleKey then
-        if state.setMenuVisible then
-            state.setMenuVisible(not state.visible)
-        else
-            state.visible = not state.visible
-            Main.Visible = state.visible
-        end
+        state.setMenuVisible(not state.visible)
     end
 end)
 end
@@ -10928,6 +10774,8 @@ local function cleanupRuntime(): ()
         end
         saveConfigNow()
 
+        -- Always release the blur, even if it was mid-tween.
+        suspendBlur()
         if Blur.Parent then
             Blur:Destroy()
         end
@@ -10948,9 +10796,9 @@ end)
 
 SectionManager.initializeAllAsync()
 setTab("Universal")
-if state.setBlurVisible then
-    state.setBlurVisible(false)
-end
+-- Sync the blur with the initial menu state (the argument is "animate", not
+-- the target state) so it matches state.visible instead of being forced off.
+state.setBlurVisible(false)
 task.defer(saveConfigNow)
 
 print(
