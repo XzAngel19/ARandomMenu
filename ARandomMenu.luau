@@ -10967,7 +10967,7 @@ addToggleOption(
         state.universalToolkit.phaseDashSettings.preserveVelocity = value
     end
 )
-local PhaseDashKeyButton: TextButton = addKeyOption(
+state.phaseDashKeyButton = addKeyOption(
     PhaseDashFeature,
     "Dash key",
     state.universalToolkit.phaseDashSettings.key,
@@ -10977,7 +10977,7 @@ local PhaseDashKeyButton: TextButton = addKeyOption(
 )
 if state.bindMobileActionPlacement then
     state.bindMobileActionPlacement(
-        PhaseDashKeyButton,
+        state.phaseDashKeyButton,
         "UniversalPhaseDash",
         "DASH",
         state.universalToolkit.performPhaseDash
