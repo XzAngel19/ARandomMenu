@@ -9350,24 +9350,24 @@ local fullbrightSettings = {
     brightness = 3,
     clockTime = 14,
 }
-local originalLighting = nil
+state.originalLighting = nil
 
 local function toggleFullbright(enabled)
     disconnectFeatureConnection("Fullbright")
 
     if not enabled then
-        if originalLighting then
-            Lighting.Brightness = originalLighting.brightness
-            Lighting.ClockTime = originalLighting.clockTime
-            Lighting.GlobalShadows = originalLighting.globalShadows
-            Lighting.FogEnd = originalLighting.fogEnd
-            Lighting.Ambient = originalLighting.ambient
-            Lighting.OutdoorAmbient = originalLighting.outdoorAmbient
+        if state.originalLighting then
+            Lighting.Brightness = state.originalLighting.brightness
+            Lighting.ClockTime = state.originalLighting.clockTime
+            Lighting.GlobalShadows = state.originalLighting.globalShadows
+            Lighting.FogEnd = state.originalLighting.fogEnd
+            Lighting.Ambient = state.originalLighting.ambient
+            Lighting.OutdoorAmbient = state.originalLighting.outdoorAmbient
         end
         return
     end
 
-    originalLighting = {
+    state.originalLighting = {
         brightness = Lighting.Brightness,
         clockTime = Lighting.ClockTime,
         globalShadows = Lighting.GlobalShadows,
