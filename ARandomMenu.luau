@@ -7027,6 +7027,12 @@ state.globalShortcutBeganConnection = UserInputService.InputBegan:Connect(
             or not shortcutInputAllowed(gameProcessed) then
             return
         end
+        -- `Unknown` is what an unbound slot holds *and* what some keyboard
+        -- events report, so it is never treated as a match: otherwise one
+        -- odd keypress would fire every module that has no key assigned.
+        if input.KeyCode == Enum.KeyCode.Unknown then
+            return
+        end
         for _, binding: any in pairs(state.shortcutBindings) do
             if binding.key == input.KeyCode then
                 if binding.hold then
@@ -7043,7 +7049,8 @@ state.globalShortcutBeganConnection = UserInputService.InputBegan:Connect(
 -- always be able to stop, even if the release lands on a game UI element.
 state.globalShortcutEndedConnection = UserInputService.InputEnded:Connect(
     function(input: InputObject): ()
-        if input.UserInputType ~= Enum.UserInputType.Keyboard then
+        if input.UserInputType ~= Enum.UserInputType.Keyboard
+            or input.KeyCode == Enum.KeyCode.Unknown then
             return
         end
         for _, binding: any in pairs(state.shortcutBindings) do
@@ -13650,6 +13657,15 @@ local function cleanupRuntime(): ()
         end
     end
 
+    cleanupStep("held keybinds", function(): ()
+        for _, binding: any in pairs(state.shortcutBindings) do
+            if binding.hold and binding.pressed and binding.onRelease then
+                binding.pressed = false
+                binding.onRelease()
+            end
+        end
+        table.clear(state.shortcutBindings)
+    end)
     cleanupStep("feature connections", function(): ()
         for name in pairs(featureConnections) do
             disconnectFeatureConnection(name)
@@ -13681,6 +13697,8 @@ local function cleanupRuntime(): ()
             "globalInputChangedConnection",
             "globalInputEndedConnection",
             "globalInputBeganConnection",
+            "globalShortcutBeganConnection",
+            "globalShortcutEndedConnection",
         }) do
             local connection: any = state[key]
             if connection then
