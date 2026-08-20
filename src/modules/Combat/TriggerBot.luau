@@ -81,10 +81,6 @@ function Module.init(context: Runtime): any
                 end
 
                 local tool: Tool? = findTool(character)
-                if options["Require tool"].Value and not tool then
-                    armedTarget = nil
-                    return
-                end
 
                 local target: Player?, distance: number =
                     Module.resolveTarget(context, trigger)
@@ -102,9 +98,10 @@ function Module.init(context: Runtime): any
                     armedTarget = target
                     -- Reaction time plus a per-target jitter, so consecutive
                     -- shots never share the same interval.
-                    armedAt = now
-                        + options["Delay"].Value
-                        + math.random() * options["Delay jitter"].Value
+                    -- Reaction time plus up to a third of it again: the
+                    -- variation is not optional, it is what the delay is for.
+                    local reaction: number = options["Reaction"].Value
+                    armedAt = now + reaction + math.random() * reaction * 0.34
                     return
                 end
                 if now < armedAt or now < nextShotAt then
@@ -116,26 +113,40 @@ function Module.init(context: Runtime): any
                     -- One shot per acquisition: the target has to leave the
                     -- crosshair and come back.
                     armedTarget = nil
-                    nextShotAt = now + math.max(options["Fire rate"].Value, 0.05)
+                    nextShotAt = now + math.max(options["Shot delay"].Value, 0.05)
                 else
-                    nextShotAt = now + math.max(options["Fire rate"].Value, 0.05)
+                    nextShotAt = now + math.max(options["Shot delay"].Value, 0.05)
                 end
             end)
         end,
     })
 
-    trigger:CreateSection("Trigger")
-    trigger:CreateDropdown({
+    -- Nine rows became six.
+    --
+    -- "Delay jitter" and "Require tool" are gone: a reaction time without
+    -- variation is a signature, so the jitter is applied always and is not a
+    -- decision anyone should have to make, and a trigger bot with nothing
+    -- equipped has nothing to fire either way. What is left is the three
+    -- questions a trigger bot actually asks — when may it fire, how fast, and
+    -- what counts as a target.
+    local holdKey: any
+    local activation: any
+    activation = trigger:CreateDropdown({
         Name = "Activation",
         List = {"Always", "Hold key"},
         Index = 1,
         Tooltip = "Always runs while the module is on; Hold key only while "
             .. "the bind is down.",
+        Function = function(value: string): ()
+            if holdKey then
+                holdKey:SetVisible(value == "Hold key")
+            end
+        end,
     })
-    trigger:CreateBind({
+    holdKey = trigger:CreateBind({
         Name = "Hold key",
         Default = Enum.KeyCode.Unknown,
-        Tooltip = "Used when Activation is Hold key.",
+        Tooltip = "Hover this row and press a key to bind it.",
     })
     trigger:CreateDropdown({
         Name = "Fire mode",
@@ -144,21 +155,16 @@ function Module.init(context: Runtime): any
         Tooltip = "Single fires once per acquisition, Automatic keeps firing.",
     })
     trigger:CreateSlider({
-        Name = "Delay",
+        Name = "Reaction",
         Min = 0,
         Max = 1,
         Default = 0.08,
-        Tooltip = "Seconds between acquiring a target and firing.",
+        Tooltip = "Seconds between a target entering the crosshair and the "
+            .. "shot. A random third of this is added on every acquisition, so "
+            .. "two shots never share the same reaction time.",
     })
     trigger:CreateSlider({
-        Name = "Delay jitter",
-        Min = 0,
-        Max = 0.5,
-        Default = 0.04,
-        Tooltip = "Random amount added to the delay on every acquisition.",
-    })
-    trigger:CreateSlider({
-        Name = "Fire rate",
+        Name = "Shot delay",
         Min = 0.05,
         Max = 2,
         Default = 0.15,
@@ -173,12 +179,12 @@ function Module.init(context: Runtime): any
         Tooltip = "Which part has to be under the crosshair.",
     })
     trigger:CreateSlider({
-        Name = "Aim radius",
+        Name = "Aim tolerance",
         Min = 0,
         Max = 120,
         Default = 0,
-        Tooltip = "Pixels of tolerance around the crosshair. 0 requires an "
-            .. "exact hit on the target.",
+        Tooltip = "Pixels of slack around the crosshair. 0 requires an exact "
+            .. "hit on the target, which is what a raycast alone gives you.",
     })
     trigger:CreateSlider({
         Name = "Max distance",
@@ -188,19 +194,20 @@ function Module.init(context: Runtime): any
     })
     trigger:CreateToggle({
         Name = "Team check",
-        Default = false,
+        Default = true,
         Tooltip = "Never fire at players on your own team.",
     })
     trigger:CreateToggle({
         Name = "Wall check",
-        Default = false,
+        Default = true,
         Tooltip = "Never fire at a target with geometry in the way.",
     })
-    trigger:CreateToggle({
-        Name = "Require tool",
-        Default = false,
-        Tooltip = "Only run while something is equipped.",
-    })
+
+    task.defer(function(): ()
+        pcall(function(): ()
+            holdKey:SetVisible(activation.Value == "Hold key")
+        end)
+    end)
 
     activeCleanup = function(): ()
         armedTarget = nil
@@ -227,7 +234,7 @@ function Module.resolveTarget(context: Runtime, trigger: any): (Player?, number)
     local resolvedRay: Ray = ray :: Ray
 
     local partFilter: string = options["Target part"].Value
-    local radius: number = options["Aim radius"].Value
+    local radius: number = options["Aim tolerance"].Value
 
     if radius <= 0 then
         local parameters: RaycastParams = RaycastParams.new()
@@ -295,6 +302,13 @@ function Module.resolveTarget(context: Runtime, trigger: any): (Player?, number)
     return entity.Player, entity.Distance
 end
 
+-- Firing, in the order things actually work.
+--
+-- `Tool:Activate()` is what a click does through the engine and covers most
+-- games. Guns that read the mouse themselves need a real button, and a click
+-- helper that presses and releases in the same instant is skipped by weapons
+-- that arm on the press and fire on the release — so the press/release pair is
+-- preferred over `mouse1click` whenever the executor exposes it.
 function Module.fire(tool: Tool?): ()
     if tool then
         pcall(function(): ()
@@ -302,6 +316,15 @@ function Module.fire(tool: Tool?): ()
         end)
     end
     local environment: any = getfenv()
+    local press: any = environment.mouse1press
+    local release: any = environment.mouse1release
+    if type(press) == "function" and type(release) == "function" then
+        pcall(press)
+        task.delay(0.02, function(): ()
+            pcall(release)
+        end)
+        return
+    end
     local click: any = environment.mouse1click
     if type(click) == "function" then
         pcall(click)

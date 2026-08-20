@@ -138,6 +138,27 @@ function Host.create(world: any): HostStub
         return optionRow(feature, label)
     end
 
+    -- Two-handle range row. The stub keeps the pair in one value, exactly
+    -- like the real builder, so a test reads `Options.CPS.Value.Min`.
+    host.addRangeOption = function(
+        feature: any,
+        label: string,
+        definition: any
+    ): any
+        local low: number = definition.defaultLow or definition.min or 0
+        local high: number = definition.defaultHigh or definition.max or 0
+        assert(
+            low >= (definition.min or 0) and high <= (definition.max or 0),
+            label .. ": defaults are outside the range"
+        )
+        assert(low <= high, label .. ": minimum default above the maximum")
+        feature.options[label] = {kind = "range", low = low, high = high}
+        if definition.onChanged then
+            definition.onChanged(low, high)
+        end
+        return optionRow(feature, label)
+    end
+
     host.addCycleOption = function(
         feature: any,
         label: string,
@@ -296,6 +317,11 @@ function Host.create(world: any): HostStub
         IsKeyDown = function(_self: any, _key: any): boolean
             return world.keyDown == true
         end,
+        -- The auto clicker only clicks while the attack is held, so the
+        -- harness has to be able to hold it.
+        IsMouseButtonPressed = function(_self: any, _button: any): boolean
+            return world.mouseDown == true
+        end,
         GetMouseLocation = function(): any
             return world.vector2(640, 360)
         end,
@@ -303,8 +329,12 @@ function Host.create(world: any): HostStub
         TouchEnabled = false,
     }
     host.UserInputService.InputBegan = Mock.signal()
+    host.UserInputService.InputEnded = Mock.signal()
     local stateTable: any = {
         menuVisible = true,
+        -- The window is closed in the harness: modules that stand down while
+        -- the menu is open (the executor-level click paths) must still run.
+        visible = false,
         setMenuVisible = function(visible: boolean): ()
             host.state.menuVisible = visible
         end,

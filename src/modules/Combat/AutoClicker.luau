@@ -2,28 +2,34 @@
 --
 -- Auto Clicker.
 --
--- Presses things for you, at a rate that does not look like a machine pressed
--- them. What it presses is the interesting part, because "click" means three
--- different things depending on the game and the device:
+-- It does one thing: while you are holding the attack down, it presses faster
+-- than a hand can. It never starts clicking on its own — that is the whole
+-- difference between an auto clicker and a bot, and it is why the reference
+-- interface gates its Tool mode behind `IsMouseButtonPressed`. Turning the
+-- module on arms it; your finger still fires it.
 --
---   Mouse        the executor's own `mouse1click`. Desktop, and only desktop.
---   Tool         `Tool:Activate()` on whatever is equipped. Works on a phone,
---                works while the menu is open, and is what most weapons
---                actually listen to.
---   Screen button  plenty of games build their own on-screen button for
---                attacking on touch, and that button is a GuiButton in your own
---                PlayerGui. Pressing it means firing its signals, which is what
---                the game's own tap does. Tap "Learn button", then tap the
---                game's button once, and the clicker owns it from then on.
+-- Two ways to hold:
 --
--- The rate is a range, not a number: a clean 13.00 CPS forever is the easiest
--- pattern in the world to spot, so every interval is drawn between the two
--- ends of the range.
+--   Hold click  the real attack button (mouse button on a desktop, a finger
+--               anywhere on the screen on touch). This is the SpeedAutoClicker
+--               behaviour people expect: hold, and the clicks come out.
+--   Hold key    a key of your own, for games where the attack is not a click
+--               at all, or when you want the burst on a key you can hold with
+--               a spare finger.
+--
+-- And four things a "click" can mean, because that also differs per game:
+-- the tool's own `Activate`, a left or right click through the executor, or
+-- the game's own on-screen attack button.
+--
+-- The rate is an interval, not a number: a clean 13.00 CPS forever is the
+-- easiest pattern in the world to spot, so every gap is drawn between the two
+-- ends of the CPS range.
 
 export type Runtime = {
     framework: any,
     entity: any,
     host: any,
+    weapons: any?,
 }
 
 local Module = {
@@ -46,9 +52,9 @@ local function pressGuiButton(button: GuiButton): boolean
     if type(connectionsOf) == "function" then
         for _, signal: any in
             ipairs({
+                button.MouseButton1Down,
                 button.MouseButton1Click,
                 (button :: any).Activated,
-                button.MouseButton1Down,
                 button.MouseButton1Up,
             })
         do
@@ -95,7 +101,7 @@ function Module.init(context: Runtime): any
         nextClickAt = 0,
         learning = false,
         target = nil :: GuiButton?,
-        clicks = 0,
+        touches = 0,
     }
 
     local function equippedTool(): Tool?
@@ -142,19 +148,52 @@ function Module.init(context: Runtime): any
         Name = "Auto Clicker",
         Category = "Combat",
         Order = 2,
-        Tooltip = "Clicks, activates your tool or presses the game's own "
-            .. "on-screen button, at a randomised rate.",
+        Tooltip = "Clicks for you while you hold the attack down.",
         Function = function(enabled: boolean): ()
             runtime.nextClickAt = 0
-            runtime.clicks = 0
+            runtime.touches = 0
             if not enabled then
                 return
             end
 
+            -- Touch has no "is the finger down" query, so the two events that
+            -- do exist are counted. Any finger on the screen is a held attack:
+            -- on a phone the attack button is wherever the game drew it.
+            clicker:Event(userInput.InputBegan, function(input: InputObject): ()
+                if input.UserInputType == Enum.UserInputType.Touch then
+                    runtime.touches += 1
+                end
+            end)
+            clicker:Event(userInput.InputEnded, function(input: InputObject): ()
+                if input.UserInputType == Enum.UserInputType.Touch then
+                    runtime.touches = math.max(0, runtime.touches - 1)
+                end
+            end)
+
             clicker:Loop(function(): ()
                 local options: any = clicker.Options
-                if options["Activation"].Value == "Hold key"
-                    and not userInput:IsKeyDown(options["Hold key"].Value) then
+                local holdingAttack: boolean = false
+                if options["Activation"].Value == "Hold key" then
+                    local key: Enum.KeyCode = options["Hold key"].Value
+                    holdingAttack = key ~= Enum.KeyCode.Unknown
+                        and userInput:IsKeyDown(key)
+                else
+                    holdingAttack = userInput:IsMouseButtonPressed(
+                        Enum.UserInputType.MouseButton1
+                    ) or runtime.touches > 0
+                end
+                if not holdingAttack then
+                    -- Nothing held, nothing pressed. The module stays armed.
+                    runtime.nextClickAt = 0
+                    return
+                end
+
+                local mode: string = options["Click"].Value
+                -- Dragging a slider in the menu is a held mouse button too:
+                -- the executor-level click paths would land in the game
+                -- behind the window, so they stand down while it is open.
+                if host.state.visible
+                    and (mode == "Left click" or mode == "Right click") then
                     return
                 end
 
@@ -162,119 +201,121 @@ function Module.init(context: Runtime): any
                 if now < runtime.nextClickAt then
                     return
                 end
-                local minimum: number = options["Minimum CPS"].Value
-                local maximum: number = math.max(options["Maximum CPS"].Value, minimum)
-                local rate: number = minimum + math.random() * (maximum - minimum)
+                local rate: number = options["CPS"]:GetRandomValue()
                 runtime.nextClickAt = now + 1 / math.max(rate, 0.5)
 
-                local mode: string = options["Press"].Value
-                if weapons then
-                    for _, label: string in ipairs(options["Weapons"].Selected or {}) do
-                        local candidate: any = weapons:Find(label)
-                        if candidate and weapons:Activate(candidate) then
-                            runtime.clicks += 1
-                        end
-                    end
-                end
-                if mode == "Weapons only" then
-                    return
-                end
-                if mode == "Tool" or mode == "Everything" then
+                if mode == "Tool" then
                     local tool: Tool? = equippedTool()
                     if tool then
+                        if options["Weapons only"].Value
+                            and weapons
+                            and not weapons:IsMelee((tool :: Tool).Name) then
+                            return
+                        end
                         pcall(function(): ()
                             (tool :: Tool):Activate()
                         end)
-                        runtime.clicks += 1
-                    elseif options["Require tool"].Value and mode == "Tool" then
                         return
                     end
+                    -- No Tool in hand does not mean no weapon: games like
+                    -- BedFight swing a view model through their own button,
+                    -- and the weapon library knows how to reach it.
+                    if weapons then
+                        local candidate: any = weapons:Best({Melee = true})
+                        if candidate then
+                            weapons:Activate(candidate)
+                        end
+                    end
+                    return
                 end
-                if mode == "Screen button" or mode == "Everything" then
+
+                if mode == "Screen button" then
                     local button: GuiButton? = resolveTarget()
                         or findButtonByName(tostring(options["Button name"].Value or ""))
                     if button then
                         runtime.target = button
-                        if pressGuiButton(button :: GuiButton) then
-                            runtime.clicks += 1
-                        end
+                        pressGuiButton(button :: GuiButton)
                     end
+                    return
                 end
-                if mode == "Mouse" or mode == "Everything" then
-                    local environment: any = getfenv()
-                    local click: any = environment.mouse1click
-                    if type(click) == "function" then
-                        pcall(click)
-                        runtime.clicks += 1
-                    end
+
+                local environment: any = getfenv()
+                local click: any = mode == "Right click"
+                    and environment.mouse2click
+                    or environment.mouse1click
+                if type(click) == "function" then
+                    pcall(click)
                 end
             end)
         end,
     })
 
-    clicker:CreateSection("Rate")
-    clicker:CreateSlider({
-        Name = "Minimum CPS",
+    clicker:CreateTwoSlider({
+        Name = "CPS",
         Min = 1,
         Max = 28,
-        Default = 8,
+        DefaultMin = 8,
+        DefaultMax = 12,
+        Tooltip = "Clicks per second. Every gap is drawn between the two ends, "
+            .. "so no two clicks are the same distance apart. A fast hand peaks "
+            .. "around 12; past 20 nothing human explains the rate and servers "
+            .. "that log click intervals will say so.",
     })
-    clicker:CreateSlider({
-        Name = "Maximum CPS",
-        Min = 1,
-        Max = 28,
-        Default = 13,
-        Tooltip = "Every interval is drawn between the two ends, so no two "
-            .. "clicks are the same distance apart. Above roughly 20 no human "
-            .. "hand is a plausible explanation.",
-    })
-    clicker:CreateDropdown({
+
+    local holdKey: any
+    local buttonName: any
+    local learnButton: any
+
+    local activation: any
+    activation = clicker:CreateDropdown({
         Name = "Activation",
-        List = {"Always", "Hold key"},
+        List = {"Hold click", "Hold key"},
         Index = 1,
+        Tooltip = "Hold click follows the real attack button; Hold key runs "
+            .. "while your own key is down.",
+        Function = function(value: string): ()
+            if holdKey then
+                holdKey:SetVisible(value == "Hold key")
+            end
+        end,
     })
-    clicker:CreateBind({
+    holdKey = clicker:CreateBind({
         Name = "Hold key",
         Default = Enum.KeyCode.Unknown,
-        Tooltip = "On touch, tap this slot to place a button and hold that.",
+        Tooltip = "Hover this row and press a key to bind it. On touch, tap "
+            .. "the slot to place a button and hold that instead.",
     })
 
-    clicker:CreateSection("Target")
-    -- The same set the aura uses. A game that hands you a sword, a pickaxe and
-    -- an on-screen button should let you click exactly one of them.
-    clicker:CreateList({
-        Name = "Weapons",
-        Items = function(): {string}
-            if not weapons then
-                return {}
-            end
-            return weapons:Labels({All = true})
-        end,
-        EmptyText = "none",
-        Tooltip = "Ticked entries are pressed on every click, alongside the "
-            .. "mode below.",
-    })
-    clicker:CreateDropdown({
-        Name = "Press",
-        List = {"Tool", "Screen button", "Mouse", "Everything", "Weapons only"},
+    local clickMode: any
+    clickMode = clicker:CreateDropdown({
+        Name = "Click",
+        List = {"Tool", "Left click", "Right click", "Screen button"},
         Index = 1,
-        Tooltip = "Tool works everywhere including phones; Screen button "
-            .. "presses the game's own attack button; Mouse needs a desktop "
-            .. "executor.",
-    })
-    clicker:CreateTextBox({
-        Name = "Button name",
-        Default = "",
-        Tooltip = "Part of the name of the game's button. Filled in for you by "
-            .. "Learn button.",
+        Tooltip = "What one click means: activate the equipped tool, a real "
+            .. "left or right click through the executor, or the game's own "
+            .. "on-screen attack button.",
+        Function = function(value: string): ()
+            local usesButton: boolean = value == "Screen button"
+            if buttonName then
+                buttonName:SetVisible(usesButton)
+            end
+            if learnButton then
+                learnButton:SetVisible(usesButton)
+            end
+        end,
     })
     clicker:CreateToggle({
-        Name = "Require tool",
+        Name = "Weapons only",
         Default = false,
-        Tooltip = "Skip the click entirely while your hands are empty.",
+        Tooltip = "Only click while what you are holding is a melee weapon, "
+            .. "so a pickaxe or a stack of blocks is never swung.",
     })
-
-    local learnButton: any
+    buttonName = clicker:CreateTextBox({
+        Name = "Button name",
+        Default = "",
+        Tooltip = "Part of the name of the game's attack button. Filled in "
+            .. "for you by Learn button.",
+    })
     learnButton = clicker:CreateButton({
         Name = "Learn button",
         Tooltip = "Press this, then tap the game's own attack button once.",
@@ -325,14 +366,21 @@ function Module.init(context: Runtime): any
         end
     )
 
-    clicker:CreateNote(
-        "Screen button mode is for games that build their own attack button on "
-            .. "touch: the clicker presses that button exactly as a finger does."
-    )
+    -- The rows the current modes do not use start hidden, instead of the panel
+    -- opening with four controls that do nothing.
+    task.defer(function(): ()
+        pcall(function(): ()
+            holdKey:SetVisible(activation.Value == "Hold key")
+            local usesButton: boolean = clickMode.Value == "Screen button"
+            buttonName:SetVisible(usesButton)
+            learnButton:SetVisible(usesButton)
+        end)
+    end)
 
     activeCleanup = function(): ()
         runtime.learning = false
         runtime.target = nil
+        runtime.touches = 0
         pcall(function(): ()
             learnConnection:Disconnect()
         end)

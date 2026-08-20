@@ -603,6 +603,13 @@ function Mock.install(): MockWorld
         spawn = function(callback: any, ...: any): ()
             callback(...)
         end,
+        -- Deferred work runs immediately here. Modules use `task.defer` for
+        -- "once every row exists" passes (hiding the rows a mode does not
+        -- use), and a harness that silently skipped those would be testing a
+        -- panel the game never shows.
+        defer = function(callback: any, ...: any): ()
+            callback(...)
+        end,
         delay = function(_seconds: number, callback: any, ...: any): ()
             callback(...)
         end,

@@ -224,7 +224,7 @@ local trigger: any = TriggerFile.init(espContext)
 
 check("card is registered", trigger ~= nil and trigger.Name == "TriggerBot")
 check("activation option exists", trigger.Options["Activation"] ~= nil)
-check("delay option exists", trigger.Options["Delay"] ~= nil)
+check("reaction option exists", trigger.Options["Reaction"] ~= nil)
 check("target part option exists", trigger.Options["Target part"] ~= nil)
 check("wall check exists", trigger.Options["Wall check"] ~= nil)
 
@@ -240,9 +240,8 @@ world.raycastResult = {
     Instance = enemy.Character:FindFirstChild("Head"),
     Position = world.vector3(0, 0, -30),
 }
-trigger.Options["Delay"].Value = 0.1
-trigger.Options["Delay jitter"].Value = 0
-trigger.Options["Aim radius"].Value = 0
+trigger.Options["Reaction"].Value = 0.1
+trigger.Options["Aim tolerance"].Value = 0
 trigger.Options["Team check"].Value = true
 
 trigger:Toggle()
@@ -476,23 +475,30 @@ local clicker: any = ClickerFile.init(espContext)
 
 check("card is registered", clicker.Name == "Auto Clicker")
 for _, name: string in ipairs({
-    "Minimum CPS",
-    "Maximum CPS",
+    "CPS",
     "Activation",
     "Hold key",
-    "Press",
+    "Click",
+    "Weapons only",
     "Button name",
-    "Require tool",
 }) do
     check("option: " .. name, clicker.Options[name] ~= nil)
 end
 
--- Tool mode: presses whatever is equipped, at the configured rate.
-clicker.Options["Press"].Value = "Tool"
-clicker.Options["Minimum CPS"].Value = 10
-clicker.Options["Maximum CPS"].Value = 10
+-- Tool mode: presses whatever is equipped, at the configured rate — but only
+-- while the attack is actually held down.
+clicker.Options["Click"].Value = "Tool"
+clicker.Options["CPS"].Value = {Min = 10, Max = 10}
 local toolBefore: number = sword.Activations or 0
 clicker:Toggle()
+world.mouseDown = false
+world.clock += 1
+stub.step(0.016)
+check("nothing is pressed while the attack is not held",
+    (sword.Activations or 0) == toolBefore,
+    "activations: " .. tostring(sword.Activations))
+
+world.mouseDown = true
 world.clock += 1
 stub.step(0.016)
 check("presses the equipped tool", (sword.Activations or 0) > toolBefore,
@@ -501,6 +507,41 @@ check("presses the equipped tool", (sword.Activations or 0) > toolBefore,
 local rateBefore: number = sword.Activations or 0
 stub.step(0.016)
 check("respects the click rate", (sword.Activations or 0) == rateBefore)
+
+-- The rate is drawn inside the band, never outside it.
+clicker.Options["CPS"].Value = {Min = 4, Max = 16}
+local lowest: number = math.huge
+local highest: number = -math.huge
+for _ = 1, 40 do
+    local drawn: number = clicker.Options["CPS"]:GetRandomValue()
+    lowest = math.min(lowest, drawn)
+    highest = math.max(highest, drawn)
+end
+check("the CPS range stays inside its band", lowest >= 4 and highest <= 16,
+    tostring(lowest) .. " .. " .. tostring(highest))
+
+-- Hold key: the SpeedAutoClicker shape. The mouse is not held at all here;
+-- only the key is, and only while it is down does anything get pressed.
+clicker.Options["CPS"].Value = {Min = 10, Max = 10}
+clicker.Options["Activation"].Value = "Hold key"
+clicker.Options["Hold key"].Value = world.globals.Enum.KeyCode.E
+world.mouseDown = false
+world.keyDown = false
+local holdBefore: number = sword.Activations or 0
+world.clock += 1
+stub.step(0.016)
+check("hold key does nothing while the key is up",
+    (sword.Activations or 0) == holdBefore)
+
+world.keyDown = true
+world.clock += 1
+stub.step(0.016)
+check("hold key clicks while the key is down",
+    (sword.Activations or 0) > holdBefore,
+    "activations: " .. tostring(sword.Activations))
+world.keyDown = false
+clicker.Options["Activation"].Value = "Hold click"
+world.mouseDown = true
 
 -- Screen button mode: the game's own touch button, pressed the way a finger
 -- presses it.
@@ -518,7 +559,7 @@ attackButton.MouseButton1Click:Connect(function(): ()
     buttonPresses += 1
 end)
 
-clicker.Options["Press"].Value = "Screen button"
+clicker.Options["Click"].Value = "Screen button"
 clicker.Options["Button name"].Value = "attack"
 world.clock += 1
 stub.step(0.016)
@@ -831,6 +872,45 @@ for _, junk: string in ipairs(junkNames) do
     end
     check("does not list " .. junk, not listed, table.concat(labels, " | "))
 end
+
+-- Melee only.
+--
+-- A view model is the whole first-person rig, and a hotbar holds the bow next
+-- to the sword: the picker used to list "RightUpperArm", "Sneak", "Blocks" and
+-- "Crossbow" as things Kill Aura could swing.
+local rigNames: {string} = {"RightUpperArm", "Sneak", "Blocks", "IdleTrack"}
+for _, rigName: string in ipairs(rigNames) do
+    local rigPart: any = Mock.newInstance("Model")
+    rigPart.Name = rigName
+    rigPart.Parent = viewModel
+end
+local bow: any = Mock.newInstance("ImageButton")
+bow.Name = "Crossbow"
+bow.Visible = true
+bow.Parent = hotbar
+
+local meleeLabels: {string} = weapons:Labels({All = true, Melee = true})
+local function hasMelee(needle: string): boolean
+    for _, label: string in ipairs(meleeLabels) do
+        if string.find(label, needle, 1, true) then
+            return true
+        end
+    end
+    return false
+end
+check("melee list keeps the view-model sword", hasMelee("Emerald Sword"),
+    table.concat(meleeLabels, " | "))
+check("melee list keeps the inventory sword", hasMelee("Iron Sword"),
+    table.concat(meleeLabels, " | "))
+for _, rigName: string in ipairs(rigNames) do
+    check("melee list drops " .. rigName, not hasMelee(rigName),
+        table.concat(meleeLabels, " | "))
+end
+check("melee list drops the crossbow", not hasMelee("Crossbow"),
+    table.concat(meleeLabels, " | "))
+check("a sword is melee", weapons:IsMelee("Wooden Sword"))
+check("a bow is not melee", not weapons:IsMelee("Bow"))
+check("a rig part is not melee", not weapons:IsMelee("RightUpperLeg"))
 
 local candidate: any = weapons:Find("Sword  ·  Button")
 check("activating a button candidate presses it",

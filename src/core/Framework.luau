@@ -48,6 +48,7 @@ export type Module = {
 
     CreateToggle: (self: Module, definition: any) -> Option,
     CreateSlider: (self: Module, definition: any) -> Option,
+    CreateTwoSlider: (self: Module, definition: any) -> Option,
     CreateDropdown: (self: Module, definition: any) -> Option,
     CreateBind: (self: Module, definition: any) -> Option,
     CreateTextBox: (self: Module, definition: any) -> Option,
@@ -272,6 +273,45 @@ function Module.init(context: any): Framework
                 end,
                 definition2.Tooltip
             )
+            return register(option)
+        end
+
+        -- A range is one setting, not two. `Value` stays a table so a module
+        -- reads `CPS.Value.Min`, and `GetRandomValue()` is the whole point of
+        -- the control: a rate drawn between the two ends every time it is
+        -- asked for, which is what stops a loop from running at a constant,
+        -- perfectly machine-shaped interval.
+        function created:CreateTwoSlider(definition2: any): Option
+            local minimum: number = definition2.Min or 0
+            local maximum: number = definition2.Max or 100
+            local low: number = definition2.DefaultMin or minimum
+            local high: number = definition2.DefaultMax or maximum
+            local option: any = newOption(definition2.Name, {Min = low, Max = high})
+            local builder: any = host.addRangeOption
+                or (host.state and host.state.addRangeOption)
+            option.GetRandomValue = function(_self: any): number
+                local band: any = option.Value
+                local lowValue: number = band.Min
+                local highValue: number = math.max(band.Max, lowValue)
+                return lowValue + math.random() * (highValue - lowValue)
+            end
+            if type(builder) ~= "function" then
+                return register(option)
+            end
+            option.Object = builder(feature, definition2.Name, {
+                min = minimum,
+                max = maximum,
+                defaultLow = low,
+                defaultHigh = high,
+                integer = definition2.Decimal == nil,
+                hint = definition2.Tooltip,
+                onChanged = function(newLow: number, newHigh: number): ()
+                    option.Value = {Min = newLow, Max = newHigh}
+                    if type(definition2.Function) == "function" then
+                        definition2.Function(newLow, newHigh)
+                    end
+                end,
+            })
             return register(option)
         end
 

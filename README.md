@@ -38,17 +38,10 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
 - Registered sections initialize asynchronously after the GUI shell appears;
   a staged loading curtain reports progress until they are ready, and opening a
   tab is never used as the condition for constructing content.
-- The loading intro is a scripted sequence rather than a spinner that vanishes
-  on the last callback: a drifting backdrop glow, the wordmark rising into
-  place, a hairline rule drawing out beneath it, then counter-rotating rings
-  over a narrated status line and progress bar, and finally a held "Ready"
-  before the curtain lifts. Roughly 1.1 s of animation runs before any
-  narration, so the intro reads as an intro even when every module loads
-  instantly, and a slow load simply keeps the status stage on screen for
-  longer — nothing here ever delays a slow load further. The narration yields
-  the moment the loader has real `x/y` counts to display, a watchdog lifts the
-  curtain if the sequence thread ever dies, and a failed bootstrap keeps the
-  curtain up so its error message stays readable.
+- There is no loading intro. The shell builds itself hidden, and on touch the
+  launcher button appearing is the signal that it is ready; on a keyboard a
+  single toast names the menu key. A failed bootstrap still reports itself in
+  the console with the `[RTM:Bootstrap]` prefix.
 - **The shell is fixed.** It is anchored at its own centre
   (`AnchorPoint = (0.5, 0.5)`, `Position = fromScale(0.5, 0.5)`) and can never
   be moved: there is no drag strip, no pointer bookkeeping and no persisted
@@ -58,6 +51,15 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
   windows (favourites, the overlay manager, the per-overlay settings) and the
   HUD overlays, which keep their own drag handlers and their own saved
   positions in `ui.floatingPositions`.
+- **The card grid is measured, never scaled.** Inside a `ScrollingFrame` a
+  child sized `UDim2.new(1, 0, ...)` resolves against the canvas, and
+  `UIPadding` shifts that canvas without shrinking it — so the board was one
+  whole gutter wider than the window it lived in, the right-hand column ran
+  under the scroll bar, and the options handle of every card on that side was
+  cut off by the shell's edge. The grid root is now sized in pixels from the
+  scrolling frame's own `AbsoluteWindowSize`, re-measured whenever that
+  changes (viewport, rail collapse, the scroll bar appearing), so nothing can
+  ever spill past the window on any device.
 - The shell itself is a compact, borderless, dark-glass surface: a navigation
   rail, a page header (page name + search) and a scrolling card board. It is
   the only visual theme, so every injection opens the same coherent interface.
@@ -322,17 +324,31 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
   still works on desktop. Player ESP, X-Ray, High Jump, Spider, Safe Walk, Zoom Unlocker,
   Interact Extender, a Rejoin action and a rewritten Hitboxes engine extend
   the universal toolkit.
-- **Hitboxes** were rewritten around a mode system — Visible (scaled body,
-  pinned head), Root (phantom HumanoidRootPart block) and Hybrid — with
-  independent head/root sizes, reveal/transparency, collision, mass,
-  accessory handling and a tunable refresh interval. Original part states are
-  recorded once and restored exactly, and switching modes unwinds the parts
-  the new mode no longer targets.
+- **Hitboxes** expand the target part by a number of studs, the way the
+  reference client does it, instead of multiplying the body by a scale factor
+  nobody can picture: pick *Root*, *Head* or *Both*, pick how many studs, and
+  that is the whole model. Teammates are skipped, NPCs are opt-in, the
+  expanded part can be revealed at a chosen transparency, collision is dropped
+  (an inflated part that still collides shoves its owner around the map in
+  front of everyone), and every part is restored exactly the moment it stops
+  being a target — respawn, team swap or mode change, not just on disable.
 - **Phase Dash** now offers Blink (collision-aware teleport) and Slide
   (velocity burst) modes plus collision padding, flash duration and a
   separate slide speed. Its dash key is the card's own key slot and starts
-  blank, like every other module, instead of arriving bound to Q. **Soft Landing** gained Landing / Feather / Auto
-  modes, a glide speed and momentum preservation. **Projectile Calibration**
+  blank, like every other module, instead of arriving bound to Q.
+  **No Fall** (formerly Soft Landing) is aimed at games that wrote their own
+  fall damage — Roblox has none. There are only two ways to write it, so there
+  are two ways out: *Impact* brakes the fall a few studs above the floor with a
+  downward raycast, which is what a game reading your landing speed sees, and
+  *State* closes the humanoid's own fall measurement early (plus an optional
+  reset every third of a second while airborne, so a game measuring the drop
+  between Freefall and Landed never sees more than a short one). *Both* is the
+  default. Nothing blocks a remote: a damage remote that never arrives is the
+  one version of this that reads as an exploit in a server log.
+  **Spider** gained the reference client's three application modes — Velocity,
+  Impulse and CFrame — a climb-state toggle, other players excluded from the
+  wall probe, and a climb that stops with the wall instead of firing you off
+  the roof. **Projectile Calibration**
   exposes live-tunable analysis knobs — ping bucket width and ceiling,
   sample window, per-track sample cap, match radius, minimum projectile
   speed — alongside Save / Delete / Show-status actions.
@@ -542,15 +558,27 @@ and the Auto Clicker's ceiling lowered from 40 CPS to 28.
   36-pixel top bar and viewport points do not, so every teleport landed above
   the finger and on touch it usually hit nothing at all; it uses
   `ScreenPointToRay` now.
-- **Auto Clicker** (`Combat`): a clicks-per-second *range* rather than a
-  number, so no two intervals match. It can press three different things:
-  `Tool` (`Tool:Activate()`, which works on a phone and is what most weapons
-  actually listen to), `Mouse` (the executor's `mouse1click`, desktop only) and
-  **`Screen button`** — games that build their own on-screen attack button put
-  a GuiButton in your PlayerGui, and the clicker presses it exactly as a finger
-  does, by firing the signals a tap raises. Press *Learn button*, tap the
-  game's button once, and it is bound; the name is remembered so a HUD rebuilt
-  between rounds is found again. The menu's own buttons are never eligible.
+- **Auto Clicker** (`Combat`): it never clicks on its own. Turning it on arms
+  it; your finger fires it — *Hold click* follows the real attack button (the
+  mouse on a desktop, any finger on the screen on touch) and *Hold key* runs
+  while a key of your own is down, which is the SpeedAutoClicker shape. The
+  rate is one two-handle **CPS** slider, not a pair of "minimum"/"maximum"
+  rows, and every gap is drawn between its ends. A click means one of four
+  things: `Tool` (`Tool:Activate()`, which works on a phone, and falls through
+  to the weapon library for games with no `Tool` instances at all), `Left
+  click`, `Right click`, or **`Screen button`** — games that build their own
+  on-screen attack button put a GuiButton in your PlayerGui, and the clicker
+  presses it exactly as a finger does, by firing the signals a tap raises.
+  Press *Learn button*, tap the game's button once, and it is bound; the name
+  is remembered so a HUD rebuilt between rounds is found again. The menu's own
+  buttons are never eligible, the executor-level click paths stand down while
+  the menu is open, and *Weapons only* keeps it from swinging a pickaxe.
+- **TriggerBot** lost the two rows nobody should have to think about: the
+  reaction delay always carries a random third of itself (a reaction time
+  without variation is a signature), and "require tool" was a question with one
+  answer. It fires through the press/release pair when the executor has one,
+  because a weapon that arms on the press and fires on the release ignores a
+  click helper that does both in the same instant.
 - **Player ESP** boxes are the projected corners of the character's own
   bounding box, not a height guess with a fixed width ratio. The old box took
   two points and made the width 52% of the height, so an angled camera, a rig
@@ -562,6 +590,12 @@ and the Auto Clicker's ceiling lowered from 40 CPS to 28.
   own `Team.TeamColor`, and puts the name on a dark plate so it stays readable
   over snow or a bright sky. The two-grey scheme is still there for teamless
   games.
+- **Kill Aura's weapon list is melee only.** It used to offer everything the
+  client owned — the bow, the blocks, the first-person rig ("RightUpperArm"),
+  animation tracks, the emote wheel — because a view model contains the whole
+  rig and a hotbar contains the whole inventory. The weapon library answers one
+  question now (is this a blade, a haft or a fist), and only those are listed,
+  found by `Best` or swung by the fallback path.
 - **Item Render** (`Visuals`): object ESP — the name of every listed object,
   drawn above it with its distance, and its silhouette outlined through walls.
   The objects are a **multi-select list**, not a comma string: each one can be
@@ -882,10 +916,27 @@ config and restored on the next injection.
   launcher button appearing *is* the signal that it is ready — press it and the
   window is already complete, which is how Vape loads. The build stamp and any
   initialisation failure go to the console.
+- **The launcher is a touch-device control.** A phone has no key to press, so
+  the button floating over the game is both the way back in and the sign that
+  the menu finished loading. A machine with a keyboard has the menu key for
+  both jobs, so the button is not drawn there at all — it would only be a
+  circle sitting on top of the game — and a single toast at startup names the
+  key instead.
 - **The launcher can be dragged.** It sits over the game, so it can land
   exactly where a game put a button of its own; press and drag moves it,
   a press that does not travel still opens the menu, and where it ends up is
   saved with the rest of the interface state.
+- **Hover a card and press a key to bind it.** No dialog, no capture mode: with
+  the menu open, point at a module and press the key you want; press it again
+  to unbind. Option rows that carry a key (Auto Clicker's hold key, for one)
+  take a key the same way, and leaving a row falls back to the card around it,
+  because Roblox does not raise `MouseLeave` on a parent when the pointer moves
+  onto its child. The key that opens the menu is never taken this way.
+- **Three lines, not three dots.** Every card's settings handle is a drawn
+  hamburger — three frames, dimmed when the module has nothing to configure —
+  instead of a "..." that read as truncated text. It is drawn rather than typed
+  because the interface typeface is swappable and a glyph would change shape
+  with it.
 - The drawn icons are solid white glyphs on full transparency, in the same
   language as the rest of the interface: a running figure for Movement, a
   chunky six-tooth gear for Config., a filled star for Favourites and two

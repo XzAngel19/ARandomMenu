@@ -27,6 +27,7 @@ export type Candidate = {
     id: string,
     label: string,
     kind: string,
+    melee: boolean,
     instance: Instance,
 }
 
@@ -34,8 +35,9 @@ export type WeaponLibrary = {
     Scan: (self: WeaponLibrary, query: any?) -> {Candidate},
     Labels: (self: WeaponLibrary, query: any?) -> {string},
     Find: (self: WeaponLibrary, label: string) -> Candidate?,
+    IsMelee: (self: WeaponLibrary, name: string) -> boolean,
     Activate: (self: WeaponLibrary, candidate: Candidate) -> boolean,
-    Best: (self: WeaponLibrary) -> Candidate?,
+    Best: (self: WeaponLibrary, query: any?) -> Candidate?,
     Invalidate: (self: WeaponLibrary) -> (),
     SetAllowEquip: (self: WeaponLibrary, allowed: boolean) -> (),
     Swing: (self: WeaponLibrary) -> boolean,
@@ -79,6 +81,101 @@ local WEAPON_WORDS: {string} = {
     "melee",
     "weapon",
     "combat",
+}
+
+-- Words that mean "this is a melee weapon": a blade, a haft, a fist. This is
+-- the list the pickers actually offer, because "what may Kill Aura swing" has
+-- exactly one sane answer and it is not "everything the client owns".
+local MELEE_WORDS: {string} = {
+    "sword",
+    "katana",
+    "dagger",
+    "blade",
+    "knife",
+    "axe",
+    "mace",
+    "spear",
+    "scythe",
+    "sickle",
+    "sabre",
+    "saber",
+    "rapier",
+    "cutlass",
+    "machete",
+    "glaive",
+    "halberd",
+    "hammer",
+    "club",
+    "baton",
+    "bat",
+    "pickaxe",
+    "fist",
+    "knuckle",
+}
+
+-- Words that mean "this throws or shoots". A bow is a weapon and still has no
+-- business in a melee picker: swinging it does nothing and it pushes the sword
+-- one row further down.
+local RANGED_WORDS: {string} = {
+    "bow",
+    "crossbow",
+    "arrow",
+    "gun",
+    "rifle",
+    "pistol",
+    "revolver",
+    "shotgun",
+    "sniper",
+    "launcher",
+    "rocket",
+    "grenade",
+    "snowball",
+    "projectile",
+    "throw",
+    "wand",
+    "staff",
+    "gauntlet",
+    "fireball",
+}
+
+-- Rig, animation and control names. A view-model container is full of these
+-- ("RightUpperArm", "Sneak", "Blocks", "Idle"), and listing them is what made
+-- the weapon picker read as a dump of the character's insides.
+local RIG_WORDS: {string} = {
+    "hand",
+    "arm",
+    "leg",
+    "foot",
+    "torso",
+    "head",
+    "upper",
+    "lower",
+    "root",
+    "limb",
+    "joint",
+    "motor",
+    "weld",
+    "attachment",
+    "rig",
+    "bone",
+    "hitbox",
+    "collider",
+    "humanoid",
+    "camera",
+    "viewmodel",
+    "idle",
+    "walk",
+    "run",
+    "sprint",
+    "sneak",
+    "crouch",
+    "jump",
+    "fall",
+    "land",
+    "swim",
+    "pose",
+    "track",
+    "sequence",
 }
 
 -- Words that mean "this is not a weapon". A hotbar holds wool, planks, emotes
@@ -153,6 +250,18 @@ local function containsWord(text: string, words: {string}): boolean
     return false
 end
 
+-- One question, asked the same way everywhere: is this thing a melee weapon?
+-- A rig part, an animation, a block or anything that shoots is not, whatever
+-- else its name happens to contain.
+local function isMeleeName(name: string): boolean
+    if containsWord(name, NOT_WEAPON_WORDS)
+        or containsWord(name, RANGED_WORDS)
+        or containsWord(name, RIG_WORDS) then
+        return false
+    end
+    return containsWord(name, MELEE_WORDS)
+end
+
 local function ancestryMatches(instance: Instance, words: {string}, depth: number): boolean
     local current: Instance? = instance
     local steps: number = 0
@@ -181,6 +290,7 @@ function Module.init(context: any): WeaponLibrary
         cache = {},
         cachedAt = -1,
         cachedAll = false,
+        cachedMelee = false,
         -- Off by default: nothing in this menu should decide for the player
         -- what is in their hands.
         allowEquip = false,
@@ -238,15 +348,25 @@ function Module.init(context: any): WeaponLibrary
         local options: any = query or {}
         local everything: boolean = options.All == true
         local now: number = os.clock()
-        if now - library.cachedAt < 1 and library.cachedAll == everything then
+        if now - library.cachedAt < 1
+            and library.cachedAll == everything
+            and library.cachedMelee == (options.Melee == true) then
             return library.cache
         end
         local found: {Candidate} = {}
         local seen: {[string]: boolean} = {}
 
+        -- `Melee` is the filter every picker uses. It is applied here rather
+        -- than at display time so `Find`, `Best` and `Labels` can never
+        -- disagree about what counts as a weapon.
+        local meleeOnly: boolean = options.Melee == true
         local function add(kind: string, label: string, instance: Instance): ()
             local id: string = kind .. ":" .. label
             if seen[id] then
+                return
+            end
+            local melee: boolean = isMeleeName(label)
+            if meleeOnly and not melee then
                 return
             end
             seen[id] = true
@@ -254,6 +374,7 @@ function Module.init(context: any): WeaponLibrary
                 id = id,
                 label = label,
                 kind = kind,
+                melee = melee,
                 instance = instance,
             })
         end
@@ -297,11 +418,17 @@ function Module.init(context: any): WeaponLibrary
                 end
                 if string.find(string.lower(child.Name), "viewmodel", 1, true) then
                     -- Whatever the client has put in your hands right now.
+                    --
+                    -- This branch used to take every child of the view model,
+                    -- which is how "RightUpperArm", "Sneak" and "Blocks" ended
+                    -- up in a list of weapons: a view model contains the whole
+                    -- first-person rig, not just the sword. Only names that
+                    -- read as a melee weapon are taken now.
                     for _, held: Instance in ipairs(child:GetChildren()) do
                         if not held:IsA("Model") and not held:IsA("BasePart") then
                             continue
                         end
-                        if containsWord(held.Name, NOT_WEAPON_WORDS) then
+                        if not isMeleeName(held.Name) then
                             continue
                         end
                         add("ViewModel", held.Name, held)
@@ -347,6 +474,7 @@ function Module.init(context: any): WeaponLibrary
         library.cache = found
         library.cachedAt = now
         library.cachedAll = everything
+        library.cachedMelee = meleeOnly
         return found
     end
 
@@ -357,6 +485,12 @@ function Module.init(context: any): WeaponLibrary
         end
         table.sort(labels)
         return labels
+    end
+
+    -- Exposed so a module can ask about a name it already has (the tool in
+    -- your hands, say) without running a scan.
+    function library:IsMelee(name: string): boolean
+        return isMeleeName(name)
     end
 
     function library:Find(label: string): Candidate?
@@ -376,8 +510,8 @@ function Module.init(context: any): WeaponLibrary
     -- because that is what most games mean by "your weapon"; then the touch
     -- button, which is the only thing that swings in games like BedFight; then
     -- a hotbar slot, which at least equips the thing.
-    function library:Best(): Candidate?
-        local found: {Candidate} = library:Scan({All = false})
+    function library:Best(query: any?): Candidate?
+        local found: {Candidate} = library:Scan(query or {All = false})
         local order: {string} = {"Tool", "Button", "Slot", "ViewModel"}
         local character: Model? = localPlayer.Character
         for _, kind: string in ipairs(order) do
@@ -401,7 +535,9 @@ function Module.init(context: any): WeaponLibrary
     end
 
     function library:Swing(): boolean
-        local candidate: Candidate? = library:Best()
+        -- A blade first; anything the game will accept as an attack second.
+        local candidate: Candidate? = library:Best({Melee = true})
+            or library:Best()
         if not candidate then
             return false
         end

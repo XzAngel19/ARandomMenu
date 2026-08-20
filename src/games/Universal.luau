@@ -29,7 +29,7 @@ local UNIVERSAL_FEATURES: {FeatureDefinition} = table.freeze({
     {id = "zoomUnlocker", name = "Zoom Unlocker", order = 9},
     {id = "interactExtender", name = "Interact Extender", order = 10},
     {id = "phaseDash", name = "Phase Dash", order = 11},
-    {id = "softLanding", name = "Soft Landing", order = 12},
+    {id = "noFall", name = "No Fall", order = 12},
     {id = "projectileCalibration", name = "Projectile Calibration", order = 13},
 })
 

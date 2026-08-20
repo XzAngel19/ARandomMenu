@@ -73,7 +73,7 @@ local FEATURE_CATEGORIES: {[string]: string} = {
     ["Anti-Fling"] = "Protection",
     ["Anti-Void"] = "Protection",
     ["Safe Walk"] = "Protection",
-    ["Soft Landing"] = "Protection",
+    ["No Fall"] = "Protection",
 
     -- Utility
     ["Anti-AFK"] = "Utility",
@@ -2046,6 +2046,58 @@ local function applyKeySlotStyle(button: TextButton): ()
     if buttonStroke then
         buttonStroke.Color = Theme.DefaultOutline
         buttonStroke.Transparency = 0.78
+    end
+end
+
+-- The options handle: three stacked lines.
+--
+-- The reference interface marks "this module has settings" with a small
+-- hamburger, and that reads as a control at a glance; the three dots this menu
+-- used before read as "truncated text" and were mistaken for a cut-off label.
+-- Text glyphs are avoided on purpose — the interface typeface is swappable, so
+-- a literal "≡" would change shape with the font. Three frames do not.
+state.applyLinesGlyph = function(
+    button: TextButton,
+    dimmed: boolean,
+    active: boolean?
+): ()
+    button.Text = ""
+    local existing: Instance? = button:FindFirstChild("LinesGlyph")
+    local glyph: Frame
+    if existing and existing:IsA("Frame") then
+        glyph = existing :: Frame
+    else
+        glyph = create("Frame", {
+            Parent = button,
+            Name = "LinesGlyph",
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Position = UDim2.fromScale(0.5, 0.5),
+            Size = UDim2.fromOffset(12, 8),
+            ZIndex = button.ZIndex + 1,
+        }) :: Frame
+        for index: number = 1, 3 do
+            local bar: Frame = create("Frame", {
+                Parent = glyph,
+                Name = "Line" .. tostring(index),
+                AnchorPoint = Vector2.new(0.5, 0.5),
+                BackgroundColor3 = Theme.DefaultText,
+                BorderSizePixel = 0,
+                Position = UDim2.new(0.5, 0, 0, (index - 1) * 3.5 + 0.5),
+                -- The middle line is shorter, which is what stops the mark
+                -- from reading as a solid block at 12px.
+                Size = UDim2.fromOffset(index == 2 and 9 or 12, 1),
+                ZIndex = button.ZIndex + 2,
+            }) :: Frame
+            create("UICorner", {Parent = bar, CornerRadius = UDim.new(1, 0)})
+        end
+    end
+    local barTransparency: number = dimmed and 0.74 or (active and 0.02 or 0.3)
+    for _, bar: Instance in ipairs(glyph:GetChildren()) do
+        if bar:IsA("Frame") then
+            bar.BackgroundTransparency = barTransparency
+        end
     end
 end
 
@@ -4120,10 +4172,14 @@ end
 -- sight. It used to sit on top of the open window, which made it look like a
 -- second, broken close button.
 local function refreshLauncherVisibility(): ()
-    -- Shown on every device, not just phones: the brand mark closes the menu,
-    -- so there has to be something visible that opens it again even when the
-    -- keyboard shortcut is not obvious to whoever is holding the machine.
-    MobileMenuButton.Visible = not state.visible
+    -- Touch devices only.
+    --
+    -- A phone has no key to press, so the button floating over the game is the
+    -- only way back in — and its presence is also how you know the menu
+    -- finished loading, since there is no intro any more. A machine with a
+    -- keyboard has the menu key for both jobs, and there the button is nothing
+    -- but a permanent circle sitting on top of the game, so it is never shown.
+    MobileMenuButton.Visible = state.isMobile and not state.visible
 end
 refreshLauncherVisibility()
 state.addMenuVisibilityListener(function(): ()
@@ -5150,15 +5206,35 @@ local function updateCardGrid(record: CardGridRecord): ()
         record.container:FindFirstChildOfClass("UIPadding")
     if containerPadding then
         containerPadding.PaddingLeft = UDim.new(0, layout.contentPadding)
-        -- The scroll bar is drawn inside the frame's right edge, so a card
-        -- sized to the full width ends up underneath it and the board looks
-        -- clipped on that side. The gutter is padding plus the bar.
-        containerPadding.PaddingRight =
-            UDim.new(0, layout.contentPadding + layout.scrollBar + 2)
+        containerPadding.PaddingRight = UDim.new(0, layout.contentPadding)
         containerPadding.PaddingTop = UDim.new(0, layout.contentPadding)
         containerPadding.PaddingBottom = UDim.new(0, layout.contentPadding + 12)
     end
     record.container.ScrollBarThickness = layout.scrollBar
+
+    -- The grid is sized in pixels, never in scale.
+    --
+    -- Inside a ScrollingFrame a child of `UDim2.new(1, 0, ...)` resolves its
+    -- width against the canvas, and UIPadding shifts that canvas without
+    -- shrinking it: the board therefore ended up one whole gutter wider than
+    -- the visible window, the second column ran under the scroll bar, and the
+    -- options button of every card on that side was cut off by the shell's
+    -- edge — the missing slice of menu the screenshot shows. Measuring the
+    -- window and sizing the root in offset is the only version that cannot
+    -- overflow, on any device, at any viewport.
+    local windowWidth: number = record.container.AbsoluteWindowSize.X
+    if windowWidth <= 0 then
+        windowWidth = record.container.AbsoluteSize.X - layout.scrollBar
+    end
+    if windowWidth <= 0 then
+        -- First frame: nothing has been measured yet, so fall back to what the
+        -- metrics say the content column will be. The AbsoluteSize listener
+        -- corrects it as soon as the engine reports a real size.
+        windowWidth = layout.shellWidth - layout.sidebarWidth - 1
+    end
+    local innerWidth: number =
+        math.max(160, math.floor(windowWidth - layout.contentPadding * 2))
+    record.root.Size = UDim2.fromOffset(innerWidth, 0)
 
     local rootLayout: UIListLayout? = record.root:FindFirstChildOfClass("UIListLayout")
     if rootLayout then
@@ -5526,7 +5602,25 @@ getFeatureCardParent = function(container: Instance): Instance
             singleColumn = container:GetAttribute("CardGridSingleColumn") == true,
         }
         cardGrids[container] = record
-        updateCardGrid(record :: CardGridRecord)
+        -- The grid is measured, not scaled, so it has to re-measure whenever
+        -- the window it lives in changes width: a viewport change, the rail
+        -- collapsing, or the scroll bar appearing the first time the canvas
+        -- overflows (which narrows the window by its own thickness).
+        local measured: CardGridRecord = record :: CardGridRecord
+        trackUiConnection(
+            container:GetPropertyChangedSignal("AbsoluteSize"):Connect(function(): ()
+                updateCardGrid(measured)
+            end)
+        )
+        pcall(function(): ()
+            trackUiConnection(
+                container:GetPropertyChangedSignal("AbsoluteWindowSize")
+                    :Connect(function(): ()
+                        updateCardGrid(measured)
+                    end)
+            )
+        end)
+        updateCardGrid(measured)
     end
 
     if state.invalidateCategoryLayout then
@@ -6153,8 +6247,11 @@ for index: number, definition: any in ipairs(overlayDefinitions) do
     managerLabel.Size = UDim2.new(1, -112, 1, 0)
     managerLabel.TextColor3 = Theme.DefaultTextMuted
     managerLabel:SetAttribute("FloatingDepth", 1)
-    local settingsButton: TextButton = makeButton(managerRow, "...", 9)
+    local settingsButton: TextButton = makeButton(managerRow, "", 9)
     settingsButton.Name = "Settings"
+    -- Same three-line mark the cards use: one glyph means "open the settings
+    -- of the thing on this row" everywhere in the interface.
+    state.applyLinesGlyph(settingsButton, false)
     settingsButton.AnchorPoint = Vector2.new(1, 0.5)
     settingsButton.BackgroundTransparency = 1
     settingsButton.Position = UDim2.new(1, -58, 0.5, 0)
@@ -7634,6 +7731,95 @@ end
 -- key always reaches the module that claimed it.
 state.shortcutBindings = {} :: {[string]: any}
 
+-- Hover to bind.
+--
+-- The reference interface has no "set key" dialog: you point at a module with
+-- the menu open, press a key, and that key is now the module's. This is that,
+-- generalised so an option row (Auto Clicker's hold key, for one) can claim a
+-- key the same way — the row it is attached to only has to say how to store
+-- one.
+--
+-- The registry is keyed by the row so that leaving a nested row falls back to
+-- the card around it: Roblox does not raise MouseLeave on a parent when the
+-- pointer moves onto its child, so without the fallback a card stopped
+-- accepting keys the moment the pointer had touched one of its options.
+state.hoverBindTarget = nil :: any
+do
+local hoverTargets: {[GuiObject]: any} = setmetatable({}, {__mode = "k"}) :: any
+
+state.bindHoverKeyTarget = function(
+    row: GuiObject,
+    name: string,
+    resolve: () -> any,
+    slot: TextButton?
+): ()
+    local target: any = {row = row, name = name, resolve = resolve, slot = slot}
+    hoverTargets[row] = target
+    local light: (boolean) -> ()
+    function light(on: boolean): ()
+        if slot and not state.isMobile then
+            -- The slot wears the same "listening" colour it wears during a
+            -- real capture, which is what makes the gesture discoverable: the
+            -- thing that is about to take your key lights up.
+            setKeySlotCapture(slot :: TextButton, on)
+        end
+    end
+    target.light = light
+    trackUiConnection(row.MouseEnter:Connect(function(): ()
+        local previous: any = state.hoverBindTarget
+        if previous and previous.light then
+            previous.light(false)
+        end
+        state.hoverBindTarget = target
+        light(true)
+    end))
+    trackUiConnection(row.MouseLeave:Connect(function(): ()
+        light(false)
+        if state.hoverBindTarget ~= target then
+            return
+        end
+        local ancestor: Instance? = row.Parent
+        while ancestor do
+            local outer: any = hoverTargets[ancestor :: any]
+            if outer then
+                state.hoverBindTarget = outer
+                if outer.light then
+                    outer.light(true)
+                end
+                return
+            end
+            ancestor = ancestor.Parent
+        end
+        state.hoverBindTarget = nil
+    end))
+end
+
+-- Called by the global keyboard handler. Returns true when the key was taken
+-- by whatever is under the pointer, in which case no module fires from it.
+state.tryHoverBind = function(keyCode: Enum.KeyCode): boolean
+    local target: any = state.hoverBindTarget
+    if not target or not state.visible or state.isMobile then
+        return false
+    end
+    if keyCode == state.toggleKey or keyCode == Enum.KeyCode.Escape then
+        -- Two keys are never taken: the one that opens the menu (a module
+        -- bound to it would fire every time the window appeared) and Escape,
+        -- which everywhere else in the interface means "cancel".
+        return false
+    end
+    local assign: any = target.resolve()
+    if type(assign) ~= "function" then
+        return false
+    end
+    local bound: boolean = assign(keyCode) == true
+    notify(
+        target.name
+            .. (bound and (" bound to " .. keyCode.Name) or " unbound")
+    )
+    return true
+end
+end
+
 local function shortcutSlotText(binding: any): string
     -- Blank when unbound. The empty slot is the affordance; a "KEY" caption
     -- only added noise and made no sense on a phone.
@@ -7698,6 +7884,20 @@ local function bindActionShortcut(
     binding.refresh = refreshButtonText
     refreshButtonText()
 
+    -- One place that takes a key, whether it arrived through the slot's own
+    -- capture or through hovering the card and pressing it. Pressing the key
+    -- that is already bound clears the binding, which is how the reference
+    -- interface unbinds and means the slot never needs a second control.
+    binding.assign = function(keyCode: Enum.KeyCode): boolean
+        local cleared: boolean = keyCode == binding.key
+        binding.key = cleared and Enum.KeyCode.Unknown or keyCode
+        setShortcutPressed(binding, false)
+        configData.values[optionKey] = binding.key.Name
+        queueConfigSave()
+        refreshButtonText()
+        return not cleared
+    end
+
     if state.isMobile then
         -- Touch: the slot is the placement trigger. A tap is enough — the
         -- previous 0.6s hold was undiscoverable on a blank button.
@@ -7738,14 +7938,7 @@ local function bindActionShortcut(
 
     trackUiConnection(button.MouseButton1Click:Connect(function(): ()
         beginKeyCapture(button, function(keyCode: Enum.KeyCode): ()
-            -- Pressing the same key again clears the binding.
-            binding.key = keyCode == binding.key
-                and Enum.KeyCode.Unknown
-                or keyCode
-            setShortcutPressed(binding, false)
-            configData.values[optionKey] = binding.key.Name
-            queueConfigSave()
-            refreshButtonText()
+            binding.assign(keyCode)
         end)
     end))
 end
@@ -7797,6 +7990,11 @@ state.globalShortcutBeganConnection = UserInputService.InputBegan:Connect(
         -- events report, so it is never treated as a match: otherwise one
         -- odd keypress would fire every module that has no key assigned.
         if input.KeyCode == Enum.KeyCode.Unknown then
+            return
+        end
+        -- Hovering a card (or one of its key rows) claims the key instead of
+        -- firing whatever already owns it.
+        if state.tryHoverBind(input.KeyCode) then
             return
         end
         for _, binding: any in pairs(state.shortcutBindings) do
@@ -8052,7 +8250,7 @@ local function createUniversalFeature(
         SortOrder = Enum.SortOrder.LayoutOrder,
     })
     local arrow: TextButton =
-        (makeButton(headerControls, "...", 10) :: any) :: TextButton
+        (makeButton(headerControls, "", 10) :: any) :: TextButton
     arrow.Name = "Expand"
     arrow.LayoutOrder = 3
     arrow:SetAttribute("ThemeRole", "Icon")
@@ -8063,13 +8261,14 @@ local function createUniversalFeature(
     arrow.TextColor3 = state.guiStyle == "Default"
         and Theme.DefaultTextMuted
         or Theme.TextMuted
-    -- Every card shows the three dots, including modules with nothing to
+    -- Every card shows the three lines, including modules with nothing to
     -- configure (Anti-AFK, Anti-Void, X-Ray...): a row that silently drops a
     -- control makes the list look ragged. A card with no options simply never
-    -- opens — the dots are dimmed and the click is ignored, which is checked
+    -- opens — the mark is dimmed and the click is ignored, which is checked
     -- at click time because option rows can be added after the card is built.
     arrow.Active = true
-    arrow.TextTransparency = configuration.noOptions == true and 0.68 or 0.35
+    arrow.ZIndex = 9
+    state.applyLinesGlyph(arrow, configuration.noOptions == true)
     arrow.ZIndex = 9
     local arrowStroke: UIStroke? = arrow:FindFirstChild("StyleStroke") :: UIStroke?
     if arrowStroke then
@@ -8190,9 +8389,7 @@ local function createUniversalFeature(
                 TweenInfo.new(UI_MOTION.slow, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
                 {Size = targetRowSize}
             ):Play()
-            arrow.TextColor3 = state.guiStyle == "Default"
-                and (feature.expanded and Theme.DefaultText or Theme.DefaultTextMuted)
-                or (feature.expanded and Theme.Text or Theme.TextMuted)
+            state.applyLinesGlyph(arrow, false, feature.expanded)
             if not feature.expanded then
                 task.delay(UI_MOTION.slow + 0.02, function(): ()
                     if not feature.expanded and options.Parent then
@@ -8203,9 +8400,7 @@ local function createUniversalFeature(
         else
             options.Size = targetOptionsSize
             row.Size = targetRowSize
-            arrow.TextColor3 = state.guiStyle == "Default"
-                and (feature.expanded and Theme.DefaultText or Theme.DefaultTextMuted)
-                or (feature.expanded and Theme.Text or Theme.TextMuted)
+            state.applyLinesGlyph(arrow, false, feature.expanded)
             options.Visible = feature.expanded
         end
     end
@@ -8221,7 +8416,7 @@ local function createUniversalFeature(
         if not feature.hasOptions() then
             -- Nothing to show: keep the panel shut instead of opening an
             -- empty box under the card.
-            arrow.TextTransparency = 0.68
+            state.applyLinesGlyph(arrow, true)
             return
         end
         feature.expanded = not feature.expanded
@@ -8415,6 +8610,21 @@ local function createUniversalFeature(
     end
 
     feature.headerControls = headerControls
+
+    -- Point at the card, press a key, the card owns that key — the same
+    -- gesture the reference interface uses instead of a capture dialog.
+    -- Containers are excluded because their slot has nothing to activate.
+    if feature.kind ~= "group" then
+        state.bindHoverKeyTarget(
+            row,
+            name,
+            function(): any
+                local binding: any = state.shortcutBindings[feature.configKey]
+                return binding and binding.assign
+            end,
+            shortcutButton
+        )
+    end
 
     -- Re-applies the responsive metrics to this card. The shared listener
     -- registered next to `allFeatures` calls it for every module whenever the
@@ -9059,6 +9269,205 @@ local function addNumberOption(
     end)
     return option
 end
+-- Range row: one slider, two handles.
+--
+-- "Minimum CPS" and "Maximum CPS" as two separate sliders is two rows to read,
+-- two rows to drag, and nothing on screen says they are the two ends of one
+-- interval — you can even leave the minimum above the maximum. The reference
+-- interface uses a single track with a handle at each end for exactly these
+-- settings, and so does this: one row, one range, and the value between the
+-- handles is what the module draws from.
+--
+-- Lives on `state` (like the list and section builders) so it costs no local
+-- register in bootstrap.
+state.addRangeOption = function(
+    feature: any,
+    labelText: string,
+    definition: any
+): Frame
+    local minimum: number = tonumber(definition.min) or 0
+    local maximum: number = tonumber(definition.max) or 100
+    local baseKey: string =
+        feature.configKey .. "." .. labelText:gsub("%W", "")
+    local storedLow: number? = tonumber(configData.values[baseKey .. ".Low"])
+    local storedHigh: number? = tonumber(configData.values[baseKey .. ".High"])
+    local low: number = math.clamp(
+        storedLow or tonumber(definition.defaultLow) or minimum,
+        minimum,
+        maximum
+    )
+    local high: number = math.clamp(
+        storedHigh or tonumber(definition.defaultHigh) or maximum,
+        minimum,
+        maximum
+    )
+    if low > high then
+        low, high = high, low
+    end
+    local integerOnly: boolean = definition.integer ~= false
+
+    local option: Frame = createOptionRow(feature, labelText, definition.hint)
+    local slider: TextButton = (create("TextButton", {
+        TextTruncate = Enum.TextTruncate.AtEnd,
+        ClipsDescendants = true,
+        Parent = option,
+        Name = "RangeSlider",
+        Active = true,
+        AutoButtonColor = false,
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Text = "",
+    }) :: any) :: TextButton
+    state.layoutOptionControl(option, slider, 0.5)
+
+    local track: Frame = (create("Frame", {
+        Parent = slider,
+        Name = "Track",
+        AnchorPoint = Vector2.new(0, 0.5),
+        BackgroundColor3 = Theme.Outline,
+        BorderSizePixel = 0,
+        Position = UDim2.new(0, 0, 0.5, 0),
+        Size = UDim2.new(1, -66, 0, state.layout.touch and 7 or 5),
+        ZIndex = slider.ZIndex + 1,
+    }) :: any) :: Frame
+    create("UICorner", {Parent = track, CornerRadius = UDim.new(1, 0)})
+
+    -- Only the span between the two handles is filled: the fill *is* the
+    -- interval the module rolls inside.
+    local span: Frame = (create("Frame", {
+        Parent = track,
+        Name = "Span",
+        BackgroundColor3 = Theme.Accent,
+        BorderSizePixel = 0,
+        Position = UDim2.fromScale(0, 0),
+        Size = UDim2.fromScale(1, 1),
+        ZIndex = track.ZIndex + 1,
+    }) :: any) :: Frame
+    create("UICorner", {Parent = span, CornerRadius = UDim.new(1, 0)})
+    create("UIGradient", {
+        Parent = span,
+        Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Theme.DefaultAccent),
+            ColorSequenceKeypoint.new(1, Theme.AccentPink),
+        }),
+    })
+
+    local knobSize: number = state.layout.touch and 16 or 12
+    local function makeKnob(name: string): Frame
+        local knob: Frame = (create("Frame", {
+            Parent = track,
+            Name = name,
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            BackgroundColor3 = Theme.Text,
+            BorderSizePixel = 0,
+            Position = UDim2.fromScale(0, 0.5),
+            Size = UDim2.fromOffset(knobSize, knobSize),
+            ZIndex = track.ZIndex + 2,
+        }) :: any) :: Frame
+        create("UICorner", {Parent = knob, CornerRadius = UDim.new(1, 0)})
+        return knob
+    end
+    local lowKnob: Frame = makeKnob("Low")
+    local highKnob: Frame = makeKnob("High")
+
+    local readout: TextLabel =
+        (makeTextLabel(slider, "", 11) :: any) :: TextLabel
+    readout.Name = "RangeValue"
+    readout.AnchorPoint = Vector2.new(1, 0.5)
+    readout.Position = UDim2.new(1, 0, 0.5, 0)
+    readout.Size = UDim2.fromOffset(62, 20)
+    readout.TextColor3 = Theme.DefaultText
+    readout.TextXAlignment = Enum.TextXAlignment.Right
+    readout.ZIndex = slider.ZIndex + 2
+
+    local function alphaOf(value: number): number
+        if maximum == minimum then
+            return 0
+        end
+        return math.clamp((value - minimum) / (maximum - minimum), 0, 1)
+    end
+
+    local function refreshRange(persist: boolean): ()
+        local lowAlpha: number = alphaOf(low)
+        local highAlpha: number = alphaOf(high)
+        span.Position = UDim2.fromScale(lowAlpha, 0)
+        span.Size = UDim2.fromScale(math.max(highAlpha - lowAlpha, 0), 1)
+        lowKnob.Position = UDim2.fromScale(lowAlpha, 0.5)
+        highKnob.Position = UDim2.fromScale(highAlpha, 0.5)
+        readout.Text = formatCompactNumber(low) .. " – " .. formatCompactNumber(high)
+        if type(definition.onChanged) == "function" then
+            definition.onChanged(low, high)
+        end
+        if persist then
+            configData.values[baseKey .. ".Low"] = low
+            configData.values[baseKey .. ".High"] = high
+            queueConfigSave()
+        end
+    end
+
+    -- Which handle a press grabs is decided once, on the press, and kept for
+    -- the whole drag: deciding it per frame makes the handles swap under the
+    -- finger as soon as they cross.
+    local dragging: string = "High"
+    local function valueAtScreenX(screenX: number): number
+        local width: number = math.max(track.AbsoluteSize.X, 1)
+        local alpha: number = math.clamp(
+            (screenX - track.AbsolutePosition.X) / width,
+            0,
+            1
+        )
+        local value: number = minimum + (maximum - minimum) * alpha
+        return integerOnly and math.round(value) or value
+    end
+
+    local function updateFromScreenX(screenX: number): ()
+        local value: number = valueAtScreenX(screenX)
+        if dragging == "Low" then
+            low = math.min(value, high)
+        else
+            high = math.max(value, low)
+        end
+        refreshRange(true)
+    end
+
+    trackUiConnection(slider.InputBegan:Connect(function(
+        input: InputObject
+    ): ()
+        if input.UserInputType ~= Enum.UserInputType.MouseButton1
+            and input.UserInputType ~= Enum.UserInputType.Touch then
+            return
+        end
+        if input.Position.X > track.AbsolutePosition.X + track.AbsoluteSize.X then
+            return
+        end
+        local value: number = valueAtScreenX(input.Position.X)
+        dragging = math.abs(value - low) <= math.abs(value - high)
+            and "Low"
+            or "High"
+        updateFromScreenX(input.Position.X)
+        activeSlider = {
+            update = updateFromScreenX,
+            finish = function(): ()
+                notify(
+                    labelText
+                        .. ": "
+                        .. formatCompactNumber(low)
+                        .. " – "
+                        .. formatCompactNumber(high)
+                )
+            end,
+        }
+    end))
+
+    task.defer(function(): ()
+        if option.Parent then
+            refreshRange(false)
+        end
+    end)
+    refreshRange(false)
+    return option
+end
+
 -- Choice popup.
 --
 -- One list, reused by every multiple-choice row. Clicking the control opens
@@ -9720,23 +10129,37 @@ local function addKeyOption(
     applyKeySlotStyle(button)
     button:SetAttribute("CaptureIdleText", button.Text)
 
+    -- One assignment path for the slot's own capture and for hovering the row
+    -- and pressing a key, so both end up with the same stored value.
+    local function assignKey(keyCode: Enum.KeyCode): boolean
+        local cleared: boolean = keyCode == currentKey
+        currentKey = cleared and Enum.KeyCode.Unknown or keyCode
+        button.Text = currentKey == Enum.KeyCode.Unknown
+            and ""
+            or currentKey.Name
+        button:SetAttribute("CaptureIdleText", button.Text)
+        callback(currentKey)
+        configData.values[optionKey] = currentKey.Name
+        queueConfigSave()
+        return not cleared
+    end
+
     button.MouseButton1Click:Connect(function()
         if state.isMobile then
             return
         end
         beginKeyCapture(button, function(keyCode: Enum.KeyCode): ()
-            currentKey = keyCode == currentKey
-                and Enum.KeyCode.Unknown
-                or keyCode
-            button.Text = currentKey == Enum.KeyCode.Unknown
-                and ""
-                or currentKey.Name
-            button:SetAttribute("CaptureIdleText", button.Text)
-            callback(currentKey)
-            configData.values[optionKey] = currentKey.Name
-            queueConfigSave()
+            assignKey(keyCode)
         end)
     end)
+    state.bindHoverKeyTarget(
+        option,
+        labelText,
+        function(): any
+            return assignKey
+        end,
+        button
+    )
 
     callback(currentKey)
     return button :: TextButton
@@ -10895,37 +11318,33 @@ function toggleFly(enabled: boolean): ()
 end
 end
 
--- Hitbox engine rewrite.
+-- Hitboxes.
 --
--- The old implementation had one fixed behaviour (scale visible parts, head
--- pinned to 8 studs, everything forced transparent, collision and mass always
--- stripped) and re-scanned every character on a hard-coded 0.1 s timer. The
--- rewrite makes the whole pipeline configurable while keeping a single,
--- cheap, idempotent sweep:
+-- The reference implementation is four lines: remember a part's size, add the
+-- slider to it every frame, put it back on disable. That is the right shape —
+-- an expansion in studs is a number a player can reason about ("six studs of
+-- extra reach"), where the multiplier this menu used before ("body scale
+-- 2.25") means nothing until you have seen it. So this is that model, with the
+-- three things the reference version leaves out:
 --
---   * Mode: "Visible" scales the visible body (the classic expanded look),
---     "Root" scales only the invisible HumanoidRootPart (the classic
---     phantom hitbox) and "Hybrid" does both.
---   * Original states are recorded once per part and restored exactly when
---     the feature is disabled or when the mode stops targeting that part,
---     so switching Visible → Root never leaves stale stretched limbs.
---   * Characters are tracked in a weak set and only alive characters are
---     swept; dead/respawned characters drop out automatically instead of
---     being re-applied forever.
---   * Transparency, collision, mass, accessories and the refresh interval
---     are all independent options instead of hard-coded side effects.
+--   * teammates are skipped, because inflating the person you cannot hit only
+--     makes it harder to see the person you can;
+--   * NPCs are opt-in, since half the games this runs in are full of them;
+--   * every part is restored exactly, including when it stops being a target
+--     mid-round (team swap, respawn, mode change), instead of only on disable.
+--
+-- Collision is dropped on the expanded part on purpose: a twelve-stud invisible
+-- box that still collides shoves its owner around the map, which is visible to
+-- everyone in the server.
 
 type HitboxSettings = {
-    mode: string,
-    bodyScale: number,
-    headSize: number,
-    rootSize: number,
-    visibleTransparency: number,
-    forceVisible: boolean,
+    part: string,
+    expand: number,
+    reveal: boolean,
+    transparency: number,
+    teamCheck: boolean,
+    includeNpcs: boolean,
     noCollision: boolean,
-    massless: boolean,
-    excludeAccessories: boolean,
-    updateInterval: number,
 }
 
 type OriginalHitboxState = {
@@ -10936,47 +11355,36 @@ type OriginalHitboxState = {
 }
 
 local hitboxSettings: HitboxSettings = {
-    mode = "Visible",
-    bodyScale = 2.25,
-    headSize = 8,
-    rootSize = 12,
-    visibleTransparency = 30,
-    forceVisible = true,
+    part = "Root",
+    expand = 6,
+    reveal = false,
+    transparency = 60,
+    teamCheck = true,
+    includeNpcs = false,
     noCollision = true,
-    massless = true,
-    excludeAccessories = true,
-    updateInterval = 0.1,
 }
 local originalHitboxes: {[BasePart]: OriginalHitboxState} =
     setmetatable({}, {__mode = "k"}) :: any
-local hitboxCharacters: {[Model]: boolean} =
-    setmetatable({}, {__mode = "k"}) :: any
 
-local function restoreHitboxes(): ()
-    for part: BasePart, original: OriginalHitboxState in pairs(originalHitboxes) do
-        if part.Parent then
-            part.Size = original.size
-            part.Transparency = original.transparency
-            part.CanCollide = original.canCollide
-            part.Massless = original.massless
-        end
+local function restoreHitboxPart(part: BasePart): ()
+    local original: OriginalHitboxState? = originalHitboxes[part]
+    if not original then
+        return
     end
-    originalHitboxes = setmetatable({}, {__mode = "k"}) :: any
-    hitboxCharacters = setmetatable({}, {__mode = "k"}) :: any
+    if part.Parent then
+        part.Size = (original :: OriginalHitboxState).size
+        part.Transparency = (original :: OriginalHitboxState).transparency
+        part.CanCollide = (original :: OriginalHitboxState).canCollide
+        part.Massless = (original :: OriginalHitboxState).massless
+    end
+    originalHitboxes[part] = nil
 end
 
-local function isScaledBodyPart(part: BasePart): boolean
-    if part.Name == "HumanoidRootPart" then
-        return false
+local function restoreHitboxes(): ()
+    for part: BasePart in pairs(originalHitboxes) do
+        restoreHitboxPart(part)
     end
-    if part:FindFirstAncestorOfClass("Tool") then
-        return false
-    end
-    if hitboxSettings.excludeAccessories
-        and part:FindFirstAncestorOfClass("Accessory") then
-        return false
-    end
-    return true
+    originalHitboxes = setmetatable({}, {__mode = "k"}) :: any
 end
 
 local function applyHitboxToPart(part: BasePart): ()
@@ -10990,92 +11398,103 @@ local function applyHitboxToPart(part: BasePart): ()
         }
         originalHitboxes[part] = original
     end
-    local resolvedOriginal: OriginalHitboxState = original :: OriginalHitboxState
-
-    if part.Name == "HumanoidRootPart" then
-        part.Size = Vector3.new(
-            hitboxSettings.rootSize,
-            hitboxSettings.rootSize,
-            hitboxSettings.rootSize
-        )
-        part.Transparency = 1
-    else
-        if part.Name == "Head" then
-            part.Size = Vector3.new(
-                hitboxSettings.headSize,
-                hitboxSettings.headSize,
-                hitboxSettings.headSize
-            )
-        else
-            part.Size = resolvedOriginal.size * hitboxSettings.bodyScale
-        end
-        if hitboxSettings.forceVisible then
-            part.Transparency = math.min(
-                resolvedOriginal.transparency,
-                hitboxSettings.visibleTransparency / 100
-            )
-        end
-    end
-
-    part.CanCollide = hitboxSettings.noCollision
-        and false
-        or resolvedOriginal.canCollide
-    part.Massless = hitboxSettings.massless
+    local resolved: OriginalHitboxState = original :: OriginalHitboxState
+    local expand: number = hitboxSettings.expand
+    part.Size = resolved.size + Vector3.new(expand, expand, expand)
+    part.Transparency = hitboxSettings.reveal
+        and math.clamp(hitboxSettings.transparency / 100, 0, 1)
+        or resolved.transparency
+    part.CanCollide = not hitboxSettings.noCollision and resolved.canCollide
+    part.Massless = true
 end
 
--- Restores every part the current mode no longer targets. Keeps the world
--- clean when the user flips the mode slider mid-flight: switching to "Root"
--- unwinds all stretched visible parts and vice versa.
-local function refreshHitboxMode(): ()
-    for part: BasePart, original: OriginalHitboxState in pairs(originalHitboxes) do
-        if not part.Parent then
+-- Which parts of one character the current mode targets. Everything else that
+-- was expanded on that character is put back, which is what makes flipping the
+-- mode mid-round safe.
+local function applyHitboxCharacter(character: Model): ()
+    local wanted: {string} = hitboxSettings.part == "Head"
+        and {"Head"}
+        or (hitboxSettings.part == "Both" and {"HumanoidRootPart", "Head"})
+        or {"HumanoidRootPart"}
+    for _, child: Instance in ipairs(character:GetChildren()) do
+        if not child:IsA("BasePart") then
             continue
         end
-        local isRoot: boolean = part.Name == "HumanoidRootPart"
-        local stillTargeted: boolean = isRoot
-            and hitboxSettings.mode ~= "Visible"
-            or (not isRoot and hitboxSettings.mode ~= "Root")
-        if not stillTargeted then
-            part.Size = original.size
-            part.Transparency = original.transparency
-            part.CanCollide = original.canCollide
-            part.Massless = original.massless
-            originalHitboxes[part] = nil
+        local part: BasePart = child :: BasePart
+        if table.find(wanted, part.Name) then
+            applyHitboxToPart(part)
+        else
+            restoreHitboxPart(part)
         end
     end
+end
+
+-- NPCs are found by walking the workspace, which is the one part of this that
+-- is not cheap, so the answer is kept for two seconds. Players are re-read
+-- every frame: that list is short and a respawn has to be picked up at once.
+local hitboxNpcCache: {Model} = {}
+local hitboxNpcCachedAt: number = -1
+
+local function hitboxTargets(): {Model}
+    local targets: {Model} = {}
+    for _, player: Player in ipairs(Players:GetPlayers()) do
+        if player == LocalPlayer then
+            continue
+        end
+        if hitboxSettings.teamCheck
+            and LocalPlayer.Team ~= nil
+            and player.Team == LocalPlayer.Team then
+            continue
+        end
+        local character: Model? = player.Character
+        local humanoid: Humanoid? = character
+            and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+        if character and humanoid and humanoid.Health > 0 then
+            table.insert(targets, character :: Model)
+        end
+    end
+    if hitboxSettings.includeNpcs then
+        local now: number = os.clock()
+        if now - hitboxNpcCachedAt > 2 then
+            hitboxNpcCachedAt = now
+            hitboxNpcCache = {}
+            for _, child: Instance in ipairs(workspace:GetChildren()) do
+                if not child:IsA("Model") or child == LocalPlayer.Character then
+                    continue
+                end
+                local humanoid: Humanoid? =
+                    child:FindFirstChildOfClass("Humanoid") :: Humanoid?
+                if humanoid
+                    and (humanoid :: Humanoid).Health > 0
+                    and Players:GetPlayerFromCharacter(child) == nil then
+                    table.insert(hitboxNpcCache, child :: Model)
+                end
+            end
+        end
+        for _, npc: Model in ipairs(hitboxNpcCache) do
+            if npc.Parent then
+                table.insert(targets, npc)
+            end
+        end
+    end
+    return targets
 end
 
 local function sweepHitboxes(): ()
-    -- Track every alive enemy character; respawns are picked up on the next
-    -- sweep and dead characters drop out of the weak set.
-    for _, player: Player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer and player.Character then
-            local character: Model = player.Character
-            local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
-            if humanoid and humanoid.Health > 0 and character.Parent then
-                hitboxCharacters[character] = true
+    local alive: {[BasePart]: boolean} = {}
+    for _, character: Model in ipairs(hitboxTargets()) do
+        applyHitboxCharacter(character)
+        for _, child: Instance in ipairs(character:GetChildren()) do
+            if child:IsA("BasePart") and originalHitboxes[child :: BasePart] then
+                alive[child :: BasePart] = true
             end
         end
     end
-
-    for character: Model in pairs(hitboxCharacters) do
-        local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
-        if character.Parent == nil or not humanoid or humanoid.Health <= 0 then
-            hitboxCharacters[character] = nil
-            continue
-        end
-        for _, part: Instance in ipairs(character:GetChildren()) do
-            if not part:IsA("BasePart") then
-                continue
-            end
-            local isRoot: boolean = part.Name == "HumanoidRootPart"
-            if isRoot then
-                if hitboxSettings.mode ~= "Visible" then
-                    applyHitboxToPart(part)
-                end
-            elseif hitboxSettings.mode ~= "Root" and isScaledBodyPart(part) then
-                applyHitboxToPart(part)
-            end
+    -- Anything expanded that is no longer a target (dead, respawned, swapped
+    -- to your team) goes back to the size the game gave it.
+    for part: BasePart in pairs(originalHitboxes) do
+        if not alive[part] then
+            restoreHitboxPart(part)
         end
     end
 end
@@ -11083,18 +11502,16 @@ end
 local function toggleHitboxes(enabled: boolean): ()
     disconnectFeatureConnection("Hitboxes")
     restoreHitboxes()
+    hitboxNpcCachedAt = -1
+    hitboxNpcCache = {}
 
     if not enabled then
         return
     end
 
-    local elapsed: number = 0
-    featureConnections.Hitboxes = TaskManager:Connect(function(deltaTime: number): ()
-        elapsed = elapsed + deltaTime
-        if elapsed < hitboxSettings.updateInterval then
-            return
-        end
-        elapsed = 0
+    -- Two parts per player is cheap enough to do every frame, and every frame
+    -- is what keeps the box on the character while the game rescales it.
+    featureConnections.Hitboxes = TaskManager:Connect(function(): ()
         sweepHitboxes()
     end)
 end
@@ -12251,32 +12668,99 @@ local function performHighJump(): ()
     end
 end
 
-local spiderSettings: {climbSpeed: number} = {climbSpeed = 38}
+-- Spider.
+--
+-- Walk into a wall and go up it. The reference version offers three ways of
+-- applying the climb and a "climb state" toggle, because games disagree about
+-- which one they let through: velocity is smooth and works nearly everywhere,
+-- an impulse survives games that overwrite velocity every frame, and moving
+-- the CFrame directly works even when both are clamped — at the cost of being
+-- the most obvious one. All three are here, plus the two details the reference
+-- version gets right and this menu did not:
+--
+--   * other characters are excluded from the probe, so you cannot climb a
+--     player standing in front of you;
+--   * the climb stops the instant the wall does. Without that, reaching the
+--     top of a wall launches you off it, which is the tell everyone notices.
+type SpiderSettings = {
+    mode: string,
+    speed: number,
+    climbState: boolean,
+}
+local spiderSettings: SpiderSettings = {
+    mode = "Velocity",
+    speed = 30,
+    climbState = true,
+}
 local function toggleSpider(enabled: boolean): ()
     disconnectFeatureConnection("Spider")
     if not enabled then
         return
     end
-    featureConnections.Spider = TaskManager:Connect(function(): ()
-        local character: Model?, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
-        if not character or not humanoid or not root or humanoid.MoveDirection.Magnitude < 0.05 then
+    local climbing: boolean = false
+    featureConnections.Spider = TaskManager:Connect(function(deltaTime: number): ()
+        local character: Model?, humanoidOrNil: Humanoid?, rootOrNil: BasePart? =
+            getCharacterParts()
+        if not character or not humanoidOrNil or not rootOrNil then
+            climbing = false
             return
         end
+        local humanoid: Humanoid = humanoidOrNil :: Humanoid
+        local root: BasePart = rootOrNil :: BasePart
+        local direction: Vector3 = humanoid.MoveDirection
+        if direction.Magnitude < 0.05 then
+            climbing = false
+            return
+        end
+
         local raycastParams: RaycastParams = RaycastParams.new()
         raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-        raycastParams.FilterDescendantsInstances = {character}
+        raycastParams.RespectCanCollide = true
+        local ignored: {Instance} = {character :: Instance}
+        for _, player: Player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer and player.Character then
+                table.insert(ignored, player.Character :: Instance)
+            end
+        end
+        raycastParams.FilterDescendantsInstances = ignored
+
+        -- Probing from the hips rather than from the middle of the root is
+        -- what finds a wall you are standing against instead of the floor.
+        local origin: Vector3 = root.Position
+            - Vector3.new(0, math.max(humanoid.HipHeight - 0.5, 0), 0)
         local wall: RaycastResult? = workspace:Raycast(
-            root.Position,
-            humanoid.MoveDirection.Unit * 2.6,
+            origin,
+            direction.Unit * 2.5,
             raycastParams
         )
-        if wall and math.abs(wall.Normal.Y) < 0.35 then
-            local velocity: Vector3 = root.AssemblyLinearVelocity
-            root.AssemblyLinearVelocity = Vector3.new(
-                velocity.X,
-                spiderSettings.climbSpeed,
-                velocity.Z
+        local velocity: Vector3 = root.AssemblyLinearVelocity
+        if not wall or math.abs((wall :: RaycastResult).Normal.Y) >= 0.35 then
+            if climbing then
+                -- The wall ended. Killing the upward velocity here is the
+                -- difference between stepping onto the roof and being fired
+                -- off it.
+                root.AssemblyLinearVelocity =
+                    Vector3.new(velocity.X, 0, velocity.Z)
+                climbing = false
+            end
+            return
+        end
+
+        climbing = true
+        if spiderSettings.climbState then
+            humanoid:ChangeState(Enum.HumanoidStateType.Climbing)
+        end
+        if spiderSettings.mode == "CFrame" then
+            root.AssemblyLinearVelocity = Vector3.new(velocity.X, 0, velocity.Z)
+            root.CFrame = root.CFrame
+                + Vector3.new(0, spiderSettings.speed * deltaTime, 0)
+        elseif spiderSettings.mode == "Impulse" then
+            root:ApplyImpulse(
+                Vector3.new(0, spiderSettings.speed, 0) * root.AssemblyMass
             )
+        else
+            root.AssemblyLinearVelocity =
+                Vector3.new(velocity.X, spiderSettings.speed, velocity.Z)
         end
     end)
 end
@@ -12640,83 +13124,112 @@ local function togglePhaseDash(enabled: boolean): ()
     -- is no private input handler and no "Dash key" row in the panel.
 end
 
-type SoftLandingSettings = {
+-- No Fall.
+--
+-- Roblox has no fall damage of its own: every game that hurts you for landing
+-- wrote that code itself, on the client that is falling, and there are only
+-- two ways to write it.
+--
+--   1. **Read the impact.** The vertical speed at touchdown, or the height
+--      difference between where the fall started and where it ended. Both are
+--      numbers this client produces, so the fall is braked a few studs above
+--      the floor and the game reads a landing that is inside its safe band.
+--      A downward raycast is what says when "a few studs" is now, which is
+--      what makes the brake late enough to be invisible from outside.
+--
+--   2. **Watch the humanoid state machine.** `StateChanged` into Freefall
+--      opens the measurement, Landed closes it. A humanoid whose state is put
+--      back before it touches down closes that measurement early, from a
+--      height where the recorded drop is harmless, and "Reset fall record"
+--      does the same thing repeatedly during a long fall: the humanoid is
+--      airborne, so physics puts it straight back into Freefall, and the game
+--      restarts its measurement from the height it is at now.
+--
+-- Neither lies to the server about where the character is, and neither blocks
+-- a remote — a blocked damage remote is the one version of this that shows up
+-- in a server log as "this player never takes fall damage".
+type NoFallSettings = {
     mode: string,
-    triggerSpeed: number,
+    safeSpeed: number,
     scanDistance: number,
-    landingSpeed: number,
-    glideSpeed: number,
-    preserveMomentum: boolean,
+    resetRecord: boolean,
 }
-local softLandingSettings: SoftLandingSettings = {
-    mode = "Landing",
-    triggerSpeed = 62,
-    scanDistance = 16,
-    landingSpeed = 11,
-    glideSpeed = 16,
-    preserveMomentum = true,
+local noFallSettings: NoFallSettings = {
+    mode = "Both",
+    safeSpeed = 30,
+    scanDistance = 14,
+    resetRecord = true,
 }
 
-local function toggleSoftLanding(enabled: boolean): ()
-    disconnectFeatureConnection("SoftLanding")
+local function toggleNoFall(enabled: boolean): ()
+    disconnectFeatureConnection("NoFall")
     if not enabled then
         return
     end
-    featureConnections.SoftLanding = TaskManager:Connect(function(): ()
-        local character: Model?, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
-        if not character or not humanoid or not root or humanoid.SeatPart then
+    local nextRecordResetAt: number = 0
+    local landedThisFall: boolean = false
+    featureConnections.NoFall = TaskManager:Connect(function(): ()
+        local character: Model?, humanoidOrNil: Humanoid?, rootOrNil: BasePart? =
+            getCharacterParts()
+        if not character or not humanoidOrNil or not rootOrNil then
             return
         end
+        local humanoid: Humanoid = humanoidOrNil :: Humanoid
+        local root: BasePart = rootOrNil :: BasePart
+        if humanoid.SeatPart or humanoid.Health <= 0 then
+            return
+        end
+
         local velocity: Vector3 = root.AssemblyLinearVelocity
-        if velocity.Y > -softLandingSettings.triggerSpeed then
+        local airborne: boolean = humanoid.FloorMaterial == Enum.Material.Air
+        if not airborne or velocity.Y >= -1 then
+            landedThisFall = false
+            nextRecordResetAt = 0
             return
         end
-        local damped: boolean = false
-        -- Feather / Auto: cap the fall speed outright, no ground required.
-        if softLandingSettings.mode == "Feather"
-            or softLandingSettings.mode == "Auto" then
-            if velocity.Y < -softLandingSettings.glideSpeed then
-                velocity = Vector3.new(
-                    velocity.X,
-                    -softLandingSettings.glideSpeed,
-                    velocity.Z
-                )
-                damped = true
-            end
+
+        -- The fall-record reset: cheap, repeated, and it costs nothing when
+        -- the game measures impact speed instead.
+        local now: number = os.clock()
+        if noFallSettings.resetRecord
+            and noFallSettings.mode ~= "Impact"
+            and now >= nextRecordResetAt then
+            nextRecordResetAt = now + 0.35
+            humanoid:ChangeState(Enum.HumanoidStateType.Landed)
         end
-        -- Landing / Auto: only dampen when ground is actually close.
-        if softLandingSettings.mode == "Landing"
-            or softLandingSettings.mode == "Auto" then
-            local params: RaycastParams = RaycastParams.new()
-            params.FilterType = Enum.RaycastFilterType.Exclude
-            params.FilterDescendantsInstances = {character}
-            local probeDistance: number = math.max(
-                softLandingSettings.scanDistance,
-                math.abs(velocity.Y) * 0.18
-            )
-            local ground: RaycastResult? = workspace:Raycast(
-                root.Position,
-                Vector3.new(0, -probeDistance, 0),
-                params
-            )
-            if ground then
-                velocity = Vector3.new(
-                    velocity.X,
-                    -softLandingSettings.landingSpeed,
-                    velocity.Z
-                )
-                damped = true
-            end
+
+        -- How far ahead to look: the further you are falling, the earlier the
+        -- ground has to be seen, or the brake lands after the impact it was
+        -- meant to soften.
+        local probe: number = math.max(
+            noFallSettings.scanDistance,
+            math.abs(velocity.Y) * 0.16
+        )
+        local params: RaycastParams = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        params.FilterDescendantsInstances = {character :: Instance}
+        local ground: RaycastResult? = workspace:Raycast(
+            root.Position,
+            Vector3.new(0, -probe, 0),
+            params
+        )
+        if not ground then
+            return
         end
-        if damped then
-            if not softLandingSettings.preserveMomentum then
-                velocity = Vector3.new(
-                    velocity.X * 0.3,
-                    velocity.Y,
-                    velocity.Z * 0.3
-                )
-            end
-            root.AssemblyLinearVelocity = velocity
+
+        if noFallSettings.mode ~= "State"
+            and velocity.Y < -noFallSettings.safeSpeed then
+            root.AssemblyLinearVelocity = Vector3.new(
+                velocity.X,
+                -noFallSettings.safeSpeed,
+                velocity.Z
+            )
+        end
+        if noFallSettings.mode ~= "Impact" and not landedThisFall then
+            -- Once per fall: the game's Freefall measurement is closed here,
+            -- a couple of studs up, instead of at the bottom.
+            landedThisFall = true
+            humanoid:ChangeState(Enum.HumanoidStateType.Landed)
         end
     end)
 end
@@ -12724,8 +13237,8 @@ end
 state.universalToolkit.phaseDashSettings = phaseDashSettings
 state.universalToolkit.togglePhaseDash = togglePhaseDash
 state.universalToolkit.performPhaseDash = performPhaseDash
-state.universalToolkit.softLandingSettings = softLandingSettings
-state.universalToolkit.toggleSoftLanding = toggleSoftLanding
+state.universalToolkit.noFallSettings = noFallSettings
+state.universalToolkit.toggleNoFall = toggleNoFall
 end)()
 end
 
@@ -12995,106 +13508,83 @@ end
 do
 local HitboxFeature = createUniversalFeature(
     "Hitboxes",
-    "Scalable visible and phantom hitboxes for enemy characters",
+    "Expand the part enemies are hit on, in studs",
     3,
     toggleHitboxes
 )
 addCycleOption(
     HitboxFeature,
-    "Mode",
-    {"Visible", "Root", "Hybrid"},
+    "Part",
+    {"Root", "Head", "Both"},
     1,
-    function(value: string)
-        hitboxSettings.mode = value
-        refreshHitboxMode()
+    function(value: string): ()
+        hitboxSettings.part = value
+        -- Parts the new mode no longer owns are restored on the next sweep.
     end
 )
 addNumberOption(
     HitboxFeature,
-    "Body scale",
-    hitboxSettings.bodyScale,
-    1,
-    5,
-    function(value)
-        hitboxSettings.bodyScale = value
-    end
-)
-addNumberOption(
-    HitboxFeature,
-    "Head size",
-    hitboxSettings.headSize,
-    2,
-    12,
-    function(value)
-        hitboxSettings.headSize = value
-    end
-)
-addNumberOption(
-    HitboxFeature,
-    "Root size",
-    hitboxSettings.rootSize,
-    3,
-    24,
-    function(value)
-        hitboxSettings.rootSize = value
-    end
-)
-addNumberOption(
-    HitboxFeature,
-    "Visible transparency %",
-    hitboxSettings.visibleTransparency,
+    "Expand",
+    hitboxSettings.expand,
     0,
-    60,
-    function(value)
-        hitboxSettings.visibleTransparency = value
+    30,
+    function(value: number): ()
+        hitboxSettings.expand = value
+    end,
+    "Studs added to the target part. Past roughly 10 the box is wider than "
+        .. "the character is tall and anyone watching can see hits landing on "
+        .. "nothing."
+)
+addToggleOption(
+    HitboxFeature,
+    "Team check",
+    hitboxSettings.teamCheck,
+    function(value: boolean): ()
+        hitboxSettings.teamCheck = value
+    end,
+    "Leave teammates at their real size."
+)
+addToggleOption(
+    HitboxFeature,
+    "Include NPCs",
+    hitboxSettings.includeNpcs,
+    function(value: boolean): ()
+        hitboxSettings.includeNpcs = value
     end
 )
 addToggleOption(
     HitboxFeature,
-    "Reveal parts",
-    hitboxSettings.forceVisible,
-    function(value)
-        hitboxSettings.forceVisible = value
+    "Show hitbox",
+    hitboxSettings.reveal,
+    function(value: boolean): ()
+        hitboxSettings.reveal = value
+    end,
+    "Draw the expanded part so you can see what you are actually aiming at."
+)
+addNumberOption(
+    HitboxFeature,
+    "Show transparency %",
+    hitboxSettings.transparency,
+    0,
+    95,
+    function(value: number): ()
+        hitboxSettings.transparency = value
     end
 )
 addToggleOption(
     HitboxFeature,
     "No collision",
     hitboxSettings.noCollision,
-    function(value)
+    function(value: boolean): ()
         hitboxSettings.noCollision = value
-    end
-)
-addToggleOption(
-    HitboxFeature,
-    "Massless",
-    hitboxSettings.massless,
-    function(value)
-        hitboxSettings.massless = value
-    end
-)
-addToggleOption(
-    HitboxFeature,
-    "Exclude accessories",
-    hitboxSettings.excludeAccessories,
-    function(value)
-        hitboxSettings.excludeAccessories = value
-    end
-)
-addNumberOption(
-    HitboxFeature,
-    "Update interval (s)",
-    hitboxSettings.updateInterval,
-    0.03,
-    0.5,
-    function(value)
-        hitboxSettings.updateInterval = value
-    end
+    end,
+    "An expanded part that still collides pushes its owner around the map, "
+        .. "which everyone in the server can see."
 )
 addFeatureTooltip(
     HitboxFeature,
-    "Visible scales the body and pins the head; Root expands only the invisible "
-        .. "HumanoidRootPart; Hybrid does both. Originals are restored exactly on disable."
+    "Adds studs to the enemy's root or head so hits register early. Every part "
+        .. "is restored exactly when it stops being a target."
 )
 end
 
@@ -13551,15 +14041,42 @@ local SpiderFeature = createUniversalFeature(
     20,
     state.universalToolkit.toggleSpider
 )
+addCycleOption(
+    SpiderFeature,
+    "Mode",
+    {"Velocity", "Impulse", "CFrame"},
+    1,
+    function(value: string): ()
+        state.universalToolkit.spiderSettings.mode = value
+    end,
+    "Velocity is smooth and works nearly everywhere; Impulse survives games "
+        .. "that rewrite your velocity every frame; CFrame works when both are "
+        .. "clamped and is the most obvious of the three."
+)
 addNumberOption(
     SpiderFeature,
     "Climb speed",
-    state.universalToolkit.spiderSettings.climbSpeed,
-    10,
-    120,
+    state.universalToolkit.spiderSettings.speed,
+    5,
+    100,
     function(value: number): ()
-        state.universalToolkit.spiderSettings.climbSpeed = value
+        state.universalToolkit.spiderSettings.speed = value
     end
+)
+addToggleOption(
+    SpiderFeature,
+    "Climb state",
+    state.universalToolkit.spiderSettings.climbState,
+    function(value: boolean): ()
+        state.universalToolkit.spiderSettings.climbState = value
+    end,
+    "Puts the humanoid in its climbing state, so the animation matches and "
+        .. "games that read the state see a climb instead of a jump."
+)
+addFeatureTooltip(
+    SpiderFeature,
+    "Walk into a wall to climb it. The climb stops with the wall, so reaching "
+        .. "the top steps onto it instead of launching you off."
 )
 end
 
@@ -13911,68 +14428,65 @@ state.bindFeatureActivationKey(
 end
 
 do
-local SoftLandingFeature = createUniversalFeature(
-    "Soft Landing",
-    "Dampen dangerous falls near ground or glide the whole descent",
+local NoFallFeature = createUniversalFeature(
+    "No Fall",
+    "Land without the game's fall damage",
     26,
-    state.universalToolkit.toggleSoftLanding
+    state.universalToolkit.toggleNoFall
 )
 addCycleOption(
-    SoftLandingFeature,
+    NoFallFeature,
     "Mode",
-    {"Landing", "Feather", "Auto"},
+    {"Both", "Impact", "State"},
     1,
     function(value: string): ()
-        state.universalToolkit.softLandingSettings.mode = value
-    end
+        state.universalToolkit.noFallSettings.mode = value
+    end,
+    "Impact brakes the fall just above the ground, for games that read your "
+        .. "landing speed. State closes the humanoid's fall measurement early, "
+        .. "for games that count the drop between Freefall and Landed. Both "
+        .. "covers either, and is what you want unless one of them fights the "
+        .. "game."
 )
 addNumberOption(
-    SoftLandingFeature,
-    "Trigger fall speed",
-    state.universalToolkit.softLandingSettings.triggerSpeed,
-    25,
-    180,
-    function(value: number): ()
-        state.universalToolkit.softLandingSettings.triggerSpeed = value
-    end
-)
-addNumberOption(
-    SoftLandingFeature,
-    "Ground scan distance",
-    state.universalToolkit.softLandingSettings.scanDistance,
+    NoFallFeature,
+    "Safe landing speed",
+    state.universalToolkit.noFallSettings.safeSpeed,
     5,
-    50,
+    80,
     function(value: number): ()
-        state.universalToolkit.softLandingSettings.scanDistance = value
-    end
+        state.universalToolkit.noFallSettings.safeSpeed = value
+    end,
+    "The vertical speed the landing is allowed to have. Most games start "
+        .. "hurting somewhere above 50."
 )
 addNumberOption(
-    SoftLandingFeature,
-    "Landing speed",
-    state.universalToolkit.softLandingSettings.landingSpeed,
-    2,
-    35,
-    function(value: number): ()
-        state.universalToolkit.softLandingSettings.landingSpeed = value
-    end
-)
-addNumberOption(
-    SoftLandingFeature,
-    "Glide speed",
-    state.universalToolkit.softLandingSettings.glideSpeed,
-    8,
+    NoFallFeature,
+    "Ground scan",
+    state.universalToolkit.noFallSettings.scanDistance,
+    4,
     40,
     function(value: number): ()
-        state.universalToolkit.softLandingSettings.glideSpeed = value
-    end
+        state.universalToolkit.noFallSettings.scanDistance = value
+    end,
+    "How many studs above the floor the brake starts. Higher is safer and "
+        .. "more visible; the module already scales this with your fall speed."
 )
 addToggleOption(
-    SoftLandingFeature,
-    "Preserve momentum",
-    state.universalToolkit.softLandingSettings.preserveMomentum,
+    NoFallFeature,
+    "Reset fall record",
+    state.universalToolkit.noFallSettings.resetRecord,
     function(value: boolean): ()
-        state.universalToolkit.softLandingSettings.preserveMomentum = value
-    end
+        state.universalToolkit.noFallSettings.resetRecord = value
+    end,
+    "Closes the humanoid's fall measurement every third of a second while you "
+        .. "are in the air, so a game that measures the drop never sees more "
+        .. "than a short one. Costs a little animation flicker on long falls."
+)
+addFeatureTooltip(
+    NoFallFeature,
+    "Fall damage is written by the game, on this client: this hands its "
+        .. "formula a landing it considers safe instead of blocking anything."
 )
 end
 
@@ -14274,6 +14788,10 @@ local function createGameModuleEnvironment(
         -- for one called nil and died halfway through building its panel —
         -- which is why Kill Aura showed a "Weapon" heading and nothing else.
         addListOption = recordBinding(state.addListOption),
+        -- Two-handle range row (Auto Clicker's CPS). Same rule as the list
+        -- builder above: a builder missing from this table takes the rest of
+        -- the module's panel down with it.
+        addRangeOption = recordBinding(state.addRangeOption),
         addInformationOption = addInformationOption,
         addSectionOption = state.addSectionOption,
         setOptionVisible = setOptionVisible,
@@ -15931,6 +16449,11 @@ print(
     "A Random Menu | Toggle key: "
         .. state.toggleKey.Name
 )
+-- On a keyboard the launcher is not drawn, so this toast is the only thing
+-- that says the menu is loaded and which key opens it.
+if not state.isMobile then
+    notify("Menu ready — press " .. state.toggleKey.Name)
+end
 end
 
 local initialized: boolean, bootstrapError: any = xpcall(bootstrap, function(message: any): string

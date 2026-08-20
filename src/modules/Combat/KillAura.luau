@@ -514,7 +514,11 @@ function Module.init(context: Runtime): any
                         swung = true
                     end
                     if not swung and weapons then
-                        swung = weapons:Swing()
+                        -- Falling back to "whatever the library can find"
+                        -- means a melee weapon, never the bow that happened
+                        -- to be in the same hotbar.
+                        local fallback: any = weapons:Best({Melee = true})
+                        swung = fallback ~= nil and weapons:Activate(fallback)
                     end
                     -- Extra presses for games that count each one as a hit.
                     local extraHits: number =
@@ -571,21 +575,27 @@ function Module.init(context: Runtime): any
     })
 
     aura:CreateSection("Weapon")
-    -- Games with nine swords, a pickaxe and a mobile attack button need a set,
-    -- not a guess: everything the weapon library can find is listed here and
-    -- you tick the ones the aura is allowed to swing. Empty means "whatever is
-    -- in my hands", which is what most games need.
+    -- Melee only, and only when asked.
+    --
+    -- This list used to offer everything the client owned: bows, blocks, the
+    -- first-person rig ("RightUpperArm"), animation tracks, the emote wheel.
+    -- None of those can be swung, and burying the sword among them is worse
+    -- than showing nothing. The library now answers one question — is this a
+    -- blade, a haft or a fist — and only those are listed. Leave every row
+    -- unticked and the aura swings whatever is in your hands, which is what
+    -- most games need.
     aura:CreateList({
         Name = "Weapons",
         Items = function(): {string}
             if not weapons then
                 return {}
             end
-            return weapons:Labels({All = true})
+            return weapons:Labels({All = true, Melee = true})
         end,
         EmptyText = "auto",
-        Tooltip = "Tick the weapons this module may use. Covers tools, view "
-            .. "models, inventory slots and the game's own attack button.",
+        Tooltip = "Melee weapons this module may swing: tools, view models, "
+            .. "inventory slots and the game's own attack button. Empty means "
+            .. "whatever you are holding.",
     })
     aura:CreateTextBox({
         Name = "Weapon name",
