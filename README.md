@@ -671,12 +671,44 @@ saved place in `reference/`, not from guesswork:
   the swing button plus contact events against the bed's hitbox, at a rate you
   set.
 
-What it does not do is fire `SwordHit`, `MineBlock`, `PlaceBlock` or
-`PurchaseItemShopItem` directly: their argument shapes are not in the dump, and
-a remote called with the wrong arguments is a kick, not a feature. Run the
-**Remote Logger**, break one bed and place one block by hand, and the saved log
-will contain exactly what those remotes expect — at which point they can be
-called properly rather than hopefully.
+### Captured remotes
+
+The Remote Logger did its job: the logs in `reference/remote-logs/` contain the
+real argument shapes, so these are called with what the game itself sends
+rather than with a guess.
+
+| Remote | Arguments as the client sends them |
+| --- | --- |
+| `ItemsRemotes.EquipTool` | `("Wooden Sword")` |
+| `ItemsRemotes.PlaceBlock` | `("Green Wool", 5, Vector3(-237, 60, 6))` |
+| `ItemsRemotes.SwordHit` | `(«Model PlayersContainer.someone», "Wooden Sword")` |
+| `PurchaseItemShopItem` | `(«Part …ItemShopPrompts.ItemShopPrompt», "Blocks", "Wool")` |
+| `WearArmor` | `("", "Pants")` |
+
+`SwordHit` is the one that matters: the client names the victim and the weapon,
+and the server takes its word for it. Damage does not depend on where you are
+standing, which is what the features below are built on — and why they are
+rate-limited and range-limited rather than fired at everyone on the server
+every frame.
+
+- **Server Aura** — reports hits directly. No swing, no reach, no line of
+  sight: range, hits per second, maximum targets, optional team check, and the
+  Friend List is respected. The weapon name is read from the view model you are
+  actually holding unless you type one.
+- **Server Scaffold** — places real blocks with `PlaceBlock`, snapped to a grid,
+  under you and up to five tiles ahead along the way you are moving, only over
+  a gap. The second argument (the constant `5` the client always sends) is
+  exposed as *Variant* in case it turns out to mean something.
+- **Auto Buy** — buys through `PurchaseItemShopItem` on a timer, passing the
+  nearest shop prompt on the map. Observed categories: Blocks, Swords,
+  Pickaxes, Armor.
+- **Quick Actions** — one-shot `EquipTool` and `WearArmor` calls with editable
+  arguments.
+- **Bed Nuker** gains an optional *Server hit* that also reports the bed
+  through `SwordHit`, since that remote takes a model.
+
+`MineBlock` and `DestroyBlock` are still uncaptured — mine a block with the
+logger on and they can be driven the same way.
 
 ## MM2 module
 

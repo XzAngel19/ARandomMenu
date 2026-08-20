@@ -15,11 +15,20 @@
 --     `MouseButton1Down`/`MouseButton1Click` the game listens on. There is no
 --     Tool anywhere in this game.
 --
--- What this module deliberately does not do is fire `SwordHit`, `MineBlock`,
--- `PlaceBlock` or `PurchaseItemShopItem` directly: their argument shapes are
--- not in the dump, and a remote called with the wrong arguments is a kick, not
--- a feature. Everything below either reads the world or presses the game's own
--- controls.
+-- The argument shapes below are not guesses either: they were captured live
+-- with the Remote Logger and the logs are in `reference/remote-logs/`.
+--
+--   EquipTool           :FireServer("Wooden Sword")
+--   PlaceBlock          :FireServer("Green Wool", 5, Vector3(-237, 60, 6))
+--   SwordHit            :FireServer(«Model PlayersContainer.someone», "Wooden Sword")
+--   PurchaseItemShopItem:FireServer(«Part …ItemShopPrompts.ItemShopPrompt», "Blocks", "Wool")
+--   WearArmor           :FireServer("", "Pants")
+--
+-- `SwordHit` is the interesting one: the client names the victim and the
+-- weapon, and the server takes its word for it. Damage therefore does not
+-- depend on where you are standing, which is what makes a server-side aura
+-- possible at all — and why it is rate-limited here rather than fired every
+-- frame.
 
 local Module = {
     Name = "BedFight",
@@ -49,6 +58,40 @@ local function clearMarks(store: {[Instance]: any}): ()
         end)
         store[instance] = nil
     end
+end
+
+-- Remote lookup, cached: these live in one folder and never move.
+local remoteCache: any = {}
+
+local function remote(path: string): Instance?
+    local cached: any = remoteCache[path]
+    if cached and cached.Parent then
+        return cached
+    end
+    local replicated: Instance? = game:GetService("ReplicatedStorage")
+    local current: Instance? = replicated and replicated:FindFirstChild("Remotes")
+    if not current then
+        return nil
+    end
+    for segment: string in string.gmatch(path, "[^%.]+") do
+        current = current and current:FindFirstChild(segment)
+        if not current then
+            return nil
+        end
+    end
+    remoteCache[path] = current
+    return current
+end
+
+local function fireRemote(path: string, ...: any): boolean
+    local target: Instance? = remote(path)
+    if not target then
+        return false
+    end
+    local arguments: {any} = table.pack(...)
+    return pcall(function(): ()
+        (target :: any):FireServer(table.unpack(arguments, 1, arguments.n))
+    end)
 end
 
 local function gameInfo(): Instance?
@@ -149,6 +192,7 @@ function Module.init(runtime: any): any
     local addToggleOption: any = host.addToggleOption
     local addNumberOption: any = host.addNumberOption
     local addColorOption: any = host.addColorOption
+    local addTextOption: any = host.addTextOption
     local addInformationOption: any = host.addInformationOption
     local create: any = host.create
     local makeTextLabel: any = host.makeTextLabel
@@ -158,6 +202,53 @@ function Module.init(runtime: any): any
 
     local scroll: any = state.bedFightScroll
     local registry: any = state.bedFightFeatures
+
+    -- Declared before the helpers that read them: a closure naming a local
+    -- that is declared further down reads a global instead, and a global that
+    -- does not exist is nil at the first call.
+    local auraSettings: any = {
+        range = 30,
+        rate = 8,
+        weapon = "",
+        teamCheck = false,
+        maxTargets = 3,
+    }
+    local placeSettings: any = {
+        block = "",
+        variant = 5,
+        grid = 3,
+        rate = 8,
+        ahead = 1,
+    }
+
+    -- The equipped weapon names itself: the client parents the view model of
+    -- whatever you are holding under the camera.
+    local function equippedWeaponName(): string
+        if auraSettings.weapon ~= "" then
+            return auraSettings.weapon
+        end
+        local camera: Camera? = workspace.CurrentCamera
+        local viewModel: Instance? = camera and camera:FindFirstChild("ViewModel")
+        if viewModel then
+            for _, child: Instance in ipairs(viewModel:GetChildren()) do
+                if child:IsA("Model") or child:IsA("BasePart") then
+                    return child.Name
+                end
+            end
+        end
+        return "Wooden Sword"
+    end
+
+    -- The victim argument is a character model, and this game keeps them in
+    -- Workspace.PlayersContainer.
+    local function characterOf(player: Player): Model?
+        local container: Instance? = workspace:FindFirstChild("PlayersContainer")
+        local named: Instance? = container and container:FindFirstChild(player.Name)
+        if named and named:IsA("Model") then
+            return named :: Model
+        end
+        return player.Character
+    end
 
     local settings: any = {
         bedColour = Color3.fromRGB(236, 236, 240),
@@ -472,7 +563,7 @@ function Module.init(runtime: any): any
     -- arguments are not in the dump, so this drives the game's own controls
     -- instead of inventing a call. Turn on the Remote Logger, break one bed by
     -- hand, and the log will say exactly what a future version could send.
-    local nukerSettings: any = {range = 24, rate = 12}
+    local nukerSettings: any = {range = 24, rate = 12, serverHit = false}
     local NukerFeature: any = createUniversalFeature(
         "Bed Nuker",
         "Hits the nearest bed in range as fast as the game allows",
@@ -521,6 +612,22 @@ function Module.init(runtime: any): any
                     if weapons then
                         weapons:Swing()
                     end
+                    -- The server-side path as well, when it is switched on:
+                    -- SwordHit names its victim, and a bed is a model like any
+                    -- other. Whether the server accepts one for this remote is
+                    -- something only the game can answer, so it is optional
+                    -- and off by default.
+                    if nukerSettings.serverHit then
+                        local owner: Instance? = (target :: BasePart)
+                            :FindFirstAncestorOfClass("Model")
+                        if owner then
+                            fireRemote(
+                                "ItemsRemotes.SwordHit",
+                                owner,
+                                equippedWeaponName()
+                            )
+                        end
+                    end
                     -- Contact as well as the swing: a pickaxe that damages on
                     -- touch never registers from the button alone.
                     local fire: any = environment.firetouchinterest
@@ -558,10 +665,14 @@ function Module.init(runtime: any): any
             nukerSettings.rate = value
         end
     )
+    addToggleOption(NukerFeature, "Server hit", false, function(value: boolean): ()
+        nukerSettings.serverHit = value
+    end)
     addInformationOption(
         NukerFeature,
-        "Equip the pickaxe first: this presses the game's own controls, so "
-            .. "whatever is in your hand is what swings."
+        "Equip the pickaxe first: this presses the game's own controls. Server "
+            .. "hit also reports the bed through SwordHit, which the server may "
+            .. "or may not accept for a block."
     )
 
     -- Scaffold ----------------------------------------------------------------
@@ -860,6 +971,342 @@ function Module.init(runtime: any): any
             .. "measured against the game's own plane."
     )
 
+    -- Server Aura --------------------------------------------------------------
+    --
+    -- `SwordHit` takes the victim's character model and the weapon's name, and
+    -- the server does the rest. No swing animation, no distance from the
+    -- client, no line of sight — which is exactly why this is capped by a
+    -- range you choose and a rate you choose rather than fired at everybody on
+    -- the server every frame.
+    local ServerAuraFeature: any = createUniversalFeature(
+        "Server Aura",
+        "Reports hits straight to the server, no swing needed",
+        8,
+        function(enabled: boolean): ()
+            host.disconnectFeatureConnection("BedFightServerAura")
+            if not enabled then
+                return
+            end
+            local nextAt: number = 0
+            host.featureConnections.BedFightServerAura =
+                TaskManager:Connect(function(): ()
+                    local now: number = os.clock()
+                    if now < nextAt then
+                        return
+                    end
+                    nextAt = now + 1 / math.max(auraSettings.rate, 0.5)
+
+                    local root: BasePart? = LocalPlayer.Character
+                        and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+                    if not root then
+                        return
+                    end
+                    local origin: Vector3 = (root :: BasePart).Position
+                    local weapon: string = equippedWeaponName()
+                    local sent: number = 0
+
+                    for _, player: Player in ipairs(host.Players:GetPlayers()) do
+                        if player == LocalPlayer then
+                            continue
+                        end
+                        if sent >= math.round(auraSettings.maxTargets) then
+                            break
+                        end
+                        if auraSettings.teamCheck
+                            and player.Team ~= nil
+                            and player.Team == LocalPlayer.Team then
+                            continue
+                        end
+                        local friendList: any = state.friendList
+                        if friendList and friendList.isProtected(player) then
+                            continue
+                        end
+                        local character: Model? = characterOf(player)
+                        local victimRoot: Instance? = character
+                            and character:FindFirstChild("HumanoidRootPart")
+                        local humanoid: Instance? = character
+                            and character:FindFirstChildOfClass("Humanoid")
+                        if not character or not victimRoot or not humanoid then
+                            continue
+                        end
+                        if (humanoid :: Humanoid).Health <= 0 then
+                            continue
+                        end
+                        if ((victimRoot :: BasePart).Position - origin).Magnitude
+                            > auraSettings.range then
+                            continue
+                        end
+                        fireRemote("ItemsRemotes.SwordHit", character, weapon)
+                        sent += 1
+                    end
+                end)
+        end,
+        {parent = scroll, registry = registry, categoryName = "Combat"}
+    )
+    addNumberOption(ServerAuraFeature, "Range", auraSettings.range, 5, 500, function(value: number): ()
+        auraSettings.range = value
+    end)
+    addNumberOption(ServerAuraFeature, "Hits per second", auraSettings.rate, 1, 30, function(value: number): ()
+        auraSettings.rate = value
+    end)
+    addNumberOption(ServerAuraFeature, "Max targets", auraSettings.maxTargets, 1, 12, function(value: number): ()
+        auraSettings.maxTargets = value
+    end)
+    addToggleOption(ServerAuraFeature, "Team check", false, function(value: boolean): ()
+        auraSettings.teamCheck = value
+    end)
+    addTextOption(ServerAuraFeature, "Weapon name", "", function(value: string): ()
+        auraSettings.weapon = value
+    end)
+    addInformationOption(
+        ServerAuraFeature,
+        "Leave the weapon empty and it reads whatever view model you are "
+            .. "holding. The Friend List is respected."
+    )
+
+    -- Server Scaffold ------------------------------------------------------------
+    --
+    -- `PlaceBlock` takes the block's name, a constant the client always sent as
+    -- 5, and the world position of the block. So the blocks can be placed
+    -- without pointing the camera anywhere: pick the position, send it.
+    local function equippedBlockName(): string
+        if placeSettings.block ~= "" then
+            return placeSettings.block
+        end
+        -- Whatever wool the hotbar last equipped is a better guess than a
+        -- hard-coded colour, and the view model names it.
+        local camera: Camera? = workspace.CurrentCamera
+        local viewModel: Instance? = camera and camera:FindFirstChild("ViewModel")
+        if viewModel then
+            for _, child: Instance in ipairs(viewModel:GetChildren()) do
+                local name: string = string.lower(child.Name)
+                if string.find(name, "wool", 1, true)
+                    or string.find(name, "plank", 1, true)
+                    or string.find(name, "block", 1, true) then
+                    return child.Name
+                end
+            end
+        end
+        return "Wool"
+    end
+
+    local function snap(value: number, grid: number): number
+        return math.floor(value / grid + 0.5) * grid
+    end
+
+    local ServerScaffoldFeature: any = createUniversalFeature(
+        "Server Scaffold",
+        "Places real blocks under and ahead of you through the game's remote",
+        9,
+        function(enabled: boolean): ()
+            host.disconnectFeatureConnection("BedFightServerScaffold")
+            if not enabled then
+                return
+            end
+            local nextAt: number = 0
+            host.featureConnections.BedFightServerScaffold =
+                TaskManager:Connect(function(): ()
+                    local character: Model? = LocalPlayer.Character
+                    local root: BasePart? = character
+                        and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+                    local humanoid: Humanoid? = character
+                        and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+                    if not root or not humanoid then
+                        return
+                    end
+                    local resolvedRoot: BasePart = root :: BasePart
+                    local resolvedHumanoid: Humanoid = humanoid :: Humanoid
+
+                    local now: number = os.clock()
+                    if now < nextAt then
+                        return
+                    end
+
+                    -- Only over a gap. Placing into solid ground is how you end
+                    -- up standing inside a tower you did not ask for.
+                    local parameters: RaycastParams = RaycastParams.new()
+                    parameters.FilterType = Enum.RaycastFilterType.Exclude
+                    parameters.IgnoreWater = true
+                    parameters.FilterDescendantsInstances = {character :: any}
+                    local drop: number = resolvedHumanoid.HipHeight + placeSettings.grid + 1
+                    local below: RaycastResult? = workspace:Raycast(
+                        resolvedRoot.Position,
+                        Vector3.new(0, -drop, 0),
+                        parameters
+                    )
+                    if below then
+                        return
+                    end
+                    nextAt = now + 1 / math.max(placeSettings.rate, 0.5)
+
+                    local grid: number = placeSettings.grid
+                    local block: string = equippedBlockName()
+                    local base: Vector3 = resolvedRoot.Position
+                        - Vector3.new(0, resolvedHumanoid.HipHeight + 1, 0)
+
+                    -- The tile you are standing over, then the ones you are
+                    -- walking into, so a run across a gap does not outpace it.
+                    local heading: Vector3 = resolvedHumanoid.MoveDirection
+                    if heading.Magnitude < 0.05 then
+                        heading = resolvedRoot.CFrame.LookVector
+                    end
+                    heading = Vector3.new(heading.X, 0, heading.Z)
+                    if heading.Magnitude > 0.05 then
+                        heading = heading.Unit
+                    else
+                        heading = Vector3.zero
+                    end
+
+                    for step: number = 0, math.round(placeSettings.ahead) do
+                        local spot: Vector3 = base + heading * (grid * step)
+                        fireRemote(
+                            "ItemsRemotes.PlaceBlock",
+                            block,
+                            placeSettings.variant,
+                            Vector3.new(
+                                snap(spot.X, grid),
+                                snap(spot.Y, grid),
+                                snap(spot.Z, grid)
+                            )
+                        )
+                    end
+                end)
+        end,
+        {parent = scroll, registry = registry, categoryName = "Movement"}
+    )
+    addNumberOption(ServerScaffoldFeature, "Blocks per second", placeSettings.rate, 1, 20, function(value: number): ()
+        placeSettings.rate = value
+    end)
+    addNumberOption(ServerScaffoldFeature, "Tiles ahead", placeSettings.ahead, 0, 5, function(value: number): ()
+        placeSettings.ahead = value
+    end)
+    addNumberOption(ServerScaffoldFeature, "Grid size", placeSettings.grid, 1, 6, function(value: number): ()
+        placeSettings.grid = value
+    end)
+    addNumberOption(ServerScaffoldFeature, "Variant", placeSettings.variant, 0, 12, function(value: number): ()
+        placeSettings.variant = value
+    end)
+    addTextOption(ServerScaffoldFeature, "Block name", "", function(value: string): ()
+        placeSettings.block = value
+    end)
+    addInformationOption(
+        ServerScaffoldFeature,
+        "Variant is the second argument the client always sends as 5. Leave "
+            .. "the block empty to use whatever you are holding."
+    )
+
+    -- Auto Buy ----------------------------------------------------------------
+    --
+    -- `PurchaseItemShopItem` takes the prompt part, a category and an item, so
+    -- the purchase is a call rather than a walk to the shop and a click.
+    local buySettings: any = {category = "Blocks", item = "Wool", rate = 2, nearest = true}
+
+    local function shopPrompt(): BasePart?
+        local root: BasePart? = LocalPlayer.Character
+            and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+        local origin: Vector3 = root and (root :: BasePart).Position or Vector3.zero
+        local best: BasePart? = nil
+        local bestDistance: number = math.huge
+        for _, mapChild: Instance in ipairs(workspace:GetChildren()) do
+            local prompts: Instance? = mapChild:FindFirstChild("ItemShopPrompts")
+            if not prompts then
+                continue
+            end
+            for _, prompt: Instance in ipairs(prompts:GetChildren()) do
+                if not prompt:IsA("BasePart") then
+                    continue
+                end
+                local distance: number = ((prompt :: BasePart).Position - origin).Magnitude
+                if distance < bestDistance then
+                    best = prompt :: BasePart
+                    bestDistance = distance
+                end
+            end
+        end
+        return best
+    end
+
+    local BuyFeature: any = createUniversalFeature(
+        "Auto Buy",
+        "Buys a shop item on a timer through the game's own purchase remote",
+        10,
+        function(enabled: boolean): ()
+            host.disconnectFeatureConnection("BedFightBuy")
+            if not enabled then
+                return
+            end
+            local nextAt: number = 0
+            host.featureConnections.BedFightBuy =
+                TaskManager:Connect(function(): ()
+                    local now: number = os.clock()
+                    if now < nextAt then
+                        return
+                    end
+                    nextAt = now + 1 / math.max(buySettings.rate, 0.2)
+                    local prompt: BasePart? = shopPrompt()
+                    if not prompt then
+                        return
+                    end
+                    fireRemote(
+                        "PurchaseItemShopItem",
+                        prompt,
+                        buySettings.category,
+                        buySettings.item
+                    )
+                end)
+        end,
+        {parent = scroll, registry = registry, categoryName = "Utility"}
+    )
+    addTextOption(BuyFeature, "Category", buySettings.category, function(value: string): ()
+        buySettings.category = value
+    end)
+    addTextOption(BuyFeature, "Item", buySettings.item, function(value: string): ()
+        buySettings.item = value
+    end)
+    addNumberOption(BuyFeature, "Purchases per second", buySettings.rate, 1, 10, function(value: number): ()
+        buySettings.rate = value
+    end)
+    addInformationOption(
+        BuyFeature,
+        "Observed categories: Blocks, Swords, Pickaxes, Armor. The nearest "
+            .. "shop prompt on the map is the one passed to the server."
+    )
+
+    -- Quick actions -------------------------------------------------------------
+    local QuickFeature: any = createUniversalFeature(
+        "Quick Actions",
+        "One-shot calls with the arguments the game itself uses",
+        11,
+        function(): () end,
+        {
+            parent = scroll,
+            registry = registry,
+            categoryName = "Utility",
+            category = true,
+        }
+    )
+    local quickSettings: any = {tool = "Wooden Sword", armor = "", slot = "Pants"}
+    addTextOption(QuickFeature, "Tool", quickSettings.tool, function(value: string): ()
+        quickSettings.tool = value
+    end)
+    host.addActionOption(QuickFeature, "Equip tool", function(): ()
+        fireRemote("ItemsRemotes.EquipTool", quickSettings.tool)
+    end)
+    addTextOption(QuickFeature, "Armor", quickSettings.armor, function(value: string): ()
+        quickSettings.armor = value
+    end)
+    addTextOption(QuickFeature, "Armor slot", quickSettings.slot, function(value: string): ()
+        quickSettings.slot = value
+    end)
+    host.addActionOption(QuickFeature, "Wear armor", function(): ()
+        fireRemote("WearArmor", quickSettings.armor, quickSettings.slot)
+    end)
+    addInformationOption(
+        QuickFeature,
+        "EquipTool takes the item's name; WearArmor takes the armor and the "
+            .. "slot, which the client sent as (\"\", \"Pants\")."
+    )
+
     Module.Initialized = true
     return Module
 end
@@ -876,6 +1323,9 @@ function Module.destroy(): ()
             "BedFightNuker",
             "BedFightVoid",
             "BedFightScaffold",
+            "BedFightServerAura",
+            "BedFightServerScaffold",
+            "BedFightBuy",
         })
     do
         if host.disconnectFeatureConnection then

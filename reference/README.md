@@ -22,6 +22,14 @@ is downloaded by the menu, compiled by the validation workflow or referenced by
   `MouseButton1Click` the game listens on. Every one of those three shapes is
   something the weapon library now looks for.
 
+- `remote-logs/` — Remote Logger output captured live in BedFight. These are
+  the argument shapes no decompiler can give you, because they are the values a
+  specific action produced: `PlaceBlock("Green Wool", 5, Vector3(-237, 60, 6))`,
+  `SwordHit(«Model PlayersContainer.someone», "Wooden Sword")`,
+  `PurchaseItemShopItem(«Part …ItemShopPrompt», "Blocks", "Wool")`,
+  `EquipTool("Wooden Sword")`, `WearArmor("", "Pants")`. `src/games/BedFight.luau`
+  calls them exactly as recorded.
+
 The equivalents in this repository are `src/core/Framework.luau`,
 `src/library/Entity.luau` and `src/modules/<Category>/*.luau`; they are written
 from scratch against this menu's own card and option API rather than copied.
