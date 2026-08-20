@@ -79,6 +79,51 @@ local Manifest: Manifest = {
         },
         -- Spoof: cosmetic only, and each one lands on its own page.
         {
+            path = "src/modules/Visuals/XRay.luau",
+            name = "X-Ray",
+            category = "Visuals",
+        },
+        {
+            path = "src/modules/Movement/HighJump.luau",
+            name = "High Jump",
+            category = "Movement",
+        },
+        {
+            path = "src/modules/Movement/Spider.luau",
+            name = "Spider",
+            category = "Movement",
+        },
+        {
+            path = "src/modules/Protection/SafeWalk.luau",
+            name = "Safe Walk",
+            category = "Protection",
+        },
+        {
+            path = "src/modules/Utility/RejoinServer.luau",
+            name = "Rejoin Server",
+            category = "Utility",
+        },
+        {
+            path = "src/modules/Visuals/ZoomUnlocker.luau",
+            name = "Zoom Unlocker",
+            category = "Visuals",
+        },
+        {
+            path = "src/modules/Utility/InteractExtender.luau",
+            name = "Interact Extender",
+            category = "Utility",
+        },
+        {
+            path = "src/modules/Movement/PhaseDash.luau",
+            name = "Phase Dash",
+            category = "Movement",
+        },
+        {
+            path = "src/modules/Protection/NoFall.luau",
+            name = "No Fall",
+            category = "Protection",
+        },
+        {
             path = "src/modules/Combat/Hitboxes.luau",
             name = "Hitboxes",
             category = "Combat",

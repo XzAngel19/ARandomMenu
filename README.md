@@ -614,11 +614,25 @@ grown into the place where features were written too, because that is where
 the first one was written. Everything below the shell belongs in
 `src/modules/**`, where the kernel, the contracts and the tests already live.
 
-Moved so far, whole: the **projectile calibration engine** (740 lines of
-telemetry that was never interface) and **Hitboxes**. The shell is 16,688 →
-15,676 lines and falling; the queue is the universal toolkit (X-Ray, High Jump,
-Spider, Safe Walk, Zoom, Interact, Phase Dash, No Fall), then Fly and Speed,
-then the option builders and the colour picker into a widget library.
+Moved so far, whole:
+
+| Batch | Modules |
+|---|---|
+| Engines | Projectile Calibration (740 lines of telemetry that was never interface), Hitboxes |
+| Universal toolkit | X-Ray, High Jump, Spider, Safe Walk, Rejoin Server, Zoom Unlocker, Interact Extender, Phase Dash, No Fall |
+
+`state.universalToolkit` — the grab-bag table nine features hung themselves off
+— is gone entirely. Each of them is an ordinary module now: a file, a manifest
+line, `init`/`destroy`, its own card, and nothing in the shell that knows it
+exists.
+
+The shell is **16,688 → 14,736 lines**, and 16 feature cards are still declared
+in it. The queue: Fly and Speed (the two biggest), then the dozen small ones
+(Fling, Noclip, Gravity, Jump Power, Walk Speed, Anti-AFK, Anti-Fling,
+Fullbright, Lag Switch, Anti-Void, Infinite Jump, Freeze), then the option
+builders and the colour picker into a widget library — which is what finally
+takes the shell under six thousand and ends the 200-register pressure that
+shapes `bootstrap()`.
 
 ## Module architecture
 
