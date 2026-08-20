@@ -3065,9 +3065,9 @@ local LoadingCurtain: CanvasGroup = (create("CanvasGroup", {
     Parent = Main,
     Name = "LoadingIntro",
     Active = true,
-    BackgroundColor3 = state.guiStyle == "Default"
-        and Theme.DefaultBackground
-        or Color3.fromRGB(4, 4, 6),
+    -- Deliberately darker than the shell itself: the intro should read as
+    -- black, and the shell fades up out of it.
+    BackgroundColor3 = Color3.fromRGB(4, 4, 5),
     BackgroundTransparency = state.guiStyle == "Default" and 0 or 0.02,
     BorderSizePixel = 0,
     -- Fully opaque from frame one: the half-built menu behind it must never
@@ -3087,8 +3087,10 @@ local LoadingGlow: Frame = create("Frame", {
     Parent = LoadingCurtain,
     Name = "Glow",
     AnchorPoint = Vector2.new(0.5, 0.5),
-    BackgroundColor3 = Color3.fromRGB(150, 150, 158),
-    BackgroundTransparency = 0.86,
+    -- Near-black: the backdrop wash used to be a pale grey at 0.86, which lit
+    -- the whole curtain and made the intro read as grey rather than dark.
+    BackgroundColor3 = Color3.fromRGB(46, 46, 52),
+    BackgroundTransparency = 0.94,
     BorderSizePixel = 0,
     Position = UDim2.fromScale(0.5, 0.42),
     Size = UDim2.fromScale(1.4, 0.9),
@@ -3099,7 +3101,7 @@ create("UIGradient", {
     Rotation = 12,
     Transparency = NumberSequence.new({
         NumberSequenceKeypoint.new(0, 1),
-        NumberSequenceKeypoint.new(0.5, 0.34),
+        NumberSequenceKeypoint.new(0.5, 0.62),
         NumberSequenceKeypoint.new(1, 1),
     }),
 })
@@ -3132,8 +3134,8 @@ create("UICorner", {Parent = LoadingSpinner, CornerRadius = UDim.new(1, 0)})
 create("UIStroke", {
     Parent = LoadingSpinner,
     Color = Theme.DefaultOutline,
-    Transparency = 0.55,
-    Thickness = 3,
+    Transparency = 0.78,
+    Thickness = 2,
 })
 local LoadingSpinnerHead: Frame = create("Frame", {
     Parent = LoadingSpinner,
@@ -3164,7 +3166,7 @@ create("UICorner", {Parent = LoadingSpinnerOuter, CornerRadius = UDim.new(1, 0)}
 create("UIStroke", {
     Parent = LoadingSpinnerOuter,
     Color = Theme.DefaultOutline,
-    Transparency = 0.84,
+    Transparency = 0.92,
     Thickness = 1,
 })
 local LoadingSpinnerOuterHead: Frame = create("Frame", {
@@ -9357,15 +9359,27 @@ end
 state.bindFeatureTooltip = addFeatureTooltip
 
 type FlySettings = {
-    preset: string,
+    method: string,
+    floatMethod: string,
     speed: number,
     verticalSpeed: number,
     response: number,
+    burstInterval: number,
     wallCheck: boolean,
     platformStand: boolean,
     faceCamera: boolean,
     upKey: Enum.KeyCode,
     downKey: Enum.KeyCode,
+}
+
+-- Everything the flight engines mutate between frames lives here rather than
+-- as separate upvalues: the engines swap at runtime and each one has to be
+-- able to tear down whatever the previous one left behind.
+type FlyRuntime = {
+    yLevel: number?,
+    burstAt: number,
+    platform: BasePart?,
+    walkSpeed: number?,
 }
 
 local findPlayerByText: (string) -> Player? = function(_text: string): Player?
@@ -9375,16 +9389,26 @@ local performFling: (Player) -> () = function(_target: Player): () end
 
 do
 local flySettings: FlySettings = {
-    preset = "Balanced",
+    method = "Velocity",
+    floatMethod = "Velocity",
     speed = 70,
     verticalSpeed = 56,
     response = 1,
+    burstInterval = 0.2,
     wallCheck = true,
     platformStand = true,
     faceCamera = true,
     upKey = Enum.KeyCode.Space,
     downKey = Enum.KeyCode.LeftControl,
 }
+-- Kept on `state` rather than as another bootstrap local: the function that
+-- builds the menu is already at Luau's 200-register ceiling.
+state.flyRuntime = {
+    yLevel = nil,
+    burstAt = 0,
+    platform = nil,
+    walkSpeed = nil,
+} :: FlyRuntime
 local flySmoothedVelocity: Vector3 = Vector3.zero
 state.platformStandController = {
     owners = {},
@@ -9486,10 +9510,7 @@ local function ensureFlyConstraints(root: BasePart): (LinearVelocity, AlignOrien
     return velocity :: LinearVelocity, orientation :: AlignOrientation
 end
 
-local function getFlyDirection(
-    humanoid: Humanoid,
-    camera: Camera
-): (Vector3, Vector3)
+local function getFlyDirection(camera: Camera): (Vector3, number, Vector3)
     local cameraForward: Vector3 = Vector3.new(
         camera.CFrame.LookVector.X,
         0,
@@ -9535,18 +9556,259 @@ local function getFlyDirection(
         vertical = 1
     end
 
-    local targetVelocity: Vector3 = horizontal * flySettings.speed
-        + Vector3.new(0, vertical * flySettings.verticalSpeed, 0)
-    return targetVelocity, cameraForward
+    return horizontal, vertical, cameraForward
 end
 
-local function toggleFly(enabled: boolean): ()
+-- Flight engines.
+--
+-- Flying is two separate problems — what pushes you sideways and what keeps
+-- you off the ground — and games break them in different ways, so they are
+-- two independent engines instead of one preset that only ever changed a
+-- smoothing constant (which is why "Balanced", "Direct" and "Precise" all
+-- used to fly identically).
+--
+-- Horizontal:
+--   Velocity    AssemblyLinearVelocity is overwritten every frame. Smooth and
+--               responsive, and the first thing a velocity clamp notices.
+--   Constraint  a LinearVelocity constraint drives the character instead, so
+--               games that reset AssemblyLinearVelocity each step cannot undo
+--               it. It owns the vertical axis too, so the float engine idles.
+--   Impulse     the same target reached with ApplyImpulse: the body keeps its
+--               own physics, collides properly and pushes what it touches.
+--   CFrame      the root is displaced directly and velocity is left at zero,
+--               so speed caps, knockback and ragdolls have nothing to grab.
+--   Blink       CFrame movement saved up and spent in one hop per interval,
+--               which looks like teleporting rather than gliding.
+--   Pulse       velocity alternating between a burst and a coast, so the
+--               average speed stays close to normal while the peaks are fast.
+--   WalkSpeed   raises Humanoid.WalkSpeed and nothing else: keeps animations
+--               and the game's own movement rules, trivially detectable.
+--
+-- Vertical:
+--   Velocity    the Y component is written directly, which also cancels
+--               gravity while you hold nothing.
+--   Impulse     the same target through ApplyImpulse.
+--   Hover       an altitude is held with CFrame writes: no drift, no physics,
+--               and gravity never applies.
+--   Jump        holds an altitude by asking the humanoid to jump whenever it
+--               falls below it, so the movement is the game's own jump.
+--   Bounce      velocity with an oscillation on top, which reads from outside
+--               as an ordinary player hopping around.
+--   Floor       an invisible anchored part is kept under your feet, so you
+--               are genuinely standing on something the entire flight.
+-- The two engine appliers live in their own block so their registers are
+-- released back to the bootstrap function, which sits at Luau's 200-local
+-- ceiling.
+local toggleFly: (boolean) -> ()
+do
+local function applyFlyHorizontal(
+    root: BasePart,
+    humanoid: Humanoid,
+    moveDirection: Vector3,
+    deltaTime: number
+): ()
+    local method: string = flySettings.method
+    local currentVelocity: Vector3 = root.AssemblyLinearVelocity
+    local target: Vector3 = moveDirection * flySettings.speed
+
+    if method == "WalkSpeed" then
+        if not state.flyRuntime.walkSpeed then
+            state.flyRuntime.walkSpeed = humanoid.WalkSpeed
+        end
+        humanoid.WalkSpeed = flySettings.speed
+        return
+    end
+
+    if method == "Pulse" then
+        -- A burst followed by a coast: the same distance covered as a steady
+        -- run at the slider value, but never a constant unnatural speed.
+        local period: number = math.max(flySettings.burstInterval, 0.05) * 2
+        local burst: boolean = (os.clock() % period) < (period * 0.5)
+        target = target * (burst and 1.8 or 0.2)
+    end
+
+    if method == "CFrame" or method == "Blink" then
+        local step: Vector3 = moveDirection * flySettings.speed * deltaTime
+        if method == "Blink" then
+            local interval: number = math.max(flySettings.burstInterval, 0.05)
+            if os.clock() < state.flyRuntime.burstAt then
+                step = Vector3.zero
+            else
+                state.flyRuntime.burstAt = os.clock() + interval
+                step = moveDirection * flySettings.speed * interval
+            end
+        end
+        if step.Magnitude > 0.001 and flySettings.wallCheck then
+            local raycastParams: RaycastParams = RaycastParams.new()
+            raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+            raycastParams.FilterDescendantsInstances = {root.Parent :: Instance}
+            local wallHit: RaycastResult? = workspace:Raycast(
+                root.Position,
+                step + step.Unit * 2,
+                raycastParams
+            )
+            if wallHit then
+                step = Vector3.zero
+            end
+        end
+        if step.Magnitude > 0.001 then
+            root.CFrame = root.CFrame + step
+        end
+        -- Position-based flight has to keep its own momentum at zero, or the
+        -- leftover velocity carries the character past wherever it stopped.
+        root.AssemblyLinearVelocity = Vector3.new(0, currentVelocity.Y, 0)
+        return
+    end
+
+    if method == "Impulse" then
+        local difference: Vector3 = (target - currentVelocity)
+            * Vector3.new(1, 0, 1)
+        -- An impulse every frame fights the solver; only correct once the
+        -- body has actually drifted away from the target.
+        local threshold: number = moveDirection.Magnitude < 0.01 and 10 or 2
+        if difference.Magnitude > threshold then
+            root:ApplyImpulse(difference * root.AssemblyMass)
+        end
+        return
+    end
+
+    -- Velocity and Constraint both track the target through the response
+    -- multiplier, which is the only setting that can make flight feel heavy.
+    local alpha: number = 1 - math.exp(-12 * flySettings.response * deltaTime)
+    flySmoothedVelocity = flySmoothedVelocity:Lerp(target, alpha)
+    if method == "Constraint" then
+        return
+    end
+    root.AssemblyLinearVelocity = Vector3.new(
+        flySmoothedVelocity.X,
+        currentVelocity.Y,
+        flySmoothedVelocity.Z
+    )
+end
+
+local function applyFlyVertical(
+    root: BasePart,
+    humanoid: Humanoid,
+    vertical: number,
+    deltaTime: number
+): ()
+    local method: string = flySettings.floatMethod
+    local currentVelocity: Vector3 = root.AssemblyLinearVelocity
+    local targetY: number = vertical * flySettings.verticalSpeed
+
+    if method == "Floor" then
+        local platform: BasePart? = state.flyRuntime.platform
+        if not platform or not platform.Parent then
+            local newPlatform: BasePart = Instance.new("Part")
+            newPlatform.Name = "RTM_FlyPlatform"
+            newPlatform.Anchored = true
+            newPlatform.CanQuery = false
+            newPlatform.CanTouch = false
+            newPlatform.Size = Vector3.new(8, 1, 8)
+            newPlatform.Transparency = 1
+            -- Parented to the camera: it exists for the local physics
+            -- simulation only and never shows up as a part in the world.
+            newPlatform.Parent = workspace.CurrentCamera
+            state.flyRuntime.platform = newPlatform
+            platform = newPlatform
+        end
+        local resolved: BasePart = platform :: BasePart
+        -- Descending means getting the floor out of the way for a moment.
+        resolved.CFrame = vertical < 0
+            and CFrame.new(0, -4096, 0)
+            or CFrame.new(root.Position - Vector3.new(0, humanoid.HipHeight + 1.5, 0))
+        if vertical > 0 then
+            root.AssemblyLinearVelocity = Vector3.new(
+                currentVelocity.X,
+                targetY,
+                currentVelocity.Z
+            )
+        end
+        return
+    end
+
+    if method == "Hover" or method == "Jump" then
+        local level: number = state.flyRuntime.yLevel or root.Position.Y
+        level = level + targetY * deltaTime
+        if flySettings.wallCheck then
+            local offset: number = level - root.Position.Y
+            if math.abs(offset) > 0.001 then
+                local raycastParams: RaycastParams = RaycastParams.new()
+                raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+                raycastParams.FilterDescendantsInstances = {root.Parent :: Instance}
+                local ceilingHit: RaycastResult? = workspace:Raycast(
+                    root.Position,
+                    Vector3.new(0, offset, 0),
+                    raycastParams
+                )
+                if ceilingHit then
+                    level = ceilingHit.Position.Y
+                        - math.sign(offset) * (humanoid.HipHeight + 0.5)
+                end
+            end
+        end
+        state.flyRuntime.yLevel = level
+        if method == "Hover" then
+            root.AssemblyLinearVelocity = Vector3.new(
+                currentVelocity.X,
+                0,
+                currentVelocity.Z
+            )
+            root.CFrame = root.CFrame + Vector3.new(0, level - root.Position.Y, 0)
+        elseif root.Position.Y < level - 0.5 then
+            humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+        end
+        return
+    end
+
+    if method == "Bounce" then
+        local period: number = math.max(flySettings.burstInterval, 0.05) * 4
+        local rising: boolean = (os.clock() % period) < (period * 0.5)
+        targetY = targetY
+            + (rising and 1 or -1) * flySettings.verticalSpeed * 0.45
+    end
+
+    if method == "Impulse" then
+        local difference: number = targetY - currentVelocity.Y
+        if math.abs(difference) > 2 then
+            root:ApplyImpulse(Vector3.new(0, difference, 0) * root.AssemblyMass)
+        end
+        return
+    end
+
+    root.AssemblyLinearVelocity = Vector3.new(
+        currentVelocity.X,
+        targetY,
+        currentVelocity.Z
+    )
+end
+
+function toggleFly(enabled: boolean): ()
     disconnectFeatureConnection("Fly")
     removeFlyObjects()
     flySmoothedVelocity = Vector3.zero
     flyTouchVertical = 0
+    state.flyRuntime.yLevel = nil
+    state.flyRuntime.burstAt = 0
+    if state.flyRuntime.platform then
+        (state.flyRuntime.platform :: BasePart):Destroy()
+        state.flyRuntime.platform = nil
+    end
+
+    local _, restoreHumanoid, restoreRoot = getCharacterParts()
+    if restoreHumanoid and state.flyRuntime.walkSpeed then
+        restoreHumanoid.WalkSpeed = state.flyRuntime.walkSpeed :: number
+    end
+    state.flyRuntime.walkSpeed = nil
 
     if not enabled then
+        if restoreRoot then
+            restoreRoot.AssemblyLinearVelocity = Vector3.zero
+        end
+        if restoreHumanoid then
+            state.platformStandController.set("Fly", false)
+            state.platformStandController.apply(restoreHumanoid)
+        end
         return
     end
 
@@ -9554,49 +9816,74 @@ local function toggleFly(enabled: boolean): ()
         local _, humanoid, root = getCharacterParts()
         local camera: Camera? = workspace.CurrentCamera
         if not humanoid or not root or not camera then
+            -- A respawn invalidates the held altitude; picking it back up
+            -- would teleport the fresh character to the old one's height.
+            state.flyRuntime.yLevel = nil
             return
         end
 
-        state.platformStandController.set("Fly", flySettings.platformStand)
+        local method: string = flySettings.method
+        local floatMethod: string = flySettings.floatMethod
+        -- WalkSpeed steering and the two engines that stand on something need
+        -- a humanoid that is still allowed to walk, so PlatformStand is only
+        -- honoured where it does not disable the engine that is running.
+        local canRagdoll: boolean = method ~= "WalkSpeed"
+            and floatMethod ~= "Floor"
+            and floatMethod ~= "Jump"
+        state.platformStandController.set(
+            "Fly",
+            canRagdoll and (flySettings.platformStand or method == "CFrame")
+        )
         state.platformStandController.apply(humanoid)
 
-        local velocity, orientation = ensureFlyConstraints(root)
-        local targetVelocity, cameraForward = getFlyDirection(humanoid, camera)
-        if flySettings.wallCheck then
-            local horizontalVelocity: Vector3 = Vector3.new(
-                targetVelocity.X,
-                0,
-                targetVelocity.Z
+        local moveDirection, vertical, cameraForward = getFlyDirection(camera)
+        if flySettings.wallCheck and moveDirection.Magnitude > 0.001 then
+            local raycastParams: RaycastParams = RaycastParams.new()
+            raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+            raycastParams.FilterDescendantsInstances = {root.Parent :: Instance}
+            local wallHit: RaycastResult? = workspace:Raycast(
+                root.Position,
+                moveDirection.Unit * 2.75,
+                raycastParams
             )
-            if horizontalVelocity.Magnitude > 0.001 then
-                local raycastParams: RaycastParams = RaycastParams.new()
-                raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-                raycastParams.FilterDescendantsInstances = {root.Parent :: Instance}
-                local wallHit: RaycastResult? = workspace:Raycast(
-                    root.Position,
-                    horizontalVelocity.Unit * 2.75,
-                    raycastParams
-                )
-                if wallHit then
-                    targetVelocity = Vector3.new(0, targetVelocity.Y, 0)
-                end
+            if wallHit then
+                moveDirection = Vector3.zero
             end
         end
-        local presetResponse: number = flySettings.preset == "Direct" and 28
-            or flySettings.preset == "Precise" and 7
-            or 12
-        local alpha: number = 1 - math.exp(
-            -presetResponse * flySettings.response * deltaTime
-        )
-        flySmoothedVelocity = flySmoothedVelocity:Lerp(targetVelocity, alpha)
 
-        velocity.Enabled = true
-        velocity.VectorVelocity = flySmoothedVelocity
+        if method == "Constraint" then
+            local velocity, orientation = ensureFlyConstraints(root)
+            applyFlyHorizontal(root, humanoid, moveDirection, deltaTime)
+            velocity.Enabled = true
+            velocity.VectorVelocity = Vector3.new(
+                flySmoothedVelocity.X,
+                vertical * flySettings.verticalSpeed,
+                flySmoothedVelocity.Z
+            )
+            orientation.Enabled = flySettings.faceCamera
+            orientation.CFrame = CFrame.lookAt(Vector3.zero, cameraForward)
+            return
+        end
 
-        orientation.Enabled = flySettings.faceCamera
-        orientation.CFrame = CFrame.lookAt(Vector3.zero, cameraForward)
+        -- Constraints left behind by a mode switch keep driving the character
+        -- against whatever engine is running now.
+        removeFlyObjects()
+        applyFlyHorizontal(root, humanoid, moveDirection, deltaTime)
+        applyFlyVertical(root, humanoid, vertical, deltaTime)
 
+        if floatMethod ~= "Floor" and state.flyRuntime.platform then
+            (state.flyRuntime.platform :: BasePart):Destroy()
+            state.flyRuntime.platform = nil
+        end
+        if floatMethod ~= "Hover" and floatMethod ~= "Jump" then
+            state.flyRuntime.yLevel = nil
+        end
+
+        if flySettings.faceCamera and cameraForward.Magnitude > 0.001 then
+            root.CFrame = CFrame.lookAt(root.Position, root.Position + cameraForward)
+        end
     end)
+end
 end
 
 -- Hitbox engine rewrite.
@@ -9942,61 +10229,122 @@ local function toggleJumpPower(enabled)
     end)
 end
 
+-- Infinite Jump.
+--
+-- Rewritten: on touch the jump button re-fires `JumpRequest` many times per
+-- second while it is held, so every request adding velocity made the module
+-- uncontrollable and made it look like it was still on after being switched
+-- off. Each mode is now a distinct, rate-limited behaviour.
+--
+--   Normal  every jump sets the same height. Predictable, does not stack.
+--   Impulse the same height reached with a force, so the character stays a
+--           normal physics body instead of having its velocity overwritten.
+--   Stack   each jump adds to the current climb (the old "Normal"), capped.
+--   Rise    hold jump to fly straight up at a steady speed.
+--   Fall    jumping mid-air cancels the fall instead of launching you, which
+--           is what a fall-mode jump was supposed to do — it used to be an
+--           exact copy of Normal, so it never worked at all.
 local infiniteJumpSettings = {
-    mode = "Rise",
+    mode = "Normal",
     strength = 50,
     riseSpeed = 75,
+    -- Minimum spacing between jumps. Touch fires jump requests continuously;
+    -- without this the character leaves the map in a second.
+    interval = 0.18,
+    stackCeiling = 160,
 }
+-- Both the enabled flag and the rate limiter live on `state`: bootstrap() is
+-- already at Luau's 200 local-register ceiling.
+state.infiniteJumpEnabled = false
+state.lastInfiniteJumpAt = -math.huge
+
+local function performInfiniteJump(): ()
+    -- A disconnected signal can still deliver the event it was already
+    -- dispatching, which on touch — where the jump button fires continuously —
+    -- kept launching the character after the module had been switched off.
+    if not state.infiniteJumpEnabled then
+        return
+    end
+
+    local _, humanoid, root = getCharacterParts()
+    if not humanoid or not root or humanoid.Health <= 0 then
+        return
+    end
+
+    -- Touch cannot tap as deliberately as a keyboard can: the on-screen jump
+    -- button repeats for as long as a finger rests on it, so the floor on the
+    -- spacing is higher there no matter what the slider says.
+    local spacing: number = infiniteJumpSettings.interval
+    if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
+        spacing = math.max(spacing, 0.25)
+    end
+
+    local now: number = os.clock()
+    if now - state.lastInfiniteJumpAt < spacing then
+        return
+    end
+    state.lastInfiniteJumpAt = now
+
+    local velocity: Vector3 = root.AssemblyLinearVelocity
+    local vertical: number
+    if infiniteJumpSettings.mode == "Stack" then
+        vertical = math.min(
+            velocity.Y + infiniteJumpSettings.strength,
+            infiniteJumpSettings.stackCeiling
+        )
+    elseif infiniteJumpSettings.mode == "Impulse" then
+        -- Force instead of a velocity write: the body keeps whatever physics
+        -- the game applies to it, which survives checks that watch for
+        -- AssemblyLinearVelocity being overwritten.
+        humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+        root:ApplyImpulse(
+            Vector3.new(0, infiniteJumpSettings.strength - velocity.Y, 0)
+                * root.AssemblyMass
+        )
+        return
+    elseif infiniteJumpSettings.mode == "Fall" then
+        -- Cancel the fall: kill downward momentum and hold position for an
+        -- instant. Jumping again keeps you up without ever launching.
+        if velocity.Y >= 0 then
+            return
+        end
+        vertical = 0
+    else
+        vertical = infiniteJumpSettings.strength
+    end
+
+    humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+    root.AssemblyLinearVelocity = Vector3.new(velocity.X, vertical, velocity.Z)
+end
 
 local function toggleInfiniteJump(enabled)
     disconnectFeatureConnection("InfiniteJump")
     disconnectFeatureConnection("InfiniteJumpRise")
+    state.infiniteJumpEnabled = false
+    state.lastInfiniteJumpAt = -math.huge
 
     if not enabled then
         return
     end
+    state.infiniteJumpEnabled = true
 
-    -- `JumpRequest` is the device-independent jump: the Space key, the gamepad
-    -- button and the touch jump button all raise it. Listening for
-    -- `KeyCode.Space` meant this module simply did nothing on a phone.
+    -- `JumpRequest` is the one jump signal every device raises.
     featureConnections.InfiniteJump = state.onJumpRequest(function(): ()
         if infiniteJumpSettings.mode == "Rise" then
             return
         end
-
-        local _, humanoid, root = getCharacterParts()
-        if not humanoid or not root then
-            return
-        end
-
-        humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-        local currentVelocity = root.AssemblyLinearVelocity
-
-        local nextVerticalVelocity
-        if infiniteJumpSettings.mode == "Normal" then
-            -- The regular soon.lua-style jump: each press adds another
-            -- configurable amount of upward velocity.
-            nextVerticalVelocity = currentVelocity.Y + infiniteJumpSettings.strength
-        else
-            -- Fall mode mirrors the abrupt velocity replacement from Inf Jump.lua.
-            nextVerticalVelocity = infiniteJumpSettings.strength
-        end
-
-        root.AssemblyLinearVelocity = Vector3.new(
-            currentVelocity.X,
-            nextVerticalVelocity,
-            currentVelocity.Z
-        )
+        performInfiniteJump()
     end)
 
-    featureConnections.InfiniteJumpRise = TaskManager:Connect(function()
-        -- Held-jump, from whichever input the device has.
-        if infiniteJumpSettings.mode ~= "Rise" or not state.isJumpHeld() then
+    featureConnections.InfiniteJumpRise = TaskManager:Connect(function(): ()
+        if not state.infiniteJumpEnabled
+            or infiniteJumpSettings.mode ~= "Rise"
+            or not state.isJumpHeld() then
             return
         end
 
         local _, humanoid, root = getCharacterParts()
-        if not humanoid or not root then
+        if not humanoid or not root or humanoid.Health <= 0 then
             return
         end
 
@@ -10052,6 +10400,7 @@ type PhysicsSpeedSettings = {
     autoJump: boolean,
     jumpVelocity: number,
     acceleration: number,
+    burstInterval: number,
     airControl: number,
     sprintMultiplier: number,
     sprintKey: Enum.KeyCode,
@@ -10080,18 +10429,24 @@ local physicsSpeedSettings: PhysicsSpeedSettings = {
     autoJump = false,
     jumpVelocity = 45,
     acceleration = 14,
+    burstInterval = 0.2,
     airControl = 0.72,
     sprintMultiplier = 1.65,
     sprintKey = Enum.KeyCode.LeftShift,
     preserveMomentum = false,
 }
+-- The physics-speed helpers are scoped to a block so their registers go
+-- back to the bootstrap function, which sits at Luau's 200-local ceiling.
+local restorePhysicsMotors: () -> ()
+local togglePhysicsSpeed: (boolean) -> ()
+do
 local physicsSpeedTeleportClock: number = 0
 local originalVehicleSeats: {[VehicleSeat]: VehicleSeatState} =
     setmetatable({}, {__mode = "k"}) :: any
 local originalMotorHinges: {[HingeConstraint]: HingeState} =
     setmetatable({}, {__mode = "k"}) :: any
 
-local function restorePhysicsMotors(): ()
+function restorePhysicsMotors(): ()
     for seat: VehicleSeat, original: VehicleSeatState in pairs(originalVehicleSeats) do
         if seat.Parent then
             seat.MaxSpeed = original.maxSpeed
@@ -10180,7 +10535,7 @@ local function tunePhysicsMotors(seat: VehicleSeat): ()
     end
 end
 
-local function togglePhysicsSpeed(enabled: boolean): ()
+function togglePhysicsSpeed(enabled: boolean): ()
     disconnectFeatureConnection("PhysicsSpeed")
     restorePhysicsMotors()
     physicsSpeedTeleportClock = 0
@@ -10211,6 +10566,17 @@ local function togglePhysicsSpeed(enabled: boolean): ()
             local direction: Vector3 = currentHumanoid.MoveDirection
             if vehicleSeat then
                 direction = vehicleSeat.CFrame.LookVector * vehicleSeat.ThrottleFloat
+            else
+                -- Humanoid.MoveDirection reads zero while PlatformStand is on
+                -- and on touch clients whose control module is bypassed, which
+                -- is exactly why Speed stood still with its own PlatformStand
+                -- option enabled. The shared helper answers on every device.
+                local camera: Camera? = workspace.CurrentCamera
+                local forwardScalar: number, rightScalar: number = state.getMoveInput()
+                if camera and (forwardScalar ~= 0 or rightScalar ~= 0) then
+                    direction = camera.CFrame.LookVector * forwardScalar
+                        + camera.CFrame.RightVector * rightScalar
+                end
             end
             direction = Vector3.new(direction.X, 0, direction.Z)
             if direction.Magnitude > 1 then
@@ -10298,6 +10664,32 @@ local function togglePhysicsSpeed(enabled: boolean): ()
                         * assembly.AssemblyMass
                         * math.clamp(deltaTime * 9, 0, 1)
                 )
+            elseif physicsSpeedSettings.mode == "CFrame" then
+                -- Displacement instead of velocity: a speed cap has nothing to
+                -- clamp, and the walk the game already gives us is subtracted
+                -- so the total stays at the slider value.
+                local extra: number = math.max(
+                    resolvedSpeed - currentHumanoid.WalkSpeed,
+                    0
+                )
+                if not wallBlocked and direction.Magnitude > 0.001 then
+                    assembly.CFrame = assembly.CFrame
+                        + direction * extra * deltaTime
+                end
+            elseif physicsSpeedSettings.mode == "Pulse" then
+                -- Bursts with a coast between them: the average speed stays
+                -- close to a normal player's, only the peaks are fast.
+                local period: number = math.max(
+                    physicsSpeedSettings.burstInterval,
+                    0.05
+                ) * 2
+                local burst: boolean = (os.clock() % period) < (period * 0.5)
+                local pulseSpeed: number = burst
+                    and resolvedSpeed
+                    or currentHumanoid.WalkSpeed
+                assembly.AssemblyLinearVelocity = (
+                    not wallBlocked and direction * pulseSpeed or Vector3.zero
+                ) + Vector3.new(0, vertical, 0)
             elseif physicsSpeedSettings.mode == "Teleport" then
                 physicsSpeedTeleportClock = physicsSpeedTeleportClock + deltaTime
                 if physicsSpeedTeleportClock >= 0.14 then
@@ -10309,6 +10701,7 @@ local function togglePhysicsSpeed(enabled: boolean): ()
                 end
             end
         end)
+end
 end
 
 local fovSettings = {value = 90}
@@ -10372,6 +10765,8 @@ local function toggleFov(enabled)
     end)
 end
 
+local toggleNoclip: (boolean) -> ()
+do
 local originalCollision = setmetatable({}, {__mode = "k"})
 
 local function restoreCollision()
@@ -10383,7 +10778,7 @@ local function restoreCollision()
     originalCollision = setmetatable({}, {__mode = "k"})
 end
 
-local function toggleNoclip(enabled)
+function toggleNoclip(enabled: boolean): ()
     disconnectFeatureConnection("Noclip")
     restoreCollision()
 
@@ -10406,6 +10801,7 @@ local function toggleNoclip(enabled)
             end
         end
     end)
+end
 end
 
 -- Click teleport.
@@ -10454,33 +10850,79 @@ state.performClickTeleport = function(targetPosition: Vector3?): ()
     root.CFrame = CFrame.new((destination :: Vector3) + Vector3.new(0, 3, 0))
 end
 
+-- Arming: hold the module's key (or its placed button) and the *next* place
+-- you touch or click is where you go. That is the whole gesture on a phone —
+-- hold the button, tap the ground — and on desktop CTRL + click still works
+-- exactly as before.
+state.clickTeleportArmed = false
+
+state.setClickTeleportArmed = function(armed: boolean): ()
+    if not state.clickTeleportEnabled then
+        state.clickTeleportArmed = false
+        return
+    end
+    state.clickTeleportArmed = armed
+    if armed then
+        notify("Click Teleport: touch where you want to go.")
+    end
+end
+
 local function toggleCtrlClickTeleport(enabled)
     disconnectFeatureConnection("CtrlClickTeleport")
     state.clickTeleportEnabled = enabled
+    state.clickTeleportArmed = false
 
     if not enabled then
         return
     end
 
-    if not UserInputService.MouseEnabled then
-        -- Touch/gamepad: the key slot is the trigger, nothing to listen for.
-        return
-    end
-
     featureConnections.CtrlClickTeleport = UserInputService.InputBegan:Connect(
-        function(input, processed)
+        function(input: InputObject, processed: boolean): ()
             if processed
                 or state.keyCaptureCallback
-                or state.waitingForKey
-                or input.UserInputType ~= Enum.UserInputType.MouseButton1
-                or not UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
+                or state.waitingForKey then
                 return
             end
 
-            local mouse = LocalPlayer:GetMouse()
-            state.performClickTeleport(
-                mouse and mouse.Hit and mouse.Hit.Position or nil
-            )
+            local touched: boolean = input.UserInputType == Enum.UserInputType.Touch
+            local clicked: boolean =
+                input.UserInputType == Enum.UserInputType.MouseButton1
+            if not touched and not clicked then
+                return
+            end
+
+            -- Desktop shortcut, unchanged.
+            local ctrlHeld: boolean = UserInputService.KeyboardEnabled
+                and UserInputService:IsKeyDown(Enum.KeyCode.LeftControl)
+            if not ctrlHeld and not state.clickTeleportArmed then
+                return
+            end
+
+            -- Teleport to the point under *this* touch/click, not under the
+            -- camera: the player is pointing at the destination.
+            local camera: Camera? = workspace.CurrentCamera
+            local destination: Vector3? = nil
+            if camera then
+                local ray: Ray = camera:ViewportPointToRay(
+                    input.Position.X,
+                    input.Position.Y
+                )
+                local parameters: RaycastParams = RaycastParams.new()
+                parameters.FilterType = Enum.RaycastFilterType.Exclude
+                parameters.IgnoreWater = true
+                parameters.FilterDescendantsInstances = LocalPlayer.Character
+                    and {LocalPlayer.Character}
+                    or {}
+                local result: RaycastResult? = workspace:Raycast(
+                    ray.Origin,
+                    ray.Direction.Unit * 2048,
+                    parameters
+                )
+                destination = result and result.Position or nil
+            end
+
+            state.clickTeleportArmed = false
+            state.performClickTeleport(destination)
         end
     )
 end
@@ -11253,7 +11695,6 @@ type PhaseDashSettings = {
     collisionPadding: number,
     flashDuration: number,
     preserveVelocity: boolean,
-    key: Enum.KeyCode,
 }
 local phaseDashSettings: PhaseDashSettings = {
     mode = "Blink",
@@ -11264,7 +11705,6 @@ local phaseDashSettings: PhaseDashSettings = {
     collisionPadding = 2.25,
     flashDuration = 0.28,
     preserveVelocity = true,
-    key = Enum.KeyCode.Q,
 }
 local lastPhaseDash: number = -math.huge
 local phaseDashEnabled: boolean = false
@@ -11476,15 +11916,27 @@ local FlyFeature = createUniversalFeature(
 -- headings, every control carrying a one-line explanation of what it does, and
 -- the rarely-touched controls folded away behind a single switch.
 local FlyFlightSection: Frame = state.addSectionOption(FlyFeature, "Flight")
-local FlyPresetButton: TextButton = addCycleOption(
+local FlyMethodButton: TextButton = addCycleOption(
     FlyFeature,
-    "Preset",
-    {"Balanced", "Direct", "Precise"},
+    "Method",
+    {"Velocity", "Constraint", "Impulse", "CFrame", "Blink", "Pulse", "WalkSpeed"},
     1,
     function(value: string): ()
-        flySettings.preset = value
+        flySettings.method = value
     end,
-    "Balanced glides, Direct stops instantly, Precise moves slowly."
+    "Sideways engine. Velocity is smooth, CFrame ignores physics, "
+        .. "WalkSpeed just runs faster."
+)
+local FlyFloatButton: TextButton = addCycleOption(
+    FlyFeature,
+    "Float",
+    {"Velocity", "Impulse", "Hover", "Jump", "Bounce", "Floor"},
+    1,
+    function(value: string): ()
+        flySettings.floatMethod = value
+    end,
+    "What keeps you airborne. Hover locks an altitude, Floor stands you on "
+        .. "an invisible part."
 )
 local FlySpeedRow: Frame = addNumberOption(
     FlyFeature,
@@ -11520,6 +11972,17 @@ local FlyResponseRow: Frame = addNumberOption(
         flySettings.response = value
     end,
     "How sharply the flight reacts to input. Higher is twitchier."
+)
+local FlyBurstRow: Frame = addNumberOption(
+    FlyFeature,
+    "Burst interval (s)",
+    flySettings.burstInterval,
+    0.05,
+    1,
+    function(value: number): ()
+        flySettings.burstInterval = value
+    end,
+    "Cycle length for Blink, Pulse and Bounce. Shorter is smoother."
 )
 local FlyWallButton: TextButton = addToggleOption(
     FlyFeature,
@@ -11574,6 +12037,7 @@ FlyAdvancedButton = addToggleOption(
         -- The heading folds away with the controls it labels.
         setOptionVisible(FlyFeature, FlyAdvancedSection, value)
         setOptionVisible(FlyFeature, FlyResponseRow, value)
+        setOptionVisible(FlyFeature, FlyBurstRow, value)
         setOptionVisible(FlyFeature, FlyWallButton.Parent :: GuiObject, value)
         setOptionVisible(FlyFeature, FlyPlatformButton.Parent :: GuiObject, value)
         setOptionVisible(FlyFeature, FlyFaceButton.Parent :: GuiObject, value)
@@ -11582,23 +12046,26 @@ FlyAdvancedButton = addToggleOption(
     end,
     "Reveal response tuning, collision behaviour and key bindings."
 )
-local FlyPresetRow: GuiObject = FlyPresetButton.Parent :: GuiObject
+local FlyMethodRow: GuiObject = FlyMethodButton.Parent :: GuiObject
+local FlyFloatRow: GuiObject = FlyFloatButton.Parent :: GuiObject
 local FlyAdvancedRow: GuiObject = FlyAdvancedButton.Parent :: GuiObject
--- Explicit order: heading, the three everyday controls, the reveal switch,
--- then the advanced heading and its controls (which addToggleOption has
--- already hidden by running its callback with the stored/default `false`).
+-- Explicit order: heading, the everyday controls, the reveal switch, then the
+-- advanced heading and its controls (which addToggleOption has already hidden
+-- by running its callback with the stored/default `false`).
 FlyFlightSection.LayoutOrder = 1
-FlyPresetRow.LayoutOrder = 2
-FlySpeedRow.LayoutOrder = 3
-FlyVerticalRow.LayoutOrder = 4
-FlyAdvancedRow.LayoutOrder = 5
-FlyAdvancedSection.LayoutOrder = 6
-FlyResponseRow.LayoutOrder = 7
-;(FlyWallButton.Parent :: GuiObject).LayoutOrder = 8
-;(FlyPlatformButton.Parent :: GuiObject).LayoutOrder = 9
-;(FlyFaceButton.Parent :: GuiObject).LayoutOrder = 10
-;(FlyUpKeyButton.Parent :: GuiObject).LayoutOrder = 11
-;(FlyDownKeyButton.Parent :: GuiObject).LayoutOrder = 12
+FlyMethodRow.LayoutOrder = 2
+FlyFloatRow.LayoutOrder = 3
+FlySpeedRow.LayoutOrder = 4
+FlyVerticalRow.LayoutOrder = 5
+FlyAdvancedRow.LayoutOrder = 6
+FlyAdvancedSection.LayoutOrder = 7
+FlyResponseRow.LayoutOrder = 8
+FlyBurstRow.LayoutOrder = 9
+;(FlyWallButton.Parent :: GuiObject).LayoutOrder = 10
+;(FlyPlatformButton.Parent :: GuiObject).LayoutOrder = 11
+;(FlyFaceButton.Parent :: GuiObject).LayoutOrder = 12
+;(FlyUpKeyButton.Parent :: GuiObject).LayoutOrder = 13
+;(FlyDownKeyButton.Parent :: GuiObject).LayoutOrder = 14
 -- Climbing and descending are holds on a keyboard, so they are holds on a
 -- phone too: keep a finger on UP to rise, lift it to level off. They used to
 -- latch on tap, which made hovering at a height nearly impossible.
@@ -11639,7 +12106,8 @@ end
 addFeatureTooltip(
     FlyFeature,
     "Use WASD to move, Space to rise and LeftControl to descend. "
-        .. "The safe velocity preset handles orientation and acceleration automatically."
+        .. "Method picks how you travel sideways and Float picks what holds "
+        .. "you up; if a game blocks one combination, another usually works."
 )
 end)()
 end
@@ -11845,14 +12313,14 @@ end
 do
 local InfiniteJumpFeature = createUniversalFeature(
     "Infinite Jump",
-    "Choose continuous, accumulated, or fall-style jumping",
+    "Normal, force-based, stacking, hold-to-rise or fall-cancel jumping",
     7,
     toggleInfiniteJump
 )
 addCycleOption(
     InfiniteJumpFeature,
     "Mode",
-    {"Rise", "Normal", "Fall"},
+    {"Normal", "Impulse", "Stack", "Rise", "Fall"},
     1,
     function(value)
         infiniteJumpSettings.mode = value
@@ -11860,12 +12328,22 @@ addCycleOption(
 )
 addNumberOption(
     InfiniteJumpFeature,
-    "Normal / Fall power",
+    "Jump power",
     infiniteJumpSettings.strength,
     10,
     250,
     function(value)
         infiniteJumpSettings.strength = value
+    end
+)
+addNumberOption(
+    InfiniteJumpFeature,
+    "Jump interval (s)",
+    infiniteJumpSettings.interval,
+    0.05,
+    0.6,
+    function(value)
+        infiniteJumpSettings.interval = value
     end
 )
 addNumberOption(
@@ -11903,7 +12381,7 @@ local PhysicsSpeedFeature = createUniversalFeature(
 local SpeedModeButton: TextButton = addCycleOption(
     PhysicsSpeedFeature,
     "Mode",
-    {"Adaptive", "Smooth", "Boost", "Teleport"},
+    {"Adaptive", "Smooth", "Boost", "CFrame", "Pulse", "Teleport"},
     1,
     function(value: string): ()
         physicsSpeedSettings.mode = value
@@ -11981,6 +12459,16 @@ SpeedDynamics.acceleration = addNumberOption(
     40,
     function(value: number): ()
         physicsSpeedSettings.acceleration = value
+    end
+)
+SpeedDynamics.burstInterval = addNumberOption(
+    PhysicsSpeedFeature,
+    "Burst interval (s)",
+    physicsSpeedSettings.burstInterval,
+    0.05,
+    1,
+    function(value: number): ()
+        physicsSpeedSettings.burstInterval = value
     end
 )
 SpeedDynamics.airControl = addNumberOption(
@@ -12072,6 +12560,7 @@ local SpeedAdvancedButton: TextButton = addToggleOption(
         setOptionVisible(PhysicsSpeedFeature, SpeedMotorRow, value and physicsSpeedSettings.customProperties)
         setOptionVisible(PhysicsSpeedFeature, SpeedWallButton.Parent :: GuiObject, value)
         setOptionVisible(PhysicsSpeedFeature, SpeedDynamics.acceleration, value)
+        setOptionVisible(PhysicsSpeedFeature, SpeedDynamics.burstInterval, value)
         setOptionVisible(PhysicsSpeedFeature, SpeedDynamics.airControl, value)
         setOptionVisible(PhysicsSpeedFeature, SpeedDynamics.sprintMultiplier, value)
         setOptionVisible(PhysicsSpeedFeature, SpeedDynamics.sprintKey.Parent :: GuiObject, value)
@@ -12087,9 +12576,11 @@ SpeedValueRow.LayoutOrder = 2
 SpeedAdvancedRow.LayoutOrder = 3
 addFeatureTooltip(
     PhysicsSpeedFeature,
-    "Adaptive changes air authority and retains flow. Smooth accelerates predictably, Boost "
-        .. "uses physical impulse, and Teleport advances in short steps. Sprint, momentum, "
-        .. "wall safety, auto-jump, and vehicle tuning are independently configurable."
+    "Adaptive changes air authority and retains flow, Smooth accelerates predictably, "
+        .. "Boost uses physical impulse, CFrame moves the character without touching its "
+        .. "velocity, Pulse alternates bursts with a normal walk, and Teleport advances in "
+        .. "short steps. Sprint, momentum, wall safety, auto-jump and vehicle tuning are "
+        .. "independently configurable."
 )
 end)()
 end
@@ -12128,19 +12619,28 @@ local CtrlClickFeature = createUniversalFeature(
 )
 -- The key slot teleports on every device; on desktop CTRL + click keeps
 -- working as well, and on touch the slot places the button that triggers it.
+-- A hold binding: while the key or the placed button is down the module is
+-- armed, and the next touch on the world is the destination.
 if state.bindFeatureActivationKey then
     state.bindFeatureActivationKey(
         CtrlClickFeature,
         Enum.KeyCode.Unknown,
         function(): ()
-            state.performClickTeleport(nil)
+            state.setClickTeleportArmed(true)
+        end,
+        function(): ()
+            -- Stay armed briefly after the finger lifts so the same hand can
+            -- let go of the button and then tap the destination.
+            task.delay(2.5, function(): ()
+                state.clickTeleportArmed = false
+            end)
         end
     )
 end
 addFeatureTooltip(
     CtrlClickFeature,
-    "Desktop: hold LeftControl and click. Any device: press the module's key "
-        .. "or its placed button to jump to what the camera is aiming at."
+    "Hold the module's key or its placed button, then touch the spot you want "
+        .. "to reach. On desktop, CTRL + click also works."
 )
 end
 
@@ -12636,11 +13136,12 @@ addToggleOption(
     end
 )
 -- The dash key is the card's own key slot, not an option row: one module, one
--- keybind, in the place every other module keeps it. On touch, tapping that
--- slot places a DASH button anywhere on screen.
+-- keybind, in the place every other module keeps it. It starts blank like
+-- every other slot — the module used to arrive pre-bound to Q for no reason
+-- the player could see. On touch, tapping the slot places a DASH button.
 state.bindFeatureActivationKey(
     PhaseDashFeature,
-    state.universalToolkit.phaseDashSettings.key,
+    nil,
     state.universalToolkit.performPhaseDash
 )
 end

@@ -291,13 +291,35 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
 - The permanent shell and tab pages are ordinary `Frame` instances rather than
   nested `CanvasGroup` textures, preventing Roblox from rasterizing interface
   text at a reduced intermediate resolution.
-- Universal Fly provides Balanced, Direct and Precise response presets,
-  independent horizontal/vertical speed and progressive advanced controls, each
-  annotated with a one-line explanation and grouped under Flight / Advanced
-  headings.
-  Speed provides Adaptive, Smooth, Boost and Teleport modes plus acceleration,
-  air control, sprint, momentum retention, wall safety, auto-jump and vehicle
-  tuning. Player ESP, X-Ray, High Jump, Spider, Safe Walk, Zoom Unlocker,
+- Universal **Fly** splits flight into two independent engines instead of a
+  preset that only changed a smoothing constant. *Method* decides how you move
+  sideways — Velocity (direct velocity writes), Constraint (a LinearVelocity
+  that survives games resetting velocity every step, and which also drives the
+  vertical axis), Impulse (force-based, keeps collisions), CFrame (position
+  writes, nothing for a speed cap to clamp), Blink (one hop per interval),
+  Pulse (burst and coast) and WalkSpeed (the game's own movement). *Float*
+  decides what holds you up — Velocity, Impulse, Hover (an altitude held with
+  CFrame writes), Jump (the humanoid's own jump whenever it drops below that
+  altitude), Bounce and Floor (an invisible anchored part kept under your
+  feet). Horizontal/vertical speed, response, burst interval, wall check,
+  PlatformStand, face-camera and the up/down keys stay configurable, grouped
+  under Flight / Advanced headings.
+  **Speed** provides Adaptive, Smooth, Boost, CFrame, Pulse and Teleport modes
+  plus acceleration, burst interval, air control, sprint, momentum retention,
+  wall safety, auto-jump and vehicle tuning; its steering reads the shared
+  input helper, so it also works while its own PlatformStand option is on and
+  on touch clients.
+- **Infinite Jump** has Normal (a fixed height every jump), Impulse (the same
+  height applied as a force), Stack (each jump adds to the climb, capped),
+  Rise (hold jump to climb steadily) and Fall (a mid-air jump cancels the fall
+  instead of launching you). A jump-interval floor — raised further on touch,
+  where the on-screen button repeats while a finger rests on it — keeps the
+  character controllable, and an explicit enabled flag stops queued jump
+  events from firing after the module is switched off.
+- **Click Teleport** is a hold-then-tap gesture: hold the module's key or its
+  placed mobile button, then touch the point you want to reach and the
+  character moves to whatever the ray under *that touch* hits. CTRL + click
+  still works on desktop. Player ESP, X-Ray, High Jump, Spider, Safe Walk, Zoom Unlocker,
   Interact Extender, a Rejoin action and a rewritten Hitboxes engine extend
   the universal toolkit.
 - **Hitboxes** were rewritten around a mode system — Visible (scaled body,
@@ -308,7 +330,8 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
   the new mode no longer targets.
 - **Phase Dash** now offers Blink (collision-aware teleport) and Slide
   (velocity burst) modes plus collision padding, flash duration and a
-  separate slide speed. **Soft Landing** gained Landing / Feather / Auto
+  separate slide speed. Its dash key is the card's own key slot and starts
+  blank, like every other module, instead of arriving bound to Q. **Soft Landing** gained Landing / Feather / Auto
   modes, a glide speed and momentum preservation. **Projectile Calibration**
   exposes live-tunable analysis knobs — ping bucket width and ceiling,
   sample window, per-track sample cap, match radius, minimum projectile
@@ -397,7 +420,10 @@ TaskManager callback count and errors captured by `pcall`.
   `computeLayoutMetrics` so the Mobile/Tablet/Desktop shells, the collapsed
   rail, the card columns and the chrome-less overlays can be reviewed in a
   browser at the reference viewports. It is never downloaded by the runtime.
-- `src/games/Universal.luau`: universal and movement module contract.
+- `src/games/Universal.luau`: the universal/movement module contract only — a
+  manifest of feature ids, names and ordering. Every universal implementation
+  (Fly, Speed, Infinite Jump, Click Teleport, Noclip …) lives in
+  `ARandomMenu.luau`.
 - `src/games/MM2.luau`: complete MM2 implementation.
 - `src/games/TRS.luau`: complete TRS implementation.
 - `src/games/VD.luau`: Violence District survivor, killer and visibility tools.
