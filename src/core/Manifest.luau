@@ -31,6 +31,7 @@ local Manifest: Manifest = {
     },
     libraries = {
         "src/library/Entity.luau",
+        "src/library/Weapons.luau",
     },
     modules = {
         -- Friend List comes first: every targeting module below asks it who
@@ -39,6 +40,11 @@ local Manifest: Manifest = {
             path = "src/modules/Utility/FriendList.luau",
             name = "Friend List",
             category = "Utility",
+        },
+        {
+            path = "src/modules/Visuals/ItemRender.luau",
+            name = "Item Render",
+            category = "Visuals",
         },
         {
             path = "src/modules/Visuals/PlayerESP.luau",

@@ -9438,6 +9438,325 @@ state.addMenuVisibilityListener(function(visible: boolean): ()
     end
 end)
 
+-- Multi-choice list.
+--
+-- A dropdown answers "which one"; this answers "which of these", which is the
+-- question a game with nine different swords actually asks. Same popup, same
+-- greys, except every row carries the state mark and toggling one leaves the
+-- list open so you can tick several without reopening it.
+state.openMultiList = function(
+    anchor: TextButton,
+    items: {string},
+    selected: {[string]: boolean},
+    onToggle: (string, boolean) -> (),
+    onBulk: ((boolean) -> ())?
+): ()
+    state.closeChoiceList()
+
+    local rowHeight: number = 22
+    local rows: number = math.min(#items + (onBulk and 1 or 0), 7)
+    local listHeight: number = math.max(rows, 1) * rowHeight + 8
+    local anchorPosition: Vector2 = anchor.AbsolutePosition
+    local anchorSize: Vector2 = anchor.AbsoluteSize
+    local viewport: Vector2 = ScreenGui.AbsoluteSize
+    local below: boolean = anchorPosition.Y + anchorSize.Y + listHeight
+        < viewport.Y - 8
+
+    local list: Frame = create("Frame", {
+        Parent = ScreenGui,
+        Name = "MultiList",
+        BackgroundColor3 = Theme.DefaultSurface,
+        BackgroundTransparency = 0.04,
+        BorderSizePixel = 0,
+        Position = UDim2.fromOffset(
+            math.round(anchorPosition.X),
+            math.round(below
+                and (anchorPosition.Y + anchorSize.Y + 4)
+                or (anchorPosition.Y - listHeight - 4))
+        ),
+        Size = UDim2.fromOffset(math.round(anchorSize.X), listHeight),
+        ZIndex = 400,
+    }) :: Frame
+    create("UICorner", {Parent = list, CornerRadius = cornerRadius(UI_RADIUS.control)})
+    create("UIStroke", {
+        Parent = list,
+        Color = Theme.DefaultOutline,
+        Transparency = 0.4,
+        Thickness = 1,
+    })
+
+    local scroller: ScrollingFrame = create("ScrollingFrame", {
+        Parent = list,
+        Name = "Items",
+        Active = true,
+        AutomaticCanvasSize = Enum.AutomaticSize.Y,
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        CanvasSize = UDim2.new(),
+        Position = UDim2.fromOffset(4, 4),
+        ScrollBarThickness = 2,
+        ScrollBarImageTransparency = 0.6,
+        Size = UDim2.new(1, -8, 1, -8),
+        ZIndex = 401,
+    }) :: ScrollingFrame
+    create("UIListLayout", {
+        Parent = scroller,
+        Padding = UDim.new(0, 1),
+        SortOrder = Enum.SortOrder.LayoutOrder,
+    })
+
+    local closed: boolean = false
+    local outsideConnection: RBXScriptConnection? = nil
+    local function close(): ()
+        if closed then
+            return
+        end
+        closed = true
+        if outsideConnection then
+            outsideConnection:Disconnect()
+            outsideConnection = nil
+        end
+        list:Destroy()
+        state.closeChoiceList = function(): () end
+    end
+    state.closeChoiceList = close
+
+    local function makeRow(text: string, order: number): TextButton
+        local row: TextButton = (create("TextButton", {
+            Parent = scroller,
+            Name = "Row" .. tostring(order),
+            AutoButtonColor = false,
+            BackgroundColor3 = Theme.DefaultSurfaceHover,
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            FontFace = CONTROL_FONT,
+            LayoutOrder = order,
+            Size = UDim2.new(1, 0, 0, rowHeight - 1),
+            Text = text,
+            TextColor3 = Theme.DefaultTextMuted,
+            TextSize = 11,
+            ZIndex = 402,
+        }) :: any) :: TextButton
+        create("UICorner", {Parent = row, CornerRadius = cornerRadius(UI_RADIUS.chip)})
+        create("UIPadding", {
+            Parent = row,
+            PaddingLeft = UDim.new(0, 26),
+            PaddingRight = UDim.new(0, 8),
+        })
+        row.TextXAlignment = Enum.TextXAlignment.Left
+        return row
+    end
+
+    if onBulk then
+        local bulk: TextButton = makeRow("All / none", 0)
+        bulk.TextColor3 = Theme.DefaultText
+        local anyOn: boolean = false
+        for _, item: string in ipairs(items) do
+            if selected[item] then
+                anyOn = true
+                break
+            end
+        end
+        bulk.MouseButton1Click:Connect(function(): ()
+            close();
+            (onBulk :: (boolean) -> ())(not anyOn)
+        end)
+    end
+
+    for index: number, item: string in ipairs(items) do
+        local row: TextButton = makeRow(item, index)
+        -- The same empty-or-filled square the option rows use.
+        local mark: Frame = create("Frame", {
+            Parent = row,
+            Name = "Mark",
+            AnchorPoint = Vector2.new(0, 0.5),
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Position = UDim2.new(0, -18, 0.5, 0),
+            Size = UDim2.fromOffset(11, 11),
+            ZIndex = 403,
+        }) :: Frame
+        create("UICorner", {Parent = mark, CornerRadius = UDim.new(0, 3)})
+        local markStroke: UIStroke = (create("UIStroke", {
+            Parent = mark,
+            Color = Theme.DefaultTextMuted,
+            Transparency = 0.35,
+            Thickness = 1,
+        }) :: any) :: UIStroke
+        local fill: Frame = create("Frame", {
+            Parent = mark,
+            Name = "Fill",
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            BackgroundColor3 = Theme.DefaultText,
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Position = UDim2.fromScale(0.5, 0.5),
+            Size = UDim2.fromScale(0, 0),
+            ZIndex = 404,
+        }) :: Frame
+        create("UICorner", {Parent = fill, CornerRadius = UDim.new(0, 2)})
+
+        local function paint(): ()
+            local on: boolean = selected[item] == true
+            fill.Size = on and UDim2.fromScale(0.6, 0.6) or UDim2.fromScale(0, 0)
+            fill.BackgroundTransparency = on and 0.05 or 1
+            markStroke.Transparency = on and 0.1 or 0.35
+            row.TextColor3 = on and Theme.DefaultText or Theme.DefaultTextMuted
+        end
+        paint()
+
+        row.MouseEnter:Connect(function(): ()
+            row.BackgroundTransparency = 0.72
+        end)
+        row.MouseLeave:Connect(function(): ()
+            row.BackgroundTransparency = 1
+        end)
+        row.MouseButton1Click:Connect(function(): ()
+            -- Left open on purpose: ticking four swords should cost four taps,
+            -- not four taps and four reopenings.
+            selected[item] = not selected[item]
+            paint()
+            onToggle(item, selected[item] == true)
+        end)
+    end
+
+    outsideConnection = UserInputService.InputBegan:Connect(function(
+        input: InputObject
+    ): ()
+        if input.UserInputType ~= Enum.UserInputType.MouseButton1
+            and input.UserInputType ~= Enum.UserInputType.Touch then
+            return
+        end
+        task.defer(function(): ()
+            if closed then
+                return
+            end
+            local pointer: Vector2 = Vector2.new(input.Position.X, input.Position.Y)
+            local origin: Vector2 = list.AbsolutePosition
+            local size: Vector2 = list.AbsoluteSize
+            if pointer.X < origin.X
+                or pointer.X > origin.X + size.X
+                or pointer.Y < origin.Y
+                or pointer.Y > origin.Y + size.Y then
+                close()
+            end
+        end)
+    end)
+    trackUiConnection(outsideConnection :: RBXScriptConnection)
+end
+
+-- Option row wrapper for the list above: keeps the selection in the config
+-- file and shows how much of it is ticked.
+state.addListOption = function(feature: any, labelText: string, definition: any): TextButton
+    local optionKey: string = feature.configKey .. "." .. labelText:gsub("%W", "")
+    local selected: {[string]: boolean} = {}
+    local stored: any = configData.values[optionKey]
+    if type(stored) == "string" and stored ~= "" then
+        for entry: string in string.gmatch(stored, "[^,]+") do
+            local trimmed: string = string.match(entry, "^%s*(.-)%s*$") or entry
+            if trimmed ~= "" then
+                selected[trimmed] = true
+            end
+        end
+    elseif type(definition.default) == "table" then
+        for _, entry: string in ipairs(definition.default) do
+            selected[entry] = true
+        end
+    end
+
+    local option: Frame = createOptionRow(feature, labelText, definition.hint)
+    local button: TextButton = makeButton(option, "", 11)
+    state.layoutOptionControl(option, button, 0.5)
+    button.TextXAlignment = Enum.TextXAlignment.Left
+    create("UIPadding", {
+        Parent = button,
+        Name = "ListPadding",
+        PaddingLeft = UDim.new(0, 8),
+        PaddingRight = UDim.new(0, 10),
+    })
+
+    local function currentItems(): {string}
+        local provider: any = definition.items
+        if type(provider) == "function" then
+            local ok: boolean, result: any = pcall(provider)
+            if ok and type(result) == "table" then
+                return result
+            end
+            return {}
+        end
+        return provider or {}
+    end
+
+    local function describe(): ()
+        local items: {string} = currentItems()
+        local total: number = #items
+        local count: number = 0
+        local last: string = ""
+        for _, item: string in ipairs(items) do
+            if selected[item] then
+                count += 1
+                last = item
+            end
+        end
+        if total == 0 then
+            button.Text = definition.emptyText or "nothing detected"
+        elseif count == 0 then
+            button.Text = "none of " .. tostring(total)
+        elseif count == 1 then
+            button.Text = last
+        elseif count == total then
+            button.Text = "all " .. tostring(total)
+        else
+            button.Text = tostring(count) .. " of " .. tostring(total)
+        end
+    end
+
+    local function publish(): ()
+        local names: {string} = {}
+        for name: string, on: boolean in pairs(selected) do
+            if on then
+                table.insert(names, name)
+            end
+        end
+        table.sort(names)
+        configData.values[optionKey] = table.concat(names, ",")
+        queueConfigSave()
+        describe()
+        if type(definition.onChanged) == "function" then
+            definition.onChanged(selected, names)
+        end
+    end
+
+    button.MouseButton1Click:Connect(function(): ()
+        local items: {string} = currentItems()
+        state.openMultiList(
+            button,
+            items,
+            selected,
+            function(): ()
+                publish()
+            end,
+            function(enableAll: boolean): ()
+                for _, item: string in ipairs(items) do
+                    selected[item] = enableAll or nil
+                end
+                publish()
+            end
+        )
+    end)
+
+    describe()
+    if type(definition.onChanged) == "function" then
+        definition.onChanged(selected, {})
+    end
+    -- Exposed so a module can ask "is this one ticked?" without keeping a
+    -- second copy of the answer.
+    button:SetAttribute("ListOption", optionKey)
+    state.listSelections = state.listSelections or {}
+    state.listSelections[optionKey] = selected
+    return button
+end
+
 local function addCycleOption(
     feature: any,
     labelText: string,
@@ -14374,12 +14693,17 @@ state.frameworkEnvironment = createGameModuleEnvironment(diagnostics)
 local fallbackManifest: any = {
     version = 1,
     core = {"src/core/Framework.luau"},
-    libraries = {"src/library/Entity.luau"},
+    libraries = {"src/library/Entity.luau", "src/library/Weapons.luau"},
     modules = {
         {
             path = "src/modules/Utility/FriendList.luau",
             name = "Friend List",
             category = "Utility",
+        },
+        {
+            path = "src/modules/Visuals/ItemRender.luau",
+            name = "Item Render",
+            category = "Visuals",
         },
         {
             path = "src/modules/Visuals/PlayerESP.luau",
@@ -14446,27 +14770,40 @@ end
 table.insert(loaded, frameworkPiece)
 state.framework = framework
 
-local entityPiece: any? = loadPiece(
-    manifest.libraries[1] or "src/library/Entity.luau"
-)
-local entityLibrary: any = nil
-if entityPiece then
-    local entityOk: boolean, library: any = pcall(
-        entityPiece.init,
+-- Libraries are shared services, so every one in the manifest is started and
+-- handed to every module by name; a module asks for `context.weapons` without
+-- caring which slot of the list it came from.
+local libraries: any = {}
+for _, path: string in ipairs(manifest.libraries or {}) do
+    local piece: any? = loadPiece(path)
+    if not piece then
+        continue
+    end
+    local startedOk: boolean, library: any = pcall(
+        piece.init,
         state.frameworkEnvironment
     )
-    if entityOk and type(library) == "table" then
-        entityLibrary = library
-        table.insert(loaded, entityPiece)
-    else
-        state.logBootstrapError("Entity init falló: " .. tostring(library))
+    if not startedOk or type(library) ~= "table" then
+        state.logBootstrapError(
+            "Librería falló (" .. path .. "): " .. tostring(library)
+        )
+        continue
     end
+    table.insert(loaded, piece)
+    local key: string = string.lower(
+        string.match(path, "([^/]+)%.luau$") or path
+    )
+    libraries[key] = library
 end
+local entityLibrary: any = libraries.entity
 state.entityLibrary = entityLibrary
+state.weaponLibrary = libraries.weapons
 
 local context: any = {
     framework = framework,
     entity = entityLibrary,
+    weapons = libraries.weapons,
+    libraries = libraries,
     host = state.frameworkEnvironment,
 }
 for _, entry: any in ipairs(manifest.modules) do

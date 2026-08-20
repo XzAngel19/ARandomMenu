@@ -1,0 +1,347 @@
+--!strict
+--
+-- Weapon discovery.
+--
+-- `Character:FindFirstChildOfClass("Tool")` describes one way of holding a
+-- weapon, and plenty of games do not use it. The BedFight dump in `reference/`
+-- is the worked example: that game contains **no Tool instances at all**. Its
+-- swords are
+--
+--   * view models — `workspace.CurrentCamera.ViewModel["Wooden Sword"]`, a
+--     plain Model swapped in and out by the client;
+--   * hotbar slots — GuiButtons under `PlayerGui.BackpackGui.HotbarList`,
+--     driven by an `InventoryHandler` module keyed by item class
+--     ("Swords", "Katanas", "Daggers", "Battle Axes", "Maces", "Spears");
+--   * and, on touch, a dedicated button at
+--     `PlayerGui.MobileGui.ButtonsFrame.Sword` whose `MouseButton1Click` is
+--     what actually swings.
+--
+-- So this library does not look for a class. It collects every plausible way of
+-- swinging that exists right now — tools, view models, inventory buttons,
+-- on-screen action buttons — labels each one, and lets the module (and the
+-- player, through a selection list) decide which of them to use. Activation is
+-- per kind: a Tool is activated, a button is pressed the way a finger presses
+-- it, a view model is swung by pressing whatever button owns it.
+
+export type Candidate = {
+    id: string,
+    label: string,
+    kind: string,
+    instance: Instance,
+}
+
+export type WeaponLibrary = {
+    Scan: (self: WeaponLibrary, query: any?) -> {Candidate},
+    Labels: (self: WeaponLibrary, query: any?) -> {string},
+    Find: (self: WeaponLibrary, label: string) -> Candidate?,
+    Activate: (self: WeaponLibrary, candidate: Candidate) -> boolean,
+    PressButton: (self: WeaponLibrary, button: GuiButton) -> boolean,
+    Destroy: (self: WeaponLibrary) -> (),
+}
+
+local Module = {
+    Name = "Weapons",
+    PlaceId = 0,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+-- Words that mean "this hits things". Deliberately generous: a false positive
+-- costs one unticked row in a list, a false negative costs a module that does
+-- nothing and no way to find out why.
+local WEAPON_WORDS: {string} = {
+    "sword",
+    "katana",
+    "dagger",
+    "blade",
+    "knife",
+    "axe",
+    "mace",
+    "spear",
+    "scythe",
+    "sabre",
+    "saber",
+    "machete",
+    "hammer",
+    "club",
+    "bat",
+    "staff",
+    "pickaxe",
+    "fist",
+    "punch",
+    "attack",
+    "swing",
+    "hit",
+    "melee",
+    "weapon",
+    "combat",
+}
+
+-- Containers whose children are inventory slots rather than decoration.
+local INVENTORY_WORDS: {string} = {
+    "hotbar",
+    "backpack",
+    "inventory",
+    "toolbar",
+    "slots",
+    "items",
+}
+
+-- Containers a game builds for touch controls.
+local TOUCH_WORDS: {string} = {
+    "mobile",
+    "touch",
+    "buttons",
+    "controls",
+}
+
+local activeLibrary: WeaponLibrary? = nil
+
+local function containsWord(text: string, words: {string}): boolean
+    local lowered: string = string.lower(text)
+    for _, word: string in ipairs(words) do
+        if string.find(lowered, word, 1, true) then
+            return true
+        end
+    end
+    return false
+end
+
+local function ancestryMatches(instance: Instance, words: {string}, depth: number): boolean
+    local current: Instance? = instance
+    local steps: number = 0
+    while current and steps < depth do
+        if containsWord(current.Name, words) then
+            return true
+        end
+        current = current.Parent
+        steps += 1
+    end
+    return false
+end
+
+function Module.init(context: any): WeaponLibrary
+    local host: any = context
+    local localPlayer: Player = host.LocalPlayer
+    local currentWorkspace: Workspace = host.workspace or workspace
+    local menuGui: Instance? = host.ScreenGui
+
+    local library: any = {}
+
+    -- Firing a GuiButton the way a real press does. BedFight's mobile sword
+    -- listens on MouseButton1Down and MouseButton1Click and does its work in a
+    -- one-shot InputBegan opened by the former, so both are fired, in order.
+    function library:PressButton(button: GuiButton): boolean
+        local environment: any = getfenv()
+        local connectionsOf: any = environment.getconnections
+        local fireSignal: any = environment.firesignal
+        local pressed: boolean = false
+
+        if type(connectionsOf) == "function" then
+            for _, signal: any in
+                ipairs({
+                    button.MouseButton1Down,
+                    button.MouseButton1Click,
+                    (button :: any).Activated,
+                    button.MouseButton1Up,
+                })
+            do
+                local ok: boolean, connections: any = pcall(connectionsOf, signal)
+                if not ok or type(connections) ~= "table" then
+                    continue
+                end
+                for _, connection: any in ipairs(connections) do
+                    local fired: boolean = pcall(function(): ()
+                        connection:Fire()
+                    end)
+                    pressed = pressed or fired
+                end
+            end
+        end
+        if not pressed and type(fireSignal) == "function" then
+            pressed = pcall(fireSignal, (button :: any).Activated) == true
+        end
+        return pressed
+    end
+
+    local function isMenuOwned(instance: Instance): boolean
+        return menuGui ~= nil and instance:IsDescendantOf(menuGui :: Instance)
+    end
+
+    function library:Scan(query: any?): {Candidate}
+        local options: any = query or {}
+        local everything: boolean = options.All == true
+        local found: {Candidate} = {}
+        local seen: {[string]: boolean} = {}
+
+        local function add(kind: string, label: string, instance: Instance): ()
+            local id: string = kind .. ":" .. label
+            if seen[id] then
+                return
+            end
+            seen[id] = true
+            table.insert(found, {
+                id = id,
+                label = label,
+                kind = kind,
+                instance = instance,
+            })
+        end
+
+        -- 1. Classic tools, held or stowed.
+        local character: Model? = localPlayer.Character
+        if character then
+            for _, child: Instance in ipairs(character:GetChildren()) do
+                if child:IsA("Tool") then
+                    add("Tool", child.Name, child)
+                end
+            end
+        end
+        local backpack: Instance? = localPlayer:FindFirstChild("Backpack")
+        if backpack then
+            for _, child: Instance in ipairs(backpack:GetChildren()) do
+                if child:IsA("Tool") then
+                    add("Tool", child.Name, child)
+                end
+            end
+        end
+
+        -- 2. View models: the weapon you can see but cannot pick up. They live
+        -- under the camera in BedFight, and under the character in others.
+        local viewRoots: {Instance} = {}
+        local camera: Camera? = currentWorkspace.CurrentCamera
+        if camera then
+            table.insert(viewRoots, camera)
+        end
+        if character then
+            table.insert(viewRoots, character)
+        end
+        for _, root: Instance in ipairs(viewRoots) do
+            for _, child: Instance in ipairs(root:GetChildren()) do
+                if not child:IsA("Model") then
+                    continue
+                end
+                if containsWord(child.Name, WEAPON_WORDS) then
+                    add("ViewModel", child.Name, child)
+                end
+                if string.find(string.lower(child.Name), "viewmodel", 1, true) then
+                    for _, held: Instance in ipairs(child:GetChildren()) do
+                        if held:IsA("Model") or held:IsA("BasePart") then
+                            add("ViewModel", held.Name, held)
+                        end
+                    end
+                end
+            end
+        end
+
+        -- 3. Interface: inventory slots and touch buttons the game built.
+        local playerGui: Instance? = localPlayer:FindFirstChild("PlayerGui")
+        if playerGui then
+            for _, descendant: Instance in ipairs(playerGui:GetDescendants()) do
+                if not descendant:IsA("GuiButton") then
+                    continue
+                end
+                if isMenuOwned(descendant) then
+                    -- The menu's own controls are not the game's weapons.
+                    continue
+                end
+                local named: boolean = containsWord(descendant.Name, WEAPON_WORDS)
+                local inTouch: boolean = ancestryMatches(descendant, TOUCH_WORDS, 4)
+                local inInventory: boolean =
+                    ancestryMatches(descendant, INVENTORY_WORDS, 4)
+                if named and inTouch then
+                    add("Button", descendant.Name, descendant)
+                elseif named then
+                    add("Button", descendant.Name, descendant)
+                elseif inInventory and (everything or descendant.Visible) then
+                    add("Slot", descendant.Name, descendant)
+                elseif everything and inTouch then
+                    add("Button", descendant.Name, descendant)
+                end
+            end
+        end
+
+        return found
+    end
+
+    function library:Labels(query: any?): {string}
+        local labels: {string} = {}
+        for _, candidate: Candidate in ipairs(library:Scan(query)) do
+            table.insert(labels, candidate.label .. "  ·  " .. candidate.kind)
+        end
+        table.sort(labels)
+        return labels
+    end
+
+    function library:Find(label: string): Candidate?
+        local wanted: string = string.lower(label)
+        for _, candidate: Candidate in ipairs(library:Scan({All = true})) do
+            if string.lower(candidate.label) == wanted then
+                return candidate
+            end
+            if string.lower(candidate.label .. "  ·  " .. candidate.kind) == wanted then
+                return candidate
+            end
+        end
+        return nil
+    end
+
+    function library:Activate(candidate: Candidate): boolean
+        local instance: Instance = candidate.instance
+        if not instance.Parent then
+            return false
+        end
+        if candidate.kind == "Tool" then
+            local tool: Tool = instance :: Tool
+            -- A stowed tool cannot swing; equipping it is part of activating.
+            if tool.Parent ~= localPlayer.Character then
+                local humanoid: Humanoid? = localPlayer.Character
+                    and localPlayer.Character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+                if humanoid then
+                    pcall(function(): ()
+                        (humanoid :: Humanoid):EquipTool(tool)
+                    end)
+                end
+            end
+            return pcall(function(): ()
+                tool:Activate()
+            end)
+        end
+        if candidate.kind == "Button" or candidate.kind == "Slot" then
+            return library:PressButton(instance :: GuiButton)
+        end
+        if candidate.kind == "ViewModel" then
+            -- A view model is scenery: the swing belongs to whatever button
+            -- drives it, so the nearest touch button wins and the caller falls
+            -- back to its own click path when there is none.
+            for _, other: Candidate in ipairs(library:Scan({All = true})) do
+                if other.kind == "Button" then
+                    return library:PressButton(other.instance :: GuiButton)
+                end
+            end
+            return false
+        end
+        return false
+    end
+
+    function library:Destroy(): ()
+        if activeLibrary == library then
+            activeLibrary = nil
+        end
+    end
+
+    activeLibrary = (library :: any) :: WeaponLibrary
+    Module.Initialized = true
+    return (library :: any) :: WeaponLibrary
+end
+
+function Module.destroy(): ()
+    local library: WeaponLibrary? = activeLibrary
+    if library then
+        library:Destroy()
+    end
+    activeLibrary = nil
+    Module.Initialized = false
+end
+
+return Module

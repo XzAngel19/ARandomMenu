@@ -196,6 +196,38 @@ function Host.create(world: any): HostStub
         return makeButton(optionRow(feature, label), "RUN", 11)
     end
 
+    host.addListOption = function(feature: any, label: string, definition: any): any
+        local selected: {[string]: boolean} = {}
+        for _, name: string in ipairs(definition.default or {}) do
+            selected[name] = true
+        end
+        local button: any = makeButton(optionRow(feature, label), "", 11)
+        local entry: any = {
+            kind = "list",
+            selected = selected,
+            items = definition.items,
+            changed = definition.onChanged,
+        }
+        function entry.set(name: string, on: boolean): ()
+            selected[name] = on or nil
+            local names: {string} = {}
+            for value: string, isOn: boolean in pairs(selected) do
+                if isOn then
+                    table.insert(names, value)
+                end
+            end
+            table.sort(names)
+            if definition.onChanged then
+                definition.onChanged(selected, names)
+            end
+        end
+        feature.options[label] = entry
+        if definition.onChanged then
+            definition.onChanged(selected, {})
+        end
+        return button
+    end
+
     host.addSectionOption = function(feature: any, label: string): any
         return optionRow(feature, label)
     end
@@ -248,6 +280,10 @@ function Host.create(world: any): HostStub
     }
     host.UserInputService.InputBegan = Mock.signal()
     host.state = {
+        menuVisible = true,
+        setMenuVisible = function(visible: boolean): ()
+            host.state.menuVisible = visible
+        end,
         keyCaptureCallback = nil,
         waitingForKey = false,
         -- Modules bind their card's key slot through this; the stub records

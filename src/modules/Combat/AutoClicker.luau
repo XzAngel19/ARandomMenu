@@ -89,6 +89,7 @@ function Module.init(context: Runtime): any
     local localPlayer: Player = host.LocalPlayer
     local userInput: UserInputService = host.UserInputService
     local screenGui: Instance? = host.ScreenGui
+    local weapons: any = context.weapons
 
     local runtime: any = {
         nextClickAt = 0,
@@ -167,6 +168,17 @@ function Module.init(context: Runtime): any
                 runtime.nextClickAt = now + 1 / math.max(rate, 0.5)
 
                 local mode: string = options["Press"].Value
+                if weapons then
+                    for _, label: string in ipairs(options["Weapons"].Selected or {}) do
+                        local candidate: any = weapons:Find(label)
+                        if candidate and weapons:Activate(candidate) then
+                            runtime.clicks += 1
+                        end
+                    end
+                end
+                if mode == "Weapons only" then
+                    return
+                end
                 if mode == "Tool" or mode == "Everything" then
                     local tool: Tool? = equippedTool()
                     if tool then
@@ -227,9 +239,23 @@ function Module.init(context: Runtime): any
     })
 
     clicker:CreateSection("Target")
+    -- The same set the aura uses. A game that hands you a sword, a pickaxe and
+    -- an on-screen button should let you click exactly one of them.
+    clicker:CreateList({
+        Name = "Weapons",
+        Items = function(): {string}
+            if not weapons then
+                return {}
+            end
+            return weapons:Labels({All = true})
+        end,
+        EmptyText = "none",
+        Tooltip = "Ticked entries are pressed on every click, alongside the "
+            .. "mode below.",
+    })
     clicker:CreateDropdown({
         Name = "Press",
-        List = {"Tool", "Screen button", "Mouse", "Everything"},
+        List = {"Tool", "Screen button", "Mouse", "Everything", "Weapons only"},
         Index = 1,
         Tooltip = "Tool works everywhere including phones; Screen button "
             .. "presses the game's own attack button; Mouse needs a desktop "

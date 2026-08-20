@@ -52,6 +52,7 @@ export type Module = {
     CreateBind: (self: Module, definition: any) -> Option,
     CreateTextBox: (self: Module, definition: any) -> Option,
     CreateColor: (self: Module, definition: any) -> Option,
+    CreateList: (self: Module, definition: any) -> Option,
     CreateButton: (self: Module, definition: any) -> Option,
     CreateSection: (self: Module, name: string) -> Option,
     CreateNote: (self: Module, text: string) -> (),
@@ -346,6 +347,27 @@ function Module.init(context: any): Framework
                 end,
                 definition2.Tooltip
             )
+            return register(option)
+        end
+
+        -- A list is a set, not a choice: "which of the nine swords this game
+        -- gave me should the module use" cannot be answered by a dropdown.
+        function created:CreateList(definition2: any): Option
+            local option: any = newOption(definition2.Name, {})
+            option.Selected = {}
+            option.Object = host.addListOption(feature, definition2.Name, {
+                items = definition2.Items,
+                default = definition2.Default,
+                hint = definition2.Tooltip,
+                emptyText = definition2.EmptyText,
+                onChanged = function(selected: any, names: {string}): ()
+                    option.Value = selected
+                    option.Selected = names
+                    if type(definition2.Function) == "function" then
+                        definition2.Function(selected, names)
+                    end
+                end,
+            })
             return register(option)
         end
 

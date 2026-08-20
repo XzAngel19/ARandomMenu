@@ -141,7 +141,11 @@ section("Player ESP")
 
 local EspFile: any = require("../../src/modules/Visuals/PlayerESP")
 Mock.inject(world, EspFile.init)
-local espContext: any = {framework = framework, entity = entity, host = host}
+local WeaponsFile: any = require("../../src/library/Weapons")
+Mock.inject(world, WeaponsFile.init)
+local weapons: any = WeaponsFile.init(host)
+local espContext: any =
+    {framework = framework, entity = entity, weapons = weapons, host = host}
 local esp: any = EspFile.init(espContext)
 
 check("card is registered", esp ~= nil and esp.Name == "Player ESP")
@@ -701,10 +705,166 @@ check("goes back to where the last hop started",
 chest:Destroy()
 farChest:Destroy()
 
+-- Weapon discovery -------------------------------------------------------------
+
+section("Weapon discovery (no-Tool games)")
+
+-- A BedFight-shaped game: no Tool anywhere, a view model under the camera, an
+-- inventory slot and a mobile attack button.
+local viewModel: any = Mock.newInstance("Model")
+viewModel.Name = "ViewModel"
+viewModel.Parent = world.camera
+local bladeModel: any = Mock.newInstance("Model")
+bladeModel.Name = "Emerald Sword"
+bladeModel.Parent = viewModel
+
+local mobileGui: any = Mock.newInstance("ScreenGui")
+mobileGui.Name = "MobileGui"
+mobileGui.Parent = world.localPlayer:FindFirstChild("PlayerGui")
+local buttonsFrame: any = Mock.newInstance("Frame")
+buttonsFrame.Name = "ButtonsFrame"
+buttonsFrame.Parent = mobileGui
+local mobileSword: any = Mock.newInstance("ImageButton")
+mobileSword.Name = "Sword"
+mobileSword.Parent = buttonsFrame
+local mobileSwings: number = 0
+mobileSword.MouseButton1Click:Connect(function(): ()
+    mobileSwings += 1
+end)
+
+local hotbar: any = Mock.newInstance("Frame")
+hotbar.Name = "HotbarList"
+hotbar.Parent = mobileGui
+local slot: any = Mock.newInstance("ImageButton")
+slot.Name = "Iron Sword"
+slot.Visible = true
+slot.Parent = hotbar
+
+local labels: {string} = weapons:Labels({All = true})
+local function hasLabel(needle: string): boolean
+    for _, label: string in ipairs(labels) do
+        if string.find(label, needle, 1, true) then
+            return true
+        end
+    end
+    return false
+end
+check("finds a view-model weapon", hasLabel("Emerald Sword"),
+    table.concat(labels, " | "))
+check("finds the game's mobile attack button", hasLabel("Sword  ·  Button"),
+    table.concat(labels, " | "))
+check("finds an inventory slot", hasLabel("Iron Sword"),
+    table.concat(labels, " | "))
+
+local candidate: any = weapons:Find("Sword  ·  Button")
+check("activating a button candidate presses it",
+    candidate ~= nil and weapons:Activate(candidate) and mobileSwings > 0,
+    "swings: " .. tostring(mobileSwings))
+
+-- Kill Aura swings the ticked candidate even with no Tool in sight.
+enemy.Character:FindFirstChild("HumanoidRootPart").Position = world.vector3(0, 0, -8)
+-- Nothing between us and the target, and the local player back at the origin:
+-- the teleport tests left the character seven studs away, which is enough to
+-- put the enemy outside the aura's twelve-stud reach.
+world.raycastResult = nil
+world.localPlayer.Character:FindFirstChild("HumanoidRootPart").Position =
+    world.vector3(0, 0, 0)
+sword.Parent = nil
+aura.Feature.options["Weapons"].set("Sword  ·  Button", true)
+local swingsBefore: number = mobileSwings
+aura:Toggle()
+world.clock += 2
+stub.step(0.016)
+check("Kill Aura swings a ticked non-Tool weapon", mobileSwings > swingsBefore,
+    "swings: " .. tostring(mobileSwings))
+aura:Toggle()
+aura.Feature.options["Weapons"].set("Sword  ·  Button", false)
+sword.Parent = world.localPlayer.Character
+
+-- Item Render -------------------------------------------------------------------
+
+section("Item Render")
+
+local ItemFile: any = require("../../src/modules/Visuals/ItemRender")
+Mock.inject(world, ItemFile.init)
+local itemRender: any = ItemFile.init(espContext)
+
+check("card is registered", itemRender.Name == "Item Render")
+for _, name: string in ipairs({
+    "Names",
+    "Touch part",
+    "Clear list",
+    "Show distance",
+    "Outline",
+    "Max distance",
+    "Colour",
+}) do
+    check("option: " .. name, itemRender.Options[name] ~= nil
+        or itemRender.Feature.options[name] ~= nil)
+end
+
+local oreA: any = Mock.newInstance("Part")
+oreA.Name = "IronOre"
+oreA.Position = world.vector3(0, 0, -20)
+oreA.Parent = world.workspace
+local oreB: any = Mock.newInstance("Part")
+oreB.Name = "IronOre"
+oreB.Position = world.vector3(0, 0, -40)
+oreB.Parent = world.workspace
+
+itemRender:Toggle()
+itemRender.Options["Names"].Value = "ironore"
+itemRender.Options["Refresh interval"].Value = 0
+-- The text box callback is what publishes the list in the real menu.
+itemRender.Feature.options["Names"] = nil
+ItemFile.Initialized = true
+stub.step(0.016)
+
+-- Touch part: the menu hides, the tap names the object, every twin lights up.
+world.menuHidden = false
+itemRender.Feature.options["Touch part"].run()
+check("touch part hides the menu", host.state.menuVisible == false)
+
+world.raycastResult = {Instance = oreA, Position = world.vector3(0, 0, -20)}
+host.UserInputService.InputBegan:Fire({
+    UserInputType = world.globals.Enum.UserInputType.Touch,
+    Position = world.vector3(300, 400, 0),
+}, false)
+check("touch part learns the object name",
+    string.find(tostring(itemRender.Options["Names"].Value), "IronOre", 1, true) ~= nil,
+    tostring(itemRender.Options["Names"].Value))
+check("touch part brings the menu back", host.state.menuVisible == true)
+
+stub.step(0.016)
+local rendered: number = 0
+for _, part: any in ipairs({oreA, oreB}) do
+    if part:FindFirstChild("RTM_ItemRender") then
+        rendered += 1
+    end
+end
+check("every object with that name is rendered", rendered == 2,
+    "rendered: " .. tostring(rendered))
+check("the label carries the object name",
+    oreA:FindFirstChild("RTM_ItemRender") ~= nil)
+
+itemRender:Toggle()
+local left: number = 0
+for _, part: any in ipairs({oreA, oreB}) do
+    if part:FindFirstChild("RTM_ItemRender") then
+        left += 1
+    end
+end
+check("labels are released when the module is off", left == 0,
+    "left: " .. tostring(left))
+oreA:Destroy()
+oreB:Destroy()
+
 -- Teardown -------------------------------------------------------------------
 
 section("Teardown")
 
+ItemFile.destroy()
+WeaponsFile.destroy()
 ClickFile.destroy()
 ClickerFile.destroy()
 AuraFile.destroy()

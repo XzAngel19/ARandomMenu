@@ -386,10 +386,22 @@ local Boxes = ESP:CreateDropdown({Name = "Boxes", List = {"Corner", "Full", "Off
 ```
 
 Builders available to a module: `CreateToggle`, `CreateSlider`,
-`CreateDropdown`, `CreateBind`, `CreateTextBox`, `CreateColor`, `CreateButton`,
-`CreateSection` and `CreateNote`. Each returns an option whose `.Value` stays
+`CreateDropdown`, `CreateList` (a multi-select: same popup, one state mark per
+row, stays open while you tick), `CreateBind`, `CreateTextBox`, `CreateColor`,
+`CreateButton`, `CreateSection` and `CreateNote`. Each returns an option whose `.Value` stays
 current, so a loop reads `Boxes.Value` instead of the module mirroring every
 setting into a table of its own.
+
+**The weapon library.** `src/library/Weapons.luau` answers "what can I swing
+here", which is not the same question as "what Tool am I holding". The BedFight
+dump in `reference/` has no `Tool` instances anywhere: its swords are view
+models under `workspace.CurrentCamera.ViewModel`, its inventory is a hotbar of
+GuiButtons, and on touch the swing comes from a button the game built at
+`PlayerGui.MobileGui.ButtonsFrame.Sword`. The library collects all four shapes —
+tools, view models, inventory slots, on-screen buttons — labels each with its
+kind, and activates each the right way: a tool is equipped and activated, a
+button is pressed by firing the signals a real press raises, in the order the
+engine raises them.
 
 **The entity library.** `Entity.luau` answers the three questions every visual
 and combat module asks — who is alive, where are their parts, which one is under
@@ -462,7 +474,12 @@ entries, and closes on any press outside it or when the menu is hidden.
   melee weapons with limb-only hitboxes need, and **Swing only** turns the
   second half off so the module does nothing a hand could not.
 
-  Weapon detection does not guess. `FindFirstChildOfClass("Tool")` fails the
+  Weapon detection does not guess, and it is not limited to tools. Everything
+  the weapon library finds is listed in a **Weapons** multi-select — tick the
+  ones the aura may use, in a game that hands you nine swords, a pickaxe and a
+  mobile attack button — and ticked entries are swung through the library, so
+  the module works in games with no `Tool` instances at all. With nothing
+  ticked it falls back to the tool logic: `FindFirstChildOfClass("Tool")` fails the
   moment a game hands you two tools or names the sword something unexpected, so
   the module *learns*: it watches `Tool.Activated`, and whatever you swing by
   hand becomes the weapon it uses. There is also a *Bind held tool* button and
@@ -497,6 +514,14 @@ entries, and closes on any press outside it or when the menu is hidden.
   does, by firing the signals a tap raises. Press *Learn button*, tap the
   game's button once, and it is bound; the name is remembered so a HUD rebuilt
   between rounds is found again. The menu's own buttons are never eligible.
+- **Item Render** (`Visuals`): object ESP — the name of every listed object,
+  drawn above it with its distance, and its silhouette outlined through walls.
+  The list is built by pointing rather than typing: **Touch part** hides the
+  menu, waits for one tap on the world, takes the name of whatever was under it
+  (the model's name, not the plank's) and adds it — and from then on *every*
+  object with that name is rendered, so one tap on one iron ore lights up all
+  of them. Names can still be typed, and the sweep interval, distance, colour,
+  text size and outline are all adjustable.
 - **TriggerBot** (`Combat`): always-on or hold-to-arm, single or automatic,
   reaction delay with a per-acquisition random jitter, minimum time between
   shots, target-part filter (any, head, torso), an aim radius in pixels that

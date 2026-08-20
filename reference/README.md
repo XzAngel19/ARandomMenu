@@ -13,6 +13,15 @@ is downloaded by the menu, compiled by the validation workflow or referenced by
   list and the entity-library approach used by ESP and TriggerBot all come from
   reading it.
 
+- `bedfight-place-dump.rbxmx.zip` — a saved place from BedFight, the worked
+  example behind `src/library/Weapons.luau`. It contains **no `Tool` instances
+  at all**: its swords are view models under `workspace.CurrentCamera.ViewModel`,
+  its inventory is a `HotbarHandler` module driving GuiButtons in
+  `PlayerGui.BackpackGui`, and on touch the swing comes from
+  `PlayerGui.MobileGui.ButtonsFrame.Sword`, whose `MouseButton1Down` and
+  `MouseButton1Click` the game listens on. Every one of those three shapes is
+  something the weapon library now looks for.
+
 The equivalents in this repository are `src/core/Framework.luau`,
 `src/library/Entity.luau` and `src/modules/<Category>/*.luau`; they are written
 from scratch against this menu's own card and option API rather than copied.

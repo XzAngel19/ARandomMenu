@@ -158,6 +158,7 @@ function Module.init(context: Runtime): any
     -- Declared before the helpers below because they read its options: the
     -- card is built further down, but `equippedTool` is written against it.
     local aura: any = nil
+    local weapons: any = context.weapons
 
     -- The weapon the player last swung by hand. Everything else is a fallback.
     local learnedWeapon: string? = nil
@@ -309,11 +310,14 @@ function Module.init(context: Runtime): any
                 end
 
                 local tool: Tool?, handle: BasePart? = equippedTool()
-                if not tool then
+                local hasPicked: boolean = #(options["Weapons"].Selected or {}) > 0
+                if not tool and not hasPicked then
                     if options["Auto equip"].Value then
                         equipFromBackpack()
                     end
                     if options["Require tool"].Value then
+                        -- Only meaningful when the game actually uses tools;
+                        -- a ticked weapon is proof that it does not.
                         clearHighlights()
                         return
                     end
@@ -376,7 +380,20 @@ function Module.init(context: Runtime): any
                     if not canSwing then
                         continue
                     end
-                    activateTool(tool)
+                    -- Ticked candidates first: in a game with no Tool
+                    -- instances at all, they are the only thing that swings.
+                    local swung: boolean = false
+                    if weapons then
+                        for _, label: string in ipairs(aura.Options["Weapons"].Selected or {}) do
+                            local candidate: any = weapons:Find(label)
+                            if candidate and weapons:Activate(candidate) then
+                                swung = true
+                            end
+                        end
+                    end
+                    if not swung then
+                        activateTool(tool)
+                    end
                     if options["Swing only"].Value then
                         -- Swing and nothing else: the tool's own Activate, no
                         -- touch events, no reach. What a player's hand does.
@@ -413,6 +430,22 @@ function Module.init(context: Runtime): any
     })
 
     aura:CreateSection("Weapon")
+    -- Games with nine swords, a pickaxe and a mobile attack button need a set,
+    -- not a guess: everything the weapon library can find is listed here and
+    -- you tick the ones the aura is allowed to swing. Empty means "whatever is
+    -- in my hands", which is what most games need.
+    aura:CreateList({
+        Name = "Weapons",
+        Items = function(): {string}
+            if not weapons then
+                return {}
+            end
+            return weapons:Labels({All = true})
+        end,
+        EmptyText = "auto",
+        Tooltip = "Tick the weapons this module may use. Covers tools, view "
+            .. "models, inventory slots and the game's own attack button.",
+    })
     aura:CreateTextBox({
         Name = "Weapon name",
         Default = "",

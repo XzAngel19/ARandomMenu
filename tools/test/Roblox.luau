@@ -241,6 +241,15 @@ local function newInstance(className: string): any
         return nil
     end
 
+    function instance:FindFirstChildWhichIsA(query: string): any
+        for _, child: any in ipairs(self.Children) do
+            if child:IsA(query) then
+                return child
+            end
+        end
+        return nil
+    end
+
     function instance:FindFirstChildOfClass(query: string): any
         for _, child: any in ipairs(self.Children) do
             if child.ClassName == query then
