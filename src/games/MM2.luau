@@ -379,25 +379,79 @@ local function findSheriff(): Player?
         or findPlayerByRoundRole("Hero")
 end
 
+-- Locating the active map.
+--
+-- This used to require a child called `CoinContainer` *and* one called
+-- `Spawns`. Current MM2 maps ship `CoinAreas` instead (a live map reads
+-- `ResearchFacility > CoinAreas / Interactive / Base / Spawns`), so the lookup
+-- always failed and everything built on it — Teleport to Map, Loop All
+-- Interact, the trap sweep, the dropped-gun search — silently did nothing.
+--
+-- The map is now recognised by any of its coin containers, with the lobby
+-- excluded explicitly because it also owns a `Spawns` model.
+local MM2_MAP_COIN_CONTAINERS: {string} = {
+    "CoinContainer",
+    "CoinAreas",
+    "Coins",
+}
+
+local function isMM2MapModel(object: Instance): boolean
+    if not object:IsA("Model") or object.Name == "Lobby" then
+        return false
+    end
+    for _, containerName: string in ipairs(MM2_MAP_COIN_CONTAINERS) do
+        if object:FindFirstChild(containerName) then
+            return true
+        end
+    end
+    return false
+end
+
 local function findMM2Map(): Instance?
     for _, object: Instance in ipairs(workspace:GetChildren()) do
-        if object:FindFirstChild("CoinContainer")
-            and object:FindFirstChild("Spawns") then
+        if isMM2MapModel(object) then
+            return object
+        end
+    end
+    -- Last resort: a model that holds coin spawn points is a map even if its
+    -- container was renamed again.
+    for _, object: Instance in ipairs(workspace:GetChildren()) do
+        if object:IsA("Model")
+            and object.Name ~= "Lobby"
+            and object:FindFirstChild("Spawns")
+            and object:FindFirstChild("CoinSpawn", true) then
             return object
         end
     end
     return nil
 end
 
+-- The dropped sheriff gun.
+--
+-- It is normally a `GunDrop` model, but when the sheriff dies holding it the
+-- gun can also be lying in the workspace as the plain `Gun` tool, so both are
+-- accepted rather than reporting "no gun" while one is on the floor.
 local function findDroppedGun(): (Model | BasePart)?
     local map: Instance? = findMM2Map()
     local candidate: Instance? = (map and map:FindFirstChild("GunDrop", true))
         or workspace:FindFirstChild("GunDrop", true)
-    if candidate and candidate:IsA("Model") then
+    if candidate
+        and (candidate:IsA("Model") or candidate:IsA("BasePart")) then
         return candidate
     end
-    if candidate and candidate:IsA("BasePart") then
-        return candidate
+
+    for _, object: Instance in ipairs(workspace:GetDescendants()) do
+        if object:IsA("Tool")
+            and (object.Name == "Gun"
+                or CollectionService:HasTag(object, "Weapon_Gun")) then
+            -- A Tool is not a PVInstance: everything downstream pivots to and
+            -- highlights this, so hand back its handle rather than the tool.
+            local handle: Instance? = object:FindFirstChild("Handle")
+                or object:FindFirstChildWhichIsA("BasePart")
+            if handle and handle:IsA("BasePart") then
+                return handle
+            end
+        end
     end
     return nil
 end
@@ -1477,8 +1531,9 @@ local function findGameTimerFrame(): (GuiObject?, TextLabel?)
         return nil, nil
     end
     local mainGui: Instance? = playerGui:FindFirstChild("MainGUI")
-    local game: Instance? = mainGui and mainGui:FindFirstChild("Game")
-    local frame: Instance? = game and game:FindFirstChild("Timer")
+    -- Not named `game`: that would shadow the Roblox global inside this scope.
+    local gameFrame: Instance? = mainGui and mainGui:FindFirstChild("Game")
+    local frame: Instance? = gameFrame and gameFrame:FindFirstChild("Timer")
     if frame and frame:IsA("GuiObject") then
         local label: Instance? = frame:FindFirstChild("XPText")
         return frame, (label and label:IsA("TextLabel")) and label or nil

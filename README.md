@@ -275,6 +275,17 @@ TaskManager callback count and errors captured by `pcall`.
   phone. The speed is re-applied every frame because the game resets
   `WalkSpeed` on respawn, on round start and when a tool is equipped.
 - **Improve FPS** moved out of this module into Universal.
+- Two lookups were verified against a dump of the live place and fixed:
+  `findMM2Map()` required a `CoinContainer` child, but current maps ship
+  `CoinAreas` (a live map reads `ResearchFacility > CoinAreas / Interactive /
+  Base / Spawns`), so it always returned `nil` and silently disabled Teleport
+  to Map, Loop All Interact and the map-scoped sweeps; and the dropped-gun
+  search now also accepts the plain `Gun` tool lying in the workspace,
+  returning its handle so the pivot and highlight paths keep working.
+- The timer work is likewise built on the real hierarchy: `MainGUI.Game.Timer`
+  with its `XPText` label, which the game's HUD only refreshes while your role
+  is not Innocent — hence the menu writing the countdown itself, in the game's
+  own `1m 7s` format, when it would otherwise be frozen.
 
 ## Source layout
 
