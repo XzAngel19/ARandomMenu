@@ -37,6 +37,7 @@ export type WeaponLibrary = {
     Activate: (self: WeaponLibrary, candidate: Candidate) -> boolean,
     Best: (self: WeaponLibrary) -> Candidate?,
     Invalidate: (self: WeaponLibrary) -> (),
+    SetAllowEquip: (self: WeaponLibrary, allowed: boolean) -> (),
     Swing: (self: WeaponLibrary) -> boolean,
     PressButton: (self: WeaponLibrary, button: GuiButton) -> boolean,
     Destroy: (self: WeaponLibrary) -> (),
@@ -180,6 +181,9 @@ function Module.init(context: any): WeaponLibrary
         cache = {},
         cachedAt = -1,
         cachedAll = false,
+        -- Off by default: nothing in this menu should decide for the player
+        -- what is in their hands.
+        allowEquip = false,
     }
 
     -- Firing a GuiButton the way a real press does. BedFight's mobile sword
@@ -224,6 +228,10 @@ function Module.init(context: any): WeaponLibrary
 
     function library:Invalidate(): ()
         library.cachedAt = -1
+    end
+
+    function library:SetAllowEquip(allowed: boolean): ()
+        library.allowEquip = allowed == true
     end
 
     function library:Scan(query: any?): {Candidate}
@@ -379,9 +387,11 @@ function Module.init(context: any): WeaponLibrary
                 end
                 if kind == "Tool"
                     and character
-                    and candidate.instance.Parent ~= character then
+                    and candidate.instance.Parent ~= character
+                    and not library.allowEquip then
                     -- A stowed tool is a worse answer than the button that
-                    -- swings whatever is already equipped.
+                    -- swings whatever is already equipped, and taking it out
+                    -- of the backpack is not this module's decision.
                     continue
                 end
                 return candidate
@@ -405,8 +415,12 @@ function Module.init(context: any): WeaponLibrary
         end
         if candidate.kind == "Tool" then
             local tool: Tool = instance :: Tool
-            -- A stowed tool cannot swing; equipping it is part of activating.
-            if tool.Parent ~= localPlayer.Character then
+            -- Equipping is a visible action that takes the weapon out of the
+            -- player's hands and puts a different one in them, so it only
+            -- happens when the caller asks for it. A stowed tool is activated
+            -- where it stands otherwise; games that ignore that are the reason
+            -- the button and view-model paths exist.
+            if library.allowEquip and tool.Parent ~= localPlayer.Character then
                 local humanoid: Humanoid? = localPlayer.Character
                     and localPlayer.Character:FindFirstChildOfClass("Humanoid") :: Humanoid?
                 if humanoid then

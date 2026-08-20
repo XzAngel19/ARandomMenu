@@ -684,6 +684,8 @@ rather than with a guess.
 | `ItemsRemotes.SwordHit` | `(«Model PlayersContainer.someone», "Wooden Sword")` |
 | `PurchaseItemShopItem` | `(«Part …ItemShopPrompts.ItemShopPrompt», "Blocks", "Wool")` |
 | `WearArmor` | `("", "Pants")` |
+| `ItemsRemotes.MineBlock` | `("Wooden Pickaxe", «Part …PlayersBlocksContainer.Wool.Blue Wool», Vector3(30, 69, 288), Vector3(30.93, 75.36, 287.98), Vector3(-0.13, -0.98, -0.12))` |
+| `ItemsRemotes.DropItem` | `("Blue Wool", "All")` |
 
 `SwordHit` is the one that matters: the client names the victim and the weapon,
 and the server takes its word for it. Damage does not depend on where you are
@@ -702,13 +704,28 @@ every frame.
 - **Auto Buy** — buys through `PurchaseItemShopItem` on a timer, passing the
   nearest shop prompt on the map. Observed categories: Blocks, Swords,
   Pickaxes, Armor.
-- **Quick Actions** — one-shot `EquipTool` and `WearArmor` calls with editable
-  arguments.
-- **Bed Nuker** gains an optional *Server hit* that also reports the bed
-  through `SwordHit`, since that remote takes a model.
+- **Server Miner** — `MineBlock` names the tool, the block, its grid position,
+  where the swing came from and which way it went, all chosen by the client:
+  so it mines every block in range without a pickaxe equipped, without standing
+  next to it and without pointing at it. Range, rate, blocks per tick and a
+  name filter.
+- **Quick Actions** — one-shot `EquipTool`, `WearArmor` and `DropItem` calls
+  with editable arguments.
+- **Bed Nuker** gains an optional *Server hit* through `SwordHit` and an
+  optional *Mine remote* through `MineBlock`, both aimed at the bed's own part.
+  Beds did not break by hand in testing, so which of the two the server accepts
+  for a bed is still an open question — both are off by default.
 
-`MineBlock` and `DestroyBlock` are still uncaptured — mine a block with the
-logger on and they can be driven the same way.
+**Nothing has to be in your hands.** Every one of these remotes takes the
+*name* of a tool, not the tool itself: `MineBlock("Wooden Pickaxe", …)`,
+`SwordHit(model, "Wooden Sword")`, `PlaceBlock("Blue Wool", …)`. So Server
+Aura, Server Miner and Server Scaffold all work empty-handed, and the universal
+Kill Aura's *Auto equip* is off by default — nothing in this menu decides what
+you are holding unless you ask it to.
+
+`PlaceBlock`'s second argument turned out not to be constant (5 in one session,
+3 in another — most likely the hotbar slot), so it is exposed as *Variant*
+rather than baked in. `DestroyBlock` is still uncaptured.
 
 ## MM2 module
 

@@ -727,7 +727,14 @@ function Module.init(context: Runtime): any
     table.insert(advancedRows, aura:CreateToggle({
         Name = "Auto equip",
         Default = false,
-        Tooltip = "Pull the first tool out of the backpack when empty-handed.",
+        Tooltip = "Pull the weapon out of the backpack when empty-handed. Off "
+            .. "by default: most games this module helps in do not need "
+            .. "anything in your hands at all.",
+        Function = function(value: boolean): ()
+            if weapons then
+                weapons:SetAllowEquip(value)
+            end
+        end,
     }))
     table.insert(advancedRows, aura:CreateToggle({
         Name = "Highlight targets",

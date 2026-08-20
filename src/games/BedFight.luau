@@ -23,6 +23,17 @@
 --   SwordHit            :FireServer(«Model PlayersContainer.someone», "Wooden Sword")
 --   PurchaseItemShopItem:FireServer(«Part …ItemShopPrompts.ItemShopPrompt», "Blocks", "Wool")
 --   WearArmor           :FireServer("", "Pants")
+--   MineBlock           :FireServer("Wooden Pickaxe", «Part …PlayersBlocksContainer.Wool.Blue Wool»,
+--                                   Vector3(30, 69, 288), Vector3(30.93, 75.36, 287.98),
+--                                   Vector3(-0.13, -0.98, -0.12))
+--   DropItem            :FireServer("Blue Wool", "All")
+--
+-- `MineBlock` is the other one worth having: tool *name*, the block part, the
+-- block's grid position, where the swing came from and the direction it went.
+-- Every one of those is something the client chooses, so mining does not
+-- require standing next to the block, holding the pickaxe, or pointing at it.
+-- `PlaceBlock`'s second argument is not the constant it first looked like — it
+-- came back as 5 and then as 3 — so it is exposed rather than hard-coded.
 --
 -- `SwordHit` is the interesting one: the client names the victim and the
 -- weapon, and the server takes its word for it. Damage therefore does not
@@ -215,7 +226,7 @@ function Module.init(runtime: any): any
     }
     local placeSettings: any = {
         block = "",
-        variant = 5,
+        variant = 3,
         grid = 3,
         rate = 8,
         ahead = 1,
@@ -223,6 +234,10 @@ function Module.init(runtime: any): any
 
     -- The equipped weapon names itself: the client parents the view model of
     -- whatever you are holding under the camera.
+    -- Names, not objects. Every one of these remotes takes the *name* of the
+    -- tool, so none of them needs the tool in your hands: the view model is
+    -- read as a convenience when you happen to be holding something, and the
+    -- typed name wins when you are not.
     local function equippedWeaponName(): string
         if auraSettings.weapon ~= "" then
             return auraSettings.weapon
@@ -563,7 +578,12 @@ function Module.init(runtime: any): any
     -- arguments are not in the dump, so this drives the game's own controls
     -- instead of inventing a call. Turn on the Remote Logger, break one bed by
     -- hand, and the log will say exactly what a future version could send.
-    local nukerSettings: any = {range = 24, rate = 12, serverHit = false}
+    local nukerSettings: any = {
+        range = 24,
+        rate = 12,
+        serverHit = false,
+        mine = false,
+    }
     local NukerFeature: any = createUniversalFeature(
         "Bed Nuker",
         "Hits the nearest bed in range as fast as the game allows",
@@ -628,6 +648,33 @@ function Module.init(runtime: any): any
                             )
                         end
                     end
+                    if nukerSettings.mine then
+                        -- The mining remote, aimed at the bed's own part. Beds
+                        -- may or may not be minable; the call costs nothing to
+                        -- try and the option is off by default.
+                        local origin: BasePart? = character
+                            and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+                        if origin then
+                            local from: Vector3 = (origin :: BasePart).Position
+                            local to: Vector3 = (target :: BasePart).Position
+                            local heading: Vector3 = to - from
+                            heading = heading.Magnitude > 0.001
+                                and heading.Unit
+                                or Vector3.new(0, -1, 0)
+                            fireRemote(
+                                "ItemsRemotes.MineBlock",
+                                "Wooden Pickaxe",
+                                target,
+                                Vector3.new(
+                                    math.round(to.X),
+                                    math.round(to.Y),
+                                    math.round(to.Z)
+                                ),
+                                from,
+                                heading
+                            )
+                        end
+                    end
                     -- Contact as well as the swing: a pickaxe that damages on
                     -- touch never registers from the button alone.
                     local fire: any = environment.firetouchinterest
@@ -667,6 +714,9 @@ function Module.init(runtime: any): any
     )
     addToggleOption(NukerFeature, "Server hit", false, function(value: boolean): ()
         nukerSettings.serverHit = value
+    end)
+    addToggleOption(NukerFeature, "Mine remote", false, function(value: boolean): ()
+        nukerSettings.mine = value
     end)
     addInformationOption(
         NukerFeature,
@@ -1191,8 +1241,132 @@ function Module.init(runtime: any): any
     end)
     addInformationOption(
         ServerScaffoldFeature,
-        "Variant is the second argument the client always sends as 5. Leave "
-            .. "the block empty to use whatever you are holding."
+        "Variant is the second argument, which the client sent as 5 once and 3 "
+            .. "another time — most likely the hotbar slot. Leave the block "
+            .. "empty to use whatever you are holding, or type one and hold "
+            .. "nothing at all."
+    )
+
+    -- Server Miner ---------------------------------------------------------------
+    --
+    -- `MineBlock` names the tool, so the pickaxe does not have to be equipped,
+    -- and it carries the block, its grid position, an origin and a direction —
+    -- all chosen by the client. Blocks players place live in
+    -- `Workspace.PlayersBlocksContainer`, sorted into folders by material.
+    local minerSettings: any = {
+        tool = "Wooden Pickaxe",
+        range = 40,
+        rate = 10,
+        perTick = 3,
+        filter = "",
+    }
+
+    local function minableBlocks(origin: Vector3, range: number, filter: string): {BasePart}
+        local found: {BasePart} = {}
+        local container: Instance? = workspace:FindFirstChild("PlayersBlocksContainer")
+        if not container then
+            return found
+        end
+        local wanted: string = string.lower(filter)
+        for _, group: Instance in ipairs(container:GetChildren()) do
+            for _, block: Instance in ipairs(group:GetChildren()) do
+                if not block:IsA("BasePart") then
+                    continue
+                end
+                if wanted ~= ""
+                    and not string.find(string.lower(block.Name), wanted, 1, true) then
+                    continue
+                end
+                if ((block :: BasePart).Position - origin).Magnitude > range then
+                    continue
+                end
+                table.insert(found, block :: BasePart)
+            end
+        end
+        table.sort(found, function(first: BasePart, second: BasePart): boolean
+            return (first.Position - origin).Magnitude
+                < (second.Position - origin).Magnitude
+        end)
+        return found
+    end
+
+    local function mineBlock(block: BasePart, origin: Vector3): ()
+        local target: Vector3 = block.Position
+        local direction: Vector3 = target - origin
+        if direction.Magnitude > 0.001 then
+            direction = direction.Unit
+        else
+            direction = Vector3.new(0, -1, 0)
+        end
+        -- Third argument is the block's own grid position, fourth is where the
+        -- swing came from, fifth is the direction it travelled: exactly the
+        -- shape the client sends.
+        fireRemote(
+            "ItemsRemotes.MineBlock",
+            minerSettings.tool,
+            block,
+            Vector3.new(
+                math.round(target.X),
+                math.round(target.Y),
+                math.round(target.Z)
+            ),
+            origin,
+            direction
+        )
+    end
+
+    local MinerFeature: any = createUniversalFeature(
+        "Server Miner",
+        "Mines the blocks around you without holding a pickaxe",
+        10,
+        function(enabled: boolean): ()
+            host.disconnectFeatureConnection("BedFightMiner")
+            if not enabled then
+                return
+            end
+            local nextAt: number = 0
+            host.featureConnections.BedFightMiner =
+                TaskManager:Connect(function(): ()
+                    local now: number = os.clock()
+                    if now < nextAt then
+                        return
+                    end
+                    nextAt = now + 1 / math.max(minerSettings.rate, 0.5)
+
+                    local root: BasePart? = LocalPlayer.Character
+                        and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+                    if not root then
+                        return
+                    end
+                    local origin: Vector3 = (root :: BasePart).Position
+                    local blocks: {BasePart} =
+                        minableBlocks(origin, minerSettings.range, minerSettings.filter)
+                    for index: number = 1, math.min(#blocks, math.round(minerSettings.perTick)) do
+                        mineBlock(blocks[index], origin)
+                    end
+                end)
+        end,
+        {parent = scroll, registry = registry, categoryName = "Combat"}
+    )
+    addTextOption(MinerFeature, "Pickaxe", minerSettings.tool, function(value: string): ()
+        minerSettings.tool = value
+    end)
+    addTextOption(MinerFeature, "Only blocks named", "", function(value: string): ()
+        minerSettings.filter = value
+    end)
+    addNumberOption(MinerFeature, "Range", minerSettings.range, 5, 300, function(value: number): ()
+        minerSettings.range = value
+    end)
+    addNumberOption(MinerFeature, "Mines per second", minerSettings.rate, 1, 30, function(value: number): ()
+        minerSettings.rate = value
+    end)
+    addNumberOption(MinerFeature, "Blocks per tick", minerSettings.perTick, 1, 12, function(value: number): ()
+        minerSettings.perTick = value
+    end)
+    addInformationOption(
+        MinerFeature,
+        "The pickaxe is a name, not an object: nothing has to be equipped. "
+            .. "Leave the filter empty for every block in range."
     )
 
     -- Auto Buy ----------------------------------------------------------------
@@ -1285,7 +1459,12 @@ function Module.init(runtime: any): any
             category = true,
         }
     )
-    local quickSettings: any = {tool = "Wooden Sword", armor = "", slot = "Pants"}
+    local quickSettings: any = {
+        tool = "Wooden Sword",
+        armor = "",
+        slot = "Pants",
+        drop = "Blue Wool",
+    }
     addTextOption(QuickFeature, "Tool", quickSettings.tool, function(value: string): ()
         quickSettings.tool = value
     end)
@@ -1300,6 +1479,14 @@ function Module.init(runtime: any): any
     end)
     host.addActionOption(QuickFeature, "Wear armor", function(): ()
         fireRemote("WearArmor", quickSettings.armor, quickSettings.slot)
+    end)
+    addTextOption(QuickFeature, "Drop item", quickSettings.drop, function(value: string): ()
+        quickSettings.drop = value
+    end)
+    host.addActionOption(QuickFeature, "Drop all of it", function(): ()
+        -- The client sends the item name and how much: "All" is what the drop
+        -- button itself sends.
+        fireRemote("ItemsRemotes.DropItem", quickSettings.drop, "All")
     end)
     addInformationOption(
         QuickFeature,
@@ -1326,6 +1513,7 @@ function Module.destroy(): ()
             "BedFightServerAura",
             "BedFightServerScaffold",
             "BedFightBuy",
+            "BedFightMiner",
         })
     do
         if host.disconnectFeatureConnection then

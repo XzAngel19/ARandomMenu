@@ -1080,6 +1080,47 @@ if playerGuiForCount then
     playerGuiForCount.GetDescendants = realGetDescendants
 end
 
+-- Equipping is never forced -------------------------------------------------------
+
+section("Nothing is taken out of your hands")
+
+-- A stowed tool in the backpack, nothing held.
+sword.Parent = nil
+local stowed: any = Mock.newInstance("Tool")
+stowed.Name = "Backpack Sword"
+local stowedHandle: any = Mock.newInstance("Part")
+stowedHandle.Name = "Handle"
+stowedHandle.Parent = stowed
+stowed.Parent = world.localPlayer:FindFirstChild("Backpack")
+
+local equipped: number = 0
+local humanoid: any = world.localPlayer.Character:FindFirstChildOfClass("Humanoid")
+local realEquip: any = humanoid.EquipTool
+humanoid.EquipTool = function(self: any, tool: any): ()
+    equipped += 1
+    realEquip(self, tool)
+end
+
+weapons:Invalidate()
+weapons:SetAllowEquip(false)
+weapons:Swing()
+check("a stowed tool is not equipped by default", equipped == 0,
+    "equips: " .. tostring(equipped))
+
+-- And when the player does ask for it, it happens.
+weapons:Invalidate()
+weapons:SetAllowEquip(true)
+local candidate: any = weapons:Find("Backpack Sword")
+if candidate then
+    weapons:Activate(candidate)
+end
+check("it is equipped when the option is on", equipped == 1,
+    "equips: " .. tostring(equipped))
+weapons:SetAllowEquip(false)
+humanoid.EquipTool = realEquip
+stowed:Destroy()
+sword.Parent = world.localPlayer.Character
+
 -- Teardown -------------------------------------------------------------------
 
 section("Teardown")
