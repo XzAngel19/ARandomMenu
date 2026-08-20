@@ -241,7 +241,21 @@ function Host.create(world: any): HostStub
         KeyboardEnabled = true,
         TouchEnabled = false,
     }
+    host.UserInputService.InputBegan = Mock.signal()
     host.state = {
+        keyCaptureCallback = nil,
+        waitingForKey = false,
+        -- Modules bind their card's key slot through this; the stub records
+        -- the pair so a test can arm and release a hold binding directly.
+        bindFeatureActivationKey = function(
+            feature: any,
+            _key: any,
+            press: any,
+            release: any
+        ): ()
+            world.bindings = world.bindings or {}
+            world.bindings[feature.name] = {press = press, release = release}
+        end,
         getAimRay = function(): any
             return world.aimRay
         end,

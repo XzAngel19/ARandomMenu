@@ -1,0 +1,408 @@
+--!strict
+--
+-- Kill Aura.
+--
+-- Swings whatever melee weapon you are holding at everyone around you. Vape's
+-- version is one range slider, a CPS slider and an angle; this one separates
+-- the three decisions that actually change how it behaves in a game:
+--
+--   * When to swing      — swing range, field of view, wall check, priority.
+--   * How to hit         — the tool's own Activate, plus contact firing
+--                          (`firetouchinterest`) for weapons that only damage
+--                          on touch, at a shorter attack range.
+--   * How obvious to be  — rotation off, snapped for a single frame around the
+--                          swing (silent), or held on the target.
+--
+-- Defaults are deliberately playable: a single target, 12-stud reach, 9 swings
+-- a second, a 220° field of view, walls respected and friends skipped. Turning
+-- it on and leaving every option alone works; the rest is folded away behind
+-- one switch.
+
+export type Runtime = {
+    framework: any,
+    entity: any,
+    host: any,
+}
+
+local Module = {
+    Name = "KillAura",
+    PlaceId = 0,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local activeCleanup: (() -> ())? = nil
+
+-- Melee damage in Roblox arrives one of three ways, and a weapon can use any
+-- combination of them, so all three are attempted per swing.
+local function activateTool(tool: Tool?): ()
+    if not tool then
+        return
+    end
+    pcall(function(): ()
+        tool:Activate()
+    end)
+end
+
+local function fireContact(handle: BasePart?, target: BasePart): ()
+    if not handle then
+        return
+    end
+    local environment: any = getfenv()
+    local fire: any = environment.firetouchinterest
+    if type(fire) ~= "function" then
+        return
+    end
+    -- 1 = TouchEnded, 0 = TouchBegan; both are needed or the game keeps
+    -- thinking the parts are still overlapping and ignores the next swing.
+    pcall(fire, handle, target, 1)
+    pcall(fire, handle, target, 0)
+end
+
+function Module.init(context: Runtime): any
+    local host: any = context.host
+    local framework: any = context.framework
+    local entityLibrary: any = context.entity
+    local localPlayer: Player = host.LocalPlayer
+    local userInput: UserInputService = host.UserInputService
+    local currentWorkspace: Workspace = host.workspace or workspace
+
+    local nextSwingAt: number = 0
+    local highlights: {[Player]: Highlight} = {}
+
+    local function clearHighlights(keep: {[Player]: boolean}?): ()
+        for player: Player, highlight: Highlight in pairs(highlights) do
+            if not keep or not keep[player] then
+                pcall(function(): ()
+                    highlight:Destroy()
+                end)
+                highlights[player] = nil
+            end
+        end
+    end
+
+    local function markTarget(entity: any, inAttackRange: boolean, options: any): ()
+        if not options["Highlight targets"].Value then
+            return
+        end
+        local existing: Highlight? = highlights[entity.Player]
+        if not existing or not existing.Parent then
+            local created: Highlight = Instance.new("Highlight")
+            created.Name = "RTM_KillAuraTarget"
+            created.FillTransparency = 0.75
+            created.Parent = entity.Character
+            highlights[entity.Player] = created
+            existing = created
+        end
+        local highlight: Highlight = existing :: Highlight
+        highlight.Adornee = entity.Character
+        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        -- Two states, because "in swing range" and "actually being hit" are
+        -- different things and the gap between them is where reach cheating
+        -- becomes visible.
+        local colour: Color3 = inAttackRange
+            and options["Attack colour"].Value
+            or options["Reach colour"].Value
+        highlight.FillColor = colour
+        highlight.OutlineColor = colour
+    end
+
+    local function equippedTool(): (Tool?, BasePart?)
+        local character: Model? = localPlayer.Character
+        if not character then
+            return nil, nil
+        end
+        local tool: Tool? = character:FindFirstChildOfClass("Tool")
+        if not tool then
+            return nil, nil
+        end
+        return tool, tool:FindFirstChild("Handle") :: BasePart?
+    end
+
+    local function equipFromBackpack(): ()
+        local backpack: Instance? = localPlayer:FindFirstChild("Backpack")
+        local humanoid: Humanoid? = localPlayer.Character
+            and localPlayer.Character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+        if not backpack or not humanoid then
+            return
+        end
+        local tool: Tool? = backpack:FindFirstChildOfClass("Tool")
+        if tool then
+            pcall(function(): ()
+                humanoid:EquipTool(tool)
+            end)
+        end
+    end
+
+    local aura: any
+    aura = framework.Categories.Combat:CreateModule({
+        Name = "Kill Aura",
+        Category = "Combat",
+        Order = 1,
+        Tooltip = "Swings your weapon at everyone in reach, with its own "
+            .. "range, rate, field of view and rotation.",
+        Function = function(enabled: boolean): ()
+            nextSwingAt = 0
+            if not enabled then
+                clearHighlights()
+                return
+            end
+
+            aura:Clean(function(): ()
+                clearHighlights()
+            end)
+
+            aura:Loop(function(): ()
+                local options: any = aura.Options
+                if options["Activation"].Value == "Hold key"
+                    and not userInput:IsKeyDown(options["Hold key"].Value) then
+                    clearHighlights()
+                    return
+                end
+                if not entityLibrary:IsAlive() then
+                    clearHighlights()
+                    return
+                end
+
+                local tool: Tool?, handle: BasePart? = equippedTool()
+                if not tool then
+                    if options["Auto equip"].Value then
+                        equipFromBackpack()
+                    end
+                    if options["Require tool"].Value then
+                        clearHighlights()
+                        return
+                    end
+                end
+
+                entityLibrary:Refresh()
+                local targets: {any} = entityLibrary:InRange({
+                    Range = options["Swing range"].Value,
+                    Limit = math.round(options["Max targets"].Value),
+                    IgnoreTeam = not options["Team check"].Value,
+                    IgnoreWalls = not options["Wall check"].Value,
+                    Angle = options["Field of view"].Value,
+                    Sort = options["Priority"].Value,
+                })
+                if #targets == 0 then
+                    clearHighlights()
+                    return
+                end
+
+                local now: number = os.clock()
+                local rate: number = math.max(options["Swings per second"].Value, 0.5)
+                local jitter: number = options["Rate jitter"].Value
+                local canSwing: boolean = now >= nextSwingAt
+                local attackRange: number = options["Attack range"].Value
+                local mode: string = options["Mode"].Value
+                local keep: {[Player]: boolean} = {}
+
+                local root: BasePart? = entityLibrary.LocalEntity
+                    and entityLibrary.LocalEntity.RootPart
+                local rotation: string = options["Rotation"].Value
+                local originalCFrame: CFrame? = root and root.CFrame or nil
+
+                if canSwing then
+                    -- One randomised interval per swing rather than a fixed
+                    -- clock: a perfectly even 9.00 CPS is the easiest thing in
+                    -- the world for a server to notice.
+                    nextSwingAt = now
+                        + (1 / rate)
+                        + (math.random() - 0.5) * 2 * jitter
+                end
+
+                if rotation ~= "Off" and root then
+                    local first: any = targets[1]
+                    local flat: Vector3 = first.RootPart.Position
+                        * Vector3.new(1, 0, 1)
+                    root.CFrame = CFrame.lookAt(
+                        root.Position,
+                        Vector3.new(flat.X, root.Position.Y + 0.01, flat.Z)
+                    )
+                end
+
+                for index: number, entity: any in ipairs(targets) do
+                    if mode == "Single" and index > 1 then
+                        break
+                    end
+                    keep[entity.Player] = true
+                    local inAttackRange: boolean = entity.Distance <= attackRange
+                    markTarget(entity, inAttackRange, options)
+
+                    if not canSwing then
+                        continue
+                    end
+                    activateTool(tool)
+                    if not inAttackRange or not options["Contact damage"].Value then
+                        continue
+                    end
+                    -- Contact firing needs a part to touch: the parts actually
+                    -- inside the target's box, not just the root, or weapons
+                    -- with limb-only hitboxes never register.
+                    local overlap: OverlapParams = OverlapParams.new()
+                    overlap.FilterType = Enum.RaycastFilterType.Include
+                    overlap.FilterDescendantsInstances = {entity.Character}
+                    local parts: {BasePart} = currentWorkspace:GetPartBoundsInBox(
+                        entity.RootPart.CFrame,
+                        Vector3.new(5, 6, 5),
+                        overlap
+                    )
+                    for _, part: BasePart in ipairs(parts) do
+                        fireContact(handle, part)
+                    end
+                end
+
+                -- Silent rotation puts the character back the way the player
+                -- left it, so the camera never fights the aura.
+                if rotation == "Silent" and root and originalCFrame then
+                    root.CFrame = originalCFrame :: CFrame
+                end
+
+                clearHighlights(keep)
+            end)
+        end,
+    })
+
+    aura:CreateSection("Targeting")
+    aura:CreateSlider({
+        Name = "Swing range",
+        Min = 5,
+        Max = 60,
+        Default = 12,
+        Tooltip = "Distance at which the weapon starts swinging.",
+    })
+    aura:CreateSlider({
+        Name = "Max targets",
+        Min = 1,
+        Max = 10,
+        Default = 3,
+    })
+    aura:CreateDropdown({
+        Name = "Mode",
+        List = {"Multi", "Single"},
+        Index = 1,
+        Tooltip = "Multi hits everyone in reach per swing, Single sticks to "
+            .. "the best target.",
+    })
+    aura:CreateDropdown({
+        Name = "Priority",
+        List = {"Distance", "Health", "Threat"},
+        Index = 1,
+        Tooltip = "Which target comes first: nearest, weakest, or the one "
+            .. "most dangerous to you.",
+    })
+    aura:CreateSlider({
+        Name = "Swings per second",
+        Min = 1,
+        Max = 20,
+        Default = 9,
+    })
+
+    local advancedRows: {any} = {}
+    table.insert(advancedRows, aura:CreateSection("Advanced"))
+    table.insert(advancedRows, aura:CreateDropdown({
+        Name = "Activation",
+        List = {"Always", "Hold key"},
+        Index = 1,
+    }))
+    table.insert(advancedRows, aura:CreateBind({
+        Name = "Hold key",
+        Default = Enum.KeyCode.Unknown,
+    }))
+    table.insert(advancedRows, aura:CreateSlider({
+        Name = "Attack range",
+        Min = 5,
+        Max = 40,
+        Default = 14,
+        Tooltip = "Distance at which contact damage is fired. Keep it near "
+            .. "the weapon's real reach.",
+    }))
+    table.insert(advancedRows, aura:CreateSlider({
+        Name = "Field of view",
+        Min = 30,
+        Max = 360,
+        Default = 220,
+        Tooltip = "Degrees in front of you a target has to be inside.",
+    }))
+    table.insert(advancedRows, aura:CreateSlider({
+        Name = "Rate jitter",
+        Min = 0,
+        Max = 0.2,
+        Default = 0.03,
+        Tooltip = "Random seconds added to or taken off each interval.",
+    }))
+    table.insert(advancedRows, aura:CreateDropdown({
+        Name = "Rotation",
+        List = {"Off", "Silent", "Face"},
+        Index = 2,
+        Tooltip = "Silent turns you for the swing only and puts you back; "
+            .. "Face keeps you pointed at the target.",
+    }))
+    table.insert(advancedRows, aura:CreateToggle({
+        Name = "Contact damage",
+        Default = true,
+        Tooltip = "Also fire the weapon's touch events. Needed by most melee "
+            .. "weapons; requires firetouchinterest.",
+    }))
+    table.insert(advancedRows, aura:CreateToggle({
+        Name = "Wall check",
+        Default = true,
+    }))
+    table.insert(advancedRows, aura:CreateToggle({
+        Name = "Team check",
+        Default = true,
+    }))
+    table.insert(advancedRows, aura:CreateToggle({
+        Name = "Require tool",
+        Default = true,
+        Tooltip = "Do nothing while your hands are empty.",
+    }))
+    table.insert(advancedRows, aura:CreateToggle({
+        Name = "Auto equip",
+        Default = false,
+        Tooltip = "Pull the first tool out of the backpack when empty-handed.",
+    }))
+    table.insert(advancedRows, aura:CreateToggle({
+        Name = "Highlight targets",
+        Default = true,
+    }))
+    table.insert(advancedRows, aura:CreateColor({
+        Name = "Attack colour",
+        Default = Color3.fromRGB(235, 110, 110),
+    }))
+    table.insert(advancedRows, aura:CreateColor({
+        Name = "Reach colour",
+        Default = Color3.fromRGB(150, 150, 158),
+    }))
+
+    aura:CreateToggle({
+        Name = "Show advanced",
+        Default = false,
+        Tooltip = "Everything above works on its own; this reveals the rest.",
+        Function = function(value: boolean): ()
+            for _, option: any in ipairs(advancedRows) do
+                option:SetVisible(value)
+            end
+        end,
+    })
+
+    aura:CreateNote(
+        "Friend List protects players from this module in every game."
+    )
+
+    activeCleanup = function(): ()
+        clearHighlights()
+    end
+    Module.Initialized = true
+    return aura
+end
+
+function Module.destroy(): ()
+    if activeCleanup then
+        pcall(activeCleanup)
+    end
+    activeCleanup = nil
+    Module.Initialized = false
+end
+
+return Module

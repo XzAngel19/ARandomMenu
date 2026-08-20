@@ -104,6 +104,27 @@ while IFS= read -r path; do
 done < <(grep -oE '"src/[^"]+\.luau"' src/core/Manifest.luau | tr -d '"' | sort -u)
 echo "ok"
 
+step "Asset manifests point at files that exist"
+python3 - <<'PYTHON'
+import json
+import os
+
+base = "src/gui/Current/"
+failures = []
+with open(base + "Assets/manifest.json") as handle:
+    for key, entry in json.load(handle)["assets"].items():
+        path = entry.get("path")
+        if path and not os.path.exists(base + path):
+            failures.append(key + " -> " + path)
+with open(base + "Images/manifest.json") as handle:
+    for key, name in json.load(handle)["images"].items():
+        if name and not os.path.exists(base + "Images/" + name):
+            failures.append(key + " -> " + name)
+if failures:
+    raise SystemExit("missing assets:\n  " + "\n  ".join(failures))
+PYTHON
+echo "ok"
+
 step "Strict Luau headers"
 while IFS= read -r file; do
     test "$(head -n 1 "$file")" = "--!strict" || {

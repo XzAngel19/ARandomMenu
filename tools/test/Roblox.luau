@@ -116,6 +116,31 @@ function Vector2Meta.__index(self: any, key: string): any
     return rawget(Vector2Meta, key)
 end
 
+-- CFrames -------------------------------------------------------------------
+--
+-- Only the four things the modules touch: a position, the two direction
+-- vectors, and adding a Vector3 to move it.
+
+local CFrameMeta: any = {}
+CFrameMeta.__index = CFrameMeta
+
+local function cframe(position: any, look: any?): any
+    return setmetatable({
+        Position = position,
+        LookVector = look or vector3(0, 0, -1),
+        RightVector = vector3(1, 0, 0),
+        UpVector = vector3(0, 1, 0),
+    }, CFrameMeta)
+end
+
+function CFrameMeta.__add(a: any, b: any): any
+    return cframe(a.Position + b, a.LookVector)
+end
+
+function CFrameMeta.__sub(a: any, b: any): any
+    return cframe(a.Position - b, a.LookVector)
+end
+
 -- Signals ------------------------------------------------------------------
 
 local function signal(): any
@@ -333,7 +358,42 @@ function Mock.install(): MockWorld
         EasingStyle = enumFolder({"Quad", "Sine", "Linear"}),
         EasingDirection = enumFolder({"Out", "In", "InOut"}),
         Material = enumFolder({"Air", "Plastic"}),
+        UserInputType = enumFolder({
+            "Touch",
+            "MouseButton1",
+            "MouseButton2",
+            "Keyboard",
+        }),
+        ScaleType = enumFolder({"Crop", "Fit", "Stretch"}),
     }
+
+    globals.CFrame = {
+        new = function(x: any, y: number?, z: number?): any
+            if type(x) == "number" then
+                return cframe(vector3(x, y or 0, z or 0))
+            end
+            return cframe(x)
+        end,
+        lookAt = function(from: any, to: any): any
+            local delta: any = to - from
+            local magnitude: number = delta.Magnitude
+            return cframe(from, magnitude > 0 and delta.Unit or vector3(0, 0, -1))
+        end,
+        identity = cframe(vector3(0, 0, 0)),
+    }
+
+    globals.OverlapParams = {
+        new = function(): any
+            return {FilterType = nil, FilterDescendantsInstances = {}}
+        end,
+    }
+
+    -- Melee weapons damage through touch events; the mock counts the calls so
+    -- a test can prove Kill Aura fired contact on the right parts.
+    world.touchFires = 0
+    globals.firetouchinterest = function(_handle: any, _part: any, _state: number): ()
+        world.touchFires += 1
+    end
 
     globals.RaycastParams = {
         new = function(): any
@@ -358,7 +418,17 @@ function Mock.install(): MockWorld
         return vector3(640 + position.X * 10, 360 - position.Y * 10, position.Z),
             position.Z <= 0
     end
+    -- Screen space includes the top bar; viewport space does not. Click
+    -- Teleport has to use this one, so the mock keeps them distinguishable.
+    function camera:ScreenPointToRay(x: number, y: number): any
+        world.lastRayCall = "ScreenPointToRay"
+        return {
+            Origin = self.CFrame.Position,
+            Direction = vector3((x - 640) / 640, (396 - y) / 360, -1),
+        }
+    end
     function camera:ViewportPointToRay(x: number, y: number): any
+        world.lastRayCall = "ViewportPointToRay"
         return {
             Origin = self.CFrame.Position,
             Direction = vector3((x - 640) / 640, (360 - y) / 360, -1),
@@ -370,6 +440,17 @@ function Mock.install(): MockWorld
     mockWorkspace.Gravity = 196.2
     function mockWorkspace:Raycast(_origin: any, _direction: any, _params: any): any
         return world.raycastResult
+    end
+    function mockWorkspace:GetPartBoundsInBox(_pivot: any, _size: any, params: any): {any}
+        local found: {any} = {}
+        for _, instance: any in ipairs(params.FilterDescendantsInstances or {}) do
+            for _, child: any in ipairs(instance:GetChildren()) do
+                if child.ClassName == "Part" then
+                    table.insert(found, child)
+                end
+            end
+        end
+        return found
     end
 
     globals.workspace = mockWorkspace
@@ -467,9 +548,15 @@ function Mock.install(): MockWorld
         humanoid.Health = 100
         humanoid.MaxHealth = 100
         humanoid.Parent = character
+        humanoid.HipHeight = 2
+        function humanoid:EquipTool(tool: any): ()
+            tool.Parent = character
+        end
         local root: any = newInstance("Part")
         root.Name = "HumanoidRootPart"
         root.Position = position
+        root.CFrame = cframe(position)
+        root.AssemblyLinearVelocity = vector3(0, 0, 0)
         root.Parent = character
         local head: any = newInstance("Part")
         head.Name = "Head"
@@ -510,6 +597,12 @@ function Mock.install(): MockWorld
         player.Neutral = false
         player.CharacterAdded = signal()
         player.Character = buildCharacter(name, position)
+        function player:IsFriendsWithAsync(_userId: number): boolean
+            return false
+        end
+        local backpack: any = newInstance("Backpack")
+        backpack.Name = "Backpack"
+        backpack.Parent = player
         table.insert(roster, player)
         playersService.PlayerAdded:Fire(player)
         return player

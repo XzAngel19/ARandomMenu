@@ -103,47 +103,20 @@ local mm2Settings = {
     autoPlayId = "",
 }
 
-local friendSettings = {
-    names = {},
-    protectRobloxFriends = true,
-    friendUserIds = {},
-}
-
-local function refreshFriendProtection()
-    friendSettings.friendUserIds = {}
-    if friendSettings.protectRobloxFriends then
-        for _, player in ipairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer then
-                local success, friend = pcall(
-                    LocalPlayer.IsFriendsWithAsync,
-                    LocalPlayer,
-                    player.UserId
-                )
-                if success and friend then
-                    friendSettings.friendUserIds[player.UserId] = true
-                end
-            end
-        end
-    end
-end
-
-state.isProtectedTarget = function(player)
+-- Friend protection is universal now: the list, the Roblox-friend lookup and
+-- the UI all live in src/modules/Utility/FriendList.luau, so the protection
+-- follows the player into every other game instead of existing only here.
+-- MM2 keeps the question it always asked and forwards it.
+state.isProtectedTarget = function(player: Player?): boolean
     if not player or player == LocalPlayer then
         return true
     end
-    if friendSettings.friendUserIds[player.UserId] then
-        return true
+    local friendList: any = state.friendList
+    if friendList and type(friendList.isProtected) == "function" then
+        return friendList.isProtected(player) == true
     end
-    local name = string.lower(player.Name)
-    local displayName = string.lower(player.DisplayName)
-    return friendSettings.names[name] == true
-        or friendSettings.names[displayName] == true
+    return false
 end
-
-featureConnections.MM2FriendPlayerAdded = Players.PlayerAdded:Connect(function()
-    task.defer(refreshFriendProtection)
-end)
-task.spawn(refreshFriendProtection)
 
 local function clearEffects(folder)
     for _, child in ipairs(folder:GetChildren()) do
@@ -5286,32 +5259,6 @@ addActionOption(FlingGroup, "Fling All Innocents", function()
     end)
 end)
 
-local FriendFeature = createUniversalFeature(
-    "FriendList",
-    "Protect listed players from targeting and damage helpers",
-    16,
-    function() end,
-    {
-        category = true,
-        parent = MM2Scroll,
-        registry = mm2Features,
-    }
-)
-addTextOption(FriendFeature, "Protected names", "", function(value)
-    friendSettings.names = {}
-    for name in string.gmatch(string.lower(value), "[^,%s]+") do
-        friendSettings.names[name] = true
-    end
-end)
-addToggleOption(FriendFeature, "Protect Roblox friends", true, function(value)
-    friendSettings.protectRobloxFriends = value
-    task.spawn(refreshFriendProtection)
-end)
-addInformationOption(
-    FriendFeature,
-    "Separate names with commas. Shoot, Knife Aura and Fling will ignore them."
-)
-
 local hiddenNameLabels = setmetatable({}, {__mode = "k"})
 local function toggleHideNames(enabled)
     disconnectFeatureConnection("MM2HideNames")
@@ -5407,7 +5354,6 @@ cleanupMM2Runtime = function()
     for _, connectionName: string in ipairs({
         "MM2RoleEspPlayerAdded",
         "MM2RoleEspPlayerRemoving",
-        "MM2FriendPlayerAdded",
         "MM2PlayerDataChanged",
         "MM2TimerTrackerStart",
         "MM2TimerTrackerEnd",

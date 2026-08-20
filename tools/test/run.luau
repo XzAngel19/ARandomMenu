@@ -290,10 +290,184 @@ stub.step(0.016)
 check("nothing fires while disabled", (tool.Activations or 0) == 1,
     "activations: " .. tostring(tool.Activations))
 
+-- Friend list ----------------------------------------------------------------
+
+section("Friend list")
+
+local FriendFile: any = require("../../src/modules/Utility/FriendList")
+Mock.inject(world, FriendFile.init)
+local friendList: any = FriendFile.init(espContext)
+
+check("card is always-on", friendList.Feature.kind == "group")
+check("list is published on state", host.state.friendList ~= nil)
+check("the local player is always protected",
+    host.state.friendList.isProtected(world.localPlayer) == true)
+check("an unlisted player is not protected",
+    host.state.friendList.isProtected(enemy) == false)
+
+friendList.Options["Protected names"].Value = "Enemy"
+host.state.friendList.names = {enemy = true}
+check("a listed player is protected",
+    host.state.friendList.isProtected(enemy) == true)
+host.state.friendList.names = {}
+
+-- Kill Aura ------------------------------------------------------------------
+
+section("Kill Aura")
+
+local AuraFile: any = require("../../src/modules/Combat/KillAura")
+Mock.inject(world, AuraFile.init)
+local aura: any = AuraFile.init(espContext)
+
+check("card is registered", aura ~= nil and aura.Name == "Kill Aura")
+for _, name: string in ipairs({
+    "Swing range",
+    "Max targets",
+    "Mode",
+    "Priority",
+    "Swings per second",
+    "Attack range",
+    "Field of view",
+    "Rotation",
+    "Contact damage",
+    "Wall check",
+    "Team check",
+    "Highlight targets",
+}) do
+    check("option: " .. name, aura.Options[name] ~= nil)
+end
+check("advanced rows start hidden",
+    aura.Options["Rotation"].Object ~= nil
+        and aura.Options["Rotation"].Object.Parent.Visible == false)
+
+-- The enemy sits 30 studs away; bring them into reach.
+enemy.Character:FindFirstChild("HumanoidRootPart").Position = world.vector3(0, 0, -8)
+world.raycastResult = nil
+-- The TriggerBot test left a rifle equipped; the melee tests need the sword to
+-- be the first tool the character finds.
+tool:Destroy()
+local swordHandle: any = Mock.newInstance("Part")
+swordHandle.Name = "Handle"
+local sword: any = Mock.newInstance("Tool")
+sword.Name = "Sword"
+swordHandle.Parent = sword
+sword.Parent = world.localPlayer.Character
+
+aura.Options["Swings per second"].Value = 20
+aura.Options["Rate jitter"].Value = 0
+aura.Options["Field of view"].Value = 360
+world.touchFires = 0
+
+aura:Toggle()
+check("aura enables", aura.Enabled == true)
+world.clock += 1
+stub.step(0.016)
+check("swings at a target in range", (sword.Activations or 0) >= 1,
+    "activations: " .. tostring(sword.Activations))
+check("fires contact damage", world.touchFires > 0,
+    "touches: " .. tostring(world.touchFires))
+check("highlights the target",
+    enemy.Character:FindFirstChild("RTM_KillAuraTarget") ~= nil)
+
+-- Rate limit: a second step in the same instant must not swing again.
+local beforeRate: number = sword.Activations or 0
+stub.step(0.016)
+check("respects the swing rate", (sword.Activations or 0) == beforeRate,
+    "activations: " .. tostring(sword.Activations))
+
+-- Friend protection has to win over an in-range target.
+host.state.friendList.names = {enemy = true}
+world.clock += 1
+local beforeFriend: number = sword.Activations or 0
+stub.step(0.016)
+check("never swings at a protected player",
+    (sword.Activations or 0) == beforeFriend,
+    "activations: " .. tostring(sword.Activations))
+check("clears the highlight of a protected player",
+    enemy.Character:FindFirstChild("RTM_KillAuraTarget") == nil)
+host.state.friendList.names = {}
+
+-- Out of range is out of range.
+enemy.Character:FindFirstChild("HumanoidRootPart").Position = world.vector3(0, 0, -400)
+world.clock += 1
+local beforeRange: number = sword.Activations or 0
+stub.step(0.016)
+check("ignores targets beyond the swing range",
+    (sword.Activations or 0) == beforeRange)
+
+aura:Toggle()
+check("aura disables", aura.Enabled == false)
+
+-- Click Teleport ---------------------------------------------------------------
+
+section("Click Teleport")
+
+local ClickFile: any = require("../../src/modules/Movement/ClickTeleport")
+Mock.inject(world, ClickFile.init)
+local clickTeleport: any = ClickFile.init(espContext)
+
+check("card is registered", clickTeleport.Name == "Click Teleport")
+check("trigger option exists", clickTeleport.Options["Trigger"] ~= nil)
+check("travel option exists", clickTeleport.Options["Travel"] ~= nil)
+check("key slot is bound as a hold",
+    world.bindings ~= nil and world.bindings["Click Teleport"] ~= nil)
+
+local localRoot: any = world.localPlayer.Character:FindFirstChild("HumanoidRootPart")
+localRoot.CFrame = world.globals.CFrame.new(world.vector3(0, 0, 0))
+world.raycastResult = {
+    Instance = Mock.newInstance("Part"),
+    Position = world.vector3(25, 0, -40),
+}
+world.lastRayCall = nil
+
+clickTeleport:Toggle()
+check("teleport enables", clickTeleport.Enabled == true)
+
+-- Hold-key trigger: a tap without arming must do nothing.
+host.UserInputService.InputBegan:Fire({
+    UserInputType = world.globals.Enum.UserInputType.Touch,
+    Position = world.vector3(300, 500, 0),
+}, false)
+check("does nothing before the key arms it",
+    localRoot.CFrame.Position.X == 0,
+    "x: " .. tostring(localRoot.CFrame.Position.X))
+
+-- Arm it the way the card's key slot does, then tap.
+world.bindings["Click Teleport"].press()
+host.UserInputService.InputBegan:Fire({
+    UserInputType = world.globals.Enum.UserInputType.Touch,
+    Position = world.vector3(300, 500, 0),
+}, false)
+check("teleports to the point under the tap",
+    localRoot.CFrame.Position.X == 25 and localRoot.CFrame.Position.Z == -40,
+    "landed at " .. tostring(localRoot.CFrame.Position.X)
+        .. "," .. tostring(localRoot.CFrame.Position.Z))
+check("lands above the surface, not inside it",
+    localRoot.CFrame.Position.Y == 5,
+    "y: " .. tostring(localRoot.CFrame.Position.Y))
+check("uses screen coordinates, not viewport coordinates",
+    world.lastRayCall == "ScreenPointToRay",
+    tostring(world.lastRayCall))
+
+-- Taps that the interface already handled must never teleport.
+localRoot.CFrame = world.globals.CFrame.new(world.vector3(0, 0, 0))
+world.bindings["Click Teleport"].press()
+host.UserInputService.InputBegan:Fire({
+    UserInputType = world.globals.Enum.UserInputType.Touch,
+    Position = world.vector3(300, 500, 0),
+}, true)
+check("ignores taps consumed by the menu", localRoot.CFrame.Position.X == 0)
+
+clickTeleport:Toggle()
+check("teleport disables", clickTeleport.Enabled == false)
+
 -- Teardown -------------------------------------------------------------------
 
 section("Teardown")
 
+ClickFile.destroy()
+AuraFile.destroy()
+FriendFile.destroy()
 EspFile.destroy()
 TriggerFile.destroy()
 EntityFile.destroy()

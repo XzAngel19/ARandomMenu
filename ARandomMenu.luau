@@ -88,6 +88,35 @@ local FEATURE_CATEGORIES: {[string]: string} = {
     ["Rejoin Server"] = "Utility",
 }
 
+-- Height reserved at the foot of the navigation rail for the player card.
+local PROFILE_CARD_HEIGHT: number = 56
+
+-- Module kinds, on the card.
+--
+-- Three different contracts used to look identical: a toggle you switch, a
+-- button that runs once, and an always-on module whose card is only a
+-- container for its options. Every card now carries a chip that says which it
+-- is, and the accent stripe is coloured to match, so the difference is visible
+-- before you click anything.
+--
+--   TOGGLE     on/off state.
+--   RUN        runs once per click or keypress.
+--   HOLD       always running; the key applies it only while held.
+--   ALWAYS ON  always running; the card just holds its settings.
+local KIND_LABELS: {[string]: string} = {
+    toggle = "TOGGLE",
+    action = "RUN",
+    hold = "HOLD",
+    group = "ALWAYS ON",
+}
+
+local KIND_COLORS: {[string]: Color3} = {
+    toggle = Color3.fromRGB(150, 190, 255),
+    action = Color3.fromRGB(245, 195, 120),
+    hold = Color3.fromRGB(160, 235, 205),
+    group = Color3.fromRGB(190, 175, 245),
+}
+
 -- Sort key for a whole category. The catch-all always sinks to the bottom;
 -- every real category is ordered alphabetically.
 local function featureCategoryRank(category: string): string
@@ -1017,6 +1046,25 @@ local AssetManager: any = {
             version = 1,
             assetType = "font/otf",
         },
+        -- Brand artwork. Both are resolved lazily and every consumer keeps a
+        -- text fallback, so an executor without getcustomasset simply keeps
+        -- the lettering it had.
+        brandLogo = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Brand/menu-logo.jpg",
+            fileName = "brand-logo-v1.jpg",
+            fallback = "",
+            version = 1,
+            assetType = "image/jpeg",
+        },
+        profileBanner = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Brand/profile-banner.png",
+            fileName = "profile-banner-v1.png",
+            fallback = "",
+            version = 1,
+            assetType = "image/png",
+        },
     } :: {[string]: AssetDefinition},
 }
 
@@ -1303,6 +1351,30 @@ end
         Enum.FontStyle.Normal
     )
     state.assetManager = AssetManager
+
+-- Resolving an image means a download, a file write and a getcustomasset
+-- call, so it happens off the bootstrap thread and the caller keeps whatever
+-- it was already showing until the id arrives.
+state.applyAssetImage = function(
+    logicalName: string,
+    image: ImageLabel,
+    onApplied: (() -> ())?
+): ()
+    task.spawn(function(): ()
+        local assetId: string?, failure: string? = AssetManager.resolve(logicalName)
+        if not assetId then
+            warn("[RTM:Assets] " .. logicalName .. ": " .. tostring(failure))
+            return
+        end
+        if not image.Parent then
+            return
+        end
+        image.Image = assetId :: string
+        if onApplied then
+            onApplied()
+        end
+    end)
+end
 end
 
 local registeredText = {}
@@ -2480,6 +2552,27 @@ create("UIStroke", {
     Transparency = 0.7,
     Thickness = 1,
 })
+local BrandIcon: ImageLabel = create("ImageLabel", {
+    Parent = BrandMark,
+    Name = "BrandIcon",
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    Image = "",
+    ScaleType = Enum.ScaleType.Crop,
+    Size = UDim2.fromScale(1, 1),
+    ZIndex = 15,
+}) :: ImageLabel
+create("UICorner", {
+    Parent = BrandIcon,
+    CornerRadius = cornerRadius(UI_RADIUS.chip),
+})
+if state.applyAssetImage then
+    state.applyAssetImage("brandLogo", BrandIcon, function(): ()
+        -- The monogram is the fallback; once the logo is up it would only
+        -- print over the artwork.
+        BrandMark.Text = ""
+    end)
+end
 local BrandName: TextLabel = makeTextLabel(BrandRow, "A Random Menu", 10)
 BrandName.Name = "BrandName"
 BrandName.AnchorPoint = Vector2.new(0, 0.5)
@@ -2497,7 +2590,14 @@ local DefaultTabs: Frame = create("Frame", {
     BackgroundTransparency = 1,
     BorderSizePixel = 0,
     Position = UDim2.fromOffset(0, layout.brandHeight),
-    Size = UDim2.new(1, 0, 1, -(layout.brandHeight + layout.launcherHeight + 18)),
+    -- 60px at the foot of the rail belongs to the profile card, which sits
+    -- above the floating-window launchers.
+    Size = UDim2.new(
+        1,
+        0,
+        1,
+        -(layout.brandHeight + layout.launcherHeight + PROFILE_CARD_HEIGHT + 18)
+    ),
     ZIndex = 11,
 }) :: Frame
 create("UIListLayout", {
@@ -2618,8 +2718,12 @@ state.onLayout(function(metrics: LayoutMetrics): ()
     )
     BrandName.Visible = not metrics.sidebarCollapsed
     DefaultTabs.Position = UDim2.fromOffset(0, metrics.brandHeight)
-    DefaultTabs.Size =
-        UDim2.new(1, 0, 1, -(metrics.brandHeight + metrics.launcherHeight + 18))
+    DefaultTabs.Size = UDim2.new(
+        1,
+        0,
+        1,
+        -(metrics.brandHeight + metrics.launcherHeight + PROFILE_CARD_HEIGHT + 18)
+    )
     local navigationPadding: UIPadding? =
         DefaultTabs:FindFirstChild("NavigationPadding") :: UIPadding?
     if navigationPadding then
@@ -3959,7 +4063,26 @@ create("UIStroke", {
     Thickness = 1,
 })
 
--- The RTM text remains visible as the button label.
+-- The launcher wears the menu's own logo, cropped to the button's circle. The
+-- "RTM" lettering underneath stays as the fallback for executors that cannot
+-- turn a downloaded file into an asset id.
+local MobileMenuIcon: ImageLabel = create("ImageLabel", {
+    Parent = MobileMenuButton,
+    Name = "BrandIcon",
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    Image = "",
+    ScaleType = Enum.ScaleType.Crop,
+    Size = UDim2.fromScale(1, 1),
+    ZIndex = 191,
+}) :: ImageLabel
+create("UICorner", {Parent = MobileMenuIcon, CornerRadius = UDim.new(1, 0)})
+if state.applyAssetImage then
+    state.applyAssetImage("brandLogo", MobileMenuIcon, function(): ()
+        MobileMenuButton.Text = ""
+    end)
+end
+
 trackUiConnection(MobileMenuButton.MouseButton1Click:Connect(function(): ()
     state.setMenuVisible(not state.visible)
 end))
@@ -6913,6 +7036,178 @@ TaskManager:Connect(function(deltaTime: number): ()
     end
 end)
 
+
+-- ---------------------------------------------------------------------------
+-- Player card
+-- ---------------------------------------------------------------------------
+--
+-- Who is running the menu, docked at the foot of the rail: the account's own
+-- avatar, its display name and handle, and how long this account has been
+-- using the menu. The "since" date and the session count are stored in the
+-- config file, so they survive rejoins; the session clock restarts with the
+-- injection.
+--
+-- The avatar comes from `rbxthumb://`, which the engine resolves itself — no
+-- download, no executor file API, and it works on the first frame.
+do
+(function(): ()
+local profileKey: string = "profile." .. tostring(LocalPlayer.UserId)
+local storedFirstSeen: number? = tonumber(configData.values[profileKey .. ".firstSeen"])
+local firstSeen: number = storedFirstSeen or os.time()
+local sessions: number =
+    (tonumber(configData.values[profileKey .. ".sessions"]) or 0) + 1
+configData.values[profileKey .. ".firstSeen"] = firstSeen
+configData.values[profileKey .. ".sessions"] = sessions
+queueConfigSave()
+local sessionStart: number = os.clock()
+
+local ProfileCard: Frame = create("Frame", {
+    Parent = state.shells.defaultSidebar,
+    Name = "PlayerCard",
+    AnchorPoint = Vector2.new(0.5, 1),
+    BackgroundColor3 = Theme.DefaultSurface,
+    BackgroundTransparency = 0.35,
+    BorderSizePixel = 0,
+    Position = UDim2.new(0.5, 0, 1, -(state.layout.launcherHeight + 14)),
+    Size = UDim2.new(1, -(state.layout.sidebarPadding * 2), 0, PROFILE_CARD_HEIGHT - 8),
+    ZIndex = 24,
+}) :: Frame
+create("UICorner", {
+    Parent = ProfileCard,
+    CornerRadius = cornerRadius(UI_RADIUS.control),
+})
+create("UIStroke", {
+    Parent = ProfileCard,
+    Color = Theme.DefaultOutline,
+    Transparency = 0.68,
+    Thickness = 1,
+})
+
+local ProfileBanner: ImageLabel = create("ImageLabel", {
+    Parent = ProfileCard,
+    Name = "Banner",
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    Image = "",
+    ImageTransparency = 0.35,
+    ScaleType = Enum.ScaleType.Crop,
+    Size = UDim2.fromScale(1, 1),
+    ZIndex = 24,
+}) :: ImageLabel
+create("UICorner", {
+    Parent = ProfileBanner,
+    CornerRadius = cornerRadius(UI_RADIUS.control),
+})
+if state.applyAssetImage then
+    state.applyAssetImage("profileBanner", ProfileBanner)
+end
+
+local Avatar: ImageLabel = create("ImageLabel", {
+    Parent = ProfileCard,
+    Name = "Avatar",
+    AnchorPoint = Vector2.new(0, 0.5),
+    BackgroundColor3 = Theme.DefaultBackground,
+    BackgroundTransparency = 0.2,
+    BorderSizePixel = 0,
+    Image = "rbxthumb://type=AvatarHeadShot&id="
+        .. tostring(LocalPlayer.UserId)
+        .. "&w=150&h=150",
+    Position = UDim2.new(0, 6, 0.5, 0),
+    Size = UDim2.fromOffset(34, 34),
+    ZIndex = 25,
+}) :: ImageLabel
+create("UICorner", {Parent = Avatar, CornerRadius = UDim.new(1, 0)})
+create("UIStroke", {
+    Parent = Avatar,
+    Color = Theme.DefaultOutline,
+    Transparency = 0.5,
+    Thickness = 1,
+})
+
+local ProfileName: TextLabel =
+    (makeTextLabel(ProfileCard, LocalPlayer.DisplayName, 11) :: any) :: TextLabel
+ProfileName.Name = "DisplayName"
+ProfileName.FontFace = CONTROL_FONT
+ProfileName.Position = UDim2.fromOffset(46, 6)
+ProfileName.Size = UDim2.new(1, -52, 0, 14)
+ProfileName.TextColor3 = Theme.DefaultText
+ProfileName.TextTruncate = Enum.TextTruncate.AtEnd
+ProfileName.ZIndex = 25
+
+local ProfileHandle: TextLabel =
+    (makeTextLabel(ProfileCard, "@" .. LocalPlayer.Name, 9) :: any) :: TextLabel
+ProfileHandle.Name = "Handle"
+ProfileHandle.Position = UDim2.fromOffset(46, 19)
+ProfileHandle.Size = UDim2.new(1, -52, 0, 12)
+ProfileHandle.TextColor3 = Theme.DefaultTextMuted
+ProfileHandle.TextTruncate = Enum.TextTruncate.AtEnd
+ProfileHandle.ZIndex = 25
+
+local ProfileMeta: TextLabel = (makeTextLabel(ProfileCard, "", 9) :: any) :: TextLabel
+ProfileMeta.Name = "Meta"
+ProfileMeta.Position = UDim2.fromOffset(46, 31)
+ProfileMeta.Size = UDim2.new(1, -52, 0, 12)
+ProfileMeta.TextColor3 = Theme.DefaultTextMuted
+ProfileMeta.TextTruncate = Enum.TextTruncate.AtEnd
+ProfileMeta.ZIndex = 25
+
+local function describeSession(): string
+    local minutes: number = math.floor((os.clock() - sessionStart) / 60)
+    if minutes < 60 then
+        return tostring(minutes) .. "m"
+    end
+    return tostring(math.floor(minutes / 60)) .. "h " .. tostring(minutes % 60) .. "m"
+end
+
+local function refreshMeta(): ()
+    ProfileMeta.Text = os.date("!%d/%m/%Y", firstSeen)
+        .. "  ·  "
+        .. tostring(sessions)
+        .. (sessions == 1 and " sesión" or " sesiones")
+        .. "  ·  "
+        .. describeSession()
+end
+refreshMeta()
+
+-- Once a minute is enough for a clock measured in minutes, and it keeps the
+-- card off the per-frame budget.
+local metaClock: number = 0
+trackUiConnection(TaskManager:Connect(function(deltaTime: number): ()
+    metaClock += deltaTime
+    if metaClock < 30 then
+        return
+    end
+    metaClock = 0
+    refreshMeta()
+end))
+
+local function applyProfileLayout(metrics: LayoutMetrics): ()
+    ProfileCard.Position = UDim2.new(0.5, 0, 1, -(metrics.launcherHeight + 14))
+    ProfileCard.Size = metrics.sidebarCollapsed
+        and UDim2.fromOffset(40, 40)
+        or UDim2.new(1, -(metrics.sidebarPadding * 2), 0, PROFILE_CARD_HEIGHT - 8)
+    -- Collapsed rail: the avatar is the card.
+    Avatar.AnchorPoint = metrics.sidebarCollapsed
+        and Vector2.new(0.5, 0.5)
+        or Vector2.new(0, 0.5)
+    Avatar.Position = metrics.sidebarCollapsed
+        and UDim2.fromScale(0.5, 0.5)
+        or UDim2.new(0, 6, 0.5, 0)
+    ProfileName.Visible = not metrics.sidebarCollapsed
+    ProfileHandle.Visible = not metrics.sidebarCollapsed
+    ProfileMeta.Visible = not metrics.sidebarCollapsed
+    ProfileBanner.Visible = not metrics.sidebarCollapsed
+end
+applyProfileLayout(state.layout)
+state.onLayout(applyProfileLayout)
+
+state.playerCard = {
+    card = ProfileCard,
+    avatar = Avatar,
+    refresh = refreshMeta,
+}
+end)()
+end
 -- Launchers for the movable tool windows, docked at the foot of the rail.
 -- They stack vertically when the rail collapses, which is the only way two
 -- 32px buttons fit inside a 58px icon rail.
@@ -7592,12 +7887,51 @@ local function createUniversalFeature(
         Rotation = 90,
     })
     feature.activeStripe = activeStripe
+    local kindColor: Color3 = KIND_COLORS[feature.kind] or Theme.DefaultAccent
+    activeStripe.BackgroundColor3 = kindColor
+    if feature.activeStripeGradient then
+        (feature.activeStripeGradient :: UIGradient).Enabled = false
+    end
+    -- Always-on kinds keep a dim stripe lit: they have no "off", and a card
+    -- with no stripe at all reads as disabled.
+    if feature.isAlwaysOn then
+        activeStripe.BackgroundTransparency = 0.55
+    end
+
+    local kindText: string = KIND_LABELS[feature.kind] or "TOGGLE"
+    local kindChip: TextLabel =
+        (makeTextLabel(row, kindText, 8) :: any) :: TextLabel
+    kindChip.Name = "KindChip"
+    kindChip.AnchorPoint = Vector2.new(0, 0.5)
+    kindChip.BackgroundColor3 = kindColor
+    kindChip.BackgroundTransparency = 0.86
+    kindChip.FontFace = CONTROL_FONT
+    kindChip.Position = UDim2.new(0, 12, 0, math.round(feature.collapsedHeight * 0.72))
+    kindChip.Size = UDim2.fromOffset(#kindText * 5 + 14, 13)
+    kindChip.TextColor3 = kindColor
+    kindChip.TextXAlignment = Enum.TextXAlignment.Center
+    kindChip.ZIndex = 9
+    create("UICorner", {Parent = kindChip, CornerRadius = UDim.new(1, 0)})
+    create("UIStroke", {
+        Parent = kindChip,
+        Color = kindColor,
+        Transparency = 0.72,
+        Thickness = 1,
+    })
+    feature.kindChip = kindChip
 
     local title: TextLabel =
         (makeTextLabel(row, name, state.layout.titleFontSize) :: any) :: TextLabel
     title.FontFace = CONTROL_FONT
     title.Position = UDim2.fromOffset(12, 0)
-    title.Size = UDim2.new(1, -(state.layout.cardHeight + 96), 0, feature.collapsedHeight)
+    -- The kind chip sits under the title, so the title centres in the upper
+    -- two thirds of the card instead of the whole of it.
+    title.Size = UDim2.new(
+        1,
+        -(state.layout.cardHeight + 96),
+        0,
+        math.round(feature.collapsedHeight * 0.62)
+    )
     title.TextTruncate = Enum.TextTruncate.AtEnd
     title.TextColor3 = state.guiStyle == "Default"
         and Theme.DefaultText
@@ -10804,129 +11138,6 @@ function toggleNoclip(enabled: boolean): ()
 end
 end
 
--- Click teleport.
---
--- Desktop keeps CTRL + click. Touch has neither a control key nor a cursor, so
--- the module's key slot doubles as the trigger there: tap the slot to place a
--- button, then press it to jump to whatever the camera is pointing at. Both
--- paths run the same raycast, so the behaviour is identical on every device.
--- Kept on `state` rather than as locals: `bootstrap()` is one function scope
--- sitting on Luau's 200 local-register ceiling.
-state.clickTeleportEnabled = false
-
-state.performClickTeleport = function(targetPosition: Vector3?): ()
-    if not state.clickTeleportEnabled then
-        return
-    end
-    local _, _, root = getCharacterParts()
-    if not root then
-        return
-    end
-
-    local destination: Vector3? = targetPosition
-    if not destination then
-        local aimRay: Ray? = state.getAimRay()
-        if not aimRay then
-            return
-        end
-        local parameters: RaycastParams = RaycastParams.new()
-        parameters.FilterType = Enum.RaycastFilterType.Exclude
-        parameters.IgnoreWater = true
-        parameters.FilterDescendantsInstances = LocalPlayer.Character
-            and {LocalPlayer.Character}
-            or {}
-        local result: RaycastResult? = workspace:Raycast(
-            aimRay.Origin,
-            aimRay.Direction.Unit * 2048,
-            parameters
-        )
-        destination = result and result.Position or nil
-        if not destination then
-            notify("Nothing to teleport to in view.")
-            return
-        end
-    end
-
-    root.CFrame = CFrame.new((destination :: Vector3) + Vector3.new(0, 3, 0))
-end
-
--- Arming: hold the module's key (or its placed button) and the *next* place
--- you touch or click is where you go. That is the whole gesture on a phone —
--- hold the button, tap the ground — and on desktop CTRL + click still works
--- exactly as before.
-state.clickTeleportArmed = false
-
-state.setClickTeleportArmed = function(armed: boolean): ()
-    if not state.clickTeleportEnabled then
-        state.clickTeleportArmed = false
-        return
-    end
-    state.clickTeleportArmed = armed
-    if armed then
-        notify("Click Teleport: touch where you want to go.")
-    end
-end
-
-local function toggleCtrlClickTeleport(enabled)
-    disconnectFeatureConnection("CtrlClickTeleport")
-    state.clickTeleportEnabled = enabled
-    state.clickTeleportArmed = false
-
-    if not enabled then
-        return
-    end
-
-    featureConnections.CtrlClickTeleport = UserInputService.InputBegan:Connect(
-        function(input: InputObject, processed: boolean): ()
-            if processed
-                or state.keyCaptureCallback
-                or state.waitingForKey then
-                return
-            end
-
-            local touched: boolean = input.UserInputType == Enum.UserInputType.Touch
-            local clicked: boolean =
-                input.UserInputType == Enum.UserInputType.MouseButton1
-            if not touched and not clicked then
-                return
-            end
-
-            -- Desktop shortcut, unchanged.
-            local ctrlHeld: boolean = UserInputService.KeyboardEnabled
-                and UserInputService:IsKeyDown(Enum.KeyCode.LeftControl)
-            if not ctrlHeld and not state.clickTeleportArmed then
-                return
-            end
-
-            -- Teleport to the point under *this* touch/click, not under the
-            -- camera: the player is pointing at the destination.
-            local camera: Camera? = workspace.CurrentCamera
-            local destination: Vector3? = nil
-            if camera then
-                local ray: Ray = camera:ViewportPointToRay(
-                    input.Position.X,
-                    input.Position.Y
-                )
-                local parameters: RaycastParams = RaycastParams.new()
-                parameters.FilterType = Enum.RaycastFilterType.Exclude
-                parameters.IgnoreWater = true
-                parameters.FilterDescendantsInstances = LocalPlayer.Character
-                    and {LocalPlayer.Character}
-                    or {}
-                local result: RaycastResult? = workspace:Raycast(
-                    ray.Origin,
-                    ray.Direction.Unit * 2048,
-                    parameters
-                )
-                destination = result and result.Position or nil
-            end
-
-            state.clickTeleportArmed = false
-            state.performClickTeleport(destination)
-        end
-    )
-end
-
 local function toggleAntiAfk(enabled)
     disconnectFeatureConnection("AntiAFK")
 
@@ -12549,41 +12760,6 @@ addFeatureTooltip(NoclipFeature, "Disables collisions for every local character 
 end
 
 do
-local CtrlClickFeature = createUniversalFeature(
-    "Click Teleport",
-    "Teleport to whatever you are aiming at",
-    12,
-    toggleCtrlClickTeleport,
-    {noOptions = true}
-)
--- The key slot teleports on every device; on desktop CTRL + click keeps
--- working as well, and on touch the slot places the button that triggers it.
--- A hold binding: while the key or the placed button is down the module is
--- armed, and the next touch on the world is the destination.
-if state.bindFeatureActivationKey then
-    state.bindFeatureActivationKey(
-        CtrlClickFeature,
-        Enum.KeyCode.Unknown,
-        function(): ()
-            state.setClickTeleportArmed(true)
-        end,
-        function(): ()
-            -- Stay armed briefly after the finger lifts so the same hand can
-            -- let go of the button and then tap the destination.
-            task.delay(2.5, function(): ()
-                state.clickTeleportArmed = false
-            end)
-        end
-    )
-end
-addFeatureTooltip(
-    CtrlClickFeature,
-    "Hold the module's key or its placed button, then touch the spot you want "
-        .. "to reach. On desktop, CTRL + click also works."
-)
-end
-
-do
 local AntiAfkFeature = createUniversalFeature(
     "Anti-AFK",
     "Prevent the local idle event from disconnecting",
@@ -13731,14 +13907,29 @@ local fallbackManifest: any = {
     libraries = {"src/library/Entity.luau"},
     modules = {
         {
+            path = "src/modules/Utility/FriendList.luau",
+            name = "Friend List",
+            category = "Utility",
+        },
+        {
             path = "src/modules/Visuals/PlayerESP.luau",
             name = "Player ESP",
             category = "Visuals",
         },
         {
+            path = "src/modules/Combat/KillAura.luau",
+            name = "Kill Aura",
+            category = "Combat",
+        },
+        {
             path = "src/modules/Combat/TriggerBot.luau",
             name = "TriggerBot",
             category = "Combat",
+        },
+        {
+            path = "src/modules/Movement/ClickTeleport.luau",
+            name = "Click Teleport",
+            category = "Movement",
         },
     },
 }

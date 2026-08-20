@@ -404,6 +404,21 @@ a failed manifest download, and the validation workflow fails if the two drift
 apart. Every piece exports the same `init` / `destroy` pair the per-game modules
 use, and `destroy` runs from the menu's own teardown step.
 
+### Module kinds
+
+Three kinds of card, and now they look like three kinds of card. Every module
+carries a chip under its title and an accent stripe in the matching colour:
+
+| Chip | Kind | Behaviour |
+| --- | --- | --- |
+| `TOGGLE` | toggle | Click the card or press its key to switch it on and off. |
+| `RUN` | action | Click or press once; it runs and does not stay on. |
+| `HOLD` | hold | Always running; the key applies its effect only while held. |
+| `ALWAYS ON` | group | Always running; the card only holds its settings (Friend List, MM2's Knife). |
+
+Always-on cards keep a dim stripe lit, because they have no "off" state and a
+dark stripe reads as disabled.
+
 ### Shipped modules
 
 - **Player ESP** (`Visuals`): corner or full boxes with adjustable thickness,
@@ -414,6 +429,30 @@ use, and `destroy` runs from the menu's own teardown step.
   geometry, plus text size and a redraw interval. Drawn with ordinary
   GuiObjects rather than the executor `Drawing` API, which several executors
   implement only partially.
+- **Kill Aura** (`Combat`): swings the equipped weapon at everyone in reach.
+  Swing range and a separate attack range (the distance at which contact
+  damage is fired), swings per second with a per-swing random jitter, max
+  targets, Multi or Single, target priority by distance, health or threat, a
+  field-of-view cone, wall and team checks, rotation off / silent (turned for
+  the swing only, then put back) / face, auto-equip, require-tool and target
+  highlighting in two colours — one for "in swing range", one for "actually
+  being hit". Damage is delivered through `Tool:Activate()` **and**
+  `firetouchinterest` on the parts inside the target's box, which is what
+  melee weapons with limb-only hitboxes need. Everything past the five basic
+  controls is folded away behind one switch.
+- **Friend List** (`Utility`, always-on): the one list nothing in the menu
+  touches — comma-separated names, Roblox friends, optionally team-mates, an
+  "add nearest player" button and a clear button. It used to live inside the
+  MM2 module, so the protection disappeared in every other game; MM2 now
+  forwards its `isProtectedTarget` question here, and Kill Aura, TriggerBot and
+  ESP ask the same list.
+- **Click Teleport** (`Movement`): hold the module's key (or its placed mobile
+  button), then tap where you want to go. The old version raycast with
+  `Camera:ViewportPointToRay(input.Position)` — input positions include the
+  36-pixel top bar and viewport points do not, so every teleport landed above
+  the finger and on touch it usually hit nothing at all. It uses
+  `ScreenPointToRay` now, lands hip-height above the surface, and offers
+  Instant or Glide travel for games that reject a single large position change.
 - **TriggerBot** (`Combat`): always-on or hold-to-arm, single or automatic,
   reaction delay with a per-acquisition random jitter, minimum time between
   shots, target-part filter (any, head, torso), an aim radius in pixels that
@@ -529,6 +568,14 @@ keep the two from drifting.
 - `tools/test/*.luau`: headless Roblox stand-in and the module test suite.
 - `tools/validate.sh`: every repository check in one command.
 - `reference/`: third-party sources kept for reading; never loaded or validated.
+- `src/gui/Current/Assets/Brand/`: the menu logo and the player-card backdrop.
+
+Artwork that no code referenced (112 files: the blossom animation frames, the
+arrow set, the manga-era decorations, particles and frames) and the 24 MB MM2
+place dump used while reverse-engineering that game have been removed, along
+with their now-dangling entries in the asset catalogue. What remains under
+`src/gui/Current/Assets` is either loaded at runtime or pinned by the
+validation workflow.
 - `src/games/Universal.luau`: the universal/movement module contract only — a
   manifest of feature ids, names and ordering. Every universal implementation
   (Fly, Speed, Infinite Jump, Click Teleport, Noclip …) lives in
@@ -539,6 +586,19 @@ keep the two from drifting.
 - `src/gui/Current/gui.lua`: reusable presentation-only GUI controller.
 - `src/gui/Current/Images`: optional normal image assets.
 - `src/Profile`: compatibility data retained for older loaders.
+
+## Brand and player card
+
+- The menu's logo (`src/gui/Current/Assets/Brand/menu-logo.jpg`) is drawn on
+  both places the menu identifies itself: the floating launcher button and the
+  brand mark at the top of the navigation rail. Both keep their lettering as a
+  fallback, so an executor without `getcustomasset` loses nothing.
+- The foot of the rail carries a **player card**: the account's avatar
+  (`rbxthumb://`, resolved by the engine itself — no download), display name,
+  handle, and a line with the date this account first ran the menu, how many
+  sessions it has had and how long the current one has been going. The date and
+  the counter live in the config file; the session clock restarts with the
+  injection. Collapsed rails show the avatar alone.
 
 ## Images
 

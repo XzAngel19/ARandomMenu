@@ -33,10 +33,27 @@ local Manifest: Manifest = {
         "src/library/Entity.luau",
     },
     modules = {
+        -- Friend List comes first: every targeting module below asks it who
+        -- must not be touched.
+        {
+            path = "src/modules/Utility/FriendList.luau",
+            name = "Friend List",
+            category = "Utility",
+        },
         {
             path = "src/modules/Visuals/PlayerESP.luau",
             name = "Player ESP",
             category = "Visuals",
+        },
+        {
+            path = "src/modules/Combat/KillAura.luau",
+            name = "Kill Aura",
+            category = "Combat",
+        },
+        {
+            path = "src/modules/Movement/ClickTeleport.luau",
+            name = "Click Teleport",
+            category = "Movement",
         },
         {
             path = "src/modules/Combat/TriggerBot.luau",

@@ -26,6 +26,16 @@ export type Entity = {
     IsFriendly: boolean,
 }
 
+export type RangeQuery = {
+    Range: number,
+    Limit: number?,
+    IgnoreTeam: boolean?,
+    IgnoreWalls: boolean?,
+    IgnoreFriends: boolean?,
+    Angle: number?,
+    Sort: string?,
+}
+
 export type EntityQuery = {
     -- Maximum angular distance from the ray, in pixels of screen space.
     Radius: number?,
@@ -44,6 +54,8 @@ export type EntityLibrary = {
     Get: (self: EntityLibrary, player: Player) -> Entity?,
     ForEach: (self: EntityLibrary, callback: (Entity) -> ()) -> (),
     IsFriendly: (self: EntityLibrary, player: Player) -> boolean,
+    IsProtected: (self: EntityLibrary, player: Player) -> boolean,
+    InRange: (self: EntityLibrary, query: RangeQuery) -> {Entity},
     ClosestToRay: (
         self: EntityLibrary,
         origin: Vector3,
@@ -231,6 +243,76 @@ function Module.init(context: any): EntityLibrary
             end
         end
         return bones
+    end
+
+    -- The friend list is universal and may not be loaded yet, so the question
+    -- is asked through `state` rather than captured at init.
+    function library:IsProtected(player: Player): boolean
+        local friendList: any = host.state and host.state.friendList
+        if friendList and type(friendList.isProtected) == "function" then
+            return friendList.isProtected(player) == true
+        end
+        return false
+    end
+
+    -- Everything a melee module needs in one query: who is close enough, in
+    -- front of you, not a friend, not behind a wall — already sorted.
+    function library:InRange(query: RangeQuery): {Entity}
+        local origin: BasePart? = localRoot()
+        if not origin then
+            return {}
+        end
+        local resolvedOrigin: BasePart = origin :: BasePart
+        local facing: Vector3 = resolvedOrigin.CFrame.LookVector
+            * Vector3.new(1, 0, 1)
+        local halfAngle: number? = query.Angle and math.rad(query.Angle) / 2 or nil
+        local candidates: {Entity} = {}
+
+        for _, entity: Entity in ipairs(library.List) do
+            if entity.Distance > query.Range then
+                continue
+            end
+            if not query.IgnoreTeam and entity.IsFriendly then
+                continue
+            end
+            if not query.IgnoreFriends and library:IsProtected(entity.Player) then
+                continue
+            end
+            if halfAngle then
+                local delta: Vector3 = (entity.RootPart.Position - resolvedOrigin.Position)
+                    * Vector3.new(1, 0, 1)
+                if delta.Magnitude > 0.001 and facing.Magnitude > 0.001 then
+                    local dot: number = facing.Unit:Dot(delta.Unit)
+                    if math.acos(math.clamp(dot, -1, 1)) > halfAngle then
+                        continue
+                    end
+                end
+            end
+            if not query.IgnoreWalls and not library:VisibleFrom(entity) then
+                continue
+            end
+            table.insert(candidates, entity)
+        end
+
+        local sortMode: string = query.Sort or "Distance"
+        table.sort(candidates, function(first: Entity, second: Entity): boolean
+            if sortMode == "Health" then
+                return first.Health < second.Health
+            end
+            if sortMode == "Threat" then
+                -- Whoever is closest to looking at you first: the one most
+                -- likely to be shooting back.
+                return first.Distance / math.max(first.Health, 1)
+                    > second.Distance / math.max(second.Health, 1)
+            end
+            return first.Distance < second.Distance
+        end)
+
+        local limit: number = query.Limit or #candidates
+        while #candidates > limit do
+            table.remove(candidates)
+        end
+        return candidates
     end
 
     function library:ClosestToRay(
