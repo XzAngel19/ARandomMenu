@@ -101,19 +101,14 @@ local PROFILE_CARD_HEIGHT: number = 56
 --
 -- The marker is a shape, not a caption: a word like "TOGGLE" on every card is
 -- noise once you have seen it twice, and it eats the width the module name
--- needs.
+-- needs. All four are drawn in the interface's own greys — a coloured chip per
+-- kind turned the board into a paint chart.
 --
---   toggle  a switch: a track with a knob that slides and lights up.
---   action  a play triangle: press it and something happens once.
---   hold    a hollow ring: live only while a finger is on the key.
---   group   a filled dot inside a ring: always running, nothing to press.
+--   toggle  a square that fills when the module is on.
+--   action  a chevron: press it and it goes.
+--   hold    two upright bars: live only while a finger is on the key.
+--   group   three stacked rules: a container of settings, always running.
 
-local KIND_COLORS: {[string]: Color3} = {
-    toggle = Color3.fromRGB(150, 190, 255),
-    action = Color3.fromRGB(245, 195, 120),
-    hold = Color3.fromRGB(160, 235, 205),
-    group = Color3.fromRGB(190, 175, 245),
-}
 
 -- Sort key for a whole category. The catch-all always sinks to the bottom;
 -- every real category is ordered alphabetically.
@@ -144,7 +139,9 @@ local TAB_GAME_ICONS: {[string]: number} = {
 
 local TAB_DRAWN_ICONS: {[string]: string} = {
     Movement = "navMovement",
-    Settings = "navSettings",
+    -- The settings page is registered as "Config.", dot included; keying this
+    -- table on "Settings" is why the gear never appeared.
+    ["Config."] = "navSettings",
 }
 
 local TAB_MONOGRAMS: {[string]: string} = {
@@ -1810,83 +1807,86 @@ end
 
 local function setToggleSwitch(button: TextButton, enabled: boolean, animate: boolean?): ()
     button:SetAttribute("Checked", enabled)
-    local track: Frame? = button:FindFirstChild("SwitchTrack") :: Frame?
-    local knob: Frame? = track and track:FindFirstChild("Knob") :: Frame?
-    if not track or not knob then
+    local frame: Frame? = button:FindFirstChild("SwitchTrack") :: Frame?
+    local core: Frame? = frame and frame:FindFirstChild("Knob") :: Frame?
+    if not frame or not core then
         return
     end
-    local knobWidth: number = knob.Size.X.Offset
-    local targetColor: Color3 = enabled and Theme.DefaultAccent or Theme.SurfacePressed
-    local targetPosition: UDim2 = enabled
-        and UDim2.new(1, -knobWidth - 3, 0.5, 0)
-        or UDim2.new(0, 3, 0.5, 0)
-    local targetKnobColor: Color3 = enabled and Theme.DefaultText or Theme.DefaultTextMuted
+    local stroke: UIStroke? = frame:FindFirstChild("MarkStroke") :: UIStroke?
+    local targetSize: UDim2 = enabled
+        and UDim2.fromScale(0.62, 0.62)
+        or UDim2.fromScale(0, 0)
+    local targetTransparency: number = enabled and 0.05 or 1
     if animate and state.animationsEnabled then
-        TweenService:Create(track, TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quart), {
-            BackgroundColor3 = targetColor,
-        }):Play()
-        TweenService:Create(knob, TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quart), {
-            Position = targetPosition,
-            BackgroundColor3 = targetKnobColor,
+        TweenService:Create(core, TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quart), {
+            Size = targetSize,
+            BackgroundTransparency = targetTransparency,
         }):Play()
     else
-        track.BackgroundColor3 = targetColor
-        knob.Position = targetPosition
-        knob.BackgroundColor3 = targetKnobColor
+        core.Size = targetSize
+        core.BackgroundTransparency = targetTransparency
+    end
+    if stroke then
+        stroke.Transparency = enabled and 0.15 or 0.45
     end
 end
 
+-- State mark.
+--
+-- Not a switch. A sliding pill is a phone control: it is wide, it is loud, it
+-- repeats on every row, and at this size the knob is the only thing you can
+-- read. This is a square that is either empty or filled — the same shape the
+-- module cards use for their own state — drawn in the interface's own greys,
+-- with no colour of its own.
 local function createToggleSwitch(
     parent: Instance,
     enabled: boolean,
     width: number?
 ): TextButton
-    local switchWidth: number = width or state.layout.switchWidth
-    local switchHeight: number = state.layout.switchHeight
+    local markSize: number = math.clamp(width or 15, 12, 18)
     local button: TextButton = create("TextButton", {
         Parent = parent,
         Active = true,
         AutoButtonColor = false,
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
-        Size = UDim2.fromOffset(switchWidth, math.max(32, switchHeight)),
+        -- The hit area stays finger-sized even though the mark is small.
+        Size = UDim2.fromOffset(math.max(markSize + 14, 28), 30),
         Text = "",
     }) :: TextButton
-    local track: Frame = create("Frame", {
+    local frame: Frame = create("Frame", {
         Parent = button,
         Name = "SwitchTrack",
         AnchorPoint = Vector2.new(0.5, 0.5),
-        BackgroundColor3 = Theme.SurfacePressed,
+        BackgroundColor3 = Theme.DefaultText,
+        BackgroundTransparency = 1,
         BorderSizePixel = 0,
         Position = UDim2.fromScale(0.5, 0.5),
-        Size = UDim2.fromOffset(switchWidth, switchHeight),
+        Size = UDim2.fromOffset(markSize, markSize),
         ZIndex = button.ZIndex + 1,
     }) :: Frame
-    create("UICorner", {Parent = track, CornerRadius = UDim.new(1, 0)})
+    create("UICorner", {Parent = frame, CornerRadius = UDim.new(0, 4)})
     create("UIStroke", {
-        Parent = track,
+        Parent = frame,
+        Name = "MarkStroke",
         Color = Theme.DefaultOutline,
-        Transparency = 0.58,
+        Transparency = 0.45,
         Thickness = 1,
     })
-    local knobSize: number = switchHeight - 6
-    local knob: Frame = create("Frame", {
-        Parent = track,
+    -- The inner block is what fills; keeping it separate from the outline lets
+    -- the mark grow into place instead of blinking on.
+    local core: Frame = create("Frame", {
+        Parent = frame,
         Name = "Knob",
-        AnchorPoint = Vector2.new(0, 0.5),
-        BackgroundColor3 = Theme.DefaultTextMuted,
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        BackgroundColor3 = Theme.DefaultText,
+        BackgroundTransparency = 1,
         BorderSizePixel = 0,
-        Position = UDim2.new(0, 3, 0.5, 0),
-        Size = UDim2.fromOffset(knobSize, knobSize),
-        ZIndex = track.ZIndex + 2,
+        Position = UDim2.fromScale(0.5, 0.5),
+        Size = UDim2.fromScale(0, 0),
+        ZIndex = frame.ZIndex + 1,
     }) :: Frame
-    create("UICorner", {Parent = knob, CornerRadius = UDim.new(1, 0)})
-    create("UIStroke", {
-        Parent = knob,
-        Color = Theme.DefaultOutline,
-        Transparency = 0.35,
-        Thickness = 1,
-    })
+    create("UICorner", {Parent = core, CornerRadius = UDim.new(0, 2)})
     setToggleSwitch(button, enabled, false)
     return button
 end
@@ -2600,6 +2600,30 @@ create("UIStroke", {
     Transparency = 0.7,
     Thickness = 1,
 })
+-- The brand mark is the close control: pressing the logo above the tab list
+-- puts the menu away, and the launcher brings it back. One obvious place to
+-- press, in the corner the eye already goes to.
+local BrandButton: TextButton = create("TextButton", {
+    Parent = BrandMark,
+    Name = "BrandButton",
+    Active = true,
+    AutoButtonColor = false,
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    Size = UDim2.fromScale(1, 1),
+    Text = "",
+    ZIndex = 17,
+}) :: TextButton
+trackUiConnection(BrandButton.MouseButton1Click:Connect(function(): ()
+    state.setMenuVisible(false)
+end))
+trackUiConnection(BrandButton.MouseEnter:Connect(function(): ()
+    BrandMark.BackgroundTransparency = 0.18
+end))
+trackUiConnection(BrandButton.MouseLeave:Connect(function(): ()
+    BrandMark.BackgroundTransparency = 0.42
+end))
+
 local BrandIcon: ImageLabel = create("ImageLabel", {
     Parent = BrandMark,
     Name = "BrandIcon",
@@ -2608,6 +2632,7 @@ local BrandIcon: ImageLabel = create("ImageLabel", {
     Image = "",
     ScaleType = Enum.ScaleType.Crop,
     Size = UDim2.fromScale(1, 1),
+    -- Under the button, so the logo is decoration and the press still lands.
     ZIndex = 15,
 }) :: ImageLabel
 create("UICorner", {
@@ -2926,10 +2951,37 @@ local function createTab(tabName: string, layoutOrder: number): Frame
             -- 0 means "whatever place we are in", which is what the Universal
             -- tab is: the game you are actually playing.
             local resolvedId: number = gameIconId > 0 and gameIconId or game.PlaceId
-            tabIcon.Image = "rbxthumb://type=GameIcon&id="
-                .. tostring(resolvedId)
-                .. "&w=150&h=150"
-            monogram.Text = ""
+            -- `rbxthumb://type=GameIcon` only resolves for the place the
+            -- client is currently connected to; every other tab came up blank.
+            -- The icon of another game has to be asked for by asset id, which
+            -- is a web call, so it runs off the bootstrap thread and falls
+            -- back to the thumbnail service and then to the monogram.
+            task.spawn(function(): ()
+                local infoOk: boolean, info: any = pcall(function(): any
+                    -- Fetched here rather than kept as another bootstrap
+                    -- local: this function is at Luau's 200-register ceiling.
+                    return (game:GetService("MarketplaceService") :: any)
+                        :GetProductInfo(resolvedId, Enum.InfoType.Asset)
+                end)
+                local iconAssetId: number = infoOk
+                        and type(info) == "table"
+                        and tonumber(info.IconImageAssetId)
+                    or 0
+                if not tabIcon.Parent then
+                    return
+                end
+                if iconAssetId > 0 then
+                    tabIcon.Image = "rbxassetid://" .. tostring(iconAssetId)
+                    monogram.Text = ""
+                    return
+                end
+                if resolvedId == game.PlaceId then
+                    tabIcon.Image = "rbxthumb://type=GameIcon&id="
+                        .. tostring(resolvedId)
+                        .. "&w=150&h=150"
+                    monogram.Text = ""
+                end
+            end)
         elseif drawnIcon and state.applyAssetImage then
             state.applyAssetImage(drawnIcon, tabIcon, function(): ()
                 monogram.Text = ""
@@ -4172,7 +4224,10 @@ end))
 -- sight. It used to sit on top of the open window, which made it look like a
 -- second, broken close button.
 local function refreshLauncherVisibility(): ()
-    MobileMenuButton.Visible = state.isMobile and not state.visible
+    -- Shown on every device, not just phones: the brand mark closes the menu,
+    -- so there has to be something visible that opens it again even when the
+    -- keyboard shortcut is not obvious to whoever is holding the machine.
+    MobileMenuButton.Visible = not state.visible
 end
 refreshLauncherVisibility()
 state.addMenuVisibilityListener(function(): ()
@@ -7199,8 +7254,7 @@ local Avatar: ImageLabel = create("ImageLabel", {
     Parent = ProfileCard,
     Name = "Avatar",
     AnchorPoint = Vector2.new(0, 0.5),
-    BackgroundColor3 = Theme.DefaultBackground,
-    BackgroundTransparency = 0.2,
+    BackgroundTransparency = 1,
     BorderSizePixel = 0,
     Image = "rbxthumb://type=AvatarHeadShot&id="
         .. tostring(LocalPlayer.UserId)
@@ -7209,13 +7263,8 @@ local Avatar: ImageLabel = create("ImageLabel", {
     Size = UDim2.fromOffset(34, 34),
     ZIndex = 25,
 }) :: ImageLabel
-create("UICorner", {Parent = Avatar, CornerRadius = UDim.new(1, 0)})
-create("UIStroke", {
-    Parent = Avatar,
-    Color = Theme.DefaultOutline,
-    Transparency = 0.5,
-    Thickness = 1,
-})
+-- No plate and no ring: the head shot already arrives inside a circle, and a
+-- frame behind it only showed up as a grey square in the corners.
 
 local ProfileName: TextLabel =
     (makeTextLabel(ProfileCard, LocalPlayer.DisplayName, 11) :: any) :: TextLabel
@@ -7550,25 +7599,31 @@ local function refreshFeatureToggle(feature: any): ()
             }
         ):Play()
     end
-    -- The switch is the state: knob to the right and lit when the module is
-    -- on, back to the left and dim when it is off.
-    if feature.kindKnob and feature.kindTrack then
+    -- The square is the state: empty when off, filled when on.
+    if feature.kindBoxFill then
         TweenService:Create(
-            feature.kindKnob,
-            TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+            feature.kindBoxFill,
+            TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
             {
-                Position = UDim2.new(0, feature.enabled and 12 or 2, 0.5, 0),
-                BackgroundTransparency = feature.enabled and 0 or 0.35,
+                Size = feature.enabled
+                    and UDim2.fromScale(0.6, 0.6)
+                    or UDim2.fromScale(0, 0),
+                BackgroundTransparency = feature.enabled and 0.05 or 1,
             }
         ):Play()
-        TweenService:Create(
-            feature.kindTrack,
-            TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-            {BackgroundTransparency = feature.enabled and 0.62 or 0.86}
-        ):Play()
     end
-    if feature.kindCore and feature.kind == "hold" then
-        feature.kindCore.BackgroundTransparency = feature.enabled and 0.1 or 1
+    if feature.kindBoxStroke then
+        (feature.kindBoxStroke :: UIStroke).Transparency =
+            feature.enabled and 0.1 or 0.35
+    end
+    -- A hold module's bars brighten for exactly as long as the key is down.
+    for _, bar: any in ipairs({feature.kindHoldLeft, feature.kindHoldRight}) do
+        if bar then
+            bar.BackgroundColor3 = feature.enabled
+                and Theme.DefaultText
+                or Theme.DefaultTextMuted
+            bar.BackgroundTransparency = feature.enabled and 0.05 or 0.35
+        end
     end
     if state.floatingUi then
         state.floatingUi.refreshFeature(feature)
@@ -8021,19 +8076,19 @@ local function createUniversalFeature(
         Rotation = 90,
     })
     feature.activeStripe = activeStripe
-    local kindColor: Color3 = KIND_COLORS[feature.kind] or Theme.DefaultAccent
-    activeStripe.BackgroundColor3 = kindColor
+    activeStripe.BackgroundColor3 = Theme.DefaultAccent
     if feature.activeStripeGradient then
         (feature.activeStripeGradient :: UIGradient).Enabled = false
     end
     -- Always-on kinds keep a dim stripe lit: they have no "off", and a card
     -- with no stripe at all reads as disabled.
     if feature.isAlwaysOn then
-        activeStripe.BackgroundTransparency = 0.55
+        activeStripe.BackgroundTransparency = 0.62
     end
 
-    -- Kind marker. Drawn from frames rather than written, so it reads the
-    -- same at every text size and in every language.
+    -- Kind marker, drawn from frames so it reads the same at every text size
+    -- and in every language.
+    local markIdle: Color3 = Theme.DefaultTextMuted
     local kindMark: Frame = create("Frame", {
         Parent = row,
         Name = "KindMark",
@@ -8041,118 +8096,99 @@ local function createUniversalFeature(
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
         Position = UDim2.new(0, 12, 0, math.round(feature.collapsedHeight * 0.74)),
-        Size = UDim2.fromOffset(26, 14),
+        Size = UDim2.fromOffset(14, 14),
         ZIndex = 9,
     }) :: Frame
 
     if feature.kind == "action" then
-        -- A play triangle, built from two tapered bars: Roblox has no polygon
-        -- primitive and a glyph would depend on the font.
-        local triangleTop: Frame = create("Frame", {
-            Parent = kindMark,
-            Name = "PlayTop",
-            AnchorPoint = Vector2.new(0.5, 1),
-            BackgroundColor3 = kindColor,
-            BackgroundTransparency = 0.15,
-            BorderSizePixel = 0,
-            Position = UDim2.new(0, 8, 0.5, 1),
-            Rotation = 27,
-            Size = UDim2.fromOffset(11, 2),
-            ZIndex = 10,
-        }) :: Frame
-        create("UICorner", {Parent = triangleTop, CornerRadius = UDim.new(1, 0)})
-        local triangleBottom: Frame = create("Frame", {
-            Parent = kindMark,
-            Name = "PlayBottom",
-            AnchorPoint = Vector2.new(0.5, 0),
-            BackgroundColor3 = kindColor,
-            BackgroundTransparency = 0.15,
-            BorderSizePixel = 0,
-            Position = UDim2.new(0, 8, 0.5, -1),
-            Rotation = -27,
-            Size = UDim2.fromOffset(11, 2),
-            ZIndex = 10,
-        }) :: Frame
-        create("UICorner", {Parent = triangleBottom, CornerRadius = UDim.new(1, 0)})
-        local playSpine: Frame = create("Frame", {
-            Parent = kindMark,
-            Name = "PlaySpine",
-            AnchorPoint = Vector2.new(0, 0.5),
-            BackgroundColor3 = kindColor,
-            BackgroundTransparency = 0.15,
-            BorderSizePixel = 0,
-            Position = UDim2.new(0, 3, 0.5, 0),
-            Size = UDim2.fromOffset(2, 10),
-            ZIndex = 10,
-        }) :: Frame
-        create("UICorner", {Parent = playSpine, CornerRadius = UDim.new(1, 0)})
+        -- A chevron, built from two bars: Roblox has no polygon primitive and
+        -- a glyph would depend on whichever font loaded.
+        for _, side: number in ipairs({-1, 1}) do
+            local blade: Frame = create("Frame", {
+                Parent = kindMark,
+                Name = side < 0 and "ChevronTop" or "ChevronBottom",
+                AnchorPoint = Vector2.new(0.5, 0.5),
+                BackgroundColor3 = markIdle,
+                BackgroundTransparency = 0.15,
+                BorderSizePixel = 0,
+                Position = UDim2.new(0.5, -1, 0.5, side * 2),
+                Rotation = side * 45,
+                Size = UDim2.fromOffset(8, 1),
+                ZIndex = 10,
+            }) :: Frame
+            create("UICorner", {Parent = blade, CornerRadius = UDim.new(1, 0)})
+        end
+    elseif feature.kind == "hold" then
+        -- Two upright bars: the shape of something you press and hold.
+        for _, side: number in ipairs({-1, 1}) do
+            local bar: Frame = create("Frame", {
+                Parent = kindMark,
+                Name = side < 0 and "HoldLeft" or "HoldRight",
+                AnchorPoint = Vector2.new(0.5, 0.5),
+                BackgroundColor3 = markIdle,
+                BackgroundTransparency = 0.35,
+                BorderSizePixel = 0,
+                Position = UDim2.new(0.5, side * 3, 0.5, 0),
+                Size = UDim2.fromOffset(2, 10),
+                ZIndex = 10,
+            }) :: Frame
+            create("UICorner", {Parent = bar, CornerRadius = UDim.new(1, 0)})
+            if side < 0 then
+                feature.kindHoldLeft = bar
+            else
+                feature.kindHoldRight = bar
+            end
+        end
     elseif feature.isAlwaysOn then
-        local ring: Frame = create("Frame", {
+        -- Three rules, narrowing: a stack of settings rather than a control.
+        for index: number = 1, 3 do
+            local rule: Frame = create("Frame", {
+                Parent = kindMark,
+                Name = "Rule" .. tostring(index),
+                AnchorPoint = Vector2.new(0, 0.5),
+                BackgroundColor3 = markIdle,
+                BackgroundTransparency = 0.2 + (index - 1) * 0.18,
+                BorderSizePixel = 0,
+                Position = UDim2.new(0, 1, 0.5, (index - 2) * 4),
+                Size = UDim2.fromOffset(12 - (index - 1) * 3, 1),
+                ZIndex = 10,
+            }) :: Frame
+            create("UICorner", {Parent = rule, CornerRadius = UDim.new(1, 0)})
+        end
+    else
+        -- The same empty-or-filled square the option rows use, so one shape
+        -- means "state" everywhere in the interface.
+        local box: Frame = create("Frame", {
             Parent = kindMark,
-            Name = "Ring",
-            AnchorPoint = Vector2.new(0, 0.5),
+            Name = "StateBox",
+            AnchorPoint = Vector2.new(0.5, 0.5),
             BackgroundTransparency = 1,
             BorderSizePixel = 0,
-            Position = UDim2.new(0, 1, 0.5, 0),
+            Position = UDim2.fromScale(0.5, 0.5),
             Size = UDim2.fromOffset(12, 12),
             ZIndex = 10,
         }) :: Frame
-        create("UICorner", {Parent = ring, CornerRadius = UDim.new(1, 0)})
-        create("UIStroke", {
-            Parent = ring,
-            Color = kindColor,
-            Transparency = 0.25,
+        create("UICorner", {Parent = box, CornerRadius = UDim.new(0, 3)})
+        local boxStroke: UIStroke = (create("UIStroke", {
+            Parent = box,
+            Color = markIdle,
+            Transparency = 0.35,
             Thickness = 1,
-        })
-        -- A hold module is live only while its key is down, so its ring stays
-        -- hollow until `setHeld` fills it; a group module is always running
-        -- and shows the dot from the start.
-        local core: Frame = create("Frame", {
-            Parent = ring,
-            Name = "Core",
+        }) :: any) :: UIStroke
+        local fill: Frame = create("Frame", {
+            Parent = box,
+            Name = "Fill",
             AnchorPoint = Vector2.new(0.5, 0.5),
-            BackgroundColor3 = kindColor,
-            BackgroundTransparency = feature.kind == "group" and 0.1 or 1,
+            BackgroundColor3 = Theme.DefaultText,
+            BackgroundTransparency = 1,
             BorderSizePixel = 0,
             Position = UDim2.fromScale(0.5, 0.5),
-            Size = UDim2.fromOffset(6, 6),
+            Size = UDim2.fromScale(0, 0),
             ZIndex = 11,
         }) :: Frame
-        create("UICorner", {Parent = core, CornerRadius = UDim.new(1, 0)})
-        feature.kindCore = core
-    else
-        local track: Frame = create("Frame", {
-            Parent = kindMark,
-            Name = "Track",
-            AnchorPoint = Vector2.new(0, 0.5),
-            BackgroundColor3 = kindColor,
-            BackgroundTransparency = 0.86,
-            BorderSizePixel = 0,
-            Position = UDim2.new(0, 0, 0.5, 0),
-            Size = UDim2.fromOffset(22, 12),
-            ZIndex = 10,
-        }) :: Frame
-        create("UICorner", {Parent = track, CornerRadius = UDim.new(1, 0)})
-        create("UIStroke", {
-            Parent = track,
-            Color = kindColor,
-            Transparency = 0.55,
-            Thickness = 1,
-        })
-        local knob: Frame = create("Frame", {
-            Parent = track,
-            Name = "Knob",
-            AnchorPoint = Vector2.new(0, 0.5),
-            BackgroundColor3 = kindColor,
-            BackgroundTransparency = 0.35,
-            BorderSizePixel = 0,
-            Position = UDim2.new(0, 2, 0.5, 0),
-            Size = UDim2.fromOffset(8, 8),
-            ZIndex = 11,
-        }) :: Frame
-        create("UICorner", {Parent = knob, CornerRadius = UDim.new(1, 0)})
-        feature.kindTrack = track
-        feature.kindKnob = knob
+        create("UICorner", {Parent = fill, CornerRadius = UDim.new(0, 2)})
+        feature.kindBoxStroke = boxStroke
+        feature.kindBoxFill = fill
     end
     feature.kindMark = kindMark
 

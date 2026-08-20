@@ -413,13 +413,25 @@ needs — and the accent stripe carries the matching colour:
 
 | Marker | Kind | Behaviour |
 | --- | --- | --- |
-| a switch whose knob slides and lights up | toggle | Click the card or press its key to switch it on and off. |
-| a play triangle | action | Click or press once; it runs and keeps no state. |
-| a hollow ring that fills while held | hold | Always running; the key applies its effect only while held. |
-| a filled dot inside a ring | group | Always running; the card only holds its settings (Friend List, MM2's Knife). |
+| a square that fills when the module is on | toggle | Click the card or press its key to switch it on and off. |
+| a chevron | action | Click or press once; it runs and keeps no state. |
+| two upright bars that brighten while held | hold | Always running; the key applies its effect only while held. |
+| three narrowing rules | group | Always running; the card only holds its settings (Friend List, MM2's Knife). |
 
 Always-on cards keep a dim stripe lit, because they have no "off" state and a
 dark stripe reads as disabled.
+
+Every marker is drawn in the interface's own greys. There are no coloured chips
+per kind — a board of forty cards each wearing a different colour is a paint
+chart, not a menu.
+
+### Controls
+
+Option rows use a **state mark** rather than a switch: a small square that is
+empty when off and filled when on, in the same greys as everything else. A
+sliding pill is a phone control — wide, loud, repeated on every row, and at
+this size the knob is the only part you can actually read — and the same square
+appears on the module cards, so one shape means "state" everywhere.
 
 ### Choosing between values
 
@@ -611,12 +623,16 @@ validation workflow.
   only exists while the menu is hidden — it used to sit on top of the open
   window, where it read as a second, broken close button.
 - Navigation tabs carry icons instead of two-letter monograms. Game tabs
-  (Universal, MM2, TRS, VD, MVSD) show the game's own thumbnail through
-  `rbxthumb://type=GameIcon`, resolved by the engine with nothing to download —
-  Universal shows the place you are actually in. Movement gets a walking figure
-  and Settings a gear (`src/gui/Current/Assets/Icons/nav-*.png`), and the two
-  floating-window launchers get a star and a stacked-windows glyph
-  (`window-*.png`). Monograms remain the fallback.
+  (Universal, MM2, TRS, VD, MVSD) show the game's own icon, fetched by asset id
+  through `MarketplaceService:GetProductInfo` — `rbxthumb://type=GameIcon` only
+  resolves for the place the client is connected to, which is why every tab but
+  Universal used to come up blank. Movement gets a walking figure and Config. a
+  gear (`src/gui/Current/Assets/Icons/nav-*.png`), and the two floating-window
+  launchers get a star and a stacked-windows glyph (`window-*.png`). Monograms
+  remain the fallback.
+- The brand mark above the tab list closes the menu, and the launcher button —
+  now shown on desktop as well, and only while the menu is hidden — opens it
+  again.
 - The foot of the rail carries a **player card**: the account's avatar
   (`rbxthumb://`, resolved by the engine itself — no download), display name,
   handle, and a line with the date this account first ran the menu, how many
