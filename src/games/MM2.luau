@@ -1457,39 +1457,44 @@ end
 
 -- Always Show Timer.
 --
--- MM2 already draws a round countdown; it is simply only made visible to the
--- murderer. Rather than covering the screen with a second box in the menu's
--- own style, this finds the game's own timer label and un-hides it, so the
--- countdown appears exactly where — and looking exactly how — the murderer
--- sees it. Everything it touches is restored when the module is switched off.
+-- MM2 already draws the round countdown: `PlayerGui.MainGUI.Game.Timer` is a
+-- frame holding an `XPText` label, and the game's own HUD script makes it
+-- visible at round start for every role *except* Innocent — innocents get the
+-- XP counter in its place. Rather than covering the screen with a second box
+-- in the menu's style, this reveals the game's own frame, so the countdown
+-- appears exactly where and how the murderer sees it.
+--
+-- Revealing it is not enough on its own: that HUD script only refreshes the
+-- text while your role is not Innocent, so an innocent would be shown a frozen
+-- label. The remaining time is therefore written here too, in the game's own
+-- "1m 7s" format, and only while the game itself is not driving it.
 local revealedTimerObjects: {[Instance]: boolean} =
     setmetatable({}, {__mode = "k"}) :: any
 
-local function looksLikeTimerText(text: string): boolean
-    -- "1:23", "01:23" and "0:07" all match; plain numbers do not, so a score
-    -- or a coin counter is never mistaken for the round clock.
-    return string.match(text, "^%s*%d?%d:%d%d%s*$") ~= nil
-end
-
-local function findGameTimerLabels(): {TextLabel}
-    local found: {TextLabel} = {}
+local function findGameTimerFrame(): (GuiObject?, TextLabel?)
     local playerGui: PlayerGui? = LocalPlayer:FindFirstChildOfClass("PlayerGui")
     if not playerGui then
-        return found
+        return nil, nil
     end
+    local mainGui: Instance? = playerGui:FindFirstChild("MainGUI")
+    local game: Instance? = mainGui and mainGui:FindFirstChild("Game")
+    local frame: Instance? = game and game:FindFirstChild("Timer")
+    if frame and frame:IsA("GuiObject") then
+        local label: Instance? = frame:FindFirstChild("XPText")
+        return frame, (label and label:IsA("TextLabel")) and label or nil
+    end
+
+    -- Fallback for a future layout change: any Timer-named GuiObject that is
+    -- not part of this menu.
     for _, descendant: Instance in ipairs(playerGui:GetDescendants()) do
-        if descendant:IsA("TextLabel") and not descendant:IsDescendantOf(ScreenGui) then
-            local named: boolean =
-                string.find(string.lower(descendant.Name), "timer") ~= nil
-            local parent: Instance? = descendant.Parent
-            local parentNamed: boolean = parent ~= nil
-                and string.find(string.lower(parent.Name), "timer") ~= nil
-            if named or parentNamed or looksLikeTimerText(descendant.Text) then
-                table.insert(found, descendant)
-            end
+        if descendant:IsA("GuiObject")
+            and descendant.Name == "Timer"
+            and not descendant:IsDescendantOf(ScreenGui) then
+            local label: Instance? = descendant:FindFirstChildWhichIsA("TextLabel", true)
+            return descendant, (label and label:IsA("TextLabel")) and label or nil
         end
     end
-    return found
+    return nil, nil
 end
 
 local function restoreGameTimer(): ()
@@ -1504,6 +1509,17 @@ local function restoreGameTimer(): ()
     revealedTimerObjects = setmetatable({}, {__mode = "k"}) :: any
 end
 
+-- The game formats the countdown as "1m 7s" / "43s"; matching it keeps the
+-- revealed label indistinguishable from the murderer's own timer.
+local function formatRoundClock(remaining: number): string
+    local minutes: number = math.floor(remaining / 60)
+    local seconds: number = remaining - minutes * 60
+    if minutes > 0 then
+        return tostring(minutes) .. "m " .. tostring(seconds) .. "s"
+    end
+    return tostring(seconds) .. "s"
+end
+
 local function toggleAlwaysShowTimer(enabled)
     disconnectFeatureConnection("MM2AlwaysTimer")
 
@@ -1512,8 +1528,8 @@ local function toggleAlwaysShowTimer(enabled)
         return
     end
 
-    -- Ask the server for the current remaining time so enabling mid-round
-    -- does not have to wait for the next RoundStart.
+    -- Ask the server for the remaining time so enabling mid-round does not
+    -- have to wait for the next RoundStart.
     local getTimer = timerRemotes and timerRemotes:FindFirstChild("GetTimer", true)
     if getTimer and getTimer:IsA("RemoteFunction") then
         task.spawn(function()
@@ -1529,35 +1545,49 @@ local function toggleAlwaysShowTimer(enabled)
     local elapsed = 1
     featureConnections.MM2AlwaysTimer = TaskManager:Connect(function(deltaTime)
         elapsed = elapsed + deltaTime
-        if elapsed < 0.4 then
+        -- Fast enough that the game's own "hide it again" pass never shows.
+        if elapsed < 0.12 then
             return
         end
         elapsed = 0
 
-        local roundRunning: boolean = timerEndsAt ~= nil
-            and timerEndsAt - os.clock() > 0
-        if not roundRunning then
+        local remaining: number? = timerEndsAt
+            and math.max(0, math.ceil(timerEndsAt - os.clock()))
+        if not remaining or remaining <= 0 then
             restoreGameTimer()
             return
         end
 
-        -- The game hides its own label between rounds and for non-murderers;
-        -- forcing Visible on the labels it already maintains keeps the exact
-        -- countdown the murderer sees, with no extra UI.
-        for _, label: TextLabel in ipairs(findGameTimerLabels()) do
-            if not label.Visible then
-                revealedTimerObjects[label] = true
-                label.Visible = true
+        local frame: GuiObject?, label: TextLabel? = findGameTimerFrame()
+        if not frame then
+            return
+        end
+        if not frame.Visible then
+            revealedTimerObjects[frame] = true
+            frame.Visible = true
+        end
+        -- Parents can be hidden too (the HUD hides whole groups between
+        -- rounds); walk a short way up rather than assuming a fixed depth.
+        local ancestor: Instance? = frame.Parent
+        local depth: number = 0
+        while ancestor and depth < 3 do
+            if ancestor:IsA("GuiObject") and not ancestor.Visible then
+                revealedTimerObjects[ancestor] = true
+                ancestor.Visible = true
             end
-            local ancestor: Instance? = label.Parent
-            local depth: number = 0
-            while ancestor and depth < 4 do
-                if ancestor:IsA("GuiObject") and not ancestor.Visible then
-                    revealedTimerObjects[ancestor] = true
-                    ancestor.Visible = true
-                end
-                ancestor = ancestor.Parent
-                depth += 1
+            ancestor = ancestor.Parent
+            depth += 1
+        end
+
+        if label then
+            -- Only write when the game is not: as a murderer or sheriff its
+            -- own script owns this label every frame.
+            local localRole: string? = getPlayerRole(LocalPlayer)
+            if localRole == nil or localRole == "Innocent" then
+                label.Text = formatRoundClock(remaining)
+                label.TextColor3 = remaining <= 30
+                    and Color3.fromRGB(255, 0, 0)
+                    or Color3.fromRGB(255, 255, 255)
             end
         end
     end)
@@ -3285,6 +3315,7 @@ local shootHookInstalled: boolean = false
 local shootTouchHookInstalled: boolean = false
 local shootHookOriginals: {[string]: any} = {}
 local shootHookWrappers: {[string]: any} = {}
+local shootHookShapes: {[string]: string} = {}
 local weaponServiceModule: any = nil
 type PendingShot = {
     target: Player,
@@ -4225,16 +4256,22 @@ local function installShootRedirectHook(): boolean
                 local wrapper: any = nil
                 wrapper = function(self: any, ...: any): any
                     local targetCFrame: CFrame? = getRedirectedWeaponCFrame()
-                    if targetCFrame then
-                        -- Position accessors must not receive a CFrame, and
-                        -- CFrame accessors must not receive a Vector3.
-                        local previous: any = predecessor(self, ...)
-                        if typeof(previous) == "Vector3" then
-                            return targetCFrame.Position
-                        end
-                        return targetCFrame
+                    if not targetCFrame then
+                        return predecessor(self, ...)
                     end
-                    return predecessor(self, ...)
+                    -- The accessor must answer in the shape the caller
+                    -- expects. Names are not a reliable guide — MM2's own
+                    -- `GetTargetPosition` returns a CFrame — so the real
+                    -- shape is measured once and remembered.
+                    local shape: string? = shootHookShapes[methodName]
+                    if shape == nil then
+                        shape = typeof(predecessor(self, ...))
+                        shootHookShapes[methodName] = shape
+                    end
+                    if shape == "Vector3" then
+                        return targetCFrame.Position
+                    end
+                    return targetCFrame
                 end
                 predecessor = state.hookFunction(original, wrapper)
                 shootHookOriginals[methodName] = predecessor
@@ -4373,6 +4410,7 @@ local function uninstallShootRedirectHook(): ()
     end
     table.clear(shootHookOriginals)
     table.clear(shootHookWrappers)
+    table.clear(shootHookShapes)
     shootHookInstalled = false
     shootTouchHookInstalled = false
     disconnectFeatureConnection("MM2GunFired")
