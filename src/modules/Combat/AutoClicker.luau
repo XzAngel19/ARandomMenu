@@ -216,16 +216,17 @@ function Module.init(context: Runtime): any
     clicker:CreateSlider({
         Name = "Minimum CPS",
         Min = 1,
-        Max = 40,
+        Max = 28,
         Default = 8,
     })
     clicker:CreateSlider({
         Name = "Maximum CPS",
         Min = 1,
-        Max = 40,
+        Max = 28,
         Default = 13,
         Tooltip = "Every interval is drawn between the two ends, so no two "
-            .. "clicks are the same distance apart.",
+            .. "clicks are the same distance apart. Above roughly 20 no human "
+            .. "hand is a plausible explanation.",
     })
     clicker:CreateDropdown({
         Name = "Activation",

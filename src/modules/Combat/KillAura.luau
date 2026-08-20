@@ -645,7 +645,9 @@ function Module.init(context: Runtime): any
         Name = "Swings per second",
         Min = 1,
         Max = 20,
-        Default = 9,
+        Default = 8,
+        Tooltip = "A fast human clicks about 8-12 times a second. Twenty is "
+            .. "not a person, and a server that logs click rates knows it.",
     })
 
     local advancedRows: {any} = {}
@@ -772,7 +774,9 @@ function Module.init(context: Runtime): any
     })
 
     aura:CreateNote(
-        "Friend List protects players from this module in every game."
+        "Safe band: 8-12 swings a second and a reach close to the weapon's "
+            .. "own. Friend List protects players from this module in every "
+            .. "game."
     )
 
     activeCleanup = function(): ()

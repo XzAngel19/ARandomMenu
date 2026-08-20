@@ -432,6 +432,10 @@ the title is a shape rather than a caption — a word like "TOGGLE" on every car
 is noise once you have read it twice, and it eats the width the module name
 needs — and the accent stripe carries the matching colour:
 
+Scrolling boards keep a right-hand gutter the width of the scroll bar plus the
+content padding, so a card sized to the full width no longer sits underneath
+the bar and the board stops looking clipped on that edge.
+
 The card *is* the control. Nothing is bolted onto it — no switch, no chip, no
 marker under the name — because a list of forty modules only stays readable if
 each row is one shape whose surface, weight and edge already say what it is and
@@ -467,6 +471,14 @@ Nothing is switched on when the menu loads, and every safety rail starts off:
 wall checks, team checks, visibility checks, require-tool and friend-skipping
 are all opt-in. A module you enable does the blatant thing first and gets
 polite only when you ask it to.
+
+Rates and reaches are the exception, because they are what gets accounts
+collected rather than what makes a module work. Anything that talks to a server
+ships inside the band the game itself produces and says so on the card: Server
+Aura at 20 studs with the slider capped at 40 and a note that nothing past 28
+could have been a real swing, Server Miner at 24 studs and 8 mines a second,
+Bed Nuker at 18 studs, Kill Aura at 8 swings a second (a fast human is 8-12),
+and the Auto Clicker's ceiling lowered from 40 CPS to 28.
 
 ### Shipped modules
 
@@ -865,12 +877,19 @@ config and restored on the next injection.
 
 ## Brand, icons and player card
 
-- The intro carries no words. A menu that spells out "loading modules" while it
-  loads modules is telling the player something they can already see; what is
-  left is the ring and the progress line, and the shell fades up out of it. The
-  build stamp moved to the console.
-- The drawn icons are transparent PNGs rather than glyphs on a dark plate, so
-  the rail's own near-black shows through instead of a grey square.
+- **There is no intro at all.** No curtain, no wordmark, no ring, no progress
+  bar, no "Ready" held on screen. The menu builds itself hidden and the
+  launcher button appearing *is* the signal that it is ready — press it and the
+  window is already complete, which is how Vape loads. The build stamp and any
+  initialisation failure go to the console.
+- **The launcher can be dragged.** It sits over the game, so it can land
+  exactly where a game put a button of its own; press and drag moves it,
+  a press that does not travel still opens the menu, and where it ends up is
+  saved with the rest of the interface state.
+- The drawn icons are solid white glyphs on full transparency, in the same
+  language as the rest of the interface: a running figure for Movement, a
+  chunky six-tooth gear for Config., a filled star for Favourites and two
+  stacked panels for Overlays.
 - The menu's logo (`src/gui/Current/Assets/Brand/menu-logo.jpg`) is drawn on
   both places the menu identifies itself: the floating launcher button and the
   brand mark at the top of the navigation rail. Both keep their lettering as a

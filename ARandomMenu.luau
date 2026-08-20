@@ -11,11 +11,9 @@
     the floating tool windows and the HUD overlays can be moved.
 ]]
 
-local bootstrapStatusLabel: TextLabel? = nil
 -- Raised by the xpcall handler at the bottom of the file. The loading intro
 -- reads it so its scripted narration and its watchdog never overwrite or hide
 -- the initialization error message.
-local bootstrapFailed: boolean = false
 local RUNTIME_COMPATIBILITY_MARKER: string =
     "Initialization error — check executor console"
 local RUNTIME_SAFETY_SOURCE_URL: string =
@@ -799,7 +797,10 @@ if type(configData.ui.toggleKey) == "string" then
 end
 
 local state: any = {
-    visible = true,
+    -- The shell starts hidden. There is no intro to watch while the menu
+    -- builds itself, so the launcher appearing is the signal that it is ready
+    -- — press it and the window is already complete.
+    visible = false,
     isMobile = IS_MOBILE_DEVICE,
     guiStyle = "Default",
     blurEnabled = configData.ui.blurEnabled ~= false,
@@ -3495,378 +3496,21 @@ create("UIListLayout", {
     SortOrder = Enum.SortOrder.LayoutOrder,
 })
 
-do
--- Loading intro.
+-- No intro.
 --
--- The intro is a staged sequence rather than a spinner that vanishes the
--- moment the last module reports in:
+-- There used to be a staged curtain here: a wordmark, a ring, a status line
+-- narrating each loading stage, a progress bar and a hold on "Ready" before it
+-- lifted. All of it was time the player spent watching the menu talk about
+-- itself. Vape does not do this and neither do we any more — the menu builds
+-- itself hidden, and the launcher button appearing on screen *is* the signal
+-- that it is ready.
 --
---   1. the curtain fades up with a slow drifting backdrop glow,
---   2. the wordmark rises into place letter-block by letter-block,
---   3. a ring sweeps while the status line reports each loading stage,
---   4. the progress bar fills, "Ready" is held briefly so it can be read,
---   5. the whole curtain lifts away.
---
--- Steps 1-3 take roughly 1.1s of scripted animation before any narration, so
--- the intro always reads as an intro even when every module loads instantly.
--- A slow load simply keeps stage 3 on screen for longer; nothing here ever
--- delays a slow load further. `state.finishLoadingIntro` may be called at any
--- point, including before the sequence has finished: it records the request
--- and the sequence picks it up at the next stage boundary.
-local LoadingCurtain: CanvasGroup = (create("CanvasGroup", {
-    Parent = Main,
-    Name = "LoadingIntro",
-    Active = true,
-    -- Deliberately darker than the shell itself: the intro should read as
-    -- black, and the shell fades up out of it.
-    BackgroundColor3 = Color3.fromRGB(4, 4, 5),
-    BackgroundTransparency = state.guiStyle == "Default" and 0 or 0.02,
-    BorderSizePixel = 0,
-    -- Fully opaque from frame one: the half-built menu behind it must never
-    -- flash. The stage-1 "fade up" animates the contents, not the curtain.
-    GroupTransparency = 0,
-    Size = UDim2.fromScale(1, 1),
-    ZIndex = 500,
-}) :: any) :: CanvasGroup
-create("UICorner", {
-    Parent = LoadingCurtain,
-    CornerRadius = cornerRadius(state.layout.shellCorner),
-})
-
--- Slow, oversized radial wash behind everything. It is a plain frame with a
--- gradient rather than an image so it costs nothing and needs no asset.
-local LoadingGlow: Frame = create("Frame", {
-    Parent = LoadingCurtain,
-    Name = "Glow",
-    AnchorPoint = Vector2.new(0.5, 0.5),
-    -- Near-black: the backdrop wash used to be a pale grey at 0.86, which lit
-    -- the whole curtain and made the intro read as grey rather than dark.
-    BackgroundColor3 = Color3.fromRGB(46, 46, 52),
-    BackgroundTransparency = 0.94,
-    BorderSizePixel = 0,
-    Position = UDim2.fromScale(0.5, 0.42),
-    Size = UDim2.fromScale(1.4, 0.9),
-    ZIndex = 501,
-}) :: Frame
-create("UIGradient", {
-    Parent = LoadingGlow,
-    Rotation = 12,
-    Transparency = NumberSequence.new({
-        NumberSequenceKeypoint.new(0, 1),
-        NumberSequenceKeypoint.new(0.5, 0.62),
-        NumberSequenceKeypoint.new(1, 1),
-    }),
-})
--- Breathing loop. Only the size pulses: transparency is owned by the stage-1
--- fade-in, and two tweens fighting over one property would stutter.
-local LoadingGlowTween: Tween = TweenService:Create(
-    LoadingGlow,
-    TweenInfo.new(
-        4.2,
-        Enum.EasingStyle.Sine,
-        Enum.EasingDirection.InOut,
-        -1,
-        true
-    ),
-    {Size = UDim2.fromScale(1.8, 1.15)}
-)
-LoadingGlowTween:Play()
-
-local LoadingSpinner: Frame = create("Frame", {
-    Parent = LoadingCurtain,
-    Name = "Spinner",
-    AnchorPoint = Vector2.new(0.5, 0.5),
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    Position = UDim2.fromScale(0.5, 0.33),
-    Size = UDim2.fromOffset(state.layout.compact and 40 or 46, state.layout.compact and 40 or 46),
-    ZIndex = 503,
-}) :: Frame
-create("UICorner", {Parent = LoadingSpinner, CornerRadius = UDim.new(1, 0)})
-create("UIStroke", {
-    Parent = LoadingSpinner,
-    Color = Theme.DefaultOutline,
-    Transparency = 0.78,
-    Thickness = 2,
-})
-local LoadingSpinnerHead: Frame = create("Frame", {
-    Parent = LoadingSpinner,
-    AnchorPoint = Vector2.new(0.5, 0),
-    BackgroundColor3 = state.guiStyle == "Default"
-        and Theme.DefaultAccent
-        or Color3.fromRGB(224, 224, 228),
-    BorderSizePixel = 0,
-    Position = UDim2.new(0.5, 0, 0, 2),
-    Size = UDim2.fromOffset(6, 6),
-    ZIndex = 504,
-}) :: Frame
-create("UICorner", {Parent = LoadingSpinnerHead, CornerRadius = UDim.new(1, 0)})
-
--- Second, slower counter-rotating ring. Two rings at different speeds read as
--- a deliberate loading animation instead of a default busy indicator.
-local LoadingSpinnerOuter: Frame = create("Frame", {
-    Parent = LoadingCurtain,
-    Name = "SpinnerOuter",
-    AnchorPoint = Vector2.new(0.5, 0.5),
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    Position = UDim2.fromScale(0.5, 0.33),
-    Size = UDim2.fromOffset(state.layout.compact and 62 or 70, state.layout.compact and 62 or 70),
-    ZIndex = 502,
-}) :: Frame
-create("UICorner", {Parent = LoadingSpinnerOuter, CornerRadius = UDim.new(1, 0)})
-create("UIStroke", {
-    Parent = LoadingSpinnerOuter,
-    Color = Theme.DefaultOutline,
-    Transparency = 0.92,
-    Thickness = 1,
-})
-local LoadingSpinnerOuterHead: Frame = create("Frame", {
-    Parent = LoadingSpinnerOuter,
-    AnchorPoint = Vector2.new(0.5, 0),
-    BackgroundColor3 = Color3.fromRGB(190, 190, 198),
-    BackgroundTransparency = 0.35,
-    BorderSizePixel = 0,
-    Position = UDim2.new(0.5, 0, 0, 1),
-    Size = UDim2.fromOffset(4, 4),
-    ZIndex = 503,
-}) :: Frame
-create("UICorner", {
-    Parent = LoadingSpinnerOuterHead,
-    CornerRadius = UDim.new(1, 0),
-})
-
-local LoadingSpinnerTween: Tween = TweenService:Create(
-    LoadingSpinner,
-    TweenInfo.new(
-        1.05,
-        Enum.EasingStyle.Linear,
-        Enum.EasingDirection.InOut,
-        -1
-    ),
-    {Rotation = 360}
-)
-LoadingSpinnerTween:Play()
-local LoadingSpinnerOuterTween: Tween = TweenService:Create(
-    LoadingSpinnerOuter,
-    TweenInfo.new(
-        2.6,
-        Enum.EasingStyle.Linear,
-        Enum.EasingDirection.InOut,
-        -1
-    ),
-    {Rotation = -360}
-)
-LoadingSpinnerOuterTween:Play()
-
--- The intro carries no words. A menu that spells out "loading modules" while
--- it loads modules is telling the player something they can already see; what
--- is left is the ring and the progress line, and the shell fades up out of it.
---
--- These three labels are kept as invisible stubs because the staging code
--- fades them in and out by name, and a sequence that has to check for nil at
--- every step is a sequence that will eventually forget to.
-local LoadingTitle: TextLabel = (makeTextLabel(LoadingCurtain, "", 1) :: any) :: TextLabel
-LoadingTitle.Name = "IntroTitle"
-LoadingTitle.Size = UDim2.fromOffset(0, 0)
-LoadingTitle.TextTransparency = 1
-LoadingTitle.Visible = false
-
-local LoadingLabel: TextLabel = (makeTextLabel(LoadingCurtain, "", 1) :: any) :: TextLabel
-LoadingLabel.Name = "IntroStatus"
-LoadingLabel.Size = UDim2.fromOffset(0, 0)
-LoadingLabel.TextTransparency = 1
-LoadingLabel.Visible = false
-state.loadingLabel = LoadingLabel
-bootstrapStatusLabel = LoadingLabel
-
-local LoadingTrack: Frame = create("Frame", {
-    Parent = LoadingCurtain,
-    Name = "ProgressTrack",
-    AnchorPoint = Vector2.new(0.5, 0),
-    BackgroundColor3 = state.guiStyle == "Default"
-        and Theme.DefaultSurface
-        or Color3.fromRGB(40, 40, 46),
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    Position = UDim2.fromScale(0.5, 0.725),
-    Size = UDim2.new(0.48, 0, 0, 3),
-    ZIndex = 503,
-}) :: Frame
-create("UICorner", {Parent = LoadingTrack, CornerRadius = UDim.new(1, 0)})
-local LoadingProgressFill: Frame = create("Frame", {
-    Parent = LoadingTrack,
-    Name = "Progress",
-    BackgroundColor3 = state.guiStyle == "Default"
-        and Theme.DefaultAccent
-        or Theme.Accent,
-    BorderSizePixel = 0,
-    Size = UDim2.fromScale(0, 1),
-    ZIndex = 504,
-}) :: Frame
-create("UICorner", {Parent = LoadingProgressFill, CornerRadius = UDim.new(1, 0)})
-
-local LoadingBuildLabel: TextLabel =
-    (makeTextLabel(LoadingCurtain, "", 1) :: any) :: TextLabel
-LoadingBuildLabel.Name = "IntroBuild"
-LoadingBuildLabel.Size = UDim2.fromOffset(0, 0)
-LoadingBuildLabel.TextTransparency = 1
-LoadingBuildLabel.Visible = false
-
-state.loadingProgressFill = LoadingProgressFill
-
-
--- Sequencing state.
---
--- `introStageReached` is how far the scripted sequence has progressed;
--- `finishRequested` records that loading completed. The exit only runs once
--- both "the sequence reached its last stage" and "loading finished" hold.
-local loadingIntroFinished: boolean = false
-local finishRequested: boolean = false
-local finishFailureCount: number = 0
-local introSequenceDone: boolean = false
-local exitStarted: boolean = false
-
-local function fadeText(label: TextLabel, target: number, duration: number): ()
-    TweenService:Create(
-        label,
-        TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-        {TextTransparency = target}
-    ):Play()
-end
-
-local function runExit(): ()
-    if exitStarted or not LoadingCurtain.Parent then
-        return
-    end
-    exitStarted = true
-
-    if finishFailureCount > 0 then
-        LoadingLabel.Text = tostring(finishFailureCount)
-            .. " module(s) loaded with warnings"
-    else
-        LoadingLabel.Text = "Ready"
-    end
-    TweenService:Create(
-        LoadingProgressFill,
-        TweenInfo.new(0.24, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-        {Size = UDim2.fromScale(1, 1)}
-    ):Play()
-
-    -- Hold "Ready" long enough to actually be read, then lift the curtain
-    -- with a slight upward drift so it feels like a door opening.
-    task.delay(0.55, function(): ()
-        if not LoadingCurtain.Parent then
-            return
-        end
-        TweenService:Create(
-            LoadingCurtain,
-            TweenInfo.new(0.34, Enum.EasingStyle.Quart, Enum.EasingDirection.In),
-            {Position = UDim2.fromScale(0, -0.05)}
-        ):Play()
-        local exitTween: Tween = TweenService:Create(
-            LoadingCurtain,
-            TweenInfo.new(
-                0.42,
-                Enum.EasingStyle.Quart,
-                Enum.EasingDirection.Out
-            ),
-            {GroupTransparency = 1}
-        )
-        exitTween:Play()
-        exitTween.Completed:Once(function(): ()
-            LoadingSpinnerTween:Cancel()
-            LoadingSpinnerOuterTween:Cancel()
-            LoadingGlowTween:Cancel()
-            LoadingCurtain:Destroy()
-        end)
-    end)
-end
-
--- The scripted opening. Runs on its own thread so a slow module load never
--- blocks it and it never blocks a module load.
-task.spawn(function(): ()
-    -- 1. Backdrop settles. The curtain is already opaque; this is the glow
-    -- easing up from nothing so the screen does not start fully lit.
-    LoadingGlow.BackgroundTransparency = 1
-    TweenService:Create(
-        LoadingGlow,
-        TweenInfo.new(0.34, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-        {BackgroundTransparency = 0.86}
-    ):Play()
-    task.wait(0.3)
-    if not LoadingCurtain.Parent then
-        return
-    end
-
-    -- 2. Wordmark rises and fades in, then the rule draws out under it.
-    -- Nothing to write on screen any more: the stage that used to bring the
-    -- wordmark and the rule in is now just the beat before the progress line.
-    task.wait(0.18)
-    if not LoadingCurtain.Parent then
-        return
-    end
-
-    -- 3. Status line and progress bar arrive together.
-    fadeText(LoadingLabel, 0, 0.3)
-    TweenService:Create(
-        LoadingTrack,
-        TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-        {BackgroundTransparency = 0}
-    ):Play()
-
-    -- Narrate the boot until the module loader starts reporting real
-    -- progress. `state.loadingLabelLocked` is raised by SectionManager the
-    -- moment it has genuine "Loading modules x/y" counts to show; the
-    -- narration must not fight it, and a fast load must not be made to sit
-    -- through a script it has already outrun.
-    for _, message: string in ipairs({
-        "Preparing interface",
-        "Registering modules",
-        "Linking game profile",
-    }) do
-        if finishRequested
-            or bootstrapFailed
-            or state.loadingLabelLocked
-            or not LoadingCurtain.Parent then
-            break
-        end
-        LoadingLabel.Text = message
-        task.wait(0.32)
-    end
-
-    introSequenceDone = true
-    if finishRequested then
-        runExit()
-    end
-end)
-
--- Watchdog. `runExit` is normally driven by the sequence thread; if that
--- thread ever dies unexpectedly the curtain must still come down rather than
--- covering the menu forever.
-task.delay(12, function(): ()
-    -- A failed bootstrap leaves its error on this very curtain, so the
-    -- watchdog must leave it up in that case.
-    if LoadingCurtain.Parent and not exitStarted and not bootstrapFailed then
-        warn("[Random Testing Menu] Loading intro watchdog fired")
-        introSequenceDone = true
-        runExit()
-    end
-end)
-
-state.finishLoadingIntro = function(failureCount: number): ()
-    if loadingIntroFinished or not LoadingCurtain.Parent then
-        return
-    end
-    loadingIntroFinished = true
-    finishRequested = true
-    finishFailureCount = failureCount
-    -- If the opening sequence is still playing, let it reach its last stage
-    -- and call `runExit` itself; otherwise exit now.
-    if introSequenceDone then
-        runExit()
-    end
-end
+-- The two entry points other code calls are kept as no-ops rather than deleted
+-- so the loader, the module runner and the watchdog do not each need to know
+-- whether an intro exists.
+state.loadingLabel = nil
+state.loadingProgressFill = nil
+state.finishLoadingIntro = function(_failureCount: number): ()
 end
 
 -- Make the shell usable before any optional feature/module initialization runs.
@@ -4389,9 +4033,88 @@ if state.applyAssetImage then
     end)
 end
 
-trackUiConnection(MobileMenuButton.MouseButton1Click:Connect(function(): ()
-    state.setMenuVisible(not state.visible)
-end))
+-- The launcher can be moved.
+--
+-- It lives over the game, which means it can sit exactly where a game put its
+-- own button. Press and drag moves it; a press that does not travel is still a
+-- press, so tapping it opens the menu as before. Where it ends up is saved.
+do
+    local dragInput: InputObject? = nil
+    local dragStart: Vector2 = Vector2.zero
+    local startPosition: UDim2 = MobileMenuButton.Position
+    local travelled: number = 0
+
+    local storedX: number? = tonumber(configData.ui.launcherX)
+    local storedY: number? = tonumber(configData.ui.launcherY)
+    if storedX and storedY then
+        MobileMenuButton.Position = UDim2.fromOffset(storedX, storedY)
+        MobileMenuButton.AnchorPoint = Vector2.new(0, 0)
+    end
+
+    trackUiConnection(MobileMenuButton.InputBegan:Connect(function(
+        input: InputObject
+    ): ()
+        if input.UserInputType ~= Enum.UserInputType.MouseButton1
+            and input.UserInputType ~= Enum.UserInputType.Touch then
+            return
+        end
+        dragInput = input
+        dragStart = Vector2.new(input.Position.X, input.Position.Y)
+        startPosition = MobileMenuButton.Position
+        travelled = 0
+    end))
+
+    trackUiConnection(UserInputService.InputChanged:Connect(function(
+        input: InputObject
+    ): ()
+        if not dragInput then
+            return
+        end
+        if input.UserInputType ~= Enum.UserInputType.MouseMovement
+            and input.UserInputType ~= Enum.UserInputType.Touch then
+            return
+        end
+        local pointer: Vector2 = Vector2.new(input.Position.X, input.Position.Y)
+        local delta: Vector2 = pointer - dragStart
+        travelled = math.max(travelled, delta.Magnitude)
+        if travelled < 6 then
+            -- Below the threshold this is still a tap, not a drag.
+            return
+        end
+        -- Anchored top-left while dragging so the maths is in one space.
+        MobileMenuButton.AnchorPoint = Vector2.new(0, 0)
+        local viewport: Vector2 = ScreenGui.AbsoluteSize
+        local size: Vector2 = MobileMenuButton.AbsoluteSize
+        local baseX: number = startPosition.X.Scale * viewport.X + startPosition.X.Offset
+        local baseY: number = startPosition.Y.Scale * viewport.Y + startPosition.Y.Offset
+        MobileMenuButton.Position = UDim2.fromOffset(
+            math.clamp(math.round(baseX + delta.X), 0, math.max(viewport.X - size.X, 0)),
+            math.clamp(math.round(baseY + delta.Y), 0, math.max(viewport.Y - size.Y, 0))
+        )
+    end))
+
+    trackUiConnection(UserInputService.InputEnded:Connect(function(
+        input: InputObject
+    ): ()
+        if input ~= dragInput then
+            return
+        end
+        dragInput = nil
+        if travelled >= 6 then
+            configData.ui.launcherX = MobileMenuButton.Position.X.Offset
+            configData.ui.launcherY = MobileMenuButton.Position.Y.Offset
+            queueConfigSave()
+        end
+    end))
+
+    trackUiConnection(MobileMenuButton.MouseButton1Click:Connect(function(): ()
+        -- A drag ends with a click too; only an untravelled press opens.
+        if travelled >= 6 then
+            return
+        end
+        state.setMenuVisible(not state.visible)
+    end))
+end
 
 -- The launcher is the way back in, so it only exists while the menu is out of
 -- sight. It used to sit on top of the open window, which made it look like a
@@ -5427,7 +5150,11 @@ local function updateCardGrid(record: CardGridRecord): ()
         record.container:FindFirstChildOfClass("UIPadding")
     if containerPadding then
         containerPadding.PaddingLeft = UDim.new(0, layout.contentPadding)
-        containerPadding.PaddingRight = UDim.new(0, layout.contentPadding)
+        -- The scroll bar is drawn inside the frame's right edge, so a card
+        -- sized to the full width ends up underneath it and the board looks
+        -- clipped on that side. The gutter is padding plus the bar.
+        containerPadding.PaddingRight =
+            UDim.new(0, layout.contentPadding + layout.scrollBar + 2)
         containerPadding.PaddingTop = UDim.new(0, layout.contentPadding)
         containerPadding.PaddingBottom = UDim.new(0, layout.contentPadding + 12)
     end
@@ -16215,10 +15942,7 @@ local initialized: boolean, bootstrapError: any = xpcall(bootstrap, function(mes
 end)
 
 if not initialized then
-    bootstrapFailed = true
-    if bootstrapStatusLabel and bootstrapStatusLabel.Parent then
-        bootstrapStatusLabel.Text = "Initialization error — check executor console"
-        bootstrapStatusLabel.TextColor3 = Color3.fromRGB(230, 105, 105)
-    end
+    -- Nowhere on screen to say it any more: the intro that used to carry the
+    -- message is gone, so the console is the report.
     warn("[RTM:Bootstrap] Inicialización detenida:\n" .. tostring(bootstrapError))
 end

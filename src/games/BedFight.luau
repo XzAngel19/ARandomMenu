@@ -218,7 +218,11 @@ function Module.init(runtime: any): any
     -- that is declared further down reads a global instead, and a global that
     -- does not exist is nil at the first call.
     local auraSettings: any = {
-        range = 30,
+        -- 20 studs is a long sword and nothing more. The server accepts
+        -- whatever the client claims, which is exactly why a claim of forty
+        -- studs is the kind of thing ban waves are assembled from: the reach
+        -- band the game itself produces is roughly 15-28.
+        range = 20,
         rate = 8,
         weapon = "",
         teamCheck = false,
@@ -579,8 +583,8 @@ function Module.init(runtime: any): any
     -- instead of inventing a call. Turn on the Remote Logger, break one bed by
     -- hand, and the log will say exactly what a future version could send.
     local nukerSettings: any = {
-        range = 24,
-        rate = 12,
+        range = 18,
+        rate = 8,
         serverHit = false,
         mine = false,
     }
@@ -707,7 +711,7 @@ function Module.init(runtime: any): any
         "Hits per second",
         nukerSettings.rate,
         1,
-        30,
+        20,
         function(value: number): ()
             nukerSettings.rate = value
         end
@@ -720,9 +724,10 @@ function Module.init(runtime: any): any
     end)
     addInformationOption(
         NukerFeature,
-        "Equip the pickaxe first: this presses the game's own controls. Server "
-            .. "hit also reports the bed through SwordHit, which the server may "
-            .. "or may not accept for a block."
+        "Safe band: 18 studs and under ten hits a second. This presses the "
+            .. "game's own controls, so whatever is in your hand is what "
+            .. "swings; the two remote paths are opt-in and the server may or "
+            .. "may not accept either for a bed."
     )
 
     -- Scaffold ----------------------------------------------------------------
@@ -1093,10 +1098,10 @@ function Module.init(runtime: any): any
         end,
         {parent = scroll, registry = registry, categoryName = "Combat"}
     )
-    addNumberOption(ServerAuraFeature, "Range", auraSettings.range, 5, 500, function(value: number): ()
+    addNumberOption(ServerAuraFeature, "Range", auraSettings.range, 5, 40, function(value: number): ()
         auraSettings.range = value
     end)
-    addNumberOption(ServerAuraFeature, "Hits per second", auraSettings.rate, 1, 30, function(value: number): ()
+    addNumberOption(ServerAuraFeature, "Hits per second", auraSettings.rate, 1, 20, function(value: number): ()
         auraSettings.rate = value
     end)
     addNumberOption(ServerAuraFeature, "Max targets", auraSettings.maxTargets, 1, 12, function(value: number): ()
@@ -1110,8 +1115,11 @@ function Module.init(runtime: any): any
     end)
     addInformationOption(
         ServerAuraFeature,
-        "Leave the weapon empty and it reads whatever view model you are "
-            .. "holding. The Friend List is respected."
+        "Safe band: 20-28 studs of range and single-digit hits per second. "
+            .. "Past 28 studs no legitimate swing could have reached, and that "
+            .. "is what gets accounts collected in a ban wave. Leave the weapon "
+            .. "empty and it reads whichever view model you hold; the Friend "
+            .. "List is respected."
     )
 
     -- Server Scaffold ------------------------------------------------------------
@@ -1255,9 +1263,11 @@ function Module.init(runtime: any): any
     -- `Workspace.PlayersBlocksContainer`, sorted into folders by material.
     local minerSettings: any = {
         tool = "Wooden Pickaxe",
-        range = 40,
-        rate = 10,
-        perTick = 3,
+        -- Same reasoning as the aura: a pickaxe reaches a few studs, so a
+        -- claim of forty is a claim nobody could make legitimately.
+        range = 24,
+        rate = 8,
+        perTick = 2,
         filter = "",
     }
 
@@ -1354,10 +1364,10 @@ function Module.init(runtime: any): any
     addTextOption(MinerFeature, "Only blocks named", "", function(value: string): ()
         minerSettings.filter = value
     end)
-    addNumberOption(MinerFeature, "Range", minerSettings.range, 5, 300, function(value: number): ()
+    addNumberOption(MinerFeature, "Range", minerSettings.range, 5, 48, function(value: number): ()
         minerSettings.range = value
     end)
-    addNumberOption(MinerFeature, "Mines per second", minerSettings.rate, 1, 30, function(value: number): ()
+    addNumberOption(MinerFeature, "Mines per second", minerSettings.rate, 1, 20, function(value: number): ()
         minerSettings.rate = value
     end)
     addNumberOption(MinerFeature, "Blocks per tick", minerSettings.perTick, 1, 12, function(value: number): ()
@@ -1365,8 +1375,10 @@ function Module.init(runtime: any): any
     end)
     addInformationOption(
         MinerFeature,
-        "The pickaxe is a name, not an object: nothing has to be equipped. "
-            .. "Leave the filter empty for every block in range."
+        "Safe band: about 24 studs and under ten mines a second. The pickaxe "
+            .. "is a name, not an object, so nothing has to be equipped — but a "
+            .. "player mining thirty blocks a second from across the map is the "
+            .. "easiest thing in the game to spot."
     )
 
     -- Auto Buy ----------------------------------------------------------------
@@ -1443,7 +1455,8 @@ function Module.init(runtime: any): any
     addInformationOption(
         BuyFeature,
         "Observed categories: Blocks, Swords, Pickaxes, Armor. The nearest "
-            .. "shop prompt on the map is the one passed to the server."
+            .. "shop prompt on the map is the one passed to the server. Two a "
+            .. "second looks like a person holding the button; twenty does not."
     )
 
     -- Quick actions -------------------------------------------------------------
