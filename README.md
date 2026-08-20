@@ -160,6 +160,12 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
 - **Blur mode** and **Interface motion** have no switch: like a module card,
   the whole row is the button. A click flips it and the row itself reports the
   state through its accent stripe, its surface and an ON/OFF caption.
+- Two scope bugs the teardown depended on were fixed along the way: the
+  session-tracking flags and the `Died` connection were block locals that
+  `cleanupRuntime` could not see (assigning them created globals and left the
+  connection alive), and the per-overlay settings windows were listed by name
+  from a scope where those names were `nil`, so they never closed with the
+  menu. Both now go through the live registries on `state`.
 - **Destruct** tears the runtime down step by step, each step inside its own
   `pcall`. It used to be one unprotected block, so a single failing step (a
   module cleanup, a stale connection, a toolkit that never finished

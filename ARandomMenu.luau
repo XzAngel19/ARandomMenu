@@ -238,7 +238,7 @@ local function computeLayoutMetrics(
         cardHeight = mobile and 50 or 44,
         cardCorner = UI_RADIUS.card,
         controlHeight = touchEnabled and 32 or 26,
-        optionRowHeight = touchEnabled and 36 or 32,
+        optionRowHeight = touchEnabled and 38 or 34,
         switchWidth = mobile and 44 or 38,
         switchHeight = mobile and 24 or 20,
         iconButton = mobile and 26 or 24,
@@ -5748,14 +5748,13 @@ local function addCompactText(
     end))
 end
 
-local textSettingsWindow: FloatingWindowRecord = nil :: any
-local radarSettingsWindow: FloatingWindowRecord = nil :: any
-local sessionSettingsWindow: FloatingWindowRecord = nil :: any
-local targetSettingsWindow: FloatingWindowRecord = nil :: any
-
+-- The four settings windows are reachable through `FloatingUi.settingsWindows`
+-- (createOverlaySettingsWindow registers each one), so they no longer need
+-- block locals that other scopes cannot see.
 do
     local textSettingsScroll: ScrollingFrame
-    textSettingsWindow, textSettingsScroll = createOverlaySettingsWindow(
+    local _textSettingsWindow: FloatingWindowRecord
+    _textSettingsWindow, textSettingsScroll = createOverlaySettingsWindow(
         "TextGUI",
         "Text GUI Studio",
         state.layout.compact and 500 or 540,
@@ -5778,7 +5777,8 @@ end
 
 do
     local radarSettingsScroll: ScrollingFrame
-    radarSettingsWindow, radarSettingsScroll = createOverlaySettingsWindow(
+    local _radarSettingsWindow: FloatingWindowRecord
+    _radarSettingsWindow, radarSettingsScroll = createOverlaySettingsWindow(
         "Radar",
         "Radar Studio",
         500,
@@ -5799,7 +5799,8 @@ end
 
 do
     local sessionSettingsScroll: ScrollingFrame
-    sessionSettingsWindow, sessionSettingsScroll = createOverlaySettingsWindow(
+    local _sessionSettingsWindow: FloatingWindowRecord
+    _sessionSettingsWindow, sessionSettingsScroll = createOverlaySettingsWindow(
         "SessionInfo",
         "Session Metrics",
         310,
@@ -5814,7 +5815,8 @@ end
 
 do
     local targetSettingsScroll: ScrollingFrame
-    targetSettingsWindow, targetSettingsScroll = createOverlaySettingsWindow(
+    local _targetSettingsWindow: FloatingWindowRecord
+    _targetSettingsWindow, targetSettingsScroll = createOverlaySettingsWindow(
         "TargetInfo",
         "Target Priority",
         280,
@@ -6076,6 +6078,21 @@ if LocalPlayer.Character then
     task.defer(bindSessionCharacter, LocalPlayer.Character)
 end
 trackUiConnection(LocalPlayer.CharacterAdded:Connect(bindSessionCharacter))
+
+-- Teardown hook for the session counters.
+--
+-- These three values are locals of this block, so the destruct routine at the
+-- bottom of the file could not reach them: assigning them there created three
+-- globals instead and left the `Died` connection alive. Exposing the teardown
+-- through `state` is what actually stops the tracking.
+state.destroySessionTracking = function(): ()
+    sessionTrackingActive = false
+    sessionBindGeneration += 1
+    if deathConnection then
+        deathConnection:Disconnect()
+        deathConnection = nil
+    end
+end
 local thumbnailCache: {[number]: string} = {}
 local thumbnailGeneration: number = 0
 local displayedTargetUserId: number = 0
@@ -7494,17 +7511,12 @@ state.layoutOptionControl = function(
     control.ZIndex = math.max(control.ZIndex, option.ZIndex + 2)
 end
 
--- A single customisation row inside a module's panel.
+-- A single customisation row inside a module's panel: a label on the left, a
+-- control on the right, exactly one line tall.
 --
--- Each row is now a self-contained card: its own soft fill, rounded corners,
--- a hairline border and a hover highlight, instead of a bare strip separated
--- by a one-pixel divider. That makes it obvious where one setting stops and
--- the next begins, which matters for panels with a lot of controls (Fly).
---
--- `hintText` is optional. When present the row grows and renders a second,
--- smaller line under the label explaining what the setting actually does, so
--- the panel can be read without hovering the card for a tooltip.
--- One option row: a label on the left, a control on the right, one line.
+-- Each row is a self-contained card — its own soft fill, rounded corners, a
+-- hairline border and a hover highlight — so it is obvious where one setting
+-- stops and the next begins in panels with a lot of controls (Fly).
 --
 -- `hintText` is accepted and deliberately ignored. Modules pass an
 -- explanatory sentence for many of their controls ("Balanced glides, Direct
@@ -12949,13 +12961,19 @@ MobileResetButton.Size = UDim2.fromScale(1, 1)
 -- never runs.
 state.addMenuVisibilityListener(function(visible: boolean): ()
     FloatingUi.overlays.TextGUI.window.root.Active = visible
-    if not visible then
-        for _, settingsWindow: FloatingWindowRecord in ipairs({
-            textSettingsWindow,
-            radarSettingsWindow,
-            sessionSettingsWindow,
-            targetSettingsWindow,
-        }) do
+    if visible then
+        return
+    end
+    -- The per-overlay settings windows are closed with the menu. They used to
+    -- be listed here by name, but those names are locals of the floating-UI
+    -- block: from here they resolved to nil globals, so the list was empty and
+    -- the windows stayed on screen. The live registry is authoritative.
+    local settingsWindows: any = FloatingUi.settingsWindows
+    if type(settingsWindows) ~= "table" then
+        return
+    end
+    for _, settingsWindow: any in pairs(settingsWindows) do
+        if settingsWindow and settingsWindow.root then
             settingsWindow.root.Visible = false
         end
     end
@@ -13325,11 +13343,8 @@ local function cleanupRuntime(): ()
     runtimeCleaned = true
 
     cleanupStep("session", function(): ()
-        sessionTrackingActive = false
-        sessionBindGeneration += 1
-        if deathConnection then
-            deathConnection:Disconnect()
-            deathConnection = nil
+        if type(state.destroySessionTracking) == "function" then
+            state.destroySessionTracking()
         end
         state.sessionInfo = nil
         state.getOverlayTarget = nil
@@ -13405,11 +13420,6 @@ local function cleanupRuntime(): ()
             cleanupStep(key, cleanup)
         end
     end
-    cleanupStep("mobile buttons", function(): ()
-        if state.mobileUi and type(state.mobileUi.destroy) == "function" then
-            state.mobileUi.destroy()
-        end
-    end)
     cleanupStep("config", saveConfigNow)
 
     -- Always release the blur, even if it was mid-tween.
