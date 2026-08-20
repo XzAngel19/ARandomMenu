@@ -5,15 +5,255 @@
 
     Default controls:
       - RightShift: show/hide the menu
-      - Drag the left navigation surface to move the fixed-size menu
+
+    The shell itself is fixed: it is always centred on the screen and its size
+    comes from the responsive metrics table (Mobile / Tablet / Desktop). Only
+    the floating tool windows and the HUD overlays can be moved.
 ]]
 
 local bootstrapStatusLabel: TextLabel? = nil
+-- Raised by the xpcall handler at the bottom of the file. The loading intro
+-- reads it so its scripted narration and its watchdog never overwrite or hide
+-- the initialization error message.
+local bootstrapFailed: boolean = false
 local RUNTIME_COMPATIBILITY_MARKER: string =
     "Initialization error — check executor console"
 local RUNTIME_SAFETY_SOURCE_URL: string =
     "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/4b10e4bfe00aa356afb3e0420a72e745327f6259/ARandomMenu.luau"
 local RUNTIME_BUILD_LABEL: string = "loader-v3"
+
+-- Module taxonomy.
+--
+-- Every feature card is filed under a category and the cards inside a category
+-- are then sorted alphabetically, so the list reads
+-- "Combat / Fling, Hitboxes… · Player / Fly, High Jump, Infinite Jump…".
+-- Anything not listed here (including everything the per-game modules add)
+-- falls back to DEFAULT_FEATURE_CATEGORY, which is always rendered last and
+-- without a header when it is the only category on a page.
+--
+-- These live at file scope on purpose: `bootstrap()` is one enormous function
+-- and is close to Luau's 200 local-register ceiling.
+local DEFAULT_FEATURE_CATEGORY: string = "General"
+local FEATURE_CATEGORIES: {[string]: string} = {
+    ["Anti-AFK"] = "Utility",
+    ["Anti-Fling"] = "Protection",
+    ["Anti-Void"] = "Protection",
+    ["CTRL + Click Teleport"] = "Player",
+    ["FOV"] = "Visuals",
+    ["Fling"] = "Combat",
+    ["Fly"] = "Player",
+    ["Freeze Movements"] = "Player",
+    ["Fullbright"] = "Visuals",
+    ["Gravity"] = "Utility",
+    ["High Jump"] = "Player",
+    ["Hitboxes"] = "Combat",
+    ["Infinite Jump"] = "Player",
+    ["Interact Extender"] = "Utility",
+    ["Jump Power"] = "Player",
+    ["Lag Switch"] = "Utility",
+    ["Noclip"] = "Player",
+    ["Phase Dash"] = "Player",
+    ["Player ESP"] = "Visuals",
+    ["Projectile Calibration"] = "Combat",
+    ["Rejoin Server"] = "Utility",
+    ["Safe Walk"] = "Protection",
+    ["Soft Landing"] = "Protection",
+    ["Speed"] = "Player",
+    ["Spider"] = "Player",
+    ["Walk Speed"] = "Player",
+    ["X-Ray"] = "Visuals",
+    ["Zoom Unlocker"] = "Visuals",
+}
+
+-- Sort key for a whole category. The catch-all always sinks to the bottom;
+-- every real category is ordered alphabetically.
+local function featureCategoryRank(category: string): string
+    if category == DEFAULT_FEATURE_CATEGORY then
+        return "\255" .. category
+    end
+    return category
+end
+
+-- Sidebar monograms.
+--
+-- The navigation rail collapses to icons on small viewports, so every tab
+-- carries a two-character monogram that is legible at 22px. Plain ASCII on
+-- purpose: a glyph font would have to be downloaded and could fail to load.
+local TAB_MONOGRAMS: {[string]: string} = {
+    ["Universal"] = "UN",
+    ["Movement"] = "MV",
+    ["MM2"] = "M2",
+    ["TRS"] = "TR",
+    ["VD"] = "VD",
+    ["MVSD"] = "MS",
+    ["Config."] = "CF",
+}
+
+-- ---------------------------------------------------------------------------
+-- Design tokens
+-- ---------------------------------------------------------------------------
+--
+-- Radii, motion durations and shadow strengths are declared exactly once so
+-- the whole shell keeps a single silhouette and a single rhythm. Sizes that
+-- depend on the viewport live in `computeLayoutMetrics` below instead; these
+-- are the values that never change with the device.
+--
+-- They sit at file scope (like the feature taxonomy) because `bootstrap()` is
+-- one enormous function and is close to Luau's 200 local-register ceiling.
+local UI_RADIUS: {[string]: number} = {
+    shell = 12,
+    panel = 9,
+    card = 7,
+    control = 6,
+    chip = 5,
+}
+-- The reference interface animates in roughly 0.16s. Everything the shell
+-- tweens uses one of these three durations.
+local UI_MOTION: {[string]: number} = {
+    fast = 0.1,
+    base = 0.16,
+    slow = 0.22,
+}
+-- There is deliberately no ambient shadow behind the shell.
+--
+-- It used to be faked with stacked rounded frames, but `cornerRadius()` caps
+-- every radius at 30px: a frame 44px wider than the shell therefore kept
+-- square-ish corners around a tightly rounded window and rendered as four
+-- grey blocks poking out of the corners. A convincing soft shadow needs a
+-- 9-slice image asset, and this runtime deliberately downloads none, so the
+-- shell simply has no shadow.
+
+-- ---------------------------------------------------------------------------
+-- Responsive layout metrics
+-- ---------------------------------------------------------------------------
+--
+-- One table drives every size in the interface. Modules never read it: they
+-- ask the shared component factories for a card, a row or a control, and the
+-- factories size themselves from here. That is what lets phones, tablets and
+-- desktops get genuinely different layouts without touching a single game
+-- module.
+--
+-- Three modes rather than one scale factor:
+--   * Mobile  — phone (either orientation): near-fullscreen shell, collapsed
+--               icon rail, one column, finger-sized controls.
+--   * Tablet  — reduced rail, one column unless the content area is wide.
+--   * Desktop — full rail with labels, two columns when they fit, more air.
+type LayoutMetrics = {
+    mode: string,
+    compact: boolean,
+    touch: boolean,
+    shellWidth: number,
+    shellHeight: number,
+    shellCorner: number,
+    sidebarWidth: number,
+    sidebarCollapsed: boolean,
+    sidebarPadding: number,
+    navRowHeight: number,
+    navIconSize: number,
+    navFontSize: number,
+    brandHeight: number,
+    headerHeight: number,
+    searchHeight: number,
+    searchWidth: number,
+    contentPadding: number,
+    cardSpacing: number,
+    cardColumns: number,
+    cardHeight: number,
+    cardCorner: number,
+    controlHeight: number,
+    optionRowHeight: number,
+    switchWidth: number,
+    switchHeight: number,
+    iconButton: number,
+    keySlotWidth: number,
+    touchTarget: number,
+    titleFontSize: number,
+    bodyFontSize: number,
+    captionFontSize: number,
+    scrollBar: number,
+    launcherHeight: number,
+}
+
+local function computeLayoutMetrics(
+    viewport: Vector2,
+    touchEnabled: boolean
+): LayoutMetrics
+    local width: number = math.max(240, viewport.X)
+    local height: number = math.max(200, viewport.Y)
+
+    -- A phone in landscape is still a phone: a short viewport switches to the
+    -- mobile layout even though it is wide.
+    local mode: string = "Desktop"
+    if width < 620 or height < 430 then
+        mode = "Mobile"
+    elseif width < 1100 then
+        mode = "Tablet"
+    end
+    local mobile: boolean = mode == "Mobile"
+    local tablet: boolean = mode == "Tablet"
+
+    local shellWidth: number
+    local shellHeight: number
+    if mobile then
+        shellWidth = math.round(math.min(width - 10, math.max(280, width * 0.97)))
+        shellHeight = math.round(math.min(height - 10, math.max(220, height * 0.94)))
+    elseif tablet then
+        shellWidth = math.round(math.clamp(width * 0.9, 460, 900))
+        shellHeight = math.round(math.clamp(height * 0.84, 380, 760))
+    else
+        shellWidth = math.round(math.clamp(width * 0.58, 760, 1080))
+        shellHeight = math.round(math.clamp(height * 0.74, 420, 700))
+    end
+    shellWidth = math.max(240, math.min(shellWidth, math.round(width - (mobile and 8 or 28))))
+    shellHeight = math.max(200, math.min(shellHeight, math.round(height - (mobile and 8 or 28))))
+
+    local sidebarWidth: number = mobile and 58 or (tablet and 132 or 156)
+    local contentPadding: number = mobile and 10 or (tablet and 12 or 14)
+    -- Columns are decided by the room the content area actually has, not by
+    -- the mode: a phone in landscape gets two columns for the same reason a
+    -- desktop does, and a portrait tablet stays on one.
+    local contentWidth: number = shellWidth - sidebarWidth - contentPadding * 2
+    local cardColumns: number = contentWidth >= 560 and 2 or 1
+
+    return {
+        mode = mode,
+        compact = mobile,
+        touch = touchEnabled,
+        shellWidth = shellWidth,
+        shellHeight = shellHeight,
+        shellCorner = mobile and 10 or UI_RADIUS.shell,
+        sidebarWidth = sidebarWidth,
+        sidebarCollapsed = mobile,
+        sidebarPadding = mobile and 6 or 10,
+        navRowHeight = mobile and 40 or (tablet and 32 or 30),
+        navIconSize = mobile and 26 or 22,
+        navFontSize = mobile and 9 or 11,
+        brandHeight = mobile and 40 or 46,
+        headerHeight = mobile and 42 or 44,
+        searchHeight = mobile and 30 or 28,
+        searchWidth = mobile and 150 or (tablet and 190 or 230),
+        contentPadding = contentPadding,
+        cardSpacing = mobile and 7 or 6,
+        cardColumns = cardColumns,
+        cardHeight = mobile and 50 or 44,
+        cardCorner = UI_RADIUS.card,
+        controlHeight = touchEnabled and 32 or 26,
+        optionRowHeight = touchEnabled and 36 or 32,
+        switchWidth = mobile and 44 or 38,
+        switchHeight = mobile and 24 or 20,
+        iconButton = mobile and 26 or 24,
+        keySlotWidth = mobile and 34 or 46,
+        touchTarget = touchEnabled and 32 or 24,
+        titleFontSize = mobile and 12 or 12,
+        bodyFontSize = mobile and 10 or 10,
+        captionFontSize = 9,
+        scrollBar = mobile and 3 or 4,
+        -- Height of the launcher dock at the foot of the rail. It stacks its
+        -- two buttons vertically when the rail is collapsed, which is the
+        -- only way they fit, so the dock is taller there.
+        launcherHeight = mobile and 58 or 28,
+    }
+end
 
 local function bootstrap(): ()
 local executorGlobals: any = getfenv()
@@ -161,6 +401,13 @@ local function loadConfig()
         configData.values = type(loaded.values) == "table" and loaded.values or {}
         configData.ui = type(loaded.ui) == "table" and loaded.ui or {}
     end
+
+    -- The shell is fixed and centred, so any window geometry written by an
+    -- older build is dropped on load instead of being honoured. Floating
+    -- window positions (`ui.floatingPositions`) are kept: those windows are
+    -- still movable on purpose.
+    configData.ui.windowPosition = nil
+    configData.ui.windowSize = nil
 end
 
 local function saveConfigNow()
@@ -352,6 +599,56 @@ local state: any = {
 configData.ui.guiStyle = nil
 configData.ui.textScaleCalibrationVersion = 2
 
+-- ---------------------------------------------------------------------------
+-- Layout controller
+-- ---------------------------------------------------------------------------
+--
+-- `state.layout` is the single source of truth for every size in the shell.
+-- Anything that has to change when the viewport changes registers a listener
+-- through `state.onLayout` and is called again with the new metrics; nothing
+-- polls, and no game module ever has to know a pixel value.
+--
+-- These are plain fields on `state` rather than locals because `bootstrap()`
+-- is one function scope sitting near Luau's 200 local-register ceiling.
+state.layout = computeLayoutMetrics(
+    (workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize)
+        or Vector2.new(1280, 720),
+    UserInputService.TouchEnabled
+)
+state.layoutListeners = {} :: {(LayoutMetrics) -> ()}
+
+state.onLayout = function(listener: (LayoutMetrics) -> ()): ()
+    table.insert(state.layoutListeners, listener)
+end
+
+-- `force` re-applies the current metrics even when nothing changed, which is
+-- what the initial pass and the style refresh use.
+state.refreshLayout = function(force: boolean?): ()
+    local camera: Camera? = workspace.CurrentCamera
+    local viewport: Vector2 = camera
+        and camera.ViewportSize
+        or Vector2.new(1280, 720)
+    local nextLayout: LayoutMetrics = computeLayoutMetrics(
+        viewport,
+        UserInputService.TouchEnabled
+    )
+    local previous: LayoutMetrics = state.layout
+    if not force
+        and previous.mode == nextLayout.mode
+        and previous.shellWidth == nextLayout.shellWidth
+        and previous.shellHeight == nextLayout.shellHeight
+        and previous.cardColumns == nextLayout.cardColumns then
+        return
+    end
+    state.layout = nextLayout
+    for _, listener: (LayoutMetrics) -> () in ipairs(state.layoutListeners) do
+        local ok: boolean, failure: any = pcall(listener, nextLayout)
+        if not ok then
+            warn("[Random Testing Menu] layout listener: " .. tostring(failure))
+        end
+    end
+end
+
 local function trackUiConnection(
     connection: RBXScriptConnection
 ): RBXScriptConnection
@@ -369,11 +666,27 @@ end
 -- that happened before -- or instead of -- that builder fell through to a
 -- fallback branch that flipped `Main.Visible` without ever touching the blur,
 -- leaving the screen blurred with the menu closed.
+-- Decorations that live on top of the blur (the falling hail layer) publish a
+-- setter on `state.blurDecorationSetActive`. They are built much later than
+-- the blur controller, so the controller only ever talks to that indirection:
+-- if nothing has registered yet the calls are no-ops, and whatever registers
+-- later is immediately synchronised with the current blur state. This keeps
+-- the "menu closed => nothing left on screen" guarantee the blur itself has.
+-- It is kept on `state` rather than in a local because `bootstrap()` is a
+-- single function scope sitting near Luau's 200 local-register ceiling.
+local function setBlurDecorationActive(active: boolean): ()
+    local setActive: any = state.blurDecorationSetActive
+    if type(setActive) == "function" then
+        pcall(setActive, active)
+    end
+end
+
 local blurTween: Tween? = nil
 local function applyBlur(animate: boolean?): ()
     local shouldBlur: boolean = state.visible == true
         and state.blurEnabled == true
     local targetSize: number = shouldBlur and BLUR_STRENGTH or 0
+    setBlurDecorationActive(shouldBlur)
 
     if blurTween then
         blurTween:Cancel()
@@ -420,12 +733,24 @@ local function suspendBlur(): ()
         blurTween:Cancel()
         blurTween = nil
     end
+    setBlurDecorationActive(false)
     if Blur.Parent then
         Blur.Size = 0
         Blur.Enabled = false
     end
 end
 state.suspendBlur = suspendBlur
+
+-- Registration point for the hail layer (or any future blur decoration).
+-- Registering immediately pushes the current blur state into the decoration so
+-- it can never start out of sync with a menu that is already open or closed.
+state.registerBlurDecoration = function(setActive: (boolean) -> ()): ()
+    state.blurDecorationSetActive = setActive
+    pcall(
+        setActive,
+        state.visible == true and state.blurEnabled == true
+    )
+end
 
 -- Authoritative menu visibility entry point. Subsystems (mobile buttons,
 -- floating windows) attach their own side effects as listeners as soon as they
@@ -891,6 +1216,9 @@ function SectionManager.initializeAllAsync(): ()
     local total: number = #sectionNames
     local completed: number = 0
     local failures: number = 0
+    -- From here on the status line shows real counts, so the intro's scripted
+    -- narration must stop writing to it.
+    state.loadingLabelLocked = true
     if state.loadingLabel then
         state.loadingLabel.Text = "Loading modules 0/" .. tostring(total)
     end
@@ -968,6 +1296,25 @@ local function create(className, properties)
     return object
 end
 
+-- Shared corner-rounding curve.
+--
+-- Every square-ish surface in the menu goes through this helper instead of
+-- hard-coding `UDim.new(0, n)`, so the whole shell keeps one consistent
+-- silhouette. The curve is deliberately soft but restrained: corners read as
+-- circular arcs rather than hard right angles, yet never turn into pills.
+-- Genuine pills/circles (switch tracks, knobs, progress bars, radar) keep
+-- using `UDim.new(1, 0)` directly and are unaffected.
+--
+-- The multiplier and clamp are inlined on purpose: `bootstrap()` is a single
+-- enormous function scope and is close to Luau's 200 local-register ceiling,
+-- so named constants here would cost registers for no benefit.
+-- The window itself passes a larger radius so the shell reads as one smooth,
+-- pill-shaped surface; the 30 cap keeps small controls from turning into
+-- circles.
+local function cornerRadius(radius: number): UDim
+    return UDim.new(0, math.clamp(math.round(radius * 1.3), 5, 30))
+end
+
 local function addRoundedStyle(
     object: GuiObject,
     radius: number,
@@ -975,7 +1322,7 @@ local function addRoundedStyle(
 ): (UICorner, UIStroke)
     local corner: UICorner = Instance.new("UICorner")
     corner.Name = "StyleCorner"
-    corner.CornerRadius = UDim.new(0, radius)
+    corner.CornerRadius = cornerRadius(radius)
     corner.Parent = object
 
     local stroke: UIStroke = Instance.new("UIStroke")
@@ -988,19 +1335,39 @@ local function addRoundedStyle(
     return corner, stroke
 end
 
+-- Every label registers the *logical* size it was designed at; the text-scale
+-- slider multiplies that. `state.registeredTextIndex` lets the responsive
+-- layout change a label's logical size later without the slider snapping it
+-- back to the size it happened to be created with.
+state.registeredTextIndex = setmetatable({}, {__mode = "k"}) :: any
+
 local function registerText(
     object: TextLabel | TextButton | TextBox,
     normalSize: number
 ): TextLabel | TextButton | TextBox
-    table.insert(registeredText, {
+    local entry: any = {
         object = object,
         normalSize = normalSize,
-    })
+    }
+    table.insert(registeredText, entry)
+    state.registeredTextIndex[object] = entry
 
     object.TextSize = math.round(
         normalSize * TEXT_BASE_MULTIPLIER * state.textScale
     )
     return object
+end
+
+-- Sets the logical size of an already-registered label and applies it with
+-- the current text scale.
+state.setTextMetric = function(object: any, normalSize: number): ()
+    local entry: any = state.registeredTextIndex[object]
+    if entry then
+        entry.normalSize = normalSize
+    end
+    object.TextSize = math.round(
+        normalSize * TEXT_BASE_MULTIPLIER * state.textScale
+    )
 end
 
 local function makeTextLabel(
@@ -1067,7 +1434,7 @@ local function makeButton(
             or Theme.SurfaceHover
         TweenService:Create(
             button,
-            TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+            TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
             {BackgroundColor3 = hoverColor}
         ):Play()
     end))
@@ -1086,7 +1453,7 @@ local function makeButton(
 
         TweenService:Create(
             button,
-            TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+            TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
             {BackgroundColor3 = targetColor}
         ):Play()
     end))
@@ -1121,7 +1488,7 @@ local function makeButton(
                 or Theme.SurfaceHover)
         TweenService:Create(
             button,
-            TweenInfo.new(0.12, Enum.EasingStyle.Quad),
+            TweenInfo.new(UI_MOTION.fast, Enum.EasingStyle.Quad),
             {BackgroundColor3 = targetColor}
         ):Play()
     end))
@@ -1143,10 +1510,10 @@ local function setToggleSwitch(button: TextButton, enabled: boolean, animate: bo
         or UDim2.new(0, 3, 0.5, 0)
     local targetKnobColor: Color3 = enabled and Theme.DefaultText or Theme.DefaultTextMuted
     if animate and state.animationsEnabled then
-        TweenService:Create(track, TweenInfo.new(0.18, Enum.EasingStyle.Quart), {
+        TweenService:Create(track, TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quart), {
             BackgroundColor3 = targetColor,
         }):Play()
-        TweenService:Create(knob, TweenInfo.new(0.18, Enum.EasingStyle.Quart), {
+        TweenService:Create(knob, TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quart), {
             Position = targetPosition,
             BackgroundColor3 = targetKnobColor,
         }):Play()
@@ -1162,8 +1529,8 @@ local function createToggleSwitch(
     enabled: boolean,
     width: number?
 ): TextButton
-    local switchWidth: number = width or (state.isMobile and 50 or 44)
-    local switchHeight: number = state.isMobile and 28 or 24
+    local switchWidth: number = width or state.layout.switchWidth
+    local switchHeight: number = state.layout.switchHeight
     local button: TextButton = create("TextButton", {
         Parent = parent,
         Active = true,
@@ -1276,7 +1643,7 @@ local function setKeySlotCapture(button: TextButton, active: boolean): ()
     local stroke: UIStroke? = button:FindFirstChild("StyleStroke") :: UIStroke?
     TweenService:Create(
         button,
-        TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+        TweenInfo.new(UI_MOTION.fast, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
         {
             BackgroundColor3 = active
                 and Theme.DefaultButtonPressed
@@ -1289,7 +1656,7 @@ local function setKeySlotCapture(button: TextButton, active: boolean): ()
     if stroke then
         TweenService:Create(
             stroke,
-            TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+            TweenInfo.new(UI_MOTION.fast, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
             {Transparency = active and 0.38 or 0.78}
         ):Play()
     end
@@ -1359,7 +1726,7 @@ local function makeTextBox(parent: Instance, defaultText: any): TextBox
     trackUiConnection(textBox.Focused:Connect(function(): ()
         TweenService:Create(
             textBox,
-            TweenInfo.new(0.16, Enum.EasingStyle.Quad),
+            TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quad),
             {BackgroundColor3 = state.guiStyle == "Default"
                 and Theme.DefaultButtonHover
                 or Theme.SurfaceRaised}
@@ -1368,7 +1735,7 @@ local function makeTextBox(parent: Instance, defaultText: any): TextBox
     trackUiConnection(textBox.FocusLost:Connect(function(): ()
         TweenService:Create(
             textBox,
-            TweenInfo.new(0.16, Enum.EasingStyle.Quad),
+            TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quad),
             {BackgroundColor3 = state.guiStyle == "Default"
                 and Theme.DefaultButtonPressed
                 or Theme.Surface}
@@ -1403,10 +1770,16 @@ local ToastContainer: Frame = (create("Frame", {
     AnchorPoint = Vector2.new(1, 1),
     BackgroundTransparency = 1,
     BorderSizePixel = 0,
-    Position = UDim2.new(1, -18, 1, -18),
-    Size = UDim2.fromOffset(340, 300),
+    Position = UDim2.new(1, -12, 1, -12),
+    Size = UDim2.fromOffset(state.layout.compact and 220 or 300, 300),
     ZIndex = 300,
 }) :: any) :: Frame
+
+-- Toasts are a screen-level element, so they follow the viewport rather than
+-- the shell: a 300px stack would cover most of a phone.
+state.onLayout(function(metrics: LayoutMetrics): ()
+    ToastContainer.Size = UDim2.fromOffset(metrics.compact and 220 or 300, 300)
+end)
 
 create("UIListLayout", {
     Parent = ToastContainer,
@@ -1434,13 +1807,13 @@ local function notify(message: any): ()
     toast.BorderSizePixel = 0
     toast.GroupTransparency = 1
     toast.LayoutOrder = toastSequence
-    toast.Size = UDim2.new(1, 0, 0, 56)
+    toast.Size = UDim2.new(1, 0, 0, state.layout.compact and 46 or 50)
     toast.ZIndex = 301
     toast.Parent = ToastContainer
 
     create("UICorner", {
         Parent = toast,
-        CornerRadius = UDim.new(0, 9),
+        CornerRadius = cornerRadius(UI_RADIUS.panel),
     })
     create("UIStroke", {
         Parent = toast,
@@ -1504,28 +1877,263 @@ local initialViewport: Vector2 = initialCamera
     and initialCamera.ViewportSize
     or Vector2.new(1280, 720)
 
-local function calculateWindowSize(viewport: Vector2): Vector2
-    if state.isMobile then
-        return Vector2.new(
-            math.max(280, math.min(viewport.X - 8, math.round(viewport.X * 0.96))),
-            math.max(320, math.min(viewport.Y - 8, math.round(viewport.Y * 0.88)))
-        )
+-- The shell size is no longer computed here: it comes from the responsive
+-- metrics table, which already knows the device mode. The helper is kept as
+-- the single accessor so every caller reads the same numbers.
+local function calculateWindowSize(_viewport: Vector2): Vector2
+    return Vector2.new(state.layout.shellWidth, state.layout.shellHeight)
+end
+
+-- Falling hail rendered over the blur.
+--
+-- The layer sits between the game and the menu window (ZIndex 0, below the
+-- Main frame's default 1) and covers the whole screen, so stones fall from the
+-- very top edge down past the bottom. It is driven entirely by the blur
+-- controller through `state.registerBlurDecoration`, which means it can never
+-- outlive the blur: closing the menu, disabling Blur mode or tearing the menu
+-- down all stop it and hide it, exactly like the blur itself.
+do
+local HAIL_STONE_COUNT: number = state.layout.compact and 34 or 54
+local HAIL_COLOR: Color3 = Color3.fromRGB(228, 231, 238)
+
+type HailStone = {
+    frame: Frame,
+    x: number,
+    y: number,
+    fallSpeed: number,
+    driftSpeed: number,
+    swayAmount: number,
+    swayRate: number,
+    swayPhase: number,
+    length: number,
+}
+
+local HailLayer: CanvasGroup = (create("CanvasGroup", {
+    Parent = ScreenGui,
+    Name = "BlurHail",
+    Active = false,
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    ClipsDescendants = true,
+    GroupTransparency = 1,
+    Position = UDim2.fromScale(0, 0),
+    Size = UDim2.fromScale(1, 1),
+    Visible = false,
+    ZIndex = 0,
+}) :: any) :: CanvasGroup
+
+local hailRandom: Random = Random.new(os.clock() * 1000)
+local hailStones: {HailStone} = {}
+
+local function currentViewport(): Vector2
+    local camera: Camera? = workspace.CurrentCamera
+    local viewport: Vector2 = camera
+        and camera.ViewportSize
+        or Vector2.new(1280, 720)
+    return Vector2.new(
+        math.max(viewport.X, 320),
+        math.max(viewport.Y, 240)
+    )
+end
+
+-- `fromTop` seeds a stone just above the screen (used while falling);
+-- otherwise the stone is scattered anywhere down the screen, which is what
+-- makes the very first frame after opening the menu look like the hail has
+-- already been going rather than a single synchronised wave.
+local function respawnStone(
+    stone: HailStone,
+    viewport: Vector2,
+    fromTop: boolean
+): ()
+    local thickness: number = hailRandom:NextNumber(2, 3.4)
+    stone.length = hailRandom:NextNumber(7, 18)
+    stone.fallSpeed = hailRandom:NextNumber(320, 680)
+    stone.driftSpeed = hailRandom:NextNumber(-46, -12)
+    stone.swayAmount = hailRandom:NextNumber(2, 9)
+    stone.swayRate = hailRandom:NextNumber(0.7, 2.1)
+    stone.swayPhase = hailRandom:NextNumber(0, math.pi * 2)
+    stone.x = hailRandom:NextNumber(-40, viewport.X + 40)
+    stone.y = fromTop
+        and hailRandom:NextNumber(-viewport.Y * 0.4, -stone.length)
+        or hailRandom:NextNumber(-stone.length, viewport.Y)
+
+    stone.frame.Size = UDim2.fromOffset(
+        math.round(thickness),
+        math.round(stone.length)
+    )
+    -- Faster stones are drawn slightly brighter and leaning a touch further
+    -- into the wind, which reads as depth without needing more particles.
+    local depth: number = (stone.fallSpeed - 320) / 360
+    stone.frame.BackgroundTransparency = 0.62 - depth * 0.34
+    stone.frame.Rotation = -6 - depth * 5
+end
+
+for index: number = 1, HAIL_STONE_COUNT do
+    local frame: Frame = (create("Frame", {
+        Parent = HailLayer,
+        Name = "Stone" .. tostring(index),
+        AnchorPoint = Vector2.new(0.5, 1),
+        BackgroundColor3 = HAIL_COLOR,
+        BorderSizePixel = 0,
+        Size = UDim2.fromOffset(3, 12),
+        ZIndex = 1,
+    }) :: any) :: Frame
+    create("UICorner", {Parent = frame, CornerRadius = UDim.new(1, 0)})
+
+    local stone: HailStone = {
+        frame = frame,
+        x = 0,
+        y = 0,
+        fallSpeed = 0,
+        driftSpeed = 0,
+        swayAmount = 0,
+        swayRate = 1,
+        swayPhase = 0,
+        length = 12,
+    }
+    respawnStone(stone, currentViewport(), false)
+    hailStones[index] = stone
+end
+
+local hailConnection: RBXScriptConnection? = nil
+local hailFadeTween: Tween? = nil
+local hailRunning: boolean = false
+local hailRequested: boolean = false
+local hailElapsed: number = 0
+
+local function drawStone(stone: HailStone): ()
+    stone.frame.Position = UDim2.fromOffset(
+        math.round(
+            stone.x
+                + math.sin(hailElapsed * stone.swayRate + stone.swayPhase)
+                    * stone.swayAmount
+        ),
+        math.round(stone.y)
+    )
+end
+
+local function stepHail(deltaTime: number): ()
+    -- Guard against the huge delta a background//frozen client produces, which
+    -- would otherwise teleport every stone off screen at once.
+    local step: number = math.min(deltaTime, 1 / 20)
+    hailElapsed += step
+    local viewport: Vector2 = currentViewport()
+    for _, stone: HailStone in ipairs(hailStones) do
+        stone.y += stone.fallSpeed * step
+        stone.x += stone.driftSpeed * step
+        if stone.y - stone.length > viewport.Y
+            or stone.x < -80
+            or stone.x > viewport.X + 80 then
+            respawnStone(stone, viewport, true)
+        end
+        drawStone(stone)
     end
-    local widthRatio: number = 0.6
-    local availableWidth: number = math.min(
-        1120,
-        viewport.X * widthRatio,
-        math.max(420, viewport.X - 36)
+end
+
+local function disconnectHail(): ()
+    if hailConnection then
+        hailConnection:Disconnect()
+        hailConnection = nil
+    end
+end
+
+local function cancelHailFade(): ()
+    if hailFadeTween then
+        hailFadeTween:Cancel()
+        hailFadeTween = nil
+    end
+end
+
+local function applyHail(): ()
+    -- Hail is motion, so it follows the "Animations" setting as well as the
+    -- blur: with motion off the layer stays completely inert.
+    local shouldRun: boolean = hailRequested
+        and state.animationsEnabled ~= false
+    if shouldRun == hailRunning then
+        return
+    end
+    hailRunning = shouldRun
+    cancelHailFade()
+
+    if not HailLayer.Parent then
+        disconnectHail()
+        return
+    end
+
+    if shouldRun then
+        local viewport: Vector2 = currentViewport()
+        for _, stone: HailStone in ipairs(hailStones) do
+            respawnStone(stone, viewport, false)
+            drawStone(stone)
+        end
+        HailLayer.Visible = true
+        disconnectHail()
+        hailConnection = RunService.RenderStepped:Connect(stepHail)
+        local fadeIn: Tween = TweenService:Create(
+            HailLayer,
+            TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+            {GroupTransparency = 0}
+        )
+        hailFadeTween = fadeIn
+        fadeIn.Completed:Once(function(): ()
+            if hailFadeTween == fadeIn then
+                hailFadeTween = nil
+            end
+        end)
+        fadeIn:Play()
+        return
+    end
+
+    if state.animationsEnabled == false then
+        disconnectHail()
+        HailLayer.GroupTransparency = 1
+        HailLayer.Visible = false
+        return
+    end
+
+    local fadeOut: Tween = TweenService:Create(
+        HailLayer,
+        TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+        {GroupTransparency = 1}
     )
-    local availableHeight: number = math.min(
-        700,
-        viewport.Y * 0.82,
-        math.max(360, viewport.Y - 36)
-    )
-    local aspectRatio: number = viewport.X >= 1200 and 1.6 or 1.35
-    local width: number = math.min(availableWidth, availableHeight * aspectRatio)
-    local height: number = width / aspectRatio
-    return Vector2.new(math.round(width), math.round(height))
+    hailFadeTween = fadeOut
+    fadeOut.Completed:Once(function(): ()
+        if hailFadeTween == fadeOut then
+            hailFadeTween = nil
+        end
+        -- A newer activation may have won the race while this faded out.
+        if hailRunning then
+            return
+        end
+        disconnectHail()
+        if HailLayer.Parent then
+            HailLayer.GroupTransparency = 1
+            HailLayer.Visible = false
+        end
+    end)
+    fadeOut:Play()
+end
+
+state.registerBlurDecoration(function(active: boolean): ()
+    hailRequested = active
+    applyHail()
+end)
+
+-- Called by the Animations setting so toggling motion takes effect without
+-- having to close and reopen the menu.
+state.refreshBlurDecoration = applyHail
+
+-- Hard stop used during teardown: no tweens, no pending callbacks.
+state.destroyBlurDecoration = function(): ()
+    hailRequested = false
+    hailRunning = false
+    cancelHailFade()
+    disconnectHail()
+    if HailLayer.Parent then
+        HailLayer.Visible = false
+        HailLayer:Destroy()
+    end
+end
 end
 
 local initialWindowSize: Vector2 = calculateWindowSize(initialViewport)
@@ -1534,11 +2142,13 @@ local Main: Frame = (create("Frame", {
     Parent = ScreenGui,
     Name = "Main",
     Active = true,
+    AnchorPoint = Vector2.new(0.5, 0.5),
     BackgroundColor3 = Theme.DefaultBackground,
     BorderSizePixel = 0,
     ClipsDescendants = true,
-    Position = UDim2.fromOffset(0, 0),
+    Position = UDim2.fromScale(0.5, 0.5),
     Size = UDim2.fromOffset(initialWindowSize.X, initialWindowSize.Y),
+    ZIndex = 1,
 }) :: any) :: Frame
 
 -- Publish the window so the shared visibility controller defined above can
@@ -1547,41 +2157,56 @@ state.mainFrame = Main
 Main.Visible = state.visible
 
 do
-local _MainCorner: UICorner, MainStroke: UIStroke = addRoundedStyle(Main, 14, 0.2)
+-- The window carries no visible outline and, since this build, no drag
+-- surface either: the shell is pinned to the middle of the screen and its
+-- rounded silhouette is the only chrome. `MainStroke` is kept on `state` for
+-- restyle compatibility, but always stays fully transparent so no grey border
+-- ever frames the menu.
+local _MainCorner: UICorner, MainStroke: UIStroke =
+    addRoundedStyle(Main, state.layout.shellCorner, 1)
 MainStroke.Thickness = 1
 MainStroke.Color = Theme.DefaultOutline
-MainStroke.Transparency = 0.58
+MainStroke.Transparency = 1
 state.mainStroke = MainStroke
 end
 
 local Content: Frame = nil :: any
-local DefaultDragZone: Frame = nil :: any
 
+-- The shell has exactly one position: the middle of the screen. It is
+-- anchored at its own centre and positioned in scale, so a viewport change
+-- can never leave it half off-screen and there is no geometry to persist.
 local function centerMain(): ()
-    local camera: Camera? = workspace.CurrentCamera
-    local viewport: Vector2 = camera
-        and camera.ViewportSize
-        or Vector2.new(1280, 720)
-    local size: Vector2 = Main.AbsoluteSize
-
-    local savedPosition: any = configData.ui.windowPosition
-    if type(savedPosition) == "table" then
-        Main.Position = UDim2.fromOffset(
-            math.clamp(tonumber(savedPosition[1]) or 0, 0, math.max(0, viewport.X - size.X)),
-            math.clamp(tonumber(savedPosition[2]) or 0, 0, math.max(0, viewport.Y - size.Y))
-        )
-    else
-        Main.Position = UDim2.fromOffset(
-            math.floor((viewport.X - size.X) / 2),
-            math.floor((viewport.Y - size.Y) / 2)
-        )
+    local layout: LayoutMetrics = state.layout
+    Main.AnchorPoint = Vector2.new(0.5, 0.5)
+    Main.Position = UDim2.fromScale(0.5, 0.5)
+    Main.Size = UDim2.fromOffset(layout.shellWidth, layout.shellHeight)
+    -- Every full-size surface inside the window has to share the window's
+    -- radius: `ClipsDescendants` clips to the rectangle, not to the rounded
+    -- corner, so a square child would fill the corners back in and make the
+    -- shell look chipped.
+    for _, rounded: Instance in ipairs({
+        Main:FindFirstChild("StyleCorner"),
+        state.shells and state.shells.default
+            and state.shells.default:FindFirstChild("ShellCorner"),
+        state.shells and state.shells.readability
+            and state.shells.readability:FindFirstChildOfClass("UICorner"),
+    }) do
+        if rounded and rounded:IsA("UICorner") then
+            (rounded :: UICorner).CornerRadius = cornerRadius(layout.shellCorner)
+        end
     end
 end
 
+state.centerMain = centerMain
+state.onLayout(function(): ()
+    centerMain()
+end)
 task.defer(centerMain)
 
 do
-local sidebarWidth: number = state.isMobile and 112 or 172
+local layout: LayoutMetrics = state.layout
+local sidebarWidth: number = layout.sidebarWidth
+
 local DefaultShell: Frame = create("Frame", {
     Parent = Main,
     Name = "DefaultShell",
@@ -1594,62 +2219,104 @@ local DefaultShell: Frame = create("Frame", {
 DefaultShell.ClipsDescendants = true
 create("UICorner", {
     Parent = DefaultShell,
-    CornerRadius = UDim.new(0, 14),
+    Name = "ShellCorner",
+    CornerRadius = cornerRadius(layout.shellCorner),
 })
 
+-- Navigation rail.
+--
+-- Desktop and tablet show a monogram chip plus the tab name; on phones the
+-- rail collapses to the chips alone, which is what frees the horizontal space
+-- a 360px-wide screen needs for actual content.
 local DefaultSidebar: Frame = create("Frame", {
     Parent = DefaultShell,
     Name = "DefaultSidebar",
     Active = true,
     BackgroundColor3 = Theme.DefaultSidebar,
-    BackgroundTransparency = 1,
+    BackgroundTransparency = 0.35,
     BorderSizePixel = 0,
     Size = UDim2.new(0, sidebarWidth, 1, 0),
     ZIndex = 10,
 }) :: Frame
-create("UICorner", {
-    Parent = DefaultSidebar,
-    CornerRadius = UDim.new(0, 14),
-})
-local SidebarAtmosphere: Frame = create("Frame", {
+
+-- Hairline that separates the rail from the content instead of a full
+-- gradient wash: denser, and it keeps the two regions readable at any size.
+local SidebarEdge: Frame = create("Frame", {
     Parent = DefaultShell,
-    Name = "SidebarAtmosphere",
-    BackgroundColor3 = Theme.DefaultBackground,
+    Name = "SidebarEdge",
+    BackgroundColor3 = Theme.DefaultOutline,
+    BackgroundTransparency = 0.82,
     BorderSizePixel = 0,
-    Size = UDim2.new(0, sidebarWidth + 72, 1, 0),
-    ZIndex = 5,
+    Position = UDim2.fromOffset(sidebarWidth, 0),
+    Size = UDim2.new(0, 1, 1, 0),
+    ZIndex = 12,
 }) :: Frame
-create("UIGradient", {
-    Parent = SidebarAtmosphere,
-    Rotation = 0,
-    Transparency = NumberSequence.new({
-        NumberSequenceKeypoint.new(0, 0.18),
-        NumberSequenceKeypoint.new(0.64, 0.36),
-        NumberSequenceKeypoint.new(1, 1),
-    }),
+
+-- Wordmark. ARandomMenu keeps its own identity here: full name when the rail
+-- is wide, initials when it is collapsed.
+local BrandRow: Frame = create("Frame", {
+    Parent = DefaultSidebar,
+    Name = "Brand",
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    Size = UDim2.new(1, 0, 0, layout.brandHeight),
+    ZIndex = 13,
+}) :: Frame
+local BrandMark: TextLabel = makeTextLabel(BrandRow, "ARM", layout.captionFontSize)
+BrandMark.Name = "BrandMark"
+BrandMark.AnchorPoint = layout.sidebarCollapsed
+    and Vector2.new(0.5, 0.5)
+    or Vector2.new(0, 0.5)
+BrandMark.BackgroundColor3 = Theme.DefaultSurface
+BrandMark.BackgroundTransparency = 0.42
+BrandMark.FontFace = CONTROL_FONT
+BrandMark.Position = layout.sidebarCollapsed
+    and UDim2.fromScale(0.5, 0.5)
+    or UDim2.new(0, layout.sidebarPadding, 0.5, 0)
+BrandMark.Size = UDim2.fromOffset(layout.navIconSize + 4, layout.navIconSize + 4)
+BrandMark.TextColor3 = Theme.DefaultText
+BrandMark.TextXAlignment = Enum.TextXAlignment.Center
+BrandMark.ZIndex = 14
+create("UICorner", {Parent = BrandMark, CornerRadius = cornerRadius(UI_RADIUS.chip)})
+create("UIStroke", {
+    Parent = BrandMark,
+    Color = Theme.DefaultOutline,
+    Transparency = 0.7,
+    Thickness = 1,
 })
+local BrandName: TextLabel = makeTextLabel(BrandRow, "A Random Menu", 10)
+BrandName.Name = "BrandName"
+BrandName.AnchorPoint = Vector2.new(0, 0.5)
+BrandName.FontFace = CONTROL_FONT
+BrandName.Position = UDim2.new(0, layout.sidebarPadding + layout.navIconSize + 12, 0.5, 0)
+BrandName.Size = UDim2.new(1, -(layout.sidebarPadding * 2 + layout.navIconSize + 12), 0, 18)
+BrandName.TextColor3 = Theme.DefaultTextMuted
+BrandName.TextTruncate = Enum.TextTruncate.AtEnd
+BrandName.Visible = not layout.sidebarCollapsed
+BrandName.ZIndex = 14
 
 local DefaultTabs: Frame = create("Frame", {
     Parent = DefaultSidebar,
     Name = "DefaultNavigation",
     BackgroundTransparency = 1,
     BorderSizePixel = 0,
-    Position = UDim2.fromOffset(0, 64),
-    Size = UDim2.new(1, 0, 1, -76),
+    Position = UDim2.fromOffset(0, layout.brandHeight),
+    Size = UDim2.new(1, 0, 1, -(layout.brandHeight + layout.launcherHeight + 18)),
     ZIndex = 11,
 }) :: Frame
 create("UIListLayout", {
     Parent = DefaultTabs,
     FillDirection = Enum.FillDirection.Vertical,
-    HorizontalAlignment = Enum.HorizontalAlignment.Left,
-    Padding = UDim.new(0, 4),
+    HorizontalAlignment = Enum.HorizontalAlignment.Center,
+    Padding = UDim.new(0, 2),
     SortOrder = Enum.SortOrder.LayoutOrder,
 })
 create("UIPadding", {
     Parent = DefaultTabs,
-    PaddingLeft = UDim.new(0, 10),
-    PaddingRight = UDim.new(0, 10),
-    PaddingTop = UDim.new(0, 8),
+    Name = "NavigationPadding",
+    PaddingLeft = UDim.new(0, layout.sidebarPadding),
+    PaddingRight = UDim.new(0, layout.sidebarPadding),
+    PaddingTop = UDim.new(0, 4),
 })
 
 local DefaultContentHost: Frame = create("Frame", {
@@ -1658,16 +2325,12 @@ local DefaultContentHost: Frame = create("Frame", {
     BackgroundColor3 = Theme.DefaultBackground,
     BackgroundTransparency = 1,
     BorderSizePixel = 0,
-    Position = UDim2.fromOffset(sidebarWidth, 0),
-    Size = UDim2.new(1, -sidebarWidth, 1, 0),
+    Position = UDim2.fromOffset(sidebarWidth + 1, 0),
+    Size = UDim2.new(1, -(sidebarWidth + 1), 1, 0),
     ZIndex = 20,
 }) :: Frame
 DefaultContentHost.ClipsDescendants = true
-create("UICorner", {
-    Parent = DefaultContentHost,
-    CornerRadius = UDim.new(0, 14),
-})
-create("Frame", {
+local DefaultReadability: Frame = create("Frame", {
     Parent = DefaultShell,
     Name = "DefaultReadabilityLayer",
     BackgroundColor3 = Theme.DefaultBackground,
@@ -1675,34 +2338,130 @@ create("Frame", {
     BorderSizePixel = 0,
     Size = UDim2.fromScale(1, 1),
     ZIndex = 2,
+}) :: Frame
+create("UICorner", {
+    Parent = DefaultReadability,
+    CornerRadius = cornerRadius(layout.shellCorner),
 })
+
+-- Page header: the name of the page on the left, the search field on the
+-- right. The search used to live in the rail, where a collapsed rail could
+-- not host it; here it stays reachable in every mode.
+local DefaultHeader: Frame = create("Frame", {
+    Parent = DefaultContentHost,
+    Name = "PageHeader",
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    Size = UDim2.new(1, 0, 0, layout.headerHeight),
+    ZIndex = 22,
+}) :: Frame
+local HeaderTitle: TextLabel = makeTextLabel(DefaultHeader, "Universal", 13)
+HeaderTitle.Name = "PageTitle"
+HeaderTitle.AnchorPoint = Vector2.new(0, 0.5)
+HeaderTitle.FontFace = CONTROL_FONT
+HeaderTitle.Position = UDim2.new(0, layout.contentPadding, 0.5, 0)
+HeaderTitle.Size = UDim2.new(
+    1,
+    -(layout.contentPadding * 2 + layout.searchWidth + 10),
+    0,
+    20
+)
+HeaderTitle.TextColor3 = Theme.DefaultText
+HeaderTitle.TextTruncate = Enum.TextTruncate.AtEnd
+HeaderTitle.ZIndex = 23
+local HeaderRule: Frame = create("Frame", {
+    Parent = DefaultHeader,
+    Name = "HeaderRule",
+    AnchorPoint = Vector2.new(0, 1),
+    BackgroundColor3 = Theme.DefaultOutline,
+    BackgroundTransparency = 0.84,
+    BorderSizePixel = 0,
+    Position = UDim2.new(0, layout.contentPadding, 1, 0),
+    Size = UDim2.new(1, -layout.contentPadding * 2, 0, 1),
+    ZIndex = 23,
+}) :: Frame
 
 Content = create("Frame", {
     Parent = DefaultContentHost,
     Name = "SharedPageHost",
     BackgroundTransparency = 1,
     BorderSizePixel = 0,
-    Size = UDim2.fromScale(1, 1),
+    Position = UDim2.fromOffset(0, layout.headerHeight),
+    Size = UDim2.new(1, 0, 1, -layout.headerHeight),
     ZIndex = 21,
 }) :: Frame
 Content.ClipsDescendants = true
-
-DefaultDragZone = create("Frame", {
-    Parent = DefaultShell,
-    Name = "DefaultDragStrip",
-    Active = true,
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    Size = UDim2.new(1, 0, 0, 10),
-    ZIndex = 30,
-}) :: Frame
 
 state.shells = {
     default = DefaultShell,
     defaultTabs = DefaultTabs,
     defaultContentHost = DefaultContentHost,
     defaultSidebar = DefaultSidebar,
+    defaultHeader = DefaultHeader,
+    headerTitle = HeaderTitle,
+    readability = DefaultReadability,
+    brandName = BrandName,
+    brandRow = BrandRow,
+    sidebarEdge = SidebarEdge,
 }
+
+-- One listener re-flows the whole shell when the viewport (and therefore the
+-- mode) changes. Nothing else in the file has to know the sidebar width.
+state.onLayout(function(metrics: LayoutMetrics): ()
+    local width: number = metrics.sidebarWidth
+    local shellCorner: UICorner? =
+        DefaultShell:FindFirstChild("ShellCorner") :: UICorner?
+    if shellCorner then
+        shellCorner.CornerRadius = cornerRadius(metrics.shellCorner)
+    end
+    local readabilityCorner: UICorner? =
+        DefaultReadability:FindFirstChildOfClass("UICorner")
+    if readabilityCorner then
+        readabilityCorner.CornerRadius = cornerRadius(metrics.shellCorner)
+    end
+    DefaultSidebar.Size = UDim2.new(0, width, 1, 0)
+    SidebarEdge.Position = UDim2.fromOffset(width, 0)
+    BrandRow.Size = UDim2.new(1, 0, 0, metrics.brandHeight)
+    BrandMark.AnchorPoint = metrics.sidebarCollapsed
+        and Vector2.new(0.5, 0.5)
+        or Vector2.new(0, 0.5)
+    BrandMark.Position = metrics.sidebarCollapsed
+        and UDim2.fromScale(0.5, 0.5)
+        or UDim2.new(0, metrics.sidebarPadding, 0.5, 0)
+    BrandMark.Size = UDim2.fromOffset(metrics.navIconSize + 4, metrics.navIconSize + 4)
+    BrandName.Position =
+        UDim2.new(0, metrics.sidebarPadding + metrics.navIconSize + 12, 0.5, 0)
+    BrandName.Size = UDim2.new(
+        1,
+        -(metrics.sidebarPadding * 2 + metrics.navIconSize + 12),
+        0,
+        18
+    )
+    BrandName.Visible = not metrics.sidebarCollapsed
+    DefaultTabs.Position = UDim2.fromOffset(0, metrics.brandHeight)
+    DefaultTabs.Size =
+        UDim2.new(1, 0, 1, -(metrics.brandHeight + metrics.launcherHeight + 18))
+    local navigationPadding: UIPadding? =
+        DefaultTabs:FindFirstChild("NavigationPadding") :: UIPadding?
+    if navigationPadding then
+        navigationPadding.PaddingLeft = UDim.new(0, metrics.sidebarPadding)
+        navigationPadding.PaddingRight = UDim.new(0, metrics.sidebarPadding)
+    end
+    DefaultContentHost.Position = UDim2.fromOffset(width + 1, 0)
+    DefaultContentHost.Size = UDim2.new(1, -(width + 1), 1, 0)
+    DefaultHeader.Size = UDim2.new(1, 0, 0, metrics.headerHeight)
+    HeaderTitle.Position = UDim2.new(0, metrics.contentPadding, 0.5, 0)
+    HeaderTitle.Size = UDim2.new(
+        1,
+        -(metrics.contentPadding * 2 + metrics.searchWidth + 10),
+        0,
+        20
+    )
+    HeaderRule.Position = UDim2.new(0, metrics.contentPadding, 1, 0)
+    HeaderRule.Size = UDim2.new(1, -metrics.contentPadding * 2, 0, 1)
+    Content.Position = UDim2.fromOffset(0, metrics.headerHeight)
+    Content.Size = UDim2.new(1, 0, 1, -metrics.headerHeight)
+end)
 end
 
 local function setTab(tabName: string): ()
@@ -1713,6 +2472,11 @@ local function setTab(tabName: string): ()
         page.Visible = selectedPage
     end
 
+    local headerTitle: TextLabel? = state.shells.headerTitle
+    if headerTitle then
+        headerTitle.Text = tabName == "Config." and "Settings" or tabName
+    end
+
     for name: string, button: TextButton in pairs(defaultTabButtons) do
         local selected: boolean = name == tabName
         button:SetAttribute("Selected", selected)
@@ -1721,24 +2485,49 @@ local function setTab(tabName: string): ()
             or Theme.DefaultSidebar
         button.BackgroundTransparency = selected and 0.34 or 1
         button.TextColor3 = selected and Theme.DefaultText or Theme.DefaultTextMuted
+        local navLabel: TextLabel? = button:FindFirstChild("NavLabel") :: TextLabel?
+        if navLabel then
+            navLabel.TextColor3 = selected
+                and Theme.DefaultText
+                or Theme.DefaultTextMuted
+        end
         local tabStroke: UIStroke? = button:FindFirstChild("StyleStroke") :: UIStroke?
         if tabStroke then
             tabStroke.Color = Theme.DefaultOutline
             tabStroke.Transparency = selected and 0.78 or 1
         end
+        -- The monogram chip is the only thing left when the rail collapses,
+        -- so it carries the selection state too.
+        local monogram: TextLabel? = button:FindFirstChild("Monogram") :: TextLabel?
+        if monogram then
+            monogram.TextColor3 = selected
+                and Theme.DefaultText
+                or Theme.DefaultTextMuted
+            monogram.BackgroundTransparency = selected and 0.28 or 0.62
+        end
+        -- Selected rows get an accent tick on their leading edge: a compact
+        -- selection cue that survives the icon-only rail.
+        local marker: Frame? = button:FindFirstChild("SelectionMarker") :: Frame?
+        if marker then
+            marker.Visible = selected
+        end
     end
 end
 
 local function createTab(tabName: string, layoutOrder: number): Frame
+    local layout: LayoutMetrics = state.layout
     local defaultLabel: string = tabName == "Config." and "Settings" or tabName
+    -- The row itself carries no text: a monogram chip and a separate label
+    -- are laid out inside it. A UIPadding on the button would also shift its
+    -- children, which is exactly what the chip must not do.
     local defaultButton: TextButton = makeButton(
         state.shells.defaultTabs,
-        defaultLabel,
-        state.isMobile and 11 or 13
+        "",
+        layout.navFontSize
     )
     defaultButton.Name = tabName .. "DefaultTab"
     defaultButton.LayoutOrder = layoutOrder
-    defaultButton.Size = UDim2.new(1, 0, 0, state.isMobile and 38 or 42)
+    defaultButton.Size = UDim2.new(1, 0, 0, layout.navRowHeight)
     defaultButton.BackgroundColor3 = Theme.DefaultSidebar
     defaultButton.BackgroundTransparency = 1
     defaultButton.TextColor3 = Theme.DefaultTextMuted
@@ -1748,12 +2537,57 @@ local function createTab(tabName: string, layoutOrder: number): Frame
     defaultButton:SetAttribute("SelectedColor", Theme.DefaultSurface)
     defaultButton:SetAttribute("IdleColor", Theme.DefaultSidebar)
     defaultButton:SetAttribute("HoverColor", Theme.DefaultSurfaceHover)
-    local defaultPadding: UIPadding = create("UIPadding", {
+    defaultButton:SetAttribute("NavigationLabel", defaultLabel)
+    local buttonCorner: UICorner? =
+        defaultButton:FindFirstChild("StyleCorner") :: UICorner?
+    if buttonCorner then
+        buttonCorner.CornerRadius = cornerRadius(UI_RADIUS.control)
+    end
+    local marker: Frame = create("Frame", {
         Parent = defaultButton,
-        PaddingLeft = UDim.new(0, 14),
-        PaddingRight = UDim.new(0, 10),
-    }) :: UIPadding
-    defaultPadding.Name = "DefaultTabPadding"
+        Name = "SelectionMarker",
+        AnchorPoint = Vector2.new(0, 0.5),
+        BackgroundColor3 = Theme.DefaultAccent,
+        BorderSizePixel = 0,
+        Position = UDim2.new(0, -6, 0.5, 0),
+        Size = UDim2.fromOffset(2, math.max(10, layout.navRowHeight - 16)),
+        Visible = false,
+        ZIndex = 14,
+    }) :: Frame
+    create("UICorner", {Parent = marker, CornerRadius = UDim.new(1, 0)})
+
+    local monogram: TextLabel = makeTextLabel(
+        defaultButton,
+        TAB_MONOGRAMS[tabName] or string.upper(string.sub(tabName, 1, 2)),
+        layout.captionFontSize
+    )
+    monogram.Name = "Monogram"
+    monogram.AnchorPoint = Vector2.new(0, 0.5)
+    monogram.BackgroundColor3 = Theme.DefaultSurface
+    monogram.BackgroundTransparency = 0.62
+    monogram.FontFace = CONTROL_FONT
+    monogram.Position = UDim2.new(0, 0, 0.5, 0)
+    monogram.Size = UDim2.fromOffset(layout.navIconSize, layout.navIconSize)
+    monogram.TextColor3 = Theme.DefaultTextMuted
+    monogram.TextXAlignment = Enum.TextXAlignment.Center
+    monogram.ZIndex = 13
+    create("UICorner", {Parent = monogram, CornerRadius = cornerRadius(UI_RADIUS.chip)})
+
+    local navLabel: TextLabel = makeTextLabel(
+        defaultButton,
+        defaultLabel,
+        layout.navFontSize
+    )
+    navLabel.Name = "NavLabel"
+    navLabel.AnchorPoint = Vector2.new(0, 0.5)
+    navLabel.FontFace = CONTROL_FONT
+    navLabel.Position = UDim2.new(0, layout.navIconSize + 10, 0.5, 0)
+    navLabel.Size = UDim2.new(1, -(layout.navIconSize + 16), 1, 0)
+    navLabel.TextColor3 = Theme.DefaultTextMuted
+    navLabel.TextTruncate = Enum.TextTruncate.AtEnd
+    navLabel.Visible = not layout.sidebarCollapsed
+    navLabel.ZIndex = 13
+
     defaultTabButtons[tabName] = defaultButton
 
     local page: Frame = create("Frame", {
@@ -1767,10 +2601,6 @@ local function createTab(tabName: string, layoutOrder: number): Frame
         ZIndex = 22,
     })
     page.ClipsDescendants = true
-    create("UICorner", {
-        Parent = page,
-        CornerRadius = UDim.new(0, 20),
-    })
     pages[tabName] = page
 
     trackUiConnection(defaultButton.MouseButton1Click:Connect(function(): ()
@@ -1779,6 +2609,35 @@ local function createTab(tabName: string, layoutOrder: number): Frame
 
     return page
 end
+
+-- Navigation rows re-flow with the mode: the label disappears when the rail
+-- collapses and the monogram slides to the middle of the chip column.
+state.onLayout(function(metrics: LayoutMetrics): ()
+    for _, button: TextButton in pairs(defaultTabButtons) do
+        button.Size = UDim2.new(1, 0, 0, metrics.navRowHeight)
+        local navLabel: TextLabel? = button:FindFirstChild("NavLabel") :: TextLabel?
+        if navLabel then
+            navLabel.Visible = not metrics.sidebarCollapsed
+            navLabel.Position = UDim2.new(0, metrics.navIconSize + 10, 0.5, 0)
+            navLabel.Size = UDim2.new(1, -(metrics.navIconSize + 16), 1, 0)
+            state.setTextMetric(navLabel, metrics.navFontSize)
+        end
+        local monogram: TextLabel? = button:FindFirstChild("Monogram") :: TextLabel?
+        if monogram then
+            monogram.Size = UDim2.fromOffset(metrics.navIconSize, metrics.navIconSize)
+            monogram.AnchorPoint = metrics.sidebarCollapsed
+                and Vector2.new(0.5, 0.5)
+                or Vector2.new(0, 0.5)
+            monogram.Position = metrics.sidebarCollapsed
+                and UDim2.fromScale(0.5, 0.5)
+                or UDim2.new(0, 0, 0.5, 0)
+        end
+        local marker: Frame? = button:FindFirstChild("SelectionMarker") :: Frame?
+        if marker then
+            marker.Size = UDim2.fromOffset(2, math.max(10, metrics.navRowHeight - 16))
+        end
+    end
+end)
 
 local UniversalPage = createTab("Universal", 1)
 local MovementPage = createTab("Movement", 2)
@@ -1795,7 +2654,7 @@ local function configureGameTabs(): ()
 
     for _, button: TextButton in pairs(defaultTabButtons) do
         if button.Visible then
-            button.Size = UDim2.new(1, 0, 0, state.isMobile and 38 or 42)
+            button.Size = UDim2.new(1, 0, 0, state.layout.navRowHeight)
         end
     end
 end
@@ -1803,11 +2662,16 @@ end
 configureGameTabs()
 
 do
-local DefaultSearchBox: TextBox = makeTextBox(state.shells.defaultSidebar, "")
+-- Search lives in the page header, not in the rail: on a phone the rail is
+-- only wide enough for the monogram chips.
+local searchLayout: LayoutMetrics = state.layout
+local DefaultSearchBox: TextBox = makeTextBox(state.shells.defaultHeader, "")
 DefaultSearchBox.Name = "DefaultSearch"
-DefaultSearchBox.PlaceholderText = "Search"
-DefaultSearchBox.Position = UDim2.fromOffset(12, 16)
-DefaultSearchBox.Size = UDim2.new(1, -24, 0, 40)
+DefaultSearchBox.PlaceholderText = "Search modules"
+DefaultSearchBox.AnchorPoint = Vector2.new(1, 0.5)
+DefaultSearchBox.Position = UDim2.new(1, -searchLayout.contentPadding, 0.5, 0)
+DefaultSearchBox.Size =
+    UDim2.fromOffset(searchLayout.searchWidth, searchLayout.searchHeight)
 DefaultSearchBox.BackgroundColor3 = Theme.DefaultSurface
 DefaultSearchBox.BackgroundTransparency = 0.38
 DefaultSearchBox.TextColor3 = Theme.DefaultText
@@ -1817,16 +2681,16 @@ DefaultSearchBox.PlaceholderColor3 = Theme.DefaultTextMuted:Lerp(
 )
 DefaultSearchBox.TextXAlignment = Enum.TextXAlignment.Left
 DefaultSearchBox.TextYAlignment = Enum.TextYAlignment.Center
-DefaultSearchBox.ZIndex = 14
+DefaultSearchBox.ZIndex = 24
 create("UIPadding", {
     Parent = DefaultSearchBox,
-    PaddingLeft = UDim.new(0, 14),
-    PaddingRight = UDim.new(0, 36),
+    PaddingLeft = UDim.new(0, 10),
+    PaddingRight = UDim.new(0, 28),
 })
 local DefaultSearchCorner: UICorner? =
     DefaultSearchBox:FindFirstChild("StyleCorner") :: UICorner?
 if DefaultSearchCorner then
-    DefaultSearchCorner.CornerRadius = UDim.new(0, 12)
+    DefaultSearchCorner.CornerRadius = cornerRadius(UI_RADIUS.control)
 end
 local DefaultSearchStroke: UIStroke? =
     DefaultSearchBox:FindFirstChild("StyleStroke") :: UIStroke?
@@ -1838,11 +2702,11 @@ local SearchClear: TextButton = makeButton(DefaultSearchBox, "x", 9)
 SearchClear.Name = "ClearSearch"
 SearchClear.AnchorPoint = Vector2.new(1, 0.5)
 SearchClear.BackgroundTransparency = 1
-SearchClear.Position = UDim2.new(1, -6, 0.5, 0)
-SearchClear.Size = UDim2.fromOffset(28, 28)
+SearchClear.Position = UDim2.new(1, -4, 0.5, 0)
+SearchClear.Size = UDim2.fromOffset(22, 22)
 SearchClear.TextTransparency = 0.45
 SearchClear.Visible = false
-SearchClear.ZIndex = 16
+SearchClear.ZIndex = 26
 SearchClear:SetAttribute("ThemeRole", "Icon")
 local SearchClearStroke: UIStroke? =
     SearchClear:FindFirstChild("StyleStroke") :: UIStroke?
@@ -1855,14 +2719,14 @@ trackUiConnection(SearchClear.MouseButton1Click:Connect(function(): ()
 end))
 trackUiConnection(DefaultSearchBox.Focused:Connect(function(): ()
     if DefaultSearchStroke then
-        TweenService:Create(DefaultSearchStroke, TweenInfo.new(0.16), {
+        TweenService:Create(DefaultSearchStroke, TweenInfo.new(UI_MOTION.base), {
             Transparency = 0.32,
         }):Play()
     end
 end))
 trackUiConnection(DefaultSearchBox.FocusLost:Connect(function(): ()
     if DefaultSearchStroke then
-        TweenService:Create(DefaultSearchStroke, TweenInfo.new(0.16), {
+        TweenService:Create(DefaultSearchStroke, TweenInfo.new(UI_MOTION.base), {
             Transparency = 0.72,
         }):Play()
     end
@@ -1870,6 +2734,12 @@ end))
 state.shells.defaultSearchBox = DefaultSearchBox
 state.shells.searchClear = SearchClear
 state.searchQuery = ""
+
+state.onLayout(function(metrics: LayoutMetrics): ()
+    DefaultSearchBox.Position = UDim2.new(1, -metrics.contentPadding, 0.5, 0)
+    DefaultSearchBox.Size =
+        UDim2.fromOffset(metrics.searchWidth, metrics.searchHeight)
+end)
 end
 
 local UniversalScroll = create("ScrollingFrame", {
@@ -1993,6 +2863,23 @@ create("UIListLayout", {
 })
 
 do
+-- Loading intro.
+--
+-- The intro is a staged sequence rather than a spinner that vanishes the
+-- moment the last module reports in:
+--
+--   1. the curtain fades up with a slow drifting backdrop glow,
+--   2. the wordmark rises into place letter-block by letter-block,
+--   3. a ring sweeps while the status line reports each loading stage,
+--   4. the progress bar fills, "Ready" is held briefly so it can be read,
+--   5. the whole curtain lifts away.
+--
+-- Steps 1-3 take roughly 1.1s of scripted animation before any narration, so
+-- the intro always reads as an intro even when every module loads instantly.
+-- A slow load simply keeps stage 3 on screen for longer; nothing here ever
+-- delays a slow load further. `state.finishLoadingIntro` may be called at any
+-- point, including before the sequence has finished: it records the request
+-- and the sequence picks it up at the next stage boundary.
 local LoadingCurtain: CanvasGroup = (create("CanvasGroup", {
     Parent = Main,
     Name = "LoadingIntro",
@@ -2002,13 +2889,53 @@ local LoadingCurtain: CanvasGroup = (create("CanvasGroup", {
         or Color3.fromRGB(4, 4, 6),
     BackgroundTransparency = state.guiStyle == "Default" and 0 or 0.02,
     BorderSizePixel = 0,
+    -- Fully opaque from frame one: the half-built menu behind it must never
+    -- flash. The stage-1 "fade up" animates the contents, not the curtain.
+    GroupTransparency = 0,
     Size = UDim2.fromScale(1, 1),
     ZIndex = 500,
 }) :: any) :: CanvasGroup
 create("UICorner", {
     Parent = LoadingCurtain,
-    CornerRadius = UDim.new(0, 10),
+    CornerRadius = cornerRadius(state.layout.shellCorner),
 })
+
+-- Slow, oversized radial wash behind everything. It is a plain frame with a
+-- gradient rather than an image so it costs nothing and needs no asset.
+local LoadingGlow: Frame = create("Frame", {
+    Parent = LoadingCurtain,
+    Name = "Glow",
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    BackgroundColor3 = Color3.fromRGB(150, 150, 158),
+    BackgroundTransparency = 0.86,
+    BorderSizePixel = 0,
+    Position = UDim2.fromScale(0.5, 0.42),
+    Size = UDim2.fromScale(1.4, 0.9),
+    ZIndex = 501,
+}) :: Frame
+create("UIGradient", {
+    Parent = LoadingGlow,
+    Rotation = 12,
+    Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 1),
+        NumberSequenceKeypoint.new(0.5, 0.34),
+        NumberSequenceKeypoint.new(1, 1),
+    }),
+})
+-- Breathing loop. Only the size pulses: transparency is owned by the stage-1
+-- fade-in, and two tweens fighting over one property would stutter.
+local LoadingGlowTween: Tween = TweenService:Create(
+    LoadingGlow,
+    TweenInfo.new(
+        4.2,
+        Enum.EasingStyle.Sine,
+        Enum.EasingDirection.InOut,
+        -1,
+        true
+    ),
+    {Size = UDim2.fromScale(1.8, 1.15)}
+)
+LoadingGlowTween:Play()
 
 local LoadingSpinner: Frame = create("Frame", {
     Parent = LoadingCurtain,
@@ -2016,8 +2943,8 @@ local LoadingSpinner: Frame = create("Frame", {
     AnchorPoint = Vector2.new(0.5, 0.5),
     BackgroundTransparency = 1,
     BorderSizePixel = 0,
-    Position = UDim2.fromScale(0.5, 0.37),
-    Size = UDim2.fromOffset(state.isMobile and 36 or 40, state.isMobile and 36 or 40),
+    Position = UDim2.fromScale(0.5, 0.33),
+    Size = UDim2.fromOffset(state.layout.compact and 40 or 46, state.layout.compact and 40 or 46),
     ZIndex = 503,
 }) :: Frame
 create("UICorner", {Parent = LoadingSpinner, CornerRadius = UDim.new(1, 0)})
@@ -2040,6 +2967,40 @@ local LoadingSpinnerHead: Frame = create("Frame", {
 }) :: Frame
 create("UICorner", {Parent = LoadingSpinnerHead, CornerRadius = UDim.new(1, 0)})
 
+-- Second, slower counter-rotating ring. Two rings at different speeds read as
+-- a deliberate loading animation instead of a default busy indicator.
+local LoadingSpinnerOuter: Frame = create("Frame", {
+    Parent = LoadingCurtain,
+    Name = "SpinnerOuter",
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    Position = UDim2.fromScale(0.5, 0.33),
+    Size = UDim2.fromOffset(state.layout.compact and 62 or 70, state.layout.compact and 62 or 70),
+    ZIndex = 502,
+}) :: Frame
+create("UICorner", {Parent = LoadingSpinnerOuter, CornerRadius = UDim.new(1, 0)})
+create("UIStroke", {
+    Parent = LoadingSpinnerOuter,
+    Color = Theme.DefaultOutline,
+    Transparency = 0.84,
+    Thickness = 1,
+})
+local LoadingSpinnerOuterHead: Frame = create("Frame", {
+    Parent = LoadingSpinnerOuter,
+    AnchorPoint = Vector2.new(0.5, 0),
+    BackgroundColor3 = Color3.fromRGB(190, 190, 198),
+    BackgroundTransparency = 0.35,
+    BorderSizePixel = 0,
+    Position = UDim2.new(0.5, 0, 0, 1),
+    Size = UDim2.fromOffset(4, 4),
+    ZIndex = 503,
+}) :: Frame
+create("UICorner", {
+    Parent = LoadingSpinnerOuterHead,
+    CornerRadius = UDim.new(1, 0),
+})
+
 local LoadingSpinnerTween: Tween = TweenService:Create(
     LoadingSpinner,
     TweenInfo.new(
@@ -2051,34 +3012,61 @@ local LoadingSpinnerTween: Tween = TweenService:Create(
     {Rotation = 360}
 )
 LoadingSpinnerTween:Play()
+local LoadingSpinnerOuterTween: Tween = TweenService:Create(
+    LoadingSpinnerOuter,
+    TweenInfo.new(
+        2.6,
+        Enum.EasingStyle.Linear,
+        Enum.EasingDirection.InOut,
+        -1
+    ),
+    {Rotation = -360}
+)
+LoadingSpinnerOuterTween:Play()
 
 local LoadingTitle: TextLabel = makeTextLabel(
     LoadingCurtain,
     "A Random Menu",
-    state.isMobile and 28 or 34
+    state.layout.compact and 26 or 30
 ) :: TextLabel
 LoadingTitle.AnchorPoint = Vector2.new(0.5, 0.5)
 LoadingTitle.FontFace = DISPLAY_FONT
-LoadingTitle.Position = UDim2.fromScale(0.5, 0.52)
+LoadingTitle.Position = UDim2.fromScale(0.5, 0.55)
 LoadingTitle.Size = UDim2.new(0.8, 0, 0, 48)
 LoadingTitle.TextColor3 = state.guiStyle == "Default"
     and Theme.DefaultText
     or Theme.Text
+LoadingTitle.TextTransparency = 1
 LoadingTitle.TextXAlignment = Enum.TextXAlignment.Center
 LoadingTitle.ZIndex = 503
 
+-- Hairline underline that draws itself out from the centre beneath the
+-- wordmark once the wordmark itself has settled.
+local LoadingTitleRule: Frame = create("Frame", {
+    Parent = LoadingCurtain,
+    Name = "TitleRule",
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    BackgroundColor3 = Color3.fromRGB(200, 200, 208),
+    BackgroundTransparency = 0.55,
+    BorderSizePixel = 0,
+    Position = UDim2.fromScale(0.5, 0.615),
+    Size = UDim2.fromOffset(0, 1),
+    ZIndex = 503,
+}) :: Frame
+
 local LoadingLabel: TextLabel = (makeTextLabel(
     LoadingCurtain,
-    "Preparing modules · " .. RUNTIME_BUILD_LABEL,
+    "Starting up",
     12
 ) :: any) :: TextLabel
 LoadingLabel.AnchorPoint = Vector2.new(0.5, 0)
 LoadingLabel.FontFace = THIN_FONT
-LoadingLabel.Position = UDim2.fromScale(0.5, 0.61)
+LoadingLabel.Position = UDim2.fromScale(0.5, 0.655)
 LoadingLabel.Size = UDim2.new(0.72, 0, 0, 28)
 LoadingLabel.TextColor3 = state.guiStyle == "Default"
     and Theme.DefaultTextMuted
     or Theme.TextMuted
+LoadingLabel.TextTransparency = 1
 LoadingLabel.TextXAlignment = Enum.TextXAlignment.Center
 LoadingLabel.ZIndex = 503
 state.loadingLabel = LoadingLabel
@@ -2091,8 +3079,9 @@ local LoadingTrack: Frame = create("Frame", {
     BackgroundColor3 = state.guiStyle == "Default"
         and Theme.DefaultSurface
         or Color3.fromRGB(40, 40, 46),
+    BackgroundTransparency = 1,
     BorderSizePixel = 0,
-    Position = UDim2.fromScale(0.5, 0.69),
+    Position = UDim2.fromScale(0.5, 0.725),
     Size = UDim2.new(0.48, 0, 0, 3),
     ZIndex = 503,
 }) :: Frame
@@ -2110,26 +3099,73 @@ local LoadingProgressFill: Frame = create("Frame", {
 create("UICorner", {Parent = LoadingProgressFill, CornerRadius = UDim.new(1, 0)})
 state.loadingProgressFill = LoadingProgressFill
 
+local LoadingBuildLabel: TextLabel = (makeTextLabel(
+    LoadingCurtain,
+    RUNTIME_BUILD_LABEL,
+    10
+) :: any) :: TextLabel
+LoadingBuildLabel.Name = "BuildLabel"
+LoadingBuildLabel.AnchorPoint = Vector2.new(0.5, 1)
+LoadingBuildLabel.FontFace = THIN_FONT
+LoadingBuildLabel.Position = UDim2.new(0.5, 0, 1, -14)
+LoadingBuildLabel.Size = UDim2.new(0.6, 0, 0, 18)
+LoadingBuildLabel.TextColor3 = Theme.DefaultTextMuted
+LoadingBuildLabel.TextTransparency = 1
+LoadingBuildLabel.TextXAlignment = Enum.TextXAlignment.Center
+LoadingBuildLabel.ZIndex = 503
+
+-- Sequencing state.
+--
+-- `introStageReached` is how far the scripted sequence has progressed;
+-- `finishRequested` records that loading completed. The exit only runs once
+-- both "the sequence reached its last stage" and "loading finished" hold.
 local loadingIntroFinished: boolean = false
-state.finishLoadingIntro = function(failureCount: number): ()
-    if loadingIntroFinished or not LoadingCurtain.Parent then
+local finishRequested: boolean = false
+local finishFailureCount: number = 0
+local introSequenceDone: boolean = false
+local exitStarted: boolean = false
+
+local function fadeText(label: TextLabel, target: number, duration: number): ()
+    TweenService:Create(
+        label,
+        TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+        {TextTransparency = target}
+    ):Play()
+end
+
+local function runExit(): ()
+    if exitStarted or not LoadingCurtain.Parent then
         return
     end
-    loadingIntroFinished = true
-    if failureCount > 0 then
-        LoadingLabel.Text = tostring(failureCount) .. " module(s) loaded with warnings"
+    exitStarted = true
+
+    if finishFailureCount > 0 then
+        LoadingLabel.Text = tostring(finishFailureCount)
+            .. " module(s) loaded with warnings"
     else
         LoadingLabel.Text = "Ready"
     end
-    LoadingProgressFill.Size = UDim2.fromScale(1, 1)
-    task.delay(0.22, function(): ()
+    TweenService:Create(
+        LoadingProgressFill,
+        TweenInfo.new(0.24, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+        {Size = UDim2.fromScale(1, 1)}
+    ):Play()
+
+    -- Hold "Ready" long enough to actually be read, then lift the curtain
+    -- with a slight upward drift so it feels like a door opening.
+    task.delay(0.55, function(): ()
         if not LoadingCurtain.Parent then
             return
         end
+        TweenService:Create(
+            LoadingCurtain,
+            TweenInfo.new(0.34, Enum.EasingStyle.Quart, Enum.EasingDirection.In),
+            {Position = UDim2.fromScale(0, -0.05)}
+        ):Play()
         local exitTween: Tween = TweenService:Create(
             LoadingCurtain,
             TweenInfo.new(
-                0.38,
+                0.42,
                 Enum.EasingStyle.Quart,
                 Enum.EasingDirection.Out
             ),
@@ -2138,9 +3174,110 @@ state.finishLoadingIntro = function(failureCount: number): ()
         exitTween:Play()
         exitTween.Completed:Once(function(): ()
             LoadingSpinnerTween:Cancel()
+            LoadingSpinnerOuterTween:Cancel()
+            LoadingGlowTween:Cancel()
             LoadingCurtain:Destroy()
         end)
     end)
+end
+
+-- The scripted opening. Runs on its own thread so a slow module load never
+-- blocks it and it never blocks a module load.
+task.spawn(function(): ()
+    -- 1. Backdrop settles. The curtain is already opaque; this is the glow
+    -- easing up from nothing so the screen does not start fully lit.
+    LoadingGlow.BackgroundTransparency = 1
+    TweenService:Create(
+        LoadingGlow,
+        TweenInfo.new(0.34, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+        {BackgroundTransparency = 0.86}
+    ):Play()
+    task.wait(0.3)
+    if not LoadingCurtain.Parent then
+        return
+    end
+
+    -- 2. Wordmark rises and fades in, then the rule draws out under it.
+    LoadingTitle.Position = UDim2.fromScale(0.5, 0.6)
+    TweenService:Create(
+        LoadingTitle,
+        TweenInfo.new(0.52, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+        {Position = UDim2.fromScale(0.5, 0.55), TextTransparency = 0}
+    ):Play()
+    task.wait(0.26)
+    if not LoadingCurtain.Parent then
+        return
+    end
+    TweenService:Create(
+        LoadingTitleRule,
+        TweenInfo.new(0.46, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+        {Size = UDim2.fromOffset(state.layout.compact and 150 or 210, 1)}
+    ):Play()
+    fadeText(LoadingBuildLabel, 0.42, 0.4)
+    task.wait(0.24)
+    if not LoadingCurtain.Parent then
+        return
+    end
+
+    -- 3. Status line and progress bar arrive together.
+    fadeText(LoadingLabel, 0, 0.3)
+    TweenService:Create(
+        LoadingTrack,
+        TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+        {BackgroundTransparency = 0}
+    ):Play()
+
+    -- Narrate the boot until the module loader starts reporting real
+    -- progress. `state.loadingLabelLocked` is raised by SectionManager the
+    -- moment it has genuine "Loading modules x/y" counts to show; the
+    -- narration must not fight it, and a fast load must not be made to sit
+    -- through a script it has already outrun.
+    for _, message: string in ipairs({
+        "Preparing interface",
+        "Registering modules",
+        "Linking game profile",
+    }) do
+        if finishRequested
+            or bootstrapFailed
+            or state.loadingLabelLocked
+            or not LoadingCurtain.Parent then
+            break
+        end
+        LoadingLabel.Text = message
+        task.wait(0.32)
+    end
+
+    introSequenceDone = true
+    if finishRequested then
+        runExit()
+    end
+end)
+
+-- Watchdog. `runExit` is normally driven by the sequence thread; if that
+-- thread ever dies unexpectedly the curtain must still come down rather than
+-- covering the menu forever.
+task.delay(12, function(): ()
+    -- A failed bootstrap leaves its error on this very curtain, so the
+    -- watchdog must leave it up in that case.
+    if LoadingCurtain.Parent and not exitStarted and not bootstrapFailed then
+        warn("[Random Testing Menu] Loading intro watchdog fired")
+        introSequenceDone = true
+        runExit()
+    end
+end)
+
+state.finishLoadingIntro = function(failureCount: number): ()
+    if loadingIntroFinished or not LoadingCurtain.Parent then
+        return
+    end
+    loadingIntroFinished = true
+    finishRequested = true
+    finishFailureCount = failureCount
+    -- If the opening sequence is still playing, let it reach its last stage
+    -- and call `runExit` itself; otherwise exit now.
+    if introSequenceDone then
+        runExit()
+    end
 end
 end
 
@@ -2157,8 +3294,23 @@ local mm2Features = {}
 state.trsFeatures = {}
 state.vdFeatures = {}
 state.mvsdFeatures = {}
-local allFeatures = {}
+local allFeatures: {any} = {}
 local featureConnections = {}
+
+-- Every module card re-applies the responsive metrics through its own
+-- `applyLayout` hook when the viewport mode changes. Registering the listener
+-- once here (instead of once per card) keeps the listener list short and means
+-- a card created later is still covered: the pass walks the live registry.
+state.onLayout(function(): ()
+    for _, feature: any in ipairs(allFeatures) do
+        if type(feature.applyLayout) == "function" then
+            local ok: boolean, failure: any = pcall(feature.applyLayout)
+            if not ok then
+                warn("[Random Testing Menu] card layout: " .. tostring(failure))
+            end
+        end
+    end
+end)
 state.tooltipConnections = {} :: {RBXScriptConnection}
 state.bindFeatureTooltip = nil :: ((any, string) -> ())?
 
@@ -2321,7 +3473,7 @@ local function createMobileAction(
     }) :: TextButton
     create("UICorner", {
         Parent = button,
-        CornerRadius = UDim.new(0, 12),
+        CornerRadius = cornerRadius(12),
     })
     create("UIStroke", {
         Parent = button,
@@ -2397,7 +3549,7 @@ local function createMobileAction(
                 if button.Parent then
                     TweenService:Create(
                         button,
-                        TweenInfo.new(0.12, Enum.EasingStyle.Quad),
+                        TweenInfo.new(UI_MOTION.fast, Enum.EasingStyle.Quad),
                         {BackgroundTransparency = 0.18}
                     ):Play()
                 end
@@ -2731,6 +3883,21 @@ state.universalProjectileCalibration = (function(): any
         delete: (self: Controller) -> boolean,
         status: (self: Controller) -> string,
         destroy: (self: Controller) -> (),
+        settings: {[string]: number},
+    }
+
+    -- Live-tuning knobs for the analyser. The option panel mutates these
+    -- while the tracker keeps running, so a calibration session can be
+    -- refined without restarting it.
+    local settings: {[string]: number} = {
+        bucketWidthMs = 5,
+        maxBucketMs = 250,
+        sampleWindowSeconds = 2.5,
+        maxSamplesPerTrack = 150,
+        minProjectileSpeed = 10,
+        matchDistanceStuds = 40,
+        maxPendingActivations = 10,
+        candidateLifetimeSeconds = 1.1,
     }
 
     local executorEnvironment: {[string]: any} = getfenv() :: any
@@ -2784,11 +3951,17 @@ state.universalProjectileCalibration = (function(): any
     end
 
     local function pingBucketKey(pingMs: number): string
-        if pingMs > 250 then
-            return "250+"
+        local width: number = math.max(1, settings.bucketWidthMs)
+        local ceiling: number = math.max(width, settings.maxBucketMs)
+        if pingMs > ceiling then
+            return tostring(ceiling) .. "+"
         end
-        local lower: number = math.clamp(math.floor(pingMs / 5) * 5, 0, 245)
-        local upper: number = lower + 5
+        local lower: number = math.clamp(
+            math.floor(pingMs / width) * width,
+            0,
+            math.max(0, ceiling - width)
+        )
+        local upper: number = lower + width
         return string.format("%03d-%03d", lower, upper)
     end
 
@@ -2869,10 +4042,10 @@ state.universalProjectileCalibration = (function(): any
             reason = reason,
             bucketSpec = {
                 metric = "Data Ping",
-                widthMs = 5,
+                widthMs = settings.bucketWidthMs,
                 minimumMs = 0,
-                maximumMs = 250,
-                overflow = "250+",
+                maximumMs = settings.maxBucketMs,
+                overflow = tostring(settings.maxBucketMs) .. "+",
             },
             summary = {
                 activations = runtime.totalActivations,
@@ -2939,10 +4112,11 @@ state.universalProjectileCalibration = (function(): any
 
     local function compactPending(now: number): ()
         while #runtime.pending > 0
-            and now - runtime.pending[1].activatedAt > 1.1 do
+            and now - runtime.pending[1].activatedAt
+                > settings.candidateLifetimeSeconds do
             table.remove(runtime.pending, 1)
         end
-        while #runtime.pending > 10 do
+        while #runtime.pending > settings.maxPendingActivations do
             table.remove(runtime.pending, 1)
         end
     end
@@ -2996,7 +4170,8 @@ state.universalProjectileCalibration = (function(): any
             local now: number = os.clock()
             local completed: {BasePart} = {}
             for part: BasePart, track: ProjectileTrack in pairs(runtime.tracks) do
-                if not part.Parent or now - track.startedAt >= 2.5 then
+                if not part.Parent
+                    or now - track.startedAt >= settings.sampleWindowSeconds then
                     table.insert(completed, part)
                     continue
                 end
@@ -3030,7 +4205,7 @@ state.universalProjectileCalibration = (function(): any
                         track.distance += (position - track.previousPosition).Magnitude
                     end
                 end
-                if #track.samples < 150 then
+                if #track.samples < settings.maxSamplesPerTrack then
                     table.insert(track.samples, {
                         t = now - track.startedAt,
                         position = vectorArray(position),
@@ -3106,7 +4281,7 @@ state.universalProjectileCalibration = (function(): any
         end
         local hinted: boolean = hasProjectileHint(part)
         local speed: number = part.AssemblyLinearVelocity.Magnitude
-        if not hinted and speed < 10 then
+        if not hinted and speed < settings.minProjectileSpeed then
             return
         end
         local selectedIndex: number? = nil
@@ -3224,6 +4399,7 @@ state.universalProjectileCalibration = (function(): any
     end
 
     controller = {} :: Controller
+    controller.settings = settings
 
     function controller:setEnabled(enabled: boolean): ()
         if runtime.enabled == enabled then
@@ -3248,7 +4424,9 @@ state.universalProjectileCalibration = (function(): any
             considerCandidate
         ))
         print(
-            "[RTM:UniversalTrajectory] Activa · buckets 5 ms · salida "
+            "[RTM:UniversalTrajectory] Activa · buckets "
+                .. tostring(settings.bucketWidthMs)
+                .. " ms · salida "
                 .. outputPath
         )
     end
@@ -3316,13 +4494,15 @@ local function applyGuiStyle(_: string, animate: boolean): ()
     local activeShell: Frame = state.shells.default
     state.guiStyle = "Default"
     Content.Parent = state.shells.defaultContentHost
-    Content.Position = UDim2.fromScale(0, 0)
-    Content.Size = UDim2.fromScale(1, 1)
+    -- The page host starts below the page header, so it is positioned from
+    -- the responsive metrics instead of filling the content host.
+    Content.Position = UDim2.fromOffset(0, state.layout.headerHeight)
+    Content.Size = UDim2.new(1, 0, 1, -state.layout.headerHeight)
     activeShell.Visible = true
 
     Main.BackgroundColor3 = Theme.DefaultBackground
     state.mainStroke.Color = Theme.DefaultOutline
-    state.mainStroke.Transparency = 0.58
+    state.mainStroke.Transparency = 1
     for _, page: Frame in pairs(pages) do
         page.BackgroundColor3 = Theme.DefaultBackground
         page.BackgroundTransparency = 1
@@ -3373,178 +4553,451 @@ local function getCharacterParts()
         character:FindFirstChild("HumanoidRootPart")
 end
 
+-- ---------------------------------------------------------------------------
+-- Responsive card grid
+-- ---------------------------------------------------------------------------
+--
+-- A page is a stack of category sections; a section is a header plus one or
+-- two columns of cards. The number of columns is a layout metric, so the same
+-- page renders as a single readable column on a phone and as a two-column
+-- board on a desktop without any module knowing about it.
+--
+--   ScrollingFrame
+--   └─ ResponsiveCardGrid
+--      ├─ Section_Combat
+--      │  ├─ Header
+--      │  └─ Body ─ Column1 / Column2
+--      ├─ Section_Player
+--      └─ Intake            (cards land here until the next layout pass)
+-- Only `getFeatureCardParent` escapes this block: every other helper stays
+-- inside it so it does not consume one of bootstrap()'s 200 local registers
+-- (the same reason the category pass was scoped before this rewrite).
+local getFeatureCardParent: (Instance) -> Instance = nil :: any
+do
+type CardSectionRecord = {
+    category: string,
+    frame: Frame,
+    body: Frame,
+    header: Frame?,
+    columns: {Frame},
+}
+
 type CardGridRecord = {
     container: ScrollingFrame,
     root: Frame,
-    columns: {Frame},
-    layouts: {UIListLayout},
-    counts: {number},
+    intake: Frame,
+    sections: {[string]: CardSectionRecord},
+    singleColumn: boolean,
 }
 
 local cardGrids: {[ScrollingFrame]: CardGridRecord} =
     setmetatable({}, {__mode = "k"}) :: any
 
-local function updateCardGrid(record: CardGridRecord): ()
-    local firstHeight: number = record.layouts[1].AbsoluteContentSize.Y
-    local secondHeight: number = record.layouts[2].AbsoluteContentSize.Y
-    local singleColumn: boolean = state.isMobile
-        or state.guiStyle == "Default"
-        or record.container.AbsoluteSize.X < 690
-    local contentHeight: number
-
-    if singleColumn then
-        record.columns[1].Position = UDim2.fromOffset(0, 0)
-        record.columns[1].Size = UDim2.new(1, 0, 0, firstHeight)
-        record.columns[2].Position = UDim2.fromOffset(0, firstHeight + 10)
-        record.columns[2].Size = UDim2.new(1, 0, 0, secondHeight)
-        contentHeight = firstHeight + secondHeight + 10
-    else
-        record.columns[1].Position = UDim2.fromOffset(0, 0)
-        record.columns[1].Size = UDim2.new(0.5, -5, 0, firstHeight)
-        record.columns[2].Position = UDim2.new(0.5, 5, 0, 0)
-        record.columns[2].Size = UDim2.new(0.5, -5, 0, secondHeight)
-        contentHeight = math.max(firstHeight, secondHeight)
+-- Settings rows are half label, half control: they are never split into two
+-- narrow columns even on a wide desktop.
+local function gridColumnCount(record: CardGridRecord): number
+    if record.singleColumn then
+        return 1
     end
-    record.root.Size = UDim2.new(1, -36, 0, contentHeight)
-    record.container.CanvasSize = UDim2.fromOffset(0, contentHeight + 54)
+    return math.clamp(state.layout.cardColumns, 1, 2)
 end
 
-local function redistributeCardGrid(record: CardGridRecord): ()
-    local cards: {GuiObject} = {}
-    for _, column: Frame in ipairs(record.columns) do
-        for _, child: Instance in ipairs(column:GetChildren()) do
-            if child:IsA("GuiObject") then
-                table.insert(cards, child)
+-- Applies the current metrics to a grid: column widths, gaps and the padding
+-- of the scrolling frame that hosts it.
+local function updateCardGrid(record: CardGridRecord): ()
+    local layout: LayoutMetrics = state.layout
+    local columns: number = gridColumnCount(record)
+    local gap: number = layout.cardSpacing
+
+    local containerPadding: UIPadding? =
+        record.container:FindFirstChildOfClass("UIPadding")
+    if containerPadding then
+        containerPadding.PaddingLeft = UDim.new(0, layout.contentPadding)
+        containerPadding.PaddingRight = UDim.new(0, layout.contentPadding)
+        containerPadding.PaddingTop = UDim.new(0, layout.contentPadding)
+        containerPadding.PaddingBottom = UDim.new(0, layout.contentPadding + 12)
+    end
+    record.container.ScrollBarThickness = layout.scrollBar
+
+    local rootLayout: UIListLayout? = record.root:FindFirstChildOfClass("UIListLayout")
+    if rootLayout then
+        rootLayout.Padding = UDim.new(0, gap + 4)
+    end
+
+    for _, section: CardSectionRecord in pairs(record.sections) do
+        for index: number, column: Frame in ipairs(section.columns) do
+            local columnLayout: UIListLayout? =
+                column:FindFirstChildOfClass("UIListLayout")
+            if columnLayout then
+                columnLayout.Padding = UDim.new(0, gap)
+            end
+            if columns > 1 then
+                column.Size = UDim2.new(0.5, -gap / 2, 0, 0)
+                column.Position = index == 1
+                    and UDim2.fromScale(0, 0)
+                    or UDim2.new(0.5, gap / 2, 0, 0)
+                column.Visible = true
+            else
+                column.Size = UDim2.new(1, 0, 0, 0)
+                column.Position = UDim2.fromScale(0, 0)
+                column.Visible = index == 1
             end
         end
-    end
-    table.sort(cards, function(left: GuiObject, right: GuiObject): boolean
-        if left.LayoutOrder == right.LayoutOrder then
-            return left.Name < right.Name
+        if section.header then
+            (section.header :: Frame).Size =
+                UDim2.new(1, 0, 0, layout.compact and 22 or 24)
         end
-        return left.LayoutOrder < right.LayoutOrder
+    end
+end
+
+local function createCardSection(
+    record: CardGridRecord,
+    category: string
+): CardSectionRecord
+    local layout: LayoutMetrics = state.layout
+    local suffix: string = category == "" and "General" or category:gsub("%W", "")
+    local frame: Frame = create("Frame", {
+        Parent = record.root,
+        Name = "Section_" .. suffix,
+        AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Size = UDim2.new(1, 0, 0, 0),
+    }) :: Frame
+    create("UIListLayout", {
+        Parent = frame,
+        FillDirection = Enum.FillDirection.Vertical,
+        HorizontalAlignment = Enum.HorizontalAlignment.Left,
+        Padding = UDim.new(0, 4),
+        SortOrder = Enum.SortOrder.LayoutOrder,
+    })
+
+    local body: Frame = create("Frame", {
+        Parent = frame,
+        Name = "Body",
+        AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        LayoutOrder = 2,
+        Size = UDim2.new(1, 0, 0, 0),
+    }) :: Frame
+
+    local columns: {Frame} = {}
+    for columnIndex: number = 1, 2 do
+        local column: Frame = create("Frame", {
+            Parent = body,
+            Name = "Column" .. tostring(columnIndex),
+            AutomaticSize = Enum.AutomaticSize.Y,
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Size = UDim2.new(1, 0, 0, 0),
+        }) :: Frame
+        create("UIListLayout", {
+            Parent = column,
+            FillDirection = Enum.FillDirection.Vertical,
+            HorizontalAlignment = Enum.HorizontalAlignment.Left,
+            Padding = UDim.new(0, layout.cardSpacing),
+            SortOrder = Enum.SortOrder.LayoutOrder,
+        })
+        columns[columnIndex] = column
+    end
+
+    local section: CardSectionRecord = {
+        category = category,
+        frame = frame,
+        body = body,
+        header = nil,
+        columns = columns,
+    }
+    record.sections[category] = section
+    return section
+end
+
+-- Lightweight header strip: an uppercase caption plus a hairline that fades
+-- out to the right. Compact on purpose — it labels a block, it is not a title.
+local function ensureSectionHeader(section: CardSectionRecord): Frame
+    local existing: Frame? = section.header
+    if existing then
+        return existing
+    end
+    local header: Frame = create("Frame", {
+        Parent = section.frame,
+        Name = "CategoryHeader",
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        LayoutOrder = 1,
+        Size = UDim2.new(1, 0, 0, state.layout.compact and 22 or 24),
+    }) :: Frame
+    header:SetAttribute("CategoryHeader", section.category)
+
+    local headerLabel: TextLabel = makeTextLabel(
+        header,
+        string.upper(section.category),
+        9
+    )
+    headerLabel.Name = "CategoryTitle"
+    headerLabel.FontFace = CONTROL_FONT
+    headerLabel.Position = UDim2.fromOffset(2, 0)
+    headerLabel.Size = UDim2.new(0, 150, 1, 0)
+    headerLabel.TextColor3 = Theme.DefaultTextMuted
+    headerLabel.TextTransparency = 0.12
+
+    local headerRule: Frame = create("Frame", {
+        Parent = header,
+        Name = "CategoryRule",
+        AnchorPoint = Vector2.new(1, 0.5),
+        BackgroundColor3 = Theme.DefaultOutline,
+        BackgroundTransparency = 0.7,
+        BorderSizePixel = 0,
+        Position = UDim2.new(1, -2, 0.5, 0),
+        Size = UDim2.new(1, -158, 0, 1),
+    }) :: Frame
+    create("UIGradient", {
+        Parent = headerRule,
+        Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 1),
+            NumberSequenceKeypoint.new(1, 0.25),
+        }),
+    })
+
+    section.header = header
+    return header
+end
+
+-- Full re-flow of one grid: group the cards by category, order the categories
+-- (catch-all last) and the cards inside each one, then balance them across the
+-- available columns. Cards keep their own LayoutOrder when they are not
+-- categorised (the settings page relies on it).
+local function refreshCategoryLayout(record: CardGridRecord): ()
+    local grouped: {[string]: {GuiObject}} = {}
+    local categories: {string} = {}
+
+    local function collect(parent: Instance): ()
+        for _, child: Instance in ipairs(parent:GetChildren()) do
+            if not child:IsA("GuiObject") then
+                continue
+            end
+            if type(child:GetAttribute("CategoryHeader")) == "string" then
+                continue
+            end
+            local attribute: any = child:GetAttribute("FeatureCategory")
+            local category: string = type(attribute) == "string" and attribute or ""
+            local bucket: {GuiObject}? = grouped[category]
+            if not bucket then
+                bucket = {}
+                grouped[category] = bucket
+                table.insert(categories, category)
+            end
+            table.insert(bucket :: {GuiObject}, child :: GuiObject)
+        end
+    end
+
+    collect(record.intake)
+    for _, section: CardSectionRecord in pairs(record.sections) do
+        for _, column: Frame in ipairs(section.columns) do
+            collect(column)
+        end
+    end
+
+    table.sort(categories, function(left: string, right: string): boolean
+        return featureCategoryRank(left) < featureCategoryRank(right)
     end)
-    record.counts[1] = 0
-    record.counts[2] = 0
-    local oneColumn: boolean = state.isMobile or state.guiStyle == "Default"
-    for index: number, card: GuiObject in ipairs(cards) do
-        local columnIndex: number = oneColumn and 1 or ((index - 1) % 2) + 1
-        card.Parent = record.columns[columnIndex]
-        record.counts[columnIndex] += 1
+
+    -- Uncategorised pages (settings) never grow a header; a page with a single
+    -- category does not need one either.
+    local showHeaders: boolean = #categories > 1
+    local columns: number = gridColumnCount(record)
+    local spacing: number = state.layout.cardSpacing
+
+    for index: number, category: string in ipairs(categories) do
+        local section: CardSectionRecord = record.sections[category]
+            or createCardSection(record, category)
+        section.frame.LayoutOrder = index
+        section.frame.Visible = true
+
+        if showHeaders and category ~= "" then
+            ensureSectionHeader(section)
+        elseif section.header then
+            (section.header :: Frame):Destroy()
+            section.header = nil
+        end
+
+        local cards: {GuiObject} = grouped[category]
+        if category == "" then
+            table.sort(cards, function(left: GuiObject, right: GuiObject): boolean
+                if left.LayoutOrder == right.LayoutOrder then
+                    return left.Name < right.Name
+                end
+                return left.LayoutOrder < right.LayoutOrder
+            end)
+        else
+            table.sort(cards, function(left: GuiObject, right: GuiObject): boolean
+                local leftName: any = left:GetAttribute("FeatureSortName")
+                local rightName: any = right:GetAttribute("FeatureSortName")
+                return tostring(leftName or left.Name)
+                    < tostring(rightName or right.Name)
+            end)
+            for cardIndex: number, card: GuiObject in ipairs(cards) do
+                card.LayoutOrder = index * 1000 + cardIndex
+            end
+        end
+
+        -- Balance by measured height instead of alternating, so one tall
+        -- expanded card cannot leave a column half empty.
+        local filled: {number} = {0, 0}
+        for _, card: GuiObject in ipairs(cards) do
+            local target: number = 1
+            if columns > 1 and filled[2] < filled[1] then
+                target = 2
+            end
+            if card.Parent ~= section.columns[target] then
+                card.Parent = section.columns[target]
+            end
+            filled[target] += card.AbsoluteSize.Y > 0
+                and card.AbsoluteSize.Y + spacing
+                or card.Size.Y.Offset + spacing
+        end
+    end
+
+    -- Sections whose last card was removed.
+    for category: string, section: CardSectionRecord in pairs(record.sections) do
+        if not grouped[category] then
+            section.frame:Destroy()
+            record.sections[category] = nil
+        end
+    end
+
+    updateCardGrid(record)
+end
+
+-- Hide a category header (and its whole section) when the active search
+-- filtered away every card underneath it, so the page never shows a dangling
+-- title or a gap.
+local function refreshCategoryVisibility(record: CardGridRecord): ()
+    for _, section: CardSectionRecord in pairs(record.sections) do
+        local visible: boolean = false
+        for _, column: Frame in ipairs(section.columns) do
+            for _, child: Instance in ipairs(column:GetChildren()) do
+                if child:IsA("GuiObject") and child.Visible then
+                    visible = true
+                    break
+                end
+            end
+            if visible then
+                break
+            end
+        end
+        section.frame.Visible = visible
+    end
+end
+
+state.refreshCategoryVisibility = function(): ()
+    for _, record: CardGridRecord in pairs(cardGrids) do
+        refreshCategoryVisibility(record)
     end
 end
 
 state.refreshCardGrids = function(): ()
     for _, record: CardGridRecord in pairs(cardGrids) do
-        redistributeCardGrid(record)
-        updateCardGrid(record)
+        refreshCategoryLayout(record)
+        refreshCategoryVisibility(record)
     end
 end
 
-local function getFeatureCardParent(container: Instance): Instance
+-- Re-sorting on every single card creation would be O(n^2) during bootstrap,
+-- so creations only mark the layout dirty and one pass runs on the next frame.
+do
+local categoryLayoutDirty: boolean = false
+state.invalidateCategoryLayout = function(): ()
+    if categoryLayoutDirty then
+        return
+    end
+    categoryLayoutDirty = true
+    task.defer(function(): ()
+        categoryLayoutDirty = false
+        state.refreshCardGrids()
+    end)
+end
+end
+
+-- A mode change (phone rotated, window resized) re-balances every page.
+state.onLayout(function(): ()
+    if state.refreshCardGrids then
+        state.refreshCardGrids()
+    end
+end)
+
+getFeatureCardParent = function(container: Instance): Instance
     if not container:IsA("ScrollingFrame") then
         return container
     end
 
     local record: CardGridRecord? = cardGrids[container]
     if not record then
-        container.AutomaticCanvasSize = Enum.AutomaticSize.None
+        container.AutomaticCanvasSize = Enum.AutomaticSize.Y
         local oldLayout: UIListLayout? =
             container:FindFirstChildOfClass("UIListLayout")
         if oldLayout then
             oldLayout:Destroy()
         end
 
-        local root: Frame = Instance.new("Frame")
-        root.Name = "ResponsiveCardGrid"
-        root.BackgroundTransparency = 1
-        root.BorderSizePixel = 0
-        root.Position = UDim2.fromOffset(18, 18)
-        root.Size = UDim2.new(1, -36, 0, 0)
-        root.Parent = container
+        local root: Frame = create("Frame", {
+            Parent = container,
+            Name = "ResponsiveCardGrid",
+            AutomaticSize = Enum.AutomaticSize.Y,
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Size = UDim2.new(1, 0, 0, 0),
+        }) :: Frame
+        create("UIListLayout", {
+            Parent = root,
+            FillDirection = Enum.FillDirection.Vertical,
+            HorizontalAlignment = Enum.HorizontalAlignment.Left,
+            Padding = UDim.new(0, state.layout.cardSpacing + 4),
+            SortOrder = Enum.SortOrder.LayoutOrder,
+        })
 
-        local columns: {Frame} = {}
-        local layouts: {UIListLayout} = {}
-        for columnIndex: number = 1, 2 do
-            local column: Frame = Instance.new("Frame")
-            column.Name = "Column" .. tostring(columnIndex)
-            column.BackgroundTransparency = 1
-            column.BorderSizePixel = 0
-            column.Size = UDim2.new(0.5, -5, 0, 0)
-            column.Parent = root
-            columns[columnIndex] = column
-
-            local layout: UIListLayout = Instance.new("UIListLayout")
-            layout.FillDirection = Enum.FillDirection.Vertical
-            layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-            layout.Padding = UDim.new(0, 7)
-            layout.SortOrder = Enum.SortOrder.LayoutOrder
-            layout.Parent = column
-            layouts[columnIndex] = layout
-        end
+        -- Landing area for cards created between two layout passes. It is a
+        -- plain single column, so a card is never mispositioned even if it is
+        -- rendered for one frame before the pass runs.
+        local intake: Frame = create("Frame", {
+            Parent = root,
+            Name = "Intake",
+            AutomaticSize = Enum.AutomaticSize.Y,
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            LayoutOrder = 100000,
+            Size = UDim2.new(1, 0, 0, 0),
+        }) :: Frame
+        create("UIListLayout", {
+            Parent = intake,
+            FillDirection = Enum.FillDirection.Vertical,
+            HorizontalAlignment = Enum.HorizontalAlignment.Left,
+            Padding = UDim.new(0, state.layout.cardSpacing),
+            SortOrder = Enum.SortOrder.LayoutOrder,
+        })
 
         record = {
             container = container,
             root = root,
-            columns = columns,
-            layouts = layouts,
-            counts = {0, 0},
+            intake = intake,
+            sections = {},
+            singleColumn = container:GetAttribute("CardGridSingleColumn") == true,
         }
         cardGrids[container] = record
-        for _, layout: UIListLayout in ipairs(layouts) do
-            trackUiConnection(
-                layout:GetPropertyChangedSignal("AbsoluteContentSize")
-                    :Connect(function(): ()
-                        updateCardGrid(record :: CardGridRecord)
-                    end)
-            )
-        end
-        trackUiConnection(
-            container:GetPropertyChangedSignal("AbsoluteSize"):Connect(
-                function(): ()
-                    updateCardGrid(record :: CardGridRecord)
-                end
-            )
-        )
-        updateCardGrid(record)
+        updateCardGrid(record :: CardGridRecord)
     end
 
-    local selectedColumn: number
-    if state.isMobile or state.guiStyle == "Default" then
-        selectedColumn = 1
-    else
-        selectedColumn = record.counts[1] <= record.counts[2] and 1 or 2
+    if state.invalidateCategoryLayout then
+        state.invalidateCategoryLayout()
     end
-    record.counts[selectedColumn] += 1
-    return record.columns[selectedColumn]
+    return (record :: CardGridRecord).intake
+end
 end
 
-local function setCheckVisual(
-    button: TextButton,
-    mark: TextLabel,
-    enabled: boolean,
-    animate: boolean?
-): ()
-    mark.Text = ""
-    mark.Visible = false
-    setToggleSwitch(button, enabled, animate)
-end
-
-local function createCheckControl(
-    parent: Instance,
-    enabled: boolean
-): (TextButton, TextLabel)
-    local button: TextButton = createToggleSwitch(parent, enabled, nil)
-    local mark: TextLabel = makeTextLabel(button, "", state.isMobile and 16 or 15)
-    mark.Name = "CheckMark"
-    mark.AnchorPoint = Vector2.new(0.5, 0.5)
-    mark.Position = UDim2.fromScale(0.5, 0.5)
-    mark.Size = UDim2.fromScale(1, 1)
-    mark.TextXAlignment = Enum.TextXAlignment.Center
-    mark.ZIndex = button.ZIndex + 1
-    setCheckVisual(button, mark, enabled, false)
-    return button, mark
-end
+-- (The old check-control factory lived here. Nothing uses a check widget any
+-- more: settings toggles are click-to-toggle rows and module options use the
+-- switch factory directly, so it was removed rather than left dangling.)
 
 do
 type FloatingWindowRecord = {
@@ -3663,13 +5116,28 @@ local function bringFloatingToFront(record: FloatingWindowRecord): ()
     end
 end
 
+-- Floating windows.
+--
+-- Two flavours share this factory:
+--   * framed  — favourites, the overlay manager and the per-overlay settings.
+--               These are tool windows: header, title, close button, panel
+--               background. They are movable on purpose (the fixed shell is
+--               the main menu, not these).
+--   * chrome-less — the HUD overlays (radar, target info, session info, text
+--               GUI). They render their content and nothing else: no panel,
+--               no header, no close button, so a circular radar is just a
+--               circle on screen instead of a circle inside a box. They stay
+--               movable: the content itself is the drag handle.
 local function createFloatingWindow(
     id: string,
     titleText: string,
     size: Vector2,
     defaultPosition: Vector2,
-    onClose: (() -> ())?
+    onClose: (() -> ())?,
+    chromeless: boolean?
 ): FloatingWindowRecord
+    local bare: boolean = chromeless == true
+    local headerHeight: number = bare and 0 or 30
     local saved: any = configData.ui.floatingPositions[id]
     local position: Vector2 = type(saved) == "table"
         and Vector2.new(
@@ -3684,84 +5152,133 @@ local function createFloatingWindow(
         Name = "Floating_" .. id,
         Active = true,
         BackgroundColor3 = Theme.DefaultBackground,
-        BackgroundTransparency = 0.08,
+        BackgroundTransparency = bare and 1 or 0.08,
         BorderSizePixel = 0,
-        ClipsDescendants = true,
+        ClipsDescendants = not bare,
         Position = UDim2.fromOffset(position.X, position.Y),
         Size = UDim2.fromOffset(size.X, size.Y),
         Visible = false,
         ZIndex = 150,
     }) :: Frame
-    create("UICorner", {
-        Parent = root,
-        CornerRadius = UDim.new(0, 10),
-    })
-    local stroke: UIStroke = create("UIStroke", {
-        Parent = root,
-        Color = Theme.DefaultOutline,
-        Transparency = 0.55,
-        Thickness = 1,
-    }) :: UIStroke
+    if not bare then
+        create("UICorner", {
+            Parent = root,
+            CornerRadius = cornerRadius(UI_RADIUS.panel),
+        })
+        -- Hairline only: the floating windows share the borderless look of
+        -- the main shell, so no grey frame draws attention at their corners.
+        create("UIStroke", {
+            Parent = root,
+            Color = Theme.DefaultOutline,
+            Transparency = 0.78,
+            Thickness = 1,
+        })
 
-    local shade: Frame = create("Frame", {
-        Parent = root,
-        Name = "Readability",
-        BackgroundColor3 = Theme.DefaultBackground,
-        BackgroundTransparency = 0.28,
-        BorderSizePixel = 0,
-        Size = UDim2.fromScale(1, 1),
-    }) :: Frame
-    shade:SetAttribute("FloatingDepth", 2)
+        local shade: Frame = create("Frame", {
+            Parent = root,
+            Name = "Readability",
+            BackgroundColor3 = Theme.DefaultBackground,
+            BackgroundTransparency = 0.28,
+            BorderSizePixel = 0,
+            Size = UDim2.fromScale(1, 1),
+        }) :: Frame
+        shade:SetAttribute("FloatingDepth", 2)
+    end
 
     local header: Frame = create("Frame", {
         Parent = root,
         Name = "Header",
-        Active = true,
+        Active = not bare,
         BackgroundColor3 = Theme.DefaultSurface,
         BackgroundTransparency = 0.24,
         BorderSizePixel = 0,
-        Size = UDim2.new(1, 0, 0, 36),
+        Size = UDim2.new(1, 0, 0, headerHeight),
+        Visible = not bare,
     }) :: Frame
     header:SetAttribute("FloatingDepth", 3)
-    local accent: Frame = create("Frame", {
-        Parent = header,
-        BackgroundColor3 = Theme.DefaultOutline,
-        BackgroundTransparency = 0.55,
-        BorderSizePixel = 0,
-        Position = UDim2.fromOffset(0, 35),
-        Size = UDim2.new(1, 0, 0, 1),
-    }) :: Frame
-    accent:SetAttribute("FloatingDepth", 1)
-    local title: TextLabel = makeTextLabel(header, titleText, 11)
-    title.FontFace = CONTROL_FONT
-    title.Position = UDim2.fromOffset(12, 0)
-    title.Size = UDim2.new(1, -48, 1, 0)
-    title.TextColor3 = Theme.DefaultText
-    title:SetAttribute("FloatingDepth", 2)
 
-    local closeButton: TextButton = makeButton(header, "x", 10)
-    closeButton.Name = "Close"
-    closeButton.AnchorPoint = Vector2.new(1, 0.5)
-    closeButton.BackgroundTransparency = 1
-    closeButton.Position = UDim2.new(1, -7, 0.5, 0)
-    closeButton.Size = UDim2.fromOffset(28, 28)
-    closeButton.TextColor3 = Theme.DefaultTextMuted
-    closeButton:SetAttribute("ThemeRole", "Icon")
-    closeButton:SetAttribute("FloatingDepth", 3)
-    local closeStroke: UIStroke? = closeButton:FindFirstChild("StyleStroke") :: UIStroke?
-    if closeStroke then
-        closeStroke.Enabled = false
+    local closeButton: TextButton
+    if bare then
+        -- Kept so every record has the same shape; never shown.
+        closeButton = create("TextButton", {
+            Parent = header,
+            Name = "Close",
+            BackgroundTransparency = 1,
+            Text = "",
+            Visible = false,
+        }) :: TextButton
+    else
+        local accent: Frame = create("Frame", {
+            Parent = header,
+            BackgroundColor3 = Theme.DefaultOutline,
+            BackgroundTransparency = 0.62,
+            BorderSizePixel = 0,
+            Position = UDim2.fromOffset(0, headerHeight - 1),
+            Size = UDim2.new(1, 0, 0, 1),
+        }) :: Frame
+        accent:SetAttribute("FloatingDepth", 1)
+        local title: TextLabel = makeTextLabel(header, titleText, 10)
+        title.FontFace = CONTROL_FONT
+        title.Position = UDim2.fromOffset(10, 0)
+        title.Size = UDim2.new(1, -40, 1, 0)
+        title.TextColor3 = Theme.DefaultText
+        title:SetAttribute("FloatingDepth", 2)
+
+        closeButton = makeButton(header, "x", 9)
+        closeButton.Name = "Close"
+        closeButton.AnchorPoint = Vector2.new(1, 0.5)
+        closeButton.BackgroundTransparency = 1
+        closeButton.Position = UDim2.new(1, -6, 0.5, 0)
+        closeButton.Size = UDim2.fromOffset(22, 22)
+        closeButton.TextColor3 = Theme.DefaultTextMuted
+        closeButton:SetAttribute("ThemeRole", "Icon")
+        closeButton:SetAttribute("FloatingDepth", 3)
+        local closeStroke: UIStroke? =
+            closeButton:FindFirstChild("StyleStroke") :: UIStroke?
+        if closeStroke then
+            closeStroke.Enabled = false
+        end
     end
 
     local body: Frame = create("Frame", {
         Parent = root,
         Name = "Body",
+        Active = false,
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
-        Position = UDim2.fromOffset(0, 36),
-        Size = UDim2.new(1, 0, 1, -36),
+        Position = UDim2.fromOffset(0, headerHeight),
+        Size = UDim2.new(1, 0, 1, -headerHeight),
     }) :: Frame
     body:SetAttribute("FloatingDepth", 4)
+
+    -- A chrome-less overlay is mostly transparent, so while the menu is
+    -- closed it must not swallow clicks meant for the game underneath: it
+    -- only becomes an input surface (and therefore only becomes movable)
+    -- while the menu is on screen.
+    if bare then
+        root.Active = state.visible == true
+        -- Faint outline shown only while the menu is open, so it is obvious
+        -- which HUD elements can be grabbed and repositioned. It disappears
+        -- with the menu, leaving the bare read-out on screen.
+        create("UICorner", {
+            Parent = root,
+            CornerRadius = cornerRadius(UI_RADIUS.control),
+        })
+        local hint: UIStroke = create("UIStroke", {
+            Parent = root,
+            Name = "MoveHint",
+            Color = Theme.DefaultOutline,
+            Thickness = 1,
+            Transparency = state.visible and 0.72 or 1,
+        }) :: UIStroke
+        state.addMenuVisibilityListener(function(visible: boolean): ()
+            if not root.Parent then
+                return
+            end
+            root.Active = visible
+            hint.Transparency = visible and 0.72 or 1
+        end)
+    end
 
     local record: FloatingWindowRecord = {
         id = id,
@@ -3769,6 +5286,10 @@ local function createFloatingWindow(
         body = body,
         closeButton = closeButton,
     }
+    -- A chrome-less overlay has no title bar to grab, so the whole surface
+    -- drags it; a framed window only drags from its header, which keeps its
+    -- content clickable.
+    local dragHandle: GuiObject = bare and root or header
     local dragging: boolean = false
     local dragInput: InputObject? = nil
     local dragStart: Vector2 = Vector2.zero
@@ -3777,7 +5298,10 @@ local function createFloatingWindow(
     trackUiConnection(root.InputBegan:Connect(function(): ()
         bringFloatingToFront(record)
     end))
-    trackUiConnection(header.InputBegan:Connect(function(input: InputObject): ()
+    trackUiConnection(dragHandle.InputBegan:Connect(function(input: InputObject): ()
+        if bare and not state.visible then
+            return
+        end
         if input.UserInputType == Enum.UserInputType.MouseButton1
             or input.UserInputType == Enum.UserInputType.Touch then
             dragging = true
@@ -3836,10 +5360,16 @@ function FloatingUi.reclamp(): ()
     end
 end
 
+-- Movable windows keep their saved position, but a smaller screen must never
+-- leave one of them stranded outside the viewport.
+state.onLayout(function(): ()
+    FloatingUi.reclamp()
+end)
+
 local FavoritesWindow: FloatingWindowRecord = createFloatingWindow(
     "Favorites",
     "Favorites",
-    Vector2.new(state.isMobile and 260 or 285, 250),
+    Vector2.new(state.layout.compact and 240 or 270, 236),
     Vector2.new(40, 90),
     function(): ()
         configData.ui.favoritesWindowOpen = false
@@ -3906,7 +5436,7 @@ local function refreshFavorites(): ()
             }) :: TextButton
             create("UICorner", {
                 Parent = row,
-                CornerRadius = UDim.new(0, 8),
+                CornerRadius = cornerRadius(8),
             })
             row:SetAttribute("FloatingDepth", 3)
             create("UIPadding", {
@@ -3988,7 +5518,7 @@ end
 local OverlayMenu: FloatingWindowRecord = createFloatingWindow(
     "OverlayMenu",
     "Overlays",
-    Vector2.new(state.isMobile and 250 or 270, 232),
+    Vector2.new(state.layout.compact and 232 or 252, 220),
     Vector2.new(340, 90),
     function(): ()
         configData.ui.overlayMenuOpen = false
@@ -4008,11 +5538,15 @@ create("UIListLayout", {
     SortOrder = Enum.SortOrder.LayoutOrder,
 })
 
+-- HUD overlays are chrome-less: their window is exactly the content and
+-- nothing else, so the radar is a bare circle, the target read-out is a bare
+-- read-out and the session counters are bare text. They keep their own drag
+-- handling, and the overlay manager below is what turns them on and off.
 local overlayDefinitions: {any} = {
-    {id = "SessionInfo", title = "Session Info", size = Vector2.new(270, 210), position = Vector2.new(40, 330)},
-    {id = "TextGUI", title = "Text GUI", size = Vector2.new(300, 260), position = Vector2.new(325, 330)},
-    {id = "TargetInfo", title = "Target Info", size = Vector2.new(330, 180), position = Vector2.new(640, 330)},
-    {id = "Radar", title = "Radar", size = Vector2.new(240, 285), position = Vector2.new(985, 300)},
+    {id = "SessionInfo", title = "Session Info", size = Vector2.new(210, 118), position = Vector2.new(24, 300)},
+    {id = "TextGUI", title = "Text GUI", size = Vector2.new(240, 220), position = Vector2.new(250, 300)},
+    {id = "TargetInfo", title = "Target Info", size = Vector2.new(260, 86), position = Vector2.new(510, 300)},
+    {id = "Radar", title = "Radar", size = Vector2.new(radarSettings.size, radarSettings.size), position = Vector2.new(820, 280)},
 }
 
 local function setOverlayEnabled(id: string, enabled: boolean): ()
@@ -4051,7 +5585,8 @@ for index: number, definition: any in ipairs(overlayDefinitions) do
         definition.position,
         function(): ()
             setOverlayEnabled(overlayId, false)
-        end
+        end,
+        true
     )
     local managerRow: Frame = create("Frame", {
         Parent = OverlayList,
@@ -4064,7 +5599,7 @@ for index: number, definition: any in ipairs(overlayDefinitions) do
     managerRow:SetAttribute("FloatingDepth", 3)
     create("UICorner", {
         Parent = managerRow,
-        CornerRadius = UDim.new(0, 8),
+        CornerRadius = cornerRadius(8),
     })
     local managerLabel: TextLabel = makeTextLabel(managerRow, definition.title, 10)
     managerLabel.Position = UDim2.fromOffset(10, 0)
@@ -4106,10 +5641,15 @@ local function createOverlaySettingsWindow(
     height: number,
     position: Vector2
 ): (FloatingWindowRecord, ScrollingFrame)
+    -- Settings windows scroll, so their height is capped to the screen: a
+    -- 500px panel would run off a phone in landscape.
     local window: FloatingWindowRecord = createFloatingWindow(
         id .. "Settings",
         title,
-        Vector2.new(state.isMobile and 286 or 310, height),
+        Vector2.new(
+            state.layout.compact and 268 or 292,
+            math.min(height, math.max(180, getFloatingViewport().Y - 24))
+        ),
         position,
         nil
     )
@@ -4143,7 +5683,7 @@ local function createCompactSettingRow(parent: Instance, labelText: string): Fra
         BorderSizePixel = 0,
         Size = UDim2.new(1, -4, 0, 38),
     }) :: Frame
-    create("UICorner", {Parent = row, CornerRadius = UDim.new(0, 8)})
+    create("UICorner", {Parent = row, CornerRadius = cornerRadius(8)})
     local label: TextLabel = makeTextLabel(row, labelText, 9)
     label.Position = UDim2.fromOffset(10, 0)
     label.Size = UDim2.new(0.48, -10, 1, 0)
@@ -4218,7 +5758,7 @@ do
     textSettingsWindow, textSettingsScroll = createOverlaySettingsWindow(
         "TextGUI",
         "Text GUI Studio",
-        state.isMobile and 520 or 560,
+        state.layout.compact and 500 or 540,
         Vector2.new(300, 70)
     )
     addCompactCycle(textSettingsScroll, "Sort", {"Alphabetical", "Length", "Enabled order", "Section"}, textGuiSettings.sort, function(value: string): () textGuiSettings.sort = value end)
@@ -4286,13 +5826,28 @@ do
     addCompactToggle(targetSettingsScroll, "Distance", targetSettings.showDistance, function(value: boolean): () targetSettings.showDistance = value end)
 end
 
+-- Session read-out. With the panel gone the text sits directly on the game,
+-- so it carries its own one-pixel shadow instead of relying on a background.
+local SessionShadow: TextLabel = makeTextLabel(
+    FloatingUi.overlays.SessionInfo.window.body,
+    "Session initializing...",
+    9
+)
+SessionShadow.Name = "SessionShadow"
+SessionShadow.Position = UDim2.fromOffset(1, 1)
+SessionShadow.Size = UDim2.fromScale(1, 1)
+SessionShadow.TextColor3 = Color3.fromRGB(0, 0, 0)
+SessionShadow.TextTransparency = 0.25
+SessionShadow.TextYAlignment = Enum.TextYAlignment.Top
+SessionShadow:SetAttribute("FloatingDepth", 1)
+
 local SessionText: TextLabel = makeTextLabel(
     FloatingUi.overlays.SessionInfo.window.body,
     "Session initializing...",
     9
 )
-SessionText.Position = UDim2.fromOffset(12, 8)
-SessionText.Size = UDim2.new(1, -24, 1, -16)
+SessionText.Position = UDim2.fromOffset(0, 0)
+SessionText.Size = UDim2.fromScale(1, 1)
 SessionText.TextColor3 = Theme.DefaultText
 SessionText.TextYAlignment = Enum.TextYAlignment.Top
 SessionText:SetAttribute("FloatingDepth", 2)
@@ -4303,8 +5858,8 @@ local TextGuiShadow: TextLabel = makeTextLabel(
     "No active modules",
     10
 )
-TextGuiShadow.Position = UDim2.fromOffset(14, 10)
-TextGuiShadow.Size = UDim2.new(1, -24, 1, -16)
+TextGuiShadow.Position = UDim2.fromOffset(1, 1)
+TextGuiShadow.Size = UDim2.fromScale(1, 1)
 TextGuiShadow.TextColor3 = Color3.fromRGB(0, 0, 0)
 TextGuiShadow.TextTransparency = 0.16
 TextGuiShadow.TextWrapped = true
@@ -4315,8 +5870,8 @@ local TextGuiLabel: TextLabel = makeTextLabel(
     "No active modules",
     10
 )
-TextGuiLabel.Position = UDim2.fromOffset(12, 8)
-TextGuiLabel.Size = UDim2.new(1, -24, 1, -16)
+TextGuiLabel.Position = UDim2.fromOffset(0, 0)
+TextGuiLabel.Size = UDim2.fromScale(1, 1)
 TextGuiLabel.TextColor3 = Theme.AccentCyan
 TextGuiLabel.TextWrapped = true
 TextGuiLabel.TextYAlignment = Enum.TextYAlignment.Top
@@ -4333,16 +5888,18 @@ local TextGuiGradient: UIGradient = create("UIGradient", {
 }) :: UIGradient
 
 local TargetBody: Frame = FloatingUi.overlays.TargetInfo.window.body
+-- The portrait is content, not chrome, so it keeps its own rounded plate;
+-- everything that used to box the whole read-out is gone.
 local TargetPortraitFrame: Frame = create("Frame", {
     Parent = TargetBody,
     BackgroundColor3 = Theme.DefaultSurface,
     BackgroundTransparency = 0.18,
     BorderSizePixel = 0,
-    Position = UDim2.fromOffset(12, 12),
-    Size = UDim2.fromOffset(66, 66),
+    Position = UDim2.fromOffset(0, 0),
+    Size = UDim2.fromOffset(56, 56),
 }) :: Frame
 TargetPortraitFrame:SetAttribute("FloatingDepth", 2)
-create("UICorner", {Parent = TargetPortraitFrame, CornerRadius = UDim.new(0, 12)})
+create("UICorner", {Parent = TargetPortraitFrame, CornerRadius = cornerRadius(UI_RADIUS.panel)})
 create("UIStroke", {
     Parent = TargetPortraitFrame,
     Color = Theme.DefaultOutline,
@@ -4360,19 +5917,19 @@ local TargetPortrait: ImageLabel = create("ImageLabel", {
     ZIndex = 3,
 }) :: ImageLabel
 TargetPortrait:SetAttribute("FloatingDepth", 3)
-create("UICorner", {Parent = TargetPortrait, CornerRadius = UDim.new(0, 10)})
+create("UICorner", {Parent = TargetPortrait, CornerRadius = cornerRadius(10)})
 local TargetName: TextLabel = makeTextLabel(
     TargetBody,
     "No target",
     11
 )
 TargetName.FontFace = CONTROL_FONT
-TargetName.Position = UDim2.fromOffset(88, 8)
-TargetName.Size = UDim2.new(1, -100, 0, 28)
+TargetName.Position = UDim2.fromOffset(64, 0)
+TargetName.Size = UDim2.new(1, -64, 0, 22)
 TargetName:SetAttribute("FloatingDepth", 2)
 local TargetRole: TextLabel = makeTextLabel(TargetBody, "No priority target", 8)
-TargetRole.Position = UDim2.fromOffset(88, 34)
-TargetRole.Size = UDim2.new(1, -100, 0, 22)
+TargetRole.Position = UDim2.fromOffset(64, 21)
+TargetRole.Size = UDim2.new(1, -64, 0, 18)
 TargetRole.TextColor3 = Theme.AccentViolet
 TargetRole:SetAttribute("FloatingDepth", 2)
 local TargetHealthTrack: Frame = create("Frame", {
@@ -4380,8 +5937,8 @@ local TargetHealthTrack: Frame = create("Frame", {
     BackgroundColor3 = Theme.Background,
     BackgroundTransparency = 0.18,
     BorderSizePixel = 0,
-    Position = UDim2.fromOffset(88, 62),
-    Size = UDim2.new(1, -100, 0, 10),
+    Position = UDim2.fromOffset(64, 42),
+    Size = UDim2.new(1, -64, 0, 6),
 }) :: Frame
 TargetHealthTrack:SetAttribute("FloatingDepth", 2)
 create("UICorner", {Parent = TargetHealthTrack, CornerRadius = UDim.new(1, 0)})
@@ -4398,8 +5955,8 @@ local TargetDetails: TextLabel = makeTextLabel(
     "Waiting for a nearby player",
     9
 )
-TargetDetails.Position = UDim2.fromOffset(12, 88)
-TargetDetails.Size = UDim2.new(1, -24, 0, 38)
+TargetDetails.Position = UDim2.fromOffset(0, 58)
+TargetDetails.Size = UDim2.new(1, 0, 0, 28)
 TargetDetails.TextColor3 = Theme.DefaultTextMuted
 TargetDetails:SetAttribute("FloatingDepth", 2)
 
@@ -4857,8 +6414,10 @@ TaskManager:Connect(function(deltaTime: number): ()
     if FloatingUi.overlays.Radar.enabled then
         local radarSize: number = radarSettings.size
         RadarSurface.Size = UDim2.fromOffset(radarSize, radarSize)
+        -- The window is the circle: no padding for a header that no longer
+        -- exists, no square plate around it.
         local radarWindow: FloatingWindowRecord = FloatingUi.overlays.Radar.window
-        local nextRadarSize: UDim2 = UDim2.fromOffset(radarSize + 32, radarSize + 76)
+        local nextRadarSize: UDim2 = UDim2.fromOffset(radarSize, radarSize)
         if radarWindow.root.Size ~= nextRadarSize then
             radarWindow.root.Size = nextRadarSize
             FloatingUi.reclamp()
@@ -4967,40 +6526,51 @@ TaskManager:Connect(function(deltaTime: number): ()
     end
 end)
 
+-- Launchers for the movable tool windows, docked at the foot of the rail.
+-- They stack vertically when the rail collapses, which is the only way two
+-- 32px buttons fit inside a 58px icon rail.
 local FloatingButtons: Frame = create("Frame", {
     Parent = state.shells.defaultSidebar,
     Name = "FloatingWindowButtons",
-    AnchorPoint = Vector2.new(0, 1),
+    AnchorPoint = Vector2.new(0.5, 1),
     BackgroundColor3 = Theme.DefaultSurface,
     BackgroundTransparency = 0.42,
     BorderSizePixel = 0,
-    Position = UDim2.new(0, 12, 1, -12),
-    Size = UDim2.fromOffset(76, 34),
+    Position = UDim2.new(0.5, 0, 1, -8),
+    Size = UDim2.fromOffset(
+        state.layout.sidebarCollapsed and 34 or 72,
+        state.layout.launcherHeight
+    ),
     ZIndex = 24,
 }) :: Frame
-create("UICorner", {Parent = FloatingButtons, CornerRadius = UDim.new(0, 9)})
+create("UICorner", {
+    Parent = FloatingButtons,
+    CornerRadius = cornerRadius(UI_RADIUS.control),
+})
 create("UIStroke", {
     Parent = FloatingButtons,
     Color = Theme.DefaultOutline,
-    Transparency = 0.55,
+    Transparency = 0.62,
 })
-create("UIListLayout", {
+local FloatingButtonsLayout: UIListLayout = create("UIListLayout", {
     Parent = FloatingButtons,
-    FillDirection = Enum.FillDirection.Horizontal,
+    FillDirection = state.layout.sidebarCollapsed
+        and Enum.FillDirection.Vertical
+        or Enum.FillDirection.Horizontal,
     HorizontalAlignment = Enum.HorizontalAlignment.Center,
     VerticalAlignment = Enum.VerticalAlignment.Center,
-    Padding = UDim.new(0, 4),
-})
+    Padding = UDim.new(0, 2),
+}) :: UIListLayout
 
 local function createFloatingLauncher(
     name: string,
     fallbackText: string,
     callback: () -> ()
 ): TextButton
-    local button: TextButton = makeButton(FloatingButtons, fallbackText, 9)
+    local button: TextButton = makeButton(FloatingButtons, fallbackText, 8)
     button.Name = name
     button.BackgroundTransparency = 1
-    button.Size = UDim2.fromOffset(32, 28)
+    button.Size = UDim2.fromOffset(30, 24)
     button.ZIndex = 25
     button:SetAttribute("ThemeRole", "Icon")
     local stroke: UIStroke? = button:FindFirstChild("StyleStroke") :: UIStroke?
@@ -5010,6 +6580,16 @@ local function createFloatingLauncher(
     trackUiConnection(button.MouseButton1Click:Connect(callback))
     return button
 end
+
+state.onLayout(function(metrics: LayoutMetrics): ()
+    FloatingButtons.Size = UDim2.fromOffset(
+        metrics.sidebarCollapsed and 34 or 72,
+        metrics.launcherHeight
+    )
+    FloatingButtonsLayout.FillDirection = metrics.sidebarCollapsed
+        and Enum.FillDirection.Vertical
+        or Enum.FillDirection.Horizontal
+end)
 
 createFloatingLauncher("Favorites", "FAV", function(): ()
     FavoritesWindow.root.Visible = not FavoritesWindow.root.Visible
@@ -5111,14 +6691,14 @@ local function refreshFeatureToggle(feature: any): ()
     if feature.activeStripe then
         TweenService:Create(
             feature.activeStripe,
-            TweenInfo.new(0.18, Enum.EasingStyle.Quad),
+            TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quad),
             {BackgroundTransparency = feature.enabled and 0 or 1}
         ):Play()
     end
     if feature.row then
         TweenService:Create(
             feature.row,
-            TweenInfo.new(0.18, Enum.EasingStyle.Quad),
+            TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quad),
             {
                 BackgroundColor3 = feature.enabled
                     and (state.guiStyle == "Default"
@@ -5136,7 +6716,7 @@ local function refreshFeatureToggle(feature: any): ()
     if feature.title then
         TweenService:Create(
             feature.title,
-            TweenInfo.new(0.18, Enum.EasingStyle.Quad),
+            TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quad),
             {TextColor3 = state.guiStyle == "Default"
                 and (feature.enabled and Theme.DefaultAccent or Theme.DefaultText)
                 or (feature.enabled and Color3.fromRGB(255, 255, 255) or Theme.Text)}
@@ -5145,7 +6725,7 @@ local function refreshFeatureToggle(feature: any): ()
     if feature.stroke then
         TweenService:Create(
             feature.stroke,
-            TweenInfo.new(0.18, Enum.EasingStyle.Quad),
+            TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quad),
             {
                 Color = feature.enabled
                     and (state.guiStyle == "Default"
@@ -5296,6 +6876,13 @@ local function bindActionShortcut(
     end))
 end
 
+-- Forward declaration for the automatic "Toggle key" row every universal
+-- module without an explicit key option receives. It cannot be a plain local
+-- function here because it is implemented after `createOptionRow` (which sits
+-- below `createUniversalFeature`); `createUniversalFeature` only schedules it
+-- with `task.defer`, so by the time it runs the implementation is assigned.
+local addToggleKeyOption: (feature: any) -> () = nil :: any
+
 local function createUniversalFeature(
     name: string,
     description: string,
@@ -5314,22 +6901,38 @@ local function createUniversalFeature(
         or "Universal"
     local configKey: string = configuration.configKey
         or (sectionName .. "." .. name:gsub("%W", ""))
+    -- A module may declare its own category; otherwise the shared taxonomy
+    -- decides, and anything unknown lands in the catch-all bucket.
+    local categoryName: string = type(configuration.categoryName) == "string"
+        and configuration.categoryName
+        or FEATURE_CATEGORIES[name]
+        or DEFAULT_FEATURE_CATEGORY
 
     local feature: any = {
         name = name,
         description = description,
+        categoryName = categoryName,
         enabled = false,
         expanded = false,
         isAction = configuration.action == true,
+        silentAction = configuration.silentAction == true,
         isCategory = configuration.category == true,
         optionCount = 0,
         optionRows = {},
-        collapsedHeight = 56,
+        collapsedHeight = state.layout.cardHeight,
         onToggle = onToggle,
         configKey = configKey,
         registry = registry,
         sectionName = sectionName,
-        searchText = string.lower(name .. " " .. description .. " " .. sectionName),
+        searchText = string.lower(
+            name
+                .. " "
+                .. description
+                .. " "
+                .. sectionName
+                .. " "
+                .. categoryName
+        ),
         tooltipText = description,
         tooltipBound = false,
     }
@@ -5350,9 +6953,18 @@ local function createUniversalFeature(
         Size = UDim2.new(1, 0, 0, feature.collapsedHeight),
     }) :: any) :: Frame
     feature.row = row
+    -- Ordering metadata read back by the card grid. `layoutOrder` above is
+    -- only the pre-sort value; the category pass overwrites it on the next
+    -- frame with "category block + alphabetical position".
+    row:SetAttribute("FeatureCategory", categoryName)
+    row:SetAttribute("FeatureSortName", string.lower(name))
+    if state.invalidateCategoryLayout then
+        state.invalidateCategoryLayout()
+    end
     create("UICorner", {
         Parent = row,
-        CornerRadius = UDim.new(0, 10),
+        Name = "CardCorner",
+        CornerRadius = cornerRadius(state.layout.cardCorner),
     })
     local cardStroke: UIStroke = (create("UIStroke", {
         Parent = row,
@@ -5371,7 +6983,7 @@ local function createUniversalFeature(
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
         Position = UDim2.new(0, 0, 0.5, 0),
-        Size = UDim2.new(0, 3, 1, -16),
+        Size = UDim2.new(0, 2, 1, -14),
         ZIndex = 8,
     }) :: Frame
     create("UICorner", {Parent = activeStripe, CornerRadius = UDim.new(1, 0)})
@@ -5386,10 +6998,11 @@ local function createUniversalFeature(
     })
     feature.activeStripe = activeStripe
 
-    local title: TextLabel = (makeTextLabel(row, name, 13) :: any) :: TextLabel
+    local title: TextLabel =
+        (makeTextLabel(row, name, state.layout.titleFontSize) :: any) :: TextLabel
     title.FontFace = CONTROL_FONT
-    title.Position = UDim2.fromOffset(18, 0)
-    title.Size = UDim2.new(1, state.isMobile and -116 or -164, 0, feature.collapsedHeight)
+    title.Position = UDim2.fromOffset(12, 0)
+    title.Size = UDim2.new(1, -(state.layout.cardHeight + 96), 0, feature.collapsedHeight)
     title.TextTruncate = Enum.TextTruncate.AtEnd
     title.TextColor3 = state.guiStyle == "Default"
         and Theme.DefaultText
@@ -5397,10 +7010,10 @@ local function createUniversalFeature(
     feature.title = title
 
     local subtitle: TextLabel =
-        (makeTextLabel(row, description, 11) :: any) :: TextLabel
+        (makeTextLabel(row, description, state.layout.bodyFontSize) :: any) :: TextLabel
     subtitle.Name = "Description"
-    subtitle.Position = UDim2.fromOffset(16, 34)
-    subtitle.Size = UDim2.new(1, state.isMobile and -116 or -164, 0, 30)
+    subtitle.Position = UDim2.fromOffset(12, math.round(feature.collapsedHeight * 0.58))
+    subtitle.Size = UDim2.new(1, -(state.layout.cardHeight + 96), 0, 24)
     subtitle.TextColor3 = state.guiStyle == "Default"
         and Theme.DefaultTextMuted
         or Theme.TextMuted
@@ -5415,16 +7028,20 @@ local function createUniversalFeature(
         AnchorPoint = Vector2.new(1, 0.5),
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
-        Position = UDim2.new(1, -10, 0, feature.collapsedHeight / 2),
-        Size = UDim2.fromOffset(state.isMobile and 88 or 124, state.isMobile and 34 or 30),
+        Position = UDim2.new(1, -8, 0, feature.collapsedHeight / 2),
+        Size = UDim2.fromOffset(
+            state.layout.iconButton * 2 + state.layout.keySlotWidth + 12,
+            state.layout.iconButton + 4
+        ),
         ZIndex = 9,
     }) :: Frame
     create("UIListLayout", {
         Parent = headerControls,
+        Name = "HeaderControlsLayout",
         FillDirection = Enum.FillDirection.Horizontal,
         HorizontalAlignment = Enum.HorizontalAlignment.Right,
         VerticalAlignment = Enum.VerticalAlignment.Center,
-        Padding = UDim.new(0, state.isMobile and 4 or 8),
+        Padding = UDim.new(0, state.layout.compact and 4 or 6),
         SortOrder = Enum.SortOrder.LayoutOrder,
     })
     local arrow: TextButton =
@@ -5434,21 +7051,37 @@ local function createUniversalFeature(
     arrow:SetAttribute("ThemeRole", "Icon")
     arrow:SetAttribute("NoPressEffect", true)
     arrow.BackgroundTransparency = 1
-    arrow.Size = UDim2.fromOffset(state.isMobile and 24 or 28, state.isMobile and 24 or 28)
+    arrow.Size =
+        UDim2.fromOffset(state.layout.iconButton, state.layout.iconButton)
     arrow.TextColor3 = state.guiStyle == "Default"
         and Theme.DefaultTextMuted
         or Theme.TextMuted
-    arrow.Active = configuration.noOptions ~= true
-    arrow.TextTransparency = 0.35
+    -- Every card shows the three dots, including modules with nothing to
+    -- configure (Anti-AFK, Anti-Void, X-Ray...): a row that silently drops a
+    -- control makes the list look ragged. A card with no options simply never
+    -- opens — the dots are dimmed and the click is ignored, which is checked
+    -- at click time because option rows can be added after the card is built.
+    arrow.Active = true
+    arrow.TextTransparency = configuration.noOptions == true and 0.68 or 0.35
     arrow.ZIndex = 9
     local arrowStroke: UIStroke? = arrow:FindFirstChild("StyleStroke") :: UIStroke?
     if arrowStroke then
         arrowStroke.Enabled = false
     end
-    if configuration.noOptions == true then
-        arrow.Text = ""
-    end
     feature.arrow = arrow
+
+    -- A module is expandable when it actually owns at least one option row.
+    function feature.hasOptions(): boolean
+        if configuration.noOptions == true then
+            return false
+        end
+        for _, optionRow: GuiObject in ipairs(feature.optionRows) do
+            if optionRow.Visible then
+                return true
+            end
+        end
+        return false
+    end
 
     local activationTarget: TextButton = create("TextButton", {
         Parent = row,
@@ -5471,7 +7104,7 @@ local function createUniversalFeature(
         end
         TweenService:Create(
             row,
-            TweenInfo.new(0.16, Enum.EasingStyle.Quad),
+            TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quad),
             {
                 BackgroundColor3 = state.guiStyle == "Default"
                     and Theme.DefaultSurfaceHover
@@ -5483,7 +7116,7 @@ local function createUniversalFeature(
     trackUiConnection(row.MouseLeave:Connect(function(): ()
         TweenService:Create(
             row,
-            TweenInfo.new(0.16, Enum.EasingStyle.Quad),
+            TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quad),
             {
                 BackgroundColor3 = feature.enabled
                     and (state.guiStyle == "Default"
@@ -5516,14 +7149,24 @@ local function createUniversalFeature(
     feature.options = options
     create("UICorner", {
         Parent = options,
-        CornerRadius = UDim.new(0, 8),
+        CornerRadius = cornerRadius(8),
+    })
+    -- Outline the whole panel so an expanded module is visibly one enclosed
+    -- surface rather than loose controls spilling out of the card.
+    create("UIStroke", {
+        Parent = options,
+        Name = "OptionsStroke",
+        ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+        Color = Theme.DefaultOutline,
+        Thickness = 1,
+        Transparency = 0.74,
     })
     create("UIPadding", {
         Parent = options,
-        PaddingBottom = UDim.new(0, 7),
-        PaddingLeft = UDim.new(0, 7),
-        PaddingRight = UDim.new(0, 7),
-        PaddingTop = UDim.new(0, 7),
+        PaddingBottom = UDim.new(0, 9),
+        PaddingLeft = UDim.new(0, 9),
+        PaddingRight = UDim.new(0, 9),
+        PaddingTop = UDim.new(0, 9),
     })
     local optionsLayout: UIListLayout = (create("UIListLayout", {
         Parent = options,
@@ -5534,18 +7177,24 @@ local function createUniversalFeature(
     }) :: any) :: UIListLayout
 
     local function updateExpandedSize(animate: boolean?): ()
+        -- Rows are no longer a uniform height (hint rows are taller, section
+        -- headings shorter), so the fallback used before the layout has
+        -- measured anything sums the declared heights instead of assuming 38.
         local visibleOptions: number = 0
+        local declaredHeight: number = 0
         for _, optionRow: GuiObject in ipairs(feature.optionRows) do
             if optionRow.Visible then
                 visibleOptions += 1
+                declaredHeight += optionRow.Size.Y.Offset
             end
         end
         local measuredHeight: number = optionsLayout.AbsoluteContentSize.Y
         if visibleOptions > 0 and measuredHeight <= 0 then
-            measuredHeight = visibleOptions * 38
+            measuredHeight = declaredHeight
                 + math.max(0, visibleOptions - 1) * 6
         end
-        local optionsHeight: number = measuredHeight + 14
+        -- +18 = the panel's 9px top and bottom UIPadding.
+        local optionsHeight: number = measuredHeight + 18
         local targetOptionsSize: UDim2 = UDim2.new(1, -20, 0, optionsHeight)
         local targetRowSize: UDim2 = UDim2.new(
             1,
@@ -5561,19 +7210,19 @@ local function createUniversalFeature(
         if animate and state.animationsEnabled then
             TweenService:Create(
                 options,
-                TweenInfo.new(0.2, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+                TweenInfo.new(UI_MOTION.slow, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
                 {Size = targetOptionsSize}
             ):Play()
             TweenService:Create(
                 row,
-                TweenInfo.new(0.2, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+                TweenInfo.new(UI_MOTION.slow, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
                 {Size = targetRowSize}
             ):Play()
             arrow.TextColor3 = state.guiStyle == "Default"
                 and (feature.expanded and Theme.DefaultText or Theme.DefaultTextMuted)
                 or (feature.expanded and Theme.Text or Theme.TextMuted)
             if not feature.expanded then
-                task.delay(0.21, function(): ()
+                task.delay(UI_MOTION.slow + 0.02, function(): ()
                     if not feature.expanded and options.Parent then
                         options.Visible = false
                     end
@@ -5597,12 +7246,21 @@ local function createUniversalFeature(
     )
 
     trackUiConnection(arrow.MouseButton1Click:Connect(function(): ()
+        if not feature.hasOptions() then
+            -- Nothing to show: keep the panel shut instead of opening an
+            -- empty box under the card.
+            arrow.TextTransparency = 0.68
+            return
+        end
         feature.expanded = not feature.expanded
         updateExpandedSize(true)
     end))
 
     local function activateFeature(): ()
         if feature.isCategory then
+            if not feature.hasOptions() then
+                return
+            end
             feature.expanded = not feature.expanded
             updateExpandedSize(true)
             return
@@ -5616,7 +7274,12 @@ local function createUniversalFeature(
                 local success: boolean, errorMessage: any = pcall(feature.onToggle)
                 feature.actionRunning = false
                 if success then
-                    notify(name .. " ejecutado")
+                    -- Actions meant to be spammed from a hotkey (High Jump)
+                    -- opt out of the toast: one notification per keypress is
+                    -- noise, not feedback.
+                    if not feature.silentAction then
+                        notify(name .. " ran")
+                    end
                 else
                     warn("[Random Testing Menu] " .. name .. ": " .. tostring(errorMessage))
                     notify("Could not run " .. name)
@@ -5637,7 +7300,7 @@ local function createUniversalFeature(
             end
             configData.states[feature.configKey] = requestedState
             queueConfigSave()
-            notify(name .. (requestedState and " activado" or " desactivado"))
+            notify(name .. (requestedState and " enabled" or " disabled"))
         else
             warn("[Random Testing Menu] " .. name .. ": " .. tostring(errorMessage))
             feature.enabled = false
@@ -5657,7 +7320,8 @@ local function createUniversalFeature(
         favoriteButton:SetAttribute("ThemeRole", "Icon")
         favoriteButton:SetAttribute("NoPressEffect", true)
         favoriteButton.BackgroundTransparency = 1
-        favoriteButton.Size = UDim2.fromOffset(state.isMobile and 24 or 28, state.isMobile and 24 or 28)
+        favoriteButton.Size =
+            UDim2.fromOffset(state.layout.iconButton, state.layout.iconButton)
         favoriteButton.ZIndex = 9
         local favoriteStroke: UIStroke? =
             favoriteButton:FindFirstChild("StyleStroke") :: UIStroke?
@@ -5669,36 +7333,108 @@ local function createUniversalFeature(
             state.floatingUi.toggleFavorite(feature)
         end))
     end
-    if not feature.isCategory then
-        local shortcutButton: TextButton =
-            (makeButton(headerControls, "KEY", 9) :: any) :: TextButton
-        shortcutButton.Name = "Shortcut"
-        shortcutButton.LayoutOrder = 2
-        shortcutButton.BackgroundColor3 = state.guiStyle == "Default"
-            and Theme.DefaultSurface
-            or Theme.SurfaceRaised
-        shortcutButton.Size = UDim2.fromOffset(state.isMobile and 32 or 52, state.isMobile and 28 or 28)
-        shortcutButton.ZIndex = 9
-        applyKeySlotStyle(shortcutButton)
-        shortcutButton.TextScaled = true
-        create("UITextSizeConstraint", {
-            Parent = shortcutButton,
-            MaxTextSize = 11,
-            MinTextSize = 7,
-        })
-        feature.shortcutButton = shortcutButton
-        bindActionShortcut(
-            shortcutButton,
-            feature.configKey,
-            name,
-            activateFeature
-        )
+    -- Every card header carries the same three controls — favourite, key
+    -- slot, expand — so the whole list reads as one symmetric grid no matter
+    -- whether the module is a toggle, an action or a category. The key slot
+    -- toggles regular modules, runs actions, and expands/collapses category
+    -- headers (the same path `activateFeature` already provides).
+    local shortcutButton: TextButton =
+        (makeButton(headerControls, "KEY", 9) :: any) :: TextButton
+    shortcutButton.Name = "Shortcut"
+    shortcutButton.LayoutOrder = 2
+    shortcutButton.BackgroundColor3 = state.guiStyle == "Default"
+        and Theme.DefaultSurface
+        or Theme.SurfaceRaised
+    shortcutButton.Size = UDim2.fromOffset(
+        state.layout.keySlotWidth,
+        state.layout.iconButton
+    )
+    shortcutButton.ZIndex = 9
+    applyKeySlotStyle(shortcutButton)
+    shortcutButton.TextScaled = true
+    create("UITextSizeConstraint", {
+        Parent = shortcutButton,
+        MaxTextSize = 11,
+        MinTextSize = 7,
+    })
+    feature.shortcutButton = shortcutButton
+    bindActionShortcut(
+        shortcutButton,
+        feature.configKey,
+        name,
+        activateFeature
+    )
+
+    feature.headerControls = headerControls
+
+    -- Re-applies the responsive metrics to this card. The shared listener
+    -- registered next to `allFeatures` calls it for every module whenever the
+    -- viewport mode changes, which is what makes phone/tablet/desktop layouts
+    -- work without a single game module knowing a pixel value.
+    feature.applyLayout = function(): ()
+        local metrics: LayoutMetrics = state.layout
+        local sideWidth: number =
+            metrics.iconButton * 2 + metrics.keySlotWidth + 12
+        feature.collapsedHeight = metrics.cardHeight
+        local cardCorner: UICorner? = row:FindFirstChild("CardCorner") :: UICorner?
+        if cardCorner then
+            cardCorner.CornerRadius = cornerRadius(metrics.cardCorner)
+        end
+        title.Size =
+            UDim2.new(1, -(sideWidth + 26), 0, metrics.cardHeight)
+        state.setTextMetric(title, metrics.titleFontSize)
+        subtitle.Position =
+            UDim2.fromOffset(12, math.round(metrics.cardHeight * 0.58))
+        subtitle.Size = UDim2.new(1, -(sideWidth + 26), 0, 24)
+        state.setTextMetric(subtitle, metrics.bodyFontSize)
+        headerControls.Position = UDim2.new(1, -8, 0, metrics.cardHeight / 2)
+        headerControls.Size =
+            UDim2.fromOffset(sideWidth, metrics.iconButton + 4)
+        local controlsLayout: UIListLayout? =
+            headerControls:FindFirstChild("HeaderControlsLayout") :: UIListLayout?
+        if controlsLayout then
+            controlsLayout.Padding = UDim.new(0, metrics.compact and 4 or 6)
+        end
+        arrow.Size = UDim2.fromOffset(metrics.iconButton, metrics.iconButton)
+        if feature.favoriteButton then
+            feature.favoriteButton.Size =
+                UDim2.fromOffset(metrics.iconButton, metrics.iconButton)
+        end
+        shortcutButton.Size =
+            UDim2.fromOffset(metrics.keySlotWidth, metrics.iconButton)
+        activationTarget.Size = UDim2.new(1, 0, 0, metrics.cardHeight)
+        options.Position = UDim2.fromOffset(10, metrics.cardHeight)
+        activeStripe.Size = UDim2.new(0, 2, 1, -14)
+        updateExpandedSize(false)
     end
+    -- Applied once at creation too, so a card built while the shell is in one
+    -- mode never keeps sizes from another.
+    feature.applyLayout()
 
     registry[name] = feature
     table.insert(allFeatures, feature)
     state.floatingUi.registerFeature(feature)
     applyFeaturePresentation(feature, state.guiStyle == "Default")
+
+    -- Symmetry pass: every interactive universal/movement module that does
+    -- not already expose a key option gets a standard "Toggle key" row, so no
+    -- panel is ever the odd one out. Deferred so the row lands after all the
+    -- module's own options, at the bottom of its panel. Game modules declare
+    -- their own layouts and opt out through their registry.
+    if configuration.autoToggleKey ~= false
+        and configuration.noOptions ~= true
+        and not feature.isAction
+        and not feature.isCategory
+        and registry ~= mm2Features
+        and registry ~= state.trsFeatures
+        and registry ~= state.vdFeatures
+        and registry ~= state.mvsdFeatures then
+        task.defer(function(): ()
+            if type(addToggleKeyOption) == "function" then
+                addToggleKeyOption(feature)
+            end
+        end)
+    end
 
     if not feature.isAction
         and not feature.isCategory
@@ -5728,46 +7464,184 @@ local function createUniversalFeature(
     return feature
 end
 
-local function createOptionRow(feature: any, labelText: string): Frame
+-- Places a control on the right-hand side of an option row.
+--
+-- Rows are no longer all the same height, so the vertical band a control may
+-- occupy is published by `createOptionRow` as attributes rather than being
+-- assumed. Every add*Option goes through this so sliders, cycle buttons, key
+-- slots and text boxes all line up on the exact same edge: every row, in
+-- every module, ends with a control band that starts at 50% of the row width
+-- and finishes 10px from the right edge. That shared geometry is what keeps
+-- panels with keybinds, sliders, toggles or actions visually symmetric.
+--
+-- Published on `state` instead of held in a local: `bootstrap()` is a single
+-- function scope and is at Luau's 200 local-register ceiling.
+state.layoutOptionControl = function(
+    option: Frame,
+    control: GuiObject,
+    widthScale: number?
+): ()
+    local top: number = tonumber(option:GetAttribute("ControlTop")) or 0
+    local height: number = tonumber(option:GetAttribute("ControlHeight"))
+        or option.Size.Y.Offset
+    -- The canonical control band. 0.5 is the default so every row type shares
+    -- the same rectangle; rows that stack several controls (action pairs)
+    -- subdivide this same band instead of drawing outside it.
+    local scale: number = widthScale or 0.5
+    control.AnchorPoint = Vector2.new(1, 0)
+    control.Position = UDim2.new(1, -10, 0, top)
+    control.Size = UDim2.new(scale, -10, 0, height)
+    control.ZIndex = math.max(control.ZIndex, option.ZIndex + 2)
+end
+
+-- A single customisation row inside a module's panel.
+--
+-- Each row is now a self-contained card: its own soft fill, rounded corners,
+-- a hairline border and a hover highlight, instead of a bare strip separated
+-- by a one-pixel divider. That makes it obvious where one setting stops and
+-- the next begins, which matters for panels with a lot of controls (Fly).
+--
+-- `hintText` is optional. When present the row grows and renders a second,
+-- smaller line under the label explaining what the setting actually does, so
+-- the panel can be read without hovering the card for a tooltip.
+-- One option row: a label on the left, a control on the right, one line.
+--
+-- `hintText` is accepted and deliberately ignored. Modules pass an
+-- explanatory sentence for many of their controls ("Balanced glides, Direct
+-- stops instantly…"), which doubled the height of every panel and buried the
+-- control itself. Dropping it here fixes every module at once — Fly, Fling,
+-- Speed, Hitboxes and everything a game module adds — without touching a
+-- single call site, and keeps the argument valid for older game modules
+-- downloaded from the repository.
+local function createOptionRow(
+    feature: any,
+    labelText: string,
+    _hintText: string?
+): Frame
     feature.optionCount += 1
     feature.searchText ..= " " .. string.lower(labelText)
+    local rowHeight: number = state.layout.optionRowHeight
     local option: Frame = (create("Frame", {
         Parent = feature.options,
-        BackgroundColor3 = Theme.Background,
-        BackgroundTransparency = 1,
+        Name = "Option_" .. labelText:gsub("%W", ""),
+        BackgroundColor3 = Theme.DefaultSurface,
+        BackgroundTransparency = 0.76,
         BorderSizePixel = 0,
         LayoutOrder = feature.optionCount,
-        Size = UDim2.new(1, 0, 0, 38),
+        Size = UDim2.new(1, 0, 0, rowHeight),
         ZIndex = feature.options.ZIndex + 1,
     }) :: any) :: Frame
     create("UICorner", {
         Parent = option,
-        CornerRadius = UDim.new(0, 7),
+        CornerRadius = cornerRadius(UI_RADIUS.control),
     })
-    create("Frame", {
+    local optionStroke: UIStroke = (create("UIStroke", {
         Parent = option,
-        Name = "OptionDivider",
-        AnchorPoint = Vector2.new(0, 1),
-        BackgroundColor3 = Theme.Outline,
-        BackgroundTransparency = 0.72,
-        BorderSizePixel = 0,
-        Position = UDim2.fromScale(0, 1),
-        Size = UDim2.new(1, 0, 0, 1),
-        ZIndex = option.ZIndex + 1,
-    })
+        Name = "OptionStroke",
+        ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+        Color = Theme.DefaultOutline,
+        Thickness = 1,
+        Transparency = 0.82,
+    }) :: any) :: UIStroke
     table.insert(feature.optionRows, option)
+
+    trackUiConnection(option.MouseEnter:Connect(function(): ()
+        TweenService:Create(
+            option,
+            TweenInfo.new(UI_MOTION.fast, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+            {BackgroundTransparency = 0.62}
+        ):Play()
+        TweenService:Create(
+            optionStroke,
+            TweenInfo.new(UI_MOTION.fast, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+            {Transparency = 0.62}
+        ):Play()
+    end))
+    trackUiConnection(option.MouseLeave:Connect(function(): ()
+        TweenService:Create(
+            option,
+            TweenInfo.new(UI_MOTION.fast, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+            {BackgroundTransparency = 0.76}
+        ):Play()
+        TweenService:Create(
+            optionStroke,
+            TweenInfo.new(UI_MOTION.fast, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+            {Transparency = 0.82}
+        ):Play()
+    end))
 
     local label: TextLabel =
         (makeTextLabel(option, labelText, 11) :: any) :: TextLabel
     label.Name = "OptionLabel"
-    label.Position = UDim2.fromOffset(10, 0)
-    label.Size = UDim2.new(0.52, -10, 1, 0)
-    label.TextColor3 = state.guiStyle == "Default"
-        and Theme.DefaultTextMuted
-        or Theme.TextMuted
+    label.TextColor3 = Theme.DefaultText
+    label.TextTruncate = Enum.TextTruncate.AtEnd
+    label.ZIndex = option.ZIndex + 1
+    -- The label column always ends at 48% of the row; the control band starts
+    -- at 50%, so no label ever collides with any control type and the left
+    -- edge of every control is the same in every module.
+    label.Position = UDim2.fromOffset(12, 0)
+    label.Size = UDim2.new(0.48, -12, 1, 0)
+
+    option:SetAttribute("ControlTop", 6)
+    option:SetAttribute("ControlHeight", rowHeight - 12)
 
     feature.updateExpandedSize()
     return option
+end
+
+-- A non-interactive heading used to break a long customisation panel into
+-- labelled groups ("Flight", "Advanced", ...). It behaves like any other
+-- option row for layout and visibility purposes, so `setOptionVisible` can
+-- hide a whole group's heading along with its controls.
+--
+-- On `state` for the same local-register reason as `layoutOptionControl`.
+state.addSectionOption = function(feature: any, titleText: string): Frame
+    feature.optionCount += 1
+    local section: Frame = (create("Frame", {
+        Parent = feature.options,
+        Name = "Section_" .. titleText:gsub("%W", ""),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        LayoutOrder = feature.optionCount,
+        Size = UDim2.new(1, 0, 0, 22),
+        ZIndex = feature.options.ZIndex + 1,
+    }) :: any) :: Frame
+    table.insert(feature.optionRows, section)
+
+    local title: TextLabel = (makeTextLabel(
+        section,
+        string.upper(titleText),
+        9
+    ) :: any) :: TextLabel
+    title.Name = "SectionTitle"
+    title.FontFace = CONTROL_FONT
+    title.Position = UDim2.fromOffset(4, 0)
+    title.Size = UDim2.new(0, 130, 1, 0)
+    title.TextColor3 = Theme.DefaultTextMuted
+    title.TextTransparency = 0.22
+    title.ZIndex = section.ZIndex + 1
+
+    local rule: Frame = create("Frame", {
+        Parent = section,
+        Name = "SectionRule",
+        AnchorPoint = Vector2.new(1, 0.5),
+        BackgroundColor3 = Theme.DefaultOutline,
+        BackgroundTransparency = 0.72,
+        BorderSizePixel = 0,
+        Position = UDim2.new(1, -4, 0.5, 0),
+        Size = UDim2.new(1, -142, 0, 1),
+        ZIndex = section.ZIndex + 1,
+    }) :: Frame
+    create("UIGradient", {
+        Parent = rule,
+        Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 1),
+            NumberSequenceKeypoint.new(1, 0.3),
+        }),
+    })
+
+    feature.updateExpandedSize()
+    return section
 end
 
 local function setOptionVisible(
@@ -5783,7 +7657,8 @@ local function addToggleOption(
     feature: any,
     labelText: string,
     defaultValue: boolean,
-    callback: (boolean) -> ()
+    callback: (boolean) -> (),
+    hintText: string?
 ): TextButton
     local optionKey: string =
         feature.configKey .. "." .. labelText:gsub("%W", "")
@@ -5792,7 +7667,7 @@ local function addToggleOption(
         enabled = defaultValue == true
     end
 
-    local option: Frame = createOptionRow(feature, labelText)
+    local option: Frame = createOptionRow(feature, labelText, hintText)
     local button: TextButton = create("TextButton", {
         Parent = option,
         Name = "OptionClickTarget",
@@ -5806,8 +7681,18 @@ local function addToggleOption(
     }) :: TextButton
     local switch: TextButton = createToggleSwitch(option, enabled :: boolean, nil)
     switch.Name = "OptionSwitch"
+    -- The switch keeps its intrinsic size, so it is pinned to the right edge
+    -- of the control band rather than stretched across it. Its right edge
+    -- lands on exactly the same x as every other control type, which keeps
+    -- toggle-only modules visually aligned with keybind and slider modules.
     switch.AnchorPoint = Vector2.new(1, 0.5)
-    switch.Position = UDim2.new(1, -8, 0.5, 0)
+    switch.Position = UDim2.new(
+        1,
+        -10,
+        0,
+        (tonumber(option:GetAttribute("ControlTop")) or 6)
+            + (tonumber(option:GetAttribute("ControlHeight")) or 30) / 2
+    )
     switch.ZIndex = option.ZIndex + 3
     for _, descendant: Instance in ipairs(switch:GetDescendants()) do
         if descendant:IsA("GuiObject") then
@@ -5832,7 +7717,7 @@ local function addToggleOption(
         configData.states[optionKey] = enabled
         callback(enabled :: boolean)
         queueConfigSave()
-        notify(labelText .. ((enabled :: boolean) and " activado" or " desactivado"))
+        notify(labelText .. ((enabled :: boolean) and " enabled" or " disabled"))
     end
     trackUiConnection(button.MouseButton1Click:Connect(toggleOption))
     trackUiConnection(switch.MouseButton1Click:Connect(toggleOption))
@@ -5844,15 +7729,19 @@ end
 local function addActionOption(
     feature: any,
     labelText: string,
-    callback: () -> ()
+    callback: () -> (),
+    hintText: string?
 ): TextButton
-    local option = createOptionRow(feature, labelText)
+    local option = createOptionRow(feature, labelText, hintText)
     local button = makeButton(option, "RUN", 11)
     button.BackgroundColor3 = state.guiStyle == "Default"
         and Theme.DefaultButtonHover
         or Theme.AccentSoft
-    button.Position = UDim2.new(0.72, 0, 0, 0)
-    button.Size = UDim2.new(0.28, 0, 1, 0)
+    -- The action pair subdivides the same control band every other row uses:
+    -- RUN hugs the band's right edge and KEY fills the band's left half, so
+    -- action rows share the exact same outer rectangle as toggles, sliders,
+    -- cycle buttons and key slots.
+    state.layoutOptionControl(option, button, 0.26)
     local function executeAction(): ()
         runActionButton(
             button,
@@ -5868,8 +7757,18 @@ local function addActionOption(
     shortcutButton.BackgroundColor3 = state.guiStyle == "Default"
         and Theme.DefaultButton
         or Theme.SurfaceRaised
-    shortcutButton.Position = UDim2.new(0.55, 0, 0, 0)
-    shortcutButton.Size = UDim2.new(0.15, 0, 1, 0)
+    -- Sits immediately left of the RUN button inside the same band, positioned
+    -- with the pair's combined scale rather than off RUN's AbsoluteSize, which
+    -- is still zero on the frame the row is built. 0.24 width + 0.26 width
+    -- with a 6px gap reproduces the 0.5-wide band of every other row type, so
+    -- the pair never breaks the shared left/right edges.
+    state.layoutOptionControl(option, shortcutButton, 0.24)
+    shortcutButton.Position = UDim2.new(
+        0.74,
+        -16,
+        shortcutButton.Position.Y.Scale,
+        shortcutButton.Position.Y.Offset
+    )
     applyKeySlotStyle(shortcutButton)
     shortcutButton.TextScaled = true
     create("UITextSizeConstraint", {
@@ -5936,7 +7835,8 @@ local function addNumberOption(
     defaultValue: number,
     minimum: number,
     maximum: number,
-    callback: (number) -> ()
+    callback: (number) -> (),
+    hintText: string?
 ): Frame
     local optionKey: string =
         feature.configKey .. "." .. labelText:gsub("%W", "")
@@ -5948,7 +7848,7 @@ local function addNumberOption(
         and minimum % 1 == 0
         and maximum % 1 == 0
 
-    local option: Frame = createOptionRow(feature, labelText)
+    local option: Frame = createOptionRow(feature, labelText, hintText)
     local slider: TextButton = (create("TextButton", {
         Parent = option,
         Name = "Slider",
@@ -5956,10 +7856,9 @@ local function addNumberOption(
         AutoButtonColor = false,
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
-        Position = UDim2.new(0.5, 0, 0, 0),
-        Size = UDim2.new(0.5, -6, 1, 0),
         Text = "",
     }) :: any) :: TextButton
+    state.layoutOptionControl(option, slider, 0.5)
 
     local track: Frame = (create("Frame", {
         Parent = slider,
@@ -5967,8 +7866,9 @@ local function addNumberOption(
         AnchorPoint = Vector2.new(0, 0.5),
         BackgroundColor3 = Theme.Outline,
         BorderSizePixel = 0,
-        Position = UDim2.new(0, 4, 0.5, 0),
-        Size = UDim2.new(1, -88, 0, state.isMobile and 7 or 5),
+        Position = UDim2.new(0, 0, 0.5, 0),
+        Size = UDim2.new(1, -80, 0, state.layout.touch and 7 or 5),
+        ZIndex = slider.ZIndex + 1,
     }) :: any) :: Frame
     create("UICorner", {
         Parent = track,
@@ -5995,7 +7895,7 @@ local function addNumberOption(
         }),
     })
 
-    local knobSize: number = state.isMobile and 18 or 14
+    local knobSize: number = state.layout.touch and 18 or 14
     local knob: Frame = (create("Frame", {
         Parent = track,
         Name = "Knob",
@@ -6014,10 +7914,16 @@ local function addNumberOption(
     valueInput.Name = "NumericValue"
     valueInput.AnchorPoint = Vector2.new(1, 0.5)
     valueInput.Position = UDim2.new(1, 0, 0.5, 0)
-    valueInput.Size = UDim2.fromOffset(76, 30)
+    valueInput.Size = UDim2.fromOffset(72, math.min(30, slider.Size.Y.Offset))
     valueInput.TextColor3 = Theme.Text
     valueInput.TextXAlignment = Enum.TextXAlignment.Center
     valueInput.TextTruncate = Enum.TextTruncate.AtEnd
+    valueInput.ZIndex = slider.ZIndex + 1
+    -- Spell out the accepted interval so a reader knows what the slider spans
+    -- without having to drag it to both ends first.
+    valueInput.PlaceholderText = formatCompactNumber(minimum)
+        .. " – "
+        .. formatCompactNumber(maximum)
 
     local editing: boolean = false
     local function setValue(
@@ -6113,11 +8019,12 @@ local function addCycleOption(
     labelText: string,
     values: {string},
     initialIndex: number?,
-    callback: (string) -> ()
+    callback: (string) -> (),
+    hintText: string?
 ): TextButton
     local optionKey = feature.configKey .. "." .. labelText:gsub("%W", "")
     local storedValue = configData.values[optionKey]
-    local option = createOptionRow(feature, labelText)
+    local option = createOptionRow(feature, labelText, hintText)
     local index = initialIndex or 1
     if storedValue ~= nil then
         for valueIndex, value in ipairs(values) do
@@ -6128,12 +8035,33 @@ local function addCycleOption(
         end
     end
     local button = makeButton(option, values[index], 11)
-    button.Position = UDim2.new(0.5, 0, 0, 0)
-    button.Size = UDim2.new(0.5, 0, 1, 0)
+    state.layoutOptionControl(option, button, 0.5)
+
+    -- A cycle button gives no clue that clicking it changes the value, and no
+    -- clue how many values there are. A trailing "1/3" counter fixes both.
+    local counter: TextLabel = (makeTextLabel(
+        button,
+        "",
+        9
+    ) :: any) :: TextLabel
+    counter.Name = "CycleCounter"
+    counter.AnchorPoint = Vector2.new(1, 0.5)
+    counter.Position = UDim2.new(1, -9, 0.5, 0)
+    counter.Size = UDim2.fromOffset(34, 16)
+    counter.TextColor3 = Theme.DefaultTextMuted
+    counter.TextTransparency = 0.3
+    counter.TextXAlignment = Enum.TextXAlignment.Right
+    counter.ZIndex = button.ZIndex + 1
+
+    local function refreshCycleVisual(): ()
+        button.Text = values[index]
+        counter.Text = tostring(index) .. "/" .. tostring(#values)
+    end
+    refreshCycleVisual()
 
     button.MouseButton1Click:Connect(function()
         index = index % #values + 1
-        button.Text = values[index]
+        refreshCycleVisual()
         callback(values[index])
         configData.values[optionKey] = values[index]
         queueConfigSave()
@@ -6147,8 +8075,12 @@ local function addKeyOption(
     feature: any,
     labelText: string,
     defaultKey: Enum.KeyCode,
-    callback: (Enum.KeyCode) -> ()
+    callback: (Enum.KeyCode) -> (),
+    hintText: string?
 ): TextButton
+    -- Flag used by the symmetry pass: modules that already expose an explicit
+    -- key row are not given the automatic "Toggle key" row.
+    feature.hasKeyOption = true
     local optionKey = feature.configKey .. "." .. labelText:gsub("%W", "")
     local savedKey = nil
     local savedName = configData.values[optionKey]
@@ -6159,14 +8091,13 @@ local function addKeyOption(
     end
     local initialKey = savedKey or defaultKey
     local currentKey: Enum.KeyCode = initialKey
-    local option = createOptionRow(feature, labelText)
+    local option = createOptionRow(feature, labelText, hintText)
     local button = makeButton(
         option,
         currentKey == Enum.KeyCode.Unknown and "NONE" or currentKey.Name,
         11
     )
-    button.Position = UDim2.new(0.5, 0, 0, 0)
-    button.Size = UDim2.new(0.5, 0, 1, 0)
+    state.layoutOptionControl(option, button, 0.5)
     applyKeySlotStyle(button)
     button:SetAttribute("CaptureIdleText", button.Text)
 
@@ -6192,12 +8123,87 @@ local function addKeyOption(
     return button :: TextButton
 end
 
+-- The automatic "Toggle key" row. Modules that declare their own key options
+-- never receive it; every other interactive universal/movement module gets
+-- one, appended as its final row, so a panel with sliders or toggles alone
+-- still ends with the same key slot a keybind-heavy panel has. Pressing the
+-- bound key runs `feature.activate()` — the identical path the header key
+-- slot uses — so the menu never has to be open for the key to work.
+addToggleKeyOption = function(feature: any): ()
+    if state.isMobile
+        or feature.isAction
+        or feature.isCategory
+        or feature.hasKeyOption
+        or feature.optionRows == nil
+        or feature.options == nil
+        or not feature.options.Parent then
+        return
+    end
+    local optionKey: string = feature.configKey .. ".ToggleKey"
+    local currentKey: Enum.KeyCode = Enum.KeyCode.Unknown
+    local savedName: any = configData.values[optionKey]
+    if type(savedName) == "string" and savedName ~= "" then
+        local saved: Enum.KeyCode? = Enum.KeyCode[savedName]
+        if saved then
+            currentKey = saved
+        end
+    end
+    local option = createOptionRow(feature, "Toggle key")
+    local button = makeButton(
+        option,
+        currentKey == Enum.KeyCode.Unknown and "NONE" or currentKey.Name,
+        11
+    )
+    state.layoutOptionControl(option, button, 0.5)
+    applyKeySlotStyle(button)
+    button:SetAttribute("CaptureIdleText", button.Text)
+
+    button.MouseButton1Click:Connect(function(): ()
+        if state.isMobile then
+            return
+        end
+        beginKeyCapture(button, function(keyCode: Enum.KeyCode): ()
+            currentKey = keyCode == currentKey
+                and Enum.KeyCode.Unknown
+                or keyCode
+            button.Text = currentKey == Enum.KeyCode.Unknown
+                and "NONE"
+                or currentKey.Name
+            button:SetAttribute("CaptureIdleText", button.Text)
+            configData.values[optionKey] = currentKey.Name
+            queueConfigSave()
+        end)
+    end)
+
+    trackUiConnection(UserInputService.InputBegan:Connect(function(
+        input: InputObject,
+        gameProcessed: boolean
+    ): ()
+        if gameProcessed
+            or currentKey == Enum.KeyCode.Unknown
+            or state.keyCaptureCallback
+            or state.waitingForKey
+            or UserInputService:GetFocusedTextBox() then
+            return
+        end
+        if input.UserInputType == Enum.UserInputType.Keyboard
+            and input.KeyCode == currentKey then
+            task.spawn(function(): ()
+                if type(feature.activate) == "function" then
+                    feature.activate()
+                end
+            end)
+        end
+    end))
+end
+
 local function addTextOption(
     feature: any,
     labelText: string,
     defaultText: string,
     callback: (string) -> (),
-    persist: boolean?
+    persist: boolean?,
+    hintText: string?
 ): TextBox
     local optionKey = feature.configKey .. "." .. labelText:gsub("%W", "")
     local shouldPersist = persist ~= false
@@ -6205,12 +8211,13 @@ local function addTextOption(
     if initialText == nil then
         initialText = defaultText or ""
     end
-    local option = createOptionRow(feature, labelText)
+    local option = createOptionRow(feature, labelText, hintText)
     local box = makeTextBox(option, initialText)
     box.PlaceholderText = "Enter value"
-    box.TextXAlignment = Enum.TextXAlignment.Left
-    box.Position = UDim2.new(0.5, 0, 0, 0)
-    box.Size = UDim2.new(0.5, 0, 1, 0)
+    -- Centred: the placeholder and the value sit in the middle of the field
+    -- instead of hugging its left edge.
+    box.TextXAlignment = Enum.TextXAlignment.Center
+    state.layoutOptionControl(option, box, 0.5)
 
     box.FocusLost:Connect(function(enterPressed)
         if enterPressed then
@@ -6252,7 +8259,7 @@ colorPicker.open = function(initialColor, onApply)
         })
         create("UICorner", {
             Parent = panel,
-            CornerRadius = UDim.new(0, 8),
+            CornerRadius = cornerRadius(8),
         })
 
         local title = makeTextLabel(panel, "COLOR", 14)
@@ -6500,15 +8507,22 @@ colorPicker.open = function(initialColor, onApply)
     colorPicker.update()
 end
 
-local function addColorOption(feature, labelText, defaultColor, callback)
+local function addColorOption(feature, labelText, defaultColor, callback, hintText)
     local optionKey = feature.configKey .. "." .. labelText:gsub("%W", "")
     local color = colorFromConfig(configData.values[optionKey], defaultColor)
-    local option = createOptionRow(feature, labelText)
+    local option = createOptionRow(feature, labelText, hintText)
     local swatch = makeButton(option, "", 10)
     swatch.AutoButtonColor = false
     swatch:SetAttribute("NoHover", true)
-    swatch.Position = UDim2.new(1, -34, 0, 3)
+    swatch.AnchorPoint = Vector2.new(1, 0)
+    swatch.Position = UDim2.new(
+        1,
+        -10,
+        0,
+        (tonumber(option:GetAttribute("ControlTop")) or 6) + 1
+    )
     swatch.Size = UDim2.fromOffset(28, 28)
+    swatch.ZIndex = option.ZIndex + 2
     swatch.BackgroundColor3 = color
     create("UICorner", {
         Parent = swatch,
@@ -6670,7 +8684,7 @@ state.featureTooltip = create("TextLabel", {
 
 create("UICorner", {
     Parent = state.featureTooltip,
-    CornerRadius = UDim.new(0, 4),
+    CornerRadius = cornerRadius(4),
 })
 
 create("UIPadding", {
@@ -7023,9 +9037,37 @@ local function toggleFly(enabled: boolean): ()
     end)
 end
 
+-- Hitbox engine rewrite.
+--
+-- The old implementation had one fixed behaviour (scale visible parts, head
+-- pinned to 8 studs, everything forced transparent, collision and mass always
+-- stripped) and re-scanned every character on a hard-coded 0.1 s timer. The
+-- rewrite makes the whole pipeline configurable while keeping a single,
+-- cheap, idempotent sweep:
+--
+--   * Mode: "Visible" scales the visible body (the classic expanded look),
+--     "Root" scales only the invisible HumanoidRootPart (the classic
+--     phantom hitbox) and "Hybrid" does both.
+--   * Original states are recorded once per part and restored exactly when
+--     the feature is disabled or when the mode stops targeting that part,
+--     so switching Visible → Root never leaves stale stretched limbs.
+--   * Characters are tracked in a weak set and only alive characters are
+--     swept; dead/respawned characters drop out automatically instead of
+--     being re-applied forever.
+--   * Transparency, collision, mass, accessories and the refresh interval
+--     are all independent options instead of hard-coded side effects.
+
 type HitboxSettings = {
+    mode: string,
     bodyScale: number,
+    headSize: number,
+    rootSize: number,
     visibleTransparency: number,
+    forceVisible: boolean,
+    noCollision: boolean,
+    massless: boolean,
+    excludeAccessories: boolean,
+    updateInterval: number,
 }
 
 type OriginalHitboxState = {
@@ -7036,10 +9078,20 @@ type OriginalHitboxState = {
 }
 
 local hitboxSettings: HitboxSettings = {
+    mode = "Visible",
     bodyScale = 2.25,
+    headSize = 8,
+    rootSize = 12,
     visibleTransparency = 30,
+    forceVisible = true,
+    noCollision = true,
+    massless = true,
+    excludeAccessories = true,
+    updateInterval = 0.1,
 }
 local originalHitboxes: {[BasePart]: OriginalHitboxState} =
+    setmetatable({}, {__mode = "k"}) :: any
+local hitboxCharacters: {[Model]: boolean} =
     setmetatable({}, {__mode = "k"}) :: any
 
 local function restoreHitboxes(): ()
@@ -7052,12 +9104,21 @@ local function restoreHitboxes(): ()
         end
     end
     originalHitboxes = setmetatable({}, {__mode = "k"}) :: any
+    hitboxCharacters = setmetatable({}, {__mode = "k"}) :: any
 end
 
-local function isVisibleCharacterPart(part: BasePart): boolean
-    return part.Name ~= "HumanoidRootPart"
-        and not part:FindFirstAncestorOfClass("Accessory")
-        and not part:FindFirstAncestorOfClass("Tool")
+local function isScaledBodyPart(part: BasePart): boolean
+    if part.Name == "HumanoidRootPart" then
+        return false
+    end
+    if part:FindFirstAncestorOfClass("Tool") then
+        return false
+    end
+    if hitboxSettings.excludeAccessories
+        and part:FindFirstAncestorOfClass("Accessory") then
+        return false
+    end
+    return true
 end
 
 local function applyHitboxToPart(part: BasePart): ()
@@ -7073,18 +9134,92 @@ local function applyHitboxToPart(part: BasePart): ()
     end
     local resolvedOriginal: OriginalHitboxState = original :: OriginalHitboxState
 
-    if part.Name == "Head" then
-        part.Size = Vector3.new(8, 8, 8)
+    if part.Name == "HumanoidRootPart" then
+        part.Size = Vector3.new(
+            hitboxSettings.rootSize,
+            hitboxSettings.rootSize,
+            hitboxSettings.rootSize
+        )
+        part.Transparency = 1
     else
-        part.Size = resolvedOriginal.size * hitboxSettings.bodyScale
+        if part.Name == "Head" then
+            part.Size = Vector3.new(
+                hitboxSettings.headSize,
+                hitboxSettings.headSize,
+                hitboxSettings.headSize
+            )
+        else
+            part.Size = resolvedOriginal.size * hitboxSettings.bodyScale
+        end
+        if hitboxSettings.forceVisible then
+            part.Transparency = math.min(
+                resolvedOriginal.transparency,
+                hitboxSettings.visibleTransparency / 100
+            )
+        end
     end
 
-    part.Transparency = math.min(
-        resolvedOriginal.transparency,
-        hitboxSettings.visibleTransparency / 100
-    )
-    part.CanCollide = false
-    part.Massless = true
+    part.CanCollide = hitboxSettings.noCollision
+        and false
+        or resolvedOriginal.canCollide
+    part.Massless = hitboxSettings.massless
+end
+
+-- Restores every part the current mode no longer targets. Keeps the world
+-- clean when the user flips the mode slider mid-flight: switching to "Root"
+-- unwinds all stretched visible parts and vice versa.
+local function refreshHitboxMode(): ()
+    for part: BasePart, original: OriginalHitboxState in pairs(originalHitboxes) do
+        if not part.Parent then
+            continue
+        end
+        local isRoot: boolean = part.Name == "HumanoidRootPart"
+        local stillTargeted: boolean = isRoot
+            and hitboxSettings.mode ~= "Visible"
+            or (not isRoot and hitboxSettings.mode ~= "Root")
+        if not stillTargeted then
+            part.Size = original.size
+            part.Transparency = original.transparency
+            part.CanCollide = original.canCollide
+            part.Massless = original.massless
+            originalHitboxes[part] = nil
+        end
+    end
+end
+
+local function sweepHitboxes(): ()
+    -- Track every alive enemy character; respawns are picked up on the next
+    -- sweep and dead characters drop out of the weak set.
+    for _, player: Player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character then
+            local character: Model = player.Character
+            local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
+            if humanoid and humanoid.Health > 0 and character.Parent then
+                hitboxCharacters[character] = true
+            end
+        end
+    end
+
+    for character: Model in pairs(hitboxCharacters) do
+        local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
+        if character.Parent == nil or not humanoid or humanoid.Health <= 0 then
+            hitboxCharacters[character] = nil
+            continue
+        end
+        for _, part: Instance in ipairs(character:GetChildren()) do
+            if not part:IsA("BasePart") then
+                continue
+            end
+            local isRoot: boolean = part.Name == "HumanoidRootPart"
+            if isRoot then
+                if hitboxSettings.mode ~= "Visible" then
+                    applyHitboxToPart(part)
+                end
+            elseif hitboxSettings.mode ~= "Root" and isScaledBodyPart(part) then
+                applyHitboxToPart(part)
+            end
+        end
+    end
 end
 
 local function toggleHitboxes(enabled: boolean): ()
@@ -7098,20 +9233,11 @@ local function toggleHitboxes(enabled: boolean): ()
     local elapsed: number = 0
     featureConnections.Hitboxes = TaskManager:Connect(function(deltaTime: number): ()
         elapsed = elapsed + deltaTime
-        if elapsed < 0.1 then
+        if elapsed < hitboxSettings.updateInterval then
             return
         end
         elapsed = 0
-
-        for _, player: Player in ipairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer and player.Character then
-                for _, part: Instance in ipairs(player.Character:GetChildren()) do
-                    if part:IsA("BasePart") and isVisibleCharacterPart(part) then
-                        applyHitboxToPart(part)
-                    end
-                end
-            end
-        end
+        sweepHitboxes()
     end)
 end
 
@@ -7845,12 +9971,17 @@ end
 
 type UniversalFlingSettings = {
     target: string,
+    duration: number,
+    power: number,
+    returnToStart: boolean,
 }
 
 local universalFlingSettings: UniversalFlingSettings = {
     target = "",
+    duration = 6,
+    power = 1,
+    returnToStart = true,
 }
-local MAX_FLING_SECONDS: number = 5
 
 findPlayerByText = function(text: string): Player?
     local query: string = string.lower(text)
@@ -7890,6 +10021,20 @@ findPlayerByText = function(text: string): Player?
     return nil
 end
 
+-- Fling.
+--
+-- Rewritten because the previous version reported "stopped after the 5 second
+-- safety limit" the instant it was activated. The loop guarded on
+-- `targetPlayer.Parent == Players`, but `Players` here is a `cloneref` handle:
+-- the clone never compares equal to the real service that `Parent` returns, so
+-- on any executor with `cloneref` the condition was false on the first
+-- iteration, the loop body never ran and the routine fell straight through to
+-- its timeout message.
+--
+-- The rewrite drops instance-identity comparisons entirely (a player is in the
+-- game while it has a parent), re-reads the local character every iteration so
+-- a respawn cannot strand the routine, alternates Stepped/Heartbeat so the
+-- velocity actually replicates, and always restores the character.
 performFling = function(targetPlayer: Player): ()
     if state.isProtectedTarget(targetPlayer) then
         notify("That player is protected by FriendList.")
@@ -7901,55 +10046,29 @@ performFling = function(targetPlayer: Player): ()
     end
 
     flingRunning = true
-    task.spawn(function()
-        local character, humanoid, root = getCharacterParts()
-        local targetCharacter: Model? = targetPlayer.Character
-        local targetRoot: BasePart? = targetCharacter
-            and targetCharacter:FindFirstChild("HumanoidRootPart")
-            :: BasePart?
-        local targetHumanoid: Humanoid? = targetCharacter
-            and targetCharacter:FindFirstChildOfClass("Humanoid")
-            :: Humanoid?
-
-        if not character or not humanoid or not root or not targetRoot then
+    task.spawn(function(): ()
+        local _, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
+        if not humanoid or not root then
             flingRunning = false
-            notify("The selected target is not available.")
+            notify("Your character is not ready.")
             return
         end
 
         local savedCFrame: CFrame = root.CFrame
+        local savedAutoRotate: boolean = humanoid.AutoRotate
         local savedCameraSubject: (Humanoid | BasePart)? = workspace.CurrentCamera
             and workspace.CurrentCamera.CameraSubject
             :: (Humanoid | BasePart)?
-        local mover: LinearVelocity? = nil
-        local spinner: AngularVelocity? = nil
-        local moverAttachment: Attachment? = nil
-        local targetReachedVoid: boolean = false
+        local touchedTarget: boolean = false
+        local reason: string = "timeout"
+
+        -- The velocity magnitude is what does the flinging: the engine
+        -- resolves the collision between two fast-moving assemblies and the
+        -- server accepts it because we own our own character.
+        local power: number = 9e4 * math.clamp(universalFlingSettings.power, 0.25, 4)
+        local duration: number = math.clamp(universalFlingSettings.duration, 1, 20)
 
         local success: boolean, errorMessage: any = pcall(function(): ()
-            local newAttachment: Attachment = Instance.new("Attachment")
-            newAttachment.Name = "RTM_FlingAttachment"
-            newAttachment.Parent = root
-            moverAttachment = newAttachment
-
-            local newMover: LinearVelocity = Instance.new("LinearVelocity")
-            newMover.Name = "RTM_FlingVelocity"
-            newMover.Attachment0 = newAttachment
-            newMover.MaxForce = math.huge
-            newMover.RelativeTo = Enum.ActuatorRelativeTo.World
-            newMover.VectorVelocity = Vector3.new(9e5, 9e5, 9e5)
-            newMover.Parent = root
-            mover = newMover
-
-            local newSpinner: AngularVelocity = Instance.new("AngularVelocity")
-            newSpinner.Name = "RTM_FlingAngular"
-            newSpinner.Attachment0 = newAttachment
-            newSpinner.MaxTorque = math.huge
-            newSpinner.RelativeTo = Enum.ActuatorRelativeTo.World
-            newSpinner.AngularVelocity = Vector3.new(9e5, 9e5, 9e5)
-            newSpinner.Parent = root
-            spinner = newSpinner
-
             local startedAt: number = os.clock()
             local step: number = 0
             local destroyHeight: number = workspace.FallenPartsDestroyHeight
@@ -7958,84 +10077,144 @@ performFling = function(targetPlayer: Player): ()
             end
             local voidThreshold: number = destroyHeight + 35
 
-            while os.clock() - startedAt < MAX_FLING_SECONDS
-                and targetPlayer.Parent == Players
-                and targetRoot.Parent do
-                if targetRoot.Position.Y <= voidThreshold
-                    or (targetHumanoid and targetHumanoid.Health <= 0) then
-                    targetReachedVoid = true
+            humanoid.AutoRotate = false
+            if humanoid.Sit then
+                humanoid.Sit = false
+            end
+
+            while os.clock() - startedAt < duration do
+                -- A player that left the game has no parent any more; this
+                -- replaces the old identity check against the service.
+                if targetPlayer.Parent == nil then
+                    reason = "left"
                     break
                 end
 
-                step = step + 1
-                local phase: number = (step % 8) / 8 * math.pi * 2
-                local offset: CFrame = CFrame.new(
-                    math.cos(phase) * 1.35,
-                    (step % 2 == 0) and 0.75 or -0.75,
-                    math.sin(phase) * 1.35
-                )
-                root.CFrame = targetRoot.CFrame * offset
-                root.AssemblyLinearVelocity = Vector3.new(
-                    step % 2 == 0 and 9e5 or -9e5,
-                    9e5,
-                    step % 2 == 0 and -9e5 or 9e5
-                )
-                root.AssemblyAngularVelocity = Vector3.new(9e5, 9e5, 9e5)
+                local targetCharacter: Model? = targetPlayer.Character
+                local targetRoot: BasePart? = targetCharacter
+                    and targetCharacter:FindFirstChild("HumanoidRootPart")
+                    :: BasePart?
+                local targetHumanoid: Humanoid? = targetCharacter
+                    and targetCharacter:FindFirstChildOfClass("Humanoid")
+                    :: Humanoid?
+                if not targetRoot or not targetRoot.Parent then
+                    reason = "gone"
+                    break
+                end
+                if targetHumanoid and targetHumanoid.Health <= 0 then
+                    touchedTarget = true
+                    reason = "killed"
+                    break
+                end
+                if targetRoot.Position.Y <= voidThreshold then
+                    touchedTarget = true
+                    reason = "void"
+                    break
+                end
+
+                -- Re-read our own parts: a respawn mid-fling replaces them,
+                -- and writing to the old ones would silently do nothing.
+                local _, liveHumanoid: Humanoid?, liveRoot: BasePart? =
+                    getCharacterParts()
+                if not liveHumanoid or not liveRoot then
+                    reason = "died"
+                    break
+                end
+                if liveHumanoid.Health <= 0 then
+                    reason = "died"
+                    break
+                end
+                if liveRoot.Anchored then
+                    liveRoot.Anchored = false
+                end
+                humanoid = liveHumanoid
+                root = liveRoot
+
+                step += 1
+                -- Orbit the target so the two assemblies keep colliding from
+                -- alternating directions instead of resting inside each other.
+                local phase: number = (step % 6) / 6 * math.pi * 2
+                local vertical: number = (step % 2 == 0) and 1.1 or -1.1
+                liveRoot.CFrame = targetRoot.CFrame
+                    * CFrame.new(math.cos(phase) * 1.6, vertical, math.sin(phase) * 1.6)
+                local sign: number = (step % 2 == 0) and 1 or -1
+                liveRoot.AssemblyLinearVelocity =
+                    Vector3.new(power * sign, power, power * -sign)
+                liveRoot.AssemblyAngularVelocity =
+                    Vector3.new(power, power, power)
+
+                -- Stepped writes land before physics, Heartbeat after: doing
+                -- both per cycle is what makes the fling replicate reliably.
+                RunService.Stepped:Wait()
+                if liveRoot.Parent then
+                    liveRoot.AssemblyLinearVelocity =
+                        Vector3.new(power * -sign, power, power * sign)
+                end
                 RunService.Heartbeat:Wait()
             end
         end)
 
-        if mover then
-            mover:Destroy()
+        -- Restoration always runs, including after an error.
+        local _, finalHumanoid: Humanoid?, finalRoot: BasePart? = getCharacterParts()
+        if finalRoot and finalRoot.Parent then
+            finalRoot.AssemblyLinearVelocity = Vector3.zero
+            finalRoot.AssemblyAngularVelocity = Vector3.zero
+            if universalFlingSettings.returnToStart then
+                finalRoot.CFrame = savedCFrame + Vector3.new(0, 2, 0)
+            end
         end
-        if spinner then
-            spinner:Destroy()
-        end
-        if moverAttachment then
-            moverAttachment:Destroy()
-        end
-        if root and root.Parent then
-            root.AssemblyLinearVelocity = Vector3.zero
-            root.AssemblyAngularVelocity = Vector3.zero
-            root.CFrame = savedCFrame + Vector3.new(0, 2, 0)
+        if finalHumanoid then
+            finalHumanoid.AutoRotate = savedAutoRotate
+            finalHumanoid.PlatformStand = false
         end
         if workspace.CurrentCamera then
-            workspace.CurrentCamera.CameraSubject = savedCameraSubject or humanoid
+            workspace.CurrentCamera.CameraSubject =
+                savedCameraSubject or finalHumanoid or humanoid
         end
 
         flingRunning = false
-        if success and targetReachedVoid then
-            notify("Fling completed: " .. targetPlayer.Name .. " reached the void.")
-        elseif success then
-            notify("Fling stopped after the 5 second safety limit.")
-        else
+        if not success then
             notify("Fling failed: " .. tostring(errorMessage))
+        elseif touchedTarget then
+            notify("Fling completed: " .. targetPlayer.Name .. " went down.")
+        elseif reason == "left" then
+            notify("Fling stopped: " .. targetPlayer.Name .. " left the game.")
+        elseif reason == "gone" then
+            notify("Fling stopped: the target character disappeared.")
+        elseif reason == "died" then
+            notify("Fling stopped: your character died.")
+        else
+            notify(
+                "Fling stopped after "
+                    .. string.format("%.0f", universalFlingSettings.duration)
+                    .. "s. Raise Duration or Power for tougher targets."
+            )
         end
     end)
 end
 
-local fullbrightSettings = {
+state.fullbrightSettings = {
     brightness = 3,
     clockTime = 14,
 }
-local originalLighting = nil
+state.originalLighting = nil
 
-local function toggleFullbright(enabled)
+state.toggleFullbright = function(enabled)
     disconnectFeatureConnection("Fullbright")
 
     if not enabled then
-        if originalLighting then
-            Lighting.Brightness = originalLighting.brightness
-            Lighting.ClockTime = originalLighting.clockTime
-            Lighting.GlobalShadows = originalLighting.globalShadows
-            Lighting.FogEnd = originalLighting.fogEnd
-            Lighting.Ambient = originalLighting.ambient
-            Lighting.OutdoorAmbient = originalLighting.outdoorAmbient
+        if state.originalLighting then
+            Lighting.Brightness = state.originalLighting.brightness
+            Lighting.ClockTime = state.originalLighting.clockTime
+            Lighting.GlobalShadows = state.originalLighting.globalShadows
+            Lighting.FogEnd = state.originalLighting.fogEnd
+            Lighting.Ambient = state.originalLighting.ambient
+            Lighting.OutdoorAmbient = state.originalLighting.outdoorAmbient
         end
         return
     end
 
-    originalLighting = {
+    state.originalLighting = {
         brightness = Lighting.Brightness,
         clockTime = Lighting.ClockTime,
         globalShadows = Lighting.GlobalShadows,
@@ -8045,8 +10224,8 @@ local function toggleFullbright(enabled)
     }
 
     featureConnections.Fullbright = TaskManager:Connect(function()
-        Lighting.Brightness = fullbrightSettings.brightness
-        Lighting.ClockTime = fullbrightSettings.clockTime
+        Lighting.Brightness = state.fullbrightSettings.brightness
+        Lighting.ClockTime = state.fullbrightSettings.clockTime
         Lighting.GlobalShadows = false
         Lighting.FogEnd = 100000
         Lighting.Ambient = Color3.fromRGB(178, 178, 178)
@@ -8171,25 +10350,27 @@ local function toggleXray(enabled: boolean): ()
 end
 
 local highJumpSettings: {velocity: number} = {velocity = 72}
-local function toggleHighJump(enabled: boolean): ()
-    disconnectFeatureConnection("HighJump")
-    if not enabled then
+
+-- High Jump is a one-shot action, not a state.
+--
+-- Holding it "enabled" made no sense: the whole feature is "press this and
+-- jump high". It is now performed once per activation — from the card, from
+-- its key slot or from a placed mobile shortcut.
+local function performHighJump(): ()
+    local _, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
+    if not humanoid or not root or humanoid.Health <= 0 then
         return
     end
-    featureConnections.HighJump = UserInputService.JumpRequest:Connect(function(): ()
-        if state.keyCaptureCallback or state.waitingForKey then
-            return
-        end
-        local _, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
-        if humanoid and root and humanoid.FloorMaterial ~= Enum.Material.Air then
-            local current: Vector3 = root.AssemblyLinearVelocity
-            root.AssemblyLinearVelocity = Vector3.new(
-                current.X,
-                highJumpSettings.velocity,
-                current.Z
-            )
-        end
-    end)
+    local current: Vector3 = root.AssemblyLinearVelocity
+    root.AssemblyLinearVelocity = Vector3.new(
+        current.X,
+        highJumpSettings.velocity,
+        current.Z
+    )
+    -- Leaving the humanoid in Freefall keeps the landing animation correct.
+    if humanoid.FloorMaterial ~= Enum.Material.Air then
+        humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
+    end
 end
 
 local spiderSettings: {climbSpeed: number} = {climbSpeed = 38}
@@ -8264,7 +10445,7 @@ return {
     togglePlayerEsp = togglePlayerEsp,
     toggleXray = toggleXray,
     highJumpSettings = highJumpSettings,
-    toggleHighJump = toggleHighJump,
+    performHighJump = performHighJump,
     spiderSettings = spiderSettings,
     toggleSpider = toggleSpider,
     safeWalkSettings = safeWalkSettings,
@@ -8455,16 +10636,24 @@ end
 do
 (function(): ()
 type PhaseDashSettings = {
+    mode: string,
     distance: number,
     cooldown: number,
     exitSpeed: number,
+    slideSpeed: number,
+    collisionPadding: number,
+    flashDuration: number,
     preserveVelocity: boolean,
     key: Enum.KeyCode,
 }
 local phaseDashSettings: PhaseDashSettings = {
+    mode = "Blink",
     distance = 20,
     cooldown = 0.8,
     exitSpeed = 42,
+    slideSpeed = 60,
+    collisionPadding = 2.25,
+    flashDuration = 0.28,
     preserveVelocity = true,
     key = Enum.KeyCode.Q,
 }
@@ -8487,7 +10676,11 @@ local function createPhaseFlash(character: Model): ()
     flash.Parent = character
     local fade: Tween = TweenService:Create(
         flash,
-        TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+        TweenInfo.new(
+            math.clamp(phaseDashSettings.flashDuration, 0.05, 1.2),
+            Enum.EasingStyle.Quad,
+            Enum.EasingDirection.Out
+        ),
         {FillTransparency = 1, OutlineTransparency = 1}
     )
     fade:Play()
@@ -8523,6 +10716,23 @@ local function performPhaseDash(): ()
         return
     end
     direction = direction.Unit
+    lastPhaseDash = now
+    local previousVelocity: Vector3 = root.AssemblyLinearVelocity
+    local padding: number = math.clamp(
+        phaseDashSettings.collisionPadding,
+        0,
+        8
+    )
+    if phaseDashSettings.mode == "Slide" then
+        -- Slide: a velocity burst instead of a teleport. No raycast, no wall
+        -- stop — the dash pushes the character and the game physics handles
+        -- the rest, which keeps the dash usable on uneven terrain.
+        root.AssemblyLinearVelocity = direction * phaseDashSettings.slideSpeed
+            + Vector3.new(0, previousVelocity.Y, 0)
+        createPhaseFlash(character)
+        return
+    end
+    -- Blink: collision-aware teleport along the dash line.
     local params: RaycastParams = RaycastParams.new()
     params.FilterType = Enum.RaycastFilterType.Exclude
     params.FilterDescendantsInstances = {character}
@@ -8532,13 +10742,11 @@ local function performPhaseDash(): ()
         params
     )
     local safeDistance: number = collision
-            and math.max(0, collision.Distance - 2.25)
+            and math.max(0, collision.Distance - padding)
         or phaseDashSettings.distance
     if safeDistance <= 0.1 then
         return
     end
-    lastPhaseDash = now
-    local previousVelocity: Vector3 = root.AssemblyLinearVelocity
     root.CFrame = root.CFrame + direction * safeDistance
     if not phaseDashSettings.preserveVelocity then
         root.AssemblyLinearVelocity = direction * phaseDashSettings.exitSpeed
@@ -8571,14 +10779,20 @@ local function togglePhaseDash(enabled: boolean): ()
 end
 
 type SoftLandingSettings = {
+    mode: string,
     triggerSpeed: number,
     scanDistance: number,
     landingSpeed: number,
+    glideSpeed: number,
+    preserveMomentum: boolean,
 }
 local softLandingSettings: SoftLandingSettings = {
+    mode = "Landing",
     triggerSpeed = 62,
     scanDistance = 16,
     landingSpeed = 11,
+    glideSpeed = 16,
+    preserveMomentum = true,
 }
 
 local function toggleSoftLanding(enabled: boolean): ()
@@ -8595,24 +10809,52 @@ local function toggleSoftLanding(enabled: boolean): ()
         if velocity.Y > -softLandingSettings.triggerSpeed then
             return
         end
-        local params: RaycastParams = RaycastParams.new()
-        params.FilterType = Enum.RaycastFilterType.Exclude
-        params.FilterDescendantsInstances = {character}
-        local probeDistance: number = math.max(
-            softLandingSettings.scanDistance,
-            math.abs(velocity.Y) * 0.18
-        )
-        local ground: RaycastResult? = workspace:Raycast(
-            root.Position,
-            Vector3.new(0, -probeDistance, 0),
-            params
-        )
-        if ground then
-            root.AssemblyLinearVelocity = Vector3.new(
-                velocity.X,
-                -softLandingSettings.landingSpeed,
-                velocity.Z
+        local damped: boolean = false
+        -- Feather / Auto: cap the fall speed outright, no ground required.
+        if softLandingSettings.mode == "Feather"
+            or softLandingSettings.mode == "Auto" then
+            if velocity.Y < -softLandingSettings.glideSpeed then
+                velocity = Vector3.new(
+                    velocity.X,
+                    -softLandingSettings.glideSpeed,
+                    velocity.Z
+                )
+                damped = true
+            end
+        end
+        -- Landing / Auto: only dampen when ground is actually close.
+        if softLandingSettings.mode == "Landing"
+            or softLandingSettings.mode == "Auto" then
+            local params: RaycastParams = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Exclude
+            params.FilterDescendantsInstances = {character}
+            local probeDistance: number = math.max(
+                softLandingSettings.scanDistance,
+                math.abs(velocity.Y) * 0.18
             )
+            local ground: RaycastResult? = workspace:Raycast(
+                root.Position,
+                Vector3.new(0, -probeDistance, 0),
+                params
+            )
+            if ground then
+                velocity = Vector3.new(
+                    velocity.X,
+                    -softLandingSettings.landingSpeed,
+                    velocity.Z
+                )
+                damped = true
+            end
+        end
+        if damped then
+            if not softLandingSettings.preserveMomentum then
+                velocity = Vector3.new(
+                    velocity.X * 0.3,
+                    velocity.Y,
+                    velocity.Z * 0.3
+                )
+            end
+            root.AssemblyLinearVelocity = velocity
         end
     end)
 end
@@ -8633,6 +10875,10 @@ local FlyFeature = createUniversalFeature(
     1,
     toggleFly
 )
+-- Fly is the reference layout for a module customisation panel: grouped under
+-- headings, every control carrying a one-line explanation of what it does, and
+-- the rarely-touched controls folded away behind a single switch.
+local FlyFlightSection: Frame = state.addSectionOption(FlyFeature, "Flight")
 local FlyPresetButton: TextButton = addCycleOption(
     FlyFeature,
     "Preset",
@@ -8640,7 +10886,8 @@ local FlyPresetButton: TextButton = addCycleOption(
     1,
     function(value: string): ()
         flySettings.preset = value
-    end
+    end,
+    "Balanced glides, Direct stops instantly, Precise moves slowly."
 )
 local FlySpeedRow: Frame = addNumberOption(
     FlyFeature,
@@ -8650,7 +10897,8 @@ local FlySpeedRow: Frame = addNumberOption(
     500,
     function(value: number): ()
         flySettings.speed = value
-    end
+    end,
+    "Studs per second while holding WASD."
 )
 local FlyVerticalRow: Frame = addNumberOption(
     FlyFeature,
@@ -8660,8 +10908,11 @@ local FlyVerticalRow: Frame = addNumberOption(
     350,
     function(value: number): ()
         flySettings.verticalSpeed = value
-    end
+    end,
+    "Studs per second while rising or descending."
 )
+local FlyAdvancedButton: TextButton
+local FlyAdvancedSection: Frame = state.addSectionOption(FlyFeature, "Advanced")
 local FlyResponseRow: Frame = addNumberOption(
     FlyFeature,
     "Response multiplier",
@@ -8670,7 +10921,8 @@ local FlyResponseRow: Frame = addNumberOption(
     2,
     function(value: number): ()
         flySettings.response = value
-    end
+    end,
+    "How sharply the flight reacts to input. Higher is twitchier."
 )
 local FlyWallButton: TextButton = addToggleOption(
     FlyFeature,
@@ -8678,7 +10930,8 @@ local FlyWallButton: TextButton = addToggleOption(
     flySettings.wallCheck,
     function(value: boolean): ()
         flySettings.wallCheck = value
-    end
+    end,
+    "Stop against solid geometry instead of flying through it."
 )
 local FlyPlatformButton: TextButton = addToggleOption(
     FlyFeature,
@@ -8686,7 +10939,8 @@ local FlyPlatformButton: TextButton = addToggleOption(
     flySettings.platformStand,
     function(value: boolean): ()
         flySettings.platformStand = value
-    end
+    end,
+    "Ragdoll the character while flying. Smoother, but no animations."
 )
 local FlyFaceButton: TextButton = addToggleOption(
     FlyFeature,
@@ -8694,7 +10948,8 @@ local FlyFaceButton: TextButton = addToggleOption(
     flySettings.faceCamera,
     function(value: boolean): ()
         flySettings.faceCamera = value
-    end
+    end,
+    "Rotate the character to follow wherever the camera looks."
 )
 local FlyUpKeyButton: TextButton = addKeyOption(
     FlyFeature,
@@ -8702,7 +10957,8 @@ local FlyUpKeyButton: TextButton = addKeyOption(
     flySettings.upKey,
     function(value: Enum.KeyCode): ()
         flySettings.upKey = value
-    end
+    end,
+    "Hold to gain altitude."
 )
 local FlyDownKeyButton: TextButton = addKeyOption(
     FlyFeature,
@@ -8710,27 +10966,42 @@ local FlyDownKeyButton: TextButton = addKeyOption(
     flySettings.downKey,
     function(value: Enum.KeyCode): ()
         flySettings.downKey = value
-    end
+    end,
+    "Hold to lose altitude."
 )
-local FlyAdvancedButton: TextButton = addToggleOption(
+FlyAdvancedButton = addToggleOption(
     FlyFeature,
     "Advanced settings",
     false,
     function(value: boolean): ()
+        -- The heading folds away with the controls it labels.
+        setOptionVisible(FlyFeature, FlyAdvancedSection, value)
         setOptionVisible(FlyFeature, FlyResponseRow, value)
         setOptionVisible(FlyFeature, FlyWallButton.Parent :: GuiObject, value)
         setOptionVisible(FlyFeature, FlyPlatformButton.Parent :: GuiObject, value)
         setOptionVisible(FlyFeature, FlyFaceButton.Parent :: GuiObject, value)
         setOptionVisible(FlyFeature, FlyUpKeyButton.Parent :: GuiObject, value)
         setOptionVisible(FlyFeature, FlyDownKeyButton.Parent :: GuiObject, value)
-    end
+    end,
+    "Reveal response tuning, collision behaviour and key bindings."
 )
 local FlyPresetRow: GuiObject = FlyPresetButton.Parent :: GuiObject
 local FlyAdvancedRow: GuiObject = FlyAdvancedButton.Parent :: GuiObject
-FlyPresetRow.LayoutOrder = 1
-FlySpeedRow.LayoutOrder = 2
-FlyVerticalRow.LayoutOrder = 3
-FlyAdvancedRow.LayoutOrder = 4
+-- Explicit order: heading, the three everyday controls, the reveal switch,
+-- then the advanced heading and its controls (which addToggleOption has
+-- already hidden by running its callback with the stored/default `false`).
+FlyFlightSection.LayoutOrder = 1
+FlyPresetRow.LayoutOrder = 2
+FlySpeedRow.LayoutOrder = 3
+FlyVerticalRow.LayoutOrder = 4
+FlyAdvancedRow.LayoutOrder = 5
+FlyAdvancedSection.LayoutOrder = 6
+FlyResponseRow.LayoutOrder = 7
+;(FlyWallButton.Parent :: GuiObject).LayoutOrder = 8
+;(FlyPlatformButton.Parent :: GuiObject).LayoutOrder = 9
+;(FlyFaceButton.Parent :: GuiObject).LayoutOrder = 10
+;(FlyUpKeyButton.Parent :: GuiObject).LayoutOrder = 11
+;(FlyDownKeyButton.Parent :: GuiObject).LayoutOrder = 12
 if state.bindMobileActionPlacement then
     state.bindMobileActionPlacement(
         FlyUpKeyButton,
@@ -8775,18 +11046,58 @@ local FlingFeature = createUniversalFeature(
 addTextOption(FlingFeature, "Target player", universalFlingSettings.target, function(value)
     universalFlingSettings.target = value
 end, false)
+-- The safety limit used to be a hidden constant, which is why hitting it read
+-- like a bug. It is a normal control now.
+addNumberOption(
+    FlingFeature,
+    "Duration (s)",
+    universalFlingSettings.duration,
+    1,
+    20,
+    function(value: number): ()
+        universalFlingSettings.duration = value
+    end
+)
+addNumberOption(
+    FlingFeature,
+    "Power",
+    universalFlingSettings.power,
+    0.25,
+    4,
+    function(value: number): ()
+        universalFlingSettings.power = value
+    end
+)
+addToggleOption(
+    FlingFeature,
+    "Return to start",
+    universalFlingSettings.returnToStart,
+    function(value: boolean): ()
+        universalFlingSettings.returnToStart = value
+    end
+)
 addFeatureTooltip(
     FlingFeature,
-    "Runs until the target reaches the void or five seconds pass. Duration is automatic."
+    "Runs until the target goes down or the duration expires, then puts you back."
 )
 end
 
 do
 local HitboxFeature = createUniversalFeature(
     "Hitboxes",
-    "Extend visible character parts instead of an invisible root block",
+    "Scalable visible and phantom hitboxes for enemy characters",
     3,
     toggleHitboxes
+)
+addCycleOption(
+    HitboxFeature,
+    "Mode",
+    {"Visible", "Root", "Hybrid"},
+    1,
+    function(value: string)
+        hitboxSettings.mode = value
+        refreshHitboxMode()
+    end
 )
 addNumberOption(
     HitboxFeature,
@@ -8800,6 +11111,26 @@ addNumberOption(
 )
 addNumberOption(
     HitboxFeature,
+    "Head size",
+    hitboxSettings.headSize,
+    2,
+    12,
+    function(value)
+        hitboxSettings.headSize = value
+    end
+)
+addNumberOption(
+    HitboxFeature,
+    "Root size",
+    hitboxSettings.rootSize,
+    3,
+    24,
+    function(value)
+        hitboxSettings.rootSize = value
+    end
+)
+addNumberOption(
+    HitboxFeature,
     "Visible transparency %",
     hitboxSettings.visibleTransparency,
     0,
@@ -8808,10 +11139,52 @@ addNumberOption(
         hitboxSettings.visibleTransparency = value
     end
 )
+addToggleOption(
+    HitboxFeature,
+    "Reveal parts",
+    hitboxSettings.forceVisible,
+    function(value)
+        hitboxSettings.forceVisible = value
+    end
+)
+addToggleOption(
+    HitboxFeature,
+    "No collision",
+    hitboxSettings.noCollision,
+    function(value)
+        hitboxSettings.noCollision = value
+    end
+)
+addToggleOption(
+    HitboxFeature,
+    "Massless",
+    hitboxSettings.massless,
+    function(value)
+        hitboxSettings.massless = value
+    end
+)
+addToggleOption(
+    HitboxFeature,
+    "Exclude accessories",
+    hitboxSettings.excludeAccessories,
+    function(value)
+        hitboxSettings.excludeAccessories = value
+    end
+)
+addNumberOption(
+    HitboxFeature,
+    "Update interval (s)",
+    hitboxSettings.updateInterval,
+    0.03,
+    0.5,
+    function(value)
+        hitboxSettings.updateInterval = value
+    end
+)
 addFeatureTooltip(
     HitboxFeature,
-    "The real head is fixed at 8 studs. Arms, legs and torso keep their appearance "
-        .. "and are scaled visibly; HumanoidRootPart is never used."
+    "Visible scales the body and pins the head; Root expands only the invisible "
+        .. "HumanoidRootPart; Hybrid does both. Originals are restored exactly on disable."
 )
 end
 
@@ -9158,26 +11531,26 @@ local FullbrightFeature = createUniversalFeature(
     "Fullbright",
     "Keep the scene bright and remove global shadows",
     15,
-    toggleFullbright
+    state.toggleFullbright
 )
 addNumberOption(
     FullbrightFeature,
     "Brightness",
-    fullbrightSettings.brightness,
+    state.fullbrightSettings.brightness,
     0,
     10,
     function(value)
-        fullbrightSettings.brightness = value
+        state.fullbrightSettings.brightness = value
     end
 )
 addNumberOption(
     FullbrightFeature,
     "Clock time",
-    fullbrightSettings.clockTime,
+    state.fullbrightSettings.clockTime,
     0,
     24,
     function(value)
-        fullbrightSettings.clockTime = value
+        state.fullbrightSettings.clockTime = value
     end
 )
 end
@@ -9241,9 +11614,10 @@ end
 do
 local HighJumpFeature = createUniversalFeature(
     "High Jump",
-    "Apply a stronger grounded jump without changing global gravity",
+    "Press the key slot to launch a single high jump",
     19,
-    state.universalToolkit.toggleHighJump
+    state.universalToolkit.performHighJump,
+    {action = true, silentAction = true}
 )
 addNumberOption(
     HighJumpFeature,
@@ -9392,9 +11766,18 @@ end
 do
 local PhaseDashFeature = createUniversalFeature(
     "Phase Dash",
-    "Collision-aware directional blink with a technical phase flash",
+    "Directional dash: collision-aware blink or a velocity slide",
     25,
     state.universalToolkit.togglePhaseDash
+)
+addCycleOption(
+    PhaseDashFeature,
+    "Mode",
+    {"Blink", "Slide"},
+    1,
+    function(value: string): ()
+        state.universalToolkit.phaseDashSettings.mode = value
+    end
 )
 addNumberOption(
     PhaseDashFeature,
@@ -9426,6 +11809,36 @@ addNumberOption(
         state.universalToolkit.phaseDashSettings.exitSpeed = value
     end
 )
+addNumberOption(
+    PhaseDashFeature,
+    "Slide speed",
+    state.universalToolkit.phaseDashSettings.slideSpeed,
+    20,
+    250,
+    function(value: number): ()
+        state.universalToolkit.phaseDashSettings.slideSpeed = value
+    end
+)
+addNumberOption(
+    PhaseDashFeature,
+    "Collision padding",
+    state.universalToolkit.phaseDashSettings.collisionPadding,
+    0,
+    8,
+    function(value: number): ()
+        state.universalToolkit.phaseDashSettings.collisionPadding = value
+    end
+)
+addNumberOption(
+    PhaseDashFeature,
+    "Flash duration (s)",
+    state.universalToolkit.phaseDashSettings.flashDuration,
+    0.05,
+    1.2,
+    function(value: number): ()
+        state.universalToolkit.phaseDashSettings.flashDuration = value
+    end
+)
 addToggleOption(
     PhaseDashFeature,
     "Preserve velocity",
@@ -9434,7 +11847,7 @@ addToggleOption(
         state.universalToolkit.phaseDashSettings.preserveVelocity = value
     end
 )
-local PhaseDashKeyButton: TextButton = addKeyOption(
+state.phaseDashKeyButton = addKeyOption(
     PhaseDashFeature,
     "Dash key",
     state.universalToolkit.phaseDashSettings.key,
@@ -9444,7 +11857,7 @@ local PhaseDashKeyButton: TextButton = addKeyOption(
 )
 if state.bindMobileActionPlacement then
     state.bindMobileActionPlacement(
-        PhaseDashKeyButton,
+        state.phaseDashKeyButton,
         "UniversalPhaseDash",
         "DASH",
         state.universalToolkit.performPhaseDash
@@ -9455,9 +11868,18 @@ end
 do
 local SoftLandingFeature = createUniversalFeature(
     "Soft Landing",
-    "Detect nearby ground and damp dangerous downward velocity",
+    "Dampen dangerous falls near ground or glide the whole descent",
     26,
     state.universalToolkit.toggleSoftLanding
+)
+addCycleOption(
+    SoftLandingFeature,
+    "Mode",
+    {"Landing", "Feather", "Auto"},
+    1,
+    function(value: string): ()
+        state.universalToolkit.softLandingSettings.mode = value
+    end
 )
 addNumberOption(
     SoftLandingFeature,
@@ -9489,16 +11911,99 @@ addNumberOption(
         state.universalToolkit.softLandingSettings.landingSpeed = value
     end
 )
+addNumberOption(
+    SoftLandingFeature,
+    "Glide speed",
+    state.universalToolkit.softLandingSettings.glideSpeed,
+    8,
+    40,
+    function(value: number): ()
+        state.universalToolkit.softLandingSettings.glideSpeed = value
+    end
+)
+addToggleOption(
+    SoftLandingFeature,
+    "Preserve momentum",
+    state.universalToolkit.softLandingSettings.preserveMomentum,
+    function(value: boolean): ()
+        state.universalToolkit.softLandingSettings.preserveMomentum = value
+    end
+)
 end
 
 do
 local ProjectileCalibrationFeature: any = createUniversalFeature(
     "Projectile Calibration",
-    "Automatic per-game projectile analytics with isolated 5 ms ping buckets",
+    "Automatic per-game projectile analytics with tunable ping buckets",
     17,
     function(_enabled: boolean): () end,
     {category = true}
 )
+state.projectileSettings =
+    state.universalProjectileCalibration.settings
+addNumberOption(
+    ProjectileCalibrationFeature,
+    "Bucket width (ms)",
+    state.projectileSettings.bucketWidthMs,
+    1,
+    25,
+    function(value: number): ()
+        state.projectileSettings.bucketWidthMs = math.round(value)
+    end
+)
+addNumberOption(
+    ProjectileCalibrationFeature,
+    "Bucket ceiling (ms)",
+    state.projectileSettings.maxBucketMs,
+    25,
+    500,
+    function(value: number): ()
+        state.projectileSettings.maxBucketMs = math.round(value)
+    end
+)
+addNumberOption(
+    ProjectileCalibrationFeature,
+    "Sample window (s)",
+    state.projectileSettings.sampleWindowSeconds,
+    1,
+    6,
+    function(value: number): ()
+        state.projectileSettings.sampleWindowSeconds = value
+    end
+)
+addNumberOption(
+    ProjectileCalibrationFeature,
+    "Max samples / track",
+    state.projectileSettings.maxSamplesPerTrack,
+    30,
+    600,
+    function(value: number): ()
+        state.projectileSettings.maxSamplesPerTrack = math.round(value)
+    end
+)
+addNumberOption(
+    ProjectileCalibrationFeature,
+    "Match radius (studs)",
+    state.projectileSettings.matchDistanceStuds,
+    10,
+    120,
+    function(value: number): ()
+        state.projectileSettings.matchDistanceStuds = math.round(value)
+    end
+)
+addNumberOption(
+    ProjectileCalibrationFeature,
+    "Min projectile speed",
+    state.projectileSettings.minProjectileSpeed,
+    1,
+    100,
+    function(value: number): ()
+        state.projectileSettings.minProjectileSpeed = math.round(value)
+    end
+)
+addActionOption(ProjectileCalibrationFeature, "Show status", function(): ()
+    notify(state.universalProjectileCalibration:status())
+end)
 addActionOption(ProjectileCalibrationFeature, "Save analytics", function(): ()
     if state.universalProjectileCalibration:save("manual") then
         notify("Universal projectile analytics saved in the executor workspace.")
@@ -9708,6 +12213,7 @@ local function createGameModuleEnvironment(
         addTextOption = recordBinding(addTextOption),
         addColorOption = recordBinding(addColorOption),
         addInformationOption = addInformationOption,
+        addSectionOption = state.addSectionOption,
         setOptionVisible = setOptionVisible,
         findPlayerByText = findPlayerByText,
         performFling = performFling,
@@ -9977,6 +12483,11 @@ local function refreshSearch(): ()
             and (sectionTotals[sectionName] or 0) > 0
             and (sectionMatches[sectionName] or 0) == 0
     end
+
+    -- Drop the headers of categories the query emptied out.
+    if state.refreshCategoryVisibility then
+        state.refreshCategoryVisibility()
+    end
 end
 state.refreshSearch = refreshSearch
 local searchRefreshToken: number = 0
@@ -10011,6 +12522,9 @@ local SettingsScroll = create("ScrollingFrame", {
     ScrollingDirection = Enum.ScrollingDirection.Y,
     Size = UDim2.fromScale(1, 1),
 })
+-- Setting rows are label + control across their full width, so this page is
+-- never split into two narrow columns no matter how wide the shell gets.
+SettingsScroll:SetAttribute("CardGridSingleColumn", true)
 
 create("UIPadding", {
     Parent = SettingsScroll,
@@ -10028,42 +12542,52 @@ local _SettingsLayout = create("UIListLayout", {
     SortOrder = Enum.SortOrder.LayoutOrder,
 })
 
+-- Settings rows.
+--
+-- A row is one line: its name, vertically centred on the left, and its
+-- control on the right. The explanatory second line every row used to carry
+-- was removed — the names say what they do and the descriptions only made the
+-- page twice as tall. `descriptionText` is still accepted so every existing
+-- call site (and any game module) keeps working; it is simply not rendered.
 local function createSettingRow(
     titleText: string,
-    descriptionText: string,
+    _descriptionText: string,
     height: number?
 ): (Frame, Frame)
+    local rowHeight: number = height or math.max(38, state.layout.cardHeight)
     local row = create("Frame", {
         Parent = getFeatureCardParent(SettingsScroll),
+        Name = "Setting_" .. titleText:gsub("%W", ""),
         BackgroundColor3 = state.guiStyle == "Default"
             and Theme.DefaultSurface
             or Theme.Surface,
         BackgroundTransparency = state.guiStyle == "Default" and 0.58 or 0,
         BorderSizePixel = 0,
-        Size = UDim2.new(1, -4, 0, height or 62),
+        Size = UDim2.new(1, -2, 0, rowHeight),
     })
 
-    local title = makeTextLabel(row, titleText, 15)
+    local title = makeTextLabel(row, titleText, 12)
+    title.Name = "SettingTitle"
     title.FontFace = CONTROL_FONT
-    title.Position = UDim2.fromOffset(14, 7)
-    title.Size = UDim2.new(0.46, -14, 0, 24)
-
-    local description = makeTextLabel(row, descriptionText, 12)
-    description.TextColor3 = Color3.fromRGB(176, 176, 182)
-    description.Position = UDim2.fromOffset(14, 30)
-    description.Size = UDim2.new(0.48, -14, 0, 22)
+    title.AnchorPoint = Vector2.new(0, 0.5)
+    title.Position = UDim2.new(0, 14, 0.5, 0)
+    title.Size = UDim2.new(0.46, -14, 1, 0)
+    title.TextTruncate = Enum.TextTruncate.AtEnd
+    title.TextYAlignment = Enum.TextYAlignment.Center
 
     local control = create("Frame", {
         Parent = row,
+        Name = "SettingControl",
+        AnchorPoint = Vector2.new(0, 0.5),
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
-        Position = UDim2.new(0.5, 8, 0, 8),
-        Size = UDim2.new(0.5, -22, 1, -16),
+        Position = UDim2.new(0.5, 6, 0.5, 0),
+        Size = UDim2.new(0.5, -18, 1, -12),
     })
 
     create("UICorner", {
         Parent = row,
-        CornerRadius = UDim.new(0, 10),
+        CornerRadius = cornerRadius(UI_RADIUS.card),
     })
     create("UIStroke", {
         Parent = row,
@@ -10078,13 +12602,114 @@ local function createSettingRow(
     return (row :: any) :: Frame, (control :: any) :: Frame
 end
 
+-- Switch-free toggle rows.
+--
+-- Blur mode and Interface motion used to carry a switch control. They now
+-- behave exactly like a module card: the whole row is the button, a click
+-- flips it, and the state is read from the row itself (accent stripe, brighter
+-- surface and an ON/OFF caption) instead of from a separate widget.
+state.settingRowRepaint = setmetatable({}, {__mode = "k"}) :: any
+
+local function makeToggleSettingRow(
+    row: Frame,
+    control: Frame,
+    enabled: boolean,
+    onToggle: (boolean) -> ()
+): (state: boolean) -> ()
+    row:SetAttribute("ToggleRow", true)
+    local stripe: Frame = create("Frame", {
+        Parent = row,
+        Name = "ActiveStripe",
+        AnchorPoint = Vector2.new(0, 0.5),
+        BackgroundColor3 = Theme.DefaultAccent,
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Position = UDim2.new(0, 0, 0.5, 0),
+        Size = UDim2.new(0, 2, 1, -14),
+        ZIndex = 3,
+    }) :: Frame
+    create("UICorner", {Parent = stripe, CornerRadius = UDim.new(1, 0)})
+
+    local status: TextLabel = makeTextLabel(control, "OFF", 10)
+    status.Name = "SettingState"
+    status.AnchorPoint = Vector2.new(1, 0.5)
+    status.Position = UDim2.new(1, 0, 0.5, 0)
+    status.Size = UDim2.fromOffset(48, 20)
+    status.TextColor3 = Theme.DefaultTextMuted
+    status.TextXAlignment = Enum.TextXAlignment.Right
+    status.ZIndex = 3
+
+    local activation: TextButton = create("TextButton", {
+        Parent = row,
+        Name = "ActivationTarget",
+        Active = true,
+        AutoButtonColor = false,
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Size = UDim2.fromScale(1, 1),
+        Text = "",
+        ZIndex = 4,
+    }) :: TextButton
+
+    local current: boolean = enabled
+    local function paint(): ()
+        -- Kept in sync from one place: clicks, restyles and external state
+        -- changes all end up here.
+        row.BackgroundColor3 = current
+            and Theme.DefaultSurfaceHover
+            or Theme.DefaultSurface
+        row.BackgroundTransparency = current and 0.42 or 0.58
+        stripe.BackgroundTransparency = current and 0 or 1
+        status.Text = current and "ON" or "OFF"
+        status.TextColor3 = current and Theme.DefaultText or Theme.DefaultTextMuted
+    end
+    paint()
+    state.settingRowRepaint[row] = paint
+
+    trackUiConnection(activation.MouseButton1Click:Connect(function(): ()
+        current = not current
+        paint()
+        onToggle(current)
+    end))
+    trackUiConnection(row.MouseEnter:Connect(function(): ()
+        TweenService:Create(
+            row,
+            TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+            {BackgroundTransparency = current and 0.34 or 0.46}
+        ):Play()
+    end))
+    trackUiConnection(row.MouseLeave:Connect(function(): ()
+        TweenService:Create(
+            row,
+            TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+            {BackgroundTransparency = current and 0.42 or 0.58}
+        ):Play()
+    end))
+
+    -- Returned so an external change (a keybind, a teardown) can push the row
+    -- back in sync without going through a click.
+    return function(nextState: boolean): ()
+        current = nextState
+        paint()
+    end
+end
+
 state.restyleSettings = function(isDefault: boolean): ()
     SettingsScroll.ScrollBarImageColor3 = isDefault
         and Theme.DefaultOutline
         or Color3.fromRGB(100, 100, 100)
     for _, row: Frame in ipairs(state.settingRows) do
-        row.BackgroundColor3 = isDefault and Theme.DefaultSurface or Theme.Surface
-        row.BackgroundTransparency = isDefault and 0.58 or 0
+        -- Click-to-toggle rows paint their own surface from their state; a
+        -- restyle must not reset an enabled row back to the idle colour.
+        local repaint: any = row:GetAttribute("ToggleRow") == true
+            and state.settingRowRepaint
+            and state.settingRowRepaint[row]
+        if repaint then
+            repaint()
+        else
+            row.BackgroundColor3 = isDefault and Theme.DefaultSurface or Theme.Surface
+            row.BackgroundTransparency = isDefault and 0.58 or 0
+        end
         local rowStroke: UIStroke? = row:FindFirstChild("SettingStroke") :: UIStroke?
         if rowStroke then
             rowStroke.Color = isDefault and Theme.DefaultOutline or Theme.Outline
@@ -10182,20 +12807,42 @@ local blurRow, blurControl = createSettingRow(
 )
 blurRow.LayoutOrder = 2
 
-local BlurButton: TextButton, BlurMark: TextLabel =
-    createCheckControl(blurControl, state.blurEnabled)
-BlurButton.AnchorPoint = Vector2.new(1, 0.5)
-BlurButton.Position = UDim2.new(1, 0, 0.5, 0)
+-- No switch: the row is the button, exactly like a module card.
+local setBlurRowState = makeToggleSettingRow(
+    blurRow,
+    blurControl,
+    state.blurEnabled,
+    function(enabled: boolean): ()
+        state.blurEnabled = enabled
+        state.setBlurVisible(true)
+        configData.ui.blurEnabled = enabled
+        queueConfigSave()
+        notify(enabled and "Blur mode enabled" or "Blur mode disabled")
+    end
+)
+state.setBlurRowState = setBlurRowState
 
 local motionRow, motionControl = createSettingRow(
     "Interface motion",
     "Smooth transitions for cards, tabs, and menu controls"
 )
 motionRow.LayoutOrder = 3
-local MotionButton: TextButton, MotionMark: TextLabel =
-    createCheckControl(motionControl, state.animationsEnabled)
-MotionButton.AnchorPoint = Vector2.new(1, 0.5)
-MotionButton.Position = UDim2.new(1, 0, 0.5, 0)
+local setMotionRowState = makeToggleSettingRow(
+    motionRow,
+    motionControl,
+    state.animationsEnabled,
+    function(enabled: boolean): ()
+        state.animationsEnabled = enabled
+        configData.ui.animationsEnabled = enabled
+        -- The hail is motion too, so it must follow this row immediately.
+        if state.refreshBlurDecoration then
+            pcall(state.refreshBlurDecoration)
+        end
+        queueConfigSave()
+        notify(enabled and "Interface motion enabled" or "Interface motion disabled")
+    end
+)
+state.setMotionRowState = setMotionRowState
 
 local keyRow, keyControl = createSettingRow(
     "Menu key",
@@ -10296,8 +12943,6 @@ local MobileResetButton = makeButton(
 )
 MobileResetButton.Size = UDim2.fromScale(1, 1)
 
-local setBlurVisible = state.setBlurVisible
-
 -- Contribute the Settings/overlay-specific side effects to the shared
 -- visibility controller instead of replacing it. `state.setMenuVisible` stays
 -- the single entry point and always updates the blur, even if this builder
@@ -10368,22 +13013,6 @@ trackUiConnection(UserInputService.InputEnded:Connect(function(input: InputObjec
         or input.UserInputType == Enum.UserInputType.MouseButton1 then
         textSizeDragInput = nil
     end
-end))
-
-trackUiConnection(BlurButton.MouseButton1Click:Connect(function(): ()
-    state.blurEnabled = not state.blurEnabled
-    setCheckVisual(BlurButton, BlurMark, state.blurEnabled, true)
-    setBlurVisible(true)
-    configData.ui.blurEnabled = state.blurEnabled
-    queueConfigSave()
-    notify(state.blurEnabled and "Blur mode enabled" or "Blur mode disabled")
-end))
-
-trackUiConnection(MotionButton.MouseButton1Click:Connect(function(): ()
-    state.animationsEnabled = not state.animationsEnabled
-    setCheckVisual(MotionButton, MotionMark, state.animationsEnabled, true)
-    configData.ui.animationsEnabled = state.animationsEnabled
-    queueConfigSave()
 end))
 
 local reinjectBusy: boolean = false
@@ -10475,8 +13104,22 @@ trackUiConnection(DestructButton.MouseButton1Click:Connect(function(): ()
     DestructButton:SetAttribute("Disabled", true)
     DestructButton.Text = "REMOVING…"
     task.defer(function(): ()
-        if state.destruct then
-            state.destruct()
+        local destruct: any = state.destruct
+        if type(destruct) ~= "function" then
+            -- The teardown routine is defined at the very end of bootstrap;
+            -- if it is somehow missing, remove the interface anyway instead
+            -- of leaving the button stuck on "REMOVING…".
+            pcall(function(): ()
+                ScreenGui:Destroy()
+            end)
+            return
+        end
+        local ok: boolean, failure: any = pcall(destruct)
+        if not ok then
+            warn("[Random Testing Menu] Destruct: " .. tostring(failure))
+            pcall(function(): ()
+                ScreenGui:Destroy()
+            end)
         end
     end)
 end))
@@ -10540,113 +13183,55 @@ SectionManager.register("Config.", buildSettings)
 
 do
 local function initializeWindowInput(): ()
-local dragging: boolean = false
-local dragInput: InputObject? = nil
-local dragStart: Vector2 = Vector2.zero
-local dragStartPosition: Vector2 = Vector2.zero
+-- The shell is fixed.
+--
+-- There is no drag surface, no pointer bookkeeping and no persisted window
+-- geometry any more: `centerMain()` owns the one position the shell can have.
+-- Only the free-floating windows (favourites, overlays, per-overlay settings)
+-- are still movable, and they carry their own drag handlers.
+--
+-- A viewport change recomputes the responsive metrics, which re-centres the
+-- shell, re-flows the rail/header/cards through the layout listeners and
+-- pulls every floating window back inside the new screen bounds.
+local function reflowForViewport(force: boolean?): ()
+    task.defer(function(): ()
+        if not Main.Parent then
+            return
+        end
+        state.refreshLayout(force)
+        if state.floatingUi and state.floatingUi.reclamp then
+            state.floatingUi.reclamp()
+        end
+    end)
+end
 
-local function getPointerPosition(input: InputObject?): Vector2
-    if input and input.UserInputType == Enum.UserInputType.Touch then
-        return Vector2.new(input.Position.X, input.Position.Y)
+local viewportConnection: RBXScriptConnection? = nil
+local function bindViewport(): ()
+    if viewportConnection then
+        viewportConnection:Disconnect()
+        viewportConnection = nil
     end
-    return UserInputService:GetMouseLocation()
-end
-
-local function viewportSize(): Vector2
     local camera: Camera? = workspace.CurrentCamera
-    return camera and camera.ViewportSize or Vector2.new(1280, 720)
-end
-
-local function clampMainPosition(position: Vector2): Vector2
-    local screenSize: Vector2 = viewportSize()
-    local mainSize: Vector2 = Main.AbsoluteSize
-    return Vector2.new(
-        math.clamp(position.X, 0, math.max(0, screenSize.X - mainSize.X)),
-        math.clamp(position.Y, 0, math.max(0, screenSize.Y - mainSize.Y))
+    if not camera then
+        return
+    end
+    viewportConnection = trackUiConnection(
+        camera:GetPropertyChangedSignal("ViewportSize"):Connect(function(): ()
+            reflowForViewport(false)
+        end)
     )
 end
 
-local function saveWindowGeometry(): ()
-    configData.ui.windowPosition = {
-        Main.Position.X.Offset,
-        Main.Position.Y.Offset,
-    }
-    configData.ui.windowSize = nil
-    queueConfigSave()
-end
-
-local function bindDragHandle(handle: GuiObject): ()
-    trackUiConnection(handle.InputBegan:Connect(function(input: InputObject): ()
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-            or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = true
-            dragInput = input.UserInputType == Enum.UserInputType.Touch
-                and input
-                or dragInput
-            dragStart = getPointerPosition(input)
-            dragStartPosition = Vector2.new(
-                Main.Position.X.Offset,
-                Main.Position.Y.Offset
-            )
-        end
-    end))
-
-    trackUiConnection(handle.InputChanged:Connect(function(input: InputObject): ()
-        if input.UserInputType == Enum.UserInputType.MouseMovement
-            or input.UserInputType == Enum.UserInputType.Touch then
-            dragInput = input
-        end
-    end))
-end
-
-bindDragHandle(DefaultDragZone)
-
-state.globalInputChangedConnection = UserInputService.InputChanged:Connect(function(
-    input: InputObject
-): ()
-    if dragging and input == dragInput then
-        local delta: Vector2 = getPointerPosition(input) - dragStart
-        local nextPosition: Vector2 = clampMainPosition(
-            dragStartPosition + delta
-        )
-        Main.Position = UDim2.fromOffset(nextPosition.X, nextPosition.Y)
+bindViewport()
+-- The camera can be replaced (respawns, cutscenes, some anti-cheats), which
+-- would otherwise leave the menu listening to a dead camera and stuck in the
+-- mode it started in.
+trackUiConnection(workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(
+    function(): ()
+        bindViewport()
+        reflowForViewport(true)
     end
-end)
-
-state.globalInputEndedConnection = UserInputService.InputEnded:Connect(function(
-    input: InputObject
-): ()
-    if dragging
-        and (input.UserInputType == Enum.UserInputType.MouseButton1
-            or input.UserInputType == Enum.UserInputType.Touch) then
-        dragging = false
-        dragInput = nil
-        saveWindowGeometry()
-    end
-end)
-
-local camera: Camera? = workspace.CurrentCamera
-if camera then
-    trackUiConnection(camera:GetPropertyChangedSignal("ViewportSize"):Connect(
-        function(): ()
-            task.defer(function(): ()
-                if not Main.Parent then
-                    return
-                end
-                local resized: Vector2 = calculateWindowSize(viewportSize())
-                Main.Size = UDim2.fromOffset(resized.X, resized.Y)
-                local clamped: Vector2 = clampMainPosition(Vector2.new(
-                    Main.Position.X.Offset,
-                    Main.Position.Y.Offset
-                ))
-                Main.Position = UDim2.fromOffset(clamped.X, clamped.Y)
-                if state.floatingUi and state.floatingUi.reclamp then
-                    state.floatingUi.reclamp()
-                end
-            end)
-        end
-    ))
-end
+))
 
 state.globalInputBeganConnection = UserInputService.InputBegan:Connect(function(input)
     if state.keyCaptureCallback then
@@ -10708,14 +13293,38 @@ state.globalInputBeganConnection = UserInputService.InputBegan:Connect(function(
 end)
 end
 initializeWindowInput()
+
+-- One forced pass once the whole shell exists, so every listener (rail,
+-- header, cards, grids, floating windows) has applied the same metrics table
+-- before the intro curtain lifts.
+task.defer(function(): ()
+    state.refreshLayout(true)
+end)
 end
 
 local runtimeCleaned: boolean = false
+-- Teardown.
+--
+-- Every step runs inside its own `pcall`. The previous version was one long
+-- unprotected block, so a single failing step (a module cleanup, a stale
+-- connection, a toolkit that never finished initializing) aborted the rest of
+-- the teardown *and* the `ScreenGui:Destroy()` that follows it — which is
+-- exactly how Destruct could leave the menu on screen stuck on "REMOVING…".
+-- Now a failure is logged and the teardown carries on.
+local function cleanupStep(label: string, step: () -> ()): ()
+    local ok: boolean, failure: any = pcall(step)
+    if not ok then
+        warn("[Random Testing Menu] destruct/" .. label .. ": " .. tostring(failure))
+    end
+end
+
 local function cleanupRuntime(): ()
     if runtimeCleaned then
         return
     end
     runtimeCleaned = true
+
+    cleanupStep("session", function(): ()
         sessionTrackingActive = false
         sessionBindGeneration += 1
         if deathConnection then
@@ -10724,68 +13333,122 @@ local function cleanupRuntime(): ()
         end
         state.sessionInfo = nil
         state.getOverlayTarget = nil
-        for _, feature in ipairs(allFeatures) do
-            if feature.enabled then
-                pcall(function()
-                    feature.onToggle(false)
-                end)
-                feature.enabled = false
-            end
-        end
+    end)
 
+    -- Disabling the features is what actually removes the effects from the
+    -- game (flight, ESP, lighting, hitboxes...), so each module is isolated:
+    -- one module that throws while switching off cannot keep the others on.
+    for _, feature in ipairs(allFeatures) do
+        if feature.enabled then
+            cleanupStep("feature " .. tostring(feature.name), function(): ()
+                feature.onToggle(false)
+            end)
+            feature.enabled = false
+        end
+    end
+
+    cleanupStep("feature connections", function(): ()
         for name in pairs(featureConnections) do
             disconnectFeatureConnection(name)
         end
+    end)
+    cleanupStep("tooltips", function(): ()
         for _, connection: RBXScriptConnection in ipairs(state.tooltipConnections) do
             connection:Disconnect()
         end
         table.clear(state.tooltipConnections)
+    end)
+    cleanupStep("ui connections", function(): ()
         for _, connection: RBXScriptConnection in ipairs(state.uiConnections) do
             connection:Disconnect()
         end
         table.clear(state.uiConnections)
-
-        state.universalProjectileCalibration:destroy()
+    end)
+    cleanupStep("projectile calibration", function(): ()
+        local calibration: any = state.universalProjectileCalibration
+        if calibration and type(calibration.destroy) == "function" then
+            calibration:destroy()
+        end
+    end)
+    cleanupStep("task manager", function(): ()
         TaskManager:Destroy()
-        if state.globalInputChangedConnection then
-            state.globalInputChangedConnection:Disconnect()
+    end)
+    cleanupStep("global input", function(): ()
+        for _, key: string in ipairs({
+            "globalInputChangedConnection",
+            "globalInputEndedConnection",
+            "globalInputBeganConnection",
+        }) do
+            local connection: any = state[key]
+            if connection then
+                connection:Disconnect()
+                state[key] = nil
+            end
         end
-        if state.globalInputEndedConnection then
-            state.globalInputEndedConnection:Disconnect()
-        end
-        if state.globalInputBeganConnection then
-            state.globalInputBeganConnection:Disconnect()
-        end
+    end)
+    cleanupStep("colour picker", function(): ()
         if colorPicker.inputChanged then
             colorPicker.inputChanged:Disconnect()
         end
         if colorPicker.inputEnded then
             colorPicker.inputEnded:Disconnect()
         end
-        cleanupMM2Runtime()
-        if state.cleanupTRSRuntime then
-            state.cleanupTRSRuntime()
+    end)
+    cleanupStep("MM2 runtime", cleanupMM2Runtime)
+    for _, key: string in ipairs({
+        "cleanupTRSRuntime",
+        "cleanupVDRuntime",
+        "cleanupMVSDRuntime",
+    }) do
+        local cleanup: any = state[key]
+        if type(cleanup) == "function" then
+            cleanupStep(key, cleanup)
         end
-        if state.cleanupVDRuntime then
-            state.cleanupVDRuntime()
+    end
+    cleanupStep("mobile buttons", function(): ()
+        if state.mobileUi and type(state.mobileUi.destroy) == "function" then
+            state.mobileUi.destroy()
         end
-        if state.cleanupMVSDRuntime then
-            state.cleanupMVSDRuntime()
-        end
-        saveConfigNow()
+    end)
+    cleanupStep("config", saveConfigNow)
 
-        -- Always release the blur, even if it was mid-tween.
+    -- Always release the blur, even if it was mid-tween.
+    cleanupStep("blur", function(): ()
         suspendBlur()
+        if state.destroyBlurDecoration then
+            state.destroyBlurDecoration()
+        end
         if Blur.Parent then
             Blur:Destroy()
         end
+    end)
+
+    state.destructed = true
 end
 
+-- The GUI is destroyed even when a cleanup step failed: an interface the user
+-- asked to remove must always disappear.
 state.destruct = function(): ()
-    cleanupRuntime()
-    if ScreenGui.Parent then
-        ScreenGui:Destroy()
-    end
+    cleanupStep("runtime", cleanupRuntime)
+    cleanupStep("screen gui", function(): ()
+        if ScreenGui.Parent then
+            ScreenGui:Destroy()
+        end
+    end)
+    -- Belt and braces: anything the runtime parented straight into PlayerGui
+    -- under the shared name (an older injection, a re-parented shell) goes too.
+    cleanupStep("leftovers", function(): ()
+        for _, child: Instance in ipairs(PlayerGui:GetChildren()) do
+            if child.Name == GUI_NAME then
+                child:Destroy()
+            end
+        end
+        local lighting: Instance? = Lighting:FindFirstChild(BLUR_NAME)
+        if lighting then
+            lighting:Destroy()
+        end
+    end)
+    print("[Random Testing Menu] Destruct complete.")
 end
 
 ScreenGui.AncestryChanged:Connect(function(_: Instance, parent: Instance?): ()
@@ -10816,6 +13479,7 @@ local initialized: boolean, bootstrapError: any = xpcall(bootstrap, function(mes
 end)
 
 if not initialized then
+    bootstrapFailed = true
     if bootstrapStatusLabel and bootstrapStatusLabel.Parent then
         bootstrapStatusLabel.Text = "Initialization error — check executor console"
         bootstrapStatusLabel.TextColor3 = Color3.fromRGB(230, 105, 105)

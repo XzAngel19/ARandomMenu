@@ -3465,8 +3465,12 @@ state.mm2ShotFeedback.resolve = function(
         local currentHumanoid: Humanoid? = targetCharacter
             and targetCharacter:FindFirstChildOfClass("Humanoid")
             :: Humanoid?
+        -- `Players` is a cloneref handle here, so it never compares equal to
+        -- the service `Parent` returns: this used to be true on every shot
+        -- and confirmed every hit, including the misses. A player that left
+        -- the game simply has no parent.
         local hitConfirmed: boolean = directHit
-            or candidate.target.Parent ~= Players
+            or candidate.target.Parent == nil
             or targetCharacter == nil
             or targetCharacter.Parent == nil
             or currentHumanoid == nil
