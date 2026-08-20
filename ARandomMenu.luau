@@ -3692,6 +3692,7 @@ end
 -- Game modules still ask for "their" page by name. There is no such page any
 -- more: every card goes on the one board, where the grid groups it under a
 -- header for its category.
+state.universalScroll = UniversalScroll
 state.trsScroll = UniversalScroll
 state.vdScroll = UniversalScroll
 state.mvsdScroll = UniversalScroll
@@ -3723,6 +3724,9 @@ print("[RTM:Bootstrap] GUI base visible; construyendo funciones universales")
 
 local universalFeatures = {}
 local movementFeatures = {}
+-- Published for the features that used to be written inside this file: a card
+-- files itself under the same registry it always did.
+state.movementFeatures = movementFeatures
 local mm2Features = {}
 state.trsFeatures = {}
 -- Spoof modules keep their own registry and their own page.
@@ -10345,1024 +10349,36 @@ local performFling: (Player) -> () = function(_target: Player): () end
 
 do
 
-local antiVoidPlatform: Part? = nil
-local antiVoidLastGroundY: number? = nil
-local antiVoidFreefallSeconds: number = 0
-local antiVoidPlatformToken: number = 0
-
-local function removeAntiVoidPlatform(): ()
-    antiVoidPlatformToken = antiVoidPlatformToken + 1
-    if antiVoidPlatform then
-        antiVoidPlatform:Destroy()
-        antiVoidPlatform = nil
-    end
-end
-
-local function createAntiVoidPlatform(root: BasePart, humanoid: Humanoid): ()
-    removeAntiVoidPlatform()
-
-    local platform: Part = Instance.new("Part")
-    platform.Name = "RTM_AntiVoidPlatform"
-    platform.Anchored = true
-    platform.CanCollide = true
-    platform.CanQuery = false
-    platform.CanTouch = false
-    platform.CastShadow = false
-    platform.Size = Vector3.new(42, 1, 42)
-    platform.Transparency = 1
-    platform.CFrame = CFrame.new(root.Position - Vector3.new(0, 4.25, 0))
-    platform.Parent = workspace
-    antiVoidPlatform = platform
-
-    local velocity: Vector3 = root.AssemblyLinearVelocity
-    root.AssemblyLinearVelocity = Vector3.new(velocity.X * 0.25, 0, velocity.Z * 0.25)
-    root.AssemblyAngularVelocity = Vector3.zero
-    humanoid:ChangeState(Enum.HumanoidStateType.Landed)
-
-    local token: number = antiVoidPlatformToken
-    task.delay(3, function(): ()
-        if antiVoidPlatformToken == token then
-            removeAntiVoidPlatform()
-        end
-    end)
-end
-
-local function toggleAntiVoid(enabled: boolean): ()
-    disconnectFeatureConnection("AntiVoid")
-    removeAntiVoidPlatform()
-    antiVoidLastGroundY = nil
-    antiVoidFreefallSeconds = 0
-
-    if not enabled then
-        return
-    end
-
-    featureConnections.AntiVoid = TaskManager:Connect(function(deltaTime: number): ()
-        local _, humanoid, root = getCharacterParts()
-        if not humanoid or not root then
-            return
-        end
-
-        if humanoid.FloorMaterial ~= Enum.Material.Air then
-            antiVoidLastGroundY = root.Position.Y
-            antiVoidFreefallSeconds = 0
-            return
-        end
-
-        antiVoidFreefallSeconds = antiVoidFreefallSeconds + deltaTime
-        local destroyHeight: number = workspace.FallenPartsDestroyHeight
-        if destroyHeight ~= destroyHeight then
-            destroyHeight = -500
-        end
-
-        local nearDestroyLayer: boolean = root.Position.Y <= destroyHeight + 45
-        local fellFarFromGround: boolean = antiVoidLastGroundY ~= nil
-            and root.Position.Y <= (antiVoidLastGroundY :: number) - 120
-            and antiVoidFreefallSeconds >= 1.1
-            and root.AssemblyLinearVelocity.Y < -45
-
-        if nearDestroyLayer or fellFarFromGround then
-            createAntiVoidPlatform(root, humanoid)
-            antiVoidFreefallSeconds = 0
-        end
-    end)
-end
-
-local gravitySettings = {value = 196.2}
-local originalGravity = workspace.Gravity
-
-local function toggleGravity(enabled)
-    disconnectFeatureConnection("Gravity")
-
-    if not enabled then
-        workspace.Gravity = originalGravity
-        return
-    end
-
-    originalGravity = workspace.Gravity
-    featureConnections.Gravity = TaskManager:Connect(function()
-        workspace.Gravity = gravitySettings.value
-    end)
-end
-
-local jumpPowerSettings = {value = 80}
-local originalJumpPower = setmetatable({}, {__mode = "k"})
-
-local function restoreJumpPower()
-    for humanoid, original in pairs(originalJumpPower) do
-        if humanoid and humanoid.Parent then
-            humanoid.JumpPower = original.jumpPower
-            humanoid.UseJumpPower = original.useJumpPower
-        end
-    end
-    originalJumpPower = setmetatable({}, {__mode = "k"})
-end
-
-local function toggleJumpPower(enabled)
-    disconnectFeatureConnection("JumpPower")
-    restoreJumpPower()
-
-    if not enabled then
-        return
-    end
-
-    featureConnections.JumpPower = TaskManager:Connect(function()
-        local _, humanoid = getCharacterParts()
-        if not humanoid then
-            return
-        end
-
-        if not originalJumpPower[humanoid] then
-            originalJumpPower[humanoid] = {
-                jumpPower = humanoid.JumpPower,
-                useJumpPower = humanoid.UseJumpPower,
-            }
-        end
-
-        humanoid.UseJumpPower = true
-        humanoid.JumpPower = jumpPowerSettings.value
-    end)
-end
-
--- Infinite Jump.
---
--- Rewritten: on touch the jump button re-fires `JumpRequest` many times per
--- second while it is held, so every request adding velocity made the module
--- uncontrollable and made it look like it was still on after being switched
--- off. Each mode is now a distinct, rate-limited behaviour.
---
---   Normal  every jump sets the same height. Predictable, does not stack.
---   Impulse the same height reached with a force, so the character stays a
---           normal physics body instead of having its velocity overwritten.
---   Stack   each jump adds to the current climb (the old "Normal"), capped.
---   Rise    hold jump to fly straight up at a steady speed.
---   Fall    jumping mid-air cancels the fall instead of launching you, which
---           is what a fall-mode jump was supposed to do — it used to be an
---           exact copy of Normal, so it never worked at all.
-local infiniteJumpSettings = {
-    mode = "Normal",
-    strength = 50,
-    riseSpeed = 75,
-    -- Minimum spacing between jumps. Touch fires jump requests continuously;
-    -- without this the character leaves the map in a second.
-    interval = 0.18,
-    stackCeiling = 160,
-}
--- Both the enabled flag and the rate limiter live on `state`: bootstrap() is
--- already at Luau's 200 local-register ceiling.
-state.infiniteJumpEnabled = false
-state.lastInfiniteJumpAt = -math.huge
-
-local function performInfiniteJump(): ()
-    -- A disconnected signal can still deliver the event it was already
-    -- dispatching, which on touch — where the jump button fires continuously —
-    -- kept launching the character after the module had been switched off.
-    if not state.infiniteJumpEnabled then
-        return
-    end
-
-    local _, humanoid, root = getCharacterParts()
-    if not humanoid or not root or humanoid.Health <= 0 then
-        return
-    end
-
-    -- Touch cannot tap as deliberately as a keyboard can: the on-screen jump
-    -- button repeats for as long as a finger rests on it, so the floor on the
-    -- spacing is higher there no matter what the slider says.
-    local spacing: number = infiniteJumpSettings.interval
-    if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
-        spacing = math.max(spacing, 0.25)
-    end
-
-    local now: number = os.clock()
-    if now - state.lastInfiniteJumpAt < spacing then
-        return
-    end
-    state.lastInfiniteJumpAt = now
-
-    local velocity: Vector3 = root.AssemblyLinearVelocity
-    local vertical: number
-    if infiniteJumpSettings.mode == "Stack" then
-        vertical = math.min(
-            velocity.Y + infiniteJumpSettings.strength,
-            infiniteJumpSettings.stackCeiling
-        )
-    elseif infiniteJumpSettings.mode == "Impulse" then
-        -- Force instead of a velocity write: the body keeps whatever physics
-        -- the game applies to it, which survives checks that watch for
-        -- AssemblyLinearVelocity being overwritten.
-        humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-        root:ApplyImpulse(
-            Vector3.new(0, infiniteJumpSettings.strength - velocity.Y, 0)
-                * root.AssemblyMass
-        )
-        return
-    elseif infiniteJumpSettings.mode == "Fall" then
-        -- Cancel the fall: kill downward momentum and hold position for an
-        -- instant. Jumping again keeps you up without ever launching.
-        if velocity.Y >= 0 then
-            return
-        end
-        vertical = 0
-    else
-        vertical = infiniteJumpSettings.strength
-    end
-
-    humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-    root.AssemblyLinearVelocity = Vector3.new(velocity.X, vertical, velocity.Z)
-end
-
-local function toggleInfiniteJump(enabled)
-    disconnectFeatureConnection("InfiniteJump")
-    disconnectFeatureConnection("InfiniteJumpRise")
-    state.infiniteJumpEnabled = false
-    state.lastInfiniteJumpAt = -math.huge
-
-    if not enabled then
-        return
-    end
-    state.infiniteJumpEnabled = true
-
-    -- `JumpRequest` is the one jump signal every device raises.
-    featureConnections.InfiniteJump = state.onJumpRequest(function(): ()
-        if infiniteJumpSettings.mode == "Rise" then
-            return
-        end
-        performInfiniteJump()
-    end)
-
-    featureConnections.InfiniteJumpRise = TaskManager:Connect(function(): ()
-        if not state.infiniteJumpEnabled
-            or infiniteJumpSettings.mode ~= "Rise"
-            or not state.isJumpHeld() then
-            return
-        end
-
-        local _, humanoid, root = getCharacterParts()
-        if not humanoid or not root or humanoid.Health <= 0 then
-            return
-        end
-
-        humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
-        local velocity = root.AssemblyLinearVelocity
-        root.AssemblyLinearVelocity = Vector3.new(
-            velocity.X,
-            infiniteJumpSettings.riseSpeed,
-            velocity.Z
-        )
-    end)
-end
-
-local walkSpeedSettings = {value = 32}
-local originalWalkSpeed = setmetatable({}, {__mode = "k"})
-
-local function restoreWalkSpeed()
-    for humanoid, value in pairs(originalWalkSpeed) do
-        if humanoid and humanoid.Parent then
-            humanoid.WalkSpeed = value
-        end
-    end
-    originalWalkSpeed = setmetatable({}, {__mode = "k"})
-end
-
-local function toggleWalkSpeed(enabled)
-    disconnectFeatureConnection("WalkSpeed")
-    restoreWalkSpeed()
-
-    if not enabled then
-        return
-    end
-
-    featureConnections.WalkSpeed = TaskManager:Connect(function()
-        local _, humanoid = getCharacterParts()
-        if humanoid then
-            if not originalWalkSpeed[humanoid] then
-                originalWalkSpeed[humanoid] = humanoid.WalkSpeed
-            end
-            humanoid.WalkSpeed = walkSpeedSettings.value
-        end
-    end)
-end
 
 
-local fovSettings = {value = 90}
-state.fovController = state.fovController or {
-    owners = {},
-    baselines = setmetatable({}, {__mode = "k"}),
-    sequence = 0,
-}
-state.fovController.set = function(ownerId: string, value: number?): ()
-    local controller: any = state.fovController
-    if value == nil then
-        controller.owners[ownerId] = nil
-        if next(controller.owners) == nil then
-            for camera: Camera, baseline: number in pairs(controller.baselines) do
-                if camera.Parent then
-                    camera.FieldOfView = baseline
-                end
-            end
-            controller.baselines = setmetatable({}, {__mode = "k"})
-        end
-        return
-    end
-    local owner: any = controller.owners[ownerId]
-    if not owner then
-        controller.sequence += 1
-        owner = {sequence = controller.sequence, value = value}
-        controller.owners[ownerId] = owner
-    else
-        owner.value = value
-    end
-end
-state.fovController.apply = function(camera: Camera?): ()
-    if not camera then
-        return
-    end
-    local controller: any = state.fovController
-    if controller.baselines[camera] == nil then
-        controller.baselines[camera] = camera.FieldOfView
-    end
-    local selected: any = nil
-    for _, owner: any in pairs(controller.owners) do
-        if not selected or owner.sequence > selected.sequence then
-            selected = owner
-        end
-    end
-    if selected then
-        camera.FieldOfView = selected.value
-    end
-end
 
-local function toggleFov(enabled)
-    disconnectFeatureConnection("FOV")
-    state.fovController.set("Universal", enabled and fovSettings.value or nil)
-    if not enabled then
-        return
-    end
 
-    featureConnections.FOV = TaskManager:Connect(function()
-        state.fovController.set("Universal", fovSettings.value)
-        state.fovController.apply(workspace.CurrentCamera)
-    end)
-end
 
-local toggleNoclip: (boolean) -> ()
-do
-local originalCollision = setmetatable({}, {__mode = "k"})
 
-local function restoreCollision()
-    for part, canCollide in pairs(originalCollision) do
-        if part and part.Parent then
-            part.CanCollide = canCollide
-        end
-    end
-    originalCollision = setmetatable({}, {__mode = "k"})
-end
 
-function toggleNoclip(enabled: boolean): ()
-    disconnectFeatureConnection("Noclip")
-    restoreCollision()
 
-    if not enabled then
-        return
-    end
-
-    featureConnections.Noclip = TaskManager:Connect(function()
-        local character = LocalPlayer.Character
-        if not character then
-            return
-        end
-
-        for _, descendant in ipairs(character:GetDescendants()) do
-            if descendant:IsA("BasePart") then
-                if originalCollision[descendant] == nil then
-                    originalCollision[descendant] = descendant.CanCollide
-                end
-                descendant.CanCollide = false
-            end
-        end
-    end)
-end
-end
-
-local function toggleAntiAfk(enabled)
-    disconnectFeatureConnection("AntiAFK")
-
-    if not enabled then
-        return
-    end
-
-    featureConnections.AntiAFK = LocalPlayer.Idled:Connect(function()
-        local virtualUserOk, virtualUser = pcall(function()
-            return game:GetService("VirtualUser")
-        end)
-        if virtualUserOk and virtualUser then
-            virtualUser:CaptureController()
-            virtualUser:ClickButton2(Vector2.new(0, 0))
-        end
-    end)
-end
-
-local flingRunning = false
+-- Overwritten by the Friend List module the moment it loads; this is the
+-- answer for the seconds before that, and for a client where the module fails
+-- to download.
 state.isProtectedTarget = function(_targetPlayer: Player): boolean
     return false
 end
-local antiFlingSettings = {velocityLimit = 120}
-local antiFlingSafeCFrame = nil
-
-local function toggleAntiFling(enabled)
-    disconnectFeatureConnection("AntiFling")
-    antiFlingSafeCFrame = nil
-
-    if not enabled then
-        return
-    end
-
-    featureConnections.AntiFling = TaskManager:Connect(function()
-        if flingRunning then
-            return
-        end
-
-        local _, humanoid, root = getCharacterParts()
-        if not humanoid or not root then
-            return
-        end
-
-        local linearSpeed = root.AssemblyLinearVelocity.Magnitude
-        local angularSpeed = root.AssemblyAngularVelocity.Magnitude
-
-        if linearSpeed > antiFlingSettings.velocityLimit
-            or angularSpeed > antiFlingSettings.velocityLimit then
-            root.AssemblyLinearVelocity = Vector3.zero
-            root.AssemblyAngularVelocity = Vector3.zero
-            if antiFlingSafeCFrame then
-                root.CFrame = antiFlingSafeCFrame
-            end
-        elseif humanoid.FloorMaterial ~= Enum.Material.Air
-            and linearSpeed < antiFlingSettings.velocityLimit * 0.45 then
-            antiFlingSafeCFrame = root.CFrame
-        end
-    end)
-end
-
-local lagSwitchSettings = {incomingLag = 999}
-local originalIncomingLag = 0
-
-local function setIncomingReplicationLag(value)
-    local success = pcall(function()
-        settings():GetService("NetworkSettings").IncomingReplicationLag = value
-    end)
-    return success
-end
-
-local function toggleLagSwitch(enabled)
-    disconnectFeatureConnection("LagSwitch")
-
-    if not enabled then
-        setIncomingReplicationLag(originalIncomingLag)
-        return
-    end
-
-    pcall(function()
-        originalIncomingLag = settings():GetService(
-            "NetworkSettings"
-        ).IncomingReplicationLag
-    end)
-
-    if not setIncomingReplicationLag(lagSwitchSettings.incomingLag) then
-        error("NetworkSettings is not available in this client.")
-    end
-
-    featureConnections.LagSwitch = TaskManager:Connect(function()
-        setIncomingReplicationLag(lagSwitchSettings.incomingLag)
-    end)
-end
-
-type UniversalFlingSettings = {
-    target: string,
-    duration: number,
-    power: number,
-    returnToStart: boolean,
-}
-
-local universalFlingSettings: UniversalFlingSettings = {
-    target = "",
-    duration = 6,
-    power = 1,
-    returnToStart = true,
-}
-
-findPlayerByText = function(text: string): Player?
-    local query: string = string.lower(text)
-    if query == "" then
-        local _, _, localRoot = getCharacterParts()
-        local nearest: Player? = nil
-        local nearestDistance: number = math.huge
-
-        if localRoot then
-            for _, player: Player in ipairs(Players:GetPlayers()) do
-                local root: BasePart? = player.Character
-                    and player.Character:FindFirstChild("HumanoidRootPart")
-                    :: BasePart?
-                if player ~= LocalPlayer and root then
-                    local distance: number = (root.Position - localRoot.Position).Magnitude
-                    if distance < nearestDistance then
-                        nearest = player
-                        nearestDistance = distance
-                    end
-                end
-            end
-        end
-        return nearest
-    end
-
-    for _, player: Player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer then
-            local username: string = string.lower(player.Name)
-            local displayName: string = string.lower(player.DisplayName)
-            if string.sub(username, 1, #query) == query
-                or string.sub(displayName, 1, #query) == query then
-                return player
-            end
-        end
-    end
-
-    return nil
-end
-
--- Fling.
---
--- Rewritten because the previous version reported "stopped after the 5 second
--- safety limit" the instant it was activated. The loop guarded on
--- `targetPlayer.Parent == Players`, but `Players` here is a `cloneref` handle:
--- the clone never compares equal to the real service that `Parent` returns, so
--- on any executor with `cloneref` the condition was false on the first
--- iteration, the loop body never ran and the routine fell straight through to
--- its timeout message.
---
--- The rewrite drops instance-identity comparisons entirely (a player is in the
--- game while it has a parent), re-reads the local character every iteration so
--- a respawn cannot strand the routine, alternates Stepped/Heartbeat so the
--- velocity actually replicates, and always restores the character.
-performFling = function(targetPlayer: Player): ()
-    if state.isProtectedTarget(targetPlayer) then
-        notify("That player is protected by FriendList.")
-        return
-    end
-    if flingRunning then
-        notify("A fling is already running.")
-        return
-    end
-
-    flingRunning = true
-    task.spawn(function(): ()
-        local _, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
-        if not humanoid or not root then
-            flingRunning = false
-            notify("Your character is not ready.")
-            return
-        end
-
-        local savedCFrame: CFrame = root.CFrame
-        local savedAutoRotate: boolean = humanoid.AutoRotate
-        local savedCameraSubject: (Humanoid | BasePart)? = workspace.CurrentCamera
-            and workspace.CurrentCamera.CameraSubject
-            :: (Humanoid | BasePart)?
-        local touchedTarget: boolean = false
-        local reason: string = "timeout"
-
-        -- The velocity magnitude is what does the flinging: the engine
-        -- resolves the collision between two fast-moving assemblies and the
-        -- server accepts it because we own our own character.
-        local power: number = 9e4 * math.clamp(universalFlingSettings.power, 0.25, 4)
-        local duration: number = math.clamp(universalFlingSettings.duration, 1, 20)
-
-        local success: boolean, errorMessage: any = pcall(function(): ()
-            local startedAt: number = os.clock()
-            local step: number = 0
-            local destroyHeight: number = workspace.FallenPartsDestroyHeight
-            if destroyHeight ~= destroyHeight then
-                destroyHeight = -500
-            end
-            local voidThreshold: number = destroyHeight + 35
-
-            humanoid.AutoRotate = false
-            if humanoid.Sit then
-                humanoid.Sit = false
-            end
-
-            while os.clock() - startedAt < duration do
-                -- A player that left the game has no parent any more; this
-                -- replaces the old identity check against the service.
-                if targetPlayer.Parent == nil then
-                    reason = "left"
-                    break
-                end
-
-                local targetCharacter: Model? = targetPlayer.Character
-                local targetRoot: BasePart? = targetCharacter
-                    and targetCharacter:FindFirstChild("HumanoidRootPart")
-                    :: BasePart?
-                local targetHumanoid: Humanoid? = targetCharacter
-                    and targetCharacter:FindFirstChildOfClass("Humanoid")
-                    :: Humanoid?
-                if not targetRoot or not targetRoot.Parent then
-                    reason = "gone"
-                    break
-                end
-                if targetHumanoid and targetHumanoid.Health <= 0 then
-                    touchedTarget = true
-                    reason = "killed"
-                    break
-                end
-                if targetRoot.Position.Y <= voidThreshold then
-                    touchedTarget = true
-                    reason = "void"
-                    break
-                end
-
-                -- Re-read our own parts: a respawn mid-fling replaces them,
-                -- and writing to the old ones would silently do nothing.
-                local _, liveHumanoid: Humanoid?, liveRoot: BasePart? =
-                    getCharacterParts()
-                if not liveHumanoid or not liveRoot then
-                    reason = "died"
-                    break
-                end
-                if liveHumanoid.Health <= 0 then
-                    reason = "died"
-                    break
-                end
-                if liveRoot.Anchored then
-                    liveRoot.Anchored = false
-                end
-                humanoid = liveHumanoid
-                root = liveRoot
-
-                step += 1
-                -- Orbit the target so the two assemblies keep colliding from
-                -- alternating directions instead of resting inside each other.
-                local phase: number = (step % 6) / 6 * math.pi * 2
-                local vertical: number = (step % 2 == 0) and 1.1 or -1.1
-                liveRoot.CFrame = targetRoot.CFrame
-                    * CFrame.new(math.cos(phase) * 1.6, vertical, math.sin(phase) * 1.6)
-                local sign: number = (step % 2 == 0) and 1 or -1
-                liveRoot.AssemblyLinearVelocity =
-                    Vector3.new(power * sign, power, power * -sign)
-                liveRoot.AssemblyAngularVelocity =
-                    Vector3.new(power, power, power)
-
-                -- Stepped writes land before physics, Heartbeat after: doing
-                -- both per cycle is what makes the fling replicate reliably.
-                RunService.Stepped:Wait()
-                if liveRoot.Parent then
-                    liveRoot.AssemblyLinearVelocity =
-                        Vector3.new(power * -sign, power, power * sign)
-                end
-                RunService.Heartbeat:Wait()
-            end
-        end)
-
-        -- Restoration always runs, including after an error.
-        local _, finalHumanoid: Humanoid?, finalRoot: BasePart? = getCharacterParts()
-        if finalRoot and finalRoot.Parent then
-            finalRoot.AssemblyLinearVelocity = Vector3.zero
-            finalRoot.AssemblyAngularVelocity = Vector3.zero
-            if universalFlingSettings.returnToStart then
-                finalRoot.CFrame = savedCFrame + Vector3.new(0, 2, 0)
-            end
-        end
-        if finalHumanoid then
-            finalHumanoid.AutoRotate = savedAutoRotate
-            finalHumanoid.PlatformStand = false
-        end
-        if workspace.CurrentCamera then
-            workspace.CurrentCamera.CameraSubject =
-                savedCameraSubject or finalHumanoid or humanoid
-        end
-
-        flingRunning = false
-        if not success then
-            notify("Fling failed: " .. tostring(errorMessage))
-        elseif touchedTarget then
-            notify("Fling completed: " .. targetPlayer.Name .. " went down.")
-        elseif reason == "left" then
-            notify("Fling stopped: " .. targetPlayer.Name .. " left the game.")
-        elseif reason == "gone" then
-            notify("Fling stopped: the target character disappeared.")
-        elseif reason == "died" then
-            notify("Fling stopped: your character died.")
-        else
-            notify(
-                "Fling stopped after "
-                    .. string.format("%.0f", universalFlingSettings.duration)
-                    .. "s. Raise Duration or Power for tougher targets."
-            )
-        end
-    end)
-end
-
-state.fullbrightSettings = {
-    brightness = 3,
-    clockTime = 14,
-}
-state.originalLighting = nil
-
-state.toggleFullbright = function(enabled)
-    disconnectFeatureConnection("Fullbright")
-
-    if not enabled then
-        if state.originalLighting then
-            Lighting.Brightness = state.originalLighting.brightness
-            Lighting.ClockTime = state.originalLighting.clockTime
-            Lighting.GlobalShadows = state.originalLighting.globalShadows
-            Lighting.FogEnd = state.originalLighting.fogEnd
-            Lighting.Ambient = state.originalLighting.ambient
-            Lighting.OutdoorAmbient = state.originalLighting.outdoorAmbient
-        end
-        return
-    end
-
-    state.originalLighting = {
-        brightness = Lighting.Brightness,
-        clockTime = Lighting.ClockTime,
-        globalShadows = Lighting.GlobalShadows,
-        fogEnd = Lighting.FogEnd,
-        ambient = Lighting.Ambient,
-        outdoorAmbient = Lighting.OutdoorAmbient,
-    }
-
-    featureConnections.Fullbright = TaskManager:Connect(function()
-        Lighting.Brightness = state.fullbrightSettings.brightness
-        Lighting.ClockTime = state.fullbrightSettings.clockTime
-        Lighting.GlobalShadows = false
-        Lighting.FogEnd = 100000
-        Lighting.Ambient = Color3.fromRGB(178, 178, 178)
-        Lighting.OutdoorAmbient = Color3.fromRGB(178, 178, 178)
-    end)
-end
 
 
 
 
 
 
-do
-local FlingFeature = createUniversalFeature(
-    "Fling",
-    "Fling a player, or the nearest player when blank",
-    2,
-    function()
-        local target = findPlayerByText(universalFlingSettings.target)
-        if target then
-            performFling(target)
-        else
-            notify("No matching player was found.")
-        end
-    end,
-    {action = true}
-)
-addTextOption(FlingFeature, "Target player", universalFlingSettings.target, function(value)
-    universalFlingSettings.target = value
-end, false)
--- The safety limit used to be a hidden constant, which is why hitting it read
--- like a bug. It is a normal control now.
-addNumberOption(
-    FlingFeature,
-    "Duration (s)",
-    universalFlingSettings.duration,
-    1,
-    20,
-    function(value: number): ()
-        universalFlingSettings.duration = value
-    end
-)
-addNumberOption(
-    FlingFeature,
-    "Power",
-    universalFlingSettings.power,
-    0.25,
-    4,
-    function(value: number): ()
-        universalFlingSettings.power = value
-    end
-)
-addToggleOption(
-    FlingFeature,
-    "Return to start",
-    universalFlingSettings.returnToStart,
-    function(value: boolean): ()
-        universalFlingSettings.returnToStart = value
-    end
-)
-addFeatureTooltip(
-    FlingFeature,
-    "Runs until the target goes down or the duration expires, then puts you back."
-)
-end
 
 
-do
-local AntiVoidFeature = createUniversalFeature(
-    "Anti-Void",
-    "Create an invisible rescue platform only when death is imminent",
-    4,
-    toggleAntiVoid,
-    {noOptions = true}
-)
-addFeatureTooltip(
-    AntiVoidFeature,
-    "Detects a deep lethal fall and creates a temporary invisible platform beneath you."
-)
-end
-
-do
-local GravityFeature = createUniversalFeature(
-    "Gravity",
-    "Keep workspace gravity at a custom value",
-    5,
-    toggleGravity
-)
-addNumberOption(GravityFeature, "Gravity value", gravitySettings.value, 0, 500, function(value)
-    gravitySettings.value = value
-end)
-end
-
-do
-local JumpPowerFeature = createUniversalFeature(
-    "Jump Power",
-    "Keep character jump power at a custom value",
-    6,
-    toggleJumpPower
-)
-addNumberOption(JumpPowerFeature, "Power", jumpPowerSettings.value, 0, 500, function(value)
-    jumpPowerSettings.value = value
-end)
-end
-
-do
-local InfiniteJumpFeature = createUniversalFeature(
-    "Infinite Jump",
-    "Normal, force-based, stacking, hold-to-rise or fall-cancel jumping",
-    7,
-    toggleInfiniteJump
-)
-addCycleOption(
-    InfiniteJumpFeature,
-    "Mode",
-    {"Normal", "Impulse", "Stack", "Rise", "Fall"},
-    1,
-    function(value)
-        infiniteJumpSettings.mode = value
-    end
-)
-addNumberOption(
-    InfiniteJumpFeature,
-    "Jump power",
-    infiniteJumpSettings.strength,
-    10,
-    250,
-    function(value)
-        infiniteJumpSettings.strength = value
-    end
-)
-addNumberOption(
-    InfiniteJumpFeature,
-    "Jump interval (s)",
-    infiniteJumpSettings.interval,
-    0.05,
-    0.6,
-    function(value)
-        infiniteJumpSettings.interval = value
-    end
-)
-addNumberOption(
-    InfiniteJumpFeature,
-    "Rise speed",
-    infiniteJumpSettings.riseSpeed,
-    10,
-    350,
-    function(value)
-        infiniteJumpSettings.riseSpeed = value
-    end
-)
-end
-
-do
-local WalkSpeedFeature = createUniversalFeature(
-    "Walk Speed",
-    "Keep character movement speed fixed",
-    8,
-    toggleWalkSpeed
-)
-addNumberOption(WalkSpeedFeature, "Speed", walkSpeedSettings.value, 0, 300, function(value)
-    walkSpeedSettings.value = value
-end)
-end
 
 
-do
-local FovFeature = createUniversalFeature(
-    "FOV",
-    "Keep the camera field of view fixed",
-    10,
-    toggleFov
-)
-addNumberOption(FovFeature, "Field of view", fovSettings.value, 20, 120, function(value)
-    fovSettings.value = value
-end)
-end
 
-do
-local NoclipFeature = createUniversalFeature(
-    "Noclip",
-    "Disable character collisions",
-    11,
-    toggleNoclip,
-    {noOptions = true}
-)
-addFeatureTooltip(NoclipFeature, "Disables collisions for every local character part. "
-    .. "Original collision states are restored when turned off.")
-end
 
-do
-local AntiAfkFeature = createUniversalFeature(
-    "Anti-AFK",
-    "Prevent the local idle event from disconnecting",
-    13,
-    toggleAntiAfk,
-    {noOptions = true}
-)
-addFeatureTooltip(AntiAfkFeature, "Responds only to Roblox's local idle event and "
-    .. "disconnects immediately when disabled.")
-end
 
-do
-local AntiFlingFeature = createUniversalFeature(
-    "Anti-Fling",
-    "Stop extreme local velocity and return to safety",
-    14,
-    toggleAntiFling
-)
-addNumberOption(
-    AntiFlingFeature,
-    "Velocity limit",
-    antiFlingSettings.velocityLimit,
-    40,
-    1000,
-    function(value)
-        antiFlingSettings.velocityLimit = value
-    end
-)
-end
 
-do
-local FullbrightFeature = createUniversalFeature(
-    "Fullbright",
-    "Keep the scene bright and remove global shadows",
-    15,
-    state.toggleFullbright
-)
-addNumberOption(
-    FullbrightFeature,
-    "Brightness",
-    state.fullbrightSettings.brightness,
-    0,
-    10,
-    function(value)
-        state.fullbrightSettings.brightness = value
-    end
-)
-addNumberOption(
-    FullbrightFeature,
-    "Clock time",
-    state.fullbrightSettings.clockTime,
-    0,
-    24,
-    function(value)
-        state.fullbrightSettings.clockTime = value
-    end
-)
-end
 
-do
-local LagSwitchFeature = createUniversalFeature(
-    "Lag Switch",
-    "Simulate extreme incoming replication delay",
-    16,
-    toggleLagSwitch
-)
-addNumberOption(
-    LagSwitchFeature,
-    "Incoming lag",
-    lagSwitchSettings.incomingLag,
-    1,
-    999,
-    function(value)
-        lagSwitchSettings.incomingLag = value
-    end
-)
-end
+
 
 
 
@@ -11515,87 +10531,10 @@ end
 
 end
 
--- Both of these are the one shared board now; the names stay because a hundred
--- call sites (and every downloaded game module) still use them.
-local MovementScroll: ScrollingFrame = UniversalScroll
+-- The one shared board. The name stays because every downloaded game module
+-- still asks for `MM2Scroll`.
 local MM2Scroll: ScrollingFrame = UniversalScroll
 
-local freezeSettings = {mode = "Anchor"}
-local originalFreezeState = setmetatable({}, {__mode = "k"})
-
-local function restoreFreezeMovements()
-    for humanoid, original in pairs(originalFreezeState) do
-        if humanoid and humanoid.Parent then
-            humanoid.WalkSpeed = original.walkSpeed
-            humanoid.JumpPower = original.jumpPower
-            humanoid.AutoRotate = original.autoRotate
-            if original.root and original.root.Parent then
-                original.root.Anchored = original.rootAnchored
-            end
-        end
-    end
-    originalFreezeState = setmetatable({}, {__mode = "k"})
-end
-
-local function toggleFreezeMovements(enabled)
-    disconnectFeatureConnection("FreezeMovements")
-    restoreFreezeMovements()
-
-    if not enabled then
-        return
-    end
-
-    featureConnections.FreezeMovements = TaskManager:Connect(function()
-        local _, humanoid, root = getCharacterParts()
-        if not humanoid or not root then
-            return
-        end
-
-        if not originalFreezeState[humanoid] then
-            originalFreezeState[humanoid] = {
-                walkSpeed = humanoid.WalkSpeed,
-                jumpPower = humanoid.JumpPower,
-                autoRotate = humanoid.AutoRotate,
-                root = root,
-                rootAnchored = root.Anchored,
-            }
-        end
-
-        local original = originalFreezeState[humanoid]
-        humanoid.WalkSpeed = 0
-        humanoid.JumpPower = 0
-        humanoid.AutoRotate = false
-        root.AssemblyLinearVelocity = Vector3.zero
-        root.AssemblyAngularVelocity = Vector3.zero
-        root.Anchored = freezeSettings.mode == "Anchor"
-            and true
-            or original.rootAnchored
-    end)
-end
-
-local FreezeFeature = createUniversalFeature(
-    "Freeze Movements",
-    "Prevent the local character from moving",
-    1,
-    toggleFreezeMovements,
-    {
-        parent = MovementScroll,
-        registry = movementFeatures,
-    }
-)
-addCycleOption(
-    FreezeFeature,
-    "Freeze mode",
-    {"Anchor", "Humanoid"},
-    1,
-    function(value)
-        freezeSettings.mode = value
-    end
-)
-addInformationOption(
-    FreezeFeature,
-    "Anchor stops all physics; Humanoid only blocks character controls."
-)
 
 local cleanupMM2Runtime = function() end
 
@@ -12041,16 +10980,6 @@ local fallbackManifest: any = {
             category = "Combat",
         },
         {
-            path = "src/modules/Combat/AutoClicker.luau",
-            name = "Auto Clicker",
-            category = "Combat",
-        },
-        {
-            path = "src/modules/Combat/TriggerBot.luau",
-            name = "TriggerBot",
-            category = "Combat",
-        },
-        {
             path = "src/modules/Utility/RemoteLogger.luau",
             name = "Remote Logger",
             category = "Utility",
@@ -12060,7 +10989,16 @@ local fallbackManifest: any = {
             name = "Click Teleport",
             category = "Movement",
         },
-        -- Spoof: cosmetic only, and each one lands on its own page.
+        {
+            path = "src/modules/Combat/AutoClicker.luau",
+            name = "Auto Clicker",
+            category = "Combat",
+        },
+        {
+            path = "src/modules/Combat/TriggerBot.luau",
+            name = "TriggerBot",
+            category = "Combat",
+        },
         {
             path = "src/modules/Visuals/XRay.luau",
             name = "X-Ray",
@@ -12114,6 +11052,71 @@ local fallbackManifest: any = {
         {
             path = "src/modules/Movement/PhysicsSpeed.luau",
             name = "Physics Speed",
+            category = "Movement",
+        },
+        {
+            path = "src/modules/Protection/AntiVoid.luau",
+            name = "Anti-Void",
+            category = "Protection",
+        },
+        {
+            path = "src/modules/Utility/Gravity.luau",
+            name = "Gravity",
+            category = "Utility",
+        },
+        {
+            path = "src/modules/Movement/JumpPower.luau",
+            name = "Jump Power",
+            category = "Movement",
+        },
+        {
+            path = "src/modules/Movement/InfiniteJump.luau",
+            name = "Infinite Jump",
+            category = "Movement",
+        },
+        {
+            path = "src/modules/Visuals/FieldOfView.luau",
+            name = "FOV",
+            category = "Visuals",
+        },
+        {
+            path = "src/modules/Movement/Noclip.luau",
+            name = "Noclip",
+            category = "Movement",
+        },
+        {
+            path = "src/modules/Utility/AntiAfk.luau",
+            name = "Anti-AFK",
+            category = "Utility",
+        },
+        {
+            path = "src/modules/Protection/AntiFling.luau",
+            name = "Anti-Fling",
+            category = "Protection",
+        },
+        {
+            path = "src/modules/Utility/LagSwitch.luau",
+            name = "Lag Switch",
+            category = "Utility",
+        },
+        {
+            path = "src/modules/Utility/Fling.luau",
+            name = "Fling",
+            category = "Utility",
+        },
+        {
+            path = "src/modules/Visuals/Fullbright.luau",
+            name = "Fullbright",
+            category = "Visuals",
+        },
+        {
+            path = "src/modules/Movement/FreezeMovements.luau",
+            name = "Freeze Movements",
+            category = "Movement",
+        },
+        {
+            path = "src/modules/Movement/Speed.luau",
+            name = "Speed",
             category = "Movement",
         },
         {

@@ -134,6 +134,71 @@ local Manifest: Manifest = {
             category = "Movement",
         },
         {
+            path = "src/modules/Protection/AntiVoid.luau",
+            name = "Anti-Void",
+            category = "Protection",
+        },
+        {
+            path = "src/modules/Utility/Gravity.luau",
+            name = "Gravity",
+            category = "Utility",
+        },
+        {
+            path = "src/modules/Movement/JumpPower.luau",
+            name = "Jump Power",
+            category = "Movement",
+        },
+        {
+            path = "src/modules/Movement/InfiniteJump.luau",
+            name = "Infinite Jump",
+            category = "Movement",
+        },
+        {
+            path = "src/modules/Visuals/FieldOfView.luau",
+            name = "FOV",
+            category = "Visuals",
+        },
+        {
+            path = "src/modules/Movement/Noclip.luau",
+            name = "Noclip",
+            category = "Movement",
+        },
+        {
+            path = "src/modules/Utility/AntiAfk.luau",
+            name = "Anti-AFK",
+            category = "Utility",
+        },
+        {
+            path = "src/modules/Protection/AntiFling.luau",
+            name = "Anti-Fling",
+            category = "Protection",
+        },
+        {
+            path = "src/modules/Utility/LagSwitch.luau",
+            name = "Lag Switch",
+            category = "Utility",
+        },
+        {
+            path = "src/modules/Utility/Fling.luau",
+            name = "Fling",
+            category = "Utility",
+        },
+        {
+            path = "src/modules/Visuals/Fullbright.luau",
+            name = "Fullbright",
+            category = "Visuals",
+        },
+        {
+            path = "src/modules/Movement/FreezeMovements.luau",
+            name = "Freeze Movements",
+            category = "Movement",
+        },
+        {
+            path = "src/modules/Movement/Speed.luau",
+            name = "Speed",
+            category = "Movement",
+        },
+        {
             path = "src/modules/Combat/Hitboxes.luau",
             name = "Hitboxes",
             category = "Combat",

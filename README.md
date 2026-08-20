@@ -621,13 +621,29 @@ Moved so far, whole:
 | Engines | Projectile Calibration (740 lines of telemetry that was never interface), Hitboxes |
 | Universal toolkit | X-Ray, High Jump, Spider, Safe Walk, Rejoin Server, Zoom Unlocker, Interact Extender, Phase Dash, No Fall |
 | The two big ones | Fly (six movement engines, five float engines, its whole panel), Physics Speed |
+| The last dozen | Fling, Anti-Void, Gravity, Jump Power, Infinite Jump, FOV, Noclip, Anti-AFK, Anti-Fling, Fullbright, Lag Switch, Freeze Movements |
+
+**Walk Speed was not moved — it was replaced.** It did one thing,
+`humanoid.WalkSpeed = value` on a loop, which is the single method every game
+that cares about speed clamps first. The new **Speed** module is an engine with
+five: *WalkSpeed* (quietest, first to be clamped), *Velocity* (rewrites the
+horizontal assembly velocity, leaves gravity alone), *Impulse* (the same target
+as a force, for games that overwrite velocity every frame), *CFrame* (steps the
+root directly — nothing to clamp, and it walks through walls unless the wall
+check stops it) and *Teleport* (CFrame in bursts: fastest, and the one a
+spectator notices). Direction comes from the shared input helper, so it is the
+same on a keyboard, a thumbstick and a phone, and it keeps working under
+PlatformStand where `MoveDirection` reads zero. Wall check and burst delay only
+appear for the modes that use them.
 
 `state.universalToolkit` — the grab-bag table nine features hung themselves off
 — is gone entirely. Each of them is an ordinary module now: a file, a manifest
 line, `init`/`destroy`, its own card, and nothing in the shell that knows it
 exists.
 
-The shell is **16,688 → 13,473 lines**, with 14 feature cards left in it.
+The shell is **16,688 → 12,475 lines**, with **one** feature card left in it
+(Improve FPS, which is wrapped in its own function scope and is worth moving
+carefully rather than quickly).
 
 One thing the move taught, worth writing down: the remaining features live
 inside a single enormous `do ... end` that exists only to hand registers back
@@ -637,9 +653,7 @@ piece is taken from *inside* the block and the block is left standing. It
 disappears on its own once the last feature is out — which is the real reason
 that register ceiling stops mattering.
 
-The queue: the dozen small ones (Fling, Noclip, Gravity, Jump Power, Walk
-Speed, Anti-AFK, Anti-Fling, Fullbright, Lag Switch, Anti-Void, Infinite Jump,
-Improve FPS, Freeze), then the option builders and the colour picker into a
+The queue: Improve FPS, then the option builders and the colour picker into a
 widget library — which is what finally takes the shell under six thousand.
 
 ## Module architecture
