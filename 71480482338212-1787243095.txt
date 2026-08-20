@@ -1,0 +1,28 @@
+-- ARandomMenu remote log
+-- place 71480482338212
+-- 4 remotes
+
+----------------------------------------------------------------------
+ReplicatedStorage.Remotes.PurchaseItemShopItem
+  class UnreliableRemoteEvent  ·  FireServer  ·  38 calls
+  args  «Part Workspace.Fort.ItemShopPrompts.ItemShopPrompt», "Blocks", "Wool"
+game:GetService("ReplicatedStorage") -- ReplicatedStorage.Remotes.PurchaseItemShopItem
+-- :FireServer(«Part Workspace.Fort.ItemShopPrompts.ItemShopPrompt», "Blocks", "Wool")
+----------------------------------------------------------------------
+ReplicatedStorage.Remotes.ItemsRemotes.SwordHit
+  class UnreliableRemoteEvent  ·  FireServer  ·  2 calls
+  args  «Model Workspace.PlayersContainer.St4rMM2AT», "Wooden Sword"
+game:GetService("ReplicatedStorage") -- ReplicatedStorage.Remotes.ItemsRemotes.SwordHit
+-- :FireServer(«Model Workspace.PlayersContainer.St4rMM2AT», "Wooden Sword")
+----------------------------------------------------------------------
+ReplicatedStorage.Remotes.ItemsRemotes.EquipTool
+  class RemoteEvent  ·  FireServer  ·  2 calls
+  args  "Wooden Sword"
+game:GetService("ReplicatedStorage") -- ReplicatedStorage.Remotes.ItemsRemotes.EquipTool
+-- :FireServer("Wooden Sword")
+----------------------------------------------------------------------
+ReplicatedStorage.Remotes.GetRankedLeaderboard
+  class RemoteFunction  ·  InvokeServer  ·  1 calls
+  args  
+game:GetService("ReplicatedStorage") -- ReplicatedStorage.Remotes.GetRankedLeaderboard
+-- :InvokeServer()
