@@ -230,6 +230,7 @@ const TABS = [
 ];
 
 let active = 3;
+let page = "Universal";
 const stage = document.getElementById("stage");
 const tabs = document.getElementById("tabs");
 const readout = document.getElementById("readout");
@@ -241,6 +242,13 @@ VIEWPORTS.forEach((vp, index) => {
   button.onclick = () => { active = index; render(); };
   tabs.appendChild(button);
 });
+const pageToggle = document.createElement("button");
+pageToggle.style.marginLeft = "14px";
+pageToggle.onclick = () => {
+  page = page === "Universal" ? "Settings" : "Universal";
+  render();
+};
+tabs.appendChild(pageToggle);
 
 function el(tag, style, text) {
   const node = document.createElement(tag);
@@ -252,6 +260,7 @@ const px = (n) => `${n}px`;
 
 function render() {
   [...tabs.children].forEach((b, i) => b.classList.toggle("active", i === active));
+  pageToggle.textContent = `page: ${page}`;
   const vp = VIEWPORTS[active];
   const m = metrics(vp.w, vp.h, vp.w < 900);
   readout.innerHTML =
@@ -342,7 +351,7 @@ function render() {
 
   const head = el("div", {height: px(m.headerHeight), padding: `0 ${px(m.contentPadding)}`});
   head.className = "pagehead";
-  head.appendChild(el("div", {fontSize: "13px"}, "Universal")).className = "title";
+  head.appendChild(el("div", {fontSize: "13px"}, page)).className = "title";
   head.appendChild(el("div", {
     width: px(m.searchWidth), height: px(m.searchHeight),
   }, "Search modules")).className = "search";
@@ -357,6 +366,68 @@ function render() {
   });
   body.className = "pagebody";
   content.appendChild(body);
+
+  if (page === "Settings") {
+    // One line per row: name centred vertically, control on the right.
+    // Blur mode and Interface motion are switch-free click-to-toggle rows.
+    const SETTINGS = [
+      {name: "Text size", control: "slider"},
+      {name: "Blur mode", control: "toggle", on: true},
+      {name: "Interface motion", control: "toggle", on: false},
+      {name: "Menu key", control: "button", label: "RIGHTSHIFT"},
+      {name: "Reinject latest", control: "button", label: "REINJECT LATEST"},
+      {name: "Destruct", control: "button", label: "DESTRUCT"},
+      {name: "Game check", control: "text", label: "Universal only"},
+    ];
+    SETTINGS.forEach((setting) => {
+      const rowHeight = Math.max(38, m.cardHeight);
+      const row = el("div", {
+        height: px(rowHeight), position: "relative", display: "flex",
+        alignItems: "center", padding: "0 14px",
+        background: setting.on ? "rgba(40,40,44,.58)" : "rgba(26,26,28,.42)",
+        border: "1px solid rgba(92,92,98,.18)", borderRadius: "9px",
+      });
+      if (setting.on) {
+        row.appendChild(el("div", {
+          position: "absolute", left: "0", top: "50%",
+          transform: "translateY(-50%)", width: "2px",
+          height: px(rowHeight - 14), borderRadius: "2px", background: "#ececee",
+        }));
+      }
+      row.appendChild(el("div", {fontSize: "11px", fontWeight: "500"}, setting.name));
+      const band = el("div", {
+        marginLeft: "auto", width: "46%", display: "flex",
+        alignItems: "center", justifyContent: "flex-end", gap: "8px",
+      });
+      if (setting.control === "toggle") {
+        band.appendChild(el("div", {
+          fontSize: "10px", color: setting.on ? "#f5f5f7" : "#9e9ea6",
+        }, setting.on ? "ON" : "OFF"));
+      } else if (setting.control === "slider") {
+        const track = el("div", {
+          flex: "1", height: "4px", borderRadius: "2px", background: "#2f2f35",
+        });
+        track.appendChild(el("div", {
+          width: "45%", height: "100%", borderRadius: "2px", background: "#d8d8dc",
+        }));
+        band.appendChild(track);
+        band.appendChild(el("div", {fontSize: "10px", color: "#9e9ea6"}, "100%"));
+      } else if (setting.control === "button") {
+        band.appendChild(el("div", {
+          width: "100%", height: px(rowHeight - 14), borderRadius: "7px",
+          background: "#232327", border: "1px solid rgba(92,92,98,.35)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: "10px", color: "#d5d5da",
+        }, setting.label));
+      } else {
+        band.appendChild(el("div", {fontSize: "10px", color: "#9e9ea6"}, setting.label));
+      }
+      row.appendChild(band);
+      body.appendChild(row);
+    });
+    renderOverlays();
+    return;
+  }
 
   CATEGORIES.forEach((category) => {
     const section = el("div", {display: "flex", flexDirection: "column", gap: "4px"});
@@ -391,6 +462,9 @@ function render() {
     body.appendChild(section);
   });
 
+  renderOverlays();
+
+  function renderOverlays() {
   // Chrome-less HUD overlays + one framed tool window, on the screen itself.
   const radarSize = 190;
   const radar = el("div", {
@@ -441,6 +515,7 @@ function render() {
     rows.appendChild(el("div", {}));
     tool.appendChild(rows);
     screen.appendChild(tool);
+  }
   }
 }
 

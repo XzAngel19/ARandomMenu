@@ -12960,7 +12960,18 @@ MobileResetButton.Size = UDim2.fromScale(1, 1)
 -- the single entry point and always updates the blur, even if this builder
 -- never runs.
 state.addMenuVisibilityListener(function(visible: boolean): ()
-    FloatingUi.overlays.TextGUI.window.root.Active = visible
+    -- `FloatingUi` is a local of the floating-UI block, so referring to it by
+    -- name from this builder resolved to a nil global and the whole listener
+    -- threw (silently: visibility listeners are pcall'd). The published
+    -- registry is the one that is actually in scope here.
+    local floating: any = state.floatingUi
+    if type(floating) ~= "table" then
+        return
+    end
+    local textOverlay: any = floating.overlays and floating.overlays.TextGUI
+    if textOverlay and textOverlay.window and textOverlay.window.root then
+        textOverlay.window.root.Active = visible
+    end
     if visible then
         return
     end
@@ -12968,7 +12979,7 @@ state.addMenuVisibilityListener(function(visible: boolean): ()
     -- be listed here by name, but those names are locals of the floating-UI
     -- block: from here they resolved to nil globals, so the list was empty and
     -- the windows stayed on screen. The live registry is authoritative.
-    local settingsWindows: any = FloatingUi.settingsWindows
+    local settingsWindows: any = floating.settingsWindows
     if type(settingsWindows) ~= "table" then
         return
     end
