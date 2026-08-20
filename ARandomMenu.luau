@@ -203,8 +203,10 @@ local TAB_GAME_ICONS: {[string]: number} = {
     Universal = 0,
 }
 
+-- Drawn icons for the rail entries that are not a game. Spoof keeps its
+-- monogram: there is no glyph for "what the server is told about you" that
+-- reads at 22px, and inventing one would be worse than two letters.
 local TAB_DRAWN_ICONS: {[string]: string} = {
-    Movement = "navMovement",
     -- The settings page is registered as "Config.", dot included; keying this
     -- table on "Settings" is why the gear never appeared.
     ["Config."] = "navSettings",
@@ -1070,10 +1072,53 @@ state.addMenuVisibilityListener = function(listener: (boolean) -> ()): ()
     table.insert(menuVisibilityListeners, listener)
 end
 
+-- Opening and closing the window.
+--
+-- It used to appear and disappear on a boolean, which reads as a glitch rather
+-- than as a window: nothing tells the eye where it came from. It scales in
+-- from 96% with a slight overshoot instead — the same gesture the other menus
+-- in this account use for their panels, and short enough (0.17s) that it never
+-- gets in the way of a player who is toggling it mid-fight. Closing is faster
+-- than opening, because waiting to hide something is worse than waiting to see
+-- it, and the frame is only hidden once the tween has finished so the shrink
+-- is actually visible.
+--
+-- `Animations` in Config. turns the whole thing off, in which case this is the
+-- boolean it always was.
+local menuScaleToken: number = 0
 local function setMenuVisibleCore(visible: boolean): ()
     state.visible = visible
-    if state.mainFrame then
-        state.mainFrame.Visible = visible
+    local frame: Frame? = state.mainFrame
+    local scale: UIScale? = state.mainScale
+    menuScaleToken += 1
+    local token: number = menuScaleToken
+    if frame and scale and state.animationsEnabled then
+        if visible then
+            (scale :: UIScale).Scale = 0.96;
+            (frame :: Frame).Visible = true
+            TweenService:Create(
+                scale :: UIScale,
+                TweenInfo.new(0.17, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+                {Scale = 1}
+            ):Play()
+        else
+            TweenService:Create(
+                scale :: UIScale,
+                TweenInfo.new(0.11, Enum.EasingStyle.Quart, Enum.EasingDirection.In),
+                {Scale = 0.955}
+            ):Play()
+            task.delay(0.12, function(): ()
+                -- A newer toggle may have re-opened the window in the meantime.
+                if token == menuScaleToken and not state.visible and frame.Parent then
+                    (frame :: Frame).Visible = false
+                end
+            end)
+        end
+    elseif frame then
+        if scale then
+            (scale :: UIScale).Scale = 1
+        end
+        (frame :: Frame).Visible = visible
     end
     for _, listener: (boolean) -> () in ipairs(menuVisibilityListeners) do
         -- One faulty listener must never leave the blur stuck on.
@@ -1154,14 +1199,6 @@ local AssetManager: any = {
             fallback = "",
             version = 1,
             assetType = "image/jpeg",
-        },
-        navMovement = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Icons/nav-movement.png",
-            fileName = "nav-movement-v1.png",
-            fallback = "",
-            version = 1,
-            assetType = "image/png",
         },
         navSettings = {
             url = REPOSITORY_RAW_BASE
@@ -2730,6 +2767,14 @@ local Main: Frame = (create("Frame", {
     ZIndex = 1,
 }) :: any) :: Frame
 
+-- The window scales from its own centre when it opens; the scale lives here so
+-- the visibility controller (defined before the window exists) can reach it.
+state.mainScale = create("UIScale", {
+    Parent = Main,
+    Name = "ShellScale",
+    Scale = 1,
+})
+
 -- Publish the window so the shared visibility controller defined above can
 -- drive it without depending on later initialization order.
 state.mainFrame = Main
@@ -3107,10 +3152,33 @@ state.tabLabel = function(tabName: string): string
 end
 
 local function setTab(tabName: string): ()
+    local previousTab: string? = state.activeTab
     state.activeTab = tabName
 
     for name, page in pairs(pages) do
-        page.Visible = name == tabName
+        local selectedPage: boolean = name == tabName
+        page.Visible = selectedPage
+        -- The page you switched to rises the last few pixels into place. It is
+        -- 10px and 0.16s: enough to say "this is a different page", not enough
+        -- to be a transition anyone has to sit through. Switching to the page
+        -- you are already on does nothing.
+        if selectedPage
+            and state.animationsEnabled
+            and previousTab ~= nil
+            and previousTab ~= tabName then
+            page.Position = UDim2.fromOffset(0, 10)
+            TweenService:Create(
+                page,
+                TweenInfo.new(
+                    UI_MOTION.base,
+                    Enum.EasingStyle.Quart,
+                    Enum.EasingDirection.Out
+                ),
+                {Position = UDim2.fromOffset(0, 0)}
+            ):Play()
+        elseif selectedPage then
+            page.Position = UDim2.fromOffset(0, 0)
+        end
     end
 
     local headerTitle: TextLabel? = state.shells.headerTitle
@@ -3147,10 +3215,38 @@ local function setTab(tabName: string): ()
             monogram.BackgroundTransparency = selected and 0.28 or 0.62
         end
         -- Selected rows get an accent tick on their leading edge: a compact
-        -- selection cue that survives the icon-only rail.
+        -- selection cue that survives the icon-only rail. It grows into place
+        -- from nothing rather than blinking on, which is what makes the rail
+        -- feel like one control instead of three lamps.
         local marker: Frame? = button:FindFirstChild("SelectionMarker") :: Frame?
         if marker then
-            marker.Visible = selected
+            local fullHeight: number = math.max(10, state.layout.navRowHeight - 12)
+            if not state.animationsEnabled then
+                marker.Visible = selected
+                marker.Size = UDim2.fromOffset(2, fullHeight)
+            elseif selected then
+                marker.Visible = true
+                marker.Size = UDim2.fromOffset(2, 0)
+                TweenService:Create(
+                    marker,
+                    TweenInfo.new(
+                        UI_MOTION.base,
+                        Enum.EasingStyle.Back,
+                        Enum.EasingDirection.Out
+                    ),
+                    {Size = UDim2.fromOffset(2, fullHeight)}
+                ):Play()
+            else
+                TweenService:Create(
+                    marker,
+                    TweenInfo.new(
+                        UI_MOTION.fast,
+                        Enum.EasingStyle.Quart,
+                        Enum.EasingDirection.In
+                    ),
+                    {Size = UDim2.fromOffset(2, 0)}
+                ):Play()
+            end
         end
     end
 end
@@ -3340,7 +3436,11 @@ state.onLayout(function(metrics: LayoutMetrics): ()
         end
         local marker: Frame? = button:FindFirstChild("SelectionMarker") :: Frame?
         if marker then
-            marker.Size = UDim2.fromOffset(2, math.max(10, metrics.navRowHeight - 16))
+            -- Only the selected row's tick has a height; resizing all of them
+            -- on a viewport change would light up the whole rail.
+            marker.Size = button:GetAttribute("Selected") == true
+                and UDim2.fromOffset(2, math.max(10, metrics.navRowHeight - 16))
+                or UDim2.fromOffset(2, 0)
         end
     end
 end)
@@ -4128,6 +4228,34 @@ do
         MobileMenuButton.AnchorPoint = Vector2.new(0, 0)
     end
 
+    -- The launcher answers a finger.
+    --
+    -- A button that floats over the game and never reacts to being touched
+    -- reads as part of the game's own HUD. It dips under the press and springs
+    -- back on release, which is the one place in this interface where a bit of
+    -- bounce belongs: it is a physical-looking object sitting on the screen.
+    local launcherScale: UIScale = create("UIScale", {
+        Parent = MobileMenuButton,
+        Name = "LauncherScale",
+        Scale = 1,
+    }) :: UIScale
+
+    local function pressLauncher(pressed: boolean): ()
+        if not state.animationsEnabled then
+            launcherScale.Scale = 1
+            return
+        end
+        TweenService:Create(
+            launcherScale,
+            TweenInfo.new(
+                pressed and UI_MOTION.fast or 0.34,
+                pressed and Enum.EasingStyle.Quart or Enum.EasingStyle.Back,
+                Enum.EasingDirection.Out
+            ),
+            {Scale = pressed and 0.9 or 1}
+        ):Play()
+    end
+
     trackUiConnection(MobileMenuButton.InputBegan:Connect(function(
         input: InputObject
     ): ()
@@ -4139,6 +4267,7 @@ do
         dragStart = Vector2.new(input.Position.X, input.Position.Y)
         startPosition = MobileMenuButton.Position
         travelled = 0
+        pressLauncher(true)
     end))
 
     trackUiConnection(UserInputService.InputChanged:Connect(function(
@@ -4177,9 +4306,40 @@ do
             return
         end
         dragInput = nil
+        pressLauncher(false)
         if travelled >= 6 then
-            configData.ui.launcherX = MobileMenuButton.Position.X.Offset
-            configData.ui.launcherY = MobileMenuButton.Position.Y.Offset
+            -- Dropped, so it settles against the nearer side rather than
+            -- floating in the middle of the view, where it covers the game and
+            -- is easy to hit by accident. The overshoot is what makes it read
+            -- as "it went home" instead of "it teleported".
+            local viewport: Vector2 = ScreenGui.AbsoluteSize
+            local size: Vector2 = MobileMenuButton.AbsoluteSize
+            local currentX: number = MobileMenuButton.Position.X.Offset
+            local currentY: number = MobileMenuButton.Position.Y.Offset
+            local margin: number = 14
+            local nearestX: number = currentX + size.X * 0.5 < viewport.X * 0.5
+                and margin
+                or math.max(margin, viewport.X - size.X - margin)
+            local restingY: number = math.clamp(
+                currentY,
+                margin,
+                math.max(margin, viewport.Y - size.Y - margin)
+            )
+            local resting: UDim2 = UDim2.fromOffset(
+                math.round(nearestX),
+                math.round(restingY)
+            )
+            if state.animationsEnabled then
+                TweenService:Create(
+                    MobileMenuButton,
+                    TweenInfo.new(0.42, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+                    {Position = resting}
+                ):Play()
+            else
+                MobileMenuButton.Position = resting
+            end
+            configData.ui.launcherX = resting.X.Offset
+            configData.ui.launcherY = resting.Y.Offset
             queueConfigSave()
         end
     end))
@@ -4360,13 +4520,13 @@ state.universalProjectileCalibration = (function(): any
         delete: (self: Controller) -> boolean,
         status: (self: Controller) -> string,
         destroy: (self: Controller) -> (),
-        settings: {[string]: number},
+        tuning: {[string]: number},
     }
 
     -- Live-tuning knobs for the analyser. The option panel mutates these
     -- while the tracker keeps running, so a calibration session can be
     -- refined without restarting it.
-    local settings: {[string]: number} = {
+    local tuning: {[string]: number} = {
         bucketWidthMs = 5,
         maxBucketMs = 250,
         sampleWindowSeconds = 2.5,
@@ -4428,8 +4588,8 @@ state.universalProjectileCalibration = (function(): any
     end
 
     local function pingBucketKey(pingMs: number): string
-        local width: number = math.max(1, settings.bucketWidthMs)
-        local ceiling: number = math.max(width, settings.maxBucketMs)
+        local width: number = math.max(1, tuning.bucketWidthMs)
+        local ceiling: number = math.max(width, tuning.maxBucketMs)
         if pingMs > ceiling then
             return tostring(ceiling) .. "+"
         end
@@ -4519,10 +4679,10 @@ state.universalProjectileCalibration = (function(): any
             reason = reason,
             bucketSpec = {
                 metric = "Data Ping",
-                widthMs = settings.bucketWidthMs,
+                widthMs = tuning.bucketWidthMs,
                 minimumMs = 0,
-                maximumMs = settings.maxBucketMs,
-                overflow = tostring(settings.maxBucketMs) .. "+",
+                maximumMs = tuning.maxBucketMs,
+                overflow = tostring(tuning.maxBucketMs) .. "+",
             },
             summary = {
                 activations = runtime.totalActivations,
@@ -4590,10 +4750,10 @@ state.universalProjectileCalibration = (function(): any
     local function compactPending(now: number): ()
         while #runtime.pending > 0
             and now - runtime.pending[1].activatedAt
-                > settings.candidateLifetimeSeconds do
+                > tuning.candidateLifetimeSeconds do
             table.remove(runtime.pending, 1)
         end
-        while #runtime.pending > settings.maxPendingActivations do
+        while #runtime.pending > tuning.maxPendingActivations do
             table.remove(runtime.pending, 1)
         end
     end
@@ -4648,7 +4808,7 @@ state.universalProjectileCalibration = (function(): any
             local completed: {BasePart} = {}
             for part: BasePart, track: ProjectileTrack in pairs(runtime.tracks) do
                 if not part.Parent
-                    or now - track.startedAt >= settings.sampleWindowSeconds then
+                    or now - track.startedAt >= tuning.sampleWindowSeconds then
                     table.insert(completed, part)
                     continue
                 end
@@ -4682,7 +4842,7 @@ state.universalProjectileCalibration = (function(): any
                         track.distance += (position - track.previousPosition).Magnitude
                     end
                 end
-                if #track.samples < settings.maxSamplesPerTrack then
+                if #track.samples < tuning.maxSamplesPerTrack then
                     table.insert(track.samples, {
                         t = now - track.startedAt,
                         position = vectorArray(position),
@@ -4758,7 +4918,7 @@ state.universalProjectileCalibration = (function(): any
         end
         local hinted: boolean = hasProjectileHint(part)
         local speed: number = part.AssemblyLinearVelocity.Magnitude
-        if not hinted and speed < settings.minProjectileSpeed then
+        if not hinted and speed < tuning.minProjectileSpeed then
             return
         end
         local selectedIndex: number? = nil
@@ -4876,7 +5036,7 @@ state.universalProjectileCalibration = (function(): any
     end
 
     controller = {} :: Controller
-    controller.settings = settings
+    controller.tuning = tuning
 
     function controller:setEnabled(enabled: boolean): ()
         if runtime.enabled == enabled then
@@ -4902,7 +5062,7 @@ state.universalProjectileCalibration = (function(): any
         ))
         print(
             "[RTM:UniversalTrajectory] Activa · buckets "
-                .. tostring(settings.bucketWidthMs)
+                .. tostring(tuning.bucketWidthMs)
                 .. " ms · salida "
                 .. outputPath
         )
@@ -14570,7 +14730,7 @@ local ProjectileCalibrationFeature: any = createUniversalFeature(
     {category = true}
 )
 state.projectileSettings =
-    state.universalProjectileCalibration.settings
+    state.universalProjectileCalibration.tuning
 addNumberOption(
     ProjectileCalibrationFeature,
     "Bucket width (ms)",

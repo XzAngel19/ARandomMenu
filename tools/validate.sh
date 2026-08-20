@@ -41,6 +41,7 @@ resolve_binary() {
 
 luau_compile="$(resolve_binary luau-compile || true)"
 luau_run="$(resolve_binary luau || true)"
+luau_analyze="$(resolve_binary luau-analyze || true)"
 
 # Locally a missing toolchain is an inconvenience and the script says so.
 # On a runner it is a broken job: skipping compilation and the tests there
@@ -190,6 +191,20 @@ grep -q 'RUNTIME_SAFETY_SOURCE_URL' ARandomMenu.luau
 ! grep -q 'corner.Enabled' src/gui/Current/gui.lua
 echo "ok"
 
+step "Module contracts II: options, state and builders"
+# Three whole classes of bug that only ever showed up in-game, checked here
+# instead:
+#
+#   * a module reading `Options["Delay"]` after the row was renamed to
+#     "Reaction" — the read returns nil and the module dies mid-frame;
+#   * a module reading `state.something` that nothing anywhere assigns (the
+#     projectile calibration read `.settings` after the field became `.tuning`);
+#   * a game module calling a builder the shell forgot to put in
+#     `createGameModuleEnvironment` — which is how Kill Aura once rendered a
+#     "Weapon" heading and nothing under it.
+python3 tools/check_contracts.py
+echo "ok"
+
 if [ -z "$luau_compile" ]; then
     missing_toolchain "luau-compile not found; skipping compilation and tests."
 fi
@@ -204,6 +219,31 @@ done < <(source_files)
 "$luau_compile" loadstring >/dev/null
 "$luau_compile" -O0 loadstring >/dev/null
 echo "ok"
+
+step "Lints"
+if [ -n "$luau_analyze" ]; then
+    # Only the lints that describe a real defect rather than a style opinion.
+    # Every one of these has cost this repository a bug: a closure that named a
+    # local declared further down read a *global* and was nil at runtime
+    # (GlobalUsedAsLocal), a second `candidate` shadowed the first and the test
+    # asserted against the wrong one (LocalShadow), and an unused local is
+    # usually the leftover half of a change (LocalUnused).
+    lint_output="$(mktemp)"
+    while IFS= read -r file; do
+        "$luau_analyze" --defs=env.d.luau "$file" 2>&1 \
+            | grep -E "LocalUnused|LocalShadow|GlobalUsedAsLocal|DuplicateLocal|DuplicateFunction|UnreachableCode|DuplicateCondition" \
+            >> "$lint_output" || true
+    done < <(source_files)
+    if [ -s "$lint_output" ]; then
+        cat "$lint_output"
+        rm -f "$lint_output"
+        exit 1
+    fi
+    rm -f "$lint_output"
+    echo "ok"
+else
+    echo "skipped (luau-analyze not found)"
+fi
 
 step "Register headroom"
 # Three throwaway locals in the main file's largest scope must still compile:

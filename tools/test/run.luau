@@ -1252,9 +1252,9 @@ check("a stowed tool is not equipped by default", equipped == 0,
 -- And when the player does ask for it, it happens.
 weapons:Invalidate()
 weapons:SetAllowEquip(true)
-local candidate: any = weapons:Find("Backpack Sword")
-if candidate then
-    weapons:Activate(candidate)
+local stowedSword: any = weapons:Find("Backpack Sword")
+if stowedSword then
+    weapons:Activate(stowedSword)
 end
 check("it is equipped when the option is on", equipped == 1,
     "equips: " .. tostring(equipped))

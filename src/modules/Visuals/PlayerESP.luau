@@ -517,7 +517,6 @@ function Module.render(
             continue
         end
 
-        local rootPosition: Vector3 = entity.RootPart.Position
         -- Geometry, properly. The old box took the character's extents, dropped
         -- two points through WorldToViewportPoint and made the width a fixed
         -- fraction of the height: a rig with its arms out, a camera at an

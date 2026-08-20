@@ -370,16 +370,6 @@
       ],
       "usage": "Backdrop of the player card at the foot of the navigation rail"
     },
-    "nav_movement": {
-      "category": "icons",
-      "path": "Assets/Icons/nav-movement.png",
-      "type": "image/png",
-      "dimensions": [
-        128,
-        128
-      ],
-      "usage": "Movement tab icon in the navigation rail"
-    },
     "nav_settings": {
       "category": "icons",
       "path": "Assets/Icons/nav-settings.png",

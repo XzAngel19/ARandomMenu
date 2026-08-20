@@ -1,4 +1,9 @@
 --!strict
+--!nolint GlobalUsedAsLocal
+--
+-- `cleanupMM2Runtime` is assigned as a global on purpose: the shell reads the
+-- teardown hook back out of this module's environment when it unloads the
+-- game, so it cannot be a local of the builder that defines it.
 local Module = {
     Name = "MM2",
     PlaceId = 142823291,
@@ -5110,6 +5115,8 @@ createUniversalFeature(
     }
 )
 
+-- Deliberately global: the shell calls `cleanupMM2Runtime` when it tears the
+-- game module down, so it cannot be a local of this builder.
 cleanupMM2Runtime = function()
     if state.gameRoleProvider == mm2RoleProvider then
         state.gameRoleProvider = nil

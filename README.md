@@ -435,6 +435,26 @@ registerEspExtra({
   and name plates. All three are deleted; MM2 and VD publish roles, MVSD
   publishes its team split, and the one ESP draws all of it.
 
+## Motion
+
+Four animations, all of them under a fifth of a second, all of them off when
+*Interface motion* is off in Config. The rule they follow is the one the other
+menus in this account get right: motion is there to say where something came
+from, never to make you wait for it.
+
+* **The window scales in from 96%** with a slight overshoot when it opens, and
+  shrinks a little faster on the way out — the frame is only hidden once that
+  tween has run, so the close is actually visible instead of the window
+  vanishing mid-gesture.
+* **A page rises the last ten pixels** when you switch to it. Switching to the
+  page you are already on does nothing.
+* **The rail's selection tick grows into place** instead of blinking on, which
+  makes the rail read as one control rather than three lamps.
+* **The launcher answers a finger**: it dips to 90% under the press, springs
+  back on release, and after a drag it settles against the nearer edge with an
+  overshoot, so it never ends up floating in the middle of the view where it
+  covers the game.
+
 ## Module architecture
 
 Modules are files, not another thousand lines of `ARandomMenu.luau`. The main
@@ -731,6 +751,33 @@ instead of repeatedly:
 The test suite asserts each of these: three refreshes in one frame do one
 sweep, a later frame sweeps again, rig tables are identical between calls, and
 three weapon scans walk the interface once.
+
+### Contracts the build enforces
+
+`tools/validate.sh` runs every check the repository holds itself to, and three
+of them exist because the compiler cannot see the bug:
+
+* **Option contract** — a module that reads `Options["Delay"]` after the row
+  was renamed to `"Reaction"` fails the build. The read would return nil and
+  take the module down mid-frame, in game, silently.
+* **State contract** — a module that reads `state.something` nothing in the
+  repository ever assigns fails the build. This is what caught the projectile
+  calibration reading `.settings` after the field became `.tuning`.
+* **Builder contract** — a game module that calls a builder missing from
+  `createGameModuleEnvironment` fails the build. A missing builder kills the
+  module halfway through its panel, which is how Kill Aura once rendered a
+  "Weapon" heading with nothing under it.
+* **Connection contract** — `featureConnections.X` with no matching
+  `disconnectFeatureConnection("X")` fails the build: that is a callback that
+  outlives the module being switched off.
+* **Card-name contract** — a game module cannot register a card whose name the
+  universal set already uses, because on one board that is two identical rows.
+
+Plus the lints that have each cost this repository a real bug —
+`GlobalUsedAsLocal` (a closure naming a local declared further down reads a
+global, nil at runtime), `LocalShadow`, `LocalUnused`, `DuplicateLocal`,
+`DuplicateFunction`, `UnreachableCode` — are errors, not warnings, across every
+file.
 
 ### Tests
 
