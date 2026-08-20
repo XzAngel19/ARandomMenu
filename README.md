@@ -4,6 +4,21 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
 
 ## Runtime architecture
 
+- **Which branch runs in game.** The loader and the bootstrap both point at
+  `main`, and the bootstrap downloads its per-game modules from `main` too, so
+  an injected menu always runs main's code — work reviewed on a branch looks
+  unchanged in game until it is merged. Set `ARANDOMMENU_BRANCH` before loading
+  to point the whole runtime (loader, bootstrap and game modules) at a branch:
+
+  ```lua
+  getgenv().ARANDOMMENU_BRANCH = "arena/01a01c6e-arandommenu"
+  loadstring(game:HttpGet(
+      "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/"
+          .. getgenv().ARANDOMMENU_BRANCH .. "/ARandomMenu.luau"))()
+  ```
+
+  It defaults to `main`, and the loader still falls back to main and then to
+  the known-good snapshot if the branch fails to download.
 - `loadstring` downloads the current `ARandomMenu.luau` bootstrap.
 - Loader v3 rejects the stale `0/0` runtime, retries a known-good immutable
   snapshot when GitHub's branch CDN has not propagated, and never runs an

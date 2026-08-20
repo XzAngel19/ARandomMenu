@@ -256,6 +256,32 @@ local function computeLayoutMetrics(
     }
 end
 
+-- Which branch the runtime pulls its game modules from.
+--
+-- The loader and this bootstrap both live on `main`, so an injected menu
+-- always ran main's game modules — which is why work reviewed on a branch
+-- still looked unchanged in game. Setting `ARANDOMMENU_BRANCH` before loading
+-- points the whole runtime (bootstrap *and* the per-game modules it fetches)
+-- at that branch instead:
+--
+--   getgenv().ARANDOMMENU_BRANCH = "arena/01a01c6e-arandommenu"
+--   loadstring(game:HttpGet(
+--       "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/"
+--           .. getgenv().ARANDOMMENU_BRANCH .. "/ARandomMenu.luau"))()
+--
+-- It defaults to `main`, so normal injections are unaffected.
+local RUNTIME_BRANCH: string = "main"
+do
+    local override: any = (getfenv() :: any).ARANDOMMENU_BRANCH
+    if type(override) == "string" and override ~= "" then
+        RUNTIME_BRANCH = (override:gsub("^refs/heads/", ""))
+    end
+end
+local RUNTIME_RAW_BASE: string =
+    "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/"
+        .. RUNTIME_BRANCH
+        .. "/"
+
 local function bootstrap(): ()
 local executorGlobals: any = getfenv()
 
@@ -288,8 +314,7 @@ local CONFIG_FILE = CONFIG_PROFILE_FOLDER
     .. "/Game_"
     .. tostring(game.GameId > 0 and game.GameId or game.PlaceId)
     .. ".Config"
-local REPOSITORY_RAW_BASE =
-    "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/main/"
+local REPOSITORY_RAW_BASE = RUNTIME_RAW_BASE
 
 local GAME_MODULES: {[number]: string} = {
     [142823291] = "MM2",
