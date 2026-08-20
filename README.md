@@ -432,6 +432,36 @@ on restricted places and its shapes differ across client versions, so a failed
 search says "the catalog refused the search" and leaves the manual id box,
 which needs nothing.
 
+### The ESP, fixed
+
+Three things were wrong with it, and the third explains the other two.
+
+* **Name tags came out several times the size the ESP asked for.** The labels
+  were built through the menu's text helper, which registers them with the
+  interface's text-scale system: that multiplies every size by 1.35, re-applies
+  it on every layout pass and re-fits it to its box, all behind the module's
+  back. The overlay owns plain instances now — nothing else touches them.
+* **The plate behind a name was three times the width of the box**, because it
+  was sized from the box. It is sized from the text now (`AutomaticSize` on X
+  plus five pixels of padding), so the tag is exactly as wide as the name in
+  it.
+* **Boxes went to pieces at the edges.** A target off the side of the screen,
+  or standing inside the camera — where eight projected corners spread across a
+  box the size of a city — left the previous frame's drawings on screen. Both
+  cases hide the drawing set instead, rather than releasing it, so nothing is
+  rebuilt when the target comes back.
+
+The colour model follows the reference client: **one colour**, not three.
+"Enemy", "friendly" and "hidden" were three rows answering one question, and
+two of them were unreachable in half the games this runs in. A target behind
+geometry is the same colour darkened; a team game or a game with roles
+overrides it per player. The picker takes a hue strip, a saturation/brightness
+square, **and** both text formats — `#rrggbb` or `r, g, b` — side by side under
+the gradients.
+
+*Filled box* and *Display name* come straight from Vape's ESP, which is also
+where the one-colour model comes from.
+
 ### The game bridge
 
 What a game module knows and a universal module cannot is published through the
@@ -454,6 +484,12 @@ registerEspExtra({
 })
 ```
 
+* **Roles** replace the generic rows they make redundant. A game that names
+  its roles has already answered the questions *Team check*, *Visibility
+  check*, *Team colours* and the base *Colour* were asking — in MM2 there are
+  no teams, the murderer is not "an enemy" and nobody is "friendly" — so those
+  four rows are folded away the moment a provider registers, and the roles take
+  their place.
 * **Roles** become a colour row each inside the universal **Player ESP**, plus
   a *Role colours* switch and a *Show role* switch. Because the colour is
   resolved in one place, a murderer is red in the corner box, in the full box,

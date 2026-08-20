@@ -275,9 +275,16 @@ function Host.create(world: any): HostStub
         feature.description = feature.description .. "\n" .. text
     end
 
+    -- Visibility is recorded by row name as well as applied, so a test can
+    -- assert that a module folded a control away without reaching into the
+    -- instance tree.
+    host.state.hiddenOptionRows = {}
     host.setOptionVisible = function(_feature: any, row: any, visible: boolean): ()
         if row then
             row.Visible = visible
+            if row.Name then
+                host.state.hiddenOptionRows[row.Name] = not visible
+            end
         end
     end
 

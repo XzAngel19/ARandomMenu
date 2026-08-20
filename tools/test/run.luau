@@ -160,8 +160,13 @@ check("tracer option exists", esp.Options["Tracers"] ~= nil)
 check("filters exist", esp.Options["Team check"] ~= nil
     and esp.Options["Max distance"] ~= nil
     and esp.Options["Visibility check"] ~= nil)
-check("style options exist", esp.Options["Enemy colour"] ~= nil
+check("style options exist", esp.Options["Colour"] ~= nil
+    and esp.Options["Team colours"] ~= nil
     and esp.Options["Text size"] ~= nil)
+check("the three-colour scheme is gone",
+    esp.Options["Enemy colour"] == nil
+        and esp.Options["Friendly colour"] == nil
+        and esp.Options["Hidden colour"] == nil)
 
 esp:Toggle()
 check("esp enables", esp.Enabled == true)
@@ -193,6 +198,18 @@ check("name tag carries the display name",
     nameTag and tostring(nameTag.Text) or "missing")
 check("box segments are drawn",
     drawings ~= nil and drawings:FindFirstChild("Box1").Visible == true)
+esp.Options["Filled box"].Value = true
+stub.step(0.05)
+check("the filled box follows the box it fills",
+    drawings ~= nil and drawings:FindFirstChild("BoxFill").Visible == true)
+esp.Options["Filled box"].Value = false
+esp.Options["Display name"].Value = false
+stub.step(0.05)
+check("the display-name switch falls back to the account name",
+    nameTag ~= nil and nameTag.Text == enemy.Name,
+    nameTag and tostring(nameTag.Text) or "missing")
+esp.Options["Display name"].Value = true
+stub.step(0.05)
 check("skeleton bones are drawn",
     drawings ~= nil and drawings:FindFirstChild("Bone1").Visible == true)
 check("chams highlight is parented to the character",
@@ -243,6 +260,10 @@ check("roles add a colour row per role",
         and esp.Options["Innocent colour"] ~= nil)
 check("roles add the role switches",
     esp.Options["Role colours"] ~= nil and esp.Options["Show role"] ~= nil)
+check("roles hide the rows they make redundant",
+    host.state.hiddenOptionRows["Team check"] == true
+        and host.state.hiddenOptionRows["Team colours"] == true
+        and host.state.hiddenOptionRows["Colour"] == true)
 check("a game object becomes a row in the ESP card",
     esp.Options["Coins"] ~= nil and esp.Options["Coins colour"] ~= nil)
 check("an extra keeps the tuning it had as a card",

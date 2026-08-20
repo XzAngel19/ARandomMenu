@@ -10398,8 +10398,8 @@ colorPicker.open = function(initialColor, onApply)
             BackgroundColor3 = Theme.DefaultSurface,
             BorderColor3 = Theme.DefaultOutline,
             BorderSizePixel = 1,
-            Position = UDim2.new(0.5, -170, 0.5, -135),
-            Size = UDim2.fromOffset(340, 270),
+            Position = UDim2.new(0.5, -170, 0.5, -150),
+            Size = UDim2.fromOffset(340, 300),
             Visible = false,
             ZIndex = 80,
         })
@@ -10506,26 +10506,41 @@ colorPicker.open = function(initialColor, onApply)
             CornerRadius = UDim.new(1, 0),
         })
 
-        local hex = makeTextBox(panel, "#ffffff")
-        hex.Position = UDim2.fromOffset(268, 105)
-        hex.Size = UDim2.fromOffset(58, 30)
-        hex.TextXAlignment = Enum.TextXAlignment.Center
-        hex.ZIndex = 81
-
         local apply = makeButton(panel, "APPLY", 11)
         apply.AutoButtonColor = false
-        apply.Position = UDim2.fromOffset(268, 148)
+        apply.Position = UDim2.fromOffset(268, 105)
         apply.Size = UDim2.fromOffset(58, 34)
         apply.ZIndex = 81
 
+        -- Two ways to type a colour, side by side under the gradients,
+        -- because people arrive with one or the other: a hex string copied
+        -- from somewhere, or three numbers out of another tool. Both write the
+        -- same colour and both update the preview as soon as the field loses
+        -- focus.
+        local hex = makeTextBox(panel, "#ffffff")
+        hex.Name = "HexField"
+        hex.Position = UDim2.fromOffset(15, 218)
+        hex.Size = UDim2.fromOffset(150, 30)
+        hex.PlaceholderText = "#rrggbb"
+        hex.TextXAlignment = Enum.TextXAlignment.Center
+        hex.ZIndex = 81
+
+        local rgb = makeTextBox(panel, "255, 255, 255")
+        rgb.Name = "RgbField"
+        rgb.Position = UDim2.fromOffset(174, 218)
+        rgb.Size = UDim2.fromOffset(151, 30)
+        rgb.PlaceholderText = "r, g, b"
+        rgb.TextXAlignment = Enum.TextXAlignment.Center
+        rgb.ZIndex = 81
+
         local hint = makeTextLabel(
             panel,
-            "Saturation / brightness        Hue",
+            "Drag the square for saturation and brightness, the strip for hue",
             10
         )
         hint.TextColor3 = Color3.fromRGB(145, 145, 145)
-        hint.Position = UDim2.fromOffset(15, 216)
-        hint.Size = UDim2.new(1, -30, 0, 22)
+        hint.Position = UDim2.fromOffset(15, 256)
+        hint.Size = UDim2.new(1, -30, 0, 24)
         hint.ZIndex = 81
 
         colorPicker.panel = panel
@@ -10536,6 +10551,7 @@ colorPicker.open = function(initialColor, onApply)
         colorPicker.hueCursor = hueCursor
         colorPicker.preview = preview
         colorPicker.hex = hex
+        colorPicker.rgb = rgb
         colorPicker.apply = apply
         colorPicker.drag = nil
 
@@ -10561,12 +10577,18 @@ colorPicker.open = function(initialColor, onApply)
                 colorPicker.h,
                 0
             )
-            local rgb = colorToConfig(color)
+            local channels = colorToConfig(color)
             colorPicker.hex.Text = string.format(
                 "#%02x%02x%02x",
-                rgb[1],
-                rgb[2],
-                rgb[3]
+                channels[1],
+                channels[2],
+                channels[3]
+            )
+            colorPicker.rgb.Text = string.format(
+                "%d, %d, %d",
+                channels[1],
+                channels[2],
+                channels[3]
             )
         end
         colorPicker.update = updateColor
@@ -10633,8 +10655,24 @@ colorPicker.open = function(initialColor, onApply)
                 local b = tonumber(string.sub(value, 5, 6), 16)
                 colorPicker.h, colorPicker.s, colorPicker.v =
                     Color3.fromRGB(r, g, b):ToHSV()
-                updateColor()
             end
+            -- Whatever was typed, the fields are rewritten from the colour
+            -- that is actually selected, so a half-typed value never sticks.
+            updateColor()
+        end)
+        rgb.FocusLost:Connect(function()
+            local r, g, b = string.match(
+                rgb.Text,
+                "^%s*(%d+)%s*[, ]%s*(%d+)%s*[, ]%s*(%d+)%s*$"
+            )
+            if r and g and b then
+                colorPicker.h, colorPicker.s, colorPicker.v = Color3.fromRGB(
+                    math.clamp(tonumber(r) or 0, 0, 255),
+                    math.clamp(tonumber(g) or 0, 0, 255),
+                    math.clamp(tonumber(b) or 0, 0, 255)
+                ):ToHSV()
+            end
+            updateColor()
         end)
         close.MouseButton1Click:Connect(function()
             panel.Visible = false

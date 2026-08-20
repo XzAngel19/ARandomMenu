@@ -111,6 +111,12 @@ function Module.init(context: Runtime): any
         Default = 1,
     })
     esp:CreateToggle({
+        Name = "Filled box",
+        Default = false,
+        Tooltip = "Wash the inside of the box in the target's colour. Reads "
+            .. "at a glance across a map; noisy in a crowd.",
+    })
+    esp:CreateToggle({
         Name = "Skeleton",
         Default = false,
         Tooltip = "Draw the rig's bones. Works on both R6 and R15.",
@@ -118,7 +124,12 @@ function Module.init(context: Runtime): any
     esp:CreateToggle({
         Name = "Name tags",
         Default = true,
-        Tooltip = "Display name above the box.",
+        Tooltip = "The player's name above the box.",
+    })
+    esp:CreateToggle({
+        Name = "Display name",
+        Default = true,
+        Tooltip = "Show the display name rather than the account name.",
     })
     esp:CreateToggle({
         Name = "Health bar",
@@ -172,29 +183,30 @@ function Module.init(context: Runtime): any
     })
 
     esp:CreateSection("Style")
+    -- One colour, not three.
+    --
+    -- "Enemy", "friendly" and "hidden" were three rows to answer one question,
+    -- and two of them were unreachable in half the games this runs in: a game
+    -- with roles never draws a "friendly", and a game without a visibility
+    -- check never draws a "hidden". There is one colour now; a target behind
+    -- geometry is the same colour darkened, and a team game or a game with
+    -- roles overrides it per player.
+    esp:CreateColor({
+        Name = "Colour",
+        Default = Color3.fromRGB(236, 236, 240),
+        Tooltip = "Used for every target the game gives no colour of its own.",
+    })
     esp:CreateToggle({
         Name = "Team colours",
         Default = true,
-        Tooltip = "Draw each player in their own team's colour. Falls back to "
-            .. "the colours below for teamless games.",
+        Tooltip = "Draw each player in their own team's colour where the game "
+            .. "has teams.",
     })
     esp:CreateToggle({
         Name = "Name plate",
         Default = true,
         Tooltip = "Put the name on a dark plate so it stays readable against "
             .. "a bright map.",
-    })
-    esp:CreateColor({
-        Name = "Enemy colour",
-        Default = Color3.fromRGB(236, 236, 240),
-    })
-    esp:CreateColor({
-        Name = "Friendly colour",
-        Default = Color3.fromRGB(120, 190, 255),
-    })
-    esp:CreateColor({
-        Name = "Hidden colour",
-        Default = Color3.fromRGB(150, 150, 158),
     })
     esp:CreateSlider({
         Name = "Text size",
@@ -230,6 +242,22 @@ function Module.init(context: Runtime): any
             return
         end
         extraRuntime.roles = provider
+        -- A game that names its roles has already answered everything the
+        -- generic rows were asking. In MM2 there are no teams to check, the
+        -- murderer is not "an enemy" and nobody is "friendly": leaving those
+        -- rows on screen is four controls that do nothing next to the ones
+        -- that do. They are hidden, not deleted, so switching games (or a
+        -- module reload) brings them back.
+        for _, redundant: string in
+            ipairs({"Team check", "Visibility check", "Team colours", "Colour"})
+        do
+            local row: any = esp.Options[redundant]
+            if row then
+                pcall(function(): ()
+                    row:SetVisible(false)
+                end)
+            end
+        end
         if not extraRuntime.sections.roles then
             extraRuntime.sections.roles = true
             esp:CreateSection("Roles · " .. tostring(provider.Name or "Game"))
@@ -388,6 +416,17 @@ function Module.acquire(
         skeleton[index] = line("Bone" .. tostring(index))
     end
 
+    -- Behind the box lines and behind the labels: a wash, not a panel.
+    local fill: Frame = create("Frame", {
+        Parent = root,
+        Name = "BoxFill",
+        BackgroundColor3 = Color3.fromRGB(236, 236, 240),
+        BackgroundTransparency = 0.82,
+        BorderSizePixel = 0,
+        Visible = false,
+        ZIndex = 0,
+    }) :: Frame
+
     local healthTrack: Frame = create("Frame", {
         Parent = root,
         Name = "HealthTrack",
@@ -409,23 +448,53 @@ function Module.acquire(
         ZIndex = 2,
     }) :: Frame
 
-    local nameLabel: TextLabel = host.makeTextLabel(root, player.DisplayName, 13)
-    nameLabel.AnchorPoint = Vector2.new(0.5, 1)
-    nameLabel.Name = "NameTag"
-    host.create("UICorner", {Parent = nameLabel, CornerRadius = UDim.new(0, 3)})
-    nameLabel.TextXAlignment = Enum.TextXAlignment.Center
-    nameLabel.Visible = false
-    nameLabel.ZIndex = 2
+    -- The overlay owns its own labels.
+    --
+    -- They used to come from the menu's text helper, which registers a label
+    -- with the interface's text-scale system: that multiplies every size by
+    -- 1.35, re-applies it on every layout pass and re-fits it to its box, all
+    -- behind the module's back. A name tag the ESP had sized at 13 came out
+    -- several times bigger, and the plate behind it was three times the width
+    -- of the box because it was sized from the box instead of from the text.
+    --
+    -- These are plain instances nothing else touches, and the plate is sized
+    -- by the text itself: AutomaticSize on X plus five pixels of padding, so
+    -- the tag is exactly as wide as the name in it.
+    local function espLabel(name: string, size: number, anchorY: number): TextLabel
+        local label: TextLabel = create("TextLabel", {
+            Parent = root,
+            Name = name,
+            AnchorPoint = Vector2.new(0.5, anchorY),
+            AutomaticSize = Enum.AutomaticSize.X,
+            BackgroundColor3 = Color3.fromRGB(10, 10, 12),
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Text = "",
+            TextColor3 = Color3.fromRGB(236, 236, 240),
+            TextSize = size,
+            -- Nothing to truncate: the box grows to the text rather than the
+            -- text being cut to the box.
+            TextTruncate = Enum.TextTruncate.None,
+            TextXAlignment = Enum.TextXAlignment.Center,
+            TextYAlignment = Enum.TextYAlignment.Center,
+            Visible = false,
+            ZIndex = 2,
+        }) :: TextLabel
+        create("UIPadding", {
+            Parent = label,
+            PaddingLeft = UDim.new(0, 5),
+            PaddingRight = UDim.new(0, 5),
+        })
+        create("UICorner", {Parent = label, CornerRadius = UDim.new(0, 3)})
+        return label
+    end
 
-    local detailsLabel: TextLabel = host.makeTextLabel(root, "", 12)
-    detailsLabel.AnchorPoint = Vector2.new(0.5, 0)
-    detailsLabel.Name = "Details"
-    detailsLabel.TextXAlignment = Enum.TextXAlignment.Center
-    detailsLabel.Visible = false
-    detailsLabel.ZIndex = 2
+    local nameLabel: TextLabel = espLabel("NameTag", 13, 1)
+    local detailsLabel: TextLabel = espLabel("Details", 12, 0)
 
     local drawings: any = {
         root = root,
+        fill = fill,
         box = box,
         skeleton = skeleton,
         tracer = line("Tracer"),
@@ -574,10 +643,7 @@ function Module.render(
             end
             visible = cache.value
         end
-        local colour: Color3 = entity.IsFriendly
-                and options["Friendly colour"].Value
-            or (visible and options["Enemy colour"].Value
-                or options["Hidden colour"].Value)
+        local colour: Color3 = options["Colour"].Value
         -- A role beats a team: in a game with roles, "murderer" is the fact
         -- the colour is there to carry, and the team is usually meaningless.
         local role: string? = nil
@@ -589,13 +655,10 @@ function Module.render(
             and options["Role colours"] ~= nil
             and options["Role colours"].Value == true
         if useRoleColour then
-            local roleColour: Color3 = roleOption.Value
-            colour = visible
-                and roleColour
-                or roleColour:Lerp(Color3.new(0, 0, 0), 0.45)
+            colour = roleOption.Value
         end
         -- A team game already colour-codes itself; borrowing that is both
-        -- prettier and more informative than two greys.
+        -- prettier and more informative than one grey.
         if not useRoleColour and options["Team colours"].Value and entity.Team then
             -- Read defensively: `Team` is a Team instance in a normal game,
             -- but plenty of games hang their own value off the player, and a
@@ -604,10 +667,12 @@ function Module.render(
                 return (entity.Team :: any).TeamColor.Color
             end)
             if teamOk and typeof(teamColour) == "Color3" then
-                colour = visible
-                    and teamColour
-                    or (teamColour :: Color3):Lerp(Color3.new(0, 0, 0), 0.45)
+                colour = teamColour
             end
+        end
+        -- One rule for "behind something", whatever the colour came from.
+        if not visible then
+            colour = colour:Lerp(Color3.new(0, 0, 0), 0.45)
         end
 
         -- The box is the projected bounding box, padded a little so it frames
@@ -620,14 +685,34 @@ function Module.render(
         local width: number = math.max(right - left, 4)
         local height: number = math.max(bottom - top, 6)
         local centreX: number = (left + right) * 0.5
-        -- A target that is off the edge of the screen would otherwise leave a
-        -- name floating in the corner.
+        -- Two ways a projected box goes wrong, and both used to leave the
+        -- last frame's drawings on screen: a target off the edge (a name
+        -- floating in a corner) and a target standing inside the camera, whose
+        -- eight corners spread across a box the size of a city. Hiding the set
+        -- is the answer to both — releasing it would rebuild every instance
+        -- the moment the target came back.
+        drawings.root.Visible = true
         if right < 0 or left > viewport.X or bottom < 0 or top > viewport.Y then
+            drawings.root.Visible = false
+            continue
+        end
+        if width > viewport.X * 2.5 or height > viewport.Y * 2.5 then
+            drawings.root.Visible = false
             continue
         end
 
         local thickness: number = math.round(options["Box thickness"].Value)
         local boxMode: string = options["Boxes"].Value
+        if options["Filled box"].Value and boxMode ~= "Off" then
+            drawings.fill.Visible = true
+            drawings.fill.BackgroundColor3 = colour
+            drawings.fill.Position =
+                UDim2.fromOffset(math.round(left), math.round(top))
+            drawings.fill.Size =
+                UDim2.fromOffset(math.round(width), math.round(height))
+        else
+            drawings.fill.Visible = false
+        end
         local corners: {Vector2} = {
             Vector2.new(left, top),
             Vector2.new(right, top),
@@ -727,18 +812,23 @@ function Module.render(
         local textSize: number = math.round(options["Text size"].Value)
         if options["Name tags"].Value then
             drawings.name.Visible = true
+            local shown: string = options["Display name"].Value
+                and player.DisplayName
+                or player.Name
             drawings.name.Text = (role
                     and options["Show role"] ~= nil
                     and options["Show role"].Value)
-                and (player.DisplayName .. "  [" .. (role :: string) .. "]")
-                or player.DisplayName
+                and (shown .. "  [" .. (role :: string) .. "]")
+                or shown
             drawings.name.TextColor3 = colour
             drawings.name.TextSize = textSize
             drawings.name.Position = UDim2.fromOffset(
                 math.round(centreX),
                 math.round(top - 3)
             )
-            drawings.name.Size = UDim2.fromOffset(math.max(width * 3, 120), textSize + 4)
+            -- Width is the text's business (AutomaticSize.X); only the line
+            -- height is set here.
+            drawings.name.Size = UDim2.fromOffset(0, textSize + 6)
             -- The plate is what keeps a name readable over snow, sand or a
             -- lit sky; without it ESP text disappears half the map.
             drawings.name.BackgroundColor3 = Color3.fromRGB(10, 10, 12)
@@ -771,11 +861,14 @@ function Module.render(
             drawings.details.Text = table.concat(details, "  ")
             drawings.details.TextColor3 = colour
             drawings.details.TextSize = math.max(textSize - 2, 8)
+            drawings.details.BackgroundTransparency =
+                options["Name plate"].Value and 0.45 or 1
             drawings.details.Position = UDim2.fromOffset(
                 math.round(centreX),
                 math.round(bottom + 2)
             )
-            drawings.details.Size = UDim2.fromOffset(math.max(width * 3, 120), textSize)
+            drawings.details.Size =
+                UDim2.fromOffset(0, math.max(textSize - 2, 8) + 6)
         else
             drawings.details.Visible = false
         end
