@@ -117,6 +117,108 @@ function Module.init(context: Runtime): any
 
     local nextSwingAt: number = 0
     local highlights: {[Player]: Highlight} = {}
+    local targetPanel: any = nil
+
+    -- Target readout, the way Vape shows it: who the aura is actually on, how
+    -- much of them is left, and how far away they are — because "the aura is
+    -- running" and "the aura is hitting that person" are different facts and
+    -- only one of them is worth screen space.
+    local function ensureTargetPanel(): any
+        if targetPanel and targetPanel.root.Parent then
+            return targetPanel
+        end
+        local root: Frame = host.create("Frame", {
+            Parent = host.ScreenGui,
+            Name = "KillAuraTarget",
+            AnchorPoint = Vector2.new(0, 1),
+            BackgroundColor3 = Color3.fromRGB(14, 14, 16),
+            BackgroundTransparency = 0.12,
+            BorderSizePixel = 0,
+            Position = UDim2.new(0, 18, 1, -18),
+            Size = UDim2.fromOffset(188, 54),
+            Visible = false,
+            ZIndex = 60,
+        }) :: Frame
+        host.create("UICorner", {Parent = root, CornerRadius = UDim.new(0, 4)})
+        host.create("UIStroke", {
+            Parent = root,
+            Color = Color3.fromRGB(92, 92, 98),
+            Transparency = 0.6,
+            Thickness = 1,
+        })
+        local portrait: ImageLabel = host.create("ImageLabel", {
+            Parent = root,
+            Name = "Portrait",
+            AnchorPoint = Vector2.new(0, 0.5),
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Image = "",
+            Position = UDim2.new(0, 8, 0.5, 0),
+            Size = UDim2.fromOffset(38, 38),
+            ZIndex = 61,
+        }) :: ImageLabel
+        local name: TextLabel = host.makeTextLabel(root, "", 12)
+        name.Name = "TargetName"
+        name.Position = UDim2.fromOffset(54, 8)
+        name.Size = UDim2.new(1, -62, 0, 15)
+        name.ZIndex = 61
+        local detail: TextLabel = host.makeTextLabel(root, "", 10)
+        detail.Name = "TargetDetail"
+        detail.Position = UDim2.fromOffset(54, 23)
+        detail.Size = UDim2.new(1, -62, 0, 13)
+        detail.TextColor3 = Color3.fromRGB(158, 158, 166)
+        detail.ZIndex = 61
+        local track: Frame = host.create("Frame", {
+            Parent = root,
+            Name = "HealthTrack",
+            BackgroundColor3 = Color3.fromRGB(34, 34, 38),
+            BorderSizePixel = 0,
+            Position = UDim2.fromOffset(54, 40),
+            Size = UDim2.new(1, -64, 0, 4),
+            ZIndex = 61,
+        }) :: Frame
+        host.create("UICorner", {Parent = track, CornerRadius = UDim.new(1, 0)})
+        local fill: Frame = host.create("Frame", {
+            Parent = track,
+            Name = "HealthFill",
+            BackgroundColor3 = Color3.fromRGB(232, 232, 236),
+            BorderSizePixel = 0,
+            Size = UDim2.fromScale(1, 1),
+            ZIndex = 62,
+        }) :: Frame
+        host.create("UICorner", {Parent = fill, CornerRadius = UDim.new(1, 0)})
+        targetPanel = {
+            root = root,
+            portrait = portrait,
+            name = name,
+            detail = detail,
+            fill = fill,
+        }
+        return targetPanel
+    end
+
+    local function showTarget(entity: any?): ()
+        if not entity then
+            if targetPanel and targetPanel.root.Parent then
+                targetPanel.root.Visible = false
+            end
+            return
+        end
+        local panel: any = ensureTargetPanel()
+        panel.root.Visible = true
+        panel.portrait.Image = "rbxthumb://type=AvatarHeadShot&id="
+            .. tostring(entity.Player.UserId)
+            .. "&w=150&h=150"
+        panel.name.Text = entity.Player.DisplayName
+        panel.detail.Text = tostring(math.round(entity.Health))
+            .. " hp  ·  "
+            .. tostring(math.round(entity.Distance))
+            .. "m"
+        panel.fill.Size = UDim2.fromScale(
+            math.clamp(entity.Health / math.max(entity.MaxHealth, 1), 0, 1),
+            1
+        )
+    end
 
     local function clearHighlights(keep: {[Player]: boolean}?): ()
         for player: Player, highlight: Highlight in pairs(highlights) do
@@ -268,11 +370,13 @@ function Module.init(context: Runtime): any
             nextSwingAt = 0
             if not enabled then
                 clearHighlights()
+                showTarget(nil)
                 return
             end
 
             aura:Clean(function(): ()
                 clearHighlights()
+                showTarget(nil)
             end)
             -- Learn from the player: whichever tool they swing by hand becomes
             -- the weapon the aura uses.
@@ -334,7 +438,13 @@ function Module.init(context: Runtime): any
                 })
                 if #targets == 0 then
                     clearHighlights()
+                    showTarget(nil)
                     return
+                end
+                if options["Show target"].Value then
+                    showTarget(targets[1])
+                else
+                    showTarget(nil)
                 end
 
                 local now: number = os.clock()
@@ -575,6 +685,17 @@ function Module.init(context: Runtime): any
         Name = "Highlight targets",
         Default = true,
     }))
+    table.insert(advancedRows, aura:CreateToggle({
+        Name = "Show target",
+        Default = true,
+        Tooltip = "Corner readout with the current target's avatar, health "
+            .. "and distance.",
+        Function = function(value: boolean): ()
+            if not value then
+                showTarget(nil)
+            end
+        end,
+    }))
     table.insert(advancedRows, aura:CreateColor({
         Name = "Attack colour",
         Default = Color3.fromRGB(235, 110, 110),
@@ -601,6 +722,12 @@ function Module.init(context: Runtime): any
 
     activeCleanup = function(): ()
         clearHighlights()
+        if targetPanel and targetPanel.root then
+            pcall(function(): ()
+                targetPanel.root:Destroy()
+            end)
+            targetPanel = nil
+        end
     end
     Module.Initialized = true
     return aura

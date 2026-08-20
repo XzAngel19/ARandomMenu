@@ -141,6 +141,38 @@ if failures:
 PYTHON
 echo "ok"
 
+step "Text objects are contained"
+# A label that fits in one typeface overflows in another, so every text object
+# has to say what happens when it does not fit. The three helpers set this for
+# everything they build; this catches the ones built by hand.
+python3 - <<'PYTHON'
+import re
+import subprocess
+
+files = [
+    path
+    for path in subprocess.run(
+        ["git", "ls-files"], capture_output=True, text=True
+    ).stdout.split()
+    if path.endswith((".lua", ".luau")) and not path.startswith("reference/")
+]
+pattern = re.compile(r'create\("(TextLabel|TextButton|TextBox)", \{')
+offenders = []
+for path in files:
+    with open(path, encoding="utf-8") as handle:
+        source = handle.read()
+    for match in pattern.finditer(source):
+        block = source[match.end() : match.end() + 900].split("})")[0]
+        if "TextTruncate" not in block:
+            line = source.count("\n", 0, match.start()) + 1
+            offenders.append(f"{path}:{line}")
+if offenders:
+    raise SystemExit(
+        "text objects without TextTruncate:\n  " + "\n  ".join(offenders)
+    )
+PYTHON
+echo "ok"
+
 step "Strict Luau headers"
 while IFS= read -r file; do
     test "$(head -n 1 "$file")" = "--!strict" || {

@@ -548,6 +548,41 @@ world.clock += 1
 stub.step(0.016)
 check("nothing is pressed while disabled", buttonPresses == afterDisable)
 
+-- Kill Aura target readout ------------------------------------------------------
+
+section("Kill Aura show target")
+
+world.raycastResult = nil
+world.localPlayer.Character:FindFirstChild("HumanoidRootPart").Position =
+    world.vector3(0, 0, 0)
+enemy.Character:FindFirstChild("HumanoidRootPart").Position = world.vector3(0, 0, -8)
+aura.Options["Show target"].Value = true
+aura:Toggle()
+world.clock += 2
+stub.step(0.016)
+
+local panel: any = nil
+for _, child: any in ipairs(host.ScreenGui.Children) do
+    if child.Name == "KillAuraTarget" then
+        panel = child
+    end
+end
+check("target panel exists while a target is held", panel ~= nil and panel.Visible == true)
+check("panel names the target",
+    panel ~= nil and panel:FindFirstChild("TargetName").Text == "Enemy",
+    panel and tostring(panel:FindFirstChild("TargetName").Text) or "no panel")
+check("panel reports health and distance",
+    panel ~= nil
+        and string.find(panel:FindFirstChild("TargetDetail").Text, "hp", 1, true) ~= nil,
+    panel and tostring(panel:FindFirstChild("TargetDetail").Text) or "no panel")
+
+-- Out of reach: the readout goes away rather than lying about the target.
+enemy.Character:FindFirstChild("HumanoidRootPart").Position = world.vector3(0, 0, -400)
+world.clock += 1
+stub.step(0.016)
+check("panel hides when there is no target", panel ~= nil and panel.Visible == false)
+aura:Toggle()
+
 -- Click Teleport ---------------------------------------------------------------
 
 section("Click Teleport")
@@ -791,7 +826,8 @@ local itemRender: any = ItemFile.init(espContext)
 
 check("card is registered", itemRender.Name == "Item Render")
 for _, name: string in ipairs({
-    "Names",
+    "Objects",
+    "Add by name",
     "Touch part",
     "Clear list",
     "Show distance",
@@ -813,11 +849,7 @@ oreB.Position = world.vector3(0, 0, -40)
 oreB.Parent = world.workspace
 
 itemRender:Toggle()
-itemRender.Options["Names"].Value = "ironore"
 itemRender.Options["Refresh interval"].Value = 0
--- The text box callback is what publishes the list in the real menu.
-itemRender.Feature.options["Names"] = nil
-ItemFile.Initialized = true
 stub.step(0.016)
 
 -- Touch part: the menu hides, the tap names the object, every twin lights up.
@@ -830,9 +862,10 @@ host.UserInputService.InputBegan:Fire({
     UserInputType = world.globals.Enum.UserInputType.Touch,
     Position = world.vector3(300, 400, 0),
 }, false)
-check("touch part learns the object name",
-    string.find(tostring(itemRender.Options["Names"].Value), "IronOre", 1, true) ~= nil,
-    tostring(itemRender.Options["Names"].Value))
+check("touch part adds the object to the list",
+    itemRender.Feature.options["Objects"].selected["IronOre"] == true,
+    "list: " .. tostring(itemRender.Options["Objects"].Selected and
+        table.concat(itemRender.Options["Objects"].Selected, ",") or "?"))
 check("touch part brings the menu back", host.state.menuVisible == true)
 
 stub.step(0.016)
@@ -846,6 +879,20 @@ check("every object with that name is rendered", rendered == 2,
     "rendered: " .. tostring(rendered))
 check("the label carries the object name",
     oreA:FindFirstChild("RTM_ItemRender") ~= nil)
+
+-- Unticking one object stops it being drawn without touching the others.
+itemRender.Feature.options["Objects"].set("IronOre", false)
+stub.step(0.016)
+local afterUntick: number = 0
+for _, part: any in ipairs({oreA, oreB}) do
+    if part:FindFirstChild("RTM_ItemRender") then
+        afterUntick += 1
+    end
+end
+check("unticking an object stops rendering it", afterUntick == 0,
+    "still rendered: " .. tostring(afterUntick))
+itemRender.Feature.options["Objects"].set("IronOre", true)
+stub.step(0.016)
 
 itemRender:Toggle()
 local left: number = 0

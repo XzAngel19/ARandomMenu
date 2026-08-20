@@ -3526,6 +3526,8 @@ create("UICorner", {
     CornerRadius = UDim.new(0, 7),
 })
 state.mm2ShotFeedback.text = create("TextLabel", {
+    TextTruncate = Enum.TextTruncate.AtEnd,
+    ClipsDescendants = true,
     Parent = state.mm2ShotFeedback.root,
     Name = "Countdown",
     BackgroundTransparency = 1,

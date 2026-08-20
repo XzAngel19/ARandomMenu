@@ -20,7 +20,6 @@ local RUNTIME_COMPATIBILITY_MARKER: string =
     "Initialization error — check executor console"
 local RUNTIME_SAFETY_SOURCE_URL: string =
     "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/4b10e4bfe00aa356afb3e0420a72e745327f6259/ARandomMenu.luau"
-local RUNTIME_BUILD_LABEL: string = "loader-v3"
 
 -- Module taxonomy.
 --
@@ -165,12 +164,15 @@ local TAB_MONOGRAMS: {[string]: string} = {
 --
 -- They sit at file scope (like the feature taxonomy) because `bootstrap()` is
 -- one enormous function and is close to Luau's 200 local-register ceiling.
+-- Vape's shell is closer to a terminal than to a phone app: small radii, hard
+-- edges, and contrast carried by the fill rather than by soft corners. These
+-- are the four radii the whole interface is built from.
 local UI_RADIUS: {[string]: number} = {
-    shell = 12,
-    panel = 9,
-    card = 7,
-    control = 6,
-    chip = 5,
+    shell = 8,
+    panel = 5,
+    card = 4,
+    control = 3,
+    chip = 3,
 }
 -- The reference interface animates in roughly 0.16s. Everything the shell
 -- tweens uses one of these three durations.
@@ -599,7 +601,6 @@ local CONTROL_FONT: Font = Font.new(
     Enum.FontWeight.SemiBold,
     Enum.FontStyle.Normal
 )
-local DISPLAY_FONT: Font = TITLE_FONT
 local VALVE_FONT: Font = CONTROL_FONT
 local TEXT_BASE_MULTIPLIER: number = 1.35
 local TEXT_SCALE_MINIMUM: number = 0.8
@@ -1393,12 +1394,6 @@ function AssetManager.resolveFont(
     return fontFace
 end
 
-    DISPLAY_FONT = AssetManager.resolveFont(
-        "candyFont",
-        TITLE_FONT,
-        Enum.FontWeight.Regular,
-        Enum.FontStyle.Normal
-    )
     VALVE_FONT = AssetManager.resolveFont(
         "valveFont",
         CONTROL_FONT,
@@ -1505,7 +1500,6 @@ state.applyInterfaceFont = function(name: string, persist: boolean?): ()
     TITLE_FONT = Font.new(family, titleWeight, style)
     CONTROL_FONT = Font.new(family, controlWeight, style)
     THIN_FONT = Font.new(family, bodyWeight, style)
-    DISPLAY_FONT = TITLE_FONT
     VALVE_FONT = CONTROL_FONT
 
     -- Each label keeps the weight it was designed with, so headings stay
@@ -1818,13 +1812,18 @@ local function makeTextLabel(
     text: string,
     normalSize: number?
 ): TextLabel
+    -- Text is contained by default. A label that is fine in BuilderSans runs
+    -- straight out of its box in Code or Bangers, and the fix cannot be "pick
+    -- a shorter word": every label clips to its frame and ends in an ellipsis.
     return registerText(create("TextLabel", {
         Parent = parent,
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
+        ClipsDescendants = true,
         FontFace = THIN_FONT,
         Text = text,
         TextColor3 = Theme.Text,
+        TextTruncate = Enum.TextTruncate.AtEnd,
         TextXAlignment = Enum.TextXAlignment.Left,
         TextYAlignment = Enum.TextYAlignment.Center,
     }), normalSize or 14) :: TextLabel
@@ -1839,6 +1838,8 @@ local function makeButton(
     local button = registerText(create("TextButton", {
         Parent = parent,
         AutoButtonColor = false,
+        ClipsDescendants = true,
+        TextTruncate = Enum.TextTruncate.AtEnd,
         BackgroundColor3 = isDefaultStyle
             and Theme.DefaultButton
             or DEFAULT_SURFACE_COLOR,
@@ -1979,6 +1980,8 @@ local function createToggleSwitch(
 ): TextButton
     local markSize: number = math.clamp(width or 15, 12, 18)
     local button: TextButton = create("TextButton", {
+        TextTruncate = Enum.TextTruncate.AtEnd,
+        ClipsDescendants = true,
         Parent = parent,
         Active = true,
         AutoButtonColor = false,
@@ -2157,6 +2160,10 @@ local function makeTextBox(parent: Instance, defaultText: any): TextBox
             or Theme.Surface,
         BorderSizePixel = 0,
         ClearTextOnFocus = false,
+        -- A text box holds whatever is typed into it, which is unbounded by
+        -- definition, so it clips and truncates rather than spilling.
+        ClipsDescendants = true,
+        TextTruncate = Enum.TextTruncate.AtEnd,
         FontFace = THIN_FONT,
         PlaceholderColor3 = isDefaultStyle
             and Theme.DefaultTextMuted
@@ -2738,6 +2745,8 @@ create("UIStroke", {
 -- puts the menu away, and the launcher brings it back. One obvious place to
 -- press, in the corner the eye already goes to.
 local BrandButton: TextButton = create("TextButton", {
+    TextTruncate = Enum.TextTruncate.AtEnd,
+    ClipsDescendants = true,
     Parent = BrandMark,
     Name = "BrandButton",
     Active = true,
@@ -3039,8 +3048,11 @@ local function createTab(tabName: string, layoutOrder: number): Frame
         AnchorPoint = Vector2.new(0, 0.5),
         BackgroundColor3 = Theme.DefaultAccent,
         BorderSizePixel = 0,
-        Position = UDim2.new(0, -6, 0.5, 0),
-        Size = UDim2.fromOffset(2, math.max(10, layout.navRowHeight - 16)),
+        -- Flush with the row's own left edge. It used to hang six pixels
+        -- outside the button, which put it in the rail's gutter and made it
+        -- the first thing to disappear once buttons started clipping.
+        Position = UDim2.new(0, 0, 0.5, 0),
+        Size = UDim2.fromOffset(2, math.max(10, layout.navRowHeight - 12)),
         Visible = false,
         ZIndex = 14,
     }) :: Frame
@@ -3215,15 +3227,43 @@ do
 -- Search lives in the page header, not in the rail: on a phone the rail is
 -- only wide enough for the monogram chips.
 local searchLayout: LayoutMetrics = state.layout
-local DefaultSearchBox: TextBox = makeTextBox(state.shells.defaultHeader, "")
+-- The search field is a clipping frame with the box inside it, not a bare
+-- TextBox. A TextBox does not contain its own text: switch the interface to a
+-- wide face like Code and the query used to run straight out of the field and
+-- across the header. The frame owns the edge, the fill and the clip; the box
+-- only owns the text.
+local DefaultSearchFrame: Frame = create("Frame", {
+    Parent = state.shells.defaultHeader,
+    Name = "DefaultSearchFrame",
+    AnchorPoint = Vector2.new(1, 0.5),
+    BackgroundColor3 = Theme.DefaultSurface,
+    BackgroundTransparency = 0.28,
+    BorderSizePixel = 0,
+    ClipsDescendants = true,
+    Position = UDim2.new(1, -searchLayout.contentPadding, 0.5, 0),
+    Size = UDim2.fromOffset(searchLayout.searchWidth, searchLayout.searchHeight),
+    ZIndex = 24,
+}) :: Frame
+create("UICorner", {
+    Parent = DefaultSearchFrame,
+    Name = "SearchCorner",
+    CornerRadius = cornerRadius(UI_RADIUS.control),
+})
+create("UIStroke", {
+    Parent = DefaultSearchFrame,
+    Name = "SearchStroke",
+    Color = Theme.DefaultOutline,
+    Transparency = 0.66,
+    Thickness = 1,
+})
+
+local DefaultSearchBox: TextBox = makeTextBox(DefaultSearchFrame, "")
 DefaultSearchBox.Name = "DefaultSearch"
 DefaultSearchBox.PlaceholderText = "Search modules"
 DefaultSearchBox.AnchorPoint = Vector2.new(1, 0.5)
-DefaultSearchBox.Position = UDim2.new(1, -searchLayout.contentPadding, 0.5, 0)
-DefaultSearchBox.Size =
-    UDim2.fromOffset(searchLayout.searchWidth, searchLayout.searchHeight)
-DefaultSearchBox.BackgroundColor3 = Theme.DefaultSurface
-DefaultSearchBox.BackgroundTransparency = 0.38
+DefaultSearchBox.BackgroundTransparency = 1
+DefaultSearchBox.Position = UDim2.new(1, -8, 0.5, 0)
+DefaultSearchBox.Size = UDim2.new(1, -32, 1, -6)
 DefaultSearchBox.TextColor3 = Theme.DefaultText
 DefaultSearchBox.PlaceholderColor3 = Theme.DefaultTextMuted:Lerp(
     Theme.DefaultSurface,
@@ -3231,33 +3271,35 @@ DefaultSearchBox.PlaceholderColor3 = Theme.DefaultTextMuted:Lerp(
 )
 DefaultSearchBox.TextXAlignment = Enum.TextXAlignment.Left
 DefaultSearchBox.TextYAlignment = Enum.TextYAlignment.Center
-DefaultSearchBox.ZIndex = 24
--- The clear button sits on the leading edge, so the text always starts after
--- it and the field never looks like it has a stray glyph floating on the right.
-create("UIPadding", {
+DefaultSearchBox.ZIndex = 25
+do
+    local boxCorner: UICorner? =
+        DefaultSearchBox:FindFirstChild("StyleCorner") :: UICorner?
+    if boxCorner then
+        boxCorner:Destroy()
+    end
+    local boxStroke: UIStroke? =
+        DefaultSearchBox:FindFirstChild("StyleStroke") :: UIStroke?
+    if boxStroke then
+        boxStroke:Destroy()
+    end
+end
+-- Keeps the glyphs off the frame's own edge at any text size.
+create("UITextSizeConstraint", {
     Parent = DefaultSearchBox,
-    PaddingLeft = UDim.new(0, 26),
-    PaddingRight = UDim.new(0, 10),
+    MaxTextSize = math.max(searchLayout.searchHeight - 12, 11),
+    MinTextSize = 8,
 })
-local DefaultSearchCorner: UICorner? =
-    DefaultSearchBox:FindFirstChild("StyleCorner") :: UICorner?
-if DefaultSearchCorner then
-    DefaultSearchCorner.CornerRadius = cornerRadius(UI_RADIUS.control)
-end
-local DefaultSearchStroke: UIStroke? =
-    DefaultSearchBox:FindFirstChild("StyleStroke") :: UIStroke?
-if DefaultSearchStroke then
-    DefaultSearchStroke.Color = Theme.DefaultOutline
-    DefaultSearchStroke.Transparency = 0.72
-end
-local SearchClear: TextButton = makeButton(DefaultSearchBox, "x", 9)
+
+local SearchClear: TextButton = makeButton(DefaultSearchFrame, "x", 9)
 SearchClear.Name = "ClearSearch"
 SearchClear.AnchorPoint = Vector2.new(0, 0.5)
 SearchClear.BackgroundTransparency = 1
-SearchClear.Position = UDim2.new(0, -22, 0.5, 0)
+SearchClear.Position = UDim2.new(0, 4, 0.5, 0)
 SearchClear.Size = UDim2.fromOffset(22, 22)
 SearchClear.TextTransparency = 0.45
 SearchClear.Visible = false
+SearchClear.ZIndex = 26
 SearchClear.ZIndex = 26
 SearchClear:SetAttribute("ThemeRole", "Icon")
 local SearchClearStroke: UIStroke? =
@@ -3288,9 +3330,15 @@ state.shells.searchClear = SearchClear
 state.searchQuery = ""
 
 state.onLayout(function(metrics: LayoutMetrics): ()
-    DefaultSearchBox.Position = UDim2.new(1, -metrics.contentPadding, 0.5, 0)
-    DefaultSearchBox.Size =
+    -- The frame is what moves and resizes now; the box fills it.
+    DefaultSearchFrame.Position = UDim2.new(1, -metrics.contentPadding, 0.5, 0)
+    DefaultSearchFrame.Size =
         UDim2.fromOffset(metrics.searchWidth, metrics.searchHeight)
+    local sizeCap: UITextSizeConstraint? =
+        DefaultSearchBox:FindFirstChildOfClass("UITextSizeConstraint")
+    if sizeCap then
+        sizeCap.MaxTextSize = math.max(metrics.searchHeight - 12, 11)
+    end
 end)
 end
 
@@ -3578,51 +3626,24 @@ local LoadingSpinnerOuterTween: Tween = TweenService:Create(
 )
 LoadingSpinnerOuterTween:Play()
 
-local LoadingTitle: TextLabel = makeTextLabel(
-    LoadingCurtain,
-    "A Random Menu",
-    state.layout.compact and 26 or 30
-) :: TextLabel
-LoadingTitle.AnchorPoint = Vector2.new(0.5, 0.5)
-LoadingTitle.FontFace = DISPLAY_FONT
-LoadingTitle.Position = UDim2.fromScale(0.5, 0.55)
-LoadingTitle.Size = UDim2.new(0.8, 0, 0, 48)
-LoadingTitle.TextColor3 = state.guiStyle == "Default"
-    and Theme.DefaultText
-    or Theme.Text
+-- The intro carries no words. A menu that spells out "loading modules" while
+-- it loads modules is telling the player something they can already see; what
+-- is left is the ring and the progress line, and the shell fades up out of it.
+--
+-- These three labels are kept as invisible stubs because the staging code
+-- fades them in and out by name, and a sequence that has to check for nil at
+-- every step is a sequence that will eventually forget to.
+local LoadingTitle: TextLabel = (makeTextLabel(LoadingCurtain, "", 1) :: any) :: TextLabel
+LoadingTitle.Name = "IntroTitle"
+LoadingTitle.Size = UDim2.fromOffset(0, 0)
 LoadingTitle.TextTransparency = 1
-LoadingTitle.TextXAlignment = Enum.TextXAlignment.Center
-LoadingTitle.ZIndex = 503
+LoadingTitle.Visible = false
 
--- Hairline underline that draws itself out from the centre beneath the
--- wordmark once the wordmark itself has settled.
-local LoadingTitleRule: Frame = create("Frame", {
-    Parent = LoadingCurtain,
-    Name = "TitleRule",
-    AnchorPoint = Vector2.new(0.5, 0.5),
-    BackgroundColor3 = Color3.fromRGB(200, 200, 208),
-    BackgroundTransparency = 0.55,
-    BorderSizePixel = 0,
-    Position = UDim2.fromScale(0.5, 0.615),
-    Size = UDim2.fromOffset(0, 1),
-    ZIndex = 503,
-}) :: Frame
-
-local LoadingLabel: TextLabel = (makeTextLabel(
-    LoadingCurtain,
-    "Starting up",
-    12
-) :: any) :: TextLabel
-LoadingLabel.AnchorPoint = Vector2.new(0.5, 0)
-LoadingLabel.FontFace = THIN_FONT
-LoadingLabel.Position = UDim2.fromScale(0.5, 0.655)
-LoadingLabel.Size = UDim2.new(0.72, 0, 0, 28)
-LoadingLabel.TextColor3 = state.guiStyle == "Default"
-    and Theme.DefaultTextMuted
-    or Theme.TextMuted
+local LoadingLabel: TextLabel = (makeTextLabel(LoadingCurtain, "", 1) :: any) :: TextLabel
+LoadingLabel.Name = "IntroStatus"
+LoadingLabel.Size = UDim2.fromOffset(0, 0)
 LoadingLabel.TextTransparency = 1
-LoadingLabel.TextXAlignment = Enum.TextXAlignment.Center
-LoadingLabel.ZIndex = 503
+LoadingLabel.Visible = false
 state.loadingLabel = LoadingLabel
 bootstrapStatusLabel = LoadingLabel
 
@@ -3651,22 +3672,16 @@ local LoadingProgressFill: Frame = create("Frame", {
     ZIndex = 504,
 }) :: Frame
 create("UICorner", {Parent = LoadingProgressFill, CornerRadius = UDim.new(1, 0)})
+
+local LoadingBuildLabel: TextLabel =
+    (makeTextLabel(LoadingCurtain, "", 1) :: any) :: TextLabel
+LoadingBuildLabel.Name = "IntroBuild"
+LoadingBuildLabel.Size = UDim2.fromOffset(0, 0)
+LoadingBuildLabel.TextTransparency = 1
+LoadingBuildLabel.Visible = false
+
 state.loadingProgressFill = LoadingProgressFill
 
-local LoadingBuildLabel: TextLabel = (makeTextLabel(
-    LoadingCurtain,
-    RUNTIME_BUILD_LABEL,
-    10
-) :: any) :: TextLabel
-LoadingBuildLabel.Name = "BuildLabel"
-LoadingBuildLabel.AnchorPoint = Vector2.new(0.5, 1)
-LoadingBuildLabel.FontFace = THIN_FONT
-LoadingBuildLabel.Position = UDim2.new(0.5, 0, 1, -14)
-LoadingBuildLabel.Size = UDim2.new(0.6, 0, 0, 18)
-LoadingBuildLabel.TextColor3 = Theme.DefaultTextMuted
-LoadingBuildLabel.TextTransparency = 1
-LoadingBuildLabel.TextXAlignment = Enum.TextXAlignment.Center
-LoadingBuildLabel.ZIndex = 503
 
 -- Sequencing state.
 --
@@ -3752,23 +3767,9 @@ task.spawn(function(): ()
     end
 
     -- 2. Wordmark rises and fades in, then the rule draws out under it.
-    LoadingTitle.Position = UDim2.fromScale(0.5, 0.6)
-    TweenService:Create(
-        LoadingTitle,
-        TweenInfo.new(0.52, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-        {Position = UDim2.fromScale(0.5, 0.55), TextTransparency = 0}
-    ):Play()
-    task.wait(0.26)
-    if not LoadingCurtain.Parent then
-        return
-    end
-    TweenService:Create(
-        LoadingTitleRule,
-        TweenInfo.new(0.46, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-        {Size = UDim2.fromOffset(state.layout.compact and 150 or 210, 1)}
-    ):Play()
-    fadeText(LoadingBuildLabel, 0.42, 0.4)
-    task.wait(0.24)
+    -- Nothing to write on screen any more: the stage that used to bring the
+    -- wordmark and the rule in is now just the beat before the progress line.
+    task.wait(0.18)
     if not LoadingCurtain.Parent then
         return
     end
@@ -4023,6 +4024,8 @@ local function createMobileAction(
     selectedPosition = clampMobileButtonPosition(selectedPosition, size)
 
     local button = create("TextButton", {
+        TextTruncate = Enum.TextTruncate.AtEnd,
+        ClipsDescendants = true,
         Parent = ScreenGui,
         Name = "MobileAction_" .. id:gsub("%W", ""),
         Active = true,
@@ -4303,6 +4306,8 @@ end
 state.bindMobileActionPlacement = bindMobileActionPlacement
 
 local MobileMenuButton = create("TextButton", {
+    TextTruncate = Enum.TextTruncate.AtEnd,
+    ClipsDescendants = true,
     Parent = ScreenGui,
     Name = "MobileMenuButton",
     AutoButtonColor = false,
@@ -5976,6 +5981,8 @@ local function createFloatingWindow(
     if bare then
         -- Kept so every record has the same shape; never shown.
         closeButton = create("TextButton", {
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            ClipsDescendants = true,
             Parent = header,
             Name = "Close",
             BackgroundTransparency = 1,
@@ -6193,6 +6200,8 @@ local function refreshFavorites(): ()
         if configData.ui.favorites[feature.configKey] == true then
             order += 1
             local row: TextButton = create("TextButton", {
+                TextTruncate = Enum.TextTruncate.AtEnd,
+                ClipsDescendants = true,
                 Parent = FavoritesList,
                 Name = feature.configKey:gsub("%W", ""),
                 AutoButtonColor = false,
@@ -6245,6 +6254,8 @@ local function refreshFavorites(): ()
     end
     if order == 0 then
         local empty: TextLabel = create("TextLabel", {
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            ClipsDescendants = true,
             Parent = FavoritesList,
             BackgroundTransparency = 1,
             FontFace = THIN_FONT,
@@ -7682,23 +7693,23 @@ state.applyCardSkin = function(feature: any, hovered: boolean?): ()
         -- options that belong to it.
         surface = 1
         titleColor = Theme.DefaultText
-        titleTransparency = 0.32
-        rule = 0.72
+        titleTransparency = 0.3
+        rule = 0.55
     elseif feature.isAction then
-        surface = isHovered and 0.6 or 0.74
-        outline = 0.88
+        surface = isHovered and 0.36 or 0.56
+        outline = 0.74
         rule = 1
     elseif feature.isHoldAction then
-        surface = isOn and 0.42 or (isHovered and 0.66 or 0.8)
-        outline = isOn and 0.82 or 0.9
+        surface = isOn and 0.18 or (isHovered and 0.46 or 0.66)
+        outline = isOn and 0.66 or 0.82
         titleColor = isOn and Theme.DefaultText or Theme.DefaultTextMuted
-        edge = isOn and 0.45 or 1
+        edge = isOn and 0.2 or 1
         rule = 1
     else
-        surface = isOn and 0.42 or (isHovered and 0.7 or 0.86)
+        surface = isOn and 0.18 or (isHovered and 0.5 or 0.74)
         titleColor = isOn and Theme.DefaultText or Theme.DefaultTextMuted
-        edge = isOn and 0.45 or 1
-        rule = isOn and 1 or 0.86
+        edge = isOn and 0.2 or 1
+        rule = isOn and 1 or 0.72
     end
 
     local motion: TweenInfo = TweenInfo.new(
@@ -8225,7 +8236,7 @@ local function createUniversalFeature(
         BackgroundTransparency = 0.86,
         BorderSizePixel = 0,
         Position = UDim2.new(0.5, 0, 1, 0),
-        Size = UDim2.new(1, -20, 0, 1),
+        Size = UDim2.new(1, 0, 0, 1),
         ZIndex = 8,
     }) :: Frame
     feature.cardRule = cardRule
@@ -8318,6 +8329,8 @@ local function createUniversalFeature(
     end
 
     local activationTarget: TextButton = create("TextButton", {
+        TextTruncate = Enum.TextTruncate.AtEnd,
+        ClipsDescendants = true,
         Parent = row,
         Name = "ActivationTarget",
         Active = true,
@@ -8935,6 +8948,8 @@ local function addToggleOption(
 
     local option: Frame = createOptionRow(feature, labelText, hintText)
     local button: TextButton = create("TextButton", {
+        TextTruncate = Enum.TextTruncate.AtEnd,
+        ClipsDescendants = true,
         Parent = option,
         Name = "OptionClickTarget",
         Active = true,
@@ -9116,6 +9131,8 @@ local function addNumberOption(
 
     local option: Frame = createOptionRow(feature, labelText, hintText)
     local slider: TextButton = (create("TextButton", {
+        TextTruncate = Enum.TextTruncate.AtEnd,
+        ClipsDescendants = true,
         Parent = option,
         Name = "Slider",
         Active = true,
@@ -9296,8 +9313,13 @@ local function openChoiceList(
     state.closeChoiceList()
 
     local rowHeight: number = 22
+    -- Fifty typefaces is not a list you scroll through, so anything longer
+    -- than a screenful gets a filter field at the top, the way Vape's own
+    -- lists do.
+    local searchable: boolean = #values > 8
+    local searchHeight: number = searchable and 24 or 0
     local visibleRows: number = math.min(#values, 6)
-    local listHeight: number = visibleRows * rowHeight + 8
+    local listHeight: number = visibleRows * rowHeight + 8 + searchHeight
     local anchorPosition: Vector2 = anchor.AbsolutePosition
     local anchorSize: Vector2 = anchor.AbsoluteSize
     -- Open upwards when there is no room below: a list that runs off the
@@ -9329,6 +9351,45 @@ local function openChoiceList(
         Thickness = 1,
     })
 
+    local filterBox: TextBox? = nil
+    if searchable then
+        local filterFrame: Frame = create("Frame", {
+            Parent = list,
+            Name = "Filter",
+            BackgroundColor3 = Theme.DefaultBackground,
+            BackgroundTransparency = 0.25,
+            BorderSizePixel = 0,
+            ClipsDescendants = true,
+            Position = UDim2.fromOffset(4, 4),
+            Size = UDim2.new(1, -8, 0, searchHeight - 4),
+            ZIndex = 402,
+        }) :: Frame
+        create("UICorner", {
+            Parent = filterFrame,
+            CornerRadius = cornerRadius(UI_RADIUS.chip),
+        })
+        local box: TextBox = makeTextBox(filterFrame, "")
+        box.Name = "FilterBox"
+        box.BackgroundTransparency = 1
+        box.PlaceholderText = "Search"
+        box.Position = UDim2.fromOffset(8, 0)
+        box.Size = UDim2.new(1, -12, 1, 0)
+        box.TextXAlignment = Enum.TextXAlignment.Left
+        box.TextSize = 11
+        box.ZIndex = 403
+        local boxCorner: UICorner? =
+            box:FindFirstChild("StyleCorner") :: UICorner?
+        if boxCorner then
+            boxCorner:Destroy()
+        end
+        local boxStroke: UIStroke? =
+            box:FindFirstChild("StyleStroke") :: UIStroke?
+        if boxStroke then
+            boxStroke:Destroy()
+        end
+        filterBox = box
+    end
+
     local scroller: ScrollingFrame = create("ScrollingFrame", {
         Parent = list,
         Name = "Items",
@@ -9337,10 +9398,10 @@ local function openChoiceList(
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
         CanvasSize = UDim2.new(),
-        Position = UDim2.fromOffset(4, 4),
+        Position = UDim2.fromOffset(4, 4 + searchHeight),
         ScrollBarThickness = 2,
         ScrollBarImageTransparency = 0.6,
-        Size = UDim2.new(1, -8, 1, -8),
+        Size = UDim2.new(1, -8, 1, -(8 + searchHeight)),
         ZIndex = 401,
     }) :: ScrollingFrame
     create("UIListLayout", {
@@ -9365,8 +9426,11 @@ local function openChoiceList(
     end
     state.closeChoiceList = close
 
+    local rowsByValue: {[string]: TextButton} = {}
     for itemIndex: number, value: string in ipairs(values) do
         local item: TextButton = (create("TextButton", {
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            ClipsDescendants = true,
             Parent = scroller,
             Name = "Choice" .. tostring(itemIndex),
             AutoButtonColor = false,
@@ -9401,6 +9465,23 @@ local function openChoiceList(
         item.MouseButton1Click:Connect(function(): ()
             close()
             onPick(itemIndex)
+        end)
+        rowsByValue[value] = item
+    end
+
+    if filterBox then
+        local box: TextBox = filterBox :: TextBox
+        trackUiConnection(box:GetPropertyChangedSignal("Text"):Connect(function(): ()
+            local query: string = string.lower(box.Text)
+            for value: string, row: TextButton in pairs(rowsByValue) do
+                row.Visible = query == ""
+                    or string.find(string.lower(value), query, 1, true) ~= nil
+            end
+        end))
+        task.defer(function(): ()
+            if not closed then
+                box:CaptureFocus()
+            end
         end)
     end
 
@@ -9523,6 +9604,8 @@ state.openMultiList = function(
 
     local function makeRow(text: string, order: number): TextButton
         local row: TextButton = (create("TextButton", {
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            ClipsDescendants = true,
             Parent = scroller,
             Name = "Row" .. tostring(order),
             AutoButtonColor = false,
@@ -9749,11 +9832,22 @@ state.addListOption = function(feature: any, labelText: string, definition: any)
     if type(definition.onChanged) == "function" then
         definition.onChanged(selected, {})
     end
-    -- Exposed so a module can ask "is this one ticked?" without keeping a
-    -- second copy of the answer.
+    -- A module that discovers a new entry (Item Render learning an object by
+    -- touch) has to be able to add it and tick it without reaching into the
+    -- row's internals, so the row hands out its own controls.
     button:SetAttribute("ListOption", optionKey)
     state.listSelections = state.listSelections or {}
     state.listSelections[optionKey] = selected
+    state.listControls = state.listControls or {}
+    state.listControls[optionKey] = {
+        set = function(item: string, on: boolean): ()
+            selected[item] = on or nil
+            publish()
+        end,
+        refresh = publish,
+        selected = selected,
+    }
+    button:SetAttribute("ListKey", optionKey)
     return button
 end
 
@@ -10353,6 +10447,8 @@ state.components = {
     addOptions = addConfiguredOptions,
 }
 state.featureTooltip = create("TextLabel", {
+    TextTruncate = Enum.TextTruncate.AtEnd,
+    ClipsDescendants = true,
     Parent = PopupLayer,
     Name = "FeatureTooltip",
     Active = false,
@@ -14318,6 +14414,10 @@ state.logBootstrap = function(message: string): ()
     print("[RTM:Bootstrap] " .. message)
 end
 
+-- The build used to be printed on the intro; the intro carries no words now,
+-- so it goes to the console where a bug report can still quote it.
+print("[RTM] build loader-v3")
+
 state.logBootstrapError = function(message: string): ()
     warn("[RTM:Bootstrap] " .. message)
 end
@@ -14379,6 +14479,10 @@ local function createGameModuleEnvironment(
         addKeyOption = recordBinding(addKeyOption),
         addTextOption = recordBinding(addTextOption),
         addColorOption = recordBinding(addColorOption),
+        -- Multi-select lists were missing from this table, so a module asking
+        -- for one called nil and died halfway through building its panel —
+        -- which is why Kill Aura showed a "Weapon" heading and nothing else.
+        addListOption = recordBinding(state.addListOption),
         addInformationOption = addInformationOption,
         addSectionOption = state.addSectionOption,
         setOptionVisible = setOptionVisible,
@@ -15033,6 +15137,8 @@ local function makeToggleSettingRow(
     create("UICorner", {Parent = stripe, CornerRadius = UDim.new(1, 0)})
 
     local activation: TextButton = create("TextButton", {
+        TextTruncate = Enum.TextTruncate.AtEnd,
+        ClipsDescendants = true,
         Parent = row,
         Name = "ActivationTarget",
         Active = true,
@@ -15120,6 +15226,8 @@ textRow.LayoutOrder = 1
 local textScaleRatio: number = (state.textScale - TEXT_SCALE_MINIMUM)
     / (TEXT_SCALE_MAXIMUM - TEXT_SCALE_MINIMUM)
 local TextSizeTrack: TextButton = create("TextButton", {
+    TextTruncate = Enum.TextTruncate.AtEnd,
+    ClipsDescendants = true,
     Parent = textControl,
     Name = "TextSizeTrack",
     Active = true,
@@ -15211,6 +15319,8 @@ local currentFontName: string = tostring(
 )
 local currentFontIndex: number = table.find(fontNames, currentFontName) or 1
 local FontButton: TextButton = (create("TextButton", {
+    TextTruncate = Enum.TextTruncate.AtEnd,
+    ClipsDescendants = true,
     Parent = fontControl,
     Name = "FontChoice",
     Active = true,
@@ -15366,6 +15476,8 @@ mobileSizeRow.LayoutOrder = 8
 mobileSizeRow.Visible = UserInputService.TouchEnabled
 
 local MobileSizeTrack: TextButton = create("TextButton", {
+    TextTruncate = Enum.TextTruncate.AtEnd,
+    ClipsDescendants = true,
     Parent = mobileSizeControl,
     Name = "MobileSizeTrack",
     Active = true,

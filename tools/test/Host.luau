@@ -45,6 +45,7 @@ function Host.create(world: any): HostStub
 
     local function makeTextLabel(parent: any, text: string, size: number): any
         return create("TextLabel", {
+            TextTruncate = "AtEnd",
             Parent = parent,
             Text = text,
             TextSize = size,
@@ -53,6 +54,7 @@ function Host.create(world: any): HostStub
 
     local function makeButton(parent: any, text: string, size: number): any
         return create("TextButton", {
+            TextTruncate = "AtEnd",
             Parent = parent,
             Text = text,
             TextSize = size,
@@ -68,6 +70,8 @@ function Host.create(world: any): HostStub
     end
 
     local host: any = {}
+    -- Created first: the option builders publish list controls onto it.
+    host.state = {}
 
     host.createUniversalFeature = function(
         name: string,
@@ -171,7 +175,10 @@ function Host.create(world: any): HostStub
     ): any
         feature.options[label] = {kind = "text", value = default}
         callback(default)
-        return create("TextBox", {Parent = optionRow(feature, label)})
+        return create("TextBox", {
+            Parent = optionRow(feature, label),
+            TextTruncate = "AtEnd",
+        })
     end
 
     host.addColorOption = function(
@@ -197,6 +204,7 @@ function Host.create(world: any): HostStub
     end
 
     host.addListOption = function(feature: any, label: string, definition: any): any
+        local optionKey: string = feature.configKey .. "." .. label:gsub("%W", "")
         local selected: {[string]: boolean} = {}
         for _, name: string in ipairs(definition.default or {}) do
             selected[name] = true
@@ -222,6 +230,16 @@ function Host.create(world: any): HostStub
             end
         end
         feature.options[label] = entry
+        -- Same controls table the real builder publishes, so a module can tick
+        -- an entry it just learned.
+        host.state.listControls = host.state.listControls or {}
+        host.state.listControls[optionKey] = {
+            set = entry.set,
+            refresh = function(): ()
+                entry.set("", false)
+            end,
+            selected = selected,
+        }
         if definition.onChanged then
             definition.onChanged(selected, {})
         end
@@ -279,7 +297,7 @@ function Host.create(world: any): HostStub
         TouchEnabled = false,
     }
     host.UserInputService.InputBegan = Mock.signal()
-    host.state = {
+    local stateTable: any = {
         menuVisible = true,
         setMenuVisible = function(visible: boolean): ()
             host.state.menuVisible = visible
@@ -307,6 +325,9 @@ function Host.create(world: any): HostStub
             return false
         end,
     }
+    for key: string, value: any in pairs(stateTable) do
+        host.state[key] = value
+    end
 
     return {
         env = host,

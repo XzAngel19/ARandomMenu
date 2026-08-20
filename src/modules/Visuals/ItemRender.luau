@@ -33,27 +33,19 @@ type Tracked = {
 
 local activeCleanup: (() -> ())? = nil
 
-local function splitNames(text: string): {string}
-    local names: {string} = {}
-    for entry: string in string.gmatch(text, "[^,]+") do
-        local trimmed: string = string.match(entry, "^%s*(.-)%s*$") or entry
-        if trimmed ~= "" then
-            table.insert(names, trimmed)
-        end
-    end
-    return names
-end
-
 function Module.init(context: Runtime): any
     local host: any = context.host
     local framework: any = context.framework
-    local create: any = host.create
     local localPlayer: Player = host.LocalPlayer
     local userInput: UserInputService = host.UserInputService
     local currentWorkspace: Workspace = host.workspace or workspace
     local state: any = host.state
 
     local tracked: {[Instance]: Tracked} = {}
+    -- Everything the module has ever been told about, and which of those are
+    -- currently ticked. A comma-separated box could only be edited as one
+    -- lump; this is a list you switch a single object on and off in.
+    local known: {string} = {}
     local wanted: {string} = {}
     local accumulator: number = 0
     local picking: boolean = false
@@ -80,15 +72,6 @@ function Module.init(context: Runtime): any
         end
     end
 
-    local function matches(name: string): boolean
-        local lowered: string = string.lower(name)
-        for _, entry: string in ipairs(wanted) do
-            if string.find(lowered, string.lower(entry), 1, true) then
-                return true
-            end
-        end
-        return false
-    end
 
     local render: any
     render = framework.Categories.Visuals:CreateModule({
@@ -117,21 +100,50 @@ function Module.init(context: Runtime): any
         end,
     })
 
-    -- Kept on the module so the picker and the text box agree about the list.
-    local namesBox: any
+    render:CreateSection("Objects")
+    local objectList: any
+    objectList = render:CreateList({
+        Name = "Objects",
+        Items = function(): {string}
+            return known
+        end,
+        EmptyText = "nothing added yet",
+        Tooltip = "Every object the module knows about. Tick the ones to draw.",
+        Function = function(_selected: any, names: {string}): ()
+            wanted = names
+            releaseAll()
+        end,
+    })
 
-    local function publishNames(text: string): ()
-        wanted = splitNames(text)
-        releaseAll()
+    local function learn(name: string): ()
+        if name == "" then
+            return
+        end
+        if not table.find(known, name) then
+            table.insert(known, name)
+            table.sort(known)
+        end
+        objectList:Set(name, true)
     end
 
-    render:CreateSection("Objects")
-    namesBox = render:CreateTextBox({
-        Name = "Names",
+    local addBox: any
+    addBox = render:CreateTextBox({
+        Name = "Add by name",
         Default = "",
-        Tooltip = "Comma-separated. Partial names match, so chest catches "
-            .. "GoldChest.",
-        Function = publishNames,
+        Tooltip = "Type a name and it joins the list, ticked. Partial names "
+            .. "match, so chest catches GoldChest.",
+        Function = function(value: string): ()
+            local trimmed: string = string.match(value, "^%s*(.-)%s*$") or value
+            if trimmed == "" then
+                return
+            end
+            learn(trimmed)
+            -- The box is a way in, not a store: the list is the store.
+            addBox.Value = ""
+            pcall(function(): ()
+                addBox.Object.Text = ""
+            end)
+        end,
     })
 
     render:CreateButton({
@@ -156,13 +168,12 @@ function Module.init(context: Runtime): any
     render:CreateButton({
         Name = "Clear list",
         Function = function(): ()
-            wanted = {}
-            if namesBox and namesBox.Object then
-                namesBox.Value = ""
-                pcall(function(): ()
-                    namesBox.Object.Text = ""
-                end)
+            for _, name: string in ipairs(known) do
+                objectList:Set(name, false)
             end
+            table.clear(known)
+            wanted = {}
+            objectList:Refresh()
             releaseAll()
             render:Notify("list cleared")
         end,
@@ -245,13 +256,7 @@ function Module.init(context: Runtime): any
             local hit: Instance = (result :: RaycastResult).Instance
             local model: Instance? = hit:FindFirstAncestorOfClass("Model")
             local name: string = model and model.Name or hit.Name
-            local current: string = tostring(namesBox.Value or "")
-            local updated: string = current == "" and name or (current .. ", " .. name)
-            namesBox.Value = updated
-            pcall(function(): ()
-                namesBox.Object.Text = updated
-            end)
-            publishNames(updated)
+            learn(name)
             if state.setMenuVisible then
                 state.setMenuVisible(true)
             end

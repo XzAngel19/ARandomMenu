@@ -468,7 +468,9 @@ entries, and closes on any press outside it or when the menu is hidden.
   targets, Multi or Single, target priority by distance, health or threat, a
   field-of-view cone, wall and team checks, rotation off / silent (turned for
   the swing only, then put back) / face, auto-equip, require-tool and target
-  highlighting in two colours — one for "in swing range", one for "actually
+  a **Show target** readout in the corner — the current target's avatar, name,
+  health bar and distance, the way Vape shows it — and highlighting in two
+  colours — one for "in swing range", one for "actually
   being hit". Damage is delivered through `Tool:Activate()` **and**
   `firetouchinterest` on the parts inside the target's box, which is what
   melee weapons with limb-only hitboxes need, and **Swing only** turns the
@@ -516,12 +518,13 @@ entries, and closes on any press outside it or when the menu is hidden.
   between rounds is found again. The menu's own buttons are never eligible.
 - **Item Render** (`Visuals`): object ESP — the name of every listed object,
   drawn above it with its distance, and its silhouette outlined through walls.
-  The list is built by pointing rather than typing: **Touch part** hides the
-  menu, waits for one tap on the world, takes the name of whatever was under it
-  (the model's name, not the plank's) and adds it — and from then on *every*
-  object with that name is rendered, so one tap on one iron ore lights up all
-  of them. Names can still be typed, and the sweep interval, distance, colour,
-  text size and outline are all adjustable.
+  The objects are a **multi-select list**, not a comma string: each one can be
+  ticked and unticked on its own. **Touch part** hides the menu, waits for one
+  tap on the world, takes the name of whatever was under it (the model's name,
+  not the plank's) and adds it to the list already ticked — and from then on
+  *every* object with that name is rendered, so one tap on one iron ore lights
+  up all of them. Names can also be typed in, and the sweep interval, distance,
+  colour, text size and outline are all adjustable.
 - **TriggerBot** (`Combat`): always-on or hold-to-arm, single or automatic,
   reaction delay with a per-acquisition random jitter, minimum time between
   shots, target-part filter (any, head, torso), an aim radius in pixels that
@@ -680,6 +683,10 @@ face under the SIL Open Font License, vendored from
 licence at `src/gui/Current/Assets/Typography/Monocraft-OFL.txt`. That is a
 little over fifty options.
 
+Lists longer than eight entries — the typeface picker among them — open with a
+filter field at the top, so fifty faces are one search away rather than a long
+scroll.
+
 Monocraft is verified as a real OTF: `OTTO`/CFF outlines, 13 tables with every
 required one present, 1,698 glyphs, all 95 printable ASCII characters mapped,
 family "Monocraft", monospaced, and a single weight (Regular 400). That last
@@ -699,6 +706,12 @@ config and restored on the next injection.
 
 ## Brand, icons and player card
 
+- The intro carries no words. A menu that spells out "loading modules" while it
+  loads modules is telling the player something they can already see; what is
+  left is the ring and the progress line, and the shell fades up out of it. The
+  build stamp moved to the console.
+- The drawn icons are transparent PNGs rather than glyphs on a dark plate, so
+  the rail's own near-black shows through instead of a grey square.
 - The menu's logo (`src/gui/Current/Assets/Brand/menu-logo.jpg`) is drawn on
   both places the menu identifies itself: the floating launcher button and the
   brand mark at the top of the navigation rail. Both keep their lettering as a

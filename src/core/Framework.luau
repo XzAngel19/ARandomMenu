@@ -355,7 +355,18 @@ function Module.init(context: any): Framework
         function created:CreateList(definition2: any): Option
             local option: any = newOption(definition2.Name, {})
             option.Selected = {}
-            option.Object = host.addListOption(feature, definition2.Name, {
+            -- `state` is the fallback for hosts that expose the builder
+            -- there rather than in the module environment.
+            local builder: any = host.addListOption
+                or (host.state and host.state.addListOption)
+            if type(builder) ~= "function" then
+                -- A missing builder must cost one row, not the whole panel.
+                return register(option)
+            end
+            local optionKey: string = feature.configKey
+                .. "."
+                .. definition2.Name:gsub("%W", "")
+            option.Object = builder(feature, definition2.Name, {
                 items = definition2.Items,
                 default = definition2.Default,
                 hint = definition2.Tooltip,
@@ -368,6 +379,26 @@ function Module.init(context: any): Framework
                     end
                 end,
             })
+            -- Tick, untick and re-read from the module side.
+            local controls: any = host.state
+                and host.state.listControls
+                and host.state.listControls[optionKey]
+            option.Set = function(_self: any, item: string, on: boolean): ()
+                if controls then
+                    controls.set(item, on)
+                end
+            end
+            option.Refresh = function(_self: any): ()
+                if controls then
+                    controls.refresh()
+                end
+            end
+            option.IsSelected = function(_self: any, item: string): boolean
+                if controls then
+                    return controls.selected[item] == true
+                end
+                return false
+            end
             return register(option)
         end
 
