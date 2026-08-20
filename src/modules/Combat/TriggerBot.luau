@@ -129,24 +129,18 @@ function Module.init(context: Runtime): any
     -- equipped has nothing to fire either way. What is left is the three
     -- questions a trigger bot actually asks — when may it fire, how fast, and
     -- what counts as a target.
-    local holdKey: any
-    local activation: any
-    activation = trigger:CreateDropdown({
+    trigger:CreateDropdown({
         Name = "Activation",
         List = {"Always", "Hold key"},
         Index = 1,
         Tooltip = "Always runs while the module is on; Hold key only while "
             .. "the bind is down.",
-        Function = function(value: string): ()
-            if holdKey then
-                holdKey:SetVisible(value == "Hold key")
-            end
-        end,
     })
-    holdKey = trigger:CreateBind({
+    trigger:CreateBind({
         Name = "Hold key",
+        Show = {Option = "Activation", Values = {"Hold key"}},
         Default = Enum.KeyCode.Unknown,
-        Tooltip = "Hover this row and press a key to bind it.",
+        Tooltip = "Click the slot, then press the key.",
     })
     trigger:CreateDropdown({
         Name = "Fire mode",
@@ -202,12 +196,6 @@ function Module.init(context: Runtime): any
         Default = true,
         Tooltip = "Never fire at a target with geometry in the way.",
     })
-
-    task.defer(function(): ()
-        pcall(function(): ()
-            holdKey:SetVisible(activation.Value == "Hold key")
-        end)
-    end)
 
     activeCleanup = function(): ()
         armedTarget = nil

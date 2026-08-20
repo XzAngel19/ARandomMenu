@@ -509,6 +509,35 @@ registerEspExtra({
   and name plates. All three are deleted; MM2 and VD publish roles, MVSD
   publishes its team split, and the one ESP draws all of it.
 
+## Conditional rows
+
+A control is on screen only while it can change what the module does. Click
+Teleport is the worked example: *Player* exists while the destination is a
+named player, *Item* while it is an item, *Save waypoint* and *Go back* with
+their own destinations, *Arm window* only for Tap point, *Skip friends* only
+for Nearest player, *Glide step* only while the movement is Glide. Twelve rows
+became four or five at any moment, without losing a setting.
+
+Modules declare that; they do not wire it:
+
+```lua
+teleport:CreateTextBox({
+    Name = "Player",
+    Show = {Option = "Destination", Values = {"Named player"}},
+})
+```
+
+`Show` takes one rule or a list of rules that all have to hold — Kill Aura's
+hold key needs both the advanced block open *and* the activation set to Hold
+key. Omitting `Values` means "while that option is on", which is how one toggle
+gates a whole block: every advanced row in Kill Aura carries
+`Show = {Option = "Show advanced"}` instead of the switch keeping a list of
+rows, a callback to walk it and an initial pass to get it right.
+
+`docs/WRITING-MODULES.md` is the checklist a new module is held to — what to
+answer before writing one, how to decide whether an option deserves a row, and
+where to look before redrawing anything.
+
 ## Motion
 
 Four animations, all of them under a fifth of a second, all of them off when
@@ -528,6 +557,24 @@ from, never to make you wait for it.
   back on release, and after a drag it settles against the nearer edge with an
   overshoot, so it never ends up floating in the middle of the view where it
   covers the game.
+
+## The module checklist
+
+`docs/WRITING-MODULES.md` is the short version of how this repository decides
+what a module is allowed to be. It exists because the menu is easy to add to,
+and that is the danger: a menu grows into a list of switches nobody
+understands one plausible-looking option at a time.
+
+Before writing: what is this in one sentence, is there a reference to read
+(Vape's build is vendored, so is the BedFight dump and the captured remote
+traffic), and if there is neither a reference nor certainty that it can work —
+say so and ask for what is missing, rather than shipping a module whose failure
+mode is indistinguishable from a broken game.
+
+While designing: does this option help in a way the defaults do not, would two
+options be one option with a better name, and can it be on screen only when it
+matters. Take the boring technically-correct answer; creativity belongs in what
+the module does, not in how many ways it can be configured.
 
 ## Module architecture
 
@@ -860,6 +907,10 @@ of them exist because the compiler cannot see the bug:
   outlives the module being switched off.
 * **Card-name contract** — a game module cannot register a card whose name the
   universal set already uses, because on one board that is two identical rows.
+* **Dead-option contract** — an option that is neither read
+  (`Options["Name"]`) nor given a `Function` fails the build. A menu grows into
+  a wall of switches one plausible-looking option at a time, and this is the
+  one class of slop a script can recognise.
 * **Text-fits contract** — a label shorter than its own line box fails the
   build. Every label clips to its frame and `TextSize` is
   `normalSize x 1.35 x textScale`, so a 13-point title renders at 18px and

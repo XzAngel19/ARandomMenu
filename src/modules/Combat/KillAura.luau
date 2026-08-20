@@ -247,12 +247,13 @@ function Module.init(context: Runtime): any
         local highlight: Highlight = existing :: Highlight
         highlight.Adornee = entity.Character
         highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-        -- Two states, because "in swing range" and "actually being hit" are
-        -- different things and the gap between them is where reach cheating
-        -- becomes visible.
+        -- One colour, dimmed for "in swing range but not being hit yet": the
+        -- gap between the two is worth seeing, and it does not need a second
+        -- colour picker to say so.
+        local base: Color3 = options["Highlight colour"].Value
         local colour: Color3 = inAttackRange
-            and options["Attack colour"].Value
-            or options["Reach colour"].Value
+            and base
+            or base:Lerp(Color3.new(0, 0, 0), 0.45)
         highlight.FillColor = colour
         highlight.OutlineColor = colour
     end
@@ -449,7 +450,11 @@ function Module.init(context: Runtime): any
 
                 local now: number = os.clock()
                 local rate: number = math.max(options["Swings per second"].Value, 0.5)
-                local jitter: number = options["Rate jitter"].Value
+                -- A perfectly even swing interval is a signature, so a
+                -- quarter of it is thrown away at random. Not a setting:
+                -- nobody wants a machine-exact rate, and the row asking about
+                -- it was one more thing to read.
+                local jitter: number = 1 / rate * 0.25
                 local canSwing: boolean = now >= nextSwingAt
                 local attackRange: number = options["Attack range"].Value
                 local mode: string = options["Mode"].Value
@@ -660,84 +665,92 @@ function Module.init(context: Runtime): any
             .. "not a person, and a server that logs click rates knows it.",
     })
 
-    local advancedRows: {any} = {}
-    table.insert(advancedRows, aura:CreateSection("Advanced"))
-    table.insert(advancedRows, aura:CreateDropdown({
+    -- The advanced block, declared. Every row below says it belongs to the
+    -- "Show advanced" switch instead of the switch keeping a list of them,
+    -- which is one place to change instead of three.
+    local advanced: any = {Option = "Show advanced"}
+    aura:CreateSection("Advanced").Show = advanced
+    aura:CreateDropdown({
         Name = "Activation",
+        Show = advanced,
         List = {"Always", "Hold key"},
         Index = 1,
-    }))
-    table.insert(advancedRows, aura:CreateBind({
+    })
+    aura:CreateBind({
         Name = "Hold key",
+        Show = {advanced, {Option = "Activation", Values = {"Hold key"}}},
         Default = Enum.KeyCode.Unknown,
-    }))
-    table.insert(advancedRows, aura:CreateSlider({
+    })
+    aura:CreateSlider({
         Name = "Attack range",
+        Show = advanced,
         Min = 5,
         Max = 40,
         Default = 14,
         Tooltip = "Distance at which contact damage is fired. Keep it near "
             .. "the weapon's real reach.",
-    }))
-    table.insert(advancedRows, aura:CreateSlider({
+    })
+    aura:CreateSlider({
         Name = "Field of view",
+        Show = advanced,
         Min = 30,
         Max = 360,
         Default = 220,
         Tooltip = "Degrees in front of you a target has to be inside.",
-    }))
-    table.insert(advancedRows, aura:CreateSlider({
-        Name = "Rate jitter",
-        Min = 0,
-        Max = 0.2,
-        Default = 0.03,
-        Tooltip = "Random seconds added to or taken off each interval.",
-    }))
-    table.insert(advancedRows, aura:CreateDropdown({
+    })
+    aura:CreateDropdown({
         Name = "Rotation",
+        Show = advanced,
         List = {"Off", "Silent", "Face"},
         Index = 2,
         Tooltip = "Silent turns you for the swing only and puts you back; "
             .. "Face keeps you pointed at the target.",
-    }))
-    table.insert(advancedRows, aura:CreateSlider({
+    })
+    aura:CreateSlider({
         Name = "Hits per swing",
+        Show = advanced,
         Min = 1,
         Max = 8,
         Default = 1,
         Tooltip = "How many times the weapon is pressed for each swing the "
             .. "rate allows. Some games count every press.",
-    }))
-    table.insert(advancedRows, aura:CreateToggle({
+    })
+    aura:CreateToggle({
         Name = "Hit through walls",
+        Show = advanced,
         Default = true,
         Tooltip = "Fire contact damage even when the target is behind "
             .. "geometry. Independent of the wall check, which decides "
             .. "whether the target is picked at all.",
-    }))
-    table.insert(advancedRows, aura:CreateToggle({
+    })
+    aura:CreateToggle({
         Name = "Contact damage",
+        Show = advanced,
         Default = true,
         Tooltip = "Also fire the weapon's touch events. Needed by most melee "
             .. "weapons; requires firetouchinterest.",
-    }))
-    table.insert(advancedRows, aura:CreateToggle({
+    })
+    aura:CreateToggle({
         Name = "Wall check",
+        Show = advanced,
         Default = false,
         Tooltip = "Off by default: the aura hits through walls and floors "
             .. "until you ask it not to.",
-    }))
-    table.insert(advancedRows, aura:CreateToggle({
+    })
+    aura:CreateToggle({
         Name = "Team check",
+        Show = advanced,
         Default = false,
-    }))
-    table.insert(advancedRows, aura:CreateToggle({
+    })
+    aura:CreateToggle({
         Name = "Require tool",
+        Show = advanced,
         Default = false,
         Tooltip = "Do nothing while your hands are empty.",
-    }))
-    table.insert(advancedRows, aura:CreateToggle({
+    })
+    aura:CreateToggle({
         Name = "Auto equip",
+        Show = advanced,
         Default = false,
         Tooltip = "Pull the weapon out of the backpack when empty-handed. Off "
             .. "by default: most games this module helps in do not need "
@@ -747,13 +760,15 @@ function Module.init(context: Runtime): any
                 weapons:SetAllowEquip(value)
             end
         end,
-    }))
-    table.insert(advancedRows, aura:CreateToggle({
+    })
+    aura:CreateToggle({
         Name = "Highlight targets",
+        Show = advanced,
         Default = false,
-    }))
-    table.insert(advancedRows, aura:CreateToggle({
+    })
+    aura:CreateToggle({
         Name = "Show target",
+        Show = advanced,
         Default = false,
         Tooltip = "Corner readout with the current target's avatar, health "
             .. "and distance.",
@@ -762,25 +777,17 @@ function Module.init(context: Runtime): any
                 showTarget(nil)
             end
         end,
-    }))
-    table.insert(advancedRows, aura:CreateColor({
-        Name = "Attack colour",
+    })
+    aura:CreateColor({
+        Name = "Highlight colour",
+        Show = {advanced, {Option = "Highlight targets"}},
         Default = Color3.fromRGB(235, 110, 110),
-    }))
-    table.insert(advancedRows, aura:CreateColor({
-        Name = "Reach colour",
-        Default = Color3.fromRGB(150, 150, 158),
-    }))
+    })
 
     aura:CreateToggle({
         Name = "Show advanced",
         Default = false,
         Tooltip = "Everything above works on its own; this reveals the rest.",
-        Function = function(value: boolean): ()
-            for _, option: any in ipairs(advancedRows) do
-                option:SetVisible(value)
-            end
-        end,
     })
 
     aura:CreateNote(

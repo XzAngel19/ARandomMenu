@@ -87,17 +87,20 @@ function Module.init(context: Runtime): any
     })
     teleport:CreateTextBox({
         Name = "Player",
+        Show = {Option = "Destination", Values = {"Named player"}},
         Default = "",
         Tooltip = "Part of a name or display name, for Named player.",
     })
     teleport:CreateTextBox({
         Name = "Item",
+        Show = {Option = "Destination", Values = {"Item"}},
         Default = "",
         Tooltip = "Part or model name to look for, for Item. Partial names "
             .. "match, so \"chest\" finds \"GoldChest\".",
     })
     teleport:CreateButton({
         Name = "Save waypoint",
+        Show = {Option = "Destination", Values = {"Waypoint"}},
         Tooltip = "Stores where you are standing right now.",
         Function = function(): ()
             local root: BasePart? = characterRoot(localPlayer)
@@ -110,6 +113,7 @@ function Module.init(context: Runtime): any
     })
     teleport:CreateButton({
         Name = "Go back",
+        Show = {Option = "Destination", Values = {"Last position"}},
         Tooltip = "Returns to where the last teleport started.",
         Function = function(): ()
             if not runtime.lastOrigin then
@@ -120,68 +124,68 @@ function Module.init(context: Runtime): any
         end,
     })
 
-    local advanced: {any} = {}
-    table.insert(advanced, teleport:CreateSection("Travel"))
-    table.insert(advanced, teleport:CreateDropdown({
-        Name = "Movement",
-        List = {"Instant", "Glide"},
-        Index = 1,
-        Tooltip = "Glide steps the character across, which some games accept "
-            .. "when a single jump is rejected.",
-    }))
-    table.insert(advanced, teleport:CreateSlider({
-        Name = "Glide step",
-        Min = 4,
-        Max = 60,
-        Default = 18,
-    }))
-    table.insert(advanced, teleport:CreateSlider({
-        Name = "Height offset",
-        Min = 0,
-        Max = 12,
-        Default = 3,
-        Tooltip = "Studs above whatever you land on.",
-    }))
-    table.insert(advanced, teleport:CreateSlider({
+    -- Everything below is a rule about the destination above it, so nothing
+    -- here is on screen unless it can change what the button does. "Arm
+    -- window" only means something for Tap point; "Skip friends" only for
+    -- Nearest player; the two offsets only where there is something to stand
+    -- next to.
+    teleport:CreateSection("Travel")
+    teleport:CreateSlider({
+        Name = "Arm window",
+        Show = {Option = "Destination", Values = {"Tap point"}},
+        Min = 1,
+        Max = 15,
+        Default = 6,
+        Tooltip = "Seconds Tap point stays armed after the button is pressed.",
+    })
+    teleport:CreateSlider({
+        Name = "Search range",
+        Show = {Option = "Destination", Values = {"Nearest player", "Named player", "Item"}},
+        Min = 50,
+        Max = 5000,
+        Default = 1500,
+        Tooltip = "How far to look for items and players.",
+    })
+    teleport:CreateSlider({
         Name = "Player offset",
+        Show = {Option = "Destination", Values = {"Nearest player", "Named player"}},
         Min = 0,
         Max = 20,
         Default = 4,
         Tooltip = "Studs to stop short of a player, so you do not land inside "
             .. "them.",
-    }))
-    table.insert(advanced, teleport:CreateSlider({
-        Name = "Search range",
-        Min = 50,
-        Max = 5000,
-        Default = 1500,
-        Tooltip = "How far to look for items and players.",
-    }))
-    table.insert(advanced, teleport:CreateSlider({
-        Name = "Arm window",
-        Min = 1,
-        Max = 15,
-        Default = 6,
-        Tooltip = "Seconds Tap point stays armed after the button is pressed.",
-    }))
-    table.insert(advanced, teleport:CreateToggle({
+    })
+    teleport:CreateToggle({
+        Name = "Skip friends",
+        Show = {Option = "Destination", Values = {"Nearest player"}},
+        Default = false,
+        Tooltip = "Nearest player ignores anyone on the Friend List.",
+    })
+    teleport:CreateDropdown({
+        Name = "Movement",
+        List = {"Instant", "Glide"},
+        Index = 1,
+        Tooltip = "Glide steps the character across, which some games accept "
+            .. "when a single jump is rejected.",
+    })
+    teleport:CreateSlider({
+        Name = "Glide step",
+        Show = {Option = "Movement", Values = {"Glide"}},
+        Min = 4,
+        Max = 60,
+        Default = 18,
+    })
+    teleport:CreateSlider({
+        Name = "Height offset",
+        Min = 0,
+        Max = 12,
+        Default = 3,
+        Tooltip = "Studs above whatever you land on.",
+    })
+    teleport:CreateToggle({
         Name = "Keep momentum",
         Default = false,
         Tooltip = "Leave your velocity alone on arrival instead of zeroing it.",
-    }))
-    table.insert(advanced, teleport:CreateToggle({
-        Name = "Skip friends",
-        Default = false,
-        Tooltip = "Nearest player ignores anyone on the Friend List.",
-    }))
-    teleport:CreateToggle({
-        Name = "Show travel options",
-        Default = false,
-        Function = function(value: boolean): ()
-            for _, option: any in ipairs(advanced) do
-                option:SetVisible(value)
-            end
-        end,
     })
 
     -- The tap listener lives for as long as the module exists: an action card

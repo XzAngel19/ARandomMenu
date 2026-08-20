@@ -56,6 +56,40 @@ def option_contract(sources: list, failures: list) -> None:
                 )
 
 
+def dead_option_contract(sources: list, failures: list) -> None:
+    """An option nobody reads and that does nothing is decoration.
+
+    A menu grows into a wall of switches one plausible-looking option at a
+    time, so an option has to earn its row: either the module reads it
+    (`Options["Name"]`) or it carries a `Function` that does something when it
+    changes. Anything else is a control that lies about having an effect.
+    """
+    builder = re.compile(
+        r"Create(?:" + OPTION_BUILDERS + r")\(\{(.*?)\n(\s*)\}\)",
+        re.S,
+    )
+    for path in sources:
+        text = open(path).read()
+        reads = set(re.findall(r"[Oo]ptions\[\s*\"([^\"]+)\"\s*\]", text))
+        # A gate is read by the rows that depend on it, not by the module.
+        reads |= set(re.findall(r"Option\s*=\s*\"([^\"]+)\"", text))
+        if "rowName" in text or "extra.Name" in text or "roleName" in text:
+            # Rows this module builds for whatever a game registered.
+            continue
+        for body in builder.findall(text):
+            block = body[0]
+            name_match = re.search(r"Name\s*=\s*\"([^\"]+)\"", block)
+            if not name_match:
+                continue
+            name = name_match.group(1)
+            if name in reads or "Function" in block:
+                continue
+            failures.append(
+                f"{path}: option \"{name}\" is never read and has no Function — "
+                "it does nothing"
+            )
+
+
 def state_contract(shell: str, sources: list, failures: list) -> None:
     writes = set(re.findall(r"\bstate\.(\w+)\s*=[^=]", shell))
     # Fields of the `state` table literal itself.
@@ -214,6 +248,7 @@ def main() -> int:
     failures: list = []
 
     option_contract(sources, failures)
+    dead_option_contract(sources, failures)
     state_contract(shell, sources, failures)
     builder_contract(shell, failures)
     connection_contract(shell, sources, failures)

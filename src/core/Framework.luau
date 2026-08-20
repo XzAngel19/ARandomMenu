@@ -233,10 +233,80 @@ function Module.init(context: any): Framework
         )
         created.Feature = feature
 
-        local function register(option: any): Option
+        -- Conditional rows, declared rather than wired.
+        --
+        -- A module used to hide its own controls by hand: a toggle whose
+        -- Function walked a list of other options calling SetVisible. That is
+        -- three places to keep in step (the list, the callback, the initial
+        -- pass), and it is why panels drifted into showing rows that did
+        -- nothing — Click Teleport asked for a player name while you were
+        -- teleporting to an item.
+        --
+        -- An option says what it depends on instead:
+        --
+        --     teleport:CreateTextBox({
+        --         Name = "Player",
+        --         Show = {Option = "Destination", Values = {"Named player"}},
+        --     })
+        --
+        -- and the kernel hides it whenever that is not true. `Values` omitted
+        -- means "while the other option is on", which covers a toggle gating
+        -- a group.
+        local function register(option: any, definition2: any?): Option
             option.Feature = feature
+            if definition2 and type(definition2.Show) == "table" then
+                option.Show = definition2.Show
+            end
             created.Options[option.Name] = option
             return option
+        end
+
+        -- One rule, or a list of rules that all have to hold — "the advanced
+        -- block is open *and* the activation is Hold key" is two facts, and a
+        -- row that needs both should not have to pick one.
+        local function ruleHolds(rule: any): boolean
+            local source: any = created.Options[rule.Option]
+            local holds: boolean = false
+            if source ~= nil then
+                if type(rule.Values) == "table" then
+                    for _, wanted: any in ipairs(rule.Values) do
+                        if source.Value == wanted then
+                            holds = true
+                            break
+                        end
+                    end
+                else
+                    holds = source.Value == true
+                end
+            end
+            if rule.Invert == true then
+                return not holds
+            end
+            return holds
+        end
+
+        function created:RefreshVisibility(): ()
+            for _, option: any in pairs(created.Options) do
+                local rule: any = option.Show
+                if type(rule) ~= "table" then
+                    continue
+                end
+                local visible: boolean = true
+                if rule.Option ~= nil then
+                    visible = ruleHolds(rule)
+                else
+                    for _, nested: any in ipairs(rule) do
+                        if not ruleHolds(nested) then
+                            visible = false
+                            break
+                        end
+                    end
+                end
+                if option.Visible ~= visible then
+                    option.Visible = visible
+                    option:SetVisible(visible)
+                end
+            end
         end
 
         function created:CreateToggle(definition2: any): Option
@@ -250,10 +320,11 @@ function Module.init(context: any): Framework
                     if type(definition2.Function) == "function" then
                         definition2.Function(value)
                     end
+                    created:RefreshVisibility()
                 end,
                 definition2.Tooltip
             )
-            return register(option)
+            return register(option, definition2)
         end
 
         function created:CreateSlider(definition2: any): Option
@@ -270,10 +341,11 @@ function Module.init(context: any): Framework
                     if type(definition2.Function) == "function" then
                         definition2.Function(value)
                     end
+                    created:RefreshVisibility()
                 end,
                 definition2.Tooltip
             )
-            return register(option)
+            return register(option, definition2)
         end
 
         -- A range is one setting, not two. `Value` stays a table so a module
@@ -310,9 +382,10 @@ function Module.init(context: any): Framework
                     if type(definition2.Function) == "function" then
                         definition2.Function(newLow, newHigh)
                     end
+                    created:RefreshVisibility()
                 end,
             })
-            return register(option)
+            return register(option, definition2)
         end
 
         function created:CreateDropdown(definition2: any): Option
@@ -329,10 +402,11 @@ function Module.init(context: any): Framework
                     if type(definition2.Function) == "function" then
                         definition2.Function(value)
                     end
+                    created:RefreshVisibility()
                 end,
                 definition2.Tooltip
             )
-            return register(option)
+            return register(option, definition2)
         end
 
         function created:CreateBind(definition2: any): Option
@@ -347,10 +421,11 @@ function Module.init(context: any): Framework
                     if type(definition2.Function) == "function" then
                         definition2.Function(value)
                     end
+                    created:RefreshVisibility()
                 end,
                 definition2.Tooltip
             )
-            return register(option)
+            return register(option, definition2)
         end
 
         function created:CreateTextBox(definition2: any): Option
@@ -365,11 +440,12 @@ function Module.init(context: any): Framework
                     if type(definition2.Function) == "function" then
                         definition2.Function(value)
                     end
+                    created:RefreshVisibility()
                 end,
                 definition2.Persist ~= false,
                 definition2.Tooltip
             )
-            return register(option)
+            return register(option, definition2)
         end
 
         function created:CreateColor(definition2: any): Option
@@ -384,10 +460,11 @@ function Module.init(context: any): Framework
                     if type(definition2.Function) == "function" then
                         definition2.Function(value)
                     end
+                    created:RefreshVisibility()
                 end,
                 definition2.Tooltip
             )
-            return register(option)
+            return register(option, definition2)
         end
 
         -- A list is a set, not a choice: "which of the nine swords this game
@@ -417,6 +494,7 @@ function Module.init(context: any): Framework
                     if type(definition2.Function) == "function" then
                         definition2.Function(selected, names)
                     end
+                    created:RefreshVisibility()
                 end,
             })
             -- Tick, untick and re-read from the module side.
@@ -439,7 +517,7 @@ function Module.init(context: any): Framework
                 end
                 return false
             end
-            return register(option)
+            return register(option, definition2)
         end
 
         function created:CreateButton(definition2: any): Option
@@ -454,7 +532,7 @@ function Module.init(context: any): Framework
                 end,
                 definition2.Tooltip
             )
-            return register(option)
+            return register(option, definition2)
         end
 
         function created:CreateSection(name: string): Option
@@ -462,6 +540,8 @@ function Module.init(context: any): Framework
             option.Object = host.addSectionOption
                 and host.addSectionOption(feature, name)
                 or nil
+            -- A heading takes no definition; a caller that wants one to follow
+            -- a gate sets `.Show` on the option it gets back.
             return register(option)
         end
 

@@ -253,8 +253,14 @@ function Module.init(context: Runtime): any
         do
             local row: any = esp.Options[redundant]
             if row then
+                -- Hidden through the kernel's own rule rather than a bare
+                -- SetVisible, so a later refresh cannot bring it back: an
+                -- always-false rule is the one thing that outlives the pass
+                -- that hid it.
+                row.Show = {Option = "__roles", Values = {true}}
                 pcall(function(): ()
                     row:SetVisible(false)
+                    row.Visible = false
                 end)
             end
         end

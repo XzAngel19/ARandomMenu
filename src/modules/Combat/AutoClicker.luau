@@ -262,47 +262,28 @@ function Module.init(context: Runtime): any
             .. "that log click intervals will say so.",
     })
 
-    local holdKey: any
-    local buttonName: any
-    local learnButton: any
-
-    local activation: any
-    activation = clicker:CreateDropdown({
+    clicker:CreateDropdown({
         Name = "Activation",
         List = {"Hold click", "Hold key"},
         Index = 1,
         Tooltip = "Hold click follows the real attack button; Hold key runs "
             .. "while your own key is down.",
-        Function = function(value: string): ()
-            if holdKey then
-                holdKey:SetVisible(value == "Hold key")
-            end
-        end,
     })
-    holdKey = clicker:CreateBind({
+    clicker:CreateBind({
         Name = "Hold key",
+        Show = {Option = "Activation", Values = {"Hold key"}},
         Default = Enum.KeyCode.Unknown,
-        Tooltip = "Hover this row and press a key to bind it. On touch, tap "
-            .. "the slot to place a button and hold that instead.",
+        Tooltip = "Click the slot, then press the key. On touch, tap it to "
+            .. "place a button and hold that instead.",
     })
 
-    local clickMode: any
-    clickMode = clicker:CreateDropdown({
+    clicker:CreateDropdown({
         Name = "Click",
         List = {"Tool", "Left click", "Right click", "Screen button"},
         Index = 1,
         Tooltip = "What one click means: activate the equipped tool, a real "
             .. "left or right click through the executor, or the game's own "
             .. "on-screen attack button.",
-        Function = function(value: string): ()
-            local usesButton: boolean = value == "Screen button"
-            if buttonName then
-                buttonName:SetVisible(usesButton)
-            end
-            if learnButton then
-                learnButton:SetVisible(usesButton)
-            end
-        end,
     })
     clicker:CreateToggle({
         Name = "Weapons only",
@@ -310,14 +291,16 @@ function Module.init(context: Runtime): any
         Tooltip = "Only click while what you are holding is a melee weapon, "
             .. "so a pickaxe or a stack of blocks is never swung.",
     })
-    buttonName = clicker:CreateTextBox({
+    clicker:CreateTextBox({
         Name = "Button name",
+        Show = {Option = "Click", Values = {"Screen button"}},
         Default = "",
         Tooltip = "Part of the name of the game's attack button. Filled in "
             .. "for you by Learn button.",
     })
-    learnButton = clicker:CreateButton({
+    clicker:CreateButton({
         Name = "Learn button",
+        Show = {Option = "Click", Values = {"Screen button"}},
         Tooltip = "Press this, then tap the game's own attack button once.",
         Function = function(): ()
             if runtime.learning then
@@ -365,17 +348,6 @@ function Module.init(context: Runtime): any
             end
         end
     )
-
-    -- The rows the current modes do not use start hidden, instead of the panel
-    -- opening with four controls that do nothing.
-    task.defer(function(): ()
-        pcall(function(): ()
-            holdKey:SetVisible(activation.Value == "Hold key")
-            local usesButton: boolean = clickMode.Value == "Screen button"
-            buttonName:SetVisible(usesButton)
-            learnButton:SetVisible(usesButton)
-        end)
-    end)
 
     activeCleanup = function(): ()
         runtime.learning = false

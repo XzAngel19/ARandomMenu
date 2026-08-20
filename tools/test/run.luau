@@ -427,6 +427,12 @@ for _, name: string in ipairs({
 }) do
     check("option: " .. name, aura.Options[name] ~= nil)
 end
+check("the jitter row is gone, the jitter is not",
+    aura.Options["Rate jitter"] == nil)
+check("one highlight colour replaced the pair",
+    aura.Options["Highlight colour"] ~= nil
+        and aura.Options["Attack colour"] == nil
+        and aura.Options["Reach colour"] == nil)
 check("advanced rows start hidden",
     aura.Options["Rotation"].Object ~= nil
         and aura.Options["Rotation"].Object.Parent.Visible == false)
@@ -445,7 +451,6 @@ swordHandle.Parent = sword
 sword.Parent = world.localPlayer.Character
 
 aura.Options["Swings per second"].Value = 20
-aura.Options["Rate jitter"].Value = 0
 aura.Options["Field of view"].Value = 360
 -- Nothing is enabled at startup any more, so the checks under test are turned
 -- on explicitly here.
@@ -743,9 +748,27 @@ for _, name: string in ipairs({
 }) do
     check("option: " .. name, clickTeleport.Options[name] ~= nil)
 end
-check("travel options start hidden",
+-- Conditional rows: a control is on screen only while it can change what the
+-- button does. This is the whole point of the mechanism, so it is asserted
+-- rather than assumed.
+check("the glide step hides while movement is instant",
     clickTeleport.Options["Glide step"].Object ~= nil
         and clickTeleport.Options["Glide step"].Object.Visible == false)
+check("the name box hides while the destination is not a named player",
+    clickTeleport.Options["Player"].Object.Parent.Visible == false)
+clickTeleport.Options["Destination"].Value = "Named player"
+clickTeleport:RefreshVisibility()
+check("choosing Named player reveals the name box",
+    clickTeleport.Options["Player"].Object.Parent.Visible == true)
+check("and leaves the item box hidden",
+    clickTeleport.Options["Item"].Object.Parent.Visible == false)
+clickTeleport.Options["Destination"].Value = "Item"
+clickTeleport:RefreshVisibility()
+check("choosing Item swaps which box is on screen",
+    clickTeleport.Options["Item"].Object.Parent.Visible == true
+        and clickTeleport.Options["Player"].Object.Parent.Visible == false)
+clickTeleport.Options["Destination"].Value = "Tap point"
+clickTeleport:RefreshVisibility()
 
 local localRoot: any = world.localPlayer.Character:FindFirstChild("HumanoidRootPart")
 local function resetLocal(): ()
