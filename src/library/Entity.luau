@@ -1,0 +1,355 @@
+--!strict
+--
+-- Entity library.
+--
+-- Every visual and combat module needs the same three answers: who is alive,
+-- where are their parts, and which of them is under the crosshair. Written per
+-- module that becomes four slightly different `Players:GetPlayers()` loops with
+-- four slightly different bugs — the ESP that kept drawing dead players, the
+-- aim helper that happily targeted teammates. Vape solves it with one entity
+-- library; this is the same idea with this menu's conventions.
+--
+-- The cache is rebuilt from Roblox signals (PlayerAdded / CharacterAdded /
+-- AncestryChanged) rather than polled, and `refresh` only recomputes the cheap
+-- per-frame numbers (health, distance).
+
+export type Entity = {
+    Player: Player,
+    Character: Model,
+    Humanoid: Humanoid,
+    RootPart: BasePart,
+    Head: BasePart?,
+    Health: number,
+    MaxHealth: number,
+    Distance: number,
+    Team: Team?,
+    IsFriendly: boolean,
+}
+
+export type EntityQuery = {
+    -- Maximum angular distance from the ray, in pixels of screen space.
+    Radius: number?,
+    MaxDistance: number?,
+    IgnoreTeam: boolean?,
+    IgnoreWalls: boolean?,
+    Part: string?,
+}
+
+export type EntityLibrary = {
+    List: {Entity},
+    ByPlayer: {[Player]: Entity},
+    LocalEntity: Entity?,
+    IsAlive: (self: EntityLibrary) -> boolean,
+    Refresh: (self: EntityLibrary) -> {Entity},
+    Get: (self: EntityLibrary, player: Player) -> Entity?,
+    ForEach: (self: EntityLibrary, callback: (Entity) -> ()) -> (),
+    IsFriendly: (self: EntityLibrary, player: Player) -> boolean,
+    ClosestToRay: (
+        self: EntityLibrary,
+        origin: Vector3,
+        direction: Vector3,
+        query: EntityQuery?
+    ) -> Entity?,
+    ClosestToCursor: (self: EntityLibrary, query: EntityQuery?) -> Entity?,
+    VisibleFrom: (self: EntityLibrary, entity: Entity) -> boolean,
+    Rig: (self: EntityLibrary, entity: Entity) -> {{BasePart}},
+    Destroy: (self: EntityLibrary) -> (),
+}
+
+local Module = {
+    Name = "Entity",
+    PlaceId = 0,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+-- Bone pairs for both official rigs. R15 is listed first because a missing
+-- lookup falls through to R6, and R6 characters have none of these parts.
+local R15_BONES: {{string}} = {
+    {"Head", "UpperTorso"},
+    {"UpperTorso", "LowerTorso"},
+    {"UpperTorso", "LeftUpperArm"},
+    {"LeftUpperArm", "LeftLowerArm"},
+    {"LeftLowerArm", "LeftHand"},
+    {"UpperTorso", "RightUpperArm"},
+    {"RightUpperArm", "RightLowerArm"},
+    {"RightLowerArm", "RightHand"},
+    {"LowerTorso", "LeftUpperLeg"},
+    {"LeftUpperLeg", "LeftLowerLeg"},
+    {"LeftLowerLeg", "LeftFoot"},
+    {"LowerTorso", "RightUpperLeg"},
+    {"RightUpperLeg", "RightLowerLeg"},
+    {"RightLowerLeg", "RightFoot"},
+}
+
+local R6_BONES: {{string}} = {
+    {"Head", "Torso"},
+    {"Torso", "Left Arm"},
+    {"Torso", "Right Arm"},
+    {"Torso", "Left Leg"},
+    {"Torso", "Right Leg"},
+}
+
+local activeLibrary: EntityLibrary? = nil
+
+function Module.init(context: any): EntityLibrary
+    local host: any = context
+    local players: Players = host.Players
+    local localPlayer: Player = host.LocalPlayer
+    local currentWorkspace: Workspace = host.workspace or workspace
+
+    local library: any = {
+        List = {},
+        ByPlayer = {},
+        LocalEntity = nil,
+        Connections = {},
+    }
+
+    local function characterParts(player: Player): (Model?, Humanoid?, BasePart?)
+        local character: Model? = player.Character
+        if not character or not character.Parent then
+            return nil, nil, nil
+        end
+        local humanoid: Humanoid? =
+            character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+        local root: BasePart? =
+            character:FindFirstChild("HumanoidRootPart") :: BasePart?
+        return character, humanoid, root
+    end
+
+    local function localRoot(): BasePart?
+        local _, _, root = characterParts(localPlayer)
+        return root
+    end
+
+    function library:IsFriendly(player: Player): boolean
+        -- Neutral teams are not friends: in most shooters everybody sits on
+        -- "Neutral" until a round starts, and treating that as friendly makes
+        -- every combat module refuse to work.
+        local team: Team? = player.Team
+        local localTeam: Team? = localPlayer.Team
+        if not team or not localTeam then
+            return false
+        end
+        if player.Neutral or localPlayer.Neutral then
+            return false
+        end
+        return team == localTeam
+    end
+
+    function library:Refresh(): {Entity}
+        local origin: BasePart? = localRoot()
+        local list: {Entity} = {}
+        local byPlayer: {[Player]: Entity} = {}
+
+        for _, player: Player in ipairs(players:GetPlayers()) do
+            local character, humanoid, root = characterParts(player)
+            if not character or not humanoid or not root then
+                continue
+            end
+            if humanoid.Health <= 0 then
+                continue
+            end
+            local entity: Entity = {
+                Player = player,
+                Character = character,
+                Humanoid = humanoid,
+                RootPart = root,
+                Head = character:FindFirstChild("Head") :: BasePart?,
+                Health = humanoid.Health,
+                MaxHealth = math.max(humanoid.MaxHealth, 1),
+                Distance = origin
+                    and (origin.Position - root.Position).Magnitude
+                    or 0,
+                Team = player.Team,
+                IsFriendly = library:IsFriendly(player),
+            }
+            byPlayer[player] = entity
+            if player == localPlayer then
+                library.LocalEntity = entity
+            else
+                table.insert(list, entity)
+            end
+        end
+
+        if not byPlayer[localPlayer] then
+            library.LocalEntity = nil
+        end
+        library.List = list
+        library.ByPlayer = byPlayer
+        return list
+    end
+
+    function library:IsAlive(): boolean
+        local _, humanoid, root = characterParts(localPlayer)
+        return humanoid ~= nil and root ~= nil and humanoid.Health > 0
+    end
+
+    function library:Get(player: Player): Entity?
+        return library.ByPlayer[player]
+    end
+
+    function library:ForEach(callback: (Entity) -> ()): ()
+        for _, entity: Entity in ipairs(library.List) do
+            callback(entity)
+        end
+    end
+
+    function library:VisibleFrom(entity: Entity): boolean
+        local camera: Camera? = currentWorkspace.CurrentCamera
+        if not camera then
+            return false
+        end
+        local parameters: RaycastParams = RaycastParams.new()
+        parameters.FilterType = Enum.RaycastFilterType.Exclude
+        parameters.IgnoreWater = true
+        parameters.FilterDescendantsInstances = {
+            entity.Character,
+            localPlayer.Character :: any,
+            camera,
+        }
+        local origin: Vector3 = camera.CFrame.Position
+        local target: Vector3 = entity.RootPart.Position
+        local result: RaycastResult? = currentWorkspace:Raycast(
+            origin,
+            target - origin,
+            parameters
+        )
+        return result == nil
+    end
+
+    function library:Rig(entity: Entity): {{BasePart}}
+        local character: Model = entity.Character
+        local bones: {{BasePart}} = {}
+        local definitions: {{string}} =
+            character:FindFirstChild("UpperTorso") and R15_BONES or R6_BONES
+        for _, pair: {string} in ipairs(definitions) do
+            local first: BasePart? = character:FindFirstChild(pair[1]) :: BasePart?
+            local second: BasePart? = character:FindFirstChild(pair[2]) :: BasePart?
+            if first and second then
+                table.insert(bones, {first, second})
+            end
+        end
+        return bones
+    end
+
+    function library:ClosestToRay(
+        origin: Vector3,
+        direction: Vector3,
+        query: EntityQuery?
+    ): Entity?
+        local options: EntityQuery = query or {}
+        local unit: Vector3 = direction.Magnitude > 0
+            and direction.Unit
+            or Vector3.new(0, 0, -1)
+        local maxDistance: number = options.MaxDistance or math.huge
+        local best: Entity? = nil
+        local bestScore: number = math.huge
+
+        for _, entity: Entity in ipairs(library.List) do
+            if not options.IgnoreTeam and entity.IsFriendly then
+                continue
+            end
+            if entity.Distance > maxDistance then
+                continue
+            end
+            local part: BasePart = entity.RootPart
+            if options.Part == "Head" and entity.Head then
+                part = entity.Head :: BasePart
+            end
+            local offset: Vector3 = part.Position - origin
+            local along: number = offset:Dot(unit)
+            if along <= 0 then
+                continue
+            end
+            -- Perpendicular distance from the ray, which is the same ordering
+            -- a screen-space check gives without needing the camera.
+            local perpendicular: number = (offset - unit * along).Magnitude
+            if perpendicular < bestScore then
+                if options.IgnoreWalls or library:VisibleFrom(entity) then
+                    best = entity
+                    bestScore = perpendicular
+                end
+            end
+        end
+
+        local radius: number? = options.Radius
+        if radius and bestScore > radius then
+            return nil
+        end
+        return best
+    end
+
+    function library:ClosestToCursor(query: EntityQuery?): Entity?
+        local camera: Camera? = currentWorkspace.CurrentCamera
+        if not camera then
+            return nil
+        end
+        local ray: Ray? = host.state and host.state.getAimRay and host.state.getAimRay()
+        local origin: Vector3 = ray and ray.Origin or camera.CFrame.Position
+        local direction: Vector3 = ray and ray.Direction or camera.CFrame.LookVector
+        return library:ClosestToRay(origin, direction, query)
+    end
+
+    function library:Destroy(): ()
+        for _, connection: RBXScriptConnection in ipairs(library.Connections) do
+            pcall(function(): ()
+                connection:Disconnect()
+            end)
+        end
+        library.Connections = {}
+        library.List = {}
+        library.ByPlayer = {}
+        library.LocalEntity = nil
+        if activeLibrary == library then
+            activeLibrary = nil
+        end
+    end
+
+    -- Signal-driven invalidation. `Refresh` is cheap enough to call per frame,
+    -- but a spawn or a leave should be reflected immediately rather than on
+    -- whatever frame a consumer happens to ask next.
+    table.insert(
+        library.Connections,
+        players.PlayerAdded:Connect(function(player: Player): ()
+            table.insert(
+                library.Connections,
+                player.CharacterAdded:Connect(function(): ()
+                    library:Refresh()
+                end)
+            )
+            library:Refresh()
+        end)
+    )
+    table.insert(
+        library.Connections,
+        players.PlayerRemoving:Connect(function(player: Player): ()
+            library.ByPlayer[player] = nil
+            library:Refresh()
+        end)
+    )
+    for _, player: Player in ipairs(players:GetPlayers()) do
+        table.insert(
+            library.Connections,
+            player.CharacterAdded:Connect(function(): ()
+                library:Refresh()
+            end)
+        )
+    end
+    library:Refresh()
+
+    activeLibrary = (library :: any) :: EntityLibrary
+    Module.Initialized = true
+    return (library :: any) :: EntityLibrary
+end
+
+function Module.destroy(): ()
+    local library: EntityLibrary? = activeLibrary
+    if library then
+        library:Destroy()
+    end
+    activeLibrary = nil
+    Module.Initialized = false
+end
+
+return Module

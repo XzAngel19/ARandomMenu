@@ -343,6 +343,107 @@ Initialization logs use the `[RTM:Bootstrap]` prefix and include detected
 PlaceId, raw download status, downloaded byte count, UI callback count,
 TaskManager callback count and errors captured by `pcall`.
 
+## Module architecture
+
+Modules are files, not another thousand lines of `ARandomMenu.luau`. The main
+file is the shell — window, cards, option rows, keybind registry — and
+everything below the shell is downloaded from the repository at runtime:
+
+```
+src/
+  core/
+    Manifest.luau        ordered list of everything the runtime downloads
+    Framework.luau       kernel: categories, modules, options, cleanup
+  library/
+    Entity.luau          player/character cache, team checks, ray queries
+  modules/
+    Combat/TriggerBot.luau
+    Visuals/PlayerESP.luau
+tools/
+  test/                  headless Roblox stand-in and the module test suite
+```
+
+**The kernel.** `Framework.luau` gives a module file a card and a set of option
+builders, and — the part that matters — a cleanup list. Anything a module
+allocates through `Module:Loop`, `Module:Event` or `Module:Clean` is disposed of
+the moment the module is switched off, so no module carries teardown code and
+none of them can leak a connection:
+
+```lua
+local ESP
+ESP = framework.Categories.Visuals:CreateModule({
+    Name = "Player ESP",
+    Function = function(enabled: boolean): ()
+        if not enabled then
+            return
+        end
+        ESP:Loop(function(deltaTime: number): ()
+            -- redrawn every frame; disconnected automatically on disable
+        end)
+    end,
+})
+local Boxes = ESP:CreateDropdown({Name = "Boxes", List = {"Corner", "Full", "Off"}})
+```
+
+Builders available to a module: `CreateToggle`, `CreateSlider`,
+`CreateDropdown`, `CreateBind`, `CreateTextBox`, `CreateColor`, `CreateButton`,
+`CreateSection` and `CreateNote`. Each returns an option whose `.Value` stays
+current, so a loop reads `Boxes.Value` instead of the module mirroring every
+setting into a table of its own.
+
+**The entity library.** `Entity.luau` answers the three questions every visual
+and combat module asks — who is alive, where are their parts, which one is under
+the crosshair — in one place, with one team check and one visibility raycast.
+`Refresh`, `Get`, `ForEach`, `Rig` (R6 and R15 bone pairs), `VisibleFrom`,
+`ClosestToRay` and `ClosestToCursor`.
+
+**The manifest.** `src/core/Manifest.luau` is the file list. Adding a module is
+one line there and one file under `src/modules/<Category>/`; nothing in
+`ARandomMenu.luau` changes. The runtime keeps an embedded copy as a fallback for
+a failed manifest download, and the validation workflow fails if the two drift
+apart. Every piece exports the same `init` / `destroy` pair the per-game modules
+use, and `destroy` runs from the menu's own teardown step.
+
+### Shipped modules
+
+- **Player ESP** (`Visuals`): corner or full boxes with adjustable thickness,
+  R6/R15 skeletons, name tags, a health bar with exact hit points, distance,
+  the target's equipped tool, tracers from the bottom, the centre or the cursor,
+  and chams as an overlay or an outline. Filters for team, maximum distance and
+  visibility, separate colours for enemies, friendlies and targets behind
+  geometry, plus text size and a redraw interval. Drawn with ordinary
+  GuiObjects rather than the executor `Drawing` API, which several executors
+  implement only partially.
+- **TriggerBot** (`Combat`): always-on or hold-to-arm, single or automatic,
+  reaction delay with a per-acquisition random jitter, minimum time between
+  shots, target-part filter (any, head, torso), an aim radius in pixels that
+  switches the search from an exact raycast to a screen-space query, maximum
+  distance, team check, wall check and a require-tool switch. Firing goes
+  through `Tool:Activate()` and `mouse1click()` so a game that ignores one
+  still receives the other.
+
+### Tests
+
+`luau tools/test/run.luau` loads the framework, the entity library and every
+module file against a stand-in Roblox (`tools/test/Roblox.luau`) and a stand-in
+menu host (`tools/test/Host.luau`), switches each module on, drives it for a few
+frames and switches it off again. It asserts that options exist with usable
+defaults, that loops run, that a delay is actually waited out, that a team-mate
+under the crosshair is never shot, and that nothing survives teardown.
+
+`bash tools/validate.sh` is the whole gate in one command: JSON manifests,
+source layout, module contracts, manifest/runtime-fallback agreement, strict
+headers, the loader guards, compilation at both optimisation levels, the
+200-local register headroom probe and the module tests. It picks up
+`luau-compile` and `luau` from `LUAU_DIR`, from `PATH` or from `/tmp/luau`:
+
+```bash
+LUAU_DIR=/path/to/luau bash tools/validate.sh
+```
+
+The GitHub workflow runs the same list; point a workflow step at this script to
+keep the two from drifting.
+
 ## MM2 module
 
 - **Clones are recognised.** MM2 is copied constantly ("MMV" and friends): same
@@ -420,6 +521,14 @@ TaskManager callback count and errors captured by `pcall`.
   `computeLayoutMetrics` so the Mobile/Tablet/Desktop shells, the collapsed
   rail, the card columns and the chrome-less overlays can be reviewed in a
   browser at the reference viewports. It is never downloaded by the runtime.
+- `src/core/Manifest.luau`: the ordered list of framework, library and module
+  files the runtime downloads.
+- `src/core/Framework.luau`: the module kernel (categories, options, cleanup).
+- `src/library/Entity.luau`: shared player/character queries.
+- `src/modules/<Category>/*.luau`: one file per module.
+- `tools/test/*.luau`: headless Roblox stand-in and the module test suite.
+- `tools/validate.sh`: every repository check in one command.
+- `reference/`: third-party sources kept for reading; never loaded or validated.
 - `src/games/Universal.luau`: the universal/movement module contract only — a
   manifest of feature ids, names and ordering. Every universal implementation
   (Fly, Speed, Infinite Jump, Click Teleport, Noclip …) lives in

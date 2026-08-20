@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+#
+# Every check the repository holds itself to, in one place.
+#
+# The GitHub workflow runs the same list; this script exists so the whole set
+# can be run locally before pushing, and so adding a check means editing one
+# file instead of two.
+#
+# Usage:  bash tools/validate.sh
+#         LUAU_DIR=/path/to/luau bash tools/validate.sh
+#
+# LUAU_DIR must contain `luau-compile` and `luau`. When it is unset the script
+# looks for them on PATH, then in /tmp/luau (where the workflow unpacks the
+# release archive).
+
+set -euo pipefail
+
+repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repository_root"
+
+resolve_binary() {
+    local name="$1"
+    if [ -n "${LUAU_DIR:-}" ] && [ -x "$LUAU_DIR/$name" ]; then
+        echo "$LUAU_DIR/$name"
+        return 0
+    fi
+    if command -v "$name" >/dev/null 2>&1; then
+        command -v "$name"
+        return 0
+    fi
+    if [ -x "/tmp/luau/$name" ]; then
+        echo "/tmp/luau/$name"
+        return 0
+    fi
+    if [ -x "/tmp/luau-src/build/$name" ]; then
+        echo "/tmp/luau-src/build/$name"
+        return 0
+    fi
+    return 1
+}
+
+luau_compile="$(resolve_binary luau-compile || true)"
+luau_run="$(resolve_binary luau || true)"
+
+step() {
+    printf '\n== %s\n' "$1"
+}
+
+# Source files, excluding reference/ (third-party code kept for reading) and
+# declaration files (which are types, not programs).
+source_files() {
+    find . -path ./.git -prune -o -path ./reference -prune -o -type f \
+        \( -name "*.lua" -o -name "*.luau" \) ! -name "*.d.luau" -print
+}
+
+step "JSON manifests"
+python3 -m json.tool src/gui/Current/Images/manifest.json >/dev/null
+python3 -m json.tool src/gui/Current/Assets/manifest.json >/dev/null
+echo "ok"
+
+step "Source layout"
+for path in \
+    src/games/Universal.luau \
+    src/games/MM2.luau \
+    src/games/TRS.luau \
+    src/games/VD.luau \
+    src/core/Framework.luau \
+    src/core/Manifest.luau \
+    src/library/Entity.luau \
+    src/library/AssetRegistry.luau \
+    src/library/ProfileRegistry.luau \
+    src/gui/Current/gui.lua \
+    tools/test/run.luau
+do
+    test -f "$path" || {
+        echo "missing $path"
+        exit 1
+    }
+done
+echo "ok"
+
+step "Module contracts"
+# Game modules and every downloadable framework file export the same pair.
+while IFS= read -r file; do
+    grep -q 'return Module' "$file" || { echo "$file: no 'return Module'"; exit 1; }
+    grep -q 'function Module.init' "$file" || { echo "$file: no init"; exit 1; }
+    grep -q 'function Module.destroy' "$file" || { echo "$file: no destroy"; exit 1; }
+done < <(
+    find src/games src/modules -type f -name "*.luau"
+    echo src/core/Framework.luau
+    echo src/library/Entity.luau
+)
+echo "ok"
+
+step "Manifest matches the runtime fallback"
+# The runtime embeds a copy of the manifest for the case where the manifest
+# download itself fails; the two must not drift apart.
+while IFS= read -r path; do
+    test -f "$path" || { echo "manifest lists a missing file: $path"; exit 1; }
+    grep -q "\"$path\"" ARandomMenu.luau || {
+        echo "runtime fallback is missing: $path"
+        exit 1
+    }
+done < <(grep -oE '"src/[^"]+\.luau"' src/core/Manifest.luau | tr -d '"' | sort -u)
+echo "ok"
+
+step "Strict Luau headers"
+while IFS= read -r file; do
+    test "$(head -n 1 "$file")" = "--!strict" || {
+        echo "$file does not start with --!strict"
+        exit 1
+    }
+done < <(find . -path ./.git -prune -o -path ./reference -prune -o -type f \
+    \( -name "*.lua" -o -name "*.luau" \) -print)
+echo "ok"
+
+step "Loader freshness guard"
+grep -q 'REQUIRED_RUNTIME_MARKER' loadstring
+grep -q 'RUNTIME_SAFETY_SOURCE_URL' ARandomMenu.luau
+! grep -q 'corner.Enabled' ARandomMenu.luau
+! grep -q 'corner.Enabled' src/gui/Current/gui.lua
+echo "ok"
+
+if [ -z "$luau_compile" ]; then
+    echo
+    echo "luau-compile not found; skipping compilation and tests."
+    echo "Set LUAU_DIR to a directory containing luau-compile and luau."
+    exit 0
+fi
+
+step "Compile"
+while IFS= read -r file; do
+    "$luau_compile" "$file" >/dev/null
+    # -O0 keeps every local in a register, which is what catches the main
+    # file drifting back over Luau's 200-local ceiling.
+    "$luau_compile" -O0 "$file" >/dev/null
+done < <(source_files)
+"$luau_compile" loadstring >/dev/null
+"$luau_compile" -O0 loadstring >/dev/null
+echo "ok"
+
+step "Register headroom"
+# Three throwaway locals in the main file's largest scope must still compile:
+# without the margin the next feature added is the one that fails to build.
+probe="$(mktemp /tmp/rtm-probe-XXXXXX.luau)"
+python3 - "$probe" <<'PYTHON'
+import sys
+
+anchor = "local Content: Frame = nil :: any"
+source = open("ARandomMenu.luau").read()
+if anchor not in source:
+    raise SystemExit("probe anchor missing from ARandomMenu.luau")
+padding = "\n".join(
+    "local __probe%d: number = %d" % (index, index) for index in range(1, 4)
+)
+open(sys.argv[1], "w").write(source.replace(anchor, anchor + "\n" + padding, 1))
+PYTHON
+"$luau_compile" -O0 "$probe" >/dev/null
+rm -f "$probe"
+echo "ok"
+
+if [ -z "$luau_run" ]; then
+    echo
+    echo "luau interpreter not found; skipping the module tests."
+    exit 0
+fi
+
+step "Headless module tests"
+"$luau_run" tools/test/run.luau
+
+echo
+echo "All checks passed."

@@ -11285,65 +11285,6 @@ state.toggleFullbright = function(enabled)
 end
 
 state.universalToolkit = (function(): any
-type EspSettings = {
-    includeTeam: boolean,
-    fillTransparency: number,
-}
-
-local espSettings: EspSettings = {
-    includeTeam = false,
-    fillTransparency = 0.72,
-}
-local espClock: number = 0
-
-local function clearPlayerEsp(): ()
-    for _, player: Player in ipairs(Players:GetPlayers()) do
-        local character: Model? = player.Character
-        local highlight: Instance? = character and character:FindFirstChild("RTM_PlayerESP")
-        if highlight then
-            highlight:Destroy()
-        end
-    end
-end
-
-local function togglePlayerEsp(enabled: boolean): ()
-    disconnectFeatureConnection("PlayerESP")
-    clearPlayerEsp()
-    espClock = 0
-    if not enabled then
-        return
-    end
-
-    featureConnections.PlayerESP = TaskManager:Connect(function(deltaTime: number): ()
-        espClock += deltaTime
-        if espClock < 0.35 then
-            return
-        end
-        espClock = 0
-        for _, player: Player in ipairs(Players:GetPlayers()) do
-            local character: Model? = player.Character
-            local shouldShow: boolean = player ~= LocalPlayer
-                and character ~= nil
-                and (espSettings.includeTeam or player.Team ~= LocalPlayer.Team)
-            local existing: Highlight? = character
-                and character:FindFirstChild("RTM_PlayerESP") :: Highlight?
-            if shouldShow and character then
-                local highlight: Highlight = existing or Instance.new("Highlight")
-                highlight.Name = "RTM_PlayerESP"
-                highlight.Adornee = character
-                highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-                highlight.FillColor = Theme.AccentCyan
-                highlight.FillTransparency = espSettings.fillTransparency
-                highlight.OutlineColor = Color3.fromRGB(244, 249, 255)
-                highlight.OutlineTransparency = 0.08
-                highlight.Parent = character
-            elseif existing then
-                existing:Destroy()
-            end
-        end
-    end)
-end
-
 local originalXrayTransparency: {[BasePart]: number} =
     setmetatable({}, {__mode = "k"}) :: any
 local xrayEnabled: boolean = false
@@ -11492,8 +11433,6 @@ local function rejoinCurrentServer(): ()
 end
 
 return {
-    espSettings = espSettings,
-    togglePlayerEsp = togglePlayerEsp,
     toggleXray = toggleXray,
     highJumpSettings = highJumpSettings,
     performHighJump = performHighJump,
@@ -12724,33 +12663,6 @@ addNumberOption(
 end
 
 do
-local PlayerEspFeature = createUniversalFeature(
-    "Player ESP",
-    "Technical outline for visible and hidden players",
-    17,
-    state.universalToolkit.togglePlayerEsp
-)
-addToggleOption(
-    PlayerEspFeature,
-    "Include team",
-    state.universalToolkit.espSettings.includeTeam,
-    function(value: boolean): ()
-        state.universalToolkit.espSettings.includeTeam = value
-    end
-)
-addNumberOption(
-    PlayerEspFeature,
-    "Fill transparency %",
-    state.universalToolkit.espSettings.fillTransparency * 100,
-    0,
-    100,
-    function(value: number): ()
-        state.universalToolkit.espSettings.fillTransparency = value / 100
-    end
-)
-end
-
-do
 createUniversalFeature(
     "X-Ray",
     "Fade map geometry locally while keeping your character clear",
@@ -13736,6 +13648,191 @@ registerPlaceModule("MM2", GAME_CHECK.MM2)
 registerPlaceModule("TRS", GAME_CHECK.TRS)
 registerPlaceModule("VD", GAME_CHECK.VD)
 registerPlaceModule("MVSD", GAME_CHECK.MVSD)
+
+-- ---------------------------------------------------------------------------
+-- Module architecture
+-- ---------------------------------------------------------------------------
+--
+-- Everything above this line is the shell: the window, the cards, the option
+-- rows, the keybind registry. Everything below is loaded as separate files —
+-- a kernel (`src/core/Framework.luau`), shared libraries (`src/library/*`) and
+-- one file per module under `src/modules/<Category>/`.
+--
+-- Splitting it this way is what makes a module a self-contained declaration
+-- instead of another thousand lines in a file that is already at Luau's
+-- 200-local ceiling: a module file asks the framework for a card, declares its
+-- options, and registers its loops through `Module:Loop`, which are torn down
+-- automatically when it is switched off.
+--
+-- The manifest is downloaded first so the file list lives in the repository
+-- rather than in this file; if that download fails the embedded copy below is
+-- used, and the validation workflow keeps the two in sync.
+state.fetchRepositoryChunk = function(path: string): (any, string?)
+    local environment: any = getfenv()
+    if type(environment.loadstring) ~= "function" then
+        return nil, "El ejecutor no admite loadstring"
+    end
+    local url: string = REPOSITORY_RAW_BASE
+        .. path
+        .. "?nocache="
+        .. HttpService:GenerateGUID(false)
+    local downloaded: boolean, source: any = pcall(function(): string
+        return (game :: any):HttpGet(url, true)
+    end)
+    if downloaded and type(source) == "string" then
+        local normalized: string = string.lower(source)
+        if #source < 32
+            or string.find(normalized, "404: not found", 1, true)
+            or string.find(normalized, "<!doctype html", 1, true) then
+            downloaded = false
+        end
+    end
+    if not downloaded or type(source) ~= "string" then
+        -- Executors that mirror the repository locally keep working offline.
+        local readFile: any = environment.readfile
+        local isFile: any = environment.isfile
+        local localPath: string = "ARandomMenu/" .. path
+        if type(readFile) == "function"
+            and (type(isFile) ~= "function" or isFile(localPath)) then
+            local readOk: boolean, localSource: any = pcall(readFile, localPath)
+            if readOk and type(localSource) == "string" then
+                source = localSource
+                downloaded = true
+            end
+        end
+    end
+    if not downloaded or type(source) ~= "string" then
+        return nil, "Descarga fallida: " .. path
+    end
+    local chunk: any, compileError: any =
+        environment.loadstring(source, "@" .. path)
+    if type(chunk) ~= "function" then
+        return nil, "Compilación fallida (" .. path .. "): " .. tostring(compileError)
+    end
+    if type(environment.setfenv) == "function" and state.frameworkEnvironment then
+        environment.setfenv(chunk, state.frameworkEnvironment)
+    end
+    local ran: boolean, result: any = pcall(chunk)
+    if not ran then
+        return nil, "Ejecución fallida (" .. path .. "): " .. tostring(result)
+    end
+    return result, nil
+end
+
+do
+(function(): ()
+local diagnostics: ModuleDiagnostics = {uiBindings = 0, taskBindings = 0}
+state.frameworkEnvironment = createGameModuleEnvironment(diagnostics)
+
+-- Kept in step with src/core/Manifest.luau by the validation workflow.
+local fallbackManifest: any = {
+    version = 1,
+    core = {"src/core/Framework.luau"},
+    libraries = {"src/library/Entity.luau"},
+    modules = {
+        {
+            path = "src/modules/Visuals/PlayerESP.luau",
+            name = "Player ESP",
+            category = "Visuals",
+        },
+        {
+            path = "src/modules/Combat/TriggerBot.luau",
+            name = "TriggerBot",
+            category = "Combat",
+        },
+    },
+}
+
+local manifest: any, manifestError: string? =
+    state.fetchRepositoryChunk("src/core/Manifest.luau")
+if type(manifest) ~= "table" or type(manifest.modules) ~= "table" then
+    if manifestError then
+        state.logBootstrapError("Manifest: " .. manifestError)
+    end
+    manifest = fallbackManifest
+end
+
+local loaded: {any} = {}
+local function loadPiece(path: string): any?
+    local piece: any, failure: string? = state.fetchRepositoryChunk(path)
+    if type(piece) ~= "table" or type(piece.init) ~= "function" then
+        state.logBootstrapError(
+            "Módulo inválido: " .. path .. " · " .. tostring(failure)
+        )
+        return nil
+    end
+    return piece
+end
+
+local frameworkPiece: any? = loadPiece(manifest.core[1] or "src/core/Framework.luau")
+if not frameworkPiece then
+    state.logBootstrapError("Framework no disponible; módulos externos omitidos")
+    return
+end
+local frameworkOk: boolean, framework: any = pcall(
+    frameworkPiece.init,
+    state.frameworkEnvironment
+)
+if not frameworkOk or type(framework) ~= "table" then
+    state.logBootstrapError("Framework init falló: " .. tostring(framework))
+    return
+end
+table.insert(loaded, frameworkPiece)
+state.framework = framework
+
+local entityPiece: any? = loadPiece(
+    manifest.libraries[1] or "src/library/Entity.luau"
+)
+local entityLibrary: any = nil
+if entityPiece then
+    local entityOk: boolean, library: any = pcall(
+        entityPiece.init,
+        state.frameworkEnvironment
+    )
+    if entityOk and type(library) == "table" then
+        entityLibrary = library
+        table.insert(loaded, entityPiece)
+    else
+        state.logBootstrapError("Entity init falló: " .. tostring(library))
+    end
+end
+state.entityLibrary = entityLibrary
+
+local context: any = {
+    framework = framework,
+    entity = entityLibrary,
+    host = state.frameworkEnvironment,
+}
+for _, entry: any in ipairs(manifest.modules) do
+    local path: string = type(entry) == "table" and entry.path or tostring(entry)
+    local piece: any? = loadPiece(path)
+    if piece then
+        local started: boolean, failure: any = pcall(piece.init, context)
+        if started then
+            table.insert(loaded, piece)
+            state.logBootstrap("Módulo cargado: " .. path)
+        else
+            state.logBootstrapError(
+                "Módulo falló (" .. path .. "): " .. tostring(failure)
+            )
+        end
+    end
+end
+
+state.cleanupFrameworkRuntime = function(): ()
+    -- Reverse order: modules first, then the libraries they were holding.
+    for index: number = #loaded, 1, -1 do
+        local piece: any = loaded[index]
+        if type(piece.destroy) == "function" then
+            pcall(piece.destroy)
+        end
+    end
+    table.clear(loaded)
+    state.framework = nil
+    state.entityLibrary = nil
+end
+end)()
+end
 
 local noResultsLabels: {[string]: TextLabel} = {}
 for sectionName: string, page: GuiObject in pairs(pages) do
@@ -14785,6 +14882,7 @@ local function cleanupRuntime(): ()
     end)
     cleanupStep("MM2 runtime", cleanupMM2Runtime)
     for _, key: string in ipairs({
+        "cleanupFrameworkRuntime",
         "cleanupTRSRuntime",
         "cleanupVDRuntime",
         "cleanupMVSDRuntime",
