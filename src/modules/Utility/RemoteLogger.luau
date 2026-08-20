@@ -104,6 +104,7 @@ function Module.init(context: Runtime): any
 
     local log: {[string]: any} = {}
     local order: {string} = {}
+    local pathCache: any = setmetatable({}, {__mode = "k"})
     local hooked: boolean = false
     local restore: (() -> ())? = nil
     local capturing: boolean = false
@@ -115,7 +116,14 @@ function Module.init(context: Runtime): any
             return
         end
         local options: any = logger.Options
-        local path: string = fullName(remote)
+        -- Built here rather than in the hook: `GetFullName` is itself a
+        -- namecall, and calling it from inside the namecall hook is how the
+        -- logger used to re-enter itself.
+        local path: string = pathCache[remote]
+        if not path then
+            path = fullName(remote)
+            pathCache[remote] = path
+        end
         local filter: string = tostring(options["Only containing"].Value or "")
         if filter ~= ""
             and not string.find(string.lower(path), string.lower(filter), 1, true) then
@@ -133,6 +141,7 @@ function Module.init(context: Runtime): any
                 class = remote.ClassName,
                 method = method,
                 calls = 0,
+                samples = 0,
                 firstSeen = os.clock(),
                 arguments = {},
             }
@@ -145,18 +154,42 @@ function Module.init(context: Runtime): any
         entry.calls += 1
         entry.lastSeen = os.clock()
 
-        -- The newest call wins: argument shapes drift between rounds, and the
-        -- most recent one is the one worth replaying.
+        -- Sampling, not recording every call: a movement remote fires sixty
+        -- times a second and the sixtieth copy of the same shape teaches
+        -- nothing. The first few calls are described, then only the count
+        -- keeps rising unless resampling is on.
+        if entry.samples >= 3 and not options["Resample always"].Value then
+            return
+        end
+        entry.samples += 1
         local described: {string} = {}
-        for index: number, argument: any in ipairs({...}) do
-            if index > 10 then
-                table.insert(described, "...")
-                break
-            end
-            table.insert(described, describe(argument, 3))
+        local packed: {any} = table.pack(...)
+        for index: number = 1, math.min(packed.n, 10) do
+            table.insert(described, describe(packed[index], 3))
+        end
+        if packed.n > 10 then
+            table.insert(described, "...")
         end
         entry.arguments = described
     end
+
+    -- The hook is deliberately tiny.
+    --
+    -- Everything expensive used to happen inside `__namecall`: building the
+    -- instance path (itself a namecall, so the hook re-entered itself),
+    -- formatting arguments, string.format on every call. On a shop button that
+    -- fires three remotes, that is enough delay and enough re-entrancy to make
+    -- the purchase fail — the logger was changing the game it was supposed to
+    -- be watching.
+    --
+    -- Now the hook captures references into a queue and returns; a normal loop
+    -- drains that queue a frame later, where taking a millisecond costs
+    -- nothing. Nothing inside the hook calls a method on an Instance, nothing
+    -- allocates a string, and the original is always called with the arguments
+    -- it was given.
+    local queue: {any} = {}
+    local queued: number = 0
+    local inHook: boolean = false
 
     local function installHook(): boolean
         if hooked then
@@ -174,12 +207,28 @@ function Module.init(context: Runtime): any
         local previous: any
         local ok: boolean = pcall(function(): ()
             previous = hookMetamethod(game, "__namecall", function(self: any, ...: any): any
+                -- Fast path first: one boolean, then straight through.
+                if not capturing or inHook then
+                    return previous(self, ...)
+                end
                 local method: string = getNamecall()
-                if (method == "FireServer" or method == "InvokeServer")
-                    and (type(checkCaller) ~= "function" or not checkCaller()) then
-                    -- pcall: a logger that can crash the game it is watching is
-                    -- worse than no logger.
-                    pcall(record, self, method, ...)
+                if method ~= "FireServer" and method ~= "InvokeServer" then
+                    return previous(self, ...)
+                end
+                if type(checkCaller) == "function" and checkCaller() then
+                    return previous(self, ...)
+                end
+                if queued < 256 then
+                    inHook = true
+                    queued += 1
+                    queue[queued] = {
+                        remote = self,
+                        method = method,
+                        count = select("#", ...),
+                        arguments = table.pack(...),
+                        at = os.clock(),
+                    }
+                    inHook = false
                 end
                 return previous(self, ...)
             end)
@@ -191,7 +240,8 @@ function Module.init(context: Runtime): any
         hooked = true
         restore = function(): ()
             -- Restoring a metamethod hook is executor-specific; where it is
-            -- not supported the capture flag alone stops the recording.
+            -- not supported the capture flag alone stops the recording, and
+            -- the hook is a single boolean test from then on.
             local restoreFn: any = environment.restorefunction
             if type(restoreFn) == "function" then
                 pcall(restoreFn, previous)
@@ -199,6 +249,29 @@ function Module.init(context: Runtime): any
             hooked = false
         end
         return true
+    end
+
+    -- Drains what the hook captured, off the game's own call stack.
+    local function drainQueue(): ()
+        if queued == 0 then
+            return
+        end
+        local pending: {any} = queue
+        queue = {}
+        local count: number = queued
+        queued = 0
+        for index: number = 1, count do
+            local item: any = pending[index]
+            if item then
+                pcall(function(): ()
+                    record(
+                        item.remote,
+                        item.method,
+                        table.unpack(item.arguments, 1, item.count)
+                    )
+                end)
+            end
+        end
     end
 
     local function buildReport(): string
@@ -294,8 +367,11 @@ function Module.init(context: Runtime): any
                 capturing = false
                 return
             end
+            logger:Loop(drainQueue)
             logger:Clean(function(): ()
                 capturing = false
+                queue = {}
+                queued = 0
                 if restore then
                     (restore :: () -> ())()
                     restore = nil
@@ -322,6 +398,12 @@ function Module.init(context: Runtime): any
         Name = "Announce new",
         Default = false,
         Tooltip = "Toast the first time each remote is seen.",
+    })
+    logger:CreateToggle({
+        Name = "Resample always",
+        Default = false,
+        Tooltip = "Describe the arguments of every call instead of the first "
+            .. "few. Useful for a remote whose shape changes; heavier.",
     })
 
     logger:CreateSection("Output")
@@ -359,8 +441,10 @@ function Module.init(context: Runtime): any
         end,
     })
     logger:CreateNote(
-        "Turn it on, play the thing you want a module to do, then save. The "
-            .. "file lists every remote with the real arguments the game used."
+        "Turn it on, do the thing you want a module to do — buy, mine, place, "
+            .. "hit — then save. The log records what only a live game can "
+            .. "tell you: the arguments, in order, as the game really sent "
+            .. "them. It watches; it never blocks, delays or alters a call."
     )
 
     -- Exposed so other modules (and a future game module) can read what was

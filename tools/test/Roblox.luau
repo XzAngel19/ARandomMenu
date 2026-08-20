@@ -557,6 +557,10 @@ function Mock.install(): MockWorld
 
     local mockWorkspace: any = newInstance("Workspace")
     mockWorkspace.CurrentCamera = camera
+    -- Item Render keeps its index up to date from these rather than sweeping
+    -- the whole workspace.
+    mockWorkspace.DescendantAdded = signal()
+    mockWorkspace.DescendantRemoving = signal()
     mockWorkspace.Gravity = 196.2
     function mockWorkspace:Raycast(_origin: any, _direction: any, _params: any): any
         return world.raycastResult

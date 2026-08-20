@@ -110,7 +110,9 @@ local entity: any = EntityFile.init(host)
 
 local enemy: any = world.addPlayer("Enemy", "Red", world.vector3(0, 0, -30))
 local ally: any = world.addPlayer("Ally", "Blue", world.vector3(10, 0, -10))
-entity:Refresh()
+-- Forced: the mocked clock is frozen between steps, and Refresh coalesces
+-- calls that land inside the same frame.
+entity:Refresh(true)
 
 check("list excludes the local player", #entity.List == 2,
     "found " .. tostring(#entity.List))
@@ -167,7 +169,8 @@ esp.Options["Team check"].Value = true
 esp.Options["Skeleton"].Value = true
 esp.Options["Boxes"].Value = "Full"
 esp.Options["Chams"].Value = "Overlay"
-stub.step(0.016)
+-- The redraw interval defaults to 30ms, so one 16ms frame is not a redraw.
+stub.step(0.05)
 
 local layer: any = nil
 for _, child: any in ipairs(host.ScreenGui.Children) do
@@ -196,7 +199,7 @@ check("chams highlight is parented to the character",
     enemy.Character:FindFirstChildOfClass("Highlight") ~= nil)
 
 esp.Options["Team check"].Value = false
-stub.step(0.016)
+stub.step(0.05)
 check(
     "disabling the team check reveals allies",
     layer ~= nil and #layer.Children == 2,
@@ -958,49 +961,6 @@ check("labels are released when the module is off", left == 0,
 oreA:Destroy()
 oreB:Destroy()
 
--- Scaffold -----------------------------------------------------------------------
-
-section("Scaffold")
-
-local ScaffoldFile: any = require("../../src/modules/Movement/Scaffold")
-Mock.inject(world, ScaffoldFile.init)
-local scaffold: any = ScaffoldFile.init(espContext)
-
-check("card is registered", scaffold.Name == "Scaffold")
-for _, name: string in ipairs({"Mode", "Width", "Bridge length", "Catch depth", "Opacity"}) do
-    check("option: " .. name, scaffold.Options[name] ~= nil)
-end
-
--- Nothing underneath: a platform appears.
-world.raycastResult = nil
-scaffold:Toggle()
-stub.step(0.016)
-local built: any = nil
-for _, child: any in ipairs(world.camera.Children) do
-    if child.Name == "RTM_Scaffold" then
-        built = child
-    end
-end
-check("builds a platform over a gap", built ~= nil)
-
--- Ground below: the game's own floor is left alone.
-world.raycastResult = {
-    Instance = Mock.newInstance("Part"),
-    Position = world.vector3(0, -4, 0),
-}
-stub.step(0.016)
-local remaining: number = 0
-for _, child: any in ipairs(world.camera.Children) do
-    if child.Name == "RTM_Scaffold" then
-        remaining += 1
-    end
-end
-check("stays out of the way when there is a floor", remaining == 0,
-    "platforms: " .. tostring(remaining))
-
-scaffold:Toggle()
-world.raycastResult = nil
-
 -- Remote Logger -------------------------------------------------------------------
 
 section("Remote Logger")
@@ -1032,6 +992,9 @@ remote.Name = "SwordHit"
 remote.Parent = world.workspace
 world.namecallMethod = "FireServer"
 world.namecallHook(remote, "Wooden Sword", world.vector3(1, 2, 3), 42)
+-- Deferred by design: the hook only queues, so the work lands on the next
+-- frame rather than inside the game's own call.
+stub.step(0.016)
 
 local entries: {any} = host.state.remoteLog.entries()
 check("records the call", #entries == 1, "entries: " .. tostring(#entries))
@@ -1062,18 +1025,66 @@ check("saved a machine-readable log", wroteJson)
 world.callerIsMenu = true
 world.namecallHook(remote, "menu-call")
 world.callerIsMenu = false
+stub.step(0.016)
 check("ignores the menu's own calls", #host.state.remoteLog.entries() == 1)
 
 logger.Feature.options["Clear log"].run()
 check("clears the log", #host.state.remoteLog.entries() == 0)
 logger:Toggle()
 
+-- Performance guards -------------------------------------------------------------
+
+section("Performance")
+
+-- One refresh per frame no matter how many modules ask. Three consumers in the
+-- same frame used to mean three full sweeps of the player list.
+local sweeps: number = 0
+local realPlayers: any = world.players.GetPlayers
+world.players.GetPlayers = function(self: any): {any}
+    sweeps += 1
+    return realPlayers(self)
+end
+entity:Refresh()
+entity:Refresh()
+entity:Refresh()
+check("repeated refreshes in one frame do the work once", sweeps == 1,
+    "sweeps: " .. tostring(sweeps))
+world.clock += 0.2
+entity:Refresh()
+check("a later frame refreshes again", sweeps == 2, "sweeps: " .. tostring(sweeps))
+world.players.GetPlayers = realPlayers
+
+-- Rig lookups are cached: fourteen FindFirstChild pairs per player per frame
+-- was pure waste.
+local firstRig: any = entity:Rig(entity:Get(enemy))
+local secondRig: any = entity:Rig(entity:Get(enemy))
+check("rig bones are cached per character", rawequal(firstRig, secondRig))
+
+-- The weapon scan walks the whole PlayerGui, so it is cached too.
+local guiWalks: number = 0
+local realGetDescendants: any = nil
+local playerGuiForCount: any = world.localPlayer:FindFirstChild("PlayerGui")
+if playerGuiForCount then
+    realGetDescendants = playerGuiForCount.GetDescendants
+    playerGuiForCount.GetDescendants = function(self: any): {any}
+        guiWalks += 1
+        return realGetDescendants(self)
+    end
+end
+weapons:Invalidate()
+weapons:Scan({All = true})
+weapons:Scan({All = true})
+weapons:Scan({All = true})
+check("weapon scans are cached", guiWalks == 1, "walks: " .. tostring(guiWalks))
+if playerGuiForCount then
+    playerGuiForCount.GetDescendants = realGetDescendants
+end
+
 -- Teardown -------------------------------------------------------------------
 
 section("Teardown")
 
 LoggerFile.destroy()
-ScaffoldFile.destroy()
 ItemFile.destroy()
 WeaponsFile.destroy()
 ClickFile.destroy()

@@ -34,7 +34,13 @@ local runtimeState: any = {
     generatorMarks = {} :: {[Instance]: any},
     infoPanel = nil :: any,
     voidPanel = nil :: any,
+    lastSafe = nil :: Vector3?,
 }
+
+-- Beds and generators are placed when the map loads and then stay put, so the
+-- world is swept on a timer rather than every frame; the marks themselves are
+-- updated every frame from the cached list.
+local mapCache: any = {beds = {}, generators = {}, at = -1}
 
 local function clearMarks(store: {[Instance]: any}): ()
     for instance: Instance, mark: any in pairs(store) do
@@ -63,7 +69,7 @@ local function readValue(name: string): any
 end
 
 -- Beds: the container is fixed, the map folder is not, so both are swept.
-local function collectBeds(): {Model}
+local function scanBeds(): {Model}
     local beds: {Model} = {}
     local container: Instance? = workspace:FindFirstChild("BedsContainer")
     if container then
@@ -86,7 +92,7 @@ local function collectBeds(): {Model}
     return beds
 end
 
-local function collectGenerators(): {BasePart}
+local function scanGenerators(): {BasePart}
     local generators: {BasePart} = {}
     for _, mapChild: Instance in ipairs(workspace:GetChildren()) do
         local folder: Instance? = mapChild:FindFirstChild("Generators")
@@ -102,6 +108,26 @@ local function collectGenerators(): {BasePart}
         end
     end
     return generators
+end
+
+local function refreshMap(): ()
+    local now: number = os.clock()
+    if now - mapCache.at < 2 then
+        return
+    end
+    mapCache.at = now
+    mapCache.beds = scanBeds()
+    mapCache.generators = scanGenerators()
+end
+
+local function collectBeds(): {Model}
+    refreshMap()
+    return mapCache.beds
+end
+
+local function collectGenerators(): {BasePart}
+    refreshMap()
+    return mapCache.generators
 end
 
 local function anchorOf(model: Model): BasePart?
@@ -538,15 +564,201 @@ function Module.init(runtime: any): any
             .. "whatever is in your hand is what swings."
     )
 
+    -- Scaffold ----------------------------------------------------------------
+    --
+    -- Real blocks, not a local platform: this game places a block when you
+    -- press its own build control while pointing at where the block should go,
+    -- so that is what this does. It equips a block from the hotbar, aims the
+    -- camera down behind you, and presses.
+    --
+    -- The one thing it cannot do yet is call `PlaceBlock` directly — the dump
+    -- has the remote but not its arguments. Run the Remote Logger, place one
+    -- block by hand, and the log will name them; the call then replaces the
+    -- button press with no other change.
+    local scaffoldSettings: any = {rate = 6, reach = 6, pitch = true}
+
+    -- Both GUI lookups are cached for a second: they walk the PlayerGui, and
+    -- the scaffold asks several times a second.
+    local guiCache: any = {at = -1, block = nil, place = nil}
+
+    local function blockSlot(): GuiButton?
+        if os.clock() - guiCache.at < 1 then
+            return guiCache.block
+        end
+        local playerGui: Instance? = LocalPlayer:FindFirstChild("PlayerGui")
+        if not playerGui then
+            return nil
+        end
+        -- Hotbar slots are named after the item, and every building block in
+        -- this game is wool, planks, stone or their coloured variants.
+        local blockWords: {string} = {"wool", "plank", "stone", "wood", "brick", "block"}
+        for _, descendant: Instance in ipairs(playerGui:GetDescendants()) do
+            if not descendant:IsA("GuiButton") then
+                continue
+            end
+            local lowered: string = string.lower(descendant.Name)
+            for _, word: string in ipairs(blockWords) do
+                if string.find(lowered, word, 1, true) then
+                    guiCache.block = descendant :: GuiButton
+                    guiCache.at = os.clock()
+                    return guiCache.block
+                end
+            end
+        end
+        guiCache.block = nil
+        guiCache.at = os.clock()
+        return nil
+    end
+
+    local function placeControl(): GuiButton?
+        if guiCache.place and (guiCache.place :: GuiButton).Parent then
+            return guiCache.place
+        end
+        local playerGui: Instance? = LocalPlayer:FindFirstChild("PlayerGui")
+        if not playerGui then
+            return nil
+        end
+        for _, descendant: Instance in ipairs(playerGui:GetDescendants()) do
+            if not descendant:IsA("GuiButton") then
+                continue
+            end
+            local lowered: string = string.lower(descendant.Name)
+            if string.find(lowered, "place", 1, true)
+                or string.find(lowered, "build", 1, true) then
+                guiCache.place = descendant :: GuiButton
+                return guiCache.place
+            end
+        end
+        return nil
+    end
+
+    local ScaffoldFeature: any = createUniversalFeature(
+        "Scaffold",
+        "Places the game's own blocks under you while you walk over nothing",
+        6,
+        function(enabled: boolean): ()
+            host.disconnectFeatureConnection("BedFightScaffold")
+            if not enabled then
+                return
+            end
+            local nextAt: number = 0
+            host.featureConnections.BedFightScaffold =
+                TaskManager:Connect(function(): ()
+                    local character: Model? = LocalPlayer.Character
+                    local root: BasePart? = character
+                        and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+                    local humanoid: Humanoid? = character
+                        and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+                    if not root or not humanoid then
+                        return
+                    end
+                    local resolvedRoot: BasePart = root :: BasePart
+                    local resolvedHumanoid: Humanoid = humanoid :: Humanoid
+
+                    -- Only over a gap: placing a block on solid ground is how
+                    -- you get a tower you did not ask for.
+                    local parameters: RaycastParams = RaycastParams.new()
+                    parameters.FilterType = Enum.RaycastFilterType.Exclude
+                    parameters.IgnoreWater = true
+                    parameters.FilterDescendantsInstances = {character :: any}
+                    local below: RaycastResult? = workspace:Raycast(
+                        resolvedRoot.Position,
+                        Vector3.new(0, -(resolvedHumanoid.HipHeight + scaffoldSettings.reach), 0),
+                        parameters
+                    )
+                    if below then
+                        return
+                    end
+
+                    local now: number = os.clock()
+                    if now < nextAt then
+                        return
+                    end
+                    nextAt = now + 1 / math.max(scaffoldSettings.rate, 0.5)
+
+                    local slot: GuiButton? = blockSlot()
+                    local weapons: any = state.weaponLibrary
+                    if slot and weapons then
+                        -- Equipping is a press of the slot, the same as a tap.
+                        weapons:PressButton(slot :: GuiButton)
+                    end
+
+                    local camera: Camera? = workspace.CurrentCamera
+                    if scaffoldSettings.pitch and camera then
+                        -- Look at where the block has to go for the frame the
+                        -- placement is fired on, then let the player's own
+                        -- camera continue: the game raycasts from the camera.
+                        local resolvedCamera: Camera = camera :: Camera
+                        local original: CFrame = resolvedCamera.CFrame
+                        resolvedCamera.CFrame = CFrame.lookAt(
+                            original.Position,
+                            resolvedRoot.Position - Vector3.new(0, 4, 0)
+                        )
+                        task.defer(function(): ()
+                            if resolvedCamera.Parent then
+                                resolvedCamera.CFrame = original
+                            end
+                        end)
+                    end
+
+                    local control: GuiButton? = placeControl()
+                    if control and weapons then
+                        weapons:PressButton(control :: GuiButton)
+                        return
+                    end
+                    -- Desktop: placement is the mouse.
+                    local click: any = environment.mouse1click
+                    if type(click) == "function" then
+                        pcall(click)
+                    end
+                end)
+        end,
+        {parent = scroll, registry = registry, categoryName = "Movement"}
+    )
+    addNumberOption(
+        ScaffoldFeature,
+        "Blocks per second",
+        scaffoldSettings.rate,
+        1,
+        20,
+        function(value: number): ()
+            scaffoldSettings.rate = value
+        end
+    )
+    addNumberOption(
+        ScaffoldFeature,
+        "Gap depth",
+        scaffoldSettings.reach,
+        2,
+        30,
+        function(value: number): ()
+            scaffoldSettings.reach = value
+        end
+    )
+    addToggleOption(
+        ScaffoldFeature,
+        "Aim down",
+        true,
+        function(value: boolean): ()
+            scaffoldSettings.pitch = value
+        end
+    )
+    addInformationOption(
+        ScaffoldFeature,
+        "Uses the game's own hotbar and build control. Log PlaceBlock with the "
+            .. "Remote Logger and it can be called directly instead."
+    )
+
     -- Void warning ------------------------------------------------------------
     --
     -- The death barrier is a Configuration in GameInfo with its height and
     -- distance in it, so the warning is the game's own number rather than a
     -- guess about where the map ends.
+    local voidSettings: any = {margin = 25, rescue = true}
     local VoidFeature: any = createUniversalFeature(
-        "Void Warning",
-        "Flashes when you drop below the map's death barrier",
-        6,
+        "Anti Void",
+        "Catches you before the map's own kill plane does",
+        7,
         function(enabled: boolean): ()
             host.disconnectFeatureConnection("BedFightVoid")
             if runtimeState.voidPanel then
@@ -591,19 +803,61 @@ function Module.init(runtime: any): any
                         warning.Visible = false
                         return
                     end
+                    local resolvedRoot: BasePart = root :: BasePart
                     local floor: number = (heightValue :: NumberValue).Value
-                    local drop: number = (root :: BasePart).Position.Y - floor
-                    warning.Visible = drop < 40
+                    local drop: number = resolvedRoot.Position.Y - floor
+
+                    -- Remember the last place the ground held: that is where a
+                    -- rescue puts you back, rather than somewhere arbitrary.
+                    local parameters: RaycastParams = RaycastParams.new()
+                    parameters.FilterType = Enum.RaycastFilterType.Exclude
+                    parameters.IgnoreWater = true
+                    parameters.FilterDescendantsInstances = {LocalPlayer.Character :: any}
+                    local ground: RaycastResult? = workspace:Raycast(
+                        resolvedRoot.Position,
+                        Vector3.new(0, -12, 0),
+                        parameters
+                    )
+                    if ground then
+                        runtimeState.lastSafe = resolvedRoot.Position
+                    end
+
+                    warning.Visible = drop < voidSettings.margin * 2
                     if warning.Visible then
                         label.Text = "Void in " .. tostring(math.round(drop)) .. " studs"
+                    end
+
+                    if not voidSettings.rescue or drop > voidSettings.margin then
+                        return
+                    end
+                    -- Past the margin with nothing under you: stop the fall and
+                    -- put the character back where the ground last was.
+                    resolvedRoot.AssemblyLinearVelocity = Vector3.zero
+                    if runtimeState.lastSafe then
+                        resolvedRoot.CFrame =
+                            CFrame.new(runtimeState.lastSafe + Vector3.new(0, 4, 0))
                     end
                 end)
         end,
         {parent = scroll, registry = registry, categoryName = "Protection"}
     )
+    addNumberOption(
+        VoidFeature,
+        "Rescue margin",
+        voidSettings.margin,
+        5,
+        120,
+        function(value: number): ()
+            voidSettings.margin = value
+        end
+    )
+    addToggleOption(VoidFeature, "Rescue", true, function(value: boolean): ()
+        voidSettings.rescue = value
+    end)
     addInformationOption(
         VoidFeature,
-        "Reads GameInfo.DeathBarrierInfo, which is where the server keeps it."
+        "The kill height comes from GameInfo.DeathBarrierInfo, so the margin is "
+            .. "measured against the game's own plane."
     )
 
     Module.Initialized = true
@@ -621,6 +875,7 @@ function Module.destroy(): ()
             "BedFightSwing",
             "BedFightNuker",
             "BedFightVoid",
+            "BedFightScaffold",
         })
     do
         if host.disconnectFeatureConnection then

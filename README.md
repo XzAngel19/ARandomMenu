@@ -560,20 +560,21 @@ polite only when you ask it to.
   up all of them. Names can also be typed in, and the sweep interval, distance,
   colour, text size and outline are all adjustable.
 - **Remote Logger** (`Utility`): records what the game sends to its own
-  remotes. It hooks `__namecall` (plus direct `FireServer`/`InvokeServer`),
-  keeps the full instance path, the method, the type and value of every
-  argument, the call count and a ready-to-paste snippet, and writes both a
-  readable `.txt` and a `.json` to `ARandomMenu/RemoteLogs/<place>-<time>`.
-  `checkcaller` keeps the menu's own traffic out of it, arguments are described
-  rather than deep-copied so it cannot serialise the whole DataModel, and a
-  name filter plus a cap keep a chatty game from filling the disk. This is how
-  a game module learns what `MineBlock` or `PlaceBlock` actually expect instead
-  of guessing and getting kicked.
-- **Scaffold** (`Movement`): footing that is always there — *Platform* under
-  your feet, *Bridge* extended along the way you are moving, or *Catch*, which
-  stays invisible until you start falling with nothing below. It is local
-  footing rather than the game's own blocks, which no universal module can
-  place without knowing the game's remote (see the Remote Logger).
+  remotes — the live-only half of reverse engineering, the part no decompiler
+  can give you, because it is the *values* a specific action produces. Full
+  instance path, method, the type and value of every argument, the call count
+  and a ready-to-paste snippet, written as a readable `.txt` and a `.json` to
+  `ARandomMenu/RemoteLogs/<place>-<time>`.
+
+  It is built not to interfere. The hook does three things — check a boolean,
+  read the namecall method, push references onto a queue — and returns; a normal
+  loop drains that queue a frame later and does the describing there. The
+  earlier version built the instance path inside the hook, and `GetFullName` is
+  itself a namecall, so the logger re-entered itself on every call: enough
+  delay on a shop button firing three remotes to make the purchase fail. Now
+  nothing inside the hook calls an Instance method or allocates a string,
+  `checkcaller` drops the menu's own traffic, and each remote's arguments are
+  sampled a few times rather than on every one of sixty calls a second.
 - **TriggerBot** (`Combat`): always-on or hold-to-arm, single or automatic,
   reaction delay with a per-acquisition random jitter, minimum time between
   shots, target-part filter (any, head, torso), an aim radius in pixels that
@@ -581,6 +582,33 @@ polite only when you ask it to.
   distance, team check, wall check and a require-tool switch. Firing goes
   through `Tool:Activate()` and `mouse1click()` so a game that ignores one
   still receives the other.
+
+### Performance
+
+Frame time was being spent in four places, and all four are now paid once
+instead of repeatedly:
+
+- **The entity list** is built once per frame. ESP, Kill Aura and TriggerBot all
+  ask on the same frame; `Refresh` coalesces calls inside a 15 ms window and
+  reuses one table per player instead of allocating a fresh one for each,
+  which keeps the collector out of the frame budget.
+- **Rig bones** are resolved once per character and cached. Fourteen
+  `FindFirstChild` pairs per player per frame bought nothing: a rig does not
+  change shape between frames.
+- **The ESP's visibility raycast** — one ray per player per frame in a full
+  server — is cached for a tenth of a second, the redraw interval defaults to
+  30 ms rather than every frame, and distance rejection happens before any
+  projection or lookup.
+- **Item Render** keeps an index of matching objects, built once and maintained
+  from `DescendantAdded`/`DescendantRemoving`, instead of walking
+  `workspace:GetDescendants()` five times a second — on a real map that is tens
+  of thousands of instances per sweep. BedFight's bed and generator sweeps are
+  cached the same way, and the weapon scan (which walks the whole PlayerGui) is
+  cached for a second, so an aura swinging nine times a second scans once.
+
+The test suite asserts each of these: three refreshes in one frame do one
+sweep, a later frame sweeps again, rig tables are identical between calls, and
+three weapon scans walk the interface once.
 
 ### Tests
 
@@ -631,11 +659,17 @@ saved place in `reference/`, not from guesswork:
   `ReplicatedStorage.GameInfo`, with the number of beds still standing.
 - **Auto Swing** — presses the game's own sword button on a timer, because this
   game has no `Tool` to activate.
+- **Scaffold** — places the game's own blocks, not a local platform: it equips
+  a block from the hotbar, aims down at the gap and presses the game's build
+  control, only while there is nothing under your feet. Log `PlaceBlock` with
+  the Remote Logger and the button press can become the call itself.
+- **Anti Void** — the kill height comes from `GameInfo.DeathBarrierInfo`, so
+  the margin is measured against the game's own plane: it remembers where the
+  ground last held you, and when you cross the margin with nothing below it
+  stops the fall and puts you back there.
 - **Bed Nuker** — hits the nearest bed in range with the game's own controls:
   the swing button plus contact events against the bed's hitbox, at a rate you
   set.
-- **Void Warning** — reads `GameInfo.DeathBarrierInfo` and warns when you are
-  within forty studs of the game's own kill plane.
 
 What it does not do is fire `SwordHit`, `MineBlock`, `PlaceBlock` or
 `PurchaseItemShopItem` directly: their argument shapes are not in the dump, and

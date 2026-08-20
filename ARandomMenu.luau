@@ -14903,11 +14903,6 @@ local fallbackManifest: any = {
             category = "Utility",
         },
         {
-            path = "src/modules/Movement/Scaffold.luau",
-            name = "Scaffold",
-            category = "Movement",
-        },
-        {
             path = "src/modules/Movement/ClickTeleport.luau",
             name = "Click Teleport",
             category = "Movement",

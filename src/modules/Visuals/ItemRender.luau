@@ -42,6 +42,13 @@ function Module.init(context: Runtime): any
     local state: any = host.state
 
     local tracked: {[Instance]: Tracked} = {}
+    -- `workspace:GetDescendants()` on a real map is tens of thousands of
+    -- instances; running it five times a second is the single most expensive
+    -- thing this menu could do. The candidates are indexed once and kept up to
+    -- date from the two signals that can change the answer.
+    local index: {Instance} = {}
+    local indexConnections: {RBXScriptConnection} = {}
+    local indexDirty: boolean = true
     -- Everything the module has ever been told about, and which of those are
     -- currently ticked. A comma-separated box could only be edited as one
     -- lump; this is a list you switch a single object on and off in.
@@ -73,6 +80,57 @@ function Module.init(context: Runtime): any
     end
 
 
+    local function nameMatches(name: string): boolean
+        local lowered: string = string.lower(name)
+        for _, entry: string in ipairs(wanted) do
+            if string.find(lowered, string.lower(entry), 1, true) then
+                return true
+            end
+        end
+        return false
+    end
+
+    local function rebuildIndex(): ()
+        table.clear(index)
+        indexDirty = false
+        if #wanted == 0 then
+            return
+        end
+        for _, descendant: Instance in ipairs(currentWorkspace:GetDescendants()) do
+            if descendant:IsA("BasePart") or descendant:IsA("Model") then
+                if nameMatches(descendant.Name) then
+                    table.insert(index, descendant)
+                end
+            end
+        end
+    end
+
+    local function watchWorkspace(): ()
+        table.insert(
+            indexConnections,
+            currentWorkspace.DescendantAdded:Connect(function(descendant: Instance): ()
+                if #wanted == 0 then
+                    return
+                end
+                if not descendant:IsA("BasePart") and not descendant:IsA("Model") then
+                    return
+                end
+                if nameMatches(descendant.Name) then
+                    table.insert(index, descendant)
+                end
+            end)
+        )
+        table.insert(
+            indexConnections,
+            currentWorkspace.DescendantRemoving:Connect(function(descendant: Instance): ()
+                local position: number? = table.find(index, descendant)
+                if position then
+                    table.remove(index, position)
+                end
+            end)
+        )
+    end
+
     local render: any
     render = framework.Categories.Visuals:CreateModule({
         Name = "Item Render",
@@ -89,13 +147,27 @@ function Module.init(context: Runtime): any
                 releaseAll()
                 picking = false
             end)
+            indexDirty = true
+            watchWorkspace()
+            render:Clean(function(): ()
+                for _, connection: RBXScriptConnection in ipairs(indexConnections) do
+                    pcall(function(): ()
+                        connection:Disconnect()
+                    end)
+                end
+                indexConnections = {}
+                table.clear(index)
+            end)
             render:Loop(function(deltaTime: number): ()
                 accumulator += deltaTime
                 if accumulator < render.Options["Refresh interval"].Value then
                     return
                 end
                 accumulator = 0
-                Module.render(context, render, tracked, wanted, release)
+                if indexDirty then
+                    rebuildIndex()
+                end
+                Module.render(context, render, tracked, wanted, release, index)
             end)
         end,
     })
@@ -111,6 +183,7 @@ function Module.init(context: Runtime): any
         Tooltip = "Every object the module knows about. Tick the ones to draw.",
         Function = function(_selected: any, names: {string}): ()
             wanted = names
+            indexDirty = true
             releaseAll()
         end,
     })
@@ -284,12 +357,12 @@ function Module.render(
     render: any,
     tracked: {[Instance]: any},
     wanted: {string},
-    release: (Instance) -> ()
+    release: (Instance) -> (),
+    index: {Instance}
 ): ()
     local host: any = context.host
     local create: any = host.create
     local localPlayer: Player = host.LocalPlayer
-    local currentWorkspace: Workspace = host.workspace or workspace
     local options: any = render.Options
 
     if #wanted == 0 then
@@ -318,7 +391,10 @@ function Module.render(
         return false
     end
 
-    for _, descendant: Instance in ipairs(currentWorkspace:GetDescendants()) do
+    for _, descendant: Instance in ipairs(index) do
+        if not descendant.Parent then
+            continue
+        end
         local isPart: boolean = descendant:IsA("BasePart")
         local isModel: boolean = descendant:IsA("Model")
         if not isPart and not isModel then

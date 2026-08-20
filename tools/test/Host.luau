@@ -340,6 +340,10 @@ function Host.create(world: any): HostStub
         features = features,
         notifications = notifications,
         step = function(deltaTime: number): ()
+            -- A frame advances time. Without this the mocked clock is frozen,
+            -- and anything that coalesces work per frame (the entity cache,
+            -- rate limits) would see every step as the same instant.
+            world.clock += deltaTime
             for _, handle: any in ipairs(table.clone(tasks)) do
                 if handle.Connected then
                     handle.callback(deltaTime)

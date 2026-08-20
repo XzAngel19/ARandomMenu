@@ -115,6 +115,12 @@ function Module.init(context: any): EntityLibrary
         ByPlayer = {},
         LocalEntity = nil,
         Connections = {},
+        -- Four modules can each ask for a refresh in the same frame. Doing the
+        -- work once per frame instead of four times is the single biggest
+        -- saving in the whole visual stack.
+        lastRefresh = -1,
+        pool = setmetatable({}, {__mode = "k"}),
+        rigs = setmetatable({}, {__mode = "k"}),
     }
 
     local function characterParts(player: Player): (Model?, Humanoid?, BasePart?)
@@ -149,10 +155,22 @@ function Module.init(context: any): EntityLibrary
         return team == localTeam
     end
 
-    function library:Refresh(): {Entity}
+    function library:Refresh(force: boolean?): {Entity}
+        -- Coalesced: repeated calls inside one frame return the list that was
+        -- already built. ESP, Kill Aura and TriggerBot all ask on the same
+        -- frame, and rebuilding the world three times shows up as frame time.
+        local now: number = os.clock()
+        if not force and now - library.lastRefresh < 0.015 then
+            return library.List
+        end
+        library.lastRefresh = now
+
         local origin: BasePart? = localRoot()
-        local list: {Entity} = {}
-        local byPlayer: {[Player]: Entity} = {}
+        local originPosition: Vector3 = origin and origin.Position or Vector3.zero
+        local list: {Entity} = library.List
+        table.clear(list)
+        local byPlayer: {[Player]: Entity} = library.ByPlayer
+        table.clear(byPlayer)
 
         for _, player: Player in ipairs(players:GetPlayers()) do
             local character, humanoid, root = characterParts(player)
@@ -162,20 +180,25 @@ function Module.init(context: any): EntityLibrary
             if humanoid.Health <= 0 then
                 continue
             end
-            local entity: Entity = {
-                Player = player,
-                Character = character,
-                Humanoid = humanoid,
-                RootPart = root,
-                Head = character:FindFirstChild("Head") :: BasePart?,
-                Health = humanoid.Health,
-                MaxHealth = math.max(humanoid.MaxHealth, 1),
-                Distance = origin
-                    and (origin.Position - root.Position).Magnitude
-                    or 0,
-                Team = player.Team,
-                IsFriendly = library:IsFriendly(player),
-            }
+            -- One table per player, reused every frame: an ESP that allocates
+            -- a fresh table per player per frame is an ESP that keeps the
+            -- collector busy for as long as it is on.
+            local entity: any = library.pool[player]
+            if not entity then
+                entity = {}
+                library.pool[player] = entity
+            end
+            entity.Player = player
+            entity.Character = character
+            entity.Humanoid = humanoid
+            entity.RootPart = root
+            entity.Head = character:FindFirstChild("Head") :: BasePart?
+            entity.Health = humanoid.Health
+            entity.MaxHealth = math.max(humanoid.MaxHealth, 1)
+            entity.Distance = (originPosition - root.Position).Magnitude
+            entity.Team = player.Team
+            entity.IsFriendly = library:IsFriendly(player)
+
             byPlayer[player] = entity
             if player == localPlayer then
                 library.LocalEntity = entity
@@ -187,8 +210,6 @@ function Module.init(context: any): EntityLibrary
         if not byPlayer[localPlayer] then
             library.LocalEntity = nil
         end
-        library.List = list
-        library.ByPlayer = byPlayer
         return list
     end
 
@@ -230,8 +251,15 @@ function Module.init(context: any): EntityLibrary
         return result == nil
     end
 
+    -- Bones are resolved once per character and kept: a rig does not change
+    -- shape between frames, and fourteen FindFirstChild pairs per player per
+    -- frame is pure waste.
     function library:Rig(entity: Entity): {{BasePart}}
         local character: Model = entity.Character
+        local cached: any = library.rigs[character]
+        if cached then
+            return cached
+        end
         local bones: {{BasePart}} = {}
         local definitions: {{string}} =
             character:FindFirstChild("UpperTorso") and R15_BONES or R6_BONES
@@ -242,6 +270,7 @@ function Module.init(context: any): EntityLibrary
                 table.insert(bones, {first, second})
             end
         end
+        library.rigs[character] = bones
         return bones
     end
 
@@ -397,28 +426,28 @@ function Module.init(context: any): EntityLibrary
             table.insert(
                 library.Connections,
                 player.CharacterAdded:Connect(function(): ()
-                    library:Refresh()
+                    library:Refresh(true)
                 end)
             )
-            library:Refresh()
+            library:Refresh(true)
         end)
     )
     table.insert(
         library.Connections,
         players.PlayerRemoving:Connect(function(player: Player): ()
             library.ByPlayer[player] = nil
-            library:Refresh()
+            library:Refresh(true)
         end)
     )
     for _, player: Player in ipairs(players:GetPlayers()) do
         table.insert(
             library.Connections,
             player.CharacterAdded:Connect(function(): ()
-                library:Refresh()
+                library:Refresh(true)
             end)
         )
     end
-    library:Refresh()
+    library:Refresh(true)
 
     activeLibrary = (library :: any) :: EntityLibrary
     Module.Initialized = true

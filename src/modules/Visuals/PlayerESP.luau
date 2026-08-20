@@ -59,6 +59,7 @@ function Module.init(context: Runtime): any
 
     local pool: {[Player]: Drawings} = {}
     local accumulator: number = 0
+    local visibilityCache: any = setmetatable({}, {__mode = "k"})
 
     local esp: any
     esp = framework.Categories.Visuals:CreateModule({
@@ -82,7 +83,7 @@ function Module.init(context: Runtime): any
                     return
                 end
                 accumulator = 0
-                Module.render(context, container, pool, esp)
+                Module.render(context, container, pool, esp, visibilityCache)
             end)
             esp:Event(players.PlayerRemoving, function(player: Player): ()
                 Module.release(pool, player)
@@ -205,8 +206,9 @@ function Module.init(context: Runtime): any
         Name = "Refresh interval",
         Min = 0,
         Max = 0.2,
-        Default = 0,
-        Tooltip = "Seconds between redraws. 0 redraws every frame.",
+        Default = 0.03,
+        Tooltip = "Seconds between redraws. 0 redraws every frame, which no "
+            .. "display needs and every frame budget notices.",
     })
 
     activeCleanup = function(): ()
@@ -366,7 +368,8 @@ function Module.render(
     context: Runtime,
     container: Frame,
     pool: {[Player]: any},
-    esp: any
+    esp: any,
+    visibilityCache: any
 ): ()
     local host: any = context.host
     local entityLibrary: any = context.entity
@@ -388,6 +391,8 @@ function Module.render(
             continue
         end
         if entity.Distance > options["Max distance"].Value then
+            -- Cheapest possible rejection, before any projection, raycast or
+            -- instance lookup happens for this player.
             continue
         end
 
@@ -436,8 +441,19 @@ function Module.render(
         seen[player] = true
         local drawings: any = Module.acquire(host, container, pool, player)
 
-        local visible: boolean = not options["Visibility check"].Value
-            or entityLibrary:VisibleFrom(entity)
+        -- One raycast per player per frame is what turns ESP into a frame-rate
+        -- problem in a full server, so the answer is cached briefly. Nobody
+        -- can see a tenth of a second of staleness in a colour.
+        local visible: boolean = true
+        if options["Visibility check"].Value then
+            local cache: any = visibilityCache[player]
+            local now: number = os.clock()
+            if not cache or now - cache.at > 0.12 then
+                cache = {at = now, value = entityLibrary:VisibleFrom(entity)}
+                visibilityCache[player] = cache
+            end
+            visible = cache.value
+        end
         local colour: Color3 = entity.IsFriendly
                 and options["Friendly colour"].Value
             or (visible and options["Enemy colour"].Value

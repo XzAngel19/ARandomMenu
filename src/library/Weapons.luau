@@ -36,6 +36,7 @@ export type WeaponLibrary = {
     Find: (self: WeaponLibrary, label: string) -> Candidate?,
     Activate: (self: WeaponLibrary, candidate: Candidate) -> boolean,
     Best: (self: WeaponLibrary) -> Candidate?,
+    Invalidate: (self: WeaponLibrary) -> (),
     Swing: (self: WeaponLibrary) -> boolean,
     PressButton: (self: WeaponLibrary, button: GuiButton) -> boolean,
     Destroy: (self: WeaponLibrary) -> (),
@@ -170,7 +171,16 @@ function Module.init(context: any): WeaponLibrary
     local currentWorkspace: Workspace = host.workspace or workspace
     local menuGui: Instance? = host.ScreenGui
 
-    local library: any = {}
+    local library: any = {
+        -- Scanning walks every GuiButton in the PlayerGui. Kill Aura asks for
+        -- a weapon on every swing and the Auto Clicker on every click, so the
+        -- answer is cached for a second: a hotbar does not change nine times a
+        -- second, and this is the difference between a scan per swing and a
+        -- scan per second.
+        cache = {},
+        cachedAt = -1,
+        cachedAll = false,
+    }
 
     -- Firing a GuiButton the way a real press does. BedFight's mobile sword
     -- listens on MouseButton1Down and MouseButton1Click and does its work in a
@@ -212,9 +222,17 @@ function Module.init(context: any): WeaponLibrary
         return menuGui ~= nil and instance:IsDescendantOf(menuGui :: Instance)
     end
 
+    function library:Invalidate(): ()
+        library.cachedAt = -1
+    end
+
     function library:Scan(query: any?): {Candidate}
         local options: any = query or {}
         local everything: boolean = options.All == true
+        local now: number = os.clock()
+        if now - library.cachedAt < 1 and library.cachedAll == everything then
+            return library.cache
+        end
         local found: {Candidate} = {}
         local seen: {[string]: boolean} = {}
 
@@ -318,6 +336,9 @@ function Module.init(context: any): WeaponLibrary
             end
         end
 
+        library.cache = found
+        library.cachedAt = now
+        library.cachedAll = everything
         return found
     end
 
