@@ -641,19 +641,54 @@ appear for the modes that use them.
 line, `init`/`destroy`, its own card, and nothing in the shell that knows it
 exists.
 
-The shell is **16,688 → 12,305 lines**, and **no feature card is left in it**.
+The shell is **16,688 → 10,429 lines**, and **no feature card is left in it**.
 
 One thing the move taught, worth writing down: the remaining features lived
 inside a single enormous `do ... end` that existed only to hand registers back
 to `bootstrap()`. A cut that swallows its opening `do` leaves the file
 unbalanced in a way the compiler reports three hundred lines later, so each
 piece was taken from *inside* the block and the block was left standing. It
-disappeared on its own once the last feature was out — which is the real reason
-that register ceiling stops mattering: `bootstrap()` went from three spare
-locals to more than twenty.
+disappeared on its own once the last feature was out.
 
-The queue: the option builders and the colour picker into a widget library —
-which is what finally takes the shell under six thousand.
+### The widget library
+
+The other half of that number is `src/library/Widgets.luau`. Every control a
+panel is made of — the option row itself, the toggle, the action button, the
+slider, the two-handle range, the cycle, the single- and multi-select lists,
+the key slot, the text field, the colour swatch and the colour picker behind
+it — used to be declared in the same function scope as the window, the rail and
+the loader. Two thousand lines of it, which is how `bootstrap()` ended up three
+locals away from Luau's 200-register ceiling. It has more than thirty spare
+now.
+
+The shell hands the library its primitives (`create`, `makeButton`, the design
+tokens, the config store) and gets back the builders, which it copies into the
+environment every downloaded file runs in. A module calls `addToggleOption(...)`
+exactly as before and cannot tell where the function came from.
+
+The library loads **before** the kernel, because a module that starts drawing
+against a half-filled environment dies in the middle of its own panel and
+leaves a card with a title and nothing under it. If it cannot be downloaded the
+loader says so and stops rather than opening a menu full of empty cards.
+
+Two build contracts hold the seam together: the builder contract now counts the
+names the library returns as well as the ones the shell writes by hand, and a
+new host contract fails the build when any file under `src/library/` or
+`src/core/` reads a `host.` field the shell never publishes — which is how the
+library asking for `PopupLayer` before the shell exported it was caught.
+
+The library is also the first interface code in this repository that is
+actually executed by the test suite. `tools/test/run.luau` loads it against the
+mock Roblox and drives it: a toggle flips and writes its value, a slider is
+typed into and dragged and clamps, a key slot is armed and bound and cleared, a
+text field persists what is typed, the colour picker opens and applies, a range
+with a reversed stored pair is put back in order, a list summarises its
+selection, and every control type in a mixed panel ends on the same pixel. That
+last one is the shared control band the comments have always claimed exists;
+now something checks it.
+
+The queue: Item Render and the remaining game marks onto `Render.luau`, then
+the settings page and the mobile action layer out of the shell.
 
 ## Module architecture
 
@@ -667,7 +702,9 @@ src/
     Manifest.luau        ordered list of everything the runtime downloads
     Framework.luau       kernel: categories, modules, options, cleanup
   library/
+    Widgets.luau         every control an option row is built from
     Entity.luau          player/character cache, team checks, ray queries
+    Render.luau          projection, pooled boxes/lines/labels, highlights
   modules/
     Combat/TriggerBot.luau
     Visuals/PlayerESP.luau

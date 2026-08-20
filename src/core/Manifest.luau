@@ -19,6 +19,7 @@ export type ModuleEntry = {
 
 export type Manifest = {
     version: number,
+    widgets: string,
     core: {string},
     libraries: {string},
     modules: {ModuleEntry},
@@ -26,6 +27,10 @@ export type Manifest = {
 
 local Manifest: Manifest = {
     version = 1,
+    -- Listed on its own rather than among the libraries: the option builders
+    -- have to exist before any other file runs, because every module builds
+    -- its panel out of them the moment it starts.
+    widgets = "src/library/Widgets.luau",
     core = {
         "src/core/Framework.luau",
     },

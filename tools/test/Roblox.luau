@@ -152,6 +152,20 @@ end
 
 -- Signals ------------------------------------------------------------------
 
+-- Anything a pointer can be over. Kept as a set rather than a chain of
+-- comparisons because every instance creation checks it.
+local POINTER_CLASSES: {[string]: boolean} = {
+    Frame = true,
+    ScrollingFrame = true,
+    TextLabel = true,
+    TextButton = true,
+    TextBox = true,
+    ImageLabel = true,
+    ImageButton = true,
+    CanvasGroup = true,
+    ScreenGui = true,
+}
+
 local function signal(): any
     local handlers: {any} = {}
     local object: any = {}
@@ -201,11 +215,26 @@ local function newInstance(className: string): any
         Destroyed = false,
     }
     instance.AncestryChanged = signal()
+    -- Roblox's own defaults for anything drawable. Reading an unset property
+    -- used to give nil, so a builder doing `control.ZIndex = math.max(
+    -- control.ZIndex, ...)` — which is how every option row stacks its
+    -- control above its label — failed on arithmetic against nil instead of
+    -- being testable.
+    if POINTER_CLASSES[className] then
+        instance.ZIndex = 1
+        instance.Visible = true
+        instance.Text = ""
+        instance.TextSize = 14
+    end
 
     setmetatable(instance, {
         __index = function(self: any, key: string): any
             if key == "Parent" then
                 return rawget(self, "_parent")
+            end
+            local watched: any = rawget(self, "WatchedValues")
+            if watched then
+                return watched[key]
             end
             return nil
         end,
@@ -222,6 +251,15 @@ local function newInstance(className: string): any
                 if value then
                     table.insert(value.Children, self)
                 end
+                return
+            end
+            -- A watched property is held off the instance itself, because Lua
+            -- only calls `__newindex` while the key is absent. Writing it
+            -- fires the listener; everything else takes the plain path.
+            local watchers: any = rawget(self, "PropertySignals")
+            if watchers and watchers[key] then
+                rawget(self, "WatchedValues")[key] = value
+                watchers[key]:Fire()
                 return
             end
             rawset(self, key, value)
@@ -345,8 +383,23 @@ local function newInstance(className: string): any
         rawset(self, "Destroyed", true)
     end
 
-    function instance:GetPropertyChangedSignal(_property: string): any
-        return signal()
+    -- One signal per property, kept: handing back a fresh one on every call
+    -- meant a listener was attached to a signal nothing would ever fire.
+    function instance:GetPropertyChangedSignal(property: string): any
+        local watchers: any = rawget(self, "PropertySignals")
+        if not watchers then
+            watchers = {}
+            rawset(self, "PropertySignals", watchers)
+            rawset(self, "WatchedValues", {})
+        end
+        local existing: any = watchers[property]
+        if not existing then
+            rawget(self, "WatchedValues")[property] = rawget(self, property)
+            rawset(self, property, nil)
+            existing = signal()
+            watchers[property] = existing
+        end
+        return existing
     end
 
     function instance:Activate(): ()
@@ -360,6 +413,22 @@ local function newInstance(className: string): any
         instance.MouseButton1Down = signal()
         instance.MouseButton1Up = signal()
         instance.Activated = signal()
+    end
+    -- Pointer signals on everything that can be drawn. The widget library
+    -- hangs its hover feedback, its slider drags and its "click outside to
+    -- close" behaviour off these, so a stand-in without them can build a
+    -- control but never operate one.
+    if POINTER_CLASSES[className] then
+        instance.MouseEnter = signal()
+        instance.MouseLeave = signal()
+        instance.MouseMoved = signal()
+        instance.InputBegan = signal()
+        instance.InputChanged = signal()
+        instance.InputEnded = signal()
+    end
+    if className == "TextBox" then
+        instance.Focused = signal()
+        instance.FocusLost = signal()
     end
     if className == "Tool" then
         -- Kill Aura learns which weapon you swing by watching this one.
@@ -392,12 +461,73 @@ function Mock.install(): MockWorld
         one = vector3(1, 1, 1),
     }
     globals.Vector2 = {new = vector2, zero = vector2(0, 0)}
+    -- Colours carry `ToHSV` because the colour picker converts in both
+    -- directions every time a cursor moves, and a stand-in that only stored
+    -- RGB would make the picker untestable.
+    local function colour(r: number, g: number, b: number): any
+        local value: any = {R = r, G = g, B = b}
+        function value:ToHSV(): (number, number, number)
+            local high: number = math.max(self.R, self.G, self.B)
+            local low: number = math.min(self.R, self.G, self.B)
+            local span: number = high - low
+            local hue: number = 0
+            if span > 0 then
+                if high == self.R then
+                    hue = ((self.G - self.B) / span) % 6
+                elseif high == self.G then
+                    hue = (self.B - self.R) / span + 2
+                else
+                    hue = (self.R - self.G) / span + 4
+                end
+                hue /= 6
+            end
+            return hue, high > 0 and span / high or 0, high
+        end
+        return value
+    end
     globals.Color3 = {
-        new = function(r: number, g: number, b: number): any
-            return {R = r, G = g, B = b}
-        end,
+        new = colour,
         fromRGB = function(r: number, g: number, b: number): any
-            return {R = r / 255, G = g / 255, B = b / 255}
+            return colour(r / 255, g / 255, b / 255)
+        end,
+        fromHSV = function(h: number, s: number, v: number): any
+            local sector: number = (h % 1) * 6
+            local index: number = math.floor(sector)
+            local fraction: number = sector - index
+            local p: number = v * (1 - s)
+            local q: number = v * (1 - s * fraction)
+            local t: number = v * (1 - s * (1 - fraction))
+            local table3: {{number}} = {
+                {v, t, p}, {q, v, p}, {p, v, t},
+                {p, q, v}, {t, p, v}, {v, p, q},
+            }
+            local picked: {number} = table3[index + 1] or {v, v, v}
+            return colour(picked[1], picked[2], picked[3])
+        end,
+    }
+    globals.ColorSequenceKeypoint = {
+        new = function(at: number, value: any): any
+            return {Time = at, Value = value}
+        end,
+    }
+    globals.ColorSequence = {
+        new = function(first: any, second: any): any
+            return {Keypoints = {first, second}}
+        end,
+    }
+    globals.NumberSequenceKeypoint = {
+        new = function(at: number, value: number): any
+            return {Time = at, Value = value}
+        end,
+    }
+    globals.NumberSequence = {
+        new = function(first: any, second: any?): any
+            return {Keypoints = {first, second}}
+        end,
+    }
+    globals.TweenInfo = {
+        new = function(duration: number, style: any?, direction: any?): any
+            return {Time = duration, EasingStyle = style, EasingDirection = direction}
         end,
     }
     globals.UDim = {
@@ -438,8 +568,11 @@ function Mock.install(): MockWorld
             "Touch",
             "MouseButton1",
             "MouseButton2",
+            "MouseMovement",
             "Keyboard",
         }),
+        ApplyStrokeMode = enumFolder({"Contextual", "Border"}),
+        SortOrder = enumFolder({"LayoutOrder", "Name"}),
         ScaleType = enumFolder({"Crop", "Fit", "Stretch"}),
         AnimationPriority = enumFolder({"Action", "Movement", "Idle", "Core"}),
         AutomaticSize = enumFolder({"None", "X", "Y", "XY"}),
@@ -596,16 +729,57 @@ function Mock.install(): MockWorld
     end
 
     globals.workspace = mockWorkspace
+
+    -- Services are cached. `GetService` used to hand back a fresh instance on
+    -- every call, so two files asking for the same service watched two
+    -- different signals and neither ever fired.
+    local services: {[string]: any} = {}
+
+    -- Tweens are applied the moment they are played. Nothing in the harness
+    -- advances an interpolation, and every property the menu tweens is a
+    -- destination the assertions care about, not a path.
+    local tweenService: any = newInstance("TweenService")
+    world.tweens = 0
+    function tweenService:Create(target: any, _info: any, goal: any): any
+        local tween: any = {}
+        function tween:Play(): ()
+            world.tweens += 1
+            for key: string, value: any in pairs(goal) do
+                target[key] = value
+            end
+        end
+        function tween:Cancel(): () end
+        function tween:Pause(): () end
+        tween.Completed = signal()
+        return tween
+    end
+    services.TweenService = tweenService
+
+    local inputService: any = newInstance("UserInputService")
+    inputService.TouchEnabled = false
+    inputService.KeyboardEnabled = true
+    function inputService:GetFocusedTextBox(): any
+        return world.focusedTextBox
+    end
+    services.UserInputService = inputService
+
     globals.game = {
         PlaceId = 0,
         JobId = "test",
         GetService = function(_self: any, name: string): any
-            return newInstance(name)
+            local existing: any = services[name]
+            if existing then
+                return existing
+            end
+            local created: any = newInstance(name)
+            services[name] = created
+            return created
         end,
         HttpGet = function(): string
             return ""
         end,
     }
+    world.services = services
     globals.warn = function(...: any): ()
         print("[warn]", ...)
     end

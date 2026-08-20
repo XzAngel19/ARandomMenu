@@ -111,13 +111,46 @@ def state_contract(shell: str, sources: list, failures: list) -> None:
             )
 
 
-def builder_contract(shell: str, failures: list) -> None:
+def environment_keys(shell: str) -> set:
+    """Everything a downloaded file can reach through `host.` or as a global.
+
+    Two sources, because the shell no longer owns all of it: the table
+    `createGameModuleEnvironment` builds, plus the builders the widget library
+    returns and the shell copies in by name. A builder renamed on one side and
+    not the other reads as nil in every module at once.
+    """
     environment = shell[
         shell.index("local function createGameModuleEnvironment") : shell.index(
             "local function loadGameModule"
         )
     ]
     exposed = set(re.findall(r"^\s{8}(\w+)\s*=", environment, re.M))
+    widgets = open("src/library/Widgets.luau").read()
+    returned = widgets[widgets.rindex("    return {") : widgets.rindex("\nend")]
+    return exposed | set(re.findall(r"^\s{8}(\w+)\s*=", returned, re.M))
+
+
+def host_contract(shell: str, sources: list, failures: list) -> None:
+    """Every `host.x` a downloaded file reads has to be something the shell puts there.
+
+    The kernel and the libraries take the same environment the game modules
+    take, and they read it by field rather than as a global — so the same
+    nil-at-runtime failure applies, one layer lower. This is what caught the
+    widget library asking for `PopupLayer` before the shell published it.
+    """
+    exposed = environment_keys(shell)
+    for path in sources:
+        if not (path.startswith("src/library/") or path.startswith("src/core/")):
+            continue
+        for name in sorted(set(re.findall(r"host\.(\w+)", open(path).read()))):
+            if name not in exposed:
+                failures.append(
+                    f"{path}: reads host.{name}, which the shell never publishes"
+                )
+
+
+def builder_contract(shell: str, failures: list) -> None:
+    exposed = environment_keys(shell)
 
     used = set()
     declared = set()
@@ -131,8 +164,8 @@ def builder_contract(shell: str, failures: list) -> None:
         declared |= set(re.findall(r"local\s+(\w+)\s*[:=]", text))
     for name in sorted(used - exposed - declared):
         failures.append(
-            f"src/games: calls {name}(), which createGameModuleEnvironment "
-            "does not expose"
+            f"src/games: calls {name}(), which neither "
+            "createGameModuleEnvironment nor the widget library exposes"
         )
 
 
@@ -251,6 +284,7 @@ def main() -> int:
     dead_option_contract(sources, failures)
     state_contract(shell, sources, failures)
     builder_contract(shell, failures)
+    host_contract(shell, sources, failures)
     connection_contract(shell, sources, failures)
     card_name_contract(shell, failures)
     text_fits_contract(failures)

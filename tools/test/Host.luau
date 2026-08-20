@@ -26,6 +26,7 @@ function Host.create(world: any): HostStub
     local tasks: {any} = {}
     local features: {any} = {}
     local notifications: {string} = {}
+    local menuListeners: {any} = {}
 
     local function create(className: string, properties: any): any
         local instance: any = Mock.newInstance(className)
@@ -333,23 +334,27 @@ function Host.create(world: any): HostStub
     host.Players = world.players
     host.LocalPlayer = world.localPlayer
     host.workspace = world.workspace
-    host.UserInputService = {
-        IsKeyDown = function(_self: any, _key: any): boolean
-            return world.keyDown == true
-        end,
-        -- The auto clicker only clicks while the attack is held, so the
-        -- harness has to be able to hold it.
-        IsMouseButtonPressed = function(_self: any, _button: any): boolean
-            return world.mouseDown == true
-        end,
-        GetMouseLocation = function(): any
-            return world.vector2(640, 360)
-        end,
-        KeyboardEnabled = true,
-        TouchEnabled = false,
-    }
-    host.UserInputService.InputBegan = Mock.signal()
-    host.UserInputService.InputEnded = Mock.signal()
+    host.TweenService = world.services.TweenService
+    -- One input service for the whole harness, the same as in the game. It
+    -- used to be a second hand-written table here, so a module listening
+    -- through the host and a library listening through `GetService` watched
+    -- two different streams and neither saw the other's events.
+    local inputService: any = world.services.UserInputService
+    function inputService:IsKeyDown(_key: any): boolean
+        return world.keyDown == true
+    end
+    -- The auto clicker only clicks while the attack is held, so the harness
+    -- has to be able to hold it.
+    function inputService:IsMouseButtonPressed(_button: any): boolean
+        return world.mouseDown == true
+    end
+    function inputService:GetMouseLocation(): any
+        return world.vector2(640, 360)
+    end
+    inputService.InputBegan = Mock.signal()
+    inputService.InputChanged = Mock.signal()
+    inputService.InputEnded = Mock.signal()
+    host.UserInputService = inputService
     -- The game bridge, exactly as the shell publishes it: a game module
     -- registers roles and its own ESP objects, and the universal modules
     -- listen. The stub keeps the same replay behaviour, because "the game
@@ -420,6 +425,122 @@ function Host.create(world: any): HostStub
     for key: string, value: any in pairs(stateTable) do
         host.state[key] = value
     end
+
+    -- The shell primitives the widget library builds its controls out of.
+    --
+    -- The builders above are a test double: they record what a module asked
+    -- for so a test can assert on it in one line. These are something else —
+    -- the real `src/library/Widgets.luau` is loaded against them, so the
+    -- interface code that actually ships is the code under test. Colour and
+    -- geometry are deliberately crude here: the harness proves a control
+    -- exists, carries its stored value and calls its module back, and says
+    -- nothing about what it looks like.
+    local function themeColour(): any
+        return world.globals.Color3.fromRGB(120, 120, 120)
+    end
+    host.Theme = setmetatable({}, {__index = themeColour})
+    host.CONTROL_FONT = "Control"
+    host.THIN_FONT = "Thin"
+    host.TITLE_FONT = "Title"
+    host.PopupLayer = create("Frame", {Parent = screenGui, Name = "PopupLayer"})
+    host.UI_RADIUS = {shell = 8, panel = 5, card = 4, control = 3, chip = 3}
+    host.UI_MOTION = {fast = 0.1, base = 0.16, slow = 0.22}
+    host.cornerRadius = function(radius: number): any
+        return world.globals.UDim.new(0, radius)
+    end
+    -- The shell releases these with the window; the harness only counts them,
+    -- so a builder that leaks a listener per row shows up as a number.
+    local uiConnections: {any} = {}
+    host.trackUiConnection = function(connection: any): any
+        table.insert(uiConnections, connection)
+        return connection
+    end
+    host.uiConnections = uiConnections
+
+    host.makeTextBox = function(parent: any, defaultText: any): any
+        local box: any = create("TextBox", {
+            Parent = parent,
+            Text = tostring(defaultText),
+            TextSize = 11,
+            TextTruncate = "AtEnd",
+        })
+        return box
+    end
+
+    host.setToggleSwitch = function(button: any, enabled: boolean, _animate: boolean?): ()
+        button:SetAttribute("Switched", enabled)
+    end
+    host.createToggleSwitch = function(parent: any, enabled: boolean, _width: number?): any
+        local button: any = create("TextButton", {
+            Parent = parent,
+            Text = "",
+            TextTruncate = "AtEnd",
+        })
+        host.setToggleSwitch(button, enabled)
+        return button
+    end
+    host.applyKeySlotStyle = function(button: any): ()
+        button:SetAttribute("ThemeRole", "KeySlot")
+    end
+    -- Click the slot, then press a key. The harness stores the callback so a
+    -- test can deliver the key press without an input device.
+    host.beginKeyCapture = function(button: any, callback: any): ()
+        button.Text = "..."
+        world.keyCapture = {button = button, callback = callback}
+    end
+    host.bindActionShortcut = function(
+        button: any,
+        shortcutId: string,
+        label: string,
+        callback: any,
+        _options: any?
+    ): ()
+        world.shortcuts = world.shortcuts or {}
+        world.shortcuts[shortcutId] = {button = button, label = label, run = callback}
+    end
+    host.runActionButton = function(
+        button: any,
+        idleText: string,
+        callback: any,
+        _successMessage: string,
+        _errorPrefix: string
+    ): ()
+        local ok: boolean, failure: any = pcall(callback)
+        button.Text = idleText
+        if not ok then
+            table.insert(notifications, tostring(failure))
+        end
+    end
+
+    host.colorFromConfig = function(value: any, fallback: any): any
+        if type(value) == "table" then
+            return world.globals.Color3.fromRGB(value[1], value[2], value[3])
+        end
+        return fallback
+    end
+    host.colorToConfig = function(colour: any): {number}
+        return {
+            math.round(colour.R * 255),
+            math.round(colour.G * 255),
+            math.round(colour.B * 255),
+        }
+    end
+
+    -- The config store, keyed exactly as the shell keys it, so a test can
+    -- prove a control wrote its value where the next session will look.
+    host.configData = {version = 1, states = {}, values = {}, ui = {}}
+    host.saves = 0
+    host.queueConfigSave = function(): ()
+        host.saves += 1
+    end
+
+    host.state.layout = {optionRowHeight = 34, touch = false}
+    host.state.guiStyle = "Default"
+    host.state.isMobile = false
+    host.state.addMenuVisibilityListener = function(listener: any): ()
+        table.insert(menuListeners, listener)
+    end
+    host.state.setTextMetric = function(_object: any, _size: number): () end
 
     return {
         env = host,
