@@ -76,6 +76,9 @@ local mm2Settings = {
     getGunKey = Enum.KeyCode.G,
     instantRoleNotify = false,
     roleEspAll = false,
+    -- Off by default: the round gate needs data the client does not always
+    -- have, and an ESP that silently shows nothing reads as a broken module.
+    roleEspRoundOnly = false,
     roleEspInnocent = false,
     roleEspMurderer = false,
     roleEspSheriff = false,
@@ -488,72 +491,127 @@ local function createMM2Cham(folder, adornee, color, transparency)
     reference.Parent = folder
 end
 
-local function rebuildRoleEsp()
+-- Player ESP.
+--
+-- Two things used to keep this switched on but invisible:
+--
+--   1. It was gated behind `hasActiveRoundRoles()`. That gate needs the round
+--      table to name a Murderer/Sheriff, or a player to be *holding* the
+--      weapon — but other players' Backpacks do not replicate, so at the start
+--      of a round nobody qualifies and the ESP drew nothing at all.
+--   2. Every refresh destroyed and rebuilt every Highlight, which flickered
+--      and lost the adornee whenever a character respawned mid-rebuild.
+--
+-- It now runs whenever the module is on (with an opt-in round gate for players
+-- who only want it in-round) and maintains one Highlight per player instead of
+-- rebuilding the world twice a second.
+local roleEspHighlights: {[Player]: Highlight} =
+    setmetatable({}, {__mode = "k"}) :: any
+
+local function removeRoleEspHighlight(player: Player): ()
+    local highlight: Highlight? = roleEspHighlights[player]
+    if highlight then
+        highlight:Destroy()
+        roleEspHighlights[player] = nil
+    end
+end
+
+local function clearRoleEspHighlights(): ()
+    for player: Player, _ in pairs(roleEspHighlights) do
+        removeRoleEspHighlight(player)
+    end
     clearEffects(RoleEffects)
-    if not hasActiveRoundRoles() then
+end
+
+-- Returns the colour/transparency this player should be drawn with, or nil
+-- when the ESP should not show them at all.
+local function resolveRoleEspStyle(player: Player): (Color3?, number?)
+    local character: Model? = player.Character
+    if not character then
+        return nil, nil
+    end
+    local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
+    if not humanoid then
+        return nil, nil
+    end
+
+    local role: string = getPlayerRole(player) or "Innocent"
+    local wanted: boolean = (role == "Innocent" and mm2Settings.roleEspInnocent)
+        or (role == "Murderer" and mm2Settings.roleEspMurderer)
+        or ((role == "Sheriff" or role == "Hero") and mm2Settings.roleEspSheriff)
+    if not wanted then
+        return nil, nil
+    end
+
+    if humanoid.Health <= 0 then
+        return mm2Settings.deadColor, mm2Settings.deadTransparency
+    end
+    if role == "Murderer" then
+        return mm2Settings.murdererColor, mm2Settings.murdererTransparency
+    end
+    if role == "Sheriff" then
+        return mm2Settings.sheriffColor, mm2Settings.sheriffTransparency
+    end
+    if role == "Hero" then
+        return mm2Settings.heroColor, mm2Settings.heroTransparency
+    end
+    return mm2Settings.innocentColor, mm2Settings.innocentTransparency
+end
+
+local function rebuildRoleEsp()
+    if mm2Settings.roleEspRoundOnly and not hasActiveRoundRoles() then
+        clearRoleEspHighlights()
         return
     end
 
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer and player.Character then
-            local role: string? = getPlayerRole(player) or "Innocent"
-
-            local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
-            local isDead = humanoid and humanoid.Health <= 0
-            local show = mm2Settings.roleEspAll
-                and ((role == "Innocent" and mm2Settings.roleEspInnocent)
-                or (role == "Murderer" and mm2Settings.roleEspMurderer)
-                or ((role == "Sheriff" or role == "Hero")
-                    and mm2Settings.roleEspSheriff))
-
-            if show and isDead then
-                createMM2Cham(
-                    RoleEffects,
-                    player.Character,
-                    mm2Settings.deadColor,
-                    mm2Settings.deadTransparency
-                )
-            elseif show and role == "Murderer" then
-                createMM2Cham(
-                    RoleEffects,
-                    player.Character,
-                    mm2Settings.murdererColor,
-                    mm2Settings.murdererTransparency
-                )
-            elseif show and role == "Sheriff" then
-                createMM2Cham(
-                    RoleEffects,
-                    player.Character,
-                    mm2Settings.sheriffColor,
-                    mm2Settings.sheriffTransparency
-                )
-            elseif show and role == "Hero" then
-                createMM2Cham(
-                    RoleEffects,
-                    player.Character,
-                    mm2Settings.heroColor,
-                    mm2Settings.heroTransparency
-                )
-            elseif show and role == "Innocent" then
-                createMM2Cham(
-                    RoleEffects,
-                    player.Character,
-                    mm2Settings.innocentColor,
-                    mm2Settings.innocentTransparency
-                )
+    local seen: {[Player]: boolean} = {}
+    for _, player: Player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            local color: Color3?, transparency: number? =
+                resolveRoleEspStyle(player)
+            local character: Model? = player.Character
+            if color and character then
+                seen[player] = true
+                local highlight: Highlight? = roleEspHighlights[player]
+                -- A respawn replaces the character, so the adornee is checked
+                -- every pass instead of trusting the one set at creation.
+                if not highlight or highlight.Parent ~= character then
+                    if highlight then
+                        highlight:Destroy()
+                    end
+                    highlight = Instance.new("Highlight")
+                    local created: Highlight = highlight :: Highlight
+                    created.Name = "RTMRoleEsp"
+                    created.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                    created.Adornee = character
+                    created.Parent = character
+                    roleEspHighlights[player] = created
+                end
+                local live: Highlight = highlight :: Highlight
+                live.FillColor = color
+                live.FillTransparency = transparency or 0.55
+                live.OutlineColor = color
+                live.OutlineTransparency =
+                    math.clamp((transparency or 0.55) + 0.15, 0, 1)
             end
+        end
+    end
+
+    for player: Player, _ in pairs(roleEspHighlights) do
+        if not seen[player] then
+            removeRoleEspHighlight(player)
         end
     end
 end
 
 local function refreshRoleEspConnection()
     disconnectFeatureConnection("MM2RoleESP")
-    clearEffects(RoleEffects)
 
     if not mm2Settings.roleEspAll
         or not (mm2Settings.roleEspInnocent
             or mm2Settings.roleEspMurderer
             or mm2Settings.roleEspSheriff) then
+        clearRoleEspHighlights()
         return
     end
 
@@ -561,7 +619,7 @@ local function refreshRoleEspConnection()
     local elapsed = 0
     featureConnections.MM2RoleESP = TaskManager:Connect(function(deltaTime)
         elapsed = elapsed + deltaTime
-        if elapsed >= 0.75 then
+        if elapsed >= 0.35 then
             elapsed = 0
             rebuildRoleEsp()
         end
@@ -1305,7 +1363,6 @@ end
 -- not be rebound and could not work on a phone at all. It is now driven by the
 -- card's key slot: hold the key (or hold the placed mobile button) to sprint,
 -- release to stop.
-local sprintHeld: boolean = false
 local sprintBaseSpeed: number? = nil
 
 local function applySprintSpeed(active: boolean): ()
@@ -1326,7 +1383,6 @@ end
 
 local function toggleSprint(enabled: boolean): ()
     disconnectFeatureConnection("MM2Sprint")
-    sprintHeld = enabled
 
     if not enabled then
         clearSprintTrail()
@@ -4478,6 +4534,12 @@ end
 -- rewriting its aim) is only used when the player explicitly picks Redirect
 -- mode and the hook really is installed for this input type.
 local function triggerManualShot(): ()
+    -- The key slot fires the module, so the module has to be on for it to do
+    -- anything; otherwise a stray keypress would shoot with Shoot disabled.
+    if not shootFeatureActive then
+        notify("Enable Shoot first.")
+        return
+    end
     local _, humanoid: Humanoid? = getCharacterParts()
     local backpack: Backpack? = LocalPlayer:FindFirstChildOfClass("Backpack")
     local gun: Tool? = getPlayerWeapon(LocalPlayer, "Gun")
@@ -4649,6 +4711,15 @@ local RoleEspAppearance: Frame =
     state.addSectionOption(RoleEspFeature, "Appearance")
 -- One slider drives every player highlight; dead bodies stay slightly fainter
 -- so they never read as a live target.
+addToggleOption(
+    RoleEspFeature,
+    "Only during rounds",
+    false,
+    function(value: boolean): ()
+        mm2Settings.roleEspRoundOnly = value
+        refreshRoleEspConnection()
+    end
+)
 addNumberOption(RoleEspFeature, "Player fill", 5.5, 0, 10, function(value)
     local fill: number = value / 10
     mm2Settings.innocentTransparency = fill

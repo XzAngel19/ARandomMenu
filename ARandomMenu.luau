@@ -6938,16 +6938,33 @@ local function bindActionShortcut(
     if state.isMobile then
         -- Touch: the slot is the placement trigger. A tap is enough — the
         -- previous 0.6s hold was undiscoverable on a blank button.
+        --
+        -- The placed button calls through the binding rather than capturing
+        -- the callbacks: a module that re-points its key later (Shoot swaps
+        -- "toggle the module" for "fire now") must change what the on-screen
+        -- button does too.
         if state.bindMobileActionPlacement then
             state.bindMobileActionPlacement(
                 button,
                 "Shortcut" .. shortcutId:gsub("%W", ""),
                 compactShortcutLabel(label),
-                callback,
-                binding.hold and {
-                    onPress = binding.onPress,
-                    onRelease = binding.onRelease,
-                } or nil
+                function(): ()
+                    if not binding.hold and binding.onPress then
+                        binding.onPress()
+                    end
+                end,
+                {
+                    onPress = function(): ()
+                        if binding.hold and binding.onPress then
+                            binding.onPress()
+                        end
+                    end,
+                    onRelease = function(): ()
+                        if binding.hold and binding.onRelease then
+                            binding.onRelease()
+                        end
+                    end,
+                }
             )
         end
         return
@@ -8283,7 +8300,7 @@ local function addKeyOption(
     local option = createOptionRow(feature, labelText, hintText)
     local button = makeButton(
         option,
-        currentKey == Enum.KeyCode.Unknown and "NONE" or currentKey.Name,
+        currentKey == Enum.KeyCode.Unknown and "" or currentKey.Name,
         11
     )
     state.layoutOptionControl(option, button, 0.5)
@@ -8299,7 +8316,7 @@ local function addKeyOption(
                 and Enum.KeyCode.Unknown
                 or keyCode
             button.Text = currentKey == Enum.KeyCode.Unknown
-                and "NONE"
+                and ""
                 or currentKey.Name
             button:SetAttribute("CaptureIdleText", button.Text)
             callback(currentKey)

@@ -119,11 +119,21 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
   interval as placeholder text, and long panels can be broken up with section
   headings that fold away together with the controls they label. Fly is the
   reference layout.
-- Every interactive Universal/Movement module without its own key option
-  automatically receives a standard **Toggle key** row as its final row, and
-  every card header carries the same favourite / key-slot / expand trio
-  (actions run and categories expand from their key slot too), so no module
-  ever looks like the odd one out in the list. The three-dot expander is drawn
+- **One keybind per module, always in the card header.** Activation keys are
+  no longer buried in the options panel (Phase Dash's "Dash key", MM2's
+  "Manual key"…): the header key slot *is* the binding, it starts blank
+  instead of reading "KEY", and one shared registry with a single input
+  handler dispatches every binding — which is what makes releases reliable.
+  Slots come in two shapes:
+  - *tap* — the module toggles or the action runs.
+  - *hold* — the module is live only while the key is down (Sprint, Fly up and
+    down, Speed's sprint), and losing window focus always releases it.
+- **Touch parity.** On a phone the same slot is the mobile-button factory: one
+  tap opens placement mode (it used to need an undocumented 0.6 s hold), the
+  button is dropped anywhere on screen, and it drives the same press/release
+  pair — so hold features work with a finger, not just with a keyboard. The
+  placed button reads the binding live, so a module that re-points its key
+  later re-points the on-screen button too. The three-dot expander is drawn
   on *every* card, including modules with nothing to configure (Anti-AFK,
   Anti-Void, X-Ray): those simply never open — the dots are dimmed and the
   click is ignored, checked at click time because options can be added after a
@@ -138,6 +148,9 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
   and exposes **Duration**, **Power** and **Return to start** instead of
   hiding the timeout in a constant. The same `cloneref` comparison was fixed in
   MM2's shot-confirmation check, where it confirmed every hit including misses.
+- **Improve FPS** is a Universal module: stripping textures, particles,
+  shadows and materials has nothing to do with Murder Mystery 2 and every game
+  benefits. Each change is cached and restored exactly when it is switched off.
 - **High Jump** is a one-shot action rather than a state: holding it "enabled"
   made no sense for a feature whose whole job is "press this and jump high".
   It fires from the card, from its key slot or from a placed mobile shortcut,
@@ -157,9 +170,11 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
   doubled the height of the page and the names already say what they do.
   `createSettingRow` still accepts the description argument so existing call
   sites keep working; it is simply never rendered.
-- **Blur mode** and **Interface motion** have no switch: like a module card,
-  the whole row is the button. A click flips it and the row itself reports the
-  state through its accent stripe, its surface and an ON/OFF caption.
+- **Blur mode** and **Interface motion** have no switch and no ON/OFF caption:
+  like a module card, the whole row is the button and the accent stripe plus
+  the lit surface are the state.
+- The search field keeps its clear button on the leading edge, so the text and
+  the control never trade places as the query changes.
 - Two scope bugs the teardown depended on were fixed along the way: the
   session-tracking flags and the `Died` connection were block locals that
   `cleanupRuntime` could not see (assigning them created globals and left the
@@ -224,6 +239,42 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
 Initialization logs use the `[RTM:Bootstrap]` prefix and include detected
 PlaceId, raw download status, downloaded byte count, UI callback count,
 TaskManager callback count and errors captured by `pcall`.
+
+## MM2 module
+
+- **Player ESP** was fifteen flat rows (a toggle, a colour and a transparency
+  slider per role, plus coins and traps). It is now grouped under Roles /
+  Appearance / World headings, each role is a toggle plus its colour, and the
+  five per-role sliders collapse into one shared **Player fill**.
+- The ESP also *works* now. It used to be gated behind `hasActiveRoundRoles()`,
+  which needs the round table to name a Murderer/Sheriff or a player to be
+  holding the weapon — but other players' Backpacks never replicate, so at the
+  start of a round nothing qualified and the module drew nothing at all. It now
+  runs whenever it is on (with an opt-in **Only during rounds** toggle) and
+  maintains one Highlight per player instead of destroying and rebuilding every
+  highlight twice a second, which also fixes the flicker and the highlights
+  lost on respawn.
+- **Gun Visuals** is **Gun ESP**, and the in-world markers follow the menu:
+  a dark glass plate with a grey hairline and off-white text, with the role
+  colour reduced to a slim accent bar instead of a coloured border.
+- **Always Show Timer** no longer draws a box. MM2 already renders a round
+  countdown and simply hides it from everyone but the murderer, so the module
+  finds that label and un-hides it: the timer appears where — and looking how —
+  the murderer sees it, and everything it touched is hidden again on disable.
+- **Shoot** and **Knife** are device-independent. Aim is solved locally with
+  CFrame maths and a raycast, then the gun's own `Shoot` remote is fired with
+  `(origin, aim)`: no mouse, no `hookfunction`, no touch-specific weapon API.
+  `gun:Activate()` with the redirect hook is now only used when Redirect mode
+  is explicitly selected *and* the hook is installed for this input type. The
+  hook itself no longer hard-codes the desktop accessor: it hooks every known
+  aim accessor and returns whichever shape the original returned, so touch
+  clients redirect too instead of reporting "unavailable".
+- **Sprint** is a hold module driven by the card's key slot (LeftControl by
+  default): hold the key, or hold a placed mobile button, to run. It used to
+  watch LeftControl itself, which could not be rebound and did nothing on a
+  phone. The speed is re-applied every frame because the game resets
+  `WalkSpeed` on respawn, on round start and when a tool is equipped.
+- **Improve FPS** moved out of this module into Universal.
 
 ## Source layout
 
