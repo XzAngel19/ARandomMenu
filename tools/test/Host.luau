@@ -209,7 +209,7 @@ function Host.create(world: any): HostStub
         callback: any,
         _hint: string?
     ): any
-        feature.options[label] = {kind = "colour", value = default}
+        feature.options[label] = {kind = "colour", value = default, set = callback}
         callback(default)
         return makeButton(optionRow(feature, label), "", 10)
     end
@@ -330,8 +330,44 @@ function Host.create(world: any): HostStub
     }
     host.UserInputService.InputBegan = Mock.signal()
     host.UserInputService.InputEnded = Mock.signal()
+    -- The game bridge, exactly as the shell publishes it: a game module
+    -- registers roles and its own ESP objects, and the universal modules
+    -- listen. The stub keeps the same replay behaviour, because "the game
+    -- module loaded first" and "the game module loaded second" have to look
+    -- the same to whoever is listening.
+    local bridge: any = {roleProvider = nil, extras = {}, listeners = {}}
     local stateTable: any = {
         menuVisible = true,
+        gameBridge = bridge,
+        onGameBridge = function(listener: (string, any) -> ()): ()
+            table.insert(bridge.listeners, listener)
+            if bridge.roleProvider then
+                listener("roles", bridge.roleProvider)
+            end
+            for _, extra: any in ipairs(bridge.extras) do
+                listener("extra", extra)
+            end
+        end,
+        registerRoleProvider = function(provider: any): ()
+            bridge.roleProvider = provider
+            for _, listener: any in ipairs(bridge.listeners) do
+                listener("roles", provider)
+            end
+        end,
+        registerEspExtra = function(extra: any): ()
+            table.insert(bridge.extras, extra)
+            for _, listener: any in ipairs(bridge.listeners) do
+                listener("extra", extra)
+            end
+        end,
+        playerRole = function(player: any): string?
+            local provider: any = bridge.roleProvider
+            if not provider then
+                return nil
+            end
+            local ok: boolean, role: any = pcall(provider.Get, player)
+            return ok and type(role) == "string" and role or nil
+        end,
         -- The window is closed in the harness: modules that stand down while
         -- the menu is open (the executor-level click paths) must still run.
         visible = false,

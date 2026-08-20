@@ -83,6 +83,81 @@ local FEATURE_CATEGORIES: {[string]: string} = {
     ["Interact Extender"] = "Utility",
     ["Lag Switch"] = "Utility",
     ["Rejoin Server"] = "Utility",
+
+    -- Everything a game module adds is filed here too.
+    --
+    -- A game module used to get a page of its own, so its cards never needed a
+    -- category and every one of them landed in the catch-all. They are modules
+    -- like any other now — BedFight's Server Aura is a combat module, its
+    -- Scaffold is a movement module — so the taxonomy names them here, in one
+    -- table, instead of asking five game files to describe themselves.
+
+    -- MM2
+    ["Instant Role Notify"] = "Utility",
+    ["Shoot"] = "Combat",
+    ["Trajectory Calibration"] = "Combat",
+    ["Knife"] = "Combat",
+    ["Loop All Interact"] = "Utility",
+    ["Silence"] = "Utility",
+    ["Auto Play ID"] = "Utility",
+    ["Sprint"] = "Movement",
+    ["Always Show Timer"] = "Visuals",
+    ["Teleport"] = "Movement",
+    ["Role Fling"] = "Utility",
+    ["Hide Names"] = "Protection",
+
+    -- TRS
+    ["Auto Tackle"] = "Combat",
+    ["Auto Dribble"] = "Combat",
+    ["Auto Pickup"] = "Utility",
+    ["Pass Assist"] = "Combat",
+    ["Shoot Assist"] = "Combat",
+    ["Power Shot"] = "Combat",
+    ["Large Shoot"] = "Combat",
+    ["Best Goal Visual"] = "Visuals",
+    ["Ball Trajectory"] = "Visuals",
+    ["Goalkeeper Assist"] = "Combat",
+    ["Auto Header"] = "Combat",
+
+    -- VD
+    ["Players ESP"] = "Visuals",
+    ["Generator & Objective ESP"] = "Visuals",
+    ["Auto Generator"] = "Utility",
+    ["Auto Parry / Auto Block"] = "Protection",
+    ["Killer Hit Aura"] = "Combat",
+    ["Fast Vault Optimizer"] = "Movement",
+    ["Cooldown Modifier"] = "Utility",
+    ["Damage Boost"] = "Movement",
+    ["Noclip (Vaults & Pallets)"] = "Movement",
+    ["WalkSpeed Hack"] = "Movement",
+    ["Silent Steps / Anti-Sound"] = "Protection",
+    ["Killer Proximity Visualizer"] = "Visuals",
+    ["Line of Sight ESP"] = "Visuals",
+    ["Locker & Hideout Detector"] = "Visuals",
+    ["Killer Power Cooldowns"] = "Visuals",
+    ["VD Field of View"] = "Visuals",
+    ["Optimize Blind / Flash Protection"] = "Protection",
+    ["VD Fullbright"] = "Visuals",
+
+    -- MVSD
+    ["ESP"] = "Visuals",
+    ["Silent Aim"] = "Combat",
+    ["Auto Shoot"] = "Combat",
+    ["Trigger Opportunity"] = "Visuals",
+
+    -- BedFight
+    ["Bed ESP"] = "Visuals",
+    ["Generator ESP"] = "Visuals",
+    ["Round Info"] = "Visuals",
+    ["Auto Swing"] = "Combat",
+    ["Bed Nuker"] = "Combat",
+    ["Scaffold"] = "Movement",
+    ["Anti Void"] = "Protection",
+    ["Server Aura"] = "Combat",
+    ["Server Scaffold"] = "Movement",
+    ["Server Miner"] = "Utility",
+    ["Auto Buy"] = "Utility",
+    ["Quick Actions"] = "Utility",
 }
 
 -- Height reserved at the foot of the navigation rail for the player card.
@@ -107,6 +182,15 @@ local PROFILE_CARD_HEIGHT: number = 56
 --   group   three stacked rules: a container of settings, always running.
 
 
+-- The rail entries that are category filters rather than pages of their own.
+local CATEGORY_TABS: {[string]: boolean} = {
+    Combat = true,
+    Movement = true,
+    Visuals = true,
+    Protection = true,
+    Utility = true,
+}
+
 -- Sort key for a whole category. The catch-all always sinks to the bottom;
 -- every real category is ordered alphabetically.
 local function featureCategoryRank(category: string): string
@@ -126,13 +210,11 @@ end
 -- A monogram is a fallback, not an icon. Game tabs show the game's own
 -- thumbnail — resolved by the engine through `rbxthumb://`, so there is
 -- nothing to download — and the two tabs that are not games get a drawn icon.
+-- The Universal tab wears the icon of the game you are actually in — the one
+-- place a game's identity still shows in the rail now that games do not own
+-- tabs. 0 means "this place".
 local TAB_GAME_ICONS: {[string]: number} = {
     Universal = 0,
-    MM2 = 142823291,
-    TRS = 14315258385,
-    VD = 93978595733734,
-    MVSD = 135856908115931,
-    BedFight = 71480482338212,
 }
 
 local TAB_DRAWN_ICONS: {[string]: string} = {
@@ -142,14 +224,18 @@ local TAB_DRAWN_ICONS: {[string]: string} = {
     ["Config."] = "navSettings",
 }
 
+-- Sidebar monograms.
+--
+-- The navigation rail collapses to icons on small viewports, so every tab
+-- carries a two-character monogram that is legible at 22px. Plain ASCII on
+-- purpose: a glyph font would have to be downloaded and could fail to load.
 local TAB_MONOGRAMS: {[string]: string} = {
     ["Universal"] = "UN",
-    ["BedFight"] = "BF",
+    ["Combat"] = "CB",
     ["Movement"] = "MV",
-    ["MM2"] = "M2",
-    ["TRS"] = "TR",
-    ["VD"] = "VD",
-    ["MVSD"] = "MS",
+    ["Visuals"] = "VS",
+    ["Protection"] = "PR",
+    ["Utility"] = "UT",
     ["Config."] = "CF",
 }
 
@@ -532,6 +618,7 @@ local GAME_CHECK = {
     TRSActive = ACTIVE_GAME_MODULE == "TRS",
     VDActive = ACTIVE_GAME_MODULE == "VD",
     MVSDActive = ACTIVE_GAME_MODULE == "MVSD",
+    BedFightActive = ACTIVE_GAME_MODULE == "BedFight",
 }
 
 function GAME_CHECK.matches(identifier: number): boolean
@@ -3023,9 +3110,15 @@ end
 local function setTab(tabName: string): ()
     state.activeTab = tabName
 
+    -- Every rail entry except Config. shows the same board; what changes is
+    -- which category of card is on it. "Universal" is the unfiltered view.
+    state.categoryFilter = CATEGORY_TABS[tabName] and tabName or nil
+    local pageName: string = tabName == "Config." and "Config." or "Universal"
     for name, page in pairs(pages) do
-        local selectedPage: boolean = name == tabName
-        page.Visible = selectedPage
+        page.Visible = name == pageName
+    end
+    if state.refreshSearch then
+        state.refreshSearch()
     end
 
     local headerTitle: TextLabel? = state.shells.headerTitle
@@ -3258,28 +3351,27 @@ state.onLayout(function(metrics: LayoutMetrics): ()
     end
 end)
 
+-- The rail is the taxonomy, not a list of games.
+--
+-- Every game used to own a tab, so where a module lived was decided by *who
+-- wrote it* rather than by what it does: MM2's role ESP sat on the MM2 page
+-- while the universal ESP sat on another, four of the seven tabs were hidden
+-- in any given server, and the same idea was implemented twice. Now there is
+-- one page per category, and a card lands on the page its category names
+-- whoever registered it — the menu's own modules and the ones the game module
+-- adds are the same kind of thing and sit next to each other. An unsupported
+-- game simply contributes nothing, so the pages hold the universal set.
 local UniversalPage = createTab("Universal", 1)
-local MovementPage = createTab("Movement", 2)
-local MM2Page = createTab("MM2", 3)
-createTab("TRS", 4)
-createTab("VD", 5)
-createTab("MVSD", 6)
-createTab("BedFight", 7)
-local SettingsPage = createTab("Config.", 8)
-local function configureGameTabs(): ()
-    defaultTabButtons.MM2.Visible = GAME_CHECK.MM2Active
-    defaultTabButtons.TRS.Visible = GAME_CHECK.TRSActive
-    defaultTabButtons.VD.Visible = GAME_CHECK.VDActive
-    defaultTabButtons.MVSD.Visible = GAME_CHECK.MVSDActive
+createTab("Combat", 2)
+createTab("Movement", 3)
+createTab("Visuals", 4)
+createTab("Protection", 5)
+createTab("Utility", 6)
+local SettingsPage = createTab("Config.", 7)
 
-    for _, button: TextButton in pairs(defaultTabButtons) do
-        if button.Visible then
-            button.Size = UDim2.new(1, 0, 0, state.layout.navRowHeight)
-        end
-    end
+for _, button: TextButton in pairs(defaultTabButtons) do
+    button.Size = UDim2.new(1, 0, 0, state.layout.navRowHeight)
 end
-
-configureGameTabs()
 
 do
 -- Search lives in the page header, not in the rail: on a phone the rail is
@@ -3430,123 +3522,22 @@ create("UIListLayout", {
     SortOrder = Enum.SortOrder.LayoutOrder,
 })
 
-state.trsScroll = create("ScrollingFrame", {
-    Parent = pages.TRS,
-    Name = "TRSScroll",
-    Active = true,
-    AutomaticCanvasSize = Enum.AutomaticSize.Y,
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    CanvasSize = UDim2.fromOffset(0, 0),
-    ScrollBarImageColor3 = Theme.DefaultOutline,
-    ScrollBarThickness = 6,
-    ScrollingDirection = Enum.ScrollingDirection.Y,
-    Size = UDim2.fromScale(1, 1),
-})
-
-create("UIPadding", {
-    Parent = state.trsScroll,
-    PaddingBottom = UDim.new(0, 18),
-    PaddingLeft = UDim.new(0, 18),
-    PaddingRight = UDim.new(0, 18),
-    PaddingTop = UDim.new(0, 18),
-})
-
-create("UIListLayout", {
-    Parent = state.trsScroll,
-    FillDirection = Enum.FillDirection.Vertical,
-    HorizontalAlignment = Enum.HorizontalAlignment.Center,
-    Padding = UDim.new(0, 9),
-    SortOrder = Enum.SortOrder.LayoutOrder,
-})
-
-state.bedFightScroll = create("ScrollingFrame", {
-    Parent = pages.BedFight,
-    Name = "BedFightScroll",
-    Active = true,
-    AutomaticCanvasSize = Enum.AutomaticSize.Y,
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    CanvasSize = UDim2.fromOffset(0, 0),
-    ScrollBarImageColor3 = Theme.DefaultOutline,
-    ScrollBarThickness = 6,
-    ScrollingDirection = Enum.ScrollingDirection.Y,
-    Size = UDim2.fromScale(1, 1),
-})
-create("UIPadding", {
-    Parent = state.bedFightScroll,
-    PaddingBottom = UDim.new(0, 18),
-    PaddingLeft = UDim.new(0, 18),
-    PaddingRight = UDim.new(0, 18),
-    PaddingTop = UDim.new(0, 18),
-})
-create("UIListLayout", {
-    Parent = state.bedFightScroll,
-    FillDirection = Enum.FillDirection.Vertical,
-    HorizontalAlignment = Enum.HorizontalAlignment.Center,
-    Padding = UDim.new(0, 9),
-    SortOrder = Enum.SortOrder.LayoutOrder,
-})
-
-state.vdScroll = create("ScrollingFrame", {
-    Parent = pages.VD,
-    Name = "VDScroll",
-    Active = true,
-    AutomaticCanvasSize = Enum.AutomaticSize.Y,
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    CanvasSize = UDim2.fromOffset(0, 0),
-    ScrollBarImageColor3 = Theme.DefaultOutline,
-    ScrollBarThickness = 6,
-    ScrollingDirection = Enum.ScrollingDirection.Y,
-    Size = UDim2.fromScale(1, 1),
-})
-
-create("UIPadding", {
-    Parent = state.vdScroll,
-    PaddingBottom = UDim.new(0, 18),
-    PaddingLeft = UDim.new(0, 18),
-    PaddingRight = UDim.new(0, 18),
-    PaddingTop = UDim.new(0, 18),
-})
-
-create("UIListLayout", {
-    Parent = state.vdScroll,
-    FillDirection = Enum.FillDirection.Vertical,
-    HorizontalAlignment = Enum.HorizontalAlignment.Center,
-    Padding = UDim.new(0, 9),
-    SortOrder = Enum.SortOrder.LayoutOrder,
-})
-
-state.mvsdScroll = create("ScrollingFrame", {
-    Parent = pages.MVSD,
-    Name = "MVSDScroll",
-    Active = true,
-    AutomaticCanvasSize = Enum.AutomaticSize.Y,
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    CanvasSize = UDim2.fromOffset(0, 0),
-    ScrollBarImageColor3 = Theme.DefaultOutline,
-    ScrollBarThickness = 6,
-    ScrollingDirection = Enum.ScrollingDirection.Y,
-    Size = UDim2.fromScale(1, 1),
-})
-
-create("UIPadding", {
-    Parent = state.mvsdScroll,
-    PaddingBottom = UDim.new(0, 18),
-    PaddingLeft = UDim.new(0, 18),
-    PaddingRight = UDim.new(0, 18),
-    PaddingTop = UDim.new(0, 18),
-})
-
-create("UIListLayout", {
-    Parent = state.mvsdScroll,
-    FillDirection = Enum.FillDirection.Vertical,
-    HorizontalAlignment = Enum.HorizontalAlignment.Center,
-    Padding = UDim.new(0, 9),
-    SortOrder = Enum.SortOrder.LayoutOrder,
-})
+-- One board, filtered by the rail.
+--
+-- Cards live on a single page and the rail chooses which category of them is
+-- on screen, rather than each page owning its own scroll. Two reasons: a card
+-- is one instance and can only ever have one parent, so a "Universal" page
+-- that shows everything *and* a "Combat" page that shows the combat half
+-- cannot both hold the same card; and grouping is something the grid already
+-- does — it draws a header per category — so the filter is the only new idea.
+--
+-- Game modules still ask for "their" page by name. There is no such page any
+-- more; the aliases point at the one board, and the category on the card
+-- decides which rail entry reveals it.
+state.trsScroll = UniversalScroll
+state.vdScroll = UniversalScroll
+state.mvsdScroll = UniversalScroll
+state.bedFightScroll = UniversalScroll
 
 -- No intro.
 --
@@ -6100,7 +6091,11 @@ local function refreshFavorites(): ()
             row.MouseButton1Click:Connect(function(): ()
                 if feature.isCategory then
                     state.setMenuVisible(true)
-                    setTab(feature.sectionName)
+                    -- Pages are categories now, so a favourite jumps to the
+                    -- page its own category names.
+                    setTab(CATEGORY_TABS[feature.categoryName]
+                        and feature.categoryName
+                        or "Universal")
                 end
                 feature.activate()
             end)
@@ -8035,6 +8030,83 @@ trackUiConnection(UserInputService.WindowFocusReleased:Connect(function(): ()
 end))
 end
 
+
+-- ---------------------------------------------------------------------------
+-- Game bridge
+-- ---------------------------------------------------------------------------
+--
+-- What a game module contributes to a universal module, instead of building a
+-- second one of its own.
+--
+-- MM2 is the worked example. It used to ship a whole "Player ESP" card —
+-- boxes, chams, per-role colours, coins, traps — living on the MM2 page next
+-- to the universal Player ESP, which did all the same drawing and knew none of
+-- the roles. Two implementations of one idea, and only one of them had the
+-- corner boxes, the skeleton, the tracers and the name plates.
+--
+-- Now a game module registers what only *it* can know:
+--
+--   * a role provider — the list of roles in this game, a colour for each and
+--     a function that answers "what is this player". Every drawing path in the
+--     universal ESP asks it for the colour, so roles work with corner boxes,
+--     full boxes, chams, tracers, health bars and name tags at once;
+--   * ESP extras — the objects only this game has (MM2's coins and traps, its
+--     dropped gun). Each one becomes a toggle and a colour row inside the
+--     universal ESP card, and the game module keeps its own implementation.
+--
+-- Everything here is optional: an unsupported game registers nothing and the
+-- universal ESP looks exactly as it always did.
+state.gameBridge = {
+    roleProvider = nil :: any,
+    extras = {} :: {any},
+    listeners = {} :: {(string, any) -> ()},
+}
+
+state.onGameBridge = function(listener: (string, any) -> ()): ()
+    table.insert(state.gameBridge.listeners, listener)
+    -- Replay what is already registered: a game module can be loaded before or
+    -- after the module that consumes it, and neither may care.
+    if state.gameBridge.roleProvider then
+        pcall(listener, "roles", state.gameBridge.roleProvider)
+    end
+    for _, extra: any in ipairs(state.gameBridge.extras) do
+        pcall(listener, "extra", extra)
+    end
+end
+
+state.registerRoleProvider = function(provider: any): ()
+    if type(provider) ~= "table" or type(provider.Get) ~= "function" then
+        return
+    end
+    state.gameBridge.roleProvider = provider
+    for _, listener: (string, any) -> () in ipairs(state.gameBridge.listeners) do
+        pcall(listener, "roles", provider)
+    end
+end
+
+state.registerEspExtra = function(extra: any): ()
+    if type(extra) ~= "table" or type(extra.Name) ~= "string" then
+        return
+    end
+    table.insert(state.gameBridge.extras, extra)
+    for _, listener: (string, any) -> () in ipairs(state.gameBridge.listeners) do
+        pcall(listener, "extra", extra)
+    end
+end
+
+-- Asked by anything that wants to colour a player by role (the ESP, and the
+-- target readouts that follow it). Returns nil in a game with no roles.
+state.playerRole = function(player: Player): string?
+    local provider: any = state.gameBridge.roleProvider
+    if not provider then
+        return nil
+    end
+    local ok: boolean, role: any = pcall(provider.Get, player)
+    if ok and type(role) == "string" and role ~= "" then
+        return role
+    end
+    return nil
+end
 
 local function createUniversalFeature(
     name: string,
@@ -14585,42 +14657,10 @@ end
 
 end
 
-local function createPageScroll(page, name)
-    local scroll = create("ScrollingFrame", {
-        Parent = page,
-        Name = name,
-        Active = true,
-        AutomaticCanvasSize = Enum.AutomaticSize.Y,
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        CanvasSize = UDim2.fromOffset(0, 0),
-        ScrollBarImageColor3 = Theme.DefaultOutline,
-        ScrollBarThickness = 6,
-        ScrollingDirection = Enum.ScrollingDirection.Y,
-        Size = UDim2.fromScale(1, 1),
-    })
-
-    create("UIPadding", {
-        Parent = scroll,
-        PaddingBottom = UDim.new(0, 18),
-        PaddingLeft = UDim.new(0, 18),
-        PaddingRight = UDim.new(0, 18),
-        PaddingTop = UDim.new(0, 18),
-    })
-
-    create("UIListLayout", {
-        Parent = scroll,
-        FillDirection = Enum.FillDirection.Vertical,
-        HorizontalAlignment = Enum.HorizontalAlignment.Center,
-        Padding = UDim.new(0, 9),
-        SortOrder = Enum.SortOrder.LayoutOrder,
-    })
-
-    return scroll
-end
-
-local MovementScroll = createPageScroll(MovementPage, "MovementScroll")
-local MM2Scroll = createPageScroll(MM2Page, "MM2Scroll")
+-- Both of these are the one shared board now; the names stay because a hundred
+-- call sites (and every downloaded game module) still use them.
+local MovementScroll: ScrollingFrame = UniversalScroll
+local MM2Scroll: ScrollingFrame = UniversalScroll
 
 local freezeSettings = {mode = "Anchor"}
 local originalFreezeState = setmetatable({}, {__mode = "k"})
@@ -14792,6 +14832,12 @@ local function createGameModuleEnvironment(
         -- builder above: a builder missing from this table takes the rest of
         -- the module's panel down with it.
         addRangeOption = recordBinding(state.addRangeOption),
+        -- The game bridge: how a game module teaches the universal modules
+        -- about its roles and its own objects.
+        registerRoleProvider = state.registerRoleProvider,
+        registerEspExtra = state.registerEspExtra,
+        onGameBridge = state.onGameBridge,
+        playerRole = state.playerRole,
         addInformationOption = addInformationOption,
         addSectionOption = state.addSectionOption,
         setOptionVisible = setOptionVisible,
@@ -15280,17 +15326,23 @@ end
 local function refreshSearch(): ()
     local query: string = string.lower(tostring(state.searchQuery or ""))
     query = string.match(query, "^%s*(.-)%s*$") or ""
-    local sectionMatches: {[string]: number} = {}
-    local sectionTotals: {[string]: number} = {}
+    -- One board means one count: a card's registry ("MM2", "BedFight") used to
+    -- name the page it lived on, and there is no such page any more.
+    local totalMatches: number = 0
     for _, feature: any in ipairs(allFeatures) do
-        local sectionName: string = feature.sectionName or "Universal"
-        sectionTotals[sectionName] = (sectionTotals[sectionName] or 0) + 1
         local searchable: string = feature.searchText
-        local matches: boolean = query == ""
-            or string.find(searchable, query, 1, true) ~= nil
+        -- Two filters, one pass: what the rail is showing and what was typed
+        -- into the header. A search always looks through the whole board, so
+        -- typing finds a module the current rail entry is hiding.
+        local categoryFilter: string? = state.categoryFilter
+        local matches: boolean = (query == ""
+            or string.find(searchable, query, 1, true) ~= nil)
+            and (query ~= ""
+                or categoryFilter == nil
+                or feature.categoryName == categoryFilter)
         feature.row.Visible = matches
         if matches then
-            sectionMatches[sectionName] = (sectionMatches[sectionName] or 0) + 1
+            totalMatches += 1
         end
         if feature.title then
             if query ~= "" and matches and not feature.enabled then
@@ -15302,9 +15354,9 @@ local function refreshSearch(): ()
     end
 
     for sectionName: string, label: TextLabel in pairs(noResultsLabels) do
-        label.Visible = query ~= ""
-            and (sectionTotals[sectionName] or 0) > 0
-            and (sectionMatches[sectionName] or 0) == 0
+        label.Visible = sectionName == "Universal"
+            and #allFeatures > 0
+            and totalMatches == 0
     end
 
     -- Drop the headers of categories the query emptied out.
@@ -15770,6 +15822,7 @@ local gameStatus = makeTextLabel(
         or GAME_CHECK.TRSActive and "TRS"
         or GAME_CHECK.VDActive and "VD"
         or GAME_CHECK.MVSDActive and "MVSD"
+        or GAME_CHECK.BedFightActive and "BedFight"
         or "Universal only")
         .. " · "
         .. (GAME_CHECK.source == "PlaceId"

@@ -211,6 +211,95 @@ function Module.init(context: Runtime): any
             .. "display needs and every frame budget notices.",
     })
 
+    -- What the game adds.
+    --
+    -- Roles and per-game objects are not built into this module: the game
+    -- module registers them through the shared bridge and the rows appear
+    -- here, in the one ESP card, so a role colour works with corner boxes,
+    -- full boxes, chams, tracers and name tags at the same time. In a game
+    -- nobody wrote a module for, none of these rows exist.
+    local extraRuntime: any = {
+        roles = nil :: any,
+        extras = {} :: {any},
+        sections = {roles = false, world = false},
+    }
+    Module.bridge = extraRuntime
+
+    local function addRoleRows(provider: any): ()
+        if extraRuntime.roles then
+            return
+        end
+        extraRuntime.roles = provider
+        if not extraRuntime.sections.roles then
+            extraRuntime.sections.roles = true
+            esp:CreateSection("Roles · " .. tostring(provider.Name or "Game"))
+        end
+        esp:CreateToggle({
+            Name = "Role colours",
+            Default = true,
+            Tooltip = "Colour every drawing by what the player is in this "
+                .. "game instead of by team.",
+        })
+        esp:CreateToggle({
+            Name = "Show role",
+            Default = true,
+            Tooltip = "Print the role next to the name.",
+        })
+        for _, roleName: string in ipairs(provider.Roles or {}) do
+            esp:CreateColor({
+                Name = roleName .. " colour",
+                Default = (provider.Colors or {})[roleName]
+                    or Color3.fromRGB(236, 236, 240),
+                Function = function(value: Color3): ()
+                    -- The game module keeps its own copy so its own drawing
+                    -- (a marker, a cham it manages) matches the ESP.
+                    if type(provider.SetColor) == "function" then
+                        pcall(provider.SetColor, roleName, value)
+                    end
+                end,
+            })
+        end
+    end
+
+    local function addExtraRows(extra: any): ()
+        if not extraRuntime.sections.world then
+            extraRuntime.sections.world = true
+            esp:CreateSection("World")
+        end
+        table.insert(extraRuntime.extras, extra)
+        esp:CreateToggle({
+            Name = extra.Name,
+            Default = extra.Default == true,
+            Tooltip = extra.Tooltip,
+            Function = function(value: boolean): ()
+                if type(extra.Toggle) == "function" then
+                    pcall(extra.Toggle, value)
+                end
+            end,
+        })
+        if extra.Color then
+            esp:CreateColor({
+                Name = extra.Name .. " colour",
+                Default = extra.Color,
+                Function = function(value: Color3): ()
+                    if type(extra.SetColor) == "function" then
+                        pcall(extra.SetColor, value)
+                    end
+                end,
+            })
+        end
+    end
+
+    if host.state and type(host.state.onGameBridge) == "function" then
+        host.state.onGameBridge(function(kind: string, payload: any): ()
+            if kind == "roles" then
+                addRoleRows(payload)
+            elseif kind == "extra" then
+                addExtraRows(payload)
+            end
+        end)
+    end
+
     activeCleanup = function(): ()
         for player: Player in pairs(pool) do
             Module.release(pool, player)
@@ -458,9 +547,25 @@ function Module.render(
                 and options["Friendly colour"].Value
             or (visible and options["Enemy colour"].Value
                 or options["Hidden colour"].Value)
+        -- A role beats a team: in a game with roles, "murderer" is the fact
+        -- the colour is there to carry, and the team is usually meaningless.
+        local role: string? = nil
+        if host.state and type(host.state.playerRole) == "function" then
+            role = host.state.playerRole(player)
+        end
+        local roleOption: any = role and options[role .. " colour"] or nil
+        local useRoleColour: boolean = roleOption ~= nil
+            and options["Role colours"] ~= nil
+            and options["Role colours"].Value == true
+        if useRoleColour then
+            local roleColour: Color3 = roleOption.Value
+            colour = visible
+                and roleColour
+                or roleColour:Lerp(Color3.new(0, 0, 0), 0.45)
+        end
         -- A team game already colour-codes itself; borrowing that is both
         -- prettier and more informative than two greys.
-        if options["Team colours"].Value and entity.Team then
+        if not useRoleColour and options["Team colours"].Value and entity.Team then
             -- Read defensively: `Team` is a Team instance in a normal game,
             -- but plenty of games hang their own value off the player, and a
             -- missing TeamColor must dim the ESP, not stop it.
@@ -591,7 +696,11 @@ function Module.render(
         local textSize: number = math.round(options["Text size"].Value)
         if options["Name tags"].Value then
             drawings.name.Visible = true
-            drawings.name.Text = player.DisplayName
+            drawings.name.Text = (role
+                    and options["Show role"] ~= nil
+                    and options["Show role"].Value)
+                and (player.DisplayName .. "  [" .. (role :: string) .. "]")
+                or player.DisplayName
             drawings.name.TextColor3 = colour
             drawings.name.TextSize = textSize
             drawings.name.Position = UDim2.fromOffset(

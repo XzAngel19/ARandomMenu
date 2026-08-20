@@ -1655,6 +1655,25 @@ local function buildVDFeatures(): ()
         end)
     end
 
+    -- The universal Player ESP learns this game's two roles, so its boxes,
+    -- chams, tracers and name tags all read Killer or Survivor without VD
+    -- having to draw any of them itself.
+    registerRoleProvider({
+        Name = "VD",
+        Roles = {"Killer", "Survivor"},
+        Colors = {
+            Killer = Color3.fromRGB(226, 72, 72),
+            Survivor = Color3.fromRGB(120, 190, 255),
+        },
+        Get = function(player: Player): string?
+            local character: Model? = player.Character
+            if not character then
+                return nil
+            end
+            return isKillerCharacter(character) and "Killer" or "Survivor"
+        end,
+    })
+
     createUniversalFeature(
         "Players ESP",
         "Role-aware player ESP; Killer sees Survivors only, Survivors see both roles",

@@ -206,6 +206,53 @@ check(
     layer and ("sets: " .. tostring(#layer.Children)) or "no layer"
 )
 
+-- The game bridge: roles and per-game objects arrive from the game module and
+-- become rows in this one card, instead of a second ESP.
+local roleColour: any = world.globals.Color3.fromRGB(255, 0, 0)
+host.state.registerRoleProvider({
+    Name = "MM2",
+    Roles = {"Murderer", "Innocent"},
+    Colors = {Murderer = roleColour, Innocent = world.globals.Color3.fromRGB(255, 255, 255)},
+    Get = function(player: any): string?
+        return player == enemy and "Murderer" or "Innocent"
+    end,
+})
+local extraState: any = {enabled = false}
+host.state.registerEspExtra({
+    Name = "Coins",
+    Default = false,
+    Color = world.globals.Color3.fromRGB(255, 210, 60),
+    Toggle = function(value: boolean): ()
+        extraState.enabled = value
+    end,
+})
+check("roles add a colour row per role",
+    esp.Options["Murderer colour"] ~= nil
+        and esp.Options["Innocent colour"] ~= nil)
+check("roles add the role switches",
+    esp.Options["Role colours"] ~= nil and esp.Options["Show role"] ~= nil)
+check("a game object becomes a row in the ESP card",
+    esp.Options["Coins"] ~= nil and esp.Options["Coins colour"] ~= nil)
+
+esp.Options["Team check"].Value = true
+esp.Options["Boxes"].Value = "Full"
+stub.step(0.05)
+local roleDrawings: any = layer and layer.Children[1]
+local roleBox: any = roleDrawings and roleDrawings:FindFirstChild("Box1")
+check("the box is drawn in the role's colour",
+    roleBox ~= nil and roleBox.BackgroundColor3 == roleColour,
+    roleBox and tostring(roleBox.BackgroundColor3) or "no box")
+local roleTag: any = roleDrawings and roleDrawings:FindFirstChild("NameTag")
+check("the name tag names the role",
+    roleTag ~= nil and string.find(tostring(roleTag.Text), "Murderer", 1, true) ~= nil,
+    roleTag and tostring(roleTag.Text) or "missing")
+
+esp.Options["Role colours"].Value = false
+stub.step(0.05)
+check("role colours can be switched off",
+    roleBox ~= nil and roleBox.BackgroundColor3 ~= roleColour)
+esp.Options["Team check"].Value = false
+
 esp:Toggle()
 check("esp disables", esp.Enabled == false)
 check("drawings are released", layer ~= nil and #layer.Children == 0,

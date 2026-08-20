@@ -359,6 +359,75 @@ Initialization logs use the `[RTM:Bootstrap]` prefix and include detected
 PlaceId, raw download status, downloaded byte count, UI callback count,
 TaskManager callback count and errors captured by `pcall`.
 
+## One menu, no game windows
+
+A game used to get a tab of its own. That decided where a module lived by *who
+wrote it* rather than by what it does: MM2's role ESP sat on the MM2 page while
+the universal Player ESP sat on another, four of the seven rail entries were
+hidden in any given server, and the same idea was implemented twice — once with
+corner boxes, skeletons, tracers and name plates, once with roles.
+
+The rail is the taxonomy now:
+
+```
+Universal   every module, grouped by category
+Combat      \
+Movement     |  the same board, filtered to one category
+Visuals      |
+Protection   |
+Utility     /
+Config.     settings
+```
+
+* **Cards live on one board.** A card is one instance and can only have one
+  parent, so a page that shows everything and a page that shows half of it
+  cannot both hold the same card. The rail sets a category filter instead, and
+  the grid already draws a header per category. Typing in the search box looks
+  through the whole board, filter or no filter.
+* **A game module adds modules, not a window.** It registers cards exactly the
+  way the menu's own modules do, and the category on the card decides which
+  rail entry reveals it: BedFight's *Server Aura* is a Combat module, its
+  *Scaffold* is a Movement module, MM2's *Sprint* is a Movement module. The
+  taxonomy names every one of them in `FEATURE_CATEGORIES`, in one table,
+  instead of five game files describing themselves.
+* **An unsupported game contributes nothing**, so the board holds the universal
+  set and nothing looks broken or empty.
+
+### The game bridge
+
+What a game module knows and a universal module cannot is published through the
+bridge rather than reimplemented:
+
+```lua
+registerRoleProvider({
+    Name = "MM2",
+    Roles = {"Murderer", "Sheriff", "Hero", "Innocent"},
+    Colors = {Murderer = Color3.fromRGB(145, 25, 25), ...},
+    Get = function(player) return getPlayerRole(player) end,
+    SetColor = function(roleName, colour) ... end,
+})
+
+registerEspExtra({
+    Name = "Coins",
+    Color = mm2Settings.coinColor,
+    Toggle = function(enabled) toggleCoinChams(enabled) end,
+    SetColor = function(colour) ... end,
+})
+```
+
+* **Roles** become a colour row each inside the universal **Player ESP**, plus
+  a *Role colours* switch and a *Show role* switch. Because the colour is
+  resolved in one place, a murderer is red in the corner box, in the full box,
+  in the chams, on the tracer, on the health bar and on the name tag at the
+  same time — every filter and style option in that card applies to it. MM2's
+  own role ESP (a Highlight per player, its own round gate, its own rebuild
+  loop) is gone; VD publishes Killer/Survivor the same way.
+* **ESP extras** are the objects only that game has — MM2's coins, traps and
+  the dropped sheriff gun. Each becomes a toggle (and a colour) in the ESP
+  card's *World* section, and the game module keeps its own implementation,
+  because nothing universal can know what a coin looks like. They exist only in
+  the game that registered them.
+
 ## Module architecture
 
 Modules are files, not another thousand lines of `ARandomMenu.luau`. The main

@@ -15,10 +15,6 @@ local MM2Effects = create("Folder", {
     Parent = ScreenGui,
     Name = "MM2Effects",
 })
-local RoleEffects = create("Folder", {
-    Parent = MM2Effects,
-    Name = "RoleESP",
-})
 local GunEffects = create("Folder", {
     Parent = MM2Effects,
     Name = "GunESP",
@@ -518,184 +514,43 @@ local function createMM2Cham(folder, adornee, color, transparency)
     reference.Parent = folder
 end
 
--- Player ESP.
+-- Roles, published instead of drawn.
 --
--- Two things used to keep this switched on but invisible:
+-- MM2 used to draw its own player ESP: a Highlight per player, a colour per
+-- role, its own round gate and its own rebuild loop — living next to the
+-- universal Player ESP, which already drew boxes, skeletons, tracers, health
+-- and name tags and knew nothing about roles. Two implementations of one idea.
 --
---   1. It was gated behind `hasActiveRoundRoles()`. That gate needs the round
---      table to name a Murderer/Sheriff, or a player to be *holding* the
---      weapon — but other players' Backpacks do not replicate, so at the start
---      of a round nobody qualifies and the ESP drew nothing at all.
---   2. Every refresh destroyed and rebuilt every Highlight, which flickered
---      and lost the adornee whenever a character respawned mid-rebuild.
---
--- It now runs whenever the module is on (with an opt-in round gate for players
--- who only want it in-round) and maintains one Highlight per player instead of
--- rebuilding the world twice a second.
-local roleEspHighlights: {[Player]: Highlight} =
-    setmetatable({}, {__mode = "k"}) :: any
-
-local function removeRoleEspHighlight(player: Player): ()
-    local highlight: Highlight? = roleEspHighlights[player]
-    if highlight then
-        highlight:Destroy()
-        roleEspHighlights[player] = nil
-    end
-end
-
-local function clearRoleEspHighlights(): ()
-    for player: Player, _ in pairs(roleEspHighlights) do
-        removeRoleEspHighlight(player)
-    end
-    clearEffects(RoleEffects)
-end
-
--- Returns the colour/transparency this player should be drawn with, or nil
--- when the ESP should not show them at all.
-local function resolveRoleEspStyle(player: Player): (Color3?, number?)
-    local character: Model? = player.Character
-    if not character then
-        return nil, nil
-    end
-    local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
-    if not humanoid then
-        return nil, nil
-    end
-
-    local role: string = getPlayerRole(player) or "Innocent"
-    local wanted: boolean = (role == "Innocent" and mm2Settings.roleEspInnocent)
-        or (role == "Murderer" and mm2Settings.roleEspMurderer)
-        or ((role == "Sheriff" or role == "Hero") and mm2Settings.roleEspSheriff)
-    if not wanted then
-        return nil, nil
-    end
-
-    if humanoid.Health <= 0 then
-        return mm2Settings.deadColor, mm2Settings.deadTransparency
-    end
-    if role == "Murderer" then
-        return mm2Settings.murdererColor, mm2Settings.murdererTransparency
-    end
-    if role == "Sheriff" then
-        return mm2Settings.sheriffColor, mm2Settings.sheriffTransparency
-    end
-    if role == "Hero" then
-        return mm2Settings.heroColor, mm2Settings.heroTransparency
-    end
-    return mm2Settings.innocentColor, mm2Settings.innocentTransparency
-end
-
-local function rebuildRoleEsp()
-    if mm2Settings.roleEspRoundOnly and not hasActiveRoundRoles() then
-        clearRoleEspHighlights()
-        return
-    end
-
-    local seen: {[Player]: boolean} = {}
-    for _, player: Player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer then
-            local color: Color3?, transparency: number? =
-                resolveRoleEspStyle(player)
-            local character: Model? = player.Character
-            if color and character then
-                seen[player] = true
-                local highlight: Highlight? = roleEspHighlights[player]
-                -- A respawn replaces the character, so the adornee is checked
-                -- every pass instead of trusting the one set at creation.
-                if not highlight or highlight.Parent ~= character then
-                    if highlight then
-                        highlight:Destroy()
-                    end
-                    highlight = Instance.new("Highlight")
-                    local created: Highlight = highlight :: Highlight
-                    created.Name = "RTMRoleEsp"
-                    created.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-                    created.Adornee = character
-                    created.Parent = character
-                    roleEspHighlights[player] = created
-                end
-                local live: Highlight = highlight :: Highlight
-                live.FillColor = color
-                live.FillTransparency = transparency or 0.55
-                live.OutlineColor = color
-                live.OutlineTransparency =
-                    math.clamp((transparency or 0.55) + 0.15, 0, 1)
+-- The game module now publishes only the part that is genuinely MM2's: which
+-- role a player is, and what colour each role should be. The universal ESP
+-- does the drawing, so a murderer is red in the corner box, in the chams, on
+-- the tracer and on the name tag at once, and every filter and style option
+-- applies to it.
+local function registerMM2Roles(): ()
+    registerRoleProvider({
+        Name = "MM2",
+        Roles = {"Murderer", "Sheriff", "Hero", "Innocent"},
+        Colors = {
+            Murderer = mm2Settings.murdererColor,
+            Sheriff = mm2Settings.sheriffColor,
+            Hero = mm2Settings.heroColor,
+            Innocent = mm2Settings.innocentColor,
+        },
+        Get = function(player: Player): string?
+            return getPlayerRole(player)
+        end,
+        SetColor = function(roleName: string, colour: Color3): ()
+            if roleName == "Murderer" then
+                mm2Settings.murdererColor = colour
+            elseif roleName == "Sheriff" then
+                mm2Settings.sheriffColor = colour
+            elseif roleName == "Hero" then
+                mm2Settings.heroColor = colour
+            elseif roleName == "Innocent" then
+                mm2Settings.innocentColor = colour
             end
-        end
-    end
-
-    for player: Player, _ in pairs(roleEspHighlights) do
-        if not seen[player] then
-            removeRoleEspHighlight(player)
-        end
-    end
-end
-
-local function refreshRoleEspConnection()
-    disconnectFeatureConnection("MM2RoleESP")
-    disconnectFeatureConnection("MM2RoleEspPlayerAdded")
-    disconnectFeatureConnection("MM2RoleEspPlayerRemoving")
-
-    if not mm2Settings.roleEspAll
-        or not (mm2Settings.roleEspInnocent
-            or mm2Settings.roleEspMurderer
-            or mm2Settings.roleEspSheriff) then
-        clearRoleEspHighlights()
-        return
-    end
-
-    rebuildRoleEsp()
-    -- Instant: the pass runs every frame. It only walks the player list and
-    -- writes three properties on an existing Highlight, so there is nothing to
-    -- throttle — and a murderer who swaps weapons, dies or respawns is
-    -- recoloured on the very next frame instead of up to a third of a second
-    -- later.
-    featureConnections.MM2RoleESP = TaskManager:Connect(function(): ()
-        rebuildRoleEsp()
-    end)
-
-    -- Joins and respawns rebuild immediately rather than waiting for the next
-    -- frame's sweep to notice a brand new character.
-    featureConnections.MM2RoleEspPlayerAdded = Players.PlayerAdded:Connect(
-        function(player: Player): ()
-            player.CharacterAdded:Connect(function(): ()
-                task.defer(rebuildRoleEsp)
-            end)
-            task.defer(rebuildRoleEsp)
-        end
-    )
-    featureConnections.MM2RoleEspPlayerRemoving = Players.PlayerRemoving:Connect(
-        function(player: Player): ()
-            removeRoleEspHighlight(player)
-        end
-    )
-    for _, player: Player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer then
-            player.CharacterAdded:Connect(function(): ()
-                task.defer(rebuildRoleEsp)
-            end)
-        end
-    end
-end
-
-local function toggleRoleEsp(enabled)
-    mm2Settings.roleEspAll = enabled
-    refreshRoleEspConnection()
-end
-
-local function toggleInnocentEsp(enabled)
-    mm2Settings.roleEspInnocent = enabled
-    refreshRoleEspConnection()
-end
-
-local function toggleMurdererEsp(enabled)
-    mm2Settings.roleEspMurderer = enabled
-    refreshRoleEspConnection()
-end
-
-local function toggleSheriffEsp(enabled)
-    mm2Settings.roleEspSheriff = enabled
-    refreshRoleEspConnection()
+        end,
+    })
 end
 
 local roleNotificationSent = false
@@ -710,7 +565,6 @@ if mm2GameplayRemotes then
             else
                 mm2RoundData = {}
             end
-            rebuildRoleEsp()
 
             local roundActive = hasActiveRoundRoles()
             if not roundActive then
@@ -4841,124 +4695,51 @@ local _InstantRolesFeature = createUniversalFeature(
     }
 )
 
-local RoleEspFeature = createUniversalFeature(
-    "Player ESP",
-    "Role highlights, coins, and traps",
-    2,
-    toggleRoleEsp,
-    {
-        parent = MM2Scroll,
-        registry = mm2Features,
-    }
-)
--- Player ESP panel.
---
--- It used to be fifteen flat rows: a toggle, a colour and a transparency
--- slider for every role, plus coins and traps, all in one column. The panel is
--- now grouped under headings, each role is a toggle plus its colour, and the
--- five per-role transparency sliders collapse into one shared "Player fill"
--- slider — the value nobody ever wanted to set differently per role.
-local RoleEspRoles: Frame = state.addSectionOption(RoleEspFeature, "Roles")
-addToggleOption(RoleEspFeature, "Innocents", false, toggleInnocentEsp)
-addColorOption(RoleEspFeature, "Innocent colour", mm2Settings.innocentColor, function(value)
-    mm2Settings.innocentColor = value
-    if mm2Settings.roleEspAll then
-        rebuildRoleEsp()
-    end
-end)
-addToggleOption(RoleEspFeature, "Murderer", false, toggleMurdererEsp)
-addColorOption(RoleEspFeature, "Murderer colour", mm2Settings.murdererColor, function(value)
-    mm2Settings.murdererColor = value
-    if mm2Settings.roleEspAll then
-        rebuildRoleEsp()
-    end
-end)
-addToggleOption(RoleEspFeature, "Sheriff", false, toggleSheriffEsp)
-addColorOption(RoleEspFeature, "Sheriff colour", mm2Settings.sheriffColor, function(value)
-    mm2Settings.sheriffColor = value
-    if mm2Settings.roleEspAll then
-        rebuildRoleEsp()
-    end
-end)
-addColorOption(RoleEspFeature, "Hero colour", mm2Settings.heroColor, function(value)
-    mm2Settings.heroColor = value
-    if mm2Settings.roleEspAll then
-        rebuildRoleEsp()
-    end
-end)
-addColorOption(RoleEspFeature, "Dead colour", mm2Settings.deadColor, function(value)
-    mm2Settings.deadColor = value
-    if mm2Settings.roleEspAll then
-        rebuildRoleEsp()
-    end
-end)
-
-local RoleEspAppearance: Frame =
-    state.addSectionOption(RoleEspFeature, "Appearance")
--- One slider drives every player highlight; dead bodies stay slightly fainter
--- so they never read as a live target.
-addToggleOption(
-    RoleEspFeature,
-    "Only during rounds",
-    false,
-    function(value: boolean): ()
-        mm2Settings.roleEspRoundOnly = value
-        refreshRoleEspConnection()
-    end
-)
-addNumberOption(RoleEspFeature, "Player fill", 5.5, 0, 10, function(value)
-    local fill: number = value / 10
-    mm2Settings.innocentTransparency = fill
-    mm2Settings.murdererTransparency = fill
-    mm2Settings.sheriffTransparency = fill
-    mm2Settings.heroTransparency = fill
-    mm2Settings.deadTransparency = math.clamp(fill + 0.08, 0, 1)
-    if mm2Settings.roleEspAll then
-        rebuildRoleEsp()
-    end
-end)
-
-local RoleEspWorld: Frame = state.addSectionOption(RoleEspFeature, "World")
-addToggleOption(RoleEspFeature, "Coins", false, toggleCoinChams)
-addColorOption(RoleEspFeature, "Coin colour", mm2Settings.coinColor, function(value)
-    mm2Settings.coinColor = value
-    if coinChamsEnabled then
-        toggleCoinChams(true)
-    end
-end)
-addNumberOption(RoleEspFeature, "Coin fill", 8, 0, 10, function(value)
-    mm2Settings.coinTransparency = value / 10
-    if coinChamsEnabled then
-        toggleCoinChams(true)
-    end
-end)
-addToggleOption(RoleEspFeature, "Traps", false, toggleTrapEsp)
-addColorOption(RoleEspFeature, "Trap colour", mm2Settings.trapColor, function(value)
-    mm2Settings.trapColor = value
-end)
-addNumberOption(RoleEspFeature, "Trap fill", 7, 0, 10, function(value)
-    mm2Settings.trapTransparency = value / 10
-end)
--- Headings are referenced so the layout keeps them; they carry no state.
-local _RoleEspSections: {Frame} =
-    {RoleEspRoles, RoleEspAppearance, RoleEspWorld}
-
-local GunEspFeature = createUniversalFeature(
-    "Gun ESP",
-    "Highlight the dropped sheriff gun",
-    3,
-    toggleGunEsp,
-    {
-        parent = MM2Scroll,
-        registry = mm2Features,
-    }
-)
-addColorOption(GunEspFeature, "Color", mm2Settings.gunColor, function(value)
-    mm2Settings.gunColor = value
-end)
-addNumberOption(GunEspFeature, "Fill transparency", 5.5, 0, 10, function(value)
-    mm2Settings.gunTransparency = value / 10
-end)
+-- Roles and MM2's own objects are contributed to the universal Player ESP
+-- instead of being a second ESP card: the role colours arrive as colour rows,
+-- and coins, traps and the dropped gun arrive as toggles in its World section.
+-- MM2 keeps its own implementations of those three — they are chams over
+-- objects the universal module has no way to find.
+registerMM2Roles()
+registerEspExtra({
+    Name = "Coins",
+    Default = false,
+    Color = mm2Settings.coinColor,
+    Tooltip = "Every coin on the map, through walls.",
+    Toggle = function(enabled: boolean): ()
+        toggleCoinChams(enabled)
+    end,
+    SetColor = function(colour: Color3): ()
+        mm2Settings.coinColor = colour
+        if coinChamsEnabled then
+            toggleCoinChams(true)
+        end
+    end,
+})
+registerEspExtra({
+    Name = "Traps",
+    Default = false,
+    Color = mm2Settings.trapColor,
+    Tooltip = "The murderer's placed traps.",
+    Toggle = function(enabled: boolean): ()
+        toggleTrapEsp(enabled)
+    end,
+    SetColor = function(colour: Color3): ()
+        mm2Settings.trapColor = colour
+    end,
+})
+registerEspExtra({
+    Name = "Sheriff gun",
+    Default = false,
+    Color = mm2Settings.gunColor,
+    Tooltip = "The gun on the floor after the sheriff dies.",
+    Toggle = function(enabled: boolean): ()
+        toggleGunEsp(enabled)
+    end,
+    SetColor = function(colour: Color3): ()
+        mm2Settings.gunColor = colour
+    end,
+})
 
 local ShootFeature = createUniversalFeature(
     "Shoot",
@@ -5219,7 +5000,7 @@ addNumberOption(
 )
 
 local FlingGroup = createUniversalFeature(
-    "Fling",
+    "Role Fling",
     "Role-based fling actions",
     15,
     function() end,
@@ -5342,7 +5123,6 @@ cleanupMM2Runtime = function()
     toggleKnifeAura(false)
     toggleKnifeRedirect(false)
     uninstallShootRedirectHook()
-    toggleRoleEsp(false)
     toggleGunEsp(false)
     toggleLoopAllInteract(false)
     toggleSprint(false)
@@ -5354,8 +5134,6 @@ cleanupMM2Runtime = function()
     toggleMuteOtherRadios(false)
     toggleMuteTrapSounds(false)
     for _, connectionName: string in ipairs({
-        "MM2RoleEspPlayerAdded",
-        "MM2RoleEspPlayerRemoving",
         "MM2PlayerDataChanged",
         "MM2TimerTrackerStart",
         "MM2TimerTrackerEnd",

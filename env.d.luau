@@ -72,6 +72,17 @@ declare function addNumberOption(
 
 declare function addInformationOption(feature: Feature, text: string): ()
 
+-- The game bridge. A game module contributes what only it can know — which
+-- role a player has, and the objects only this game has — to the universal
+-- modules, instead of building a second ESP of its own.
+declare function registerRoleProvider(provider: any): ()
+
+declare function registerEspExtra(extra: any): ()
+
+declare function onGameBridge(listener: (string, any) -> ()): ()
+
+declare function playerRole(player: any): string?
+
 declare function disconnectFeatureConnection(name: string): ()
 
 declare featureConnections: {[string]: any}
