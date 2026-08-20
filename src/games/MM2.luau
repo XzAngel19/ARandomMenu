@@ -93,8 +93,10 @@ local mm2Settings = {
     coinTransparency = 0.8,
     trapColor = Color3.fromRGB(145, 25, 25),
     trapTransparency = 0.7,
-    gunColor = Color3.fromRGB(160, 65, 215),
-    gunTransparency = 0.5,
+    -- Menu palette: the dropped gun reads as light grey chrome, not a
+    -- saturated purple that fights the rest of the interface.
+    gunColor = Color3.fromRGB(226, 226, 232),
+    gunTransparency = 0.55,
     autoPlayId = "",
 }
 
@@ -433,16 +435,39 @@ local function createMM2Marker(folder, adornee, labelText, color, transparency)
         billboardReference.Parent = folder
 
         local text = Instance.new("TextLabel")
-        text.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
-        text.BackgroundTransparency = 0.2
-        text.BorderColor3 = color
-        text.BorderSizePixel = 1
-        text.Font = Enum.Font.GothamBold
+        text.BackgroundColor3 = Theme.DefaultBackground
+        text.BackgroundTransparency = 0.28
+        text.BorderSizePixel = 0
+        text.FontFace = CONTROL_FONT
         text.Size = UDim2.fromScale(1, 1)
         text.Text = labelText
-        text.TextColor3 = color
-        text.TextSize = 13
+        text.TextColor3 = Theme.DefaultText
+        text.TextSize = 12
         text.Parent = billboard
+
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 6)
+        corner.Parent = text
+
+        local stroke = Instance.new("UIStroke")
+        stroke.Color = Theme.DefaultOutline
+        stroke.Transparency = 0.55
+        stroke.Thickness = 1
+        stroke.Parent = text
+
+        -- The role colour survives as a slim accent bar; the plate itself
+        -- stays the menu's dark grey so the world ESP matches the interface.
+        local accent = Instance.new("Frame")
+        accent.AnchorPoint = Vector2.new(0.5, 1)
+        accent.BackgroundColor3 = color
+        accent.BorderSizePixel = 0
+        accent.Position = UDim2.new(0.5, 0, 1, -3)
+        accent.Size = UDim2.new(0.55, 0, 0, 2)
+        accent.Parent = text
+
+        local accentCorner = Instance.new("UICorner")
+        accentCorner.CornerRadius = UDim.new(1, 0)
+        accentCorner.Parent = accent
     end
 end
 
@@ -618,7 +643,7 @@ local function toggleGunEsp(enabled)
             createMM2Marker(
                 GunEffects,
                 gun,
-                "Dropped Gun",
+                "Gun",
                 mm2Settings.gunColor,
                 mm2Settings.gunTransparency
             )
@@ -1224,9 +1249,8 @@ local function toggleAutoPlayId(enabled: boolean): ()
 end
 
 local sprintTrailObjects: {Instance} = {}
-local sprintSpeedOriginal: {[Humanoid]: number} =
-    setmetatable({}, {__mode = "k"}) :: any
-local sprintTouchActive: boolean = false
+
+local MM2_SPRINT_SPEED: number = 30
 
 local function clearSprintTrail(): ()
     for _, object: Instance in ipairs(sprintTrailObjects) do
@@ -1275,167 +1299,68 @@ local function ensureSprintTrail(root: BasePart): Trail
     return trail
 end
 
+-- Sprint is a hold module.
+--
+-- It used to be a toggle that watched LeftControl itself, which meant it could
+-- not be rebound and could not work on a phone at all. It is now driven by the
+-- card's key slot: hold the key (or hold the placed mobile button) to sprint,
+-- release to stop.
+local sprintHeld: boolean = false
+local sprintBaseSpeed: number? = nil
+
+local function applySprintSpeed(active: boolean): ()
+    local _, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
+    if not humanoid or not root then
+        return
+    end
+    if active then
+        if sprintBaseSpeed == nil then
+            sprintBaseSpeed = humanoid.WalkSpeed
+        end
+        humanoid.WalkSpeed = MM2_SPRINT_SPEED
+    else
+        humanoid.WalkSpeed = sprintBaseSpeed or 16
+        sprintBaseSpeed = nil
+    end
+end
+
 local function toggleSprint(enabled: boolean): ()
     disconnectFeatureConnection("MM2Sprint")
-    clearSprintTrail()
-    for humanoid: Humanoid, speed: number in pairs(sprintSpeedOriginal) do
-        if humanoid and humanoid.Parent then
-            humanoid.WalkSpeed = speed
-        end
-    end
-    sprintSpeedOriginal = setmetatable({}, {__mode = "k"}) :: any
-    sprintTouchActive = state.isMobile and enabled
+    sprintHeld = enabled
 
     if not enabled then
+        clearSprintTrail()
+        applySprintSpeed(false)
         return
     end
 
+    -- While held, the speed is re-applied every frame: the game resets
+    -- WalkSpeed on respawn, on round start and when a tool is equipped.
     featureConnections.MM2Sprint = TaskManager:Connect(function(): ()
-        local _, humanoid, root = getCharacterParts()
-        if not humanoid or not root
-            or not humanoid:IsA("Humanoid")
-            or not root:IsA("BasePart") then
+        local _, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
+        if not humanoid or not root then
             return
         end
-        if sprintSpeedOriginal[humanoid] == nil then
-            sprintSpeedOriginal[humanoid] = humanoid.WalkSpeed
+        if sprintBaseSpeed == nil and humanoid.WalkSpeed ~= MM2_SPRINT_SPEED then
+            sprintBaseSpeed = humanoid.WalkSpeed
+        end
+        if humanoid.WalkSpeed ~= MM2_SPRINT_SPEED then
+            humanoid.WalkSpeed = MM2_SPRINT_SPEED
         end
 
         local trail: Trail = ensureSprintTrail(root)
-        local direction: Vector3 = humanoid.MoveDirection
-        local sprinting: boolean =
-            (sprintTouchActive
-                or UserInputService:IsKeyDown(Enum.KeyCode.LeftControl))
-            and direction.Magnitude > 0.05
-        trail.Enabled = sprinting
-
-        if sprinting then
-            humanoid.WalkSpeed = 30
-            local velocity: Vector3 = root.AssemblyLinearVelocity
-            root.AssemblyLinearVelocity = Vector3.new(
-                direction.X * 30,
-                velocity.Y,
-                direction.Z * 30
-            )
-        elseif humanoid.WalkSpeed == 30 then
-            humanoid.WalkSpeed = sprintSpeedOriginal[humanoid]
-        else
-            sprintSpeedOriginal[humanoid] = humanoid.WalkSpeed
-        end
+        local moving: boolean = humanoid.MoveDirection.Magnitude > 0.05
+        trail.Enabled = moving
     end)
 end
 
-local fpsSettings = {
-    textures = true,
-    particles = true,
-    shadows = true,
-    materials = false,
-}
-local fpsModeEnabled = false
-local fpsVisualCache = setmetatable({}, {__mode = "k"})
+-- Improve FPS moved to the Universal section: stripping textures, particles,
+-- shadows and materials is not MM2-specific. `state.toggleImproveFps` is the
+-- shared implementation; nothing here owns it any more.
 
-local function cacheFpsProperty(object, property)
-    local data = fpsVisualCache[object]
-    if not data then
-        data = {}
-        fpsVisualCache[object] = data
-    end
-    if data[property] == nil then
-        data[property] = object[property]
-    end
-end
-
-local function applyFpsObject(object)
-    if fpsSettings.textures and (object:IsA("Decal") or object:IsA("Texture")) then
-        cacheFpsProperty(object, "Transparency")
-        object.Transparency = 1
-    elseif fpsSettings.textures and object:IsA("MeshPart") then
-        cacheFpsProperty(object, "TextureID")
-        object.TextureID = ""
-    end
-
-    if fpsSettings.particles
-        and (object:IsA("ParticleEmitter")
-            or object:IsA("Trail")
-            or object:IsA("Beam")
-            or object:IsA("Smoke")
-            or object:IsA("Fire")
-            or object:IsA("Sparkles")) then
-        cacheFpsProperty(object, "Enabled")
-        object.Enabled = false
-    end
-
-    if object:IsA("BasePart") then
-        if fpsSettings.shadows then
-            cacheFpsProperty(object, "CastShadow")
-            object.CastShadow = false
-        end
-        if fpsSettings.materials then
-            cacheFpsProperty(object, "Material")
-            cacheFpsProperty(object, "Reflectance")
-            object.Material = Enum.Material.SmoothPlastic
-            object.Reflectance = 0
-        end
-    end
-end
-
-local function restoreFpsObjects()
-    for object, properties in pairs(fpsVisualCache) do
-        if object and object.Parent then
-            for property, value in pairs(properties) do
-                pcall(function()
-                    object[property] = value
-                end)
-            end
-        end
-    end
-    fpsVisualCache = setmetatable({}, {__mode = "k"})
-end
-
-local function toggleImproveFps(enabled)
-    fpsModeEnabled = enabled
-    disconnectFeatureConnection("MM2ImproveFPS")
-    restoreFpsObjects()
-
-    if not enabled then
-        return
-    end
-
-    task.spawn(function()
-        for index, object in ipairs(workspace:GetDescendants()) do
-            if not fpsModeEnabled then
-                return
-            end
-            applyFpsObject(object)
-            if index % 250 == 0 then
-                task.wait()
-            end
-        end
-    end)
-    featureConnections.MM2ImproveFPS = workspace.DescendantAdded:Connect(function(object)
-        if fpsModeEnabled then
-            applyFpsObject(object)
-        end
-    end)
-end
-
-local TimerDisplay: Frame = create("Frame", {
-    Parent = ScreenGui,
-    Name = "MM2RoundTimer",
-    BackgroundColor3 = Color3.fromRGB(24, 24, 24),
-    BackgroundTransparency = 0.12,
-    BorderColor3 = state.headerColor,
-    BorderSizePixel = 1,
-    Position = UDim2.new(1, -205, 0, 58),
-    Size = UDim2.fromOffset(180, 34),
-    Visible = false,
-    ZIndex = 30,
-}) :: Frame
-local TimerText = makeTextLabel(TimerDisplay, "ROUND 0:00", 14)
-TimerText.Font = Enum.Font.GothamBold
-TimerText.TextXAlignment = Enum.TextXAlignment.Center
-TimerText.Size = UDim2.fromScale(1, 1)
-TimerText.ZIndex = 31
+-- Round timer state. The remotes tell us when a round starts and ends; the
+-- countdown itself is the game's own label (see below), so the menu draws no
+-- timer window of its own.
 local timerEndsAt = nil
 local timerRemotes = game:GetService("ReplicatedStorage"):FindFirstChild("Remotes")
 local timerGameplay = timerRemotes and timerRemotes:FindFirstChild("Gameplay")
@@ -1471,18 +1396,68 @@ if timerRoundEnd and timerRoundEnd:IsA("RemoteEvent") then
         roundLifecycleActive = false
         roleRefreshGeneration += 1
         mm2RoundData = {}
-        TimerDisplay.Visible = false
     end)
+end
+
+-- Always Show Timer.
+--
+-- MM2 already draws a round countdown; it is simply only made visible to the
+-- murderer. Rather than covering the screen with a second box in the menu's
+-- own style, this finds the game's own timer label and un-hides it, so the
+-- countdown appears exactly where — and looking exactly how — the murderer
+-- sees it. Everything it touches is restored when the module is switched off.
+local revealedTimerObjects: {[Instance]: boolean} =
+    setmetatable({}, {__mode = "k"}) :: any
+
+local function looksLikeTimerText(text: string): boolean
+    -- "1:23", "01:23" and "0:07" all match; plain numbers do not, so a score
+    -- or a coin counter is never mistaken for the round clock.
+    return string.match(text, "^%s*%d?%d:%d%d%s*$") ~= nil
+end
+
+local function findGameTimerLabels(): {TextLabel}
+    local found: {TextLabel} = {}
+    local playerGui: PlayerGui? = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    if not playerGui then
+        return found
+    end
+    for _, descendant: Instance in ipairs(playerGui:GetDescendants()) do
+        if descendant:IsA("TextLabel") and not descendant:IsDescendantOf(ScreenGui) then
+            local named: boolean =
+                string.find(string.lower(descendant.Name), "timer") ~= nil
+            local parent: Instance? = descendant.Parent
+            local parentNamed: boolean = parent ~= nil
+                and string.find(string.lower(parent.Name), "timer") ~= nil
+            if named or parentNamed or looksLikeTimerText(descendant.Text) then
+                table.insert(found, descendant)
+            end
+        end
+    end
+    return found
+end
+
+local function restoreGameTimer(): ()
+    for object: Instance, _ in pairs(revealedTimerObjects) do
+        if object and object.Parent then
+            local guiObject: any = object
+            pcall(function(): ()
+                guiObject.Visible = false
+            end)
+        end
+    end
+    revealedTimerObjects = setmetatable({}, {__mode = "k"}) :: any
 end
 
 local function toggleAlwaysShowTimer(enabled)
     disconnectFeatureConnection("MM2AlwaysTimer")
-    TimerDisplay.Visible = false
 
     if not enabled then
+        restoreGameTimer()
         return
     end
 
+    -- Ask the server for the current remaining time so enabling mid-round
+    -- does not have to wait for the next RoundStart.
     local getTimer = timerRemotes and timerRemotes:FindFirstChild("GetTimer", true)
     if getTimer and getTimer:IsA("RemoteFunction") then
         task.spawn(function()
@@ -1498,19 +1473,36 @@ local function toggleAlwaysShowTimer(enabled)
     local elapsed = 1
     featureConnections.MM2AlwaysTimer = TaskManager:Connect(function(deltaTime)
         elapsed = elapsed + deltaTime
-        if elapsed < 0.1 then
+        if elapsed < 0.4 then
             return
         end
         elapsed = 0
 
-        local remaining = timerEndsAt and math.max(0, math.ceil(timerEndsAt - os.clock()))
-        TimerDisplay.Visible = remaining ~= nil and remaining > 0
-        if TimerDisplay.Visible then
-            local minutes = math.floor(remaining / 60)
-            TimerText.Text = string.format("ROUND %d:%02d", minutes, remaining % 60)
-            TimerText.TextColor3 = remaining <= 30
-                and Color3.fromRGB(190, 55, 55)
-                or Color3.fromRGB(220, 220, 220)
+        local roundRunning: boolean = timerEndsAt ~= nil
+            and timerEndsAt - os.clock() > 0
+        if not roundRunning then
+            restoreGameTimer()
+            return
+        end
+
+        -- The game hides its own label between rounds and for non-murderers;
+        -- forcing Visible on the labels it already maintains keeps the exact
+        -- countdown the murderer sees, with no extra UI.
+        for _, label: TextLabel in ipairs(findGameTimerLabels()) do
+            if not label.Visible then
+                revealedTimerObjects[label] = true
+                label.Visible = true
+            end
+            local ancestor: Instance? = label.Parent
+            local depth: number = 0
+            while ancestor and depth < 4 do
+                if ancestor:IsA("GuiObject") and not ancestor.Visible then
+                    revealedTimerObjects[ancestor] = true
+                    ancestor.Visible = true
+                end
+                ancestor = ancestor.Parent
+                depth += 1
+            end
         end
     end)
 end
@@ -3235,10 +3227,8 @@ end
 local shootFeatureActive: boolean = false
 local shootHookInstalled: boolean = false
 local shootTouchHookInstalled: boolean = false
-local shootHookOriginal: any = nil
-local shootTouchHookOriginal: any = nil
-local shootHookWrapper: any = nil
-local shootTouchHookWrapper: any = nil
+local shootHookOriginals: {[string]: any} = {}
+local shootHookWrappers: {[string]: any} = {}
 local weaponServiceModule: any = nil
 type PendingShot = {
     target: Player,
@@ -3465,8 +3455,12 @@ state.mm2ShotFeedback.resolve = function(
         local currentHumanoid: Humanoid? = targetCharacter
             and targetCharacter:FindFirstChildOfClass("Humanoid")
             :: Humanoid?
+        -- `Players` is a cloneref handle here, so it never compares equal to
+        -- the service `Parent` returns: this used to be true on every shot
+        -- and confirmed every hit, including the misses. A player that left
+        -- the game simply has no parent.
         local hitConfirmed: boolean = directHit
-            or candidate.target.Parent ~= Players
+            or candidate.target.Parent == nil
             or targetCharacter == nil
             or targetCharacter.Parent == nil
             or currentHumanoid == nil
@@ -4131,6 +4125,27 @@ local function connectGunFiredSignal(weaponService: any): boolean
     return false
 end
 
+-- Aim redirection hook.
+--
+-- The game asks its WeaponService where the player is aiming. Hooking that one
+-- call lets the game fire its own shot with our solved aim, which is the most
+-- faithful way to redirect — but the method名 differs per input type, and a
+-- previous build only knew the desktop one, so touch clients reported
+-- "unavailable" and fell back with no explanation.
+--
+-- Every known aim accessor is hooked instead of a hard-coded pair, and each
+-- wrapper returns the same shape the original returned (CFrame or Vector3), so
+-- whichever one the client actually calls on this device gets redirected.
+local SHOOT_AIM_METHODS: {string} = {
+    "GetMouseTargetCFrame",
+    "GetTargetCFrame",
+    "GetAimCFrame",
+    "GetMouseHit",
+    "GetTargetPosition",
+    "GetMouseTargetPosition",
+    "GetAimPosition",
+}
+
 local function installShootRedirectHook(): boolean
     local weaponService: any = getWeaponServiceModule()
     if type(weaponService) ~= "table" then
@@ -4138,61 +4153,51 @@ local function installShootRedirectHook(): boolean
     end
     connectGunFiredSignal(weaponService)
 
-    local touchPreferred: boolean =
-        UserInputService.PreferredInput == Enum.PreferredInput.Touch
     if shootHookInstalled then
-        return not touchPreferred or shootTouchHookInstalled
+        return true
     end
-    if type(state.hookFunction) ~= "function"
-        or type(weaponService.GetMouseTargetCFrame) ~= "function" then
+    if type(state.hookFunction) ~= "function" then
         return false
     end
 
-    local mouseHooked: boolean = pcall(function(): ()
-        local predecessor: any = nil
-        local wrapper: any = nil
-        wrapper = function(self: any, ...: any): any
-            local targetCFrame: CFrame? = getRedirectedWeaponCFrame()
-            if targetCFrame then
-                return targetCFrame
-            end
-            return predecessor(self, ...)
-        end
-        predecessor = state.hookFunction(
-            weaponService.GetMouseTargetCFrame,
-            wrapper
-        )
-        shootHookOriginal = predecessor
-        shootHookWrapper = wrapper
-    end)
-    if not mouseHooked or type(shootHookOriginal) ~= "function" then
-        return false
-    end
-
-    shootHookInstalled = true
-    if type(weaponService.GetTargetPosition) == "function" then
-        shootTouchHookInstalled = pcall(function(): ()
-            local predecessor: any = nil
-            local wrapper: any = nil
-            wrapper = function(self: any, ...: any): any
-                local targetCFrame: CFrame? = getRedirectedWeaponCFrame()
-                if targetCFrame then
-                    return targetCFrame.Position
+    local hookedAny: boolean = false
+    for _, methodName: string in ipairs(SHOOT_AIM_METHODS) do
+        local original: any = weaponService[methodName]
+        if type(original) == "function" and shootHookOriginals[methodName] == nil then
+            local installed: boolean = pcall(function(): ()
+                local predecessor: any = nil
+                local wrapper: any = nil
+                wrapper = function(self: any, ...: any): any
+                    local targetCFrame: CFrame? = getRedirectedWeaponCFrame()
+                    if targetCFrame then
+                        -- Position accessors must not receive a CFrame, and
+                        -- CFrame accessors must not receive a Vector3.
+                        local previous: any = predecessor(self, ...)
+                        if typeof(previous) == "Vector3" then
+                            return targetCFrame.Position
+                        end
+                        return targetCFrame
+                    end
+                    return predecessor(self, ...)
                 end
-                return predecessor(self, ...)
+                predecessor = state.hookFunction(original, wrapper)
+                shootHookOriginals[methodName] = predecessor
+                shootHookWrappers[methodName] = wrapper
+            end)
+            if installed and type(shootHookOriginals[methodName]) == "function" then
+                hookedAny = true
+            else
+                shootHookOriginals[methodName] = nil
+                shootHookWrappers[methodName] = nil
             end
-            predecessor = state.hookFunction(
-                weaponService.GetTargetPosition,
-                wrapper
-            )
-            shootTouchHookOriginal = predecessor
-            shootTouchHookWrapper = wrapper
-        end)
-        shootTouchHookInstalled = shootTouchHookInstalled
-            and type(shootTouchHookOriginal) == "function"
+        elseif shootHookOriginals[methodName] ~= nil then
+            hookedAny = true
+        end
     end
 
-    return not touchPreferred or shootTouchHookInstalled
+    shootHookInstalled = hookedAny
+    shootTouchHookInstalled = hookedAny
+    return hookedAny
 end
 
 local function mm2RoleProvider(player: Player): string?
@@ -4291,46 +4296,29 @@ end
 
 local function uninstallShootRedirectHook(): ()
     local weaponService: any = weaponServiceModule
-    local touchRestored: boolean = not shootTouchHookInstalled
-    local mouseRestored: boolean = not shootHookInstalled
     if type(state.hookFunction) == "function" and type(weaponService) == "table" then
-        if shootTouchHookInstalled
-            and shootTouchHookOriginal
-            and type(weaponService.GetTargetPosition) == "function" then
-            local restored: boolean, displaced: any = pcall(
-                state.hookFunction,
-                weaponService.GetTargetPosition,
-                shootTouchHookOriginal
-            )
-            touchRestored = restored and displaced == shootTouchHookWrapper
-            if restored and not touchRestored and type(displaced) == "function" then
-                pcall(state.hookFunction, weaponService.GetTargetPosition, displaced)
-            end
-        end
-        if shootHookInstalled
-            and shootHookOriginal
-            and type(weaponService.GetMouseTargetCFrame) == "function" then
-            local restored: boolean, displaced: any = pcall(
-                state.hookFunction,
-                weaponService.GetMouseTargetCFrame,
-                shootHookOriginal
-            )
-            mouseRestored = restored and displaced == shootHookWrapper
-            if restored and not mouseRestored and type(displaced) == "function" then
-                pcall(state.hookFunction, weaponService.GetMouseTargetCFrame, displaced)
+        for methodName: string, original: any in pairs(shootHookOriginals) do
+            local current: any = weaponService[methodName]
+            if type(original) == "function" and type(current) == "function" then
+                local restored: boolean, displaced: any = pcall(
+                    state.hookFunction,
+                    current,
+                    original
+                )
+                -- If something else hooked the same method after us, put its
+                -- wrapper back rather than stealing the chain.
+                if restored
+                    and displaced ~= shootHookWrappers[methodName]
+                    and type(displaced) == "function" then
+                    pcall(state.hookFunction, current, displaced)
+                end
             end
         end
     end
-    if touchRestored then
-        shootTouchHookInstalled = false
-        shootTouchHookOriginal = nil
-        shootTouchHookWrapper = nil
-    end
-    if mouseRestored then
-        shootHookInstalled = false
-        shootHookOriginal = nil
-        shootHookWrapper = nil
-    end
+    table.clear(shootHookOriginals)
+    table.clear(shootHookWrappers)
+    shootHookInstalled = false
+    shootTouchHookInstalled = false
     disconnectFeatureConnection("MM2GunFired")
     state.mm2ShotFeedback.gunFiredConnected = false
 end
@@ -4479,6 +4467,16 @@ local function toggleKnifeAura(enabled: boolean): ()
     refreshKnifeController()
 end
 
+-- Manual shot.
+--
+-- The universal path is the default on every device: aim is solved here with
+-- CFrame maths and a raycast, then the gun's own `Shoot` remote is fired with
+-- (origin, aim). That needs no mouse, no `hookfunction` and no touch-specific
+-- weapon API, which is why it behaves identically on PC, phone and console.
+--
+-- `gun:Activate()` (letting the game's own client fire, with our redirect hook
+-- rewriting its aim) is only used when the player explicitly picks Redirect
+-- mode and the hook really is installed for this input type.
 local function triggerManualShot(): ()
     local _, humanoid: Humanoid? = getCharacterParts()
     local backpack: Backpack? = LocalPlayer:FindFirstChildOfClass("Backpack")
@@ -4488,7 +4486,8 @@ local function triggerManualShot(): ()
     local activationHookReady: boolean = shootHookInstalled
         and (not touchPreferred or shootTouchHookInstalled)
 
-    if gun
+    if mm2Settings.shootMode == "Redirect"
+        and gun
         and humanoid
         and humanoid:IsA("Humanoid")
         and activationHookReady then
@@ -4497,12 +4496,11 @@ local function triggerManualShot(): ()
             task.wait()
         end
         gun:Activate()
-    else
-        shootMurderer()
+        return
     end
+    shootMurderer()
 end
 local function toggleShootMurderer(enabled: boolean): ()
-    disconnectFeatureConnection("MM2ShootKey")
     disconnectFeatureConnection("MM2MotionTracker")
     shootFeatureActive = enabled
 
@@ -4537,20 +4535,7 @@ local function toggleShootMurderer(enabled: boolean): ()
         end
     end)
 
-    featureConnections.MM2ShootKey = UserInputService.InputBegan:Connect(function(
-        input,
-        processed
-    )
-        if not processed
-            and not state.keyCaptureCallback
-            and not state.waitingForKey
-            and not UserInputService:GetFocusedTextBox()
-            and (mm2Settings.shootMode == "Manual"
-                or mm2Settings.shootMode == "Custom")
-            and input.KeyCode == mm2Settings.shootKey then
-            triggerManualShot()
-        end
-    end)
+    -- No private key handler: the card's key slot owns the binding.
 end
 
 local function teleportToMap()
@@ -4618,77 +4603,91 @@ local RoleEspFeature = createUniversalFeature(
         registry = mm2Features,
     }
 )
-addToggleOption(RoleEspFeature, "Innocent ESP", false, toggleInnocentEsp)
-addColorOption(RoleEspFeature, "Innocent ESP color", mm2Settings.innocentColor, function(value)
+-- Player ESP panel.
+--
+-- It used to be fifteen flat rows: a toggle, a colour and a transparency
+-- slider for every role, plus coins and traps, all in one column. The panel is
+-- now grouped under headings, each role is a toggle plus its colour, and the
+-- five per-role transparency sliders collapse into one shared "Player fill"
+-- slider — the value nobody ever wanted to set differently per role.
+local RoleEspRoles: Frame = state.addSectionOption(RoleEspFeature, "Roles")
+addToggleOption(RoleEspFeature, "Innocents", false, toggleInnocentEsp)
+addColorOption(RoleEspFeature, "Innocent colour", mm2Settings.innocentColor, function(value)
     mm2Settings.innocentColor = value
-end)
-addNumberOption(RoleEspFeature, "Innocent transparency", 6.2, 0, 10, function(value)
-    mm2Settings.innocentTransparency = value / 10
     if mm2Settings.roleEspAll then
         rebuildRoleEsp()
     end
 end)
-addColorOption(RoleEspFeature, "Dead ESP color", mm2Settings.deadColor, function(value)
-    mm2Settings.deadColor = value
-end)
-addNumberOption(RoleEspFeature, "Dead transparency", 5.8, 0, 10, function(value)
-    mm2Settings.deadTransparency = value / 10
-    if mm2Settings.roleEspAll then
-        rebuildRoleEsp()
-    end
-end)
-addToggleOption(RoleEspFeature, "Murderer ESP", false, toggleMurdererEsp)
-addColorOption(RoleEspFeature, "Murderer color", mm2Settings.murdererColor, function(value)
+addToggleOption(RoleEspFeature, "Murderer", false, toggleMurdererEsp)
+addColorOption(RoleEspFeature, "Murderer colour", mm2Settings.murdererColor, function(value)
     mm2Settings.murdererColor = value
-end)
-addNumberOption(RoleEspFeature, "Murderer transparency", 5.5, 0, 10, function(value)
-    mm2Settings.murdererTransparency = value / 10
     if mm2Settings.roleEspAll then
         rebuildRoleEsp()
     end
 end)
-addToggleOption(RoleEspFeature, "Sheriff ESP", false, toggleSheriffEsp)
-addColorOption(RoleEspFeature, "Sheriff color", mm2Settings.sheriffColor, function(value)
+addToggleOption(RoleEspFeature, "Sheriff", false, toggleSheriffEsp)
+addColorOption(RoleEspFeature, "Sheriff colour", mm2Settings.sheriffColor, function(value)
     mm2Settings.sheriffColor = value
-end)
-addNumberOption(RoleEspFeature, "Sheriff transparency", 5.5, 0, 10, function(value)
-    mm2Settings.sheriffTransparency = value / 10
     if mm2Settings.roleEspAll then
         rebuildRoleEsp()
     end
 end)
-addColorOption(RoleEspFeature, "Hero color", mm2Settings.heroColor, function(value)
+addColorOption(RoleEspFeature, "Hero colour", mm2Settings.heroColor, function(value)
     mm2Settings.heroColor = value
-end)
-addNumberOption(RoleEspFeature, "Hero transparency", 5.5, 0, 10, function(value)
-    mm2Settings.heroTransparency = value / 10
     if mm2Settings.roleEspAll then
         rebuildRoleEsp()
     end
 end)
-addToggleOption(RoleEspFeature, "Coin Chams", false, toggleCoinChams)
-addColorOption(RoleEspFeature, "Coin color", mm2Settings.coinColor, function(value)
+addColorOption(RoleEspFeature, "Dead colour", mm2Settings.deadColor, function(value)
+    mm2Settings.deadColor = value
+    if mm2Settings.roleEspAll then
+        rebuildRoleEsp()
+    end
+end)
+
+local RoleEspAppearance: Frame =
+    state.addSectionOption(RoleEspFeature, "Appearance")
+-- One slider drives every player highlight; dead bodies stay slightly fainter
+-- so they never read as a live target.
+addNumberOption(RoleEspFeature, "Player fill", 5.5, 0, 10, function(value)
+    local fill: number = value / 10
+    mm2Settings.innocentTransparency = fill
+    mm2Settings.murdererTransparency = fill
+    mm2Settings.sheriffTransparency = fill
+    mm2Settings.heroTransparency = fill
+    mm2Settings.deadTransparency = math.clamp(fill + 0.08, 0, 1)
+    if mm2Settings.roleEspAll then
+        rebuildRoleEsp()
+    end
+end)
+
+local RoleEspWorld: Frame = state.addSectionOption(RoleEspFeature, "World")
+addToggleOption(RoleEspFeature, "Coins", false, toggleCoinChams)
+addColorOption(RoleEspFeature, "Coin colour", mm2Settings.coinColor, function(value)
     mm2Settings.coinColor = value
     if coinChamsEnabled then
         toggleCoinChams(true)
     end
 end)
-addNumberOption(RoleEspFeature, "Coin transparency", 8, 0, 10, function(value)
+addNumberOption(RoleEspFeature, "Coin fill", 8, 0, 10, function(value)
     mm2Settings.coinTransparency = value / 10
     if coinChamsEnabled then
         toggleCoinChams(true)
     end
 end)
-addToggleOption(RoleEspFeature, "Trap ESP", false, toggleTrapEsp)
-addColorOption(RoleEspFeature, "Trap color", mm2Settings.trapColor, function(value)
+addToggleOption(RoleEspFeature, "Traps", false, toggleTrapEsp)
+addColorOption(RoleEspFeature, "Trap colour", mm2Settings.trapColor, function(value)
     mm2Settings.trapColor = value
 end)
-addNumberOption(RoleEspFeature, "Trap transparency", 7, 0, 10, function(value)
+addNumberOption(RoleEspFeature, "Trap fill", 7, 0, 10, function(value)
     mm2Settings.trapTransparency = value / 10
 end)
+-- Headings are referenced so the layout keeps them; they carry no state.
+local _RoleEspSections: {Frame} =
+    {RoleEspRoles, RoleEspAppearance, RoleEspWorld}
 
-local GunVisualsFeature = createUniversalFeature(
-    "Gun Visuals",
+local GunEspFeature = createUniversalFeature(
+    "Gun ESP",
     "Highlight the dropped sheriff gun",
     3,
     toggleGunEsp,
@@ -4697,10 +4696,10 @@ local GunVisualsFeature = createUniversalFeature(
         registry = mm2Features,
     }
 )
-addColorOption(GunVisualsFeature, "Gun color", mm2Settings.gunColor, function(value)
+addColorOption(GunEspFeature, "Color", mm2Settings.gunColor, function(value)
     mm2Settings.gunColor = value
 end)
-addNumberOption(GunVisualsFeature, "Gun transparency", 5, 0, 10, function(value)
+addNumberOption(GunEspFeature, "Fill transparency", 5.5, 0, 10, function(value)
     mm2Settings.gunTransparency = value / 10
 end)
 
@@ -4714,17 +4713,8 @@ local ShootFeature = createUniversalFeature(
         registry = mm2Features,
     }
 )
-local ShootKeyButton
 local ShootTargetBox
 local function refreshShootOptions(): ()
-    if ShootKeyButton then
-        setOptionVisible(
-            ShootFeature,
-            ShootKeyButton.Parent :: GuiObject,
-            mm2Settings.shootMode == "Manual"
-                or mm2Settings.shootMode == "Custom"
-        )
-    end
     if ShootTargetBox then
         setOptionVisible(
             ShootFeature,
@@ -4748,19 +4738,12 @@ addCycleOption(
         refreshShootOptions()
     end
 )
-ShootKeyButton = addKeyOption(
-    ShootFeature,
-    "Manual key",
-    mm2Settings.shootKey,
-    function(value: Enum.KeyCode): ()
-        mm2Settings.shootKey = value
-    end
-)
-if state.bindMobileActionPlacement then
-    state.bindMobileActionPlacement(
-        ShootKeyButton,
-        "MM2ManualShoot",
-        "SHOOT",
+-- The shot key lives in the card header like every other module: rebind it
+-- there on desktop, or tap the slot on touch to drop a SHOOT button on screen.
+if state.bindFeatureActivationKey then
+    state.bindFeatureActivationKey(
+        ShootFeature,
+        mm2Settings.shootKey,
         triggerManualShot
     )
 end
@@ -4894,55 +4877,37 @@ autoPlayInput = addTextOption(AutoPlayFeature, "Play ID", mm2Settings.autoPlayId
     end
 end)
 
-createUniversalFeature(
+local SprintFeature = createUniversalFeature(
     "Sprint",
-    "Hold LeftControl while moving for 30 speed and a yellow trail",
+    "Hold the key slot to run at 30 speed with a trail",
     10,
     toggleSprint,
     {
+        holdAction = true,
         noOptions = true,
         parent = MM2Scroll,
         registry = mm2Features,
     }
 )
+-- LeftControl stays the default, but the slot owns it now: rebind it on
+-- desktop, or tap the slot on a phone to drop a SPRINT button on screen and
+-- hold that instead.
+if state.bindFeatureActivationKey then
+    state.bindFeatureActivationKey(
+        SprintFeature,
+        Enum.KeyCode.LeftControl,
+        function(): ()
+            SprintFeature.setHeld(true)
+        end,
+        function(): ()
+            SprintFeature.setHeld(false)
+        end
+    )
+end
 
-local FpsFeature = createUniversalFeature(
-    "Improve FPS",
-    "Apply only the selected reversible optimizations",
-    11,
-    toggleImproveFps,
-    {
-        parent = MM2Scroll,
-        registry = mm2Features,
-    }
-)
-addToggleOption(FpsFeature, "Remove textures", true, function(value)
-    fpsSettings.textures = value
-    if fpsModeEnabled then
-        toggleImproveFps(true)
-    end
-end)
-addToggleOption(FpsFeature, "Disable particles", true, function(value)
-    fpsSettings.particles = value
-    if fpsModeEnabled then
-        toggleImproveFps(true)
-    end
-end)
-addToggleOption(FpsFeature, "Disable shadows", true, function(value)
-    fpsSettings.shadows = value
-    if fpsModeEnabled then
-        toggleImproveFps(true)
-    end
-end)
-addToggleOption(FpsFeature, "Simple materials", false, function(value)
-    fpsSettings.materials = value
-    if fpsModeEnabled then
-        toggleImproveFps(true)
-    end
-end)
 createUniversalFeature(
     "Always Show Timer",
-    "Show the RoundStart timer above the coin bag",
+    "Reveal the game's own round countdown, murderer or not",
     13,
     toggleAlwaysShowTimer,
     {
@@ -5164,7 +5129,6 @@ cleanupMM2Runtime = function()
     toggleSprint(false)
     toggleHideNames(false)
     toggleAutoGetGun(false)
-    toggleImproveFps(false)
     toggleAlwaysShowTimer(false)
     toggleCoinChams(false)
     toggleTrapEsp(false)

@@ -1,0 +1,526 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ARandomMenu — layout preview</title>
+<!--
+  Development harness only. It is not shipped to the executor and the runtime
+  never reads it.
+
+  It mirrors `computeLayoutMetrics` from ARandomMenu.luau so the Mobile /
+  Tablet / Desktop breakpoints, the fixed centred shell, the collapsed
+  navigation rail, the card columns and the chrome-less HUD overlays can be
+  checked at the reference viewports without launching Roblox. Keep the
+  numbers in `metrics()` below in sync with the Luau table when they change.
+-->
+<style>
+  :root {
+    --bg: #08080a;
+    --sidebar: #0d0d0e;
+    --surface: #1a1a1c;
+    --surface-hover: #28282c;
+    --outline: #5c5c62;
+    --text: #f5f5f7;
+    --muted: #9e9ea6;
+    --accent: #ececee;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #131316;
+    color: var(--text);
+    font: 13px/1.4 "Inter", "Segoe UI", system-ui, sans-serif;
+  }
+  header.page {
+    padding: 18px 22px 10px;
+    border-bottom: 1px solid #26262b;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    align-items: center;
+  }
+  header.page h1 { font-size: 15px; margin: 0 12px 0 0; font-weight: 600; }
+  .tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+  .tabs button {
+    background: #1c1c20;
+    border: 1px solid #303036;
+    color: var(--muted);
+    border-radius: 7px;
+    padding: 6px 11px;
+    cursor: pointer;
+    font: inherit;
+  }
+  .tabs button.active { background: #2c2c33; color: var(--text); border-color: #4b4b54; }
+  .readout { color: var(--muted); font-size: 12px; margin-left: auto; }
+  .readout b { color: var(--text); font-weight: 600; }
+  main { padding: 20px; display: flex; justify-content: center; }
+  .screen {
+    position: relative;
+    background:
+      repeating-linear-gradient(45deg, #1b2430 0 12px, #1e2836 12px 24px);
+    border: 1px solid #33333a;
+    border-radius: 4px;
+    overflow: hidden;
+    transform-origin: top center;
+  }
+  .screen .label {
+    position: absolute; top: 6px; left: 8px;
+    font-size: 11px; color: #8ea0b6; letter-spacing: .04em;
+  }
+  .shell {
+    position: absolute;
+    background: var(--bg);
+    overflow: hidden;
+    display: flex;
+  }
+  .rail { background: #101012; flex: none; position: relative; }
+  .rail .edge { position: absolute; right: 0; top: 0; bottom: 0; width: 1px; background: #35353b; }
+  .brand { display: flex; align-items: center; }
+  .chip {
+    background: #232327; border: 1px solid #3a3a41; border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 9px; color: var(--muted); letter-spacing: .04em; flex: none;
+  }
+  .navrow {
+    display: flex; align-items: center; position: relative;
+    border-radius: 7px; color: var(--muted); gap: 10px;
+  }
+  .navrow.active { background: rgba(38,38,44,.85); color: var(--text); }
+  .navrow.active .chip { background: #33333a; color: var(--text); }
+  .navrow .tick {
+    position: absolute; left: -6px; top: 50%; transform: translateY(-50%);
+    width: 2px; border-radius: 2px; background: var(--accent);
+  }
+  .launchers {
+    position: absolute; left: 50%; transform: translateX(-50%);
+    background: #1e1e22; border: 1px solid #37373e; border-radius: 7px;
+    display: flex; align-items: center; justify-content: center; gap: 2px;
+  }
+  .launchers span { font-size: 8px; color: var(--muted); padding: 2px 4px; }
+  .content { flex: 1; position: relative; overflow: hidden; }
+  .pagehead { position: absolute; left: 0; right: 0; top: 0; display: flex; align-items: center; }
+  .pagehead .title { font-weight: 600; }
+  .pagehead .search {
+    margin-left: auto; background: #1d1d21; border: 1px solid #34343b;
+    border-radius: 6px; color: #6f6f78; display: flex; align-items: center;
+    padding: 0 8px; font-size: 10px;
+  }
+  .pagehead .rule { position: absolute; bottom: 0; height: 1px; background: #2a2a30; }
+  .pagebody { position: absolute; left: 0; right: 0; bottom: 0; overflow: hidden; }
+  .cat { font-size: 8px; letter-spacing: .12em; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+  .cat .line { flex: 1; height: 1px; background: linear-gradient(to right, transparent, #34343b); }
+  .cards { display: flex; }
+  .col { display: flex; flex-direction: column; }
+  .card {
+    background: rgba(26,26,28,.82); border-radius: 9px; position: relative;
+    display: flex; align-items: center; padding: 0 8px 0 12px; overflow: hidden;
+  }
+  .card .name { font-size: 11px; font-weight: 500; }
+  .card .ctrls { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+  .card .icon { border-radius: 5px; background: rgba(255,255,255,.05); }
+  .card .key { border-radius: 5px; background: rgba(255,255,255,.07); }
+  .overlay { position: absolute; }
+  .radar {
+    border-radius: 50%; background: rgba(26,26,28,.66);
+    border: 1px solid rgba(92,92,98,.45); position: relative;
+  }
+  .radar::before, .radar::after {
+    content: ""; position: absolute; background: rgba(92,92,98,.28);
+  }
+  .radar::before { left: 8px; right: 8px; top: 50%; height: 1px; }
+  .radar::after { top: 8px; bottom: 8px; left: 50%; width: 1px; }
+  .radar .ring {
+    position: absolute; border: 1px solid rgba(92,92,98,.3); border-radius: 50%;
+    top: 50%; left: 50%; transform: translate(-50%,-50%);
+  }
+  .radar .dot {
+    position: absolute; width: 7px; height: 7px; border-radius: 50%;
+    background: #7ec48a; transform: translate(-50%,-50%);
+  }
+  .hud { font-size: 9px; line-height: 1.45; text-shadow: 1px 1px 0 rgba(0,0,0,.75); white-space: pre; }
+  .hudtarget { display: flex; gap: 8px; }
+  .hudtarget .portrait {
+    width: 56px; height: 56px; border-radius: 9px; background: rgba(26,26,28,.82);
+    border: 1px solid rgba(92,92,98,.45); flex: none;
+  }
+  .toolwin {
+    background: rgba(8,8,9,.92); border: 1px solid rgba(92,92,98,.3);
+    border-radius: 10px; overflow: hidden; width: 230px;
+  }
+  .toolwin .bar {
+    height: 30px; background: rgba(26,26,28,.9); display: flex; align-items: center;
+    padding: 0 10px; font-size: 10px; border-bottom: 1px solid rgba(92,92,98,.35);
+  }
+  .toolwin .bar .x { margin-left: auto; color: var(--muted); }
+  .toolwin .rows { padding: 8px; display: flex; flex-direction: column; gap: 5px; }
+  .toolwin .rows div { height: 26px; border-radius: 6px; background: rgba(26,26,28,.75); }
+  .caption { text-align: center; color: var(--muted); font-size: 12px; padding: 6px 0 24px; }
+</style>
+</head>
+<body>
+<header class="page">
+  <h1>ARandomMenu — responsive shell preview</h1>
+  <div class="tabs" id="tabs"></div>
+  <div class="readout" id="readout"></div>
+</header>
+<main><div id="stage"></div></main>
+<div class="caption" id="caption"></div>
+<script>
+// Mirror of computeLayoutMetrics() in ARandomMenu.luau.
+function metrics(vw, vh, touch) {
+  const width = Math.max(240, vw), height = Math.max(200, vh);
+  let mode = "Desktop";
+  if (width < 620 || height < 430) mode = "Mobile";
+  else if (width < 1100) mode = "Tablet";
+  const mobile = mode === "Mobile", tablet = mode === "Tablet";
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  let sw, sh;
+  if (mobile) {
+    sw = Math.round(Math.min(width - 10, Math.max(280, width * 0.97)));
+    sh = Math.round(Math.min(height - 10, Math.max(220, height * 0.94)));
+  } else if (tablet) {
+    sw = Math.round(clamp(width * 0.9, 460, 900));
+    sh = Math.round(clamp(height * 0.84, 380, 760));
+  } else {
+    sw = Math.round(clamp(width * 0.58, 760, 1080));
+    sh = Math.round(clamp(height * 0.74, 420, 700));
+  }
+  sw = Math.max(240, Math.min(sw, Math.round(width - (mobile ? 8 : 28))));
+  sh = Math.max(200, Math.min(sh, Math.round(height - (mobile ? 8 : 28))));
+  const sidebarWidth = mobile ? 58 : (tablet ? 132 : 156);
+  const contentPadding = mobile ? 10 : (tablet ? 12 : 14);
+  const contentWidth = sw - sidebarWidth - contentPadding * 2;
+  return {
+    mode, compact: mobile, touch,
+    shellWidth: sw, shellHeight: sh, shellCorner: mobile ? 10 : 12,
+    sidebarWidth, sidebarCollapsed: mobile, sidebarPadding: mobile ? 6 : 10,
+    navRowHeight: mobile ? 40 : (tablet ? 32 : 30),
+    navIconSize: mobile ? 26 : 22,
+    navFontSize: mobile ? 9 : 11,
+    brandHeight: mobile ? 40 : 46,
+    headerHeight: mobile ? 42 : 44,
+    searchHeight: mobile ? 30 : 28,
+    searchWidth: mobile ? 150 : (tablet ? 190 : 230),
+    contentPadding, contentWidth,
+    cardSpacing: mobile ? 7 : 6,
+    cardColumns: contentWidth >= 560 ? 2 : 1,
+    cardHeight: mobile ? 50 : 44,
+    iconButton: mobile ? 26 : 24,
+    keySlotWidth: mobile ? 34 : 46,
+    launcherHeight: mobile ? 58 : 28,
+  };
+}
+
+const VIEWPORTS = [
+  {w: 360, h: 800, note: "phone portrait"},
+  {w: 800, h: 360, note: "phone landscape"},
+  {w: 768, h: 1024, note: "tablet portrait"},
+  {w: 1280, h: 720, note: "laptop"},
+  {w: 1920, h: 1080, note: "desktop"},
+];
+const CATEGORIES = [
+  {name: "Combat", cards: ["Fling", "Hitboxes", "Projectile Calibration"]},
+  {name: "Player", cards: ["Fly", "High Jump", "Noclip", "Speed", "Spider"]},
+  {name: "Visuals", cards: ["Fullbright", "Player ESP", "X-Ray"]},
+];
+const TABS = [
+  ["Universal", "UN"], ["Movement", "MV"], ["MM2", "M2"],
+  ["Config.", "CF"],
+];
+
+let active = 3;
+let page = "Universal";
+const stage = document.getElementById("stage");
+const tabs = document.getElementById("tabs");
+const readout = document.getElementById("readout");
+const caption = document.getElementById("caption");
+
+VIEWPORTS.forEach((vp, index) => {
+  const button = document.createElement("button");
+  button.textContent = `${vp.w}×${vp.h}`;
+  button.onclick = () => { active = index; render(); };
+  tabs.appendChild(button);
+});
+const pageToggle = document.createElement("button");
+pageToggle.style.marginLeft = "14px";
+pageToggle.onclick = () => {
+  page = page === "Universal" ? "Settings" : "Universal";
+  render();
+};
+tabs.appendChild(pageToggle);
+
+function el(tag, style, text) {
+  const node = document.createElement(tag);
+  if (style) Object.assign(node.style, style);
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+const px = (n) => `${n}px`;
+
+function render() {
+  [...tabs.children].forEach((b, i) => b.classList.toggle("active", i === active));
+  pageToggle.textContent = `page: ${page}`;
+  const vp = VIEWPORTS[active];
+  const m = metrics(vp.w, vp.h, vp.w < 900);
+  readout.innerHTML =
+    `mode <b>${m.mode}</b> · shell <b>${m.shellWidth}×${m.shellHeight}</b> · rail <b>${m.sidebarWidth}</b>`
+    + ` · content <b>${m.contentWidth}</b> · columns <b>${m.cardColumns}</b>`;
+  caption.textContent =
+    `${vp.w}×${vp.h} (${vp.note}) — shell fixed and centred; radar / target / session overlays are chrome-less and movable.`;
+
+  stage.innerHTML = "";
+  const scale = Math.min(1, (window.innerWidth - 80) / vp.w, 620 / vp.h);
+  const screen = el("div", {width: px(vp.w), height: px(vp.h), transform: `scale(${scale})`});
+  screen.className = "screen";
+  screen.appendChild(Object.assign(el("div", {}, `${vp.w} × ${vp.h}`), {className: "label"}));
+  stage.style.height = px(vp.h * scale + 12);
+  stage.appendChild(screen);
+
+  const left = Math.round((vp.w - m.shellWidth) / 2);
+  const top = Math.round((vp.h - m.shellHeight) / 2);
+
+  // No ambient shadow: faking one with plain frames produced grey blocks at
+  // the corners in Roblox (cornerRadius() caps at 30px), so the shell has none.
+
+  const shell = el("div", {
+    left: px(left), top: px(top), width: px(m.shellWidth), height: px(m.shellHeight),
+    borderRadius: px(Math.min(30, Math.round(m.shellCorner * 1.3))),
+  });
+  shell.className = "shell";
+  screen.appendChild(shell);
+
+  // Navigation rail.
+  const rail = el("div", {width: px(m.sidebarWidth), padding: px(0)});
+  rail.className = "rail";
+  shell.appendChild(rail);
+  rail.appendChild(el("div", {})).className = "edge";
+
+  const brand = el("div", {
+    height: px(m.brandHeight), gap: "10px",
+    paddingLeft: m.sidebarCollapsed ? "0" : px(m.sidebarPadding),
+    justifyContent: m.sidebarCollapsed ? "center" : "flex-start",
+  });
+  brand.className = "brand";
+  const mark = el("div", {width: px(m.navIconSize + 4), height: px(m.navIconSize + 4)}, "ARM");
+  mark.className = "chip";
+  brand.appendChild(mark);
+  if (!m.sidebarCollapsed) {
+    brand.appendChild(el("div", {fontSize: "10px", color: "var(--muted)"}, "A Random Menu"));
+  }
+  rail.appendChild(brand);
+
+  const nav = el("div", {
+    padding: `4px ${px(m.sidebarPadding)} 0`, display: "flex",
+    flexDirection: "column", gap: "2px",
+  });
+  rail.appendChild(nav);
+  TABS.forEach(([name, mono], index) => {
+    const row = el("div", {
+      height: px(m.navRowHeight),
+      justifyContent: m.sidebarCollapsed ? "center" : "flex-start",
+    });
+    row.className = "navrow" + (index === 0 ? " active" : "");
+    if (index === 0) {
+      row.appendChild(el("div", {height: px(Math.max(10, m.navRowHeight - 16))})).className = "tick";
+    }
+    const chip = el("div", {width: px(m.navIconSize), height: px(m.navIconSize)}, mono);
+    chip.className = "chip";
+    row.appendChild(chip);
+    if (!m.sidebarCollapsed) {
+      row.appendChild(el("div", {fontSize: px(m.navFontSize + 1)}, name === "Config." ? "Settings" : name));
+    }
+    nav.appendChild(row);
+  });
+
+  const launchers = el("div", {
+    bottom: "8px",
+    width: px(m.sidebarCollapsed ? 34 : 72),
+    height: px(m.launcherHeight),
+    flexDirection: m.sidebarCollapsed ? "column" : "row",
+  });
+  launchers.className = "launchers";
+  launchers.appendChild(el("span", {}, "FAV"));
+  launchers.appendChild(el("span", {}, "OVR"));
+  rail.appendChild(launchers);
+
+  // Content: page header + card board.
+  const content = el("div", {});
+  content.className = "content";
+  shell.appendChild(content);
+
+  const head = el("div", {height: px(m.headerHeight), padding: `0 ${px(m.contentPadding)}`});
+  head.className = "pagehead";
+  head.appendChild(el("div", {fontSize: "13px"}, page)).className = "title";
+  head.appendChild(el("div", {
+    width: px(m.searchWidth), height: px(m.searchHeight),
+  }, "Search modules")).className = "search";
+  const rule = el("div", {left: px(m.contentPadding), right: px(m.contentPadding)});
+  rule.className = "rule";
+  head.appendChild(rule);
+  content.appendChild(head);
+
+  const body = el("div", {
+    top: px(m.headerHeight), padding: px(m.contentPadding),
+    display: "flex", flexDirection: "column", gap: px(m.cardSpacing + 4),
+  });
+  body.className = "pagebody";
+  content.appendChild(body);
+
+  if (page === "Settings") {
+    // One line per row: name centred vertically, control on the right.
+    // Blur mode and Interface motion are switch-free click-to-toggle rows.
+    const SETTINGS = [
+      {name: "Text size", control: "slider"},
+      {name: "Blur mode", control: "toggle", on: true},
+      {name: "Interface motion", control: "toggle", on: false},
+      {name: "Menu key", control: "button", label: "RIGHTSHIFT"},
+      {name: "Reinject latest", control: "button", label: "REINJECT LATEST"},
+      {name: "Destruct", control: "button", label: "DESTRUCT"},
+      {name: "Game check", control: "text", label: "Universal only"},
+    ];
+    SETTINGS.forEach((setting) => {
+      const rowHeight = Math.max(38, m.cardHeight);
+      const row = el("div", {
+        height: px(rowHeight), position: "relative", display: "flex",
+        alignItems: "center", padding: "0 14px",
+        background: setting.on ? "rgba(40,40,44,.58)" : "rgba(26,26,28,.42)",
+        border: "1px solid rgba(92,92,98,.18)", borderRadius: "9px",
+      });
+      if (setting.on) {
+        row.appendChild(el("div", {
+          position: "absolute", left: "0", top: "50%",
+          transform: "translateY(-50%)", width: "2px",
+          height: px(rowHeight - 14), borderRadius: "2px", background: "#ececee",
+        }));
+      }
+      row.appendChild(el("div", {fontSize: "11px", fontWeight: "500"}, setting.name));
+      const band = el("div", {
+        marginLeft: "auto", width: "46%", display: "flex",
+        alignItems: "center", justifyContent: "flex-end", gap: "8px",
+      });
+      if (setting.control === "toggle") {
+        band.appendChild(el("div", {
+          fontSize: "10px", color: setting.on ? "#f5f5f7" : "#9e9ea6",
+        }, setting.on ? "ON" : "OFF"));
+      } else if (setting.control === "slider") {
+        const track = el("div", {
+          flex: "1", height: "4px", borderRadius: "2px", background: "#2f2f35",
+        });
+        track.appendChild(el("div", {
+          width: "45%", height: "100%", borderRadius: "2px", background: "#d8d8dc",
+        }));
+        band.appendChild(track);
+        band.appendChild(el("div", {fontSize: "10px", color: "#9e9ea6"}, "100%"));
+      } else if (setting.control === "button") {
+        band.appendChild(el("div", {
+          width: "100%", height: px(rowHeight - 14), borderRadius: "7px",
+          background: "#232327", border: "1px solid rgba(92,92,98,.35)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: "10px", color: "#d5d5da",
+        }, setting.label));
+      } else {
+        band.appendChild(el("div", {fontSize: "10px", color: "#9e9ea6"}, setting.label));
+      }
+      row.appendChild(band);
+      body.appendChild(row);
+    });
+    renderOverlays();
+    return;
+  }
+
+  CATEGORIES.forEach((category) => {
+    const section = el("div", {display: "flex", flexDirection: "column", gap: "4px"});
+    const cat = el("div", {height: px(m.compact ? 22 : 24)});
+    cat.className = "cat";
+    cat.appendChild(el("span", {}, category.name.toUpperCase()));
+    cat.appendChild(el("div", {})).className = "line";
+    section.appendChild(cat);
+
+    const cards = el("div", {gap: px(m.cardSpacing)});
+    cards.className = "cards";
+    const columns = [];
+    for (let i = 0; i < m.cardColumns; i += 1) {
+      const column = el("div", {flex: "1", gap: px(m.cardSpacing)});
+      column.className = "col";
+      columns.push(column);
+      cards.appendChild(column);
+    }
+    category.cards.forEach((name, index) => {
+      const card = el("div", {height: px(m.cardHeight)});
+      card.className = "card";
+      card.appendChild(el("div", {}, name)).className = "name";
+      const ctrls = el("div", {});
+      ctrls.className = "ctrls";
+      ctrls.appendChild(el("div", {width: px(m.iconButton), height: px(m.iconButton)})).className = "icon";
+      ctrls.appendChild(el("div", {width: px(m.keySlotWidth), height: px(m.iconButton)})).className = "key";
+      ctrls.appendChild(el("div", {width: px(m.iconButton), height: px(m.iconButton)})).className = "icon";
+      card.appendChild(ctrls);
+      columns[index % columns.length].appendChild(card);
+    });
+    section.appendChild(cards);
+    body.appendChild(section);
+  });
+
+  renderOverlays();
+
+  function renderOverlays() {
+  // Chrome-less HUD overlays + one framed tool window, on the screen itself.
+  const radarSize = 190;
+  const radar = el("div", {
+    right: "18px", top: "18px", width: px(radarSize), height: px(radarSize),
+  });
+  radar.className = "overlay radar";
+  [0.34, 0.67].forEach((ratio) => {
+    radar.appendChild(el("div", {width: px(radarSize * ratio), height: px(radarSize * ratio)})).className = "ring";
+  });
+  [[38, 30], [64, 72], [30, 66]].forEach(([x, y]) => {
+    radar.appendChild(el("div", {left: `${x}%`, top: `${y}%`})).className = "dot";
+  });
+  radar.appendChild(el("div", {
+    left: "50%", top: "50%", width: "7px", height: "7px", borderRadius: "50%",
+    background: "#ececee", position: "absolute", transform: "translate(-50%,-50%)",
+  }));
+  screen.appendChild(radar);
+
+  const session = el("div", {left: "18px", top: "18px"});
+  session.className = "overlay hud";
+  session.textContent =
+    "Injected  00:04:12\nDeaths    1\nWins      3\nRole      Sheriff\nFPS       60   Ping 48ms";
+  screen.appendChild(session);
+
+  const target = el("div", {left: "18px", bottom: "18px", width: "260px"});
+  target.className = "overlay hudtarget";
+  target.appendChild(el("div", {})).className = "portrait";
+  const info = el("div", {display: "flex", flexDirection: "column", gap: "3px"});
+  info.appendChild(el("div", {fontSize: "11px", fontWeight: "600"}, "PlayerOne"));
+  info.appendChild(el("div", {fontSize: "8px", color: "#c4c4ca"}, "Murderer · 24 studs"));
+  const bar = el("div", {width: "160px", height: "6px", borderRadius: "3px", background: "rgba(0,0,0,.5)"});
+  bar.appendChild(el("div", {width: "62%", height: "100%", borderRadius: "3px", background: "#ececee"}));
+  info.appendChild(bar);
+  target.appendChild(info);
+  screen.appendChild(target);
+
+  if (vp.w >= 768) {
+    const tool = el("div", {position: "absolute", right: "18px", bottom: "18px"});
+    tool.className = "toolwin";
+    const bar2 = el("div", {}, "Favorites");
+    bar2.className = "bar";
+    bar2.appendChild(el("span", {}, "x")).className = "x";
+    tool.appendChild(bar2);
+    const rows = el("div", {});
+    rows.className = "rows";
+    rows.appendChild(el("div", {}));
+    rows.appendChild(el("div", {}));
+    rows.appendChild(el("div", {}));
+    tool.appendChild(rows);
+    screen.appendChild(tool);
+  }
+  }
+}
+
+window.addEventListener("resize", render);
+render();
+</script>
+</body>
+</html>
