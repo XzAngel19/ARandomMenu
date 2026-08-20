@@ -398,6 +398,152 @@ check("ignores targets beyond the swing range",
 aura:Toggle()
 check("aura disables", aura.Enabled == false)
 
+-- Kill Aura weapon detection --------------------------------------------------
+
+section("Kill Aura weapon detection")
+
+-- A game that hands you two tools and calls the sword something unexpected is
+-- the case the old FindFirstChildOfClass could not survive.
+local shield: any = Mock.newInstance("Tool")
+shield.Name = "WoodenShield"
+local shieldHandle: any = Mock.newInstance("Part")
+shieldHandle.Name = "Handle"
+shieldHandle.Parent = shield
+shield.Parent = world.localPlayer.Character
+-- Parented first, so it is the tool a naive search finds.
+sword.Parent = nil
+sword.Parent = world.localPlayer.Character
+
+enemy.Character:FindFirstChild("HumanoidRootPart").Position = world.vector3(0, 0, -8)
+aura.Options["Weapon name"].Value = ""
+world.clock += 5
+aura:Toggle()
+
+-- Swinging the sword by hand teaches the module which tool to use.
+sword.Activated:Fire()
+local shieldBefore: number = shield.Activations or 0
+local swordBefore: number = sword.Activations or 0
+world.clock += 1
+stub.step(0.016)
+check("uses the weapon the player swung by hand",
+    (sword.Activations or 0) > swordBefore
+        and (shield.Activations or 0) == shieldBefore,
+    "sword: " .. tostring(sword.Activations) .. " shield: " .. tostring(shield.Activations))
+
+-- A typed name wins over what was learned.
+aura.Options["Weapon name"].Value = "shield"
+local shieldBefore2: number = shield.Activations or 0
+world.clock += 1
+stub.step(0.016)
+check("a typed weapon name takes priority",
+    (shield.Activations or 0) > shieldBefore2,
+    "shield: " .. tostring(shield.Activations))
+aura.Options["Weapon name"].Value = ""
+
+-- Swing only: the tool is pressed, no touch events are fired.
+aura.Options["Swing only"].Value = true
+world.touchFires = 0
+local swordBefore3: number = sword.Activations or 0
+world.clock += 1
+stub.step(0.016)
+check("swing only presses the weapon", (sword.Activations or 0) > swordBefore3)
+check("swing only fires no contact events", world.touchFires == 0,
+    "touches: " .. tostring(world.touchFires))
+aura.Options["Swing only"].Value = false
+aura:Toggle()
+shield:Destroy()
+
+-- Auto Clicker -----------------------------------------------------------------
+
+section("Auto Clicker")
+
+local ClickerFile: any = require("../../src/modules/Combat/AutoClicker")
+Mock.inject(world, ClickerFile.init)
+local clicker: any = ClickerFile.init(espContext)
+
+check("card is registered", clicker.Name == "Auto Clicker")
+for _, name: string in ipairs({
+    "Minimum CPS",
+    "Maximum CPS",
+    "Activation",
+    "Hold key",
+    "Press",
+    "Button name",
+    "Require tool",
+}) do
+    check("option: " .. name, clicker.Options[name] ~= nil)
+end
+
+-- Tool mode: presses whatever is equipped, at the configured rate.
+clicker.Options["Press"].Value = "Tool"
+clicker.Options["Minimum CPS"].Value = 10
+clicker.Options["Maximum CPS"].Value = 10
+local toolBefore: number = sword.Activations or 0
+clicker:Toggle()
+world.clock += 1
+stub.step(0.016)
+check("presses the equipped tool", (sword.Activations or 0) > toolBefore,
+    "activations: " .. tostring(sword.Activations))
+
+local rateBefore: number = sword.Activations or 0
+stub.step(0.016)
+check("respects the click rate", (sword.Activations or 0) == rateBefore)
+
+-- Screen button mode: the game's own touch button, pressed the way a finger
+-- presses it.
+local gameGui: any = Mock.newInstance("ScreenGui")
+gameGui.Name = "TouchAttackGui"
+local playerGui: any = Mock.newInstance("PlayerGui")
+playerGui.Name = "PlayerGui"
+playerGui.Parent = world.localPlayer
+gameGui.Parent = playerGui
+local attackButton: any = Mock.newInstance("TextButton")
+attackButton.Name = "AttackButton"
+attackButton.Parent = gameGui
+local buttonPresses: number = 0
+attackButton.MouseButton1Click:Connect(function(): ()
+    buttonPresses += 1
+end)
+
+clicker.Options["Press"].Value = "Screen button"
+clicker.Options["Button name"].Value = "attack"
+world.clock += 1
+stub.step(0.016)
+check("presses the game's own screen button", buttonPresses > 0,
+    "presses: " .. tostring(buttonPresses))
+
+-- Learning: press Learn button, then tap the game's button.
+clicker.Options["Button name"].Value = ""
+clicker.Feature.options["Learn button"].run()
+playerGui.HitTest = {attackButton}
+host.UserInputService.InputBegan:Fire({
+    UserInputType = world.globals.Enum.UserInputType.Touch,
+    Position = world.vector3(200, 400, 0),
+}, false)
+check("learns the button under the tap",
+    clicker.Options["Button name"].Value == "AttackButton",
+    tostring(clicker.Options["Button name"].Value))
+
+-- The menu's own buttons must never be learned or clicked.
+local menuButton: any = Mock.newInstance("TextButton")
+menuButton.Name = "MenuButton"
+menuButton.Parent = host.ScreenGui
+clicker.Feature.options["Learn button"].run()
+playerGui.HitTest = {menuButton}
+host.UserInputService.InputBegan:Fire({
+    UserInputType = world.globals.Enum.UserInputType.Touch,
+    Position = world.vector3(200, 400, 0),
+}, false)
+check("ignores the menu's own buttons while learning",
+    clicker.Options["Button name"].Value == "AttackButton")
+
+clicker:Toggle()
+check("clicker disables", clicker.Enabled == false)
+local afterDisable: number = buttonPresses
+world.clock += 1
+stub.step(0.016)
+check("nothing is pressed while disabled", buttonPresses == afterDisable)
+
 -- Click Teleport ---------------------------------------------------------------
 
 section("Click Teleport")
@@ -560,6 +706,7 @@ farChest:Destroy()
 section("Teardown")
 
 ClickFile.destroy()
+ClickerFile.destroy()
 AuraFile.destroy()
 FriendFile.destroy()
 EspFile.destroy()

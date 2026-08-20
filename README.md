@@ -459,8 +459,16 @@ entries, and closes on any press outside it or when the menu is hidden.
   highlighting in two colours — one for "in swing range", one for "actually
   being hit". Damage is delivered through `Tool:Activate()` **and**
   `firetouchinterest` on the parts inside the target's box, which is what
-  melee weapons with limb-only hitboxes need. Everything past the five basic
-  controls is folded away behind one switch.
+  melee weapons with limb-only hitboxes need, and **Swing only** turns the
+  second half off so the module does nothing a hand could not.
+
+  Weapon detection does not guess. `FindFirstChildOfClass("Tool")` fails the
+  moment a game hands you two tools or names the sword something unexpected, so
+  the module *learns*: it watches `Tool.Activated`, and whatever you swing by
+  hand becomes the weapon it uses. There is also a *Bind held tool* button and
+  a **Weapon name** box (partial match, highest priority), and auto-equip pulls
+  that same weapon back out of the backpack after a respawn. Everything past
+  the five basic controls is folded away behind one switch.
 - **Friend List** (`Utility`, always-on): the one list nothing in the menu
   touches — comma-separated names, Roblox friends, optionally team-mates, an
   "add nearest player" button and a clear button. It used to live inside the
@@ -480,6 +488,15 @@ entries, and closes on any press outside it or when the menu is hidden.
   36-pixel top bar and viewport points do not, so every teleport landed above
   the finger and on touch it usually hit nothing at all; it uses
   `ScreenPointToRay` now.
+- **Auto Clicker** (`Combat`): a clicks-per-second *range* rather than a
+  number, so no two intervals match. It can press three different things:
+  `Tool` (`Tool:Activate()`, which works on a phone and is what most weapons
+  actually listen to), `Mouse` (the executor's `mouse1click`, desktop only) and
+  **`Screen button`** — games that build their own on-screen attack button put
+  a GuiButton in your PlayerGui, and the clicker presses it exactly as a finger
+  does, by firing the signals a tap raises. Press *Learn button*, tap the
+  game's button once, and it is bound; the name is remembered so a HUD rebuilt
+  between rounds is found again. The menu's own buttons are never eligible.
 - **TriggerBot** (`Combat`): always-on or hold-to-arm, single or automatic,
   reaction delay with a per-acquisition random jitter, minimum time between
   shots, target-part filter (any, head, torso), an aim radius in pixels that
@@ -637,6 +654,15 @@ face under the SIL Open Font License, vendored from
 [IdreesInc/Monocraft](https://github.com/IdreesInc/Monocraft) together with its
 licence at `src/gui/Current/Assets/Typography/Monocraft-OFL.txt`. That is a
 little over fifty options.
+
+Monocraft is verified as a real OTF: `OTTO`/CFF outlines, 13 tables with every
+required one present, 1,698 glyphs, all 95 printable ASCII characters mapped,
+family "Monocraft", monospaced, and a single weight (Regular 400). That last
+point matters — a Roblox font *family* is a JSON manifest with one file per
+weight, while a single-file face has exactly one. Asking such a file for Bold
+returns a synthetic smear or nothing, so the picker uses single-file faces at
+the one weight they have and lets size carry the hierarchy; only real families
+get the bold/semibold/regular treatment.
 
 Choosing one rebuilds the menu's three weights — bold for titles, semibold for
 controls, regular for body — from the chosen family and repaints every label

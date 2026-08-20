@@ -56,6 +56,11 @@ local Manifest: Manifest = {
             category = "Movement",
         },
         {
+            path = "src/modules/Combat/AutoClicker.luau",
+            name = "Auto Clicker",
+            category = "Combat",
+        },
+        {
             path = "src/modules/Combat/TriggerBot.luau",
             name = "TriggerBot",
             category = "Combat",

@@ -1486,9 +1486,25 @@ state.applyInterfaceFont = function(name: string, persist: boolean?): ()
     local resolvedBase: Font = base :: Font
     local family: string = resolvedBase.Family
     local style: Enum.FontStyle = resolvedBase.Style
-    TITLE_FONT = Font.new(family, Enum.FontWeight.Bold, style)
-    CONTROL_FONT = Font.new(family, Enum.FontWeight.SemiBold, style)
-    THIN_FONT = Font.new(family, Enum.FontWeight.Regular, style)
+    -- A Roblox family is a JSON manifest listing one file per weight; a font
+    -- the repository ships is a single file with a single weight (Monocraft is
+    -- Regular 400 and nothing else). Asking such a file for Bold gets you
+    -- either a synthetic smear or nothing at all, so single-file faces are used
+    -- at the one weight they have and the hierarchy comes from size alone.
+    local hasWeights: boolean =
+        string.find(family, "fonts/families/", 1, true) ~= nil
+    local titleWeight: Enum.FontWeight = hasWeights
+        and Enum.FontWeight.Bold
+        or resolvedBase.Weight
+    local controlWeight: Enum.FontWeight = hasWeights
+        and Enum.FontWeight.SemiBold
+        or resolvedBase.Weight
+    local bodyWeight: Enum.FontWeight = hasWeights
+        and Enum.FontWeight.Regular
+        or resolvedBase.Weight
+    TITLE_FONT = Font.new(family, titleWeight, style)
+    CONTROL_FONT = Font.new(family, controlWeight, style)
+    THIN_FONT = Font.new(family, bodyWeight, style)
     DISPLAY_FONT = TITLE_FONT
     VALVE_FONT = CONTROL_FONT
 
@@ -1499,9 +1515,11 @@ state.applyInterfaceFont = function(name: string, persist: boolean?): ()
             or descendant:IsA("TextButton")
             or descendant:IsA("TextBox") then
             local current: Font = (descendant :: any).FontFace
+            local weight: Enum.FontWeight = hasWeights
+                and current.Weight
+                or resolvedBase.Weight
             local ok: boolean = pcall(function(): ()
-                (descendant :: any).FontFace =
-                    Font.new(family, current.Weight, current.Style)
+                (descendant :: any).FontFace = Font.new(family, weight, current.Style)
             end)
             if not ok then
                 (descendant :: any).FontFace = resolvedBase
@@ -14371,6 +14389,11 @@ local fallbackManifest: any = {
         {
             path = "src/modules/Combat/KillAura.luau",
             name = "Kill Aura",
+            category = "Combat",
+        },
+        {
+            path = "src/modules/Combat/AutoClicker.luau",
+            name = "Auto Clicker",
             category = "Combat",
         },
         {

@@ -35,6 +35,54 @@ local activeCleanup: (() -> ())? = nil
 
 -- Melee damage in Roblox arrives one of three ways, and a weapon can use any
 -- combination of them, so all three are attempted per swing.
+-- Weapon detection.
+--
+-- `character:FindFirstChildOfClass("Tool")` is not enough: plenty of games keep
+-- the weapon somewhere else, hand you two tools at once, or give the sword a
+-- name the module cannot guess. So the module learns instead of guessing — it
+-- watches `Tool.Activated`, and whatever you swing manually becomes the weapon
+-- it swings from then on. There is also a button that binds whatever is in
+-- your hands right now, and a name box for the stubborn cases.
+local function collectTools(localPlayer: Player): {Tool}
+    local tools: {Tool} = {}
+    local character: Model? = localPlayer.Character
+    if character then
+        for _, child: Instance in ipairs(character:GetChildren()) do
+            if child:IsA("Tool") then
+                table.insert(tools, child :: Tool)
+            end
+        end
+    end
+    local backpack: Instance? = localPlayer:FindFirstChild("Backpack")
+    if backpack then
+        for _, child: Instance in ipairs(backpack:GetChildren()) do
+            if child:IsA("Tool") then
+                table.insert(tools, child :: Tool)
+            end
+        end
+    end
+    return tools
+end
+
+local function toolHandle(tool: Tool?): BasePart?
+    if not tool then
+        return nil
+    end
+    local resolved: Tool = tool :: Tool
+    local handle: Instance? = resolved:FindFirstChild("Handle")
+    if handle and handle:IsA("BasePart") then
+        return handle :: BasePart
+    end
+    -- Some weapons name their handle anything at all; the first part in the
+    -- tool is a better guess than nothing.
+    for _, descendant: Instance in ipairs(resolved:GetDescendants()) do
+        if descendant:IsA("BasePart") then
+            return descendant :: BasePart
+        end
+    end
+    return nil
+end
+
 local function activateTool(tool: Tool?): ()
     if not tool then
         return
@@ -107,18 +155,75 @@ function Module.init(context: Runtime): any
         highlight.OutlineColor = colour
     end
 
+    -- Declared before the helpers below because they read its options: the
+    -- card is built further down, but `equippedTool` is written against it.
+    local aura: any = nil
+
+    -- The weapon the player last swung by hand. Everything else is a fallback.
+    local learnedWeapon: string? = nil
+    local learnConnections: {RBXScriptConnection} = {}
+
+    local function watchTool(tool: Tool): ()
+        table.insert(
+            learnConnections,
+            tool.Activated:Connect(function(): ()
+                learnedWeapon = tool.Name
+            end)
+        )
+    end
+
+    local function watchAllTools(): ()
+        for _, connection: RBXScriptConnection in ipairs(learnConnections) do
+            pcall(function(): ()
+                connection:Disconnect()
+            end)
+        end
+        learnConnections = {}
+        for _, tool: Tool in ipairs(collectTools(localPlayer)) do
+            watchTool(tool)
+        end
+    end
+
+    local function matchesWanted(tool: Tool, wanted: string): boolean
+        return string.find(string.lower(tool.Name), string.lower(wanted), 1, true) ~= nil
+    end
+
+    -- Order of preference: the name you typed, the weapon you last swung, then
+    -- whatever is in your hands.
     local function equippedTool(): (Tool?, BasePart?)
         local character: Model? = localPlayer.Character
         if not character then
             return nil, nil
         end
-        local tool: Tool? = character:FindFirstChildOfClass("Tool")
-        if not tool then
-            return nil, nil
+        local wanted: string = tostring(aura.Options["Weapon name"].Value or "")
+        local held: {Tool} = {}
+        for _, child: Instance in ipairs(character:GetChildren()) do
+            if child:IsA("Tool") then
+                table.insert(held, child :: Tool)
+            end
         end
-        return tool, tool:FindFirstChild("Handle") :: BasePart?
+
+        if wanted ~= "" then
+            for _, tool: Tool in ipairs(held) do
+                if matchesWanted(tool, wanted) then
+                    return tool, toolHandle(tool)
+                end
+            end
+        end
+        if learnedWeapon then
+            for _, tool: Tool in ipairs(held) do
+                if tool.Name == learnedWeapon then
+                    return tool, toolHandle(tool)
+                end
+            end
+        end
+        local first: Tool? = held[1]
+        return first, toolHandle(first)
     end
 
+    -- Equipping: the wanted weapon if the backpack has it, otherwise the first
+    -- tool there, because a game that stows your sword on respawn should not
+    -- end the aura.
     local function equipFromBackpack(): ()
         local backpack: Instance? = localPlayer:FindFirstChild("Backpack")
         local humanoid: Humanoid? = localPlayer.Character
@@ -126,15 +231,32 @@ function Module.init(context: Runtime): any
         if not backpack or not humanoid then
             return
         end
-        local tool: Tool? = backpack:FindFirstChildOfClass("Tool")
-        if tool then
+        local wanted: string = tostring(aura.Options["Weapon name"].Value or "")
+        local chosen: Tool? = nil
+        for _, child: Instance in ipairs(backpack:GetChildren()) do
+            if not child:IsA("Tool") then
+                continue
+            end
+            local tool: Tool = child :: Tool
+            if wanted ~= "" and matchesWanted(tool, wanted) then
+                chosen = tool
+                break
+            end
+            if learnedWeapon and tool.Name == learnedWeapon then
+                chosen = tool
+                break
+            end
+            if not chosen then
+                chosen = tool
+            end
+        end
+        if chosen then
             pcall(function(): ()
-                humanoid:EquipTool(tool)
+                humanoid:EquipTool(chosen :: Tool)
             end)
         end
     end
 
-    local aura: any
     aura = framework.Categories.Combat:CreateModule({
         Name = "Kill Aura",
         Category = "Combat",
@@ -150,6 +272,28 @@ function Module.init(context: Runtime): any
 
             aura:Clean(function(): ()
                 clearHighlights()
+            end)
+            -- Learn from the player: whichever tool they swing by hand becomes
+            -- the weapon the aura uses.
+            watchAllTools()
+            aura:Event(localPlayer.CharacterAdded, function(): ()
+                task.defer(watchAllTools)
+            end)
+            local backpack: Instance? = localPlayer:FindFirstChild("Backpack")
+            if backpack then
+                aura:Event(backpack.ChildAdded, function(child: Instance): ()
+                    if child:IsA("Tool") then
+                        watchTool(child :: Tool)
+                    end
+                end)
+            end
+            aura:Clean(function(): ()
+                for _, connection: RBXScriptConnection in ipairs(learnConnections) do
+                    pcall(function(): ()
+                        connection:Disconnect()
+                    end)
+                end
+                learnConnections = {}
             end)
 
             aura:Loop(function(): ()
@@ -233,6 +377,11 @@ function Module.init(context: Runtime): any
                         continue
                     end
                     activateTool(tool)
+                    if options["Swing only"].Value then
+                        -- Swing and nothing else: the tool's own Activate, no
+                        -- touch events, no reach. What a player's hand does.
+                        continue
+                    end
                     if not inAttackRange or not options["Contact damage"].Value then
                         continue
                     end
@@ -261,6 +410,33 @@ function Module.init(context: Runtime): any
                 clearHighlights(keep)
             end)
         end,
+    })
+
+    aura:CreateSection("Weapon")
+    aura:CreateTextBox({
+        Name = "Weapon name",
+        Default = "",
+        Tooltip = "Part of the tool's name. Leave empty and the module uses "
+            .. "whatever you last swung by hand.",
+    })
+    aura:CreateButton({
+        Name = "Bind held tool",
+        Tooltip = "Remembers whatever is in your hands right now.",
+        Function = function(): ()
+            local tool: Tool? = equippedTool()
+            if not tool then
+                aura:Notify("nothing equipped")
+                return
+            end
+            learnedWeapon = (tool :: Tool).Name
+            aura:Notify((tool :: Tool).Name .. " bound")
+        end,
+    })
+    aura:CreateToggle({
+        Name = "Swing only",
+        Default = false,
+        Tooltip = "Only press the weapon; never fire its touch events. Slower, "
+            .. "but indistinguishable from swinging by hand.",
     })
 
     aura:CreateSection("Targeting")

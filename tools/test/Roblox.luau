@@ -209,6 +209,10 @@ local function newInstance(className: string): any
         end,
     })
 
+    function instance:GetGuiObjectsAtPosition(_x: number, _y: number): {any}
+        return rawget(self, "HitTest") or {}
+    end
+
     function instance:IsA(query: string): boolean
         if self.ClassName == query then
             return true
@@ -218,6 +222,12 @@ local function newInstance(className: string): any
         end
         if query == "GuiObject" then
             return self.ClassName == "Frame" or self.ClassName == "TextLabel"
+        end
+        if query == "GuiButton" then
+            return self.ClassName == "TextButton" or self.ClassName == "ImageButton"
+        end
+        if query == "Tool" then
+            return self.ClassName == "Tool"
         end
         return false
     end
@@ -309,6 +319,22 @@ local function newInstance(className: string): any
         rawset(self, "Activations", (rawget(self, "Activations") or 0) + 1)
     end
 
+    -- Buttons carry the signals a tap raises, so a module can be watched
+    -- pressing them.
+    if className == "TextButton" or className == "ImageButton" then
+        instance.MouseButton1Click = signal()
+        instance.MouseButton1Down = signal()
+        instance.MouseButton1Up = signal()
+        instance.Activated = signal()
+    end
+    if className == "Tool" then
+        -- Kill Aura learns which weapon you swing by watching this one.
+        instance.Activated = signal()
+    end
+    if className == "Model" or className == "Backpack" then
+        instance.ChildAdded = signal()
+    end
+
     return instance
 end
 
@@ -396,6 +422,27 @@ function Mock.install(): MockWorld
         end,
         identity = cframe(vector3(0, 0, 0)),
     }
+
+    -- Executor helpers the combat modules reach for.
+    globals.getconnections = function(target: any): {any}
+        local handlers: {any} = {}
+        if type(target) == "table" and type(target.Connect) == "function" then
+            table.insert(handlers, {
+                Fire = function(): ()
+                    target:Fire()
+                end,
+            })
+        end
+        return handlers
+    end
+    globals.firesignal = function(target: any): ()
+        if type(target) == "table" and type(target.Fire) == "function" then
+            target:Fire()
+        end
+    end
+    globals.mouse1click = function(): ()
+        world.mouseClicks = (world.mouseClicks or 0) + 1
+    end
 
     globals.OverlapParams = {
         new = function(): any
