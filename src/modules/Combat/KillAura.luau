@@ -135,7 +135,7 @@ function Module.init(context: Runtime): any
             BackgroundTransparency = 0.12,
             BorderSizePixel = 0,
             Position = UDim2.new(0, 18, 1, -18),
-            Size = UDim2.fromOffset(188, 54),
+            Size = UDim2.fromOffset(188, 62),
             Visible = false,
             ZIndex = 60,
         }) :: Frame
@@ -159,13 +159,13 @@ function Module.init(context: Runtime): any
         }) :: ImageLabel
         local name: TextLabel = host.makeTextLabel(root, "", 12)
         name.Name = "TargetName"
-        name.Position = UDim2.fromOffset(54, 8)
-        name.Size = UDim2.new(1, -62, 0, 15)
+        name.Position = UDim2.fromOffset(54, 6)
+        name.Size = UDim2.new(1, -62, 0, 21)
         name.ZIndex = 61
         local detail: TextLabel = host.makeTextLabel(root, "", 10)
         detail.Name = "TargetDetail"
-        detail.Position = UDim2.fromOffset(54, 23)
-        detail.Size = UDim2.new(1, -62, 0, 13)
+        detail.Position = UDim2.fromOffset(54, 26)
+        detail.Size = UDim2.new(1, -62, 0, 18)
         detail.TextColor3 = Color3.fromRGB(158, 158, 166)
         detail.ZIndex = 61
         local track: Frame = host.create("Frame", {

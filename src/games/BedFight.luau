@@ -510,7 +510,7 @@ function Module.init(runtime: any): any
                 BackgroundTransparency = 0.15,
                 BorderSizePixel = 0,
                 Position = UDim2.new(1, -18, 0, 90),
-                Size = UDim2.fromOffset(196, 56),
+                Size = UDim2.fromOffset(196, 64),
                 ZIndex = 60,
             }) :: Frame
             create("UICorner", {Parent = root, CornerRadius = UDim.new(0, 4)})
@@ -521,17 +521,17 @@ function Module.init(runtime: any): any
                 Thickness = 1,
             })
             local statusLabel: TextLabel = makeTextLabel(root, "", 12)
-            statusLabel.Position = UDim2.fromOffset(10, 8)
-            statusLabel.Size = UDim2.new(1, -20, 0, 15)
+            statusLabel.Position = UDim2.fromOffset(10, 5)
+            statusLabel.Size = UDim2.new(1, -20, 0, 21)
             statusLabel.ZIndex = 61
             local modeLabel: TextLabel = makeTextLabel(root, "", 10)
-            modeLabel.Position = UDim2.fromOffset(10, 24)
-            modeLabel.Size = UDim2.new(1, -20, 0, 13)
+            modeLabel.Position = UDim2.fromOffset(10, 25)
+            modeLabel.Size = UDim2.new(1, -20, 0, 18)
             modeLabel.TextColor3 = Color3.fromRGB(158, 158, 166)
             modeLabel.ZIndex = 61
             local bedLabel: TextLabel = makeTextLabel(root, "", 10)
-            bedLabel.Position = UDim2.fromOffset(10, 38)
-            bedLabel.Size = UDim2.new(1, -20, 0, 13)
+            bedLabel.Position = UDim2.fromOffset(10, 42)
+            bedLabel.Size = UDim2.new(1, -20, 0, 18)
             bedLabel.TextColor3 = Color3.fromRGB(158, 158, 166)
             bedLabel.ZIndex = 61
             runtimeState.infoPanel = {root = root}

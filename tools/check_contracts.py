@@ -16,6 +16,7 @@ Run from the repository root; prints every violation and exits non-zero.
 """
 
 import glob
+import math
 import re
 import sys
 
@@ -150,6 +151,63 @@ def card_name_contract(shell: str, failures: list) -> None:
             failures.append(f'{path}: card "{name}" is registered twice')
 
 
+def text_fits_contract(failures: list) -> None:
+    """A label shorter than its own line box loses its descenders.
+
+    Every label the helpers build clips to its frame, and `TextSize` is
+    `normalSize * 1.35 * textScale`, so a 13-point label renders at 18px and
+    needs about 22 pixels of room. The page header was 20 and the tail of the
+    "g" in "Settings" was shaved off. The runtime caps the font size to the box
+    as a safety net; this keeps the boxes honest so the net is never needed.
+    """
+    multiplier, line_box = 1.35, 1.2
+
+    def needed(normal: int) -> int:
+        return math.ceil(round(normal * multiplier) * line_box) + 1
+
+    builder = re.compile(
+        r"\b(?:host\.)?(?:makeTextLabel|makeButton)\(\s*[^,]+,.*?,\s*(\d+)\s*\)"
+    )
+    for path in ["ARandomMenu.luau"] + sorted(
+        glob.glob("src/**/*.luau", recursive=True)
+    ):
+        lines = open(path).read().split("\n")
+        for index, line in enumerate(lines):
+            call = builder.search(line)
+            if not call:
+                continue
+            name = None
+            for probe in (line, lines[index - 1] if index else ""):
+                found = re.search(r"local\s+(\w+)\s*[:=]", probe)
+                if found:
+                    name = found.group(1)
+                    break
+            if not name:
+                continue
+            want = needed(int(call.group(1)))
+            window = "\n".join(lines[index : index + 16])
+            # `UDim2.new` is often written across five lines, so the height
+            # search has to read through newlines.
+            heights = re.findall(
+                re.escape(name)
+                + r"\.Size\s*=\s*UDim2\.fromOffset\(\s*[^,]+?,\s*(\d+)\s*\)",
+                window,
+                re.S,
+            )
+            heights += re.findall(
+                re.escape(name)
+                + r"\.Size\s*=\s*UDim2\.new\(.*?,\s*0\s*,\s*(\d+)\s*\)",
+                window,
+                re.S,
+            )
+            for height in heights:
+                if int(height) < want:
+                    failures.append(
+                        f"{path}:{index + 1}: {name} is {height}px tall but its "
+                        f"text needs {want}px, so it will be clipped"
+                    )
+
+
 def main() -> int:
     shell = open(SHELL).read()
     sources = sorted(glob.glob("src/**/*.luau", recursive=True))
@@ -160,6 +218,7 @@ def main() -> int:
     builder_contract(shell, failures)
     connection_contract(shell, sources, failures)
     card_name_contract(shell, failures)
+    text_fits_contract(failures)
 
     if failures:
         for line in failures:

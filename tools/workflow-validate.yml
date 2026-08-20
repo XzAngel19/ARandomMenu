@@ -1,0 +1,44 @@
+# The workflow this repository should run, kept here because a GitHub App
+# cannot push to `.github/workflows/`.
+#
+# Copy this file over `.github/workflows/validate.yml` yourself. It replaces
+# every hand-written step with one call to `tools/validate.sh`, which is the
+# same list of checks, in the same order, that runs locally — so a green tick
+# here and a green run on your machine mean the same thing.
+#
+# The current workflow fails for a reason that has nothing to do with the menu:
+# its "strict Luau headers" step walks every .lua file in the repository,
+# including `reference/vape-v4-universal.lua`, which is third-party source and
+# starts with its own watermark line. `tools/validate.sh` excludes `reference/`
+# from that check (and from compilation) precisely because that directory is
+# not ours to reformat.
+
+name: Validate repository
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Fetch the Luau toolchain
+        shell: bash
+        run: |
+          curl -fsSL -o /tmp/luau.zip \
+            https://github.com/luau-lang/luau/releases/download/0.732/luau-ubuntu.zip
+          unzip -q /tmp/luau.zip -d /tmp/luau
+          chmod +x /tmp/luau/luau /tmp/luau/luau-compile /tmp/luau/luau-analyze
+
+      - name: Run repository checks
+        shell: bash
+        env:
+          # A missing toolchain is a failed job here, not a skipped check.
+          REQUIRE_LUAU: "1"
+          LUAU_DIR: /tmp/luau
+        run: bash tools/validate.sh

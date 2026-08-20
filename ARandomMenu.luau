@@ -156,7 +156,7 @@ local FEATURE_CATEGORIES: {[string]: string} = {
 }
 
 -- Height reserved at the foot of the navigation rail for the player card.
-local PROFILE_CARD_HEIGHT: number = 56
+local PROFILE_CARD_HEIGHT: number = 62
 
 -- Module kinds, on the card.
 --
@@ -1906,6 +1906,33 @@ local function registerText(
     return object
 end
 
+-- The box wins.
+--
+-- Every label the helpers build clips to its frame, because text that spills
+-- out of its box is the one failure this interface will not have. The cost is
+-- that a frame shorter than the font's line box shaves the bottom off the
+-- glyphs — the tail of the "g" in "Settings" was cut off in the page header,
+-- and it happens with any face taller than the one a height was tuned for.
+--
+-- So the requested size is capped by the room the object actually has. 1.2 is
+-- the tallest line box among the faces the typeface picker offers, and text
+-- that does not fit comes out a point or two smaller instead of shaved. A
+-- label sized in scale has no measurable height until it is laid out, so it
+-- keeps the requested size until the next refresh pass, when AbsoluteSize is
+-- real.
+local function fitTextSize(object: any, requested: number): number
+    local height: number = object.AbsoluteSize.Y
+    if height <= 0 then
+        local vertical: UDim = object.Size.Y
+        height = vertical.Scale == 0 and vertical.Offset or 0
+    end
+    if height <= 0 then
+        return requested
+    end
+    return math.max(7, math.min(requested, math.floor((height - 2) / 1.2)))
+end
+state.fitTextSize = fitTextSize
+
 -- Sets the logical size of an already-registered label and applies it with
 -- the current text scale.
 state.setTextMetric = function(object: any, normalSize: number): ()
@@ -1913,8 +1940,9 @@ state.setTextMetric = function(object: any, normalSize: number): ()
     if entry then
         entry.normalSize = normalSize
     end
-    object.TextSize = math.round(
-        normalSize * TEXT_BASE_MULTIPLIER * state.textScale
+    object.TextSize = fitTextSize(
+        object,
+        math.round(normalSize * TEXT_BASE_MULTIPLIER * state.textScale)
     )
 end
 
@@ -3030,11 +3058,13 @@ HeaderTitle.Name = "PageTitle"
 HeaderTitle.AnchorPoint = Vector2.new(0, 0.5)
 HeaderTitle.FontFace = CONTROL_FONT
 HeaderTitle.Position = UDim2.new(0, layout.contentPadding, 0.5, 0)
+-- Tall enough for a descender at the largest text scale, so the title is not
+-- the label that has to be shrunk to fit.
 HeaderTitle.Size = UDim2.new(
     1,
     -(layout.contentPadding * 2 + layout.searchWidth + 10),
     0,
-    20
+    26
 )
 HeaderTitle.TextColor3 = Theme.DefaultText
 HeaderTitle.TextTruncate = Enum.TextTruncate.AtEnd
@@ -7458,8 +7488,8 @@ local ProfileName: TextLabel =
     (makeTextLabel(ProfileCard, LocalPlayer.DisplayName, 11) :: any) :: TextLabel
 ProfileName.Name = "DisplayName"
 ProfileName.FontFace = CONTROL_FONT
-ProfileName.Position = UDim2.fromOffset(46, 6)
-ProfileName.Size = UDim2.new(1, -52, 0, 14)
+ProfileName.Position = UDim2.fromOffset(46, 3)
+ProfileName.Size = UDim2.new(1, -52, 0, 21)
 ProfileName.TextColor3 = Theme.DefaultText
 ProfileName.TextTruncate = Enum.TextTruncate.AtEnd
 ProfileName.ZIndex = 25
@@ -7467,16 +7497,16 @@ ProfileName.ZIndex = 25
 local ProfileHandle: TextLabel =
     (makeTextLabel(ProfileCard, "@" .. LocalPlayer.Name, 9) :: any) :: TextLabel
 ProfileHandle.Name = "Handle"
-ProfileHandle.Position = UDim2.fromOffset(46, 19)
-ProfileHandle.Size = UDim2.new(1, -52, 0, 12)
+ProfileHandle.Position = UDim2.fromOffset(46, 25)
+ProfileHandle.Size = UDim2.new(1, -52, 0, 18)
 ProfileHandle.TextColor3 = Theme.DefaultTextMuted
 ProfileHandle.TextTruncate = Enum.TextTruncate.AtEnd
 ProfileHandle.ZIndex = 25
 
 local ProfileMeta: TextLabel = (makeTextLabel(ProfileCard, "", 9) :: any) :: TextLabel
 ProfileMeta.Name = "Meta"
-ProfileMeta.Position = UDim2.fromOffset(46, 31)
-ProfileMeta.Size = UDim2.new(1, -52, 0, 12)
+ProfileMeta.Position = UDim2.fromOffset(46, 43)
+ProfileMeta.Size = UDim2.new(1, -52, 0, 18)
 ProfileMeta.TextColor3 = Theme.DefaultTextMuted
 ProfileMeta.TextTruncate = Enum.TextTruncate.AtEnd
 ProfileMeta.ZIndex = 25
@@ -7916,74 +7946,6 @@ end
 -- key always reaches the module that claimed it.
 state.shortcutBindings = {} :: {[string]: any}
 
--- Hover the key slot to bind it.
---
--- The reference interface has no "set key" dialog: you point at the slot with
--- the menu open, press a key, and that key is now the module's.
---
--- The pointer has to be **on the slot itself**, not anywhere on the card. It
--- used to be the whole row, and that made the menu unusable: every card is a
--- wide rectangle, the pointer is inside one of them almost all the time, and
--- so every keypress — reading the panel, typing anywhere but the search box —
--- landed on whatever module happened to be under the mouse. The slot is a
--- 46x24 target you have to aim at, which is what makes the gesture
--- deliberate.
-state.hoverBindTarget = nil :: any
-do
-
-state.bindHoverKeyTarget = function(
-    slot: GuiObject,
-    name: string,
-    resolve: () -> any
-): ()
-    local target: any = {name = name, resolve = resolve}
-    trackUiConnection(slot.MouseEnter:Connect(function(): ()
-        if state.isMobile then
-            return
-        end
-        state.hoverBindTarget = target
-        -- The slot wears the same "listening" colour it wears during a real
-        -- capture, so it is obvious which one is about to take the key.
-        if slot:IsA("TextButton") then
-            setKeySlotCapture(slot :: TextButton, true)
-        end
-    end))
-    trackUiConnection(slot.MouseLeave:Connect(function(): ()
-        if slot:IsA("TextButton") then
-            setKeySlotCapture(slot :: TextButton, false)
-        end
-        if state.hoverBindTarget == target then
-            state.hoverBindTarget = nil
-        end
-    end))
-end
-
--- Called by the global keyboard handler. Returns true when the key was taken
--- by whatever is under the pointer, in which case no module fires from it.
-state.tryHoverBind = function(keyCode: Enum.KeyCode): boolean
-    local target: any = state.hoverBindTarget
-    if not target or not state.visible or state.isMobile then
-        return false
-    end
-    if keyCode == state.toggleKey or keyCode == Enum.KeyCode.Escape then
-        -- Two keys are never taken: the one that opens the menu (a module
-        -- bound to it would fire every time the window appeared) and Escape,
-        -- which everywhere else in the interface means "cancel".
-        return false
-    end
-    local assign: any = target.resolve()
-    if type(assign) ~= "function" then
-        return false
-    end
-    local bound: boolean = assign(keyCode) == true
-    notify(
-        target.name
-            .. (bound and (" bound to " .. keyCode.Name) or " unbound")
-    )
-    return true
-end
-end
-
 local function shortcutSlotText(binding: any): string
     -- Blank when unbound. The empty slot is the affordance; a "KEY" caption
     -- only added noise and made no sense on a phone.
@@ -8048,10 +8010,13 @@ local function bindActionShortcut(
     binding.refresh = refreshButtonText
     refreshButtonText()
 
-    -- One place that takes a key, whether it arrived through the slot's own
-    -- capture or through hovering the card and pressing it. Pressing the key
-    -- that is already bound clears the binding, which is how the reference
-    -- interface unbinds and means the slot never needs a second control.
+    -- One place that takes a key.
+    --
+    -- A key is only ever taken after the slot has been *clicked*: the slot
+    -- shows "..." and the next key press lands here. Hovering used to be
+    -- enough, and that was a bug — the pointer resting over a slot turned
+    -- every keystroke into a rebind. Pressing the key that is already bound
+    -- clears the binding, so the slot never needs a second control.
     binding.assign = function(keyCode: Enum.KeyCode): boolean
         local cleared: boolean = keyCode == binding.key
         binding.key = cleared and Enum.KeyCode.Unknown or keyCode
@@ -8154,11 +8119,6 @@ state.globalShortcutBeganConnection = UserInputService.InputBegan:Connect(
         -- events report, so it is never treated as a match: otherwise one
         -- odd keypress would fire every module that has no key assigned.
         if input.KeyCode == Enum.KeyCode.Unknown then
-            return
-        end
-        -- Hovering a card (or one of its key rows) claims the key instead of
-        -- firing whatever already owns it.
-        if state.tryHoverBind(input.KeyCode) then
             return
         end
         for _, binding: any in pairs(state.shortcutBindings) do
@@ -8855,12 +8815,6 @@ local function createUniversalFeature(
     -- Point at the card, press a key, the card owns that key — the same
     -- gesture the reference interface uses instead of a capture dialog.
     -- Containers are excluded because their slot has nothing to activate.
-    if feature.kind ~= "group" then
-        state.bindHoverKeyTarget(shortcutButton, name, function(): any
-            local binding: any = state.shortcutBindings[feature.configKey]
-            return binding and binding.assign
-        end)
-    end
 
     -- Re-applies the responsive metrics to this card. The shared listener
     -- registered next to `allFeatures` calls it for every module whenever the
@@ -10365,8 +10319,8 @@ local function addKeyOption(
     applyKeySlotStyle(button)
     button:SetAttribute("CaptureIdleText", button.Text)
 
-    -- One assignment path for the slot's own capture and for hovering the row
-    -- and pressing a key, so both end up with the same stored value.
+    -- The row's key is taken by the slot's capture and nothing else: click it,
+    -- then press the key.
     local function assignKey(keyCode: Enum.KeyCode): boolean
         local cleared: boolean = keyCode == currentKey
         currentKey = cleared and Enum.KeyCode.Unknown or keyCode
@@ -10387,9 +10341,6 @@ local function addKeyOption(
         beginKeyCapture(button, function(keyCode: Enum.KeyCode): ()
             assignKey(keyCode)
         end)
-    end)
-    state.bindHoverKeyTarget(button, labelText, function(): any
-        return assignKey
     end)
 
     callback(currentKey)
@@ -16080,12 +16031,23 @@ end)
 local function updateTextSizes(): ()
     for _, item in ipairs(registeredText) do
         if item.object and item.object.Parent then
-            item.object.TextSize = math.round(
-                item.normalSize * TEXT_BASE_MULTIPLIER * state.textScale
+            item.object.TextSize = state.fitTextSize(
+                item.object,
+                math.round(
+                    item.normalSize * TEXT_BASE_MULTIPLIER * state.textScale
+                )
             )
         end
     end
 end
+-- One pass once the shell has been laid out: every label sized in scale has a
+-- real AbsoluteSize by then, so this is where those get their cap applied. A
+-- viewport change resizes boxes, so the cap is re-applied then too.
+state.refitText = updateTextSizes
+state.onLayout(function(): ()
+    updateTextSizes()
+end)
+task.defer(updateTextSizes)
 
 local textSizeDragInput: InputObject? = nil
 local function setTextScaleFromX(pointerX: number): ()

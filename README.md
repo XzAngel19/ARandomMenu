@@ -752,6 +752,20 @@ The test suite asserts each of these: three refreshes in one frame do one
 sweep, a later frame sweeps again, rig tables are identical between calls, and
 three weapon scans walk the interface once.
 
+### The workflow
+
+`.github/workflows/validate.yml` should be one step: `bash tools/validate.sh`.
+The intended file is checked in at **`tools/workflow-validate.yml`** — copy it
+over the workflow yourself, because a GitHub App cannot push to
+`.github/workflows/`.
+
+Until then CI is red for a reason that has nothing to do with the menu: the
+hand-written "strict Luau headers" step walks every `.lua` file in the
+repository, `reference/vape-v4-universal.lua` included, and that file is
+third-party source whose first line is its own watermark. `tools/validate.sh`
+excludes `reference/` from that check and from compilation, because that
+directory is not ours to reformat.
+
 ### Contracts the build enforces
 
 `tools/validate.sh` runs every check the repository holds itself to, and three
@@ -772,6 +786,13 @@ of them exist because the compiler cannot see the bug:
   outlives the module being switched off.
 * **Card-name contract** — a game module cannot register a card whose name the
   universal set already uses, because on one board that is two identical rows.
+* **Text-fits contract** — a label shorter than its own line box fails the
+  build. Every label clips to its frame and `TextSize` is
+  `normalSize x 1.35 x textScale`, so a 13-point title renders at 18px and
+  needs about 23 pixels of room: the page header had 20 and the tail of the "g"
+  in "Settings" was shaved off. At runtime the font size is also capped to the
+  box it is in, so a face taller than the one a height was tuned for comes out
+  a point smaller instead of cut.
 
 Plus the lints that have each cost this repository a real bug —
 `GlobalUsedAsLocal` (a closure naming a local declared further down reads a
@@ -1049,14 +1070,11 @@ config and restored on the next injection.
   exactly where a game put a button of its own; press and drag moves it,
   a press that does not travel still opens the menu, and where it ends up is
   saved with the rest of the interface state.
-- **Hover the key slot and press a key to bind it.** No dialog, no capture
-  mode: with the menu open, point at a module's key slot and press the key you
-  want; press it again to unbind. The pointer has to be on the slot itself —
-  it used to be the whole card, and since the pointer is inside some card
-  almost all the time, every keypress bound itself to whatever was under the
-  mouse. The slot lights up while it is listening. Option rows that carry a key
-  (Auto Clicker's hold key) work the same way, and the key that opens the menu
-  is never taken.
+- **Click the key slot, then press a key.** The slot shows `...` while it is
+  waiting and takes the next key; pressing the key it already holds clears it.
+  Binding on hover was tried and removed: the pointer resting over a slot
+  turned every keystroke into a rebind, which is unusable. A click is the
+  gesture that says "I meant this one".
 - **Three lines, not three dots.** Every card's settings handle is a drawn
   hamburger — three frames, dimmed when the module has nothing to configure —
   instead of a "..." that read as truncated text. It is drawn rather than typed

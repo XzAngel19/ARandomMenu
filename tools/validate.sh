@@ -191,7 +191,7 @@ grep -q 'RUNTIME_SAFETY_SOURCE_URL' ARandomMenu.luau
 ! grep -q 'corner.Enabled' src/gui/Current/gui.lua
 echo "ok"
 
-step "Module contracts II: options, state and builders"
+step "Module contracts II: options, state, builders, text boxes"
 # Three whole classes of bug that only ever showed up in-game, checked here
 # instead:
 #
@@ -201,7 +201,9 @@ step "Module contracts II: options, state and builders"
 #     projectile calibration read `.settings` after the field became `.tuning`);
 #   * a game module calling a builder the shell forgot to put in
 #     `createGameModuleEnvironment` — which is how Kill Aura once rendered a
-#     "Weapon" heading and nothing under it.
+#     "Weapon" heading and nothing under it;
+#   * a label shorter than the line box of its own font, which clips the
+#     descenders off its text (the page header shaved the tail off "Settings").
 python3 tools/check_contracts.py
 echo "ok"
 
