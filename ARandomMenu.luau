@@ -120,8 +120,6 @@ local FEATURE_CATEGORIES: {[string]: string} = {
     ["Auto Header"] = "Combat",
 
     -- VD
-    ["Players ESP"] = "Visuals",
-    ["Generator & Objective ESP"] = "Visuals",
     ["Auto Generator"] = "Utility",
     ["Auto Parry / Auto Block"] = "Protection",
     ["Killer Hit Aura"] = "Combat",
@@ -139,15 +137,12 @@ local FEATURE_CATEGORIES: {[string]: string} = {
     ["Optimize Blind / Flash Protection"] = "Protection",
     ["VD Fullbright"] = "Visuals",
 
-    -- MVSD
-    ["ESP"] = "Visuals",
+    -- MVSD (its ESP is an option of the universal one now)
     ["Silent Aim"] = "Combat",
     ["Auto Shoot"] = "Combat",
     ["Trigger Opportunity"] = "Visuals",
 
-    -- BedFight
-    ["Bed ESP"] = "Visuals",
-    ["Generator ESP"] = "Visuals",
+    -- BedFight (beds and generators are options of the universal ESP)
     ["Round Info"] = "Visuals",
     ["Auto Swing"] = "Combat",
     ["Bed Nuker"] = "Combat",
@@ -181,15 +176,6 @@ local PROFILE_CARD_HEIGHT: number = 56
 --   hold    two upright bars: live only while a finger is on the key.
 --   group   three stacked rules: a container of settings, always running.
 
-
--- The rail entries that are category filters rather than pages of their own.
-local CATEGORY_TABS: {[string]: boolean} = {
-    Combat = true,
-    Movement = true,
-    Visuals = true,
-    Protection = true,
-    Utility = true,
-}
 
 -- Sort key for a whole category. The catch-all always sinks to the bottom;
 -- every real category is ordered alphabetically.
@@ -231,11 +217,7 @@ local TAB_DRAWN_ICONS: {[string]: string} = {
 -- purpose: a glyph font would have to be downloaded and could fail to load.
 local TAB_MONOGRAMS: {[string]: string} = {
     ["Universal"] = "UN",
-    ["Combat"] = "CB",
-    ["Movement"] = "MV",
-    ["Visuals"] = "VS",
-    ["Protection"] = "PR",
-    ["Utility"] = "UT",
+    ["Spoof"] = "SP",
     ["Config."] = "CF",
 }
 
@@ -3107,23 +3089,33 @@ state.onLayout(function(metrics: LayoutMetrics): ()
 end)
 end
 
+-- What a rail entry is called on screen.
+--
+-- In one place because the rail row and the page header have to agree, and
+-- because the board's name is not fixed: it is the game's when a game module
+-- was recognised.
+state.tabLabel = function(tabName: string): string
+    if tabName == "Config." then
+        return "Settings"
+    end
+    if tabName == "Universal"
+        and type(ACTIVE_GAME_MODULE) == "string"
+        and ACTIVE_GAME_MODULE ~= "" then
+        return ACTIVE_GAME_MODULE
+    end
+    return tabName
+end
+
 local function setTab(tabName: string): ()
     state.activeTab = tabName
 
-    -- Every rail entry except Config. shows the same board; what changes is
-    -- which category of card is on it. "Universal" is the unfiltered view.
-    state.categoryFilter = CATEGORY_TABS[tabName] and tabName or nil
-    local pageName: string = tabName == "Config." and "Config." or "Universal"
     for name, page in pairs(pages) do
-        page.Visible = name == pageName
-    end
-    if state.refreshSearch then
-        state.refreshSearch()
+        page.Visible = name == tabName
     end
 
     local headerTitle: TextLabel? = state.shells.headerTitle
     if headerTitle then
-        headerTitle.Text = tabName == "Config." and "Settings" or tabName
+        headerTitle.Text = state.tabLabel(tabName)
     end
 
     for name: string, button: TextButton in pairs(defaultTabButtons) do
@@ -3165,7 +3157,9 @@ end
 
 local function createTab(tabName: string, layoutOrder: number): Frame
     local layout: LayoutMetrics = state.layout
-    local defaultLabel: string = tabName == "Config." and "Settings" or tabName
+    -- The board's own label follows the game: "Universal" is what it is
+    -- called when nothing recognised this place.
+    local defaultLabel: string = state.tabLabel(tabName)
     -- The row itself carries no text: a monogram chip and a separate label
     -- are laid out inside it. A UIPadding on the button would also shift its
     -- children, which is exactly what the chip must not do.
@@ -3351,23 +3345,21 @@ state.onLayout(function(metrics: LayoutMetrics): ()
     end
 end)
 
--- The rail is the taxonomy, not a list of games.
+-- Three entries, and one of them is the whole menu.
 --
--- Every game used to own a tab, so where a module lived was decided by *who
--- wrote it* rather than by what it does: MM2's role ESP sat on the MM2 page
--- while the universal ESP sat on another, four of the seven tabs were hidden
--- in any given server, and the same idea was implemented twice. Now there is
--- one page per category, and a card lands on the page its category names
--- whoever registered it — the menu's own modules and the ones the game module
--- adds are the same kind of thing and sit next to each other. An unsupported
--- game simply contributes nothing, so the pages hold the universal set.
+-- Games used to own a tab each, then categories did, and both were the same
+-- mistake in different clothes: a rail full of pages that were only ever a
+-- filter over one list of cards. There is one board now. It carries every
+-- module the client has — the menu's own and whatever the game module added —
+-- grouped under a header per category, which is the grouping that was doing
+-- the work all along.
+--
+-- The board is called "Universal" in a game nobody wrote a module for, and
+-- takes the game's own name when there is one: the rail says MM2 because in
+-- MM2 the board *is* MM2 plus everything else.
 local UniversalPage = createTab("Universal", 1)
-createTab("Combat", 2)
-createTab("Movement", 3)
-createTab("Visuals", 4)
-createTab("Protection", 5)
-createTab("Utility", 6)
-local SettingsPage = createTab("Config.", 7)
+createTab("Spoof", 2)
+local SettingsPage = createTab("Config.", 3)
 
 for _, button: TextButton in pairs(defaultTabButtons) do
     button.Size = UDim2.new(1, 0, 0, state.layout.navRowHeight)
@@ -3522,18 +3514,60 @@ create("UIListLayout", {
     SortOrder = Enum.SortOrder.LayoutOrder,
 })
 
--- One board, filtered by the rail.
+-- The Spoof page.
 --
--- Cards live on a single page and the rail chooses which category of them is
--- on screen, rather than each page owning its own scroll. Two reasons: a card
--- is one instance and can only ever have one parent, so a "Universal" page
--- that shows everything *and* a "Combat" page that shows the combat half
--- cannot both hold the same card; and grouping is something the grid already
--- does — it draws a header per category — so the filter is the only new idea.
---
+-- Its own page rather than a category of the board: spoofing is about what the
+-- server is told about this client, not about what the client can do in the
+-- world, and mixing the two under one list would make both harder to read. It
+-- is empty until the tools land; the scroll is published so they can be added
+-- without touching the shell.
+do
+    local spoofPage: Frame? = pages.Spoof
+    if spoofPage then
+        local spoofScroll: ScrollingFrame = create("ScrollingFrame", {
+            Parent = spoofPage,
+            Name = "SpoofScroll",
+            Active = true,
+            AutomaticCanvasSize = Enum.AutomaticSize.Y,
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            CanvasSize = UDim2.fromOffset(0, 0),
+            ScrollBarImageColor3 = Theme.DefaultOutline,
+            ScrollBarThickness = 6,
+            ScrollingDirection = Enum.ScrollingDirection.Y,
+            Size = UDim2.fromScale(1, 1),
+        }) :: ScrollingFrame
+        create("UIPadding", {
+            Parent = spoofScroll,
+            PaddingBottom = UDim.new(0, 18),
+            PaddingLeft = UDim.new(0, 18),
+            PaddingRight = UDim.new(0, 18),
+            PaddingTop = UDim.new(0, 18),
+        })
+        create("UIListLayout", {
+            Parent = spoofScroll,
+            FillDirection = Enum.FillDirection.Vertical,
+            HorizontalAlignment = Enum.HorizontalAlignment.Center,
+            Padding = UDim.new(0, 9),
+            SortOrder = Enum.SortOrder.LayoutOrder,
+        })
+        state.spoofScroll = spoofScroll
+
+        local placeholder: TextLabel = makeTextLabel(
+            spoofScroll,
+            "Nothing here yet.",
+            12
+        )
+        placeholder.Name = "SpoofPlaceholder"
+        placeholder.Size = UDim2.new(1, 0, 0, 40)
+        placeholder.TextColor3 = Theme.DefaultTextMuted
+        placeholder.TextXAlignment = Enum.TextXAlignment.Left
+    end
+end
+
 -- Game modules still ask for "their" page by name. There is no such page any
--- more; the aliases point at the one board, and the category on the card
--- decides which rail entry reveals it.
+-- more: every card goes on the one board, where the grid groups it under a
+-- header for its category.
 state.trsScroll = UniversalScroll
 state.vdScroll = UniversalScroll
 state.mvsdScroll = UniversalScroll
@@ -6091,11 +6125,7 @@ local function refreshFavorites(): ()
             row.MouseButton1Click:Connect(function(): ()
                 if feature.isCategory then
                     state.setMenuVisible(true)
-                    -- Pages are categories now, so a favourite jumps to the
-                    -- page its own category names.
-                    setTab(CATEGORY_TABS[feature.categoryName]
-                        and feature.categoryName
-                        or "Universal")
+                    setTab("Universal")
                 end
                 feature.activate()
             end)
@@ -7726,66 +7756,45 @@ end
 -- key always reaches the module that claimed it.
 state.shortcutBindings = {} :: {[string]: any}
 
--- Hover to bind.
+-- Hover the key slot to bind it.
 --
--- The reference interface has no "set key" dialog: you point at a module with
--- the menu open, press a key, and that key is now the module's. This is that,
--- generalised so an option row (Auto Clicker's hold key, for one) can claim a
--- key the same way — the row it is attached to only has to say how to store
--- one.
+-- The reference interface has no "set key" dialog: you point at the slot with
+-- the menu open, press a key, and that key is now the module's.
 --
--- The registry is keyed by the row so that leaving a nested row falls back to
--- the card around it: Roblox does not raise MouseLeave on a parent when the
--- pointer moves onto its child, so without the fallback a card stopped
--- accepting keys the moment the pointer had touched one of its options.
+-- The pointer has to be **on the slot itself**, not anywhere on the card. It
+-- used to be the whole row, and that made the menu unusable: every card is a
+-- wide rectangle, the pointer is inside one of them almost all the time, and
+-- so every keypress — reading the panel, typing anywhere but the search box —
+-- landed on whatever module happened to be under the mouse. The slot is a
+-- 46x24 target you have to aim at, which is what makes the gesture
+-- deliberate.
 state.hoverBindTarget = nil :: any
 do
-local hoverTargets: {[GuiObject]: any} = setmetatable({}, {__mode = "k"}) :: any
 
 state.bindHoverKeyTarget = function(
-    row: GuiObject,
+    slot: GuiObject,
     name: string,
-    resolve: () -> any,
-    slot: TextButton?
+    resolve: () -> any
 ): ()
-    local target: any = {row = row, name = name, resolve = resolve, slot = slot}
-    hoverTargets[row] = target
-    local light: (boolean) -> ()
-    function light(on: boolean): ()
-        if slot and not state.isMobile then
-            -- The slot wears the same "listening" colour it wears during a
-            -- real capture, which is what makes the gesture discoverable: the
-            -- thing that is about to take your key lights up.
-            setKeySlotCapture(slot :: TextButton, on)
-        end
-    end
-    target.light = light
-    trackUiConnection(row.MouseEnter:Connect(function(): ()
-        local previous: any = state.hoverBindTarget
-        if previous and previous.light then
-            previous.light(false)
-        end
-        state.hoverBindTarget = target
-        light(true)
-    end))
-    trackUiConnection(row.MouseLeave:Connect(function(): ()
-        light(false)
-        if state.hoverBindTarget ~= target then
+    local target: any = {name = name, resolve = resolve}
+    trackUiConnection(slot.MouseEnter:Connect(function(): ()
+        if state.isMobile then
             return
         end
-        local ancestor: Instance? = row.Parent
-        while ancestor do
-            local outer: any = hoverTargets[ancestor :: any]
-            if outer then
-                state.hoverBindTarget = outer
-                if outer.light then
-                    outer.light(true)
-                end
-                return
-            end
-            ancestor = ancestor.Parent
+        state.hoverBindTarget = target
+        -- The slot wears the same "listening" colour it wears during a real
+        -- capture, so it is obvious which one is about to take the key.
+        if slot:IsA("TextButton") then
+            setKeySlotCapture(slot :: TextButton, true)
         end
-        state.hoverBindTarget = nil
+    end))
+    trackUiConnection(slot.MouseLeave:Connect(function(): ()
+        if slot:IsA("TextButton") then
+            setKeySlotCapture(slot :: TextButton, false)
+        end
+        if state.hoverBindTarget == target then
+            state.hoverBindTarget = nil
+        end
     end))
 end
 
@@ -8687,15 +8696,10 @@ local function createUniversalFeature(
     -- gesture the reference interface uses instead of a capture dialog.
     -- Containers are excluded because their slot has nothing to activate.
     if feature.kind ~= "group" then
-        state.bindHoverKeyTarget(
-            row,
-            name,
-            function(): any
-                local binding: any = state.shortcutBindings[feature.configKey]
-                return binding and binding.assign
-            end,
-            shortcutButton
-        )
+        state.bindHoverKeyTarget(shortcutButton, name, function(): any
+            local binding: any = state.shortcutBindings[feature.configKey]
+            return binding and binding.assign
+        end)
     end
 
     -- Re-applies the responsive metrics to this card. The shared listener
@@ -10224,14 +10228,9 @@ local function addKeyOption(
             assignKey(keyCode)
         end)
     end)
-    state.bindHoverKeyTarget(
-        option,
-        labelText,
-        function(): any
-            return assignKey
-        end,
-        button
-    )
+    state.bindHoverKeyTarget(button, labelText, function(): any
+        return assignKey
+    end)
 
     callback(currentKey)
     return button :: TextButton
@@ -15331,15 +15330,8 @@ local function refreshSearch(): ()
     local totalMatches: number = 0
     for _, feature: any in ipairs(allFeatures) do
         local searchable: string = feature.searchText
-        -- Two filters, one pass: what the rail is showing and what was typed
-        -- into the header. A search always looks through the whole board, so
-        -- typing finds a module the current rail entry is hiding.
-        local categoryFilter: string? = state.categoryFilter
-        local matches: boolean = (query == ""
-            or string.find(searchable, query, 1, true) ~= nil)
-            and (query ~= ""
-                or categoryFilter == nil
-                or feature.categoryName == categoryFilter)
+        local matches: boolean = query == ""
+            or string.find(searchable, query, 1, true) ~= nil
         feature.row.Visible = matches
         if matches then
             totalMatches += 1

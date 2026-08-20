@@ -34,12 +34,6 @@ local Module = {
 
 type AimSettings = {
     teamCheck: boolean,
-    espEnabled: boolean,
-    espShowBoxes: boolean,
-    espShowNames: boolean,
-    espShowHealth: boolean,
-    espShowDistance: boolean,
-    espMaxDistance: number,
     aimEnabled: boolean,
     autoShootEnabled: boolean,
     triggerCueEnabled: boolean,
@@ -93,22 +87,11 @@ type VisualRecord = {
     status: TextLabel,
 }
 
-type EspRecord = {
-    character: Model,
-    billboard: BillboardGui,
-    box: Frame,
-    boxStroke: UIStroke,
-    nameLabel: TextLabel,
-    healthBg: Frame,
-    healthFill: Frame,
-}
-
 type AimRuntime = {
     visuals: VisualRecord?,
     motion: {[Player]: MotionRecord},
     selected: TargetRecord?,
     triggerEnteredAt: number?,
-    esp: {[Player]: EspRecord},
     rayHookInstalled: boolean,
     oldRay: any,
     rayHookWrapper: any,
@@ -122,19 +105,9 @@ type AimRuntime = {
 
 local moduleCleanup: () -> () = function(): () end
 
-local ESP_ENEMY: Color3 = Color3.fromRGB(255, 88, 88)
-local ESP_TEAM: Color3 = Color3.fromRGB(96, 200, 130)
-local ESP_WHITE: Color3 = Color3.fromRGB(245, 245, 245)
-
 local function buildMVSDFeatures(): ()
     local settings: AimSettings = {
         teamCheck = true,
-        espEnabled = false,
-        espShowBoxes = true,
-        espShowNames = true,
-        espShowHealth = true,
-        espShowDistance = true,
-        espMaxDistance = 2000,
         aimEnabled = false,
         autoShootEnabled = false,
         triggerCueEnabled = false,
@@ -162,7 +135,6 @@ local function buildMVSDFeatures(): ()
         motion = {},
         selected = nil,
         triggerEnteredAt = nil,
-        esp = {},
         rayHookInstalled = false,
         oldRay = nil,
         rayHookWrapper = nil,
@@ -232,20 +204,6 @@ local function buildMVSDFeatures(): ()
             and humanoid ~= nil
             and humanoid.Health > 0
             and getTargetPart(character) ~= nil
-    end
-
-    -- Valid entity for ESP. Teammates only shown when team check is OFF.
-    local function isEspTarget(player: Player): boolean
-        if player == LocalPlayer or player:GetAttribute("Died") == true then
-            return false
-        end
-        if not isInMatch(player) then
-            return false
-        end
-        if settings.teamCheck and isSameTeam(LocalPlayer, player) then
-            return false
-        end
-        return player.Character ~= nil
     end
 
     local function getPingSeconds(): number
@@ -750,156 +708,6 @@ local function buildMVSDFeatures(): ()
         runtime.triggerEnteredAt = nil
     end
 
-    local function makeEspRecord(player: Player): EspRecord
-        local character: Model = player.Character :: Model
-        local billboard: BillboardGui = Instance.new("BillboardGui")
-        billboard.Name = "RTM_MVSD_ESP"
-        billboard.Size = UDim2.fromOffset(170, 82)
-        billboard.StudsOffset = Vector3.new(0, 3.4, 0)
-        billboard.AlwaysOnTop = true
-        billboard.LightInfluence = 1
-        billboard.MaxDistance = math.max(settings.espMaxDistance, 100)
-        local billboardRoot: BasePart? = getRoot(character)
-        if billboardRoot then
-            billboard.Adornee = billboardRoot
-        end
-        billboard.Parent = character
-
-        local box: Frame = Instance.new("Frame")
-        box.Name = "Box"
-        box.BackgroundTransparency = 0.12
-        box.BorderSizePixel = 0
-        box.Position = UDim2.fromOffset(0, 20)
-        box.Size = UDim2.new(1, 0, 0, 48)
-        box.Parent = billboard
-        makeRounded(box, 3)
-        local boxStroke: UIStroke = Instance.new("UIStroke")
-        boxStroke.Color = ESP_ENEMY
-        boxStroke.Thickness = 2
-        boxStroke.Parent = box
-
-        local nameLabel: TextLabel = Instance.new("TextLabel")
-        nameLabel.Name = "Name"
-        nameLabel.BackgroundTransparency = 1
-        nameLabel.BorderSizePixel = 0
-        nameLabel.Font = Enum.Font.GothamSemibold
-        nameLabel.Position = UDim2.fromOffset(0, 0)
-        nameLabel.Size = UDim2.new(1, 0, 0, 18)
-        nameLabel.Text = player.Name
-        nameLabel.TextColor3 = ESP_WHITE
-        nameLabel.TextSize = 13
-        nameLabel.TextStrokeTransparency = 0.35
-        nameLabel.Parent = billboard
-
-        local healthBg: Frame = Instance.new("Frame")
-        healthBg.Name = "HealthBg"
-        healthBg.BackgroundColor3 = Theme.Outline
-        healthBg.BackgroundTransparency = 0.4
-        healthBg.BorderSizePixel = 0
-        healthBg.Position = UDim2.new(0, 0, 0, 72)
-        healthBg.Size = UDim2.new(1, 0, 0, 4)
-        healthBg.Parent = billboard
-        makeRounded(healthBg, 2)
-
-        local healthFill: Frame = Instance.new("Frame")
-        healthFill.Name = "HealthFill"
-        healthFill.BackgroundColor3 = Color3.fromRGB(96, 220, 130)
-        healthFill.BorderSizePixel = 0
-        healthFill.Position = UDim2.fromScale(0, 0)
-        healthFill.Size = UDim2.fromScale(1, 1)
-        healthFill.Parent = healthBg
-        makeRounded(healthFill, 2)
-
-        return {
-            character = character,
-            billboard = billboard,
-            box = box,
-            boxStroke = boxStroke,
-            nameLabel = nameLabel,
-            healthBg = healthBg,
-            healthFill = healthFill,
-        }
-    end
-
-    local function destroyEspRecord(player: Player): ()
-        local record: EspRecord? = runtime.esp[player]
-        if not record then
-            return
-        end
-        pcall(function(): ()
-            record.billboard:Destroy()
-        end)
-        runtime.esp[player] = nil
-    end
-
-    local function healthColor(ratio: number): Color3
-        if ratio > 0.5 then
-            return Color3.fromRGB(96, 220, 130)
-        elseif ratio > 0.25 then
-            return Color3.fromRGB(235, 200, 80)
-        end
-        return Color3.fromRGB(255, 88, 88)
-    end
-
-    local function updateEsp(): ()
-        if not settings.espEnabled then
-            return
-        end
-        local localRoot: BasePart? = getRoot(LocalPlayer.Character)
-        for _, player: Player in ipairs(Players:GetPlayers()) do
-            local character: Model? = player.Character
-            if isEspTarget(player) and character and character.Parent then
-                local root: BasePart? = getRoot(character)
-                local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
-                if root and humanoid then
-                    local existing: EspRecord? = runtime.esp[player]
-                    local record: EspRecord
-                    if existing and existing.character == character then
-                        record = existing
-                    else
-                        if existing then
-                            destroyEspRecord(player)
-                        end
-                        record = makeEspRecord(player)
-                        runtime.esp[player] = record
-                    end
-                    local isTeam: boolean = isSameTeam(LocalPlayer, player)
-                    local accent: Color3 = if isTeam then ESP_TEAM else ESP_ENEMY
-                    record.box.Visible = settings.espShowBoxes
-                    record.boxStroke.Color = accent
-                    record.billboard.MaxDistance = math.max(settings.espMaxDistance, 100)
-                    local details: {string} = {}
-                    if settings.espShowNames then
-                        table.insert(details, player.Name)
-                    end
-                    if settings.espShowDistance and localRoot then
-                        table.insert(details, string.format("%.0f", (root.Position - localRoot.Position).Magnitude))
-                    end
-                    record.nameLabel.Text = table.concat(details, "  ·  ")
-                    record.nameLabel.Visible = settings.espShowNames or settings.espShowDistance
-                    local health: number = math.max(humanoid.Health, 0)
-                    local maxHealth: number = math.max(humanoid.MaxHealth, 1)
-                    local ratio: number = math.clamp(health / maxHealth, 0, 1)
-                    record.healthBg.Visible = settings.espShowHealth
-                    record.healthFill.Size = UDim2.fromScale(ratio, 1)
-                    record.healthFill.BackgroundColor3 = healthColor(ratio)
-                    record.billboard.Adornee = root
-                else
-                    destroyEspRecord(player)
-                end
-            else
-                destroyEspRecord(player)
-            end
-        end
-    end
-
-    local function destroyAllEsp(): ()
-        for player: Player in pairs(runtime.esp) do
-            destroyEspRecord(player)
-        end
-        table.clear(runtime.esp)
-    end
-
     -- The game weapon exposes cooldown attributes on the equipped tool. Respecting
     -- them stops auto shoot from firing faster than the game allows, which is a
     -- detectable macro pattern.
@@ -976,7 +784,6 @@ local function buildMVSDFeatures(): ()
 
     local function updateCore(deltaTime: number): ()
         local visuals: VisualRecord = getVisuals()
-        updateEsp()
         local camera: Camera? = workspace.CurrentCamera
         if not camera or type(LocalPlayer:GetAttribute("Game")) ~= "string" then
             visuals.circle.Visible = false
@@ -1065,8 +872,7 @@ local function buildMVSDFeatures(): ()
     end
 
     local function anyFeatureEnabled(): boolean
-        return settings.espEnabled
-            or settings.aimEnabled
+        return settings.aimEnabled
             or settings.autoShootEnabled
             or settings.triggerCueEnabled
     end
@@ -1080,7 +886,6 @@ local function buildMVSDFeatures(): ()
                 runtime.visuals.root:Destroy()
                 runtime.visuals = nil
             end
-            destroyAllEsp()
             runtime.selected = nil
             table.clear(runtime.motion)
             return
@@ -1099,41 +904,27 @@ local function buildMVSDFeatures(): ()
         featureConnections.MVSDAimCore = TaskManager:Connect(updateCore)
     end
 
-    local EspFeature: any = createUniversalFeature(
-        "ESP",
-        "Advanced player ESP with team colors, health and distance",
-        1,
-        function(enabled: boolean): ()
-            settings.espEnabled = enabled
-            if not enabled then
-                destroyAllEsp()
+    -- No ESP card here.
+    --
+    -- This one drew boxes, names, health and distance over players — which is
+    -- the universal Player ESP, minus its corner boxes, skeletons, chams,
+    -- tracers and name plates. Two ESPs in one menu is one too many, so this
+    -- game contributes its team split to the shared one instead and the
+    -- duplicate is gone.
+    registerRoleProvider({
+        Name = "MVSD",
+        Roles = {"Enemy", "Teammate"},
+        Colors = {
+            Enemy = Color3.fromRGB(226, 72, 72),
+            Teammate = Color3.fromRGB(120, 220, 140),
+        },
+        Get = function(player: Player): string?
+            if not isInMatch(player) then
+                return nil
             end
-            syncCoreTask()
+            return isSameTeam(LocalPlayer, player) and "Teammate" or "Enemy"
         end,
-        {parent = state.mvsdScroll, registry = state.mvsdFeatures}
-    )
-    addToggleOption(EspFeature, "Team check", true, function(value: boolean): ()
-        settings.teamCheck = value
-    end)
-    addToggleOption(EspFeature, "Boxes", true, function(value: boolean): ()
-        settings.espShowBoxes = value
-    end)
-    addToggleOption(EspFeature, "Names", true, function(value: boolean): ()
-        settings.espShowNames = value
-    end)
-    addToggleOption(EspFeature, "Health bar", true, function(value: boolean): ()
-        settings.espShowHealth = value
-    end)
-    addToggleOption(EspFeature, "Distance", true, function(value: boolean): ()
-        settings.espShowDistance = value
-    end)
-    addNumberOption(EspFeature, "ESP distance", 2000, 100, 20000, function(value: number): ()
-        settings.espMaxDistance = math.max(100, value)
-    end)
-    addInformationOption(
-        EspFeature,
-        "Team check ON shows only enemies (TeamRed vs TeamBlue). Enemies red, teammates green."
-    )
+    })
 
     local SilentAimFeature: any = createUniversalFeature(
         "Silent Aim",

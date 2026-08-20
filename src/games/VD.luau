@@ -55,7 +55,6 @@ local function buildVDFeatures(): ()
     }
     local runtime: any = {
         generatorMarkers = {} :: {[Model]: MarkerRecord},
-        playerMarkers = {} :: {[Player]: MarkerRecord},
         lockerMarkers = {} :: {[Player]: MarkerRecord},
         generatorStates = {} :: {[Model]: string},
         lockerAlerts = {} :: {[Player]: number},
@@ -498,94 +497,6 @@ local function buildVDFeatures(): ()
             return "INJURED · " .. string.format("%.0f%%", humanoid.Health / humanoid.MaxHealth * 100), Color3.fromRGB(244, 190, 88)
         end
         return "HEALTHY", Theme.Success
-    end
-
-    local function clearPlayerMarkers(markers: {[Player]: MarkerRecord}): ()
-        for player: Player, record: MarkerRecord in pairs(markers) do
-            destroyMarker(record)
-            markers[player] = nil
-        end
-    end
-
-    local function updatePlayersESP(): ()
-        local markers: {[Player]: MarkerRecord} = runtime.playerMarkers
-        if not getMap() then
-            clearPlayerMarkers(markers)
-            return
-        end
-        local localRoot: BasePart? = getRoot(LocalPlayer.Character)
-        for _, player: Player in ipairs(Players:GetPlayers()) do
-            local character: Model? = player.Character
-            local root: BasePart? = getRoot(character)
-            local record: MarkerRecord? = markers[player]
-            local killer: boolean = isKillerCharacter(character)
-            local survivor: boolean = player.Team ~= nil
-                and lower((player.Team :: Team).Name) == "survivors"
-            local expectedRole: boolean = if isLocalKiller()
-                then survivor
-                else killer or survivor
-            local valid: boolean = player ~= LocalPlayer
-                and isPlayerInRound(player)
-                and expectedRole
-                and character ~= nil
-                and root ~= nil
-                and character:IsDescendantOf(workspace)
-            if valid and character and root then
-                local distance: number = if localRoot
-                    then (root.Position - localRoot.Position).Magnitude
-                    else 0
-                local status: string
-                local color: Color3
-                if killer then
-                    status = "KILLER"
-                    color = VD_KILLER_COLOR
-                else
-                    status, color = survivorStatus(player, character)
-                end
-                local text: string = string.format(
-                    "%s\n%s · %.0f STUDS",
-                    player.DisplayName,
-                    status,
-                    distance
-                )
-                if not record or record.highlight.Adornee ~= character then
-                    destroyMarker(record)
-                    record = createMarker(character, root, color, text, 2000)
-                    markers[player] = record
-                end
-                record.highlight.FillColor = color
-                record.highlight.OutlineColor = color
-                if record.label then
-                    record.label.TextColor3 = color
-                    record.label.Text = text
-                end
-            elseif record then
-                destroyMarker(record)
-                markers[player] = nil
-            end
-        end
-        for player: Player, record: MarkerRecord in pairs(markers) do
-            if not player.Parent then
-                destroyMarker(record)
-                markers[player] = nil
-            end
-        end
-    end
-
-    local function togglePlayersESP(enabled: boolean): ()
-        disconnectFeatureConnection("VDPlayersESP")
-        clearPlayerMarkers(runtime.playerMarkers)
-        if not enabled then
-            return
-        end
-        local elapsed: number = 1
-        featureConnections.VDPlayersESP = TaskManager:Connect(function(deltaTime: number): ()
-            elapsed += deltaTime
-            if elapsed >= 0.12 then
-                elapsed = 0
-                updatePlayersESP()
-            end
-        end)
     end
 
     local function findRemoteEvent(folderName: string, eventName: string): RemoteEvent?
@@ -1674,31 +1585,40 @@ local function buildVDFeatures(): ()
         end,
     })
 
-    createUniversalFeature(
-        "Players ESP",
-        "Role-aware player ESP; Killer sees Survivors only, Survivors see both roles",
-        1,
-        togglePlayersESP,
-        {parent = state.vdScroll, registry = state.vdFeatures}
-    )
-
-    local GeneratorFeature: any = createUniversalFeature(
-        "Generator & Objective ESP",
-        "Highlight match generators with exact progress, state and distance",
-        2,
-        toggleGeneratorESP,
-        {parent = state.vdScroll, registry = state.vdFeatures}
-    )
-    addNumberOption(GeneratorFeature, "Maximum distance", 1800, 200, 3000, function(value: number): ()
-        settings.generatorDistance = value
-    end)
-    addNumberOption(GeneratorFeature, "Fill transparency", 0.82, 0, 1, function(value: number): ()
-        settings.generatorTransparency = math.clamp(value, 0, 1)
-    end)
-    addInformationOption(
-        GeneratorFeature,
-        "workspace.Map only; Lobby and Spectator objects are ignored."
-    )
+    -- Generators are an option of the universal Player ESP, not a card of
+    -- their own: it is the same "mark a thing through a wall" idea, and the
+    -- only reason it lives in this file is that nothing universal knows what a
+    -- VD generator is. The rows appear only in this game.
+    registerEspExtra({
+        Name = "Generators",
+        Default = false,
+        Tooltip = "Match generators with their exact progress, state and "
+            .. "distance. workspace.Map only; Lobby and Spectator objects are "
+            .. "ignored.",
+        Toggle = toggleGeneratorESP,
+        Options = {
+            {
+                Kind = "number",
+                Name = "max distance",
+                Default = 1800,
+                Min = 200,
+                Max = 3000,
+                Set = function(value: number): ()
+                    settings.generatorDistance = value
+                end,
+            },
+            {
+                Kind = "number",
+                Name = "fill",
+                Default = 0.82,
+                Min = 0,
+                Max = 1,
+                Set = function(value: number): ()
+                    settings.generatorTransparency = math.clamp(value, 0, 1)
+                end,
+            },
+        },
+    })
 
     local GeneratorAuraFeature: any = createUniversalFeature(
         "Auto Generator",
@@ -1946,7 +1866,6 @@ local function buildVDFeatures(): ()
     state.cleanupVDRuntime = function(): ()
         disconnectFeatureConnection("VDProximityVisibility")
         toggleGeneratorESP(false)
-        togglePlayersESP(false)
         toggleAutoGeneratorAura(false)
         toggleAutoParry(false)
         toggleKillerHitAura(false)
@@ -1965,7 +1884,6 @@ local function buildVDFeatures(): ()
         toggleVDFullbright(false)
         clearFacing()
         clearLockerMarkers()
-        clearPlayerMarkers(runtime.playerMarkers)
         restoreSelectiveCollisions()
         if runtime.visualFolder then
             runtime.visualFolder:Destroy()

@@ -202,7 +202,9 @@ function Module.init(runtime: any): any
     local createUniversalFeature: any = host.createUniversalFeature
     local addToggleOption: any = host.addToggleOption
     local addNumberOption: any = host.addNumberOption
-    local addColorOption: any = host.addColorOption
+    -- ESP for this game's own objects is contributed to the universal Player
+    -- ESP rather than shipped as cards of its own.
+    local registerEspExtra: any = host.registerEspExtra
     local addTextOption: any = host.addTextOption
     local addInformationOption: any = host.addInformationOption
     local create: any = host.create
@@ -335,131 +337,154 @@ function Module.init(runtime: any): any
         end
     end
 
-    local BedFeature: any = createUniversalFeature(
-        "Bed ESP",
-        "Every bed on the map, with its distance",
-        1,
-        function(enabled: boolean): ()
-            host.disconnectFeatureConnection("BedFightBeds")
-            clearBeds()
-            if not enabled then
-                return
-            end
-            host.featureConnections.BedFightBeds =
-                TaskManager:Connect(function(): ()
-                    renderBeds()
-                end)
-        end,
-        {parent = scroll, registry = registry, categoryName = "Visuals"}
-    )
-    addToggleOption(BedFeature, "Show distance", true, function(value: boolean): ()
-        settings.showDistance = value
-    end)
-    addColorOption(BedFeature, "Colour", settings.bedColour, function(value: Color3): ()
-        settings.bedColour = value
-    end)
-    addNumberOption(
-        BedFeature,
-        "Max distance",
-        settings.maxDistance,
-        100,
-        5000,
-        function(value: number): ()
-            settings.maxDistance = value
+    -- Bed ESP is an option of the universal Player ESP, not a card.
+    --
+    -- It draws through the same idea — a mark over a thing, through walls,
+    -- with its distance — so it belongs in the one ESP the player already
+    -- opened, and it only exists here because nothing universal can know what
+    -- a bed is. The implementation stays in this file; the bridge only carries
+    -- the switch, the colour and the two numbers it used to have as a card.
+    local function setBedEsp(enabled: boolean): ()
+        host.disconnectFeatureConnection("BedFightBeds")
+        clearBeds()
+        if not enabled then
+            return
         end
-    )
+        host.featureConnections.BedFightBeds =
+            TaskManager:Connect(function(): ()
+                renderBeds()
+            end)
+    end
+
+    registerEspExtra({
+        Name = "Beds",
+        Default = false,
+        Color = settings.bedColour,
+        Tooltip = "Every bed on the map, through walls.",
+        Toggle = setBedEsp,
+        SetColor = function(value: Color3): ()
+            settings.bedColour = value
+        end,
+        Options = {
+            {
+                Kind = "toggle",
+                Name = "distance",
+                Default = true,
+                Set = function(value: boolean): ()
+                    settings.showDistance = value
+                end,
+            },
+            {
+                Kind = "number",
+                Name = "max distance",
+                Default = settings.maxDistance,
+                Min = 100,
+                Max = 5000,
+                Set = function(value: number): ()
+                    settings.maxDistance = value
+                end,
+            },
+        },
+    })
 
     -- Generator ESP ---------------------------------------------------------
-    local GeneratorFeature: any = createUniversalFeature(
-        "Generator ESP",
-        "Diamond and emerald generators, with the game's own countdown",
-        2,
-        function(enabled: boolean): ()
-            host.disconnectFeatureConnection("BedFightGenerators")
-            clearMarks(runtimeState.generatorMarks)
-            if not enabled then
-                return
-            end
-            host.featureConnections.BedFightGenerators =
-                TaskManager:Connect(function(): ()
-                    local root: BasePart? = LocalPlayer.Character
-                        and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
-                    local origin: Vector3 = root and (root :: BasePart).Position or Vector3.zero
-                    local seen: {[Instance]: boolean} = {}
-
-                    for _, generator: BasePart in ipairs(collectGenerators()) do
-                        local distance: number = (generator.Position - origin).Magnitude
-                        if distance > settings.maxDistance then
-                            continue
-                        end
-                        seen[generator] = true
-                        local mark: any = runtimeState.generatorMarks[generator]
-                        if not mark or not mark.Parent then
-                            local billboard: BillboardGui = create("BillboardGui", {
-                                Parent = generator,
-                                Name = "RTM_GeneratorMark",
-                                AlwaysOnTop = true,
-                                LightInfluence = 0,
-                                Size = UDim2.fromOffset(150, 20),
-                                StudsOffset = Vector3.new(0, 3, 0),
-                            }) :: BillboardGui
-                            local label: TextLabel = makeTextLabel(billboard, "", 11)
-                            label.Name = "Label"
-                            label.Size = UDim2.fromScale(1, 1)
-                            label.TextXAlignment = Enum.TextXAlignment.Center
-                            runtimeState.generatorMarks[generator] = billboard
-                            mark = billboard
-                        end
-                        local label: TextLabel? = mark:FindFirstChild("Label") :: TextLabel?
-                        if not label then
-                            continue
-                        end
-                        -- The game already renders a countdown above every
-                        -- generator; reading it is more honest than timing it
-                        -- ourselves and being a second out.
-                        local kind: string = generator.Parent
-                            and generator.Parent.Name:gsub("Generators", "")
-                            or "Generator"
-                        local timer: string = ""
-                        if settings.showTimers then
-                            local progress: Instance? = generator:FindFirstChild("ProgressGui")
-                            local timerLabel: Instance? = progress
-                                and progress:FindFirstChild("TimerLabel")
-                            if timerLabel and timerLabel:IsA("TextLabel") then
-                                timer = "  " .. (timerLabel :: TextLabel).Text
-                            end
-                        end
-                        label.TextColor3 = settings.generatorColour
-                        label.Text = kind
-                            .. (settings.showDistance
-                                and ("  " .. tostring(math.round(distance)) .. "m")
-                                or "")
-                            .. timer
-                    end
-
-                    for generator: Instance, mark: any in pairs(runtimeState.generatorMarks) do
-                        if not seen[generator] or not generator.Parent then
-                            pcall(function(): ()
-                                mark:Destroy()
-                            end)
-                            runtimeState.generatorMarks[generator] = nil
-                        end
-                    end
-                end)
-        end,
-        {parent = scroll, registry = registry, categoryName = "Visuals"}
-    )
-    addToggleOption(GeneratorFeature, "Show timers", true, function(value: boolean): ()
-        settings.showTimers = value
-    end)
-    addColorOption(
-        GeneratorFeature,
-        "Colour",
-        settings.generatorColour,
-        function(value: Color3): ()
-            settings.generatorColour = value
+    -- Generator ESP, same story: an object only this game has, drawn by this
+    -- file, switched from inside the universal ESP.
+    local function setGeneratorEsp(enabled: boolean): ()
+        host.disconnectFeatureConnection("BedFightGenerators")
+        clearMarks(runtimeState.generatorMarks)
+        if not enabled then
+            return
         end
-    )
+        host.featureConnections.BedFightGenerators =
+            TaskManager:Connect(function(): ()
+                local root: BasePart? = LocalPlayer.Character
+                    and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+                local origin: Vector3 = root and (root :: BasePart).Position or Vector3.zero
+                local seen: {[Instance]: boolean} = {}
+
+                for _, generator: BasePart in ipairs(collectGenerators()) do
+                    local distance: number = (generator.Position - origin).Magnitude
+                    if distance > settings.maxDistance then
+                        continue
+                    end
+                    seen[generator] = true
+                    local mark: any = runtimeState.generatorMarks[generator]
+                    if not mark or not mark.Parent then
+                        local billboard: BillboardGui = create("BillboardGui", {
+                            Parent = generator,
+                            Name = "RTM_GeneratorMark",
+                            AlwaysOnTop = true,
+                            LightInfluence = 0,
+                            Size = UDim2.fromOffset(150, 20),
+                            StudsOffset = Vector3.new(0, 3, 0),
+                        }) :: BillboardGui
+                        local label: TextLabel = makeTextLabel(billboard, "", 11)
+                        label.Name = "Label"
+                        label.Size = UDim2.fromScale(1, 1)
+                        label.TextXAlignment = Enum.TextXAlignment.Center
+                        runtimeState.generatorMarks[generator] = billboard
+                        mark = billboard
+                    end
+                    local label: TextLabel? = mark:FindFirstChild("Label") :: TextLabel?
+                    if not label then
+                        continue
+                    end
+                    -- The game already renders a countdown above every
+                    -- generator; reading it is more honest than timing it
+                    -- ourselves and being a second out.
+                    local kind: string = generator.Parent
+                        and generator.Parent.Name:gsub("Generators", "")
+                        or "Generator"
+                    local timer: string = ""
+                    if settings.showTimers then
+                        local progress: Instance? = generator:FindFirstChild("ProgressGui")
+                        local timerLabel: Instance? = progress
+                            and progress:FindFirstChild("TimerLabel")
+                        if timerLabel and timerLabel:IsA("TextLabel") then
+                            timer = "  " .. (timerLabel :: TextLabel).Text
+                        end
+                    end
+                    label.TextColor3 = settings.generatorColour
+                    label.Text = kind
+                        .. (settings.showDistance
+                            and ("  " .. tostring(math.round(distance)) .. "m")
+                            or "")
+                        .. timer
+                end
+
+                for generator: Instance, mark: any in pairs(runtimeState.generatorMarks) do
+                    if not seen[generator] or not generator.Parent then
+                        pcall(function(): ()
+                            mark:Destroy()
+                        end)
+                        runtimeState.generatorMarks[generator] = nil
+                    end
+                end
+            end)
+    end
+
+    registerEspExtra({
+        Name = "Generators",
+        Default = false,
+        Color = settings.generatorColour,
+        Tooltip = "Diamond and emerald generators, with the game's own "
+            .. "countdown.",
+        Toggle = setGeneratorEsp,
+        SetColor = function(value: Color3): ()
+            settings.generatorColour = value
+        end,
+        Options = {
+            {
+                Kind = "toggle",
+                Name = "timers",
+                Default = true,
+                Set = function(value: boolean): ()
+                    settings.showTimers = value
+                end,
+            },
+        },
+    })
 
     -- Round info ------------------------------------------------------------
     local InfoFeature: any = createUniversalFeature(

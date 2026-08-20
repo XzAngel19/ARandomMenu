@@ -217,7 +217,7 @@ host.state.registerRoleProvider({
         return player == enemy and "Murderer" or "Innocent"
     end,
 })
-local extraState: any = {enabled = false}
+local extraState: any = {enabled = false, distance = 0}
 host.state.registerEspExtra({
     Name = "Coins",
     Default = false,
@@ -225,6 +225,18 @@ host.state.registerEspExtra({
     Toggle = function(value: boolean): ()
         extraState.enabled = value
     end,
+    Options = {
+        {
+            Kind = "number",
+            Name = "max distance",
+            Default = 900,
+            Min = 100,
+            Max = 5000,
+            Set = function(value: number): ()
+                extraState.distance = value
+            end,
+        },
+    },
 })
 check("roles add a colour row per role",
     esp.Options["Murderer colour"] ~= nil
@@ -233,6 +245,9 @@ check("roles add the role switches",
     esp.Options["Role colours"] ~= nil and esp.Options["Show role"] ~= nil)
 check("a game object becomes a row in the ESP card",
     esp.Options["Coins"] ~= nil and esp.Options["Coins colour"] ~= nil)
+check("an extra keeps the tuning it had as a card",
+    esp.Options["Coins max distance"] ~= nil and extraState.distance == 900,
+    tostring(extraState.distance))
 
 esp.Options["Team check"].Value = true
 esp.Options["Boxes"].Value = "Full"

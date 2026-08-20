@@ -367,29 +367,30 @@ the universal Player ESP sat on another, four of the seven rail entries were
 hidden in any given server, and the same idea was implemented twice — once with
 corner boxes, skeletons, tracers and name plates, once with roles.
 
-The rail is the taxonomy now:
+The rail is three entries:
 
 ```
-Universal   every module, grouped by category
-Combat      \
-Movement     |  the same board, filtered to one category
-Visuals      |
-Protection   |
-Utility     /
+Universal   every module the client has, grouped by a header per category
+Spoof       what the server is told about this client (empty for now)
 Config.     settings
 ```
 
 * **Cards live on one board.** A card is one instance and can only have one
-  parent, so a page that shows everything and a page that shows half of it
-  cannot both hold the same card. The rail sets a category filter instead, and
-  the grid already draws a header per category. Typing in the search box looks
-  through the whole board, filter or no filter.
+  parent, so pages per game — or per category — were always a filter over the
+  same list pretending to be somewhere else. The grid draws a header per
+  category (Combat, Movement, Visuals, Protection, Utility, General), which is
+  the grouping that was doing the work all along, and the search box looks
+  through all of it.
+* **The board wears the game's name.** "Universal" is what it is called when
+  nothing recognised this place; in a supported game the rail row and the page
+  header say MM2, VD, BedFight — because there the board *is* that game plus
+  everything else.
 * **A game module adds modules, not a window.** It registers cards exactly the
   way the menu's own modules do, and the category on the card decides which
-  rail entry reveals it: BedFight's *Server Aura* is a Combat module, its
-  *Scaffold* is a Movement module, MM2's *Sprint* is a Movement module. The
-  taxonomy names every one of them in `FEATURE_CATEGORIES`, in one table,
-  instead of five game files describing themselves.
+  header it sits under: BedFight's *Server Aura* is Combat, its *Scaffold* is
+  Movement, MM2's *Sprint* is Movement. The taxonomy names every one of them in
+  `FEATURE_CATEGORIES`, in one table, instead of five game files describing
+  themselves.
 * **An unsupported game contributes nothing**, so the board holds the universal
   set and nothing looks broken or empty.
 
@@ -422,11 +423,17 @@ registerEspExtra({
   same time — every filter and style option in that card applies to it. MM2's
   own role ESP (a Highlight per player, its own round gate, its own rebuild
   loop) is gone; VD publishes Killer/Survivor the same way.
-* **ESP extras** are the objects only that game has — MM2's coins, traps and
-  the dropped sheriff gun. Each becomes a toggle (and a colour) in the ESP
-  card's *World* section, and the game module keeps its own implementation,
-  because nothing universal can know what a coin looks like. They exist only in
-  the game that registered them.
+* **ESP extras** are the objects only that game has. Each becomes a toggle (and
+  a colour, and whatever sliders it had) in the ESP card's *World* section, and
+  the game module keeps its own implementation, because nothing universal can
+  know what a coin or a bed looks like. They exist only in the game that
+  registered them. Shipping today: MM2's **coins**, **traps** and **sheriff
+  gun**, BedFight's **beds** and **generators**, VD's **generators**.
+* **The duplicate player ESPs are gone.** MM2's role ESP, VD's *Players ESP*
+  and MVSD's *ESP* each drew boxes, names, health and distance over players —
+  the universal Player ESP, minus its corner boxes, skeletons, chams, tracers
+  and name plates. All three are deleted; MM2 and VD publish roles, MVSD
+  publishes its team split, and the one ESP draws all of it.
 
 ## Module architecture
 
@@ -995,12 +1002,14 @@ config and restored on the next injection.
   exactly where a game put a button of its own; press and drag moves it,
   a press that does not travel still opens the menu, and where it ends up is
   saved with the rest of the interface state.
-- **Hover a card and press a key to bind it.** No dialog, no capture mode: with
-  the menu open, point at a module and press the key you want; press it again
-  to unbind. Option rows that carry a key (Auto Clicker's hold key, for one)
-  take a key the same way, and leaving a row falls back to the card around it,
-  because Roblox does not raise `MouseLeave` on a parent when the pointer moves
-  onto its child. The key that opens the menu is never taken this way.
+- **Hover the key slot and press a key to bind it.** No dialog, no capture
+  mode: with the menu open, point at a module's key slot and press the key you
+  want; press it again to unbind. The pointer has to be on the slot itself —
+  it used to be the whole card, and since the pointer is inside some card
+  almost all the time, every keypress bound itself to whatever was under the
+  mouse. The slot lights up while it is listening. Option rows that carry a key
+  (Auto Clicker's hold key) work the same way, and the key that opens the menu
+  is never taken.
 - **Three lines, not three dots.** Every card's settings handle is a drawn
   hamburger — three frames, dimmed when the module has nothing to configure —
   instead of a "..." that read as truncated text. It is drawn rather than typed

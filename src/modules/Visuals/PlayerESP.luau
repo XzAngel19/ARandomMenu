@@ -288,6 +288,38 @@ function Module.init(context: Runtime): any
                 end,
             })
         end
+        -- An extra keeps whatever tuning it had as a card of its own — a
+        -- distance, a fill, a switch — so folding it in here costs the player
+        -- nothing. The rows are prefixed with the object's name because two
+        -- games can both want to call something "Max distance".
+        for _, definition: any in ipairs(extra.Options or {}) do
+            local rowName: string = extra.Name .. " " .. definition.Name
+            if definition.Kind == "toggle" then
+                esp:CreateToggle({
+                    Name = rowName,
+                    Default = definition.Default == true,
+                    Tooltip = definition.Tooltip,
+                    Function = function(value: boolean): ()
+                        if type(definition.Set) == "function" then
+                            pcall(definition.Set, value)
+                        end
+                    end,
+                })
+            else
+                esp:CreateSlider({
+                    Name = rowName,
+                    Min = definition.Min or 0,
+                    Max = definition.Max or 100,
+                    Default = definition.Default or definition.Min or 0,
+                    Tooltip = definition.Tooltip,
+                    Function = function(value: number): ()
+                        if type(definition.Set) == "function" then
+                            pcall(definition.Set, value)
+                        end
+                    end,
+                })
+            end
+        end
     end
 
     if host.state and type(host.state.onGameBridge) == "function" then
