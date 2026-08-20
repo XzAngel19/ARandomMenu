@@ -124,6 +124,16 @@ local Manifest: Manifest = {
             category = "Protection",
         },
         {
+            path = "src/modules/Movement/Fly.luau",
+            name = "Fly",
+            category = "Movement",
+        },
+        {
+            path = "src/modules/Movement/PhysicsSpeed.luau",
+            name = "Physics Speed",
+            category = "Movement",
+        },
+        {
             path = "src/modules/Combat/Hitboxes.luau",
             name = "Hitboxes",
             category = "Combat",

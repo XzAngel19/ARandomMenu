@@ -620,19 +620,27 @@ Moved so far, whole:
 |---|---|
 | Engines | Projectile Calibration (740 lines of telemetry that was never interface), Hitboxes |
 | Universal toolkit | X-Ray, High Jump, Spider, Safe Walk, Rejoin Server, Zoom Unlocker, Interact Extender, Phase Dash, No Fall |
+| The two big ones | Fly (six movement engines, five float engines, its whole panel), Physics Speed |
 
 `state.universalToolkit` — the grab-bag table nine features hung themselves off
 — is gone entirely. Each of them is an ordinary module now: a file, a manifest
 line, `init`/`destroy`, its own card, and nothing in the shell that knows it
 exists.
 
-The shell is **16,688 → 14,736 lines**, and 16 feature cards are still declared
-in it. The queue: Fly and Speed (the two biggest), then the dozen small ones
-(Fling, Noclip, Gravity, Jump Power, Walk Speed, Anti-AFK, Anti-Fling,
-Fullbright, Lag Switch, Anti-Void, Infinite Jump, Freeze), then the option
-builders and the colour picker into a widget library — which is what finally
-takes the shell under six thousand and ends the 200-register pressure that
-shapes `bootstrap()`.
+The shell is **16,688 → 13,473 lines**, with 14 feature cards left in it.
+
+One thing the move taught, worth writing down: the remaining features live
+inside a single enormous `do ... end` that exists only to hand registers back
+to `bootstrap()`. A cut that swallows its opening `do` leaves the file
+unbalanced in a way the compiler reports three hundred lines later, so each
+piece is taken from *inside* the block and the block is left standing. It
+disappears on its own once the last feature is out — which is the real reason
+that register ceiling stops mattering.
+
+The queue: the dozen small ones (Fling, Noclip, Gravity, Jump Power, Walk
+Speed, Anti-AFK, Anti-Fling, Fullbright, Lag Switch, Anti-Void, Infinite Jump,
+Improve FPS, Freeze), then the option builders and the colour picker into a
+widget library — which is what finally takes the shell under six thousand.
 
 ## Module architecture
 
