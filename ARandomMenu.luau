@@ -10981,6 +10981,34 @@ local function applyFlyVertical(
         return
     end
 
+    if method == "Bypass" then
+        -- Vape's trick, in one branch: hold the altitude, then drop to the
+        -- ground for a fraction of a second every few seconds. A server that
+        -- checks "has this player touched the floor lately" sees a player who
+        -- lands regularly, and the dip is short enough to fly through.
+        --
+        -- Air and ground times come from the burst interval: four intervals up
+        -- and one down, which is long enough for the landing to register.
+        local period: number = math.max(flySettings.burstInterval, 0.05) * 5
+        if (os.clock() % period) > (period * 0.8) then
+            -- Fall honestly for the dip: the humanoid changes state on its
+            -- own, and that state is exactly what the check reads.
+            state.flyRuntime.yLevel = nil
+            return
+        end
+        local held: number = state.flyRuntime.yLevel or root.Position.Y
+        held = held + targetY * deltaTime
+        state.flyRuntime.yLevel = held
+        root.AssemblyLinearVelocity = Vector3.new(
+            currentVelocity.X,
+            0,
+            currentVelocity.Z
+        )
+        root.CFrame = root.CFrame + Vector3.new(0, held - root.Position.Y, 0)
+        return
+    end
+
+
     if method == "Hover" or method == "Jump" then
         local level: number = state.flyRuntime.yLevel or root.Position.Y
         level = level + targetY * deltaTime
@@ -13000,13 +13028,14 @@ local FlyMethodButton: TextButton = addCycleOption(
 local FlyFloatButton: TextButton = addCycleOption(
     FlyFeature,
     "Float",
-    {"Velocity", "Impulse", "Hover", "Jump", "Bounce", "Floor"},
+    {"Velocity", "Impulse", "Hover", "Jump", "Bounce", "Floor", "Bypass"},
     1,
     function(value: string): ()
         flySettings.floatMethod = value
     end,
     "What keeps you airborne. Hover locks an altitude, Floor stands you on "
-        .. "an invisible part."
+        .. "an invisible part, and Bypass drops you to the ground for an "
+        .. "instant every few seconds so the server sees you land."
 )
 local FlySpeedRow: Frame = addNumberOption(
     FlyFeature,
@@ -14867,6 +14896,16 @@ local fallbackManifest: any = {
             path = "src/modules/Combat/TriggerBot.luau",
             name = "TriggerBot",
             category = "Combat",
+        },
+        {
+            path = "src/modules/Utility/RemoteLogger.luau",
+            name = "Remote Logger",
+            category = "Utility",
+        },
+        {
+            path = "src/modules/Movement/Scaffold.luau",
+            name = "Scaffold",
+            category = "Movement",
         },
         {
             path = "src/modules/Movement/ClickTeleport.luau",

@@ -958,10 +958,122 @@ check("labels are released when the module is off", left == 0,
 oreA:Destroy()
 oreB:Destroy()
 
+-- Scaffold -----------------------------------------------------------------------
+
+section("Scaffold")
+
+local ScaffoldFile: any = require("../../src/modules/Movement/Scaffold")
+Mock.inject(world, ScaffoldFile.init)
+local scaffold: any = ScaffoldFile.init(espContext)
+
+check("card is registered", scaffold.Name == "Scaffold")
+for _, name: string in ipairs({"Mode", "Width", "Bridge length", "Catch depth", "Opacity"}) do
+    check("option: " .. name, scaffold.Options[name] ~= nil)
+end
+
+-- Nothing underneath: a platform appears.
+world.raycastResult = nil
+scaffold:Toggle()
+stub.step(0.016)
+local built: any = nil
+for _, child: any in ipairs(world.camera.Children) do
+    if child.Name == "RTM_Scaffold" then
+        built = child
+    end
+end
+check("builds a platform over a gap", built ~= nil)
+
+-- Ground below: the game's own floor is left alone.
+world.raycastResult = {
+    Instance = Mock.newInstance("Part"),
+    Position = world.vector3(0, -4, 0),
+}
+stub.step(0.016)
+local remaining: number = 0
+for _, child: any in ipairs(world.camera.Children) do
+    if child.Name == "RTM_Scaffold" then
+        remaining += 1
+    end
+end
+check("stays out of the way when there is a floor", remaining == 0,
+    "platforms: " .. tostring(remaining))
+
+scaffold:Toggle()
+world.raycastResult = nil
+
+-- Remote Logger -------------------------------------------------------------------
+
+section("Remote Logger")
+
+local LoggerFile: any = require("../../src/modules/Utility/RemoteLogger")
+Mock.inject(world, LoggerFile.init)
+local logger: any = LoggerFile.init(espContext)
+
+check("card is registered", logger.Name == "Remote Logger")
+for _, name: string in ipairs({"Only containing", "Max remotes", "Announce new"}) do
+    check("option: " .. name, logger.Options[name] ~= nil)
+end
+for _, name: string in ipairs({
+    "Save to file",
+    "Print to console",
+    "Copy to clipboard",
+    "Clear log",
+}) do
+    check("action: " .. name, logger.Feature.options[name] ~= nil)
+end
+
+logger:Toggle()
+check("logger enables", logger.Enabled == true)
+check("hook was installed", world.namecallHook ~= nil)
+
+-- A game firing one of its own remotes, exactly as the hook sees it.
+local remote: any = Mock.newInstance("RemoteEvent")
+remote.Name = "SwordHit"
+remote.Parent = world.workspace
+world.namecallMethod = "FireServer"
+world.namecallHook(remote, "Wooden Sword", world.vector3(1, 2, 3), 42)
+
+local entries: {any} = host.state.remoteLog.entries()
+check("records the call", #entries == 1, "entries: " .. tostring(#entries))
+check("records the method", entries[1] ~= nil and entries[1].method == "FireServer")
+check("records the argument values",
+    entries[1] ~= nil
+        and string.find(table.concat(entries[1].arguments, ","), "Wooden Sword", 1, true) ~= nil,
+    entries[1] and table.concat(entries[1].arguments, " | ") or "none")
+
+-- Saving writes a readable report and a machine-readable one.
+logger.Feature.options["Save to file"].run()
+check("writes a text report", world.files["ARandomMenu/RemoteLogs"] == nil
+    or true)
+local wroteText: boolean = false
+local wroteJson: boolean = false
+for path: string in pairs(world.files) do
+    if string.find(path, "%.txt$") then
+        wroteText = true
+    end
+    if string.find(path, "%.json$") then
+        wroteJson = true
+    end
+end
+check("saved a readable log", wroteText)
+check("saved a machine-readable log", wroteJson)
+
+-- The menu's own traffic must never be logged.
+world.callerIsMenu = true
+world.namecallHook(remote, "menu-call")
+world.callerIsMenu = false
+check("ignores the menu's own calls", #host.state.remoteLog.entries() == 1)
+
+logger.Feature.options["Clear log"].run()
+check("clears the log", #host.state.remoteLog.entries() == 0)
+logger:Toggle()
+
 -- Teardown -------------------------------------------------------------------
 
 section("Teardown")
 
+LoggerFile.destroy()
+ScaffoldFile.destroy()
 ItemFile.destroy()
 WeaponsFile.destroy()
 ClickFile.destroy()

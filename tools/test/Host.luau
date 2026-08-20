@@ -283,6 +283,12 @@ function Host.create(world: any): HostStub
     host.makeTextLabel = makeTextLabel
     host.makeButton = makeButton
     host.ScreenGui = screenGui
+    host.HttpService = {
+        JSONEncode = function(_self: any, value: any): string
+            -- Enough of an encoder for a test to prove a file was written.
+            return "[" .. tostring(#value) .. " entries]"
+        end,
+    }
     host.Players = world.players
     host.LocalPlayer = world.localPlayer
     host.workspace = world.workspace

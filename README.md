@@ -385,6 +385,10 @@ ESP = framework.Categories.Visuals:CreateModule({
 local Boxes = ESP:CreateDropdown({Name = "Boxes", List = {"Corner", "Full", "Off"}})
 ```
 
+Fly's float engine gained **Bypass**: it holds the altitude but drops you to
+the ground for a fraction of a second every few seconds, so a server that
+checks whether you ever land sees that you do.
+
 Builders available to a module: `CreateToggle`, `CreateSlider`,
 `CreateDropdown`, `CreateList` (a multi-select: same popup, one state mark per
 row, stays open while you tick), `CreateBind`, `CreateTextBox`, `CreateColor`,
@@ -535,6 +539,13 @@ polite only when you ask it to.
   does, by firing the signals a tap raises. Press *Learn button*, tap the
   game's button once, and it is bound; the name is remembered so a HUD rebuilt
   between rounds is found again. The menu's own buttons are never eligible.
+- **Player ESP** boxes are the projected corners of the character's own
+  bounding box, not a height guess with a fixed width ratio. The old box took
+  two points and made the width 52% of the height, so an angled camera, a rig
+  with its arms out or a target near the screen edge all produced the wrong
+  shape — and a corner behind the lens projects to a huge negative coordinate,
+  which is where the sudden stretching came from. Targets with any corner
+  behind the camera are skipped outright.
 - **Player ESP** draws in **team colours** by default, reading each player's
   own `Team.TeamColor`, and puts the name on a dark plate so it stays readable
   over snow or a bright sky. The two-grey scheme is still there for teamless
@@ -548,6 +559,21 @@ polite only when you ask it to.
   *every* object with that name is rendered, so one tap on one iron ore lights
   up all of them. Names can also be typed in, and the sweep interval, distance,
   colour, text size and outline are all adjustable.
+- **Remote Logger** (`Utility`): records what the game sends to its own
+  remotes. It hooks `__namecall` (plus direct `FireServer`/`InvokeServer`),
+  keeps the full instance path, the method, the type and value of every
+  argument, the call count and a ready-to-paste snippet, and writes both a
+  readable `.txt` and a `.json` to `ARandomMenu/RemoteLogs/<place>-<time>`.
+  `checkcaller` keeps the menu's own traffic out of it, arguments are described
+  rather than deep-copied so it cannot serialise the whole DataModel, and a
+  name filter plus a cap keep a chatty game from filling the disk. This is how
+  a game module learns what `MineBlock` or `PlaceBlock` actually expect instead
+  of guessing and getting kicked.
+- **Scaffold** (`Movement`): footing that is always there — *Platform* under
+  your feet, *Bridge* extended along the way you are moving, or *Catch*, which
+  stays invisible until you start falling with nothing below. It is local
+  footing rather than the game's own blocks, which no universal module can
+  place without knowing the game's remote (see the Remote Logger).
 - **TriggerBot** (`Combat`): always-on or hold-to-arm, single or automatic,
   reaction delay with a per-acquisition random jitter, minimum time between
   shots, target-part filter (any, head, torso), an aim radius in pixels that
@@ -605,10 +631,18 @@ saved place in `reference/`, not from guesswork:
   `ReplicatedStorage.GameInfo`, with the number of beds still standing.
 - **Auto Swing** — presses the game's own sword button on a timer, because this
   game has no `Tool` to activate.
+- **Bed Nuker** — hits the nearest bed in range with the game's own controls:
+  the swing button plus contact events against the bed's hitbox, at a rate you
+  set.
+- **Void Warning** — reads `GameInfo.DeathBarrierInfo` and warns when you are
+  within forty studs of the game's own kill plane.
 
 What it does not do is fire `SwordHit`, `MineBlock`, `PlaceBlock` or
 `PurchaseItemShopItem` directly: their argument shapes are not in the dump, and
-a remote called with the wrong arguments is a kick, not a feature.
+a remote called with the wrong arguments is a kick, not a feature. Run the
+**Remote Logger**, break one bed and place one block by hand, and the saved log
+will contain exactly what those remotes expect — at which point they can be
+called properly rather than hopefully.
 
 ## MM2 module
 

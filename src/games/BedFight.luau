@@ -33,6 +33,7 @@ local runtimeState: any = {
     bedMarks = {} :: {[Instance]: any},
     generatorMarks = {} :: {[Instance]: any},
     infoPanel = nil :: any,
+    voidPanel = nil :: any,
 }
 
 local function clearMarks(store: {[Instance]: any}): ()
@@ -437,6 +438,174 @@ function Module.init(runtime: any): any
         "Equip a weapon first; the button swings whatever is in the hotbar slot."
     )
 
+    -- Bed Nuker -------------------------------------------------------------
+    --
+    -- The bed is broken by hitting it, and hitting in this game is the touch
+    -- button plus the weapon's own contact events — the same pair Kill Aura
+    -- uses on players. `MineBlock` is right there in ReplicatedStorage, but its
+    -- arguments are not in the dump, so this drives the game's own controls
+    -- instead of inventing a call. Turn on the Remote Logger, break one bed by
+    -- hand, and the log will say exactly what a future version could send.
+    local nukerSettings: any = {range = 24, rate = 12}
+    local NukerFeature: any = createUniversalFeature(
+        "Bed Nuker",
+        "Hits the nearest bed in range as fast as the game allows",
+        5,
+        function(enabled: boolean): ()
+            host.disconnectFeatureConnection("BedFightNuker")
+            if not enabled then
+                return
+            end
+            local nextAt: number = 0
+            host.featureConnections.BedFightNuker =
+                TaskManager:Connect(function(): ()
+                    local character: Model? = LocalPlayer.Character
+                    local root: BasePart? = character
+                        and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+                    if not root then
+                        return
+                    end
+                    local resolvedRoot: BasePart = root :: BasePart
+
+                    local target: BasePart? = nil
+                    local best: number = nukerSettings.range
+                    for _, bed: Model in ipairs(collectBeds()) do
+                        local anchor: BasePart? = anchorOf(bed)
+                        if not anchor then
+                            continue
+                        end
+                        local distance: number =
+                            ((anchor :: BasePart).Position - resolvedRoot.Position).Magnitude
+                        if distance < best then
+                            target = anchor
+                            best = distance
+                        end
+                    end
+                    if not target then
+                        return
+                    end
+
+                    local now: number = os.clock()
+                    if now < nextAt then
+                        return
+                    end
+                    nextAt = now + 1 / math.max(nukerSettings.rate, 0.5)
+
+                    local weapons: any = state.weaponLibrary
+                    if weapons then
+                        weapons:Swing()
+                    end
+                    -- Contact as well as the swing: a pickaxe that damages on
+                    -- touch never registers from the button alone.
+                    local fire: any = environment.firetouchinterest
+                    if type(fire) ~= "function" then
+                        return
+                    end
+                    for _, part: Instance in ipairs(character:GetDescendants()) do
+                        if not part:IsA("BasePart") then
+                            continue
+                        end
+                        pcall(fire, part, target, 1)
+                        pcall(fire, part, target, 0)
+                    end
+                end)
+        end,
+        {parent = scroll, registry = registry, categoryName = "Combat"}
+    )
+    addNumberOption(
+        NukerFeature,
+        "Range",
+        nukerSettings.range,
+        6,
+        80,
+        function(value: number): ()
+            nukerSettings.range = value
+        end
+    )
+    addNumberOption(
+        NukerFeature,
+        "Hits per second",
+        nukerSettings.rate,
+        1,
+        30,
+        function(value: number): ()
+            nukerSettings.rate = value
+        end
+    )
+    addInformationOption(
+        NukerFeature,
+        "Equip the pickaxe first: this presses the game's own controls, so "
+            .. "whatever is in your hand is what swings."
+    )
+
+    -- Void warning ------------------------------------------------------------
+    --
+    -- The death barrier is a Configuration in GameInfo with its height and
+    -- distance in it, so the warning is the game's own number rather than a
+    -- guess about where the map ends.
+    local VoidFeature: any = createUniversalFeature(
+        "Void Warning",
+        "Flashes when you drop below the map's death barrier",
+        6,
+        function(enabled: boolean): ()
+            host.disconnectFeatureConnection("BedFightVoid")
+            if runtimeState.voidPanel then
+                pcall(function(): ()
+                    runtimeState.voidPanel:Destroy()
+                end)
+                runtimeState.voidPanel = nil
+            end
+            if not enabled then
+                return
+            end
+            local warning: Frame = create("Frame", {
+                Parent = host.ScreenGui,
+                Name = "BedFightVoidWarning",
+                AnchorPoint = Vector2.new(0.5, 0),
+                BackgroundColor3 = Color3.fromRGB(18, 14, 14),
+                BackgroundTransparency = 0.1,
+                BorderSizePixel = 0,
+                Position = UDim2.new(0.5, 0, 0, 74),
+                Size = UDim2.fromOffset(210, 26),
+                Visible = false,
+                ZIndex = 62,
+            }) :: Frame
+            create("UICorner", {Parent = warning, CornerRadius = UDim.new(0, 4)})
+            local label: TextLabel = makeTextLabel(warning, "", 12)
+            label.Size = UDim2.fromScale(1, 1)
+            label.TextXAlignment = Enum.TextXAlignment.Center
+            label.TextColor3 = Color3.fromRGB(232, 160, 160)
+            label.ZIndex = 63
+            runtimeState.voidPanel = warning
+
+            host.featureConnections.BedFightVoid =
+                TaskManager:Connect(function(): ()
+                    local info: Instance? = gameInfo()
+                    local barrier: Instance? = info
+                        and info:FindFirstChild("DeathBarrierInfo")
+                    local heightValue: Instance? = barrier
+                        and barrier:FindFirstChild("MaxHeight")
+                    local root: BasePart? = LocalPlayer.Character
+                        and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+                    if not root or not heightValue or not heightValue:IsA("NumberValue") then
+                        warning.Visible = false
+                        return
+                    end
+                    local floor: number = (heightValue :: NumberValue).Value
+                    local drop: number = (root :: BasePart).Position.Y - floor
+                    warning.Visible = drop < 40
+                    if warning.Visible then
+                        label.Text = "Void in " .. tostring(math.round(drop)) .. " studs"
+                    end
+                end)
+        end,
+        {parent = scroll, registry = registry, categoryName = "Protection"}
+    )
+    addInformationOption(
+        VoidFeature,
+        "Reads GameInfo.DeathBarrierInfo, which is where the server keeps it."
+    )
+
     Module.Initialized = true
     return Module
 end
@@ -450,6 +619,8 @@ function Module.destroy(): ()
             "BedFightGenerators",
             "BedFightInfo",
             "BedFightSwing",
+            "BedFightNuker",
+            "BedFightVoid",
         })
     do
         if host.disconnectFeatureConnection then
@@ -463,6 +634,12 @@ function Module.destroy(): ()
             runtimeState.infoPanel.root:Destroy()
         end)
         runtimeState.infoPanel = nil
+    end
+    if runtimeState.voidPanel then
+        pcall(function(): ()
+            runtimeState.voidPanel:Destroy()
+        end)
+        runtimeState.voidPanel = nil
     end
     Module.Initialized = false
 end

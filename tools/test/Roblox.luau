@@ -141,6 +141,15 @@ function CFrameMeta.__sub(a: any, b: any): any
     return cframe(a.Position - b, a.LookVector)
 end
 
+function CFrameMeta.__mul(a: any, b: any): any
+    -- Only the case the ESP needs: a point in the CFrame's own space, with no
+    -- rotation applied, which is enough to place the eight box corners.
+    if type(b) == "table" and b.X and b.Y and b.Z then
+        return a.Position + b
+    end
+    return a
+end
+
 -- Signals ------------------------------------------------------------------
 
 local function signal(): any
@@ -304,6 +313,12 @@ local function newInstance(className: string): any
         return vector3(4, 5, 2)
     end
 
+    function instance:GetBoundingBox(): (any, any)
+        local root: any = self:FindFirstChild("HumanoidRootPart")
+        local origin: any = root and rawget(root, "Position") or vector3(0, 0, 0)
+        return cframe(origin), vector3(4, 5, 2)
+    end
+
     function instance:SetAttribute(key: string, value: any): ()
         self.Attributes[key] = value
     end
@@ -453,6 +468,37 @@ function Mock.install(): MockWorld
         world.mouseClicks = (world.mouseClicks or 0) + 1
     end
 
+    -- Remote logging: the hook is captured so a test can pretend the game
+    -- fired one of its own remotes, and writes land in a table rather than on
+    -- a disk that does not exist here.
+    world.files = {}
+    globals.hookmetamethod = function(_target: any, name: string, replacement: any): any
+        if name == "__namecall" then
+            world.namecallHook = replacement
+        end
+        return function(): ()
+        end
+    end
+    globals.getnamecallmethod = function(): string
+        return world.namecallMethod or "FireServer"
+    end
+    globals.checkcaller = function(): boolean
+        return world.callerIsMenu == true
+    end
+    globals.writefile = function(path: string, contents: string): ()
+        world.files[path] = contents
+    end
+    globals.isfolder = function(path: string): boolean
+        return world.folders ~= nil and world.folders[path] == true
+    end
+    globals.makefolder = function(path: string): ()
+        world.folders = world.folders or {}
+        world.folders[path] = true
+    end
+    globals.setclipboard = function(contents: string): ()
+        world.clipboard = contents
+    end
+
     globals.OverlapParams = {
         new = function(): any
             return {FilterType = nil, FilterDescendantsInstances = {}}
@@ -485,9 +531,12 @@ function Mock.install(): MockWorld
     camera.ViewportSize = vector2(1280, 720)
     function camera:WorldToViewportPoint(position: any): (any, boolean)
         -- Straight-line projection: enough for the ESP to compute a box, and
-        -- deterministic, which a perspective divide would not be.
-        return vector3(640 + position.X * 10, 360 - position.Y * 10, position.Z),
-            position.Z <= 0
+        -- deterministic, which a perspective divide would not be. The third
+        -- component is depth in front of the lens, exactly like the engine's:
+        -- the camera looks down -Z, so depth is the negated world Z.
+        local depth: number = -position.Z
+        return vector3(640 + position.X * 10, 360 - position.Y * 10, depth),
+            depth > 0
     end
     -- Screen space includes the top bar; viewport space does not. Click
     -- Teleport has to use this one, so the mock keeps them distinguishable.

@@ -392,9 +392,44 @@ function Module.render(
         end
 
         local rootPosition: Vector3 = entity.RootPart.Position
-        local screenPoint: Vector3, onScreen: boolean =
-            resolvedCamera:WorldToViewportPoint(rootPosition)
-        if not onScreen then
+        -- Geometry, properly. The old box took the character's extents, dropped
+        -- two points through WorldToViewportPoint and made the width a fixed
+        -- fraction of the height: a rig with its arms out, a camera at an
+        -- angle, or a target near the edge of the screen all produced a box
+        -- that was the wrong shape, and a corner behind the camera projects to
+        -- a huge negative coordinate, which is where the sudden stretching
+        -- came from. This projects all eight corners of the model's own
+        -- bounding box and takes the extremes, skipping the target entirely if
+        -- any corner is behind the lens.
+        local boundsCFrame: CFrame, boundsSize: Vector3 =
+            entity.Character:GetBoundingBox()
+        local half: Vector3 = boundsSize * 0.5
+        local minimumX: number = math.huge
+        local minimumY: number = math.huge
+        local maximumX: number = -math.huge
+        local maximumY: number = -math.huge
+        local anyVisible: boolean = false
+        local behindCamera: boolean = false
+
+        for cornerIndex: number = 0, 7 do
+            local corner: Vector3 = boundsCFrame * Vector3.new(
+                (cornerIndex % 2 == 0) and -half.X or half.X,
+                (math.floor(cornerIndex / 2) % 2 == 0) and -half.Y or half.Y,
+                (math.floor(cornerIndex / 4) % 2 == 0) and -half.Z or half.Z
+            )
+            local projected: Vector3, visible: boolean =
+                resolvedCamera:WorldToViewportPoint(corner)
+            if projected.Z <= 0 then
+                behindCamera = true
+                break
+            end
+            anyVisible = anyVisible or visible
+            minimumX = math.min(minimumX, projected.X)
+            minimumY = math.min(minimumY, projected.Y)
+            maximumX = math.max(maximumX, projected.X)
+            maximumY = math.max(maximumY, projected.Y)
+        end
+        if behindCamera or not anyVisible then
             continue
         end
 
@@ -423,20 +458,21 @@ function Module.render(
             end
         end
 
-        -- Box geometry from the character's own extents, so a crouching or
-        -- oversized rig gets a box that actually fits it.
-        local extents: Vector3 = entity.Character:GetExtentsSize()
-        local topPoint: Vector3 =
-            resolvedCamera:WorldToViewportPoint(rootPosition + Vector3.new(0, extents.Y * 0.5 + 0.4, 0))
-        local bottomPoint: Vector3 =
-            resolvedCamera:WorldToViewportPoint(rootPosition - Vector3.new(0, extents.Y * 0.5, 0))
-        local height: number = math.abs(bottomPoint.Y - topPoint.Y)
-        local width: number = math.max(height * 0.52, 6)
-        local centreX: number = screenPoint.X
-        local top: number = math.min(topPoint.Y, bottomPoint.Y)
-        local left: number = centreX - width * 0.5
-        local right: number = centreX + width * 0.5
-        local bottom: number = top + height
+        -- The box is the projected bounding box, padded a little so it frames
+        -- the character instead of cutting into it.
+        local padding: number = 2
+        local left: number = minimumX - padding
+        local right: number = maximumX + padding
+        local top: number = minimumY - padding
+        local bottom: number = maximumY + padding
+        local width: number = math.max(right - left, 4)
+        local height: number = math.max(bottom - top, 6)
+        local centreX: number = (left + right) * 0.5
+        -- A target that is off the edge of the screen would otherwise leave a
+        -- name floating in the corner.
+        if right < 0 or left > viewport.X or bottom < 0 or top > viewport.Y then
+            continue
+        end
 
         local thickness: number = math.round(options["Box thickness"].Value)
         local boxMode: string = options["Boxes"].Value
