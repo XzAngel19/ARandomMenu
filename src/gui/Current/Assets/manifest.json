@@ -409,6 +409,16 @@
         128
       ],
       "usage": "Overlay window launcher"
+    },
+    "minecraft_font": {
+      "category": "typography",
+      "path": "Assets/Typography/Monocraft.otf",
+      "type": "font/otf",
+      "dimensions": [
+        0,
+        0
+      ],
+      "usage": "Minecraft-shaped face offered by the interface font picker (SIL OFL, IdreesInc/Monocraft)"
     }
   }
 }

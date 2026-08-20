@@ -1062,6 +1062,16 @@ local AssetManager: any = {
         -- Brand artwork. Both are resolved lazily and every consumer keeps a
         -- text fallback, so an executor without getcustomasset simply keeps
         -- the lettering it had.
+        -- Monocraft: a Minecraft-shaped OFL font, kept in the repository so
+        -- the picker has one pixel face that is not a Roblox built-in.
+        minecraftFont = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Typography/Monocraft.otf",
+            fileName = "monocraft-v1.otf",
+            fallback = "",
+            version = 1,
+            assetType = "font/otf",
+        },
         brandLogo = {
             url = REPOSITORY_RAW_BASE
                 .. "src/gui/Current/Assets/Brand/menu-logo.jpg",
@@ -1400,6 +1410,112 @@ end
 -- Resolving an image means a download, a file write and a getcustomasset
 -- call, so it happens off the bootstrap thread and the caller keeps whatever
 -- it was already showing until the id arrives.
+-- Interface fonts.
+--
+-- Everything the menu draws goes through three faces — a bold one for titles,
+-- a semibold one for controls and a regular one for body text — and all three
+-- are built from one family, so choosing a font here re-skins the whole
+-- interface without touching a single call site.
+state.customFontAssets = {
+    ["Minecraft (Monocraft)"] = "minecraftFont",
+    ["Candy Fruits"] = "candyFont",
+    ["Valve"] = "valveFont",
+}
+
+state.listInterfaceFonts = function(): {string}
+    local names: {string} = {"Menu default"}
+    -- Read from the engine rather than a hard-coded list: a client with newer
+    -- faces should offer them, and one with fewer should not lie about them.
+    for _, item: EnumItem in ipairs(Enum.Font:GetEnumItems()) do
+        if item ~= Enum.Font.Unknown then
+            table.insert(names, item.Name)
+        end
+    end
+    for name: string in pairs(state.customFontAssets) do
+        table.insert(names, name)
+    end
+    table.sort(names, function(first: string, second: string): boolean
+        if first == "Menu default" then
+            return true
+        end
+        if second == "Menu default" then
+            return false
+        end
+        return first < second
+    end)
+    return names
+end
+
+state.resolveInterfaceFont = function(name: string): Font?
+    if name == "Menu default" then
+        return Font.new(
+            "rbxasset://fonts/families/BuilderSans.json",
+            Enum.FontWeight.Regular,
+            Enum.FontStyle.Normal
+        )
+    end
+    local customAsset: string? = state.customFontAssets[name]
+    if customAsset then
+        -- Downloaded, cached and turned into an asset id by the same path the
+        -- decorative fonts already use; falls back to the current face.
+        return AssetManager.resolveFont(
+            customAsset,
+            CONTROL_FONT,
+            Enum.FontWeight.Regular,
+            Enum.FontStyle.Normal
+        )
+    end
+    local enumOk: boolean, enumItem: any = pcall(function(): any
+        return (Enum.Font :: any)[name]
+    end)
+    if not enumOk or typeof(enumItem) ~= "EnumItem" then
+        return nil
+    end
+    local fontOk: boolean, face: any = pcall(Font.fromEnum, enumItem)
+    if not fontOk then
+        return nil
+    end
+    return face :: Font
+end
+
+state.applyInterfaceFont = function(name: string, persist: boolean?): ()
+    local base: Font? = state.resolveInterfaceFont(name)
+    if not base then
+        return
+    end
+    local resolvedBase: Font = base :: Font
+    local family: string = resolvedBase.Family
+    local style: Enum.FontStyle = resolvedBase.Style
+    TITLE_FONT = Font.new(family, Enum.FontWeight.Bold, style)
+    CONTROL_FONT = Font.new(family, Enum.FontWeight.SemiBold, style)
+    THIN_FONT = Font.new(family, Enum.FontWeight.Regular, style)
+    DISPLAY_FONT = TITLE_FONT
+    VALVE_FONT = CONTROL_FONT
+
+    -- Each label keeps the weight it was designed with, so headings stay
+    -- heavier than body text in whichever family was picked.
+    for _, descendant: Instance in ipairs(ScreenGui:GetDescendants()) do
+        if descendant:IsA("TextLabel")
+            or descendant:IsA("TextButton")
+            or descendant:IsA("TextBox") then
+            local current: Font = (descendant :: any).FontFace
+            local ok: boolean = pcall(function(): ()
+                (descendant :: any).FontFace =
+                    Font.new(family, current.Weight, current.Style)
+            end)
+            if not ok then
+                (descendant :: any).FontFace = resolvedBase
+            end
+        end
+    end
+
+    state.interfaceFontName = name
+    if persist ~= false then
+        configData.values.interfaceFont = name
+        queueConfigSave()
+    end
+end
+
 state.applyAssetImage = function(
     logicalName: string,
     image: ImageLabel,
@@ -7463,43 +7579,14 @@ refreshFavorites()
 end
 
 local function applyFeaturePresentation(feature: any, isDefault: boolean): ()
-    local enabled: boolean = feature.kind == "hold"
-        and feature.active == true
-        or feature.enabled == true
-    if feature.row then
-        feature.row.BackgroundColor3 = isDefault
-            and (enabled and Theme.DefaultSurfaceHover or Theme.DefaultSurface)
-            or (enabled and Color3.fromRGB(31, 31, 35) or Theme.Background)
-        feature.row.BackgroundTransparency = isDefault
-            and (enabled and 0.5 or 0.82)
-            or (enabled and 0.08 or 1)
+    -- One skin, one place. A restyle used to repaint the card with its own
+    -- copy of the rules, which is how the stripe ended up pink on action cards
+    -- and violet on headings while the card code said otherwise.
+    if feature.kind == "hold" then
+        feature.enabled = feature.active == true
     end
-    if feature.stroke then
-        feature.stroke.Color = isDefault
-            and Theme.DefaultOutline
-            or (enabled and Color3.fromRGB(225, 225, 230) or Theme.Outline)
-        feature.stroke.Transparency = isDefault
-            and (enabled and 0.68 or 1)
-            or (enabled and 0.18 or 1)
-    end
-    if feature.activeStripe then
-        feature.activeStripe.BackgroundColor3 = feature.isAction
-            and Theme.AccentPink
-            or (feature.isCategory and Theme.AccentViolet or Theme.DefaultAccent)
-
-        feature.activeStripe.BackgroundTransparency = enabled
-            and 0
-            or ((feature.isAction or feature.isCategory or feature.isHoldAction)
-                and 0.42
-                or 1)
-    end
-    if feature.activeStripeGradient then
-        feature.activeStripeGradient.Enabled = not isDefault
-    end
-    if feature.title then
-        feature.title.TextColor3 = isDefault
-            and (enabled and Theme.DefaultAccent or Theme.DefaultText)
-            or Theme.Text
+    if state.applyCardSkin then
+        state.applyCardSkin(feature, false)
     end
     if feature.subtitle then
         feature.subtitle.TextColor3 = isDefault
@@ -7536,8 +7623,114 @@ state.restyleAllFeatures = function(isDefault: boolean): ()
     end
 end
 
+-- Card skin.
+--
+-- The card *is* the control. Nothing is bolted onto it — no switch, no chip,
+-- no marker under the name — because a list of forty modules only stays
+-- readable if each row is one shape whose surface, weight and edge already say
+-- what it is and what it is doing:
+--
+--   toggle  a row that lifts. Off it is a hairline-separated line of muted
+--           text on near-black; on, the surface rises a step, the name goes
+--           white and a two-pixel edge lights the left side.
+--   action  a slab. It carries a whisper of an outline on all four sides and
+--           its name is always white, because a button has no "off"; pressing
+--           it flashes the surface once.
+--   hold    the same slab, seated one step darker, which rises to the toggle's
+--           lit state for exactly as long as the key is down.
+--   group   not a control at all: no surface, no outline, no hover — a heading
+--           with a rule under it and its options below.
+--
+-- Everything is near-black through grey; the only "colour" in the interface is
+-- how light a grey is.
+state.applyCardSkin = function(feature: any, hovered: boolean?): ()
+    local row: Frame? = feature.row
+    if not row then
+        return
+    end
+    local resolvedRow: Frame = row :: Frame
+    local isHovered: boolean = hovered == true
+    local isOn: boolean = feature.enabled == true
+
+    local surface: number
+    local titleTransparency: number = 0
+    local titleColor: Color3 = Theme.DefaultText
+    local outline: number = 1
+    local edge: number = 1
+    local rule: number = 0.86
+
+    if feature.isCategory then
+        -- A heading, not a button: flat, and the rule under it groups the
+        -- options that belong to it.
+        surface = 1
+        titleColor = Theme.DefaultText
+        titleTransparency = 0.32
+        rule = 0.72
+    elseif feature.isAction then
+        surface = isHovered and 0.6 or 0.74
+        outline = 0.88
+        rule = 1
+    elseif feature.isHoldAction then
+        surface = isOn and 0.42 or (isHovered and 0.66 or 0.8)
+        outline = isOn and 0.82 or 0.9
+        titleColor = isOn and Theme.DefaultText or Theme.DefaultTextMuted
+        edge = isOn and 0.45 or 1
+        rule = 1
+    else
+        surface = isOn and 0.42 or (isHovered and 0.7 or 0.86)
+        titleColor = isOn and Theme.DefaultText or Theme.DefaultTextMuted
+        edge = isOn and 0.45 or 1
+        rule = isOn and 1 or 0.86
+    end
+
+    local motion: TweenInfo = TweenInfo.new(
+        UI_MOTION.base,
+        Enum.EasingStyle.Quad,
+        Enum.EasingDirection.Out
+    )
+    local animate: boolean = state.animationsEnabled == true
+    if animate then
+        TweenService:Create(resolvedRow, motion, {
+            BackgroundColor3 = Theme.DefaultSurface,
+            BackgroundTransparency = surface,
+        }):Play()
+    else
+        resolvedRow.BackgroundColor3 = Theme.DefaultSurface
+        resolvedRow.BackgroundTransparency = surface
+    end
+
+    if feature.title then
+        local titleLabel: TextLabel = feature.title :: TextLabel
+        titleLabel.TextColor3 = titleColor
+        titleLabel.TextTransparency = titleTransparency
+    end
+    if feature.stroke then
+        local cardStroke: UIStroke = feature.stroke :: UIStroke
+        cardStroke.Color = Theme.DefaultOutline
+        cardStroke.Transparency = outline
+    end
+    if feature.activeStripe then
+        local stripe: Frame = feature.activeStripe :: Frame
+        stripe.BackgroundColor3 = Theme.DefaultText
+        if animate then
+            TweenService:Create(stripe, motion, {BackgroundTransparency = edge}):Play()
+        else
+            stripe.BackgroundTransparency = edge
+        end
+    end
+    if feature.cardRule then
+        (feature.cardRule :: Frame).BackgroundTransparency = rule
+    end
+end
+
 local function refreshFeatureToggle(feature: any): ()
     if feature.isCategory or feature.isAction then
+        -- Neither has an on/off state, but both still need their skin applied
+        -- once so a restyle does not leave them looking like a dead toggle.
+        state.applyCardSkin(feature, false)
+        if state.floatingUi then
+            state.floatingUi.refreshFeature(feature)
+        end
         return
     end
     -- A hold module has no enabled state: what it shows is whether its key is
@@ -7545,86 +7738,7 @@ local function refreshFeatureToggle(feature: any): ()
     if feature.isHoldAction then
         feature.enabled = feature.active == true
     end
-    if feature.activeStripe then
-        TweenService:Create(
-            feature.activeStripe,
-            TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quad),
-            {BackgroundTransparency = feature.enabled
-                and 0
-                or (feature.isHoldAction and 0.42 or 1)}
-        ):Play()
-    end
-    if feature.row then
-        TweenService:Create(
-            feature.row,
-            TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quad),
-            {
-                BackgroundColor3 = feature.enabled
-                    and (state.guiStyle == "Default"
-                        and Theme.DefaultSurfaceHover
-                        or Color3.fromRGB(31, 31, 35))
-                    or (state.guiStyle == "Default"
-                        and Theme.DefaultSurface
-                        or Theme.Background),
-                BackgroundTransparency = state.guiStyle == "Default"
-                    and (feature.enabled and 0.5 or 0.82)
-                    or (feature.enabled and 0.08 or 1),
-            }
-        ):Play()
-    end
-    if feature.title then
-        TweenService:Create(
-            feature.title,
-            TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quad),
-            {TextColor3 = state.guiStyle == "Default"
-                and (feature.enabled and Theme.DefaultAccent or Theme.DefaultText)
-                or (feature.enabled and Color3.fromRGB(255, 255, 255) or Theme.Text)}
-        ):Play()
-    end
-    if feature.stroke then
-        TweenService:Create(
-            feature.stroke,
-            TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quad),
-            {
-                Color = feature.enabled
-                    and (state.guiStyle == "Default"
-                        and Theme.DefaultOutline
-                        or Color3.fromRGB(225, 225, 230))
-                    or (state.guiStyle == "Default"
-                        and Theme.DefaultOutline
-                        or Theme.Outline),
-                Transparency = state.guiStyle == "Default"
-                    and (feature.enabled and 0.68 or 1)
-                    or (feature.enabled and 0.18 or 1),
-            }
-        ):Play()
-    end
-    -- The square is the state: empty when off, filled when on.
-    if feature.kindBoxFill then
-        TweenService:Create(
-            feature.kindBoxFill,
-            TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-            {
-                Size = feature.enabled
-                    and UDim2.fromScale(0.6, 0.6)
-                    or UDim2.fromScale(0, 0),
-                BackgroundTransparency = feature.enabled and 0.05 or 1,
-            }
-        ):Play()
-    end
-    if feature.kindBoxStroke then
-        (feature.kindBoxStroke :: UIStroke).Transparency =
-            feature.enabled and 0.1 or 0.35
-    end
-    -- A hold module's bars brighten for exactly as long as the key is down.
-    for _, bar: any in ipairs({feature.kindHoldLeft, feature.kindHoldRight}) do
-        if bar then
-            bar.BackgroundColor3 = feature.enabled
-                and Theme.DefaultText
-                or Theme.DefaultTextMuted
-            bar.BackgroundTransparency = feature.enabled and 0.05 or 0.35
-        end
-    end
+    state.applyCardSkin(feature, false)
     if state.floatingUi then
         state.floatingUi.refreshFeature(feature)
     end
@@ -8043,7 +8157,9 @@ local function createUniversalFeature(
     create("UICorner", {
         Parent = row,
         Name = "CardCorner",
-        CornerRadius = cornerRadius(state.layout.cardCorner),
+        -- Cards are rows in a list, not floating tiles: a small radius keeps
+        -- them reading as one surface instead of a tray of lozenges.
+        CornerRadius = cornerRadius(math.min(state.layout.cardCorner, 8)),
     })
     local cardStroke: UIStroke = (create("UIStroke", {
         Parent = row,
@@ -8076,134 +8192,33 @@ local function createUniversalFeature(
         Rotation = 90,
     })
     feature.activeStripe = activeStripe
-    activeStripe.BackgroundColor3 = Theme.DefaultAccent
+    activeStripe.BackgroundColor3 = Theme.DefaultText
     if feature.activeStripeGradient then
         (feature.activeStripeGradient :: UIGradient).Enabled = false
     end
-    -- Always-on kinds keep a dim stripe lit: they have no "off", and a card
-    -- with no stripe at all reads as disabled.
-    if feature.isAlwaysOn then
-        activeStripe.BackgroundTransparency = 0.62
-    end
 
-    -- Kind marker, drawn from frames so it reads the same at every text size
-    -- and in every language.
-    local markIdle: Color3 = Theme.DefaultTextMuted
-    local kindMark: Frame = create("Frame", {
+    -- Hairline under the card. A separator instead of a box: forty boxed cards
+    -- read as a spreadsheet, forty separated rows read as a list.
+    local cardRule: Frame = create("Frame", {
         Parent = row,
-        Name = "KindMark",
-        AnchorPoint = Vector2.new(0, 0.5),
-        BackgroundTransparency = 1,
+        Name = "CardRule",
+        AnchorPoint = Vector2.new(0.5, 1),
+        BackgroundColor3 = Theme.DefaultOutline,
+        BackgroundTransparency = 0.86,
         BorderSizePixel = 0,
-        Position = UDim2.new(0, 12, 0, math.round(feature.collapsedHeight * 0.74)),
-        Size = UDim2.fromOffset(14, 14),
-        ZIndex = 9,
+        Position = UDim2.new(0.5, 0, 1, 0),
+        Size = UDim2.new(1, -20, 0, 1),
+        ZIndex = 8,
     }) :: Frame
+    feature.cardRule = cardRule
 
-    if feature.kind == "action" then
-        -- A chevron, built from two bars: Roblox has no polygon primitive and
-        -- a glyph would depend on whichever font loaded.
-        for _, side: number in ipairs({-1, 1}) do
-            local blade: Frame = create("Frame", {
-                Parent = kindMark,
-                Name = side < 0 and "ChevronTop" or "ChevronBottom",
-                AnchorPoint = Vector2.new(0.5, 0.5),
-                BackgroundColor3 = markIdle,
-                BackgroundTransparency = 0.15,
-                BorderSizePixel = 0,
-                Position = UDim2.new(0.5, -1, 0.5, side * 2),
-                Rotation = side * 45,
-                Size = UDim2.fromOffset(8, 1),
-                ZIndex = 10,
-            }) :: Frame
-            create("UICorner", {Parent = blade, CornerRadius = UDim.new(1, 0)})
-        end
-    elseif feature.kind == "hold" then
-        -- Two upright bars: the shape of something you press and hold.
-        for _, side: number in ipairs({-1, 1}) do
-            local bar: Frame = create("Frame", {
-                Parent = kindMark,
-                Name = side < 0 and "HoldLeft" or "HoldRight",
-                AnchorPoint = Vector2.new(0.5, 0.5),
-                BackgroundColor3 = markIdle,
-                BackgroundTransparency = 0.35,
-                BorderSizePixel = 0,
-                Position = UDim2.new(0.5, side * 3, 0.5, 0),
-                Size = UDim2.fromOffset(2, 10),
-                ZIndex = 10,
-            }) :: Frame
-            create("UICorner", {Parent = bar, CornerRadius = UDim.new(1, 0)})
-            if side < 0 then
-                feature.kindHoldLeft = bar
-            else
-                feature.kindHoldRight = bar
-            end
-        end
-    elseif feature.isAlwaysOn then
-        -- Three rules, narrowing: a stack of settings rather than a control.
-        for index: number = 1, 3 do
-            local rule: Frame = create("Frame", {
-                Parent = kindMark,
-                Name = "Rule" .. tostring(index),
-                AnchorPoint = Vector2.new(0, 0.5),
-                BackgroundColor3 = markIdle,
-                BackgroundTransparency = 0.2 + (index - 1) * 0.18,
-                BorderSizePixel = 0,
-                Position = UDim2.new(0, 1, 0.5, (index - 2) * 4),
-                Size = UDim2.fromOffset(12 - (index - 1) * 3, 1),
-                ZIndex = 10,
-            }) :: Frame
-            create("UICorner", {Parent = rule, CornerRadius = UDim.new(1, 0)})
-        end
-    else
-        -- The same empty-or-filled square the option rows use, so one shape
-        -- means "state" everywhere in the interface.
-        local box: Frame = create("Frame", {
-            Parent = kindMark,
-            Name = "StateBox",
-            AnchorPoint = Vector2.new(0.5, 0.5),
-            BackgroundTransparency = 1,
-            BorderSizePixel = 0,
-            Position = UDim2.fromScale(0.5, 0.5),
-            Size = UDim2.fromOffset(12, 12),
-            ZIndex = 10,
-        }) :: Frame
-        create("UICorner", {Parent = box, CornerRadius = UDim.new(0, 3)})
-        local boxStroke: UIStroke = (create("UIStroke", {
-            Parent = box,
-            Color = markIdle,
-            Transparency = 0.35,
-            Thickness = 1,
-        }) :: any) :: UIStroke
-        local fill: Frame = create("Frame", {
-            Parent = box,
-            Name = "Fill",
-            AnchorPoint = Vector2.new(0.5, 0.5),
-            BackgroundColor3 = Theme.DefaultText,
-            BackgroundTransparency = 1,
-            BorderSizePixel = 0,
-            Position = UDim2.fromScale(0.5, 0.5),
-            Size = UDim2.fromScale(0, 0),
-            ZIndex = 11,
-        }) :: Frame
-        create("UICorner", {Parent = fill, CornerRadius = UDim.new(0, 2)})
-        feature.kindBoxStroke = boxStroke
-        feature.kindBoxFill = fill
-    end
-    feature.kindMark = kindMark
+    -- The card itself carries the kind (see `state.applyCardSkin`).
 
     local title: TextLabel =
         (makeTextLabel(row, name, state.layout.titleFontSize) :: any) :: TextLabel
     title.FontFace = CONTROL_FONT
     title.Position = UDim2.fromOffset(12, 0)
-    -- The kind chip sits under the title, so the title centres in the upper
-    -- two thirds of the card instead of the whole of it.
-    title.Size = UDim2.new(
-        1,
-        -(state.layout.cardHeight + 96),
-        0,
-        math.round(feature.collapsedHeight * 0.62)
-    )
+    title.Size = UDim2.new(1, -(state.layout.cardHeight + 96), 0, feature.collapsedHeight)
     title.TextTruncate = Enum.TextTruncate.AtEnd
     title.TextColor3 = state.guiStyle == "Default"
         and Theme.DefaultText
@@ -8300,37 +8315,10 @@ local function createUniversalFeature(
     title.ZIndex = 7
 
     trackUiConnection(row.MouseEnter:Connect(function(): ()
-        if feature.enabled then
-            return
-        end
-        TweenService:Create(
-            row,
-            TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quad),
-            {
-                BackgroundColor3 = state.guiStyle == "Default"
-                    and Theme.DefaultSurfaceHover
-                    or Theme.SurfaceHover,
-                BackgroundTransparency = state.guiStyle == "Default" and 0.66 or 0.78,
-            }
-        ):Play()
+        state.applyCardSkin(feature, true)
     end))
     trackUiConnection(row.MouseLeave:Connect(function(): ()
-        TweenService:Create(
-            row,
-            TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quad),
-            {
-                BackgroundColor3 = feature.enabled
-                    and (state.guiStyle == "Default"
-                        and Theme.DefaultSurfaceHover
-                        or Color3.fromRGB(31, 31, 35))
-                    or (state.guiStyle == "Default"
-                        and Theme.DefaultSurface
-                        or Theme.Background),
-                BackgroundTransparency = state.guiStyle == "Default"
-                    and (feature.enabled and 0.5 or 0.82)
-                    or (feature.enabled and 0.08 or 1),
-            }
-        ):Play()
+        state.applyCardSkin(feature, false)
     end))
 
     -- The options panel is a plain container, not a third surface.
@@ -8532,6 +8520,20 @@ local function createUniversalFeature(
         refreshFeatureToggle(feature)
     end
     feature.activate = activateFeature
+    -- Start in the right skin instead of inheriting the creation defaults.
+    state.applyCardSkin(feature, false)
+    if feature.isAction then
+        -- The only feedback a button needs: the surface lifts under the press
+        -- and settles back. No colour, no bounce.
+        trackUiConnection(activationTarget.MouseButton1Down:Connect(function(): ()
+            if feature.row then
+                (feature.row :: Frame).BackgroundTransparency = 0.46
+            end
+        end))
+        trackUiConnection(activationTarget.MouseButton1Up:Connect(function(): ()
+            state.applyCardSkin(feature, true)
+        end))
+    end
 
     trackUiConnection(activationTarget.MouseButton1Click:Connect(activateFeature))
     do
@@ -8632,7 +8634,7 @@ local function createUniversalFeature(
         feature.collapsedHeight = metrics.cardHeight
         local cardCorner: UICorner? = row:FindFirstChild("CardCorner") :: UICorner?
         if cardCorner then
-            cardCorner.CornerRadius = cornerRadius(metrics.cardCorner)
+            cardCorner.CornerRadius = cornerRadius(math.min(metrics.cardCorner, 8))
         end
         title.Size =
             UDim2.new(1, -(sideWidth + 26), 0, metrics.cardHeight)
@@ -14833,11 +14835,64 @@ TextSizeValue.Position = UDim2.new(1, 0, 0.5, 0)
 TextSizeValue.Size = UDim2.fromOffset(48, 22)
 TextSizeValue.TextXAlignment = Enum.TextXAlignment.Right
 
+-- Typeface picker.
+--
+-- Every face the client ships plus the three the repository carries, including
+-- a Minecraft-shaped one. Picking here rebuilds the menu's three weights from
+-- the chosen family and repaints every label already on screen.
+local fontRow, fontControl = createSettingRow(
+    "Interface font",
+    "Choose the typeface the whole menu is drawn in"
+)
+fontRow.LayoutOrder = 2
+local fontNames: {string} = state.listInterfaceFonts()
+local currentFontName: string = tostring(
+    configData.values.interfaceFont or "Menu default"
+)
+local currentFontIndex: number = table.find(fontNames, currentFontName) or 1
+local FontButton: TextButton = (create("TextButton", {
+    Parent = fontControl,
+    Name = "FontChoice",
+    Active = true,
+    AutoButtonColor = false,
+    AnchorPoint = Vector2.new(1, 0.5),
+    BackgroundColor3 = Theme.DefaultButton,
+    BackgroundTransparency = 0.25,
+    BorderSizePixel = 0,
+    FontFace = CONTROL_FONT,
+    Position = UDim2.new(1, 0, 0.5, 0),
+    Size = UDim2.new(1, -6, 0, 26),
+    Text = fontNames[currentFontIndex],
+    TextColor3 = Theme.DefaultText,
+    TextSize = 11,
+    TextXAlignment = Enum.TextXAlignment.Left,
+}) :: any) :: TextButton
+create("UICorner", {
+    Parent = FontButton,
+    CornerRadius = cornerRadius(UI_RADIUS.chip),
+})
+create("UIPadding", {
+    Parent = FontButton,
+    PaddingLeft = UDim.new(0, 10),
+    PaddingRight = UDim.new(0, 10),
+})
+trackUiConnection(FontButton.MouseButton1Click:Connect(function(): ()
+    openChoiceList(FontButton, fontNames, currentFontIndex, function(picked: number): ()
+        currentFontIndex = picked
+        FontButton.Text = fontNames[picked]
+        -- A repository font has to be downloaded before it can be applied, so
+        -- the switch happens off the input thread.
+        task.spawn(function(): ()
+            state.applyInterfaceFont(fontNames[picked])
+        end)
+    end)
+end))
+
 local blurRow, blurControl = createSettingRow(
     "Blur mode",
     "Blur the game while the menu is visible"
 )
-blurRow.LayoutOrder = 2
+blurRow.LayoutOrder = 3
 
 -- No switch: the row is the button, exactly like a module card.
 local setBlurRowState = makeToggleSettingRow(
@@ -14858,7 +14913,7 @@ local motionRow, motionControl = createSettingRow(
     "Interface motion",
     "Smooth transitions for cards, tabs, and menu controls"
 )
-motionRow.LayoutOrder = 3
+motionRow.LayoutOrder = 4
 local setMotionRowState = makeToggleSettingRow(
     motionRow,
     motionControl,
@@ -14882,7 +14937,7 @@ local keyRow, keyControl = createSettingRow(
     "Menu key",
     "Choose the key used to show or hide"
 )
-keyRow.LayoutOrder = 4
+keyRow.LayoutOrder = 5
 keyRow.Visible = not UserInputService.TouchEnabled
 
 local KeybindButton = makeButton(keyControl, state.toggleKey.Name, 13)
@@ -15299,6 +15354,18 @@ end))
 end
 
 SectionManager.register("Config.", buildSettings)
+
+-- Restore the saved typeface once the interface exists. A repository font is a
+-- download, so this waits its turn on its own thread rather than holding the
+-- menu closed while it arrives.
+do
+    local savedFont: string = tostring(configData.values.interfaceFont or "")
+    if savedFont ~= "" and savedFont ~= "Menu default" then
+        task.spawn(function(): ()
+            state.applyInterfaceFont(savedFont, false)
+        end)
+    end
+end
 
 do
 local function initializeWindowInput(): ()

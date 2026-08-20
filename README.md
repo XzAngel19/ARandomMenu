@@ -411,27 +411,27 @@ the title is a shape rather than a caption — a word like "TOGGLE" on every car
 is noise once you have read it twice, and it eats the width the module name
 needs — and the accent stripe carries the matching colour:
 
-| Marker | Kind | Behaviour |
-| --- | --- | --- |
-| a square that fills when the module is on | toggle | Click the card or press its key to switch it on and off. |
-| a chevron | action | Click or press once; it runs and keeps no state. |
-| two upright bars that brighten while held | hold | Always running; the key applies its effect only while held. |
-| three narrowing rules | group | Always running; the card only holds its settings (Friend List, MM2's Knife). |
+The card *is* the control. Nothing is bolted onto it — no switch, no chip, no
+marker under the name — because a list of forty modules only stays readable if
+each row is one shape whose surface, weight and edge already say what it is and
+what it is doing:
 
-Always-on cards keep a dim stripe lit, because they have no "off" state and a
-dark stripe reads as disabled.
+| Kind | The card |
+| --- | --- |
+| toggle | A row that lifts. Off: muted text on near-black, separated by a hairline. On: the surface rises a step, the name goes white and a two-pixel edge lights the left side. |
+| action | A slab. A whisper of an outline on all four sides and a name that is always white, because a button has no "off"; the surface flashes once under the press. |
+| hold | The same slab, seated a step darker, rising to the lit state for exactly as long as the key is down. |
+| group | Not a control at all: no surface, no outline, no hover — a heading with a rule under it and its options below. |
 
-Every marker is drawn in the interface's own greys. There are no coloured chips
-per kind — a board of forty cards each wearing a different colour is a paint
-chart, not a menu.
-
-### Controls
+All of it is near-black through grey; the only "colour" in the interface is how
+light a grey is. One function, `state.applyCardSkin`, owns every one of those
+states, so a restyle, a hover and a toggle cannot disagree about how a card
+should look.
 
 Option rows use a **state mark** rather than a switch: a small square that is
-empty when off and filled when on, in the same greys as everything else. A
-sliding pill is a phone control — wide, loud, repeated on every row, and at
-this size the knob is the only part you can actually read — and the same square
-appears on the module cards, so one shape means "state" everywhere.
+empty when off and filled when on. A sliding pill is a phone control — wide,
+loud, repeated on every row, and at this size the knob is the only part you can
+actually read.
 
 ### Choosing between values
 
@@ -626,6 +626,25 @@ validation workflow.
 - `src/gui/Current/gui.lua`: reusable presentation-only GUI controller.
 - `src/gui/Current/Images`: optional normal image assets.
 - `src/Profile`: compatibility data retained for older loaders.
+
+## Typeface
+
+`Config. → Interface font` lists every face the client ships (read from
+`Enum.Font` at runtime rather than hard-coded, so a newer client offers more and
+an older one does not lie), plus the three the repository carries:
+**Candy Fruits**, **Valve** and **Minecraft (Monocraft)** — a Minecraft-shaped
+face under the SIL Open Font License, vendored from
+[IdreesInc/Monocraft](https://github.com/IdreesInc/Monocraft) together with its
+licence at `src/gui/Current/Assets/Typography/Monocraft-OFL.txt`. That is a
+little over fifty options.
+
+Choosing one rebuilds the menu's three weights — bold for titles, semibold for
+controls, regular for body — from the chosen family and repaints every label
+already on screen, each keeping the weight it was designed with, so headings
+stay heavier than body text whatever the family. Repository fonts are
+downloaded, cached and turned into an asset id through the same path the
+decorative fonts already use, off the input thread; the choice is stored in the
+config and restored on the next injection.
 
 ## Brand, icons and player card
 
