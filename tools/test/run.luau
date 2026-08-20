@@ -146,8 +146,16 @@ Mock.inject(world, EspFile.init)
 local WeaponsFile: any = require("../../src/library/Weapons")
 Mock.inject(world, WeaponsFile.init)
 local weapons: any = WeaponsFile.init(host)
-local espContext: any =
-    {framework = framework, entity = entity, weapons = weapons, host = host}
+local RenderFile: any = require("../../src/library/Render")
+Mock.inject(world, RenderFile.init)
+local render: any = RenderFile.init(host)
+local espContext: any = {
+    framework = framework,
+    entity = entity,
+    weapons = weapons,
+    render = render,
+    host = host,
+}
 local esp: any = EspFile.init(espContext)
 
 check("card is registered", esp ~= nil and esp.Name == "Player ESP")
@@ -1417,6 +1425,7 @@ EmoteFile.destroy()
 LoggerFile.destroy()
 ItemFile.destroy()
 WeaponsFile.destroy()
+RenderFile.destroy()
 ClickFile.destroy()
 ClickerFile.destroy()
 AuraFile.destroy()

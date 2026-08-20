@@ -32,6 +32,7 @@ local Manifest: Manifest = {
     libraries = {
         "src/library/Entity.luau",
         "src/library/Weapons.luau",
+        "src/library/Render.luau",
     },
     modules = {
         -- Friend List comes first: every targeting module below asks it who
@@ -77,6 +78,16 @@ local Manifest: Manifest = {
             category = "Combat",
         },
         -- Spoof: cosmetic only, and each one lands on its own page.
+        {
+            path = "src/modules/Combat/Hitboxes.luau",
+            name = "Hitboxes",
+            category = "Combat",
+        },
+        {
+            path = "src/modules/Combat/ProjectileCalibration.luau",
+            name = "Projectile Calibration",
+            category = "Combat",
+        },
         {
             path = "src/modules/Spoof/Disguise.luau",
             name = "Disguise",

@@ -25,39 +25,20 @@ local Module = {
     Initialized = false,
 }
 
-type Drawings = {
-    root: Frame,
-    box: {Frame},
-    skeleton: {Frame},
-    tracer: Frame,
-    healthTrack: Frame,
-    healthFill: Frame,
-    name: TextLabel,
-    details: TextLabel,
-    highlight: Highlight?,
-}
-
 local activeCleanup: (() -> ())? = nil
 
 function Module.init(context: Runtime): any
     local host: any = context.host
     local framework: any = context.framework
-    local create: any = host.create
     local players: Players = host.Players
+    -- Every drawing this module does — the pooling, the projection, the lines,
+    -- the plates, the chams — belongs to the shared render library. What is
+    -- left here is the ESP's own decisions: who to draw, in what colour, and
+    -- which parts of them.
+    local render: any = context.render
 
-    local container: Frame = create("Frame", {
-        Parent = host.ScreenGui,
-        Name = "PlayerEspLayer",
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        Size = UDim2.fromScale(1, 1),
-        Visible = false,
-        -- Behind every panel the menu draws: the overlay is world information,
-        -- not interface, and must never cover a control.
-        ZIndex = 0,
-    }) :: Frame
-
-    local pool: {[Player]: Drawings} = {}
+    local container: Frame = render:Layer("PlayerEspLayer")
+    local pool: {[Player]: boolean} = {}
     local accumulator: number = 0
     local visibilityCache: any = setmetatable({}, {__mode = "k"})
 
@@ -71,9 +52,8 @@ function Module.init(context: Runtime): any
         Function = function(enabled: boolean): ()
             container.Visible = enabled
             if not enabled then
-                for player: Player in pairs(pool) do
-                    Module.release(pool, player)
-                end
+                render:ReleaseAll(container)
+                table.clear(pool)
                 return
             end
             esp:Loop(function(deltaTime: number): ()
@@ -86,12 +66,12 @@ function Module.init(context: Runtime): any
                 Module.render(context, container, pool, esp, visibilityCache)
             end)
             esp:Event(players.PlayerRemoving, function(player: Player): ()
-                Module.release(pool, player)
+                render:Release(container, player)
+                pool[player] = nil
             end)
             esp:Clean(function(): ()
-                for player: Player in pairs(pool) do
-                    Module.release(pool, player)
-                end
+                render:ReleaseAll(container)
+                table.clear(pool)
                 container.Visible = false
             end)
         end,
@@ -367,197 +347,12 @@ function Module.init(context: Runtime): any
     end
 
     activeCleanup = function(): ()
-        for player: Player in pairs(pool) do
-            Module.release(pool, player)
-        end
-        container:Destroy()
+        render:ReleaseAll(container)
+        table.clear(pool)
+        container.Visible = false
     end
     Module.Initialized = true
     return esp
-end
-
--- Instance pool. A player keeps the same drawings for as long as they are in
--- the server, so a frame costs property writes rather than allocations.
-function Module.acquire(
-    host: any,
-    container: Frame,
-    pool: {[Player]: any},
-    player: Player
-): any
-    local existing: any = pool[player]
-    if existing then
-        return existing
-    end
-    local create: any = host.create
-    local root: Frame = create("Frame", {
-        Parent = container,
-        Name = player.Name,
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        Size = UDim2.fromScale(1, 1),
-        ZIndex = 0,
-    }) :: Frame
-
-    local function line(name: string): Frame
-        return create("Frame", {
-            Parent = root,
-            Name = name,
-            AnchorPoint = Vector2.new(0.5, 0.5),
-            BorderSizePixel = 0,
-            Size = UDim2.fromOffset(0, 1),
-            Visible = false,
-            ZIndex = 1,
-        }) :: Frame
-    end
-
-    local box: {Frame} = {}
-    -- Eight segments: four sides for Full, and the same eight halves reused as
-    -- the brackets in Corner mode.
-    for index: number = 1, 8 do
-        box[index] = line("Box" .. tostring(index))
-    end
-
-    local skeleton: {Frame} = {}
-    for index: number = 1, 14 do
-        skeleton[index] = line("Bone" .. tostring(index))
-    end
-
-    -- Behind the box lines and behind the labels: a wash, not a panel.
-    local fill: Frame = create("Frame", {
-        Parent = root,
-        Name = "BoxFill",
-        BackgroundColor3 = Color3.fromRGB(236, 236, 240),
-        BackgroundTransparency = 0.82,
-        BorderSizePixel = 0,
-        Visible = false,
-        ZIndex = 0,
-    }) :: Frame
-
-    local healthTrack: Frame = create("Frame", {
-        Parent = root,
-        Name = "HealthTrack",
-        AnchorPoint = Vector2.new(1, 0),
-        BackgroundColor3 = Color3.fromRGB(12, 12, 14),
-        BackgroundTransparency = 0.35,
-        BorderSizePixel = 0,
-        Visible = false,
-        ZIndex = 1,
-    }) :: Frame
-    local healthFill: Frame = create("Frame", {
-        Parent = healthTrack,
-        Name = "HealthFill",
-        AnchorPoint = Vector2.new(0, 1),
-        BackgroundColor3 = Color3.fromRGB(120, 220, 140),
-        BorderSizePixel = 0,
-        Position = UDim2.fromScale(0, 1),
-        Size = UDim2.fromScale(1, 1),
-        ZIndex = 2,
-    }) :: Frame
-
-    -- The overlay owns its own labels.
-    --
-    -- They used to come from the menu's text helper, which registers a label
-    -- with the interface's text-scale system: that multiplies every size by
-    -- 1.35, re-applies it on every layout pass and re-fits it to its box, all
-    -- behind the module's back. A name tag the ESP had sized at 13 came out
-    -- several times bigger, and the plate behind it was three times the width
-    -- of the box because it was sized from the box instead of from the text.
-    --
-    -- These are plain instances nothing else touches, and the plate is sized
-    -- by the text itself: AutomaticSize on X plus five pixels of padding, so
-    -- the tag is exactly as wide as the name in it.
-    local function espLabel(name: string, size: number, anchorY: number): TextLabel
-        local label: TextLabel = create("TextLabel", {
-            Parent = root,
-            Name = name,
-            AnchorPoint = Vector2.new(0.5, anchorY),
-            AutomaticSize = Enum.AutomaticSize.X,
-            BackgroundColor3 = Color3.fromRGB(10, 10, 12),
-            BackgroundTransparency = 1,
-            BorderSizePixel = 0,
-            Text = "",
-            TextColor3 = Color3.fromRGB(236, 236, 240),
-            TextSize = size,
-            -- Nothing to truncate: the box grows to the text rather than the
-            -- text being cut to the box.
-            TextTruncate = Enum.TextTruncate.None,
-            TextXAlignment = Enum.TextXAlignment.Center,
-            TextYAlignment = Enum.TextYAlignment.Center,
-            Visible = false,
-            ZIndex = 2,
-        }) :: TextLabel
-        create("UIPadding", {
-            Parent = label,
-            PaddingLeft = UDim.new(0, 5),
-            PaddingRight = UDim.new(0, 5),
-        })
-        create("UICorner", {Parent = label, CornerRadius = UDim.new(0, 3)})
-        return label
-    end
-
-    local nameLabel: TextLabel = espLabel("NameTag", 13, 1)
-    local detailsLabel: TextLabel = espLabel("Details", 12, 0)
-
-    local drawings: any = {
-        root = root,
-        fill = fill,
-        box = box,
-        skeleton = skeleton,
-        tracer = line("Tracer"),
-        healthTrack = healthTrack,
-        healthFill = healthFill,
-        name = nameLabel,
-        details = detailsLabel,
-        highlight = nil,
-    }
-    pool[player] = drawings
-    return drawings
-end
-
-function Module.release(pool: {[Player]: any}, player: Player): ()
-    local drawings: any = pool[player]
-    if not drawings then
-        return
-    end
-    pool[player] = nil
-    if drawings.highlight then
-        pcall(function(): ()
-            drawings.highlight:Destroy()
-        end)
-    end
-    pcall(function(): ()
-        drawings.root:Destroy()
-    end)
-end
-
--- Draw a line between two screen points by rotating a 1px frame onto them.
-local function drawLine(
-    frame: Frame,
-    from: Vector2,
-    to: Vector2,
-    thickness: number,
-    colour: Color3
-): ()
-    local delta: Vector2 = to - from
-    local length: number = delta.Magnitude
-    if length < 0.5 then
-        frame.Visible = false
-        return
-    end
-    frame.Visible = true
-    frame.BackgroundColor3 = colour
-    frame.Position = UDim2.fromOffset(
-        math.round((from.X + to.X) * 0.5),
-        math.round((from.Y + to.Y) * 0.5)
-    )
-    frame.Size = UDim2.fromOffset(math.round(length), thickness)
-    frame.Rotation = math.deg(math.atan2(delta.Y, delta.X))
-end
-
-local function hideAll(frames: {Frame}): ()
-    for _, frame: Frame in ipairs(frames) do
-        frame.Visible = false
-    end
 end
 
 function Module.render(
@@ -569,6 +364,7 @@ function Module.render(
 ): ()
     local host: any = context.host
     local entityLibrary: any = context.entity
+    local render: any = context.render
     local currentWorkspace: Workspace = host.workspace or workspace
     local camera: Camera? = currentWorkspace.CurrentCamera
     if not camera then
@@ -592,49 +388,17 @@ function Module.render(
             continue
         end
 
-        -- Geometry, properly. The old box took the character's extents, dropped
-        -- two points through WorldToViewportPoint and made the width a fixed
-        -- fraction of the height: a rig with its arms out, a camera at an
-        -- angle, or a target near the edge of the screen all produced a box
-        -- that was the wrong shape, and a corner behind the camera projects to
-        -- a huge negative coordinate, which is where the sudden stretching
-        -- came from. This projects all eight corners of the model's own
-        -- bounding box and takes the extremes, skipping the target entirely if
-        -- any corner is behind the lens.
-        local boundsCFrame: CFrame, boundsSize: Vector3 =
-            entity.Character:GetBoundingBox()
-        local half: Vector3 = boundsSize * 0.5
-        local minimumX: number = math.huge
-        local minimumY: number = math.huge
-        local maximumX: number = -math.huge
-        local maximumY: number = -math.huge
-        local anyVisible: boolean = false
-        local behindCamera: boolean = false
-
-        for cornerIndex: number = 0, 7 do
-            local corner: Vector3 = boundsCFrame * Vector3.new(
-                (cornerIndex % 2 == 0) and -half.X or half.X,
-                (math.floor(cornerIndex / 2) % 2 == 0) and -half.Y or half.Y,
-                (math.floor(cornerIndex / 4) % 2 == 0) and -half.Z or half.Z
-            )
-            local projected: Vector3, visible: boolean =
-                resolvedCamera:WorldToViewportPoint(corner)
-            if projected.Z <= 0 then
-                behindCamera = true
-                break
-            end
-            anyVisible = anyVisible or visible
-            minimumX = math.min(minimumX, projected.X)
-            minimumY = math.min(minimumY, projected.Y)
-            maximumX = math.max(maximumX, projected.X)
-            maximumY = math.max(maximumY, projected.Y)
-        end
-        if behindCamera or not anyVisible then
+        -- The projected bounding box, from the shared library: eight corners
+        -- taken to their extremes, and nothing at all when one of them is
+        -- behind the lens.
+        local rect: any = render:ModelRect(resolvedCamera, entity.Character)
+        if not rect then
             continue
         end
 
         seen[player] = true
-        local drawings: any = Module.acquire(host, container, pool, player)
+        pool[player] = true
+        local drawings: any = render:Set(container, player)
 
         -- One raycast per player per frame is what turns ESP into a frame-rate
         -- problem in a full server, so the answer is cached briefly. Nobody
@@ -681,167 +445,95 @@ function Module.render(
             colour = colour:Lerp(Color3.new(0, 0, 0), 0.45)
         end
 
-        -- The box is the projected bounding box, padded a little so it frames
-        -- the character instead of cutting into it.
-        local padding: number = 2
-        local left: number = minimumX - padding
-        local right: number = maximumX + padding
-        local top: number = minimumY - padding
-        local bottom: number = maximumY + padding
-        local width: number = math.max(right - left, 4)
-        local height: number = math.max(bottom - top, 6)
-        local centreX: number = (left + right) * 0.5
+        local left: number = rect.left
+        local right: number = rect.right
+        local top: number = rect.top
+        local bottom: number = rect.bottom
+        local width: number = rect.width
+        local height: number = rect.height
+        local centreX: number = rect.centreX
         -- Two ways a projected box goes wrong, and both used to leave the
         -- last frame's drawings on screen: a target off the edge (a name
         -- floating in a corner) and a target standing inside the camera, whose
         -- eight corners spread across a box the size of a city. Hiding the set
         -- is the answer to both — releasing it would rebuild every instance
         -- the moment the target came back.
-        drawings.root.Visible = true
+        drawings:Show(true)
         if right < 0 or left > viewport.X or bottom < 0 or top > viewport.Y then
-            drawings.root.Visible = false
+            drawings:Show(false)
             continue
         end
         if width > viewport.X * 2.5 or height > viewport.Y * 2.5 then
-            drawings.root.Visible = false
+            drawings:Show(false)
             continue
         end
 
         local thickness: number = math.round(options["Box thickness"].Value)
         local boxMode: string = options["Boxes"].Value
-        if options["Filled box"].Value and boxMode ~= "Off" then
-            drawings.fill.Visible = true
-            drawings.fill.BackgroundColor3 = colour
-            drawings.fill.Position =
-                UDim2.fromOffset(math.round(left), math.round(top))
-            drawings.fill.Size =
-                UDim2.fromOffset(math.round(width), math.round(height))
-        else
-            drawings.fill.Visible = false
-        end
-        local corners: {Vector2} = {
-            Vector2.new(left, top),
-            Vector2.new(right, top),
-            Vector2.new(right, bottom),
-            Vector2.new(left, bottom),
-        }
-        if boxMode == "Off" then
-            hideAll(drawings.box)
-        elseif boxMode == "Full" then
-            for index: number = 1, 4 do
-                drawLine(
-                    drawings.box[index],
-                    corners[index],
-                    corners[index % 4 + 1],
-                    thickness,
-                    colour
-                )
-            end
-            for index: number = 5, 8 do
-                drawings.box[index].Visible = false
-            end
-        else
-            -- Corner brackets: a quarter of each side, drawn from both ends.
-            local segment: number = math.max(math.min(width, height) * 0.28, 3)
-            local index: number = 1
-            for corner: number = 1, 4 do
-                local from: Vector2 = corners[corner]
-                local nextCorner: Vector2 = corners[corner % 4 + 1]
-                local previousCorner: Vector2 = corners[(corner + 2) % 4 + 1]
-                drawLine(
-                    drawings.box[index],
-                    from,
-                    from + (nextCorner - from).Unit * segment,
-                    thickness,
-                    colour
-                )
-                drawLine(
-                    drawings.box[index + 1],
-                    from,
-                    from + (previousCorner - from).Unit * segment,
-                    thickness,
-                    colour
-                )
-                index += 2
-            end
-        end
+        drawings:Fill(
+            options["Filled box"].Value and boxMode ~= "Off" and rect or nil,
+            colour,
+            0.82
+        )
+        drawings:Box(rect, boxMode, thickness, colour)
 
-        -- Skeleton.
+        -- Skeleton. The library owns the pool; this owns which bones exist.
         if options["Skeleton"].Value then
             local bones: {{BasePart}} = entityLibrary:Rig(entity)
-            for index: number = 1, #drawings.skeleton do
+            for index: number = 1, 14 do
                 local pair: {BasePart}? = bones[index]
-                if not pair then
-                    drawings.skeleton[index].Visible = false
-                    continue
-                end
-                local first: Vector3, firstVisible: boolean =
-                    resolvedCamera:WorldToViewportPoint(pair[1].Position)
-                local second: Vector3, secondVisible: boolean =
-                    resolvedCamera:WorldToViewportPoint(pair[2].Position)
-                if firstVisible and secondVisible then
-                    drawLine(
-                        drawings.skeleton[index],
-                        Vector2.new(first.X, first.Y),
-                        Vector2.new(second.X, second.Y),
+                local first: Vector2? = pair
+                    and render:Project(resolvedCamera, pair[1].Position)
+                local second: Vector2? = pair
+                    and render:Project(resolvedCamera, pair[2].Position)
+                if first and second then
+                    drawings:Line(
+                        "Bone",
+                        index,
+                        first :: Vector2,
+                        second :: Vector2,
                         1,
                         colour
                     )
                 else
-                    drawings.skeleton[index].Visible = false
+                    drawings:HideLines("Bone", index, index)
                 end
             end
         else
-            hideAll(drawings.skeleton)
+            drawings:HideLines("Bone", 1, 14)
         end
 
-        -- Health bar, pinned to the left edge so it never overlaps the name.
+        -- Health, pinned to the left edge so it never overlaps the name.
         if options["Health bar"].Value then
-            local fraction: number = math.clamp(entity.Health / entity.MaxHealth, 0, 1)
-            drawings.healthTrack.Visible = true
-            drawings.healthTrack.Position = UDim2.fromOffset(
-                math.round(left - 4),
-                math.round(top)
-            )
-            drawings.healthTrack.Size = UDim2.fromOffset(2, math.round(height))
-            drawings.healthFill.Size = UDim2.fromScale(1, fraction)
-            drawings.healthFill.BackgroundColor3 = Color3.fromRGB(
-                math.round(255 * (1 - fraction)),
-                math.round(200 * fraction + 40),
-                math.round(120 * fraction)
+            drawings:Bar(
+                Vector2.new(left - 4, top),
+                height,
+                entity.Health / math.max(entity.MaxHealth, 1)
             )
         else
-            drawings.healthTrack.Visible = false
+            drawings:HideBar()
         end
 
-        -- Name tag and the details line under the box.
         local textSize: number = math.round(options["Text size"].Value)
         if options["Name tags"].Value then
-            drawings.name.Visible = true
             local shown: string = options["Display name"].Value
                 and player.DisplayName
                 or player.Name
-            drawings.name.Text = (role
-                    and options["Show role"] ~= nil
-                    and options["Show role"].Value)
-                and (shown .. "  [" .. (role :: string) .. "]")
-                or shown
-            drawings.name.TextColor3 = colour
-            drawings.name.TextSize = textSize
-            drawings.name.Position = UDim2.fromOffset(
-                math.round(centreX),
-                math.round(top - 3)
+            drawings:Label(
+                "NameTag",
+                (role
+                        and options["Show role"] ~= nil
+                        and options["Show role"].Value)
+                    and (shown .. "  [" .. (role :: string) .. "]")
+                    or shown,
+                Vector2.new(centreX, top - 3),
+                1,
+                textSize,
+                colour,
+                options["Name plate"].Value
             )
-            -- Width is the text's business (AutomaticSize.X); only the line
-            -- height is set here.
-            drawings.name.Size = UDim2.fromOffset(0, textSize + 6)
-            -- The plate is what keeps a name readable over snow, sand or a
-            -- lit sky; without it ESP text disappears half the map.
-            drawings.name.BackgroundColor3 = Color3.fromRGB(10, 10, 12)
-            drawings.name.BackgroundTransparency =
-                options["Name plate"].Value and 0.35 or 1
         else
-            drawings.name.Visible = false
+            drawings:HideLabel("NameTag")
         end
 
         local details: {string} = {}
@@ -863,26 +555,23 @@ function Module.render(
             end
         end
         if #details > 0 then
-            drawings.details.Visible = true
-            drawings.details.Text = table.concat(details, "  ")
-            drawings.details.TextColor3 = colour
-            drawings.details.TextSize = math.max(textSize - 2, 8)
-            drawings.details.BackgroundTransparency =
-                options["Name plate"].Value and 0.45 or 1
-            drawings.details.Position = UDim2.fromOffset(
-                math.round(centreX),
-                math.round(bottom + 2)
+            drawings:Label(
+                "Details",
+                table.concat(details, "  "),
+                Vector2.new(centreX, bottom + 2),
+                0,
+                math.max(textSize - 2, 8),
+                colour,
+                options["Name plate"].Value
             )
-            drawings.details.Size =
-                UDim2.fromOffset(0, math.max(textSize - 2, 8) + 6)
         else
-            drawings.details.Visible = false
+            drawings:HideLabel("Details")
         end
 
         -- Tracer.
         local tracerMode: string = options["Tracers"].Value
         if tracerMode == "Off" then
-            drawings.tracer.Visible = false
+            drawings:HideLines("Tracer", 1, 1)
         else
             local origin: Vector2
             if tracerMode == "Bottom" then
@@ -890,11 +579,11 @@ function Module.render(
             elseif tracerMode == "Centre" then
                 origin = viewport * 0.5
             else
-                local pointer: Vector2 = host.UserInputService:GetMouseLocation()
-                origin = pointer
+                origin = host.UserInputService:GetMouseLocation()
             end
-            drawLine(
-                drawings.tracer,
+            drawings:Line(
+                "Tracer",
+                1,
                 origin,
                 Vector2.new(centreX, bottom),
                 1,
@@ -902,35 +591,19 @@ function Module.render(
             )
         end
 
-        -- Chams. `Highlight` is a native class, so it works on every executor
-        -- and survives the character being re-parented.
-        local chamsMode: string = options["Chams"].Value
-        if chamsMode == "Off" then
-            if drawings.highlight then
-                drawings.highlight:Destroy()
-                drawings.highlight = nil
-            end
-        else
-            local highlight: Highlight? = drawings.highlight
-            if not highlight or not highlight.Parent then
-                highlight = Instance.new("Highlight")
-                highlight.Name = "RTM_Chams"
-                highlight.Parent = entity.Character
-                drawings.highlight = highlight
-            end
-            local resolvedHighlight: Highlight = highlight :: Highlight
-            resolvedHighlight.Adornee = entity.Character
-            resolvedHighlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-            resolvedHighlight.FillColor = colour
-            resolvedHighlight.OutlineColor = colour
-            resolvedHighlight.FillTransparency = chamsMode == "Outline" and 1 or 0.55
-            resolvedHighlight.OutlineTransparency = 0
-        end
+        -- Chams.
+        drawings:Highlight(
+            entity.Character,
+            colour,
+            0.55,
+            options["Chams"].Value
+        )
     end
 
     for player: Player in pairs(pool) do
         if not seen[player] then
-            Module.release(pool, player)
+            render:Release(container, player)
+            pool[player] = nil
         end
     end
 end

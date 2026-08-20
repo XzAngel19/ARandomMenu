@@ -576,6 +576,50 @@ options be one option with a better name, and can it be on screen only when it
 matters. Take the boring technically-correct answer; creativity belongs in what
 the module does, not in how many ways it can be configured.
 
+## Draw once: `src/library/Render.luau`
+
+Four modules were each drawing the same things their own way — the player ESP,
+Item Render, BedFight's bed and generator marks, VD's objective marks. Every
+one projected world points, pooled frames per target, rotated 1px frames into
+lines, sized a label and made a Highlight, and every one got some detail wrong
+on its own.
+
+That work happens once now. A module asks the library for a **layer**, asks for
+a **drawing set** per target, and says what to draw:
+
+```lua
+local rect = render:ModelRect(camera, entity.Character)   -- nil if a corner is behind the lens
+local set  = render:Set(layer, player)
+set:Box(rect, "Corner", 1, colour)
+set:Label("NameTag", name, Vector2.new(rect.centreX, rect.top - 3), 1, 13, colour, true)
+set:Bar(Vector2.new(rect.left - 4, rect.top), rect.height, health)
+set:Highlight(character, colour, 0.55, "Overlay")
+```
+
+Two rules the library holds to, both of them bugs this repository has already
+paid for: a set is **hidden, never destroyed**, while its target is alive but
+not drawable (releasing rebuilds every instance the moment the target comes
+back, which is the difference between an ESP that flickers and one that does
+not), and **nothing is created per frame** — lines and labels are pooled by
+index and named for what they draw, so a frame costs property writes.
+
+Player ESP is the first module on it: **947 lines down to 619**, with the
+projection, the pooling, the line rotation, the plate sizing and the chams
+lifecycle all gone from it. Item Render and the game marks are next.
+
+## Getting the shell out of the way
+
+`ARandomMenu.luau` is the window, the widgets and the loader — and it had
+grown into the place where features were written too, because that is where
+the first one was written. Everything below the shell belongs in
+`src/modules/**`, where the kernel, the contracts and the tests already live.
+
+Moved so far, whole: the **projectile calibration engine** (740 lines of
+telemetry that was never interface) and **Hitboxes**. The shell is 16,688 →
+15,676 lines and falling; the queue is the universal toolkit (X-Ray, High Jump,
+Spider, Safe Walk, Zoom, Interact, Phase Dash, No Fall), then Fly and Speed,
+then the option builders and the colour picker into a widget library.
+
 ## Module architecture
 
 Modules are files, not another thousand lines of `ARandomMenu.luau`. The main
