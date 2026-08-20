@@ -507,8 +507,21 @@ headers, the loader guards, compilation at both optimisation levels, the
 LUAU_DIR=/path/to/luau bash tools/validate.sh
 ```
 
-The GitHub workflow runs the same list; point a workflow step at this script to
-keep the two from drifting.
+On a runner (`CI=true`, which GitHub sets, or `REQUIRE_LUAU=1`) a missing
+toolchain fails the job instead of skipping the compile and the tests — a
+skipped check that reports success is worse than no check. Locally it just says
+so and stops.
+
+The GitHub workflow should point a step at this script so the two cannot drift:
+
+```yaml
+      - name: Run repository checks
+        run: bash tools/validate.sh
+```
+
+`LUAU_DIR` is optional there: the script already looks in `PATH` and in
+`/tmp/luau`, which is where the workflow's existing compile step unpacks the
+Luau release.
 
 ## MM2 module
 

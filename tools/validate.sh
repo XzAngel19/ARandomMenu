@@ -42,6 +42,22 @@ resolve_binary() {
 luau_compile="$(resolve_binary luau-compile || true)"
 luau_run="$(resolve_binary luau || true)"
 
+# Locally a missing toolchain is an inconvenience and the script says so.
+# On a runner it is a broken job: skipping compilation and the tests there
+# would report a green tick for checks that never ran.
+require_luau="${REQUIRE_LUAU:-${CI:-0}}"
+missing_toolchain() {
+    echo
+    echo "$1"
+    echo "Set LUAU_DIR to a directory containing luau-compile and luau."
+    case "$require_luau" in
+        1 | true | TRUE | yes)
+            exit 1
+            ;;
+    esac
+    exit 0
+}
+
 step() {
     printf '\n== %s\n' "$1"
 }
@@ -143,10 +159,7 @@ grep -q 'RUNTIME_SAFETY_SOURCE_URL' ARandomMenu.luau
 echo "ok"
 
 if [ -z "$luau_compile" ]; then
-    echo
-    echo "luau-compile not found; skipping compilation and tests."
-    echo "Set LUAU_DIR to a directory containing luau-compile and luau."
-    exit 0
+    missing_toolchain "luau-compile not found; skipping compilation and tests."
 fi
 
 step "Compile"
@@ -181,9 +194,7 @@ rm -f "$probe"
 echo "ok"
 
 if [ -z "$luau_run" ]; then
-    echo
-    echo "luau interpreter not found; skipping the module tests."
-    exit 0
+    missing_toolchain "luau interpreter not found; skipping the module tests."
 fi
 
 step "Headless module tests"
