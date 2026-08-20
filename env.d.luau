@@ -25,7 +25,11 @@ declare function mouse1release(): ()
 
 declare function mouse1click(): ()
 
-declare function firesignal(signal: any): ()
+declare function firesignal(signal: any, ...: any): ()
+
+-- Modern executors expose the connection list of a signal, which is how the
+-- MM2 timer replays the game's own RoundStart handler locally.
+declare function getconnections(signal: any): {any}
 
 declare function getcustomasset(path: string): string
 
