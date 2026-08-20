@@ -1,0 +1,58 @@
+-- ARandomMenu remote log
+-- place 71480482338212
+-- 9 remotes
+
+----------------------------------------------------------------------
+ReplicatedStorage.Remotes.PurchaseItemShopItem
+  class UnreliableRemoteEvent  ·  FireServer  ·  84 calls
+  args  «Part Workspace.Dusty Dunes.ItemShopPrompts.ItemShopPrompt», "Blocks", "Wool"
+game:GetService("ReplicatedStorage") -- ReplicatedStorage.Remotes.PurchaseItemShopItem
+-- :FireServer(«Part Workspace.Dusty Dunes.ItemShopPrompts.ItemShopPrompt», "Blocks", "Wool")
+----------------------------------------------------------------------
+ReplicatedStorage.Remotes.ItemsRemotes.EquipTool
+  class RemoteEvent  ·  FireServer  ·  68 calls
+  args  "Blue Wool"
+game:GetService("ReplicatedStorage") -- ReplicatedStorage.Remotes.ItemsRemotes.EquipTool
+-- :FireServer("Blue Wool")
+----------------------------------------------------------------------
+ReplicatedStorage.Remotes.ItemsRemotes.PlaceBlock
+  class RemoteEvent  ·  FireServer  ·  285 calls
+  args  "Blue Wool", 3, Vector3(-84, 66, 255)
+game:GetService("ReplicatedStorage") -- ReplicatedStorage.Remotes.ItemsRemotes.PlaceBlock
+-- :FireServer("Blue Wool", 3, Vector3(-84, 66, 255))
+----------------------------------------------------------------------
+ReplicatedStorage.Remotes.GetRankedLeaderboard
+  class RemoteFunction  ·  InvokeServer  ·  9 calls
+  args  
+game:GetService("ReplicatedStorage") -- ReplicatedStorage.Remotes.GetRankedLeaderboard
+-- :InvokeServer()
+----------------------------------------------------------------------
+ReplicatedStorage.Remotes.ItemsRemotes.SwordHit
+  class UnreliableRemoteEvent  ·  FireServer  ·  20 calls
+  args  «Model Workspace.PlayersContainer.ispyoobleck», "Wooden Sword"
+game:GetService("ReplicatedStorage") -- ReplicatedStorage.Remotes.ItemsRemotes.SwordHit
+-- :FireServer(«Model Workspace.PlayersContainer.ispyoobleck», "Wooden Sword")
+----------------------------------------------------------------------
+ReplicatedStorage.Remotes.OnSpectate
+  class UnreliableRemoteEvent  ·  FireServer  ·  1 calls
+  args  
+game:GetService("ReplicatedStorage") -- ReplicatedStorage.Remotes.OnSpectate
+-- :FireServer()
+----------------------------------------------------------------------
+ReplicatedStorage.Remotes.ItemsRemotes.DropItem
+  class UnreliableRemoteEvent  ·  FireServer  ·  2 calls
+  args  "Blue Wool", "All"
+game:GetService("ReplicatedStorage") -- ReplicatedStorage.Remotes.ItemsRemotes.DropItem
+-- :FireServer("Blue Wool", "All")
+----------------------------------------------------------------------
+ReplicatedStorage.Remotes.ItemsRemotes.MineBlock
+  class UnreliableRemoteEvent  ·  FireServer  ·  12 calls
+  args  "Wooden Pickaxe", «Part Workspace.PlayersBlocksContainer.Wool.Blue Wool», Vector3(30, 69, 288), Vector3(30.936607360839844, 75.3671646118164, 287.98651123046875), Vector3(-0.13713303208351135, -0.9825158715248108, -0.12592525780200958)
+game:GetService("ReplicatedStorage") -- ReplicatedStorage.Remotes.ItemsRemotes.MineBlock
+-- :FireServer("Wooden Pickaxe", «Part Workspace.PlayersBlocksContainer.Wool.Blue Wool», Vector3(30, 69, 288), Vector3(30.936607360839844, 75.3671646118164, 287.98651123046875), Vector3(-0.13713303208351135, -0.9825158715248108, -0.12592525780200958))
+----------------------------------------------------------------------
+ReplicatedStorage.Remotes.ItemsRemotes.ShootProjectile
+  class RemoteEvent  ·  FireServer  ·  14 calls
+  args  3, "Crossbow", Vector3(-0.017771419137716293, -0.8600577116012573, -0.509887158870697), Vector3(-10.662851333618164, -516.0346069335938, -305.9322814941406), CFrame(8.25292492, 521.771118, 108.250496, -0.141014591, -0.974967122, 0.171913296, 0, 0.173648477, 0.984807789, -0.99000752, 0.138872266, -0.0244869683)
+game:GetService("ReplicatedStorage") -- ReplicatedStorage.Remotes.ItemsRemotes.ShootProjectile
+-- :FireServer(3, "Crossbow", Vector3(-0.017771419137716293, -0.8600577116012573, -0.509887158870697), Vector3(-10.662851333618164, -516.0346069335938, -305.9322814941406), CFrame(8.25292492, 521.771118, 108.250496, -0.141014591, -0.974967122, 0.171913296, 0, 0.173648477, 0.984807789, -0.99000752, 0.138872266, -0.0244869683))
