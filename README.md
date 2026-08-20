@@ -797,12 +797,12 @@ The intended file is checked in at **`tools/workflow-validate.yml`** — copy it
 over the workflow yourself, because a GitHub App cannot push to
 `.github/workflows/`.
 
-Until then CI is red for a reason that has nothing to do with the menu: the
-hand-written "strict Luau headers" step walks every `.lua` file in the
-repository, `reference/vape-v4-universal.lua` included, and that file is
-third-party source whose first line is its own watermark. `tools/validate.sh`
-excludes `reference/` from that check and from compilation, because that
-directory is not ours to reformat.
+The hand-written steps in the current workflow walk every `.lua` file in the
+repository, which used to fail on `reference/vape-v4-universal.lua`: that is
+third-party source whose first line is its own cache watermark, not
+`--!strict`. Rather than edit somebody else's file, the dump now carries a
+`.txt` suffix — it is kept for reading, not compiled — so both the old workflow
+and `tools/validate.sh` (which prunes `reference/` anyway) are happy.
 
 ### Contracts the build enforces
 

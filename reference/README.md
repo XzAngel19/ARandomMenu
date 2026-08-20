@@ -4,7 +4,7 @@ Third-party code kept for reading, not for running. Nothing in this directory
 is downloaded by the menu, compiled by the validation workflow or referenced by
 `src/core/Manifest.luau`.
 
-- `vape-v4-universal.lua` — the bundled universal build of
+- `vape-v4-universal.lua.txt` — the bundled universal build of
   [VapeV4ForRoblox](https://github.com/7GrandDadPGN/VapeV4ForRoblox). It is the
   worked example behind this repository's own module architecture: a kernel that
   owns categories and modules, per-module option builders, and a cleanup list
@@ -33,3 +33,9 @@ is downloaded by the menu, compiled by the validation workflow or referenced by
 The equivalents in this repository are `src/core/Framework.luau`,
 `src/library/Entity.luau` and `src/modules/<Category>/*.luau`; they are written
 from scratch against this menu's own card and option API rather than copied.
+
+The Vape dump carries a `.txt` suffix on purpose. It is third-party source kept
+for reading, not code this repository compiles or lints, and its first line is
+its own cache watermark rather than `--!strict` — so a checker that walks every
+`.lua` file in the repository would either fail on it or force us to edit
+somebody else's file.
