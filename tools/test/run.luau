@@ -163,6 +163,7 @@ check("style options exist", esp.Options["Enemy colour"] ~= nil
 
 esp:Toggle()
 check("esp enables", esp.Enabled == true)
+esp.Options["Team check"].Value = true
 esp.Options["Skeleton"].Value = true
 esp.Options["Boxes"].Value = "Full"
 esp.Options["Chams"].Value = "Overlay"
@@ -239,6 +240,7 @@ world.raycastResult = {
 trigger.Options["Delay"].Value = 0.1
 trigger.Options["Delay jitter"].Value = 0
 trigger.Options["Aim radius"].Value = 0
+trigger.Options["Team check"].Value = true
 
 trigger:Toggle()
 check("trigger enables", trigger.Enabled == true)
@@ -360,6 +362,10 @@ sword.Parent = world.localPlayer.Character
 aura.Options["Swings per second"].Value = 20
 aura.Options["Rate jitter"].Value = 0
 aura.Options["Field of view"].Value = 360
+-- Nothing is enabled at startup any more, so the checks under test are turned
+-- on explicitly here.
+aura.Options["Highlight targets"].Value = true
+aura.Options["Team check"].Value = true
 world.touchFires = 0
 
 aura:Toggle()
@@ -557,6 +563,7 @@ world.localPlayer.Character:FindFirstChild("HumanoidRootPart").Position =
     world.vector3(0, 0, 0)
 enemy.Character:FindFirstChild("HumanoidRootPart").Position = world.vector3(0, 0, -8)
 aura.Options["Show target"].Value = true
+aura.Options["Team check"].Value = true
 aura:Toggle()
 world.clock += 2
 stub.step(0.016)
@@ -663,6 +670,7 @@ check("ignores taps consumed by the menu", localRoot.CFrame.Position.X == 0)
 resetLocal()
 enemy.Character:FindFirstChild("HumanoidRootPart").Position = world.vector3(0, 0, -100)
 clickTeleport.Options["Destination"].Value = "Nearest player"
+clickTeleport.Options["Skip friends"].Value = true
 clickTeleport.Options["Player offset"].Value = 0
 clickTeleport.Feature.activate()
 check("travels to the nearest player",
@@ -775,6 +783,26 @@ slot.Name = "Iron Sword"
 slot.Visible = true
 slot.Parent = hotbar
 
+-- Junk the picker must never list: a hotbar is full of blocks, emotes and
+-- cosmetics sitting next to the sword.
+local junkNames: {string} = {
+    "EmoteWheel",
+    "AnimationPack",
+    "Wool Block",
+    "Oak Plank",
+    "KitButton",
+    "ShopButton",
+}
+for index: number, junk: string in ipairs(junkNames) do
+    local button: any = Mock.newInstance("ImageButton")
+    button.Name = junk
+    button.Visible = true
+    button.Parent = hotbar
+    if index == 1 then
+        button.Parent = buttonsFrame
+    end
+end
+
 local labels: {string} = weapons:Labels({All = true})
 local function hasLabel(needle: string): boolean
     for _, label: string in ipairs(labels) do
@@ -790,6 +818,16 @@ check("finds the game's mobile attack button", hasLabel("Sword  ·  Button"),
     table.concat(labels, " | "))
 check("finds an inventory slot", hasLabel("Iron Sword"),
     table.concat(labels, " | "))
+
+for _, junk: string in ipairs(junkNames) do
+    local listed: boolean = false
+    for _, label: string in ipairs(labels) do
+        if string.find(label, junk, 1, true) then
+            listed = true
+        end
+    end
+    check("does not list " .. junk, not listed, table.concat(labels, " | "))
+end
 
 local candidate: any = weapons:Find("Sword  ·  Button")
 check("activating a button candidate presses it",
@@ -814,6 +852,20 @@ check("Kill Aura swings a ticked non-Tool weapon", mobileSwings > swingsBefore,
     "swings: " .. tostring(mobileSwings))
 aura:Toggle()
 aura.Feature.options["Weapons"].set("Sword  ·  Button", false)
+
+-- Nothing ticked, no Tool in the character: the aura must still find the
+-- game's own button and press it. This is the case that used to outline the
+-- target and then do nothing at all.
+-- Either attack button counts: the point is that something was pressed.
+local autoBefore: number = mobileSwings + buttonPresses
+aura:Toggle()
+world.clock += 2
+stub.step(0.016)
+check("swings automatically when nothing is ticked and no tool exists",
+    mobileSwings + buttonPresses > autoBefore,
+    "presses: " .. tostring(mobileSwings + buttonPresses))
+aura:Toggle()
+
 sword.Parent = world.localPlayer.Character
 
 -- Item Render -------------------------------------------------------------------

@@ -134,6 +134,7 @@ local TAB_GAME_ICONS: {[string]: number} = {
     TRS = 14315258385,
     VD = 93978595733734,
     MVSD = 135856908115931,
+    BedFight = 71480482338212,
 }
 
 local TAB_DRAWN_ICONS: {[string]: string} = {
@@ -145,6 +146,7 @@ local TAB_DRAWN_ICONS: {[string]: string} = {
 
 local TAB_MONOGRAMS: {[string]: string} = {
     ["Universal"] = "UN",
+    ["BedFight"] = "BF",
     ["Movement"] = "MV",
     ["MM2"] = "M2",
     ["TRS"] = "TR",
@@ -383,6 +385,7 @@ local CONFIG_FILE = CONFIG_PROFILE_FOLDER
 local REPOSITORY_RAW_BASE = RUNTIME_RAW_BASE
 
 local GAME_MODULES: {[number]: string} = {
+    [71480482338212] = "BedFight",
     [142823291] = "MM2",
     [14315258385] = "TRS",
     [93978595733734] = "VD",
@@ -523,6 +526,7 @@ end
 
 local GAME_CHECK = {
     MM2 = 142823291,
+    BedFight = 71480482338212,
     TRS = 14315258385,
     VD = 93978595733734,
     MVSD = 135856908115931,
@@ -3207,7 +3211,8 @@ local MM2Page = createTab("MM2", 3)
 createTab("TRS", 4)
 createTab("VD", 5)
 createTab("MVSD", 6)
-local SettingsPage = createTab("Config.", 7)
+createTab("BedFight", 7)
+local SettingsPage = createTab("Config.", 8)
 local function configureGameTabs(): ()
     defaultTabButtons.MM2.Visible = GAME_CHECK.MM2Active
     defaultTabButtons.TRS.Visible = GAME_CHECK.TRSActive
@@ -3396,6 +3401,34 @@ create("UIPadding", {
 
 create("UIListLayout", {
     Parent = state.trsScroll,
+    FillDirection = Enum.FillDirection.Vertical,
+    HorizontalAlignment = Enum.HorizontalAlignment.Center,
+    Padding = UDim.new(0, 9),
+    SortOrder = Enum.SortOrder.LayoutOrder,
+})
+
+state.bedFightScroll = create("ScrollingFrame", {
+    Parent = pages.BedFight,
+    Name = "BedFightScroll",
+    Active = true,
+    AutomaticCanvasSize = Enum.AutomaticSize.Y,
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    CanvasSize = UDim2.fromOffset(0, 0),
+    ScrollBarImageColor3 = Theme.DefaultOutline,
+    ScrollBarThickness = 6,
+    ScrollingDirection = Enum.ScrollingDirection.Y,
+    Size = UDim2.fromScale(1, 1),
+})
+create("UIPadding", {
+    Parent = state.bedFightScroll,
+    PaddingBottom = UDim.new(0, 18),
+    PaddingLeft = UDim.new(0, 18),
+    PaddingRight = UDim.new(0, 18),
+    PaddingTop = UDim.new(0, 18),
+})
+create("UIListLayout", {
+    Parent = state.bedFightScroll,
     FillDirection = Enum.FillDirection.Vertical,
     HorizontalAlignment = Enum.HorizontalAlignment.Center,
     Padding = UDim.new(0, 9),
@@ -3848,6 +3881,7 @@ local movementFeatures = {}
 local mm2Features = {}
 state.trsFeatures = {}
 state.vdFeatures = {}
+state.bedFightFeatures = {}
 state.mvsdFeatures = {}
 local allFeatures: {any} = {}
 local featureConnections = {}
@@ -8090,6 +8124,7 @@ local function createUniversalFeature(
         or (registry == mm2Features and "MM2")
         or (registry == state.trsFeatures and "TRS")
         or (registry == state.vdFeatures and "VD")
+        or (registry == state.bedFightFeatures and "BedFight")
         or (registry == state.mvsdFeatures and "MVSD")
         or (registry == movementFeatures and "Movement")
         or "Universal"
@@ -14491,6 +14526,7 @@ local function createGameModuleEnvironment(
         MM2Scroll = MM2Scroll,
         mm2Features = mm2Features,
         vdFeatures = state.vdFeatures,
+        bedFightFeatures = state.bedFightFeatures,
         mvsdFeatures = state.mvsdFeatures,
         allFeatures = allFeatures,
         cleanupMM2Runtime = cleanupMM2Runtime,
@@ -14702,6 +14738,8 @@ local function registerPlaceModule(
             state.cleanupVDRuntime = destroyModule
         elseif tabName == "MVSD" then
             state.cleanupMVSDRuntime = destroyModule
+        elseif tabName == "BedFight" then
+            state.cleanupBedFightRuntime = destroyModule
         end
     end)
 end
@@ -14717,6 +14755,7 @@ registerPlaceModule("MM2", GAME_CHECK.MM2)
 registerPlaceModule("TRS", GAME_CHECK.TRS)
 registerPlaceModule("VD", GAME_CHECK.VD)
 registerPlaceModule("MVSD", GAME_CHECK.MVSD)
+registerPlaceModule("BedFight", GAME_CHECK.BedFight)
 
 -- ---------------------------------------------------------------------------
 -- Module architecture
@@ -16066,6 +16105,7 @@ local function cleanupRuntime(): ()
         "cleanupTRSRuntime",
         "cleanupVDRuntime",
         "cleanupMVSDRuntime",
+        "cleanupBedFightRuntime",
     }) do
         local cleanup: any = state[key]
         if type(cleanup) == "function" then

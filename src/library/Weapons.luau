@@ -35,6 +35,8 @@ export type WeaponLibrary = {
     Labels: (self: WeaponLibrary, query: any?) -> {string},
     Find: (self: WeaponLibrary, label: string) -> Candidate?,
     Activate: (self: WeaponLibrary, candidate: Candidate) -> boolean,
+    Best: (self: WeaponLibrary) -> Candidate?,
+    Swing: (self: WeaponLibrary) -> boolean,
     PressButton: (self: WeaponLibrary, button: GuiButton) -> boolean,
     Destroy: (self: WeaponLibrary) -> (),
 }
@@ -75,6 +77,48 @@ local WEAPON_WORDS: {string} = {
     "melee",
     "weapon",
     "combat",
+}
+
+-- Words that mean "this is not a weapon". A hotbar holds wool, planks, emotes
+-- and cosmetics next to the sword, and listing all of it turned the picker
+-- into an inventory dump. A blocked word always wins: nothing called
+-- "EmoteWheel" is a blade, whatever else its name contains.
+local NOT_WEAPON_WORDS: {string} = {
+    "emote",
+    "animation",
+    "anim",
+    "dance",
+    "cosmetic",
+    "cape",
+    "skin",
+    "kit",
+    "shop",
+    "setting",
+    "gift",
+    "trade",
+    "coin",
+    "gem",
+    "wool",
+    "block",
+    "plank",
+    "brick",
+    "glass",
+    "ladder",
+    "wood ",
+    "sand",
+    "dirt",
+    "obsidian",
+    "potion",
+    "food",
+    "apple",
+    "bed",
+    "chest",
+    "music",
+    "sound",
+    "menu",
+    "close",
+    "back",
+    "shopkeeper",
 }
 
 -- Containers whose children are inventory slots rather than decoration.
@@ -221,14 +265,20 @@ function Module.init(context: any): WeaponLibrary
                 if not child:IsA("Model") then
                     continue
                 end
-                if containsWord(child.Name, WEAPON_WORDS) then
+                if containsWord(child.Name, WEAPON_WORDS)
+                    and not containsWord(child.Name, NOT_WEAPON_WORDS) then
                     add("ViewModel", child.Name, child)
                 end
                 if string.find(string.lower(child.Name), "viewmodel", 1, true) then
+                    -- Whatever the client has put in your hands right now.
                     for _, held: Instance in ipairs(child:GetChildren()) do
-                        if held:IsA("Model") or held:IsA("BasePart") then
-                            add("ViewModel", held.Name, held)
+                        if not held:IsA("Model") and not held:IsA("BasePart") then
+                            continue
                         end
+                        if containsWord(held.Name, NOT_WEAPON_WORDS) then
+                            continue
+                        end
+                        add("ViewModel", held.Name, held)
                     end
                 end
             end
@@ -245,19 +295,26 @@ function Module.init(context: any): WeaponLibrary
                     -- The menu's own controls are not the game's weapons.
                     continue
                 end
+                if containsWord(descendant.Name, NOT_WEAPON_WORDS) then
+                    continue
+                end
                 local named: boolean = containsWord(descendant.Name, WEAPON_WORDS)
-                local inTouch: boolean = ancestryMatches(descendant, TOUCH_WORDS, 4)
+                if not named then
+                    -- Unnamed buttons are only interesting when the caller
+                    -- explicitly asks for everything, and even then only from
+                    -- the touch controls, where the swing button lives.
+                    if not everything then
+                        continue
+                    end
+                    if not ancestryMatches(descendant, TOUCH_WORDS, 4) then
+                        continue
+                    end
+                    add("Button", descendant.Name, descendant)
+                    continue
+                end
                 local inInventory: boolean =
                     ancestryMatches(descendant, INVENTORY_WORDS, 4)
-                if named and inTouch then
-                    add("Button", descendant.Name, descendant)
-                elseif named then
-                    add("Button", descendant.Name, descendant)
-                elseif inInventory and (everything or descendant.Visible) then
-                    add("Slot", descendant.Name, descendant)
-                elseif everything and inTouch then
-                    add("Button", descendant.Name, descendant)
-                end
+                add(inInventory and "Slot" or "Button", descendant.Name, descendant)
             end
         end
 
@@ -284,6 +341,40 @@ function Module.init(context: any): WeaponLibrary
             end
         end
         return nil
+    end
+
+    -- What to hit with when nobody has picked anything. Held tools first,
+    -- because that is what most games mean by "your weapon"; then the touch
+    -- button, which is the only thing that swings in games like BedFight; then
+    -- a hotbar slot, which at least equips the thing.
+    function library:Best(): Candidate?
+        local found: {Candidate} = library:Scan({All = false})
+        local order: {string} = {"Tool", "Button", "Slot", "ViewModel"}
+        local character: Model? = localPlayer.Character
+        for _, kind: string in ipairs(order) do
+            for _, candidate: Candidate in ipairs(found) do
+                if candidate.kind ~= kind then
+                    continue
+                end
+                if kind == "Tool"
+                    and character
+                    and candidate.instance.Parent ~= character then
+                    -- A stowed tool is a worse answer than the button that
+                    -- swings whatever is already equipped.
+                    continue
+                end
+                return candidate
+            end
+        end
+        return found[1]
+    end
+
+    function library:Swing(): boolean
+        local candidate: Candidate? = library:Best()
+        if not candidate then
+            return false
+        end
+        return library:Activate(candidate :: Candidate)
     end
 
     function library:Activate(candidate: Candidate): boolean

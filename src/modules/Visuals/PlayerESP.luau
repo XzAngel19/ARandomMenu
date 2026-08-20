@@ -155,12 +155,12 @@ function Module.init(context: Runtime): any
     esp:CreateSection("Filters")
     esp:CreateToggle({
         Name = "Team check",
-        Default = true,
+        Default = false,
         Tooltip = "Skip players on your own team.",
     })
     esp:CreateToggle({
         Name = "Visibility check",
-        Default = true,
+        Default = false,
         Tooltip = "Recolour targets that are behind geometry.",
     })
     esp:CreateSlider({
@@ -171,6 +171,18 @@ function Module.init(context: Runtime): any
     })
 
     esp:CreateSection("Style")
+    esp:CreateToggle({
+        Name = "Team colours",
+        Default = true,
+        Tooltip = "Draw each player in their own team's colour. Falls back to "
+            .. "the colours below for teamless games.",
+    })
+    esp:CreateToggle({
+        Name = "Name plate",
+        Default = true,
+        Tooltip = "Put the name on a dark plate so it stays readable against "
+            .. "a bright map.",
+    })
     esp:CreateColor({
         Name = "Enemy colour",
         Default = Color3.fromRGB(236, 236, 240),
@@ -277,6 +289,7 @@ function Module.acquire(
     local nameLabel: TextLabel = host.makeTextLabel(root, player.DisplayName, 13)
     nameLabel.AnchorPoint = Vector2.new(0.5, 1)
     nameLabel.Name = "NameTag"
+    host.create("UICorner", {Parent = nameLabel, CornerRadius = UDim.new(0, 3)})
     nameLabel.TextXAlignment = Enum.TextXAlignment.Center
     nameLabel.Visible = false
     nameLabel.ZIndex = 2
@@ -394,6 +407,21 @@ function Module.render(
                 and options["Friendly colour"].Value
             or (visible and options["Enemy colour"].Value
                 or options["Hidden colour"].Value)
+        -- A team game already colour-codes itself; borrowing that is both
+        -- prettier and more informative than two greys.
+        if options["Team colours"].Value and entity.Team then
+            -- Read defensively: `Team` is a Team instance in a normal game,
+            -- but plenty of games hang their own value off the player, and a
+            -- missing TeamColor must dim the ESP, not stop it.
+            local teamOk: boolean, teamColour: any = pcall(function(): Color3
+                return (entity.Team :: any).TeamColor.Color
+            end)
+            if teamOk and typeof(teamColour) == "Color3" then
+                colour = visible
+                    and teamColour
+                    or (teamColour :: Color3):Lerp(Color3.new(0, 0, 0), 0.45)
+            end
+        end
 
         -- Box geometry from the character's own extents, so a crouching or
         -- oversized rig gets a box that actually fits it.
@@ -516,9 +544,14 @@ function Module.render(
             drawings.name.TextSize = textSize
             drawings.name.Position = UDim2.fromOffset(
                 math.round(centreX),
-                math.round(top - 2)
+                math.round(top - 3)
             )
-            drawings.name.Size = UDim2.fromOffset(math.max(width * 3, 120), textSize + 2)
+            drawings.name.Size = UDim2.fromOffset(math.max(width * 3, 120), textSize + 4)
+            -- The plate is what keeps a name readable over snow, sand or a
+            -- lit sky; without it ESP text disappears half the map.
+            drawings.name.BackgroundColor3 = Color3.fromRGB(10, 10, 12)
+            drawings.name.BackgroundTransparency =
+                options["Name plate"].Value and 0.35 or 1
         else
             drawings.name.Visible = false
         end

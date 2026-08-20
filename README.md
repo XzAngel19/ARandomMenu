@@ -403,6 +403,11 @@ kind, and activates each the right way: a tool is equipped and activated, a
 button is pressed by firing the signals a real press raises, in the order the
 engine raises them.
 
+A blocklist keeps the picker honest: a hotbar is full of wool, planks, emotes,
+capes and kit buttons sitting next to the sword, so anything whose name says
+cosmetic, block or emote is dropped, and unnamed buttons are only considered
+when they live in the game's touch controls.
+
 **The entity library.** `Entity.luau` answers the three questions every visual
 and combat module asks — who is alive, where are their parts, which one is under
 the crosshair — in one place, with one team check and one visibility raycast.
@@ -452,6 +457,13 @@ per click: pick the value you want directly, in one press, with the current one
 marked. The list opens upwards when there is no room below, scrolls past six
 entries, and closes on any press outside it or when the menu is hidden.
 
+### Defaults
+
+Nothing is switched on when the menu loads, and every safety rail starts off:
+wall checks, team checks, visibility checks, require-tool and friend-skipping
+are all opt-in. A module you enable does the blatant thing first and gets
+polite only when you ask it to.
+
 ### Shipped modules
 
 - **Player ESP** (`Visuals`): corner or full boxes with adjustable thickness,
@@ -468,6 +480,9 @@ entries, and closes on any press outside it or when the menu is hidden.
   targets, Multi or Single, target priority by distance, health or threat, a
   field-of-view cone, wall and team checks, rotation off / silent (turned for
   the swing only, then put back) / face, auto-equip, require-tool and target
+  **Hits per swing** for games that count each press, **Hit through walls** as
+  a decision separate from the wall check (reach and line of sight are not the
+  same question),
   a **Show target** readout in the corner — the current target's avatar, name,
   health bar and distance, the way Vape shows it — and highlighting in two
   colours — one for "in swing range", one for "actually
@@ -476,7 +491,11 @@ entries, and closes on any press outside it or when the menu is hidden.
   melee weapons with limb-only hitboxes need, and **Swing only** turns the
   second half off so the module does nothing a hand could not.
 
-  Weapon detection does not guess, and it is not limited to tools. Everything
+  If nothing is ticked and there is no Tool in your hands, the aura asks the
+  weapon library for the best candidate and presses that — without that step it
+  found its target, outlined it and then swung nothing at all in every game
+  that has no `Tool` instances. Weapon detection does not guess, and it is not
+  limited to tools. Everything
   the weapon library finds is listed in a **Weapons** multi-select — tick the
   ones the aura may use, in a game that hands you nine swords, a pickaxe and a
   mobile attack button — and ticked entries are swung through the library, so
@@ -516,6 +535,10 @@ entries, and closes on any press outside it or when the menu is hidden.
   does, by firing the signals a tap raises. Press *Learn button*, tap the
   game's button once, and it is bound; the name is remembered so a HUD rebuilt
   between rounds is found again. The menu's own buttons are never eligible.
+- **Player ESP** draws in **team colours** by default, reading each player's
+  own `Team.TeamColor`, and puts the name on a dark plate so it stays readable
+  over snow or a bright sky. The two-grey scheme is still there for teamless
+  games.
 - **Item Render** (`Visuals`): object ESP — the name of every listed object,
   drawn above it with its distance, and its silhouette outlined through walls.
   The objects are a **multi-select list**, not a comma string: each one can be
@@ -567,6 +590,25 @@ The GitHub workflow should point a step at this script so the two cannot drift:
 `LUAU_DIR` is optional there: the script already looks in `PATH` and in
 `/tmp/luau`, which is where the workflow's existing compile step unpacks the
 Luau release.
+
+## BedFight module
+
+`src/games/BedFight.luau` loads for place `71480482338212` and is built from the
+saved place in `reference/`, not from guesswork:
+
+- **Bed ESP** — `Workspace.BedsContainer` and the map's own `Beds` folder, each
+  bed labelled with its distance.
+- **Generator ESP** — the Diamond and Emerald generator parts, labelled with
+  the countdown the game itself renders in `ProgressGui.TimerLabel`, so the
+  number on screen is the game's number rather than a second-hand guess.
+- **Round Info** — `Status`, `GameMode` and `AllBedsBroken` read live from
+  `ReplicatedStorage.GameInfo`, with the number of beds still standing.
+- **Auto Swing** — presses the game's own sword button on a timer, because this
+  game has no `Tool` to activate.
+
+What it does not do is fire `SwordHit`, `MineBlock`, `PlaceBlock` or
+`PurchaseItemShopItem` directly: their argument shapes are not in the dump, and
+a remote called with the wrong arguments is a kick, not a feature.
 
 ## MM2 module
 

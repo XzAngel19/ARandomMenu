@@ -414,15 +414,15 @@ function Module.init(context: Runtime): any
                 end
 
                 local tool: Tool?, handle: BasePart? = equippedTool()
-                local hasPicked: boolean = #(options["Weapons"].Selected or {}) > 0
-                if not tool and not hasPicked then
+                if not tool then
                     if options["Auto equip"].Value then
                         equipFromBackpack()
                     end
                     if options["Require tool"].Value then
-                        -- Only meaningful when the game actually uses tools;
-                        -- a ticked weapon is proof that it does not.
+                        -- Opt-in only. Most games this module is useful in do
+                        -- not put a Tool in your hands at all.
                         clearHighlights()
+                        showTarget(nil)
                         return
                     end
                 end
@@ -490,8 +490,16 @@ function Module.init(context: Runtime): any
                     if not canSwing then
                         continue
                     end
-                    -- Ticked candidates first: in a game with no Tool
-                    -- instances at all, they are the only thing that swings.
+                    -- Three ways to swing, tried in order, because a game
+                    -- that answers to none of them is a game the aura cannot
+                    -- help with:
+                    --   1. whatever the player ticked,
+                    --   2. the tool in their hands,
+                    --   3. whatever the weapon library can find — the touch
+                    --      button, a hotbar slot, a view model. Without this
+                    --      third step the aura found its target, outlined it,
+                    --      and then pressed nothing at all in every game that
+                    --      does not use Tool instances.
                     local swung: boolean = false
                     if weapons then
                         for _, label: string in ipairs(aura.Options["Weapons"].Selected or {}) do
@@ -501,15 +509,38 @@ function Module.init(context: Runtime): any
                             end
                         end
                     end
-                    if not swung then
+                    if not swung and tool then
                         activateTool(tool)
+                        swung = true
+                    end
+                    if not swung and weapons then
+                        swung = weapons:Swing()
+                    end
+                    -- Extra presses for games that count each one as a hit.
+                    local extraHits: number =
+                        math.max(math.round(options["Hits per swing"].Value) - 1, 0)
+                    for _ = 1, extraHits do
+                        if tool then
+                            activateTool(tool)
+                        elseif weapons then
+                            weapons:Swing()
+                        end
                     end
                     if options["Swing only"].Value then
                         -- Swing and nothing else: the tool's own Activate, no
                         -- touch events, no reach. What a player's hand does.
                         continue
                     end
-                    if not inAttackRange or not options["Contact damage"].Value then
+                    if not options["Contact damage"].Value then
+                        continue
+                    end
+                    -- Reach is the distance check; walls are a separate
+                    -- decision, so a player can have one without the other.
+                    if not inAttackRange then
+                        continue
+                    end
+                    if not options["Hit through walls"].Value
+                        and not entityLibrary:VisibleFrom(entity) then
                         continue
                     end
                     -- Contact firing needs a part to touch: the parts actually
@@ -657,6 +688,21 @@ function Module.init(context: Runtime): any
         Tooltip = "Silent turns you for the swing only and puts you back; "
             .. "Face keeps you pointed at the target.",
     }))
+    table.insert(advancedRows, aura:CreateSlider({
+        Name = "Hits per swing",
+        Min = 1,
+        Max = 8,
+        Default = 1,
+        Tooltip = "How many times the weapon is pressed for each swing the "
+            .. "rate allows. Some games count every press.",
+    }))
+    table.insert(advancedRows, aura:CreateToggle({
+        Name = "Hit through walls",
+        Default = true,
+        Tooltip = "Fire contact damage even when the target is behind "
+            .. "geometry. Independent of the wall check, which decides "
+            .. "whether the target is picked at all.",
+    }))
     table.insert(advancedRows, aura:CreateToggle({
         Name = "Contact damage",
         Default = true,
@@ -665,15 +711,17 @@ function Module.init(context: Runtime): any
     }))
     table.insert(advancedRows, aura:CreateToggle({
         Name = "Wall check",
-        Default = true,
+        Default = false,
+        Tooltip = "Off by default: the aura hits through walls and floors "
+            .. "until you ask it not to.",
     }))
     table.insert(advancedRows, aura:CreateToggle({
         Name = "Team check",
-        Default = true,
+        Default = false,
     }))
     table.insert(advancedRows, aura:CreateToggle({
         Name = "Require tool",
-        Default = true,
+        Default = false,
         Tooltip = "Do nothing while your hands are empty.",
     }))
     table.insert(advancedRows, aura:CreateToggle({
@@ -683,11 +731,11 @@ function Module.init(context: Runtime): any
     }))
     table.insert(advancedRows, aura:CreateToggle({
         Name = "Highlight targets",
-        Default = true,
+        Default = false,
     }))
     table.insert(advancedRows, aura:CreateToggle({
         Name = "Show target",
-        Default = true,
+        Default = false,
         Tooltip = "Corner readout with the current target's avatar, health "
             .. "and distance.",
         Function = function(value: boolean): ()

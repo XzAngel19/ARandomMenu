@@ -660,11 +660,33 @@ function Mock.install(): MockWorld
         return character
     end
 
+    local teams: {[string]: any} = {}
+    local teamPalette: {[string]: any} = {
+        Red = {R = 0.8, G = 0.2, B = 0.2},
+        Blue = {R = 0.2, G = 0.4, B = 0.9},
+    }
+    local function teamNamed(name: string?): any
+        if not name then
+            return nil
+        end
+        local existing: any = teams[name]
+        if existing then
+            return existing
+        end
+        -- A real Team instance, because that is what the ESP reads for its
+        -- team colours.
+        local team: any = newInstance("Team")
+        team.Name = name
+        team.TeamColor = {Color = teamPalette[name] or {R = 1, G = 1, B = 1}}
+        teams[name] = team
+        return team
+    end
+
     function world.addPlayer(name: string, team: any, position: any): any
         local player: any = newInstance("Player")
         player.Name = name
         player.DisplayName = name
-        player.Team = team
+        player.Team = typeof(team) == "string" and teamNamed(team) or team
         player.Neutral = false
         player.CharacterAdded = signal()
         player.Character = buildCharacter(name, position)

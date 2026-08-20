@@ -142,7 +142,7 @@ function Module.init(context: Runtime): any
 
     friends:CreateToggle({
         Name = "Protect Roblox friends",
-        Default = true,
+        Default = false,
         Tooltip = "Everyone in the server you are actually friends with.",
         Function = function(value: boolean): ()
             list.protectRobloxFriends = value

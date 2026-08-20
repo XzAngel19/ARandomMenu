@@ -188,17 +188,17 @@ function Module.init(context: Runtime): any
     })
     trigger:CreateToggle({
         Name = "Team check",
-        Default = true,
+        Default = false,
         Tooltip = "Never fire at players on your own team.",
     })
     trigger:CreateToggle({
         Name = "Wall check",
-        Default = true,
+        Default = false,
         Tooltip = "Never fire at a target with geometry in the way.",
     })
     trigger:CreateToggle({
         Name = "Require tool",
-        Default = true,
+        Default = false,
         Tooltip = "Only run while something is equipped.",
     })
 

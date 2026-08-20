@@ -171,7 +171,7 @@ function Module.init(context: Runtime): any
     }))
     table.insert(advanced, teleport:CreateToggle({
         Name = "Skip friends",
-        Default = true,
+        Default = false,
         Tooltip = "Nearest player ignores anyone on the Friend List.",
     }))
     teleport:CreateToggle({
