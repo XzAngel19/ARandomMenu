@@ -119,8 +119,13 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
   faint outline appears around them while the menu is open to show they can be
   grabbed. The framed tool windows (favourites, overlay manager, overlay
   settings) keep their compact header and close button.
-- Modules are filed under categories (Player, Combat, Visuals, Protection,
-  Utility, and a `General` catch-all that always sorts last) and sorted
+- Modules are filed under categories (Movement, Combat, Visuals, Protection,
+  Utility, and a `General` catch-all that always sorts last). "Player" used to
+  hold everything that moved the character, which made it a second General; it
+  is **Movement** now. Combat holds only what helps you fight, so **Fling** —
+  which does not help you fight, it throws another player around — sits with
+  the other one-shot tools in Utility. Every shipped module is filed: nothing
+  falls through to `General` and sorted
   alphabetically inside each one. A card publishes its category and sort name
   as attributes; the card grid materialises one **section** per category —
   a header strip plus one or two columns — writes every `LayoutOrder`
@@ -144,6 +149,23 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
   interval as placeholder text, and long panels can be broken up with section
   headings that fold away together with the controls they label. Fly is the
   reference layout.
+- **Device-independent input.** Modules never read WASD, Space or a mouse
+  position directly — a phone has none of them, which is precisely why Fly,
+  Infinite Jump and CTRL+Click Teleport did nothing on touch. Three shared
+  helpers answer the questions a module actually has:
+  - `state.getMoveInput()` — steering, read from Roblox's own control module,
+    so keyboard, thumbstick and gamepad all work *and* it keeps answering while
+    `PlatformStand` is on (which is when `Humanoid.MoveDirection` goes silent
+    and flying on a phone froze the character).
+  - `state.isJumpHeld()` / `state.onJumpRequest()` — jump from a key, a gamepad
+    button or the touch jump button, via `JumpRequest`.
+  - `state.getAimRay()` — the mouse on desktop, the centre of the screen on
+    touch, because a finger is not a cursor.
+  Fly steers through the first, Infinite Jump (including Rise) through the
+  second, and **Click Teleport** — renamed, since CTRL+click is only the
+  desktop half — through the third: its key slot teleports to whatever is being
+  aimed at on any device, and on touch that slot places the button that
+  triggers it.
 - **Module kinds.** A card's behaviour comes from one declared kind instead of
   a pile of independent booleans, so a new module cannot accidentally inherit
   the wrong keybind semantics:
@@ -299,6 +321,18 @@ PlaceId, raw download status, downloaded byte count, UI callback count,
 TaskManager callback count and errors captured by `pcall`.
 
 ## MM2 module
+
+- **Clones are recognised.** MM2 is copied constantly ("MMV" and friends): same
+  game, different PlaceId, so a PlaceId table alone left every copy with no
+  game tab. When the PlaceId is unknown the runtime fingerprints the place
+  instead — the `Remotes.Gameplay` round pipeline, `ClientServices.WeaponService`
+  with its `GunFired` event, the `MainGUI.Game.Timer` HUD, the `Murderer`
+  collision group and the map's coin container. Four of those five must match,
+  each is something the game genuinely needs to work, and the check is retried
+  briefly while the client is still replicating. `GAME_CHECK.matches()` answers
+  for the game a clone is a copy of, so game modules keep working there without
+  comparing PlaceIds themselves, and the Settings page reports how the game was
+  recognised (`MM2 · fingerprint 5 markers`).
 
 - **Player ESP** was fifteen flat rows (a toggle, a colour and a transparency
   slider per role, plus coins and traps). It is now grouped under Roles /

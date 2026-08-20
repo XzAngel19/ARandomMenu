@@ -2667,7 +2667,7 @@ local function createTrajectoryCalibration(): any
         )
         if not decodeOk
             or type(decoded) ~= "table"
-            or decoded.placeId ~= game.PlaceId
+            or decoded.placeId ~= game.PlaceId -- calibration is per server build
             or decoded.schema ~= 2
             or decoded.kind ~= "mm2-trajectory-analytics" then
             if decodeOk
@@ -3161,7 +3161,10 @@ local function createTrajectoryCalibration(): any
         if runtime.active then
             return
         end
-        if game.PlaceId ~= Module.PlaceId then
+        -- The runtime already decided this server is MM2 (by PlaceId or by
+        -- fingerprinting a clone); refusing here on PlaceId alone would leave
+        -- every copy of the game without calibration.
+        if not (GAME_CHECK.MM2Active or game.PlaceId == Module.PlaceId) then
             warn("[RTM:MM2:Trajectory] Inicio omitido fuera de MM2.")
             return
         end

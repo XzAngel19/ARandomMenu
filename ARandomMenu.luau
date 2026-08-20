@@ -34,36 +34,58 @@ local RUNTIME_BUILD_LABEL: string = "loader-v3"
 -- These live at file scope on purpose: `bootstrap()` is one enormous function
 -- and is close to Luau's 200 local-register ceiling.
 local DEFAULT_FEATURE_CATEGORY: string = "General"
+
+-- The taxonomy, sorted the way it reads on screen:
+--
+--   Movement    getting around: speed, flight, jumps, teleports, phasing.
+--   Combat      aiming and hitting: only things that help you fight.
+--   Visuals     what you can see: ESP, lighting, camera.
+--   Protection  what stops something happening to you.
+--   Utility     one-shot tools and session helpers that fit nowhere else.
+--
+-- "Player" used to hold everything that moved the character, which made it a
+-- second General; it is "Movement" now, which is what those modules are. And
+-- Fling is not a combat aid — it does not help you fight, it throws another
+-- player around — so it sits with the other one-shot tools.
 local FEATURE_CATEGORIES: {[string]: string} = {
-    ["Anti-AFK"] = "Utility",
-    ["Anti-Fling"] = "Protection",
-    ["Anti-Void"] = "Protection",
-    ["CTRL + Click Teleport"] = "Player",
-    ["FOV"] = "Visuals",
-    ["Fling"] = "Combat",
-    ["Fly"] = "Player",
-    ["Freeze Movements"] = "Player",
-    ["Fullbright"] = "Visuals",
-    ["Gravity"] = "Utility",
-    ["High Jump"] = "Player",
+    -- Movement
+    ["Click Teleport"] = "Movement",
+    ["Fly"] = "Movement",
+    ["Freeze Movements"] = "Movement",
+    ["High Jump"] = "Movement",
+    ["Infinite Jump"] = "Movement",
+    ["Jump Power"] = "Movement",
+    ["Noclip"] = "Movement",
+    ["Phase Dash"] = "Movement",
+    ["Speed"] = "Movement",
+    ["Spider"] = "Movement",
+    ["Walk Speed"] = "Movement",
+
+    -- Combat
     ["Hitboxes"] = "Combat",
-    ["Infinite Jump"] = "Player",
-    ["Improve FPS"] = "Utility",
-    ["Interact Extender"] = "Utility",
-    ["Jump Power"] = "Player",
-    ["Lag Switch"] = "Utility",
-    ["Noclip"] = "Player",
-    ["Phase Dash"] = "Player",
-    ["Player ESP"] = "Visuals",
     ["Projectile Calibration"] = "Combat",
-    ["Rejoin Server"] = "Utility",
-    ["Safe Walk"] = "Protection",
-    ["Soft Landing"] = "Protection",
-    ["Speed"] = "Player",
-    ["Spider"] = "Player",
-    ["Walk Speed"] = "Player",
+
+    -- Visuals
+    ["FOV"] = "Visuals",
+    ["Fullbright"] = "Visuals",
+    ["Player ESP"] = "Visuals",
     ["X-Ray"] = "Visuals",
     ["Zoom Unlocker"] = "Visuals",
+
+    -- Protection
+    ["Anti-Fling"] = "Protection",
+    ["Anti-Void"] = "Protection",
+    ["Safe Walk"] = "Protection",
+    ["Soft Landing"] = "Protection",
+
+    -- Utility
+    ["Anti-AFK"] = "Utility",
+    ["Fling"] = "Utility",
+    ["Gravity"] = "Utility",
+    ["Improve FPS"] = "Utility",
+    ["Interact Extender"] = "Utility",
+    ["Lag Switch"] = "Utility",
+    ["Rejoin Server"] = "Utility",
 }
 
 -- Sort key for a whole category. The catch-all always sinks to the bottom;
@@ -323,7 +345,137 @@ local GAME_MODULES: {[number]: string} = {
     [135856908115931] = "MVSD",
 }
 
+-- ---------------------------------------------------------------------------
+-- Game fingerprinting
+-- ---------------------------------------------------------------------------
+--
+-- MM2 is cloned constantly ("MMV" and friends): same game, different PlaceId,
+-- so a PlaceId table alone leaves every copy with no game tab at all. A copy
+-- cannot strip the structure the game is *built* on, though — the remotes its
+-- rounds run through, the weapon service its guns call, the HUD it clones into
+-- PlayerGui — so when the PlaceId is unknown the runtime looks for that
+-- structure instead.
+--
+-- Deliberately conservative: several independent markers must match, and each
+-- one is a path the real game genuinely needs, so an unrelated game cannot
+-- score high enough by accident. Nothing here waits on the network; it reads
+-- what has already replicated.
+type GameFingerprint = {
+    module: string,
+    required: number,
+    markers: {(ReplicatedStorage) -> boolean},
+}
+
+local GAME_FINGERPRINTS: {GameFingerprint} = {
+    {
+        module = "MM2",
+        required = 4,
+        markers = {
+            -- The round pipeline: these four remotes are what every MM2 round
+            -- is driven by.
+            function(replicated: ReplicatedStorage): boolean
+                local remotes: Instance? = replicated:FindFirstChild("Remotes")
+                local gameplay: Instance? = remotes
+                    and remotes:FindFirstChild("Gameplay")
+                if not gameplay then
+                    return false
+                end
+                local found: number = 0
+                for _, name: string in ipairs({
+                    "RoundStart",
+                    "RoundEndFade",
+                    "GetCurrentPlayerData",
+                    "PlayerDataChanged",
+                }) do
+                    if gameplay:FindFirstChild(name) then
+                        found += 1
+                    end
+                end
+                return found >= 3
+            end,
+            -- The weapon service the knife and gun both go through.
+            function(replicated: ReplicatedStorage): boolean
+                local services: Instance? =
+                    replicated:FindFirstChild("ClientServices")
+                local weaponService: Instance? = services
+                    and services:FindFirstChild("WeaponService")
+                return weaponService ~= nil
+                    and weaponService:FindFirstChild("GunFired") ~= nil
+            end,
+            -- The HUD that carries the round timer and the role selector.
+            function(replicated: ReplicatedStorage): boolean
+                local mainGui: Instance? = replicated:FindFirstChild("MainGUI")
+                local gameFrame: Instance? = mainGui
+                    and mainGui:FindFirstChild("Game")
+                return gameFrame ~= nil
+                    and gameFrame:FindFirstChild("Timer") ~= nil
+            end,
+            -- MM2 gives the murderer its own collision group.
+            function(_replicated: ReplicatedStorage): boolean
+                local ok: boolean, groups: any = pcall(function(): any
+                    return game:GetService("PhysicsService")
+                        :GetRegisteredCollisionGroups()
+                end)
+                if not ok or type(groups) ~= "table" then
+                    return false
+                end
+                for _, group: any in ipairs(groups) do
+                    if type(group) == "table" and group.name == "Murderer" then
+                        return true
+                    end
+                end
+                return false
+            end,
+            -- Coin containers/areas are in every MM2 map.
+            function(_replicated: ReplicatedStorage): boolean
+                for _, object: Instance in ipairs(workspace:GetChildren()) do
+                    if object:IsA("Model")
+                        and object.Name ~= "Lobby"
+                        and (object:FindFirstChild("CoinContainer")
+                            or object:FindFirstChild("CoinAreas")) then
+                        return true
+                    end
+                end
+                return false
+            end,
+        },
+    },
+}
+
+local function detectGameModuleByStructure(): (string?, number)
+    local replicated: ReplicatedStorage = game:GetService("ReplicatedStorage")
+    for _, fingerprint: GameFingerprint in ipairs(GAME_FINGERPRINTS) do
+        local score: number = 0
+        for _, marker: (ReplicatedStorage) -> boolean in ipairs(fingerprint.markers) do
+            local ok: boolean, matched: any = pcall(marker, replicated)
+            if ok and matched == true then
+                score += 1
+            end
+        end
+        if score >= fingerprint.required then
+            return fingerprint.module, score
+        end
+    end
+    return nil, 0
+end
+
 local ACTIVE_GAME_MODULE: string? = GAME_MODULES[game.PlaceId]
+local ACTIVE_GAME_SOURCE: string = ACTIVE_GAME_MODULE and "PlaceId" or "none"
+if not ACTIVE_GAME_MODULE then
+    -- A clone: recognise the game by what it is made of. The check is retried
+    -- briefly because a freshly joined client may still be replicating.
+    local detected: string?, score: number = detectGameModuleByStructure()
+    local attempts: number = 0
+    while not detected and attempts < 6 do
+        attempts += 1
+        task.wait(0.5)
+        detected, score = detectGameModuleByStructure()
+    end
+    if detected then
+        ACTIVE_GAME_MODULE = detected
+        ACTIVE_GAME_SOURCE = "fingerprint " .. tostring(score) .. " markers"
+    end
+end
 
 local GAME_CHECK = {
     MM2 = 142823291,
@@ -337,8 +489,20 @@ local GAME_CHECK = {
 }
 
 function GAME_CHECK.matches(identifier: number): boolean
-    return game.PlaceId == identifier
+    if game.PlaceId == identifier then
+        return true
+    end
+    -- A recognised clone answers for the game it is a copy of, so modules that
+    -- gate on `GAME_CHECK.matches(GAME_CHECK.MM2)` keep working there.
+    for placeId: number, moduleName: string in pairs(GAME_MODULES) do
+        if placeId == identifier then
+            return ACTIVE_GAME_MODULE == moduleName
+        end
+    end
+    return false
 end
+
+GAME_CHECK.source = ACTIVE_GAME_SOURCE
 -- Neutral monochrome palette. The interface is intentionally themeless: every
 -- surface is a shade of black/grey and the single accent is plain white, so no
 -- decorative identity leaks into the runtime.
@@ -4615,6 +4779,146 @@ local function getCharacterParts()
     return character,
         character:FindFirstChildOfClass("Humanoid"),
         character:FindFirstChild("HumanoidRootPart")
+end
+
+-- ---------------------------------------------------------------------------
+-- Device-independent input
+-- ---------------------------------------------------------------------------
+--
+-- Modules must never read WASD, Space or a mouse position directly: a phone
+-- has none of them, which is exactly why Fly, Infinite Jump and CTRL+Click
+-- Teleport did nothing on touch. These three helpers answer the questions a
+-- module actually has — "where is the player steering", "is jump held", "what
+-- is being aimed at" — using whatever input the device provides.
+do
+-- Roblox's own control module is the single source of movement input: it
+-- already merges keyboard, thumbstick, gamepad and click-to-move. Reading it
+-- also keeps working while `PlatformStand` is on, which is when
+-- `Humanoid.MoveDirection` goes silent (and why flying on a phone left the
+-- character stuck).
+local cachedControls: any = nil
+local controlsFetchedAt: number = -math.huge
+
+local function getControls(): any
+    if cachedControls ~= nil or os.clock() - controlsFetchedAt < 2 then
+        return cachedControls
+    end
+    controlsFetchedAt = os.clock()
+    local ok: boolean, controls: any = pcall(function(): any
+        local scripts: Instance? = LocalPlayer:FindFirstChildOfClass("PlayerScripts")
+        local playerModule: Instance? = scripts and scripts:FindFirstChild("PlayerModule")
+        if not playerModule then
+            return nil
+        end
+        return (state.requireModule(playerModule) :: any):GetControls()
+    end)
+    if ok and type(controls) == "table" then
+        cachedControls = controls
+    end
+    return cachedControls
+end
+
+-- Returns the steering intent in camera space: +1 forward, +1 right.
+state.getMoveInput = function(): (number, number)
+    local controls: any = getControls()
+    if controls then
+        local ok: boolean, move: any = pcall(controls.GetMoveVector, controls)
+        if ok and typeof(move) == "Vector3" and move.Magnitude > 0.001 then
+            -- GetMoveVector is camera-relative with -Z forward.
+            return -move.Z, move.X
+        end
+    end
+
+    -- Fallbacks: the humanoid's own direction (world space, resolved against
+    -- the camera by the caller) and finally the desktop keys.
+    local _, humanoid: Humanoid? = getCharacterParts()
+    if humanoid and humanoid.MoveDirection.Magnitude > 0.001 then
+        local camera: Camera? = workspace.CurrentCamera
+        if camera then
+            local forward: Vector3 = camera.CFrame.LookVector
+            local right: Vector3 = camera.CFrame.RightVector
+            local flatForward: Vector3 = Vector3.new(forward.X, 0, forward.Z)
+            local flatRight: Vector3 = Vector3.new(right.X, 0, right.Z)
+            if flatForward.Magnitude > 0.001 and flatRight.Magnitude > 0.001 then
+                local direction: Vector3 = humanoid.MoveDirection
+                return direction:Dot(flatForward.Unit), direction:Dot(flatRight.Unit)
+            end
+        end
+    end
+
+    local forwardScalar: number = 0
+    local rightScalar: number = 0
+    if UserInputService.KeyboardEnabled then
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then
+            forwardScalar += 1
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then
+            forwardScalar -= 1
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then
+            rightScalar += 1
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then
+            rightScalar -= 1
+        end
+    end
+    return forwardScalar, rightScalar
+end
+
+-- Jump, from a key, a gamepad button or the touch jump button. `JumpRequest`
+-- covers all three, and repeats while the input is held, so a short grace
+-- window turns it into a reliable "is jump held" signal.
+local lastJumpRequestAt: number = -math.huge
+trackUiConnection(UserInputService.JumpRequest:Connect(function(): ()
+    lastJumpRequestAt = os.clock()
+end))
+
+state.onJumpRequest = function(callback: () -> ()): RBXScriptConnection
+    return UserInputService.JumpRequest:Connect(function(): ()
+        if state.keyCaptureCallback
+            or state.waitingForKey
+            or UserInputService:GetFocusedTextBox() then
+            return
+        end
+        callback()
+    end)
+end
+
+state.isJumpHeld = function(): boolean
+    if UserInputService:GetFocusedTextBox() then
+        return false
+    end
+    if UserInputService.KeyboardEnabled
+        and UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+        return true
+    end
+    if UserInputService.GamepadEnabled
+        and UserInputService:IsKeyDown(Enum.KeyCode.ButtonA) then
+        return true
+    end
+    local _, humanoid: Humanoid? = getCharacterParts()
+    if humanoid and humanoid.Jump then
+        return true
+    end
+    -- Touch: the jump button re-fires while it is held down.
+    return os.clock() - lastJumpRequestAt < 0.2
+end
+
+-- Where the player is aiming: the mouse on a desktop, the middle of the
+-- screen on touch (a finger is not a cursor).
+state.getAimRay = function(): Ray?
+    local camera: Camera? = workspace.CurrentCamera
+    if not camera then
+        return nil
+    end
+    local pointer: Vector2
+    if UserInputService.MouseEnabled then
+        pointer = UserInputService:GetMouseLocation()
+    else
+        pointer = camera.ViewportSize / 2
+    end
+    return camera:ViewportPointToRay(pointer.X, pointer.Y)
+end
 end
 
 -- ---------------------------------------------------------------------------
@@ -9203,34 +9507,32 @@ local function getFlyDirection(
         and cameraRight.Unit
         or Vector3.new(1, 0, 0)
 
-    local horizontal: Vector3 = humanoid.MoveDirection
-    if horizontal.Magnitude <= 0.001 then
-        if UserInputService:IsKeyDown(Enum.KeyCode.W) then
-            horizontal = horizontal + cameraForward
-        end
-        if UserInputService:IsKeyDown(Enum.KeyCode.S) then
-            horizontal = horizontal - cameraForward
-        end
-        if UserInputService:IsKeyDown(Enum.KeyCode.D) then
-            horizontal = horizontal + cameraRight
-        end
-        if UserInputService:IsKeyDown(Enum.KeyCode.A) then
-            horizontal = horizontal - cameraRight
-        end
-    end
-
+    -- Steering comes from the shared input helper, which reads Roblox's own
+    -- control module: keyboard, thumbstick or gamepad, and it keeps answering
+    -- while PlatformStand is on — the exact case where `MoveDirection` goes
+    -- quiet and flying on a phone left the character frozen in place.
+    local forwardScalar: number, rightScalar: number = state.getMoveInput()
+    local horizontal: Vector3 = cameraForward * forwardScalar
+        + cameraRight * rightScalar
     if horizontal.Magnitude > 1 then
         horizontal = horizontal.Unit
     end
 
     local vertical: number = 0
-    if UserInputService:IsKeyDown(flySettings.upKey)
-        or flyTouchVertical > 0 then
+    if flyTouchVertical > 0
+        or (UserInputService.KeyboardEnabled
+            and UserInputService:IsKeyDown(flySettings.upKey)) then
         vertical = vertical + 1
     end
-    if UserInputService:IsKeyDown(flySettings.downKey)
-        or flyTouchVertical < 0 then
+    if flyTouchVertical < 0
+        or (UserInputService.KeyboardEnabled
+            and UserInputService:IsKeyDown(flySettings.downKey)) then
         vertical = vertical - 1
+    end
+    -- On touch the jump button doubles as "up" so flying needs no placed
+    -- button at all to get off the ground.
+    if vertical == 0 and not UserInputService.KeyboardEnabled and state.isJumpHeld() then
+        vertical = 1
     end
 
     local targetVelocity: Vector3 = horizontal * flySettings.speed
@@ -9654,16 +9956,11 @@ local function toggleInfiniteJump(enabled)
         return
     end
 
-    featureConnections.InfiniteJump = UserInputService.InputBegan:Connect(function(
-        input,
-        processed
-    )
-        if processed
-            or state.keyCaptureCallback
-            or state.waitingForKey
-            or input.KeyCode ~= Enum.KeyCode.Space
-            or UserInputService:GetFocusedTextBox()
-            or infiniteJumpSettings.mode == "Rise" then
+    -- `JumpRequest` is the device-independent jump: the Space key, the gamepad
+    -- button and the touch jump button all raise it. Listening for
+    -- `KeyCode.Space` meant this module simply did nothing on a phone.
+    featureConnections.InfiniteJump = state.onJumpRequest(function(): ()
+        if infiniteJumpSettings.mode == "Rise" then
             return
         end
 
@@ -9693,9 +9990,8 @@ local function toggleInfiniteJump(enabled)
     end)
 
     featureConnections.InfiniteJumpRise = TaskManager:Connect(function()
-        if infiniteJumpSettings.mode ~= "Rise"
-            or not UserInputService:IsKeyDown(Enum.KeyCode.Space)
-            or UserInputService:GetFocusedTextBox() then
+        -- Held-jump, from whichever input the device has.
+        if infiniteJumpSettings.mode ~= "Rise" or not state.isJumpHeld() then
             return
         end
 
@@ -10112,10 +10408,62 @@ local function toggleNoclip(enabled)
     end)
 end
 
+-- Click teleport.
+--
+-- Desktop keeps CTRL + click. Touch has neither a control key nor a cursor, so
+-- the module's key slot doubles as the trigger there: tap the slot to place a
+-- button, then press it to jump to whatever the camera is pointing at. Both
+-- paths run the same raycast, so the behaviour is identical on every device.
+-- Kept on `state` rather than as locals: `bootstrap()` is one function scope
+-- sitting on Luau's 200 local-register ceiling.
+state.clickTeleportEnabled = false
+
+state.performClickTeleport = function(targetPosition: Vector3?): ()
+    if not state.clickTeleportEnabled then
+        return
+    end
+    local _, _, root = getCharacterParts()
+    if not root then
+        return
+    end
+
+    local destination: Vector3? = targetPosition
+    if not destination then
+        local aimRay: Ray? = state.getAimRay()
+        if not aimRay then
+            return
+        end
+        local parameters: RaycastParams = RaycastParams.new()
+        parameters.FilterType = Enum.RaycastFilterType.Exclude
+        parameters.IgnoreWater = true
+        parameters.FilterDescendantsInstances = LocalPlayer.Character
+            and {LocalPlayer.Character}
+            or {}
+        local result: RaycastResult? = workspace:Raycast(
+            aimRay.Origin,
+            aimRay.Direction.Unit * 2048,
+            parameters
+        )
+        destination = result and result.Position or nil
+        if not destination then
+            notify("Nothing to teleport to in view.")
+            return
+        end
+    end
+
+    root.CFrame = CFrame.new((destination :: Vector3) + Vector3.new(0, 3, 0))
+end
+
 local function toggleCtrlClickTeleport(enabled)
     disconnectFeatureConnection("CtrlClickTeleport")
+    state.clickTeleportEnabled = enabled
 
     if not enabled then
+        return
+    end
+
+    if not UserInputService.MouseEnabled then
+        -- Touch/gamepad: the key slot is the trigger, nothing to listen for.
         return
     end
 
@@ -10129,11 +10477,10 @@ local function toggleCtrlClickTeleport(enabled)
                 return
             end
 
-            local _, _, root = getCharacterParts()
             local mouse = LocalPlayer:GetMouse()
-            if root and mouse and mouse.Hit then
-                root.CFrame = CFrame.new(mouse.Hit.Position + Vector3.new(0, 3, 0))
-            end
+            state.performClickTeleport(
+                mouse and mouse.Hit and mouse.Hit.Position or nil
+            )
         end
     )
 end
@@ -11773,13 +12120,28 @@ end
 
 do
 local CtrlClickFeature = createUniversalFeature(
-    "CTRL + Click Teleport",
-    "Teleport to the position under the cursor",
+    "Click Teleport",
+    "Teleport to whatever you are aiming at",
     12,
     toggleCtrlClickTeleport,
     {noOptions = true}
 )
-addFeatureTooltip(CtrlClickFeature, "Hold LeftControl and click a reachable world position.")
+-- The key slot teleports on every device; on desktop CTRL + click keeps
+-- working as well, and on touch the slot places the button that triggers it.
+if state.bindFeatureActivationKey then
+    state.bindFeatureActivationKey(
+        CtrlClickFeature,
+        Enum.KeyCode.Unknown,
+        function(): ()
+            state.performClickTeleport(nil)
+        end
+    )
+end
+addFeatureTooltip(
+    CtrlClickFeature,
+    "Desktop: hold LeftControl and click. Any device: press the module's key "
+        .. "or its placed button to jump to what the camera is aiming at."
+)
 end
 
 do
@@ -12607,6 +12969,9 @@ local function createGameModuleEnvironment(
         PlayerGui = PlayerGui,
         ScreenGui = ScreenGui,
         Theme = Theme,
+        -- Game modules ask this whether they are running on the real place or
+        -- on a recognised clone, instead of comparing PlaceIds themselves.
+        GAME_CHECK = GAME_CHECK,
         -- Game modules style their in-world ESP with the menu's own fonts, so
         -- billboards and labels match the interface instead of inventing a
         -- second look.
@@ -12666,7 +13031,9 @@ local function loadGameModule(
         return nil, nil, diagnostics, "El ejecutor no admite loadstring/setfenv"
     end
 
-    local moduleName: string = GAME_MODULES[placeId] or tostring(placeId)
+    local moduleName: string = GAME_MODULES[placeId]
+        or ACTIVE_GAME_MODULE
+        or tostring(placeId)
     local moduleUrl: string = REPOSITORY_RAW_BASE
         .. "src/games/"
         .. moduleName
@@ -12741,11 +13108,20 @@ local function registerPlaceModule(
     tabName: string,
     placeId: number
 ): ()
-    if game.PlaceId ~= placeId then
+    -- A clone has its own PlaceId, so registration follows the module that
+    -- was resolved for this server (by PlaceId, or by fingerprint).
+    if game.PlaceId ~= placeId
+        and ACTIVE_GAME_MODULE ~= GAME_MODULES[placeId] then
         return
     end
 
-    state.logBootstrap("PlaceId detectado: " .. tostring(game.PlaceId))
+    state.logBootstrap(
+        "PlaceId detectado: "
+            .. tostring(game.PlaceId)
+            .. " · módulo "
+            .. tostring(ACTIVE_GAME_MODULE)
+            .. " (" .. ACTIVE_GAME_SOURCE .. ")"
+    )
     SectionManager.register(tabName, function(): ()
         local loadedModule: GameModule?, _moduleEnvironment: any,
             diagnostics: ModuleDiagnostics, loadError: string? =
@@ -13304,13 +13680,19 @@ local gameRow, gameControl = createSettingRow(
     "Only the matching game-specific module is loaded"
 )
 gameRow.LayoutOrder = 7
+-- Shows *how* the game was recognised, which is what tells you a clone was
+-- matched by its structure rather than by its PlaceId.
 local gameStatus = makeTextLabel(
     gameControl,
-    GAME_CHECK.MM2Active and "MM2 · 142823291"
-        or GAME_CHECK.TRSActive and "TRS · 14315258385"
-        or GAME_CHECK.VDActive and "VD · 93978595733734"
-        or GAME_CHECK.MVSDActive and "MVSD · 135856908115931"
-        or "Universal only",
+    (GAME_CHECK.MM2Active and "MM2"
+        or GAME_CHECK.TRSActive and "TRS"
+        or GAME_CHECK.VDActive and "VD"
+        or GAME_CHECK.MVSDActive and "MVSD"
+        or "Universal only")
+        .. " · "
+        .. (GAME_CHECK.source == "PlaceId"
+            and tostring(game.PlaceId)
+            or GAME_CHECK.source),
     12
 )
 gameStatus.TextXAlignment = Enum.TextXAlignment.Center
