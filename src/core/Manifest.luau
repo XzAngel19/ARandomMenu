@@ -76,6 +76,22 @@ local Manifest: Manifest = {
             name = "TriggerBot",
             category = "Combat",
         },
+        -- Spoof: cosmetic only, and each one lands on its own page.
+        {
+            path = "src/modules/Spoof/Disguise.luau",
+            name = "Disguise",
+            category = "Spoof",
+        },
+        {
+            path = "src/modules/Spoof/AnimationChanger.luau",
+            name = "Animation Changer",
+            category = "Spoof",
+        },
+        {
+            path = "src/modules/Spoof/EmotePlayer.luau",
+            name = "Emote Player",
+            category = "Spoof",
+        },
     },
 }
 

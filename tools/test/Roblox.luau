@@ -167,6 +167,16 @@ local function signal(): any
         end
         return connection
     end
+    -- Roblox's own one-shot connect. Modules use it for "clean this up when
+    -- it ends" work, and a stub without it fails only at runtime.
+    function object:Once(callback: any): any
+        local connection: any
+        connection = object:Connect(function(...: any): ()
+            connection:Disconnect()
+            callback(...)
+        end)
+        return connection
+    end
     function object:Fire(...: any): ()
         for _, handler: any in ipairs(table.clone(handlers)) do
             handler(...)
@@ -430,6 +440,11 @@ function Mock.install(): MockWorld
             "Keyboard",
         }),
         ScaleType = enumFolder({"Crop", "Fit", "Stretch"}),
+        AnimationPriority = enumFolder({"Action", "Movement", "Idle", "Core"}),
+        AvatarItemType = enumFolder({"Asset", "Bundle"}),
+        AvatarAssetType = enumFolder({"EmoteAnimation"}),
+        BundleType = enumFolder({"Animations", "BodyParts"}),
+        CatalogSortType = enumFolder({"MostFavorited", "Relevance"}),
     }
 
     globals.CFrame = {
@@ -659,6 +674,35 @@ function Mock.install(): MockWorld
         return table.clone(roster)
     end
 
+    -- Avatar descriptions. `world.avatars[userId]` is what
+    -- `GetHumanoidDescriptionFromUserId` hands back, so a test can say what a
+    -- given user looks like.
+    world.avatars = {}
+    function playersService:GetHumanoidDescriptionFromUserId(userId: number): any
+        local prepared: any = world.avatars[userId]
+        if prepared then
+            return prepared
+        end
+        local description: any = newInstance("HumanoidDescription")
+        description.IdleAnimation = 0
+        description.WalkAnimation = 0
+        description.RunAnimation = 0
+        description.JumpAnimation = 0
+        description.FallAnimation = 0
+        description.ClimbAnimation = 0
+        description.SwimAnimation = 0
+        description.MoodAnimation = 0
+        function description:GetEmotes(): any
+            return {}
+        end
+        world.avatars[userId] = description
+        return description
+    end
+
+    function playersService:GetUserIdFromNameAsync(name: string): number
+        return world.userIdsByName and world.userIdsByName[name] or 0
+    end
+
     function playersService:GetPlayerFromCharacter(character: any): any
         for _, player: any in ipairs(roster) do
             if player.Character == character then
@@ -682,6 +726,65 @@ function Mock.install(): MockWorld
         humanoid.HipHeight = 2
         function humanoid:EquipTool(tool: any): ()
             tool.Parent = character
+        end
+        -- Appearance, the two calls the disguise and the animation changer
+        -- live on. The applied description is remembered so a test can read
+        -- back what was worn.
+        local worn: any = newInstance("HumanoidDescription")
+        for _, field: string in
+            ipairs({
+                "IdleAnimation",
+                "WalkAnimation",
+                "RunAnimation",
+                "JumpAnimation",
+                "FallAnimation",
+                "ClimbAnimation",
+                "SwimAnimation",
+                "MoodAnimation",
+            })
+        do
+            worn[field] = 0
+        end
+        function worn:GetEmotes(): any
+            return {}
+        end
+        function humanoid:GetAppliedDescription(): any
+            return worn
+        end
+        function humanoid:ApplyDescription(description: any): ()
+            worn = description
+            humanoid.AppliedDescription = description
+        end
+        local animator: any = newInstance("Animator")
+        animator.Name = "Animator"
+        animator.Parent = humanoid
+        animator.Tracks = {}
+        function animator:LoadAnimation(animation: any): any
+            local track: any = newInstance("AnimationTrack")
+            track.AnimationId = animation.AnimationId
+            track.IsPlaying = false
+            track.Looped = false
+            track.Stopped = signal()
+            function track:Play(): ()
+                track.IsPlaying = true
+            end
+            function track:Stop(): ()
+                track.IsPlaying = false
+            end
+            function track:AdjustSpeed(speed: number): ()
+                track.Speed = speed
+            end
+            table.insert(animator.Tracks, track)
+            return track
+        end
+        function animator:GetPlayingAnimationTracks(): {any}
+            local playing: {any} = {}
+            for _, track: any in ipairs(animator.Tracks) do
+                if track.IsPlaying then
+                    table.insert(playing, track)
+                end
+            end
+            return playing
         end
         local root: any = newInstance("Part")
         root.Name = "HumanoidRootPart"

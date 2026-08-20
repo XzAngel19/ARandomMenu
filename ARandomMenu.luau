@@ -3646,11 +3646,15 @@ create("UIListLayout", {
 
 -- The Spoof page.
 --
--- Its own page rather than a category of the board: spoofing is about what the
--- server is told about this client, not about what the client can do in the
--- world, and mixing the two under one list would make both harder to read. It
--- is empty until the tools land; the scroll is published so they can be added
--- without touching the shell.
+-- Its own page rather than a category of the board, because nothing on it is
+-- an advantage: it changes how the game looks to you — whose avatar you are
+-- wearing, which animations your character plays, which emote it is doing —
+-- and mixing that with the modules that change what you can *do* would make
+-- both lists harder to read.
+--
+-- The scroll is published on `state` and the modules that fill it are ordinary
+-- downloaded modules (`src/modules/Spoof/`), so the shell knows nothing about
+-- them beyond where to put their cards.
 do
     local spoofPage: Frame? = pages.Spoof
     if spoofPage then
@@ -3682,16 +3686,6 @@ do
             SortOrder = Enum.SortOrder.LayoutOrder,
         })
         state.spoofScroll = spoofScroll
-
-        local placeholder: TextLabel = makeTextLabel(
-            spoofScroll,
-            "Nothing here yet.",
-            12
-        )
-        placeholder.Name = "SpoofPlaceholder"
-        placeholder.Size = UDim2.new(1, 0, 0, 40)
-        placeholder.TextColor3 = Theme.DefaultTextMuted
-        placeholder.TextXAlignment = Enum.TextXAlignment.Left
     end
 end
 
@@ -3731,6 +3725,8 @@ local universalFeatures = {}
 local movementFeatures = {}
 local mm2Features = {}
 state.trsFeatures = {}
+-- Spoof modules keep their own registry and their own page.
+state.spoofFeatures = {}
 state.vdFeatures = {}
 state.bedFightFeatures = {}
 state.mvsdFeatures = {}
@@ -15307,6 +15303,22 @@ local fallbackManifest: any = {
             path = "src/modules/Movement/ClickTeleport.luau",
             name = "Click Teleport",
             category = "Movement",
+        },
+        -- Spoof: cosmetic only, and each one lands on its own page.
+        {
+            path = "src/modules/Spoof/Disguise.luau",
+            name = "Disguise",
+            category = "Spoof",
+        },
+        {
+            path = "src/modules/Spoof/AnimationChanger.luau",
+            name = "Animation Changer",
+            category = "Spoof",
+        },
+        {
+            path = "src/modules/Spoof/EmotePlayer.luau",
+            name = "Emote Player",
+            category = "Spoof",
         },
     },
 }

@@ -371,7 +371,7 @@ The rail is three entries:
 
 ```
 Universal   every module the client has, grouped by a header per category
-Spoof       what the server is told about this client (empty for now)
+Spoof       cosmetic identity: disguise, animation packs, emotes
 Config.     settings
 ```
 
@@ -393,6 +393,44 @@ Config.     settings
   themselves.
 * **An unsupported game contributes nothing**, so the board holds the universal
   set and nothing looks broken or empty.
+
+### The Spoof page
+
+Three modules, none of them an advantage — the page exists so that the things
+that change *how the game looks to you* do not sit in the same list as the
+things that change what you can do.
+
+* **Disguise** — paste a user id or a username and wear that avatar: body,
+  packages, accessories, face, the animation set that came with their bundle
+  and the emotes they have equipped, which are handed straight to the emote
+  player. `ApplyDescription` runs on this client, so the server and every other
+  screen still show you; the original description is kept and put back when the
+  module is switched off, and the disguise is re-applied after a respawn. The
+  fetch runs off the toggle thread, because a card must never wait on the
+  network before it can light up.
+* **Animation Changer** — swaps the eight animations a humanoid plays for
+  itself (idle, walk, run, jump, fall, climb, swim, mood) for the ones in a
+  Roblox animation bundle. The packs are **not** a hard-coded id list: those go
+  stale and a wrong id is a module that silently does nothing, so
+  `AvatarEditorService:SearchCatalog` is asked with the bundle type set to
+  animations and the creator pinned to Roblox — which is exactly the filter
+  that keeps UGC out — and each bundle is resolved to its assets through
+  `GetItemDetails`, with every asset matched to the slot its own name names.
+  Two application paths, because games disagree about which survives: the
+  HumanoidDescription (supported) and the client-side `Animate` script (works
+  where the game re-applies its own description). Both, by default, and a
+  Bundle ID box for anything the search misses.
+* **Emote Player** — plays any emote by asset id, Roblox's or UGC's; they load
+  through the same path. The list is what the disguise read off the avatar plus
+  whatever the catalog search returned (with a *Roblox only* switch), and an id
+  can always be pasted straight in. Speed and looping are adjustable. This one
+  is not local-only: an emote is a real animation on your character, so it
+  replicates — it is still cosmetic.
+
+Everything that touches the catalog is wrapped and degrades: the service throws
+on restricted places and its shapes differ across client versions, so a failed
+search says "the catalog refused the search" and leaves the manual id box,
+which needs nothing.
 
 ### The game bridge
 
