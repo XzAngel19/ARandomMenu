@@ -406,18 +406,27 @@ use, and `destroy` runs from the menu's own teardown step.
 
 ### Module kinds
 
-Three kinds of card, and now they look like three kinds of card. Every module
-carries a chip under its title and an accent stripe in the matching colour:
+Three kinds of card, and they look like three kinds of card. The marker under
+the title is a shape rather than a caption — a word like "TOGGLE" on every card
+is noise once you have read it twice, and it eats the width the module name
+needs — and the accent stripe carries the matching colour:
 
-| Chip | Kind | Behaviour |
+| Marker | Kind | Behaviour |
 | --- | --- | --- |
-| `TOGGLE` | toggle | Click the card or press its key to switch it on and off. |
-| `RUN` | action | Click or press once; it runs and does not stay on. |
-| `HOLD` | hold | Always running; the key applies its effect only while held. |
-| `ALWAYS ON` | group | Always running; the card only holds its settings (Friend List, MM2's Knife). |
+| a switch whose knob slides and lights up | toggle | Click the card or press its key to switch it on and off. |
+| a play triangle | action | Click or press once; it runs and keeps no state. |
+| a hollow ring that fills while held | hold | Always running; the key applies its effect only while held. |
+| a filled dot inside a ring | group | Always running; the card only holds its settings (Friend List, MM2's Knife). |
 
 Always-on cards keep a dim stripe lit, because they have no "off" state and a
 dark stripe reads as disabled.
+
+### Choosing between values
+
+Multiple-choice rows open a list under the control instead of cycling one value
+per click: pick the value you want directly, in one press, with the current one
+marked. The list opens upwards when there is no room below, scrolls past six
+entries, and closes on any press outside it or when the menu is hidden.
 
 ### Shipped modules
 
@@ -446,13 +455,19 @@ dark stripe reads as disabled.
   MM2 module, so the protection disappeared in every other game; MM2 now
   forwards its `isProtectedTarget` question here, and Kill Aura, TriggerBot and
   ESP ask the same list.
-- **Click Teleport** (`Movement`): hold the module's key (or its placed mobile
-  button), then tap where you want to go. The old version raycast with
+- **Click Teleport** (`Movement`, a button card): pick a destination in the
+  panel and press the card. Destinations are **Tap point** (arms the module;
+  the next tap on the world is where you go), **Nearest player** (friends
+  excluded), **Named player** (partial name or display name), **Item** (nearest
+  part or model in the workspace whose name contains what you typed, so
+  "chest" finds "GoldChest"), **Waypoint** and **Last position** — plus *Save
+  waypoint* and *Go back* buttons. Travel is Instant or Glide, with height
+  offset, an offset that stops you short of a player instead of inside them,
+  search range and an optional keep-momentum. The old version raycast with
   `Camera:ViewportPointToRay(input.Position)` — input positions include the
   36-pixel top bar and viewport points do not, so every teleport landed above
-  the finger and on touch it usually hit nothing at all. It uses
-  `ScreenPointToRay` now, lands hip-height above the surface, and offers
-  Instant or Glide travel for games that reject a single large position change.
+  the finger and on touch it usually hit nothing at all; it uses
+  `ScreenPointToRay` now.
 - **TriggerBot** (`Combat`): always-on or hold-to-arm, single or automatic,
   reaction delay with a per-acquisition random jitter, minimum time between
   shots, target-part filter (any, head, torso), an aim radius in pixels that
@@ -587,12 +602,21 @@ validation workflow.
 - `src/gui/Current/Images`: optional normal image assets.
 - `src/Profile`: compatibility data retained for older loaders.
 
-## Brand and player card
+## Brand, icons and player card
 
 - The menu's logo (`src/gui/Current/Assets/Brand/menu-logo.jpg`) is drawn on
   both places the menu identifies itself: the floating launcher button and the
   brand mark at the top of the navigation rail. Both keep their lettering as a
-  fallback, so an executor without `getcustomasset` loses nothing.
+  fallback, so an executor without `getcustomasset` loses nothing. The launcher
+  only exists while the menu is hidden — it used to sit on top of the open
+  window, where it read as a second, broken close button.
+- Navigation tabs carry icons instead of two-letter monograms. Game tabs
+  (Universal, MM2, TRS, VD, MVSD) show the game's own thumbnail through
+  `rbxthumb://type=GameIcon`, resolved by the engine with nothing to download —
+  Universal shows the place you are actually in. Movement gets a walking figure
+  and Settings a gear (`src/gui/Current/Assets/Icons/nav-*.png`), and the two
+  floating-window launchers get a star and a stacked-windows glyph
+  (`window-*.png`). Monograms remain the fallback.
 - The foot of the rail carries a **player card**: the account's avatar
   (`rbxthumb://`, resolved by the engine itself — no download), display name,
   handle, and a line with the date this account first ran the menu, how many

@@ -255,6 +255,21 @@ local function newInstance(className: string): any
         return table.clone(self.Children)
     end
 
+    function instance:IsDescendantOf(ancestor: any): boolean
+        local parent: any = self.Parent
+        while parent do
+            if parent == ancestor then
+                return true
+            end
+            parent = parent.Parent
+        end
+        return false
+    end
+
+    function instance:GetPivot(): any
+        return rawget(self, "CFrame") or cframe(rawget(self, "Position") or vector3(0, 0, 0))
+    end
+
     function instance:GetDescendants(): {any}
         local result: {any} = {}
         for _, child: any in ipairs(self.Children) do

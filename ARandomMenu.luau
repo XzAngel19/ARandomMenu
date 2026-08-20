@@ -99,16 +99,14 @@ local PROFILE_CARD_HEIGHT: number = 56
 -- is, and the accent stripe is coloured to match, so the difference is visible
 -- before you click anything.
 --
---   TOGGLE     on/off state.
---   RUN        runs once per click or keypress.
---   HOLD       always running; the key applies it only while held.
---   ALWAYS ON  always running; the card just holds its settings.
-local KIND_LABELS: {[string]: string} = {
-    toggle = "TOGGLE",
-    action = "RUN",
-    hold = "HOLD",
-    group = "ALWAYS ON",
-}
+-- The marker is a shape, not a caption: a word like "TOGGLE" on every card is
+-- noise once you have seen it twice, and it eats the width the module name
+-- needs.
+--
+--   toggle  a switch: a track with a knob that slides and lights up.
+--   action  a play triangle: press it and something happens once.
+--   hold    a hollow ring: live only while a finger is on the key.
+--   group   a filled dot inside a ring: always running, nothing to press.
 
 local KIND_COLORS: {[string]: Color3} = {
     toggle = Color3.fromRGB(150, 190, 255),
@@ -131,6 +129,24 @@ end
 -- The navigation rail collapses to icons on small viewports, so every tab
 -- carries a two-character monogram that is legible at 22px. Plain ASCII on
 -- purpose: a glyph font would have to be downloaded and could fail to load.
+-- Tab artwork.
+--
+-- A monogram is a fallback, not an icon. Game tabs show the game's own
+-- thumbnail — resolved by the engine through `rbxthumb://`, so there is
+-- nothing to download — and the two tabs that are not games get a drawn icon.
+local TAB_GAME_ICONS: {[string]: number} = {
+    Universal = 0,
+    MM2 = 142823291,
+    TRS = 14315258385,
+    VD = 93978595733734,
+    MVSD = 135856908115931,
+}
+
+local TAB_DRAWN_ICONS: {[string]: string} = {
+    Movement = "navMovement",
+    Settings = "navSettings",
+}
+
 local TAB_MONOGRAMS: {[string]: string} = {
     ["Universal"] = "UN",
     ["Movement"] = "MV",
@@ -1056,6 +1072,38 @@ local AssetManager: any = {
             fallback = "",
             version = 1,
             assetType = "image/jpeg",
+        },
+        navMovement = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Icons/nav-movement.png",
+            fileName = "nav-movement-v1.png",
+            fallback = "",
+            version = 1,
+            assetType = "image/png",
+        },
+        navSettings = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Icons/nav-settings.png",
+            fileName = "nav-settings-v1.png",
+            fallback = "",
+            version = 1,
+            assetType = "image/png",
+        },
+        windowFavorites = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Icons/window-favorites.png",
+            fileName = "window-favorites-v1.png",
+            fallback = "",
+            version = 1,
+            assetType = "image/png",
+        },
+        windowOverlays = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Icons/window-overlays.png",
+            fileName = "window-overlays-v1.png",
+            fallback = "",
+            version = 1,
+            assetType = "image/png",
         },
         profileBanner = {
             url = REPOSITORY_RAW_BASE
@@ -2856,6 +2904,39 @@ local function createTab(tabName: string, layoutOrder: number): Frame
     monogram.ZIndex = 13
     create("UICorner", {Parent = monogram, CornerRadius = cornerRadius(UI_RADIUS.chip)})
 
+    local tabIcon: ImageLabel = create("ImageLabel", {
+        Parent = monogram,
+        Name = "TabIcon",
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Image = "",
+        ImageTransparency = 0.08,
+        ScaleType = Enum.ScaleType.Crop,
+        Size = UDim2.fromScale(1, 1),
+        ZIndex = 14,
+    }) :: ImageLabel
+    create("UICorner", {
+        Parent = tabIcon,
+        CornerRadius = cornerRadius(UI_RADIUS.chip),
+    })
+    do
+        local gameIconId: number? = TAB_GAME_ICONS[tabName]
+        local drawnIcon: string? = TAB_DRAWN_ICONS[tabName]
+        if gameIconId then
+            -- 0 means "whatever place we are in", which is what the Universal
+            -- tab is: the game you are actually playing.
+            local resolvedId: number = gameIconId > 0 and gameIconId or game.PlaceId
+            tabIcon.Image = "rbxthumb://type=GameIcon&id="
+                .. tostring(resolvedId)
+                .. "&w=150&h=150"
+            monogram.Text = ""
+        elseif drawnIcon and state.applyAssetImage then
+            state.applyAssetImage(drawnIcon, tabIcon, function(): ()
+                monogram.Text = ""
+            end)
+        end
+    end
+
     local navLabel: TextLabel = makeTextLabel(
         defaultButton,
         defaultLabel,
@@ -4086,6 +4167,18 @@ end
 trackUiConnection(MobileMenuButton.MouseButton1Click:Connect(function(): ()
     state.setMenuVisible(not state.visible)
 end))
+
+-- The launcher is the way back in, so it only exists while the menu is out of
+-- sight. It used to sit on top of the open window, which made it look like a
+-- second, broken close button.
+local function refreshLauncherVisibility(): ()
+    MobileMenuButton.Visible = state.isMobile and not state.visible
+end
+refreshLauncherVisibility()
+state.addMenuVisibilityListener(function(): ()
+    refreshLauncherVisibility()
+end)
+state.refreshLauncherVisibility = refreshLauncherVisibility
 
 local function resetMobileActions(): ()
     local ids: {string} = {}
@@ -7247,7 +7340,8 @@ local FloatingButtonsLayout: UIListLayout = create("UIListLayout", {
 local function createFloatingLauncher(
     name: string,
     fallbackText: string,
-    callback: () -> ()
+    callback: () -> (),
+    iconAsset: string?
 ): TextButton
     local button: TextButton = makeButton(FloatingButtons, fallbackText, 8)
     button.Name = name
@@ -7258,6 +7352,26 @@ local function createFloatingLauncher(
     local stroke: UIStroke? = button:FindFirstChild("StyleStroke") :: UIStroke?
     if stroke then
         stroke.Enabled = false
+    end
+    -- The three-letter labels were placeholders. The icon replaces the text
+    -- once it resolves, and the text stays put if it never does.
+    if iconAsset and state.applyAssetImage then
+        local icon: ImageLabel = create("ImageLabel", {
+            Parent = button,
+            Name = "Icon",
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Image = "",
+            ImageTransparency = 0.12,
+            Position = UDim2.fromScale(0.5, 0.5),
+            Size = UDim2.fromOffset(18, 18),
+            ZIndex = 26,
+        }) :: ImageLabel
+        create("UICorner", {Parent = icon, CornerRadius = cornerRadius(UI_RADIUS.chip)})
+        state.applyAssetImage(iconAsset, icon, function(): ()
+            button.Text = ""
+        end)
     end
     trackUiConnection(button.MouseButton1Click:Connect(callback))
     return button
@@ -7281,7 +7395,7 @@ createFloatingLauncher("Favorites", "FAV", function(): ()
         bringFloatingToFront(FavoritesWindow)
     end
     queueConfigSave()
-end)
+end, "windowFavorites")
 createFloatingLauncher("Overlays", "OVR", function(): ()
     OverlayMenu.root.Visible = not OverlayMenu.root.Visible
     configData.ui.overlayMenuOpen = OverlayMenu.root.Visible
@@ -7289,7 +7403,7 @@ createFloatingLauncher("Overlays", "OVR", function(): ()
         bringFloatingToFront(OverlayMenu)
     end
     queueConfigSave()
-end)
+end, "windowOverlays")
 
 FavoritesWindow.root.Visible = configData.ui.favoritesWindowOpen == true
 OverlayMenu.root.Visible = configData.ui.overlayMenuOpen == true
@@ -7435,6 +7549,26 @@ local function refreshFeatureToggle(feature: any): ()
                     or (feature.enabled and 0.18 or 1),
             }
         ):Play()
+    end
+    -- The switch is the state: knob to the right and lit when the module is
+    -- on, back to the left and dim when it is off.
+    if feature.kindKnob and feature.kindTrack then
+        TweenService:Create(
+            feature.kindKnob,
+            TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+            {
+                Position = UDim2.new(0, feature.enabled and 12 or 2, 0.5, 0),
+                BackgroundTransparency = feature.enabled and 0 or 0.35,
+            }
+        ):Play()
+        TweenService:Create(
+            feature.kindTrack,
+            TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+            {BackgroundTransparency = feature.enabled and 0.62 or 0.86}
+        ):Play()
+    end
+    if feature.kindCore and feature.kind == "hold" then
+        feature.kindCore.BackgroundTransparency = feature.enabled and 0.1 or 1
     end
     if state.floatingUi then
         state.floatingUi.refreshFeature(feature)
@@ -7898,27 +8032,129 @@ local function createUniversalFeature(
         activeStripe.BackgroundTransparency = 0.55
     end
 
-    local kindText: string = KIND_LABELS[feature.kind] or "TOGGLE"
-    local kindChip: TextLabel =
-        (makeTextLabel(row, kindText, 8) :: any) :: TextLabel
-    kindChip.Name = "KindChip"
-    kindChip.AnchorPoint = Vector2.new(0, 0.5)
-    kindChip.BackgroundColor3 = kindColor
-    kindChip.BackgroundTransparency = 0.86
-    kindChip.FontFace = CONTROL_FONT
-    kindChip.Position = UDim2.new(0, 12, 0, math.round(feature.collapsedHeight * 0.72))
-    kindChip.Size = UDim2.fromOffset(#kindText * 5 + 14, 13)
-    kindChip.TextColor3 = kindColor
-    kindChip.TextXAlignment = Enum.TextXAlignment.Center
-    kindChip.ZIndex = 9
-    create("UICorner", {Parent = kindChip, CornerRadius = UDim.new(1, 0)})
-    create("UIStroke", {
-        Parent = kindChip,
-        Color = kindColor,
-        Transparency = 0.72,
-        Thickness = 1,
-    })
-    feature.kindChip = kindChip
+    -- Kind marker. Drawn from frames rather than written, so it reads the
+    -- same at every text size and in every language.
+    local kindMark: Frame = create("Frame", {
+        Parent = row,
+        Name = "KindMark",
+        AnchorPoint = Vector2.new(0, 0.5),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Position = UDim2.new(0, 12, 0, math.round(feature.collapsedHeight * 0.74)),
+        Size = UDim2.fromOffset(26, 14),
+        ZIndex = 9,
+    }) :: Frame
+
+    if feature.kind == "action" then
+        -- A play triangle, built from two tapered bars: Roblox has no polygon
+        -- primitive and a glyph would depend on the font.
+        local triangleTop: Frame = create("Frame", {
+            Parent = kindMark,
+            Name = "PlayTop",
+            AnchorPoint = Vector2.new(0.5, 1),
+            BackgroundColor3 = kindColor,
+            BackgroundTransparency = 0.15,
+            BorderSizePixel = 0,
+            Position = UDim2.new(0, 8, 0.5, 1),
+            Rotation = 27,
+            Size = UDim2.fromOffset(11, 2),
+            ZIndex = 10,
+        }) :: Frame
+        create("UICorner", {Parent = triangleTop, CornerRadius = UDim.new(1, 0)})
+        local triangleBottom: Frame = create("Frame", {
+            Parent = kindMark,
+            Name = "PlayBottom",
+            AnchorPoint = Vector2.new(0.5, 0),
+            BackgroundColor3 = kindColor,
+            BackgroundTransparency = 0.15,
+            BorderSizePixel = 0,
+            Position = UDim2.new(0, 8, 0.5, -1),
+            Rotation = -27,
+            Size = UDim2.fromOffset(11, 2),
+            ZIndex = 10,
+        }) :: Frame
+        create("UICorner", {Parent = triangleBottom, CornerRadius = UDim.new(1, 0)})
+        local playSpine: Frame = create("Frame", {
+            Parent = kindMark,
+            Name = "PlaySpine",
+            AnchorPoint = Vector2.new(0, 0.5),
+            BackgroundColor3 = kindColor,
+            BackgroundTransparency = 0.15,
+            BorderSizePixel = 0,
+            Position = UDim2.new(0, 3, 0.5, 0),
+            Size = UDim2.fromOffset(2, 10),
+            ZIndex = 10,
+        }) :: Frame
+        create("UICorner", {Parent = playSpine, CornerRadius = UDim.new(1, 0)})
+    elseif feature.isAlwaysOn then
+        local ring: Frame = create("Frame", {
+            Parent = kindMark,
+            Name = "Ring",
+            AnchorPoint = Vector2.new(0, 0.5),
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Position = UDim2.new(0, 1, 0.5, 0),
+            Size = UDim2.fromOffset(12, 12),
+            ZIndex = 10,
+        }) :: Frame
+        create("UICorner", {Parent = ring, CornerRadius = UDim.new(1, 0)})
+        create("UIStroke", {
+            Parent = ring,
+            Color = kindColor,
+            Transparency = 0.25,
+            Thickness = 1,
+        })
+        -- A hold module is live only while its key is down, so its ring stays
+        -- hollow until `setHeld` fills it; a group module is always running
+        -- and shows the dot from the start.
+        local core: Frame = create("Frame", {
+            Parent = ring,
+            Name = "Core",
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            BackgroundColor3 = kindColor,
+            BackgroundTransparency = feature.kind == "group" and 0.1 or 1,
+            BorderSizePixel = 0,
+            Position = UDim2.fromScale(0.5, 0.5),
+            Size = UDim2.fromOffset(6, 6),
+            ZIndex = 11,
+        }) :: Frame
+        create("UICorner", {Parent = core, CornerRadius = UDim.new(1, 0)})
+        feature.kindCore = core
+    else
+        local track: Frame = create("Frame", {
+            Parent = kindMark,
+            Name = "Track",
+            AnchorPoint = Vector2.new(0, 0.5),
+            BackgroundColor3 = kindColor,
+            BackgroundTransparency = 0.86,
+            BorderSizePixel = 0,
+            Position = UDim2.new(0, 0, 0.5, 0),
+            Size = UDim2.fromOffset(22, 12),
+            ZIndex = 10,
+        }) :: Frame
+        create("UICorner", {Parent = track, CornerRadius = UDim.new(1, 0)})
+        create("UIStroke", {
+            Parent = track,
+            Color = kindColor,
+            Transparency = 0.55,
+            Thickness = 1,
+        })
+        local knob: Frame = create("Frame", {
+            Parent = track,
+            Name = "Knob",
+            AnchorPoint = Vector2.new(0, 0.5),
+            BackgroundColor3 = kindColor,
+            BackgroundTransparency = 0.35,
+            BorderSizePixel = 0,
+            Position = UDim2.new(0, 2, 0.5, 0),
+            Size = UDim2.fromOffset(8, 8),
+            ZIndex = 11,
+        }) :: Frame
+        create("UICorner", {Parent = knob, CornerRadius = UDim.new(1, 0)})
+        feature.kindTrack = track
+        feature.kindKnob = knob
+    end
+    feature.kindMark = kindMark
 
     local title: TextLabel =
         (makeTextLabel(row, name, state.layout.titleFontSize) :: any) :: TextLabel
@@ -8988,6 +9224,164 @@ local function addNumberOption(
     end)
     return option
 end
+-- Choice popup.
+--
+-- One list, reused by every multiple-choice row. Clicking the control opens
+-- the options underneath it and the value is picked directly, instead of
+-- clicking the same button four times to get back to the one you wanted.
+state.closeChoiceList = function(): () end
+
+local function openChoiceList(
+    anchor: TextButton,
+    values: {string},
+    currentIndex: number,
+    onPick: (number) -> ()
+): ()
+    state.closeChoiceList()
+
+    local rowHeight: number = 22
+    local visibleRows: number = math.min(#values, 6)
+    local listHeight: number = visibleRows * rowHeight + 8
+    local anchorPosition: Vector2 = anchor.AbsolutePosition
+    local anchorSize: Vector2 = anchor.AbsoluteSize
+    -- Open upwards when there is no room below: a list that runs off the
+    -- bottom of the screen cannot be used at all.
+    local viewport: Vector2 = ScreenGui.AbsoluteSize
+    local below: boolean = anchorPosition.Y + anchorSize.Y + listHeight
+        < viewport.Y - 8
+
+    local list: Frame = create("Frame", {
+        Parent = ScreenGui,
+        Name = "ChoiceList",
+        BackgroundColor3 = Theme.DefaultSurface,
+        BackgroundTransparency = 0.04,
+        BorderSizePixel = 0,
+        Position = UDim2.fromOffset(
+            math.round(anchorPosition.X),
+            math.round(below
+                and (anchorPosition.Y + anchorSize.Y + 4)
+                or (anchorPosition.Y - listHeight - 4))
+        ),
+        Size = UDim2.fromOffset(math.round(anchorSize.X), listHeight),
+        ZIndex = 400,
+    }) :: Frame
+    create("UICorner", {Parent = list, CornerRadius = cornerRadius(UI_RADIUS.control)})
+    create("UIStroke", {
+        Parent = list,
+        Color = Theme.DefaultOutline,
+        Transparency = 0.4,
+        Thickness = 1,
+    })
+
+    local scroller: ScrollingFrame = create("ScrollingFrame", {
+        Parent = list,
+        Name = "Items",
+        Active = true,
+        AutomaticCanvasSize = Enum.AutomaticSize.Y,
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        CanvasSize = UDim2.new(),
+        Position = UDim2.fromOffset(4, 4),
+        ScrollBarThickness = 2,
+        ScrollBarImageTransparency = 0.6,
+        Size = UDim2.new(1, -8, 1, -8),
+        ZIndex = 401,
+    }) :: ScrollingFrame
+    create("UIListLayout", {
+        Parent = scroller,
+        Padding = UDim.new(0, 1),
+        SortOrder = Enum.SortOrder.LayoutOrder,
+    })
+
+    local closed: boolean = false
+    local outsideConnection: RBXScriptConnection? = nil
+    local function close(): ()
+        if closed then
+            return
+        end
+        closed = true
+        if outsideConnection then
+            outsideConnection:Disconnect()
+            outsideConnection = nil
+        end
+        list:Destroy()
+        state.closeChoiceList = function(): () end
+    end
+    state.closeChoiceList = close
+
+    for itemIndex: number, value: string in ipairs(values) do
+        local item: TextButton = (create("TextButton", {
+            Parent = scroller,
+            Name = "Choice" .. tostring(itemIndex),
+            AutoButtonColor = false,
+            BackgroundColor3 = Theme.DefaultSurfaceHover,
+            BackgroundTransparency = itemIndex == currentIndex and 0.35 or 1,
+            BorderSizePixel = 0,
+            FontFace = CONTROL_FONT,
+            LayoutOrder = itemIndex,
+            Size = UDim2.new(1, 0, 0, rowHeight - 1),
+            Text = value,
+            TextColor3 = itemIndex == currentIndex
+                and Theme.DefaultText
+                or Theme.DefaultTextMuted,
+            TextSize = 11,
+            ZIndex = 402,
+        }) :: any) :: TextButton
+        create("UICorner", {Parent = item, CornerRadius = cornerRadius(UI_RADIUS.chip)})
+        create("UIPadding", {
+            Parent = item,
+            PaddingLeft = UDim.new(0, 8),
+            PaddingRight = UDim.new(0, 8),
+        })
+        item.TextXAlignment = Enum.TextXAlignment.Left
+        item.MouseEnter:Connect(function(): ()
+            if itemIndex ~= currentIndex then
+                item.BackgroundTransparency = 0.72
+            end
+        end)
+        item.MouseLeave:Connect(function(): ()
+            item.BackgroundTransparency = itemIndex == currentIndex and 0.35 or 1
+        end)
+        item.MouseButton1Click:Connect(function(): ()
+            close()
+            onPick(itemIndex)
+        end)
+    end
+
+    -- Any press that is not on the list dismisses it, which is what every
+    -- other menu on the platform does.
+    outsideConnection = UserInputService.InputBegan:Connect(function(
+        input: InputObject
+    ): ()
+        if input.UserInputType ~= Enum.UserInputType.MouseButton1
+            and input.UserInputType ~= Enum.UserInputType.Touch then
+            return
+        end
+        task.defer(function(): ()
+            if closed then
+                return
+            end
+            local pointer: Vector2 = Vector2.new(input.Position.X, input.Position.Y)
+            local origin: Vector2 = list.AbsolutePosition
+            local size: Vector2 = list.AbsoluteSize
+            local inside: boolean = pointer.X >= origin.X
+                and pointer.X <= origin.X + size.X
+                and pointer.Y >= origin.Y
+                and pointer.Y <= origin.Y + size.Y
+            if not inside then
+                close()
+            end
+        end)
+    end)
+    trackUiConnection(outsideConnection :: RBXScriptConnection)
+end
+
+state.addMenuVisibilityListener(function(visible: boolean): ()
+    if not visible then
+        state.closeChoiceList()
+    end
+end)
+
 local function addCycleOption(
     feature: any,
     labelText: string,
@@ -9010,35 +9404,55 @@ local function addCycleOption(
     end
     local button = makeButton(option, values[index], 11)
     state.layoutOptionControl(option, button, 0.5)
+    button.TextXAlignment = Enum.TextXAlignment.Left
+    create("UIPadding", {
+        Parent = button,
+        Name = "ChoicePadding",
+        PaddingLeft = UDim.new(0, 8),
+        PaddingRight = UDim.new(0, 20),
+    })
 
-    -- A cycle button gives no clue that clicking it changes the value, and no
-    -- clue how many values there are. A trailing "1/3" counter fixes both.
-    local counter: TextLabel = (makeTextLabel(
-        button,
-        "",
-        9
-    ) :: any) :: TextLabel
-    counter.Name = "CycleCounter"
-    counter.AnchorPoint = Vector2.new(1, 0.5)
-    counter.Position = UDim2.new(1, -9, 0.5, 0)
-    counter.Size = UDim2.fromOffset(34, 16)
-    counter.TextColor3 = Theme.DefaultTextMuted
-    counter.TextTransparency = 0.3
-    counter.TextXAlignment = Enum.TextXAlignment.Right
-    counter.ZIndex = button.ZIndex + 1
-
-    local function refreshCycleVisual(): ()
-        button.Text = values[index]
-        counter.Text = tostring(index) .. "/" .. tostring(#values)
+    -- A caret, because this opens a list; the old counter ("2/4") only made
+    -- sense while the control was a button you had to click four times.
+    local caret: Frame = create("Frame", {
+        Parent = button,
+        Name = "Caret",
+        AnchorPoint = Vector2.new(1, 0.5),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Position = UDim2.new(1, -8, 0.5, 0),
+        Size = UDim2.fromOffset(10, 6),
+        ZIndex = button.ZIndex + 1,
+    }) :: Frame
+    for _, side: number in ipairs({-1, 1}) do
+        local blade: Frame = create("Frame", {
+            Parent = caret,
+            Name = side < 0 and "Left" or "Right",
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            BackgroundColor3 = Theme.DefaultTextMuted,
+            BackgroundTransparency = 0.25,
+            BorderSizePixel = 0,
+            Position = UDim2.new(0.5, side * 2, 0.5, 0),
+            Rotation = side * 38,
+            Size = UDim2.fromOffset(7, 1),
+            ZIndex = button.ZIndex + 2,
+        }) :: Frame
+        create("UICorner", {Parent = blade, CornerRadius = UDim.new(1, 0)})
     end
-    refreshCycleVisual()
+
+    local function refreshChoiceVisual(): ()
+        button.Text = values[index]
+    end
+    refreshChoiceVisual()
 
     button.MouseButton1Click:Connect(function()
-        index = index % #values + 1
-        refreshCycleVisual()
-        callback(values[index])
-        configData.values[optionKey] = values[index]
-        queueConfigSave()
+        openChoiceList(button, values, index, function(picked: number): ()
+            index = picked
+            refreshChoiceVisual()
+            callback(values[index])
+            configData.values[optionKey] = values[index]
+            queueConfigSave()
+        end)
     end)
 
     callback(values[index])

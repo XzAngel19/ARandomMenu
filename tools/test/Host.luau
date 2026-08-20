@@ -89,6 +89,11 @@ function Host.create(world: any): HostStub
             options = {},
         }
         function feature.activate(): ()
+            -- Action cards run and keep no state, exactly like the real card.
+            if feature.kind == "action" then
+                onToggle(true)
+                return
+            end
             feature.enabled = not feature.enabled
             onToggle(feature.enabled)
         end

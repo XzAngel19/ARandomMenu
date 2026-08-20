@@ -369,6 +369,46 @@
         512
       ],
       "usage": "Backdrop of the player card at the foot of the navigation rail"
+    },
+    "nav_movement": {
+      "category": "icons",
+      "path": "Assets/Icons/nav-movement.png",
+      "type": "image/png",
+      "dimensions": [
+        128,
+        128
+      ],
+      "usage": "Movement tab icon in the navigation rail"
+    },
+    "nav_settings": {
+      "category": "icons",
+      "path": "Assets/Icons/nav-settings.png",
+      "type": "image/png",
+      "dimensions": [
+        128,
+        128
+      ],
+      "usage": "Settings tab icon in the navigation rail"
+    },
+    "window_favorites": {
+      "category": "icons",
+      "path": "Assets/Icons/window-favorites.png",
+      "type": "image/png",
+      "dimensions": [
+        128,
+        128
+      ],
+      "usage": "Favourites window launcher"
+    },
+    "window_overlays": {
+      "category": "icons",
+      "path": "Assets/Icons/window-overlays.png",
+      "type": "image/png",
+      "dimensions": [
+        128,
+        128
+      ],
+      "usage": "Overlay window launcher"
     }
   }
 }
