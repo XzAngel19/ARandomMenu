@@ -433,7 +433,7 @@ function Mock.install(): MockWorld
         HumanoidStateType = enumFolder({"Jumping", "Freefall", "Running"}),
         EasingStyle = enumFolder({"Quad", "Sine", "Linear"}),
         EasingDirection = enumFolder({"Out", "In", "InOut"}),
-        Material = enumFolder({"Air", "Plastic"}),
+        Material = enumFolder({"Air", "Plastic", "SmoothPlastic"}),
         UserInputType = enumFolder({
             "Touch",
             "MouseButton1",

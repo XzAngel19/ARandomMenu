@@ -1226,6 +1226,59 @@ logger.Feature.options["Clear log"].run()
 check("clears the log", #host.state.remoteLog.entries() == 0)
 logger:Toggle()
 
+-- Improve FPS --------------------------------------------------------------------
+
+section("Improve FPS")
+
+local FpsFile: any = require("../../src/modules/Utility/ImproveFps")
+Mock.inject(world, FpsFile.init)
+local improveFps: any = FpsFile.init(espContext)
+
+check("card is registered", improveFps.name == "Improve FPS")
+for _, name: string in ipairs({
+    "Remove textures",
+    "Disable particles",
+    "Disable shadows",
+    "Simple materials",
+}) do
+    check("option: " .. name, improveFps.options[name] ~= nil)
+end
+
+local decal: any = Mock.newInstance("Decal")
+decal.Transparency = 0
+decal.Parent = world.workspace
+local emitter: any = Mock.newInstance("ParticleEmitter")
+emitter.Enabled = true
+emitter.Parent = world.workspace
+local scenery: any = Mock.newInstance("Part")
+scenery.CastShadow = true
+scenery.Material = world.globals.Enum.Material.Plastic
+scenery.Reflectance = 0.5
+scenery.Parent = world.workspace
+
+improveFps.activate()
+check("decals are hidden", decal.Transparency == 1)
+check("emitters are switched off", emitter.Enabled == false)
+check("shadows are dropped", scenery.CastShadow == false)
+-- Simple materials is off by default, so the look of the map is left alone.
+check("materials are left alone",
+    scenery.Material == world.globals.Enum.Material.Plastic
+        and scenery.Reflectance == 0.5)
+
+-- Parts that stream in after the sweep get the same treatment; without this
+-- the optimisation only ever covered whatever happened to be loaded.
+local latecomer: any = Mock.newInstance("Decal")
+latecomer.Transparency = 0.25
+latecomer.Parent = world.workspace
+world.workspace.DescendantAdded:Fire(latecomer)
+check("late arrivals are optimised too", latecomer.Transparency == 1)
+
+improveFps.activate()
+check("decals come back", decal.Transparency == 0)
+check("emitters come back", emitter.Enabled == true)
+check("shadows come back", scenery.CastShadow == true)
+check("late arrivals are restored as well", latecomer.Transparency == 0.25)
+
 -- Performance guards -------------------------------------------------------------
 
 section("Performance")

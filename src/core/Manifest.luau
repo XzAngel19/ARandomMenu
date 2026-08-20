@@ -184,6 +184,11 @@ local Manifest: Manifest = {
             category = "Utility",
         },
         {
+            path = "src/modules/Utility/ImproveFps.luau",
+            name = "Improve FPS",
+            category = "Utility",
+        },
+        {
             path = "src/modules/Visuals/Fullbright.luau",
             name = "Fullbright",
             category = "Visuals",

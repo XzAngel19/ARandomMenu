@@ -73,6 +73,19 @@ function Host.create(world: any): HostStub
     -- Created first: the option builders publish list controls onto it.
     host.state = {}
 
+    -- The shell's one connection registry, keyed by name so a module can drop
+    -- its own listener without holding the handle. Modules that predate the
+    -- framework's `Event`/`Clean` pair still use it, and a stub without it
+    -- fails only once the module is switched on.
+    host.featureConnections = {}
+    host.disconnectFeatureConnection = function(name: string): ()
+        local connection: any = host.featureConnections[name]
+        if connection then
+            connection:Disconnect()
+            host.featureConnections[name] = nil
+        end
+    end
+
     host.createUniversalFeature = function(
         name: string,
         description: string,

@@ -641,20 +641,19 @@ appear for the modes that use them.
 line, `init`/`destroy`, its own card, and nothing in the shell that knows it
 exists.
 
-The shell is **16,688 → 12,475 lines**, with **one** feature card left in it
-(Improve FPS, which is wrapped in its own function scope and is worth moving
-carefully rather than quickly).
+The shell is **16,688 → 12,305 lines**, and **no feature card is left in it**.
 
-One thing the move taught, worth writing down: the remaining features live
-inside a single enormous `do ... end` that exists only to hand registers back
+One thing the move taught, worth writing down: the remaining features lived
+inside a single enormous `do ... end` that existed only to hand registers back
 to `bootstrap()`. A cut that swallows its opening `do` leaves the file
 unbalanced in a way the compiler reports three hundred lines later, so each
-piece is taken from *inside* the block and the block is left standing. It
-disappears on its own once the last feature is out — which is the real reason
-that register ceiling stops mattering.
+piece was taken from *inside* the block and the block was left standing. It
+disappeared on its own once the last feature was out — which is the real reason
+that register ceiling stops mattering: `bootstrap()` went from three spare
+locals to more than twenty.
 
-The queue: Improve FPS, then the option builders and the colour picker into a
-widget library — which is what finally takes the shell under six thousand.
+The queue: the option builders and the colour picker into a widget library —
+which is what finally takes the shell under six thousand.
 
 ## Module architecture
 
