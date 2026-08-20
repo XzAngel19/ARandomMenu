@@ -6660,7 +6660,9 @@ refreshFavorites()
 end
 
 local function applyFeaturePresentation(feature: any, isDefault: boolean): ()
-    local enabled: boolean = feature.enabled == true
+    local enabled: boolean = feature.kind == "hold"
+        and feature.active == true
+        or feature.enabled == true
     if feature.row then
         feature.row.BackgroundColor3 = isDefault
             and (enabled and Theme.DefaultSurfaceHover or Theme.DefaultSurface)
@@ -6684,7 +6686,9 @@ local function applyFeaturePresentation(feature: any, isDefault: boolean): ()
 
         feature.activeStripe.BackgroundTransparency = enabled
             and 0
-            or ((feature.isAction or feature.isCategory) and 0.42 or 1)
+            or ((feature.isAction or feature.isCategory or feature.isHoldAction)
+                and 0.42
+                or 1)
     end
     if feature.activeStripeGradient then
         feature.activeStripeGradient.Enabled = not isDefault
@@ -6714,7 +6718,13 @@ local function applyFeaturePresentation(feature: any, isDefault: boolean): ()
         feature.shortcutButton.BackgroundColor3 = isDefault
             and Theme.DefaultSurface
             or Theme.SurfaceRaised
-        feature.shortcutButton.BackgroundTransparency = isDefault and 0.54 or 1
+        -- A container's slot is inert, so it stays a faint placeholder
+        -- instead of being repainted as an interactive key slot.
+        local inertSlot: boolean = feature.kind == "group"
+        feature.shortcutButton.BackgroundTransparency = inertSlot
+            and 0.86
+            or (isDefault and 0.54 or 1)
+        feature.shortcutButton.TextTransparency = inertSlot and 1 or 0
         feature.shortcutButton.TextColor3 = isDefault
             and Theme.DefaultText
             or Theme.Text
@@ -6730,11 +6740,18 @@ local function refreshFeatureToggle(feature: any): ()
     if feature.isCategory or feature.isAction then
         return
     end
+    -- A hold module has no enabled state: what it shows is whether its key is
+    -- being held right now.
+    if feature.isHoldAction then
+        feature.enabled = feature.active == true
+    end
     if feature.activeStripe then
         TweenService:Create(
             feature.activeStripe,
             TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quad),
-            {BackgroundTransparency = feature.enabled and 0 or 1}
+            {BackgroundTransparency = feature.enabled
+                and 0
+                or (feature.isHoldAction and 0.42 or 1)}
         ):Play()
     end
     if feature.row then
@@ -7103,9 +7120,30 @@ local function createUniversalFeature(
         categoryName = categoryName,
         enabled = false,
         expanded = false,
-        isAction = configuration.action == true,
+        -- Module kinds.
+        --
+        -- Everything about a card — what a click does, what its key slot
+        -- does, whether it can be "off", whether it announces itself — is
+        -- decided by one kind instead of a pile of independent booleans:
+        --
+        --   toggle  (default) enable/disable state; click or key flips it.
+        --   action            a button: click or key runs it once, no state.
+        --   hold              always-on system; the key is a dead-man switch
+        --                     that only applies the effect while it is held.
+        --                     It can never be turned off and never toasts.
+        --   group             an always-on container of options; the card
+        --                     expands, and its key slot is inert because
+        --                     there is nothing to activate.
+        --
+        -- Legacy flags still work: `action`, `category` and `holdAction` map
+        -- onto the kinds above.
+        kind = configuration.kind
+            or (configuration.action == true and "action")
+            or (configuration.holdAction == true and "hold")
+            or (configuration.category == true and "group")
+            or "toggle",
         silentAction = configuration.silentAction == true,
-        isCategory = configuration.category == true,
+        onHold = configuration.onHold,
         optionCount = 0,
         optionRows = {},
         collapsedHeight = state.layout.cardHeight,
@@ -7125,6 +7163,13 @@ local function createUniversalFeature(
         tooltipText = description,
         tooltipBound = false,
     }
+
+    -- Kept as plain flags so existing code (and the game modules downloaded
+    -- from the repository) keep reading the same fields.
+    feature.isAction = feature.kind == "action"
+    feature.isCategory = feature.kind == "group"
+    feature.isHoldAction = feature.kind == "hold"
+    feature.isAlwaysOn = feature.kind == "hold" or feature.kind == "group"
 
     local requestedParent: Instance =
         configuration.parent or UniversalScroll
@@ -7445,27 +7490,36 @@ local function createUniversalFeature(
         updateExpandedSize(true)
     end))
 
-    -- Hold modules publish `setHeld`; the card, the key slot and the mobile
-    -- button all funnel through it so the module only ever sees one signal.
+    -- Hold modules.
+    --
+    -- The module itself is *always* running — it can never be switched off
+    -- and never announces itself. `setHeld` only reports whether the player
+    -- is currently holding the key (or the placed mobile button), and the
+    -- module applies or drops its effect accordingly. The card lights up
+    -- while held purely as feedback.
     function feature.setHeld(held: boolean): ()
         if feature.held == held then
             return
         end
         feature.held = held
-        local ok: boolean, failure: any = pcall(feature.onToggle, held)
+        local handler: any = feature.onHold
+        if type(handler) ~= "function" then
+            return
+        end
+        local ok: boolean, failure: any = pcall(handler, held)
         if not ok then
             warn("[Random Testing Menu] " .. name .. ": " .. tostring(failure))
             return
         end
-        feature.enabled = held
+        feature.active = held
         refreshFeatureToggle(feature)
     end
 
     local function activateFeature(): ()
         if feature.isHoldAction then
-            -- Tapping the card is a momentary press: useful on desktop to
-            -- test the module without binding a key.
-            feature.setHeld(not feature.held)
+            -- Clicking the card does nothing: a hold module has no on/off
+            -- state to flip, and an accidental click must never leave the
+            -- effect latched. Only the key slot drives it.
             return
         end
         if feature.isCategory then
@@ -7569,15 +7623,26 @@ local function createUniversalFeature(
         MinTextSize = 7,
     })
     feature.shortcutButton = shortcutButton
-    -- Hold modules (Sprint) are active only while their key — or their placed
-    -- mobile button — is held down. Everything else fires on press.
-    if configuration.holdAction == true then
-        feature.isHoldAction = true
+    if feature.kind == "group" then
+        -- A container has nothing to activate: the slot stays on the card for
+        -- symmetry but never captures a key, never places a mobile button and
+        -- never fires. Pressing it does nothing, by design.
+        shortcutButton.Active = false
+        shortcutButton.AutoButtonColor = false
+        shortcutButton.Text = ""
+        shortcutButton.TextTransparency = 1
+        shortcutButton.BackgroundTransparency = 0.86
+        shortcutButton:SetAttribute("Disabled", true)
+        shortcutButton:SetAttribute("NoHover", true)
+        shortcutButton:SetAttribute("CaptureIdleText", "")
+    elseif feature.kind == "hold" then
+        -- The key is a dead-man switch: held means active, released means
+        -- inactive. It never toggles the module on or off.
         bindActionShortcut(
             shortcutButton,
             feature.configKey,
             name,
-            activateFeature,
+            function(): () end,
             {
                 hold = true,
                 onPress = function(): ()
@@ -7651,6 +7716,17 @@ local function createUniversalFeature(
     -- No "Toggle key" option row any more: every card already carries a key
     -- slot in its header and that slot is the only place an activation key
     -- lives, on desktop and on touch alike.
+
+    -- Always-on modules (hold systems, containers) start their runtime once,
+    -- here, instead of waiting for a click that can never come.
+    if feature.isAlwaysOn then
+        task.defer(function(): ()
+            local ok: boolean, failure: any = pcall(feature.onToggle, true)
+            if not ok then
+                warn("[Random Testing Menu] " .. name .. ": " .. tostring(failure))
+            end
+        end)
+    end
 
     -- Hold modules are momentary: they are never restored as "on" at startup.
     if not feature.isAction

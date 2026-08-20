@@ -660,6 +660,8 @@ end
 
 local function refreshRoleEspConnection()
     disconnectFeatureConnection("MM2RoleESP")
+    disconnectFeatureConnection("MM2RoleEspPlayerAdded")
+    disconnectFeatureConnection("MM2RoleEspPlayerRemoving")
 
     if not mm2Settings.roleEspAll
         or not (mm2Settings.roleEspInnocent
@@ -670,14 +672,37 @@ local function refreshRoleEspConnection()
     end
 
     rebuildRoleEsp()
-    local elapsed = 0
-    featureConnections.MM2RoleESP = TaskManager:Connect(function(deltaTime)
-        elapsed = elapsed + deltaTime
-        if elapsed >= 0.35 then
-            elapsed = 0
-            rebuildRoleEsp()
-        end
+    -- Instant: the pass runs every frame. It only walks the player list and
+    -- writes three properties on an existing Highlight, so there is nothing to
+    -- throttle — and a murderer who swaps weapons, dies or respawns is
+    -- recoloured on the very next frame instead of up to a third of a second
+    -- later.
+    featureConnections.MM2RoleESP = TaskManager:Connect(function(): ()
+        rebuildRoleEsp()
     end)
+
+    -- Joins and respawns rebuild immediately rather than waiting for the next
+    -- frame's sweep to notice a brand new character.
+    featureConnections.MM2RoleEspPlayerAdded = Players.PlayerAdded:Connect(
+        function(player: Player): ()
+            player.CharacterAdded:Connect(function(): ()
+                task.defer(rebuildRoleEsp)
+            end)
+            task.defer(rebuildRoleEsp)
+        end
+    )
+    featureConnections.MM2RoleEspPlayerRemoving = Players.PlayerRemoving:Connect(
+        function(player: Player): ()
+            removeRoleEspHighlight(player)
+        end
+    )
+    for _, player: Player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            player.CharacterAdded:Connect(function(): ()
+                task.defer(rebuildRoleEsp)
+            end)
+        end
+    end
 end
 
 local function toggleRoleEsp(enabled)
@@ -1411,12 +1436,13 @@ local function ensureSprintTrail(root: BasePart): Trail
     return trail
 end
 
--- Sprint is a hold module.
+-- Sprint.
 --
--- It used to be a toggle that watched LeftControl itself, which meant it could
--- not be rebound and could not work on a phone at all. It is now driven by the
--- card's key slot: hold the key (or hold the placed mobile button) to sprint,
--- release to stop.
+-- The module is always running and can never be switched off — pressing its
+-- key does not enable or disable anything and never announces itself. The key
+-- (and only the key the player picked; there is no hard-coded LeftControl any
+-- more) is a dead-man switch: hold it to run, release it to stop.
+local sprintActive: boolean = false
 local sprintBaseSpeed: number? = nil
 
 local function applySprintSpeed(active: boolean): ()
@@ -1425,7 +1451,7 @@ local function applySprintSpeed(active: boolean): ()
         return
     end
     if active then
-        if sprintBaseSpeed == nil then
+        if sprintBaseSpeed == nil and humanoid.WalkSpeed ~= MM2_SPRINT_SPEED then
             sprintBaseSpeed = humanoid.WalkSpeed
         end
         humanoid.WalkSpeed = MM2_SPRINT_SPEED
@@ -1435,33 +1461,60 @@ local function applySprintSpeed(active: boolean): ()
     end
 end
 
+-- Runtime: always connected while the module exists. It does nothing at all
+-- until the key is held, so an idle Sprint costs one cheap check per frame.
 local function toggleSprint(enabled: boolean): ()
     disconnectFeatureConnection("MM2Sprint")
 
     if not enabled then
+        sprintActive = false
         clearSprintTrail()
         applySprintSpeed(false)
         return
     end
 
-    -- While held, the speed is re-applied every frame: the game resets
-    -- WalkSpeed on respawn, on round start and when a tool is equipped.
     featureConnections.MM2Sprint = TaskManager:Connect(function(): ()
         local _, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
         if not humanoid or not root then
             return
         end
-        if sprintBaseSpeed == nil and humanoid.WalkSpeed ~= MM2_SPRINT_SPEED then
-            sprintBaseSpeed = humanoid.WalkSpeed
-        end
-        if humanoid.WalkSpeed ~= MM2_SPRINT_SPEED then
-            humanoid.WalkSpeed = MM2_SPRINT_SPEED
+        if not sprintActive then
+            if sprintBaseSpeed ~= nil then
+                -- The key was released while the character was missing.
+                applySprintSpeed(false)
+            end
+            return
         end
 
-        local trail: Trail = ensureSprintTrail(root)
-        local moving: boolean = humanoid.MoveDirection.Magnitude > 0.05
-        trail.Enabled = moving
+        -- Re-applied every frame: MM2 resets WalkSpeed on respawn, on round
+        -- start and whenever a weapon is equipped.
+        if humanoid.WalkSpeed ~= MM2_SPRINT_SPEED then
+            if sprintBaseSpeed == nil then
+                sprintBaseSpeed = humanoid.WalkSpeed
+            end
+            humanoid.WalkSpeed = MM2_SPRINT_SPEED
+        end
+        ensureSprintTrail(root).Enabled = humanoid.MoveDirection.Magnitude > 0.05
     end)
+end
+
+-- Called by the card's key slot: pressed means run, released means stop.
+local function setSprintActive(active: boolean): ()
+    if sprintActive == active then
+        return
+    end
+    sprintActive = active
+    applySprintSpeed(active)
+    if not active then
+        local trail: Instance? = nil
+        local _, _, root: BasePart? = getCharacterParts()
+        if root then
+            trail = root:FindFirstChild("RTM_SprintTail")
+        end
+        if trail and trail:IsA("Trail") then
+            trail.Enabled = false
+        end
+    end
 end
 
 -- Improve FPS moved to the Universal section: stripping textures, particles,
@@ -1511,19 +1564,48 @@ end
 
 -- Always Show Timer.
 --
--- MM2 already draws the round countdown: `PlayerGui.MainGUI.Game.Timer` is a
--- frame holding an `XPText` label, and the game's own HUD script makes it
--- visible at round start for every role *except* Innocent — innocents get the
--- XP counter in its place. Rather than covering the screen with a second box
--- in the menu's style, this reveals the game's own frame, so the countdown
--- appears exactly where and how the murderer sees it.
+-- MM2 already owns a round countdown: `MainGUI.Game.Timer` with its `XPText`
+-- label. Its HUD script decides who sees it in one place — `RoundStart`'s
+-- client handler shows the frame for every role *except* Innocent, and its
+-- update loop only refreshes the text while your role is not Innocent (the
+-- whole place has exactly one listener on that remote, so nothing else reacts
+-- to it).
 --
--- Revealing it is not enough on its own: that HUD script only refreshes the
--- text while your role is not Innocent, so an innocent would be shown a frozen
--- label. The remaining time is therefore written here too, in the game's own
--- "1m 7s" format, and only while the game itself is not driving it.
+-- So instead of drawing a second timer in the menu's own style, the module
+-- replays that client event locally with the local player marked as a
+-- non-Innocent role. The game's HUD then brings up *its* timer and counts it
+-- down itself: the display is the game's, not ours. Switching the module off
+-- replays the real round data so the HUD goes back to what it was showing.
+local timerSpoofActive: boolean = false
 local revealedTimerObjects: {[Instance]: boolean} =
     setmetatable({}, {__mode = "k"}) :: any
+
+-- Executors expose different names for "run this client event locally".
+local function fireClientSignal(signal: any, ...: any): boolean
+    if type(getconnections) == "function" then
+        local ok: boolean, connections: any = pcall(getconnections, signal)
+        if ok and type(connections) == "table" then
+            local delivered: boolean = false
+            for _, connection: any in ipairs(connections) do
+                local fired: boolean = false
+                if type(connection.Fire) == "function" then
+                    fired = pcall(connection.Fire, connection, ...)
+                end
+                if not fired and type(connection.Function) == "function" then
+                    fired = pcall(connection.Function, ...)
+                end
+                delivered = delivered or fired
+            end
+            if delivered then
+                return true
+            end
+        end
+    end
+    if type(firesignal) == "function" then
+        return (pcall(firesignal, signal, ...))
+    end
+    return false
+end
 
 local function findGameTimerFrame(): (GuiObject?, TextLabel?)
     local playerGui: PlayerGui? = LocalPlayer:FindFirstChildOfClass("PlayerGui")
@@ -1538,21 +1620,48 @@ local function findGameTimerFrame(): (GuiObject?, TextLabel?)
         local label: Instance? = frame:FindFirstChild("XPText")
         return frame, (label and label:IsA("TextLabel")) and label or nil
     end
-
-    -- Fallback for a future layout change: any Timer-named GuiObject that is
-    -- not part of this menu.
-    for _, descendant: Instance in ipairs(playerGui:GetDescendants()) do
-        if descendant:IsA("GuiObject")
-            and descendant.Name == "Timer"
-            and not descendant:IsDescendantOf(ScreenGui) then
-            local label: Instance? = descendant:FindFirstChildWhichIsA("TextLabel", true)
-            return descendant, (label and label:IsA("TextLabel")) and label or nil
-        end
-    end
     return nil, nil
 end
 
-local function restoreGameTimer(): ()
+-- Replays RoundStart locally with our role rewritten, which is what makes the
+-- game itself decide to show and drive its timer.
+local function spoofRoundTimerRole(remaining: number): boolean
+    if not timerRoundStart or not timerRoundStart:IsA("RemoteEvent") then
+        return false
+    end
+    local payload: {[string]: any} = {}
+    for key: any, value: any in pairs(mm2RoundData) do
+        payload[tostring(key)] = value
+    end
+    local mine: {[string]: any} = {}
+    local existing: any = payload[LocalPlayer.Name]
+    if type(existing) == "table" then
+        for key: any, value: any in pairs(existing) do
+            mine[tostring(key)] = value
+        end
+    end
+    mine.Role = "Sheriff"
+    mine.Dead = false
+    payload[LocalPlayer.Name] = mine
+    return fireClientSignal(
+        timerRoundStart.OnClientEvent,
+        math.max(1, math.floor(remaining)),
+        payload
+    )
+end
+
+-- Puts the HUD back the way the server described it.
+local function restoreRoundTimerRole(): ()
+    if timerSpoofActive
+        and timerRoundStart
+        and timerRoundStart:IsA("RemoteEvent")
+        and next(mm2RoundData) ~= nil
+        and timerEndsAt then
+        local remaining: number = math.max(1, math.floor(timerEndsAt - os.clock()))
+        fireClientSignal(timerRoundStart.OnClientEvent, remaining, mm2RoundData)
+    end
+    timerSpoofActive = false
+
     for object: Instance, _ in pairs(revealedTimerObjects) do
         if object and object.Parent then
             local guiObject: any = object
@@ -1564,8 +1673,8 @@ local function restoreGameTimer(): ()
     revealedTimerObjects = setmetatable({}, {__mode = "k"}) :: any
 end
 
--- The game formats the countdown as "1m 7s" / "43s"; matching it keeps the
--- revealed label indistinguishable from the murderer's own timer.
+-- Fallback for executors that cannot replay a client event: reveal the frame
+-- and write the countdown in the game's own "1m 7s" format.
 local function formatRoundClock(remaining: number): string
     local minutes: number = math.floor(remaining / 60)
     local seconds: number = remaining - minutes * 60
@@ -1575,11 +1684,31 @@ local function formatRoundClock(remaining: number): string
     return tostring(seconds) .. "s"
 end
 
+local function revealTimerManually(remaining: number): ()
+    local frame: GuiObject?, label: TextLabel? = findGameTimerFrame()
+    if not frame then
+        return
+    end
+    if not frame.Visible then
+        revealedTimerObjects[frame] = true
+        frame.Visible = true
+    end
+    if label then
+        local localRole: string? = getPlayerRole(LocalPlayer)
+        if localRole == nil or localRole == "Innocent" then
+            label.Text = formatRoundClock(remaining)
+            label.TextColor3 = remaining <= 30
+                and Color3.fromRGB(255, 0, 0)
+                or Color3.fromRGB(255, 255, 255)
+        end
+    end
+end
+
 local function toggleAlwaysShowTimer(enabled)
     disconnectFeatureConnection("MM2AlwaysTimer")
 
     if not enabled then
-        restoreGameTimer()
+        restoreRoundTimerRole()
         return
     end
 
@@ -1597,11 +1726,11 @@ local function toggleAlwaysShowTimer(enabled)
         end)
     end
 
-    local elapsed = 1
+    local elapsed: number = 1
+    local lastSpoofAt: number = -math.huge
     featureConnections.MM2AlwaysTimer = TaskManager:Connect(function(deltaTime)
-        elapsed = elapsed + deltaTime
-        -- Fast enough that the game's own "hide it again" pass never shows.
-        if elapsed < 0.12 then
+        elapsed += deltaTime
+        if elapsed < 0.35 then
             return
         end
         elapsed = 0
@@ -1609,40 +1738,26 @@ local function toggleAlwaysShowTimer(enabled)
         local remaining: number? = timerEndsAt
             and math.max(0, math.ceil(timerEndsAt - os.clock()))
         if not remaining or remaining <= 0 then
-            restoreGameTimer()
-            return
-        end
-
-        local frame: GuiObject?, label: TextLabel? = findGameTimerFrame()
-        if not frame then
-            return
-        end
-        if not frame.Visible then
-            revealedTimerObjects[frame] = true
-            frame.Visible = true
-        end
-        -- Parents can be hidden too (the HUD hides whole groups between
-        -- rounds); walk a short way up rather than assuming a fixed depth.
-        local ancestor: Instance? = frame.Parent
-        local depth: number = 0
-        while ancestor and depth < 3 do
-            if ancestor:IsA("GuiObject") and not ancestor.Visible then
-                revealedTimerObjects[ancestor] = true
-                ancestor.Visible = true
+            if timerSpoofActive then
+                timerSpoofActive = false
             end
-            ancestor = ancestor.Parent
-            depth += 1
+            return
         end
 
-        if label then
-            -- Only write when the game is not: as a murderer or sheriff its
-            -- own script owns this label every frame.
-            local localRole: string? = getPlayerRole(LocalPlayer)
-            if localRole == nil or localRole == "Innocent" then
-                label.Text = formatRoundClock(remaining)
-                label.TextColor3 = remaining <= 30
-                    and Color3.fromRGB(255, 0, 0)
-                    or Color3.fromRGB(255, 255, 255)
+        local frame: GuiObject? = findGameTimerFrame()
+        if frame and frame.Visible then
+            -- The game is already showing its own timer: nothing to do.
+            return
+        end
+
+        -- Re-announce at most every two seconds: a new round, a respawn or the
+        -- HUD hiding itself all land here.
+        if os.clock() - lastSpoofAt >= 2 then
+            lastSpoofAt = os.clock()
+            if spoofRoundTimerRole(remaining) then
+                timerSpoofActive = true
+            else
+                revealTimerManually(remaining)
             end
         end
     end)
@@ -5041,33 +5156,21 @@ autoPlayInput = addTextOption(AutoPlayFeature, "Play ID", mm2Settings.autoPlayId
     end
 end)
 
-local SprintFeature = createUniversalFeature(
+-- Always on, never toggled: pick a key in the card's slot (or tap the slot on
+-- a phone to drop a SPRINT button) and hold it to run.
+createUniversalFeature(
     "Sprint",
-    "Hold the key slot to run at 30 speed with a trail",
+    "Hold your key to run at 30 speed with a trail",
     10,
     toggleSprint,
     {
-        holdAction = true,
+        kind = "hold",
+        onHold = setSprintActive,
         noOptions = true,
         parent = MM2Scroll,
         registry = mm2Features,
     }
 )
--- LeftControl stays the default, but the slot owns it now: rebind it on
--- desktop, or tap the slot on a phone to drop a SPRINT button on screen and
--- hold that instead.
-if state.bindFeatureActivationKey then
-    state.bindFeatureActivationKey(
-        SprintFeature,
-        Enum.KeyCode.LeftControl,
-        function(): ()
-            SprintFeature.setHeld(true)
-        end,
-        function(): ()
-            SprintFeature.setHeld(false)
-        end
-    )
-end
 
 createUniversalFeature(
     "Always Show Timer",
@@ -5299,6 +5402,8 @@ cleanupMM2Runtime = function()
     toggleMuteOtherRadios(false)
     toggleMuteTrapSounds(false)
     for _, connectionName: string in ipairs({
+        "MM2RoleEspPlayerAdded",
+        "MM2RoleEspPlayerRemoving",
         "MM2FriendPlayerAdded",
         "MM2PlayerDataChanged",
         "MM2TimerTrackerStart",

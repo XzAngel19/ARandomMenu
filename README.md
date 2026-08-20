@@ -119,6 +119,26 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
   interval as placeholder text, and long panels can be broken up with section
   headings that fold away together with the controls they label. Fly is the
   reference layout.
+- **Module kinds.** A card's behaviour comes from one declared kind instead of
+  a pile of independent booleans, so a new module cannot accidentally inherit
+  the wrong keybind semantics:
+  - `toggle` (default) — enable/disable state; a click or the key flips it and
+    it announces the change.
+  - `action` — a button (High Jump, Rejoin, the Fling actions). A click or the
+    key runs it once; there is no state to get out of sync. `silentAction`
+    suppresses the toast for keys meant to be spammed.
+  - `hold` — an always-on system whose effect only applies while its key (or
+    its placed mobile button) is held, like a dead-man switch. It can never be
+    switched off, never toasts, and clicking the card does nothing so a stray
+    click cannot latch the effect. Sprint is the reference implementation:
+    `kind = "hold"` plus an `onHold(active)` callback.
+  - `group` — an always-on container of options (Knife, FriendList, Teleport…).
+    The card expands, and its key slot is deliberately inert: there is nothing
+    to activate, so it never captures a key, never places a mobile button and
+    does nothing when pressed.
+  The legacy `action` / `category` / `holdAction` flags still map onto these
+  kinds, and always-on kinds start their runtime once at creation instead of
+  waiting for a click that can never come.
 - **One keybind per module, always in the card header.** Activation keys are
   no longer buried in the options panel (Phase Dash's "Dash key", MM2's
   "Manual key"…): the header key slot *is* the binding, it starts blank
@@ -257,10 +277,21 @@ TaskManager callback count and errors captured by `pcall`.
 - **Gun Visuals** is **Gun ESP**, and the in-world markers follow the menu:
   a dark glass plate with a grey hairline and off-white text, with the role
   colour reduced to a slim accent bar instead of a coloured border.
-- **Always Show Timer** no longer draws a box. MM2 already renders a round
-  countdown and simply hides it from everyone but the murderer, so the module
-  finds that label and un-hides it: the timer appears where — and looking how —
-  the murderer sees it, and everything it touched is hidden again on disable.
+- **Always Show Timer** draws nothing of its own. MM2's HUD decides who sees
+  its countdown in exactly one place: the client handler for the `RoundStart`
+  remote shows `MainGUI.Game.Timer` for every role except Innocent, and its
+  update loop only refreshes that label while your role is not Innocent. The
+  module therefore *replays that client event locally* with the local player
+  marked as a non-Innocent role, and the game brings up and drives its own
+  timer — the display is the game's, not the menu's. The place has exactly one
+  listener on that remote, so nothing else reacts to the replay; switching the
+  module off replays the real round data to put the HUD back. Executors that
+  cannot replay a client event fall back to revealing the label and writing the
+  countdown in the game's own `1m 7s` format.
+- **Player ESP is instant**: the pass runs every frame (it only walks the
+  player list and writes three properties on an existing Highlight) and
+  rebuilds immediately on joins, respawns and role changes, so a murderer who
+  swaps weapons or dies is recoloured on the next frame.
 - **Shoot** and **Knife** are device-independent. Aim is solved locally with
   CFrame maths and a raycast, then the gun's own `Shoot` remote is fired with
   `(origin, aim)`: no mouse, no `hookfunction`, no touch-specific weapon API.
@@ -269,10 +300,11 @@ TaskManager callback count and errors captured by `pcall`.
   hook itself no longer hard-codes the desktop accessor: it hooks every known
   aim accessor and returns whichever shape the original returned, so touch
   clients redirect too instead of reporting "unavailable".
-- **Sprint** is a hold module driven by the card's key slot (LeftControl by
-  default): hold the key, or hold a placed mobile button, to run. It used to
-  watch LeftControl itself, which could not be rebound and did nothing on a
-  phone. The speed is re-applied every frame because the game resets
+- **Sprint** is the reference `hold` module. The hard-coded LeftControl watch
+  is gone entirely: the module is always running, its key slot starts unbound,
+  and the key the player picks is the only thing that makes it run — held means
+  sprint, released means stop. It never enables or disables anything and never
+  toasts. The speed is re-applied every frame because the game resets
   `WalkSpeed` on respawn, on round start and when a tool is equipped.
 - **Improve FPS** moved out of this module into Universal.
 - Two lookups were verified against a dump of the live place and fixed:
