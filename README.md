@@ -61,6 +61,16 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
 - The shell itself is a compact, borderless, dark-glass surface: a navigation
   rail, a page header (page name + search) and a scrolling card board. It is
   the only visual theme, so every injection opens the same coherent interface.
+- **One window, not a stack of rectangles.** `Main` *is* the shell: the second
+  full-size rounded frame that used to sit inside it (painted the same colour,
+  with its own radius to keep in sync) and the readability wash that painted
+  the background colour over the background are both gone. The navigation rail
+  is rounded on the window side and squared off on the content side, because
+  `ClipsDescendants` clips to the window's rectangle and not to its rounded
+  corner — a square rail filled those corners and read as a block sticking out
+  behind the ARM chip. Inside a card, the options panel is a transparent
+  container instead of a third surface: an expanded module shows the card and
+  its rows, with nothing drawn in between.
 - **No faked shadow.** An ambient shadow used to be approximated with stacked
   rounded frames behind the window. `cornerRadius()` caps every radius at
   30 px, so a frame 44 px wider than the shell kept square-ish corners around
@@ -196,6 +206,19 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
 - Its asset cache verifies PNG/JPEG signatures, interface assets use the real
   files under `Assets`, and text scaling updates a creation-time registry
   instead of walking the complete GUI during every slider movement.
+- The Settings page carries only rows that do something. "Menu key" is built
+  for keyboards only; the "Mobile menu icon" row (which always read
+  ON - REQUIRED and could not be changed) and the "Mobile action buttons"
+  reset row are gone, and **Mobile action size** is an exact pixel value —
+  type it or drag it — instead of a four-step preset cycle.
+- Placed mobile buttons now actually fire their module. Every key slot handed
+  the mobile layer a hold descriptor, so *every* placed button was treated as a
+  hold button: it engaged on touch-down, and on release took the "stop holding"
+  path that never runs the tap callback. Hold state is asked for at press time
+  now, so taps tap and holds hold — and hold-to-remove is disabled for hold
+  features, because keeping a finger on Sprint is how you sprint, not how you
+  delete the button. Long names are kept in full and wrapped at a smaller size
+  rather than clipped to six characters ("Infinite Jump", not "INFINI").
 - Settings includes calibrated text scale, blur, interface motion,
   cache-busted **Reinject latest**, and an idempotent **Destruct** action
   that disables features and releases every tracked runtime connection. The

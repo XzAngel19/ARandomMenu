@@ -601,10 +601,12 @@ local state: any = {
         or 1,
     mobileMenuButtonVisible = true,
     animationsEnabled = configData.ui.animationsEnabled ~= false,
+    -- Free-form pixel size now, not one of four presets, so the stored value
+    -- is only sanity-clamped.
     mobileButtonSize = math.clamp(
         tonumber(configData.ui.mobileButtonSize) or 52,
-        42,
-        72
+        28,
+        120
     ),
     toggleKey = savedToggleKey,
     waitingForKey = false,
@@ -2206,20 +2208,12 @@ local function centerMain(): ()
     Main.AnchorPoint = Vector2.new(0.5, 0.5)
     Main.Position = UDim2.fromScale(0.5, 0.5)
     Main.Size = UDim2.fromOffset(layout.shellWidth, layout.shellHeight)
-    -- Every full-size surface inside the window has to share the window's
-    -- radius: `ClipsDescendants` clips to the rectangle, not to the rounded
-    -- corner, so a square child would fill the corners back in and make the
-    -- shell look chipped.
-    for _, rounded: Instance in ipairs({
-        Main:FindFirstChild("StyleCorner"),
-        state.shells and state.shells.default
-            and state.shells.default:FindFirstChild("ShellCorner"),
-        state.shells and state.shells.readability
-            and state.shells.readability:FindFirstChildOfClass("UICorner"),
-    }) do
-        if rounded and rounded:IsA("UICorner") then
-            (rounded :: UICorner).CornerRadius = cornerRadius(layout.shellCorner)
-        end
+    -- The window owns the only shell radius now; the rail keeps its own in
+    -- sync from the layout listener, because `ClipsDescendants` clips to the
+    -- rectangle and not to the rounded corner.
+    local shellCorner: Instance? = Main:FindFirstChild("StyleCorner")
+    if shellCorner and shellCorner:IsA("UICorner") then
+        shellCorner.CornerRadius = cornerRadius(layout.shellCorner)
     end
 end
 
@@ -2233,27 +2227,23 @@ do
 local layout: LayoutMetrics = state.layout
 local sidebarWidth: number = layout.sidebarWidth
 
-local DefaultShell: Frame = create("Frame", {
-    Parent = Main,
-    Name = "DefaultShell",
-    BackgroundColor3 = Theme.DefaultBackground,
-    BorderSizePixel = 0,
-    Size = UDim2.fromScale(1, 1),
-    Visible = true,
-    ZIndex = 2,
-}) :: Frame
-DefaultShell.ClipsDescendants = true
-create("UICorner", {
-    Parent = DefaultShell,
-    Name = "ShellCorner",
-    CornerRadius = cornerRadius(layout.shellCorner),
-})
+-- `Main` *is* the shell. There used to be a second full-size rounded frame
+-- stacked inside it painted the same colour, which bought nothing and gave the
+-- corners a second radius to keep in sync.
+local DefaultShell: Frame = Main
 
 -- Navigation rail.
 --
 -- Desktop and tablet show a monogram chip plus the tab name; on phones the
 -- rail collapses to the chips alone, which is what frees the horizontal space
 -- a 360px-wide screen needs for actual content.
+--
+-- The rail is rounded like the window because `ClipsDescendants` clips to the
+-- window's *rectangle*, not to its rounded corner: a square-cornered rail
+-- painted a lighter grey filled the shell's top-left and bottom-left corners
+-- and read as a block sticking out behind the ARM chip. Its right-hand side is
+-- squared off again by a patch the width of the radius, so only the two
+-- corners that sit on the window edge are curved.
 local DefaultSidebar: Frame = create("Frame", {
     Parent = DefaultShell,
     Name = "DefaultSidebar",
@@ -2262,6 +2252,22 @@ local DefaultSidebar: Frame = create("Frame", {
     BackgroundTransparency = 0.35,
     BorderSizePixel = 0,
     Size = UDim2.new(0, sidebarWidth, 1, 0),
+    ZIndex = 10,
+}) :: Frame
+create("UICorner", {
+    Parent = DefaultSidebar,
+    Name = "SidebarCorner",
+    CornerRadius = cornerRadius(layout.shellCorner),
+})
+local SidebarSquareEdge: Frame = create("Frame", {
+    Parent = DefaultSidebar,
+    Name = "SidebarSquareEdge",
+    AnchorPoint = Vector2.new(1, 0),
+    BackgroundColor3 = Theme.DefaultSidebar,
+    BackgroundTransparency = 0.35,
+    BorderSizePixel = 0,
+    Position = UDim2.fromScale(1, 0),
+    Size = UDim2.new(0, math.max(6, layout.shellCorner), 1, 0),
     ZIndex = 10,
 }) :: Frame
 
@@ -2356,19 +2362,6 @@ local DefaultContentHost: Frame = create("Frame", {
     ZIndex = 20,
 }) :: Frame
 DefaultContentHost.ClipsDescendants = true
-local DefaultReadability: Frame = create("Frame", {
-    Parent = DefaultShell,
-    Name = "DefaultReadabilityLayer",
-    BackgroundColor3 = Theme.DefaultBackground,
-    BackgroundTransparency = 0.58,
-    BorderSizePixel = 0,
-    Size = UDim2.fromScale(1, 1),
-    ZIndex = 2,
-}) :: Frame
-create("UICorner", {
-    Parent = DefaultReadability,
-    CornerRadius = cornerRadius(layout.shellCorner),
-})
 
 -- Page header: the name of the page on the left, the search field on the
 -- right. The search used to live in the rail, where a collapsed rail could
@@ -2425,7 +2418,6 @@ state.shells = {
     defaultSidebar = DefaultSidebar,
     defaultHeader = DefaultHeader,
     headerTitle = HeaderTitle,
-    readability = DefaultReadability,
     brandName = BrandName,
     brandRow = BrandRow,
     sidebarEdge = SidebarEdge,
@@ -2435,16 +2427,13 @@ state.shells = {
 -- mode) changes. Nothing else in the file has to know the sidebar width.
 state.onLayout(function(metrics: LayoutMetrics): ()
     local width: number = metrics.sidebarWidth
-    local shellCorner: UICorner? =
-        DefaultShell:FindFirstChild("ShellCorner") :: UICorner?
-    if shellCorner then
-        shellCorner.CornerRadius = cornerRadius(metrics.shellCorner)
+    local sidebarCorner: UICorner? =
+        DefaultSidebar:FindFirstChild("SidebarCorner") :: UICorner?
+    if sidebarCorner then
+        sidebarCorner.CornerRadius = cornerRadius(metrics.shellCorner)
     end
-    local readabilityCorner: UICorner? =
-        DefaultReadability:FindFirstChildOfClass("UICorner")
-    if readabilityCorner then
-        readabilityCorner.CornerRadius = cornerRadius(metrics.shellCorner)
-    end
+    SidebarSquareEdge.Size =
+        UDim2.new(0, math.max(6, metrics.shellCorner), 1, 0)
     DefaultSidebar.Size = UDim2.new(0, width, 1, 0)
     SidebarEdge.Position = UDim2.fromOffset(width, 0)
     BrandRow.Size = UDim2.new(1, 0, 0, metrics.brandHeight)
@@ -3343,6 +3332,9 @@ state.tooltipConnections = {} :: {RBXScriptConnection}
 state.bindFeatureTooltip = nil :: ((any, string) -> ())?
 
 type MobileHoldCallbacks = {
+    -- Asked at press time. A binding can become (or stop being) a hold after
+    -- the button was placed, so the answer cannot be baked in at creation.
+    isActive: (() -> boolean)?,
     onPress: (() -> ())?,
     onRelease: (() -> ())?,
 }
@@ -3507,10 +3499,20 @@ local function createMobileAction(
         Size = UDim2.fromOffset(size, size),
         Text = label,
         TextColor3 = Theme.Text,
+        -- Wrapped and auto-scaled: a long module name is shown in full at a
+        -- smaller size instead of being clipped to its first few letters.
         TextScaled = true,
+        TextWrapped = true,
         Visible = not state.visible,
         ZIndex = 180,
     }) :: TextButton
+    create("UIPadding", {
+        Parent = button,
+        PaddingBottom = UDim.new(0, 4),
+        PaddingLeft = UDim.new(0, 4),
+        PaddingRight = UDim.new(0, 4),
+        PaddingTop = UDim.new(0, 4),
+    })
     create("UICorner", {
         Parent = button,
         CornerRadius = cornerRadius(12),
@@ -3523,8 +3525,8 @@ local function createMobileAction(
     })
     create("UITextSizeConstraint", {
         Parent = button,
-        MaxTextSize = 13,
-        MinTextSize = 8,
+        MaxTextSize = 12,
+        MinTextSize = 6,
     })
 
     local record: MobileActionRecord = {
@@ -3557,23 +3559,34 @@ local function createMobileAction(
         )
         record.moved = false
         -- Hold features engage on touch-down and stay engaged until the
-        -- finger lifts, so Sprint behaves like a real hold button.
-        if record.hold and record.hold.onPress and not record.holding then
+        -- finger lifts, so Sprint behaves like a real hold button. Everything
+        -- else stays a tap and fires on release.
+        local hold: MobileHoldCallbacks? = record.hold
+        local holdActive: boolean = hold ~= nil
+            and hold.onPress ~= nil
+            and (hold.isActive == nil or (hold.isActive :: () -> boolean)())
+        if holdActive and not record.holding then
             record.holding = true
             button.BackgroundTransparency = 0.02
-            task.spawn(record.hold.onPress)
+            task.spawn((hold :: MobileHoldCallbacks).onPress :: () -> ())
         end
         record.holdToken += 1
         local token: number = record.holdToken
-        task.delay(0.85, function(): ()
-            if mobileActions[id] == record
-                and record.activeInput == input
-                and not record.moved
-                and record.holdToken == token then
-                record.activeInput = nil
-                removeMobileAction(id)
-            end
-        end)
+        -- Hold-to-remove would fight a hold *feature*: keeping a finger on the
+        -- Sprint button is how you sprint, not how you delete it. Those are
+        -- removed from the menu instead, by tapping their key slot again.
+        if not holdActive then
+            task.delay(0.85, function(): ()
+                if mobileActions[id] == record
+                    and record.activeInput == input
+                    and not record.moved
+                    and record.holdToken == token then
+                    record.activeInput = nil
+                    removeMobileAction(id)
+                    notify(record.label .. " button removed.")
+                end
+            end)
+        end
     end)))
 
     table.insert(record.connections, trackUiConnection(
@@ -4541,14 +4554,15 @@ end)()
 state.universalProjectileCalibration:setEnabled(true)
 do
 local function applyGuiStyle(_: string, animate: boolean): ()
-    local activeShell: Frame = state.shells.default
     state.guiStyle = "Default"
     Content.Parent = state.shells.defaultContentHost
     -- The page host starts below the page header, so it is positioned from
     -- the responsive metrics instead of filling the content host.
     Content.Position = UDim2.fromOffset(0, state.layout.headerHeight)
     Content.Size = UDim2.new(1, 0, 1, -state.layout.headerHeight)
-    activeShell.Visible = true
+    -- The shell's visibility belongs to the menu toggle, not to a restyle:
+    -- `state.shells.default` is the window itself now, so forcing it visible
+    -- here would pop the menu open behind the player's back.
 
     Main.BackgroundColor3 = Theme.DefaultBackground
     state.mainStroke.Color = Theme.DefaultOutline
@@ -6729,10 +6743,7 @@ local function applyFeaturePresentation(feature: any, isDefault: boolean): ()
             or Theme.TextMuted
     end
     if feature.options then
-        feature.options.BackgroundColor3 = isDefault
-            and Theme.DefaultBackground
-            or Theme.Background
-        feature.options.BackgroundTransparency = isDefault and 0.62 or 0.66
+        feature.options.BackgroundTransparency = 1
     end
     if feature.arrow then
         feature.arrow.TextColor3 = isDefault
@@ -6884,12 +6895,28 @@ local function runActionButton(
     end)
 end
 
+-- Label for a placed mobile button.
+--
+-- It used to be squeezed into six characters, so "Infinite Jump" arrived as
+-- "INFINI" and several modules became indistinguishable. The full name is kept
+-- and the button wraps it over two lines at a smaller size; only genuinely
+-- long names are trimmed, on a word boundary.
 local function compactShortcutLabel(label: string): string
-    local compact: string = string.upper(label:gsub("[^%w]", ""))
-    if compact == "" then
-        return "ACT"
+    local trimmed: string = string.upper(
+        (string.gsub(string.gsub(label, "%s+", " "), "^%s*(.-)%s*$", "%1"))
+    )
+    if trimmed == "" then
+        return "ACTION"
     end
-    return string.sub(compact, 1, 6)
+    if #trimmed <= 18 then
+        return trimmed
+    end
+    local cut: string = string.sub(trimmed, 1, 18)
+    local lastSpace: number? = string.find(string.reverse(cut), " ")
+    if lastSpace and lastSpace < 8 then
+        cut = string.sub(cut, 1, 18 - lastSpace)
+    end
+    return cut
 end
 
 -- ---------------------------------------------------------------------------
@@ -6996,6 +7023,9 @@ local function bindActionShortcut(
                     end
                 end,
                 {
+                    isActive = function(): boolean
+                        return binding.hold == true
+                    end,
                     onPress = function(): ()
                         if binding.hold and binding.onPress then
                             binding.onPress()
@@ -7391,41 +7421,31 @@ local function createUniversalFeature(
         ):Play()
     end))
 
+    -- The options panel is a plain container, not a third surface.
+    --
+    -- It used to draw its own fill, corners and outline *inside* the card,
+    -- with every option row drawing its own fill and outline again inside
+    -- that: three nested rounded rectangles for one setting. The panel is
+    -- transparent now, so an expanded card shows the card and its rows, and
+    -- nothing in between.
     local options: Frame = (create("Frame", {
         Parent = row,
         Name = "Options",
         Active = true,
-        BackgroundColor3 = state.guiStyle == "Default"
-            and Theme.DefaultBackground
-            or Theme.Background,
-        BackgroundTransparency = state.guiStyle == "Default" and 0.62 or 0.66,
+        BackgroundTransparency = 1,
         BorderSizePixel = 0,
-        Position = UDim2.fromOffset(10, feature.collapsedHeight),
-        Size = UDim2.new(1, -20, 0, 0),
+        Position = UDim2.fromOffset(8, feature.collapsedHeight),
+        Size = UDim2.new(1, -16, 0, 0),
         Visible = false,
         ZIndex = row.ZIndex + 10,
     }) :: any) :: Frame
     feature.options = options
-    create("UICorner", {
-        Parent = options,
-        CornerRadius = cornerRadius(8),
-    })
-    -- Outline the whole panel so an expanded module is visibly one enclosed
-    -- surface rather than loose controls spilling out of the card.
-    create("UIStroke", {
-        Parent = options,
-        Name = "OptionsStroke",
-        ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-        Color = Theme.DefaultOutline,
-        Thickness = 1,
-        Transparency = 0.74,
-    })
     create("UIPadding", {
         Parent = options,
-        PaddingBottom = UDim.new(0, 9),
-        PaddingLeft = UDim.new(0, 9),
-        PaddingRight = UDim.new(0, 9),
-        PaddingTop = UDim.new(0, 9),
+        PaddingBottom = UDim.new(0, 6),
+        PaddingLeft = UDim.new(0, 2),
+        PaddingRight = UDim.new(0, 2),
+        PaddingTop = UDim.new(0, 2),
     })
     local optionsLayout: UIListLayout = (create("UIListLayout", {
         Parent = options,
@@ -7452,15 +7472,15 @@ local function createUniversalFeature(
             measuredHeight = declaredHeight
                 + math.max(0, visibleOptions - 1) * 6
         end
-        -- +18 = the panel's 9px top and bottom UIPadding.
-        local optionsHeight: number = measuredHeight + 18
-        local targetOptionsSize: UDim2 = UDim2.new(1, -20, 0, optionsHeight)
+        -- +8 = the panel's 2px top and 6px bottom UIPadding.
+        local optionsHeight: number = measuredHeight + 8
+        local targetOptionsSize: UDim2 = UDim2.new(1, -16, 0, optionsHeight)
         local targetRowSize: UDim2 = UDim2.new(
             1,
             0,
             0,
             feature.expanded
-                and feature.collapsedHeight + optionsHeight + 10
+                and feature.collapsedHeight + optionsHeight + 6
                 or feature.collapsedHeight
         )
         if feature.expanded then
@@ -7725,7 +7745,7 @@ local function createUniversalFeature(
         shortcutButton.Size =
             UDim2.fromOffset(metrics.keySlotWidth, metrics.iconButton)
         activationTarget.Size = UDim2.new(1, 0, 0, metrics.cardHeight)
-        options.Position = UDim2.fromOffset(10, metrics.cardHeight)
+        options.Position = UDim2.fromOffset(8, metrics.cardHeight)
         activeStripe.Size = UDim2.new(0, 2, 1, -14)
         updateExpandedSize(false)
     end
@@ -13241,11 +13261,14 @@ local setMotionRowState = makeToggleSettingRow(
 )
 state.setMotionRowState = setMotionRowState
 
+-- Menu key: keyboard-only. A touch client has no key to bind and reaches the
+-- menu through its floating button, so the row is not built there at all.
 local keyRow, keyControl = createSettingRow(
     "Menu key",
     "Choose the key used to show or hide"
 )
 keyRow.LayoutOrder = 4
+keyRow.Visible = not UserInputService.TouchEnabled
 
 local KeybindButton = makeButton(keyControl, state.toggleKey.Name, 13)
 KeybindButton.Size = UDim2.fromScale(1, 1)
@@ -13293,52 +13316,60 @@ local gameStatus = makeTextLabel(
 gameStatus.TextXAlignment = Enum.TextXAlignment.Center
 gameStatus.Size = UDim2.fromScale(1, 1)
 
-local mobileIconRow, mobileIconControl = createSettingRow(
-    "Mobile menu icon",
-    "Dog shortcut stays available so the menu cannot become unreachable"
-)
-mobileIconRow.LayoutOrder = 8
-mobileIconRow.Visible = UserInputService.TouchEnabled
-local MobileIconButton = makeButton(
-    mobileIconControl,
-    "ON - REQUIRED",
-    13
-)
-MobileIconButton.Size = UDim2.fromScale(1, 1)
-MobileIconButton:SetAttribute(
-    "Selected",
-    UserInputService.TouchEnabled and state.mobileMenuButtonVisible
-)
-MobileIconButton.BackgroundColor3 = UserInputService.TouchEnabled
-        and state.mobileMenuButtonVisible
-        and state.headerColor
-    or DEFAULT_SURFACE_COLOR
-
+-- Mobile action size.
+--
+-- The only mobile row left. "Mobile menu icon" always said ON - REQUIRED and
+-- could not be changed, and "Mobile action buttons" only offered a reset that
+-- holding a button already does, so both were noise. The size is a real value
+-- now instead of a four-step preset cycle: type it, or drag the slider.
 local mobileSizeRow, mobileSizeControl = createSettingRow(
     "Mobile action size",
-    "Size for placed mobile shortcuts"
+    "Exact pixel size for placed mobile shortcuts"
 )
-mobileSizeRow.LayoutOrder = 9
+mobileSizeRow.LayoutOrder = 8
 mobileSizeRow.Visible = UserInputService.TouchEnabled
-local MobileSizeButton = makeButton(
-    mobileSizeControl,
-    tostring(state.mobileButtonSize) .. " PX",
-    13
-)
-MobileSizeButton.Size = UDim2.fromScale(1, 1)
 
-local mobileResetRow, mobileResetControl = createSettingRow(
-    "Mobile action buttons",
-    "Hold ADD to place; hold a shortcut to remove it"
+local MobileSizeTrack: TextButton = create("TextButton", {
+    Parent = mobileSizeControl,
+    Name = "MobileSizeTrack",
+    Active = true,
+    AutoButtonColor = false,
+    AnchorPoint = Vector2.new(0, 0.5),
+    BackgroundColor3 = Theme.DefaultButtonPressed,
+    BorderSizePixel = 0,
+    Position = UDim2.new(0, 0, 0.5, 0),
+    Size = UDim2.new(1, -62, 0, 4),
+    Text = "",
+}) :: TextButton
+create("UICorner", {Parent = MobileSizeTrack, CornerRadius = UDim.new(1, 0)})
+local MobileSizeFill: Frame = create("Frame", {
+    Parent = MobileSizeTrack,
+    Name = "Fill",
+    BackgroundColor3 = Theme.DefaultButtonHover,
+    BorderSizePixel = 0,
+    Size = UDim2.fromScale(0, 1),
+}) :: Frame
+create("UICorner", {Parent = MobileSizeFill, CornerRadius = UDim.new(1, 0)})
+local MobileSizeKnob: Frame = create("Frame", {
+    Parent = MobileSizeTrack,
+    Name = "Knob",
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    BackgroundColor3 = Theme.DefaultText,
+    BorderSizePixel = 0,
+    Position = UDim2.fromScale(0, 0.5),
+    Size = UDim2.fromOffset(14, 14),
+    ZIndex = 3,
+}) :: Frame
+create("UICorner", {Parent = MobileSizeKnob, CornerRadius = UDim.new(1, 0)})
+local MobileSizeInput: TextBox = makeTextBox(
+    mobileSizeControl,
+    tostring(state.mobileButtonSize)
 )
-mobileResetRow.LayoutOrder = 10
-mobileResetRow.Visible = UserInputService.TouchEnabled
-local MobileResetButton = makeButton(
-    mobileResetControl,
-    "RESET PLACED",
-    13
-)
-MobileResetButton.Size = UDim2.fromScale(1, 1)
+MobileSizeInput.Name = "MobileSizeValue"
+MobileSizeInput.AnchorPoint = Vector2.new(1, 0.5)
+MobileSizeInput.Position = UDim2.new(1, 0, 0.5, 0)
+MobileSizeInput.Size = UDim2.fromOffset(54, 24)
+MobileSizeInput.PlaceholderText = "px"
 
 -- Contribute the Settings/overlay-specific side effects to the shared
 -- visibility controller instead of replacing it. `state.setMenuVisible` stays
@@ -13538,49 +13569,102 @@ trackUiConnection(DestructButton.MouseButton1Click:Connect(function(): ()
     end)
 end))
 
-trackUiConnection(MobileIconButton.MouseButton1Click:Connect(function(): ()
-    if not UserInputService.TouchEnabled then
-        return
-    end
-    notify("The mobile menu icon remains enabled so the menu is always reachable.")
-end))
+-- Mobile action size: exact value, from the field or the slider.
+do
+local MOBILE_SIZE_MINIMUM: number = 28
+local MOBILE_SIZE_MAXIMUM: number = 120
 
-trackUiConnection(MobileSizeButton.MouseButton1Click:Connect(function(): ()
-    if not UserInputService.TouchEnabled then
-        return
+local function applyMobileButtonSize(requested: number, persist: boolean): ()
+    local size: number = math.clamp(
+        math.round(requested),
+        MOBILE_SIZE_MINIMUM,
+        MOBILE_SIZE_MAXIMUM
+    )
+    state.mobileButtonSize = size
+    configData.ui.mobileButtonSize = size
+
+    local ratio: number = (size - MOBILE_SIZE_MINIMUM)
+        / (MOBILE_SIZE_MAXIMUM - MOBILE_SIZE_MINIMUM)
+    MobileSizeFill.Size = UDim2.fromScale(ratio, 1)
+    MobileSizeKnob.Position = UDim2.fromScale(ratio, 0.5)
+    if not MobileSizeInput:IsFocused() then
+        MobileSizeInput.Text = tostring(size)
     end
-    local sizes: {number} = {42, 52, 62, 72}
-    local nextSize: number = sizes[1]
-    for index: number, size: number in ipairs(sizes) do
-        if state.mobileButtonSize == size then
-            nextSize = sizes[(index % #sizes) + 1]
-            break
-        end
-    end
-    state.mobileButtonSize = nextSize
-    configData.ui.mobileButtonSize = nextSize
-    MobileSizeButton.Text = tostring(nextSize) .. " PX"
+
+    -- Every placed button follows immediately, and is pulled back on screen
+    -- if the new size pushed it past an edge.
     for _, record: MobileActionRecord in pairs(state.mobileUi.actions) do
-        record.button.Size = UDim2.fromOffset(nextSize, nextSize)
+        record.button.Size = UDim2.fromOffset(size, size)
         local clamped: Vector2 = state.mobileUi.clampButtonPosition(
             Vector2.new(
                 record.button.Position.X.Offset,
                 record.button.Position.Y.Offset
             ),
-            nextSize
+            size
         )
         record.button.Position = UDim2.fromOffset(clamped.X, clamped.Y)
         state.mobileUi.saveActionPosition(record)
     end
-    queueConfigSave()
-end))
+    if persist then
+        queueConfigSave()
+    end
+end
 
-trackUiConnection(MobileResetButton.MouseButton1Click:Connect(function(): ()
-    if not UserInputService.TouchEnabled then
+local function sizeFromPointer(pointerX: number): number
+    local width: number = math.max(1, MobileSizeTrack.AbsoluteSize.X)
+    local alpha: number = math.clamp(
+        (pointerX - MobileSizeTrack.AbsolutePosition.X) / width,
+        0,
+        1
+    )
+    return MOBILE_SIZE_MINIMUM
+        + alpha * (MOBILE_SIZE_MAXIMUM - MOBILE_SIZE_MINIMUM)
+end
+
+local mobileSizeDrag: InputObject? = nil
+trackUiConnection(MobileSizeTrack.InputBegan:Connect(function(
+    input: InputObject
+): ()
+    if input.UserInputType ~= Enum.UserInputType.MouseButton1
+        and input.UserInputType ~= Enum.UserInputType.Touch then
         return
     end
-    state.mobileUi.resetActions()
+    mobileSizeDrag = input
+    applyMobileButtonSize(sizeFromPointer(input.Position.X), false)
 end))
+trackUiConnection(UserInputService.InputChanged:Connect(function(
+    input: InputObject
+): ()
+    if mobileSizeDrag
+        and (input.UserInputType == Enum.UserInputType.MouseMovement
+            or input.UserInputType == Enum.UserInputType.Touch) then
+        applyMobileButtonSize(sizeFromPointer(input.Position.X), false)
+    end
+end))
+trackUiConnection(UserInputService.InputEnded:Connect(function(
+    input: InputObject
+): ()
+    if mobileSizeDrag
+        and (input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch) then
+        mobileSizeDrag = nil
+        applyMobileButtonSize(state.mobileButtonSize, true)
+    end
+end))
+
+trackUiConnection(MobileSizeInput.FocusLost:Connect(function(): ()
+    local parsed: number? = tonumber(MobileSizeInput.Text)
+    if parsed == nil then
+        MobileSizeInput.Text = tostring(state.mobileButtonSize)
+        notify("Mobile action size: enter a number of pixels.")
+        return
+    end
+    applyMobileButtonSize(parsed, true)
+    notify("Mobile action size: " .. tostring(state.mobileButtonSize) .. " px")
+end))
+
+applyMobileButtonSize(state.mobileButtonSize, false)
+end
 
 trackUiConnection(KeybindButton.MouseButton1Click:Connect(function(): ()
     if state.keyCaptureCancel then

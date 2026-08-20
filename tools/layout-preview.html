@@ -290,8 +290,13 @@ function render() {
   shell.className = "shell";
   screen.appendChild(shell);
 
-  // Navigation rail.
-  const rail = el("div", {width: px(m.sidebarWidth), padding: px(0)});
+  // Navigation rail. Rounded on the window side only: the shell clips to its
+  // rectangle, not to its corner, so a square rail used to fill the corners.
+  const railRadius = Math.min(30, Math.round(m.shellCorner * 1.3));
+  const rail = el("div", {
+    width: px(m.sidebarWidth), padding: px(0),
+    borderTopLeftRadius: px(railRadius), borderBottomLeftRadius: px(railRadius),
+  });
   rail.className = "rail";
   shell.appendChild(rail);
   rail.appendChild(el("div", {})).className = "edge";
