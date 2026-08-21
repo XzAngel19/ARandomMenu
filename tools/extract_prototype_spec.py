@@ -154,6 +154,30 @@ def parse_transition_seconds(declaration: str) -> float:
     return float(match.group(1))
 
 
+def parse_scale_control(html: str) -> dict:
+    """The prototype Scale slider, not a viewport formula.
+
+    numeric(body,"Scale",UI.scale,.7,1.6,2,...) is the only place the
+    prototype says how scale works: a user setting, default 1, min 0.7,
+    max 1.6. There is no reference resolution and no auto factor. A
+    ClickGui that invents 1080 and 1.35 is ungrounded.
+    """
+    match = re.search(
+        r'numeric\(body,"Scale",UI\.scale,([0-9.]+),([0-9.]+),(\d+)',
+        html,
+    )
+    if not match:
+        raise SystemExit(f"{PROTOTYPE}: Scale slider not found")
+    return {
+        "default": 1,
+        "min": css_number(match.group(1)),
+        "max": css_number(match.group(2)),
+        "decimals": int(match.group(3)),
+        "referenceHeight": None,
+        "autoFactor": None,
+    }
+
+
 def build_spec(html: str) -> dict:
     root = parse_root(html)
     missing = [css for css in SHAPE_FROM_ROOT if css not in root]
@@ -210,6 +234,7 @@ def build_spec(html: str) -> dict:
         "chrome": chrome,
         "components": components,
         "luau": luau,
+        "scaleControl": parse_scale_control(html),
         "wurst": wurst_features.spec_section(),
     }
     return spec
@@ -363,6 +388,45 @@ def check_luau(spec: dict) -> list[str]:
     return failures
 
 
+def check_ungrounded_scale(spec: dict, constants: dict) -> list[str]:
+    """Refuse a viewport scale the prototype never declared.
+
+    ClickGui currently multiplies height/1080 by 1.35. The prototype's
+    Scale slider is 1 by default, 0.7 to 1.6. Putting 1080 or 1.35 into
+    spec.json would make that loose decision official. Naming the
+    constants without a prototype source fails and names both sides.
+    """
+    failures = []
+    control = spec.get("scaleControl") or {}
+    gui = clickgui_path()
+    source = open(gui, encoding="utf-8").read() if gui else ""
+    if "REFERENCE_HEIGHT" in constants:
+        failures.append(
+            f"REFERENCE_HEIGHT={constants['REFERENCE_HEIGHT']} has no "
+            f"prototype source (Scale is a user slider, default "
+            f"{control.get('default')}, min {control.get('min')}, "
+            f"max {control.get('max')})"
+        )
+    if re.search(r"\*\s*1\.35", source):
+        failures.append(
+            "ClickGui multiplies viewport scale by 1.35; "
+            f"prototype Scale default is {control.get('default')}"
+        )
+    minimum = constants.get("SCALE_MINIMUM")
+    if minimum is not None and not numbers_close(minimum, control.get("min")):
+        failures.append(
+            f"SCALE_MINIMUM: {minimum} != prototype Scale min "
+            f"{control.get('min')}"
+        )
+    maximum = constants.get("SCALE_MAXIMUM")
+    if maximum is not None and not numbers_close(maximum, control.get("max")):
+        failures.append(
+            f"SCALE_MAXIMUM: {maximum} != prototype Scale max "
+            f"{control.get('max')}"
+        )
+    return failures
+
+
 def check_wurst_settings(spec: dict, shell: str, constants: dict) -> list[str]:
     """Hold named Luau counterparts to official Wurst defaults."""
     failures = []
@@ -455,6 +519,9 @@ def main() -> int:
             print("owed · " + ", ".join(owed))
         if settings_owed:
             print("owed settings · " + ", ".join(settings_owed))
+        ungrounded = check_ungrounded_scale(spec, constants)
+        if ungrounded:
+            print("ungrounded · " + " · ".join(ungrounded))
         return 0
 
     os.makedirs(os.path.dirname(SPEC), exist_ok=True)

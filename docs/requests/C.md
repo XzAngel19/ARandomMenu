@@ -40,6 +40,38 @@ Agent D (unblocked by PRODUCT on the mock):
 - `src/modules/Combat/ProjectileCalibration.luau` does the same
 - `[RTM:…]` log prefixes in those two files
 
+## Furniture the suites are waiting on
+
+`tools/test/suites/furniture.luau` is written. Until these exist it
+records the gap and stays green.
+
+- **Wordmark.** Resolve `assets/wurst/wurst_128.png` through the
+  `getcustomasset` path. An executor without that function keeps the
+  text fallback (`PRODUCT.name`). The shell still loads `brandLogo` →
+  `menu-logo.jpg` onto the mobile launcher; that is the old product art.
+- **HackList.** Exactly the enabled cards. `card.status` non-nil prints
+  `Name [status]`. `nil` prints the bare name. `card:SetStatus` already
+  exists.
+- **Pill.** Visible with the GUI closed. The mobile launcher is not the
+  pill: it is phone-only and hides when the menu is open.
+- **Tooltip.** 400 ms, not before. The shell still has
+  `task.delay(0.42)` behind `COMPACT_FEATURE_CARDS`, which currently
+  skips tooltips entirely.
+
+## ClickGui UIScale is ungrounded
+
+The prototype does **not** declare a reference resolution or an auto
+factor. Scale is a user slider: default **1**, min **0.7**, max **1.6**,
+two decimals (`numeric(body,"Scale",UI.scale,.7,1.6,2,…)`). Those numbers
+are now in `spec.json` `scaleControl`. `referenceHeight` and `autoFactor`
+are explicitly null.
+
+ClickGui currently does `(viewport.Y / 1080) * 1.35` clamped to
+`SCALE_MINIMUM=0.85` / `SCALE_MAXIMUM=1.6`. The gate prints that as
+`ungrounded` and will not copy 1080 or 1.35 into the spec. Delete
+`REFERENCE_HEIGHT` and the `* 1.35`. The Scale slider, when UI Settings
+lands, is the counterpart of `ThemeEngine.shape.scale` (already 1).
+
 ## ClickGUI hooks the harness is waiting on
 
 `ThemeEngine.Bind` / `Apply` and the render bucket landed on live. The
