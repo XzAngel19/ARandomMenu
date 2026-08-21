@@ -1593,10 +1593,6 @@ local function buildTRSFeatures()
     addToggleOption(TackleFeature, "Opponents only", true, function(value)
         settings.opponentsOnly = value
     end)
-    addInformationOption(
-        TackleFeature,
-        "Reach: 3-16 studs. Prediction: 0-0.30 s. Recommended: 8 / 0.12."
-    )
 
     local DribbleFeature = createUniversalFeature(
         "Auto Dribble",
@@ -1633,7 +1629,7 @@ local function buildTRSFeatures()
 
     local PickupFeature = createUniversalFeature(
         "Auto Pickup",
-        "Use TRS's pickup remote for nearby loose balls with height and delay limits",
+        "Grab nearby loose balls through the game's own pickup remote",
         3,
         toggleAutoPickup,
         {
@@ -1670,7 +1666,9 @@ local function buildTRSFeatures()
     end)
     addInformationOption(
         PickupFeature,
-        "Reach: 3-180. Height: 2-50. Reported distance: 0.5-10. Delay: 0.05-0.50 s."
+        "The pickup remote is found by its instance attribute, not by name — no "
+            .. "capture ever named it. If a match does nothing, that identification "
+            .. "is the first thing to check."
     )
 
     local PassFeature = createUniversalFeature(
@@ -1797,7 +1795,7 @@ local function buildTRSFeatures()
     end)
     addInformationOption(
         GoalVisualFeature,
-        "Range: 25-180. Margin: 0.5-6. Curve: -20 to 20. Green means a clear shot."
+        "Green means the keeper cannot reach that entry; red means blocked."
     )
 
     local TrajectoryFeature = createUniversalFeature(
@@ -1813,10 +1811,6 @@ local function buildTRSFeatures()
     addNumberOption(TrajectoryFeature, "Prediction time", 2.4, 0.8, 4, function(value)
         settings.trajectoryTime = value
     end)
-    addInformationOption(
-        TrajectoryFeature,
-        "Prediction window: 0.8-4.0 seconds. Twenty reusable segments prevent FPS drops."
-    )
 
     local GoalkeeperFeature = createUniversalFeature(
         "Goalkeeper Assist",
@@ -1837,10 +1831,6 @@ local function buildTRSFeatures()
     addNumberOption(GoalkeeperFeature, "High ball height", 5, 3, 9, function(value)
         settings.goalkeeperHighBall = value
     end)
-    addInformationOption(
-        GoalkeeperFeature,
-        "Range: 12-45 studs. Ball speed: 4-30. High threshold: 3-9 studs."
-    )
 
     local HeaderFeature = createUniversalFeature(
         "Auto Header",
