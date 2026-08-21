@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "b7a15374119cd54d",
+    stamp = "614b4a3f57e72521",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -19999,8 +19999,58 @@ function Module.search(context: Runtime, animations: any, runtime: any): ()
     animations:Notify(tostring(#found) .. " packs from Roblox")
 end
 
--- A bundle id becomes eight asset ids, keyed by the slot each one's name says
--- it belongs to.
+-- A bundle item is often a container asset, not the AnimationClip that an
+-- Animator can play. Roblox's default pack ids are the common example: putting
+-- 619512767 straight into an Animation reaches LoadAnimation and fails with
+-- "AnimationClip loaded is not valid". GetObjects opens the asset locally; an
+-- Animation child names the real clip, while a KeyframeSequence means the id
+-- was already a clip.
+function Module.resolveClipId(assetId: number): number?
+    local loaded: {Instance} = {}
+    local ok: boolean = pcall(function(): ()
+        loaded = game:GetObjects("rbxassetid://" .. tostring(assetId))
+    end)
+    if not ok then
+        return nil
+    end
+
+    local resolved: number? = nil
+    for _, root: Instance in ipairs(loaded) do
+        if root:IsA("KeyframeSequence") then
+            resolved = assetId
+        end
+        local candidates: {Instance} = {root}
+        for _, descendant: Instance in ipairs(root:GetDescendants()) do
+            table.insert(candidates, descendant)
+        end
+        for _, candidate: Instance in ipairs(candidates) do
+            if candidate:IsA("Animation") then
+                local id: number? = tonumber(
+                    string.match((candidate :: Animation).AnimationId, "%d+")
+                )
+                if id and id > 0 then
+                    resolved = id
+                    break
+                end
+            end
+        end
+        root:Destroy()
+        if resolved then
+            break
+        end
+    end
+    -- GetObjects can return several roots. The answer came from one, but none
+    -- of these temporary containers belongs in the DataModel afterwards.
+    for _, root: Instance in ipairs(loaded) do
+        pcall(function(): ()
+            root:Destroy()
+        end)
+    end
+    return resolved
+end
+
+-- A bundle id becomes eight playable clip ids, keyed by the slot each item's
+-- own name identifies.
 function Module.resolveBundle(bundleId: number): {[string]: number}
     local ids: {[string]: number} = {}
     pcall(function(): ()
@@ -20019,7 +20069,10 @@ function Module.resolveBundle(bundleId: number): {[string]: number}
             local id: number? = tonumber(item.Id or item.id)
             local slot: string? = slotForName(name)
             if id and slot and not ids[slot] then
-                ids[slot] = id
+                local clipId: number? = Module.resolveClipId(id)
+                if clipId then
+                    ids[slot] = clipId
+                end
             end
         end
     end)
@@ -20241,6 +20294,7 @@ function Module.init(context: Runtime): any
 
     local runtime: any = {
         track = nil :: AnimationTrack?,
+        tracks = {} :: {[AnimationTrack]: boolean},
         catalog = {} :: {any},
         byLabel = {} :: {[string]: number},
         searching = false,
@@ -20291,16 +20345,33 @@ function Module.init(context: Runtime): any
         return rows
     end
 
-    local function stop(): ()
-        local track: AnimationTrack? = runtime.track
-        runtime.track = nil
-        if track then
-            local resolved: AnimationTrack = track :: AnimationTrack
+    local function destroyTrack(track: AnimationTrack, stopFirst: boolean): ()
+        runtime.tracks[track] = nil
+        if runtime.track == track then
+            runtime.track = nil
+        end
+        if stopFirst then
             pcall(function(): ()
-                resolved:Stop(0.15)
-                resolved:Destroy()
+                track:Stop(0.15)
             end)
         end
+        pcall(function(): ()
+            track:Destroy()
+        end)
+    end
+
+    local function stop(): ()
+        local track: AnimationTrack? = runtime.track
+        if track then
+            destroyTrack(track :: AnimationTrack, true)
+        end
+    end
+
+    local function destroyAllTracks(): ()
+        for track: AnimationTrack in pairs(runtime.tracks) do
+            destroyTrack(track, true)
+        end
+        runtime.track = nil
     end
 
     local emotes: any
@@ -20314,7 +20385,7 @@ function Module.init(context: Runtime): any
         Function = function(enabled: boolean): ()
             if not enabled then
                 emotes:SetStatus(nil)
-                stop()
+                destroyAllTracks()
                 return
             end
             emotes:SetStatus(
@@ -20323,9 +20394,9 @@ function Module.init(context: Runtime): any
             -- Dying mid-emote leaves a track pointing at a humanoid that no
             -- longer exists.
             emotes:Event(localPlayer.CharacterAdded, function(): ()
-                stop()
+                destroyAllTracks()
             end)
-            emotes:Clean(stop)
+            emotes:Clean(destroyAllTracks)
         end,
     })
 
@@ -20405,7 +20476,7 @@ function Module.init(context: Runtime): any
         Tooltip = "Play the ticked emote, or the id in the box.",
         Function = function(): ()
             task.spawn(function(): ()
-                Module.play(context, emotes, runtime, animator, stop)
+                Module.play(context, emotes, runtime, animator, stop, destroyTrack)
             end)
         end,
     })
@@ -20423,7 +20494,7 @@ function Module.init(context: Runtime): any
     )
 
     activeCleanup = function(): ()
-        stop()
+        destroyAllTracks()
         runtime.catalog = {}
         runtime.byLabel = {}
         runtime.selected = nil
@@ -20492,7 +20563,8 @@ function Module.play(
     emotes: any,
     runtime: any,
     animator: () -> Animator?,
-    stop: () -> ()
+    stop: () -> (),
+    destroyTrack: (AnimationTrack, boolean) -> ()
 ): ()
     local typed: number? = tonumber(
         trimmed(tostring(emotes.Options["Emote ID"].Value or ""))
@@ -20527,6 +20599,7 @@ function Module.play(
     local resolved: AnimationTrack = track :: AnimationTrack
     resolved.Priority = Enum.AnimationPriority.Action
     resolved.Looped = emotes.Options["Loop"].Value == true
+    runtime.tracks[resolved] = true
     runtime.track = resolved
     local ok: boolean = pcall(function(): ()
         resolved:Play(0.1)
@@ -20534,16 +20607,16 @@ function Module.play(
     end)
     animation:Destroy()
     if not ok then
+        destroyTrack(resolved, false)
         emotes:Notify("the game refused to play it")
         return
     end
     if not resolved.Looped then
-        -- One-shot emotes clean themselves up, so the Stop button is only for
-        -- the looping ones.
+        -- Stopped tracks still count toward Animator's 64-track ceiling until
+        -- they are destroyed. One-shots therefore release themselves instead
+        -- of only dropping the module's pointer.
         resolved.Stopped:Once(function(): ()
-            if runtime.track == resolved then
-                runtime.track = nil
-            end
+            destroyTrack(resolved, false)
         end)
     end
     emotes:Notify("playing " .. tostring(assetId))
