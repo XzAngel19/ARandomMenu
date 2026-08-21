@@ -213,6 +213,53 @@ def state_index_contract(sources: list, failures: list) -> None:
         )
 
 
+def state_index_comment_contract(failures: list) -> None:
+    """A declared key has to come with a reason, not a restatement of its name.
+
+    Grouping is allowed: a run of keys under one comment (the per-game
+    boards, the teardown hooks) share the line that introduced them. A key
+    after a blank line with no comment of its own is a hole. A comment that
+    is just the key again, or shorter than a short sentence, is padding.
+    """
+    text = open("state.d.luau").read()
+    start = text.find("export type MenuState")
+    end = text.find("\n}\n", start)
+    if start < 0 or end < 0:
+        failures.append("state.d.luau: MenuState type is missing")
+        return
+    body = text[start:end]
+    last_commented = False
+    for line in body.splitlines():
+        match = re.match(r"^    (\w+):", line)
+        if not match:
+            if line.strip() == "":
+                last_commented = False
+            continue
+        name = match.group(1)
+        comment_match = re.search(r"--\s*(.*)$", line)
+        if comment_match:
+            comment = comment_match.group(1).strip()
+            last_commented = True
+            if len(comment) < 8:
+                failures.append(
+                    f"state.d.luau: state.{name} has a comment too short to "
+                    f"explain it: {comment!r}"
+                )
+                continue
+            normalised = re.sub(r"[^a-z0-9]", "", comment.lower())
+            if normalised == name.lower():
+                failures.append(
+                    f"state.d.luau: state.{name} restates its own name "
+                    "instead of saying what it is for"
+                )
+            continue
+        if not last_commented:
+            failures.append(
+                f"state.d.luau: state.{name} has no comment and is not "
+                "grouped under the previous one"
+            )
+
+
 def show_rule_contract(sources: list, failures: list) -> None:
     """A row that declares when it belongs on screen has to name a real option.
 

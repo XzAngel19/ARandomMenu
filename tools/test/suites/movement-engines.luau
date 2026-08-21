@@ -216,6 +216,17 @@ return function(ctx: any): ()
     stub.step(1 / 60)
     check("the flight loop runs against the stand-in character",
         root.AssemblyLinearVelocity ~= nil)
+
+    -- Wall-clock, not the mocked os.clock. Raise only with a comment saying
+    -- what got more expensive.
+    local BUDGET_FLY_FRAME_SECONDS: number = 0.010
+    local flyPerFrame: number = ctx.measureFrames(stub.step, 20)
+    check(
+        "Fly stays inside the per-frame time budget",
+        flyPerFrame <= BUDGET_FLY_FRAME_SECONDS,
+        string.format("%.4fs/frame", flyPerFrame)
+    )
+
     fly.Feature.activate()
     check("disabling releases the task", stub.taskCount() == baseline)
     check("disable zeroes the leftover velocity",
@@ -286,6 +297,17 @@ return function(ctx: any): ()
         stub.taskCount() == baseline + 1)
     stub.step(1 / 60)
     stub.step(1 / 60)
+
+    -- Wall-clock, not the mocked os.clock. Raise only with a comment saying
+    -- what got more expensive.
+    local BUDGET_PHYSICS_FRAME_SECONDS: number = 0.010
+    local physicsPerFrame: number = ctx.measureFrames(stub.step, 20)
+    check(
+        "Physics Speed stays inside the per-frame time budget",
+        physicsPerFrame <= BUDGET_PHYSICS_FRAME_SECONDS,
+        string.format("%.4fs/frame", physicsPerFrame)
+    )
+
     physics.Feature.activate()
     check("disabling releases the task", stub.taskCount() == baseline)
 

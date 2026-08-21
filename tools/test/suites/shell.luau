@@ -8,11 +8,10 @@
 -- string) and tools/test/_bundle_source.luau (the stamped bundle as a string)
 -- before this runs.
 --
--- The loader used to be tested against a stub HttpGet that compiled into an
--- empty module. Five of thirty-eight modules then died on a real client for a
--- week because they called a host field the shell never published, and every
--- check here stayed green. Feeding the real bundle is what makes
--- `moduleCount == #manifest.modules` a question this suite can answer.
+-- Two boots. The first feeds the stamped bundle, which is the path a client
+-- takes. The second 404s only that one URL and serves every other file from
+-- the same bundle's `files` table, which is the recovery path
+-- `downloadSourcesParallel` was written for and that nothing had ever run.
 
 return function(ctx: any): ()
     local Mock: any = ctx.Mock
@@ -40,40 +39,86 @@ return function(ctx: any): ()
             or tostring(ctx.bundleSourceError)
     )
 
-    local world: any = Mock.install()
-    local playerGui: any = Mock.newInstance("PlayerGui")
-    playerGui.Name = "PlayerGui"
-    playerGui.Parent = world.localPlayer
+    local packed: any = require("../../../runtime/bundle")
+    local manifest: any = require("../../../src/core/Manifest")
+    local expectedModules: number = type(manifest.modules) == "table"
+        and #manifest.modules
+        or 0
 
-    local chunk: any, compileError: any = loadstring(source, "@ARandomMenu.luau")
-    check("the shell compiles", type(chunk) == "function", tostring(compileError))
-    if type(chunk) ~= "function" then
-        return
+    local function pathFromUrl(url: any): string?
+        if type(url) ~= "string" then
+            return nil
+        end
+        local withoutQuery: string = string.match(url, "^([^?]+)") or url
+        return string.match(withoutQuery, "/refs/heads/[^/]+/(.+)$")
     end
 
-    Mock.inject(world, chunk)
-    local environment: any = getfenv(chunk)
-    local shellState: any = nil
-    local realSetfenv: any = environment.setfenv
-    environment.setfenv = function(fn: any, env: any): any
-        if type(env) == "table" and env.state ~= nil then
-            shellState = env.state
+    -- One boot against one HttpGet. Kept as a helper so the recovery pass
+    -- does not duplicate the capture of `state` or sit on the 200-local
+    -- ceiling of this file.
+    local function bootOnce(httpGet: any): any
+        local world: any = Mock.install()
+        local playerGui: any = Mock.newInstance("PlayerGui")
+        playerGui.Name = "PlayerGui"
+        playerGui.Parent = world.localPlayer
+
+        local chunk: any, compileError: any = loadstring(source, "@ARandomMenu.luau")
+        if type(chunk) ~= "function" then
+            return {
+                world = world,
+                compiled = false,
+                compileError = compileError,
+            }
         end
-        return realSetfenv(fn, env)
+
+        Mock.inject(world, chunk)
+        if type(httpGet) == "function" then
+            world.globals.game.HttpGet = httpGet
+        end
+
+        local captured: any = nil
+        local environment: any = getfenv(chunk)
+        local realSetfenv: any = environment.setfenv
+        environment.setfenv = function(fn: any, env: any): any
+            if type(env) == "table" and env.state ~= nil then
+                captured = env.state
+            end
+            return realSetfenv(fn, env)
+        end
+
+        local started: number = os.clock()
+        local ran: boolean, failure: any = xpcall(chunk, function(message: any): string
+            return tostring(message)
+        end)
+        return {
+            world = world,
+            playerGui = playerGui,
+            state = captured,
+            compiled = true,
+            ran = ran,
+            failure = failure,
+            elapsed = os.clock() - started,
+        }
+    end
+
+    local function moduleCountOf(boot: any): number
+        local state: any = boot.state
+        if not state or not state.boot or not state.boot.timing then
+            return -1
+        end
+        return tonumber(state.boot.timing.moduleCount) or -1
     end
 
     -- Production path: one HttpGet for the stamped bundle, then every file
-    -- the manifest names is compiled out of `packed.files`. The stub that
-    -- used to sit here compiled into `{stamp="", files={}}`, which the
-    -- loader rejected, so kernel, libraries and the 38 modules never ran.
+    -- the manifest names is compiled out of `packed.files`.
+    local productionGet: any = nil
     if type(bundleSource) == "string" then
-        local originalHttpGet: any = world.globals.game.HttpGet
-        world.globals.game.HttpGet = function(self: any, url: any, cache: any): string
+        productionGet = function(_self: any, url: any, _cache: any): string
             if type(url) == "string"
                 and string.find(url, "runtime/bundle.luau", 1, true) then
                 return bundleSource
             end
-            return originalHttpGet(self, url, cache)
+            return "404: Not Found"
         end
     end
 
@@ -81,13 +126,16 @@ return function(ctx: any): ()
     -- client does this in 0.59s; headless also has to compile the bundle.
     -- Raise the number only with a comment saying what got more expensive.
     local BUDGET_BOOT_SECONDS: number = 1.5
-    local bootStarted: number = os.clock()
-    local ran: boolean, failure: any = xpcall(chunk, function(message: any): string
-        return tostring(message)
-    end)
-    local bootElapsed: number = os.clock() - bootStarted
-    check("the shell runs", ran == true, tostring(failure))
+    local boot: any = bootOnce(productionGet)
+    check("the shell compiles", boot.compiled == true, tostring(boot.compileError))
+    if not boot.compiled then
+        return
+    end
+    check("the shell runs", boot.ran == true, tostring(boot.failure))
 
+    local world: any = boot.world
+    local playerGui: any = boot.playerGui
+    local shellState: any = boot.state
     local gui: any = playerGui:FindFirstChild("RandomTestingMenu0001")
         or world.services.CoreGui:FindFirstChild("RandomTestingMenu0001")
     check("the window is built", gui ~= nil)
@@ -141,14 +189,6 @@ return function(ctx: any): ()
     -- The assertion that would have caught this morning's bug in the first
     -- minute: five modules called `host.addFeatureTooltip`, the shell had
     -- never published it, and nothing counted the cards that never appeared.
-    local manifest: any = require("../../../src/core/Manifest")
-    local expectedModules: number = type(manifest.modules) == "table"
-        and #manifest.modules
-        or 0
-    local startedModules: number = shellState
-        and shellState.boot
-        and tonumber(shellState.boot.timing.moduleCount)
-        or -1
     check(
         "the bootstrap accepted the bundle",
         shellState ~= nil
@@ -158,13 +198,13 @@ return function(ctx: any): ()
     )
     check(
         "every manifest module started",
-        startedModules == expectedModules,
-        string.format("%s/%s", tostring(startedModules), tostring(expectedModules))
+        moduleCountOf(boot) == expectedModules,
+        string.format("%s/%s", tostring(moduleCountOf(boot)), tostring(expectedModules))
     )
     check(
         "headless boot stays inside the time budget",
-        bootElapsed <= BUDGET_BOOT_SECONDS,
-        string.format("%.3fs", bootElapsed)
+        boot.elapsed <= BUDGET_BOOT_SECONDS,
+        string.format("%.3fs", boot.elapsed)
     )
 
     local inputService: any = world.services.UserInputService
@@ -207,4 +247,48 @@ return function(ctx: any): ()
         inputService.InputBegan:Count() == 0,
         "listeners: " .. tostring(inputService.InputBegan:Count())
     )
+
+    section("Shell recovery boot")
+
+    -- The bundle is gone. Every other repository file is served from the
+    -- same `files` table the production path compiled as one module, which
+    -- is what `downloadSourcesParallel` is for. A 404 for anything else
+    -- (assets, a game module) is the honest answer: those are not in the
+    -- startup bundle.
+    local recoveryGet = function(_self: any, url: any, _cache: any): string
+        if type(url) == "string"
+            and string.find(url, "runtime/bundle.luau", 1, true) then
+            return "404: Not Found"
+        end
+        local path: string? = pathFromUrl(url)
+        local files: any = packed.files
+        if path and type(files) == "table" and type(files[path]) == "string" then
+            return files[path]
+        end
+        return "404: Not Found"
+    end
+
+    local recovered: any = bootOnce(recoveryGet)
+    check("recovery compiles", recovered.compiled == true, tostring(recovered.compileError))
+    check("recovery runs", recovered.ran == true, tostring(recovered.failure))
+    check(
+        "recovery refused the missing bundle",
+        recovered.state ~= nil
+            and recovered.state.boot ~= nil
+            and recovered.state.boot.bundle == nil,
+        recovered.state and recovered.state.boot and "bundle was accepted" or "no state"
+    )
+    check(
+        "recovery still started every module",
+        moduleCountOf(recovered) == expectedModules,
+        string.format(
+            "%s/%s",
+            tostring(moduleCountOf(recovered)),
+            tostring(expectedModules)
+        )
+    )
+
+    if recovered.state and type(recovered.state.destruct) == "function" then
+        recovered.state.destruct()
+    end
 end

@@ -430,6 +430,19 @@ return function(ctx: any): ()
     stub.step(0.016)
     check("nothing is pressed while disabled", buttonPresses == afterDisable)
 
+    -- Wall-clock, not the mocked os.clock. Raise only with a comment saying
+    -- what got more expensive.
+    local BUDGET_CLICKER_FRAME_SECONDS: number = 0.010
+    world.mouseDown = true
+    clicker:Toggle()
+    local clickerPerFrame: number = ctx.measureFrames(stub.step, 20)
+    clicker:Toggle()
+    check(
+        "Auto Clicker stays inside the per-frame time budget",
+        clickerPerFrame <= BUDGET_CLICKER_FRAME_SECONDS,
+        string.format("%.4fs/frame", clickerPerFrame)
+    )
+
     -- Kill Aura target readout ------------------------------------------------------
 
     section("Kill Aura show target")
