@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "20c8ada1af6978c2",
+    stamp = "83c8f374c89151ec",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -154,8 +154,8 @@ local Manifest: Manifest = {
             category = "Movement",
         },
         {
-            path = "src/modules/Movement/PhysicsSpeed.luau",
-            name = "Physics Speed",
+            path = "src/modules/Movement/VehicleSpeed.luau",
+            name = "Vehicle Speed",
             category = "Movement",
         },
         {
@@ -14050,7 +14050,7 @@ function Module.init(context: Runtime): any
     }
     local flySmoothedVelocity: Vector3 = Vector3.zero
     -- PlatformStand is contested: Fly wants the character ragdolled while
-    -- PhysicsSpeed may want it standing, and both can be on at once. The
+    -- VehicleSpeed may want it standing, and both can be on at once. The
     -- controller arbitrates — the last owner to speak wins, and every baseline
     -- goes back when the last owner leaves. It lives on `state` because the
     -- two modules share it; it is not Fly's alone.
@@ -14755,15 +14755,20 @@ end
 
 return Module
 ]=====],
-        ["src/modules/Movement/PhysicsSpeed.luau"] = [=====[--!strict
+        ["src/modules/Movement/VehicleSpeed.luau"] = [=====[--!strict
 --
--- Physics Speed.
+-- Vehicle Speed.
 --
 -- Speed for the things the humanoid does not own: a vehicle seat's MaxSpeed,
 -- the torque of the hinges driving its wheels, and PlatformStand while you are
 -- in one. Every original value is recorded per instance and put back, because
 -- a seat left at ten times its torque stays broken for everyone who sits in it
 -- afterwards.
+--
+-- It used to be called "Physics Speed", which said what it touched rather than
+-- what it is for, and the name cost us a real bug: the vehicle work was already
+-- here and nobody looking for it found it. Speed moves a character; this moves
+-- whatever the character is sitting in.
 
 export type Runtime = {
     framework: any,
@@ -14772,7 +14777,7 @@ export type Runtime = {
 }
 
 local Module = {
-    Name = "PhysicsSpeed",
+    Name = "VehicleSpeed",
     PlaceId = 0,
     Events = {} :: {[string]: any},
     Initialized = false,
@@ -14788,7 +14793,7 @@ function Module.init(context: Runtime): any
     local UserInputService: any = host.UserInputService
     local currentWorkspace: Workspace = host.workspace or workspace
 
-    type PhysicsSpeedSettings = {
+    type VehicleSpeedSettings = {
         mode: string,
         speed: number,
         verticalSpeed: number,
@@ -14817,7 +14822,7 @@ function Module.init(context: Runtime): any
         motorMaxTorque: number,
     }
 
-    local physicsSpeedSettings: PhysicsSpeedSettings = {
+    local vehicleSpeedSettings: VehicleSpeedSettings = {
         mode = "Smooth",
         speed = 50,
         verticalSpeed = 50,
@@ -14838,9 +14843,9 @@ function Module.init(context: Runtime): any
     -- mid-session, so it is declared here and assigned in the block below,
     -- which also keeps the physics helpers' registers local to that block.
     local restorePhysicsMotors: () -> ()
-    local physicsSpeed: any
+    local vehicleSpeed: any
     do
-    local physicsSpeedTeleportClock: number = 0
+    local vehicleTeleportClock: number = 0
     local originalVehicleSeats: {[VehicleSeat]: VehicleSeatState} =
         setmetatable({}, {__mode = "k"}) :: any
     local originalMotorHinges: {[HingeConstraint]: HingeState} =
@@ -14865,7 +14870,7 @@ function Module.init(context: Runtime): any
         originalMotorHinges = setmetatable({}, {__mode = "k"}) :: any
     end
 
-    local function getPhysicsSpeedTarget(): (BasePart?, Humanoid?, VehicleSeat?)
+    local function getVehicleSpeedTarget(): (BasePart?, Humanoid?, VehicleSeat?)
         local _, humanoid, root = getCharacterParts()
         if not humanoid or not root then
             return nil, humanoid, nil
@@ -14900,14 +14905,14 @@ function Module.init(context: Runtime): any
                     originalVehicleSeats[descendant] = original
                 end
                 local resolvedOriginal: VehicleSeatState = original :: VehicleSeatState
-                descendant.MaxSpeed = physicsSpeedSettings.speed
+                descendant.MaxSpeed = vehicleSpeedSettings.speed
                 descendant.Torque = math.max(
                     resolvedOriginal.torque,
-                    physicsSpeedSettings.motorTorque
+                    vehicleSpeedSettings.motorTorque
                 )
                 descendant.TurnSpeed = math.max(
                     resolvedOriginal.turnSpeed,
-                    physicsSpeedSettings.speed * 0.35
+                    vehicleSpeedSettings.speed * 0.35
                 )
             elseif descendant:IsA("HingeConstraint")
                 and descendant.ActuatorType == Enum.ActuatorType.Motor then
@@ -14925,18 +14930,18 @@ function Module.init(context: Runtime): any
                 descendant.AngularVelocity = sign
                     * math.max(
                         math.abs(resolvedOriginal.angularVelocity),
-                        physicsSpeedSettings.speed / 3
+                        vehicleSpeedSettings.speed / 3
                     )
                 descendant.MotorMaxTorque = math.max(
                     resolvedOriginal.motorMaxTorque,
-                    physicsSpeedSettings.motorTorque
+                    vehicleSpeedSettings.motorTorque
                 )
             end
         end
     end
 
-    physicsSpeed = framework.Categories.Movement:CreateModule({
-        Name = "Physics Speed",
+    vehicleSpeed = framework.Categories.Movement:CreateModule({
+        Name = "Vehicle Speed",
         Category = "Movement",
         Tooltip = "Fast movement for characters and occupied vehicles. Adaptive "
             .. "changes air authority and retains flow, Smooth accelerates "
@@ -14946,26 +14951,26 @@ function Module.init(context: Runtime): any
             .. "steps.",
         Function = function(enabled: boolean): ()
             restorePhysicsMotors()
-            physicsSpeedTeleportClock = 0
-            state.platformStandController.set("PhysicsSpeed", nil)
+            vehicleTeleportClock = 0
+            state.platformStandController.set("VehicleSpeed", nil)
 
             if not enabled then
                 return
             end
 
-            physicsSpeed:Loop(function(deltaTime: number): ()
-                local assembly, currentHumanoid, vehicleSeat = getPhysicsSpeedTarget()
+            vehicleSpeed:Loop(function(deltaTime: number): ()
+                local assembly, currentHumanoid, vehicleSeat = getVehicleSpeedTarget()
                 if not assembly or not currentHumanoid then
                     return
                 end
 
                 state.platformStandController.set(
-                    "PhysicsSpeed",
-                    physicsSpeedSettings.platformStand
+                    "VehicleSpeed",
+                    vehicleSpeedSettings.platformStand
                 )
                 state.platformStandController.apply(currentHumanoid)
 
-                if vehicleSeat and physicsSpeedSettings.customProperties then
+                if vehicleSeat and vehicleSpeedSettings.customProperties then
                     tunePhysicsMotors(vehicleSeat)
                 end
 
@@ -14990,7 +14995,7 @@ function Module.init(context: Runtime): any
                 end
 
                 local wallBlocked: boolean = false
-                if physicsSpeedSettings.wallCheck
+                if vehicleSpeedSettings.wallCheck
                     and direction.Magnitude > 0.001 then
                     local raycastParams: RaycastParams = RaycastParams.new()
                     raycastParams.FilterType = Enum.RaycastFilterType.Exclude
@@ -15009,14 +15014,14 @@ function Module.init(context: Runtime): any
                 end
 
                 if not vehicleSeat
-                    and physicsSpeedSettings.autoJump
+                    and vehicleSpeedSettings.autoJump
                     and direction.Magnitude > 0.001
                     and currentHumanoid.FloorMaterial ~= Enum.Material.Air then
                     currentHumanoid.Jump = true
                     local jumpVelocity: Vector3 = assembly.AssemblyLinearVelocity
                     assembly.AssemblyLinearVelocity = Vector3.new(
                         jumpVelocity.X,
-                        math.max(jumpVelocity.Y, physicsSpeedSettings.jumpVelocity),
+                        math.max(jumpVelocity.Y, vehicleSpeedSettings.jumpVelocity),
                         jumpVelocity.Z
                     )
                 end
@@ -15026,24 +15031,24 @@ function Module.init(context: Runtime): any
                 -- Touch clients hold a placed SPRINT button instead of a key.
                 local sprinting: boolean = state.speedSprintHeld == true
                     or (not state.isMobile
-                        and UserInputService:IsKeyDown(physicsSpeedSettings.sprintKey))
-                local resolvedSpeed: number = physicsSpeedSettings.speed
-                    * (sprinting and physicsSpeedSettings.sprintMultiplier or 1)
-                if physicsSpeedSettings.mode == "Adaptive" and not grounded then
-                    resolvedSpeed *= physicsSpeedSettings.airControl
+                        and UserInputService:IsKeyDown(vehicleSpeedSettings.sprintKey))
+                local resolvedSpeed: number = vehicleSpeedSettings.speed
+                    * (sprinting and vehicleSpeedSettings.sprintMultiplier or 1)
+                if vehicleSpeedSettings.mode == "Adaptive" and not grounded then
+                    resolvedSpeed *= vehicleSpeedSettings.airControl
                 end
                 local vertical: number = math.clamp(
                     currentVelocity.Y,
-                    -physicsSpeedSettings.verticalSpeed,
-                    physicsSpeedSettings.verticalSpeed
+                    -vehicleSpeedSettings.verticalSpeed,
+                    vehicleSpeedSettings.verticalSpeed
                 )
                 local currentHorizontal: Vector3 = Vector3.new(
                     currentVelocity.X,
                     0,
                     currentVelocity.Z
                 )
-                local keepMomentum: boolean = physicsSpeedSettings.preserveMomentum
-                    or physicsSpeedSettings.mode == "Adaptive"
+                local keepMomentum: boolean = vehicleSpeedSettings.preserveMomentum
+                    or vehicleSpeedSettings.mode == "Adaptive"
                 local targetHorizontal: Vector3 = not wallBlocked
                         and direction.Magnitude > 0.001
                         and direction * resolvedSpeed
@@ -15052,10 +15057,10 @@ function Module.init(context: Runtime): any
                 local targetVelocity: Vector3 = targetHorizontal
                     + Vector3.new(0, vertical, 0)
 
-                if physicsSpeedSettings.mode == "Smooth"
-                    or physicsSpeedSettings.mode == "Adaptive" then
+                if vehicleSpeedSettings.mode == "Smooth"
+                    or vehicleSpeedSettings.mode == "Adaptive" then
                     local alpha: number = 1 - math.exp(
-                        -physicsSpeedSettings.acceleration * deltaTime
+                        -vehicleSpeedSettings.acceleration * deltaTime
                     )
                     local smoothedHorizontal: Vector3 = currentHorizontal:Lerp(
                         targetHorizontal,
@@ -15063,14 +15068,14 @@ function Module.init(context: Runtime): any
                     )
                     assembly.AssemblyLinearVelocity = smoothedHorizontal
                         + Vector3.new(0, vertical, 0)
-                elseif physicsSpeedSettings.mode == "Boost" then
+                elseif vehicleSpeedSettings.mode == "Boost" then
                     local correction: Vector3 = targetVelocity - currentVelocity
                     assembly:ApplyImpulse(
                         correction
                             * assembly.AssemblyMass
                             * math.clamp(deltaTime * 9, 0, 1)
                     )
-                elseif physicsSpeedSettings.mode == "CFrame" then
+                elseif vehicleSpeedSettings.mode == "CFrame" then
                     -- Displacement instead of velocity: a speed cap has nothing to
                     -- clamp, and the walk the game already gives us is subtracted
                     -- so the total stays at the slider value.
@@ -15082,11 +15087,11 @@ function Module.init(context: Runtime): any
                         assembly.CFrame = assembly.CFrame
                             + direction * extra * deltaTime
                     end
-                elseif physicsSpeedSettings.mode == "Pulse" then
+                elseif vehicleSpeedSettings.mode == "Pulse" then
                     -- Bursts with a coast between them: the average speed stays
                     -- close to a normal player's, only the peaks are fast.
                     local period: number = math.max(
-                        physicsSpeedSettings.burstInterval,
+                        vehicleSpeedSettings.burstInterval,
                         0.05
                     ) * 2
                     local burst: boolean = (os.clock() % period) < (period * 0.5)
@@ -15096,14 +15101,14 @@ function Module.init(context: Runtime): any
                     assembly.AssemblyLinearVelocity = (
                         not wallBlocked and direction * pulseSpeed or Vector3.zero
                     ) + Vector3.new(0, vertical, 0)
-                elseif physicsSpeedSettings.mode == "Teleport" then
-                    physicsSpeedTeleportClock = physicsSpeedTeleportClock + deltaTime
-                    if physicsSpeedTeleportClock >= 0.14 then
+                elseif vehicleSpeedSettings.mode == "Teleport" then
+                    vehicleTeleportClock = vehicleTeleportClock + deltaTime
+                    if vehicleTeleportClock >= 0.14 then
                         assembly.CFrame = assembly.CFrame
                             + direction
                                 * resolvedSpeed
-                                * physicsSpeedTeleportClock
-                        physicsSpeedTeleportClock = 0
+                                * vehicleTeleportClock
+                        vehicleTeleportClock = 0
                     end
                 end
             end)
@@ -15111,51 +15116,51 @@ function Module.init(context: Runtime): any
     })
     end
 
-    physicsSpeed:CreateDropdown({
+    vehicleSpeed:CreateDropdown({
         Name = "Mode",
         List = {"Adaptive", "Smooth", "Boost", "CFrame", "Pulse", "Teleport"},
         Index = 1,
         Function = function(value: string): ()
-            physicsSpeedSettings.mode = value
+            vehicleSpeedSettings.mode = value
         end,
     })
-    physicsSpeed:CreateSlider({
+    vehicleSpeed:CreateSlider({
         Name = "Speed",
         Min = 5,
         Max = 500,
-        Default = physicsSpeedSettings.speed,
+        Default = vehicleSpeedSettings.speed,
         Function = function(value: number): ()
-            physicsSpeedSettings.speed = value
+            vehicleSpeedSettings.speed = value
         end,
     })
     -- Every row below declares that it belongs to the switch after the block
     -- (and, where a mode owns it, to that mode) instead of the switch walking
     -- a list.
     local advanced: any = {Option = "Advanced settings"}
-    physicsSpeed:CreateSlider({
+    vehicleSpeed:CreateSlider({
         Name = "Vertical speed",
         Show = advanced,
         Min = 0,
         Max = 300,
-        Default = physicsSpeedSettings.verticalSpeed,
+        Default = vehicleSpeedSettings.verticalSpeed,
         Function = function(value: number): ()
-            physicsSpeedSettings.verticalSpeed = value
+            vehicleSpeedSettings.verticalSpeed = value
         end,
     })
-    physicsSpeed:CreateToggle({
+    vehicleSpeed:CreateToggle({
         Name = "PlatformStand",
         Show = advanced,
-        Default = physicsSpeedSettings.platformStand,
+        Default = vehicleSpeedSettings.platformStand,
         Function = function(value: boolean): ()
-            physicsSpeedSettings.platformStand = value
+            vehicleSpeedSettings.platformStand = value
         end,
     })
-    physicsSpeed:CreateToggle({
+    vehicleSpeed:CreateToggle({
         Name = "Custom properties",
         Show = advanced,
-        Default = physicsSpeedSettings.customProperties,
+        Default = vehicleSpeedSettings.customProperties,
         Function = function(value: boolean): ()
-            physicsSpeedSettings.customProperties = value
+            vehicleSpeedSettings.customProperties = value
             if not value then
                 restorePhysicsMotors()
             end
@@ -15163,71 +15168,71 @@ function Module.init(context: Runtime): any
         Tooltip = "Rewrite the seat and wheel motors of a vehicle you are "
             .. "sitting in; the originals go back the moment this is off.",
     })
-    physicsSpeed:CreateSlider({
+    vehicleSpeed:CreateSlider({
         Name = "Motor torque",
         Show = {advanced, {Option = "Custom properties"}},
         Min = 1000,
         Max = 250000,
-        Default = physicsSpeedSettings.motorTorque,
+        Default = vehicleSpeedSettings.motorTorque,
         Function = function(value: number): ()
-            physicsSpeedSettings.motorTorque = value
+            vehicleSpeedSettings.motorTorque = value
         end,
     })
-    physicsSpeed:CreateToggle({
+    vehicleSpeed:CreateToggle({
         Name = "Wall check",
         Show = advanced,
-        Default = physicsSpeedSettings.wallCheck,
+        Default = vehicleSpeedSettings.wallCheck,
         Function = function(value: boolean): ()
-            physicsSpeedSettings.wallCheck = value
+            vehicleSpeedSettings.wallCheck = value
         end,
         Tooltip = "Stop against solid geometry instead of moving through it.",
     })
-    physicsSpeed:CreateSlider({
+    vehicleSpeed:CreateSlider({
         Name = "Acceleration",
         Show = {advanced, {Option = "Mode", Values = {"Adaptive", "Smooth"}}},
         Min = 1,
         Max = 40,
-        Default = physicsSpeedSettings.acceleration,
+        Default = vehicleSpeedSettings.acceleration,
         Function = function(value: number): ()
-            physicsSpeedSettings.acceleration = value
+            vehicleSpeedSettings.acceleration = value
         end,
     })
-    physicsSpeed:CreateSlider({
+    vehicleSpeed:CreateSlider({
         Name = "Burst interval (s)",
         Show = {advanced, {Option = "Mode", Values = {"Pulse"}}},
         Min = 0.05,
         Max = 1,
-        Default = physicsSpeedSettings.burstInterval,
+        Default = vehicleSpeedSettings.burstInterval,
         Function = function(value: number): ()
-            physicsSpeedSettings.burstInterval = value
+            vehicleSpeedSettings.burstInterval = value
         end,
     })
-    physicsSpeed:CreateSlider({
+    vehicleSpeed:CreateSlider({
         Name = "Air control %",
         Show = {advanced, {Option = "Mode", Values = {"Adaptive"}}},
         Min = 10,
         Max = 150,
-        Default = physicsSpeedSettings.airControl * 100,
+        Default = vehicleSpeedSettings.airControl * 100,
         Function = function(value: number): ()
-            physicsSpeedSettings.airControl = value / 100
+            vehicleSpeedSettings.airControl = value / 100
         end,
     })
-    physicsSpeed:CreateSlider({
+    vehicleSpeed:CreateSlider({
         Name = "Sprint multiplier",
         Show = advanced,
         Min = 1,
         Max = 4,
-        Default = physicsSpeedSettings.sprintMultiplier,
+        Default = vehicleSpeedSettings.sprintMultiplier,
         Function = function(value: number): ()
-            physicsSpeedSettings.sprintMultiplier = value
+            vehicleSpeedSettings.sprintMultiplier = value
         end,
     })
-    local sprintKey: any = physicsSpeed:CreateBind({
+    local sprintKey: any = vehicleSpeed:CreateBind({
         Name = "Sprint key",
         Show = advanced,
-        Default = physicsSpeedSettings.sprintKey,
+        Default = vehicleSpeedSettings.sprintKey,
         Function = function(value: Enum.KeyCode): ()
-            physicsSpeedSettings.sprintKey = value
+            vehicleSpeedSettings.sprintKey = value
         end,
     })
     -- Sprint is a hold, so its mobile button is a hold too: tap the row's key
@@ -15248,33 +15253,33 @@ function Module.init(context: Runtime): any
             }
         )
     end
-    physicsSpeed:CreateToggle({
+    vehicleSpeed:CreateToggle({
         Name = "Preserve momentum",
         Show = advanced,
-        Default = physicsSpeedSettings.preserveMomentum,
+        Default = vehicleSpeedSettings.preserveMomentum,
         Function = function(value: boolean): ()
-            physicsSpeedSettings.preserveMomentum = value
+            vehicleSpeedSettings.preserveMomentum = value
         end,
     })
-    physicsSpeed:CreateToggle({
+    vehicleSpeed:CreateToggle({
         Name = "Auto jump",
         Show = advanced,
-        Default = physicsSpeedSettings.autoJump,
+        Default = vehicleSpeedSettings.autoJump,
         Function = function(value: boolean): ()
-            physicsSpeedSettings.autoJump = value
+            vehicleSpeedSettings.autoJump = value
         end,
     })
-    physicsSpeed:CreateSlider({
+    vehicleSpeed:CreateSlider({
         Name = "Auto-jump velocity",
         Show = {advanced, {Option = "Auto jump"}},
         Min = 20,
         Max = 120,
-        Default = physicsSpeedSettings.jumpVelocity,
+        Default = vehicleSpeedSettings.jumpVelocity,
         Function = function(value: number): ()
-            physicsSpeedSettings.jumpVelocity = value
+            vehicleSpeedSettings.jumpVelocity = value
         end,
     })
-    physicsSpeed:CreateToggle({
+    vehicleSpeed:CreateToggle({
         Name = "Advanced settings",
         Default = false,
         Tooltip = "Everything above works on its own; this reveals the rest.",
@@ -15282,10 +15287,10 @@ function Module.init(context: Runtime): any
 
     activeCleanup = function(): ()
         restorePhysicsMotors()
-        state.platformStandController.set("PhysicsSpeed", nil)
+        state.platformStandController.set("VehicleSpeed", nil)
     end
     Module.Initialized = true
-    return physicsSpeed
+    return vehicleSpeed
 end
 
 function Module.destroy(): ()

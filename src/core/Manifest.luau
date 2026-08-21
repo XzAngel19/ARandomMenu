@@ -147,8 +147,8 @@ local Manifest: Manifest = {
             category = "Movement",
         },
         {
-            path = "src/modules/Movement/PhysicsSpeed.luau",
-            name = "Physics Speed",
+            path = "src/modules/Movement/VehicleSpeed.luau",
+            name = "Vehicle Speed",
             category = "Movement",
         },
         {

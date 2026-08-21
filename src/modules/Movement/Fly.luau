@@ -73,7 +73,7 @@ function Module.init(context: Runtime): any
     }
     local flySmoothedVelocity: Vector3 = Vector3.zero
     -- PlatformStand is contested: Fly wants the character ragdolled while
-    -- PhysicsSpeed may want it standing, and both can be on at once. The
+    -- VehicleSpeed may want it standing, and both can be on at once. The
     -- controller arbitrates — the last owner to speak wins, and every baseline
     -- goes back when the last owner leaves. It lives on `state` because the
     -- two modules share it; it is not Fly's alone.
