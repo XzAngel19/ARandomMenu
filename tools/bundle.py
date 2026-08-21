@@ -2,10 +2,10 @@
 """Build the runtime source bundle and keep its stamp honest.
 
 The menu used to download every file in the manifest one HTTP GET at a time.
-This step packs those files into `dist/bundle.luau` as `{path → source}` and
+This step packs those files into `runtime/bundle.luau` as `{path → source}` and
 writes a content stamp that both the runtime and the gate share.
 
-  python3 tools/bundle.py          write dist/bundle.luau and stamp the shell
+  python3 tools/bundle.py          write runtime/bundle.luau and stamp the shell
   python3 tools/bundle.py --check  fail if the committed bundle/stamp is stale
 
 The gate has to fail when the bundle does not match the sources. A stale
@@ -24,8 +24,11 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "src" / "core" / "Manifest.luau"
 SHELL = ROOT / "ARandomMenu.luau"
-DIST = ROOT / "dist"
-BUNDLE = DIST / "bundle.luau"
+# Not "dist": the Arena workspace drops a directory with that name between
+# turns, so a tracked, generated file living there disappears from the working
+# tree and the next `git add -A` deletes it from the repository.
+OUTPUT_DIR = ROOT / "runtime"
+BUNDLE = OUTPUT_DIR / "bundle.luau"
 STAMP_PATTERN = re.compile(
     r'(local SOURCE_STAMP: string = )"[0-9a-fA-F]*"'
 )
@@ -119,7 +122,7 @@ def build() -> str:
     if missing:
         raise SystemExit("bundle sources missing:\n  " + "\n  ".join(missing))
     stamp = compute_stamp(paths)
-    DIST.mkdir(exist_ok=True)
+    OUTPUT_DIR.mkdir(exist_ok=True)
     BUNDLE.write_text(render_bundle(stamp, paths), encoding="utf-8")
     write_shell_stamp(stamp)
     print(f"bundle {len(paths)} files · stamp {stamp} · {BUNDLE.stat().st_size} bytes")
@@ -142,10 +145,10 @@ def check() -> int:
         )
     if bundle_stamp != expected:
         failures.append(
-            f"dist/bundle.luau stamp is {bundle_stamp!r}, expected {expected!r}"
+            f"runtime/bundle.luau stamp is {bundle_stamp!r}, expected {expected!r}"
         )
     if not BUNDLE.is_file():
-        failures.append("dist/bundle.luau is missing")
+        failures.append("runtime/bundle.luau is missing")
     elif BUNDLE.is_file():
         packed = set(re.findall(r'\["(src/[^"]+\.luau)"\]', BUNDLE.read_text(encoding="utf-8")))
         wanted = set(paths)

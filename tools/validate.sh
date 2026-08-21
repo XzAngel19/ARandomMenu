@@ -89,7 +89,7 @@ for path in \
     src/gui/Current/gui.lua \
     tools/test/run.luau \
     tools/bundle.py \
-    dist/bundle.luau
+    runtime/bundle.luau
 do
     test -f "$path" || {
         echo "missing $path"
@@ -194,7 +194,7 @@ grep -q 'RUNTIME_SAFETY_SOURCE_URL' ARandomMenu.luau
 echo "ok"
 
 step "Bundle stamp matches the sources"
-# A stale dist/bundle.luau serving old code while the repo says otherwise is
+# A stale runtime/bundle.luau serving old code while the repo says otherwise is
 # the class of silent rot the stamp exists to prevent.
 python3 tools/bundle.py --check
 echo "ok"

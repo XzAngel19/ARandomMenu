@@ -418,7 +418,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
--- Content stamp of every file packed into dist/bundle.luau. Written by
+-- Content stamp of every file packed into runtime/bundle.luau. Written by
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
@@ -8875,17 +8875,22 @@ state.summarizeBoot = function(): ()
     ))
 end
 
+-- Reject a response that is technically a 200 but is not a source file:
+-- GitHub answers a bad path with a plain-text "404: Not Found" and a captive
+-- portal answers everything with HTML.
+--
+-- Only the head of the response is examined. Lowercasing and scanning the
+-- whole thing meant half a megabyte of copying to answer a question about the
+-- first line, and it made any file that merely *mentions* `<html` anywhere in
+-- its own source unloadable — a trap with no warning attached.
 state.sourceLooksValid = function(source: any, minimum: number): boolean
     if type(source) ~= "string" or #source < minimum then
         return false
     end
-    local normalized: string = string.lower(source)
-    if string.find(normalized, "404: not found", 1, true)
-        or string.find(normalized, "<!doctype html", 1, true)
-        or string.find(normalized, "<html", 1, true) then
-        return false
-    end
-    return true
+    local head: string = string.lower(string.sub(source, 1, 512))
+    return string.find(head, "404: not found", 1, true) == nil
+        and string.find(head, "<!doctype html", 1, true) == nil
+        and string.find(head, "<html", 1, true) == nil
 end
 
 state.httpGetPath = function(path: string): (string?, string?)
@@ -9117,7 +9122,7 @@ local fallbackManifest: any = {
 }
 
 local bundleAt: number = os.clock()
-local packed: any, packedError: string? = state.fetchRepositoryChunk("dist/bundle.luau")
+local packed: any, packedError: string? = state.fetchRepositoryChunk("runtime/bundle.luau")
 if type(packed) == "table"
     and packed.stamp == SOURCE_STAMP
     and type(packed.files) == "table" then
@@ -10526,10 +10531,6 @@ end)
 
 if not initialized then
     -- Nowhere on screen to say it any more: the intro that used to carry the
-    -- message is gone, so the console is the report.
-    warn("[RTM:Bootstrap] Inicialización detenida:\n" .. tostring(bootstrapError))
-end
- that used to carry the
     -- message is gone, so the console is the report.
     warn("[RTM:Bootstrap] Inicialización detenida:\n" .. tostring(bootstrapError))
 end

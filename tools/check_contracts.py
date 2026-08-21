@@ -289,7 +289,7 @@ def loader_contract(shell: str, failures: list) -> None:
         failures.append(
             "ARandomMenu.luau: fingerprint still blocks bootstrap for 3s"
         )
-    if "fetchRepositorySource" not in shell or "dist/bundle.luau" not in shell:
+    if "fetchRepositorySource" not in shell or "runtime/bundle.luau" not in shell:
         failures.append("ARandomMenu.luau: bundle fetch path is missing")
     if "writeCachedSource" not in shell:
         failures.append("ARandomMenu.luau: disk cache is never written")
