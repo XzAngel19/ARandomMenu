@@ -67,7 +67,7 @@ return function(ctx: any): ()
     Mock.inject(world, SpeedFile.init)
     local speed: any = SpeedFile.init(context)
 
-    check("card is registered", speed.Name == "Speed")
+    check("card is registered", speed.Name == "SpeedHack")
     for _, name: string in ipairs({
         "Mode",
         "Speed",
@@ -121,13 +121,13 @@ return function(ctx: any): ()
         humanoid.WalkSpeed == 16 and humanoid.JumpPower == 50
             and humanoid.AutoRotate == true and root.Anchored == false)
 
-    section("High Jump")
+    section("HighJump")
 
     local HighJumpFile: any = require("../../../src/modules/Movement/HighJump")
     Mock.inject(world, HighJumpFile.init)
     local highJump: any = HighJumpFile.init(context)
 
-    check("card is registered", highJump.name == "High Jump")
+    check("card is registered", highJump.name == "HighJump")
     check("option: Jump velocity",
         highJump.options ~= nil and highJump.options["Jump velocity"] ~= nil)
 

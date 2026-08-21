@@ -17,7 +17,7 @@ return function(ctx: any): ()
     local entity: any = ctx.entity
     local enemy: any = ctx.enemy
 
-    section("Player ESP")
+    section("PlayerESP")
 
     local EspFile: any = require("../../../src/modules/Visuals/PlayerESP")
     Mock.inject(world, EspFile.init)
@@ -36,7 +36,7 @@ return function(ctx: any): ()
     }
     local esp: any = EspFile.init(espContext)
 
-    check("card is registered", esp ~= nil and esp.Name == "Player ESP")
+    check("card is registered", esp ~= nil and esp.Name == "PlayerESP")
     check("box mode option exists", esp.Options["Boxes"] ~= nil)
     check("skeleton option exists", esp.Options["Skeleton"] ~= nil)
     check("name tag option exists", esp.Options["Name tags"] ~= nil)
@@ -188,13 +188,13 @@ return function(ctx: any): ()
 
     -- TriggerBot -----------------------------------------------------------------
 
-    section("Item Render")
+    section("ItemESP")
 
     local ItemFile: any = require("../../../src/modules/Visuals/ItemRender")
     Mock.inject(world, ItemFile.init)
     local itemRender: any = ItemFile.init(espContext)
 
-    check("card is registered", itemRender.Name == "Item Render")
+    check("card is registered", itemRender.Name == "ItemESP")
     for _, name: string in ipairs({
         "Objects",
         "Add by name",

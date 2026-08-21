@@ -2,7 +2,7 @@
 --
 -- Headless tests: the utility cards no suite had loaded.
 --
--- Anti-AFK, Fling, Gravity, Interact Extender, Lag Switch and Rejoin Server.
+-- AntiAFK, Fling, Gravity, Interact Extender, Lag Switch and Rejoin Server.
 -- Six of the cards that spent a week dead in the client because the shell
 -- never published two fields they call while building — these are their first
 -- runs anywhere, so the checks read like a first inspection.
@@ -34,7 +34,7 @@ return function(ctx: any): ()
 
     local baseline: number = stub.taskCount()
 
-    section("Anti-AFK")
+    section("AntiAFK")
 
     -- VirtualUser is not a default service; the module talks to it by name.
     local idleSignal: any = world.localPlayer.Idled
@@ -53,7 +53,7 @@ return function(ctx: any): ()
     Mock.inject(world, AntiAfkFile.init)
     local antiAfk: any = AntiAfkFile.init(context)
 
-    check("card is registered", antiAfk.name == "Anti-AFK")
+    check("card is registered", antiAfk.name == "AntiAFK")
     antiAfk.activate()
     check("the idle listener is attached", idleSignal:Count() == 1)
     idleSignal:Fire()
@@ -131,6 +131,7 @@ return function(ctx: any): ()
         gravity.options ~= nil and gravity.options["Gravity value"] ~= nil)
 
     gravity.activate()
+    check("gravity reports its live value", gravity.status == "196")
     stub.step(1 / 60)
     check("gravity is held at the slider value",
         world.globals.workspace.Gravity == gravity.options["Gravity value"].value,

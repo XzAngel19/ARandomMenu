@@ -127,8 +127,9 @@ function Module.init(context: Runtime): any
 
     local speed: any
     speed = framework.Categories.Movement:CreateModule({
-        Name = "Speed",
+        Name = "SpeedHack",
         Category = "Movement",
+        ConfigKey = "Universal.Speed",
         Order = 1,
         Tooltip = "Move faster, by whichever of five methods this game lets "
             .. "through.",

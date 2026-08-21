@@ -198,9 +198,11 @@ function Module.init(context: Runtime): any
             state.platformStandController.set("VehicleSpeed", nil)
 
             if not enabled then
+                vehicleSpeed:SetStatus(nil)
                 return
             end
 
+            vehicleSpeed:SetStatus(vehicleSpeedSettings.mode)
             vehicleSpeed:Loop(function(deltaTime: number): ()
                 local assembly, currentHumanoid, vehicleSeat = getVehicleSpeedTarget()
                 if not assembly or not currentHumanoid then
@@ -365,6 +367,9 @@ function Module.init(context: Runtime): any
         Index = 1,
         Function = function(value: string): ()
             vehicleSpeedSettings.mode = value
+            if vehicleSpeed.Enabled then
+                vehicleSpeed:SetStatus(value)
+            end
         end,
     })
     vehicleSpeed:CreateSlider({

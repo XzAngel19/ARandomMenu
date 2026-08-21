@@ -123,6 +123,7 @@ function Module.init(context: Runtime): any
             .. "Local only: the server and everyone else still see you.",
         Function = function(enabled: boolean): ()
             if not enabled then
+                disguise:SetStatus(nil)
                 local original: HumanoidDescription? = runtime.original
                 runtime.applied = nil
                 state.spoofDescription = nil
@@ -131,6 +132,8 @@ function Module.init(context: Runtime): any
                 end
                 return
             end
+            local user: string = tostring(disguise.Options["User"].Value or "")
+            disguise:SetStatus(user ~= "" and string.sub(user, 1, 15) or "waiting")
 
             -- Re-dress after every respawn, or the disguise lasts exactly one
             -- life.

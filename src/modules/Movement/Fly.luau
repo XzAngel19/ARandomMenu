@@ -493,8 +493,9 @@ function Module.init(context: Runtime): any
 
     local fly: any
     fly = framework.Categories.Movement:CreateModule({
-        Name = "Fly",
+        Name = "Flight",
         Category = "Movement",
+        ConfigKey = "Universal.Fly",
         Tooltip = "Use WASD to move, Space to rise and LeftControl to descend. "
             .. "Method picks how you travel sideways and Float picks what "
             .. "holds you up; if a game blocks one combination, another "

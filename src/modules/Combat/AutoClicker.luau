@@ -153,8 +153,16 @@ function Module.init(context: Runtime): any
             runtime.nextClickAt = 0
             runtime.touches = 0
             if not enabled then
+                clicker:SetStatus(nil)
                 return
             end
+            local cps: any = clicker.Options["CPS"].Value
+            clicker:SetStatus(
+                tostring(math.round(cps.Min))
+                    .. "-"
+                    .. tostring(math.round(cps.Max))
+                    .. " CPS"
+            )
 
             -- Touch has no "is the finger down" query, so the two events that
             -- do exist are counted. Any finger on the screen is a held attack:
@@ -256,6 +264,16 @@ function Module.init(context: Runtime): any
         Max = 28,
         DefaultMin = 8,
         DefaultMax = 12,
+        Function = function(value: any): ()
+            if clicker.Enabled then
+                clicker:SetStatus(
+                    tostring(math.round(value.Min))
+                        .. "-"
+                        .. tostring(math.round(value.Max))
+                        .. " CPS"
+                )
+            end
+        end,
         Tooltip = "Clicks per second. Every gap is drawn between the two ends, "
             .. "so no two clicks are the same distance apart. A fast hand peaks "
             .. "around 12; past 20 nothing human explains the rate and servers "

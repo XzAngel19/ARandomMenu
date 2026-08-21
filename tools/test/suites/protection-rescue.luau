@@ -2,7 +2,7 @@
 --
 -- Headless tests: the protection cards no suite had loaded.
 --
--- Anti-Fling, Anti-Void and Safe Walk. The three questions again, with the
+-- Anti-Fling, Anti-Void and SafeWalk. The three questions again, with the
 -- third one doing the work: Anti-Fling has to put the character back where
 -- it stood and stand down during a fling of your own, and Anti-Void has to
 -- leave no platform behind once its three seconds are up.
@@ -108,13 +108,13 @@ return function(ctx: any): ()
     antiVoid.activate()
     check("disabling releases the task", stub.taskCount() == baseline)
 
-    section("Safe Walk")
+    section("SafeWalk")
 
     local SafeWalkFile: any = require("../../../src/modules/Protection/SafeWalk")
     Mock.inject(world, SafeWalkFile.init)
     local safeWalk: any = SafeWalkFile.init(context)
 
-    check("card is registered", safeWalk.name == "Safe Walk")
+    check("card is registered", safeWalk.name == "SafeWalk")
     check("option: Edge look-ahead",
         safeWalk.options ~= nil and safeWalk.options["Edge look-ahead"] ~= nil)
 

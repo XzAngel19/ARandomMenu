@@ -54,13 +54,13 @@ return function(ctx: any): ()
             and host.state.hiddenOptionRows[name] == true
     end
 
-    section("Fly")
+    section("Flight")
 
     local FlyFile: any = require("../../../src/modules/Movement/Fly")
     Mock.inject(world, FlyFile.init)
     local fly: any = FlyFile.init(context)
 
-    check("card is registered under its own name", fly.Name == "Fly")
+    check("card is registered under its Wurst name", fly.Name == "Flight")
     for _, name: string in ipairs({
         "Method",
         "Float",
@@ -188,6 +188,8 @@ return function(ctx: any): ()
     ctx.setOption(physics, "Mode", "Adaptive")
     ctx.setOption(physics, "Custom properties", true)
     physics.Feature.activate()
+    check("vehicle speed reports the active route",
+        physics.Status == "Adaptive", tostring(physics.Status))
     check("a session takes exactly one task",
         stub.taskCount() == baseline + 1)
     stub.step(1 / 60)

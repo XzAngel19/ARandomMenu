@@ -31,6 +31,7 @@ function Module.init(context: Runtime): any
     local originalXrayTransparency: {[BasePart]: number} =
         setmetatable({}, {__mode = "k"}) :: any
     local xrayEnabled: boolean = false
+    local feature: any = nil
 
     local function restoreXray(): ()
         for part: BasePart, transparency: number in pairs(originalXrayTransparency) do
@@ -46,9 +47,11 @@ function Module.init(context: Runtime): any
         xrayEnabled = false
         restoreXray()
         if not enabled then
+            if feature then feature:SetStatus(nil) end
             return
         end
 
+        feature:SetStatus("72%")
         xrayEnabled = true
         local function applyToInstance(descendant: Instance): ()
             if not xrayEnabled or not descendant:IsA("BasePart") then
@@ -85,7 +88,7 @@ function Module.init(context: Runtime): any
     end
 
 
-    local feature: any = createUniversalFeature(
+    feature = createUniversalFeature(
         "X-Ray",
         "Fade map geometry locally while keeping your character clear",
         18,

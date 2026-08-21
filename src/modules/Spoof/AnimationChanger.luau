@@ -147,9 +147,13 @@ function Module.init(context: Runtime): any
             .. "climb and swim.",
         Function = function(enabled: boolean): ()
             if not enabled then
+                animations:SetStatus(nil)
                 Module.restore(context, runtime)
                 return
             end
+            animations:SetStatus(
+                runtime.selected and string.sub(runtime.selected, 1, 15) or "custom"
+            )
             rememberOriginal()
             -- Re-applied after a respawn, because a fresh character arrives
             -- with the game's own animations.
@@ -207,6 +211,9 @@ function Module.init(context: Runtime): any
             end
             runtime.settingSelection = false
             runtime.selected = chosen
+            if animations.Enabled then
+                animations:SetStatus(chosen and string.sub(chosen, 1, 15) or "custom")
+            end
         end,
     })
     animations:CreateButton({

@@ -51,11 +51,16 @@ function Module.init(context: Runtime): any
 
 
     local HighJumpFeature = createUniversalFeature(
-        "High Jump",
+        "HighJump",
         "Press the key slot to launch a single high jump",
         19,
         performHighJump,
-        {action = true, silentAction = true}
+        {
+            action = true,
+            silentAction = true,
+            configKey = "Universal.HighJump",
+            categoryName = "Movement",
+        }
     )
     addNumberOption(
         HighJumpFeature,

@@ -46,11 +46,15 @@ function Module.init(context: Runtime): any
     end
 
     local AntiAfkFeature = createUniversalFeature(
-        "Anti-AFK",
+        "AntiAFK",
         "Prevent the local idle event from disconnecting",
         13,
         toggleAntiAfk,
-        {noOptions = true}
+        {
+            noOptions = true,
+            configKey = "Universal.AntiAFK",
+            categoryName = "Utility",
+        }
     )
     addFeatureTooltip(AntiAfkFeature, "Responds only to Roblox's local idle event and "
         .. "disconnects immediately when disabled.")

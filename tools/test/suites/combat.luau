@@ -135,13 +135,13 @@ return function(ctx: any): ()
 
     -- Kill Aura ------------------------------------------------------------------
 
-    section("Kill Aura")
+    section("Killaura")
 
     local AuraFile: any = require("../../../src/modules/Combat/KillAura")
     Mock.inject(world, AuraFile.init)
     local aura: any = AuraFile.init(espContext)
 
-    check("card is registered", aura ~= nil and aura.Name == "Kill Aura")
+    check("card is registered", aura ~= nil and aura.Name == "Killaura")
     for _, name: string in ipairs({
         "Swing range",
         "Max targets",
@@ -327,6 +327,8 @@ return function(ctx: any): ()
     clicker.Options["CPS"].Value = {Min = 10, Max = 10}
     local toolBefore: number = sword.Activations or 0
     clicker:Toggle()
+    check("auto clicker reports its CPS band",
+        clicker.Status == "10-10 CPS", tostring(clicker.Status))
     world.mouseDown = false
     world.clock += 1
     stub.step(0.016)

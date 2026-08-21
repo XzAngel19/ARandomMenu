@@ -115,9 +115,13 @@ function Module.init(context: Runtime): any
         Tooltip = "Play any emote by id — Roblox's own or UGC.",
         Function = function(enabled: boolean): ()
             if not enabled then
+                emotes:SetStatus(nil)
                 stop()
                 return
             end
+            emotes:SetStatus(
+                runtime.selected and string.sub(runtime.selected, 1, 15) or "custom"
+            )
             -- Dying mid-emote leaves a track pointing at a humanoid that no
             -- longer exists.
             emotes:Event(localPlayer.CharacterAdded, function(): ()
@@ -155,6 +159,9 @@ function Module.init(context: Runtime): any
             end
             runtime.settingSelection = false
             runtime.selected = chosen
+            if emotes.Enabled then
+                emotes:SetStatus(chosen and string.sub(chosen, 1, 15) or "custom")
+            end
         end,
     })
     emotes:CreateTextBox({

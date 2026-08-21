@@ -78,6 +78,8 @@ return function(ctx: any): ()
 
     ctx.setOption(hitboxes, "Expand", 4)
     hitboxes.Feature.activate()
+    check("hitboxes reports the part and expansion",
+        hitboxes.Status == "Root +4", tostring(hitboxes.Status))
     stub.step(1 / 60)
     check("the target's part grows by exactly the slider",
         enemyRoot.Size.X == rootSize.X + 4,

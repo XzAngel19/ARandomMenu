@@ -30,6 +30,7 @@ function Module.init(context: Runtime): any
     local addNumberOption: any = host.addNumberOption
     local lagSwitchSettings = {incomingLag = 999}
     local originalIncomingLag = 0
+    local LagSwitchFeature: any = nil
 
     local function setIncomingReplicationLag(value)
         local success = pcall(function()
@@ -42,10 +43,12 @@ function Module.init(context: Runtime): any
         disconnectFeatureConnection("LagSwitch")
 
         if not enabled then
+            if LagSwitchFeature then LagSwitchFeature:SetStatus(nil) end
             setIncomingReplicationLag(originalIncomingLag)
             return
         end
 
+        LagSwitchFeature:SetStatus(tostring(math.round(lagSwitchSettings.incomingLag)) .. " ms")
         pcall(function()
             originalIncomingLag = settings():GetService(
                 "NetworkSettings"
@@ -61,7 +64,7 @@ function Module.init(context: Runtime): any
         end)
     end
 
-    local LagSwitchFeature = createUniversalFeature(
+    LagSwitchFeature = createUniversalFeature(
         "Lag Switch",
         "Simulate extreme incoming replication delay",
         16,

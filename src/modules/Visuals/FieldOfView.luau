@@ -31,6 +31,7 @@ function Module.init(context: Runtime): any
     local addNumberOption: any = host.addNumberOption
     local workspace: any = host.workspace
     local fovSettings = {value = 90}
+    local FovFeature: any = nil
     state.fovController = state.fovController or {
         owners = {},
         baselines = setmetatable({}, {__mode = "k"}),
@@ -82,16 +83,18 @@ function Module.init(context: Runtime): any
         disconnectFeatureConnection("FOV")
         state.fovController.set("Universal", enabled and fovSettings.value or nil)
         if not enabled then
+            if FovFeature then FovFeature:SetStatus(nil) end
             return
         end
 
+        FovFeature:SetStatus(tostring(math.round(fovSettings.value)))
         featureConnections.FOV = TaskManager:Connect(function()
             state.fovController.set("Universal", fovSettings.value)
             state.fovController.apply(workspace.CurrentCamera)
         end)
     end
 
-    local FovFeature = createUniversalFeature(
+    FovFeature = createUniversalFeature(
         "FOV",
         "Keep the camera field of view fixed",
         10,
