@@ -1,95 +1,67 @@
-# Agent C — the harness, and holding the port to its spec
+# Agent C — Wurst's exact feature list, as a machine-checkable spec
 
-Read `docs/agents/RULES.md` first. Sync before anything else; the recipe is in
-rule 12.
+Read `docs/agents/RULES.md` first, then sync (rule 12).
 
-You own **`tools/**`** and **`docs/**`**, with two changes:
+Your parity gate already caught the integrator narrowing a window in Luau while
+the prototype said otherwise, and your empty-boot suite found a 49-connection
+leak on the day the file it tests first existed. Both worked. This is the same
+idea aimed at the rest of the client.
 
-- `docs/agents/*` is the integrator's.
-- **The suites that test a module now belong to agent D.** A fix and the test
-  that proves it have to land in the same green commit. You keep the harness
-  itself — `run.luau`, `Roblox.luau`, `Host.luau`, `check_contracts.py`,
-  `validate.sh` — and the suites that test the shell, the libraries and the
-  interface.
+## The decision that changes your queue
 
-Heads up on two files: I edited `tools/test/suites/movement-engines.luau` for
-the PhysicsSpeed → VehicleSpeed rename, and `tools/test/suites/floating.luau` so
-it starts the window manager before the overlays. Both had to be atomic with a
-change on the other side of the fence. Sync before you touch them.
+The menu is not "inspired by" Wurst any more. It is a port, the way
+`VapeV4ForRoblox` is a port of Vape: the same windows, the same settings, the
+same names, the same defaults. Anything the old menu had that Wurst does not
+have is going away, and anything Wurst has that we lack is missing.
 
-## The only thing that matters right now
+Nobody currently knows what that list *is*. That is your job, and it blocks the
+interface work, which means it is the most valuable thing in the repository
+right now.
 
-The menu is being turned into a Roblox port of the Wurst Client and the
-interface is being rebuilt this week. Everything below serves that. Anything
-else waits.
+## 1. `docs/wurst-features.md` — the inventory
 
-## 1. The parity spec — do this first
+Sources, in order of authority: `assets/wurst/translations/en_us.json`, which is
+already vendored and contains every setting key and description in the client;
+`wiki.wurstclient.net`; and the screenshots in `docs/design/reference/`.
 
-`docs/design/prototype/index.html` is a working ClickGUI and it is the
-specification for the port. Every number in its CSS is a decision: 22 px rows,
-22 px title bars, a 2 px gap, a 1 px border, a 5 px slider bar with a 7×11 knob,
-11.5 px labels, 4 px corners, 0.86 body opacity, a 400 ms tooltip delay,
-transitions between 0.10 s and 0.18 s.
+Produce a table per window, and for every setting: its exact Wurst name, its
+type, its **default value**, and its in-game description. The defaults matter as
+much as the names — Wurst's ClickGUI ships Background `#404040`, Accent
+`#101010`, Text `#F0F0F0`, and getting one of those wrong is the difference
+between a port and an imitation.
 
-Build two things:
+The windows to inventory, at minimum:
 
-1. **`docs/design/prototype/spec.json`**, produced by a script that parses the
-   prototype's `:root` block and its component rules. Generated, not hand-copied
-   — a hand-copied file is wrong within a week.
-2. **A gate step** that reads it and holds the Luau side to it. The shape tokens
-   already exist as `ThemeEngine.shape` in the shell (`opacity`,
-   `tooltipOpacity`, `radius`, `rowHeight`, `borderThickness`, `maxHeight`,
-   `scale`); the rest will arrive as named constants in `Widgets.luau` and
-   `WindowManager.luau` as they are ported. Any number in the spec with no
-   counterpart, or a counterpart holding a different value, fails the step and
-   names both sides.
+- **ClickGUI** — Background, Accent, Text, and whatever else 7.x exposes.
+- **UI Settings** — the window that opens the ones below.
+- **HackList** — Mode, Position, Sort by, Reverse sorting, Animations, Colour.
+- **WurstLogo** — Background, Text, Visibility.
+- **Navigator** — how search behaves, what it lists, what pressing Enter does.
+- **Keybinds** — the manager: add, remove, edit, the command syntax.
+- **Presets / Profiles** — what a preset stores and how it is loaded.
+- **GlobalToggle**, **Isolate windows**, **Max height**, **Opacity**,
+  **Tooltip opacity**, and the taco.
 
-I am porting the row and the category windows now. Without this, "matches Wurst"
-means whatever the last person to look at it thought, and it drifts.
+Mark each row with whether it has a Roblox counterpart, no counterpart, or is
+meaningless here (anything about chunks, blocks or servers). Do not silently
+drop the meaningless ones — write them down as deliberately absent, so nobody
+re-discovers them in a month and thinks we forgot.
 
-## 2. Suites ahead of the code, not behind it
+## 2. Fold the settings into `spec.json`
 
-These are the pieces landing over the next few days. Writing the tests first is
-the fastest way to keep the rebuild from breaking what already works — and you
-can write them now, because the behaviours are decided and visible in the
-prototype.
+Every default from that table becomes an entry the parity gate can check, the
+same way the pixel numbers already are. When I build the UI Settings window, a
+default that does not match Wurst's should fail the build and name both sides.
 
-- **Windows.** `state.windows` exists: `Create`, `Adopt`, `Get`, `Raise`,
-  `Reclamp`, `SetMenuVisible`. Open several, move one, collapse another, pin a
-  third, serialise, boot again from that config, assert the layout came back.
-  Assert no window can end up fully off-screen. Assert snapping lands flush on a
-  viewport edge and on another window's edge within eight pixels, and does not
-  snap at nine.
-- **Theme.** Extend `clickgui.luau`: assert every one of the 22 tokens is bound
-  somewhere after a boot, and that `Apply` leaves no instance holding a colour
-  from the previous preset.
-- **The row.** When it lands: enabled fills the row, the triangle only exists
-  when the module has options, expanding pushes the rows below down, and the
-  kernel's `Show` rules still hide and reveal inside an expansion while the
-  window's height follows. Player ESP has the deepest rule tree in the menu.
-- **The HUD list.** Agent D is giving every module a `card:SetStatus(text)`.
-  Assert the list contains exactly the enabled cards, that a status appears in
-  brackets, and that a `nil` status prints the bare name.
+## 3. Keep the suites ahead of the code
 
-## 3. Wurst's voice
-
-`assets/wurst/translations/en_us.json` is already vendored. Turn it into
-`docs/wurst-voice.md`: the naming conventions it reveals — how a hack is named
-versus a setting, when a description warns instead of explaining, sentence
-length, capitalisation — plus a table of the Wurst hacks that have a counterpart
-here and what Wurst calls them.
-
-Agent D rewrites the tooltips from it. You produce the reference. Do not
-translate their text: their descriptions are about Minecraft, and a tooltip
-mentioning bedrock in a Roblox menu is worse than a plain one.
+Same as before, for the pieces landing next: the row (filled when enabled, a
+triangle only when the module has options, `Show` rules still working inside an
+expansion while the window's height follows), the HUD list (exactly the enabled
+cards, a status in brackets, a bare name when the status is `nil`), and the UI
+Settings window once its spec exists.
 
 ## Not now
 
-More mock gaps, more contracts, the workflow header. All still true, none of
-them make the menu look like Wurst today.
-
-## Definition of done
-
-The gate prints `All checks passed.`, the bundle is regenerated with
-`python3 tools/bundle.py` and committed if the stamp moved, and every increment
-is pushed on its own.
+Anything about the old menu. It is being deleted, and a test that pins its
+behaviour is a test that will have to be deleted with it.
