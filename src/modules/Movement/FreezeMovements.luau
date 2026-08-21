@@ -33,6 +33,7 @@ function Module.init(context: Runtime): any
     local movementFeatures: any = host.state.movementFeatures
     local MovementScroll: any = host.state.universalScroll
     local freezeSettings = {mode = "Anchor"}
+    local FreezeFeature: any = nil
     local originalFreezeState = setmetatable({}, {__mode = "k"})
 
     local function restoreFreezeMovements()
@@ -54,9 +55,13 @@ function Module.init(context: Runtime): any
         restoreFreezeMovements()
 
         if not enabled then
+            if FreezeFeature then
+                FreezeFeature:SetStatus(nil)
+            end
             return
         end
 
+        FreezeFeature:SetStatus(freezeSettings.mode)
         featureConnections.FreezeMovements = TaskManager:Connect(function()
             local _, humanoid, root = getCharacterParts()
             if not humanoid or not root then
@@ -85,7 +90,7 @@ function Module.init(context: Runtime): any
         end)
     end
 
-    local FreezeFeature = createUniversalFeature(
+    FreezeFeature = createUniversalFeature(
         "Freeze Movements",
         "Prevent the local character from moving",
         1,
@@ -102,6 +107,9 @@ function Module.init(context: Runtime): any
         1,
         function(value)
             freezeSettings.mode = value
+            if FreezeFeature.enabled then
+                FreezeFeature:SetStatus(value)
+            end
         end
     )
     addInformationOption(

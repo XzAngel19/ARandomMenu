@@ -83,6 +83,8 @@ return function(ctx: any): ()
 
     local baseline: number = stub.taskCount()
     noFall.Feature.activate()
+    check("no fall reports the active protection model",
+        noFall.Status == "Impact", tostring(noFall.Status))
     check("a session takes exactly one task", stub.taskCount() == baseline + 1)
     stub.step(1 / 60)
     check("impact brakes the fall to the slider speed",

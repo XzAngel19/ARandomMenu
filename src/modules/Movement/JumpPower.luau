@@ -30,6 +30,7 @@ function Module.init(context: Runtime): any
     local createUniversalFeature: any = host.createUniversalFeature
     local addNumberOption: any = host.addNumberOption
     local jumpPowerSettings = {value = 80}
+    local JumpPowerFeature: any = nil
     local originalJumpPower = setmetatable({}, {__mode = "k"})
 
     local function restoreJumpPower()
@@ -47,9 +48,13 @@ function Module.init(context: Runtime): any
         restoreJumpPower()
 
         if not enabled then
+            if JumpPowerFeature then
+                JumpPowerFeature:SetStatus(nil)
+            end
             return
         end
 
+        JumpPowerFeature:SetStatus(tostring(math.round(jumpPowerSettings.value)))
         featureConnections.JumpPower = TaskManager:Connect(function()
             local _, humanoid = getCharacterParts()
             if not humanoid then
@@ -84,7 +89,7 @@ function Module.init(context: Runtime): any
     --           is what a fall-mode jump was supposed to do — it used to be an
     --           exact copy of Normal, so it never worked at all.
 
-    local JumpPowerFeature = createUniversalFeature(
+    JumpPowerFeature = createUniversalFeature(
         "Jump Power",
         "Keep character jump power at a custom value",
         6,
@@ -92,6 +97,9 @@ function Module.init(context: Runtime): any
     )
     addNumberOption(JumpPowerFeature, "Power", jumpPowerSettings.value, 0, 500, function(value)
         jumpPowerSettings.value = value
+        if JumpPowerFeature.enabled then
+            JumpPowerFeature:SetStatus(tostring(math.round(value)))
+        end
     end)
 
     activeCleanup = function(): ()

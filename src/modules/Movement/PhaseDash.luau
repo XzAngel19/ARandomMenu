@@ -153,6 +153,7 @@ function Module.init(context: Runtime): any
             .. "The card's key slot is the dash key.",
         Function = function(enabled: boolean): ()
             phaseDashEnabled = enabled
+            phaseDash:SetStatus(enabled and phaseDashSettings.mode or nil)
             -- The dash key is the card's header key slot (bound below), so there
             -- is no private input handler and no "Dash key" row in the panel.
         end,
@@ -163,6 +164,9 @@ function Module.init(context: Runtime): any
         Index = 1,
         Function = function(value: string): ()
             phaseDashSettings.mode = value
+            if phaseDash.Enabled then
+                phaseDash:SetStatus(value)
+            end
         end,
     })
     phaseDash:CreateSlider({

@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "cb3f7f1f84a143d9",
+    stamp = "7fdd68cb430c984c",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -13657,11 +13657,16 @@ function Module.init(context: Runtime): any
         speed = 30,
         climbState = true,
     }
+    local SpiderFeature: any = nil
     local function toggleSpider(enabled: boolean): ()
         disconnectFeatureConnection("Spider")
         if not enabled then
+            if SpiderFeature then
+                SpiderFeature:SetStatus(nil)
+            end
             return
         end
+        SpiderFeature:SetStatus(spiderSettings.mode)
         local climbing: boolean = false
         featureConnections.Spider = TaskManager:Connect(function(deltaTime: number): ()
             local character: Model?, humanoidOrNil: Humanoid?, rootOrNil: BasePart? =
@@ -13731,7 +13736,7 @@ function Module.init(context: Runtime): any
     end
 
 
-    local SpiderFeature = createUniversalFeature(
+    SpiderFeature = createUniversalFeature(
         "Spider",
         "Climb a wall automatically while moving into it",
         20,
@@ -13744,6 +13749,9 @@ function Module.init(context: Runtime): any
         1,
         function(value: string): ()
             spiderSettings.mode = value
+            if SpiderFeature.enabled then
+                SpiderFeature:SetStatus(value)
+            end
         end,
         "Velocity is smooth and works nearly everywhere; Impulse survives games "
             .. "that rewrite your velocity every frame; CFrame works when both are "
@@ -14446,6 +14454,7 @@ function Module.init(context: Runtime): any
             .. "The card's key slot is the dash key.",
         Function = function(enabled: boolean): ()
             phaseDashEnabled = enabled
+            phaseDash:SetStatus(enabled and phaseDashSettings.mode or nil)
             -- The dash key is the card's header key slot (bound below), so there
             -- is no private input handler and no "Dash key" row in the panel.
         end,
@@ -14456,6 +14465,9 @@ function Module.init(context: Runtime): any
         Index = 1,
         Function = function(value: string): ()
             phaseDashSettings.mode = value
+            if phaseDash.Enabled then
+                phaseDash:SetStatus(value)
+            end
         end,
     })
     phaseDash:CreateSlider({
@@ -14633,8 +14645,10 @@ function Module.init(context: Runtime): any
             .. "blocking anything.",
         Function = function(enabled: boolean): ()
             if not enabled then
+                noFall:SetStatus(nil)
                 return
             end
+            noFall:SetStatus(noFallSettings.mode)
             local nextRecordResetAt: number = 0
             local landedThisFall: boolean = false
             noFall:Loop(function(): ()
@@ -14709,6 +14723,9 @@ function Module.init(context: Runtime): any
         Index = 1,
         Function = function(value: string): ()
             noFallSettings.mode = value
+            if noFall.Enabled then
+                noFall:SetStatus(value)
+            end
         end,
         Tooltip = "Impact brakes the fall just above the ground, for games "
             .. "that read your landing speed. State closes the humanoid's "
@@ -16355,6 +16372,7 @@ function Module.init(context: Runtime): any
     local createUniversalFeature: any = host.createUniversalFeature
     local addNumberOption: any = host.addNumberOption
     local jumpPowerSettings = {value = 80}
+    local JumpPowerFeature: any = nil
     local originalJumpPower = setmetatable({}, {__mode = "k"})
 
     local function restoreJumpPower()
@@ -16372,9 +16390,13 @@ function Module.init(context: Runtime): any
         restoreJumpPower()
 
         if not enabled then
+            if JumpPowerFeature then
+                JumpPowerFeature:SetStatus(nil)
+            end
             return
         end
 
+        JumpPowerFeature:SetStatus(tostring(math.round(jumpPowerSettings.value)))
         featureConnections.JumpPower = TaskManager:Connect(function()
             local _, humanoid = getCharacterParts()
             if not humanoid then
@@ -16409,7 +16431,7 @@ function Module.init(context: Runtime): any
     --           is what a fall-mode jump was supposed to do — it used to be an
     --           exact copy of Normal, so it never worked at all.
 
-    local JumpPowerFeature = createUniversalFeature(
+    JumpPowerFeature = createUniversalFeature(
         "Jump Power",
         "Keep character jump power at a custom value",
         6,
@@ -16417,6 +16439,9 @@ function Module.init(context: Runtime): any
     )
     addNumberOption(JumpPowerFeature, "Power", jumpPowerSettings.value, 0, 500, function(value)
         jumpPowerSettings.value = value
+        if JumpPowerFeature.enabled then
+            JumpPowerFeature:SetStatus(tostring(math.round(value)))
+        end
     end)
 
     activeCleanup = function(): ()
@@ -16552,9 +16577,11 @@ function Module.init(context: Runtime): any
             state.infiniteJumpEnabled = false
             state.lastInfiniteJumpAt = -math.huge
             if not enabled then
+                jump:SetStatus(nil)
                 return
             end
             state.infiniteJumpEnabled = true
+            jump:SetStatus(infiniteJumpSettings.mode)
 
             -- `JumpRequest` is the one jump signal every device raises.
             jump:Clean(state.onJumpRequest(function(): ()
@@ -16592,6 +16619,9 @@ function Module.init(context: Runtime): any
         Index = 1,
         Function = function(value: string): ()
             infiniteJumpSettings.mode = value
+            if jump.Enabled then
+                jump:SetStatus(value)
+            end
         end,
     })
     jump:CreateSlider({
@@ -16983,15 +17013,29 @@ function Module.init(context: Runtime): any
     local addNumberOption: any = host.addNumberOption
     local antiFlingSettings = {velocityLimit = 120}
     local antiFlingSafeCFrame = nil
+    local AntiFlingFeature: any = nil
+    local antiFlingStatus: string? = nil
+
+    local function setAntiFlingStatus(status: string?): ()
+        if antiFlingStatus == status then
+            return
+        end
+        antiFlingStatus = status
+        if AntiFlingFeature then
+            AntiFlingFeature:SetStatus(status)
+        end
+    end
 
     local function toggleAntiFling(enabled)
         disconnectFeatureConnection("AntiFling")
         antiFlingSafeCFrame = nil
 
         if not enabled then
+            setAntiFlingStatus(nil)
             return
         end
 
+        setAntiFlingStatus("standing by")
         featureConnections.AntiFling = TaskManager:Connect(function()
             -- Your own fling is deliberate; standing on the brakes during it
             -- is the module fighting its owner.
@@ -17009,6 +17053,7 @@ function Module.init(context: Runtime): any
 
             if linearSpeed > antiFlingSettings.velocityLimit
                 or angularSpeed > antiFlingSettings.velocityLimit then
+                setAntiFlingStatus("blocking")
                 root.AssemblyLinearVelocity = Vector3.zero
                 root.AssemblyAngularVelocity = Vector3.zero
                 if antiFlingSafeCFrame then
@@ -17016,12 +17061,13 @@ function Module.init(context: Runtime): any
                 end
             elseif humanoid.FloorMaterial ~= Enum.Material.Air
                 and linearSpeed < antiFlingSettings.velocityLimit * 0.45 then
+                setAntiFlingStatus("standing by")
                 antiFlingSafeCFrame = root.CFrame
             end
         end)
     end
 
-    local AntiFlingFeature = createUniversalFeature(
+    AntiFlingFeature = createUniversalFeature(
         "Anti-Fling",
         "Stop extreme local velocity and return to safety",
         14,
@@ -17842,6 +17888,7 @@ function Module.init(context: Runtime): any
     local movementFeatures: any = host.state.movementFeatures
     local MovementScroll: any = host.state.universalScroll
     local freezeSettings = {mode = "Anchor"}
+    local FreezeFeature: any = nil
     local originalFreezeState = setmetatable({}, {__mode = "k"})
 
     local function restoreFreezeMovements()
@@ -17863,9 +17910,13 @@ function Module.init(context: Runtime): any
         restoreFreezeMovements()
 
         if not enabled then
+            if FreezeFeature then
+                FreezeFeature:SetStatus(nil)
+            end
             return
         end
 
+        FreezeFeature:SetStatus(freezeSettings.mode)
         featureConnections.FreezeMovements = TaskManager:Connect(function()
             local _, humanoid, root = getCharacterParts()
             if not humanoid or not root then
@@ -17894,7 +17945,7 @@ function Module.init(context: Runtime): any
         end)
     end
 
-    local FreezeFeature = createUniversalFeature(
+    FreezeFeature = createUniversalFeature(
         "Freeze Movements",
         "Prevent the local character from moving",
         1,
@@ -17911,6 +17962,9 @@ function Module.init(context: Runtime): any
         1,
         function(value)
             freezeSettings.mode = value
+            if FreezeFeature.enabled then
+                FreezeFeature:SetStatus(value)
+            end
         end
     )
     addInformationOption(

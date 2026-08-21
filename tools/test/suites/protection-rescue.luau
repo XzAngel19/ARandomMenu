@@ -47,6 +47,7 @@ return function(ctx: any): ()
 
     antiFling.activate()
     stub.step(1 / 60)
+    check("anti-fling reports that it is armed", antiFling.status == "standing by")
     local safeCFrame: any = root.CFrame
 
     root.CFrame = world.globals.CFrame.new(vector3(400, 50, 400))
@@ -56,6 +57,8 @@ return function(ctx: any): ()
         root.AssemblyLinearVelocity.Magnitude == 0
             and root.CFrame.Position.X == safeCFrame.Position.X,
         "position is " .. tostring(root.CFrame.Position.X))
+    check("anti-fling distinguishes an active block",
+        antiFling.status == "blocking", tostring(antiFling.status))
 
     -- Your own fling is deliberate; Anti-Fling used to read a global that was
     -- nil and never stood down for it. This is that regression.

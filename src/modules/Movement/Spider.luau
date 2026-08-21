@@ -59,11 +59,16 @@ function Module.init(context: Runtime): any
         speed = 30,
         climbState = true,
     }
+    local SpiderFeature: any = nil
     local function toggleSpider(enabled: boolean): ()
         disconnectFeatureConnection("Spider")
         if not enabled then
+            if SpiderFeature then
+                SpiderFeature:SetStatus(nil)
+            end
             return
         end
+        SpiderFeature:SetStatus(spiderSettings.mode)
         local climbing: boolean = false
         featureConnections.Spider = TaskManager:Connect(function(deltaTime: number): ()
             local character: Model?, humanoidOrNil: Humanoid?, rootOrNil: BasePart? =
@@ -133,7 +138,7 @@ function Module.init(context: Runtime): any
     end
 
 
-    local SpiderFeature = createUniversalFeature(
+    SpiderFeature = createUniversalFeature(
         "Spider",
         "Climb a wall automatically while moving into it",
         20,
@@ -146,6 +151,9 @@ function Module.init(context: Runtime): any
         1,
         function(value: string): ()
             spiderSettings.mode = value
+            if SpiderFeature.enabled then
+                SpiderFeature:SetStatus(value)
+            end
         end,
         "Velocity is smooth and works nearly everywhere; Impulse survives games "
             .. "that rewrite your velocity every frame; CFrame works when both are "

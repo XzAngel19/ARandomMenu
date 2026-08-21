@@ -112,6 +112,7 @@ return function(ctx: any): ()
 
     freeze.activate()
     stub.step(1 / 60)
+    check("freeze reports the active engine", freeze.status == "Anchor")
     check("anchor mode stops the character cold",
         humanoid.WalkSpeed == 0 and humanoid.JumpPower == 0
             and humanoid.AutoRotate == false and root.Anchored == true)
@@ -155,6 +156,7 @@ return function(ctx: any): ()
 
     jumpPower.activate()
     stub.step(1 / 60)
+    check("jump power reports its live value", jumpPower.status == "80")
     check("the jump is rewritten through the humanoid's own fields",
         humanoid.UseJumpPower == true
             and humanoid.JumpPower == jumpPower.options["Power"].value,
@@ -196,6 +198,7 @@ return function(ctx: any): ()
 
     humanoid.MoveDirection = vector3(0, 0, -1)
     spider.activate()
+    check("spider reports its climbing engine", spider.status == "Velocity")
     world.raycastResult = {
         Instance = Mock.newInstance("Part"),
         Position = vector3(0, 0, -2),

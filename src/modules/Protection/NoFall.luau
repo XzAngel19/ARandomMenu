@@ -71,8 +71,10 @@ function Module.init(context: Runtime): any
             .. "blocking anything.",
         Function = function(enabled: boolean): ()
             if not enabled then
+                noFall:SetStatus(nil)
                 return
             end
+            noFall:SetStatus(noFallSettings.mode)
             local nextRecordResetAt: number = 0
             local landedThisFall: boolean = false
             noFall:Loop(function(): ()
@@ -147,6 +149,9 @@ function Module.init(context: Runtime): any
         Index = 1,
         Function = function(value: string): ()
             noFallSettings.mode = value
+            if noFall.Enabled then
+                noFall:SetStatus(value)
+            end
         end,
         Tooltip = "Impact brakes the fall just above the ground, for games "
             .. "that read your landing speed. State closes the humanoid's "
