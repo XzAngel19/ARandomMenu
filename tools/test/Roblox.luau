@@ -1056,8 +1056,14 @@ function Mock.install(): MockWorld
         delay = function(_seconds: number, callback: any, ...: any): ()
             callback(...)
         end,
-        wait = function(): number
-            return 0
+        -- Honour the duration so a wait-loop against os.clock can actually
+        -- expire. The recovery loader spins `task.wait(0.03)` for up to 12s;
+        -- a wait that never moved the clock hung that loop forever the
+        -- moment a worker left `pending` above zero.
+        wait = function(seconds: number?): number
+            local delta: number = seconds or 0
+            world.clock += delta
+            return delta
         end,
     }
 
