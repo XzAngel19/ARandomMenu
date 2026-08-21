@@ -136,8 +136,15 @@ instead, once, before doing anything else:
 ```
 git fetch origin arena/01a01c6e-arandommenu
 git reset --hard FETCH_HEAD
+git fetch origin <your-branch>                 # refresh the lease's reference
 git push --force-with-lease origin HEAD
 ```
+
+The third line is not optional and its absence is not obvious. Bare
+`--force-with-lease` refuses the push unless git already knows where your branch
+is on the server, and after a reset it does not — the probe commit was created
+before that knowledge existed, so the push is rejected with `stale info`, which
+reads like an authentication problem and is not one.
 
 You are staying on your own branch; you are giving it the right contents. Later,
 to pick up integration work: `git fetch origin arena/01a01c6e-arandommenu &&

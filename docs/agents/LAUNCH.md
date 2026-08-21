@@ -21,8 +21,14 @@ branch the right contents.
 ```
 git fetch origin arena/01a01c6e-arandommenu
 git reset --hard FETCH_HEAD
+git fetch origin <your-branch>                 # refresh the lease's reference
 git push --force-with-lease origin HEAD
 ```
+
+The third line is not optional. Bare `--force-with-lease` refuses to push unless
+git already knows where your branch is on the server, and after a reset it does
+not; the rejection reads `stale info`, which looks like an authentication
+failure and is not one.
 
 The probe commit is thrown away by that reset, which is fine — it already proved
 what it was for. To pick up later integration work, `git fetch origin
@@ -48,8 +54,12 @@ Both messages below start with this.
 > ```
 > git fetch origin arena/01a01c6e-arandommenu
 > git reset --hard FETCH_HEAD
+> git fetch origin <your-branch>               # refresh the lease's reference
 > git push --force-with-lease origin HEAD
 > ```
+>
+> That third line is not optional: without it the push is rejected with
+> `stale info`, which looks like an auth failure and is not one.
 >
 > Read these three files in this order before running anything:
 >
@@ -88,8 +98,12 @@ Both messages below start with this.
 > ```
 > git fetch origin arena/01a01c6e-arandommenu
 > git reset --hard FETCH_HEAD
+> git fetch origin <your-branch>               # refresh the lease's reference
 > git push --force-with-lease origin HEAD
 > ```
+>
+> That third line is not optional: without it the push is rejected with
+> `stale info`, which looks like an auth failure and is not one.
 >
 > Read these two files in this order before running anything:
 >
