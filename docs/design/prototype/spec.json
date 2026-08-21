@@ -52,6 +52,14 @@
       "transitionSlow": "TRANSITION_SLOW"
     }
   },
+  "scaleControl": {
+    "default": 1,
+    "min": 0.7,
+    "max": 1.6,
+    "decimals": 2,
+    "referenceHeight": null,
+    "autoFactor": null
+  },
   "wurst": {
     "source": "Wurst7 4a22e53d774b9a28e395874834f099e779685998",
     "uiSettingsHosts": [
