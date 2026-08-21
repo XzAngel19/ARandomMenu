@@ -145,6 +145,7 @@ export type MenuState = {
     animationsEnabled: boolean,                     -- Whether the interface animates
     mobileButtonSize: number,                       -- Pixel size of placed phone shortcuts
     clickGui: any,                                  -- Wurst's layout: one window per category, cards placed into them
+    hudList: any,                                   -- Wurst's HackList: the on-screen list of enabled modules and their card.status brackets
     windows: any,                                   -- The window manager: drag, collapse, pin, snap, persistence
     floatingUi: any,                                -- Favourites, the overlay menu and the four overlays
     destroySessionTracking: () -> (),               -- Stop counting kills, deaths and time

@@ -318,7 +318,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "5e97b82da5b7c203"
+local SOURCE_STAMP: string = "037602a03853026d"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the

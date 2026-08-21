@@ -2,8 +2,10 @@
 --
 -- The screen furniture: everything Wurst draws on the HUD that is neither a
 -- window nor a row. Today that is the wordmark — Wurst's own logo with the
--- version next to it, top-left, on the white chip Wurst gives it — and the
--- stats block under it (FPS, ping, session time, place).
+-- version next to it, top-left, on the white chip Wurst gives it — the
+-- stats block under it (FPS, ping, session time, place), and the HackList:
+-- every enabled module down the right edge, with whatever bracketed status
+-- it publishes through card:SetStatus.
 --
 -- All of it lives on the same layer as the windows so the one UIScale the
 -- ClickGUI installs moves the whole interface together, and all of it stays
@@ -41,6 +43,20 @@ local LOGO_WIDTH: number = 87
 local STATS_FONT_SIZE: number = 11
 local STATS_LINE_HEIGHT: number = 17
 
+-- Wurst's HackList defaults (docs/wurst-features.md). Mode, sort order and
+-- animations are behaviour this file implements; the enums keep Wurst's
+-- values so the settings window that later exposes them starts from parity.
+-- Position is the one place the port deviates on purpose: Wurst hangs the
+-- list under its logo on the left, our prototype gives that corner to the
+-- wordmark and the stats and sends the list to the right edge.
+local HACKLIST_COLOR: Color3 = Color3.fromRGB(255, 255, 255)
+local HACKLIST_REVERSE: boolean = false
+local HACKLIST_ANIMATIONS: boolean = true
+local HACKLIST_FONT_SIZE: number = 13
+local HACKLIST_LINE_HEIGHT: number = 18
+local HACKLIST_TOP: number = 56
+local HACKLIST_SLIDE: number = 14
+
 function Module.init(context: any): any
     local host: any = context
     local state: any = host.state
@@ -52,6 +68,9 @@ function Module.init(context: any): any
     local PopupLayer: any = host.PopupLayer
     local Stats: any = host.Stats
     local TITLE_FONT: any = host.TITLE_FONT
+    local CONTROL_FONT: any = host.CONTROL_FONT
+    local TweenService: any = host.TweenService
+    local allFeatures: {any} = host.allFeatures
 
     local Furniture: any = {
         handles = {} :: {any},
@@ -224,6 +243,219 @@ function Module.init(context: any): any
     end))
     renderStats(0)
 
+    -- ------------------------------------------------------------- HackList
+    -- Wurst's list of what is on, one line per enabled module, newest state
+    -- at most a quarter of a second old. Every card already publishes its
+    -- bracketed status through card:SetStatus, so the line is the module's
+    -- name plus that bracket — `Speed [CFrame ×2]` — exactly the read the
+    -- prototype's #hud gives it. There is no toggle event to subscribe to
+    -- (refreshFeatureToggle is a plain function), so the list polls; Wurst's
+    -- own Width sort has to be recomputed per tick for the same reason.
+    local hudFrame: Frame = (create("Frame", {
+        Parent = PopupLayer,
+        Name = "HackList",
+        Active = false,
+        AnchorPoint = Vector2.new(1, 0),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Position = UDim2.new(1, -12, 0, HACKLIST_TOP),
+        Size = UDim2.new(0, 260, 1, -(HACKLIST_TOP + 12)),
+        ZIndex = 20,
+    }) :: any) :: Frame
+
+    local hudLayout: UIListLayout = (create("UIListLayout", {
+        Parent = hudFrame,
+        FillDirection = Enum.FillDirection.Vertical,
+        HorizontalAlignment = Enum.HorizontalAlignment.Right,
+        Padding = UDim.new(0, 1),
+        SortOrder = Enum.SortOrder.LayoutOrder,
+    }) :: any) :: UIListLayout
+
+    -- On a phone the list moves to the left edge under the stats block,
+    -- where a thumb on the right half of the screen does not cover it
+    -- (UI-V2, Mobile). Same rows, different placement policy.
+    local function placeHudList(): ()
+        if state.layout.compact then
+            hudFrame.AnchorPoint = Vector2.new(0, 0)
+            hudFrame.Position = UDim2.new(
+                0,
+                FURNITURE_MARGIN_X,
+                0,
+                FURNITURE_MARGIN_Y + LOGO_HEIGHT + 8
+                    + STATS_GAP
+                    + STATS_LINE_HEIGHT * 2
+                    + STATS_GAP
+            )
+            hudLayout.HorizontalAlignment = Enum.HorizontalAlignment.Left
+        else
+            hudFrame.AnchorPoint = Vector2.new(1, 0)
+            hudFrame.Position = UDim2.new(1, -12, 0, HACKLIST_TOP)
+            hudLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
+        end
+    end
+    placeHudList()
+    state.onLayout(placeHudList)
+
+    -- One container per entry: the list layout owns the container's slot,
+    -- so the label inside it is free to slide the prototype's 14 px without
+    -- fighting the layout for its position.
+    local hudRows: {[string]: any} = {}
+
+    local function hudAlignment(): Enum.TextXAlignment
+        return state.layout.compact
+            and Enum.TextXAlignment.Left
+            or Enum.TextXAlignment.Right
+    end
+
+    local function composeHudText(name: string, status: string?): string
+        local text: string = escapeRich(name)
+        if status and status ~= "" then
+            text = text
+                .. ' <font color="'
+                .. colorHex(Theme.textMuted)
+                .. '">['
+                .. escapeRich(status)
+                .. "]</font>"
+        end
+        return text
+    end
+
+    local function animationsOn(): boolean
+        return HACKLIST_ANIMATIONS and state.animationsEnabled ~= false
+    end
+
+    local function newHudRow(name: string): any
+        local container: Frame = (create("Frame", {
+            Parent = hudFrame,
+            Name = name,
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Size = UDim2.new(1, 0, 0, HACKLIST_LINE_HEIGHT),
+            ZIndex = 20,
+        }) :: any) :: Frame
+        local label: TextLabel = (create("TextLabel", {
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            Parent = container,
+            Name = "Entry",
+            BackgroundTransparency = 1,
+            FontFace = CONTROL_FONT,
+            Position = UDim2.fromOffset(0, 0),
+            RichText = true,
+            Size = UDim2.new(1, 0, 1, 0),
+            Text = "",
+            TextColor3 = HACKLIST_COLOR,
+            TextSize = HACKLIST_FONT_SIZE,
+            TextXAlignment = hudAlignment(),
+            ZIndex = 20,
+        }) :: any) :: TextLabel
+        if animationsOn() then
+            label.Position = UDim2.fromOffset(HACKLIST_SLIDE, 0)
+            label.TextTransparency = 1
+            TweenService:Create(
+                label,
+                TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+                {
+                    Position = UDim2.fromOffset(0, 0),
+                    TextTransparency = 0,
+                }
+            ):Play()
+        end
+        return {container = container, label = label}
+    end
+
+    local function dropHudRow(row: any): ()
+        if animationsOn() then
+            local tween: Tween = TweenService:Create(
+                row.label,
+                TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+                {
+                    Position = UDim2.fromOffset(HACKLIST_SLIDE, 0),
+                    TextTransparency = 1,
+                }
+            )
+            tween.Completed:Connect(function(): ()
+                row.container:Destroy()
+            end)
+            tween:Play()
+        else
+            row.container:Destroy()
+        end
+    end
+
+    local hudSignature: string = ""
+    local hudElapsed: number = 0
+
+    local function refreshHudList(): ()
+        local entries: {any} = {}
+        for _, feature: any in ipairs(allFeatures) do
+            if feature.enabled == true and not feature.isCategory then
+                table.insert(entries, {
+                    name = tostring(feature.name),
+                    status = feature.status,
+                })
+            end
+        end
+        -- Wurst's default sort is by name; Width (rendered pixel width,
+        -- recomputed per tick) arrives with the settings window that can
+        -- switch to it. Reverse is Wurst's other axis and already works.
+        table.sort(entries, function(left: any, right: any): boolean
+            if HACKLIST_REVERSE then
+                return left.name > right.name
+            end
+            return left.name < right.name
+        end)
+
+        local signature: {string} = {}
+        for _, entry: any in ipairs(entries) do
+            table.insert(
+                signature,
+                entry.name .. "\1" .. tostring(entry.status or "")
+            )
+        end
+        local composed: string = table.concat(signature, "\2")
+            .. (state.layout.compact and "\3compact" or "")
+        if composed == hudSignature then
+            return
+        end
+        hudSignature = composed
+
+        local wanted: {[string]: boolean} = {}
+        for order: number, entry: any in ipairs(entries) do
+            wanted[entry.name] = true
+            local row: any = hudRows[entry.name]
+            if not row then
+                row = newHudRow(entry.name)
+                hudRows[entry.name] = row
+            end
+            row.container.LayoutOrder = order
+            row.label.Text = composeHudText(entry.name, entry.status)
+            row.label.TextXAlignment = hudAlignment()
+        end
+        for name: string, row: any in pairs(hudRows) do
+            if not wanted[name] then
+                hudRows[name] = nil
+                dropHudRow(row)
+            end
+        end
+    end
+
+    table.insert(Furniture.handles, TaskManager:Connect(function(
+        deltaTime: number
+    ): ()
+        hudElapsed += deltaTime
+        if hudElapsed < 0.25 then
+            return
+        end
+        hudElapsed = 0
+        refreshHudList()
+    end))
+    refreshHudList()
+
+    state.hudList = {
+        frame = hudFrame,
+        refresh = refreshHudList,
+    }
+
     activeCleanup = function(): ()
         for _, handle: any in ipairs(Furniture.handles) do
             pcall(function(): ()
@@ -233,6 +465,8 @@ function Module.init(context: any): any
         Furniture.handles = {}
         chip:Destroy()
         statsLabel:Destroy()
+        hudFrame:Destroy()
+        state.hudList = nil
     end
     Module.Initialized = true
     return Furniture
