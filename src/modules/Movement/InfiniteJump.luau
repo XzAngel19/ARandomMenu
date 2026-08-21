@@ -168,6 +168,16 @@ function Module.init(context: Runtime): any
             .. "you, so they have no power to set.",
     })
     jump:CreateSlider({
+        Name = "Rise speed",
+        Show = {Option = "Mode", Values = {"Rise"}},
+        Min = 10,
+        Max = 350,
+        Default = infiniteJumpSettings.riseSpeed,
+        Function = function(value: number): ()
+            infiniteJumpSettings.riseSpeed = value
+        end,
+    })
+    jump:CreateSlider({
         Name = "Jump interval (s)",
         Show = {Option = "Mode", Values = {"Normal", "Impulse", "Stack", "Fall"}},
         Min = 0.05,
@@ -179,16 +189,10 @@ function Module.init(context: Runtime): any
         Tooltip = "Minimum spacing between jumps. Rise ignores it: it is a "
             .. "hold, not a repeat.",
     })
-    jump:CreateSlider({
-        Name = "Rise speed",
-        Show = {Option = "Mode", Values = {"Rise"}},
-        Min = 10,
-        Max = 350,
-        Default = infiniteJumpSettings.riseSpeed,
-        Function = function(value: number): ()
-            infiniteJumpSettings.riseSpeed = value
-        end,
-    })
+    -- Every row in this panel belongs to the mode, so there is no ungated
+    -- final row whose creation would make the kernel re-read the rules one
+    -- last time. One explicit pass keeps the panel honest.
+    jump:RefreshVisibility()
 
     activeCleanup = function(): ()
         state.infiniteJumpEnabled = false

@@ -422,7 +422,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "b79656c8cbf3e8c1"
+local SOURCE_STAMP: string = "bb382e0a8d8f2564"
 local BOOT_FINGERPRINT_SECONDS: number = 0
 local PENDING_FINGERPRINT: boolean = false
 

@@ -643,12 +643,6 @@ function Module.init(context: Runtime): any
         end,
         Tooltip = "Studs per second while rising or descending.",
     })
-    fly:CreateToggle({
-        Name = "Advanced settings",
-        Default = false,
-        Tooltip = "Reveal response tuning, collision behaviour and key bindings.",
-    })
-
     -- The advanced block, declared: every row below says it belongs to the
     -- "Advanced settings" switch instead of the switch keeping a list of them.
     local advanced: any = {Option = "Advanced settings"}
@@ -720,6 +714,12 @@ function Module.init(context: Runtime): any
             flySettings.downKey = value
         end,
         Tooltip = "Hold to lose altitude.",
+    })
+
+    fly:CreateToggle({
+        Name = "Advanced settings",
+        Default = false,
+        Tooltip = "Everything above works on its own; this reveals the rest.",
     })
 
     -- Climbing and descending are holds on a keyboard, so they are holds on a

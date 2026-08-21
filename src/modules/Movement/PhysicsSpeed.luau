@@ -371,13 +371,9 @@ function Module.init(context: Runtime): any
             physicsSpeedSettings.speed = value
         end,
     })
-    physicsSpeed:CreateToggle({
-        Name = "Advanced settings",
-        Default = false,
-    })
-
-    -- Every row below declares that it belongs to the switch above (and, where
-    -- a mode owns it, to that mode) instead of the switch walking a list.
+    -- Every row below declares that it belongs to the switch after the block
+    -- (and, where a mode owns it, to that mode) instead of the switch walking
+    -- a list.
     local advanced: any = {Option = "Advanced settings"}
     physicsSpeed:CreateSlider({
         Name = "Vertical speed",
@@ -520,6 +516,11 @@ function Module.init(context: Runtime): any
         Function = function(value: number): ()
             physicsSpeedSettings.jumpVelocity = value
         end,
+    })
+    physicsSpeed:CreateToggle({
+        Name = "Advanced settings",
+        Default = false,
+        Tooltip = "Everything above works on its own; this reveals the rest.",
     })
 
     activeCleanup = function(): ()

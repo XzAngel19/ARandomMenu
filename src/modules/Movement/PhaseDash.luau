@@ -178,15 +178,6 @@ function Module.init(context: Runtime): any
             .. "shortens it.",
     })
     phaseDash:CreateSlider({
-        Name = "Cooldown",
-        Min = 0.1,
-        Max = 5,
-        Default = phaseDashSettings.cooldown,
-        Function = function(value: number): ()
-            phaseDashSettings.cooldown = value
-        end,
-    })
-    phaseDash:CreateSlider({
         Name = "Exit speed",
         Show = {Option = "Mode", Values = {"Blink"}},
         Min = 0,
@@ -239,10 +230,24 @@ function Module.init(context: Runtime): any
         Tooltip = "Keep the velocity you had before the blink instead of "
             .. "replacing it with Exit speed.",
     })
-    -- The dash key is the card's own key slot, not an option row: one module, one
-    -- keybind, in the place every other module keeps it. It starts blank like
-    -- every other slot — the module used to arrive pre-bound to Q for no reason
-    -- the player could see. On touch, tapping the slot places a DASH button.
+    -- Cooldown exists in both modes, so it is created last: an ungated final
+    -- row is what keeps every rule above it honest, because the kernel only
+    -- re-reads the rules when an option is created or a value changes.
+    phaseDash:CreateSlider({
+        Name = "Cooldown",
+        Min = 0.1,
+        Max = 5,
+        Default = phaseDashSettings.cooldown,
+        Function = function(value: number): ()
+            phaseDashSettings.cooldown = value
+        end,
+    })
+
+    -- The dash key is the card's own key slot, not an option row: one module,
+    -- one keybind, in the place every other module keeps it. It starts blank
+    -- like every other slot — the module used to arrive pre-bound to Q for no
+    -- reason the player could see. On touch, tapping the slot places a DASH
+    -- button.
     state.bindFeatureActivationKey(phaseDash.Feature, nil, performPhaseDash)
 
     activeCleanup = function(): ()

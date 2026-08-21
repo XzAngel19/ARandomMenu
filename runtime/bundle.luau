@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "b79656c8cbf3e8c1",
+    stamp = "bb382e0a8d8f2564",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -13670,15 +13670,6 @@ function Module.init(context: Runtime): any
             .. "shortens it.",
     })
     phaseDash:CreateSlider({
-        Name = "Cooldown",
-        Min = 0.1,
-        Max = 5,
-        Default = phaseDashSettings.cooldown,
-        Function = function(value: number): ()
-            phaseDashSettings.cooldown = value
-        end,
-    })
-    phaseDash:CreateSlider({
         Name = "Exit speed",
         Show = {Option = "Mode", Values = {"Blink"}},
         Min = 0,
@@ -13731,10 +13722,24 @@ function Module.init(context: Runtime): any
         Tooltip = "Keep the velocity you had before the blink instead of "
             .. "replacing it with Exit speed.",
     })
-    -- The dash key is the card's own key slot, not an option row: one module, one
-    -- keybind, in the place every other module keeps it. It starts blank like
-    -- every other slot — the module used to arrive pre-bound to Q for no reason
-    -- the player could see. On touch, tapping the slot places a DASH button.
+    -- Cooldown exists in both modes, so it is created last: an ungated final
+    -- row is what keeps every rule above it honest, because the kernel only
+    -- re-reads the rules when an option is created or a value changes.
+    phaseDash:CreateSlider({
+        Name = "Cooldown",
+        Min = 0.1,
+        Max = 5,
+        Default = phaseDashSettings.cooldown,
+        Function = function(value: number): ()
+            phaseDashSettings.cooldown = value
+        end,
+    })
+
+    -- The dash key is the card's own key slot, not an option row: one module,
+    -- one keybind, in the place every other module keeps it. It starts blank
+    -- like every other slot — the module used to arrive pre-bound to Q for no
+    -- reason the player could see. On touch, tapping the slot places a DASH
+    -- button.
     state.bindFeatureActivationKey(phaseDash.Feature, nil, performPhaseDash)
 
     activeCleanup = function(): ()
@@ -13922,18 +13927,6 @@ function Module.init(context: Runtime): any
         Tooltip = "The vertical speed the landing is allowed to have. Most "
             .. "games start hurting somewhere above 50.",
     })
-    noFall:CreateSlider({
-        Name = "Ground scan",
-        Min = 4,
-        Max = 40,
-        Default = noFallSettings.scanDistance,
-        Function = function(value: number): ()
-            noFallSettings.scanDistance = value
-        end,
-        Tooltip = "How many studs above the floor the brake starts. Higher is "
-            .. "safer and more visible; the module already scales this with "
-            .. "your fall speed.",
-    })
     noFall:CreateToggle({
         Name = "Reset fall record",
         Show = {Option = "Mode", Values = {"Both", "State"}},
@@ -13945,6 +13938,18 @@ function Module.init(context: Runtime): any
             .. "second while you are in the air, so a game that measures the "
             .. "drop never sees more than a short one. Costs a little "
             .. "animation flicker on long falls.",
+    })
+    noFall:CreateSlider({
+        Name = "Ground scan",
+        Min = 4,
+        Max = 40,
+        Default = noFallSettings.scanDistance,
+        Function = function(value: number): ()
+            noFallSettings.scanDistance = value
+        end,
+        Tooltip = "How many studs above the floor the brake starts. Higher is "
+            .. "safer and more visible; the module already scales this with "
+            .. "your fall speed.",
     })
 
     Module.Initialized = true
@@ -14604,12 +14609,6 @@ function Module.init(context: Runtime): any
         end,
         Tooltip = "Studs per second while rising or descending.",
     })
-    fly:CreateToggle({
-        Name = "Advanced settings",
-        Default = false,
-        Tooltip = "Reveal response tuning, collision behaviour and key bindings.",
-    })
-
     -- The advanced block, declared: every row below says it belongs to the
     -- "Advanced settings" switch instead of the switch keeping a list of them.
     local advanced: any = {Option = "Advanced settings"}
@@ -14681,6 +14680,12 @@ function Module.init(context: Runtime): any
             flySettings.downKey = value
         end,
         Tooltip = "Hold to lose altitude.",
+    })
+
+    fly:CreateToggle({
+        Name = "Advanced settings",
+        Default = false,
+        Tooltip = "Everything above works on its own; this reveals the rest.",
     })
 
     -- Climbing and descending are holds on a keyboard, so they are holds on a
@@ -15112,13 +15117,9 @@ function Module.init(context: Runtime): any
             physicsSpeedSettings.speed = value
         end,
     })
-    physicsSpeed:CreateToggle({
-        Name = "Advanced settings",
-        Default = false,
-    })
-
-    -- Every row below declares that it belongs to the switch above (and, where
-    -- a mode owns it, to that mode) instead of the switch walking a list.
+    -- Every row below declares that it belongs to the switch after the block
+    -- (and, where a mode owns it, to that mode) instead of the switch walking
+    -- a list.
     local advanced: any = {Option = "Advanced settings"}
     physicsSpeed:CreateSlider({
         Name = "Vertical speed",
@@ -15261,6 +15262,11 @@ function Module.init(context: Runtime): any
         Function = function(value: number): ()
             physicsSpeedSettings.jumpVelocity = value
         end,
+    })
+    physicsSpeed:CreateToggle({
+        Name = "Advanced settings",
+        Default = false,
+        Tooltip = "Everything above works on its own; this reveals the rest.",
     })
 
     activeCleanup = function(): ()
@@ -15785,6 +15791,16 @@ function Module.init(context: Runtime): any
             .. "you, so they have no power to set.",
     })
     jump:CreateSlider({
+        Name = "Rise speed",
+        Show = {Option = "Mode", Values = {"Rise"}},
+        Min = 10,
+        Max = 350,
+        Default = infiniteJumpSettings.riseSpeed,
+        Function = function(value: number): ()
+            infiniteJumpSettings.riseSpeed = value
+        end,
+    })
+    jump:CreateSlider({
         Name = "Jump interval (s)",
         Show = {Option = "Mode", Values = {"Normal", "Impulse", "Stack", "Fall"}},
         Min = 0.05,
@@ -15796,16 +15812,10 @@ function Module.init(context: Runtime): any
         Tooltip = "Minimum spacing between jumps. Rise ignores it: it is a "
             .. "hold, not a repeat.",
     })
-    jump:CreateSlider({
-        Name = "Rise speed",
-        Show = {Option = "Mode", Values = {"Rise"}},
-        Min = 10,
-        Max = 350,
-        Default = infiniteJumpSettings.riseSpeed,
-        Function = function(value: number): ()
-            infiniteJumpSettings.riseSpeed = value
-        end,
-    })
+    -- Every row in this panel belongs to the mode, so there is no ungated
+    -- final row whose creation would make the kernel re-read the rules one
+    -- last time. One explicit pass keeps the panel honest.
+    jump:RefreshVisibility()
 
     activeCleanup = function(): ()
         state.infiniteJumpEnabled = false

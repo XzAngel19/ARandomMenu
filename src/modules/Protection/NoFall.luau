@@ -166,18 +166,6 @@ function Module.init(context: Runtime): any
         Tooltip = "The vertical speed the landing is allowed to have. Most "
             .. "games start hurting somewhere above 50.",
     })
-    noFall:CreateSlider({
-        Name = "Ground scan",
-        Min = 4,
-        Max = 40,
-        Default = noFallSettings.scanDistance,
-        Function = function(value: number): ()
-            noFallSettings.scanDistance = value
-        end,
-        Tooltip = "How many studs above the floor the brake starts. Higher is "
-            .. "safer and more visible; the module already scales this with "
-            .. "your fall speed.",
-    })
     noFall:CreateToggle({
         Name = "Reset fall record",
         Show = {Option = "Mode", Values = {"Both", "State"}},
@@ -189,6 +177,18 @@ function Module.init(context: Runtime): any
             .. "second while you are in the air, so a game that measures the "
             .. "drop never sees more than a short one. Costs a little "
             .. "animation flicker on long falls.",
+    })
+    noFall:CreateSlider({
+        Name = "Ground scan",
+        Min = 4,
+        Max = 40,
+        Default = noFallSettings.scanDistance,
+        Function = function(value: number): ()
+            noFallSettings.scanDistance = value
+        end,
+        Tooltip = "How many studs above the floor the brake starts. Higher is "
+            .. "safer and more visible; the module already scales this with "
+            .. "your fall speed.",
     })
 
     Module.Initialized = true
