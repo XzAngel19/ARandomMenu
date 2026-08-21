@@ -609,13 +609,13 @@ function Module.init(context: any): Framework
             onToggle(not created.Enabled)
         end
 
-        -- What the HUD list writes in brackets after the module's name, the
-        -- way Wurst prints `AutoTotem [0 totems]`. Only the module knows what
-        -- is worth saying, and only while it is running; `nil` means say
-        -- nothing, which is the right answer for most of them most of the
-        -- time. A bracket that always reads `[on]` is noise.
+        -- The status belongs to the card, which every module has, rather than
+        -- to this wrapper, which only eighteen of them do. This forwards.
         function created:SetStatus(status: string?): ()
             created.Status = status
+            if feature and type(feature.SetStatus) == "function" then
+                feature:SetStatus(status)
+            end
         end
 
         function created:Notify(message: string): ()

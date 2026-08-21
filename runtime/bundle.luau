@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "59b92e4c61385918",
+    stamp = "ab4bd898eddabf92",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -2949,13 +2949,13 @@ function Module.init(context: any): Framework
             onToggle(not created.Enabled)
         end
 
-        -- What the HUD list writes in brackets after the module's name, the
-        -- way Wurst prints `AutoTotem [0 totems]`. Only the module knows what
-        -- is worth saying, and only while it is running; `nil` means say
-        -- nothing, which is the right answer for most of them most of the
-        -- time. A bracket that always reads `[on]` is noise.
+        -- The status belongs to the card, which every module has, rather than
+        -- to this wrapper, which only eighteen of them do. This forwards.
         function created:SetStatus(status: string?): ()
             created.Status = status
+            if feature and type(feature.SetStatus) == "function" then
+                feature:SetStatus(status)
+            end
         end
 
         function created:Notify(message: string): ()
@@ -4850,33 +4850,6 @@ function Module.init(context: any): any
             Thickness = 1,
         }) :: any) :: UIStroke
         feature.stroke = cardStroke
-        local activeStripe: Frame = create("Frame", {
-            Parent = row,
-            Name = "ActiveStripe",
-            AnchorPoint = Vector2.new(0, 0.5),
-            BackgroundColor3 = Theme.accent,
-            BackgroundTransparency = 1,
-            BorderSizePixel = 0,
-            Position = UDim2.new(0, 0, 0.5, 0),
-            Size = UDim2.new(0, 2, 1, -14),
-            ZIndex = 8,
-        }) :: Frame
-        create("UICorner", {Parent = activeStripe, CornerRadius = UDim.new(1, 0)})
-        feature.activeStripeGradient = create("UIGradient", {
-            Parent = activeStripe,
-            Color = ColorSequence.new({
-                ColorSequenceKeypoint.new(0, Theme.accent),
-                ColorSequenceKeypoint.new(0.5, Theme.accentDim),
-                ColorSequenceKeypoint.new(1, Theme.accentFaint),
-            }),
-            Rotation = 90,
-        })
-        feature.activeStripe = activeStripe
-        activeStripe.BackgroundColor3 = Theme.text
-        if feature.activeStripeGradient then
-            (feature.activeStripeGradient :: UIGradient).Enabled = false
-        end
-
         -- Hairline under the card. A separator instead of a box: forty boxed cards
         -- read as a spreadsheet, forty separated rows read as a list.
         local cardRule: Frame = create("Frame", {
@@ -5343,12 +5316,25 @@ function Module.init(context: any): any
                 UDim2.fromOffset(metrics.keySlotWidth, metrics.iconButton)
             activationTarget.Size = UDim2.new(1, 0, 0, metrics.cardHeight)
             options.Position = UDim2.fromOffset(8, metrics.cardHeight)
-            activeStripe.Size = UDim2.new(0, 2, 1, -14)
             updateExpandedSize(false)
         end
         -- Applied once at creation too, so a card built while the shell is in one
         -- mode never keeps sizes from another.
         feature.applyLayout()
+
+        -- What the HUD list writes in brackets after the module's name, the
+        -- way Wurst prints `AutoTotem [0 totems]`. It lives on the card rather
+        -- than on the framework's wrapper because only eighteen of the
+        -- thirty-eight modules have a wrapper — the other twenty build their
+        -- card straight through this factory, and a status only half the menu
+        -- can publish is a list that lies by omission.
+        --
+        -- `nil` means say nothing, which is the right answer for most modules
+        -- most of the time; `[on]` is noise, since the name is in the list
+        -- precisely because it is on.
+        function feature:SetStatus(status: string?): ()
+            feature.status = status
+        end
 
         registry[name] = feature
         table.insert(allFeatures, feature)

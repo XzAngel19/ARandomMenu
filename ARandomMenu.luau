@@ -423,7 +423,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "59b92e4c61385918"
+local SOURCE_STAMP: string = "ab4bd898eddabf92"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -5013,8 +5013,15 @@ end
 --   group   not a control at all: no surface, no outline, no hover — a heading
 --           with a rule under it and its options below.
 --
--- Everything is near-black through grey; the only "colour" in the interface is
--- how light a grey is.
+-- An enabled module fills its whole row with the `enabled` token, the way
+-- Wurst does, rather than lighting a two-pixel stripe down its left edge. With
+-- thirty-eight modules the question "what is on" has to be answerable from
+-- across the room, and a stripe is not an answer — it was legible only once you
+-- were already reading the row you were asking about.
+--
+-- `enabled` is a separate token from `accent` for the same reason Wurst keeps
+-- "Enabled hacks" separate from "Accent": the accent already paints every title
+-- bar, and filling forty rows with it would leave nothing to look at.
 state.applyCardSkin = function(feature: any, hovered: boolean?): ()
     local row: Frame? = feature.row
     if not row then
@@ -5028,8 +5035,9 @@ state.applyCardSkin = function(feature: any, hovered: boolean?): ()
     local titleTransparency: number = 0
     local titleColor: Color3 = Theme.text
     local outline: number = 1
-    local edge: number = 1
     local rule: number = 0.86
+    -- Which token the row is painted with, as opposed to how transparent it is.
+    local fill: Color3 = Theme.surface
 
     if feature.isCategory then
         -- A heading, not a button: flat, and the rule under it groups the
@@ -5043,15 +5051,17 @@ state.applyCardSkin = function(feature: any, hovered: boolean?): ()
         outline = 0.74
         rule = 1
     elseif feature.isHoldAction then
-        surface = isOn and 0.18 or (isHovered and 0.46 or 0.66)
-        outline = isOn and 0.66 or 0.82
-        titleColor = isOn and Theme.text or Theme.textMuted
-        edge = isOn and 0.2 or 1
+        -- A hold card is lit for exactly as long as the key is down, so it uses
+        -- the same fill as a toggle: while it is on it *is* on.
+        fill = isOn and Theme.enabled or Theme.surface
+        surface = isOn and 0 or (isHovered and 0.46 or 0.66)
+        outline = isOn and 1 or 0.82
+        titleColor = isOn and Theme.enabledText or Theme.textMuted
         rule = 1
     else
-        surface = isOn and 0.18 or (isHovered and 0.5 or 0.74)
-        titleColor = isOn and Theme.text or Theme.textMuted
-        edge = isOn and 0.2 or 1
+        fill = isOn and Theme.enabled or Theme.surface
+        surface = isOn and 0 or (isHovered and 0.5 or 0.74)
+        titleColor = isOn and Theme.enabledText or Theme.textMuted
         rule = isOn and 1 or 0.72
     end
 
@@ -5063,11 +5073,11 @@ state.applyCardSkin = function(feature: any, hovered: boolean?): ()
     local animate: boolean = state.animationsEnabled == true
     if animate then
         TweenService:Create(resolvedRow, motion, {
-            BackgroundColor3 = Theme.surface,
+            BackgroundColor3 = fill,
             BackgroundTransparency = surface,
         }):Play()
     else
-        resolvedRow.BackgroundColor3 = Theme.surface
+        resolvedRow.BackgroundColor3 = fill
         resolvedRow.BackgroundTransparency = surface
     end
 
@@ -5080,15 +5090,6 @@ state.applyCardSkin = function(feature: any, hovered: boolean?): ()
         local cardStroke: UIStroke = feature.stroke :: UIStroke
         cardStroke.Color = Theme.outline
         cardStroke.Transparency = outline
-    end
-    if feature.activeStripe then
-        local stripe: Frame = feature.activeStripe :: Frame
-        stripe.BackgroundColor3 = Theme.text
-        if animate then
-            TweenService:Create(stripe, motion, {BackgroundTransparency = edge}):Play()
-        else
-            stripe.BackgroundTransparency = edge
-        end
     end
     if feature.cardRule then
         (feature.cardRule :: Frame).BackgroundTransparency = rule
