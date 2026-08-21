@@ -138,13 +138,22 @@ function Module.init(context: any): any
         ZIndex = 21,
     }) :: any) :: TextLabel
 
-    -- The version chip. Wurst prints it beside the sausage at a size you can
-    -- actually read, on the white background its own setting defaults to.
+    -- The version string sits on the game, not on a slab.
+    --
+    -- WurstLogo does expose a Background whose default is #FFFFFF, and I read
+    -- that out of the wiki and painted an opaque white box with it. The
+    -- reference screenshot already in this repository —
+    -- docs/design/reference/ref-wurst-719.jpg — shows "v7.19 MC1.18.1" as bare
+    -- coloured text beside the sausage with no box anywhere. The image was
+    -- right and the defaults table was being read out of context: the setting
+    -- exists so a settings window can switch a background on, not so one is
+    -- painted before anybody asks.
     local versionText: string = tostring(PRODUCT.version)
     local versionChip: Frame = (create("Frame", {
         Parent = chip,
         Name = "VersionChip",
         BackgroundColor3 = WURSTLOGO_BACKGROUND,
+        BackgroundTransparency = 1,
         BorderSizePixel = 0,
         Position = UDim2.fromOffset(LOGO_WIDTH + 10, 4),
         Size = UDim2.fromOffset(12 + #versionText * 9, LOGO_HEIGHT),
@@ -160,7 +169,11 @@ function Module.init(context: any): any
         Position = UDim2.fromOffset(0, 0),
         Size = UDim2.fromScale(1, 1),
         Text = versionText,
-        TextColor3 = WURSTLOGO_TEXT,
+        -- Wurst prints the version in the interface's own accent, which is why
+        -- it is magenta in one reference shot and cyan in the other. Its
+        -- default text colour is black, which on no background over a dark game
+        -- is invisible.
+        TextColor3 = Theme.accent,
         TextSize = 16,
         TextXAlignment = Enum.TextXAlignment.Left,
         ZIndex = 21,
