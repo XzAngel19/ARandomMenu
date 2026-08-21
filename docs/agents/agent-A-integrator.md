@@ -135,6 +135,23 @@ Not done, in order:
 4. UI Settings, Keybinds and Presets as windows, against the inventory agent C
    is producing in `docs/wurst-features.md`.
 
+## Who builds what, so nobody builds it twice
+
+There are four of us on this and two of us can write interface code, so the
+split is explicit:
+
+- **You** build the interface: points 2, 3 and 4 of the list above — the pill,
+  the wordmark, the stats block, the HUD list, tooltips, Wurst's setting lines
+  inside an expanded row, and then UI Settings, Keybinds and Presets as windows
+  against C's inventory in `docs/wurst-features.md`.
+- **The reviewer** verifies what you push, integrates C's and D's branches, and
+  writes their briefs. It does not build interface features while you are
+  building them; if it needs to touch one of your files to unblock somebody, it
+  says so in its reply.
+
+Both of you push to the same branch, so rule 2c applies: small commits, and a
+rejected push is merged, never forced.
+
 ## The other two agents
 
 - **C** owns `tools/**` and `docs/**` minus `docs/agents/`, plus the harness and

@@ -48,6 +48,28 @@ deletes work that is already pushed. The script checks one thing — that HEAD i
 built on what is actually on the server — and tells you how to recover if it is
 not.
 
+## 2c. Two people share the integration branch
+
+The integrator and the reviewer both push to `arena/01a01c6e-arandommenu`. That
+is deliberate — it means the interface work never has to be merged — and it has
+one hazard: the branch can move under you between your last fetch and your push.
+
+When a push is rejected with `fetch first`, **never force**. The other person's
+commit is not a mistake to overwrite:
+
+```
+git fetch origin arena/01a01c6e-arandommenu
+git merge FETCH_HEAD                 # or: git stash -u; git reset --hard FETCH_HEAD; git stash pop
+python3 tools/bundle.py              # the only conflicts are generated; regenerate, never pick a side
+bash tools/preflight.sh
+LUAU_DIR=/tmp/luau-src/build bash tools/validate.sh
+git push origin HEAD
+```
+
+Push small and push often. A five-minute increment merges cleanly; an
+afternoon's work in one commit is an afternoon of conflicts in a file neither of
+you can read.
+
 ## 3. Push every increment
 
 One file finished is one push. Never batch a session's work into a final push.
