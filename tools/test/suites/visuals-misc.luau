@@ -20,19 +20,8 @@ return function(ctx: any): ()
     if host.Lighting == nil then
         host.Lighting = world.globals.game:GetService("Lighting")
     end
-    if world.globals.Enum.CameraMode == nil then
-        world.globals.Enum.CameraMode = {
-            Classic = {Name = "Classic", Value = 1},
-            LockFirstPerson = {Name = "LockFirstPerson", Value = 2},
-        }
-    end
 
     local camera: any = world.globals.workspace.CurrentCamera
-    if camera.Parent == nil then
-        -- A real CurrentCamera is a child of workspace; the restore paths read
-        -- Parent before touching a camera, so the stand-in needs the link.
-        camera.Parent = world.globals.workspace
-    end
 
     local context: any = ctx.espContext
     if not context then

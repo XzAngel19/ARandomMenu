@@ -28,6 +28,15 @@ function Host.create(world: any): HostStub
     local notifications: {string} = {}
     local menuListeners: {any} = {}
 
+    -- Infinite Jump (and anything else that launches on the jump button)
+    -- registers here; a suite fires it without an input device.
+    world.jumpCallbacks = {}
+    world.fireJumpRequest = function(): ()
+        for _, callback: any in ipairs(table.clone(world.jumpCallbacks)) do
+            callback()
+        end
+    end
+
     local function create(className: string, properties: any): any
         local instance: any = Mock.newInstance(className)
         local parent: any = nil
@@ -106,6 +115,9 @@ function Host.create(world: any): HostStub
             optionRows = {},
             options = {},
         }
+        -- The real factory gives every feature its row. Cards that hide
+        -- themselves (VD's killer-only proximity widget) read `.row`.
+        feature.row = create("Frame", {Name = name .. "Row"})
         function feature.activate(): ()
             -- Action cards run and keep no state, exactly like the real card.
             if feature.kind == "action" then
@@ -321,6 +333,18 @@ function Host.create(world: any): HostStub
         table.insert(notifications, message)
     end
 
+    -- The shell publishes these on the environment every downloaded file
+    -- runs in. Suites used to each invent a copy, so a module that needed
+    -- one and a suite that had not yet been written disagreed about whether
+    -- they existed.
+    host.getCharacterParts = function(): (any, any, any)
+        local character: any = world.localPlayer.Character
+        return character,
+            character and character:FindFirstChildOfClass("Humanoid"),
+            character and character:FindFirstChild("HumanoidRootPart")
+    end
+    host.addFeatureTooltip = function(_feature: any, _text: string): () end
+
     host.create = create
     host.makeTextLabel = makeTextLabel
     host.makeButton = makeButton
@@ -421,6 +445,22 @@ function Host.create(world: any): HostStub
         isJumpHeld = function(): boolean
             return false
         end,
+        isProtectedTarget = function(_player: any): boolean
+            return false
+        end,
+        onJumpRequest = function(callback: any): any
+            table.insert(world.jumpCallbacks, callback)
+            return {
+                Connected = true,
+                Disconnect = function(self: any): ()
+                    self.Connected = false
+                    local index: number? = table.find(world.jumpCallbacks, callback)
+                    if index then
+                        table.remove(world.jumpCallbacks, index :: number)
+                    end
+                end,
+            }
+        end,
     }
     for key: string, value: any in pairs(stateTable) do
         host.state[key] = value
@@ -435,10 +475,41 @@ function Host.create(world: any): HostStub
     -- geometry are deliberately crude here: the harness proves a control
     -- exists, carries its stored value and calls its module back, and says
     -- nothing about what it looks like.
-    local function themeColour(): any
-        return world.globals.Color3.fromRGB(120, 120, 120)
-    end
-    host.Theme = setmetatable({}, {__index = themeColour})
+    --
+    -- The real Theme is a fixed set of 22 tokens. A metatable that answered
+    -- any name with a grey hid a misspelt token behind a plausible colour;
+    -- the game would have handed back nil.
+    local rgb: any = world.globals.Color3.fromRGB
+    local themeTokens: {[string]: any} = {
+        background = rgb(64, 64, 64),
+        sidebar = rgb(48, 48, 48),
+        surface = rgb(64, 64, 64),
+        surfaceRaised = rgb(74, 74, 74),
+        surfaceHover = rgb(86, 86, 86),
+        surfacePressed = rgb(96, 96, 96),
+        button = rgb(56, 56, 56),
+        buttonHover = rgb(72, 72, 72),
+        buttonPressed = rgb(84, 84, 84),
+        outline = rgb(16, 16, 16),
+        accent = rgb(16, 16, 16),
+        accentDim = rgb(36, 36, 36),
+        accentFaint = rgb(56, 56, 56),
+        accentSoft = rgb(40, 40, 40),
+        accentText = rgb(240, 240, 240),
+        enabled = rgb(32, 175, 32),
+        enabledText = rgb(240, 240, 240),
+        text = rgb(240, 240, 240),
+        textMuted = rgb(168, 168, 168),
+        tooltip = rgb(24, 24, 24),
+        positive = rgb(126, 196, 138),
+        negative = rgb(214, 106, 106),
+    }
+    host.Theme = setmetatable(themeTokens, {
+        __index = function(_self: any, key: string): any
+            error("unknown theme token '" .. tostring(key) .. "'", 2)
+        end,
+    })
+    world.globals.Theme = host.Theme
     host.CONTROL_FONT = "Control"
     host.THIN_FONT = "Thin"
     host.TITLE_FONT = "Title"

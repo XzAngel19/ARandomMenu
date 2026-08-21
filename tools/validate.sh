@@ -71,6 +71,104 @@ source_files() {
         ! -name "_shell_source.luau" ! -name "_bundle_source.luau" -print
 }
 
+step "Licence and attribution"
+# Wurst7 is GPL-3.0. Nothing from it may land here without the licence text
+# and a NOTICE that names every copied file. An asset under assets/wurst/
+# that is not listed there is an unattributed copy.
+test -f LICENSE || { echo "LICENSE is missing"; exit 1; }
+grep -q "GNU GENERAL PUBLIC LICENSE" LICENSE || {
+    echo "LICENSE is not the GNU GPL"
+    exit 1
+}
+test -f NOTICE.md || { echo "NOTICE.md is missing"; exit 1; }
+python3 - <<'PYTHON'
+import os
+
+notice = open("NOTICE.md").read()
+root = "assets/wurst"
+if not os.path.isdir(root):
+    raise SystemExit(0)
+missing = []
+for dirpath, _dirnames, filenames in os.walk(root):
+    for name in filenames:
+        if name == "manifest.json":
+            continue
+        path = os.path.join(dirpath, name).replace("\\", "/")
+        if path not in notice and name not in notice:
+            missing.append(path)
+if missing:
+    raise SystemExit(
+        "vendored files not listed in NOTICE.md:\n  " + "\n  ".join(sorted(missing))
+    )
+PYTHON
+echo "ok"
+
+step "Wurst asset checksums"
+# A PNG that drifted from the pinned Wurst7 commit is an unattributed edit.
+# The fetch script records sha256 per file; this step re-hashes the tree.
+if [ -f assets/wurst/manifest.json ]; then
+    python3 tools/fetch_wurst_assets.py --check
+else
+    echo "ok (nothing vendored)"
+fi
+
+step "Product name"
+# Display names of the previous product must not be hard-coded in tools/ or
+# docs/. The filename ARandomMenu.luau stays: it is the loader entry point.
+# The shell still logs a three-letter prefix and names its GUI after the old
+# product; those live in one constant once the integrator publishes it.
+python3 - <<'PYTHON'
+import subprocess
+
+# Split so this file itself does not contain the banned phrases.
+banned = ("A " + "Random Menu", "Random " + "Testing Menu")
+exempt = (
+    "docs/agents/",
+)
+offenders = []
+for path in subprocess.run(
+    ["git", "ls-files", "tools", "docs", "README.md"],
+    capture_output=True, text=True,
+).stdout.split():
+    if any(path.startswith(prefix) for prefix in exempt):
+        continue
+    text = open(path, encoding="utf-8", errors="replace").read()
+    for needle in banned:
+        if needle in text:
+            offenders.append(f"{path}: {needle!r}")
+if offenders:
+    raise SystemExit(
+        "old product name hard-coded:\n  " + "\n  ".join(offenders)
+        + "\n  the display name is Wurst; the file ARandomMenu.luau keeps its name"
+    )
+PYTHON
+echo "ok"
+
+step "Tracked images stay in asset directories"
+# A screenshot of the desktop is not an asset. Anything we ship as pixels
+# lives under assets/, reference/ or docs/.
+python3 - <<'PYTHON'
+import subprocess
+
+allowed = ("assets/", "reference/", "docs/", "src/gui/")
+suffixes = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")
+offenders = []
+for path in subprocess.run(
+    ["git", "ls-files"], capture_output=True, text=True
+).stdout.split():
+    if not path.lower().endswith(suffixes):
+        continue
+    if any(path.startswith(prefix) for prefix in allowed):
+        continue
+    offenders.append(path)
+if offenders:
+    raise SystemExit(
+        "tracked images outside assets/, reference/ and docs/:\n  "
+        + "\n  ".join(offenders)
+    )
+PYTHON
+echo "ok"
+
 step "JSON manifests"
 python3 -m json.tool src/gui/Current/Images/manifest.json >/dev/null
 python3 -m json.tool src/gui/Current/Assets/manifest.json >/dev/null
@@ -251,6 +349,16 @@ if orphans:
 if missing:
     raise SystemExit("run.luau requires suites that do not exist:\n  " + "\n  ".join(missing))
 PYTHON
+echo "ok"
+
+step "Option callbacks live in one place"
+# Four suites each wrapped the builders. Two of them guessed the callback
+# position wrong and recorded nothing, then passed anyway. The wrap belongs
+# on run.luau; a suite that carries its own copy is the next silent miss.
+if grep -n 'if not host.optionCallbacks' tools/test/suites/*.luau; then
+    echo "a suite is wrapping option builders; that lives in tools/test/run.luau"
+    exit 1
+fi
 echo "ok"
 
 step "Bundle stamp matches the sources"

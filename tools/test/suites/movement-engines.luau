@@ -18,119 +18,6 @@ return function(ctx: any): ()
     local check: (string, boolean, string?) -> () = ctx.check
     local section: (string) -> () = ctx.section
 
-    -- The shell publishes its palette and services to every downloaded file;
-    -- the harness keeps them on the host only. Two lines make them globals
-    -- again, the way the module environments see them.
-    if world.globals.Theme == nil then
-        world.globals.Theme = host.Theme
-    end
-    if world.globals.TweenService == nil then
-        world.globals.TweenService = world.globals.game:GetService("TweenService")
-    end
-
-    -- The stand-in vector has arithmetic but not Lerp, which both speed
-    -- engines smooth with. Patched here for the suites; belongs in the mock
-    -- proper (asked for in the PR) the moment its owner can take it.
-    do
-        local vector3lib: any = world.globals.Vector3
-        local originalNew: any = vector3lib.new
-        local function withLerp(value: any): any
-            if value ~= nil and value.Lerp == nil then
-                function value:Lerp(other: any, alpha: number): any
-                    return originalNew(
-                        self.X + (other.X - self.X) * alpha,
-                        self.Y + (other.Y - self.Y) * alpha,
-                        self.Z + (other.Z - self.Z) * alpha
-                    )
-                end
-            end
-            return value
-        end
-        vector3lib.new = function(...: any): any
-            return withLerp(originalNew(...))
-        end
-        withLerp(vector3lib.zero)
-        withLerp(vector3lib.one)
-    end
-
-    -- The kernel keeps each option's callback to itself, and a test that
-    -- writes `Options[x].Value` changes the rule check without changing the
-    -- settings table the engine reads. Wrapping the host builders records the
-    -- callbacks so a suite can set an option the way the widget would.
-    if not host.optionCallbacks then
-        host.optionCallbacks = {}
-        -- Where each builder's callback sits among the varargs, after the
-        -- feature: (label, default, callback) for toggles, keys and text
-        -- boxes, (label, values, index, callback) for cycles, and
-        -- (label, default, min, max, callback) for numbers.
-        --
-        -- These were guessed once and the guess was wrong for every builder
-        -- but the cycle, so `setOption` set `.Value` and drove no callback at
-        -- all — the checks below still passed, which is what made it invisible.
-        local callbackPosition: {[string]: number} = {
-            addToggleOption = 3,
-            addKeyOption = 3,
-            addTextOption = 3,
-            addCycleOption = 4,
-            addNumberOption = 5,
-        }
-        for builder: string, position: number in pairs(callbackPosition) do
-            local original: any = host[builder]
-            host[builder] = function(feature: any, ...: any): any
-                local label: any = select(1, ...)
-                local callback: any = select(position, ...)
-                if type(callback) == "function" then
-                    host.optionCallbacks[feature] = host.optionCallbacks[feature] or {}
-                    host.optionCallbacks[feature][label] = callback
-                end
-                return original(feature, ...)
-            end
-        end
-    end
-    local function setOption(module: any, name: string, value: any): ()
-        module.Options[name].Value = value
-        local callback: any = host.optionCallbacks[module.Feature]
-            and host.optionCallbacks[module.Feature][name]
-        if callback then
-            callback(value)
-        end
-        module:RefreshVisibility()
-    end
-
-    -- The shell publishes these helpers; the harness host did not, because no
-    -- module that needed them ran headless before this pass. Idempotent, so
-    -- the shared runner can hand us a context that already has them.
-    if not host.getCharacterParts then
-        host.getCharacterParts = function(): (any, any, any)
-            local character: any = world.localPlayer.Character
-            return character,
-                character and character:FindFirstChildOfClass("Humanoid"),
-                character and character:FindFirstChild("HumanoidRootPart")
-        end
-    end
-    if not host.state.onJumpRequest then
-        local jumpCallbacks: {any} = {}
-        world.jumpCallbacks = jumpCallbacks
-        world.fireJumpRequest = function(): ()
-            for _, callback: any in ipairs(table.clone(jumpCallbacks)) do
-                callback()
-            end
-        end
-        host.state.onJumpRequest = function(callback: any): any
-            table.insert(jumpCallbacks, callback)
-            return {
-                Connected = true,
-                Disconnect = function(self: any): ()
-                    self.Connected = false
-                    local index: number? = table.find(jumpCallbacks, callback)
-                    if index then
-                        table.remove(jumpCallbacks, index :: number)
-                    end
-                end,
-            }
-        end
-    end
-
     -- The stand-in humanoid does not model movement state; the modules only
     -- read these, so plain values are enough.
     local character: any = world.localPlayer.Character
@@ -197,23 +84,23 @@ return function(ctx: any): ()
             and rows("Face camera") and rows("Up key") and rows("Down key"),
         "a gated row is visible before Advanced settings is on")
 
-    setOption(fly, "Advanced settings", true)
+    ctx.setOption(fly, "Advanced settings", true)
     check("the switch reveals the block it labels",
         not rows("Burst interval (s)") and not rows("Wall check"))
-    setOption(fly, "Method", "Impulse")
+    ctx.setOption(fly, "Method", "Impulse")
     check("response stays hidden for an engine that does not smooth",
         rows("Response multiplier"),
         "Impulse is not in the Response rule's value list")
-    setOption(fly, "Method", "Velocity")
+    ctx.setOption(fly, "Method", "Velocity")
     check("response appears for the engines that track it",
         not rows("Response multiplier"))
-    setOption(fly, "Advanced settings", false)
+    ctx.setOption(fly, "Advanced settings", false)
     check("switching it off folds the whole block again",
         rows("Response multiplier") and rows("Burst interval (s)"))
 
     -- CFrame steering: the one engine whose loop needs neither Lerp nor
     -- ApplyImpulse, which the stand-in does not model.
-    setOption(fly, "Method", "CFrame")
+    ctx.setOption(fly, "Method", "CFrame")
 
     local baseline: number = stub.taskCount()
     fly.Feature.activate()
@@ -240,7 +127,7 @@ return function(ctx: any): ()
 
     -- WalkSpeed is the one method that borrows a property, so it is the one
     -- that has to give it back.
-    setOption(fly, "Method", "WalkSpeed")
+    ctx.setOption(fly, "Method", "WalkSpeed")
     fly.Feature.activate()
     stub.step(1 / 60)
     check("the WalkSpeed engine writes the slider speed",
@@ -283,21 +170,21 @@ return function(ctx: any): ()
     check("the advanced rows start folded",
         rows("Vertical speed") and rows("Acceleration") and rows("Sprint key"))
     check("burst interval hides while the mode cannot burst", rows("Burst interval (s)"))
-    setOption(physics, "Advanced settings", true)
+    ctx.setOption(physics, "Advanced settings", true)
     check("adaptive owns acceleration and air control",
         not rows("Acceleration") and not rows("Air control %"))
-    setOption(physics, "Mode", "Pulse")
+    ctx.setOption(physics, "Mode", "Pulse")
     check("pulse swaps them for the burst interval",
         rows("Acceleration") and rows("Air control %") and not rows("Burst interval (s)"))
-    setOption(physics, "Custom properties", false)
+    ctx.setOption(physics, "Custom properties", false)
     check("motor torque only exists while properties are customised",
         rows("Motor torque"))
-    setOption(physics, "Auto jump", true)
+    ctx.setOption(physics, "Auto jump", true)
     check("the jump velocity follows its switch",
         not rows("Auto-jump velocity"))
 
-    setOption(physics, "Mode", "Adaptive")
-    setOption(physics, "Custom properties", true)
+    ctx.setOption(physics, "Mode", "Adaptive")
+    ctx.setOption(physics, "Custom properties", true)
     physics.Feature.activate()
     check("a session takes exactly one task",
         stub.taskCount() == baseline + 1)
@@ -339,14 +226,14 @@ return function(ctx: any): ()
     check("slide speed hides while the dash blinks", rows("Slide speed"))
     check("blink's own rows are out",
         not rows("Dash distance") and not rows("Collision padding"))
-    setOption(dash, "Mode", "Slide")
+    ctx.setOption(dash, "Mode", "Slide")
     check("slide swaps the panel's rows",
         not rows("Slide speed") and rows("Dash distance"))
 
     local binding: any = world.bindings and world.bindings["Phase Dash"]
     check("the dash key is the card's own slot", binding ~= nil)
     world.raycastResult = nil
-    setOption(dash, "Mode", "Blink")
+    ctx.setOption(dash, "Mode", "Blink")
     dash.Feature.activate()
     check("the dash key is inert while the card is off", (function(): boolean
         root.CFrame = world.globals.CFrame.new(vector3(0, 0, 0))
@@ -386,13 +273,13 @@ return function(ctx: any): ()
     end
 
     check("rise speed hides while jumps launch", rows("Rise speed"))
-    setOption(jump, "Mode", "Rise")
+    ctx.setOption(jump, "Mode", "Rise")
     check("rise owns its speed and drops the others",
         not rows("Rise speed") and rows("Jump power") and rows("Jump interval (s)"))
-    setOption(jump, "Mode", "Fall")
+    ctx.setOption(jump, "Mode", "Fall")
     check("fall cancelling never launches, so there is no power to set",
         rows("Jump power"))
-    setOption(jump, "Mode", "Normal")
+    ctx.setOption(jump, "Mode", "Normal")
 
     jump.Feature.activate()
     root.AssemblyLinearVelocity = vector3(0, 0, 0)

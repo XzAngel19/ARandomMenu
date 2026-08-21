@@ -17,58 +17,10 @@ return function(ctx: any): ()
     local check: (string, boolean, string?) -> () = ctx.check
     local section: (string) -> () = ctx.section
 
-    if not host.getCharacterParts then
-        host.getCharacterParts = function(): (any, any, any)
-            local character: any = world.localPlayer.Character
-            return character,
-                character and character:FindFirstChildOfClass("Humanoid"),
-                character and character:FindFirstChild("HumanoidRootPart")
-        end
-    end
-    if world.globals.Theme == nil then
-        world.globals.Theme = host.Theme
-    end
-
     local character: any = world.localPlayer.Character
     local humanoid: any = character:FindFirstChildOfClass("Humanoid")
     local root: any = character:FindFirstChild("HumanoidRootPart")
     humanoid.ChangeState = function(_self: any, _state: any): () end
-
-    -- Set an option the way the widget would: the rule check reads .Value,
-    -- the engine reads the settings table the callback writes.
-    if not host.optionCallbacks then
-        host.optionCallbacks = {}
-        for _, builder: string in ipairs({
-            "addToggleOption",
-            "addNumberOption",
-            "addCycleOption",
-            "addKeyOption",
-            "addTextOption",
-        }) do
-            local original: any = host[builder]
-            host[builder] = function(feature: any, ...: any): any
-                local label: any = select(1, ...)
-                local callback: any = select(4, ...)
-                if builder == "addNumberOption" or builder == "addTextOption" then
-                    callback = select(6, ...)
-                end
-                if type(callback) == "function" then
-                    host.optionCallbacks[feature] = host.optionCallbacks[feature] or {}
-                    host.optionCallbacks[feature][label] = callback
-                end
-                return original(feature, ...)
-            end
-        end
-    end
-    local function setOption(module: any, name: string, value: any): ()
-        module.Options[name].Value = value
-        local callback: any = host.optionCallbacks[module.Feature]
-            and host.optionCallbacks[module.Feature][name]
-        if callback then
-            callback(value)
-        end
-        module:RefreshVisibility()
-    end
 
     local context: any = ctx.espContext
     if not context then
@@ -111,14 +63,14 @@ return function(ctx: any): ()
 
     check("both modes start with both of their rows",
         not hidden("Safe landing speed") and not hidden("Reset fall record"))
-    setOption(noFall, "Mode", "Impact")
+    ctx.setOption(noFall, "Mode", "Impact")
     check("impact owns the brake, not the record reset",
         not hidden("Safe landing speed") and hidden("Reset fall record"))
-    setOption(noFall, "Mode", "State")
+    ctx.setOption(noFall, "Mode", "State")
     check("state owns the record reset, not the brake",
         hidden("Safe landing speed") and not hidden("Reset fall record"))
     check("ground scan belongs to both", hidden("Ground scan") == false)
-    setOption(noFall, "Mode", "Impact")
+    ctx.setOption(noFall, "Mode", "Impact")
 
     -- A fall: airborne, fast, and a floor the raycast finds right below.
     local vector3: any = world.vector3
@@ -138,7 +90,7 @@ return function(ctx: any): ()
             == -noFall.Options["Safe landing speed"].Value,
         "velocity is " .. tostring(root.AssemblyLinearVelocity.Y))
 
-    setOption(noFall, "Mode", "State")
+    ctx.setOption(noFall, "Mode", "State")
     root.AssemblyLinearVelocity = vector3(0, -80, 0)
     stub.step(1 / 60)
     check("state mode never touches the velocity",

@@ -1,5 +1,12 @@
 # ARandomMenu
 
+**Unofficial port.** This client is an unofficial Roblox port of the
+[Wurst Client](https://github.com/Wurst-Imperium/Wurst7). It is not
+affiliated with, endorsed by, or supported by Wurst-Imperium. Wurst7 is
+Copyright (c) 2014-2026 Wurst-Imperium and contributors, licensed under
+the GNU General Public License v3.0. This port is released under the same
+licence; see `LICENSE` and `NOTICE.md`.
+
 Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
 
 ## Runtime architecture

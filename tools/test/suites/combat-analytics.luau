@@ -33,45 +33,6 @@ return function(ctx: any): ()
     end
     ctx.espContext = context
 
-    -- Set an option the way the widget would: the rule check reads .Value,
-    -- the engine reads the settings table the callback writes.
-    if not host.optionCallbacks then
-        host.optionCallbacks = {}
-        -- Where each builder's callback sits among the varargs, after the
-        -- feature: (label, default, callback) for toggles and keys,
-        -- (label, values, index, callback) for cycles,
-        -- (label, default, min, max, callback) for numbers,
-        -- (label, default, callback, persist) for text boxes.
-        local callbackPosition: {[string]: number} = {
-            addToggleOption = 3,
-            addKeyOption = 3,
-            addTextOption = 3,
-            addCycleOption = 4,
-            addNumberOption = 5,
-        }
-        for builder, position: number in pairs(callbackPosition) do
-            local original: any = host[builder]
-            host[builder] = function(feature: any, ...: any): any
-                local label: any = select(1, ...)
-                local callback: any = select(position, ...)
-                if type(callback) == "function" then
-                    host.optionCallbacks[feature] = host.optionCallbacks[feature] or {}
-                    host.optionCallbacks[feature][label] = callback
-                end
-                return original(feature, ...)
-            end
-        end
-    end
-    local function setOption(module: any, name: string, value: any): ()
-        module.Options[name].Value = value
-        local callback: any = host.optionCallbacks[module.Feature]
-            and host.optionCallbacks[module.Feature][name]
-        if callback then
-            callback(value)
-        end
-        module:RefreshVisibility()
-    end
-
     -- The stand-in player has no mouse; Projectile Calibration keeps one hit
     -- point from it while it builds.
     if world.localPlayer.GetMouse == nil then
@@ -110,30 +71,18 @@ return function(ctx: any): ()
         check("option: " .. name, hitboxes.Options[name] ~= nil)
     end
 
-    -- The stand-in rig has no sizes of its own, and Hitboxes adds studs to
-    -- what it finds; every character the sweep can reach needs a starting
-    -- number — earlier suites left their players in the world.
-    for _, player: any in ipairs(host.Players:GetPlayers()) do
-        if player ~= world.localPlayer and player.Character then
-            for _, part: any in ipairs(player.Character:GetDescendants()) do
-                if part:IsA("BasePart") then
-                    part.Size = vector3(1, 1, 1)
-                end
-            end
-        end
-    end
     local rootSize: any = vector3(2, 2, 1)
     local headSize: any = vector3(1.2, 1.2, 1.2)
     enemyRoot.Size = rootSize
     enemyHead.Size = headSize
 
-    setOption(hitboxes, "Expand", 4)
+    ctx.setOption(hitboxes, "Expand", 4)
     hitboxes.Feature.activate()
     stub.step(1 / 60)
     check("the target's part grows by exactly the slider",
         enemyRoot.Size.X == rootSize.X + 4,
         "size is " .. tostring(enemyRoot.Size.X))
-    setOption(hitboxes, "Part", "Head")
+    ctx.setOption(hitboxes, "Part", "Head")
     stub.step(1 / 60)
     check("switching part restores the one it no longer owns",
         enemyRoot.Size.X == rootSize.X)

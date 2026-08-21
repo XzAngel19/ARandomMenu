@@ -81,6 +81,14 @@ function Vector3Meta.Dot(self: any, other: any): number
     return self.X * other.X + self.Y * other.Y + self.Z * other.Z
 end
 
+function Vector3Meta.Lerp(self: any, other: any, alpha: number): any
+    return vector3(
+        self.X + (other.X - self.X) * alpha,
+        self.Y + (other.Y - self.Y) * alpha,
+        self.Z + (other.Z - self.Z) * alpha
+    )
+end
+
 local Vector2Meta: any = {}
 
 local function vector2(x: number, y: number): any
@@ -493,6 +501,18 @@ local function newInstance(className: string): any
         -- cannot fail on a real client — died on the first loose part in the
         -- world.
         instance.LocalTransparencyModifier = 0
+        -- A part always has a size. Hitboxes adds studs to what it finds;
+        -- nil here made every suite invent its own starting number.
+        instance.Size = vector3(1, 1, 1)
+    end
+    if className == "Sound" then
+        instance.IsPlaying = false
+        function instance:Play(): ()
+            instance.IsPlaying = true
+        end
+        function instance:Stop(): ()
+            instance.IsPlaying = false
+        end
     end
     if className == "Humanoid" then
         -- The session panel counts deaths, and a stand-in humanoid that never
@@ -680,8 +700,16 @@ function Mock.install(): MockWorld
             "BuilderSans",
             "SourceSans",
             "Gotham",
+            "GothamMedium",
+            "GothamSemibold",
+            "GothamBold",
+            "GothamBlack",
             "Code",
             "Arcade",
+        }),
+        CameraMode = enumFolder({
+            "Classic",
+            "LockFirstPerson",
         }),
         FontWeight = enumFolder({
             "Thin",
@@ -828,7 +856,11 @@ function Mock.install(): MockWorld
     end
 
     local mockWorkspace: any = newInstance("Workspace")
+    camera.Parent = mockWorkspace
     mockWorkspace.CurrentCamera = camera
+    -- The engine always answers this; Anti-Void and Fling do arithmetic on
+    -- it without a nil guard because a real client can never see nil here.
+    mockWorkspace.FallenPartsDestroyHeight = -500
     -- Item Render keeps its index up to date from these rather than sweeping
     -- the whole workspace.
     mockWorkspace.DescendantAdded = signal()
@@ -875,6 +907,7 @@ function Mock.install(): MockWorld
         return tween
     end
     services.TweenService = tweenService
+    globals.TweenService = tweenService
 
     local inputService: any = newInstance("UserInputService")
     inputService.TouchEnabled = false
@@ -930,7 +963,34 @@ function Mock.install(): MockWorld
     end
     services.MarketplaceService = market
 
-    services.CollectionService = newInstance("CollectionService")
+    local collectionService: any = newInstance("CollectionService")
+    do
+        local tagged: {[string]: {any}} = {}
+        local added: {[string]: any} = {}
+        function collectionService:HasTag(instance: any, tag: string): boolean
+            local list: {any} = tagged[tag]
+            return list ~= nil and table.find(list, instance) ~= nil
+        end
+        function collectionService:GetTagged(tag: string): {any}
+            return tagged[tag] or {}
+        end
+        function collectionService:GetInstanceAddedSignal(tag: string): any
+            if added[tag] == nil then
+                added[tag] = signal()
+            end
+            return added[tag]
+        end
+        function collectionService:AddTag(instance: any, tag: string): ()
+            tagged[tag] = tagged[tag] or {}
+            if table.find(tagged[tag], instance) == nil then
+                table.insert(tagged[tag], instance)
+                if added[tag] then
+                    added[tag]:Fire(instance)
+                end
+            end
+        end
+    end
+    services.CollectionService = collectionService
     services.Stats = newInstance("Stats")
     services.CoreGui = newInstance("CoreGui")
     services.ReplicatedStorage = newInstance("ReplicatedStorage")
@@ -1047,6 +1107,21 @@ function Mock.install(): MockWorld
     globals.require = require
     globals.tick = function(): number
         return world.clock
+    end
+    -- Roblox's settings() surface. Lag Switch holds IncomingReplicationLag
+    -- through it; a suite that needs the property absent nils this global.
+    local networkSettings: any = newInstance("NetworkSettings")
+    networkSettings.IncomingReplicationLag = 0
+    world.networkSettings = networkSettings
+    globals.settings = function(): any
+        return {
+            GetService = function(_self: any, name: string): any
+                if name ~= "NetworkSettings" then
+                    error("settings(): no " .. name, 2)
+                end
+                return networkSettings
+            end,
+        }
     end
 
     globals.task = {
@@ -1300,6 +1375,7 @@ function Mock.install(): MockWorld
         player.Team = type(team) == "string" and teamNamed(team) or team
         player.Neutral = false
         player.CharacterAdded = signal()
+        player.Idled = signal()
         player.Character = buildCharacter(name, position)
         function player:IsFriendsWithAsync(_userId: number): boolean
             return false

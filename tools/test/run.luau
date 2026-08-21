@@ -72,6 +72,45 @@ ctx.measureFrames = function(step: (number) -> (), samples: number?): number
     return (os.clock() - started) / count
 end
 
+-- Record each option builder's callback so a suite can set a value the way
+-- the widget would. Four suites each carried a private copy; two of them
+-- guessed select(4)/select(6) and recorded nothing, then passed anyway.
+host.optionCallbacks = {}
+do
+    local callbackPosition: {[string]: number} = {
+        addToggleOption = 3,
+        addKeyOption = 3,
+        addTextOption = 3,
+        addCycleOption = 4,
+        addNumberOption = 5,
+    }
+    for builder: string, position: number in pairs(callbackPosition) do
+        local original: any = host[builder]
+        host[builder] = function(feature: any, ...: any): any
+            local label: any = select(1, ...)
+            local callback: any = select(position, ...)
+            if type(callback) == "function" then
+                host.optionCallbacks[feature] = host.optionCallbacks[feature] or {}
+                host.optionCallbacks[feature][label] = callback
+            end
+            return original(feature, ...)
+        end
+    end
+end
+
+ctx.setOption = function(module: any, name: string, value: any): ()
+    module.Options[name].Value = value
+    local feature: any = module.Feature or module
+    local callback: any = host.optionCallbacks[feature]
+        and host.optionCallbacks[feature][name]
+    if callback then
+        callback(value)
+    end
+    if type(module.RefreshVisibility) == "function" then
+        module:RefreshVisibility()
+    end
+end
+
 -- Later suites read world state (the sword, the friend list, the ESP card)
 -- that earlier ones built, so this order is the dependency order.
 require("./suites/framework")(ctx)
@@ -94,6 +133,7 @@ require("./suites/combat-analytics")(ctx)
 require("./suites/games")(ctx)
 require("./suites/bundle")(ctx)
 require("./suites/shell")(ctx)
+require("./suites/clickgui")(ctx)
 require("./suites/teardown")(ctx)
 
 print("")

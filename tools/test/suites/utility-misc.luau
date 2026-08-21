@@ -17,28 +17,6 @@ return function(ctx: any): ()
     local check: (string, boolean, string?) -> () = ctx.check
     local section: (string) -> () = ctx.section
 
-    if not host.getCharacterParts then
-        host.getCharacterParts = function(): (any, any, any)
-            local character: any = world.localPlayer.Character
-            return character,
-                character and character:FindFirstChildOfClass("Humanoid"),
-                character and character:FindFirstChild("HumanoidRootPart")
-        end
-    end
-    if host.addFeatureTooltip == nil then
-        host.addFeatureTooltip = function(_feature: any, _text: string): () end
-    end
-    if world.globals.workspace.FallenPartsDestroyHeight == nil then
-        world.globals.workspace.FallenPartsDestroyHeight = -500
-    end
-    if host.state.isProtectedTarget == nil then
-        -- Friend List publishes this in the real runtime and loads first in
-        -- the manifest; a suite that has not loaded it answers "nobody".
-        host.state.isProtectedTarget = function(_player: any): boolean
-            return false
-        end
-    end
-
     local vector3: any = world.vector3
     local character: any = world.localPlayer.Character
     local humanoid: any = character:FindFirstChildOfClass("Humanoid")
@@ -58,26 +36,8 @@ return function(ctx: any): ()
 
     section("Anti-AFK")
 
-    -- The stand-in player has no idle signal and the VirtualUser service is
-    -- not part of the mock; both are exactly what the module talks to.
-    local idleCallbacks: {any} = {}
-    if world.localPlayer.Idled == nil then
-        world.localPlayer.Idled = {
-            Connect = function(_self: any, callback: any): any
-                table.insert(idleCallbacks, callback)
-                return {
-                    Connected = true,
-                    Disconnect = function(self2: any): ()
-                        self2.Connected = false
-                        local index: number? = table.find(idleCallbacks, callback)
-                        if index then
-                            table.remove(idleCallbacks, index :: number)
-                        end
-                    end,
-                }
-            end,
-        }
-    end
+    -- VirtualUser is not a default service; the module talks to it by name.
+    local idleSignal: any = world.localPlayer.Idled
     local virtualUser: any = Mock.newInstance("VirtualUser")
     local capturedController: number = 0
     local clicked: number = 0
@@ -95,18 +55,16 @@ return function(ctx: any): ()
 
     check("card is registered", antiAfk.name == "Anti-AFK")
     antiAfk.activate()
-    check("the idle listener is attached", #idleCallbacks == 1)
-    for _, callback: any in ipairs(table.clone(idleCallbacks)) do
-        callback()
-    end
+    check("the idle listener is attached", idleSignal:Count() == 1)
+    idleSignal:Fire()
     check("an idle kick is answered the way Roblox expects",
         capturedController == 1 and clicked == 1,
         "captures: " .. tostring(capturedController) .. ", clicks: " .. tostring(clicked))
     antiAfk.activate()
-    check("switching it off detaches the listener", #idleCallbacks == 0)
+    check("switching it off detaches the listener", idleSignal:Count() == 0)
     antiAfk.activate()
     AntiAfkFile.destroy()
-    check("and so does tearing the module down", #idleCallbacks == 0,
+    check("and so does tearing the module down", idleSignal:Count() == 0,
         "the cleanup used to disconnect a name it never stored")
 
     section("Fling")
@@ -227,18 +185,8 @@ return function(ctx: any): ()
 
     section("Lag Switch")
 
-    -- The executor's settings() surface, with the one property the module
-    -- holds: recorded so the restore can be asserted.
-    local networkSettings: any = Mock.newInstance("NetworkSettings")
+    local networkSettings: any = world.networkSettings
     networkSettings.IncomingReplicationLag = 0
-    world.globals.settings = function(): any
-        return {
-            GetService = function(_self: any, name: string): any
-                assert(name == "NetworkSettings")
-                return networkSettings
-            end,
-        }
-    end
 
     local LagFile: any = require("../../../src/modules/Utility/LagSwitch")
     Mock.inject(world, LagFile.init)
