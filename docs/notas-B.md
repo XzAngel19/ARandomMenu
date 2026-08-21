@@ -14,6 +14,23 @@
   closest to mouse, Prediction envelope) were deleted rather than left on
   as a switch that does nothing. Knife Aura stays: it fires
   `HandleTouched:FireServer(root)`, which is the game's own stab.
+- **Shoot Redirect (MM2), deleted.** Same disease as KnifeThrown. The hook
+  had to replace a WeaponService *aim accessor* by name, and nothing ever
+  captured what those are called: `reference/remote-logs/` is all BedFight
+  traffic (place 71480482338212), and there is no MM2 place dump. The code
+  guessed seven names (`GetMouseTargetCFrame`, `GetTargetCFrame`, …) and
+  when none matched — the common case, and always on executors without
+  `hookfunction` — `triggerManualShot` silently fell through to the same
+  `Shoot:FireServer(origin, aim)` that Manual fires, so the mode was a
+  second switch for the same behaviour. What was evidence-backed stayed:
+  the `Shoot` remote's `(origin, aim)` payload (Manual/Custom both fire it)
+  and `WeaponService.GunFired`, which is one of the five place fingerprints
+  and now connects as a plain observer for the miss feedback instead of
+  riding along on the redirect installer. To bring Redirect back it needs a
+  live capture naming the accessor the client actually calls per input
+  type. *(README's MM2 Shoot bullet still describes the hook — needs
+  Agent A's pass.)*
+
 
 ## PlaceBlock
 
@@ -25,10 +42,19 @@ cannot. Server Scaffold already did.
 
 Framework modules that had a row which only matters under another option now
 declare `Show`. Hitboxes moved onto `CreateModule` so transparency can gate
-on "Show hitbox". Fly and PhysicsSpeed still build with `addToggleOption`
-and hide their advanced block themselves — converting them is a dedicated
-pass, not this one. Modules with a single always-relevant slider
-(Jump Power, Gravity, FOV, …) have nothing to gate.
+on "Show hitbox". Fly and PhysicsSpeed are done: both build through the
+kernel now, the advanced block is declared (`Show = {Option = "Advanced
+settings"}`), and the rows that belong to one mode say so (Fly's Response
+multiplier only for Velocity/Constraint/Pulse; Physics Speed's Burst
+interval only for Pulse, Air control only for Adaptive, Motor torque only
+under Custom properties, Auto-jump velocity only under Auto jump). Modules
+with a single always-relevant slider (Jump Power, Gravity, FOV, …) have
+nothing to gate.
+
+Physics Speed's card was also renamed from "Speed" to "Physics Speed": it
+and Speed.luau both created a feature named "Speed", so the two cards shared
+the `Universal.Speed` configKey and overwrote each other's saved values.
+Its saved options move from `Universal.Speed.*` to `Universal.PhysicsSpeed.*`.
 
 ## Agent A
 
