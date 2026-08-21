@@ -100,6 +100,18 @@ return function(ctx: any): ()
     check("nothing fires while disabled", (tool.Activations or 0) == 1,
         "activations: " .. tostring(tool.Activations))
 
+    -- Wall-clock, not the mocked os.clock. Raise only with a comment saying
+    -- what got more expensive.
+    local BUDGET_TRIGGER_FRAME_SECONDS: number = 0.010
+    trigger:Toggle()
+    local triggerPerFrame: number = ctx.measureFrames(stub.step, 20)
+    trigger:Toggle()
+    check(
+        "TriggerBot stays inside the per-frame time budget",
+        triggerPerFrame <= BUDGET_TRIGGER_FRAME_SECONDS,
+        string.format("%.4fs/frame", triggerPerFrame)
+    )
+
     -- Friend list ----------------------------------------------------------------
 
     section("Friend list")
@@ -216,6 +228,19 @@ return function(ctx: any): ()
 
     aura:Toggle()
     check("aura disables", aura.Enabled == false)
+
+    -- Wall-clock, not the mocked os.clock. Raise only with a comment saying
+    -- what got more expensive.
+    local BUDGET_AURA_FRAME_SECONDS: number = 0.010
+    enemy.Character:FindFirstChild("HumanoidRootPart").Position = world.vector3(0, 0, -8)
+    aura:Toggle()
+    local auraPerFrame: number = ctx.measureFrames(stub.step, 20)
+    aura:Toggle()
+    check(
+        "Kill Aura stays inside the per-frame time budget",
+        auraPerFrame <= BUDGET_AURA_FRAME_SECONDS,
+        string.format("%.4fs/frame", auraPerFrame)
+    )
 
     -- Kill Aura weapon detection --------------------------------------------------
 

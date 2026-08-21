@@ -1291,6 +1291,18 @@ function Mock.install(): MockWorld
         function player:IsFriendsWithAsync(_userId: number): boolean
             return false
         end
+        -- Projectile Calibration reads the mouse at init. A stand-in without
+        -- this one method is a module that never starts, which is exactly
+        -- the class of failure the integration boot now counts.
+        function player:GetMouse(): any
+            if world.mouse then
+                return world.mouse
+            end
+            local mouse: any = newInstance("Mouse")
+            mouse.Hit = cframe(vector3(0, 0, -40))
+            world.mouse = mouse
+            return mouse
+        end
         local backpack: any = newInstance("Backpack")
         backpack.Name = "Backpack"
         backpack.Parent = player

@@ -55,6 +55,23 @@ end)
 ctx.shellSource = shellSourceOk and shellSource or nil
 ctx.shellSourceError = shellSourceOk and nil or shellSource
 
+local bundleSourceOk: boolean, bundleSource: any = pcall(function(): any
+    return require("./_bundle_source")
+end)
+ctx.bundleSource = bundleSourceOk and bundleSource or nil
+ctx.bundleSourceError = bundleSourceOk and nil or bundleSource
+
+-- Wall-clock of one module's per-frame work. The mocked os.clock does not
+-- move unless a test nudges it, so the budget has to read the CLI's clock.
+ctx.measureFrames = function(step: (number) -> (), samples: number?): number
+    local count: number = samples or 20
+    local started: number = os.clock()
+    for _ = 1, count do
+        step(0.016)
+    end
+    return (os.clock() - started) / count
+end
+
 -- Later suites read world state (the sword, the friend list, the ESP card)
 -- that earlier ones built, so this order is the dependency order.
 require("./suites/framework")(ctx)

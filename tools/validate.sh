@@ -68,7 +68,7 @@ step() {
 source_files() {
     find . -path ./.git -prune -o -path ./reference -prune -o -type f \
         \( -name "*.lua" -o -name "*.luau" \) ! -name "*.d.luau" \
-        ! -name "_shell_source.luau" -print
+        ! -name "_shell_source.luau" ! -name "_bundle_source.luau" -print
 }
 
 step "JSON manifests"
@@ -417,25 +417,30 @@ if [ -z "$luau_run" ]; then
 fi
 
 step "Headless module tests"
-# The CLI has no filesystem API, so the shell test loadstrings a generated
-# module that returns ARandomMenu.luau as a string. Emitted here, not kept
-# in git: a committed copy would drift the moment the bootstrap changed.
+# The CLI has no filesystem API, so the shell test loadstrings generated
+# modules that return ARandomMenu.luau and runtime/bundle.luau as strings.
+# Emitted here, not kept in git: a committed copy would drift the moment
+# either file changed.
 python3 - <<'PYTHON'
 from pathlib import Path
 
-source = Path("ARandomMenu.luau").read_text()
-level = 0
-while ("]" + "=" * level + "]") in source:
-    level += 1
-eq = "=" * level
-Path("tools/test/_shell_source.luau").write_text(
-    "--!strict\n"
-    "-- Emitted for the headless shell test; the CLI has no file API.\n"
-    f"return [{eq}[\n{source}\n]{eq}]\n"
-)
+def emit(src: str, dest: str) -> None:
+    source = Path(src).read_text()
+    level = 0
+    while ("]" + "=" * level + "]") in source:
+        level += 1
+    eq = "=" * level
+    Path(dest).write_text(
+        "--!strict\n"
+        "-- Emitted for the headless tests; the CLI has no file API.\n"
+        f"return [{eq}[\n{source}\n]{eq}]\n"
+    )
+
+emit("ARandomMenu.luau", "tools/test/_shell_source.luau")
+emit("runtime/bundle.luau", "tools/test/_bundle_source.luau")
 PYTHON
 "$luau_run" tools/test/run.luau
-rm -f tools/test/_shell_source.luau
+rm -f tools/test/_shell_source.luau tools/test/_bundle_source.luau
 
 echo
 echo "All checks passed."

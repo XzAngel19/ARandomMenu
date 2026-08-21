@@ -88,6 +88,18 @@ return function(ctx: any): ()
     -- did not.
     check("the layer takes its per-frame loops", stub.taskCount() > tasksBefore,
         "before: " .. tostring(tasksBefore) .. " after: " .. tostring(stub.taskCount()))
+
+    -- Wall-clock, not the mocked os.clock. Raise only with a comment saying
+    -- what got more expensive. Two loops (overlay redraw and the profile
+    -- clock) ran for the life of the menu with no ceiling of their own.
+    local BUDGET_FLOATING_FRAME_SECONDS: number = 0.010
+    local floatingPerFrame: number = ctx.measureFrames(stub.step, 20)
+    check(
+        "the floating layer stays inside the per-frame time budget",
+        floatingPerFrame <= BUDGET_FLOATING_FRAME_SECONDS,
+        string.format("%.4fs/frame", floatingPerFrame)
+    )
+
     FloatingFile.destroy()
     check("and gives every one of them back on destroy",
         stub.taskCount() == tasksBefore,
