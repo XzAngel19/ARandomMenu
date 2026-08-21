@@ -287,6 +287,7 @@ function Module.init(context: Runtime): any
     })
     clicker:CreateToggle({
         Name = "Weapons only",
+        Show = {Option = "Click", Values = {"Tool"}},
         Default = false,
         Tooltip = "Only click while what you are holding is a melee weapon, "
             .. "so a pickaxe or a stack of blocks is never swung.",

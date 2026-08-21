@@ -86,12 +86,14 @@ function Module.init(context: Runtime): any
     })
     esp:CreateSlider({
         Name = "Box thickness",
+        Show = {Option = "Boxes", Values = {"Corner", "Full"}},
         Min = 1,
         Max = 5,
         Default = 1,
     })
     esp:CreateToggle({
         Name = "Filled box",
+        Show = {Option = "Boxes", Values = {"Corner", "Full"}},
         Default = false,
         Tooltip = "Wash the inside of the box in the target's colour. Reads "
             .. "at a glance across a map; noisy in a crowd.",
@@ -108,6 +110,7 @@ function Module.init(context: Runtime): any
     })
     esp:CreateToggle({
         Name = "Display name",
+        Show = {Option = "Name tags"},
         Default = true,
         Tooltip = "Show the display name rather than the account name.",
     })
@@ -256,6 +259,7 @@ function Module.init(context: Runtime): any
         })
         esp:CreateToggle({
             Name = "Show role",
+            Show = {Option = "Name tags"},
             Default = true,
             Tooltip = "Print the role next to the name.",
         })
@@ -294,6 +298,7 @@ function Module.init(context: Runtime): any
         if extra.Color then
             esp:CreateColor({
                 Name = extra.Name .. " colour",
+                Show = {Option = extra.Name},
                 Default = extra.Color,
                 Function = function(value: Color3): ()
                     if type(extra.SetColor) == "function" then
@@ -311,6 +316,7 @@ function Module.init(context: Runtime): any
             if definition.Kind == "toggle" then
                 esp:CreateToggle({
                     Name = rowName,
+                    Show = {Option = extra.Name},
                     Default = definition.Default == true,
                     Tooltip = definition.Tooltip,
                     Function = function(value: boolean): ()
@@ -322,6 +328,7 @@ function Module.init(context: Runtime): any
             else
                 esp:CreateSlider({
                     Name = rowName,
+                    Show = {Option = extra.Name},
                     Min = definition.Min or 0,
                     Max = definition.Max or 100,
                     Default = definition.Default or definition.Min or 0,

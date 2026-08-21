@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "ab966107746938c6",
+    stamp = "22b19a14fb27b402",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -6344,12 +6344,14 @@ function Module.init(context: Runtime): any
     })
     esp:CreateSlider({
         Name = "Box thickness",
+        Show = {Option = "Boxes", Values = {"Corner", "Full"}},
         Min = 1,
         Max = 5,
         Default = 1,
     })
     esp:CreateToggle({
         Name = "Filled box",
+        Show = {Option = "Boxes", Values = {"Corner", "Full"}},
         Default = false,
         Tooltip = "Wash the inside of the box in the target's colour. Reads "
             .. "at a glance across a map; noisy in a crowd.",
@@ -6366,6 +6368,7 @@ function Module.init(context: Runtime): any
     })
     esp:CreateToggle({
         Name = "Display name",
+        Show = {Option = "Name tags"},
         Default = true,
         Tooltip = "Show the display name rather than the account name.",
     })
@@ -6514,6 +6517,7 @@ function Module.init(context: Runtime): any
         })
         esp:CreateToggle({
             Name = "Show role",
+            Show = {Option = "Name tags"},
             Default = true,
             Tooltip = "Print the role next to the name.",
         })
@@ -6552,6 +6556,7 @@ function Module.init(context: Runtime): any
         if extra.Color then
             esp:CreateColor({
                 Name = extra.Name .. " colour",
+                Show = {Option = extra.Name},
                 Default = extra.Color,
                 Function = function(value: Color3): ()
                     if type(extra.SetColor) == "function" then
@@ -6569,6 +6574,7 @@ function Module.init(context: Runtime): any
             if definition.Kind == "toggle" then
                 esp:CreateToggle({
                     Name = rowName,
+                    Show = {Option = extra.Name},
                     Default = definition.Default == true,
                     Tooltip = definition.Tooltip,
                     Function = function(value: boolean): ()
@@ -6580,6 +6586,7 @@ function Module.init(context: Runtime): any
             else
                 esp:CreateSlider({
                     Name = rowName,
+                    Show = {Option = extra.Name},
                     Min = definition.Min or 0,
                     Max = definition.Max or 100,
                     Default = definition.Default or definition.Min or 0,
@@ -8953,6 +8960,7 @@ function Module.init(context: Runtime): any
     })
     clicker:CreateToggle({
         Name = "Weapons only",
+        Show = {Option = "Click", Values = {"Tool"}},
         Default = false,
         Tooltip = "Only click while what you are holding is a melee weapon, "
             .. "so a pickaxe or a stack of blocks is never swung.",
@@ -14303,16 +14311,9 @@ local activeCleanup: (() -> ())? = nil
 
 function Module.init(context: Runtime): any
     local host: any = context.host
+    local framework: any = context.framework
     local Players: any = host.Players
     local LocalPlayer: any = host.LocalPlayer
-    local TaskManager: any = host.TaskManager
-    local featureConnections: any = host.featureConnections
-    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
-    local createUniversalFeature: any = host.createUniversalFeature
-    local addToggleOption: any = host.addToggleOption
-    local addNumberOption: any = host.addNumberOption
-    local addCycleOption: any = host.addCycleOption
-    local addFeatureTooltip: any = host.addFeatureTooltip
 
     -- Hitboxes.
     --
@@ -14495,110 +14496,100 @@ function Module.init(context: Runtime): any
         end
     end
 
-    local function toggleHitboxes(enabled: boolean): ()
-        disconnectFeatureConnection("Hitboxes")
-        restoreHitboxes()
-        hitboxNpcCachedAt = -1
-        hitboxNpcCache = {}
-
-        if not enabled then
-            return
-        end
-
-        -- Two parts per player is cheap enough to do every frame, and every frame
-        -- is what keeps the box on the character while the game rescales it.
-        featureConnections.Hitboxes = TaskManager:Connect(function(): ()
-            sweepHitboxes()
-        end)
-    end
-
-    local HitboxFeature = createUniversalFeature(
-        "Hitboxes",
-        "Expand the part enemies are hit on, in studs",
-        3,
-        toggleHitboxes
-    )
-    addCycleOption(
-        HitboxFeature,
-        "Part",
-        {"Root", "Head", "Both"},
-        1,
-        function(value: string): ()
+    local hitboxes: any
+    hitboxes = framework.Categories.Combat:CreateModule({
+        Name = "Hitboxes",
+        Category = "Combat",
+        Order = 3,
+        Tooltip = "Expand the part enemies are hit on, in studs. Every part "
+            .. "is restored exactly when it stops being a target.",
+        Function = function(enabled: boolean): ()
+            restoreHitboxes()
+            hitboxNpcCachedAt = -1
+            hitboxNpcCache = {}
+            if not enabled then
+                return
+            end
+            hitboxes:Clean(restoreHitboxes)
+            -- Two parts per player is cheap enough to do every frame, and
+            -- every frame is what keeps the box on the character while the
+            -- game rescales it.
+            hitboxes:Loop(function(): ()
+                sweepHitboxes()
+            end)
+        end,
+    })
+    hitboxes:CreateDropdown({
+        Name = "Part",
+        List = {"Root", "Head", "Both"},
+        Index = 1,
+        Function = function(value: string): ()
             hitboxSettings.part = value
-            -- Parts the new mode no longer owns are restored on the next sweep.
-        end
-    )
-    addNumberOption(
-        HitboxFeature,
-        "Expand",
-        hitboxSettings.expand,
-        0,
-        30,
-        function(value: number): ()
+        end,
+        Tooltip = "Which part of the character is expanded. Parts the new "
+            .. "mode no longer owns are restored on the next sweep.",
+    })
+    hitboxes:CreateSlider({
+        Name = "Expand",
+        Min = 0,
+        Max = 30,
+        Default = hitboxSettings.expand,
+        Function = function(value: number): ()
             hitboxSettings.expand = value
         end,
-        "Studs added to the target part. Past roughly 10 the box is wider than "
-            .. "the character is tall and anyone watching can see hits landing on "
-            .. "nothing."
-    )
-    addToggleOption(
-        HitboxFeature,
-        "Team check",
-        hitboxSettings.teamCheck,
-        function(value: boolean): ()
+        Tooltip = "Studs added to the target part. Past roughly 10 the box is "
+            .. "wider than the character is tall and anyone watching can see "
+            .. "hits landing on nothing.",
+    })
+    hitboxes:CreateToggle({
+        Name = "Team check",
+        Default = hitboxSettings.teamCheck,
+        Function = function(value: boolean): ()
             hitboxSettings.teamCheck = value
         end,
-        "Leave teammates at their real size."
-    )
-    addToggleOption(
-        HitboxFeature,
-        "Include NPCs",
-        hitboxSettings.includeNpcs,
-        function(value: boolean): ()
+        Tooltip = "Leave teammates at their real size.",
+    })
+    hitboxes:CreateToggle({
+        Name = "Include NPCs",
+        Default = hitboxSettings.includeNpcs,
+        Function = function(value: boolean): ()
             hitboxSettings.includeNpcs = value
-        end
-    )
-    addToggleOption(
-        HitboxFeature,
-        "Show hitbox",
-        hitboxSettings.reveal,
-        function(value: boolean): ()
+        end,
+    })
+    hitboxes:CreateToggle({
+        Name = "Show hitbox",
+        Default = hitboxSettings.reveal,
+        Function = function(value: boolean): ()
             hitboxSettings.reveal = value
         end,
-        "Draw the expanded part so you can see what you are actually aiming at."
-    )
-    addNumberOption(
-        HitboxFeature,
-        "Show transparency %",
-        hitboxSettings.transparency,
-        0,
-        95,
-        function(value: number): ()
+        Tooltip = "Draw the expanded part so you can see what you are actually "
+            .. "aiming at.",
+    })
+    hitboxes:CreateSlider({
+        Name = "Show transparency %",
+        Show = {Option = "Show hitbox"},
+        Min = 0,
+        Max = 95,
+        Default = hitboxSettings.transparency,
+        Function = function(value: number): ()
             hitboxSettings.transparency = value
-        end
-    )
-    addToggleOption(
-        HitboxFeature,
-        "No collision",
-        hitboxSettings.noCollision,
-        function(value: boolean): ()
+        end,
+    })
+    hitboxes:CreateToggle({
+        Name = "No collision",
+        Default = hitboxSettings.noCollision,
+        Function = function(value: boolean): ()
             hitboxSettings.noCollision = value
         end,
-        "An expanded part that still collides pushes its owner around the map, "
-            .. "which everyone in the server can see."
-    )
-    addFeatureTooltip(
-        HitboxFeature,
-        "Adds studs to the enemy's root or head so hits register early. Every part "
-            .. "is restored exactly when it stops being a target."
-    )
+        Tooltip = "An expanded part that still collides pushes its owner "
+            .. "around the map, which everyone in the server can see.",
+    })
 
     activeCleanup = function(): ()
-        disconnectFeatureConnection("Hitboxes")
         restoreHitboxes()
     end
     Module.Initialized = true
-    return HitboxFeature
+    return hitboxes
 end
 
 function Module.destroy(): ()
