@@ -103,6 +103,15 @@ if missing:
 PYTHON
 echo "ok"
 
+step "Wurst asset checksums"
+# A PNG that drifted from the pinned Wurst7 commit is an unattributed edit.
+# The fetch script records sha256 per file; this step re-hashes the tree.
+if [ -f assets/wurst/manifest.json ]; then
+    python3 tools/fetch_wurst_assets.py --check
+else
+    echo "ok (nothing vendored)"
+fi
+
 step "JSON manifests"
 python3 -m json.tool src/gui/Current/Images/manifest.json >/dev/null
 python3 -m json.tool src/gui/Current/Assets/manifest.json >/dev/null

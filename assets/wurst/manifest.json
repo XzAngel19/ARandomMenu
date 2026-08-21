@@ -1,0 +1,38 @@
+{
+  "upstream": "Wurst-Imperium/Wurst7",
+  "commit": "4a22e53d774b9a28e395874834f099e779685998",
+  "files": {
+    "wurst_128.png": {
+      "upstream": "src/main/resources/assets/wurst/wurst_128.png",
+      "sha256": "51fdf9945eead33d9c189b076004deb4e1582105fe0ca96390361887dea5bb36"
+    },
+    "icon.png": {
+      "upstream": "src/main/resources/assets/wurst/icon.png",
+      "sha256": "8a0a22a066ee739c4d1f49feb6ae73fe894d7a48551bbe1d6a42b0c095d6c184"
+    },
+    "colorpalette.png": {
+      "upstream": "src/main/resources/assets/wurst/colorpalette.png",
+      "sha256": "2cbb4437e2376f3df5aae11cf72e293912f2c1503f69a1fbf1c9e907e27eb071"
+    },
+    "dancingtaco1.png": {
+      "upstream": "src/main/resources/assets/wurst/dancingtaco1.png",
+      "sha256": "2ee4fb0de2e383968fe1d0aeed758760bf43e788828296767196e216bbbc1bad"
+    },
+    "dancingtaco2.png": {
+      "upstream": "src/main/resources/assets/wurst/dancingtaco2.png",
+      "sha256": "cc9d0bbcd26212cd2904310515f3059ec451da23ef9981cca05efe546f224382"
+    },
+    "dancingtaco3.png": {
+      "upstream": "src/main/resources/assets/wurst/dancingtaco3.png",
+      "sha256": "efa3c253ea5ff34458abb78bd22514973ce79fca6161d67ef9fbb131be9f7dcf"
+    },
+    "dancingtaco4.png": {
+      "upstream": "src/main/resources/assets/wurst/dancingtaco4.png",
+      "sha256": "7ad4da6b9c7f4e3bd49b2c8843f99f83b4aac15011595d90f1567e91dd2d21fe"
+    },
+    "translations/en_us.json": {
+      "upstream": "src/main/resources/assets/wurst/translations/en_us.json",
+      "sha256": "bc340206a7c8622eb9c669e3f0f7d21334c321a6f2fafaf29a28d62f8a395749"
+    }
+  }
+}
