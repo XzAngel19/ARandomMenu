@@ -487,6 +487,13 @@ local function newInstance(className: string): any
     if className == "Model" or className == "Backpack" then
         instance.ChildAdded = signal()
     end
+    if className == "Part" or className == "MeshPart" then
+        -- Roblox answers this on every BasePart, and its default is zero.
+        -- The stand-in left it nil, so X-Ray taking `math.max` of it — which
+        -- cannot fail on a real client — died on the first loose part in the
+        -- world.
+        instance.LocalTransparencyModifier = 0
+    end
     if className == "Humanoid" then
         -- The session panel counts deaths, and a stand-in humanoid that never
         -- announces one makes that counter untestable.
