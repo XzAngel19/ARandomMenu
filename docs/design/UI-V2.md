@@ -17,9 +17,25 @@ our own type and spacing. The two screenshots the user supplied are in
 Matcha stays a secondary reference for the furniture (a stats block, toasts, a
 list of what is running), not for the layout.
 
-Our mockups: `mock-clickgui.jpg` (layout — the row *labels* in it are generated
-nonsense, read the shapes), `mock-settings.jpg` (a window and the UI Settings
-window, legible).
+## The prototype is the specification
+
+`docs/design/prototype/index.html` — open it in a browser, or serve the folder
+with `python3 -m http.server 8080 --bind 0.0.0.0 --directory docs/design/prototype`.
+
+It is a working ClickGUI: seven windows that drag, collapse, pin, snap to the
+edges and raise on click; rows that fill when enabled and expand their settings
+in place; a HUD list that tracks what is on; tooltips; toasts; the pill; and a
+UI Settings window whose every control is live.
+
+It exists because a mockup cannot be argued with and a generated image cannot
+spell. Every number in it — 22 px rows, 22 px title bars, a 2 px gap, a 1 px
+border, a 5 px slider bar with a 7×11 knob, 11.5 px labels — is the number the
+Luau widgets get built with. When something in it is wrong, change it there
+first; that file is cheaper to argue with than `Widgets.luau`.
+
+Static mockups, superseded by the prototype but kept for the record:
+`mock-clickgui.jpg` (the row labels in it are generated nonsense, read the
+shapes) and `mock-settings.jpg`.
 
 ## The shape of it
 
