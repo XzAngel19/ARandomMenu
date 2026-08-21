@@ -50,6 +50,23 @@ ClickGUI suite asserts those. Still needed:
 
 ## Parity gate
 
-Owed: named metric constants in `Widgets.luau` for the numbers the prototype
-decided (choice-list row height, slider bar, knob, label size, tooltip
-delay). The gate will fail naming both sides until those exist.
+`docs/design/prototype/spec.json` is generated from the prototype. The gate
+already checks `ThemeEngine.shape` against it (7 tokens, currently matching).
+
+Owed — named constants in `Widgets.luau`, so the remaining prototype numbers
+have a counterpart the gate can read. Until they exist the step stays green
+and prints them as owed; once a name appears, a wrong value fails and names
+both sides. C cannot add them (`src/` is not its lane).
+
+| Constant | Prototype |
+|---|---|
+| `TITLE_HEIGHT` | 22 |
+| `WINDOW_GAP` | 2 |
+| `SLIDER_BAR_HEIGHT` | 5 |
+| `SLIDER_KNOB_WIDTH` | 7 |
+| `SLIDER_KNOB_HEIGHT` | 11 |
+| `TITLE_FONT_SIZE` | 11.5 |
+| `LABEL_FONT_SIZE` | 11.5 |
+| `TOOLTIP_DELAY_MS` | 400 |
+| `TRANSITION_FAST` | 0.1 |
+| `TRANSITION_SLOW` | 0.18 |

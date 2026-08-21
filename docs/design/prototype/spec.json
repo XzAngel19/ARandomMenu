@@ -1,0 +1,26 @@
+{
+  "source": "docs/design/prototype/index.html",
+  "shape": {
+    "opacity": 0.86,
+    "tooltipOpacity": 0.95,
+    "radius": 4,
+    "rowHeight": 22,
+    "borderThickness": 1,
+    "maxHeight": 340,
+    "scale": 1
+  },
+  "chrome": {
+    "titleHeight": 22,
+    "gap": 2
+  },
+  "components": {
+    "sliderBarHeight": 5,
+    "sliderKnobWidth": 7,
+    "sliderKnobHeight": 11,
+    "titleFontSize": 11.5,
+    "labelFontSize": 11.5,
+    "tooltipDelayMs": 400,
+    "transitionFast": 0.1,
+    "transitionSlow": 0.18
+  }
+}
