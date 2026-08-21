@@ -42,13 +42,15 @@ local activeCleanup: (() -> ())? = nil
 -- one. Nothing here scales with the viewport.
 local WINDOW_WIDTH: number = 160
 local WINDOW_MAX_HEIGHT: number = 300
--- 1080p is the reference the prototype was drawn at. Below it the interface
--- would be unreadably small and above it lost, so everything scales with the
--- viewport's height rather than being redesigned per device — which is what
--- Vape does on Roblox, and why its menu looks the same shape on a phone as on
--- a monitor instead of being a second layout.
-local REFERENCE_HEIGHT: number = 1080
-local SCALE_MINIMUM: number = 0.85
+-- Scale is the player's, not a guess of mine.
+--
+-- This was a viewport-height formula with a 1080 reference and a 1.35 factor,
+-- three numbers with no source: the prototype has no reference height and no
+-- automatic factor, it has a slider that defaults to 1 and runs 0.7 to 1.6.
+-- Agent C's parity gate said so, and it was right — a number I picked while
+-- looking at one screen is exactly the kind of decision that gate exists to
+-- refuse.
+local SCALE_MINIMUM: number = 0.7
 local SCALE_MAXIMUM: number = 1.6
 local GRID_MARGIN: number = 12
 local WINDOW_GAP: number = 2
@@ -73,20 +75,13 @@ function Module.init(context: any): any
     local create: any = host.create
     local allFeatures: {any} = host.allFeatures
 
-    -- One UIScale over the whole layer. Wurst is bigger than what we shipped —
-    -- the user compared it to Vape and said so — and the answer is not a bigger
-    -- constant, because then it is wrong on every screen that is not the one it
-    -- was picked on.
+    -- One UIScale over the whole layer, driven by the theme's own shape token,
+    -- so the Scale row in UI Settings moves the entire interface and nothing
+    -- has to be re-measured per device.
     local function viewportScale(): number
-        local camera: Camera? = workspace.CurrentCamera
-        local height: number = camera
-            and (camera :: Camera).ViewportSize.Y
-            or REFERENCE_HEIGHT
-        return math.clamp(
-            (height / REFERENCE_HEIGHT) * 1.35,
-            SCALE_MINIMUM,
-            SCALE_MAXIMUM
-        )
+        local shape: any = host.ThemeEngine and host.ThemeEngine.shape
+        local wanted: number = shape and tonumber(shape.scale) or 1
+        return math.clamp(wanted, SCALE_MINIMUM, SCALE_MAXIMUM)
     end
 
     local windows: any = state.windows
