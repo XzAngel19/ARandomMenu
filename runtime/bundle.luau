@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "de868e8ff6d10222",
+    stamp = "730f2a48dca9033c",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -9422,14 +9422,16 @@ function Module.init(context: any): any
     }
 
     -- ------------------------------------------------------------- wordmark
-    -- Wurst's WurstLogo feature: the sausage and the version on a white chip.
-    -- Until the image resolves (or on an executor without getcustomasset) the
-    -- chip carries the product name as text, so the corner is never blank.
+    -- Wurst's WurstLogo feature. The sausage sits on the game with nothing
+    -- behind it; only the version string gets the white chip, which is what
+    -- WURSTLOGO_BACKGROUND is the default for. Painting the whole block white
+    -- put the transparent logo on a white slab, which is not how Wurst looks
+    -- anywhere.
     local chip: Frame = (create("Frame", {
         Parent = PopupLayer,
         Name = "WurstLogo",
         Active = false,
-        BackgroundColor3 = WURSTLOGO_BACKGROUND,
+        BackgroundTransparency = 1,
         BorderSizePixel = 0,
         Position = UDim2.fromOffset(FURNITURE_MARGIN_X, FURNITURE_MARGIN_Y),
         Size = UDim2.fromOffset(LOGO_WIDTH + 46, LOGO_HEIGHT + 8),
@@ -9460,21 +9462,34 @@ function Module.init(context: any): any
         Text = string.upper(tostring(PRODUCT.name)),
         TextColor3 = WURSTLOGO_TEXT,
         TextSize = 14,
-        TextXAlignment = Enum.TextXAlignment.Left,
+        TextXAlignment = Enum.TextXAlignment.Center,
         ZIndex = 21,
     }) :: any) :: TextLabel
 
+    -- The version chip. Wurst prints it beside the sausage at a size you can
+    -- actually read, on the white background its own setting defaults to.
+    local versionText: string = tostring(PRODUCT.version)
+    local versionChip: Frame = (create("Frame", {
+        Parent = chip,
+        Name = "VersionChip",
+        BackgroundColor3 = WURSTLOGO_BACKGROUND,
+        BorderSizePixel = 0,
+        Position = UDim2.fromOffset(LOGO_WIDTH + 10, 4),
+        Size = UDim2.fromOffset(12 + #versionText * 9, LOGO_HEIGHT),
+        ZIndex = 20,
+    }) :: any) :: Frame
+
     create("TextLabel", {
         TextTruncate = Enum.TextTruncate.AtEnd,
-        Parent = chip,
+        Parent = versionChip,
         Name = "Version",
         BackgroundTransparency = 1,
         FontFace = TITLE_FONT,
-        Position = UDim2.fromOffset(LOGO_WIDTH + 8, 4),
-        Size = UDim2.fromOffset(34, LOGO_HEIGHT),
-        Text = "v" .. tostring(PRODUCT.version),
+        Position = UDim2.fromOffset(0, 0),
+        Size = UDim2.fromScale(1, 1),
+        Text = versionText,
         TextColor3 = WURSTLOGO_TEXT,
-        TextSize = 11,
+        TextSize = 16,
         TextXAlignment = Enum.TextXAlignment.Left,
         ZIndex = 21,
     })
