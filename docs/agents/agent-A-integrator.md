@@ -122,18 +122,36 @@ Done, and load-bearing:
   game can enumerate under CoreGui and Lighting, and the third already holds
   every player's saved configs.
 
-Not done, in order:
+**The demolition is done.** Your predecessor removed `Main`, `centerMain`, the
+sidebar, `createTab`, `setTab`, the page host, the search and the card subtitle:
+2,454 lines out, the shell down to 5,288, `state.d.luau` cleaned of the 21 keys
+that lost their owner. The scroll aliases it left behind (`state.universalScroll
+= CardBin` and friends) are deliberate and load-bearing — game modules still
+name a parent — and they go when those modules move to `CreateModule`.
 
-1. **The demolition.** `createTab` (431 lines), `centerMain` (341), the sidebar,
-   the page host, the card subtitle. Roughly 1,500 lines. Until this lands the
-   player sees the ClickGUI drawn on top of an empty copy of the old menu, which
-   is what they see today and what they have already told us about twice.
-2. The pill, the wordmark with Wurst's own logo (vendored at
-   `assets/wurst/wurst_128.png`), the stats block, the HUD list, tooltips.
-3. Wurst's setting lines inside an expanded row: label left, value right, a
-   5 px bar with a 7×11 knob underneath.
-4. UI Settings, Keybinds and Presets as windows, against the inventory agent C
-   is producing in `docs/wurst-features.md`.
+Three window bugs from a real session are also fixed: a category window no
+longer has a close button (Wurst does not give one; the X belongs to settings
+windows, and ours removed a sixth of the menu with nothing to bring it back), a
+pinned window now survives the GUI closing, which is the only thing pinning is
+for, and the whole layer is on one `UIScale` derived from viewport height
+against 1080p, clamped 0.85–1.6, because the interface was measured against
+Vape's and Wurst is bigger.
+
+Not done, in order — **this is your queue**:
+
+1. **The furniture.** None of it exists yet and it is most of what still makes
+   the menu not look like Wurst. The wordmark with Wurst's own logo, already
+   vendored and verified at `assets/wurst/wurst_128.png` and reachable through
+   the shell's `getcustomasset` path; the stats block under it; the floating
+   Roblox pill as the launcher; the HUD list down the right edge — every
+   module's `card.status` is already populated, so it has something to show the
+   day you write it; and tooltips on a 400 ms hover.
+2. Wurst's setting lines inside an expanded row: label left, value right, a 5 px
+   bar with a 7×11 knob underneath, a small square checkbox, and a colour as
+   label + hex + a bar of that colour under it.
+3. UI Settings, Keybinds and Presets as windows, against C's inventory in
+   `docs/wurst-features.md` — it carries the exact names, types and defaults, and
+   the parity gate fails a window that ships the wrong default.
 
 ## Who builds what, so nobody builds it twice
 
@@ -173,6 +191,15 @@ the refactor. Rule 12 in `RULES.md` is the sync recipe, and its third line —
 fetching your own branch before the force-push — is not optional; without it the
 push is rejected with `stale info`, which reads like an authentication failure
 and is not one.
+
+## Why your work is safe even if this session dies
+
+The session before yours was lost — conversation and all — and nothing of its
+work went with it, because it pushed to the shared integration branch as it
+went. The demolition was on the server before the session ended.
+
+That is the whole reason rule 3 exists. Push every increment; a finished thing
+sitting in a sandbox is a thing nobody has.
 
 ## How to talk to the user
 
