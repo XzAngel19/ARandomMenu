@@ -1227,6 +1227,18 @@ local AssetManager: any = {
             version = 1,
             assetType = "font/otf",
         },
+        -- Wurst's own wordmark, vendored from Wurst-Imperium/Wurst7 at the
+        -- pinned commit and checksummed by the gate. It is the transparent
+        -- 505x128 sausage — not `icon.png`, which is the same mark stamped on
+        -- an opaque black square and reads as a black brick anywhere that is
+        -- not a repository avatar.
+        wurstLogo = {
+            url = REPOSITORY_RAW_BASE .. "assets/wurst/wurst_128.png",
+            fileName = "wurst-logo-v1.png",
+            fallback = "",
+            version = 1,
+            assetType = "image/png",
+        },
         brandLogo = {
             url = REPOSITORY_RAW_BASE
                 .. "src/gui/Current/Assets/Brand/menu-logo.jpg",
