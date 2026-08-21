@@ -412,7 +412,10 @@ def loader_contract(shell: str, failures: list) -> None:
         failures.append("ARandomMenu.luau: bundle fetch path is missing")
     if "writeCachedSource" not in shell:
         failures.append("ARandomMenu.luau: disk cache is never written")
-    if "[RTM:Timing]" not in shell:
+    # The prefix is built from PRODUCT.logPrefix now, so the literal that used
+    # to be grepped for no longer appears anywhere. What matters is that the
+    # summary is still printed, not what it is called.
+    if ':Timing]' not in shell:
         failures.append("ARandomMenu.luau: bootstrap timing summary is missing")
 
 

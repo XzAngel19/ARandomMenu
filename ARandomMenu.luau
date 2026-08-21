@@ -1,6 +1,7 @@
 --!strict
 --[[
-    A Random Menu
+    Wurst
+    An unofficial Roblox port of the Minecraft Wurst Client.
     Standalone, client-sided Roblox GUI.
 
     Default controls:
@@ -433,6 +434,29 @@ local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
 local PENDING_FINGERPRINT: boolean = false
 
+-- The product's own name, in one place.
+--
+-- Everything a player reads — the wordmark, the log prefix, the notification
+-- title — comes from here, so the next rename is one line and not a hundred
+-- and twenty.
+--
+-- Three names deliberately do *not* follow it. `guiName`, `blurName` and
+-- `storageFolder` are not branding: the first two are the instance names a
+-- game can enumerate under CoreGui and Lighting, so naming them after the
+-- product would announce the menu to anything scanning for it, and the third
+-- is a folder on disk that already holds every existing player's saved
+-- configs. Renaming it would silently orphan all of them.
+local PRODUCT = {
+    name = "Wurst",
+    version = "2.1",
+    -- Prefixes every console line as `[Wurst:Bootstrap]` and friends.
+    logPrefix = "Wurst",
+    guiName = "RandomTestingMenu0001",
+    blurName = "RandomTestingMenu0001Blur",
+    storageFolder = "RandomTestingMenu0001",
+}
+
+
 local function bootstrap(): ()
 local executorGlobals: any = getfenv()
 
@@ -457,9 +481,9 @@ local Stats: Stats = cloneReference(game:GetService("Stats"))
 local LocalPlayer: Player = Players.LocalPlayer :: Player
 local PlayerGui: PlayerGui = LocalPlayer:WaitForChild("PlayerGui") :: PlayerGui
 
-local GUI_NAME = "RandomTestingMenu0001"
-local BLUR_NAME = "RandomTestingMenu0001Blur"
-local CONFIG_FOLDER = "RandomTestingMenu0001"
+local GUI_NAME = PRODUCT.guiName
+local BLUR_NAME = PRODUCT.blurName
+local CONFIG_FOLDER = PRODUCT.storageFolder
 local CONFIG_PROFILE_FOLDER = CONFIG_FOLDER .. "/Profiles"
 local CONFIG_FILE = CONFIG_PROFILE_FOLDER
     .. "/Game_"
@@ -1108,7 +1132,7 @@ state.refreshLayout = function(force: boolean?): ()
     for _, listener: (LayoutMetrics) -> () in ipairs(state.layoutListeners) do
         local ok: boolean, failure: any = pcall(listener, nextLayout)
         if not ok then
-            warn("[Random Testing Menu] layout listener: " .. tostring(failure))
+            warn("[" .. PRODUCT.name .. "] layout listener: " .. tostring(failure))
         end
     end
 end
@@ -1593,7 +1617,7 @@ function AssetManager.resolve(logicalName: string): (string?, string?)
     local cachedBytes: string?, cacheError: string? =
         AssetManager.readVerifiedCache(path, definition)
     if not cachedBytes then
-        print("[RTM:Assets] caché no reutilizable: " .. tostring(cacheError))
+        print("[" .. PRODUCT.logPrefix .. ":Assets] caché no reutilizable: " .. tostring(cacheError))
         local downloaded: string?, downloadError: string? =
             AssetManager.download(definition)
         if not downloaded then
@@ -1632,7 +1656,7 @@ function AssetManager.resolveFont(
     local assetId: string?, loadError: string? = AssetManager.resolve(logicalName)
     if not assetId then
         warn(
-            "[RTM:Assets] fuente fallback para "
+            "[" .. PRODUCT.logPrefix .. ":Assets] fuente fallback para "
                 .. logicalName
                 .. ": "
                 .. tostring(loadError)
@@ -1647,14 +1671,14 @@ function AssetManager.resolveFont(
     )
     if not fontOk or typeof(fontFace) ~= "Font" then
         warn(
-            "[RTM:Assets] Font.new fallback para "
+            "[" .. PRODUCT.logPrefix .. ":Assets] Font.new fallback para "
                 .. logicalName
                 .. ": "
                 .. tostring(fontFace)
         )
         return fallbackFont
     end
-    print("[RTM:Assets] fuente cargada: " .. logicalName)
+    print("[" .. PRODUCT.logPrefix .. ":Assets] fuente cargada: " .. logicalName)
     return fontFace
 end
 
@@ -1798,7 +1822,7 @@ state.applyAssetImage = function(
     task.spawn(function(): ()
         local assetId: string?, failure: string? = AssetManager.resolve(logicalName)
         if not assetId then
-            warn("[RTM:Assets] " .. logicalName .. ": " .. tostring(failure))
+            warn("[" .. PRODUCT.logPrefix .. ":Assets] " .. logicalName .. ": " .. tostring(failure))
             return
         end
         if not image.Parent then
@@ -1889,7 +1913,7 @@ function SectionManager.initialize(sectionName: string): (boolean, string?)
     end
 
     warn(
-        "[Random Testing Menu] "
+        "[" .. PRODUCT.name .. "] "
             .. sectionName
             .. " failed to initialize: "
             .. tostring(errorMessage)
@@ -1933,13 +1957,13 @@ function SectionManager.initializeAllAsync(): ()
 
     for _, sectionName: string in ipairs(sectionNames) do
         task.spawn(function(): ()
-            print("[RTM:Bootstrap] Inicializando sección " .. sectionName)
+            print("[" .. PRODUCT.logPrefix .. ":Bootstrap] Inicializando sección " .. sectionName)
             local success: boolean, errorMessage: string? =
                 SectionManager.initialize(sectionName)
             if not success then
                 failures += 1
                 warn(
-                    "[RTM:Bootstrap] Sección "
+                    "[" .. PRODUCT.logPrefix .. ":Bootstrap] Sección "
                         .. sectionName
                         .. " falló: "
                         .. tostring(errorMessage)
@@ -1965,7 +1989,7 @@ function SectionManager.initializeAllAsync(): ()
             end
             if completed >= total then
                 print(
-                    "[RTM:Bootstrap] Carga terminada · fallos="
+                    "[" .. PRODUCT.logPrefix .. ":Bootstrap] Carga terminada · fallos="
                         .. tostring(failures)
                 )
                 task.delay(0.35, function(): ()
@@ -2588,7 +2612,7 @@ local toastSequence: number = 0
 
 local function notify(message: any): ()
     local text: string = tostring(message)
-    print("[Random Testing Menu] " .. text)
+    print("[" .. PRODUCT.name .. "] " .. text)
     toastSequence += 1
 
     local toast: CanvasGroup = Instance.new("CanvasGroup")
@@ -3137,7 +3161,7 @@ if state.applyAssetImage then
         BrandMark.Text = ""
     end)
 end
-local BrandName: TextLabel = makeTextLabel(BrandRow, "A Random Menu", 10)
+local BrandName: TextLabel = makeTextLabel(BrandRow, PRODUCT.name, 10)
 BrandName.Name = "BrandName"
 BrandName.AnchorPoint = Vector2.new(0, 0.5)
 BrandName.FontFace = CONTROL_FONT
@@ -3869,7 +3893,7 @@ end
 UniversalScroll.Visible = true
 UniversalScroll.CanvasSize = UDim2.fromOffset(0, 0)
 setTab("Universal")
-print("[RTM:Bootstrap] GUI base visible; construyendo funciones universales")
+print("[" .. PRODUCT.logPrefix .. ":Bootstrap] GUI base visible; construyendo funciones universales")
 
 local universalFeatures = {}
 local movementFeatures = {}
@@ -3895,7 +3919,7 @@ state.onLayout(function(): ()
         if type(feature.applyLayout) == "function" then
             local ok: boolean, failure: any = pcall(feature.applyLayout)
             if not ok then
-                warn("[Random Testing Menu] card layout: " .. tostring(failure))
+                warn("[" .. PRODUCT.name .. "] card layout: " .. tostring(failure))
             end
         end
     end
@@ -4204,7 +4228,7 @@ local function runBucket(
             else
                 scheduled.failures += 1
                 warn(
-                    "[Random Testing Menu] scheduled task "
+                    "[" .. PRODUCT.name .. "] scheduled task "
                         .. tostring(taskId)
                         .. " failed: "
                         .. tostring(message)
@@ -5654,7 +5678,7 @@ type ModuleDiagnostics = {
 }
 
 state.logBootstrap = function(message: string): ()
-    print("[RTM:Bootstrap] " .. message)
+    print("[" .. PRODUCT.logPrefix .. ":Bootstrap] " .. message)
 end
 
 -- The build used to be printed on the intro; the intro carries no words now,
@@ -5662,7 +5686,7 @@ end
 print("[RTM] build loader-v3")
 
 state.logBootstrapError = function(message: string): ()
-    warn("[RTM:Bootstrap] " .. message)
+    warn("[" .. PRODUCT.logPrefix .. ":Bootstrap] " .. message)
 end
 
 -- The option builders, once src/library/Widgets.luau has been downloaded.
@@ -5697,6 +5721,9 @@ local function createGameModuleEnvironment(
         LocalPlayer = LocalPlayer,
         PlayerGui = PlayerGui,
         ScreenGui = ScreenGui,
+        -- The product's identity, so nothing downstream retypes a name
+        -- or a folder that the shell already owns.
+        PRODUCT = PRODUCT,
         Theme = Theme,
         -- The engine, so a library can bind an instance to a token instead of
         -- copying a colour into it once and going stale at the next preset.
@@ -5864,7 +5891,7 @@ local function loadGameModule(
             or string.find(candidate, "404: not found", 1, true)
             or string.find(candidate, "<!doctype html", 1, true)
             or string.find(candidate, "<html", 1, true) then
-            warn("[RTM:Bootstrap] Respuesta remota inválida para " .. moduleName)
+            warn("[" .. PRODUCT.logPrefix .. ":Bootstrap] Respuesta remota inválida para " .. moduleName)
             downloadSuccess = false
         end
     end
@@ -5878,7 +5905,7 @@ local function loadGameModule(
             if localSuccess and type(localSource) == "string" then
                 source = localSource
                 downloadSuccess = true
-                warn("[RTM:Bootstrap] HTTP falló; usando fallback local " .. localPath)
+                warn("[" .. PRODUCT.logPrefix .. ":Bootstrap] HTTP falló; usando fallback local " .. localPath)
             end
         end
     end
@@ -6122,7 +6149,7 @@ state.summarizeBoot = function(): ()
     local timing: any = state.boot.timing
     local total: number = os.clock() - (state.boot.started or os.clock())
     print(string.format(
-        "[RTM:Timing] fingerprint %.2fs · gui %.2fs · bundle %.2fs · manifest %.2fs · widgets %.2fs · framework %.2fs · libraries %.2fs · modules %.2fs (%d/%d) · game module %.2fs · total %.2fs",
+        "[" .. PRODUCT.logPrefix .. ":Timing] fingerprint %.2fs · gui %.2fs · bundle %.2fs · manifest %.2fs · widgets %.2fs · framework %.2fs · libraries %.2fs · modules %.2fs (%d/%d) · game module %.2fs · total %.2fs",
         BOOT_FINGERPRINT_SECONDS,
         tonumber(timing.gui) or 0,
         tonumber(timing.bundle) or 0,
@@ -6846,7 +6873,7 @@ local runtimeCleaned: boolean = false
 local function cleanupStep(label: string, step: () -> ()): ()
     local ok: boolean, failure: any = pcall(step)
     if not ok then
-        warn("[Random Testing Menu] destruct/" .. label .. ": " .. tostring(failure))
+        warn("[" .. PRODUCT.name .. "] destruct/" .. label .. ": " .. tostring(failure))
     end
 end
 
@@ -6990,7 +7017,7 @@ state.destruct = function(): ()
             lighting:Destroy()
         end
     end)
-    print("[Random Testing Menu] Destruct complete.")
+    print("[" .. PRODUCT.name .. "] Destruct complete.")
 end
 
 ScreenGui.AncestryChanged:Connect(function(_: Instance, parent: Instance?): ()
@@ -7007,7 +7034,10 @@ state.setBlurVisible(false)
 task.defer(saveConfigNow)
 
 print(
-    "A Random Menu | Toggle key: "
+    PRODUCT.name
+        .. " v"
+        .. PRODUCT.version
+        .. " | Toggle key: "
         .. state.toggleKey.Name
 )
 -- On a keyboard the launcher is not drawn, so this toast is the only thing
@@ -7020,13 +7050,13 @@ end
 local initialized: boolean, bootstrapError: any = xpcall(bootstrap, function(message: any): string
     local text: string = tostring(message)
     if debug and type(debug.traceback) == "function" then
-        return debug.traceback("[RTM:Bootstrap] " .. text, 2)
+        return debug.traceback("[" .. PRODUCT.logPrefix .. ":Bootstrap] " .. text, 2)
     end
-    return "[RTM:Bootstrap] " .. text
+    return "[" .. PRODUCT.logPrefix .. ":Bootstrap] " .. text
 end)
 
 if not initialized then
     -- Nowhere on screen to say it any more: the intro that used to carry the
     -- message is gone, so the console is the report.
-    warn("[RTM:Bootstrap] Inicialización detenida:\n" .. tostring(bootstrapError))
+    warn("[" .. PRODUCT.logPrefix .. ":Bootstrap] Inicialización detenida:\n" .. tostring(bootstrapError))
 end
