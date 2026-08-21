@@ -6134,8 +6134,15 @@ state.downloadSourcesParallel = function(paths: {string}): ()
                 end
                 local path: string = paths[current]
                 if not state.boot.sources[path] then
-                    local source: string? = state.fetchRepositorySource(path)
-                    if source then
+                    -- pcall'd, and the counter moves either way. A throw in
+                    -- one file used to kill its worker with the count still
+                    -- owing, which stalled the whole load for the full twelve
+                    -- seconds before the recovery below even started.
+                    local ok: boolean, source: any = pcall(
+                        state.fetchRepositorySource,
+                        path
+                    )
+                    if ok and type(source) == "string" then
                         state.boot.sources[path] = source
                     end
                 end
@@ -6149,9 +6156,16 @@ state.downloadSourcesParallel = function(paths: {string}): ()
     end
     if pending > 0 then
         timedOut = true
+        -- Finish the job on this thread. The result has to be *kept*: this
+        -- used to call the fetch and drop what it returned, so every file the
+        -- workers had not reached was downloaded here, thrown away, and then
+        -- downloaded a third time by the loader.
         for _, path: string in ipairs(paths) do
             if not state.boot.sources[path] then
-                state.fetchRepositorySource(path)
+                local source: string? = state.fetchRepositorySource(path)
+                if source then
+                    state.boot.sources[path] = source
+                end
             end
         end
     end
