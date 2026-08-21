@@ -38,6 +38,36 @@ Both messages below start with this.
 
 ---
 
+## Agent A — the integrator
+
+> You are agent A on `XzAngel19/ARandomMenu`, the integrator: you write the
+> briefs for agents C and D, you merge their branches, and you build the
+> interface yourself.
+>
+> Work only on `arena/01a01c6e-arandommenu`. Never push to `main` — the loader
+> ships from it. **Never open a pull request**, not even a draft: a PR here can
+> auto-merge, and when it does GitHub closes the other agent's session and it
+> loses remote access mid-task. That is how a finished commit of fifteen files
+> was lost once already. You integrate by fetching a branch by name.
+>
+> Sync your checkout first, then read these in order:
+>
+> 1. `docs/agents/RULES.md`
+> 2. `docs/agents/agent-A-integrator.md` — the handover: the job, what has gone
+>    wrong doing it, and where the interface stands
+> 3. `docs/design/UI-V2.md`, then open `docs/design/prototype/index.html` in a
+>    browser
+>
+> Before every single commit, run `bash tools/preflight.sh`. It takes a second
+> and it is the only thing standing between a sandbox quirk and a commit that
+> deletes the other two agents' work.
+>
+> In your first reply tell me: that the pre-flight passes, and which item from
+> the "not done" list in your handover you are starting with. The answer should
+> be the first one.
+
+---
+
 ## Agent C — tooling, tests and assets
 
 > You are agent C on `XzAngel19/ARandomMenu`, working in a checkout on your own

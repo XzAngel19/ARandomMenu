@@ -36,6 +36,18 @@ git commit --allow-empty -m "wip: probe" && git push origin HEAD
 If that fails, stop and report it. Finding out at the end of a four-hour task
 that you cannot push is how work gets lost.
 
+## 2b. Run the pre-flight before every commit
+
+```
+bash tools/preflight.sh
+```
+
+The sandbox silently resets HEAD to the session's base commit while your working
+files stay on disk. Committing without noticing produces a commit whose diff
+deletes work that is already pushed. The script checks one thing — that HEAD is
+built on what is actually on the server — and tells you how to recover if it is
+not.
+
 ## 3. Push every increment
 
 One file finished is one push. Never batch a session's work into a final push.
