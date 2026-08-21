@@ -23,12 +23,8 @@ That is expected; it is not a missed rename.
 
 ## ClickGUI hooks the harness is waiting on
 
-The ClickGUI tests in `tools/test/suites/clickgui.luau` will assert theme
-presets, window persistence and a RenderStepped budget. They need:
+`ThemeEngine.Bind` / `Apply` and the render bucket landed on live. The
+ClickGUI suite asserts those. Still needed:
 
-- `Theme:Bind` / a way to apply a named preset and repaint bound instances.
 - `WindowManager` with serialise / restore of position, collapse and pin.
-- ESP (or the render bucket) on `RenderStepped`, not only Heartbeat.
-
-Until those exist the suite asserts the current palette and the current
-floating-layer budget, and skips the rest.
+  Until that exists the suite records the gap and stays green.

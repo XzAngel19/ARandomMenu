@@ -133,6 +133,7 @@ require("./suites/combat-analytics")(ctx)
 require("./suites/games")(ctx)
 require("./suites/bundle")(ctx)
 require("./suites/shell")(ctx)
+require("./suites/clickgui")(ctx)
 require("./suites/teardown")(ctx)
 
 print("")
