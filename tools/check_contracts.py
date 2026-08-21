@@ -213,6 +213,34 @@ def state_index_contract(sources: list, failures: list) -> None:
         )
 
 
+def show_rule_contract(sources: list, failures: list) -> None:
+    """A row that declares when it belongs on screen has to name a real option.
+
+    `Show = {Option = "Mode", Values = {...}}` is how a row folds itself away
+    under the mode that does not use it. The kernel resolves the name at
+    refresh time, so a typo does not error — the rule never matches and the row
+    is simply never visible again. It is the least visible way to lose a
+    control: the card still says it has the setting.
+
+    A name starting with `__` is the deliberate opposite: an always-false rule,
+    used to retire a row so that no later refresh can bring it back.
+    """
+    for path in sources:
+        if not (path.startswith("src/modules/") or path.startswith("src/games/")):
+            continue
+        text = open(path).read()
+        declared = set(re.findall(r'Name\s*=\s*"([^"]+)"', text))
+        for match in re.finditer(r'Option\s*=\s*"([^"]+)"', text):
+            name = match.group(1)
+            if name.startswith("__") or name in declared:
+                continue
+            line = text.count("\n", 0, match.start()) + 1
+            failures.append(
+                f'{path}:{line}: a Show rule names the option "{name}", '
+                "which this file never creates"
+            )
+
+
 def connection_contract(shell: str, sources: list, failures: list) -> None:
     """Every named per-frame connection has to be disconnected somewhere.
 
@@ -352,6 +380,7 @@ def main() -> int:
     builder_contract(shell, failures)
     host_contract(shell, sources, failures)
     state_index_contract(sources, failures)
+    show_rule_contract(sources, failures)
     connection_contract(shell, sources, failures)
     card_name_contract(shell, failures)
     text_fits_contract(failures)
