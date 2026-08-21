@@ -214,7 +214,7 @@ function Module.init(context: any): any
             Parent = PopupLayer,
             Name = "Floating_" .. id,
             Active = true,
-            BackgroundColor3 = Theme.DefaultBackground,
+            BackgroundColor3 = Theme.background,
             BackgroundTransparency = bare and 1 or 0.08,
             BorderSizePixel = 0,
             ClipsDescendants = not bare,
@@ -232,7 +232,7 @@ function Module.init(context: any): any
             -- the main shell, so no grey frame draws attention at their corners.
             create("UIStroke", {
                 Parent = root,
-                Color = Theme.DefaultOutline,
+                Color = Theme.outline,
                 Transparency = 0.78,
                 Thickness = 1,
             })
@@ -240,7 +240,7 @@ function Module.init(context: any): any
             local shade: Frame = create("Frame", {
                 Parent = root,
                 Name = "Readability",
-                BackgroundColor3 = Theme.DefaultBackground,
+                BackgroundColor3 = Theme.background,
                 BackgroundTransparency = 0.28,
                 BorderSizePixel = 0,
                 Size = UDim2.fromScale(1, 1),
@@ -252,7 +252,7 @@ function Module.init(context: any): any
             Parent = root,
             Name = "Header",
             Active = not bare,
-            BackgroundColor3 = Theme.DefaultSurface,
+            BackgroundColor3 = Theme.surface,
             BackgroundTransparency = 0.24,
             BorderSizePixel = 0,
             Size = UDim2.new(1, 0, 0, headerHeight),
@@ -275,7 +275,7 @@ function Module.init(context: any): any
         else
             local accent: Frame = create("Frame", {
                 Parent = header,
-                BackgroundColor3 = Theme.DefaultOutline,
+                BackgroundColor3 = Theme.outline,
                 BackgroundTransparency = 0.62,
                 BorderSizePixel = 0,
                 Position = UDim2.fromOffset(0, headerHeight - 1),
@@ -286,7 +286,7 @@ function Module.init(context: any): any
             title.FontFace = CONTROL_FONT
             title.Position = UDim2.fromOffset(10, 0)
             title.Size = UDim2.new(1, -40, 1, 0)
-            title.TextColor3 = Theme.DefaultText
+            title.TextColor3 = Theme.text
             title:SetAttribute("FloatingDepth", 2)
 
             closeButton = makeButton(header, "x", 9)
@@ -295,7 +295,7 @@ function Module.init(context: any): any
             closeButton.BackgroundTransparency = 1
             closeButton.Position = UDim2.new(1, -6, 0.5, 0)
             closeButton.Size = UDim2.fromOffset(22, 22)
-            closeButton.TextColor3 = Theme.DefaultTextMuted
+            closeButton.TextColor3 = Theme.textMuted
             closeButton:SetAttribute("ThemeRole", "Icon")
             closeButton:SetAttribute("FloatingDepth", 3)
             local closeStroke: UIStroke? =
@@ -332,7 +332,7 @@ function Module.init(context: any): any
             local hint: UIStroke = create("UIStroke", {
                 Parent = root,
                 Name = "MoveHint",
-                Color = Theme.DefaultOutline,
+                Color = Theme.outline,
                 Thickness = 1,
                 Transparency = state.visible and 0.72 or 1,
             }) :: UIStroke
@@ -450,7 +450,7 @@ function Module.init(context: any): any
         BorderSizePixel = 0,
         CanvasSize = UDim2.fromOffset(0, 0),
         Position = UDim2.fromOffset(8, 8),
-        ScrollBarImageColor3 = Theme.DefaultOutline,
+        ScrollBarImageColor3 = Theme.outline,
         ScrollBarThickness = 3,
         Size = UDim2.new(1, -16, 1, -16),
     }) :: ScrollingFrame
@@ -468,8 +468,8 @@ function Module.init(context: any): any
         local selected: boolean = configData.ui.favorites[feature.configKey] == true
         feature.favoriteButton.Text = selected and "★" or "☆"
         feature.favoriteButton.TextColor3 = selected
-            and Theme.DefaultAccent
-            or Theme.DefaultTextMuted
+            and Theme.accent
+            or Theme.textMuted
         feature.favoriteButton.TextTransparency = selected and 0 or 0.34
     end
 
@@ -488,7 +488,7 @@ function Module.init(context: any): any
                     Parent = FavoritesList,
                     Name = feature.configKey:gsub("%W", ""),
                     AutoButtonColor = false,
-                    BackgroundColor3 = Theme.DefaultSurface,
+                    BackgroundColor3 = Theme.surface,
                     BackgroundTransparency = 0.38,
                     BorderSizePixel = 0,
                     FontFace = THIN_FONT,
@@ -496,8 +496,8 @@ function Module.init(context: any): any
                     Size = UDim2.new(1, -4, 0, 36),
                     Text = feature.name,
                     TextColor3 = feature.enabled
-                        and Theme.DefaultAccent
-                        or Theme.DefaultText,
+                        and Theme.accent
+                        or Theme.text,
                     TextSize = 13,
                     TextXAlignment = Enum.TextXAlignment.Left,
                 }) :: TextButton
@@ -516,8 +516,8 @@ function Module.init(context: any): any
                     Name = "Status",
                     AnchorPoint = Vector2.new(1, 0.5),
                     BackgroundColor3 = feature.enabled
-                        and Theme.AccentCyan
-                        or Theme.DefaultTextMuted,
+                        and Theme.accent
+                        or Theme.textMuted,
                     BackgroundTransparency = feature.enabled and 0 or 0.58,
                     BorderSizePixel = 0,
                     Position = UDim2.new(1, -14, 0.5, 0),
@@ -545,7 +545,7 @@ function Module.init(context: any): any
                 LayoutOrder = 1,
                 Size = UDim2.new(1, -4, 0, 52),
                 Text = "Star a module to keep it here",
-                TextColor3 = Theme.DefaultTextMuted,
+                TextColor3 = Theme.textMuted,
                 TextSize = 13,
                 TextTransparency = 0.28,
                 TextXAlignment = Enum.TextXAlignment.Center,
@@ -659,7 +659,7 @@ function Module.init(context: any): any
         )
         local managerRow: Frame = create("Frame", {
             Parent = OverlayList,
-            BackgroundColor3 = Theme.DefaultSurface,
+            BackgroundColor3 = Theme.surface,
             BackgroundTransparency = 0.48,
             BorderSizePixel = 0,
             LayoutOrder = index,
@@ -673,7 +673,7 @@ function Module.init(context: any): any
         local managerLabel: TextLabel = makeTextLabel(managerRow, definition.title, 10)
         managerLabel.Position = UDim2.fromOffset(10, 0)
         managerLabel.Size = UDim2.new(1, -112, 1, 0)
-        managerLabel.TextColor3 = Theme.DefaultTextMuted
+        managerLabel.TextColor3 = Theme.textMuted
         managerLabel:SetAttribute("FloatingDepth", 1)
         local settingsButton: TextButton = makeButton(managerRow, "", 9)
         settingsButton.Name = "Settings"
@@ -733,7 +733,7 @@ function Module.init(context: any): any
             BorderSizePixel = 0,
             CanvasSize = UDim2.fromOffset(0, 0),
             Position = UDim2.fromOffset(8, 8),
-            ScrollBarImageColor3 = Theme.AccentViolet,
+            ScrollBarImageColor3 = Theme.accentDim,
             ScrollBarThickness = 3,
             Size = UDim2.new(1, -16, 1, -16),
         }) :: ScrollingFrame
@@ -750,7 +750,7 @@ function Module.init(context: any): any
     local function createCompactSettingRow(parent: Instance, labelText: string): Frame
         local row: Frame = create("Frame", {
             Parent = parent,
-            BackgroundColor3 = Theme.DefaultSurface,
+            BackgroundColor3 = Theme.surface,
             BackgroundTransparency = 0.44,
             BorderSizePixel = 0,
             Size = UDim2.new(1, -4, 0, 38),
@@ -759,7 +759,7 @@ function Module.init(context: any): any
         local label: TextLabel = makeTextLabel(row, labelText, 9)
         label.Position = UDim2.fromOffset(10, 0)
         label.Size = UDim2.new(0.48, -10, 1, 0)
-        label.TextColor3 = Theme.DefaultTextMuted
+        label.TextColor3 = Theme.textMuted
         return row
     end
 
@@ -922,7 +922,7 @@ function Module.init(context: any): any
     )
     SessionText.Position = UDim2.fromOffset(0, 0)
     SessionText.Size = UDim2.fromScale(1, 1)
-    SessionText.TextColor3 = Theme.DefaultText
+    SessionText.TextColor3 = Theme.text
     SessionText.TextYAlignment = Enum.TextYAlignment.Top
     SessionText:SetAttribute("FloatingDepth", 2)
 
@@ -946,16 +946,16 @@ function Module.init(context: any): any
     )
     TextGuiLabel.Position = UDim2.fromOffset(0, 0)
     TextGuiLabel.Size = UDim2.fromScale(1, 1)
-    TextGuiLabel.TextColor3 = Theme.AccentCyan
+    TextGuiLabel.TextColor3 = Theme.accent
     TextGuiLabel.TextWrapped = true
     TextGuiLabel.TextYAlignment = Enum.TextYAlignment.Top
     TextGuiLabel:SetAttribute("FloatingDepth", 2)
     local TextGuiGradient: UIGradient = create("UIGradient", {
         Parent = TextGuiLabel,
         Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Theme.DefaultAccent),
-            ColorSequenceKeypoint.new(0.5, Theme.AccentViolet),
-            ColorSequenceKeypoint.new(1, Theme.AccentPink),
+            ColorSequenceKeypoint.new(0, Theme.accent),
+            ColorSequenceKeypoint.new(0.5, Theme.accentDim),
+            ColorSequenceKeypoint.new(1, Theme.accentFaint),
         }),
         Rotation = 90,
         Enabled = false,
@@ -966,7 +966,7 @@ function Module.init(context: any): any
     -- everything that used to box the whole read-out is gone.
     local TargetPortraitFrame: Frame = create("Frame", {
         Parent = TargetBody,
-        BackgroundColor3 = Theme.DefaultSurface,
+        BackgroundColor3 = Theme.surface,
         BackgroundTransparency = 0.18,
         BorderSizePixel = 0,
         Position = UDim2.fromOffset(0, 0),
@@ -976,7 +976,7 @@ function Module.init(context: any): any
     create("UICorner", {Parent = TargetPortraitFrame, CornerRadius = cornerRadius(UI_RADIUS.panel)})
     create("UIStroke", {
         Parent = TargetPortraitFrame,
-        Color = Theme.DefaultOutline,
+        Color = Theme.outline,
         Transparency = 0.55,
         Thickness = 1,
     })
@@ -1004,11 +1004,11 @@ function Module.init(context: any): any
     local TargetRole: TextLabel = makeTextLabel(TargetBody, "No priority target", 8)
     TargetRole.Position = UDim2.fromOffset(64, 21)
     TargetRole.Size = UDim2.new(1, -64, 0, 18)
-    TargetRole.TextColor3 = Theme.AccentViolet
+    TargetRole.TextColor3 = Theme.accentDim
     TargetRole:SetAttribute("FloatingDepth", 2)
     local TargetHealthTrack: Frame = create("Frame", {
         Parent = TargetBody,
-        BackgroundColor3 = Theme.Background,
+        BackgroundColor3 = Theme.background,
         BackgroundTransparency = 0.18,
         BorderSizePixel = 0,
         Position = UDim2.fromOffset(64, 42),
@@ -1018,7 +1018,7 @@ function Module.init(context: any): any
     create("UICorner", {Parent = TargetHealthTrack, CornerRadius = UDim.new(1, 0)})
     local TargetHealthFill: Frame = create("Frame", {
         Parent = TargetHealthTrack,
-        BackgroundColor3 = Theme.AccentCyan,
+        BackgroundColor3 = Theme.accent,
         BorderSizePixel = 0,
         Size = UDim2.fromScale(0, 1),
     }) :: Frame
@@ -1031,14 +1031,14 @@ function Module.init(context: any): any
     )
     TargetDetails.Position = UDim2.fromOffset(0, 58)
     TargetDetails.Size = UDim2.new(1, 0, 0, 28)
-    TargetDetails.TextColor3 = Theme.DefaultTextMuted
+    TargetDetails.TextColor3 = Theme.textMuted
     TargetDetails:SetAttribute("FloatingDepth", 2)
 
     local RadarSurface: Frame = create("Frame", {
         Parent = FloatingUi.overlays.Radar.window.body,
         Name = "Surface",
         AnchorPoint = Vector2.new(0.5, 0.5),
-        BackgroundColor3 = Theme.DefaultSurface,
+        BackgroundColor3 = Theme.surface,
         BackgroundTransparency = 0.34,
         BorderSizePixel = 0,
         Position = UDim2.fromScale(0.5, 0.5),
@@ -1048,7 +1048,7 @@ function Module.init(context: any): any
     create("UICorner", {Parent = RadarSurface, CornerRadius = UDim.new(1, 0)})
     create("UIStroke", {
         Parent = RadarSurface,
-        Color = Theme.DefaultOutline,
+        Color = Theme.outline,
         Transparency = 0.55,
     })
     local radarAxes: {Frame} = {}
@@ -1056,7 +1056,7 @@ function Module.init(context: any): any
         local axis: Frame = create("Frame", {
             Parent = RadarSurface,
             AnchorPoint = Vector2.new(0.5, 0.5),
-            BackgroundColor3 = Theme.DefaultOutline,
+            BackgroundColor3 = Theme.outline,
             BackgroundTransparency = 0.72,
             BorderSizePixel = 0,
             Position = UDim2.fromScale(0.5, 0.5),
@@ -1079,7 +1079,7 @@ function Module.init(context: any): any
         create("UICorner", {Parent = ring, CornerRadius = UDim.new(1, 0)})
         create("UIStroke", {
             Parent = ring,
-            Color = Theme.DefaultOutline,
+            Color = Theme.outline,
             Transparency = 0.7,
             Thickness = 1,
         })
@@ -1089,13 +1089,13 @@ function Module.init(context: any): any
     RadarNorth.AnchorPoint = Vector2.new(0.5, 0)
     RadarNorth.Position = UDim2.new(0.5, 0, 0, 5)
     RadarNorth.Size = UDim2.fromOffset(20, 18)
-    RadarNorth.TextColor3 = Theme.AccentCyan
+    RadarNorth.TextColor3 = Theme.accent
     RadarNorth.TextXAlignment = Enum.TextXAlignment.Center
     RadarNorth:SetAttribute("FloatingDepth", 3)
     local RadarCenter: Frame = create("Frame", {
         Parent = RadarSurface,
         AnchorPoint = Vector2.new(0.5, 0.5),
-        BackgroundColor3 = Theme.AccentCyan,
+        BackgroundColor3 = Theme.accent,
         BorderSizePixel = 0,
         Position = UDim2.fromScale(0.5, 0.5),
         Size = UDim2.fromOffset(7, 7),
@@ -1341,7 +1341,7 @@ function Module.init(context: any): any
             TextGuiLabel.TextSize = math.round(14 * textGuiSettings.scale)
             TextGuiShadow.TextSize = TextGuiLabel.TextSize
             TextGuiShadow.Visible = textGuiSettings.shadow
-            TextGuiBody.BackgroundColor3 = Theme.DefaultBackground
+            TextGuiBody.BackgroundColor3 = Theme.background
             TextGuiBody.BackgroundTransparency = textGuiSettings.background and 0.42 or 1
             local textWindowRoot: Frame = FloatingUi.overlays.TextGUI.window.root
             local textHeader: Frame? = textWindowRoot:FindFirstChild("Header") :: Frame?
@@ -1363,10 +1363,10 @@ function Module.init(context: any): any
             TextGuiGradient.Enabled = gradientEnabled
             if textGuiSettings.v4Gradient then
                 TextGuiGradient.Color = ColorSequence.new({
-                    ColorSequenceKeypoint.new(0, Theme.DefaultAccent),
-                    ColorSequenceKeypoint.new(0.34, Theme.AccentViolet),
-                    ColorSequenceKeypoint.new(0.68, Theme.AccentPink),
-                    ColorSequenceKeypoint.new(1, Theme.DefaultAccent),
+                    ColorSequenceKeypoint.new(0, Theme.accent),
+                    ColorSequenceKeypoint.new(0.34, Theme.accentDim),
+                    ColorSequenceKeypoint.new(0.68, Theme.accentFaint),
+                    ColorSequenceKeypoint.new(1, Theme.accent),
                 })
                 TextGuiGradient.Rotation = (now * 45) % 360
             elseif textGuiSettings.colorMode == "Rainbow" then
@@ -1378,11 +1378,11 @@ function Module.init(context: any): any
                 TextGuiLabel.TextColor3 = Color3.fromHSV(0, 0, pulse)
                 TextGuiGradient.Enabled = false
             elseif textGuiSettings.colorMode == "Solid white" then
-                TextGuiLabel.TextColor3 = Theme.AccentCyan
+                TextGuiLabel.TextColor3 = Theme.accent
             elseif textGuiSettings.colorMode == "By section" then
-                TextGuiLabel.TextColor3 = Theme.AccentViolet
+                TextGuiLabel.TextColor3 = Theme.accentDim
             else
-                TextGuiLabel.TextColor3 = Theme.DefaultAccent
+                TextGuiLabel.TextColor3 = Theme.accent
                 TextGuiGradient.Rotation = 90
             end
         end
@@ -1395,7 +1395,7 @@ function Module.init(context: any): any
         local selectedTarget: Player? = nil
         local targetRole: string? = nil
         local targetSource: string = "Nearest player"
-        local targetAccent: Color3 = Theme.AccentViolet
+        local targetAccent: Color3 = Theme.accentDim
         if targetInfoEnabled
             and targetSettings.mode == "Smart Priority"
             and state.gameTargetProvider then
@@ -1450,10 +1450,10 @@ function Module.init(context: any): any
             targetRole = success and type(role) == "string" and role or nil
         end
         if targetRole then
-            targetAccent = targetRole == "Murderer" and Theme.Danger
+            targetAccent = targetRole == "Murderer" and Theme.negative
                 or ((targetRole == "Sheriff" or targetRole == "Hero")
-                    and Theme.AccentCyan
-                    or Theme.Success)
+                    and Theme.accent
+                    or Theme.positive)
         end
         if targetInfoEnabled then
             local targetCharacter: Model? = selectedTarget and selectedTarget.Character
@@ -1484,8 +1484,8 @@ function Module.init(context: any): any
                 TargetHealthTrack.Visible = targetSettings.showHealth
                 TargetHealthFill.Size = UDim2.fromScale(ratio, 1)
                 TargetHealthFill.BackgroundColor3 = ratio > 0.5
-                    and Theme.AccentCyan
-                    or (ratio > 0.25 and Theme.AccentViolet or Theme.AccentPink)
+                    and Theme.accent
+                    or (ratio > 0.25 and Theme.accentDim or Theme.accentFaint)
                 TargetPortraitFrame.Visible = targetSettings.showAvatar
                 requestTargetThumbnail(selectedTarget)
             else
@@ -1544,7 +1544,7 @@ function Module.init(context: any): any
                                 local blip: Frame = create("Frame", {
                                     Parent = RadarSurface,
                                     AnchorPoint = Vector2.new(0.5, 0.5),
-                                    BackgroundColor3 = Theme.AccentPink,
+                                    BackgroundColor3 = Theme.accentFaint,
                                     BorderSizePixel = 0,
                                     Size = UDim2.fromOffset(7, 7),
                                 }) :: Frame
@@ -1552,7 +1552,7 @@ function Module.init(context: any): any
                                 create("UICorner", {Parent = blip, CornerRadius = UDim.new(1, 0)})
                                 local targetRing: UIStroke = create("UIStroke", {
                                     Parent = blip,
-                                    Color = Theme.AccentCyan,
+                                    Color = Theme.accent,
                                     Transparency = 1,
                                     Thickness = 2,
                                 }) :: UIStroke
@@ -1560,7 +1560,7 @@ function Module.init(context: any): any
                                 label.AnchorPoint = Vector2.new(0.5, 0)
                                 label.Position = UDim2.new(0.5, 0, 1, 3)
                                 label.Size = UDim2.fromOffset(100, 18)
-                                label.TextColor3 = Theme.DefaultText
+                                label.TextColor3 = Theme.text
                                 label.TextXAlignment = Enum.TextXAlignment.Center
                                 record = {blip = blip, label = label, ring = targetRing}
                                 radarBlips[player] = record
@@ -1578,17 +1578,17 @@ function Module.init(context: any): any
                                 local roleOk: boolean, roleValue: any = pcall(state.gameRoleProvider, player)
                                 role = roleOk and type(roleValue) == "string" and roleValue or nil
                             end
-                            local color: Color3 = Theme.AccentPink
+                            local color: Color3 = Theme.accentFaint
                             if radarSettings.colorMode == "Health" and humanoid then
                                 local healthRatio: number = humanoid.Health / math.max(1, humanoid.MaxHealth)
                                 color = Color3.fromHSV(healthRatio * 0.34, 0.8, 1)
                             elseif radarSettings.colorMode == "Team" or radarSettings.colorMode == "Smart" then
-                                color = sameTeam and Theme.Success or Theme.Danger
+                                color = sameTeam and Theme.positive or Theme.negative
                             end
                             if (radarSettings.colorMode == "MM2 role" or radarSettings.colorMode == "Smart") and role then
-                                color = role == "Murderer" and Theme.Danger
-                                    or ((role == "Sheriff" or role == "Hero") and Theme.AccentCyan
-                                        or Theme.Success)
+                                color = role == "Murderer" and Theme.negative
+                                    or ((role == "Sheriff" or role == "Hero") and Theme.accent
+                                        or Theme.positive)
                             elseif radarSettings.colorMode == "Spectrum" then
                                 color = Color3.fromHSV((now * 0.1 + player.UserId % 10 / 10) % 1, 0.7, 1)
                             end
@@ -1643,7 +1643,7 @@ function Module.init(context: any): any
         Parent = state.shells.defaultSidebar,
         Name = "PlayerCard",
         AnchorPoint = Vector2.new(0.5, 1),
-        BackgroundColor3 = Theme.DefaultSurface,
+        BackgroundColor3 = Theme.surface,
         BackgroundTransparency = 0.35,
         BorderSizePixel = 0,
         Position = UDim2.new(0.5, 0, 1, -(state.layout.launcherHeight + 14)),
@@ -1656,7 +1656,7 @@ function Module.init(context: any): any
     })
     create("UIStroke", {
         Parent = ProfileCard,
-        Color = Theme.DefaultOutline,
+        Color = Theme.outline,
         Transparency = 0.68,
         Thickness = 1,
     })
@@ -1702,7 +1702,7 @@ function Module.init(context: any): any
     ProfileName.FontFace = CONTROL_FONT
     ProfileName.Position = UDim2.fromOffset(46, 3)
     ProfileName.Size = UDim2.new(1, -52, 0, 21)
-    ProfileName.TextColor3 = Theme.DefaultText
+    ProfileName.TextColor3 = Theme.text
     ProfileName.TextTruncate = Enum.TextTruncate.AtEnd
     ProfileName.ZIndex = 25
 
@@ -1711,7 +1711,7 @@ function Module.init(context: any): any
     ProfileHandle.Name = "Handle"
     ProfileHandle.Position = UDim2.fromOffset(46, 25)
     ProfileHandle.Size = UDim2.new(1, -52, 0, 18)
-    ProfileHandle.TextColor3 = Theme.DefaultTextMuted
+    ProfileHandle.TextColor3 = Theme.textMuted
     ProfileHandle.TextTruncate = Enum.TextTruncate.AtEnd
     ProfileHandle.ZIndex = 25
 
@@ -1719,7 +1719,7 @@ function Module.init(context: any): any
     ProfileMeta.Name = "Meta"
     ProfileMeta.Position = UDim2.fromOffset(46, 43)
     ProfileMeta.Size = UDim2.new(1, -52, 0, 18)
-    ProfileMeta.TextColor3 = Theme.DefaultTextMuted
+    ProfileMeta.TextColor3 = Theme.textMuted
     ProfileMeta.TextTruncate = Enum.TextTruncate.AtEnd
     ProfileMeta.ZIndex = 25
 
@@ -1781,7 +1781,7 @@ function Module.init(context: any): any
         Parent = state.shells.defaultSidebar,
         Name = "FloatingWindowButtons",
         AnchorPoint = Vector2.new(0.5, 1),
-        BackgroundColor3 = Theme.DefaultSurface,
+        BackgroundColor3 = Theme.surface,
         BackgroundTransparency = 0.42,
         BorderSizePixel = 0,
         Position = UDim2.new(0.5, 0, 1, -8),
@@ -1797,7 +1797,7 @@ function Module.init(context: any): any
     })
     create("UIStroke", {
         Parent = FloatingButtons,
-        Color = Theme.DefaultOutline,
+        Color = Theme.outline,
         Transparency = 0.62,
     })
     local FloatingButtonsLayout: UIListLayout = create("UIListLayout", {

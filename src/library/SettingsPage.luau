@@ -76,7 +76,7 @@ function Module.init(context: any): SettingsPage
             BackgroundTransparency = 1,
             BorderSizePixel = 0,
             CanvasSize = UDim2.fromOffset(0, 0),
-            ScrollBarImageColor3 = Theme.DefaultOutline,
+            ScrollBarImageColor3 = Theme.outline,
             ScrollBarThickness = 6,
             ScrollingDirection = Enum.ScrollingDirection.Y,
             Size = UDim2.fromScale(1, 1),
@@ -118,8 +118,8 @@ function Module.init(context: any): SettingsPage
                 Parent = getFeatureCardParent(SettingsScroll),
                 Name = "Setting_" .. titleText:gsub("%W", ""),
                 BackgroundColor3 = state.guiStyle == "Default"
-                    and Theme.DefaultSurface
-                    or Theme.Surface,
+                    and Theme.surface
+                    or Theme.surface,
                 BackgroundTransparency = state.guiStyle == "Default" and 0.58 or 0,
                 BorderSizePixel = 0,
                 Size = UDim2.new(1, -2, 0, rowHeight),
@@ -152,8 +152,8 @@ function Module.init(context: any): SettingsPage
                 Parent = row,
                 Name = "SettingStroke",
                 Color = state.guiStyle == "Default"
-                    and Theme.DefaultOutline
-                    or Theme.Outline,
+                    and Theme.outline
+                    or Theme.outline,
                 Transparency = state.guiStyle == "Default" and 0.82 or 0.28,
                 Thickness = 1,
             })
@@ -181,7 +181,7 @@ function Module.init(context: any): SettingsPage
                 Parent = row,
                 Name = "ActiveStripe",
                 AnchorPoint = Vector2.new(0, 0.5),
-                BackgroundColor3 = Theme.DefaultAccent,
+                BackgroundColor3 = Theme.accent,
                 BackgroundTransparency = 1,
                 BorderSizePixel = 0,
                 Position = UDim2.new(0, 0, 0.5, 0),
@@ -209,13 +209,13 @@ function Module.init(context: any): SettingsPage
                 -- Kept in sync from one place: clicks, restyles and external state
                 -- changes all end up here.
                 row.BackgroundColor3 = current
-                    and Theme.DefaultSurfaceHover
-                    or Theme.DefaultSurface
+                    and Theme.surfaceHover
+                    or Theme.surface
                 row.BackgroundTransparency = current and 0.42 or 0.58
                 stripe.BackgroundTransparency = current and 0 or 1
                 -- No ON/OFF caption: the accent stripe and the lit surface are the
                 -- state, exactly like a module card.
-                title.TextColor3 = current and Theme.DefaultText or Theme.DefaultTextMuted
+                title.TextColor3 = current and Theme.text or Theme.textMuted
             end
             paint()
             state.settingRowRepaint[row] = paint
@@ -250,7 +250,7 @@ function Module.init(context: any): SettingsPage
 
         state.restyleSettings = function(isDefault: boolean): ()
             SettingsScroll.ScrollBarImageColor3 = isDefault
-                and Theme.DefaultOutline
+                and Theme.outline
                 or Color3.fromRGB(100, 100, 100)
             for _, row: Frame in ipairs(state.settingRows) do
                 -- Click-to-toggle rows paint their own surface from their state; a
@@ -261,12 +261,12 @@ function Module.init(context: any): SettingsPage
                 if repaint then
                     repaint()
                 else
-                    row.BackgroundColor3 = isDefault and Theme.DefaultSurface or Theme.Surface
+                    row.BackgroundColor3 = isDefault and Theme.surface or Theme.surface
                     row.BackgroundTransparency = isDefault and 0.58 or 0
                 end
                 local rowStroke: UIStroke? = row:FindFirstChild("SettingStroke") :: UIStroke?
                 if rowStroke then
-                    rowStroke.Color = isDefault and Theme.DefaultOutline or Theme.Outline
+                    rowStroke.Color = isDefault and Theme.outline or Theme.outline
                     rowStroke.Transparency = isDefault and 0.82 or 0.28
                 end
             end
@@ -288,7 +288,7 @@ function Module.init(context: any): SettingsPage
             AutoButtonColor = false,
             AnchorPoint = Vector2.new(0, 0.5),
             BackgroundColor3 = state.guiStyle == "Default"
-                and Theme.DefaultButtonPressed
+                and Theme.buttonPressed
                 or Color3.fromRGB(45, 45, 49),
             BorderSizePixel = 0,
             Position = UDim2.new(0, 0, 0.5, 0),
@@ -303,7 +303,7 @@ function Module.init(context: any): SettingsPage
             Parent = TextSizeTrack,
             Name = "Fill",
             BackgroundColor3 = state.guiStyle == "Default"
-                and Theme.DefaultButtonHover
+                and Theme.buttonHover
                 or Color3.fromRGB(238, 238, 242),
             BorderSizePixel = 0,
             Size = UDim2.fromScale(textScaleRatio, 1),
@@ -317,7 +317,7 @@ function Module.init(context: any): SettingsPage
             Name = "Knob",
             AnchorPoint = Vector2.new(0.5, 0.5),
             BackgroundColor3 = state.guiStyle == "Default"
-                and Theme.DefaultText
+                and Theme.text
                 or Color3.fromRGB(250, 250, 252),
             BorderSizePixel = 0,
             Position = UDim2.fromScale(textScaleRatio, 0.5),
@@ -330,7 +330,7 @@ function Module.init(context: any): SettingsPage
         })
         create("UIStroke", {
             Parent = TextSizeKnob,
-            Color = Theme.DefaultOutline,
+            Color = Theme.outline,
             Transparency = 0.55,
             Thickness = 1,
         })
@@ -338,13 +338,13 @@ function Module.init(context: any): SettingsPage
         state.restyleSettings = function(isDefault: boolean): ()
             baseRestyleSettings(isDefault)
             TextSizeTrack.BackgroundColor3 = isDefault
-                and Theme.DefaultButtonPressed
+                and Theme.buttonPressed
                 or Color3.fromRGB(45, 45, 49)
             TextSizeFill.BackgroundColor3 = isDefault
-                and Theme.DefaultButtonHover
+                and Theme.buttonHover
                 or Color3.fromRGB(238, 238, 242)
             TextSizeKnob.BackgroundColor3 = isDefault
-                and Theme.DefaultText
+                and Theme.text
                 or Color3.fromRGB(250, 250, 252)
         end
         local TextSizeValue: TextLabel = makeTextLabel(
@@ -380,14 +380,14 @@ function Module.init(context: any): SettingsPage
             Active = true,
             AutoButtonColor = false,
             AnchorPoint = Vector2.new(1, 0.5),
-            BackgroundColor3 = Theme.DefaultButton,
+            BackgroundColor3 = Theme.button,
             BackgroundTransparency = 0.25,
             BorderSizePixel = 0,
             FontFace = CONTROL_FONT,
             Position = UDim2.new(1, 0, 0.5, 0),
             Size = UDim2.new(1, -6, 0, 26),
             Text = fontNames[currentFontIndex],
-            TextColor3 = Theme.DefaultText,
+            TextColor3 = Theme.text,
             TextSize = 11,
             TextXAlignment = Enum.TextXAlignment.Left,
         }) :: any) :: TextButton
@@ -536,7 +536,7 @@ function Module.init(context: any): SettingsPage
             Active = true,
             AutoButtonColor = false,
             AnchorPoint = Vector2.new(0, 0.5),
-            BackgroundColor3 = Theme.DefaultButtonPressed,
+            BackgroundColor3 = Theme.buttonPressed,
             BorderSizePixel = 0,
             Position = UDim2.new(0, 0, 0.5, 0),
             Size = UDim2.new(1, -62, 0, 4),
@@ -546,7 +546,7 @@ function Module.init(context: any): SettingsPage
         local MobileSizeFill: Frame = create("Frame", {
             Parent = MobileSizeTrack,
             Name = "Fill",
-            BackgroundColor3 = Theme.DefaultButtonHover,
+            BackgroundColor3 = Theme.buttonHover,
             BorderSizePixel = 0,
             Size = UDim2.fromScale(0, 1),
         }) :: Frame
@@ -555,7 +555,7 @@ function Module.init(context: any): SettingsPage
             Parent = MobileSizeTrack,
             Name = "Knob",
             AnchorPoint = Vector2.new(0.5, 0.5),
-            BackgroundColor3 = Theme.DefaultText,
+            BackgroundColor3 = Theme.text,
             BorderSizePixel = 0,
             Position = UDim2.fromScale(0, 0.5),
             Size = UDim2.fromOffset(14, 14),

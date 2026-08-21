@@ -643,7 +643,7 @@ local function buildMVSDFeatures(): ()
         circle.Parent = root
         makeRounded(circle, 1000)
         local circleStroke: UIStroke = Instance.new("UIStroke")
-        circleStroke.Color = Theme.AccentCyan
+        circleStroke.Color = Theme.accent
         circleStroke.Thickness = 1.5
         circleStroke.Transparency = 0.18
         circleStroke.Parent = circle
@@ -651,7 +651,7 @@ local function buildMVSDFeatures(): ()
         local marker: Frame = Instance.new("Frame")
         marker.Name = "PredictionMarker"
         marker.AnchorPoint = Vector2.new(0.5, 0.5)
-        marker.BackgroundColor3 = Theme.Surface
+        marker.BackgroundColor3 = Theme.surface
         marker.BackgroundTransparency = 0.12
         marker.BorderSizePixel = 0
         marker.Size = UDim2.fromOffset(16, 16)
@@ -660,7 +660,7 @@ local function buildMVSDFeatures(): ()
         marker.Parent = root
         makeRounded(marker, 1000)
         local markerStroke: UIStroke = Instance.new("UIStroke")
-        markerStroke.Color = Theme.AccentCyan
+        markerStroke.Color = Theme.accent
         markerStroke.Thickness = 2
         markerStroke.Transparency = 0.02
         markerStroke.Parent = marker
@@ -668,14 +668,14 @@ local function buildMVSDFeatures(): ()
         local status: TextLabel = Instance.new("TextLabel")
         status.Name = "TargetStatus"
         status.AnchorPoint = Vector2.new(0.5, 0)
-        status.BackgroundColor3 = Theme.Surface
+        status.BackgroundColor3 = Theme.surface
         status.BackgroundTransparency = 0.12
         status.BorderSizePixel = 0
         status.Font = Enum.Font.GothamSemibold
         status.Position = UDim2.new(0.5, 0, 0, 22)
         status.Size = UDim2.fromOffset(330, 38)
         status.Text = "MVSD · NO VISIBLE TARGET"
-        status.TextColor3 = Theme.TextMuted
+        status.TextColor3 = Theme.textMuted
         status.TextSize = 12
         status.Visible = false
         status.ZIndex = 304
@@ -791,7 +791,7 @@ local function buildMVSDFeatures(): ()
                 or settings.autoShootEnabled
                 or settings.triggerCueEnabled
             visuals.status.Text = "MVSD · WAITING FOR ACTIVE MATCH"
-            visuals.status.TextColor3 = Theme.TextMuted
+            visuals.status.TextColor3 = Theme.textMuted
             hideTargetVisuals(visuals)
             updateAutoShoot()
             return
@@ -823,7 +823,7 @@ local function buildMVSDFeatures(): ()
                 "MVSD · NO VISIBLE TARGET · PING %.0f MS",
                 ping * 1000
             )
-            visuals.status.TextColor3 = Theme.TextMuted
+            visuals.status.TextColor3 = Theme.textMuted
             hideTargetVisuals(visuals)
             updateAutoShoot()
             return
@@ -856,7 +856,7 @@ local function buildMVSDFeatures(): ()
         updateAutoShoot()
 
         local modeText: string = if settings.aimEnabled then "SILENT AIM" else "AUTO SHOOT"
-        local accent: Color3 = if triggerReady then Theme.Success else Theme.AccentCyan
+        local accent: Color3 = if triggerReady then Theme.positive else Theme.accent
         visuals.markerStroke.Color = accent
         visuals.circleStroke.Color = accent
         visuals.status.TextColor3 = accent

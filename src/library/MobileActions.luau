@@ -106,7 +106,7 @@ function Module.init(context: any): any
         Parent = PopupLayer,
         Name = "MobilePlacementOverlay",
         Active = true,
-        BackgroundColor3 = Theme.DefaultBackground,
+        BackgroundColor3 = Theme.background,
         BackgroundTransparency = 0.2,
         BorderSizePixel = 0,
         Size = UDim2.fromScale(1, 1),
@@ -225,7 +225,7 @@ function Module.init(context: any): any
             Name = "MobileAction_" .. id:gsub("%W", ""),
             Active = true,
             AutoButtonColor = false,
-            BackgroundColor3 = Theme.SurfaceRaised,
+            BackgroundColor3 = Theme.surfaceRaised,
             BackgroundTransparency = 0.08,
             BorderSizePixel = 0,
             FontFace = CONTROL_FONT,
@@ -233,7 +233,7 @@ function Module.init(context: any): any
             AnchorPoint = Vector2.new(0.5, 0.5),
             Size = UDim2.fromOffset(size, size),
             Text = label,
-            TextColor3 = Theme.Text,
+            TextColor3 = Theme.text,
             -- Wrapped and auto-scaled: a long module name is shown in full at a
             -- smaller size instead of being clipped to its first few letters.
             TextScaled = true,
@@ -254,7 +254,7 @@ function Module.init(context: any): any
         })
         create("UIStroke", {
             Parent = button,
-            Color = Theme.DefaultOutline,
+            Color = Theme.outline,
             Transparency = 0.55,
             Thickness = 1,
         })

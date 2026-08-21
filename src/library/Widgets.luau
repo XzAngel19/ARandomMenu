@@ -154,7 +154,7 @@ function Module.init(context: any): WidgetLibrary
         local option: Frame = (create("Frame", {
             Parent = feature.options,
             Name = "Option_" .. labelText:gsub("%W", ""),
-            BackgroundColor3 = Theme.DefaultSurface,
+            BackgroundColor3 = Theme.surface,
             BackgroundTransparency = 0.76,
             BorderSizePixel = 0,
             LayoutOrder = feature.optionCount,
@@ -169,7 +169,7 @@ function Module.init(context: any): WidgetLibrary
             Parent = option,
             Name = "OptionStroke",
             ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-            Color = Theme.DefaultOutline,
+            Color = Theme.outline,
             Thickness = 1,
             Transparency = 0.82,
         }) :: any) :: UIStroke
@@ -203,7 +203,7 @@ function Module.init(context: any): WidgetLibrary
         local label: TextLabel =
             (makeTextLabel(option, labelText, 11) :: any) :: TextLabel
         label.Name = "OptionLabel"
-        label.TextColor3 = Theme.DefaultText
+        label.TextColor3 = Theme.text
         label.TextTruncate = Enum.TextTruncate.AtEnd
         label.ZIndex = option.ZIndex + 1
         -- The label column always ends at 48% of the row; the control band starts
@@ -248,7 +248,7 @@ function Module.init(context: any): WidgetLibrary
         title.FontFace = CONTROL_FONT
         title.Position = UDim2.fromOffset(4, 0)
         title.Size = UDim2.new(0, 130, 1, 0)
-        title.TextColor3 = Theme.DefaultTextMuted
+        title.TextColor3 = Theme.textMuted
         title.TextTransparency = 0.22
         title.ZIndex = section.ZIndex + 1
 
@@ -256,7 +256,7 @@ function Module.init(context: any): WidgetLibrary
             Parent = section,
             Name = "SectionRule",
             AnchorPoint = Vector2.new(1, 0.5),
-            BackgroundColor3 = Theme.DefaultOutline,
+            BackgroundColor3 = Theme.outline,
             BackgroundTransparency = 0.72,
             BorderSizePixel = 0,
             Position = UDim2.new(1, -4, 0.5, 0),
@@ -339,8 +339,8 @@ function Module.init(context: any): WidgetLibrary
             setToggleSwitch(switch, enabled :: boolean, true)
             if optionLabel then
                 optionLabel.TextColor3 = (enabled :: boolean)
-                    and Theme.DefaultText
-                    or Theme.DefaultTextMuted
+                    and Theme.text
+                    or Theme.textMuted
             end
         end
 
@@ -368,8 +368,8 @@ function Module.init(context: any): WidgetLibrary
         local option = createOptionRow(feature, labelText, hintText)
         local button = makeButton(option, "RUN", 11)
         button.BackgroundColor3 = state.guiStyle == "Default"
-            and Theme.DefaultButtonHover
-            or Theme.AccentSoft
+            and Theme.buttonHover
+            or Theme.accentSoft
         -- The action pair subdivides the same control band every other row uses:
         -- RUN hugs the band's right edge and KEY fills the band's left half, so
         -- action rows share the exact same outer rectangle as toggles, sliders,
@@ -388,8 +388,8 @@ function Module.init(context: any): WidgetLibrary
         local shortcutButton: TextButton =
             (makeButton(option, "KEY", 9) :: any) :: TextButton
         shortcutButton.BackgroundColor3 = state.guiStyle == "Default"
-            and Theme.DefaultButton
-            or Theme.SurfaceRaised
+            and Theme.button
+            or Theme.surfaceRaised
         -- Sits immediately left of the RUN button inside the same band, positioned
         -- with the pair's combined scale rather than off RUN's AbsoluteSize, which
         -- is still zero on the frame the row is built. 0.24 width + 0.26 width
@@ -499,7 +499,7 @@ function Module.init(context: any): WidgetLibrary
             Parent = slider,
             Name = "Track",
             AnchorPoint = Vector2.new(0, 0.5),
-            BackgroundColor3 = Theme.Outline,
+            BackgroundColor3 = Theme.outline,
             BorderSizePixel = 0,
             Position = UDim2.new(0, 0, 0.5, 0),
             Size = UDim2.new(1, -80, 0, state.layout.touch and 7 or 5),
@@ -513,7 +513,7 @@ function Module.init(context: any): WidgetLibrary
         local fill: Frame = (create("Frame", {
             Parent = track,
             Name = "Fill",
-            BackgroundColor3 = Theme.Accent,
+            BackgroundColor3 = Theme.accent,
             BorderSizePixel = 0,
             Size = UDim2.fromScale(0, 1),
         }) :: any) :: Frame
@@ -524,9 +524,9 @@ function Module.init(context: any): WidgetLibrary
         create("UIGradient", {
             Parent = fill,
             Color = ColorSequence.new({
-                ColorSequenceKeypoint.new(0, Theme.DefaultAccent),
-                ColorSequenceKeypoint.new(0.52, Theme.AccentViolet),
-                ColorSequenceKeypoint.new(1, Theme.AccentPink),
+                ColorSequenceKeypoint.new(0, Theme.accent),
+                ColorSequenceKeypoint.new(0.52, Theme.accentDim),
+                ColorSequenceKeypoint.new(1, Theme.accentFaint),
             }),
         })
 
@@ -535,7 +535,7 @@ function Module.init(context: any): WidgetLibrary
             Parent = track,
             Name = "Knob",
             AnchorPoint = Vector2.new(0.5, 0.5),
-            BackgroundColor3 = Theme.Text,
+            BackgroundColor3 = Theme.text,
             BorderSizePixel = 0,
             Position = UDim2.fromScale(0, 0.5),
             Size = UDim2.fromOffset(knobSize, knobSize),
@@ -550,7 +550,7 @@ function Module.init(context: any): WidgetLibrary
         valueInput.AnchorPoint = Vector2.new(1, 0.5)
         valueInput.Position = UDim2.new(1, 0, 0.5, 0)
         valueInput.Size = UDim2.fromOffset(72, math.min(30, slider.Size.Y.Offset))
-        valueInput.TextColor3 = Theme.Text
+        valueInput.TextColor3 = Theme.text
         valueInput.TextXAlignment = Enum.TextXAlignment.Center
         valueInput.TextTruncate = Enum.TextTruncate.AtEnd
         valueInput.ZIndex = slider.ZIndex + 1
@@ -701,7 +701,7 @@ function Module.init(context: any): WidgetLibrary
             Parent = slider,
             Name = "Track",
             AnchorPoint = Vector2.new(0, 0.5),
-            BackgroundColor3 = Theme.Outline,
+            BackgroundColor3 = Theme.outline,
             BorderSizePixel = 0,
             Position = UDim2.new(0, 0, 0.5, 0),
             Size = UDim2.new(1, -66, 0, state.layout.touch and 7 or 5),
@@ -714,7 +714,7 @@ function Module.init(context: any): WidgetLibrary
         local span: Frame = (create("Frame", {
             Parent = track,
             Name = "Span",
-            BackgroundColor3 = Theme.Accent,
+            BackgroundColor3 = Theme.accent,
             BorderSizePixel = 0,
             Position = UDim2.fromScale(0, 0),
             Size = UDim2.fromScale(1, 1),
@@ -724,8 +724,8 @@ function Module.init(context: any): WidgetLibrary
         create("UIGradient", {
             Parent = span,
             Color = ColorSequence.new({
-                ColorSequenceKeypoint.new(0, Theme.DefaultAccent),
-                ColorSequenceKeypoint.new(1, Theme.AccentPink),
+                ColorSequenceKeypoint.new(0, Theme.accent),
+                ColorSequenceKeypoint.new(1, Theme.accentFaint),
             }),
         })
 
@@ -735,7 +735,7 @@ function Module.init(context: any): WidgetLibrary
                 Parent = track,
                 Name = name,
                 AnchorPoint = Vector2.new(0.5, 0.5),
-                BackgroundColor3 = Theme.Text,
+                BackgroundColor3 = Theme.text,
                 BorderSizePixel = 0,
                 Position = UDim2.fromScale(0, 0.5),
                 Size = UDim2.fromOffset(knobSize, knobSize),
@@ -753,7 +753,7 @@ function Module.init(context: any): WidgetLibrary
         readout.AnchorPoint = Vector2.new(1, 0.5)
         readout.Position = UDim2.new(1, 0, 0.5, 0)
         readout.Size = UDim2.fromOffset(62, 20)
-        readout.TextColor3 = Theme.DefaultText
+        readout.TextColor3 = Theme.text
         readout.TextXAlignment = Enum.TextXAlignment.Right
         readout.ZIndex = slider.ZIndex + 2
 
@@ -879,7 +879,7 @@ function Module.init(context: any): WidgetLibrary
         local list: Frame = create("Frame", {
             Parent = ScreenGui,
             Name = "ChoiceList",
-            BackgroundColor3 = Theme.DefaultSurface,
+            BackgroundColor3 = Theme.surface,
             BackgroundTransparency = 0.04,
             BorderSizePixel = 0,
             Position = UDim2.fromOffset(
@@ -894,7 +894,7 @@ function Module.init(context: any): WidgetLibrary
         create("UICorner", {Parent = list, CornerRadius = cornerRadius(UI_RADIUS.control)})
         create("UIStroke", {
             Parent = list,
-            Color = Theme.DefaultOutline,
+            Color = Theme.outline,
             Transparency = 0.4,
             Thickness = 1,
         })
@@ -904,7 +904,7 @@ function Module.init(context: any): WidgetLibrary
             local filterFrame: Frame = create("Frame", {
                 Parent = list,
                 Name = "Filter",
-                BackgroundColor3 = Theme.DefaultBackground,
+                BackgroundColor3 = Theme.background,
                 BackgroundTransparency = 0.25,
                 BorderSizePixel = 0,
                 ClipsDescendants = true,
@@ -982,7 +982,7 @@ function Module.init(context: any): WidgetLibrary
                 Parent = scroller,
                 Name = "Choice" .. tostring(itemIndex),
                 AutoButtonColor = false,
-                BackgroundColor3 = Theme.DefaultSurfaceHover,
+                BackgroundColor3 = Theme.surfaceHover,
                 BackgroundTransparency = itemIndex == currentIndex and 0.35 or 1,
                 BorderSizePixel = 0,
                 FontFace = CONTROL_FONT,
@@ -990,8 +990,8 @@ function Module.init(context: any): WidgetLibrary
                 Size = UDim2.new(1, 0, 0, rowHeight - 1),
                 Text = value,
                 TextColor3 = itemIndex == currentIndex
-                    and Theme.DefaultText
-                    or Theme.DefaultTextMuted,
+                    and Theme.text
+                    or Theme.textMuted,
                 TextSize = 11,
                 ZIndex = 402,
             }) :: any) :: TextButton
@@ -1099,7 +1099,7 @@ function Module.init(context: any): WidgetLibrary
         local list: Frame = create("Frame", {
             Parent = ScreenGui,
             Name = "MultiList",
-            BackgroundColor3 = Theme.DefaultSurface,
+            BackgroundColor3 = Theme.surface,
             BackgroundTransparency = 0.04,
             BorderSizePixel = 0,
             Position = UDim2.fromOffset(
@@ -1114,7 +1114,7 @@ function Module.init(context: any): WidgetLibrary
         create("UICorner", {Parent = list, CornerRadius = cornerRadius(UI_RADIUS.control)})
         create("UIStroke", {
             Parent = list,
-            Color = Theme.DefaultOutline,
+            Color = Theme.outline,
             Transparency = 0.4,
             Thickness = 1,
         })
@@ -1162,14 +1162,14 @@ function Module.init(context: any): WidgetLibrary
                 Parent = scroller,
                 Name = "Row" .. tostring(order),
                 AutoButtonColor = false,
-                BackgroundColor3 = Theme.DefaultSurfaceHover,
+                BackgroundColor3 = Theme.surfaceHover,
                 BackgroundTransparency = 1,
                 BorderSizePixel = 0,
                 FontFace = CONTROL_FONT,
                 LayoutOrder = order,
                 Size = UDim2.new(1, 0, 0, rowHeight - 1),
                 Text = text,
-                TextColor3 = Theme.DefaultTextMuted,
+                TextColor3 = Theme.textMuted,
                 TextSize = 11,
                 ZIndex = 402,
             }) :: any) :: TextButton
@@ -1185,7 +1185,7 @@ function Module.init(context: any): WidgetLibrary
 
         if onBulk then
             local bulk: TextButton = makeRow("All / none", 0)
-            bulk.TextColor3 = Theme.DefaultText
+            bulk.TextColor3 = Theme.text
             local anyOn: boolean = false
             for _, item: string in ipairs(items) do
                 if selected[item] then
@@ -1215,7 +1215,7 @@ function Module.init(context: any): WidgetLibrary
             create("UICorner", {Parent = mark, CornerRadius = UDim.new(0, 3)})
             local markStroke: UIStroke = (create("UIStroke", {
                 Parent = mark,
-                Color = Theme.DefaultTextMuted,
+                Color = Theme.textMuted,
                 Transparency = 0.35,
                 Thickness = 1,
             }) :: any) :: UIStroke
@@ -1223,7 +1223,7 @@ function Module.init(context: any): WidgetLibrary
                 Parent = mark,
                 Name = "Fill",
                 AnchorPoint = Vector2.new(0.5, 0.5),
-                BackgroundColor3 = Theme.DefaultText,
+                BackgroundColor3 = Theme.text,
                 BackgroundTransparency = 1,
                 BorderSizePixel = 0,
                 Position = UDim2.fromScale(0.5, 0.5),
@@ -1237,7 +1237,7 @@ function Module.init(context: any): WidgetLibrary
                 fill.Size = on and UDim2.fromScale(0.6, 0.6) or UDim2.fromScale(0, 0)
                 fill.BackgroundTransparency = on and 0.05 or 1
                 markStroke.Transparency = on and 0.1 or 0.35
-                row.TextColor3 = on and Theme.DefaultText or Theme.DefaultTextMuted
+                row.TextColor3 = on and Theme.text or Theme.textMuted
             end
             paint()
 
@@ -1451,7 +1451,7 @@ function Module.init(context: any): WidgetLibrary
                 Parent = caret,
                 Name = side < 0 and "Left" or "Right",
                 AnchorPoint = Vector2.new(0.5, 0.5),
-                BackgroundColor3 = Theme.DefaultTextMuted,
+                BackgroundColor3 = Theme.textMuted,
                 BackgroundTransparency = 0.25,
                 BorderSizePixel = 0,
                 Position = UDim2.new(0.5, side * 2, 0.5, 0),
@@ -1591,8 +1591,8 @@ function Module.init(context: any): WidgetLibrary
                 Parent = PopupLayer,
                 Name = "ColorPicker",
                 Active = true,
-                BackgroundColor3 = Theme.DefaultSurface,
-                BorderColor3 = Theme.DefaultOutline,
+                BackgroundColor3 = Theme.surface,
+                BorderColor3 = Theme.outline,
                 BorderSizePixel = 1,
                 Position = UDim2.new(0.5, -170, 0.5, -150),
                 Size = UDim2.fromOffset(340, 300),
@@ -1631,7 +1631,7 @@ function Module.init(context: any): WidgetLibrary
             })
             local shade = create("Frame", {
                 Parent = sv,
-                BackgroundColor3 = Theme.DefaultBackground,
+                BackgroundColor3 = Theme.background,
                 BorderSizePixel = 0,
                 Size = UDim2.fromScale(1, 1),
                 ZIndex = 82,
@@ -1648,7 +1648,7 @@ function Module.init(context: any): WidgetLibrary
                 Parent = sv,
                 AnchorPoint = Vector2.new(0.5, 0.5),
                 BackgroundColor3 = Color3.fromRGB(255, 255, 255),
-                BorderColor3 = Theme.DefaultSurface,
+                BorderColor3 = Theme.surface,
                 BorderSizePixel = 2,
                 Size = UDim2.fromOffset(12, 12),
                 ZIndex = 83,
@@ -1681,7 +1681,7 @@ function Module.init(context: any): WidgetLibrary
                 Parent = hue,
                 AnchorPoint = Vector2.new(0.5, 0.5),
                 BackgroundColor3 = Color3.fromRGB(245, 245, 245),
-                BorderColor3 = Theme.DefaultSurface,
+                BorderColor3 = Theme.surface,
                 BorderSizePixel = 1,
                 Position = UDim2.new(0.5, 0, 0, 0),
                 Size = UDim2.new(1, 6, 0, 5),

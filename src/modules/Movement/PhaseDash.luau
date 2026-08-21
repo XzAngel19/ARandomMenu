@@ -58,9 +58,9 @@ function Module.init(context: Runtime): any
         flash.Name = "RTM_PhaseDashFlash"
         flash.Adornee = character
         flash.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-        flash.FillColor = Theme.AccentViolet
+        flash.FillColor = Theme.accentDim
         flash.FillTransparency = 0.42
-        flash.OutlineColor = Theme.AccentCyan
+        flash.OutlineColor = Theme.accent
         flash.OutlineTransparency = 0.05
         flash.Parent = character
         local fade: Tween = TweenService:Create(

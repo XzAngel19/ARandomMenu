@@ -466,13 +466,13 @@ local function createMM2Marker(folder, adornee, labelText, color, transparency)
         billboardReference.Parent = folder
 
         local text = Instance.new("TextLabel")
-        text.BackgroundColor3 = Theme.DefaultBackground
+        text.BackgroundColor3 = Theme.background
         text.BackgroundTransparency = 0.28
         text.BorderSizePixel = 0
         text.FontFace = CONTROL_FONT
         text.Size = UDim2.fromScale(1, 1)
         text.Text = labelText
-        text.TextColor3 = Theme.DefaultText
+        text.TextColor3 = Theme.text
         text.TextSize = 12
         text.Parent = billboard
 
@@ -481,7 +481,7 @@ local function createMM2Marker(folder, adornee, labelText, color, transparency)
         corner.Parent = text
 
         local stroke = Instance.new("UIStroke")
-        stroke.Color = Theme.DefaultOutline
+        stroke.Color = Theme.outline
         stroke.Transparency = 0.55
         stroke.Thickness = 1
         stroke.Parent = text
@@ -3768,10 +3768,10 @@ local function mm2TargetProvider(): any
         role = role,
         source = source,
         accent = role == "Murderer"
-            and Theme.Danger
+            and Theme.negative
             or ((role == "Sheriff" or role == "Hero")
-                and Theme.AccentCyan
-                or Theme.Success),
+                and Theme.accent
+                or Theme.positive),
     }
 end
 

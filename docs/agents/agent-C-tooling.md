@@ -112,6 +112,13 @@ and `tools/test/Host.luau`:
 Absorb them one at a time, deleting the suite-local shim in the same commit. A
 mock two suites disagree about is a mock that is lying to one of them.
 
+One of them is now worse than a gap. `tools/test/Host.luau:441` publishes
+`host.Theme` as `setmetatable({}, {__index = themeColour})` — it answers *any*
+name with a colour. The real `Theme` is a fixed set of 22 tokens, so a module
+asking for a token that does not exist gets a plausible colour in the harness
+and `nil` in the game. Make the mock carry the real token list and throw on
+anything else.
+
 ## 6. What the ClickGUI will need from the harness
 
 Write these before the code they test where you can — they are the only thing

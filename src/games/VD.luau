@@ -277,11 +277,11 @@ local function buildVDFeatures(): ()
         local regressing: boolean = generator:GetAttribute("Regressing") == true
             or (regression ~= nil and regression.Playing)
         if progress >= 99.95 then
-            return progress, "COMPLETE", Theme.Success
+            return progress, "COMPLETE", Theme.positive
         elseif regressing then
             return progress, "REGRESSING", VD_ALERT_COLOR
         elseif repairers > 0 then
-            return progress, "REPAIRING x" .. tostring(repairers), Theme.AccentCyan
+            return progress, "REPAIRING x" .. tostring(repairers), Theme.accent
         end
         return progress, "IDLE", Color3.fromRGB(244, 190, 88)
     end
@@ -374,7 +374,7 @@ local function buildVDFeatures(): ()
                         runtime.generatorMarkers[generator] = createMarker(
                             generator,
                             root,
-                            Theme.AccentCyan,
+                            Theme.accent,
                             "GENERATOR",
                             settings.generatorDistance
                         )
@@ -448,13 +448,13 @@ local function buildVDFeatures(): ()
         label.Position = UDim2.fromOffset(12, 4)
         label.Size = UDim2.new(1, -24, 0, 25)
         label.Text = "NEAREST SURVIVOR: NO SIGNAL"
-        label.TextColor3 = Theme.TextMuted
+        label.TextColor3 = Theme.textMuted
         label.TextSize = 14
         label.TextXAlignment = Enum.TextXAlignment.Left
         label.Parent = panel
         local track: Frame = Instance.new("Frame")
         track.Name = "Track"
-        track.BackgroundColor3 = Theme.SurfaceRaised
+        track.BackgroundColor3 = Theme.surfaceRaised
         track.BorderSizePixel = 0
         track.Position = UDim2.fromOffset(12, 36)
         track.Size = UDim2.new(1, -24, 0, 8)
@@ -491,7 +491,7 @@ local function buildVDFeatures(): ()
             if not isRoundActive() or not isLocalKiller() then
                 gui.Enabled = false
                 label.Text = "NEAREST SURVIVOR: NO SIGNAL"
-                label.TextColor3 = Theme.TextMuted
+                label.TextColor3 = Theme.textMuted
                 bar.Size = UDim2.fromScale(0, 1)
                 return
             end
@@ -515,7 +515,7 @@ local function buildVDFeatures(): ()
             end
             if not nearestDistance then
                 label.Text = "NEAREST SURVIVOR: NO SIGNAL"
-                label.TextColor3 = Theme.TextMuted
+                label.TextColor3 = Theme.textMuted
                 bar.Size = UDim2.fromScale(0, 1)
                 return
             end
@@ -523,7 +523,7 @@ local function buildVDFeatures(): ()
             local color: Color3 = if distance <= 25
                 then VD_KILLER_COLOR
                 elseif distance <= 60 then Color3.fromRGB(244, 190, 88)
-                else Theme.Success
+                else Theme.positive
             label.Text = string.format("NEAREST SURVIVOR: %.1f STUDS", distance)
             label.TextColor3 = color
             bar.BackgroundColor3 = color
@@ -534,7 +534,7 @@ local function buildVDFeatures(): ()
     local function survivorStatus(player: Player, character: Model): (string, Color3)
         local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
         if not humanoid then
-            return "UNKNOWN", Theme.TextMuted
+            return "UNKNOWN", Theme.textMuted
         end
         local hooked: boolean = character:GetAttribute("Hooked") == true
             or character:GetAttribute("IsHooked") == true
@@ -556,7 +556,7 @@ local function buildVDFeatures(): ()
         elseif humanoid.Health < humanoid.MaxHealth * 0.75 then
             return "INJURED · " .. string.format("%.0f%%", humanoid.Health / humanoid.MaxHealth * 100), Color3.fromRGB(244, 190, 88)
         end
-        return "HEALTHY", Theme.Success
+        return "HEALTHY", Theme.positive
     end
 
     local function findRemoteEvent(folderName: string, eventName: string): RemoteEvent?
@@ -1112,7 +1112,7 @@ local function buildVDFeatures(): ()
                         local origin: Vector3 = head.Position
                         local direction: Vector3 = head.CFrame.LookVector
                         line.Color = if isKillerCharacter(player.Character)
-                            then VD_KILLER_COLOR else Theme.AccentCyan
+                            then VD_KILLER_COLOR else Theme.accent
                         line.Size = Vector3.new(0.08, 0.08, length)
                         line.CFrame = CFrame.lookAt(
                             origin + direction * (length / 2),
@@ -1184,7 +1184,7 @@ local function buildVDFeatures(): ()
                     )
                     if not record or record.highlight.Adornee ~= character then
                         destroyMarker(record)
-                        record = createMarker(character, root, Theme.AccentCyan, text, 600)
+                        record = createMarker(character, root, Theme.accent, text, 600)
                         record.highlight.FillTransparency = 0.3
                         record.highlight.OutlineTransparency = 0
                         runtime.lockerMarkers[player] = record
@@ -1468,7 +1468,7 @@ local function buildVDFeatures(): ()
         label.Position = UDim2.new(1, -22, 0.5, 0)
         label.Size = UDim2.fromOffset(260, 100)
         label.Text = "KILLER POWER\nNO DATA"
-        label.TextColor3 = Theme.Text
+        label.TextColor3 = Theme.text
         label.TextSize = 13
         label.TextWrapped = true
         label.Parent = gui

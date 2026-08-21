@@ -422,7 +422,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "d83faccd756a4fe3"
+local SOURCE_STAMP: string = "20c8ada1af6978c2"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -635,45 +635,173 @@ function GAME_CHECK.matches(identifier: number): boolean
 end
 
 GAME_CHECK.source = ACTIVE_GAME_SOURCE
--- Neutral monochrome palette. The interface is intentionally themeless: every
--- surface is a shade of black/grey and the single accent is plain white, so no
--- decorative identity leaks into the runtime.
-local DEFAULT_HEADER_COLOR: Color3 = Color3.fromRGB(236, 236, 238)
-local DEFAULT_MENU_COLOR: Color3 = Color3.fromRGB(8, 8, 9)
-local DEFAULT_SURFACE_COLOR: Color3 = Color3.fromRGB(26, 26, 28)
-local DEFAULT_BORDER_COLOR: Color3 = Color3.fromRGB(92, 92, 98)
-
-local Theme: {[string]: Color3} = {
-    Background = Color3.fromRGB(8, 8, 9),
-    Surface = Color3.fromRGB(26, 26, 28),
-    SurfaceRaised = Color3.fromRGB(32, 32, 35),
-    SurfaceHover = Color3.fromRGB(40, 40, 44),
-    SurfacePressed = Color3.fromRGB(48, 48, 52),
-    Accent = Color3.fromRGB(236, 236, 238),
-    AccentCyan = Color3.fromRGB(236, 236, 238),
-    AccentViolet = Color3.fromRGB(196, 196, 202),
-    AccentPink = Color3.fromRGB(160, 160, 168),
-    AccentSoft = Color3.fromRGB(52, 52, 56),
-    DefaultBackground = Color3.fromRGB(8, 8, 9),
-    DefaultSidebar = Color3.fromRGB(13, 13, 14),
-    DefaultSurface = Color3.fromRGB(26, 26, 28),
-    DefaultSurfaceHover = Color3.fromRGB(40, 40, 44),
-    DefaultButton = Color3.fromRGB(32, 32, 35),
-    DefaultButtonHover = Color3.fromRGB(46, 46, 50),
-    DefaultButtonPressed = Color3.fromRGB(56, 56, 61),
-    DefaultOutline = Color3.fromRGB(92, 92, 98),
-    DefaultAccent = Color3.fromRGB(236, 236, 238),
-    DefaultText = Color3.fromRGB(245, 245, 247),
-    DefaultTextMuted = Color3.fromRGB(158, 158, 166),
-    Text = Color3.fromRGB(245, 245, 247),
-    TextMuted = Color3.fromRGB(158, 158, 166),
-    Outline = Color3.fromRGB(92, 92, 98),
-    -- Status colours stay semantic: they label gameplay data (roles, health,
-    -- failures) rather than the menu chrome, so they remain readable while the
-    -- interface itself stays monochrome.
-    Success = Color3.fromRGB(126, 196, 138),
-    Danger = Color3.fromRGB(214, 106, 106),
+-- Colour tokens.
+--
+-- One set, not two. There used to be `Surface` and `DefaultSurface`, `Text` and
+-- `DefaultText`, `Outline` and `DefaultOutline` — leftovers from a second GUI
+-- style that no longer exists. Half the menu read one set and half read the
+-- other, so changing a colour either had to be done twice or only took in half
+-- the window.
+--
+-- The defaults are the Wurst Client's own: background #404040, accent #101010,
+-- text #F0F0F0. The magenta most Wurst screenshots show is a theme its user
+-- picked, not what the client ships with.
+--
+-- `accent` paints chrome — title bars, borders, slider fills. `enabled` paints
+-- a module that is on. They are two tokens rather than one because Wurst
+-- separates them too, and for the same reason: filling every enabled row with
+-- the colour that already paints eight title bars is unreadable.
+export type ThemeShape = {
+    opacity: number,
+    tooltipOpacity: number,
+    radius: number,
+    rowHeight: number,
+    borderThickness: number,
+    maxHeight: number,
+    scale: number,
 }
+
+local THEME_PRESETS: {[string]: {[string]: Color3}} = {
+    -- What Wurst looks like out of the box.
+    Wurst = {
+        background = Color3.fromRGB(64, 64, 64),
+        sidebar = Color3.fromRGB(48, 48, 48),
+        surface = Color3.fromRGB(64, 64, 64),
+        surfaceRaised = Color3.fromRGB(74, 74, 74),
+        surfaceHover = Color3.fromRGB(86, 86, 86),
+        surfacePressed = Color3.fromRGB(96, 96, 96),
+        button = Color3.fromRGB(56, 56, 56),
+        buttonHover = Color3.fromRGB(72, 72, 72),
+        buttonPressed = Color3.fromRGB(84, 84, 84),
+        outline = Color3.fromRGB(16, 16, 16),
+        accent = Color3.fromRGB(16, 16, 16),
+        accentDim = Color3.fromRGB(36, 36, 36),
+        accentFaint = Color3.fromRGB(56, 56, 56),
+        accentSoft = Color3.fromRGB(40, 40, 40),
+        accentText = Color3.fromRGB(240, 240, 240),
+        -- Green at half alpha over #404040 is what a Wurst player actually
+        -- sees on an enabled hack; the token is that result, because our rows
+        -- are drawn opaque.
+        enabled = Color3.fromRGB(32, 175, 32),
+        enabledText = Color3.fromRGB(240, 240, 240),
+        text = Color3.fromRGB(240, 240, 240),
+        textMuted = Color3.fromRGB(168, 168, 168),
+        tooltip = Color3.fromRGB(24, 24, 24),
+    },
+    -- The palette this menu shipped with before the port.
+    Monochrome = {
+        background = Color3.fromRGB(8, 8, 9),
+        sidebar = Color3.fromRGB(13, 13, 14),
+        surface = Color3.fromRGB(26, 26, 28),
+        surfaceRaised = Color3.fromRGB(32, 32, 35),
+        surfaceHover = Color3.fromRGB(40, 40, 44),
+        surfacePressed = Color3.fromRGB(48, 48, 52),
+        button = Color3.fromRGB(32, 32, 35),
+        buttonHover = Color3.fromRGB(46, 46, 50),
+        buttonPressed = Color3.fromRGB(56, 56, 61),
+        outline = Color3.fromRGB(92, 92, 98),
+        accent = Color3.fromRGB(236, 236, 238),
+        accentDim = Color3.fromRGB(196, 196, 202),
+        accentFaint = Color3.fromRGB(160, 160, 168),
+        accentSoft = Color3.fromRGB(52, 52, 56),
+        accentText = Color3.fromRGB(8, 8, 9),
+        enabled = Color3.fromRGB(236, 236, 238),
+        enabledText = Color3.fromRGB(8, 8, 9),
+        text = Color3.fromRGB(245, 245, 247),
+        textMuted = Color3.fromRGB(158, 158, 166),
+        tooltip = Color3.fromRGB(16, 16, 18),
+    },
+}
+
+-- Read by every widget. Mutated in place by `ThemeEngine.Apply`, never
+-- replaced, because half the menu captured a reference to it at build time.
+local Theme: {[string]: Color3} = {}
+for token: string, value: Color3 in pairs(THEME_PRESETS.Wurst) do
+    Theme[token] = value
+end
+-- Semantic colours are not theme tokens and no preset may set them. They label
+-- game data — health, a failure, a role — and a theme that recolours "murderer"
+-- is a theme that lies.
+Theme.positive = Color3.fromRGB(126, 196, 138)
+Theme.negative = Color3.fromRGB(214, 106, 106)
+
+local ThemeEngine = {
+    name = "Wurst",
+    presets = THEME_PRESETS,
+    tokens = Theme,
+    shape = {
+        opacity = 0.86,
+        tooltipOpacity = 0.95,
+        radius = 4,
+        rowHeight = 22,
+        borderThickness = 1,
+        maxHeight = 340,
+        scale = 1,
+    } :: ThemeShape,
+}
+
+-- Instance -> list of {property, token}. Weak keys, so a window that is
+-- destroyed stops being repainted without anything having to unregister it.
+local themeBindings: any = setmetatable({}, {__mode = "k"})
+local themeListeners: {(string) -> ()} = {}
+
+-- A widget that reads `Theme.surface` once and copies it into a property is
+-- painted for the life of that instance. Binding instead records the intent, so
+-- switching preset repaints what is already on screen.
+function ThemeEngine.Bind(
+    instance: Instance,
+    property: string,
+    token: string
+): Instance
+    local record: any = themeBindings[instance]
+    if not record then
+        record = {}
+        themeBindings[instance] = record
+    end
+    table.insert(record, {property = property, token = token})
+    local value: Color3? = Theme[token]
+    if value then
+        (instance :: any)[property] = value
+    end
+    return instance
+end
+
+function ThemeEngine.OnChange(callback: (string) -> ()): ()
+    table.insert(themeListeners, callback)
+end
+
+function ThemeEngine.Apply(name: string): boolean
+    local preset: {[string]: Color3}? = THEME_PRESETS[name]
+    if not preset then
+        return false
+    end
+    for token: string, value: Color3 in pairs(preset :: {[string]: Color3}) do
+        Theme[token] = value
+    end
+    ThemeEngine.name = name
+    for instance: any, record: any in pairs(themeBindings) do
+        for _, binding: any in ipairs(record) do
+            local value: Color3? = Theme[binding.token]
+            if value then
+                -- One dead instance must not stop the repaint of every
+                -- instance after it in the table.
+                pcall(function(): ()
+                    instance[binding.property] = value
+                end)
+            end
+        end
+    end
+    for _, listener: (string) -> () in ipairs(themeListeners) do
+        pcall(listener, name)
+    end
+    return true
+end
+
+local DEFAULT_HEADER_COLOR: Color3 = Theme.text
+local DEFAULT_MENU_COLOR: Color3 = Theme.background
+local DEFAULT_SURFACE_COLOR: Color3 = Theme.surface
+local DEFAULT_BORDER_COLOR: Color3 = Theme.outline
+
 local TITLE_FONT: Font = Font.new(
     "rbxasset://fonts/families/BuilderSans.json",
     Enum.FontWeight.Bold,
@@ -1714,7 +1842,7 @@ function SectionManager.showStatus(page, message, isError)
 
     local status = Instance.new("TextLabel")
     status.Name = "SectionStatus"
-    status.BackgroundColor3 = Theme.DefaultSurface
+    status.BackgroundColor3 = Theme.surface
     status.BackgroundTransparency = isError and 0.05 or 0.2
     status.BorderSizePixel = 0
     status.FontFace = CONTROL_FONT
@@ -1722,8 +1850,8 @@ function SectionManager.showStatus(page, message, isError)
     status.Size = UDim2.new(1, -36, 0, isError and 150 or 46)
     status.Text = message
     status.TextColor3 = isError
-        and Theme.Danger
-        or Theme.DefaultText
+        and Theme.negative
+        or Theme.text
     status.TextSize = 13
     status.TextWrapped = true
     status.TextXAlignment = Enum.TextXAlignment.Left
@@ -1898,7 +2026,7 @@ local function addRoundedStyle(
     local stroke: UIStroke = Instance.new("UIStroke")
     stroke.Name = "StyleStroke"
     stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-    stroke.Color = Theme.Outline
+    stroke.Color = Theme.outline
     stroke.Thickness = 1
     stroke.Transparency = strokeTransparency or 0.45
     stroke.Parent = object
@@ -1983,7 +2111,7 @@ local function makeTextLabel(
         ClipsDescendants = true,
         FontFace = THIN_FONT,
         Text = text,
-        TextColor3 = Theme.Text,
+        TextColor3 = Theme.text,
         TextTruncate = Enum.TextTruncate.AtEnd,
         TextXAlignment = Enum.TextXAlignment.Left,
         TextYAlignment = Enum.TextYAlignment.Center,
@@ -2002,14 +2130,14 @@ local function makeButton(
         ClipsDescendants = true,
         TextTruncate = Enum.TextTruncate.AtEnd,
         BackgroundColor3 = isDefaultStyle
-            and Theme.DefaultButton
+            and Theme.button
             or DEFAULT_SURFACE_COLOR,
         BorderSizePixel = 0,
         FontFace = CONTROL_FONT,
         Text = text,
         TextColor3 = isDefaultStyle
-            and Theme.DefaultText
-            or Theme.Text,
+            and Theme.text
+            or Theme.text,
         TextXAlignment = Enum.TextXAlignment.Center,
         TextYAlignment = Enum.TextYAlignment.Center,
     }), normalSize or 14)
@@ -2017,15 +2145,15 @@ local function makeButton(
     addRoundedStyle(button, 9, 0.48)
     button:SetAttribute(
         "IdleColor",
-        isDefaultStyle and Theme.DefaultButton or DEFAULT_SURFACE_COLOR
+        isDefaultStyle and Theme.button or DEFAULT_SURFACE_COLOR
     )
     button:SetAttribute(
         "HoverColor",
-        isDefaultStyle and Theme.DefaultButtonHover or Theme.SurfaceHover
+        isDefaultStyle and Theme.buttonHover or Theme.surfaceHover
     )
     button:SetAttribute(
         "PressedColor",
-        isDefaultStyle and Theme.DefaultButtonPressed or Theme.SurfacePressed
+        isDefaultStyle and Theme.buttonPressed or Theme.surfacePressed
     )
     table.insert(state.styledButtons, button)
 
@@ -2036,7 +2164,7 @@ local function makeButton(
         local configuredHover: any = button:GetAttribute("HoverColor")
         local hoverColor: Color3 = typeof(configuredHover) == "Color3"
             and configuredHover
-            or Theme.SurfaceHover
+            or Theme.surfaceHover
         TweenService:Create(
             button,
             TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
@@ -2051,7 +2179,7 @@ local function makeButton(
         local selectedColor: any = button:GetAttribute("SelectedColor")
         local configuredIdle: any = button:GetAttribute("IdleColor")
         local targetColor: Color3 = button:GetAttribute("Selected")
-            and (typeof(selectedColor) == "Color3" and selectedColor or Theme.AccentSoft)
+            and (typeof(selectedColor) == "Color3" and selectedColor or Theme.accentSoft)
             or (typeof(configuredIdle) == "Color3"
                 and configuredIdle
                 or DEFAULT_SURFACE_COLOR)
@@ -2071,7 +2199,7 @@ local function makeButton(
         local configuredPressed: any = button:GetAttribute("PressedColor")
         local pressedColor: Color3 = typeof(configuredPressed) == "Color3"
             and configuredPressed
-            or Theme.SurfacePressed
+            or Theme.surfacePressed
         TweenService:Create(
             button,
             TweenInfo.new(0.08, Enum.EasingStyle.Quad),
@@ -2087,10 +2215,10 @@ local function makeButton(
         local selectedColor: any = button:GetAttribute("SelectedColor")
         local configuredHover: any = button:GetAttribute("HoverColor")
         local targetColor: Color3 = button:GetAttribute("Selected")
-            and (typeof(selectedColor) == "Color3" and selectedColor or Theme.AccentSoft)
+            and (typeof(selectedColor) == "Color3" and selectedColor or Theme.accentSoft)
             or (typeof(configuredHover) == "Color3"
                 and configuredHover
-                or Theme.SurfaceHover)
+                or Theme.surfaceHover)
         TweenService:Create(
             button,
             TweenInfo.new(UI_MOTION.fast, Enum.EasingStyle.Quad),
@@ -2156,7 +2284,7 @@ local function createToggleSwitch(
         Parent = button,
         Name = "SwitchTrack",
         AnchorPoint = Vector2.new(0.5, 0.5),
-        BackgroundColor3 = Theme.DefaultText,
+        BackgroundColor3 = Theme.text,
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
         Position = UDim2.fromScale(0.5, 0.5),
@@ -2167,7 +2295,7 @@ local function createToggleSwitch(
     create("UIStroke", {
         Parent = frame,
         Name = "MarkStroke",
-        Color = Theme.DefaultOutline,
+        Color = Theme.outline,
         Transparency = 0.45,
         Thickness = 1,
     })
@@ -2177,7 +2305,7 @@ local function createToggleSwitch(
         Parent = frame,
         Name = "Knob",
         AnchorPoint = Vector2.new(0.5, 0.5),
-        BackgroundColor3 = Theme.DefaultText,
+        BackgroundColor3 = Theme.text,
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
         Position = UDim2.fromScale(0.5, 0.5),
@@ -2191,16 +2319,16 @@ end
 
 local function applyKeySlotStyle(button: TextButton): ()
     button.ZIndex = math.max(2, button.ZIndex)
-    button.BackgroundColor3 = Theme.DefaultSurface
+    button.BackgroundColor3 = Theme.surface
     button.BackgroundTransparency = 0.54
-    button.TextColor3 = Theme.DefaultTextMuted
+    button.TextColor3 = Theme.textMuted
     button:SetAttribute("ThemeRole", "KeySlot")
-    button:SetAttribute("IdleColor", Theme.DefaultSurface)
-    button:SetAttribute("HoverColor", Theme.DefaultSurfaceHover)
-    button:SetAttribute("PressedColor", Theme.DefaultButtonPressed)
+    button:SetAttribute("IdleColor", Theme.surface)
+    button:SetAttribute("HoverColor", Theme.surfaceHover)
+    button:SetAttribute("PressedColor", Theme.buttonPressed)
     local buttonStroke: UIStroke? = button:FindFirstChildOfClass("UIStroke")
     if buttonStroke then
-        buttonStroke.Color = Theme.DefaultOutline
+        buttonStroke.Color = Theme.outline
         buttonStroke.Transparency = 0.78
     end
 end
@@ -2238,7 +2366,7 @@ state.applyLinesGlyph = function(
                 Parent = glyph,
                 Name = "Line" .. tostring(index),
                 AnchorPoint = Vector2.new(0.5, 0.5),
-                BackgroundColor3 = Theme.DefaultText,
+                BackgroundColor3 = Theme.text,
                 BorderSizePixel = 0,
                 Position = UDim2.new(0.5, 0, 0, (index - 1) * 3.5 + 0.5),
                 -- The middle line is shorter, which is what stops the mark
@@ -2263,36 +2391,36 @@ state.restyleButtons = function(isDefault: boolean): ()
             local role: any = button:GetAttribute("ThemeRole")
             if role ~= "Navigation" and role ~= "Icon" then
                 local idleColor: Color3 = isDefault
-                    and Theme.DefaultButton
+                    and Theme.button
                     or DEFAULT_SURFACE_COLOR
                 button:SetAttribute("IdleColor", idleColor)
                 button:SetAttribute(
                     "HoverColor",
-                    isDefault and Theme.DefaultButtonHover or Theme.SurfaceHover
+                    isDefault and Theme.buttonHover or Theme.surfaceHover
                 )
                 button:SetAttribute(
                     "PressedColor",
-                    isDefault and Theme.DefaultButtonPressed or Theme.SurfacePressed
+                    isDefault and Theme.buttonPressed or Theme.surfacePressed
                 )
                 if button:GetAttribute("Selected") ~= true then
                     button.BackgroundColor3 = idleColor
                 end
-                button.TextColor3 = isDefault and Theme.DefaultText or Theme.Text
+                button.TextColor3 = isDefault and Theme.text or Theme.text
                 local stroke: UIStroke? =
                     button:FindFirstChild("StyleStroke") :: UIStroke?
                 if stroke then
                     stroke.Enabled = true
-                    stroke.Color = isDefault and Theme.DefaultOutline or Theme.Outline
+                    stroke.Color = isDefault and Theme.outline or Theme.outline
                     stroke.Transparency = isDefault and 0.32 or 0.48
                 end
                 if role == "KeySlot" then
-                    button.BackgroundColor3 = Theme.DefaultSurface
+                    button.BackgroundColor3 = Theme.surface
                     button.BackgroundTransparency = 0.54
-                    button.TextColor3 = Theme.DefaultTextMuted
+                    button.TextColor3 = Theme.textMuted
                     local keyStroke: UIStroke? =
                         button:FindFirstChild("StyleStroke") :: UIStroke?
                     if keyStroke then
-                        keyStroke.Color = Theme.DefaultOutline
+                        keyStroke.Color = Theme.outline
                         keyStroke.Transparency = 0.78
                     end
                 end
@@ -2308,11 +2436,11 @@ local function setKeySlotCapture(button: TextButton, active: boolean): ()
         TweenInfo.new(UI_MOTION.fast, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
         {
             BackgroundColor3 = active
-                and Theme.DefaultButtonPressed
-                or Theme.DefaultSurface,
+                and Theme.buttonPressed
+                or Theme.surface,
             TextColor3 = active
-                and Theme.DefaultText
-                or Theme.DefaultTextMuted,
+                and Theme.text
+                or Theme.textMuted,
         }
     ):Play()
     if stroke then
@@ -2369,8 +2497,8 @@ local function makeTextBox(parent: Instance, defaultText: any): TextBox
     local textBox: TextBox = (registerText(create("TextBox", {
         Parent = parent,
         BackgroundColor3 = isDefaultStyle
-            and Theme.DefaultButtonPressed
-            or Theme.Surface,
+            and Theme.buttonPressed
+            or Theme.surface,
         BorderSizePixel = 0,
         ClearTextOnFocus = false,
         -- A text box holds whatever is typed into it, which is unbounded by
@@ -2379,12 +2507,12 @@ local function makeTextBox(parent: Instance, defaultText: any): TextBox
         TextTruncate = Enum.TextTruncate.AtEnd,
         FontFace = THIN_FONT,
         PlaceholderColor3 = isDefaultStyle
-            and Theme.DefaultTextMuted
-            or Theme.TextMuted,
+            and Theme.textMuted
+            or Theme.textMuted,
         Text = tostring(defaultText),
         TextColor3 = isDefaultStyle
-            and Theme.DefaultText
-            or Theme.Text,
+            and Theme.text
+            or Theme.text,
         TextXAlignment = Enum.TextXAlignment.Center,
     }), 13) :: any) :: TextBox
     addRoundedStyle(textBox, 9, 0.5)
@@ -2394,8 +2522,8 @@ local function makeTextBox(parent: Instance, defaultText: any): TextBox
             textBox,
             TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quad),
             {BackgroundColor3 = state.guiStyle == "Default"
-                and Theme.DefaultButtonHover
-                or Theme.SurfaceRaised}
+                and Theme.buttonHover
+                or Theme.surfaceRaised}
         ):Play()
     end))
     trackUiConnection(textBox.FocusLost:Connect(function(): ()
@@ -2403,8 +2531,8 @@ local function makeTextBox(parent: Instance, defaultText: any): TextBox
             textBox,
             TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quad),
             {BackgroundColor3 = state.guiStyle == "Default"
-                and Theme.DefaultButtonPressed
-                or Theme.Surface}
+                and Theme.buttonPressed
+                or Theme.surface}
         ):Play()
     end))
     return textBox
@@ -2414,16 +2542,16 @@ state.restyleTextBoxes = function(isDefault: boolean): ()
     for _, textBox: TextBox in ipairs(state.styledTextBoxes) do
         if textBox.Parent then
             textBox.BackgroundColor3 = isDefault
-                and Theme.DefaultButtonPressed
-                or Theme.Surface
-            textBox.TextColor3 = isDefault and Theme.DefaultText or Theme.Text
+                and Theme.buttonPressed
+                or Theme.surface
+            textBox.TextColor3 = isDefault and Theme.text or Theme.text
             textBox.PlaceholderColor3 = isDefault
-                and Theme.DefaultTextMuted
-                or Theme.TextMuted
+                and Theme.textMuted
+                or Theme.textMuted
             local stroke: UIStroke? =
                 textBox:FindFirstChild("StyleStroke") :: UIStroke?
             if stroke then
-                stroke.Color = isDefault and Theme.DefaultOutline or Theme.Outline
+                stroke.Color = isDefault and Theme.outline or Theme.outline
                 stroke.Transparency = isDefault and 0.3 or 0.5
             end
         end
@@ -2467,8 +2595,8 @@ local function notify(message: any): ()
     toast.Name = "Toast"
     toast.AutomaticSize = Enum.AutomaticSize.Y
     toast.BackgroundColor3 = state.guiStyle == "Default"
-        and Theme.DefaultSurface
-        or Theme.SurfaceRaised
+        and Theme.surface
+        or Theme.surfaceRaised
     toast.BackgroundTransparency = state.guiStyle == "Default" and 0.12 or 0.04
     toast.BorderSizePixel = 0
     toast.GroupTransparency = 1
@@ -2484,16 +2612,16 @@ local function notify(message: any): ()
     create("UIStroke", {
         Parent = toast,
         Color = state.guiStyle == "Default"
-            and Theme.DefaultOutline
-            or Theme.Outline,
+            and Theme.outline
+            or Theme.outline,
         Transparency = state.guiStyle == "Default" and 0.42 or 0.22,
         Thickness = 1,
     })
     local accent: Frame = (create("Frame", {
         Parent = toast,
         BackgroundColor3 = state.guiStyle == "Default"
-            and Theme.DefaultAccent
-            or Theme.Accent,
+            and Theme.accent
+            or Theme.accent,
         BorderSizePixel = 0,
         Size = UDim2.new(0, 4, 1, 0),
         ZIndex = 302,
@@ -2509,8 +2637,8 @@ local function notify(message: any): ()
     label.Position = UDim2.fromOffset(16, 10)
     label.Size = UDim2.new(1, -28, 0, 36)
     label.TextColor3 = state.guiStyle == "Default"
-        and Theme.DefaultText
-        or Theme.Text
+        and Theme.text
+        or Theme.text
     label.TextWrapped = true
     label.ZIndex = 303
 
@@ -2809,7 +2937,7 @@ local Main: Frame = (create("Frame", {
     Name = "Main",
     Active = true,
     AnchorPoint = Vector2.new(0.5, 0.5),
-    BackgroundColor3 = Theme.DefaultBackground,
+    BackgroundColor3 = Theme.background,
     BorderSizePixel = 0,
     ClipsDescendants = true,
     Position = UDim2.fromScale(0.5, 0.5),
@@ -2839,7 +2967,7 @@ do
 local _MainCorner: UICorner, MainStroke: UIStroke =
     addRoundedStyle(Main, state.layout.shellCorner, 1)
 MainStroke.Thickness = 1
-MainStroke.Color = Theme.DefaultOutline
+MainStroke.Color = Theme.outline
 MainStroke.Transparency = 1
 state.mainStroke = MainStroke
 end
@@ -2893,7 +3021,7 @@ local DefaultSidebar: Frame = create("Frame", {
     Parent = DefaultShell,
     Name = "DefaultSidebar",
     Active = true,
-    BackgroundColor3 = Theme.DefaultSidebar,
+    BackgroundColor3 = Theme.sidebar,
     BackgroundTransparency = 0.35,
     BorderSizePixel = 0,
     Size = UDim2.new(0, sidebarWidth, 1, 0),
@@ -2908,7 +3036,7 @@ local SidebarSquareEdge: Frame = create("Frame", {
     Parent = DefaultSidebar,
     Name = "SidebarSquareEdge",
     AnchorPoint = Vector2.new(1, 0),
-    BackgroundColor3 = Theme.DefaultSidebar,
+    BackgroundColor3 = Theme.sidebar,
     BackgroundTransparency = 0.35,
     BorderSizePixel = 0,
     Position = UDim2.fromScale(1, 0),
@@ -2921,7 +3049,7 @@ local SidebarSquareEdge: Frame = create("Frame", {
 local SidebarEdge: Frame = create("Frame", {
     Parent = DefaultShell,
     Name = "SidebarEdge",
-    BackgroundColor3 = Theme.DefaultOutline,
+    BackgroundColor3 = Theme.outline,
     BackgroundTransparency = 0.82,
     BorderSizePixel = 0,
     Position = UDim2.fromOffset(sidebarWidth, 0),
@@ -2944,20 +3072,20 @@ BrandMark.Name = "BrandMark"
 BrandMark.AnchorPoint = layout.sidebarCollapsed
     and Vector2.new(0.5, 0.5)
     or Vector2.new(0, 0.5)
-BrandMark.BackgroundColor3 = Theme.DefaultSurface
+BrandMark.BackgroundColor3 = Theme.surface
 BrandMark.BackgroundTransparency = 0.42
 BrandMark.FontFace = CONTROL_FONT
 BrandMark.Position = layout.sidebarCollapsed
     and UDim2.fromScale(0.5, 0.5)
     or UDim2.new(0, layout.sidebarPadding, 0.5, 0)
 BrandMark.Size = UDim2.fromOffset(layout.navIconSize + 4, layout.navIconSize + 4)
-BrandMark.TextColor3 = Theme.DefaultText
+BrandMark.TextColor3 = Theme.text
 BrandMark.TextXAlignment = Enum.TextXAlignment.Center
 BrandMark.ZIndex = 14
 create("UICorner", {Parent = BrandMark, CornerRadius = cornerRadius(UI_RADIUS.chip)})
 create("UIStroke", {
     Parent = BrandMark,
-    Color = Theme.DefaultOutline,
+    Color = Theme.outline,
     Transparency = 0.7,
     Thickness = 1,
 })
@@ -3015,7 +3143,7 @@ BrandName.AnchorPoint = Vector2.new(0, 0.5)
 BrandName.FontFace = CONTROL_FONT
 BrandName.Position = UDim2.new(0, layout.sidebarPadding + layout.navIconSize + 12, 0.5, 0)
 BrandName.Size = UDim2.new(1, -(layout.sidebarPadding * 2 + layout.navIconSize + 12), 0, 18)
-BrandName.TextColor3 = Theme.DefaultTextMuted
+BrandName.TextColor3 = Theme.textMuted
 BrandName.TextTruncate = Enum.TextTruncate.AtEnd
 BrandName.Visible = not layout.sidebarCollapsed
 BrandName.ZIndex = 14
@@ -3054,7 +3182,7 @@ create("UIPadding", {
 local DefaultContentHost: Frame = create("Frame", {
     Parent = DefaultShell,
     Name = "DefaultContentHost",
-    BackgroundColor3 = Theme.DefaultBackground,
+    BackgroundColor3 = Theme.background,
     BackgroundTransparency = 1,
     BorderSizePixel = 0,
     Position = UDim2.fromOffset(sidebarWidth + 1, 0),
@@ -3087,14 +3215,14 @@ HeaderTitle.Size = UDim2.new(
     0,
     26
 )
-HeaderTitle.TextColor3 = Theme.DefaultText
+HeaderTitle.TextColor3 = Theme.text
 HeaderTitle.TextTruncate = Enum.TextTruncate.AtEnd
 HeaderTitle.ZIndex = 23
 local HeaderRule: Frame = create("Frame", {
     Parent = DefaultHeader,
     Name = "HeaderRule",
     AnchorPoint = Vector2.new(0, 1),
-    BackgroundColor3 = Theme.DefaultOutline,
+    BackgroundColor3 = Theme.outline,
     BackgroundTransparency = 0.84,
     BorderSizePixel = 0,
     Position = UDim2.new(0, layout.contentPadding, 1, 0),
@@ -3241,19 +3369,19 @@ local function setTab(tabName: string): ()
         local selected: boolean = name == tabName
         button:SetAttribute("Selected", selected)
         button.BackgroundColor3 = selected
-            and Theme.DefaultSurface
-            or Theme.DefaultSidebar
+            and Theme.surface
+            or Theme.sidebar
         button.BackgroundTransparency = selected and 0.34 or 1
-        button.TextColor3 = selected and Theme.DefaultText or Theme.DefaultTextMuted
+        button.TextColor3 = selected and Theme.text or Theme.textMuted
         local navLabel: TextLabel? = button:FindFirstChild("NavLabel") :: TextLabel?
         if navLabel then
             navLabel.TextColor3 = selected
-                and Theme.DefaultText
-                or Theme.DefaultTextMuted
+                and Theme.text
+                or Theme.textMuted
         end
         local tabStroke: UIStroke? = button:FindFirstChild("StyleStroke") :: UIStroke?
         if tabStroke then
-            tabStroke.Color = Theme.DefaultOutline
+            tabStroke.Color = Theme.outline
             tabStroke.Transparency = selected and 0.78 or 1
         end
         -- The monogram chip is the only thing left when the rail collapses,
@@ -3261,8 +3389,8 @@ local function setTab(tabName: string): ()
         local monogram: TextLabel? = button:FindFirstChild("Monogram") :: TextLabel?
         if monogram then
             monogram.TextColor3 = selected
-                and Theme.DefaultText
-                or Theme.DefaultTextMuted
+                and Theme.text
+                or Theme.textMuted
             monogram.BackgroundTransparency = selected and 0.28 or 0.62
         end
         -- Selected rows get an accent tick on their leading edge: a compact
@@ -3318,15 +3446,15 @@ local function createTab(tabName: string, layoutOrder: number): Frame
     defaultButton.Name = tabName .. "DefaultTab"
     defaultButton.LayoutOrder = layoutOrder
     defaultButton.Size = UDim2.new(1, 0, 0, layout.navRowHeight)
-    defaultButton.BackgroundColor3 = Theme.DefaultSidebar
+    defaultButton.BackgroundColor3 = Theme.sidebar
     defaultButton.BackgroundTransparency = 1
-    defaultButton.TextColor3 = Theme.DefaultTextMuted
+    defaultButton.TextColor3 = Theme.textMuted
     defaultButton.TextXAlignment = Enum.TextXAlignment.Left
     defaultButton.ZIndex = 12
     defaultButton:SetAttribute("ThemeRole", "Navigation")
-    defaultButton:SetAttribute("SelectedColor", Theme.DefaultSurface)
-    defaultButton:SetAttribute("IdleColor", Theme.DefaultSidebar)
-    defaultButton:SetAttribute("HoverColor", Theme.DefaultSurfaceHover)
+    defaultButton:SetAttribute("SelectedColor", Theme.surface)
+    defaultButton:SetAttribute("IdleColor", Theme.sidebar)
+    defaultButton:SetAttribute("HoverColor", Theme.surfaceHover)
     defaultButton:SetAttribute("NavigationLabel", defaultLabel)
     local buttonCorner: UICorner? =
         defaultButton:FindFirstChild("StyleCorner") :: UICorner?
@@ -3337,7 +3465,7 @@ local function createTab(tabName: string, layoutOrder: number): Frame
         Parent = defaultButton,
         Name = "SelectionMarker",
         AnchorPoint = Vector2.new(0, 0.5),
-        BackgroundColor3 = Theme.DefaultAccent,
+        BackgroundColor3 = Theme.accent,
         BorderSizePixel = 0,
         -- Flush with the row's own left edge. It used to hang six pixels
         -- outside the button, which put it in the rail's gutter and made it
@@ -3356,12 +3484,12 @@ local function createTab(tabName: string, layoutOrder: number): Frame
     )
     monogram.Name = "Monogram"
     monogram.AnchorPoint = Vector2.new(0, 0.5)
-    monogram.BackgroundColor3 = Theme.DefaultSurface
+    monogram.BackgroundColor3 = Theme.surface
     monogram.BackgroundTransparency = 0.62
     monogram.FontFace = CONTROL_FONT
     monogram.Position = UDim2.new(0, 0, 0.5, 0)
     monogram.Size = UDim2.fromOffset(layout.navIconSize, layout.navIconSize)
-    monogram.TextColor3 = Theme.DefaultTextMuted
+    monogram.TextColor3 = Theme.textMuted
     monogram.TextXAlignment = Enum.TextXAlignment.Center
     monogram.ZIndex = 13
     create("UICorner", {Parent = monogram, CornerRadius = cornerRadius(UI_RADIUS.chip)})
@@ -3436,7 +3564,7 @@ local function createTab(tabName: string, layoutOrder: number): Frame
     navLabel.FontFace = CONTROL_FONT
     navLabel.Position = UDim2.new(0, layout.navIconSize + 10, 0.5, 0)
     navLabel.Size = UDim2.new(1, -(layout.navIconSize + 16), 1, 0)
-    navLabel.TextColor3 = Theme.DefaultTextMuted
+    navLabel.TextColor3 = Theme.textMuted
     navLabel.TextTruncate = Enum.TextTruncate.AtEnd
     navLabel.Visible = not layout.sidebarCollapsed
     navLabel.ZIndex = 13
@@ -3446,7 +3574,7 @@ local function createTab(tabName: string, layoutOrder: number): Frame
     local page: Frame = create("Frame", {
         Parent = Content,
         Name = tabName .. "Page",
-        BackgroundColor3 = Theme.Background,
+        BackgroundColor3 = Theme.background,
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
         Size = UDim2.fromScale(1, 1),
@@ -3529,7 +3657,7 @@ local DefaultSearchFrame: Frame = create("Frame", {
     Parent = state.shells.defaultHeader,
     Name = "DefaultSearchFrame",
     AnchorPoint = Vector2.new(1, 0.5),
-    BackgroundColor3 = Theme.DefaultSurface,
+    BackgroundColor3 = Theme.surface,
     BackgroundTransparency = 0.28,
     BorderSizePixel = 0,
     ClipsDescendants = true,
@@ -3545,7 +3673,7 @@ create("UICorner", {
 create("UIStroke", {
     Parent = DefaultSearchFrame,
     Name = "SearchStroke",
-    Color = Theme.DefaultOutline,
+    Color = Theme.outline,
     Transparency = 0.66,
     Thickness = 1,
 })
@@ -3557,9 +3685,9 @@ DefaultSearchBox.AnchorPoint = Vector2.new(1, 0.5)
 DefaultSearchBox.BackgroundTransparency = 1
 DefaultSearchBox.Position = UDim2.new(1, -8, 0.5, 0)
 DefaultSearchBox.Size = UDim2.new(1, -32, 1, -6)
-DefaultSearchBox.TextColor3 = Theme.DefaultText
-DefaultSearchBox.PlaceholderColor3 = Theme.DefaultTextMuted:Lerp(
-    Theme.DefaultSurface,
+DefaultSearchBox.TextColor3 = Theme.text
+DefaultSearchBox.PlaceholderColor3 = Theme.textMuted:Lerp(
+    Theme.surface,
     0.42
 )
 DefaultSearchBox.TextXAlignment = Enum.TextXAlignment.Left
@@ -3643,7 +3771,7 @@ local UniversalScroll = create("ScrollingFrame", {
     BackgroundTransparency = 1,
     BorderSizePixel = 0,
     CanvasSize = UDim2.fromOffset(0, 0),
-    ScrollBarImageColor3 = Theme.DefaultOutline,
+    ScrollBarImageColor3 = Theme.outline,
     ScrollBarThickness = 6,
     ScrollingDirection = Enum.ScrollingDirection.Y,
     Size = UDim2.fromScale(1, 1),
@@ -3687,7 +3815,7 @@ do
             BackgroundTransparency = 1,
             BorderSizePixel = 0,
             CanvasSize = UDim2.fromOffset(0, 0),
-            ScrollBarImageColor3 = Theme.DefaultOutline,
+            ScrollBarImageColor3 = Theme.outline,
             ScrollBarThickness = 6,
             ScrollingDirection = Enum.ScrollingDirection.Y,
             Size = UDim2.fromScale(1, 1),
@@ -3781,7 +3909,7 @@ local MobileMenuButton = create("TextButton", {
     Parent = ScreenGui,
     Name = "MobileMenuButton",
     AutoButtonColor = false,
-    BackgroundColor3 = Theme.DefaultSurface,
+    BackgroundColor3 = Theme.surface,
     BackgroundTransparency = 0.12,
     BorderSizePixel = 0,
     FontFace = CONTROL_FONT,
@@ -3789,7 +3917,7 @@ local MobileMenuButton = create("TextButton", {
     AnchorPoint = Vector2.new(1, 0),
     Size = UDim2.fromOffset(52, 52),
     Text = "RTM",
-    TextColor3 = Theme.Text,
+    TextColor3 = Theme.text,
     TextSize = 11,
     Visible = state.isMobile,
     ZIndex = 190,
@@ -3800,7 +3928,7 @@ create("UICorner", {
 })
 create("UIStroke", {
     Parent = MobileMenuButton,
-    Color = Theme.DefaultOutline,
+    Color = Theme.outline,
     Transparency = 0.55,
     Thickness = 1,
 })
@@ -4117,15 +4245,15 @@ local function applyGuiStyle(_: string, animate: boolean): ()
     -- `state.shells.default` is the window itself now, so forcing it visible
     -- here would pop the menu open behind the player's back.
 
-    Main.BackgroundColor3 = Theme.DefaultBackground
-    state.mainStroke.Color = Theme.DefaultOutline
+    Main.BackgroundColor3 = Theme.background
+    state.mainStroke.Color = Theme.outline
     state.mainStroke.Transparency = 1
     for _, page: Frame in pairs(pages) do
-        page.BackgroundColor3 = Theme.DefaultBackground
+        page.BackgroundColor3 = Theme.background
         page.BackgroundTransparency = 1
         for _, descendant: Instance in ipairs(page:GetDescendants()) do
             if descendant:IsA("ScrollingFrame") then
-                descendant.ScrollBarImageColor3 = Theme.DefaultOutline
+                descendant.ScrollBarImageColor3 = Theme.outline
             end
         end
     end
@@ -4519,14 +4647,14 @@ local function ensureSectionHeader(section: CardSectionRecord): Frame
     headerLabel.FontFace = CONTROL_FONT
     headerLabel.Position = UDim2.fromOffset(2, 0)
     headerLabel.Size = UDim2.new(0, 150, 1, 0)
-    headerLabel.TextColor3 = Theme.DefaultTextMuted
+    headerLabel.TextColor3 = Theme.textMuted
     headerLabel.TextTransparency = 0.12
 
     local headerRule: Frame = create("Frame", {
         Parent = header,
         Name = "CategoryRule",
         AnchorPoint = Vector2.new(1, 0.5),
-        BackgroundColor3 = Theme.DefaultOutline,
+        BackgroundColor3 = Theme.outline,
         BackgroundTransparency = 0.7,
         BorderSizePixel = 0,
         Position = UDim2.new(1, -2, 0.5, 0),
@@ -4810,21 +4938,21 @@ local function applyFeaturePresentation(feature: any, isDefault: boolean): ()
     end
     if feature.subtitle then
         feature.subtitle.TextColor3 = isDefault
-            and Theme.DefaultTextMuted
-            or Theme.TextMuted
+            and Theme.textMuted
+            or Theme.textMuted
     end
     if feature.options then
         feature.options.BackgroundTransparency = 1
     end
     if feature.arrow then
         feature.arrow.TextColor3 = isDefault
-            and Theme.DefaultTextMuted
-            or Theme.TextMuted
+            and Theme.textMuted
+            or Theme.textMuted
     end
     if feature.shortcutButton then
         feature.shortcutButton.BackgroundColor3 = isDefault
-            and Theme.DefaultSurface
-            or Theme.SurfaceRaised
+            and Theme.surface
+            or Theme.surfaceRaised
         -- A container's slot is inert, so it stays a faint placeholder
         -- instead of being repainted as an interactive key slot.
         local inertSlot: boolean = feature.kind == "group"
@@ -4833,8 +4961,8 @@ local function applyFeaturePresentation(feature: any, isDefault: boolean): ()
             or (isDefault and 0.54 or 1)
         feature.shortcutButton.TextTransparency = inertSlot and 1 or 0
         feature.shortcutButton.TextColor3 = isDefault
-            and Theme.DefaultText
-            or Theme.Text
+            and Theme.text
+            or Theme.text
     end
 end
 state.restyleAllFeatures = function(isDefault: boolean): ()
@@ -4874,7 +5002,7 @@ state.applyCardSkin = function(feature: any, hovered: boolean?): ()
 
     local surface: number
     local titleTransparency: number = 0
-    local titleColor: Color3 = Theme.DefaultText
+    local titleColor: Color3 = Theme.text
     local outline: number = 1
     local edge: number = 1
     local rule: number = 0.86
@@ -4883,7 +5011,7 @@ state.applyCardSkin = function(feature: any, hovered: boolean?): ()
         -- A heading, not a button: flat, and the rule under it groups the
         -- options that belong to it.
         surface = 1
-        titleColor = Theme.DefaultText
+        titleColor = Theme.text
         titleTransparency = 0.3
         rule = 0.55
     elseif feature.isAction then
@@ -4893,12 +5021,12 @@ state.applyCardSkin = function(feature: any, hovered: boolean?): ()
     elseif feature.isHoldAction then
         surface = isOn and 0.18 or (isHovered and 0.46 or 0.66)
         outline = isOn and 0.66 or 0.82
-        titleColor = isOn and Theme.DefaultText or Theme.DefaultTextMuted
+        titleColor = isOn and Theme.text or Theme.textMuted
         edge = isOn and 0.2 or 1
         rule = 1
     else
         surface = isOn and 0.18 or (isHovered and 0.5 or 0.74)
-        titleColor = isOn and Theme.DefaultText or Theme.DefaultTextMuted
+        titleColor = isOn and Theme.text or Theme.textMuted
         edge = isOn and 0.2 or 1
         rule = isOn and 1 or 0.72
     end
@@ -4911,11 +5039,11 @@ state.applyCardSkin = function(feature: any, hovered: boolean?): ()
     local animate: boolean = state.animationsEnabled == true
     if animate then
         TweenService:Create(resolvedRow, motion, {
-            BackgroundColor3 = Theme.DefaultSurface,
+            BackgroundColor3 = Theme.surface,
             BackgroundTransparency = surface,
         }):Play()
     else
-        resolvedRow.BackgroundColor3 = Theme.DefaultSurface
+        resolvedRow.BackgroundColor3 = Theme.surface
         resolvedRow.BackgroundTransparency = surface
     end
 
@@ -4926,12 +5054,12 @@ state.applyCardSkin = function(feature: any, hovered: boolean?): ()
     end
     if feature.stroke then
         local cardStroke: UIStroke = feature.stroke :: UIStroke
-        cardStroke.Color = Theme.DefaultOutline
+        cardStroke.Color = Theme.outline
         cardStroke.Transparency = outline
     end
     if feature.activeStripe then
         local stripe: Frame = feature.activeStripe :: Frame
-        stripe.BackgroundColor3 = Theme.DefaultText
+        stripe.BackgroundColor3 = Theme.text
         if animate then
             TweenService:Create(stripe, motion, {BackgroundTransparency = edge}):Play()
         else
@@ -4979,8 +5107,8 @@ local function runActionButton(
     button.Active = false
     button.Text = "Running…"
     button.BackgroundColor3 = state.guiStyle == "Default"
-        and Theme.DefaultButtonHover
-        or Theme.AccentSoft
+        and Theme.buttonHover
+        or Theme.accentSoft
 
     task.spawn(function(): ()
         local running: boolean = true
@@ -4998,7 +5126,7 @@ local function runActionButton(
         running = false
         if button.Parent then
             button.Text = success and "Done" or "Failed"
-            button.BackgroundColor3 = success and Theme.AccentSoft or Theme.Danger
+            button.BackgroundColor3 = success and Theme.accentSoft or Theme.negative
         end
         if success then
             notify(successMessage)
@@ -5013,8 +5141,8 @@ local function runActionButton(
             button:SetAttribute("Disabled", false)
             button:SetAttribute("Running", false)
             button.BackgroundColor3 = idleText == "RUN"
-                and Theme.AccentSoft
-                or Theme.Surface
+                and Theme.accentSoft
+                or Theme.surface
         end
     end)
 end
@@ -5356,7 +5484,7 @@ state.featureTooltip = create("TextLabel", {
     Name = "FeatureTooltip",
     Active = false,
     AutomaticSize = Enum.AutomaticSize.None,
-    BackgroundColor3 = Theme.DefaultSurface,
+    BackgroundColor3 = Theme.surface,
     BackgroundTransparency = 0.04,
     BorderColor3 = Color3.fromRGB(58, 58, 58),
     BorderSizePixel = 1,
@@ -5570,6 +5698,9 @@ local function createGameModuleEnvironment(
         PlayerGui = PlayerGui,
         ScreenGui = ScreenGui,
         Theme = Theme,
+        -- The engine, so a library can bind an instance to a token instead of
+        -- copying a colour into it once and going stale at the next preset.
+        ThemeEngine = ThemeEngine,
         -- Game modules ask this whether they are running on the real place or
         -- on a recognised clone, instead of comparing PlaceIds themselves.
         GAME_CHECK = GAME_CHECK,
@@ -6497,7 +6628,7 @@ for sectionName: string, page: GuiObject in pairs(pages) do
     label.AnchorPoint = Vector2.new(0.5, 0.5)
     label.Position = UDim2.fromScale(0.5, 0.5)
     label.Size = UDim2.new(1, -50, 0, 40)
-    label.TextColor3 = Theme.TextMuted
+    label.TextColor3 = Theme.textMuted
     label.TextXAlignment = Enum.TextXAlignment.Center
     label.Visible = false
     label.ZIndex = 90
@@ -6520,7 +6651,7 @@ local function refreshSearch(): ()
         end
         if feature.title then
             if query ~= "" and matches and not feature.enabled then
-                feature.title.TextColor3 = Theme.AccentCyan
+                feature.title.TextColor3 = Theme.accent
             else
                 applyFeaturePresentation(feature, state.guiStyle == "Default")
             end

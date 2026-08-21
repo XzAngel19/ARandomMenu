@@ -144,8 +144,8 @@ function Module.init(context: any): any
             Name = name:gsub("%W", "") .. "Feature",
             Active = true,
             BackgroundColor3 = state.guiStyle == "Default"
-                and Theme.DefaultSurface
-                or Theme.Background,
+                and Theme.surface
+                or Theme.background,
             BackgroundTransparency = state.guiStyle == "Default" and 0.82 or 1,
             BorderSizePixel = 0,
             ClipsDescendants = true,
@@ -171,8 +171,8 @@ function Module.init(context: any): any
         local cardStroke: UIStroke = (create("UIStroke", {
             Parent = row,
             Color = state.guiStyle == "Default"
-                and Theme.DefaultOutline
-                or Theme.Outline,
+                and Theme.outline
+                or Theme.outline,
             Transparency = 1,
             Thickness = 1,
         }) :: any) :: UIStroke
@@ -181,7 +181,7 @@ function Module.init(context: any): any
             Parent = row,
             Name = "ActiveStripe",
             AnchorPoint = Vector2.new(0, 0.5),
-            BackgroundColor3 = Theme.DefaultAccent,
+            BackgroundColor3 = Theme.accent,
             BackgroundTransparency = 1,
             BorderSizePixel = 0,
             Position = UDim2.new(0, 0, 0.5, 0),
@@ -192,14 +192,14 @@ function Module.init(context: any): any
         feature.activeStripeGradient = create("UIGradient", {
             Parent = activeStripe,
             Color = ColorSequence.new({
-                ColorSequenceKeypoint.new(0, Theme.DefaultAccent),
-                ColorSequenceKeypoint.new(0.5, Theme.AccentViolet),
-                ColorSequenceKeypoint.new(1, Theme.AccentPink),
+                ColorSequenceKeypoint.new(0, Theme.accent),
+                ColorSequenceKeypoint.new(0.5, Theme.accentDim),
+                ColorSequenceKeypoint.new(1, Theme.accentFaint),
             }),
             Rotation = 90,
         })
         feature.activeStripe = activeStripe
-        activeStripe.BackgroundColor3 = Theme.DefaultText
+        activeStripe.BackgroundColor3 = Theme.text
         if feature.activeStripeGradient then
             (feature.activeStripeGradient :: UIGradient).Enabled = false
         end
@@ -210,7 +210,7 @@ function Module.init(context: any): any
             Parent = row,
             Name = "CardRule",
             AnchorPoint = Vector2.new(0.5, 1),
-            BackgroundColor3 = Theme.DefaultOutline,
+            BackgroundColor3 = Theme.outline,
             BackgroundTransparency = 0.86,
             BorderSizePixel = 0,
             Position = UDim2.new(0.5, 0, 1, 0),
@@ -228,8 +228,8 @@ function Module.init(context: any): any
         title.Size = UDim2.new(1, -(state.layout.cardHeight + 96), 0, feature.collapsedHeight)
         title.TextTruncate = Enum.TextTruncate.AtEnd
         title.TextColor3 = state.guiStyle == "Default"
-            and Theme.DefaultText
-            or Theme.Text
+            and Theme.text
+            or Theme.text
         feature.title = title
 
         local subtitle: TextLabel =
@@ -238,8 +238,8 @@ function Module.init(context: any): any
         subtitle.Position = UDim2.fromOffset(12, math.round(feature.collapsedHeight * 0.58))
         subtitle.Size = UDim2.new(1, -(state.layout.cardHeight + 96), 0, 24)
         subtitle.TextColor3 = state.guiStyle == "Default"
-            and Theme.DefaultTextMuted
-            or Theme.TextMuted
+            and Theme.textMuted
+            or Theme.textMuted
         subtitle.TextTruncate = Enum.TextTruncate.AtEnd
         subtitle.TextWrapped = true
         subtitle.Visible = false
@@ -277,8 +277,8 @@ function Module.init(context: any): any
         arrow.Size =
             UDim2.fromOffset(state.layout.iconButton, state.layout.iconButton)
         arrow.TextColor3 = state.guiStyle == "Default"
-            and Theme.DefaultTextMuted
-            or Theme.TextMuted
+            and Theme.textMuted
+            or Theme.textMuted
         -- Every card shows the three lines, including modules with nothing to
         -- configure (Anti-AFK, Anti-Void, X-Ray...): a row that silently drops a
         -- control makes the list look ragged. A card with no options simply never
@@ -573,8 +573,8 @@ function Module.init(context: any): any
         shortcutButton.Name = "Shortcut"
         shortcutButton.LayoutOrder = 2
         shortcutButton.BackgroundColor3 = state.guiStyle == "Default"
-            and Theme.DefaultSurface
-            or Theme.SurfaceRaised
+            and Theme.surface
+            or Theme.surfaceRaised
         shortcutButton.Size = UDim2.fromOffset(
             state.layout.keySlotWidth,
             state.layout.iconButton
