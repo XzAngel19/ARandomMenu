@@ -138,14 +138,13 @@ export type MenuState = {
     cleanupBedFightRuntime: () -> (),
 
     -- Pages that are libraries of their own
-    buildSettingsPage: () -> (),                    -- Fill the Config. tab, the first time it is opened
-    settingRows: {Frame},                           -- Its rows, for restyling
-    settingRowRepaint: (any) -> (),                 -- Repaint one
-    restyleSettings: (boolean) -> (),               -- Repaint them all
     animationsEnabled: boolean,                     -- Whether the interface animates
     mobileButtonSize: number,                       -- Pixel size of placed phone shortcuts
     clickGui: any,                                  -- Wurst's layout: one window per category, cards placed into them
     hudList: any,                                   -- Wurst's HackList: the on-screen list of enabled modules and their card.status brackets
+    wurstLogo: any,                                 -- The logo chip's live setters, driven by the WurstLogo settings window
+    uiMaxHeight: number,                            -- Wurst's ClickGUI "Max height" in pixels; 0 means no limit, read by every category window
+    uiSettings: any,                                -- The UI Settings window's current values, readable without walking its rows
     pill: any,                                      -- The floating pill toolbar: the launcher, and the one chrome that outlives closing the GUI
     refreshLauncher: () -> (),                      -- Re-evaluate the fallback mobile circle; the pill supersedes it while it exists
     windows: any,                                   -- The window manager: drag, collapse, pin, snap, persistence

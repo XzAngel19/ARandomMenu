@@ -396,7 +396,7 @@ function Module.init(context: any): any
             Parent = PopupLayer,
             Name = "Window_" .. id,
             Active = true,
-            BackgroundTransparency = bare and 1 or 0.08,
+            BackgroundTransparency = bare and 1 or manager.bodyTransparency,
             BorderSizePixel = 0,
             ClipsDescendants = not bare,
             Position = UDim2.fromOffset(position.X, position.Y),
@@ -576,6 +576,20 @@ function Module.init(context: any): any
             window.root.Visible = visible and window.wasVisible == true
             if visible == false then
                 window.wasVisible = window.root.Visible
+            end
+        end
+    end
+
+    -- Wurst's ClickGUI Opacity setting: the body of every window at one
+    -- alpha. The title bar stays opaque — Wurst fades only the background.
+    -- Remembered on the manager so a window created after the slider moved
+    -- is born at the same alpha.
+    manager.bodyTransparency = 0.08
+    function manager.SetOpacity(alpha: number): ()
+        manager.bodyTransparency = math.clamp(1 - alpha, 0, 1)
+        for _, window: any in ipairs(manager.list) do
+            if window.headerHeight and window.headerHeight > 0 then
+                window.root.BackgroundTransparency = manager.bodyTransparency
             end
         end
     end

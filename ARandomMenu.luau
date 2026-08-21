@@ -318,7 +318,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "113f2d5493a56d74"
+local SOURCE_STAMP: string = "5dd24eff7ad672a3"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -689,6 +689,26 @@ function ThemeEngine.OnChange(callback: (string) -> ()): ()
     table.insert(themeListeners, callback)
 end
 
+-- One token, repainted live. ThemeEngine.Apply is a whole preset; the UI
+-- Settings window edits Background, Accent and Text one at a time, the way
+-- Wurst's ClickGUI settings do, and each edit has to reach everything that
+-- bound the token without waiting for a preset switch.
+function ThemeEngine.Set(token: string, value: Color3): ()
+    Theme[token] = value
+    for instance: any, record: any in pairs(themeBindings) do
+        for _, binding: any in ipairs(record) do
+            if binding.token == token then
+                pcall(function(): ()
+                    instance[binding.property] = value
+                end)
+            end
+        end
+    end
+    for _, listener: (string) -> () in ipairs(themeListeners) do
+        pcall(listener, ThemeEngine.name)
+    end
+end
+
 function ThemeEngine.Apply(name: string): boolean
     local preset: {[string]: Color3}? = THEME_PRESETS[name]
     if not preset then
@@ -942,23 +962,7 @@ local state: any = {
     visible = false,
     isMobile = IS_MOBILE_DEVICE,
     guiStyle = "Default",
-    blurEnabled = configData.ui.blurEnabled ~= false,
-    textScale = configData.ui.textScaleCalibrationVersion == 2
-        and math.clamp(
-            tonumber(configData.ui.textScale) or 1,
-            TEXT_SCALE_MINIMUM,
-            TEXT_SCALE_MAXIMUM
-        )
-        or 1,
     mobileMenuButtonVisible = true,
-    animationsEnabled = configData.ui.animationsEnabled ~= false,
-    -- Free-form pixel size now, not one of four presets, so the stored value
-    -- is only sanity-clamped.
-    mobileButtonSize = math.clamp(
-        tonumber(configData.ui.mobileButtonSize) or 52,
-        28,
-        120
-    ),
     toggleKey = savedToggleKey,
     waitingForKey = false,
     keyCaptureCallback = nil,
@@ -978,6 +982,25 @@ local state: any = {
 -- taken, by the loaded module table itself, and reusing the key would have
 -- meant one of the two silently winning.
 state.activeGameName = ACTIVE_GAME_MODULE
+-- Settings that used to be rows on the old Config. page. The page is gone —
+-- Wurst has no text-scale, blur or launcher-size settings — but the stored
+-- values keep applying so an existing install does not change under its
+-- player the day the rows disappeared.
+state.blurEnabled = configData.ui.blurEnabled ~= false
+state.textScale = configData.ui.textScaleCalibrationVersion == 2
+    and math.clamp(
+        tonumber(configData.ui.textScale) or 1,
+        TEXT_SCALE_MINIMUM,
+        TEXT_SCALE_MAXIMUM
+    )
+    or 1
+state.animationsEnabled = configData.ui.animationsEnabled ~= false
+-- Free-form pixel size, only sanity-clamped.
+state.mobileButtonSize = math.clamp(
+    tonumber(configData.ui.mobileButtonSize) or 52,
+    28,
+    120
+)
 configData.ui.guiStyle = nil
 configData.ui.textScaleCalibrationVersion = 2
 

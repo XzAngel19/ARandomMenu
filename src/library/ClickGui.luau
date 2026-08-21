@@ -168,9 +168,17 @@ function Module.init(context: any): any
         -- limit and the body scrolls. A window padded out to a fixed height is
         -- how a category with two modules ends up looking broken.
         local function resize(): ()
+            -- Wurst's "Max height" setting, live: the UI Settings slider
+            -- publishes state.uiMaxHeight, and 0 means no limit, exactly as
+            -- Wurst's tooltip says. Until that slider has run once, the
+            -- window's own construction cap holds.
+            local limit: number = tonumber(state.uiMaxHeight) or WINDOW_MAX_HEIGHT
+            if limit <= 0 then
+                limit = math.huge
+            end
             local wanted: number = math.min(
                 TITLE_HEIGHT + layout.AbsoluteContentSize.Y + 4,
-                WINDOW_MAX_HEIGHT
+                limit
             )
             window.fullHeight = wanted
             if not window.collapsed then
@@ -203,6 +211,17 @@ function Module.init(context: any): any
         (row :: Frame).Size = UDim2.new(1, 0, 0, feature.collapsedHeight or 22)
         if record.resize then
             (record.resize :: () -> ())()
+        end
+    end
+
+    -- Re-clamp every category window after the Max height slider moves;
+    -- each record's own resize already knows how to read the live limit.
+    function ClickGui.RefreshHeights(): ()
+        for _, name: string in ipairs(ClickGui.order) do
+            local record: CategoryWindow = ClickGui.categories[name]
+            if record and record.resize then
+                (record.resize :: () -> ())()
+            end
         end
     end
 

@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "113f2d5493a56d74",
+    stamp = "5dd24eff7ad672a3",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -5847,7 +5847,7 @@ function Module.init(context: any): any
             Parent = PopupLayer,
             Name = "Window_" .. id,
             Active = true,
-            BackgroundTransparency = bare and 1 or 0.08,
+            BackgroundTransparency = bare and 1 or manager.bodyTransparency,
             BorderSizePixel = 0,
             ClipsDescendants = not bare,
             Position = UDim2.fromOffset(position.X, position.Y),
@@ -6027,6 +6027,20 @@ function Module.init(context: any): any
             window.root.Visible = visible and window.wasVisible == true
             if visible == false then
                 window.wasVisible = window.root.Visible
+            end
+        end
+    end
+
+    -- Wurst's ClickGUI Opacity setting: the body of every window at one
+    -- alpha. The title bar stays opaque — Wurst fades only the background.
+    -- Remembered on the manager so a window created after the slider moved
+    -- is born at the same alpha.
+    manager.bodyTransparency = 0.08
+    function manager.SetOpacity(alpha: number): ()
+        manager.bodyTransparency = math.clamp(1 - alpha, 0, 1)
+        for _, window: any in ipairs(manager.list) do
+            if window.headerHeight and window.headerHeight > 0 then
+                window.root.BackgroundTransparency = manager.bodyTransparency
             end
         end
     end
@@ -6247,9 +6261,17 @@ function Module.init(context: any): any
         -- limit and the body scrolls. A window padded out to a fixed height is
         -- how a category with two modules ends up looking broken.
         local function resize(): ()
+            -- Wurst's "Max height" setting, live: the UI Settings slider
+            -- publishes state.uiMaxHeight, and 0 means no limit, exactly as
+            -- Wurst's tooltip says. Until that slider has run once, the
+            -- window's own construction cap holds.
+            local limit: number = tonumber(state.uiMaxHeight) or WINDOW_MAX_HEIGHT
+            if limit <= 0 then
+                limit = math.huge
+            end
             local wanted: number = math.min(
                 TITLE_HEIGHT + layout.AbsoluteContentSize.Y + 4,
-                WINDOW_MAX_HEIGHT
+                limit
             )
             window.fullHeight = wanted
             if not window.collapsed then
@@ -6282,6 +6304,17 @@ function Module.init(context: any): any
         (row :: Frame).Size = UDim2.new(1, 0, 0, feature.collapsedHeight or 22)
         if record.resize then
             (record.resize :: () -> ())()
+        end
+    end
+
+    -- Re-clamp every category window after the Max height slider moves;
+    -- each record's own resize already knows how to read the live limit.
+    function ClickGui.RefreshHeights(): ()
+        for _, name: string in ipairs(ClickGui.order) do
+            local record: CategoryWindow = ClickGui.categories[name]
+            if record and record.resize then
+                (record.resize :: () -> ())()
+            end
         end
     end
 
@@ -7936,23 +7969,22 @@ return Module
 ]=====],
         ["src/library/SettingsPage.luau"] = [=====[--!strict
 --
--- Settings page.
+-- The configuration surface, replicated from Wurst.
 --
--- The Config. tab: interface scale and typeface, blur, animations, the toggle
--- key, re-inject and destruct, the detected game, and the mobile action size.
+-- Wurst configures itself through ClickGUI windows: a **UI Settings** window
+-- that carries four feature shortcuts (WurstLogo, HackList, Keybinds, Wurst
+-- Options) and the ClickGUI hack's own settings, and a closable settings
+-- window per feature behind each shortcut. This file builds exactly that,
+-- with Wurst's setting names, types and defaults — the parity gate reads the
+-- constants below against `docs/design/prototype/spec.json` and fails a
+-- drifted default, naming both sides.
 --
--- It lived in `ARandomMenu.luau` as one eight-hundred-line function, which is
--- how a shell stops being a shell. Nothing in it is shell logic — it is a page
--- of controls, exactly like a module's panel, and the only reason it was in
--- the main file is that it was written before there was anywhere else to put
--- it.
---
--- The page is built on demand: `SectionManager` calls `build` the first time
--- the Config. tab is opened, and everything below runs then, not at startup.
-
-export type SettingsPage = {
-    build: () -> (),
-}
+-- The page this file used to build — one scroll of text-scale, interface
+-- font, blur and mobile-launcher rows — was the old menu's Config. tab.
+-- Wurst has none of those, and the tab that hosted the page is already
+-- demolished; what was still functional in it (the menu key, reinject,
+-- destruct, the game check) lives on in the Wurst Options window, which is
+-- where Wurst keeps client management.
 
 local Module = {
     Name = "SettingsPage",
@@ -7961,7 +7993,35 @@ local Module = {
     Initialized = false,
 }
 
-function Module.init(context: any): SettingsPage
+local activeCleanup: (() -> ())? = nil
+
+-- The prototype's UI Settings window width; category windows stay at 160.
+local WINDOW_WIDTH: number = 214
+local ROW_HEIGHT: number = 22
+local WINDOW_GAP: number = 2
+
+function Module.init(context: any): any
+    -- Wurst's defaults, verbatim (docs/wurst-features.md). A value that is
+    -- not what a fresh Wurst install shows does not belong in this block.
+    -- Inside init because Color3 only exists once the shell's environment
+    -- is installed; the parity gate still reads the names.
+    local OPACITY: number = 0.5
+    local TOOLTIP_OPACITY: number = 0.75
+    local MAX_HEIGHT: number = 200
+    local MAX_SETTINGS_HEIGHT: number = 200
+    local CLICKGUI_BACKGROUND: Color3 = Color3.fromRGB(64, 64, 64)
+    local CLICKGUI_ACCENT: Color3 = Color3.fromRGB(16, 16, 16)
+    local CLICKGUI_TEXT: Color3 = Color3.fromRGB(240, 240, 240)
+    local HACKLIST_MODE: string = "Auto"
+    local HACKLIST_POSITION: string = "Left"
+    local HACKLIST_COLOR: Color3 = Color3.fromRGB(255, 255, 255)
+    local HACKLIST_SORT_BY: string = "Name"
+    local HACKLIST_REVERSE: boolean = false
+    local HACKLIST_ANIMATIONS: boolean = true
+    local WURSTLOGO_BACKGROUND: Color3 = Color3.fromRGB(255, 255, 255)
+    local WURSTLOGO_TEXT: Color3 = Color3.fromRGB(0, 0, 0)
+    local WURSTLOGO_VISIBILITY: string = "Always"
+
     local host: any = context
     local state: any = host.state
     local configData: any = host.configData
@@ -7969,646 +8029,660 @@ function Module.init(context: any): SettingsPage
     local create: any = host.create
     local makeButton: any = host.makeButton
     local makeTextBox: any = host.makeTextBox
-    local makeTextLabel: any = host.makeTextLabel
     local notify: any = host.notify
     local Theme: any = host.Theme
+    local ThemeEngine: any = host.ThemeEngine
     local CONTROL_FONT: any = host.CONTROL_FONT
-    local ScreenGui: any = host.ScreenGui
-    local TweenService: any = host.TweenService
     local UserInputService: any = host.UserInputService
-    local UI_RADIUS: any = host.UI_RADIUS
-    local UI_MOTION: any = host.UI_MOTION
-    local cornerRadius: any = host.cornerRadius
     local trackUiConnection: any = host.trackUiConnection
     local applyKeySlotStyle: any = host.applyKeySlotStyle
+    local beginKeyCapture: any = host.beginKeyCapture
     local setKeySlotCapture: any = host.setKeySlotCapture
     local GAME_CHECK: any = host.GAME_CHECK
-    -- The page frame the shell already created for this tab, and the helper
-    -- that files a row into the right column of a card grid. Both belong to
-    -- the shell's layout engine; the page only fills what it is given.
-    local SettingsPage: any = host.SettingsPage
-    local getFeatureCardParent: any = host.getFeatureCardParent
-    -- Where the runtime came from, so the page can show it and re-inject it.
+    local ScreenGui: any = host.ScreenGui
+    local allFeatures: {any} = host.allFeatures or {}
     local REPOSITORY_RAW_BASE: any = host.REPOSITORY_RAW_BASE
     local RUNTIME_SAFETY_SOURCE_URL: any = host.RUNTIME_SAFETY_SOURCE_URL
     local RUNTIME_COMPATIBILITY_MARKER: any = host.RUNTIME_COMPATIBILITY_MARKER
     local SOURCE_STAMP: any = host.SOURCE_STAMP
-    -- Text scale bounds, shared with the shell so the slider cannot offer a
-    -- size the rest of the interface refuses to render.
-    local TEXT_BASE_MULTIPLIER: any = host.TEXT_BASE_MULTIPLIER
-    local TEXT_SCALE_MINIMUM: any = host.TEXT_SCALE_MINIMUM
-    local TEXT_SCALE_MAXIMUM: any = host.TEXT_SCALE_MAXIMUM
-    -- Every label the shell has registered for scaling. The page owns the
-    -- slider, so it is the thing that walks the list when the scale changes.
-    local registeredText: any = host.registeredText
+    -- The option builders, under the names every module calls them with.
+    local addToggleOption: any = host.addToggleOption
+    local addNumberOption: any = host.addNumberOption
+    local addCycleOption: any = host.addCycleOption
+    local addColorOption: any = host.addColorOption
 
-    local function build(): ()
-        state.settingRows = {} :: {Frame}
-        local SettingsScroll = create("ScrollingFrame", {
-            Parent = SettingsPage,
-            Name = "SettingsScroll",
+    local windows: any = state.windows
+    if not windows then
+        error("SettingsPage requires the window manager")
+    end
+
+    local Settings: any = {
+        records = {} :: {any},
+        connections = {} :: {RBXScriptConnection},
+    }
+
+    local function viewport(): Vector2
+        local camera: Camera? = workspace.CurrentCamera
+        return camera and (camera :: Camera).ViewportSize or Vector2.new(1280, 720)
+    end
+
+    -- The live "Max settings height" value; 0 means no limit, as Wurst's
+    -- tooltip says. The UI Settings window itself obeys "Max height" through
+    -- state.uiMaxHeight, like every other ClickGUI window.
+    local maxSettingsHeight: number = MAX_SETTINGS_HEIGHT
+
+    -- One window of setting lines. `settingsSized` windows follow the "Max
+    -- settings height" slider; the UI Settings window follows "Max height".
+    local function configWindow(
+        id: string,
+        title: string,
+        definition: any
+    ): any
+        local window: any = windows.Create({
+            id = id,
+            title = title,
+            size = Vector2.new(WINDOW_WIDTH, 30),
+            position = definition.position,
+            closable = definition.closable ~= false,
+        })
+        local layout: UIListLayout = (create("UIListLayout", {
+            Parent = window.body,
+            Padding = UDim.new(0, WINDOW_GAP),
+            SortOrder = Enum.SortOrder.LayoutOrder,
+        }) :: any) :: UIListLayout
+        create("UIPadding", {
+            Parent = window.body,
+            PaddingTop = UDim.new(0, WINDOW_GAP),
+            PaddingBottom = UDim.new(0, WINDOW_GAP),
+            PaddingLeft = UDim.new(0, WINDOW_GAP),
+            PaddingRight = UDim.new(0, WINDOW_GAP),
+        })
+
+        local record: any = {window = window, layout = layout, open = false}
+        local function resize(): ()
+            local limit: number
+            if definition.settingsSized then
+                limit = maxSettingsHeight
+            else
+                limit = tonumber(state.uiMaxHeight) or MAX_HEIGHT
+            end
+            if limit <= 0 then
+                limit = math.huge
+            end
+            local wanted: number = math.min(
+                22 + layout.AbsoluteContentSize.Y + WINDOW_GAP * 2,
+                limit
+            )
+            window.fullHeight = wanted
+            if not window.collapsed then
+                window.root.Size = UDim2.fromOffset(WINDOW_WIDTH, wanted)
+            end
+        end
+        record.resize = resize
+        table.insert(
+            Settings.connections,
+            layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(resize)
+        )
+        resize()
+        table.insert(Settings.records, record)
+        return record
+    end
+
+    -- The adapter the option builders expect: they were written for a card's
+    -- expansion panel, and a configuration window is the same column of
+    -- lines with a window for a parent.
+    local function panelFor(record: any, configKey: string): any
+        local panel: any = {
+            options = record.window.body,
+            optionCount = 0,
+            optionRows = {},
+            configKey = configKey,
+            searchText = "",
+        }
+        panel.updateExpandedSize = function(): ()
+            record.resize()
+        end
+        return panel
+    end
+
+    -- A flat row that opens something: Wurst's feature buttons in UI
+    -- Settings, and the manager buttons everywhere else. No tween — nothing
+    -- in Wurst's ClickGUI animates a button.
+    local function actionRow(
+        record: any,
+        order: number,
+        labelText: string,
+        onClick: () -> ()
+    ): TextButton
+        local row: TextButton = (create("TextButton", {
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            Parent = record.window.body,
+            Name = "Row_" .. labelText:gsub("%W", ""),
             Active = true,
-            AutomaticCanvasSize = Enum.AutomaticSize.Y,
+            AutoButtonColor = false,
+            BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+            BackgroundTransparency = 0.5,
+            BorderSizePixel = 0,
+            FontFace = CONTROL_FONT,
+            LayoutOrder = order,
+            Size = UDim2.new(1, 0, 0, ROW_HEIGHT),
+            Text = "",
+            ZIndex = record.window.body.ZIndex + 1,
+        }) :: any) :: TextButton
+        create("TextLabel", {
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            Parent = row,
+            Name = "Label",
+            BackgroundTransparency = 1,
+            FontFace = CONTROL_FONT,
+            Position = UDim2.fromOffset(6, 0),
+            Size = UDim2.new(1, -20, 1, 0),
+            Text = labelText,
+            TextColor3 = Theme.text,
+            TextSize = 11.5,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            ZIndex = row.ZIndex + 1,
+        })
+        create("TextLabel", {
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            Parent = row,
+            Name = "Arrow",
+            AnchorPoint = Vector2.new(1, 0),
+            BackgroundTransparency = 1,
+            FontFace = CONTROL_FONT,
+            Position = UDim2.new(1, -6, 0, 0),
+            Size = UDim2.fromOffset(10, ROW_HEIGHT),
+            Text = "›",
+            TextColor3 = Theme.textMuted,
+            TextSize = 12,
+            ZIndex = row.ZIndex + 1,
+        })
+        trackUiConnection(row.MouseEnter:Connect(function(): ()
+            row.BackgroundTransparency = 0.3
+        end))
+        trackUiConnection(row.MouseLeave:Connect(function(): ()
+            row.BackgroundTransparency = 0.5
+        end))
+        trackUiConnection(row.MouseButton1Click:Connect(onClick))
+        record.resize()
+        return row
+    end
+
+    local function raiseOpen(record: any): ()
+        record.open = true
+        record.window:SetVisible(true)
+    end
+
+    -- ------------------------------------------------------------ WurstLogo
+    local logoRecord: any = nil
+    local function openWurstLogo(): ()
+        if logoRecord then
+            raiseOpen(logoRecord)
+            return
+        end
+        local screen: Vector2 = viewport()
+        logoRecord = configWindow("WurstLogo", "WurstLogo", {
+            position = Vector2.new(screen.X - WINDOW_WIDTH * 2 - 32, 120),
+            settingsSized = true,
+        })
+        local panel: any = panelFor(logoRecord, "WurstLogo")
+        addColorOption(panel, "Background", WURSTLOGO_BACKGROUND, function(color: Color3): ()
+            if state.wurstLogo then
+                state.wurstLogo.SetBackground(color)
+            end
+        end)
+        addColorOption(panel, "Text", WURSTLOGO_TEXT, function(color: Color3): ()
+            if state.wurstLogo then
+                state.wurstLogo.SetTextColor(color)
+            end
+        end)
+        local visibilityValues: {string} = {"Always", "Only when outdated"}
+        addCycleOption(
+            panel,
+            "Visibility",
+            visibilityValues,
+            table.find(visibilityValues, WURSTLOGO_VISIBILITY) or 1,
+            function(value: string): ()
+                if state.wurstLogo then
+                    state.wurstLogo.SetVisibility(value)
+                end
+            end
+        )
+        raiseOpen(logoRecord)
+    end
+
+    -- ------------------------------------------------------------- HackList
+    local hackListRecord: any = nil
+    local function openHackList(): ()
+        if hackListRecord then
+            raiseOpen(hackListRecord)
+            return
+        end
+        local screen: Vector2 = viewport()
+        hackListRecord = configWindow("HackList", "HackList", {
+            position = Vector2.new(screen.X - WINDOW_WIDTH * 2 - 32, 180),
+            settingsSized = true,
+        })
+        local panel: any = panelFor(hackListRecord, "HackList")
+        local modes: {string} = {"Auto", "Count", "Hidden"}
+        addCycleOption(
+            panel,
+            "Mode",
+            modes,
+            table.find(modes, HACKLIST_MODE) or 1,
+            function(value: string): ()
+                if state.hudList then
+                    state.hudList.SetMode(value)
+                end
+            end
+        )
+        local positions: {string} = {"Left", "Right"}
+        addCycleOption(
+            panel,
+            "Position",
+            positions,
+            table.find(positions, HACKLIST_POSITION) or 1,
+            function(value: string): ()
+                if state.hudList then
+                    state.hudList.SetPosition(value)
+                end
+            end
+        )
+        addColorOption(panel, "Color", HACKLIST_COLOR, function(color: Color3): ()
+            if state.hudList then
+                state.hudList.SetColor(color)
+            end
+        end)
+        local sorts: {string} = {"Name", "Width"}
+        addCycleOption(
+            panel,
+            "Sort by",
+            sorts,
+            table.find(sorts, HACKLIST_SORT_BY) or 1,
+            function(value: string): ()
+                if state.hudList then
+                    state.hudList.SetSortBy(value)
+                end
+            end
+        )
+        addToggleOption(panel, "Reverse sorting", HACKLIST_REVERSE, function(value: boolean): ()
+            if state.hudList then
+                state.hudList.SetReverse(value)
+            end
+        end)
+        addToggleOption(panel, "Animations", HACKLIST_ANIMATIONS, function(value: boolean): ()
+            if state.hudList then
+                state.hudList.SetAnimations(value)
+            end
+        end)
+        raiseOpen(hackListRecord)
+    end
+
+    -- ------------------------------------------------------------- Keybinds
+    -- Wurst's Keybind Manager: every bound key in one list, rebindable, a
+    -- Reset that restores the defaults (here: nothing bound, the menu key
+    -- untouched), and Profiles. Ours are the key slots the cards already
+    -- own — this window is one place to see and edit all of them.
+    local keybindsRecord: any = nil
+    local profilesRecord: any = nil
+    local keybindsList: Frame? = nil
+
+    local function featureLabel(bindingId: string): string
+        for _, feature: any in ipairs(allFeatures) do
+            if feature.configKey == bindingId then
+                return tostring(feature.name)
+            end
+        end
+        return bindingId
+    end
+
+    local function persistBindingKey(binding: any): ()
+        local optionKey: string = "Shortcut." .. tostring(binding.id):gsub("%W", "")
+        if binding.key == Enum.KeyCode.Unknown then
+            configData.values[optionKey] = nil
+        else
+            configData.values[optionKey] = binding.key.Name
+        end
+        queueConfigSave()
+    end
+
+    local rebuildKeybinds: () -> () = function(): () end
+
+    local function sortedBindings(): {any}
+        local list: {any} = {}
+        for _, binding: any in pairs(state.shortcutBindings) do
+            table.insert(list, binding)
+        end
+        table.sort(list, function(left: any, right: any): boolean
+            return featureLabel(tostring(left.id)) < featureLabel(tostring(right.id))
+        end)
+        return list
+    end
+
+    rebuildKeybinds = function(): ()
+        local container: Frame? = keybindsList
+        if not container then
+            return
+        end
+        for _, child: Instance in ipairs((container :: Frame):GetChildren()) do
+            if child:IsA("GuiObject") then
+                child:Destroy()
+            end
+        end
+
+        -- Two rows on one key is a fight the player cannot see anywhere
+        -- else; the manager paints both slots in the warning colour.
+        local keyUses: {[string]: number} = {}
+        for _, binding: any in pairs(state.shortcutBindings) do
+            if binding.key and binding.key ~= Enum.KeyCode.Unknown then
+                local name: string = binding.key.Name
+                keyUses[name] = (keyUses[name] or 0) + 1
+            end
+        end
+
+        local order: number = 0
+        local function keybindRow(labelText: string, slotText: string, conflicted: boolean, onSlot: (TextButton) -> ()): ()
+            order += 1
+            local row: Frame = (create("Frame", {
+                Parent = container,
+                Name = "Bind_" .. labelText:gsub("%W", ""),
+                BackgroundTransparency = 1,
+                BorderSizePixel = 0,
+                LayoutOrder = order,
+                Size = UDim2.new(1, 0, 0, ROW_HEIGHT),
+                ZIndex = (container :: Frame).ZIndex + 1,
+            }) :: any) :: Frame
+            create("TextLabel", {
+                TextTruncate = Enum.TextTruncate.AtEnd,
+                Parent = row,
+                Name = "Label",
+                BackgroundTransparency = 1,
+                FontFace = CONTROL_FONT,
+                Position = UDim2.fromOffset(6, 0),
+                Size = UDim2.new(1, -66, 1, 0),
+                Text = labelText,
+                TextColor3 = Theme.text,
+                TextSize = 11.5,
+                TextXAlignment = Enum.TextXAlignment.Left,
+                ZIndex = row.ZIndex + 1,
+            })
+            local slot: TextButton = (makeButton(row, slotText, 9) :: any) :: TextButton
+            slot.AnchorPoint = Vector2.new(1, 0.5)
+            slot.Position = UDim2.new(1, -6, 0.5, 0)
+            slot.Size = UDim2.fromOffset(52, 16)
+            slot.ZIndex = row.ZIndex + 1
+            applyKeySlotStyle(slot)
+            slot:SetAttribute("CaptureIdleText", slotText)
+            if conflicted then
+                slot.TextColor3 = Theme.negative
+            end
+            trackUiConnection(slot.MouseButton1Click:Connect(function(): ()
+                onSlot(slot)
+            end))
+        end
+
+        -- The menu key first: it is the one bind that can lock a player out,
+        -- which is exactly why Wurst's own description of WurstOptions
+        -- mentions restoring keybinds.
+        if not UserInputService.TouchEnabled then
+            keybindRow("Open menu", state.toggleKey.Name, false, function(slot: TextButton): ()
+                if state.keyCaptureCancel then
+                    state.keyCaptureCancel()
+                end
+                state.keybindButton = slot
+                state.waitingForKey = true
+                slot.Text = "..."
+                setKeySlotCapture(slot, true)
+            end)
+        end
+
+        for _, binding: any in ipairs(sortedBindings()) do
+            local bound: boolean = binding.key ~= nil
+                and binding.key ~= Enum.KeyCode.Unknown
+            local slotText: string = bound and binding.key.Name or ""
+            local conflicted: boolean = bound and (keyUses[binding.key.Name] or 0) > 1
+            keybindRow(featureLabel(tostring(binding.id)), slotText, conflicted, function(slot: TextButton): ()
+                beginKeyCapture(slot, function(keyCode: Enum.KeyCode): ()
+                    -- Pressing the bound key again clears it, the same
+                    -- gesture every card slot already understands.
+                    binding.key = keyCode == binding.key
+                        and Enum.KeyCode.Unknown
+                        or keyCode
+                    persistBindingKey(binding)
+                    if binding.refresh then
+                        binding.refresh()
+                    end
+                    rebuildKeybinds()
+                end)
+            end)
+        end
+
+        if keybindsRecord then
+            keybindsRecord.resize()
+        end
+    end
+
+    -- ------------------------------------------------------------- Profiles
+    -- Wurst's keybind profiles are .json files next to keybinds.json. Ours
+    -- live inside the same per-game profile store everything else already
+    -- persists in — a second file format for one window would be invention.
+    local function profileStore(): any
+        if type(configData.values.KeybindProfiles) ~= "table" then
+            configData.values.KeybindProfiles = {}
+        end
+        return configData.values.KeybindProfiles
+    end
+
+    local rebuildProfiles: () -> () = function(): () end
+    local profilesList: Frame? = nil
+
+    local function openProfiles(): ()
+        if profilesRecord then
+            raiseOpen(profilesRecord)
+            rebuildProfiles()
+            return
+        end
+        local screen: Vector2 = viewport()
+        profilesRecord = configWindow("KeybindProfiles", "Keybind Profiles", {
+            position = Vector2.new(screen.X - WINDOW_WIDTH * 2 - 32, 260),
+            settingsSized = true,
+        })
+
+        -- New profile: a name and a button, like Wurst's New Profile dialog.
+        local entryRow: Frame = (create("Frame", {
+            Parent = profilesRecord.window.body,
+            Name = "NewProfile",
             BackgroundTransparency = 1,
             BorderSizePixel = 0,
-            CanvasSize = UDim2.fromOffset(0, 0),
-            ScrollBarImageColor3 = Theme.outline,
-            ScrollBarThickness = 6,
-            ScrollingDirection = Enum.ScrollingDirection.Y,
-            Size = UDim2.fromScale(1, 1),
-        })
-        -- Setting rows are label + control across their full width, so this page is
-        -- never split into two narrow columns no matter how wide the shell gets.
-        SettingsScroll:SetAttribute("CardGridSingleColumn", true)
+            LayoutOrder = 1,
+            Size = UDim2.new(1, 0, 0, ROW_HEIGHT),
+            ZIndex = profilesRecord.window.body.ZIndex + 1,
+        }) :: any) :: Frame
+        local nameBox: TextBox = (makeTextBox(entryRow, "") :: any) :: TextBox
+        nameBox.PlaceholderText = "New profile name"
+        nameBox.Position = UDim2.fromOffset(0, 0)
+        nameBox.Size = UDim2.new(1, -54, 1, 0)
+        nameBox.TextSize = 11
+        nameBox.ZIndex = entryRow.ZIndex + 1
+        local saveButton: TextButton = (makeButton(entryRow, "SAVE", 9) :: any) :: TextButton
+        saveButton.AnchorPoint = Vector2.new(1, 0.5)
+        saveButton.Position = UDim2.new(1, 0, 0.5, 0)
+        saveButton.Size = UDim2.fromOffset(48, 18)
+        saveButton.ZIndex = entryRow.ZIndex + 1
 
-        create("UIPadding", {
-            Parent = SettingsScroll,
-            PaddingBottom = UDim.new(0, 18),
-            PaddingLeft = UDim.new(0, 18),
-            PaddingRight = UDim.new(0, 18),
-            PaddingTop = UDim.new(0, 18),
-        })
-
-        local _SettingsLayout = create("UIListLayout", {
-            Parent = SettingsScroll,
-            FillDirection = Enum.FillDirection.Vertical,
-            HorizontalAlignment = Enum.HorizontalAlignment.Center,
-            Padding = UDim.new(0, 10),
+        profilesList = (create("Frame", {
+            Parent = profilesRecord.window.body,
+            Name = "ProfileList",
+            AutomaticSize = Enum.AutomaticSize.Y,
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            LayoutOrder = 2,
+            Size = UDim2.new(1, 0, 0, 0),
+            ZIndex = profilesRecord.window.body.ZIndex + 1,
+        }) :: any) :: Frame
+        create("UIListLayout", {
+            Parent = profilesList,
+            Padding = UDim.new(0, WINDOW_GAP),
             SortOrder = Enum.SortOrder.LayoutOrder,
         })
 
-        -- Settings rows.
-        --
-        -- A row is one line: its name, vertically centred on the left, and its
-        -- control on the right. The explanatory second line every row used to carry
-        -- was removed — the names say what they do and the descriptions only made the
-        -- page twice as tall. `descriptionText` is still accepted so every existing
-        -- call site (and any game module) keeps working; it is simply not rendered.
-        local function createSettingRow(
-            titleText: string,
-            _descriptionText: string,
-            height: number?
-        ): (Frame, Frame)
-            local rowHeight: number = height or math.max(38, state.layout.cardHeight)
-            local row = create("Frame", {
-                Parent = getFeatureCardParent(SettingsScroll),
-                Name = "Setting_" .. titleText:gsub("%W", ""),
-                BackgroundColor3 = state.guiStyle == "Default"
-                    and Theme.surface
-                    or Theme.surface,
-                BackgroundTransparency = state.guiStyle == "Default" and 0.58 or 0,
-                BorderSizePixel = 0,
-                Size = UDim2.new(1, -2, 0, rowHeight),
-            })
-
-            local title = makeTextLabel(row, titleText, 12)
-            title.Name = "SettingTitle"
-            title.FontFace = CONTROL_FONT
-            title.AnchorPoint = Vector2.new(0, 0.5)
-            title.Position = UDim2.new(0, 14, 0.5, 0)
-            title.Size = UDim2.new(0.46, -14, 1, 0)
-            title.TextTruncate = Enum.TextTruncate.AtEnd
-            title.TextYAlignment = Enum.TextYAlignment.Center
-
-            local control = create("Frame", {
-                Parent = row,
-                Name = "SettingControl",
-                AnchorPoint = Vector2.new(0, 0.5),
-                BackgroundTransparency = 1,
-                BorderSizePixel = 0,
-                Position = UDim2.new(0.5, 6, 0.5, 0),
-                Size = UDim2.new(0.5, -18, 1, -12),
-            })
-
-            create("UICorner", {
-                Parent = row,
-                CornerRadius = cornerRadius(UI_RADIUS.card),
-            })
-            create("UIStroke", {
-                Parent = row,
-                Name = "SettingStroke",
-                Color = state.guiStyle == "Default"
-                    and Theme.outline
-                    or Theme.outline,
-                Transparency = state.guiStyle == "Default" and 0.82 or 0.28,
-                Thickness = 1,
-            })
-            table.insert(state.settingRows, row)
-            return (row :: any) :: Frame, (control :: any) :: Frame
-        end
-
-        -- Switch-free toggle rows.
-        --
-        -- Blur mode and Interface motion used to carry a switch control. They now
-        -- behave exactly like a module card: the whole row is the button, a click
-        -- flips it, and the state is read from the row itself (accent stripe, brighter
-        -- surface and an ON/OFF caption) instead of from a separate widget.
-        state.settingRowRepaint = setmetatable({}, {__mode = "k"}) :: any
-
-        local function makeToggleSettingRow(
-            row: Frame,
-            _control: Frame,
-            enabled: boolean,
-            onToggle: (boolean) -> ()
-        ): ()
-            row:SetAttribute("ToggleRow", true)
-            local title: TextLabel = row:FindFirstChild("SettingTitle") :: TextLabel
-            local stripe: Frame = create("Frame", {
-                Parent = row,
-                Name = "ActiveStripe",
-                AnchorPoint = Vector2.new(0, 0.5),
-                BackgroundColor3 = Theme.accent,
-                BackgroundTransparency = 1,
-                BorderSizePixel = 0,
-                Position = UDim2.new(0, 0, 0.5, 0),
-                Size = UDim2.new(0, 2, 1, -14),
-                ZIndex = 3,
-            }) :: Frame
-            create("UICorner", {Parent = stripe, CornerRadius = UDim.new(1, 0)})
-
-            local activation: TextButton = create("TextButton", {
-                TextTruncate = Enum.TextTruncate.AtEnd,
-                ClipsDescendants = true,
-                Parent = row,
-                Name = "ActivationTarget",
-                Active = true,
-                AutoButtonColor = false,
-                BackgroundTransparency = 1,
-                BorderSizePixel = 0,
-                Size = UDim2.fromScale(1, 1),
-                Text = "",
-                ZIndex = 4,
-            }) :: TextButton
-
-            local current: boolean = enabled
-            local function paint(): ()
-                -- Kept in sync from one place: clicks, restyles and external state
-                -- changes all end up here.
-                row.BackgroundColor3 = current
-                    and Theme.surfaceHover
-                    or Theme.surface
-                row.BackgroundTransparency = current and 0.42 or 0.58
-                stripe.BackgroundTransparency = current and 0 or 1
-                -- No ON/OFF caption: the accent stripe and the lit surface are the
-                -- state, exactly like a module card.
-                title.TextColor3 = current and Theme.text or Theme.textMuted
-            end
-            paint()
-            state.settingRowRepaint[row] = paint
-
-            trackUiConnection(activation.MouseButton1Click:Connect(function(): ()
-                current = not current
-                paint()
-                onToggle(current)
-            end))
-            trackUiConnection(row.MouseEnter:Connect(function(): ()
-                TweenService:Create(
-                    row,
-                    TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-                    {BackgroundTransparency = current and 0.34 or 0.46}
-                ):Play()
-            end))
-            trackUiConnection(row.MouseLeave:Connect(function(): ()
-                TweenService:Create(
-                    row,
-                    TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-                    {BackgroundTransparency = current and 0.42 or 0.58}
-                ):Play()
-            end))
-
-            -- No setter is returned. It used to hand one back "so an external
-            -- change could push the row back in sync", and for both rows that
-            -- used this the only consumer was a `state.` publication nothing
-            -- ever read: blur and motion are changed from these rows and
-            -- nowhere else. When something does change them elsewhere, this is
-            -- where the setter comes back.
-        end
-
-        state.restyleSettings = function(isDefault: boolean): ()
-            SettingsScroll.ScrollBarImageColor3 = isDefault
-                and Theme.outline
-                or Color3.fromRGB(100, 100, 100)
-            for _, row: Frame in ipairs(state.settingRows) do
-                -- Click-to-toggle rows paint their own surface from their state; a
-                -- restyle must not reset an enabled row back to the idle colour.
-                local repaint: any = row:GetAttribute("ToggleRow") == true
-                    and state.settingRowRepaint
-                    and state.settingRowRepaint[row]
-                if repaint then
-                    repaint()
-                else
-                    row.BackgroundColor3 = isDefault and Theme.surface or Theme.surface
-                    row.BackgroundTransparency = isDefault and 0.58 or 0
-                end
-                local rowStroke: UIStroke? = row:FindFirstChild("SettingStroke") :: UIStroke?
-                if rowStroke then
-                    rowStroke.Color = isDefault and Theme.outline or Theme.outline
-                    rowStroke.Transparency = isDefault and 0.82 or 0.28
-                end
-            end
-        end
-
-        local textRow, textControl = createSettingRow(
-            "Text size",
-            "Drag the linear control to scale every label"
-        )
-        textRow.LayoutOrder = 1
-        local textScaleRatio: number = (state.textScale - TEXT_SCALE_MINIMUM)
-            / (TEXT_SCALE_MAXIMUM - TEXT_SCALE_MINIMUM)
-        local TextSizeTrack: TextButton = create("TextButton", {
-            TextTruncate = Enum.TextTruncate.AtEnd,
-            ClipsDescendants = true,
-            Parent = textControl,
-            Name = "TextSizeTrack",
-            Active = true,
-            AutoButtonColor = false,
-            AnchorPoint = Vector2.new(0, 0.5),
-            BackgroundColor3 = state.guiStyle == "Default"
-                and Theme.buttonPressed
-                or Color3.fromRGB(45, 45, 49),
-            BorderSizePixel = 0,
-            Position = UDim2.new(0, 0, 0.5, 0),
-            Size = UDim2.new(1, -58, 0, 4),
-            Text = "",
-        }) :: TextButton
-        create("UICorner", {
-            Parent = TextSizeTrack,
-            CornerRadius = UDim.new(1, 0),
-        })
-        local TextSizeFill: Frame = create("Frame", {
-            Parent = TextSizeTrack,
-            Name = "Fill",
-            BackgroundColor3 = state.guiStyle == "Default"
-                and Theme.buttonHover
-                or Color3.fromRGB(238, 238, 242),
-            BorderSizePixel = 0,
-            Size = UDim2.fromScale(textScaleRatio, 1),
-        }) :: Frame
-        create("UICorner", {
-            Parent = TextSizeFill,
-            CornerRadius = UDim.new(1, 0),
-        })
-        local TextSizeKnob: Frame = create("Frame", {
-            Parent = TextSizeTrack,
-            Name = "Knob",
-            AnchorPoint = Vector2.new(0.5, 0.5),
-            BackgroundColor3 = state.guiStyle == "Default"
-                and Theme.text
-                or Color3.fromRGB(250, 250, 252),
-            BorderSizePixel = 0,
-            Position = UDim2.fromScale(textScaleRatio, 0.5),
-            Size = UDim2.fromOffset(14, 14),
-            ZIndex = TextSizeTrack.ZIndex + 2,
-        }) :: Frame
-        create("UICorner", {
-            Parent = TextSizeKnob,
-            CornerRadius = UDim.new(1, 0),
-        })
-        create("UIStroke", {
-            Parent = TextSizeKnob,
-            Color = Theme.outline,
-            Transparency = 0.55,
-            Thickness = 1,
-        })
-        local baseRestyleSettings: (boolean) -> () = state.restyleSettings
-        state.restyleSettings = function(isDefault: boolean): ()
-            baseRestyleSettings(isDefault)
-            TextSizeTrack.BackgroundColor3 = isDefault
-                and Theme.buttonPressed
-                or Color3.fromRGB(45, 45, 49)
-            TextSizeFill.BackgroundColor3 = isDefault
-                and Theme.buttonHover
-                or Color3.fromRGB(238, 238, 242)
-            TextSizeKnob.BackgroundColor3 = isDefault
-                and Theme.text
-                or Color3.fromRGB(250, 250, 252)
-        end
-        local TextSizeValue: TextLabel = makeTextLabel(
-            textControl,
-            tostring(math.round(state.textScale * 100)) .. "%",
-            11
-        ) :: TextLabel
-        TextSizeValue.AnchorPoint = Vector2.new(1, 0.5)
-        TextSizeValue.Position = UDim2.new(1, 0, 0.5, 0)
-        TextSizeValue.Size = UDim2.fromOffset(48, 22)
-        TextSizeValue.TextXAlignment = Enum.TextXAlignment.Right
-
-        -- Typeface picker.
-        --
-        -- Every face the client ships plus the three the repository carries, including
-        -- a Minecraft-shaped one. Picking here rebuilds the menu's three weights from
-        -- the chosen family and repaints every label already on screen.
-        local fontRow, fontControl = createSettingRow(
-            "Interface font",
-            "Choose the typeface the whole menu is drawn in"
-        )
-        fontRow.LayoutOrder = 2
-        local fontNames: {string} = state.listInterfaceFonts()
-        local currentFontName: string = tostring(
-            configData.values.interfaceFont or "Menu default"
-        )
-        local currentFontIndex: number = table.find(fontNames, currentFontName) or 1
-        local FontButton: TextButton = (create("TextButton", {
-            TextTruncate = Enum.TextTruncate.AtEnd,
-            ClipsDescendants = true,
-            Parent = fontControl,
-            Name = "FontChoice",
-            Active = true,
-            AutoButtonColor = false,
-            AnchorPoint = Vector2.new(1, 0.5),
-            BackgroundColor3 = Theme.button,
-            BackgroundTransparency = 0.25,
-            BorderSizePixel = 0,
-            FontFace = CONTROL_FONT,
-            Position = UDim2.new(1, 0, 0.5, 0),
-            Size = UDim2.new(1, -6, 0, 26),
-            Text = fontNames[currentFontIndex],
-            TextColor3 = Theme.text,
-            TextSize = 11,
-            TextXAlignment = Enum.TextXAlignment.Left,
-        }) :: any) :: TextButton
-        create("UICorner", {
-            Parent = FontButton,
-            CornerRadius = cornerRadius(UI_RADIUS.chip),
-        })
-        create("UIPadding", {
-            Parent = FontButton,
-            PaddingLeft = UDim.new(0, 10),
-            PaddingRight = UDim.new(0, 10),
-        })
-        trackUiConnection(FontButton.MouseButton1Click:Connect(function(): ()
-            state.openChoiceList(FontButton, fontNames, currentFontIndex, function(picked: number): ()
-                currentFontIndex = picked
-                FontButton.Text = fontNames[picked]
-                -- A repository font has to be downloaded before it can be applied, so
-                -- the switch happens off the input thread.
-                task.spawn(function(): ()
-                    state.applyInterfaceFont(fontNames[picked])
-                end)
-            end)
-        end))
-
-        local blurRow, blurControl = createSettingRow(
-            "Blur mode",
-            "Blur the game while the menu is visible"
-        )
-        blurRow.LayoutOrder = 3
-
-        -- No switch: the row is the button, exactly like a module card.
-        makeToggleSettingRow(
-            blurRow,
-            blurControl,
-            state.blurEnabled,
-            function(enabled: boolean): ()
-                state.blurEnabled = enabled
-                state.setBlurVisible(true)
-                configData.ui.blurEnabled = enabled
-                queueConfigSave()
-                notify(enabled and "Blur mode enabled" or "Blur mode disabled")
-            end
-        )
-
-        local motionRow, motionControl = createSettingRow(
-            "Interface motion",
-            "Smooth transitions for cards, tabs, and menu controls"
-        )
-        motionRow.LayoutOrder = 4
-        makeToggleSettingRow(
-            motionRow,
-            motionControl,
-            state.animationsEnabled,
-            function(enabled: boolean): ()
-                state.animationsEnabled = enabled
-                configData.ui.animationsEnabled = enabled
-                -- The hail is motion too, so it must follow this row immediately.
-                if state.refreshBlurDecoration then
-                    pcall(state.refreshBlurDecoration)
-                end
-                queueConfigSave()
-                notify(enabled and "Interface motion enabled" or "Interface motion disabled")
-            end
-        )
-
-        -- Menu key: keyboard-only. A touch client has no key to bind and reaches the
-        -- menu through its floating button, so the row is not built there at all.
-        local keyRow, keyControl = createSettingRow(
-            "Menu key",
-            "Choose the key used to show or hide"
-        )
-        keyRow.LayoutOrder = 5
-        keyRow.Visible = not UserInputService.TouchEnabled
-
-        local KeybindButton = makeButton(keyControl, state.toggleKey.Name, 13)
-        KeybindButton.Size = UDim2.fromScale(1, 1)
-        applyKeySlotStyle(KeybindButton)
-        state.keybindButton = KeybindButton
-
-        local reinjectRow, reinjectControl = createSettingRow(
-            "Reinject latest",
-            "Download and restart the newest main build"
-        )
-        reinjectRow.LayoutOrder = 5
-        local ReinjectButton: TextButton = makeButton(
-            reinjectControl,
-            "REINJECT LATEST",
-            12
-        )
-        ReinjectButton.Size = UDim2.fromScale(1, 1)
-
-        local destructRow, destructControl = createSettingRow(
-            "Destruct",
-            "Disable every function and completely remove the menu from this client"
-        )
-        destructRow.LayoutOrder = 6
-        local DestructButton: TextButton = makeButton(
-            destructControl,
-            "DESTRUCT",
-            12
-        )
-        DestructButton.Size = UDim2.fromScale(1, 1)
-
-        local gameRow, gameControl = createSettingRow(
-            "Game check",
-            "Only the matching game-specific module is loaded"
-        )
-        gameRow.LayoutOrder = 7
-        -- Shows *how* the game was recognised, which is what tells you a clone was
-        -- matched by its structure rather than by its PlaceId.
-        local gameStatus = makeTextLabel(
-            gameControl,
-            (GAME_CHECK.MM2Active and "MM2"
-                or GAME_CHECK.TRSActive and "TRS"
-                or GAME_CHECK.VDActive and "VD"
-                or GAME_CHECK.MVSDActive and "MVSD"
-                or GAME_CHECK.BedFightActive and "BedFight"
-                or "Universal only")
-                .. " · "
-                .. (GAME_CHECK.source == "PlaceId"
-                    and tostring(game.PlaceId)
-                    or GAME_CHECK.source),
-            12
-        )
-        gameStatus.TextXAlignment = Enum.TextXAlignment.Center
-        gameStatus.Size = UDim2.fromScale(1, 1)
-
-        -- Mobile action size.
-        --
-        -- The only mobile row left. "Mobile menu icon" always said ON - REQUIRED and
-        -- could not be changed, and "Mobile action buttons" only offered a reset that
-        -- holding a button already does, so both were noise. The size is a real value
-        -- now instead of a four-step preset cycle: type it, or drag the slider.
-        local mobileSizeRow, mobileSizeControl = createSettingRow(
-            "Mobile action size",
-            "Exact pixel size for placed mobile shortcuts"
-        )
-        mobileSizeRow.LayoutOrder = 8
-        mobileSizeRow.Visible = UserInputService.TouchEnabled
-
-        local MobileSizeTrack: TextButton = create("TextButton", {
-            TextTruncate = Enum.TextTruncate.AtEnd,
-            ClipsDescendants = true,
-            Parent = mobileSizeControl,
-            Name = "MobileSizeTrack",
-            Active = true,
-            AutoButtonColor = false,
-            AnchorPoint = Vector2.new(0, 0.5),
-            BackgroundColor3 = Theme.buttonPressed,
-            BorderSizePixel = 0,
-            Position = UDim2.new(0, 0, 0.5, 0),
-            Size = UDim2.new(1, -62, 0, 4),
-            Text = "",
-        }) :: TextButton
-        create("UICorner", {Parent = MobileSizeTrack, CornerRadius = UDim.new(1, 0)})
-        local MobileSizeFill: Frame = create("Frame", {
-            Parent = MobileSizeTrack,
-            Name = "Fill",
-            BackgroundColor3 = Theme.buttonHover,
-            BorderSizePixel = 0,
-            Size = UDim2.fromScale(0, 1),
-        }) :: Frame
-        create("UICorner", {Parent = MobileSizeFill, CornerRadius = UDim.new(1, 0)})
-        local MobileSizeKnob: Frame = create("Frame", {
-            Parent = MobileSizeTrack,
-            Name = "Knob",
-            AnchorPoint = Vector2.new(0.5, 0.5),
-            BackgroundColor3 = Theme.text,
-            BorderSizePixel = 0,
-            Position = UDim2.fromScale(0, 0.5),
-            Size = UDim2.fromOffset(14, 14),
-            ZIndex = 3,
-        }) :: Frame
-        create("UICorner", {Parent = MobileSizeKnob, CornerRadius = UDim.new(1, 0)})
-        local MobileSizeInput: TextBox = makeTextBox(
-            mobileSizeControl,
-            tostring(state.mobileButtonSize)
-        )
-        MobileSizeInput.Name = "MobileSizeValue"
-        MobileSizeInput.AnchorPoint = Vector2.new(1, 0.5)
-        MobileSizeInput.Position = UDim2.new(1, 0, 0.5, 0)
-        MobileSizeInput.Size = UDim2.fromOffset(54, 24)
-        MobileSizeInput.PlaceholderText = "px"
-
-        -- Contribute the Settings/overlay-specific side effects to the shared
-        -- visibility controller instead of replacing it. `state.setMenuVisible` stays
-        -- the single entry point and always updates the blur, even if this builder
-        -- never runs.
-        state.addMenuVisibilityListener(function(visible: boolean): ()
-            -- `FloatingUi` is a local of the floating-UI block, so referring to it by
-            -- name from this builder resolved to a nil global and the whole listener
-            -- threw (silently: visibility listeners are pcall'd). The published
-            -- registry is the one that is actually in scope here.
-            local floating: any = state.floatingUi
-            if type(floating) ~= "table" then
+        rebuildProfiles = function(): ()
+            local container: Frame? = profilesList
+            if not container then
                 return
             end
-            local textOverlay: any = floating.overlays and floating.overlays.TextGUI
-            if textOverlay and textOverlay.window and textOverlay.window.root then
-                textOverlay.window.root.Active = visible
-            end
-            if visible then
-                return
-            end
-            -- The per-overlay settings windows are closed with the menu. They used to
-            -- be listed here by name, but those names are locals of the floating-UI
-            -- block: from here they resolved to nil globals, so the list was empty and
-            -- the windows stayed on screen. The live registry is authoritative.
-            local settingsWindows: any = floating.settingsWindows
-            if type(settingsWindows) ~= "table" then
-                return
-            end
-            for _, settingsWindow: any in pairs(settingsWindows) do
-                if settingsWindow and settingsWindow.root then
-                    settingsWindow.root.Visible = false
+            for _, child: Instance in ipairs((container :: Frame):GetChildren()) do
+                if child:IsA("GuiObject") then
+                    child:Destroy()
                 end
             end
-        end)
-
-        local function updateTextSizes(): ()
-            for _, item in ipairs(registeredText) do
-                if item.object and item.object.Parent then
-                    item.object.TextSize = state.fitTextSize(
-                        item.object,
-                        math.round(
-                            item.normalSize * TEXT_BASE_MULTIPLIER * state.textScale
-                        )
-                    )
-                end
+            local names: {string} = {}
+            for name: string in pairs(profileStore()) do
+                table.insert(names, name)
+            end
+            table.sort(names)
+            for index: number, name: string in ipairs(names) do
+                local row: Frame = (create("Frame", {
+                    Parent = container,
+                    Name = "Profile_" .. name:gsub("%W", ""),
+                    BackgroundTransparency = 1,
+                    BorderSizePixel = 0,
+                    LayoutOrder = index,
+                    Size = UDim2.new(1, 0, 0, ROW_HEIGHT),
+                    ZIndex = (container :: Frame).ZIndex + 1,
+                }) :: any) :: Frame
+                create("TextLabel", {
+                    TextTruncate = Enum.TextTruncate.AtEnd,
+                    Parent = row,
+                    Name = "Label",
+                    BackgroundTransparency = 1,
+                    FontFace = CONTROL_FONT,
+                    Position = UDim2.fromOffset(6, 0),
+                    Size = UDim2.new(1, -60, 1, 0),
+                    Text = name,
+                    TextColor3 = Theme.text,
+                    TextSize = 11.5,
+                    TextXAlignment = Enum.TextXAlignment.Left,
+                    ZIndex = row.ZIndex + 1,
+                })
+                local loadButton: TextButton = (makeButton(row, "LOAD", 9) :: any) :: TextButton
+                loadButton.AnchorPoint = Vector2.new(1, 0.5)
+                loadButton.Position = UDim2.new(1, -6, 0.5, 0)
+                loadButton.Size = UDim2.fromOffset(48, 16)
+                loadButton.ZIndex = row.ZIndex + 1
+                trackUiConnection(loadButton.MouseButton1Click:Connect(function(): ()
+                    local snapshot: any = profileStore()[name]
+                    if type(snapshot) ~= "table" then
+                        return
+                    end
+                    for _, binding: any in pairs(state.shortcutBindings) do
+                        local savedName: any = snapshot[tostring(binding.id)]
+                        local savedKey: Enum.KeyCode? = nil
+                        if type(savedName) == "string" and savedName ~= "" then
+                            savedKey = (Enum.KeyCode :: any)[savedName]
+                        end
+                        binding.key = savedKey or Enum.KeyCode.Unknown
+                        persistBindingKey(binding)
+                        if binding.refresh then
+                            binding.refresh()
+                        end
+                    end
+                    rebuildKeybinds()
+                    notify("Keybind profile loaded: " .. name)
+                end))
+            end
+            if profilesRecord then
+                profilesRecord.resize()
             end
         end
-        -- One pass once the shell has been laid out: every label sized in scale has a
-        -- real AbsoluteSize by then, so this is where those get their cap applied. A
-        -- viewport change resizes boxes, so the cap is re-applied then too.
-        state.onLayout(function(): ()
-            updateTextSizes()
-        end)
-        task.defer(updateTextSizes)
 
-        local textSizeDragInput: InputObject? = nil
-        local function setTextScaleFromX(pointerX: number): ()
-            local width: number = math.max(1, TextSizeTrack.AbsoluteSize.X)
-            local ratio: number = math.clamp(
-                (pointerX - TextSizeTrack.AbsolutePosition.X) / width,
-                0,
-                1
-            )
-            state.textScale = math.round((
-                TEXT_SCALE_MINIMUM
-                    + ratio * (TEXT_SCALE_MAXIMUM - TEXT_SCALE_MINIMUM)
-            ) * 100) / 100
-            TextSizeFill.Size = UDim2.fromScale(ratio, 1)
-            TextSizeKnob.Position = UDim2.fromScale(ratio, 0.5)
-            TextSizeValue.Text = tostring(math.round(state.textScale * 100)) .. "%"
-            updateTextSizes()
-            configData.ui.largeText = nil
-            configData.ui.textScale = state.textScale
-            configData.ui.textScaleCalibrationVersion = 2
+        trackUiConnection(saveButton.MouseButton1Click:Connect(function(): ()
+            local name: string = nameBox.Text:gsub("^%s+", ""):gsub("%s+$", "")
+            if name == "" then
+                notify("Keybind profile: enter a name first")
+                return
+            end
+            local snapshot: {[string]: string} = {}
+            for _, binding: any in pairs(state.shortcutBindings) do
+                if binding.key ~= Enum.KeyCode.Unknown then
+                    snapshot[tostring(binding.id)] = binding.key.Name
+                end
+            end
+            profileStore()[name] = snapshot
             queueConfigSave()
+            nameBox.Text = ""
+            rebuildProfiles()
+            notify("Keybind profile saved: " .. name)
+        end))
+
+        rebuildProfiles()
+        raiseOpen(profilesRecord)
+    end
+
+    local function openKeybinds(): ()
+        if keybindsRecord then
+            raiseOpen(keybindsRecord)
+            rebuildKeybinds()
+            return
         end
-        trackUiConnection(TextSizeTrack.InputBegan:Connect(function(input: InputObject): ()
-            if input.UserInputType == Enum.UserInputType.MouseButton1
-                or input.UserInputType == Enum.UserInputType.Touch then
-                textSizeDragInput = input
-                setTextScaleFromX(input.Position.X)
+        local screen: Vector2 = viewport()
+        keybindsRecord = configWindow("Keybinds", "Keybinds", {
+            position = Vector2.new(screen.X - WINDOW_WIDTH * 2 - 32, 140),
+            settingsSized = true,
+        })
+        keybindsList = (create("Frame", {
+            Parent = keybindsRecord.window.body,
+            Name = "KeybindList",
+            AutomaticSize = Enum.AutomaticSize.Y,
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            LayoutOrder = 1,
+            Size = UDim2.new(1, 0, 0, 0),
+            ZIndex = keybindsRecord.window.body.ZIndex + 1,
+        }) :: any) :: Frame
+        create("UIListLayout", {
+            Parent = keybindsList,
+            Padding = UDim.new(0, WINDOW_GAP),
+            SortOrder = Enum.SortOrder.LayoutOrder,
+        })
+        actionRow(keybindsRecord, 100, "Reset keybinds", function(): ()
+            for _, binding: any in pairs(state.shortcutBindings) do
+                binding.key = Enum.KeyCode.Unknown
+                persistBindingKey(binding)
+                if binding.refresh then
+                    binding.refresh()
+                end
             end
-        end))
-        trackUiConnection(UserInputService.InputChanged:Connect(function(input: InputObject): ()
-            if textSizeDragInput == nil then
-                return
-            end
-            if input == textSizeDragInput
-                or input.UserInputType == Enum.UserInputType.MouseMovement then
-                setTextScaleFromX(input.Position.X)
-            end
-        end))
-        trackUiConnection(UserInputService.InputEnded:Connect(function(input: InputObject): ()
-            if input == textSizeDragInput
-                or input.UserInputType == Enum.UserInputType.MouseButton1 then
-                textSizeDragInput = nil
-            end
-        end))
+            rebuildKeybinds()
+            notify("Keybinds reset — profiles are untouched, as in Wurst")
+        end)
+        actionRow(keybindsRecord, 101, "Profiles…", openProfiles)
+        rebuildKeybinds()
+        raiseOpen(keybindsRecord)
+    end
+
+    -- -------------------------------------------------------- Wurst Options
+    -- Wurst's client-management screen. What survives from the old Config.
+    -- page lands here because it is management, not decoration: the reinject
+    -- and destruct actions and the game check readout.
+    local optionsRecord: any = nil
+    local function openWurstOptions(): ()
+        if optionsRecord then
+            raiseOpen(optionsRecord)
+            return
+        end
+        local screen: Vector2 = viewport()
+        optionsRecord = configWindow("WurstOptions", "Wurst Options", {
+            position = Vector2.new(screen.X - WINDOW_WIDTH * 2 - 32, 220),
+            settingsSized = true,
+        })
+
+        actionRow(optionsRecord, 1, "Keybinds", openKeybinds)
 
         local reinjectBusy: boolean = false
-        trackUiConnection(ReinjectButton.MouseButton1Click:Connect(function(): ()
+        local reinjectRow: TextButton = actionRow(optionsRecord, 2, "Reinject latest", function(): () end)
+        local reinjectLabel: TextLabel = reinjectRow:FindFirstChild("Label") :: TextLabel
+        trackUiConnection(reinjectRow.MouseButton1Click:Connect(function(): ()
             if reinjectBusy then
                 return
             end
@@ -8618,8 +8692,7 @@ function Module.init(context: any): SettingsPage
                 return
             end
             reinjectBusy = true
-            ReinjectButton:SetAttribute("Disabled", true)
-            ReinjectButton.Text = "DOWNLOADING…"
+            reinjectLabel.Text = "Downloading…"
             local sourceUrls: {string} = {
                 REPOSITORY_RAW_BASE .. "ARandomMenu.luau",
                 RUNTIME_SAFETY_SOURCE_URL,
@@ -8647,10 +8720,9 @@ function Module.init(context: any): SettingsPage
             end
             if not downloaded then
                 reinjectBusy = false
-                ReinjectButton:SetAttribute("Disabled", false)
-                ReinjectButton.Text = "REINJECT LATEST"
+                reinjectLabel.Text = "Reinject latest"
                 notify("Could not download the latest build")
-                warn("[Random Testing Menu] Reinject download: "
+                warn("[Wurst] Reinject download: "
                     .. table.concat(downloadFailures, " | "))
                 return
             end
@@ -8669,13 +8741,12 @@ function Module.init(context: any): SettingsPage
             end
             if type(compiled) ~= "function" then
                 reinjectBusy = false
-                ReinjectButton:SetAttribute("Disabled", false)
-                ReinjectButton.Text = "REINJECT LATEST"
+                reinjectLabel.Text = "Reinject latest"
                 notify("The downloaded build could not be compiled")
-                warn("[Random Testing Menu] Reinject compile: " .. tostring(compileError))
+                warn("[Wurst] Reinject compile: " .. tostring(compileError))
                 return
             end
-            ReinjectButton.Text = "RESTARTING…"
+            reinjectLabel.Text = "Restarting…"
             task.defer(function(): ()
                 local executed: boolean, executionError: any = xpcall(
                     compiled,
@@ -8683,24 +8754,24 @@ function Module.init(context: any): SettingsPage
                 )
                 if not executed then
                     reinjectBusy = false
-                    if ReinjectButton.Parent then
-                        ReinjectButton:SetAttribute("Disabled", false)
-                        ReinjectButton.Text = "REINJECT LATEST"
+                    if reinjectLabel.Parent then
+                        reinjectLabel.Text = "Reinject latest"
                     end
-                    warn("[Random Testing Menu] Reinject runtime: " .. tostring(executionError))
+                    warn("[Wurst] Reinject runtime: " .. tostring(executionError))
                 end
             end)
         end))
 
-        trackUiConnection(DestructButton.MouseButton1Click:Connect(function(): ()
-            DestructButton:SetAttribute("Disabled", true)
-            DestructButton.Text = "REMOVING…"
+        local destructRow: TextButton = actionRow(optionsRecord, 3, "Destruct", function(): () end)
+        local destructLabel: TextLabel = destructRow:FindFirstChild("Label") :: TextLabel
+        trackUiConnection(destructRow.MouseButton1Click:Connect(function(): ()
+            destructLabel.Text = "Removing…"
             task.defer(function(): ()
                 local destruct: any = state.destruct
                 if type(destruct) ~= "function" then
-                    -- The teardown routine is defined at the very end of bootstrap;
-                    -- if it is somehow missing, remove the interface anyway instead
-                    -- of leaving the button stuck on "REMOVING…".
+                    -- The teardown routine is defined at the very end of
+                    -- bootstrap; if it is somehow missing, remove the
+                    -- interface anyway instead of a label stuck mid-word.
                     pcall(function(): ()
                         ScreenGui:Destroy()
                     end)
@@ -8708,7 +8779,7 @@ function Module.init(context: any): SettingsPage
                 end
                 local ok: boolean, failure: any = pcall(destruct)
                 if not ok then
-                    warn("[Random Testing Menu] Destruct: " .. tostring(failure))
+                    warn("[Wurst] Destruct: " .. tostring(failure))
                     pcall(function(): ()
                         ScreenGui:Destroy()
                     end)
@@ -8716,125 +8787,156 @@ function Module.init(context: any): SettingsPage
             end)
         end))
 
-        -- Mobile action size: exact value, from the field or the slider.
-        do
-        local MOBILE_SIZE_MINIMUM: number = 28
-        local MOBILE_SIZE_MAXIMUM: number = 120
-
-        local function applyMobileButtonSize(requested: number, persist: boolean): ()
-            local size: number = math.clamp(
-                math.round(requested),
-                MOBILE_SIZE_MINIMUM,
-                MOBILE_SIZE_MAXIMUM
-            )
-            state.mobileButtonSize = size
-            configData.ui.mobileButtonSize = size
-
-            local ratio: number = (size - MOBILE_SIZE_MINIMUM)
-                / (MOBILE_SIZE_MAXIMUM - MOBILE_SIZE_MINIMUM)
-            MobileSizeFill.Size = UDim2.fromScale(ratio, 1)
-            MobileSizeKnob.Position = UDim2.fromScale(ratio, 0.5)
-            if not MobileSizeInput:IsFocused() then
-                MobileSizeInput.Text = tostring(size)
-            end
-
-            -- Every placed button follows immediately, and is pulled back on screen
-            -- if the new size pushed it past an edge.
-            -- `any` rather than the record type: that type belongs to
-            -- src/library/MobileActions.luau, and a downloaded file cannot
-            -- require another one. Naming it here annotated nothing.
-            for _, record: any in pairs(state.mobileUi.actions) do
-                record.button.Size = UDim2.fromOffset(size, size)
-                local clamped: Vector2 = state.mobileUi.clampButtonPosition(
-                    Vector2.new(
-                        record.button.Position.X.Offset,
-                        record.button.Position.Y.Offset
-                    ),
-                    size
-                )
-                record.button.Position = UDim2.fromOffset(clamped.X, clamped.Y)
-                state.mobileUi.saveActionPosition(record)
-            end
-            if persist then
-                queueConfigSave()
-            end
-        end
-
-        local function sizeFromPointer(pointerX: number): number
-            local width: number = math.max(1, MobileSizeTrack.AbsoluteSize.X)
-            local alpha: number = math.clamp(
-                (pointerX - MobileSizeTrack.AbsolutePosition.X) / width,
-                0,
-                1
-            )
-            return MOBILE_SIZE_MINIMUM
-                + alpha * (MOBILE_SIZE_MAXIMUM - MOBILE_SIZE_MINIMUM)
-        end
-
-        local mobileSizeDrag: InputObject? = nil
-        trackUiConnection(MobileSizeTrack.InputBegan:Connect(function(
-            input: InputObject
-        ): ()
-            if input.UserInputType ~= Enum.UserInputType.MouseButton1
-                and input.UserInputType ~= Enum.UserInputType.Touch then
-                return
-            end
-            mobileSizeDrag = input
-            applyMobileButtonSize(sizeFromPointer(input.Position.X), false)
-        end))
-        trackUiConnection(UserInputService.InputChanged:Connect(function(
-            input: InputObject
-        ): ()
-            if mobileSizeDrag
-                and (input.UserInputType == Enum.UserInputType.MouseMovement
-                    or input.UserInputType == Enum.UserInputType.Touch) then
-                applyMobileButtonSize(sizeFromPointer(input.Position.X), false)
-            end
-        end))
-        trackUiConnection(UserInputService.InputEnded:Connect(function(
-            input: InputObject
-        ): ()
-            if mobileSizeDrag
-                and (input.UserInputType == Enum.UserInputType.MouseButton1
-                    or input.UserInputType == Enum.UserInputType.Touch) then
-                mobileSizeDrag = nil
-                applyMobileButtonSize(state.mobileButtonSize, true)
-            end
-        end))
-
-        trackUiConnection(MobileSizeInput.FocusLost:Connect(function(): ()
-            local parsed: number? = tonumber(MobileSizeInput.Text)
-            if parsed == nil then
-                MobileSizeInput.Text = tostring(state.mobileButtonSize)
-                notify("Mobile action size: enter a number of pixels.")
-                return
-            end
-            applyMobileButtonSize(parsed, true)
-            notify("Mobile action size: " .. tostring(state.mobileButtonSize) .. " px")
-        end))
-
-        applyMobileButtonSize(state.mobileButtonSize, false)
-        end
-
-        trackUiConnection(KeybindButton.MouseButton1Click:Connect(function(): ()
-            if state.keyCaptureCancel then
-                state.keyCaptureCancel()
-            end
-            state.waitingForKey = true
-            KeybindButton.Text = "PRESS A KEY…"
-            setKeySlotCapture(KeybindButton, true)
-        end))
-
+        -- The game check readout: *how* the game was recognised, which is
+        -- what tells you a clone was matched by structure, not PlaceId.
+        local recognised: string = GAME_CHECK.MM2Active and "MM2"
+            or GAME_CHECK.TRSActive and "TRS"
+            or GAME_CHECK.VDActive and "VD"
+            or GAME_CHECK.BedFightActive and "BedFight"
+            or GAME_CHECK.MVSDActive and "MVSD"
+            or "Universal only"
+        create("TextLabel", {
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            Parent = optionsRecord.window.body,
+            Name = "GameCheck",
+            BackgroundTransparency = 1,
+            FontFace = CONTROL_FONT,
+            LayoutOrder = 4,
+            Size = UDim2.new(1, 0, 0, ROW_HEIGHT),
+            Text = "  Game check: " .. recognised,
+            TextColor3 = Theme.textMuted,
+            TextSize = 11,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            ZIndex = optionsRecord.window.body.ZIndex + 1,
+        })
+        optionsRecord.resize()
+        raiseOpen(optionsRecord)
     end
 
-    state.buildSettingsPage = build
+    -- ---------------------------------------------------------- UI Settings
+    -- Built eagerly: in Wurst this window sits in the ClickGUI grid like any
+    -- category window, and building it is also what applies the stored (or
+    -- default) opacity, tooltip opacity and heights at boot.
+    local screen: Vector2 = viewport()
+    local uiRecord: any = configWindow("UISettings", "UI Settings", {
+        position = Vector2.new(screen.X - WINDOW_WIDTH - 12, 96),
+        closable = false,
+        settingsSized = false,
+    })
+    uiRecord.open = true
+
+    actionRow(uiRecord, 1, "WurstLogo", openWurstLogo)
+    actionRow(uiRecord, 2, "HackList", openHackList)
+    actionRow(uiRecord, 3, "Keybinds", openKeybinds)
+    actionRow(uiRecord, 4, "WurstOptions", openWurstOptions)
+
+    local uiPanel: any = panelFor(uiRecord, "ClickGUI")
+    -- The four shortcuts above hold LayoutOrder 1–4; starting the option
+    -- counter past them keeps Wurst's order (buttons first, then settings).
+    uiPanel.optionCount = 4
+
+    -- The window's current values, published so anything that wants to read
+    -- the defaults does not have to walk rows — the parity suite does.
+    local uiSettingsValues: {[string]: any} = {}
+    state.uiSettings = uiSettingsValues
+
+    for _, row: any in ipairs({
+        {label = "Background", default = CLICKGUI_BACKGROUND, tokens = {"surface", "background"}},
+        {label = "Accent", default = CLICKGUI_ACCENT, tokens = {"accent", "outline"}},
+        {label = "Text", default = CLICKGUI_TEXT, tokens = {"text", "accentText"}},
+    }) do
+        local tokens: {string} = row.tokens
+        local labelText: string = row.label
+        addColorOption(uiPanel, labelText, row.default, function(color: Color3): ()
+            uiSettingsValues[labelText] = color
+            -- Wurst's Background paints window bodies, Accent paints title
+            -- bars *and* borders, Text paints every label — and in the Wurst
+            -- preset each pair already shares one value, so this mapping is
+            -- exact at boot.
+            if ThemeEngine and type(ThemeEngine.Set) == "function" then
+                for _, token: string in ipairs(tokens) do
+                    ThemeEngine.Set(token, color)
+                end
+            end
+        end)
+    end
+
+    addNumberOption(uiPanel, "Opacity", OPACITY, 0.15, 0.85, function(value: number): ()
+        uiSettingsValues["Opacity"] = value
+        windows.SetOpacity(value)
+    end)
+    addNumberOption(uiPanel, "Tooltip opacity", TOOLTIP_OPACITY, 0.15, 1, function(value: number): ()
+        uiSettingsValues["Tooltip opacity"] = value
+        if state.featureTooltip then
+            state.featureTooltip.BackgroundTransparency = 1 - value
+        end
+    end)
+    addNumberOption(uiPanel, "Max height", MAX_HEIGHT, 0, 1000, function(value: number): ()
+        uiSettingsValues["Max height"] = value
+        state.uiMaxHeight = value
+        if state.clickGui and state.clickGui.RefreshHeights then
+            state.clickGui.RefreshHeights()
+        end
+        uiRecord.resize()
+    end)
+    addNumberOption(uiPanel, "Max settings height", MAX_SETTINGS_HEIGHT, 0, 1000, function(value: number): ()
+        uiSettingsValues["Max settings height"] = value
+        maxSettingsHeight = value
+        for _, record: any in ipairs(Settings.records) do
+            record.resize()
+        end
+    end)
+
+    -- The configuration windows follow the GUI the way category windows do,
+    -- except the pinned ones, which is the whole point of pinning.
+    state.addMenuVisibilityListener(function(visible: boolean): ()
+        for _, record: any in ipairs(Settings.records) do
+            if not visible and record.window.pinned then
+                continue
+            end
+            if visible then
+                record.window:SetVisible(record.open)
+            else
+                record.open = record.window.root.Visible
+                record.window:SetVisible(false)
+            end
+        end
+    end)
+    for _, record: any in ipairs(Settings.records) do
+        record.window:SetVisible(state.visible == true and record.open)
+    end
+
+    Settings.ui = uiRecord
+    Settings.openKeybinds = openKeybinds
+    Settings.openProfiles = openProfiles
+    Settings.openWurstLogo = openWurstLogo
+    Settings.openHackList = openHackList
+    Settings.openWurstOptions = openWurstOptions
+
+    activeCleanup = function(): ()
+        for _, record: any in ipairs(Settings.records) do
+            pcall(function(): ()
+                record.window:Destroy()
+            end)
+        end
+        Settings.records = {}
+        for _, connection: RBXScriptConnection in ipairs(Settings.connections) do
+            pcall(function(): ()
+                connection:Disconnect()
+            end)
+        end
+        Settings.connections = {}
+        state.uiSettings = nil
+    end
     Module.Initialized = true
-    return {build = build}
+    return Settings
 end
 
--- Nothing to tear down: every connection the page makes goes through the
--- shell's own `trackUiConnection`, which the shell releases with the window.
 function Module.destroy(): ()
+    if activeCleanup then
+        pcall(activeCleanup)
+    end
+    activeCleanup = nil
     Module.Initialized = false
 end
 
@@ -9423,19 +9525,23 @@ local LOGO_WIDTH: number = 87
 local STATS_FONT_SIZE: number = 11
 local STATS_LINE_HEIGHT: number = 17
 
--- Wurst's HackList defaults (docs/wurst-features.md). Mode, sort order and
--- animations are behaviour this file implements; the enums keep Wurst's
--- values so the settings window that later exposes them starts from parity.
--- Position is the one place the port deviates on purpose: Wurst hangs the
--- list under its logo on the left, our prototype gives that corner to the
--- wordmark and the stats and sends the list to the right edge.
+-- Wurst's HackList defaults (docs/wurst-features.md). Everything here is a
+-- live setting once the HackList settings window has been opened; these are
+-- the values a fresh install shows, and they are Wurst's own — including
+-- Position = Left, under the logo, exactly where Wurst hangs the list.
+local HACKLIST_MODE: string = "Auto"
+local HACKLIST_POSITION: string = "Left"
 local HACKLIST_COLOR: Color3 = Color3.fromRGB(255, 255, 255)
+local HACKLIST_SORT_BY: string = "Name"
 local HACKLIST_REVERSE: boolean = false
 local HACKLIST_ANIMATIONS: boolean = true
 local HACKLIST_FONT_SIZE: number = 13
 local HACKLIST_LINE_HEIGHT: number = 18
 local HACKLIST_TOP: number = 56
 local HACKLIST_SLIDE: number = 14
+
+-- Wurst's WurstLogo defaults: a white chip with black text, visible always.
+local WURSTLOGO_VISIBILITY: string = "Always"
 
 -- The pill's proportions come from the prototype's #pill rule: 32 px round
 -- buttons in a capsule with 5×7 padding, floating 12 px under the top edge.
@@ -9465,6 +9571,7 @@ function Module.init(context: any): any
     local refreshFeatureToggle: any = host.refreshFeatureToggle
     local notify: any = host.notify
     local UserInputService: any = host.UserInputService
+    local colorFromConfig: any = host.colorFromConfig
 
     local Furniture: any = {
         handles = {} :: {any},
@@ -9514,7 +9621,7 @@ function Module.init(context: any): any
         ZIndex = 21,
     }) :: any) :: TextLabel
 
-    create("TextLabel", {
+    local versionLabel: TextLabel = (create("TextLabel", {
         TextTruncate = Enum.TextTruncate.AtEnd,
         Parent = chip,
         Name = "Version",
@@ -9527,7 +9634,7 @@ function Module.init(context: any): any
         TextSize = 11,
         TextXAlignment = Enum.TextXAlignment.Left,
         ZIndex = 21,
-    })
+    }) :: any) :: TextLabel
 
     if type(state.applyAssetImage) == "function" then
         state.applyAssetImage("wurstLogo", logoImage, function(): ()
@@ -9535,6 +9642,40 @@ function Module.init(context: any): any
             logoFallback.Visible = false
         end)
     end
+
+    -- Wurst's WurstLogo settings, read from the store at boot and edited
+    -- live by the WurstLogo settings window.
+    local function setLogoBackground(color: Color3): ()
+        chip.BackgroundColor3 = color
+    end
+    local function setLogoTextColor(color: Color3): ()
+        versionLabel.TextColor3 = color
+        logoFallback.TextColor3 = color
+    end
+    local function setLogoVisibility(value: string): ()
+        -- We ship no updater, so "Only when outdated" can never fire; it
+        -- hides the chip rather than pretending to know about versions.
+        chip.Visible = value == "Always"
+    end
+    setLogoBackground(colorFromConfig(
+        configData.values["WurstLogo.Background"],
+        WURSTLOGO_BACKGROUND
+    ))
+    setLogoTextColor(colorFromConfig(
+        configData.values["WurstLogo.Text"],
+        WURSTLOGO_TEXT
+    ))
+    local storedLogoVisibility: any = configData.values["WurstLogo.Visibility"]
+    setLogoVisibility(type(storedLogoVisibility) == "string"
+        and storedLogoVisibility
+        or WURSTLOGO_VISIBILITY)
+
+    state.wurstLogo = {
+        root = chip,
+        SetBackground = setLogoBackground,
+        SetTextColor = setLogoTextColor,
+        SetVisibility = setLogoVisibility,
+    }
 
     -- ---------------------------------------------------------- stats block
     -- Small, monospace, and rebuilt twice a second — cheap enough that the
@@ -9666,19 +9807,48 @@ function Module.init(context: any): any
         SortOrder = Enum.SortOrder.LayoutOrder,
     }) :: any) :: UIListLayout
 
-    -- On a phone the list moves to the left edge under the stats block,
-    -- where a thumb on the right half of the screen does not cover it
-    -- (UI-V2, Mobile). Same rows, different placement policy.
+    -- The live HackList settings, read from the store at boot; the HackList
+    -- settings window edits them through the setters published below.
+    local hudMode: string = type(configData.values["HackList.Mode"]) == "string"
+        and configData.values["HackList.Mode"]
+        or HACKLIST_MODE
+    local hudPosition: string = type(configData.values["HackList.Position"]) == "string"
+        and configData.values["HackList.Position"]
+        or HACKLIST_POSITION
+    local hudColor: Color3 = colorFromConfig(
+        configData.values["HackList.Color"],
+        HACKLIST_COLOR
+    )
+    local hudSortBy: string = type(configData.values["HackList.Sortby"]) == "string"
+        and configData.values["HackList.Sortby"]
+        or HACKLIST_SORT_BY
+    local hudReverse: boolean = HACKLIST_REVERSE
+    if configData.states["HackList.Reversesorting"] ~= nil then
+        hudReverse = configData.states["HackList.Reversesorting"] == true
+    end
+    local hudAnimations: boolean = HACKLIST_ANIMATIONS
+    if configData.states["HackList.Animations"] ~= nil then
+        hudAnimations = configData.states["HackList.Animations"] == true
+    end
+
+    local function hudOnLeft(): boolean
+        -- A phone always keeps the list on the left under the stats block,
+        -- where a thumb does not cover it (UI-V2, Mobile); a desktop follows
+        -- Wurst's Position setting, whose default is Left, under the logo.
+        return state.layout.compact or hudPosition == "Left"
+    end
+
     local function placeHudList(): ()
-        if state.layout.compact then
+        if hudOnLeft() then
             hudFrame.AnchorPoint = Vector2.new(0, 0)
+            local statsLines: number = state.layout.compact and 2 or 4
             hudFrame.Position = UDim2.new(
                 0,
                 FURNITURE_MARGIN_X,
                 0,
                 FURNITURE_MARGIN_Y + LOGO_HEIGHT + 8
                     + STATS_GAP
-                    + STATS_LINE_HEIGHT * 2
+                    + STATS_LINE_HEIGHT * statsLines
                     + STATS_GAP
             )
             hudLayout.HorizontalAlignment = Enum.HorizontalAlignment.Left
@@ -9697,7 +9867,7 @@ function Module.init(context: any): any
     local hudRows: {[string]: any} = {}
 
     local function hudAlignment(): Enum.TextXAlignment
-        return state.layout.compact
+        return hudOnLeft()
             and Enum.TextXAlignment.Left
             or Enum.TextXAlignment.Right
     end
@@ -9716,7 +9886,7 @@ function Module.init(context: any): any
     end
 
     local function animationsOn(): boolean
-        return HACKLIST_ANIMATIONS and state.animationsEnabled ~= false
+        return hudAnimations and state.animationsEnabled ~= false
     end
 
     local function newHudRow(name: string): any
@@ -9738,7 +9908,7 @@ function Module.init(context: any): any
             RichText = true,
             Size = UDim2.new(1, 0, 1, 0),
             Text = "",
-            TextColor3 = HACKLIST_COLOR,
+            TextColor3 = hudColor,
             TextSize = HACKLIST_FONT_SIZE,
             TextXAlignment = hudAlignment(),
             ZIndex = 20,
@@ -9790,15 +9960,49 @@ function Module.init(context: any): any
                 })
             end
         end
-        -- Wurst's default sort is by name; Width (rendered pixel width,
-        -- recomputed per tick) arrives with the settings window that can
-        -- switch to it. Reverse is Wurst's other axis and already works.
-        table.sort(entries, function(left: any, right: any): boolean
-            if HACKLIST_REVERSE then
-                return left.name > right.name
+
+        -- Wurst's two sort axes. Width is the rendered width of the line;
+        -- the prototype's #hud sorts by text length for the same effect,
+        -- and that is the measure used here — widest first, as Wurst draws.
+        local function before(left: any, right: any): boolean
+            if hudSortBy == "Width" then
+                local leftWidth: number = #left.name
+                    + (left.status and #tostring(left.status) + 3 or 0)
+                local rightWidth: number = #right.name
+                    + (right.status and #tostring(right.status) + 3 or 0)
+                if leftWidth ~= rightWidth then
+                    return leftWidth > rightWidth
+                end
             end
             return left.name < right.name
+        end
+        table.sort(entries, function(left: any, right: any): boolean
+            if hudReverse then
+                return before(right, left)
+            end
+            return before(left, right)
         end)
+
+        -- Wurst's Mode: Hidden renders nothing; Count renders the number of
+        -- active hacks; Auto renders the whole list only while it fits on
+        -- the screen, and falls back to the count when it does not.
+        if hudMode == "Hidden" then
+            entries = {}
+        elseif #entries > 0 then
+            local camera: Camera? = workspace.CurrentCamera
+            local screenHeight: number = camera
+                and (camera :: Camera).ViewportSize.Y
+                or 720
+            local available: number = screenHeight - HACKLIST_TOP - 12
+            local overflows: boolean =
+                #entries * (HACKLIST_LINE_HEIGHT + 1) > available
+            if hudMode == "Count" or (hudMode == "Auto" and overflows) then
+                entries = {{
+                    name = tostring(#entries) .. " hacks active",
+                    status = nil,
+                }}
+            end
+        end
 
         local signature: {string} = {}
         for _, entry: any in ipairs(entries) do
@@ -9808,7 +10012,7 @@ function Module.init(context: any): any
             )
         end
         local composed: string = table.concat(signature, "\2")
-            .. (state.layout.compact and "\3compact" or "")
+            .. (hudOnLeft() and "\3left" or "\3right")
         if composed == hudSignature then
             return
         end
@@ -9846,9 +10050,42 @@ function Module.init(context: any): any
     end))
     refreshHudList()
 
+    local function forceHudRefresh(): ()
+        hudSignature = "\0stale"
+        refreshHudList()
+    end
+
     state.hudList = {
         frame = hudFrame,
         refresh = refreshHudList,
+        -- The HackList settings window drives these; persistence belongs to
+        -- its rows, which write the same keys this file read at boot.
+        SetMode = function(value: string): ()
+            hudMode = value
+            forceHudRefresh()
+        end,
+        SetPosition = function(value: string): ()
+            hudPosition = value
+            placeHudList()
+            forceHudRefresh()
+        end,
+        SetColor = function(color: Color3): ()
+            hudColor = color
+            for _, row: any in pairs(hudRows) do
+                row.label.TextColor3 = color
+            end
+        end,
+        SetSortBy = function(value: string): ()
+            hudSortBy = value
+            forceHudRefresh()
+        end,
+        SetReverse = function(value: boolean): ()
+            hudReverse = value
+            forceHudRefresh()
+        end,
+        SetAnimations = function(value: boolean): ()
+            hudAnimations = value
+        end,
     }
 
     -- ----------------------------------------------------------------- pill
@@ -10079,6 +10316,7 @@ function Module.init(context: any): any
         hudFrame:Destroy()
         pillFrame:Destroy()
         state.hudList = nil
+        state.wurstLogo = nil
         state.pill = nil
         -- The fallback launcher becomes the way in again.
         if type(state.refreshLauncher) == "function" then
