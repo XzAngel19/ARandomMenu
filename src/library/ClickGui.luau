@@ -40,7 +40,9 @@ local activeCleanup: (() -> ())? = nil
 -- phone as on a desktop, because Vape's Roblox menu is deliberately small on a
 -- phone and that is what makes it usable over a game rather than instead of
 -- one. Nothing here scales with the viewport.
-local WINDOW_WIDTH: number = 160
+-- Wider than it was. At 160 the longest card names truncated to "Vehicl…" and
+-- "Interac…", which is a menu you cannot read.
+local WINDOW_WIDTH: number = 200
 local WINDOW_MAX_HEIGHT: number = 300
 -- Scale is the player's, not a guess of mine.
 --

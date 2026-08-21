@@ -29,7 +29,11 @@ local activeCleanup: (() -> ())? = nil
 -- WurstLogo.Text #000000. Deliberately not theme tokens — the chip is white
 -- in every Wurst screenshot regardless of palette, which is what makes the
 -- sausage readable on any background.
-local WURSTLOGO_BACKGROUND: Color3 = Color3.fromRGB(255, 255, 255)
+-- Wurst's documented default is #FFFFFF, and an opaque white slab over a game
+-- is the first thing the user pointed at. Kept as a token so a settings window
+-- can expose it, but seeded dark and drawn at 45% so it reads as a ghost behind
+-- the version rather than as a box.
+local WURSTLOGO_BACKGROUND: Color3 = Color3.fromRGB(0, 0, 0)
 local WURSTLOGO_TEXT: Color3 = Color3.fromRGB(0, 0, 0)
 
 -- The prototype's #brand block: 14 px from the left edge, 10 from the top,
@@ -152,8 +156,12 @@ function Module.init(context: any): any
     local versionChip: Frame = (create("Frame", {
         Parent = chip,
         Name = "VersionChip",
+        -- A ghost of a background rather than Wurst's opaque white, which is
+        -- ugly over a game and was the first thing the user pointed at. Dark
+        -- and mostly transparent: enough to hold the text off the world, not
+        -- enough to be a box.
         BackgroundColor3 = WURSTLOGO_BACKGROUND,
-        BackgroundTransparency = 1,
+        BackgroundTransparency = 0.45,
         BorderSizePixel = 0,
         Position = UDim2.fromOffset(LOGO_WIDTH + 10, 4),
         Size = UDim2.fromOffset(12 + #versionText * 9, LOGO_HEIGHT),
@@ -191,7 +199,6 @@ function Module.init(context: any): any
     -- values can read the live theme instead of binding each fragment.
     local statsLabel: TextLabel = (create("TextLabel", {
         TextTruncate = Enum.TextTruncate.AtEnd,
-        Parent = PopupLayer,
         Name = "StatsBlock",
         Active = false,
         BackgroundTransparency = 1,
@@ -209,7 +216,15 @@ function Module.init(context: any): any
         TextYAlignment = Enum.TextYAlignment.Top,
         ZIndex = 20,
     }) :: any) :: TextLabel
-    ThemeEngine.Bind(statsLabel, "TextColor3", "text")
+    -- Never parented, never shown.
+    --
+    -- Official Wurst 7 draws the sausage and the version in that corner and
+    -- nothing else. FPS, ping, session time and place were the old menu's
+    -- readout, and the user counted them as exactly that. The label is built
+    -- and left unparented rather than ripped out here, because the HackList's
+    -- compact placement still measures against where it used to sit and that
+    -- arithmetic is the next thing to simplify, not this.
+    statsLabel.Parent = nil
 
     local function colorHex(color: Color3): string
         return string.format(
@@ -266,7 +281,8 @@ function Module.init(context: any): any
                 escapeRich(tostring(state.activeGameName or "—"))
             ))
         end
-        statsLabel.Text = table.concat(rows, "\n")
+        -- Deliberately unused. See the note where StatsBlock used to be.
+        local _unused: string = table.concat(rows, "\n")
     end
 
     table.insert(Furniture.handles, TaskManager:Connect(function(): ()
