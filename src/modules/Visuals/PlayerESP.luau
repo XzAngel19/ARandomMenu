@@ -39,7 +39,6 @@ function Module.init(context: Runtime): any
 
     local container: Frame = render:Layer("PlayerEspLayer")
     local pool: {[Player]: boolean} = {}
-    local accumulator: number = 0
     local visibilityCache: any = setmetatable({}, {__mode = "k"})
 
     local esp: any
@@ -56,13 +55,7 @@ function Module.init(context: Runtime): any
                 table.clear(pool)
                 return
             end
-            esp:Render(function(deltaTime: number): ()
-                accumulator += deltaTime
-                local interval: number = esp.Options["Refresh interval"].Value
-                if accumulator < interval then
-                    return
-                end
-                accumulator = 0
+            esp:Render(function(): ()
                 Module.render(context, container, pool, esp, visibilityCache)
             end)
             esp:Event(players.PlayerRemoving, function(player: Player): ()
@@ -197,15 +190,6 @@ function Module.init(context: Runtime): any
         Max = 24,
         Default = 13,
     })
-    esp:CreateSlider({
-        Name = "Refresh interval",
-        Min = 0,
-        Max = 0.2,
-        Default = 0,
-        Tooltip = "Seconds between redraws. 0 follows every rendered frame so "
-            .. "the overlay stays attached to the camera.",
-    })
-
     -- What the game adds.
     --
     -- Roles and per-game objects are not built into this module: the game

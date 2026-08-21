@@ -49,6 +49,8 @@ return function(ctx: any): ()
     check("style options exist", esp.Options["Colour"] ~= nil
         and esp.Options["Team colours"] ~= nil
         and esp.Options["Text size"] ~= nil)
+    check("ESP redraws every rendered frame without a throttle option",
+        esp.Options["Refresh interval"] == nil)
     check("the three-colour scheme is gone",
         esp.Options["Enemy colour"] == nil
             and esp.Options["Friendly colour"] == nil
@@ -60,7 +62,6 @@ return function(ctx: any): ()
     esp.Options["Skeleton"].Value = true
     esp.Options["Boxes"].Value = "Full"
     esp.Options["Chams"].Value = "Overlay"
-    -- The redraw interval defaults to 30ms, so one 16ms frame is not a redraw.
     stub.step(0.05)
 
     local layer: any = nil
@@ -215,8 +216,9 @@ return function(ctx: any): ()
     oreB.Position = world.vector3(0, 0, -40)
     oreB.Parent = world.workspace
 
+    check("Item Render redraws every rendered frame without a throttle option",
+        itemRender.Options["Refresh interval"] == nil)
     itemRender:Toggle()
-    itemRender.Options["Refresh interval"].Value = 0
     stub.step(0.016)
 
     -- Touch part: the menu hides, the tap names the object, every twin lights up.

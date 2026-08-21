@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "c534b251ccdcb7d9",
+    stamp = "73c30170e989eed1",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -9582,7 +9582,6 @@ function Module.init(context: Runtime): any
     -- lump; this is a list you switch a single object on and off in.
     local known: {string} = {}
     local wanted: {string} = {}
-    local accumulator: number = 0
     local picking: boolean = false
 
     local function release(instance: Instance): ()
@@ -9691,12 +9690,7 @@ function Module.init(context: Runtime): any
                 indexConnections = {}
                 table.clear(index)
             end)
-            render:Render(function(deltaTime: number): ()
-                accumulator += deltaTime
-                if accumulator < render.Options["Refresh interval"].Value then
-                    return
-                end
-                accumulator = 0
+            render:Render(function(): ()
                 if indexDirty then
                     rebuildIndex()
                 end
@@ -9811,15 +9805,6 @@ function Module.init(context: Runtime): any
         Name = "Colour",
         Default = Color3.fromRGB(232, 232, 236),
     })
-    render:CreateSlider({
-        Name = "Refresh interval",
-        Min = 0,
-        Max = 1,
-        Default = 0,
-        Tooltip = "Seconds between redraws. 0 follows every rendered frame so "
-            .. "labels stay attached while the camera moves.",
-    })
-
     -- The picker: one tap, one name, menu back.
     local pickConnection: RBXScriptConnection = userInput.InputBegan:Connect(
         function(input: InputObject, processed: boolean): ()
@@ -10053,7 +10038,6 @@ function Module.init(context: Runtime): any
 
     local container: Frame = render:Layer("PlayerEspLayer")
     local pool: {[Player]: boolean} = {}
-    local accumulator: number = 0
     local visibilityCache: any = setmetatable({}, {__mode = "k"})
 
     local esp: any
@@ -10070,13 +10054,7 @@ function Module.init(context: Runtime): any
                 table.clear(pool)
                 return
             end
-            esp:Render(function(deltaTime: number): ()
-                accumulator += deltaTime
-                local interval: number = esp.Options["Refresh interval"].Value
-                if accumulator < interval then
-                    return
-                end
-                accumulator = 0
+            esp:Render(function(): ()
                 Module.render(context, container, pool, esp, visibilityCache)
             end)
             esp:Event(players.PlayerRemoving, function(player: Player): ()
@@ -10211,15 +10189,6 @@ function Module.init(context: Runtime): any
         Max = 24,
         Default = 13,
     })
-    esp:CreateSlider({
-        Name = "Refresh interval",
-        Min = 0,
-        Max = 0.2,
-        Default = 0,
-        Tooltip = "Seconds between redraws. 0 follows every rendered frame so "
-            .. "the overlay stays attached to the camera.",
-    })
-
     -- What the game adds.
     --
     -- Roles and per-game objects are not built into this module: the game
