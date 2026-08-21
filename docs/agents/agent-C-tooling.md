@@ -42,8 +42,9 @@ mock that two suites disagree about is a mock that is lying to one of them.
 
 ### 3. What UI v2 needs from the harness
 
-Read `docs/design/UI-V2.md`. The rebuild lands over the next weeks and it needs
-tests that do not exist:
+Read `docs/design/UI-V2.md`. The whole chrome is being rebuilt by the
+integrator over the next weeks — theme tokens, a window manager, a rail, rows
+that expand in place — and it needs tests that do not exist yet:
 
 - **Theme.** Boot headless, apply each preset, assert every bound instance
   changed and none kept a stale colour. Assert Monochrome is byte-identical to
