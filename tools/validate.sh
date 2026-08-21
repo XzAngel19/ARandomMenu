@@ -71,6 +71,38 @@ source_files() {
         ! -name "_shell_source.luau" ! -name "_bundle_source.luau" -print
 }
 
+step "Licence and attribution"
+# Wurst7 is GPL-3.0. Nothing from it may land here without the licence text
+# and a NOTICE that names every copied file. An asset under assets/wurst/
+# that is not listed there is an unattributed copy.
+test -f LICENSE || { echo "LICENSE is missing"; exit 1; }
+grep -q "GNU GENERAL PUBLIC LICENSE" LICENSE || {
+    echo "LICENSE is not the GNU GPL"
+    exit 1
+}
+test -f NOTICE.md || { echo "NOTICE.md is missing"; exit 1; }
+python3 - <<'PYTHON'
+import os
+
+notice = open("NOTICE.md").read()
+root = "assets/wurst"
+if not os.path.isdir(root):
+    raise SystemExit(0)
+missing = []
+for dirpath, _dirnames, filenames in os.walk(root):
+    for name in filenames:
+        if name == "manifest.json":
+            continue
+        path = os.path.join(dirpath, name).replace("\\", "/")
+        if path not in notice and name not in notice:
+            missing.append(path)
+if missing:
+    raise SystemExit(
+        "vendored files not listed in NOTICE.md:\n  " + "\n  ".join(sorted(missing))
+    )
+PYTHON
+echo "ok"
+
 step "JSON manifests"
 python3 -m json.tool src/gui/Current/Images/manifest.json >/dev/null
 python3 -m json.tool src/gui/Current/Assets/manifest.json >/dev/null
