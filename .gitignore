@@ -6,3 +6,5 @@ runtime-config/
 local-profiles/
 /compile-*.txt
 /register-stats.json
+__pycache__/
+*.pyc

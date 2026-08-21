@@ -277,7 +277,8 @@ if [ -n "$luau_analyze" ]; then
             >> "$analyze_output" || true
     done < <(source_files)
     global_output="$(mktemp)"
-    ANALYZE_OUTPUT="$analyze_output" GLOBAL_OUTPUT="$global_output" python3 - <<'PYTHON'
+    ANALYZE_OUTPUT="$analyze_output" GLOBAL_OUTPUT="$global_output" \
+        PYTHONDONTWRITEBYTECODE=1 python3 - <<'PYTHON'
 import os
 import re
 import sys
