@@ -104,10 +104,6 @@ SETTINGS: list[dict] = [
         "name": "Position",
         "type": "enum",
         "default": "Left",
-        # Wurst hangs the list under the logo. The prototype gives that
-        # corner to the wordmark and the stats, so this port's default is
-        # Right. The gate holds the port default, not upstream's.
-        "portDefault": "Right",
         "values": ["Left", "Right"],
         "description": (
             "Which side of the screen the HackList should be shown on.\n"
@@ -242,15 +238,16 @@ ABSENT: list[str] = [
     "Isolate windows",
 ]
 
-# Minecraft GUI-scale-1 pixels, from Wurst7 at the pinned commit
-# (Window.java height = inner + 13, FeatureButton.getDefaultHeight
-# 11, WurstLogo blit 72x18 at (0, 3), chip fill y=6..17,
-# HackListHUD posY += 9). Window width is packed to the title and
-# the widest child, not a constant.
+# Logical GUI-scale-1 pixels. The port scales them with one UIScale
+# (ThemeEngine.shape.scale, 0.7-1.6). Do not bind 13 or 22 to a
+# resolution — the unit is Wurst's own pixel, not a 1080p guess.
 CHROME: dict = {
     "titleHeight": 13,
     "rowHeight": 11,
     "settingsArrow": 11,
+    "titleButton": 11,
+    "childInset": 2,
+    "childGap": 2,
     "logoWidth": 72,
     "logoHeight": 18,
     "logoX": 0,
@@ -262,6 +259,47 @@ CHROME: dict = {
     "hackListSlide": 5,
     "windowWidth": None,
 }
+
+# Setting-row widgets, same unit. Slider and color are two text-rows
+# tall; checkbox and combo are one. Minecraft fill is exclusive on
+# the max corner, so the slider rail y=15..18 is 3 px.
+WIDGETS: dict = {
+    "sliderHeight": 22,
+    "sliderTextHeight": 11,
+    "sliderRailHeight": 3,
+    "sliderRailInset": 2,
+    "sliderKnobWidth": 8,
+    "sliderKnobHeight": 8,
+    "checkboxBox": 11,
+    "checkboxHeight": 11,
+    "checkboxTextPad": 2,
+    "colorHeight": 22,
+    "colorTextHeight": 11,
+    "colorSwatchHeight": 11,
+    "comboHeight": 11,
+    "comboArrow": 11,
+}
+
+# Title-bar controls. Category windows get collapse + pin, no close.
+# Settings windows add close. Each slot is 11 px of the 13 px bar.
+TITLE_BUTTONS: dict = {
+    "size": 11,
+    "category": ["collapse", "pin"],
+    "settings": ["collapse", "pin", "close"],
+}
+
+# Official Wurst category windows, in ClickGui.init order. Ours file
+# cards under a different taxonomy; docs/wurst-categories.md maps them.
+CATEGORIES: list[str] = [
+    "Combat",
+    "Render",
+    "Blocks",
+    "Movement",
+    "Chat",
+    "Fun",
+    "Items",
+    "Other",
+]
 
 # ref-wurst-719.jpg is 1600x900: a 1920x1080 framebuffer at GUI
 # scale 2, scaled by 5/6. One GUI-scale-1 pixel is 10/6 screenshot
@@ -329,6 +367,17 @@ def spec_section() -> dict:
         "settings": settings,
         "keybinds": [dict(row) for row in KEYBINDS],
         "chrome": dict(CHROME),
+        "widgets": dict(WIDGETS),
+        "titleButtons": dict(TITLE_BUTTONS),
+        "categories": list(CATEGORIES),
         "screenshot": dict(SCREENSHOT),
         "font": dict(FONT),
+        "scale": {
+            "unit": "gui-scale-1",
+            "control": "ThemeEngine.shape.scale",
+            "min": 0.7,
+            "max": 1.6,
+            "default": 1,
+            "viewportFormula": None,
+        },
     }

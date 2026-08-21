@@ -165,8 +165,7 @@
         "values": [
           "Left",
           "Right"
-        ],
-        "portDefault": "Right"
+        ]
       },
       {
         "window": "HackList",
@@ -315,6 +314,9 @@
       "titleHeight": 13,
       "rowHeight": 11,
       "settingsArrow": 11,
+      "titleButton": 11,
+      "childInset": 2,
+      "childGap": 2,
       "logoWidth": 72,
       "logoHeight": 18,
       "logoX": 0,
@@ -326,6 +328,44 @@
       "hackListSlide": 5,
       "windowWidth": null
     },
+    "widgets": {
+      "sliderHeight": 22,
+      "sliderTextHeight": 11,
+      "sliderRailHeight": 3,
+      "sliderRailInset": 2,
+      "sliderKnobWidth": 8,
+      "sliderKnobHeight": 8,
+      "checkboxBox": 11,
+      "checkboxHeight": 11,
+      "checkboxTextPad": 2,
+      "colorHeight": 22,
+      "colorTextHeight": 11,
+      "colorSwatchHeight": 11,
+      "comboHeight": 11,
+      "comboArrow": 11
+    },
+    "titleButtons": {
+      "size": 11,
+      "category": [
+        "collapse",
+        "pin"
+      ],
+      "settings": [
+        "collapse",
+        "pin",
+        "close"
+      ]
+    },
+    "categories": [
+      "Combat",
+      "Render",
+      "Blocks",
+      "Movement",
+      "Chat",
+      "Fun",
+      "Items",
+      "Other"
+    ],
     "screenshot": {
       "file": "docs/design/reference/ref-wurst-719.jpg",
       "width": 1600,
@@ -348,6 +388,14 @@
       "typicalAdvance": 6,
       "closestVendored": "minecraftFont / Monocraft.otf",
       "portToday": "BuilderSans / RobotoMono"
+    },
+    "scale": {
+      "unit": "gui-scale-1",
+      "control": "ThemeEngine.shape.scale",
+      "min": 0.7,
+      "max": 1.6,
+      "default": 1,
+      "viewportFormula": null
     }
   }
 }

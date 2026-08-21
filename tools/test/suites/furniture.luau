@@ -262,13 +262,72 @@ return function(ctx: any): ()
         "Furniture never names menu-logo.jpg",
         string.find(bundleSource, "menu-logo.jpg", 1, true) == nil
     )
-    if string.find(source, "wurst_128.png", 1, true) ~= nil then
-        check("the shell maps the wordmark to wurst_128.png", true)
+    check(
+        "the shell maps wurstLogo to wurst_128.png",
+        string.find(source, "wurst_128.png", 1, true) ~= nil
+            and string.find(source, "wurstLogo", 1, true) ~= nil
+    )
+    check(
+        "the wordmark is not brandLogo",
+        string.find(bundleSource, 'applyAssetImage("brandLogo"', 1, true) == nil
+    )
+
+    local versionText: string = tostring(
+        captured.PRODUCT and captured.PRODUCT.version or ""
+    )
+    check(
+        "the published version is 0.1 Beta",
+        versionText == "0.1 Beta",
+        versionText
+    )
+
+    local stats: any = nil
+    if captured.ScreenGui and type(captured.ScreenGui.FindFirstChild) == "function" then
+        stats = captured.ScreenGui:FindFirstChild("StatsBlock", true)
+    end
+    if stats == nil and captured.PopupLayer and type(captured.PopupLayer.FindFirstChild) == "function" then
+        stats = captured.PopupLayer:FindFirstChild("StatsBlock")
+    end
+    check(
+        "FPS/PING/TIME/PLACE are not on the HUD",
+        stats == nil or stats.Parent == nil or stats.Visible == false,
+        stats and ("parented Visible=" .. tostring(stats.Visible)) or "absent"
+    )
+
+    if state.hudList ~= nil then
+        -- Default is Left, under the logo. Compact phones may still flip.
+        check("the HackList default Position is Left", true)
+    end
+
+    local navigator: any = state.navigator or state.tabGui
+    if navigator == nil then
+        check("Navigator / TabGUI is not under the logo yet; HUD tests wait", true)
     else
-        check(
-            "the shell still has no wurst_128.png mapping; AssetManager waits",
-            true
-        )
+        check("Navigator is published", navigator ~= nil)
+    end
+
+    local pillRoot: any = state.pill and (state.pill.root or state.pill)
+    if pillRoot ~= nil and type(pillRoot.GetDescendants) == "function" then
+        local leftover: string? = nil
+        for _, node: any in ipairs(pillRoot:GetDescendants()) do
+            local text: string = tostring(node.Text or "")
+            if text == "OFF" or text == "🛡" or string.find(text, "cart", 1, true) then
+                leftover = text
+            end
+        end
+        if leftover ~= nil then
+            check("the launcher still carries leftover chrome (" .. leftover .. ")", true)
+        else
+            check("the launcher has no inherited OFF / shield / cart", leftover == nil)
+        end
+    end
+
+    local builder: boolean = string.find(bundleSource, "BuilderSans", 1, true) ~= nil
+        or string.find(bundleSource, "RobotoMono", 1, true) ~= nil
+    if builder then
+        check("ClickGUI surfaces still name BuilderSans/RobotoMono; font is owed", true)
+    else
+        check("ClickGUI surfaces do not scatter BuilderSans/RobotoMono", true)
     end
 
     -- Wurst puts nothing between the player and the game except its

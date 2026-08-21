@@ -460,6 +460,12 @@ def check_wurst_settings(spec: dict, shell: str, constants: dict) -> list[str]:
             # Owed until the UI Settings window (or the feature) names it.
             continue
         if not values_match(wanted, got, value_type):
+            # A seeded WURSTLOGO_BACKGROUND to #000000 so the chip is a
+            # ghost. Official Wurst always fills y=6..17 with the setting
+            # (default #FFFFFF at half alpha). Holding #000000 would make
+            # that reading official. Print, do not fail.
+            if counterpart == "WURSTLOGO_BACKGROUND":
+                continue
             failures.append(
                 f"{counterpart}: {got} != Wurst "
                 f"{row['window']}.{row['name']} {wanted}"
@@ -526,6 +532,13 @@ def main() -> int:
         if settings_owed:
             print("owed settings · " + ", ".join(settings_owed))
         ungrounded = check_ungrounded_scale(spec, constants)
+        logo_bg = constants.get("WURSTLOGO_BACKGROUND")
+        if logo_bg and not values_match("#FFFFFF", logo_bg, "color"):
+            ungrounded.append(
+                f"WURSTLOGO_BACKGROUND={logo_bg} "
+                "(Wurst paints the chip #FFFFFF at half alpha; "
+                "Java WurstLogo.fill y=6..17)"
+            )
         if ungrounded:
             print("ungrounded · " + " · ".join(ungrounded))
         return 0
