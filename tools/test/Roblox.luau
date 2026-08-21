@@ -150,6 +150,10 @@ function CFrameMeta.__mul(a: any, b: any): any
     return a
 end
 
+function CFrameMeta.PointToObjectSpace(self: any, point: any): any
+    return point - self.Position
+end
+
 -- Signals ------------------------------------------------------------------
 
 -- Anything a pointer can be over. Kept as a set rather than a chain of
@@ -229,8 +233,16 @@ local function newInstance(className: string): any
         -- still gets a rectangle rather than nil, so arithmetic on a size —
         -- which is what clamping a window inside the viewport is — reaches an
         -- assertion instead of a stack trace.
-        instance.AbsoluteSize = vector2(0, 0)
         instance.AbsolutePosition = vector2(0, 0)
+        instance.AbsoluteSize = vector2(100, 20)
+    end
+    if className == "UIListLayout" or className == "UIGridLayout" then
+        instance.AbsoluteContentSize = vector2(0, 0)
+    end
+    if className == "ScrollingFrame" then
+        instance.AbsoluteWindowSize = vector2(400, 300)
+        instance.AbsolutePosition = vector2(0, 0)
+        instance.AbsoluteSize = vector2(400, 300)
     end
 
     setmetatable(instance, {
@@ -284,13 +296,23 @@ local function newInstance(className: string): any
             return self.ClassName == "Part" or self.ClassName == "MeshPart"
         end
         if query == "GuiObject" then
-            return self.ClassName == "Frame" or self.ClassName == "TextLabel"
+            return POINTER_CLASSES[self.ClassName] == true
+                and self.ClassName ~= "ScreenGui"
         end
         if query == "GuiButton" then
             return self.ClassName == "TextButton" or self.ClassName == "ImageButton"
         end
+        if query == "LayerCollector" then
+            return self.ClassName == "ScreenGui"
+        end
         if query == "Tool" then
             return self.ClassName == "Tool"
+        end
+        if query == "Player" then
+            return self.ClassName == "Player"
+        end
+        if query == "Model" then
+            return self.ClassName == "Model"
         end
         return false
     end
@@ -500,7 +522,7 @@ function Mock.install(): MockWorld
     -- directions every time a cursor moves, and a stand-in that only stored
     -- RGB would make the picker untestable.
     local function colour(r: number, g: number, b: number): any
-        local value: any = {R = r, G = g, B = b}
+        local value: any = {R = r, G = g, B = b, _kind = "Color3"}
         function value:ToHSV(): (number, number, number)
             local high: number = math.max(self.R, self.G, self.B)
             local low: number = math.min(self.R, self.G, self.B)
@@ -517,6 +539,13 @@ function Mock.install(): MockWorld
                 hue /= 6
             end
             return hue, high > 0 and span / high or 0, high
+        end
+        function value:Lerp(other: any, alpha: number): any
+            return colour(
+                self.R + (other.R - self.R) * alpha,
+                self.G + (other.G - self.G) * alpha,
+                self.B + (other.B - self.B) * alpha
+            )
         end
         return value
     end
@@ -584,19 +613,38 @@ function Mock.install(): MockWorld
 
     local function enumFolder(names: {string}): any
         local folder: any = {}
-        for _, name: string in ipairs(names) do
-            folder[name] = {Name = name, Value = name}
+        local items: {any} = {}
+        for index: number, name: string in ipairs(names) do
+            local item: any = {Name = name, Value = index, _kind = "EnumItem"}
+            folder[name] = item
+            table.insert(items, item)
+        end
+        function folder:GetEnumItems(): {any}
+            return items
         end
         return folder
     end
     globals.Enum = {
-        KeyCode = enumFolder({"Unknown", "Space", "LeftControl", "E", "Q"}),
+        KeyCode = enumFolder({
+            "Unknown",
+            "Space",
+            "LeftControl",
+            "RightShift",
+            "Escape",
+            "E",
+            "Q",
+            "W",
+            "A",
+            "S",
+            "D",
+            "ButtonA",
+        }),
         RaycastFilterType = enumFolder({"Exclude", "Include"}),
         HighlightDepthMode = enumFolder({"AlwaysOnTop", "Occluded"}),
         TextXAlignment = enumFolder({"Center", "Left", "Right"}),
         TextYAlignment = enumFolder({"Center", "Top", "Bottom"}),
         HumanoidStateType = enumFolder({"Jumping", "Freefall", "Running"}),
-        EasingStyle = enumFolder({"Quad", "Sine", "Linear"}),
+        EasingStyle = enumFolder({"Quad", "Sine", "Linear", "Back", "Quart"}),
         EasingDirection = enumFolder({"Out", "In", "InOut"}),
         Material = enumFolder({"Air", "Plastic", "SmoothPlastic"}),
         UserInputType = enumFolder({
@@ -620,6 +668,30 @@ function Mock.install(): MockWorld
         AvatarAssetType = enumFolder({"EmoteAnimation"}),
         BundleType = enumFolder({"Animations", "BodyParts"}),
         CatalogSortType = enumFolder({"MostFavorited", "Relevance"}),
+        Font = enumFolder({
+            "Unknown",
+            "BuilderSans",
+            "SourceSans",
+            "Gotham",
+            "Code",
+            "Arcade",
+        }),
+        FontWeight = enumFolder({
+            "Thin",
+            "ExtraLight",
+            "Light",
+            "Regular",
+            "Medium",
+            "SemiBold",
+            "Bold",
+            "ExtraBold",
+            "Heavy",
+        }),
+        FontStyle = enumFolder({"Normal", "Italic"}),
+        ZIndexBehavior = enumFolder({"Global", "Sibling"}),
+        InfoType = enumFolder({"Asset", "Product", "GamePass"}),
+        ThumbnailType = enumFolder({"HeadShot", "AvatarBust", "AvatarThumbnail"}),
+        ThumbnailSize = enumFolder({"Size48x48", "Size180x180", "Size420x420"}),
     }
 
     globals.CFrame = {
@@ -636,6 +708,9 @@ function Mock.install(): MockWorld
         end,
         identity = cframe(vector3(0, 0, 0)),
     }
+    function CFrameMeta.PointToObjectSpace(self: any, point: any): any
+        return point - self.Position
+    end
 
     -- Executor helpers the combat modules reach for.
     globals.getconnections = function(target: any): {any}
@@ -797,13 +872,65 @@ function Mock.install(): MockWorld
     local inputService: any = newInstance("UserInputService")
     inputService.TouchEnabled = false
     inputService.KeyboardEnabled = true
+    inputService.MouseEnabled = true
+    inputService.GamepadEnabled = false
+    inputService.InputBegan = signal()
+    inputService.InputChanged = signal()
+    inputService.InputEnded = signal()
+    inputService.WindowFocusReleased = signal()
+    inputService.JumpRequest = signal()
     function inputService:GetFocusedTextBox(): any
         return world.focusedTextBox
     end
+    function inputService:IsKeyDown(_key: any): boolean
+        return world.keyDown == true
+    end
+    function inputService:IsMouseButtonPressed(_button: any): boolean
+        return world.mouseDown == true
+    end
+    function inputService:GetMouseLocation(): any
+        return vector2(640, 360)
+    end
     services.UserInputService = inputService
+
+    local runService: any = newInstance("RunService")
+    runService.Heartbeat = signal()
+    runService.RenderStepped = signal()
+    runService.Stepped = signal()
+    services.RunService = runService
+
+    local httpService: any = newInstance("HttpService")
+    function httpService:JSONEncode(_value: any): string
+        return "{}"
+    end
+    function httpService:JSONDecode(_text: string): any
+        return {}
+    end
+    services.HttpService = httpService
+
+    local lighting: any = newInstance("Lighting")
+    services.Lighting = lighting
+
+    local physics: any = newInstance("PhysicsService")
+    function physics:GetRegisteredCollisionGroups(): {any}
+        return {}
+    end
+    services.PhysicsService = physics
+
+    local market: any = newInstance("MarketplaceService")
+    function market:GetProductInfo(_id: number, _infoType: any): any
+        return {IconImageAssetId = 0}
+    end
+    services.MarketplaceService = market
+
+    services.CollectionService = newInstance("CollectionService")
+    services.Stats = newInstance("Stats")
+    services.CoreGui = newInstance("CoreGui")
+    services.ReplicatedStorage = newInstance("ReplicatedStorage")
 
     globals.game = {
         PlaceId = 0,
+        GameId = 0,
         JobId = "test",
         GetService = function(_self: any, name: string): any
             local existing: any = services[name]
@@ -814,8 +941,29 @@ function Mock.install(): MockWorld
             services[name] = created
             return created
         end,
-        HttpGet = function(): string
-            return ""
+        HttpGet = function(_self: any, _url: any, _cache: any): string
+            -- Enough of a module for the shell's loader to accept the
+            -- response and call setfenv, which is how the harness captures
+            -- `state` without the real downloads.
+            return table.concat({
+                "--!strict\n",
+                "return {\n",
+                "    Name = \"Stub\",\n",
+                "    PlaceId = 0,\n",
+                "    Events = {},\n",
+                "    stamp = \"\",\n",
+                "    files = {},\n",
+                "    widgets = \"src/library/Widgets.luau\",\n",
+                "    core = {},\n",
+                "    libraries = {},\n",
+                "    modules = {},\n",
+                "    init = function(_context: any): any\n",
+                "        return {}\n",
+                "    end,\n",
+                "    destroy = function(): ()\n",
+                "    end,\n",
+                "}\n",
+            })
         end,
     }
     world.services = services
@@ -824,10 +972,74 @@ function Mock.install(): MockWorld
     end
     globals.typeof = function(value: any): string
         local raw: string = type(value)
-        if raw == "table" and rawget(value, "ClassName") ~= nil then
-            return "Instance"
+        if raw == "table" then
+            local kind: any = rawget(value, "_kind")
+            if kind == "Color3" then
+                return "Color3"
+            end
+            if kind == "Font" then
+                return "Font"
+            end
+            if kind == "EnumItem" then
+                return "EnumItem"
+            end
+            if rawget(value, "ClassName") ~= nil then
+                return "Instance"
+            end
+            local meta: any = getmetatable(value)
+            if meta == Vector3Meta then
+                return "Vector3"
+            end
+            if meta == Vector2Meta then
+                return "Vector2"
+            end
+            if meta == CFrameMeta then
+                return "CFrame"
+            end
         end
         return raw
+    end
+    globals.Font = {
+        new = function(family: any, weight: any?, style: any?): any
+            return {
+                Family = family,
+                Weight = weight,
+                Style = style,
+                _kind = "Font",
+            }
+        end,
+        fromEnum = function(item: any): any
+            return {
+                Family = tostring(item and item.Name or "BuilderSans"),
+                Weight = globals.Enum.FontWeight.Regular,
+                Style = globals.Enum.FontStyle.Normal,
+                _kind = "Font",
+            }
+        end,
+    }
+    globals.Random = {
+        new = function(_seed: number?): any
+            local rng: any = {n = 0}
+            function rng:NextNumber(lo: number?, hi: number?): number
+                rng.n += 1
+                local a: number = lo or 0
+                local b: number = hi or 1
+                return a + (b - a) * ((rng.n % 10) / 10)
+            end
+            function rng:NextInteger(lo: number, hi: number): number
+                return lo
+            end
+            return rng
+        end,
+    }
+    globals.loadstring = loadstring
+    globals.setfenv = setfenv
+    globals.debug = debug
+    globals.xpcall = xpcall
+    globals.rawequal = rawequal
+    globals.require = require
+    globals.tick = function(): number
+        return world.clock
     end
 
     globals.task = {
@@ -940,6 +1152,11 @@ function Mock.install(): MockWorld
         humanoid.MaxHealth = 100
         humanoid.Parent = character
         humanoid.HipHeight = 2
+        humanoid.Died = signal()
+        humanoid.StateChanged = signal()
+        humanoid.HealthChanged = signal()
+        humanoid.Jumping = signal()
+        humanoid.Seated = signal()
         function humanoid:EquipTool(tool: any): ()
             tool.Parent = character
         end
@@ -1065,7 +1282,9 @@ function Mock.install(): MockWorld
         local player: any = newInstance("Player")
         player.Name = name
         player.DisplayName = name
-        player.Team = typeof(team) == "string" and teamNamed(team) or team
+        player.UserId = world.nextUserId or 1
+        world.nextUserId = player.UserId + 1
+        player.Team = type(team) == "string" and teamNamed(team) or team
         player.Neutral = false
         player.CharacterAdded = signal()
         player.Character = buildCharacter(name, position)
@@ -1090,6 +1309,7 @@ function Mock.install(): MockWorld
 
     local localPlayer: any = world.addPlayer("LocalTester", "Blue", vector3(0, 0, 0))
     playersService.LocalPlayer = localPlayer
+    services.Players = playersService
 
     world.players = playersService
     world.localPlayer = localPlayer
