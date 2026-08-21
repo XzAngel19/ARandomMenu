@@ -51,7 +51,6 @@ local function buildVDFeatures(): ()
         damageBoostDuration = 1,
         walkSpeed = 16,
         lockerRange = 45,
-        fov = 85,
     }
     local runtime: any = {
         generatorMarkers = {} :: {[Model]: any},
@@ -81,7 +80,6 @@ local function buildVDFeatures(): ()
         trackedHumanoid = nil :: Humanoid?,
         actionAnimator = nil :: Animator?,
         selectiveCollisions = {} :: {[BasePart]: CollisionState},
-        lighting = nil :: any,
         effectStates = {} :: {[Instance]: any},
         soundStates = {} :: {[Sound]: SoundState},
         soundConnections = {} :: {[Sound]: RBXScriptConnection},
@@ -737,7 +735,12 @@ local function buildVDFeatures(): ()
             end
             maintainRepairAnimation()
             if settings.autoGeneratorMode == "Blatant" then
-                for _burstIndex: number = 1, 8 do
+                -- Blatant means every tick the game would accept, not a
+                -- frame-rate-driven flood: eight FireServers per frame is
+                -- hundreds per second, which is not cheating visibly, it is
+                -- shouting at the server.
+                if os.clock() - runtime.lastRepairFire >= 0.03 then
+                    runtime.lastRepairFire = os.clock()
                     repairRemote:FireServer(point, true)
                 end
             elseif os.clock() - runtime.lastRepairFire >= settings.autoGeneratorInterval then
@@ -908,10 +911,13 @@ local function buildVDFeatures(): ()
                 return
             end
             if settings.hitAuraMode == "Blatant" then
-                for _burstIndex: number = 1, 4 do
+                -- The reach is what makes this mode blatant; the rate stays
+                -- inside a fast human's. A four-per-frame burst with no clock
+                -- check was hundreds of attacks a second.
+                if os.clock() - runtime.lastHit >= 0.12 then
+                    runtime.lastHit = os.clock()
                     attackRemote:FireServer()
                 end
-                runtime.lastHit = os.clock()
             elseif os.clock() - runtime.lastHit >= settings.hitAuraInterval then
                 runtime.lastHit = os.clock()
                 attackRemote:FireServer()
@@ -1519,18 +1525,6 @@ local function buildVDFeatures(): ()
         end)
     end
 
-    local function toggleFov(enabled: boolean): ()
-        disconnectFeatureConnection("VDFOV")
-        state.fovController.set("VD", enabled and settings.fov or nil)
-        if not enabled then
-            return
-        end
-        featureConnections.VDFOV = TaskManager:Connect(function(): ()
-            state.fovController.set("VD", settings.fov)
-            state.fovController.apply(workspace.CurrentCamera)
-        end)
-    end
-
     local function suppressBlindEffect(effect: Instance): ()
         local name: string = lower(effect.Name)
         if not contains(name, "blind")
@@ -1593,35 +1587,6 @@ local function buildVDFeatures(): ()
                     effect.Visible = false
                 end
             end
-        end)
-    end
-
-    local function toggleVDFullbright(enabled: boolean): ()
-        disconnectFeatureConnection("VDFullbright")
-        if not enabled then
-            if runtime.lighting then
-                for property: string, value: any in pairs(runtime.lighting) do
-                    (Lighting :: any)[property] = value
-                end
-                runtime.lighting = nil
-            end
-            return
-        end
-        runtime.lighting = {
-            Brightness = Lighting.Brightness,
-            ClockTime = Lighting.ClockTime,
-            FogEnd = Lighting.FogEnd,
-            GlobalShadows = Lighting.GlobalShadows,
-            Ambient = Lighting.Ambient,
-            OutdoorAmbient = Lighting.OutdoorAmbient,
-        }
-        featureConnections.VDFullbright = TaskManager:Connect(function(): ()
-            Lighting.Brightness = 3
-            Lighting.ClockTime = 14
-            Lighting.FogEnd = 100000
-            Lighting.GlobalShadows = false
-            Lighting.Ambient = Color3.fromRGB(190, 190, 190)
-            Lighting.OutdoorAmbient = Color3.fromRGB(170, 170, 170)
         end)
     end
 
@@ -1895,30 +1860,11 @@ local function buildVDFeatures(): ()
         {parent = state.vdScroll, registry = state.vdFeatures}
     )
 
-    local FovFeature: any = createUniversalFeature(
-        "VD Field of View",
-        "Keep a wider camera view while VD replaces camera properties",
-        16,
-        toggleFov,
-        {parent = state.vdScroll, registry = state.vdFeatures}
-    )
-    addNumberOption(FovFeature, "Field of view", 85, 50, 120, function(value: number): ()
-        settings.fov = math.clamp(value, 50, 120)
-    end)
-
     createUniversalFeature(
         "Optimize Blind / Flash Protection",
         "Disable local flashlight, blind and whiteout overlays as soon as they appear",
         17,
         toggleNoBlind,
-        {parent = state.vdScroll, registry = state.vdFeatures}
-    )
-
-    createUniversalFeature(
-        "VD Fullbright",
-        "Remove local darkness, fog and shadows and restore them when disabled",
-        18,
-        toggleVDFullbright,
         {parent = state.vdScroll, registry = state.vdFeatures}
     )
 
@@ -1938,9 +1884,7 @@ local function buildVDFeatures(): ()
         toggleFacingESP(false)
         toggleLockerDetector(false)
         toggleCooldownTracker(false)
-        toggleFov(false)
         toggleNoBlind(false)
-        toggleVDFullbright(false)
         clearFacing()
         clearLockerMarkers()
         restoreSelectiveCollisions()

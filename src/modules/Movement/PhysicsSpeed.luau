@@ -25,19 +25,12 @@ local activeCleanup: (() -> ())? = nil
 
 function Module.init(context: Runtime): any
     local host: any = context.host
-    local TaskManager: any = host.TaskManager
-    local featureConnections: any = host.featureConnections
-    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
-    local getCharacterParts: any = host.getCharacterParts
+    local framework: any = context.framework
     local state: any = host.state
-    local createUniversalFeature: any = host.createUniversalFeature
-    local addToggleOption: any = host.addToggleOption
-    local addNumberOption: any = host.addNumberOption
-    local addCycleOption: any = host.addCycleOption
-    local addFeatureTooltip: any = host.addFeatureTooltip
-    local addKeyOption: any = host.addKeyOption
+    local getCharacterParts: any = host.getCharacterParts
     local UserInputService: any = host.UserInputService
-    local workspace: any = host.workspace
+    local currentWorkspace: Workspace = host.workspace or workspace
+
     type PhysicsSpeedSettings = {
         mode: string,
         speed: number,
@@ -84,10 +77,11 @@ function Module.init(context: Runtime): any
         sprintKey = Enum.KeyCode.LeftShift,
         preserveMomentum = false,
     }
-    -- The physics-speed helpers are scoped to a block so their registers go
-    -- back to the bootstrap function, which sits at Luau's 200-local ceiling.
+    -- The restore helper is shared with the option that can trigger it
+    -- mid-session, so it is declared here and assigned in the block below,
+    -- which also keeps the physics helpers' registers local to that block.
     local restorePhysicsMotors: () -> ()
-    local togglePhysicsSpeed: (boolean) -> ()
+    local physicsSpeed: any
     do
     local physicsSpeedTeleportClock: number = 0
     local originalVehicleSeats: {[VehicleSeat]: VehicleSeatState} =
@@ -95,7 +89,7 @@ function Module.init(context: Runtime): any
     local originalMotorHinges: {[HingeConstraint]: HingeState} =
         setmetatable({}, {__mode = "k"}) :: any
 
-    function restorePhysicsMotors(): ()
+    restorePhysicsMotors = function(): ()
         for seat: VehicleSeat, original: VehicleSeatState in pairs(originalVehicleSeats) do
             if seat.Parent then
                 seat.MaxSpeed = original.maxSpeed
@@ -184,19 +178,25 @@ function Module.init(context: Runtime): any
         end
     end
 
-    function togglePhysicsSpeed(enabled: boolean): ()
-        disconnectFeatureConnection("PhysicsSpeed")
-        restorePhysicsMotors()
-        physicsSpeedTeleportClock = 0
+    physicsSpeed = framework.Categories.Movement:CreateModule({
+        Name = "Physics Speed",
+        Category = "Movement",
+        Tooltip = "Fast movement for characters and occupied vehicles. Adaptive "
+            .. "changes air authority and retains flow, Smooth accelerates "
+            .. "predictably, Boost uses physical impulse, CFrame moves the "
+            .. "character without touching its velocity, Pulse alternates "
+            .. "bursts with a normal walk, and Teleport advances in short "
+            .. "steps.",
+        Function = function(enabled: boolean): ()
+            restorePhysicsMotors()
+            physicsSpeedTeleportClock = 0
+            state.platformStandController.set("PhysicsSpeed", nil)
 
-        state.platformStandController.set("PhysicsSpeed", nil)
+            if not enabled then
+                return
+            end
 
-        if not enabled then
-            return
-        end
-
-        featureConnections.PhysicsSpeed =
-            TaskManager:Connect(function(deltaTime: number): ()
+            physicsSpeed:Loop(function(deltaTime: number): ()
                 local assembly, currentHumanoid, vehicleSeat = getPhysicsSpeedTarget()
                 if not assembly or not currentHumanoid then
                     return
@@ -220,7 +220,7 @@ function Module.init(context: Runtime): any
                     -- and on touch clients whose control module is bypassed, which
                     -- is exactly why Speed stood still with its own PlatformStand
                     -- option enabled. The shared helper answers on every device.
-                    local camera: Camera? = workspace.CurrentCamera
+                    local camera: Camera? = currentWorkspace.CurrentCamera
                     local forwardScalar: number, rightScalar: number = state.getMoveInput()
                     if camera and (forwardScalar ~= 0 or rightScalar ~= 0) then
                         direction = camera.CFrame.LookVector * forwardScalar
@@ -240,7 +240,7 @@ function Module.init(context: Runtime): any
                     raycastParams.FilterDescendantsInstances = {
                         currentHumanoid.Parent :: Instance,
                     }
-                    local wallHit: RaycastResult? = workspace:Raycast(
+                    local wallHit: RaycastResult? = currentWorkspace:Raycast(
                         assembly.Position,
                         direction.Unit * 2.75,
                         raycastParams
@@ -350,141 +350,138 @@ function Module.init(context: Runtime): any
                     end
                 end
             end)
-    end
+        end,
+    })
     end
 
-    local PhysicsSpeedFeature = createUniversalFeature(
-        "Speed",
-        "Fast movement for characters and occupied vehicles",
-        9,
-        togglePhysicsSpeed
-    )
-    local SpeedModeButton: TextButton = addCycleOption(
-        PhysicsSpeedFeature,
-        "Mode",
-        {"Adaptive", "Smooth", "Boost", "CFrame", "Pulse", "Teleport"},
-        1,
-        function(value: string): ()
+    physicsSpeed:CreateDropdown({
+        Name = "Mode",
+        List = {"Adaptive", "Smooth", "Boost", "CFrame", "Pulse", "Teleport"},
+        Index = 1,
+        Function = function(value: string): ()
             physicsSpeedSettings.mode = value
-        end
-    )
-    local SpeedValueRow: Frame = addNumberOption(
-        PhysicsSpeedFeature,
-        "Speed",
-        physicsSpeedSettings.speed,
-        5,
-        500,
-        function(value: number): ()
+        end,
+    })
+    physicsSpeed:CreateSlider({
+        Name = "Speed",
+        Min = 5,
+        Max = 500,
+        Default = physicsSpeedSettings.speed,
+        Function = function(value: number): ()
             physicsSpeedSettings.speed = value
-        end
-    )
-    local SpeedVerticalRow: Frame = addNumberOption(
-        PhysicsSpeedFeature,
-        "Vertical speed",
-        physicsSpeedSettings.verticalSpeed,
-        0,
-        300,
-        function(value: number): ()
+        end,
+    })
+    physicsSpeed:CreateToggle({
+        Name = "Advanced settings",
+        Default = false,
+    })
+
+    -- Every row below declares that it belongs to the switch above (and, where
+    -- a mode owns it, to that mode) instead of the switch walking a list.
+    local advanced: any = {Option = "Advanced settings"}
+    physicsSpeed:CreateSlider({
+        Name = "Vertical speed",
+        Show = advanced,
+        Min = 0,
+        Max = 300,
+        Default = physicsSpeedSettings.verticalSpeed,
+        Function = function(value: number): ()
             physicsSpeedSettings.verticalSpeed = value
-        end
-    )
-    local SpeedPlatformButton: TextButton = addToggleOption(
-        PhysicsSpeedFeature,
-        "PlatformStand",
-        physicsSpeedSettings.platformStand,
-        function(value: boolean): ()
+        end,
+    })
+    physicsSpeed:CreateToggle({
+        Name = "PlatformStand",
+        Show = advanced,
+        Default = physicsSpeedSettings.platformStand,
+        Function = function(value: boolean): ()
             physicsSpeedSettings.platformStand = value
-        end
-    )
-    local SpeedMotorRow: Frame = addNumberOption(
-        PhysicsSpeedFeature,
-        "Motor torque",
-        physicsSpeedSettings.motorTorque,
-        1000,
-        250000,
-        function(value: number): ()
-            physicsSpeedSettings.motorTorque = value
-        end
-    )
-    local speedAdvancedVisible: boolean = false
-    local SpeedCustomButton: TextButton = addToggleOption(
-        PhysicsSpeedFeature,
-        "Custom properties",
-        physicsSpeedSettings.customProperties,
-        function(value: boolean): ()
+        end,
+    })
+    physicsSpeed:CreateToggle({
+        Name = "Custom properties",
+        Show = advanced,
+        Default = physicsSpeedSettings.customProperties,
+        Function = function(value: boolean): ()
             physicsSpeedSettings.customProperties = value
-            setOptionVisible(
-                PhysicsSpeedFeature,
-                SpeedMotorRow,
-                speedAdvancedVisible and value
-            )
             if not value then
                 restorePhysicsMotors()
             end
-        end
-    )
-    local SpeedWallButton: TextButton = addToggleOption(
-        PhysicsSpeedFeature,
-        "Wall check",
-        physicsSpeedSettings.wallCheck,
-        function(value: boolean): ()
+        end,
+        Tooltip = "Rewrite the seat and wheel motors of a vehicle you are "
+            .. "sitting in; the originals go back the moment this is off.",
+    })
+    physicsSpeed:CreateSlider({
+        Name = "Motor torque",
+        Show = {advanced, {Option = "Custom properties"}},
+        Min = 1000,
+        Max = 250000,
+        Default = physicsSpeedSettings.motorTorque,
+        Function = function(value: number): ()
+            physicsSpeedSettings.motorTorque = value
+        end,
+    })
+    physicsSpeed:CreateToggle({
+        Name = "Wall check",
+        Show = advanced,
+        Default = physicsSpeedSettings.wallCheck,
+        Function = function(value: boolean): ()
             physicsSpeedSettings.wallCheck = value
-        end
-    )
-    local SpeedDynamics: any = {}
-    SpeedDynamics.acceleration = addNumberOption(
-        PhysicsSpeedFeature,
-        "Acceleration",
-        physicsSpeedSettings.acceleration,
-        1,
-        40,
-        function(value: number): ()
+        end,
+        Tooltip = "Stop against solid geometry instead of moving through it.",
+    })
+    physicsSpeed:CreateSlider({
+        Name = "Acceleration",
+        Show = {advanced, {Option = "Mode", Values = {"Adaptive", "Smooth"}}},
+        Min = 1,
+        Max = 40,
+        Default = physicsSpeedSettings.acceleration,
+        Function = function(value: number): ()
             physicsSpeedSettings.acceleration = value
-        end
-    )
-    SpeedDynamics.burstInterval = addNumberOption(
-        PhysicsSpeedFeature,
-        "Burst interval (s)",
-        physicsSpeedSettings.burstInterval,
-        0.05,
-        1,
-        function(value: number): ()
+        end,
+    })
+    physicsSpeed:CreateSlider({
+        Name = "Burst interval (s)",
+        Show = {advanced, {Option = "Mode", Values = {"Pulse"}}},
+        Min = 0.05,
+        Max = 1,
+        Default = physicsSpeedSettings.burstInterval,
+        Function = function(value: number): ()
             physicsSpeedSettings.burstInterval = value
-        end
-    )
-    SpeedDynamics.airControl = addNumberOption(
-        PhysicsSpeedFeature,
-        "Air control %",
-        physicsSpeedSettings.airControl * 100,
-        10,
-        150,
-        function(value: number): ()
+        end,
+    })
+    physicsSpeed:CreateSlider({
+        Name = "Air control %",
+        Show = {advanced, {Option = "Mode", Values = {"Adaptive"}}},
+        Min = 10,
+        Max = 150,
+        Default = physicsSpeedSettings.airControl * 100,
+        Function = function(value: number): ()
             physicsSpeedSettings.airControl = value / 100
-        end
-    )
-    SpeedDynamics.sprintMultiplier = addNumberOption(
-        PhysicsSpeedFeature,
-        "Sprint multiplier",
-        physicsSpeedSettings.sprintMultiplier,
-        1,
-        4,
-        function(value: number): ()
+        end,
+    })
+    physicsSpeed:CreateSlider({
+        Name = "Sprint multiplier",
+        Show = advanced,
+        Min = 1,
+        Max = 4,
+        Default = physicsSpeedSettings.sprintMultiplier,
+        Function = function(value: number): ()
             physicsSpeedSettings.sprintMultiplier = value
-        end
-    )
-    SpeedDynamics.sprintKey = addKeyOption(
-        PhysicsSpeedFeature,
-        "Sprint key",
-        physicsSpeedSettings.sprintKey,
-        function(value: Enum.KeyCode): ()
+        end,
+    })
+    local sprintKey: any = physicsSpeed:CreateBind({
+        Name = "Sprint key",
+        Show = advanced,
+        Default = physicsSpeedSettings.sprintKey,
+        Function = function(value: Enum.KeyCode): ()
             physicsSpeedSettings.sprintKey = value
-        end
-    )
+        end,
+    })
     -- Sprint is a hold, so its mobile button is a hold too: tap the row's key
     -- slot to place it, then keep a finger on it to sprint.
     if state.bindMobileActionPlacement then
         state.bindMobileActionPlacement(
-            SpeedDynamics.sprintKey,
+            sprintKey.Object,
             "UniversalSpeedSprint",
             "SPRINT",
             function(): () end,
@@ -498,77 +495,39 @@ function Module.init(context: Runtime): any
             }
         )
     end
-    SpeedDynamics.preserveMomentum = addToggleOption(
-        PhysicsSpeedFeature,
-        "Preserve momentum",
-        physicsSpeedSettings.preserveMomentum,
-        function(value: boolean): ()
+    physicsSpeed:CreateToggle({
+        Name = "Preserve momentum",
+        Show = advanced,
+        Default = physicsSpeedSettings.preserveMomentum,
+        Function = function(value: boolean): ()
             physicsSpeedSettings.preserveMomentum = value
-        end
-    )
-    local SpeedJumpRow: Frame = addNumberOption(
-        PhysicsSpeedFeature,
-        "Auto-jump velocity",
-        physicsSpeedSettings.jumpVelocity,
-        20,
-        120,
-        function(value: number): ()
-            physicsSpeedSettings.jumpVelocity = value
-        end
-    )
-    local SpeedAutoJumpButton: TextButton = addToggleOption(
-        PhysicsSpeedFeature,
-        "Auto jump",
-        physicsSpeedSettings.autoJump,
-        function(value: boolean): ()
+        end,
+    })
+    physicsSpeed:CreateToggle({
+        Name = "Auto jump",
+        Show = advanced,
+        Default = physicsSpeedSettings.autoJump,
+        Function = function(value: boolean): ()
             physicsSpeedSettings.autoJump = value
-            setOptionVisible(
-                PhysicsSpeedFeature,
-                SpeedJumpRow,
-                speedAdvancedVisible and value
-            )
-        end
-    )
-    local SpeedAdvancedButton: TextButton = addToggleOption(
-        PhysicsSpeedFeature,
-        "Advanced settings",
-        false,
-        function(value: boolean): ()
-            speedAdvancedVisible = value
-            setOptionVisible(PhysicsSpeedFeature, SpeedVerticalRow, value)
-            setOptionVisible(PhysicsSpeedFeature, SpeedPlatformButton.Parent :: GuiObject, value)
-            setOptionVisible(PhysicsSpeedFeature, SpeedCustomButton.Parent :: GuiObject, value)
-            setOptionVisible(PhysicsSpeedFeature, SpeedMotorRow, value and physicsSpeedSettings.customProperties)
-            setOptionVisible(PhysicsSpeedFeature, SpeedWallButton.Parent :: GuiObject, value)
-            setOptionVisible(PhysicsSpeedFeature, SpeedDynamics.acceleration, value)
-            setOptionVisible(PhysicsSpeedFeature, SpeedDynamics.burstInterval, value)
-            setOptionVisible(PhysicsSpeedFeature, SpeedDynamics.airControl, value)
-            setOptionVisible(PhysicsSpeedFeature, SpeedDynamics.sprintMultiplier, value)
-            setOptionVisible(PhysicsSpeedFeature, SpeedDynamics.sprintKey.Parent :: GuiObject, value)
-            setOptionVisible(PhysicsSpeedFeature, SpeedDynamics.preserveMomentum.Parent :: GuiObject, value)
-            setOptionVisible(PhysicsSpeedFeature, SpeedAutoJumpButton.Parent :: GuiObject, value)
-            setOptionVisible(PhysicsSpeedFeature, SpeedJumpRow, value and physicsSpeedSettings.autoJump)
-        end
-    )
-    local SpeedModeRow: GuiObject = SpeedModeButton.Parent :: GuiObject
-    local SpeedAdvancedRow: GuiObject = SpeedAdvancedButton.Parent :: GuiObject
-    SpeedModeRow.LayoutOrder = 1
-    SpeedValueRow.LayoutOrder = 2
-    SpeedAdvancedRow.LayoutOrder = 3
-    addFeatureTooltip(
-        PhysicsSpeedFeature,
-        "Adaptive changes air authority and retains flow, Smooth accelerates predictably, "
-            .. "Boost uses physical impulse, CFrame moves the character without touching its "
-            .. "velocity, Pulse alternates bursts with a normal walk, and Teleport advances in "
-            .. "short steps. Sprint, momentum, wall safety, auto-jump and vehicle tuning are "
-            .. "independently configurable."
-    )
+        end,
+    })
+    physicsSpeed:CreateSlider({
+        Name = "Auto-jump velocity",
+        Show = {advanced, {Option = "Auto jump"}},
+        Min = 20,
+        Max = 120,
+        Default = physicsSpeedSettings.jumpVelocity,
+        Function = function(value: number): ()
+            physicsSpeedSettings.jumpVelocity = value
+        end,
+    })
 
     activeCleanup = function(): ()
-        togglePhysicsSpeed(false)
+        restorePhysicsMotors()
+        state.platformStandController.set("PhysicsSpeed", nil)
     end
     Module.Initialized = true
-    return PhysicsSpeedFeature
+    return physicsSpeed
 end
 
 function Module.destroy(): ()
