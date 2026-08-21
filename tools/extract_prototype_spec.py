@@ -26,6 +26,13 @@ SPEC = "docs/design/prototype/spec.json"
 SHELL = "ARandomMenu.luau"
 WIDGETS = "src/library/Widgets.luau"
 WINDOWS = "src/library/WindowManager.luau"
+# The file being written against this spec. The moment it exists, every
+# chrome/component number must have a named constant or the gate fails —
+# that is what "born bound to the spec" means.
+CLICKGUI_CANDIDATES = (
+    "src/library/ClickGui.luau",
+    "src/library/ClickGUI.luau",
+)
 
 # CSS custom property -> ThemeEngine.shape field. The names on the Luau
 # side are the ones the brief listed; the CSS names are what the prototype
@@ -52,6 +59,7 @@ WIDGET_CONSTANTS = {
     "titleHeight": "TITLE_HEIGHT",
     "gap": "WINDOW_GAP",
     "snapDistance": "SNAP_DISTANCE",
+    "windowWidth": "WINDOW_WIDTH",
     "sliderBarHeight": "SLIDER_BAR_HEIGHT",
     "sliderKnobWidth": "SLIDER_KNOB_WIDTH",
     "sliderKnobHeight": "SLIDER_KNOB_HEIGHT",
@@ -163,10 +171,12 @@ def build_spec(html: str) -> dict:
     row = rule_body(html, ".row")
     toast = rule_body(html, ".toast")
 
+    win = rule_body(html, ".win")
     chrome = {
         "titleHeight": root["title-h"],
         "gap": root["gap"],
         "snapDistance": parse_snap_distance(html),
+        "windowWidth": rule_number(win, "width"),
     }
     components = {
         "sliderBarHeight": rule_number(bar, "height"),
@@ -182,11 +192,19 @@ def build_spec(html: str) -> dict:
             re.search(r"animation\s*:\s*([^;]+)", toast).group(1)
         ),
     }
+    luau = {"shape": {}, "chrome": {}, "components": {}}
+    for name in shape:
+        luau["shape"][name] = "ThemeEngine.shape." + name
+    for name in chrome:
+        luau["chrome"][name] = WIDGET_CONSTANTS[name]
+    for name in components:
+        luau["components"][name] = WIDGET_CONSTANTS[name]
     return {
         "source": PROTOTYPE,
         "shape": shape,
         "chrome": chrome,
         "components": components,
+        "luau": luau,
     }
 
 
@@ -204,10 +222,21 @@ def parse_theme_shape(shell: str) -> dict:
     return found
 
 
+def clickgui_path() -> str | None:
+    for path in CLICKGUI_CANDIDATES:
+        if os.path.exists(path):
+            return path
+    return None
+
+
 def parse_named_constants() -> dict:
     """ALL_CAPS number locals in the files the brief named as counterparts."""
     found = {}
-    for path in (WIDGETS, WINDOWS):
+    paths = [WIDGETS, WINDOWS]
+    gui = clickgui_path()
+    if gui:
+        paths.append(gui)
+    for path in paths:
         if not os.path.exists(path):
             continue
         for name, value in re.findall(

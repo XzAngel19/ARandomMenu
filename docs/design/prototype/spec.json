@@ -12,7 +12,8 @@
   "chrome": {
     "titleHeight": 22,
     "gap": 2,
-    "snapDistance": 8
+    "snapDistance": 8,
+    "windowWidth": 186
   },
   "components": {
     "sliderBarHeight": 5,
@@ -23,5 +24,32 @@
     "tooltipDelayMs": 400,
     "transitionFast": 0.1,
     "transitionSlow": 0.18
+  },
+  "luau": {
+    "shape": {
+      "opacity": "ThemeEngine.shape.opacity",
+      "tooltipOpacity": "ThemeEngine.shape.tooltipOpacity",
+      "radius": "ThemeEngine.shape.radius",
+      "rowHeight": "ThemeEngine.shape.rowHeight",
+      "borderThickness": "ThemeEngine.shape.borderThickness",
+      "maxHeight": "ThemeEngine.shape.maxHeight",
+      "scale": "ThemeEngine.shape.scale"
+    },
+    "chrome": {
+      "titleHeight": "TITLE_HEIGHT",
+      "gap": "WINDOW_GAP",
+      "snapDistance": "SNAP_DISTANCE",
+      "windowWidth": "WINDOW_WIDTH"
+    },
+    "components": {
+      "sliderBarHeight": "SLIDER_BAR_HEIGHT",
+      "sliderKnobWidth": "SLIDER_KNOB_WIDTH",
+      "sliderKnobHeight": "SLIDER_KNOB_HEIGHT",
+      "titleFontSize": "TITLE_FONT_SIZE",
+      "labelFontSize": "LABEL_FONT_SIZE",
+      "tooltipDelayMs": "TOOLTIP_DELAY_MS",
+      "transitionFast": "TRANSITION_FAST",
+      "transitionSlow": "TRANSITION_SLOW"
+    }
   }
 }
