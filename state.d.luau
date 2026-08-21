@@ -133,6 +133,7 @@ export type MenuState = {
     mobileButtonSize: number,                       -- Pixel size of placed phone shortcuts
     clickGui: any,                                  -- Wurst's layout: one window per category, cards placed into them
     hudList: any,                                   -- Wurst's HackList: the on-screen list of enabled modules and their card.status brackets
+    navigator: any,                                 -- Wurst's Navigator adaptation: the search and preference-ordered grid under the logo
     wurstLogo: any,                                 -- The logo chip's live setters, driven by the WurstLogo settings window
     uiMaxHeight: number,                            -- Wurst's ClickGUI "Max height" in pixels; 0 means no limit, read by every category window
     uiSettings: any,                                -- The UI Settings window's current values, readable without walking its rows
