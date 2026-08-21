@@ -284,7 +284,27 @@ function Module.init(runtime: any): any
         clearMarks(runtimeState.bedMarks)
     end
 
+    local function renderLibrary(): any
+        return state.renderLibrary
+    end
+
+    local function worldLayer(name: string): Frame?
+        local library: any = renderLibrary()
+        if not library then
+            return nil
+        end
+        return library:Layer(name)
+    end
+
     local function renderBeds(): ()
+        local library: any = renderLibrary()
+        local layer: Frame? = worldLayer("BedFightEspLayer")
+        local camera: Camera? = workspace.CurrentCamera
+        if not library or not layer or not camera then
+            return
+        end
+        local resolvedLayer: Frame = layer :: Frame
+        resolvedLayer.Visible = true
         local root: BasePart? = LocalPlayer.Character
             and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
         local origin: Vector3 = root and (root :: BasePart).Position or Vector3.zero
@@ -300,38 +320,30 @@ function Module.init(runtime: any): any
             if distance > settings.maxDistance then
                 continue
             end
+            local projected: Vector2? = library:Project(camera :: Camera, resolved.Position)
+            if not projected then
+                continue
+            end
             seen[bed] = true
-            local mark: any = runtimeState.bedMarks[bed]
-            if not mark or not mark.Parent then
-                local billboard: BillboardGui = create("BillboardGui", {
-                    Parent = resolved,
-                    Name = "RTM_BedMark",
-                    AlwaysOnTop = true,
-                    LightInfluence = 0,
-                    Size = UDim2.fromOffset(150, 22),
-                    StudsOffset = Vector3.new(0, 2.4, 0),
-                }) :: BillboardGui
-                local label: TextLabel = makeTextLabel(billboard, "Bed", 12)
-                label.Name = "Label"
-                label.Size = UDim2.fromScale(1, 1)
-                label.TextXAlignment = Enum.TextXAlignment.Center
-                runtimeState.bedMarks[bed] = billboard
-                mark = billboard
-            end
-            local label: TextLabel? = mark:FindFirstChild("Label") :: TextLabel?
-            if label then
-                label.TextColor3 = settings.bedColour
-                label.Text = settings.showDistance
+            runtimeState.bedMarks[bed] = true
+            local drawings: any = library:Set(resolvedLayer, bed)
+            drawings:Show(true)
+            drawings:Label(
+                "NameTag",
+                settings.showDistance
                         and ("Bed  " .. tostring(math.round(distance)) .. "m")
-                    or "Bed"
-            end
+                    or "Bed",
+                projected :: Vector2,
+                0.5,
+                12,
+                settings.bedColour,
+                true
+            )
         end
 
-        for bed: Instance, mark: any in pairs(runtimeState.bedMarks) do
+        for bed: Instance in pairs(runtimeState.bedMarks) do
             if not seen[bed] or not bed.Parent then
-                pcall(function(): ()
-                    mark:Destroy()
-                end)
+                library:Release(resolvedLayer, bed)
                 runtimeState.bedMarks[bed] = nil
             end
         end
@@ -347,6 +359,12 @@ function Module.init(runtime: any): any
     local function setBedEsp(enabled: boolean): ()
         host.disconnectFeatureConnection("BedFightBeds")
         clearBeds()
+        local library: any = renderLibrary()
+        local layer: Frame? = worldLayer("BedFightEspLayer")
+        if library and layer and not enabled then
+            library:ReleaseAll(layer)
+            layer.Visible = false
+        end
         if not enabled then
             return
         end
@@ -392,6 +410,13 @@ function Module.init(runtime: any): any
     -- file, switched from inside the universal ESP.
     local function setGeneratorEsp(enabled: boolean): ()
         host.disconnectFeatureConnection("BedFightGenerators")
+        local library: any = renderLibrary()
+        local layer: Frame? = worldLayer("BedFightEspLayer")
+        if library and layer then
+            for generator: Instance in pairs(runtimeState.generatorMarks) do
+                library:Release(layer, generator)
+            end
+        end
         clearMarks(runtimeState.generatorMarks)
         if not enabled then
             return

@@ -275,6 +275,28 @@ def text_fits_contract(failures: list) -> None:
                     )
 
 
+def loader_contract(shell: str, failures: list) -> None:
+    """The 10-second boot is a contract, not a vibe.
+
+    GUID cache-busting, a blocking fingerprint wait and a missing disk write
+    are the three things that made a second launch as expensive as the first.
+    """
+    if "GenerateGUID" in shell:
+        failures.append("ARandomMenu.luau: still cache-busts with GenerateGUID")
+    if "?nocache=" in shell:
+        failures.append("ARandomMenu.luau: still uses ?nocache=")
+    if "while not detected and attempts < 6 do" in shell:
+        failures.append(
+            "ARandomMenu.luau: fingerprint still blocks bootstrap for 3s"
+        )
+    if "fetchRepositorySource" not in shell or "dist/bundle.luau" not in shell:
+        failures.append("ARandomMenu.luau: bundle fetch path is missing")
+    if "writeCachedSource" not in shell:
+        failures.append("ARandomMenu.luau: disk cache is never written")
+    if "[RTM:Timing]" not in shell:
+        failures.append("ARandomMenu.luau: bootstrap timing summary is missing")
+
+
 def main() -> int:
     shell = open(SHELL).read()
     sources = sorted(glob.glob("src/**/*.luau", recursive=True))
@@ -288,6 +310,7 @@ def main() -> int:
     connection_contract(shell, sources, failures)
     card_name_contract(shell, failures)
     text_fits_contract(failures)
+    loader_contract(shell, failures)
 
     if failures:
         for line in failures:

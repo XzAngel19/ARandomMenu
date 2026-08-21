@@ -418,6 +418,14 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
+-- Content stamp of every file packed into dist/bundle.luau. Written by
+-- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
+-- `?v=` so the CDN and the executor can cache a URL that still changes the
+-- moment the content does.
+local SOURCE_STAMP: string = "7f9eda12e8af1cfc"
+local BOOT_FINGERPRINT_SECONDS: number = 0
+local PENDING_FINGERPRINT: boolean = false
+
 local function bootstrap(): ()
 local executorGlobals: any = getfenv()
 
@@ -576,19 +584,19 @@ end
 
 local ACTIVE_GAME_MODULE: string? = GAME_MODULES[game.PlaceId]
 local ACTIVE_GAME_SOURCE: string = ACTIVE_GAME_MODULE and "PlaceId" or "none"
+PENDING_FINGERPRINT = ACTIVE_GAME_MODULE == nil
 if not ACTIVE_GAME_MODULE then
-    -- A clone: recognise the game by what it is made of. The check is retried
-    -- briefly because a freshly joined client may still be replicating.
+    -- One look, no wait. A clone that has already replicated is recognised
+    -- here; one that is still streaming is picked up later, off the path that
+    -- builds the window. Waiting three seconds for markers that never arrive
+    -- was a blank screen in every game that is not one of the five PlaceIds.
+    local fingerprintAt: number = os.clock()
     local detected: string?, score: number = detectGameModuleByStructure()
-    local attempts: number = 0
-    while not detected and attempts < 6 do
-        attempts += 1
-        task.wait(0.5)
-        detected, score = detectGameModuleByStructure()
-    end
+    BOOT_FINGERPRINT_SECONDS = os.clock() - fingerprintAt
     if detected then
         ACTIVE_GAME_MODULE = detected
         ACTIVE_GAME_SOURCE = "fingerprint " .. tostring(score) .. " markers"
+        PENDING_FINGERPRINT = false
     end
 end
 
@@ -8575,12 +8583,24 @@ local function loadGameModule(
     local moduleUrl: string = REPOSITORY_RAW_BASE
         .. "src/games/"
         .. moduleName
-        .. ".luau?nocache="
-        .. HttpService:GenerateGUID(false)
+        .. ".luau?v="
+        .. SOURCE_STAMP
     state.logBootstrap("Descargando módulo: " .. moduleUrl)
-    local downloadSuccess: boolean, source: any = pcall(function(): string
-        return (game :: any):HttpGet(moduleUrl, true)
-    end)
+    local downloadSuccess: boolean, source: any = false, nil
+    if type(state.fetchRepositorySource) == "function" then
+        local fetched: string?, fetchError: string? =
+            state.fetchRepositorySource("src/games/" .. moduleName .. ".luau")
+        if fetched then
+            source = fetched
+            downloadSuccess = true
+        else
+            source = fetchError
+        end
+    else
+        downloadSuccess, source = pcall(function(): string
+            return (game :: any):HttpGet(moduleUrl, true)
+        end)
+    end
     if downloadSuccess and type(source) == "string" then
         local candidate: string = string.lower(source)
         if #source < 64
@@ -8777,6 +8797,31 @@ registerPlaceModule("VD", GAME_CHECK.VD)
 registerPlaceModule("MVSD", GAME_CHECK.MVSD)
 registerPlaceModule("BedFight", GAME_CHECK.BedFight)
 
+if PENDING_FINGERPRINT then
+    task.spawn(function(): ()
+        local attempts: number = 0
+        while attempts < 6 do
+            attempts += 1
+            task.wait(0.5)
+            local detected: string?, score: number = detectGameModuleByStructure()
+            if detected then
+                ACTIVE_GAME_MODULE = detected
+                ACTIVE_GAME_SOURCE = "fingerprint " .. tostring(score) .. " markers"
+                GAME_CHECK.MM2Active = detected == "MM2"
+                GAME_CHECK.TRSActive = detected == "TRS"
+                GAME_CHECK.VDActive = detected == "VD"
+                GAME_CHECK.MVSDActive = detected == "MVSD"
+                GAME_CHECK.BedFightActive = detected == "BedFight"
+                GAME_CHECK.source = ACTIVE_GAME_SOURCE
+                PENDING_FINGERPRINT = false
+                registerPlaceModule(detected, GAME_CHECK[detected] or 0)
+                SectionManager.initialize(detected)
+                break
+            end
+        end
+    end)
+end
+
 -- ---------------------------------------------------------------------------
 -- Module architecture
 -- ---------------------------------------------------------------------------
@@ -8795,45 +8840,163 @@ registerPlaceModule("BedFight", GAME_CHECK.BedFight)
 -- The manifest is downloaded first so the file list lives in the repository
 -- rather than in this file; if that download fails the embedded copy below is
 -- used, and the validation workflow keeps the two in sync.
-state.fetchRepositoryChunk = function(path: string): (any, string?)
+--
+-- Delivery: prefer one stamped bundle (shell + bundle = two requests). The
+-- gate refuses a bundle whose stamp does not match the sources. If the bundle
+-- is missing or stale, fall back to a bounded parallel download of the same
+-- files, then loadstring+init in manifest order so behaviour is identical.
+state.boot = {
+    stamp = SOURCE_STAMP,
+    bundle = nil :: {[string]: string}?,
+    sources = {} :: {[string]: string},
+    timing = {} :: {[string]: number},
+    started = os.clock(),
+}
+
+state.markBoot = function(phase: string, startedAt: number): ()
+    state.boot.timing[phase] = os.clock() - startedAt
+end
+
+state.summarizeBoot = function(): ()
+    local timing: any = state.boot.timing
+    local total: number = os.clock() - (state.boot.started or os.clock())
+    print(string.format(
+        "[RTM:Timing] fingerprint %.2fs · bundle %.2fs · manifest %.2fs · widgets %.2fs · framework %.2fs · libraries %.2fs · modules %.2fs (%d) · game module %.2fs · total %.2fs",
+        BOOT_FINGERPRINT_SECONDS,
+        tonumber(timing.bundle) or 0,
+        tonumber(timing.manifest) or 0,
+        tonumber(timing.widgets) or 0,
+        tonumber(timing.framework) or 0,
+        tonumber(timing.libraries) or 0,
+        tonumber(timing.modules) or 0,
+        tonumber(timing.moduleCount) or 0,
+        tonumber(timing.game) or 0,
+        total
+    ))
+end
+
+state.sourceLooksValid = function(source: any, minimum: number): boolean
+    if type(source) ~= "string" or #source < minimum then
+        return false
+    end
+    local normalized: string = string.lower(source)
+    if string.find(normalized, "404: not found", 1, true)
+        or string.find(normalized, "<!doctype html", 1, true)
+        or string.find(normalized, "<html", 1, true) then
+        return false
+    end
+    return true
+end
+
+state.httpGetPath = function(path: string): (string?, string?)
+    local url: string = REPOSITORY_RAW_BASE .. path .. "?v=" .. SOURCE_STAMP
+    local ok: boolean, body: any = pcall(function(): string
+        return (game :: any):HttpGet(url, true)
+    end)
+    if ok and state.sourceLooksValid(body, 32) then
+        return body :: string, nil
+    end
+    return nil, tostring(body)
+end
+
+state.ensureSourceFolders = function(path: string): ()
+    local environment: any = getfenv()
+    if type(environment.makefolder) ~= "function" then
+        return
+    end
+    pcall(environment.makefolder, "ARandomMenu")
+    local cursor: string = "ARandomMenu"
+    for segment: string in string.gmatch(path, "([^/]+)/") do
+        cursor = cursor .. "/" .. segment
+        pcall(environment.makefolder, cursor)
+    end
+end
+
+state.readCachedSource = function(path: string): string?
+    local environment: any = getfenv()
+    local readFile: any = environment.readfile
+    local isFile: any = environment.isfile
+    if type(readFile) ~= "function" then
+        return nil
+    end
+    local stampFile: string = "ARandomMenu/.stamp"
+    if type(isFile) == "function" then
+        local stampOk: boolean, stampExists: any = pcall(isFile, stampFile)
+        if not stampOk or not stampExists then
+            return nil
+        end
+    end
+    local stampOk: boolean, stampBody: any = pcall(readFile, stampFile)
+    if not stampOk or stampBody ~= SOURCE_STAMP then
+        return nil
+    end
+    local localPath: string = "ARandomMenu/" .. path
+    if type(isFile) == "function" then
+        local fileOk: boolean, exists: any = pcall(isFile, localPath)
+        if not fileOk or not exists then
+            return nil
+        end
+    end
+    local readOk: boolean, source: any = pcall(readFile, localPath)
+    if readOk and state.sourceLooksValid(source, 32) then
+        return source :: string
+    end
+    return nil
+end
+
+state.writeCachedSource = function(path: string, source: string): ()
+    local environment: any = getfenv()
+    local writeFile: any = environment.writefile
+    if type(writeFile) ~= "function" then
+        return
+    end
+    state.ensureSourceFolders(path)
+    pcall(writeFile, "ARandomMenu/" .. path, source)
+    pcall(writeFile, "ARandomMenu/.stamp", SOURCE_STAMP)
+end
+
+state.fetchRepositorySource = function(path: string): (string?, string?)
+    local bundled: any = state.boot.bundle and state.boot.bundle[path]
+    if type(bundled) == "string" then
+        state.boot.sources[path] = bundled
+        return bundled, nil
+    end
+    local remembered: string? = state.boot.sources[path]
+    if remembered then
+        return remembered, nil
+    end
+    local cached: string? = state.readCachedSource(path)
+    if cached then
+        state.boot.sources[path] = cached
+        return cached, nil
+    end
+    local downloaded: string?, downloadError: string? = state.httpGetPath(path)
+    if downloaded then
+        state.boot.sources[path] = downloaded
+        state.writeCachedSource(path, downloaded)
+        return downloaded, nil
+    end
+    local environment: any = getfenv()
+    local readFile: any = environment.readfile
+    local isFile: any = environment.isfile
+    local localPath: string = "ARandomMenu/" .. path
+    if type(readFile) == "function"
+        and (type(isFile) ~= "function" or isFile(localPath)) then
+        local readOk: boolean, localSource: any = pcall(readFile, localPath)
+        if readOk and state.sourceLooksValid(localSource, 32) then
+            state.boot.sources[path] = localSource
+            return localSource :: string, nil
+        end
+    end
+    return nil, downloadError or ("Descarga fallida: " .. path)
+end
+
+state.compileRepositorySource = function(path: string, source: string): (any, string?)
     local environment: any = getfenv()
     if type(environment.loadstring) ~= "function" then
         return nil, "El ejecutor no admite loadstring"
     end
-    local url: string = REPOSITORY_RAW_BASE
-        .. path
-        .. "?nocache="
-        .. HttpService:GenerateGUID(false)
-    local downloaded: boolean, source: any = pcall(function(): string
-        return (game :: any):HttpGet(url, true)
-    end)
-    if downloaded and type(source) == "string" then
-        local normalized: string = string.lower(source)
-        if #source < 32
-            or string.find(normalized, "404: not found", 1, true)
-            or string.find(normalized, "<!doctype html", 1, true) then
-            downloaded = false
-        end
-    end
-    if not downloaded or type(source) ~= "string" then
-        -- Executors that mirror the repository locally keep working offline.
-        local readFile: any = environment.readfile
-        local isFile: any = environment.isfile
-        local localPath: string = "ARandomMenu/" .. path
-        if type(readFile) == "function"
-            and (type(isFile) ~= "function" or isFile(localPath)) then
-            local readOk: boolean, localSource: any = pcall(readFile, localPath)
-            if readOk and type(localSource) == "string" then
-                source = localSource
-                downloaded = true
-            end
-        end
-    end
-    if not downloaded or type(source) ~= "string" then
-        return nil, "Descarga fallida: " .. path
-    end
-    local chunk: any, compileError: any =
-        environment.loadstring(source, "@" .. path)
+    local chunk: any, compileError: any = environment.loadstring(source, "@" .. path)
     if type(chunk) ~= "function" then
         return nil, "Compilación fallida (" .. path .. "): " .. tostring(compileError)
     end
@@ -8845,6 +9008,55 @@ state.fetchRepositoryChunk = function(path: string): (any, string?)
         return nil, "Ejecución fallida (" .. path .. "): " .. tostring(result)
     end
     return result, nil
+end
+
+state.fetchRepositoryChunk = function(path: string): (any, string?)
+    local source: string?, sourceError: string? = state.fetchRepositorySource(path)
+    if not source then
+        return nil, sourceError
+    end
+    return state.compileRepositorySource(path, source :: string)
+end
+
+state.downloadSourcesParallel = function(paths: {string}): ()
+    local pending: number = #paths
+    if pending == 0 then
+        return
+    end
+    local index: number = 0
+    local workers: number = math.min(8, pending)
+    local timedOut: boolean = false
+    for _ = 1, workers do
+        task.spawn(function(): ()
+            while not timedOut do
+                index += 1
+                local current: number = index
+                if current > #paths then
+                    return
+                end
+                local path: string = paths[current]
+                if not state.boot.sources[path] then
+                    local source: string? = state.fetchRepositorySource(path)
+                    if source then
+                        state.boot.sources[path] = source
+                    end
+                end
+                pending -= 1
+            end
+        end)
+    end
+    local deadline: number = os.clock() + 12
+    while pending > 0 and os.clock() < deadline do
+        task.wait(0.03)
+    end
+    if pending > 0 then
+        timedOut = true
+        for _, path: string in ipairs(paths) do
+            if not state.boot.sources[path] then
+                state.fetchRepositorySource(path)
+            end
+        end
+    end
 end
 
 do
@@ -8863,199 +9075,70 @@ local fallbackManifest: any = {
         "src/library/Render.luau",
     },
     modules = {
-        {
-            path = "src/modules/Utility/FriendList.luau",
-            name = "Friend List",
-            category = "Utility",
-        },
-        {
-            path = "src/modules/Visuals/ItemRender.luau",
-            name = "Item Render",
-            category = "Visuals",
-        },
-        {
-            path = "src/modules/Visuals/PlayerESP.luau",
-            name = "Player ESP",
-            category = "Visuals",
-        },
-        {
-            path = "src/modules/Combat/KillAura.luau",
-            name = "Kill Aura",
-            category = "Combat",
-        },
-        {
-            path = "src/modules/Utility/RemoteLogger.luau",
-            name = "Remote Logger",
-            category = "Utility",
-        },
-        {
-            path = "src/modules/Movement/ClickTeleport.luau",
-            name = "Click Teleport",
-            category = "Movement",
-        },
-        {
-            path = "src/modules/Combat/AutoClicker.luau",
-            name = "Auto Clicker",
-            category = "Combat",
-        },
-        {
-            path = "src/modules/Combat/TriggerBot.luau",
-            name = "TriggerBot",
-            category = "Combat",
-        },
-        {
-            path = "src/modules/Visuals/XRay.luau",
-            name = "X-Ray",
-            category = "Visuals",
-        },
-        {
-            path = "src/modules/Movement/HighJump.luau",
-            name = "High Jump",
-            category = "Movement",
-        },
-        {
-            path = "src/modules/Movement/Spider.luau",
-            name = "Spider",
-            category = "Movement",
-        },
-        {
-            path = "src/modules/Protection/SafeWalk.luau",
-            name = "Safe Walk",
-            category = "Protection",
-        },
-        {
-            path = "src/modules/Utility/RejoinServer.luau",
-            name = "Rejoin Server",
-            category = "Utility",
-        },
-        {
-            path = "src/modules/Visuals/ZoomUnlocker.luau",
-            name = "Zoom Unlocker",
-            category = "Visuals",
-        },
-        {
-            path = "src/modules/Utility/InteractExtender.luau",
-            name = "Interact Extender",
-            category = "Utility",
-        },
-        {
-            path = "src/modules/Movement/PhaseDash.luau",
-            name = "Phase Dash",
-            category = "Movement",
-        },
-        {
-            path = "src/modules/Protection/NoFall.luau",
-            name = "No Fall",
-            category = "Protection",
-        },
-        {
-            path = "src/modules/Movement/Fly.luau",
-            name = "Fly",
-            category = "Movement",
-        },
-        {
-            path = "src/modules/Movement/PhysicsSpeed.luau",
-            name = "Physics Speed",
-            category = "Movement",
-        },
-        {
-            path = "src/modules/Protection/AntiVoid.luau",
-            name = "Anti-Void",
-            category = "Protection",
-        },
-        {
-            path = "src/modules/Utility/Gravity.luau",
-            name = "Gravity",
-            category = "Utility",
-        },
-        {
-            path = "src/modules/Movement/JumpPower.luau",
-            name = "Jump Power",
-            category = "Movement",
-        },
-        {
-            path = "src/modules/Movement/InfiniteJump.luau",
-            name = "Infinite Jump",
-            category = "Movement",
-        },
-        {
-            path = "src/modules/Visuals/FieldOfView.luau",
-            name = "FOV",
-            category = "Visuals",
-        },
-        {
-            path = "src/modules/Movement/Noclip.luau",
-            name = "Noclip",
-            category = "Movement",
-        },
-        {
-            path = "src/modules/Utility/AntiAfk.luau",
-            name = "Anti-AFK",
-            category = "Utility",
-        },
-        {
-            path = "src/modules/Protection/AntiFling.luau",
-            name = "Anti-Fling",
-            category = "Protection",
-        },
-        {
-            path = "src/modules/Utility/LagSwitch.luau",
-            name = "Lag Switch",
-            category = "Utility",
-        },
-        {
-            path = "src/modules/Utility/Fling.luau",
-            name = "Fling",
-            category = "Utility",
-        },
-        {
-            path = "src/modules/Utility/ImproveFps.luau",
-            name = "Improve FPS",
-            category = "Utility",
-        },
-        {
-            path = "src/modules/Visuals/Fullbright.luau",
-            name = "Fullbright",
-            category = "Visuals",
-        },
-        {
-            path = "src/modules/Movement/FreezeMovements.luau",
-            name = "Freeze Movements",
-            category = "Movement",
-        },
-        {
-            path = "src/modules/Movement/Speed.luau",
-            name = "Speed",
-            category = "Movement",
-        },
-        {
-            path = "src/modules/Combat/Hitboxes.luau",
-            name = "Hitboxes",
-            category = "Combat",
-        },
-        {
-            path = "src/modules/Combat/ProjectileCalibration.luau",
-            name = "Projectile Calibration",
-            category = "Combat",
-        },
-        {
-            path = "src/modules/Spoof/Disguise.luau",
-            name = "Disguise",
-            category = "Spoof",
-        },
-        {
-            path = "src/modules/Spoof/AnimationChanger.luau",
-            name = "Animation Changer",
-            category = "Spoof",
-        },
-        {
-            path = "src/modules/Spoof/EmotePlayer.luau",
-            name = "Emote Player",
-            category = "Spoof",
-        },
+        {path = "src/modules/Utility/FriendList.luau", name = "Friend List", category = "Utility"},
+        {path = "src/modules/Visuals/ItemRender.luau", name = "Item Render", category = "Visuals"},
+        {path = "src/modules/Visuals/PlayerESP.luau", name = "Player ESP", category = "Visuals"},
+        {path = "src/modules/Combat/KillAura.luau", name = "Kill Aura", category = "Combat"},
+        {path = "src/modules/Utility/RemoteLogger.luau", name = "Remote Logger", category = "Utility"},
+        {path = "src/modules/Movement/ClickTeleport.luau", name = "Click Teleport", category = "Movement"},
+        {path = "src/modules/Combat/AutoClicker.luau", name = "Auto Clicker", category = "Combat"},
+        {path = "src/modules/Combat/TriggerBot.luau", name = "TriggerBot", category = "Combat"},
+        {path = "src/modules/Visuals/XRay.luau", name = "X-Ray", category = "Visuals"},
+        {path = "src/modules/Movement/HighJump.luau", name = "High Jump", category = "Movement"},
+        {path = "src/modules/Movement/Spider.luau", name = "Spider", category = "Movement"},
+        {path = "src/modules/Protection/SafeWalk.luau", name = "Safe Walk", category = "Protection"},
+        {path = "src/modules/Utility/RejoinServer.luau", name = "Rejoin Server", category = "Utility"},
+        {path = "src/modules/Visuals/ZoomUnlocker.luau", name = "Zoom Unlocker", category = "Visuals"},
+        {path = "src/modules/Utility/InteractExtender.luau", name = "Interact Extender", category = "Utility"},
+        {path = "src/modules/Movement/PhaseDash.luau", name = "Phase Dash", category = "Movement"},
+        {path = "src/modules/Protection/NoFall.luau", name = "No Fall", category = "Protection"},
+        {path = "src/modules/Movement/Fly.luau", name = "Fly", category = "Movement"},
+        {path = "src/modules/Movement/PhysicsSpeed.luau", name = "Physics Speed", category = "Movement"},
+        {path = "src/modules/Protection/AntiVoid.luau", name = "Anti-Void", category = "Protection"},
+        {path = "src/modules/Utility/Gravity.luau", name = "Gravity", category = "Utility"},
+        {path = "src/modules/Movement/JumpPower.luau", name = "Jump Power", category = "Movement"},
+        {path = "src/modules/Movement/InfiniteJump.luau", name = "Infinite Jump", category = "Movement"},
+        {path = "src/modules/Visuals/FieldOfView.luau", name = "FOV", category = "Visuals"},
+        {path = "src/modules/Movement/Noclip.luau", name = "Noclip", category = "Movement"},
+        {path = "src/modules/Utility/AntiAfk.luau", name = "Anti-AFK", category = "Utility"},
+        {path = "src/modules/Protection/AntiFling.luau", name = "Anti-Fling", category = "Protection"},
+        {path = "src/modules/Utility/LagSwitch.luau", name = "Lag Switch", category = "Utility"},
+        {path = "src/modules/Utility/Fling.luau", name = "Fling", category = "Utility"},
+        {path = "src/modules/Utility/ImproveFps.luau", name = "Improve FPS", category = "Utility"},
+        {path = "src/modules/Visuals/Fullbright.luau", name = "Fullbright", category = "Visuals"},
+        {path = "src/modules/Movement/FreezeMovements.luau", name = "Freeze Movements", category = "Movement"},
+        {path = "src/modules/Movement/Speed.luau", name = "Speed", category = "Movement"},
+        {path = "src/modules/Combat/Hitboxes.luau", name = "Hitboxes", category = "Combat"},
+        {path = "src/modules/Combat/ProjectileCalibration.luau", name = "Projectile Calibration", category = "Combat"},
+        {path = "src/modules/Spoof/Disguise.luau", name = "Disguise", category = "Spoof"},
+        {path = "src/modules/Spoof/AnimationChanger.luau", name = "Animation Changer", category = "Spoof"},
+        {path = "src/modules/Spoof/EmotePlayer.luau", name = "Emote Player", category = "Spoof"},
     },
 }
 
+local bundleAt: number = os.clock()
+local packed: any, packedError: string? = state.fetchRepositoryChunk("dist/bundle.luau")
+if type(packed) == "table"
+    and packed.stamp == SOURCE_STAMP
+    and type(packed.files) == "table" then
+    state.boot.bundle = packed.files
+    state.logBootstrap("Bundle aceptado · stamp=" .. SOURCE_STAMP)
+else
+    if packedError then
+        state.logBootstrapError("Bundle: " .. packedError)
+    elseif type(packed) == "table" then
+        state.logBootstrapError(
+            "Bundle stamp mismatch: got "
+                .. tostring(packed.stamp)
+                .. " expected "
+                .. SOURCE_STAMP
+        )
+    end
+    state.boot.bundle = nil
+end
+state.markBoot("bundle", bundleAt)
+
+local manifestAt: number = os.clock()
 local manifest: any, manifestError: string? =
     state.fetchRepositoryChunk("src/core/Manifest.luau")
 if type(manifest) ~= "table" or type(manifest.modules) ~= "table" then
@@ -9063,6 +9146,22 @@ if type(manifest) ~= "table" or type(manifest.modules) ~= "table" then
         state.logBootstrapError("Manifest: " .. manifestError)
     end
     manifest = fallbackManifest
+end
+state.markBoot("manifest", manifestAt)
+
+local loadList: {string} = {}
+table.insert(loadList, manifest.widgets or "src/library/Widgets.luau")
+for _, path: string in ipairs(manifest.core or {}) do
+    table.insert(loadList, path)
+end
+for _, path: string in ipairs(manifest.libraries or {}) do
+    table.insert(loadList, path)
+end
+for _, entry: any in ipairs(manifest.modules or {}) do
+    table.insert(loadList, type(entry) == "table" and entry.path or tostring(entry))
+end
+if not state.boot.bundle then
+    state.downloadSourcesParallel(loadList)
 end
 
 local loaded: {any} = {}
@@ -9077,12 +9176,7 @@ local function loadPiece(path: string): any?
     return piece
 end
 
--- The widget library comes before everything else, including the framework.
---
--- It owns every control a panel is made of, so the environment each module
--- runs in is incomplete until it has loaded; a module that starts drawing
--- against a half-filled environment dies in the middle of its own panel and
--- leaves a card with a title and nothing under it.
+local widgetsAt: number = os.clock()
 local widgetPath: string = manifest.widgets or "src/library/Widgets.luau"
 local widgetPiece: any? = loadPiece(widgetPath)
 if widgetPiece then
@@ -9093,10 +9187,6 @@ if widgetPiece then
     if widgetOk and type(builders) == "table" then
         table.insert(loaded, widgetPiece)
         widgetBuilders = builders
-        -- `state.frameworkEnvironment` was built before this point, so the
-        -- loop inside `createGameModuleEnvironment` never ran for it. Game
-        -- modules get theirs from that loop; this is the same install for the
-        -- one environment that already existed.
         for builderName: string, builder: any in pairs(builders) do
             state.frameworkEnvironment[builderName] = function(...: any): any
                 diagnostics.uiBindings += 1
@@ -9107,17 +9197,21 @@ if widgetPiece then
         state.logBootstrapError("Widgets init falló: " .. tostring(builders))
     end
 end
+state.markBoot("widgets", widgetsAt)
 if not widgetBuilders then
     state.logBootstrapError(
         "Sin librería de controles; los módulos no pueden construir sus paneles"
     )
     notify("No se pudo cargar la librería de controles")
+    state.summarizeBoot()
     return
 end
 
+local frameworkAt: number = os.clock()
 local frameworkPiece: any? = loadPiece(manifest.core[1] or "src/core/Framework.luau")
 if not frameworkPiece then
     state.logBootstrapError("Framework no disponible; módulos externos omitidos")
+    state.summarizeBoot()
     return
 end
 local frameworkOk: boolean, framework: any = pcall(
@@ -9126,14 +9220,14 @@ local frameworkOk: boolean, framework: any = pcall(
 )
 if not frameworkOk or type(framework) ~= "table" then
     state.logBootstrapError("Framework init falló: " .. tostring(framework))
+    state.summarizeBoot()
     return
 end
 table.insert(loaded, frameworkPiece)
 state.framework = framework
+state.markBoot("framework", frameworkAt)
 
--- Libraries are shared services, so every one in the manifest is started and
--- handed to every module by name; a module asks for `context.weapons` without
--- caring which slot of the list it came from.
+local librariesAt: number = os.clock()
 local libraries: any = {}
 for _, path: string in ipairs(manifest.libraries or {}) do
     local piece: any? = loadPiece(path)
@@ -9159,6 +9253,8 @@ end
 local entityLibrary: any = libraries.entity
 state.entityLibrary = entityLibrary
 state.weaponLibrary = libraries.weapons
+state.renderLibrary = libraries.render
+state.markBoot("libraries", librariesAt)
 
 local context: any = {
     framework = framework,
@@ -9168,6 +9264,8 @@ local context: any = {
     libraries = libraries,
     host = state.frameworkEnvironment,
 }
+local modulesAt: number = os.clock()
+local moduleCount: number = 0
 for _, entry: any in ipairs(manifest.modules) do
     local path: string = type(entry) == "table" and entry.path or tostring(entry)
     local piece: any? = loadPiece(path)
@@ -9175,6 +9273,7 @@ for _, entry: any in ipairs(manifest.modules) do
         local started: boolean, failure: any = pcall(piece.init, context)
         if started then
             table.insert(loaded, piece)
+            moduleCount += 1
             state.logBootstrap("Módulo cargado: " .. path)
         else
             state.logBootstrapError(
@@ -9183,9 +9282,10 @@ for _, entry: any in ipairs(manifest.modules) do
         end
     end
 end
+state.boot.timing.moduleCount = moduleCount
+state.markBoot("modules", modulesAt)
 
 state.cleanupFrameworkRuntime = function(): ()
-    -- Reverse order: modules first, then the libraries they were holding.
     for index: number = #loaded, 1, -1 do
         local piece: any = loaded[index]
         if type(piece.destroy) == "function" then
@@ -9195,7 +9295,9 @@ state.cleanupFrameworkRuntime = function(): ()
     table.clear(loaded)
     state.framework = nil
     state.entityLibrary = nil
+    state.renderLibrary = nil
 end
+state.summarizeBoot()
 end)()
 end
 
@@ -9899,8 +10001,8 @@ trackUiConnection(ReinjectButton.MouseButton1Click:Connect(function(): ()
     local downloadFailures: {string} = {}
     for _, candidateUrl: string in ipairs(sourceUrls) do
         local requestUrl: string = candidateUrl
-            .. "?reinject=v3&nocache="
-            .. HttpService:GenerateGUID(false)
+            .. "?reinject=v3&v="
+            .. SOURCE_STAMP
         local requestOk: boolean, bodyOrError: any = pcall(function(): string
             return (game :: any):HttpGet(requestUrl, true)
         end)
@@ -10424,6 +10526,10 @@ end)
 
 if not initialized then
     -- Nowhere on screen to say it any more: the intro that used to carry the
+    -- message is gone, so the console is the report.
+    warn("[RTM:Bootstrap] Inicialización detenida:\n" .. tostring(bootstrapError))
+end
+ that used to carry the
     -- message is gone, so the console is the report.
     warn("[RTM:Bootstrap] Inicialización detenida:\n" .. tostring(bootstrapError))
 end

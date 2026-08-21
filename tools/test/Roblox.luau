@@ -298,6 +298,14 @@ local function newInstance(className: string): any
         return nil
     end
 
+    function instance:WaitForChild(name: string, _timeout: number?): any
+        local child: any = instance:FindFirstChild(name)
+        if child then
+            return child
+        end
+        error(name .. " was never added", 0)
+    end
+
     function instance:FindFirstChildWhichIsA(query: string): any
         for _, child: any in ipairs(self.Children) do
             if child:IsA(query) then

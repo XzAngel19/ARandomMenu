@@ -54,7 +54,7 @@ local function buildVDFeatures(): ()
         fov = 85,
     }
     local runtime: any = {
-        generatorMarkers = {} :: {[Model]: MarkerRecord},
+        generatorMarkers = {} :: {[Model]: any},
         lockerMarkers = {} :: {[Player]: MarkerRecord},
         generatorStates = {} :: {[Model]: string},
         lockerAlerts = {} :: {[Player]: number},
@@ -287,13 +287,24 @@ local function buildVDFeatures(): ()
 
     local function toggleGeneratorESP(enabled: boolean): ()
         disconnectFeatureConnection("VDGeneratorESP")
+        local library: any = state.renderLibrary
+        local layer: Frame? = library and library:Layer("VDEspLayer") or nil
         if not enabled then
-            for generator: Model, record: MarkerRecord in pairs(runtime.generatorMarkers) do
-                destroyMarker(record)
-                runtime.generatorMarkers[generator] = nil
+            if library and layer then
+                library:ReleaseAll(layer)
+                layer.Visible = false
+            else
+                for generator: Model, record: MarkerRecord in pairs(runtime.generatorMarkers) do
+                    destroyMarker(record)
+                    runtime.generatorMarkers[generator] = nil
+                end
             end
+            table.clear(runtime.generatorMarkers)
             table.clear(runtime.generatorStates)
             return
+        end
+        if layer then
+            layer.Visible = true
         end
         local elapsed: number = 1
         featureConnections.VDGeneratorESP = TaskManager:Connect(function(deltaTime: number): ()
@@ -303,19 +314,62 @@ local function buildVDFeatures(): ()
             end
             elapsed = 0
             local map: Instance? = getMap()
+            local camera: Camera? = workspace.CurrentCamera
             if not map then
-                for generator: Model, record: MarkerRecord in pairs(runtime.generatorMarkers) do
-                    destroyMarker(record)
-                    runtime.generatorMarkers[generator] = nil
-                    runtime.generatorStates[generator] = nil
+                if library and layer then
+                    library:ReleaseAll(layer)
+                else
+                    for generator: Model, record: MarkerRecord in pairs(runtime.generatorMarkers) do
+                        destroyMarker(record)
+                        runtime.generatorMarkers[generator] = nil
+                        runtime.generatorStates[generator] = nil
+                    end
                 end
+                table.clear(runtime.generatorMarkers)
                 return
             end
+            local localRoot: BasePart? = getRoot(LocalPlayer.Character)
+            local seen: {[Model]: boolean} = {}
             for _, descendant: Instance in ipairs(map:GetDescendants()) do
                 if isGenerator(descendant) then
                     local generator: Model = descendant :: Model
                     local root: BasePart? = getRoot(generator)
-                    if root and not runtime.generatorMarkers[generator] then
+                    if not root then
+                        continue
+                    end
+                    local progress: number, status: string, color: Color3 = generatorState(generator)
+                    local distance: number = if localRoot
+                        then (root.Position - localRoot.Position).Magnitude
+                        else 0
+                    if library and layer and camera then
+                        local projected: Vector2? = library:Project(camera, root.Position)
+                        if projected then
+                            seen[generator] = true
+                            runtime.generatorMarkers[generator] = true :: any
+                            local drawings: any = library:Set(layer, generator)
+                            drawings:Show(true)
+                            drawings:Label(
+                                "NameTag",
+                                string.format(
+                                    "GENERATOR · %.1f%%  %s · %.0f STUDS",
+                                    progress,
+                                    status,
+                                    distance
+                                ),
+                                projected :: Vector2,
+                                0.5,
+                                13,
+                                color,
+                                true
+                            )
+                            drawings:Highlight(
+                                generator,
+                                color,
+                                settings.generatorTransparency,
+                                "Overlay"
+                            )
+                        end
+                    elseif not runtime.generatorMarkers[generator] then
                         runtime.generatorMarkers[generator] = createMarker(
                             generator,
                             root,
@@ -324,40 +378,45 @@ local function buildVDFeatures(): ()
                             settings.generatorDistance
                         )
                     end
-                end
-            end
-            local localRoot: BasePart? = getRoot(LocalPlayer.Character)
-            for generator: Model, record: MarkerRecord in pairs(runtime.generatorMarkers) do
-                if not generator:IsDescendantOf(map) then
-                    destroyMarker(record)
-                    runtime.generatorMarkers[generator] = nil
-                    runtime.generatorStates[generator] = nil
-                else
-                    local progress: number, status: string, color: Color3 = generatorState(generator)
-                    record.highlight.FillColor = color
-                    record.highlight.OutlineColor = color
-                    record.highlight.FillTransparency = settings.generatorTransparency
-                    if record.billboard then
-                        record.billboard.MaxDistance = settings.generatorDistance
-                    end
-                    if record.label then
-                        local root: BasePart? = getRoot(generator)
-                        local distance: number = if root and localRoot
-                            then (root.Position - localRoot.Position).Magnitude
-                            else 0
-                        record.label.Text = string.format(
-                            "GENERATOR · %.1f%%\n%s · %.0f STUDS",
-                            progress,
-                            status,
-                            distance
-                        )
-                        record.label.TextColor3 = color
-                    end
                     local previous: string? = runtime.generatorStates[generator]
                     if previous == "REGRESSING" and status:find("REPAIRING", 1, true) then
                         notify("A survivor touched a regressing generator.")
                     end
                     runtime.generatorStates[generator] = status
+                end
+            end
+            if library and layer then
+                for generator: Model in pairs(runtime.generatorMarkers) do
+                    if not seen[generator] then
+                        library:Release(layer, generator)
+                        runtime.generatorMarkers[generator] = nil
+                    end
+                end
+            else
+                for generator: Model, record: MarkerRecord in pairs(runtime.generatorMarkers) do
+                    if not generator:IsDescendantOf(map) then
+                        destroyMarker(record)
+                        runtime.generatorMarkers[generator] = nil
+                        runtime.generatorStates[generator] = nil
+                    else
+                        local progress: number, status: string, color: Color3 = generatorState(generator)
+                        record.highlight.FillColor = color
+                        record.highlight.OutlineColor = color
+                        record.highlight.FillTransparency = settings.generatorTransparency
+                        if record.label then
+                            local root: BasePart? = getRoot(generator)
+                            local distance: number = if root and localRoot
+                                then (root.Position - localRoot.Position).Magnitude
+                                else 0
+                            record.label.Text = string.format(
+                                "GENERATOR · %.1f%%\n%s · %.0f STUDS",
+                                progress,
+                                status,
+                                distance
+                            )
+                            record.label.TextColor3 = color
+                        end
+                    end
                 end
             end
         end)

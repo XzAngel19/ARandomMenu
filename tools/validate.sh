@@ -87,7 +87,9 @@ for path in \
     src/library/AssetRegistry.luau \
     src/library/ProfileRegistry.luau \
     src/gui/Current/gui.lua \
-    tools/test/run.luau
+    tools/test/run.luau \
+    tools/bundle.py \
+    dist/bundle.luau
 do
     test -f "$path" || {
         echo "missing $path"
@@ -189,6 +191,12 @@ grep -q 'REQUIRED_RUNTIME_MARKER' loadstring
 grep -q 'RUNTIME_SAFETY_SOURCE_URL' ARandomMenu.luau
 ! grep -q 'corner.Enabled' ARandomMenu.luau
 ! grep -q 'corner.Enabled' src/gui/Current/gui.lua
+echo "ok"
+
+step "Bundle stamp matches the sources"
+# A stale dist/bundle.luau serving old code while the repo says otherwise is
+# the class of silent rot the stamp exists to prevent.
+python3 tools/bundle.py --check
 echo "ok"
 
 step "Module contracts II: options, state, builders, text boxes, slop"

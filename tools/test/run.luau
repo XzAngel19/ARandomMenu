@@ -1118,40 +1118,36 @@ check("touch part adds the object to the list",
 check("touch part brings the menu back", host.state.menuVisible == true)
 
 stub.step(0.016)
-local rendered: number = 0
-for _, part: any in ipairs({oreA, oreB}) do
-    if part:FindFirstChild("RTM_ItemRender") then
-        rendered += 1
+local itemLayer: any = nil
+for _, child: any in ipairs(host.ScreenGui.Children) do
+    if child.Name == "ItemRenderLayer" then
+        itemLayer = child
     end
 end
-check("every object with that name is rendered", rendered == 2,
-    "rendered: " .. tostring(rendered))
+check("overlay layer exists", itemLayer ~= nil)
+check(
+    "every object with that name is rendered",
+    itemLayer ~= nil and #itemLayer.Children == 2,
+    itemLayer and ("sets: " .. tostring(#itemLayer.Children)) or "no layer"
+)
+local itemTag: any = itemLayer and itemLayer.Children[1] and itemLayer.Children[1]:FindFirstChild("NameTag")
 check("the label carries the object name",
-    oreA:FindFirstChild("RTM_ItemRender") ~= nil)
+    itemTag ~= nil and string.find(tostring(itemTag.Text), "IronOre", 1, true) ~= nil,
+    itemTag and tostring(itemTag.Text) or "missing")
 
 -- Unticking one object stops it being drawn without touching the others.
 itemRender.Feature.options["Objects"].set("IronOre", false)
 stub.step(0.016)
-local afterUntick: number = 0
-for _, part: any in ipairs({oreA, oreB}) do
-    if part:FindFirstChild("RTM_ItemRender") then
-        afterUntick += 1
-    end
-end
-check("unticking an object stops rendering it", afterUntick == 0,
-    "still rendered: " .. tostring(afterUntick))
+check("unticking an object stops rendering it",
+    itemLayer ~= nil and #itemLayer.Children == 0,
+    itemLayer and ("still rendered: " .. tostring(#itemLayer.Children)) or "no layer")
 itemRender.Feature.options["Objects"].set("IronOre", true)
 stub.step(0.016)
 
 itemRender:Toggle()
-local left: number = 0
-for _, part: any in ipairs({oreA, oreB}) do
-    if part:FindFirstChild("RTM_ItemRender") then
-        left += 1
-    end
-end
-check("labels are released when the module is off", left == 0,
-    "left: " .. tostring(left))
+check("labels are released when the module is off",
+    itemLayer ~= nil and #itemLayer.Children == 0,
+    itemLayer and ("left: " .. tostring(#itemLayer.Children)) or "no layer")
 oreA:Destroy()
 oreB:Destroy()
 
@@ -1613,6 +1609,46 @@ check("a section is a row like any other", sectionRow ~= nil
 widgets.addInformationOption(geometryPanel, "Explains itself")
 check("a note goes on the card rather than into a row",
     geometryPanel.tooltipText == "Explains itself")
+
+-- Performance budget -------------------------------------------------------------
+
+section("Performance budget")
+
+-- A module that starts doing more work per frame than last week has to fail
+-- here, not in a 60fps game. The numbers are the observed cost of the current
+-- modules against this mock: raise them only with a comment saying why.
+local BUDGET_TASKS_WITH_ESP: number = 12
+local BUDGET_DESCENDANT_WALKS: number = 8
+
+esp:Toggle()
+local tasksWithEsp: number = stub.taskCount()
+esp:Toggle()
+check(
+    "ESP keeps the per-frame callback count inside budget",
+    tasksWithEsp <= BUDGET_TASKS_WITH_ESP,
+    "tasks: " .. tostring(tasksWithEsp)
+)
+
+local walks: number = 0
+local countedGui: any = world.localPlayer:FindFirstChild("PlayerGui")
+local previousGetDescendants: any = countedGui and countedGui.GetDescendants
+if countedGui then
+    countedGui.GetDescendants = function(self: any): {any}
+        walks += 1
+        return previousGetDescendants(self)
+    end
+end
+weapons:Invalidate()
+weapons:Scan({All = true})
+stub.step(0.016)
+if countedGui then
+    countedGui.GetDescendants = previousGetDescendants
+end
+check(
+    "a frame does not walk PlayerGui more than the budget",
+    walks <= BUDGET_DESCENDANT_WALKS,
+    "walks: " .. tostring(walks)
+)
 
 -- Performance guards -------------------------------------------------------------
 

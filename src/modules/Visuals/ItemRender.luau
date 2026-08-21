@@ -16,6 +16,7 @@ export type Runtime = {
     framework: any,
     entity: any,
     host: any,
+    render: any,
 }
 
 local Module = {
@@ -23,12 +24,7 @@ local Module = {
     PlaceId = 0,
     Events = {} :: {[string]: any},
     Initialized = false,
-}
-
-type Tracked = {
-    label: TextLabel,
-    billboard: BillboardGui,
-    highlight: Highlight?,
+    layer = nil :: Frame?,
 }
 
 local activeCleanup: (() -> ())? = nil
@@ -41,7 +37,7 @@ function Module.init(context: Runtime): any
     local currentWorkspace: Workspace = host.workspace or workspace
     local state: any = host.state
 
-    local tracked: {[Instance]: Tracked} = {}
+    local tracked: {[Instance]: boolean} = {}
     -- `workspace:GetDescendants()` on a real map is tens of thousands of
     -- instances; running it five times a second is the single most expensive
     -- thing this menu could do. The candidates are indexed once and kept up to
@@ -58,18 +54,13 @@ function Module.init(context: Runtime): any
     local picking: boolean = false
 
     local function release(instance: Instance): ()
-        local entry: Tracked? = tracked[instance]
-        if not entry then
+        if not tracked[instance] then
             return
         end
         tracked[instance] = nil
-        pcall(function(): ()
-            entry.billboard:Destroy()
-        end)
-        if entry.highlight then
-            pcall(function(): ()
-                (entry.highlight :: Highlight):Destroy()
-            end)
+        local renderLib: any = context.render
+        if renderLib and Module.layer then
+            renderLib:Release(Module.layer, instance)
         end
     end
 
@@ -131,6 +122,10 @@ function Module.init(context: Runtime): any
         )
     end
 
+    local renderLib: any = context.render
+    local layer: Frame? = renderLib and renderLib:Layer("ItemRenderLayer") or nil
+    Module.layer = layer
+
     local render: any
     render = framework.Categories.Visuals:CreateModule({
         Name = "Item Render",
@@ -138,6 +133,9 @@ function Module.init(context: Runtime): any
         Order = 2,
         Tooltip = "Names and outlines every object on the list, wherever it is.",
         Function = function(enabled: boolean): ()
+            if layer then
+                layer.Visible = enabled
+            end
             if not enabled then
                 releaseAll()
                 picking = false
@@ -146,6 +144,9 @@ function Module.init(context: Runtime): any
             render:Clean(function(): ()
                 releaseAll()
                 picking = false
+                if layer then
+                    layer.Visible = false
+                end
             end)
             indexDirty = true
             watchWorkspace()
@@ -361,17 +362,22 @@ function Module.render(
     index: {Instance}
 ): ()
     local host: any = context.host
-    local create: any = host.create
+    local renderLib: any = context.render
+    local layer: Frame? = Module.layer
     local localPlayer: Player = host.LocalPlayer
     local options: any = render.Options
+    local currentWorkspace: Workspace = host.workspace or workspace
+    local camera: Camera? = currentWorkspace.CurrentCamera
 
-    if #wanted == 0 then
+    if #wanted == 0 or not renderLib or not layer or not camera then
         for instance: Instance in pairs(tracked) do
             release(instance)
         end
         return
     end
 
+    local resolvedCamera: Camera = camera :: Camera
+    local resolvedLayer: Frame = layer :: Frame
     local character: Model? = localPlayer.Character
     local root: BasePart? = character
         and character:FindFirstChild("HumanoidRootPart") :: BasePart?
@@ -406,8 +412,6 @@ function Module.render(
         if not lowerMatch(descendant.Name) then
             continue
         end
-        -- A matching model renders once, as itself; its parts are skipped so a
-        -- chest does not draw twelve labels.
         if isPart and descendant:FindFirstAncestorOfClass("Model") then
             local ancestor: Instance? = descendant:FindFirstAncestorOfClass("Model")
             if ancestor and lowerMatch(ancestor.Name) then
@@ -430,54 +434,32 @@ function Module.render(
         if distance > maxDistance then
             continue
         end
+        local projected: Vector2? = renderLib:Project(resolvedCamera, resolvedAnchor.Position)
+        if not projected then
+            continue
+        end
 
         seen[descendant] = true
-        local entry: any = tracked[descendant]
-        if not entry then
-            local billboard: BillboardGui = create("BillboardGui", {
-                Parent = resolvedAnchor,
-                Name = "RTM_ItemRender",
-                AlwaysOnTop = true,
-                LightInfluence = 0,
-                MaxDistance = maxDistance,
-                Size = UDim2.fromOffset(180, 24),
-                StudsOffset = Vector3.new(0, 1.6, 0),
-            }) :: BillboardGui
-            local label: TextLabel = host.makeTextLabel(billboard, descendant.Name, textSize)
-            label.Size = UDim2.fromScale(1, 1)
-            label.TextXAlignment = Enum.TextXAlignment.Center
-            entry = {billboard = billboard, label = label, highlight = nil}
-            tracked[descendant] = entry
-        end
-
-        entry.billboard.MaxDistance = maxDistance
-        entry.label.TextColor3 = colour
-        entry.label.TextSize = textSize
-        entry.label.Text = options["Show distance"].Value
-                and (descendant.Name .. "  " .. tostring(math.round(distance)) .. "m")
-            or descendant.Name
-
-        if options["Outline"].Value then
-            local highlight: Highlight? = entry.highlight
-            if not highlight or not (highlight :: Highlight).Parent then
-                local created: Highlight = Instance.new("Highlight")
-                created.Name = "RTM_ItemOutline"
-                created.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-                created.FillTransparency = 1
-                created.Parent = descendant
-                entry.highlight = created
-                highlight = created
-            end
-            local resolvedHighlight: Highlight = highlight :: Highlight
-            resolvedHighlight.Adornee = descendant
-            resolvedHighlight.OutlineColor = colour
-            resolvedHighlight.OutlineTransparency = 0
-        elseif entry.highlight then
-            pcall(function(): ()
-                (entry.highlight :: Highlight):Destroy()
-            end)
-            entry.highlight = nil
-        end
+        tracked[descendant] = true
+        local drawings: any = renderLib:Set(resolvedLayer, descendant)
+        drawings:Show(true)
+        drawings:Label(
+            "NameTag",
+            options["Show distance"].Value
+                    and (descendant.Name .. "  " .. tostring(math.round(distance)) .. "m")
+                or descendant.Name,
+            projected :: Vector2,
+            0.5,
+            textSize,
+            colour,
+            true
+        )
+        drawings:Highlight(
+            descendant,
+            colour,
+            1,
+            options["Outline"].Value and "Outline" or "Off"
+        )
     end
 
     for instance: Instance in pairs(tracked) do
@@ -492,6 +474,7 @@ function Module.destroy(): ()
         pcall(activeCleanup)
     end
     activeCleanup = nil
+    Module.layer = nil
     Module.Initialized = false
 end
 
