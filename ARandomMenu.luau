@@ -318,7 +318,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "0e49012e79541129"
+local SOURCE_STAMP: string = "3f41eed7eef47ad1"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -2976,11 +2976,8 @@ local function applyFeaturePresentation(feature: any, isDefault: boolean): ()
     if feature.options then
         feature.options.BackgroundTransparency = 1
     end
-    if feature.arrow then
-        feature.arrow.TextColor3 = isDefault
-            and Theme.textMuted
-            or Theme.textMuted
-    end
+    -- The settings arrow keeps its own token binding (`enabled`, the colour
+    -- Wurst draws its triangles in); nothing here may overwrite it.
     if feature.shortcutButton then
         feature.shortcutButton.BackgroundColor3 = isDefault
             and Theme.surface
@@ -3042,65 +3039,37 @@ state.applyCardSkin = function(feature: any, hovered: boolean?): ()
     local surface: number
     local titleTransparency: number = 0
     local titleColor: Color3 = Theme.text
-    local outline: number = 1
-    local rule: number = 0.86
     -- Which token the row is painted with, as opposed to how transparent it is.
     local fill: Color3 = Theme.surface
 
     if feature.isCategory then
-        -- A heading, not a button: flat, and the rule under it groups the
-        -- options that belong to it.
+        -- A heading, not a button: flat text on the window body.
         surface = 1
         titleColor = Theme.text
         titleTransparency = 0.3
-        rule = 0.55
     elseif feature.isAction then
-        surface = isHovered and 0.36 or 0.56
-        outline = 0.74
-        rule = 1
+        surface = isHovered and 0.3 or 0.5
     elseif feature.isHoldAction then
         -- A hold card is lit for exactly as long as the key is down, so it uses
         -- the same fill as a toggle: while it is on it *is* on.
         fill = isOn and Theme.enabled or Theme.surface
-        surface = isOn and 0 or (isHovered and 0.46 or 0.66)
-        outline = isOn and 1 or 0.82
-        titleColor = isOn and Theme.enabledText or Theme.textMuted
-        rule = 1
+        surface = isOn and 0 or (isHovered and 0.3 or 0.5)
+        titleColor = isOn and Theme.enabledText or Theme.text
     else
         fill = isOn and Theme.enabled or Theme.surface
-        surface = isOn and 0 or (isHovered and 0.5 or 0.74)
-        titleColor = isOn and Theme.enabledText or Theme.textMuted
-        rule = isOn and 1 or 0.72
+        surface = isOn and 0 or (isHovered and 0.3 or 0.5)
+        titleColor = isOn and Theme.enabledText or Theme.text
     end
 
-    local motion: TweenInfo = TweenInfo.new(
-        UI_MOTION.base,
-        Enum.EasingStyle.Quad,
-        Enum.EasingDirection.Out
-    )
-    local animate: boolean = state.animationsEnabled == true
-    if animate then
-        TweenService:Create(resolvedRow, motion, {
-            BackgroundColor3 = fill,
-            BackgroundTransparency = surface,
-        }):Play()
-    else
-        resolvedRow.BackgroundColor3 = fill
-        resolvedRow.BackgroundTransparency = surface
-    end
+    -- Instant, on purpose. Wurst repaints a row the frame it changes; the
+    -- wipe this used to tween was the old menu's motion, not Wurst's.
+    resolvedRow.BackgroundColor3 = fill
+    resolvedRow.BackgroundTransparency = surface
 
     if feature.title then
         local titleLabel: TextLabel = feature.title :: TextLabel
         titleLabel.TextColor3 = titleColor
         titleLabel.TextTransparency = titleTransparency
-    end
-    if feature.stroke then
-        local cardStroke: UIStroke = feature.stroke :: UIStroke
-        cardStroke.Color = Theme.outline
-        cardStroke.Transparency = outline
-    end
-    if feature.cardRule then
-        (feature.cardRule :: Frame).BackgroundTransparency = rule
     end
 end
 
@@ -3249,7 +3218,7 @@ local function setShortcutPressed(binding: any, pressed: boolean): ()
 end
 
 local function bindActionShortcut(
-    button: TextButton,
+    button: TextButton?,
     shortcutId: string,
     label: string,
     callback: () -> (),
@@ -3275,9 +3244,15 @@ local function bindActionShortcut(
     end
     state.shortcutBindings[shortcutId] = binding
 
+    -- Desktop rows no longer carry a key slot — Wurst rows are a name and at
+    -- most the settings arrow, and keys are managed in the Keybinds window —
+    -- so the button is optional and everything that painted it is guarded.
     local function refreshButtonText(): ()
-        button.Text = shortcutSlotText(binding)
-        button:SetAttribute("CaptureIdleText", button.Text)
+        if not button then
+            return
+        end
+        (button :: TextButton).Text = shortcutSlotText(binding);
+        (button :: TextButton):SetAttribute("CaptureIdleText", (button :: TextButton).Text)
     end
     binding.refresh = refreshButtonText
     refreshButtonText()
@@ -3307,7 +3282,7 @@ local function bindActionShortcut(
         -- the callbacks: a module that re-points its key later (Shoot swaps
         -- "toggle the module" for "fire now") must change what the on-screen
         -- button does too.
-        if state.bindMobileActionPlacement then
+        if button and state.bindMobileActionPlacement then
             state.bindMobileActionPlacement(
                 button,
                 "Shortcut" .. shortcutId:gsub("%W", ""),
@@ -3337,11 +3312,13 @@ local function bindActionShortcut(
         return
     end
 
-    trackUiConnection(button.MouseButton1Click:Connect(function(): ()
-        beginKeyCapture(button, function(keyCode: Enum.KeyCode): ()
-            binding.assign(keyCode)
-        end)
-    end))
+    if button then
+        trackUiConnection((button :: TextButton).MouseButton1Click:Connect(function(): ()
+            beginKeyCapture(button, function(keyCode: Enum.KeyCode): ()
+                binding.assign(keyCode)
+            end)
+        end))
+    end
 end
 
 -- Modules whose "activation key" used to be an option row call this instead:
