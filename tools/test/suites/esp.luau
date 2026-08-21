@@ -236,6 +236,17 @@ return function(ctx: any): ()
     check("touch part brings the menu back", host.state.menuVisible == true)
 
     stub.step(0.016)
+
+    -- Wall-clock, not the mocked os.clock. Raise only with a comment saying
+    -- what got more expensive.
+    local BUDGET_ITEM_FRAME_SECONDS: number = 0.010
+    local itemPerFrame: number = ctx.measureFrames(stub.step, 20)
+    check(
+        "Item Render stays inside the per-frame time budget",
+        itemPerFrame <= BUDGET_ITEM_FRAME_SECONDS,
+        string.format("%.4fs/frame", itemPerFrame)
+    )
+
     local itemLayer: any = nil
     for _, child: any in ipairs(host.ScreenGui.Children) do
         if child.Name == "ItemRenderLayer" then
