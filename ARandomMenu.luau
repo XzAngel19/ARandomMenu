@@ -422,7 +422,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "1818c6509ff7f498"
+local SOURCE_STAMP: string = "d83faccd756a4fe3"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -3999,15 +3999,30 @@ type ScheduledTask = {
     failures: number,
 }
 
+-- Two buckets, not one.
+--
+-- Heartbeat fires *after* the frame has been drawn, so anything that draws an
+-- overlay from the camera's position is always one frame behind the world and
+-- visibly swims when the player turns. Work that reads or writes the game
+-- belongs on Heartbeat; work that draws belongs on RenderStepped, which runs
+-- before the frame it is drawing into.
 local TaskManager = {
     tasks = {} :: {[number]: ScheduledTask},
+    renderTasks = {} :: {[number]: ScheduledTask},
     nextId = 0,
     connection = nil :: RBXScriptConnection?,
+    renderConnection = nil :: RBXScriptConnection?,
 }
 
-function TaskManager:Connect(callback: (...any) -> ()): TaskHandle
+function TaskManager:Connect(
+    callback: (...any) -> (),
+    phase: string?
+): TaskHandle
     self.nextId += 1
     local taskId: number = self.nextId
+    local bucket: {[number]: ScheduledTask} = phase == "render"
+        and self.renderTasks
+        or self.tasks
     local handle: TaskHandle
     handle = {
         Connected = true,
@@ -4016,10 +4031,10 @@ function TaskManager:Connect(callback: (...any) -> ()): TaskHandle
                 return
             end
             selfHandle.Connected = false
-            TaskManager.tasks[taskId] = nil
+            bucket[taskId] = nil
         end,
     }
-    self.tasks[taskId] = {
+    bucket[taskId] = {
         callback = callback,
         handle = handle,
         failures = 0,
@@ -4028,20 +4043,29 @@ function TaskManager:Connect(callback: (...any) -> ()): TaskHandle
 end
 
 function TaskManager:Destroy(): ()
-    for taskId: number, scheduled: ScheduledTask in pairs(self.tasks) do
-        scheduled.handle.Connected = false
-        self.tasks[taskId] = nil
+    for _, bucket: {[number]: ScheduledTask} in
+        ipairs({self.tasks, self.renderTasks})
+    do
+        for taskId: number, scheduled: ScheduledTask in pairs(bucket) do
+            scheduled.handle.Connected = false
+            bucket[taskId] = nil
+        end
     end
     if self.connection then
         self.connection:Disconnect()
         self.connection = nil
     end
+    if self.renderConnection then
+        self.renderConnection:Disconnect()
+        self.renderConnection = nil
+    end
 end
 
-TaskManager.connection = RunService.Heartbeat:Connect(function(
+local function runBucket(
+    bucket: {[number]: ScheduledTask},
     deltaTime: number
 ): ()
-    for taskId: number, scheduled: ScheduledTask in pairs(TaskManager.tasks) do
+    for taskId: number, scheduled: ScheduledTask in pairs(bucket) do
         if scheduled.handle.Connected then
             local success: boolean, message: any = pcall(
                 scheduled.callback,
@@ -4057,12 +4081,27 @@ TaskManager.connection = RunService.Heartbeat:Connect(function(
                         .. " failed: "
                         .. tostring(message)
                 )
+                -- Three throws in a row is a task that is never going to
+                -- work; leaving it connected turns one broken module into a
+                -- warning every frame for the rest of the session.
                 if scheduled.failures >= 3 then
                     scheduled.handle:Disconnect()
                 end
             end
         end
     end
+end
+
+TaskManager.connection = RunService.Heartbeat:Connect(function(
+    deltaTime: number
+): ()
+    runBucket(TaskManager.tasks, deltaTime)
+end)
+
+TaskManager.renderConnection = RunService.RenderStepped:Connect(function(
+    deltaTime: number
+): ()
+    runBucket(TaskManager.renderTasks, deltaTime)
 end)
 
 

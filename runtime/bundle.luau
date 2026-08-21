@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "1818c6509ff7f498",
+    stamp = "d83faccd756a4fe3",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -2397,6 +2397,7 @@ export type Module = {
 
     Clean: (self: Module, item: CleanupItem) -> CleanupItem,
     Loop: (self: Module, callback: (number) -> ()) -> any,
+    Render: (self: Module, callback: (number) -> ()) -> any,
     Event: (self: Module, signal: any, callback: (...any) -> ()) -> any,
     CleanAll: (self: Module) -> (),
     Toggle: (self: Module, value: boolean?) -> (),
@@ -2909,6 +2910,14 @@ function Module.init(context: any): Framework
 
         function created:Loop(callback: (number) -> ()): any
             return created:Clean(host.TaskManager:Connect(callback))
+        end
+
+        -- Anything that draws from the camera belongs here rather than on
+        -- `Loop`. Heartbeat runs after the frame has been rendered, so an
+        -- overlay built there is always showing the previous frame's camera
+        -- and swims behind the world whenever the player turns.
+        function created:Render(callback: (number) -> ()): any
+            return created:Clean(host.TaskManager:Connect(callback, "render"))
         end
 
         function created:Event(signal: any, callback: (...any) -> ()): any
