@@ -32,15 +32,29 @@ function Module.init(context: Runtime): any
     local addNumberOption: any = host.addNumberOption
     local antiFlingSettings = {velocityLimit = 120}
     local antiFlingSafeCFrame = nil
+    local AntiFlingFeature: any = nil
+    local antiFlingStatus: string? = nil
+
+    local function setAntiFlingStatus(status: string?): ()
+        if antiFlingStatus == status then
+            return
+        end
+        antiFlingStatus = status
+        if AntiFlingFeature then
+            AntiFlingFeature:SetStatus(status)
+        end
+    end
 
     local function toggleAntiFling(enabled)
         disconnectFeatureConnection("AntiFling")
         antiFlingSafeCFrame = nil
 
         if not enabled then
+            setAntiFlingStatus(nil)
             return
         end
 
+        setAntiFlingStatus("standing by")
         featureConnections.AntiFling = TaskManager:Connect(function()
             -- Your own fling is deliberate; standing on the brakes during it
             -- is the module fighting its owner.
@@ -58,6 +72,7 @@ function Module.init(context: Runtime): any
 
             if linearSpeed > antiFlingSettings.velocityLimit
                 or angularSpeed > antiFlingSettings.velocityLimit then
+                setAntiFlingStatus("blocking")
                 root.AssemblyLinearVelocity = Vector3.zero
                 root.AssemblyAngularVelocity = Vector3.zero
                 if antiFlingSafeCFrame then
@@ -65,12 +80,13 @@ function Module.init(context: Runtime): any
                 end
             elseif humanoid.FloorMaterial ~= Enum.Material.Air
                 and linearSpeed < antiFlingSettings.velocityLimit * 0.45 then
+                setAntiFlingStatus("standing by")
                 antiFlingSafeCFrame = root.CFrame
             end
         end)
     end
 
-    local AntiFlingFeature = createUniversalFeature(
+    AntiFlingFeature = createUniversalFeature(
         "Anti-Fling",
         "Stop extreme local velocity and return to safety",
         14,

@@ -60,10 +60,14 @@ function Module.init(context: Runtime): any
 
 
     local SafeWalkFeature = createUniversalFeature(
-        "Safe Walk",
+        "SafeWalk",
         "Stop horizontal movement before walking over an edge",
         21,
-        toggleSafeWalk
+        toggleSafeWalk,
+        {
+            configKey = "Universal.SafeWalk",
+            categoryName = "Protection",
+        }
     )
     addNumberOption(
         SafeWalkFeature,

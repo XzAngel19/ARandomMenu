@@ -1,6 +1,6 @@
 --!strict
 --
--- Headless tests: No Fall.
+-- Headless tests: NoFall.
 --
 -- The card moved onto the kernel so the Impact brake and the State trick can
 -- say which mode owns them, and the loop itself runs against a stand-in
@@ -45,13 +45,13 @@ return function(ctx: any): ()
             and host.state.hiddenOptionRows[name] == true
     end
 
-    section("No Fall")
+    section("NoFall")
 
     local NoFallFile: any = require("../../../src/modules/Protection/NoFall")
     Mock.inject(world, NoFallFile.init)
     local noFall: any = NoFallFile.init(context)
 
-    check("card is registered", noFall.Name == "No Fall")
+    check("card is registered", noFall.Name == "NoFall")
     for _, name: string in ipairs({
         "Mode",
         "Safe landing speed",
@@ -83,6 +83,8 @@ return function(ctx: any): ()
 
     local baseline: number = stub.taskCount()
     noFall.Feature.activate()
+    check("no fall reports the active protection model",
+        noFall.Status == "Impact", tostring(noFall.Status))
     check("a session takes exactly one task", stub.taskCount() == baseline + 1)
     stub.step(1 / 60)
     check("impact brakes the fall to the slider speed",

@@ -272,6 +272,7 @@ function Module.init(context: Runtime): any
                 end)
             end
         end
+        logger:SetStatus(tostring(#order))
     end
 
     local function buildReport(): string
@@ -361,8 +362,10 @@ function Module.init(context: Runtime): any
         Function = function(enabled: boolean): ()
             capturing = enabled
             if not enabled then
+                logger:SetStatus(nil)
                 return
             end
+            logger:SetStatus(tostring(#order))
             if not installHook() then
                 capturing = false
                 return
@@ -437,6 +440,9 @@ function Module.init(context: Runtime): any
         Function = function(): ()
             log = {}
             order = {}
+            if logger.Enabled then
+                logger:SetStatus("0")
+            end
             logger:Notify("cleared")
         end,
     })

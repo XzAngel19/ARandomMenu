@@ -29,23 +29,28 @@ function Module.init(context: Runtime): any
     local addNumberOption: any = host.addNumberOption
     local workspace: any = host.workspace
     local gravitySettings = {value = 196.2}
+    local GravityFeature: any = nil
     local originalGravity = workspace.Gravity
 
     local function toggleGravity(enabled)
         disconnectFeatureConnection("Gravity")
 
         if not enabled then
+            if GravityFeature then
+                GravityFeature:SetStatus(nil)
+            end
             workspace.Gravity = originalGravity
             return
         end
 
+        GravityFeature:SetStatus(tostring(math.round(gravitySettings.value)))
         originalGravity = workspace.Gravity
         featureConnections.Gravity = TaskManager:Connect(function()
             workspace.Gravity = gravitySettings.value
         end)
     end
 
-    local GravityFeature = createUniversalFeature(
+    GravityFeature = createUniversalFeature(
         "Gravity",
         "Keep workspace gravity at a custom value",
         5,
@@ -53,6 +58,9 @@ function Module.init(context: Runtime): any
     )
     addNumberOption(GravityFeature, "Gravity value", gravitySettings.value, 0, 500, function(value)
         gravitySettings.value = value
+        if GravityFeature.enabled then
+            GravityFeature:SetStatus(tostring(math.round(value)))
+        end
     end)
 
     activeCleanup = function(): ()

@@ -67,7 +67,7 @@ return function(ctx: any): ()
     Mock.inject(world, SpeedFile.init)
     local speed: any = SpeedFile.init(context)
 
-    check("card is registered", speed.Name == "Speed")
+    check("card is registered", speed.Name == "SpeedHack")
     for _, name: string in ipairs({
         "Mode",
         "Speed",
@@ -112,6 +112,7 @@ return function(ctx: any): ()
 
     freeze.activate()
     stub.step(1 / 60)
+    check("freeze reports the active engine", freeze.status == "Anchor")
     check("anchor mode stops the character cold",
         humanoid.WalkSpeed == 0 and humanoid.JumpPower == 0
             and humanoid.AutoRotate == false and root.Anchored == true)
@@ -120,13 +121,13 @@ return function(ctx: any): ()
         humanoid.WalkSpeed == 16 and humanoid.JumpPower == 50
             and humanoid.AutoRotate == true and root.Anchored == false)
 
-    section("High Jump")
+    section("HighJump")
 
     local HighJumpFile: any = require("../../../src/modules/Movement/HighJump")
     Mock.inject(world, HighJumpFile.init)
     local highJump: any = HighJumpFile.init(context)
 
-    check("card is registered", highJump.name == "High Jump")
+    check("card is registered", highJump.name == "HighJump")
     check("option: Jump velocity",
         highJump.options ~= nil and highJump.options["Jump velocity"] ~= nil)
 
@@ -155,6 +156,7 @@ return function(ctx: any): ()
 
     jumpPower.activate()
     stub.step(1 / 60)
+    check("jump power reports its live value", jumpPower.status == "80")
     check("the jump is rewritten through the humanoid's own fields",
         humanoid.UseJumpPower == true
             and humanoid.JumpPower == jumpPower.options["Power"].value,
@@ -196,6 +198,7 @@ return function(ctx: any): ()
 
     humanoid.MoveDirection = vector3(0, 0, -1)
     spider.activate()
+    check("spider reports its climbing engine", spider.status == "Velocity")
     world.raycastResult = {
         Instance = Mock.newInstance("Part"),
         Position = vector3(0, 0, -2),

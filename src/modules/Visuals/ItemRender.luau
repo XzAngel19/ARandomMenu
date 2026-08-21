@@ -127,8 +127,9 @@ function Module.init(context: Runtime): any
 
     local render: any
     render = framework.Categories.Visuals:CreateModule({
-        Name = "Item Render",
+        Name = "ItemESP",
         Category = "Visuals",
+        ConfigKey = "Universal.ItemRender",
         Order = 2,
         Tooltip = "Names and outlines every object on the list, wherever it is.",
         Function = function(enabled: boolean): ()
@@ -136,10 +137,12 @@ function Module.init(context: Runtime): any
                 layer.Visible = enabled
             end
             if not enabled then
+                render:SetStatus(nil)
                 releaseAll()
                 picking = false
                 return
             end
+            render:SetStatus("0")
             render:Clean(function(): ()
                 releaseAll()
                 picking = false
@@ -447,10 +450,17 @@ function Module.render(
         )
     end
 
+    local count: number = 0
     for instance: Instance in pairs(tracked) do
         if not seen[instance] or not instance.Parent then
             release(instance)
+        else
+            count += 1
         end
+    end
+    local status: string = tostring(count)
+    if render.Status ~= status then
+        render:SetStatus(status)
     end
 end
 

@@ -64,15 +64,18 @@ function Module.init(context: Runtime): any
 
     local noFall: any
     noFall = framework.Categories.Protection:CreateModule({
-        Name = "No Fall",
+        Name = "NoFall",
         Category = "Protection",
+        ConfigKey = "Universal.NoFall",
         Tooltip = "Fall damage is written by the game, on this client: this "
             .. "hands its formula a landing it considers safe instead of "
             .. "blocking anything.",
         Function = function(enabled: boolean): ()
             if not enabled then
+                noFall:SetStatus(nil)
                 return
             end
+            noFall:SetStatus(noFallSettings.mode)
             local nextRecordResetAt: number = 0
             local landedThisFall: boolean = false
             noFall:Loop(function(): ()
@@ -147,6 +150,9 @@ function Module.init(context: Runtime): any
         Index = 1,
         Function = function(value: string): ()
             noFallSettings.mode = value
+            if noFall.Enabled then
+                noFall:SetStatus(value)
+            end
         end,
         Tooltip = "Impact brakes the fall just above the ground, for games "
             .. "that read your landing speed. State closes the humanoid's "

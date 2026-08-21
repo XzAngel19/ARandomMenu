@@ -113,9 +113,11 @@ function Module.init(context: Runtime): any
             state.infiniteJumpEnabled = false
             state.lastInfiniteJumpAt = -math.huge
             if not enabled then
+                jump:SetStatus(nil)
                 return
             end
             state.infiniteJumpEnabled = true
+            jump:SetStatus(infiniteJumpSettings.mode)
 
             -- `JumpRequest` is the one jump signal every device raises.
             jump:Clean(state.onJumpRequest(function(): ()
@@ -153,6 +155,9 @@ function Module.init(context: Runtime): any
         Index = 1,
         Function = function(value: string): ()
             infiniteJumpSettings.mode = value
+            if jump.Enabled then
+                jump:SetStatus(value)
+            end
         end,
     })
     jump:CreateSlider({

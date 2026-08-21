@@ -230,8 +230,12 @@ function Module.init(context: Runtime): any
             hitboxNpcCachedAt = -1
             hitboxNpcCache = {}
             if not enabled then
+                hitboxes:SetStatus(nil)
                 return
             end
+            hitboxes:SetStatus(
+                hitboxSettings.part .. " +" .. tostring(math.round(hitboxSettings.expand))
+            )
             hitboxes:Clean(restoreHitboxes)
             -- Two parts per player is cheap enough to do every frame, and
             -- every frame is what keeps the box on the character while the
@@ -247,6 +251,11 @@ function Module.init(context: Runtime): any
         Index = 1,
         Function = function(value: string): ()
             hitboxSettings.part = value
+            if hitboxes.Enabled then
+                hitboxes:SetStatus(
+                    value .. " +" .. tostring(math.round(hitboxSettings.expand))
+                )
+            end
         end,
         Tooltip = "Which part of the character is expanded. Parts the new "
             .. "mode no longer owns are restored on the next sweep.",
@@ -258,6 +267,11 @@ function Module.init(context: Runtime): any
         Default = hitboxSettings.expand,
         Function = function(value: number): ()
             hitboxSettings.expand = value
+            if hitboxes.Enabled then
+                hitboxes:SetStatus(
+                    hitboxSettings.part .. " +" .. tostring(math.round(value))
+                )
+            end
         end,
         Tooltip = "Studs added to the target part. Past roughly 10 the box is "
             .. "wider than the character is tall and anyone watching can see "

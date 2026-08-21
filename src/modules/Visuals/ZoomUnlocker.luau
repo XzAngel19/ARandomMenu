@@ -46,6 +46,7 @@ function Module.init(context: Runtime): any
         unlockFirstPerson = true,
     }
     local originalZoomState: ZoomState? = nil
+    local ZoomFeature: any = nil
 
     local function toggleZoomUnlocker(enabled: boolean): ()
         disconnectFeatureConnection("ZoomUnlocker")
@@ -56,8 +57,10 @@ function Module.init(context: Runtime): any
             originalZoomState = nil
         end
         if not enabled then
+            if ZoomFeature then ZoomFeature:SetStatus(nil) end
             return
         end
+        ZoomFeature:SetStatus(tostring(math.round(zoomSettings.maxDistance)) .. " studs")
         originalZoomState = {
             minDistance = LocalPlayer.CameraMinZoomDistance,
             maxDistance = LocalPlayer.CameraMaxZoomDistance,
@@ -81,11 +84,15 @@ function Module.init(context: Runtime): any
     end
 
 
-    local ZoomFeature = createUniversalFeature(
-        "Zoom Unlocker",
+    ZoomFeature = createUniversalFeature(
+        "CameraDistance",
         "Extend camera zoom and optionally leave forced first person",
         23,
-        toggleZoomUnlocker
+        toggleZoomUnlocker,
+        {
+            configKey = "Universal.ZoomUnlocker",
+            categoryName = "Visuals",
+        }
     )
     addNumberOption(
         ZoomFeature,
@@ -95,6 +102,9 @@ function Module.init(context: Runtime): any
         2000,
         function(value: number): ()
             zoomSettings.maxDistance = value
+            if ZoomFeature.enabled then
+                ZoomFeature:SetStatus(tostring(math.round(value)) .. " studs")
+            end
         end
     )
     addNumberOption(

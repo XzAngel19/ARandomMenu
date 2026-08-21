@@ -48,6 +48,7 @@ function Module.init(context: Runtime): any
     local originalClickDetectors: {[ClickDetector]: number} =
         setmetatable({}, {__mode = "k"}) :: any
     local interactionExtenderEnabled: boolean = false
+    local InteractFeature: any = nil
     local interactionRefreshClock: number = 0
 
     local function refreshInteractionExtender(): ()
@@ -116,8 +117,10 @@ function Module.init(context: Runtime): any
         restoreInteractionExtender()
         interactionRefreshClock = 0
         if not enabled then
+            if InteractFeature then InteractFeature:SetStatus(nil) end
             return
         end
+        InteractFeature:SetStatus(tostring(math.round(interactionSettings.distance)) .. " studs")
         interactionExtenderEnabled = true
         featureConnections.InteractExtender = workspace.DescendantAdded:Connect(
             applyInteractionExtension
@@ -145,7 +148,7 @@ function Module.init(context: Runtime): any
     end
 
 
-    local InteractFeature = createUniversalFeature(
+    InteractFeature = createUniversalFeature(
         "Interact Extender",
         "Extend prompt and click interaction range without auto-firing",
         24,
@@ -159,6 +162,9 @@ function Module.init(context: Runtime): any
         250,
         function(value: number): ()
             interactionSettings.distance = value
+            if InteractFeature.enabled then
+                InteractFeature:SetStatus(tostring(math.round(value)) .. " studs")
+            end
             refreshInteractionExtender()
         end
     )

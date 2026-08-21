@@ -38,6 +38,14 @@ function Module.init(context: Runtime): any
         materials = false,
     }
     local fpsModeEnabled: boolean = false
+    local ImproveFpsFeature: any = nil
+    local function selectedEffectCount(): number
+        local count: number = 0
+        for _name: string, selected: boolean in pairs(fpsSettings) do
+            if selected then count += 1 end
+        end
+        return count
+    end
     -- Weak keys: a part that leaves the world takes its cached values with it
     -- instead of pinning the whole instance in memory until the next restore.
     local fpsVisualCache: any = setmetatable({}, {__mode = "k"})
@@ -107,8 +115,10 @@ function Module.init(context: Runtime): any
         restoreFpsObjects()
 
         if not enabled then
+            if ImproveFpsFeature then ImproveFpsFeature:SetStatus(nil) end
             return
         end
+        ImproveFpsFeature:SetStatus(tostring(selectedEffectCount()) .. " effects")
 
         -- The initial sweep is chunked so a large map cannot freeze the client.
         task.spawn(function(): ()
@@ -140,7 +150,7 @@ function Module.init(context: Runtime): any
         end
     end
 
-    local ImproveFpsFeature: any = createUniversalFeature(
+    ImproveFpsFeature = createUniversalFeature(
         "Improve FPS",
         "Apply only the selected reversible optimizations",
         26,

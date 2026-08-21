@@ -372,8 +372,9 @@ function Module.init(context: Runtime): any
     end
 
     aura = framework.Categories.Combat:CreateModule({
-        Name = "Kill Aura",
+        Name = "Killaura",
         Category = "Combat",
+        ConfigKey = "Universal.KillAura",
         Order = 1,
         Tooltip = "Swings your weapon at everyone in reach, with its own "
             .. "range, rate, field of view and rotation.",

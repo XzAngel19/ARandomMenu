@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "cb3f7f1f84a143d9",
+    stamp = "87f53b6501892992",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -9924,8 +9924,9 @@ function Module.init(context: Runtime): any
 
     local render: any
     render = framework.Categories.Visuals:CreateModule({
-        Name = "Item Render",
+        Name = "ItemESP",
         Category = "Visuals",
+        ConfigKey = "Universal.ItemRender",
         Order = 2,
         Tooltip = "Names and outlines every object on the list, wherever it is.",
         Function = function(enabled: boolean): ()
@@ -9933,10 +9934,12 @@ function Module.init(context: Runtime): any
                 layer.Visible = enabled
             end
             if not enabled then
+                render:SetStatus(nil)
                 releaseAll()
                 picking = false
                 return
             end
+            render:SetStatus("0")
             render:Clean(function(): ()
                 releaseAll()
                 picking = false
@@ -10244,10 +10247,17 @@ function Module.render(
         )
     end
 
+    local count: number = 0
     for instance: Instance in pairs(tracked) do
         if not seen[instance] or not instance.Parent then
             release(instance)
+        else
+            count += 1
         end
+    end
+    local status: string = tostring(count)
+    if render.Status ~= status then
+        render:SetStatus(status)
     end
 end
 
@@ -10308,8 +10318,9 @@ function Module.init(context: Runtime): any
 
     local esp: any
     esp = framework.Categories.Visuals:CreateModule({
-        Name = "Player ESP",
+        Name = "PlayerESP",
         Category = "Visuals",
+        ConfigKey = "Universal.PlayerESP",
         Order = 1,
         Tooltip = "Boxes, skeletons, name tags, health, tracers and chams, "
             .. "each independently switchable.",
@@ -11260,8 +11271,9 @@ function Module.init(context: Runtime): any
     end
 
     aura = framework.Categories.Combat:CreateModule({
-        Name = "Kill Aura",
+        Name = "Killaura",
         Category = "Combat",
+        ConfigKey = "Universal.KillAura",
         Order = 1,
         Tooltip = "Swings your weapon at everyone in reach, with its own "
             .. "range, rate, field of view and rotation.",
@@ -11998,6 +12010,7 @@ function Module.init(context: Runtime): any
                 end)
             end
         end
+        logger:SetStatus(tostring(#order))
     end
 
     local function buildReport(): string
@@ -12087,8 +12100,10 @@ function Module.init(context: Runtime): any
         Function = function(enabled: boolean): ()
             capturing = enabled
             if not enabled then
+                logger:SetStatus(nil)
                 return
             end
+            logger:SetStatus(tostring(#order))
             if not installHook() then
                 capturing = false
                 return
@@ -12163,6 +12178,9 @@ function Module.init(context: Runtime): any
         Function = function(): ()
             log = {}
             order = {}
+            if logger.Enabled then
+                logger:SetStatus("0")
+            end
             logger:Notify("cleared")
         end,
     })
@@ -12846,8 +12864,16 @@ function Module.init(context: Runtime): any
             runtime.nextClickAt = 0
             runtime.touches = 0
             if not enabled then
+                clicker:SetStatus(nil)
                 return
             end
+            local cps: any = clicker.Options["CPS"].Value
+            clicker:SetStatus(
+                tostring(math.round(cps.Min))
+                    .. "-"
+                    .. tostring(math.round(cps.Max))
+                    .. " CPS"
+            )
 
             -- Touch has no "is the finger down" query, so the two events that
             -- do exist are counted. Any finger on the screen is a held attack:
@@ -12949,6 +12975,16 @@ function Module.init(context: Runtime): any
         Max = 28,
         DefaultMin = 8,
         DefaultMax = 12,
+        Function = function(value: any): ()
+            if clicker.Enabled then
+                clicker:SetStatus(
+                    tostring(math.round(value.Min))
+                        .. "-"
+                        .. tostring(math.round(value.Max))
+                        .. " CPS"
+                )
+            end
+        end,
         Tooltip = "Clicks per second. Every gap is drawn between the two ends, "
             .. "so no two clicks are the same distance apart. A fast hand peaks "
             .. "around 12; past 20 nothing human explains the rate and servers "
@@ -13429,6 +13465,7 @@ function Module.init(context: Runtime): any
     local originalXrayTransparency: {[BasePart]: number} =
         setmetatable({}, {__mode = "k"}) :: any
     local xrayEnabled: boolean = false
+    local feature: any = nil
 
     local function restoreXray(): ()
         for part: BasePart, transparency: number in pairs(originalXrayTransparency) do
@@ -13444,9 +13481,11 @@ function Module.init(context: Runtime): any
         xrayEnabled = false
         restoreXray()
         if not enabled then
+            if feature then feature:SetStatus(nil) end
             return
         end
 
+        feature:SetStatus("72%")
         xrayEnabled = true
         local function applyToInstance(descendant: Instance): ()
             if not xrayEnabled or not descendant:IsA("BasePart") then
@@ -13483,7 +13522,7 @@ function Module.init(context: Runtime): any
     end
 
 
-    local feature: any = createUniversalFeature(
+    feature = createUniversalFeature(
         "X-Ray",
         "Fade map geometry locally while keeping your character clear",
         18,
@@ -13562,11 +13601,16 @@ function Module.init(context: Runtime): any
 
 
     local HighJumpFeature = createUniversalFeature(
-        "High Jump",
+        "HighJump",
         "Press the key slot to launch a single high jump",
         19,
         performHighJump,
-        {action = true, silentAction = true}
+        {
+            action = true,
+            silentAction = true,
+            configKey = "Universal.HighJump",
+            categoryName = "Movement",
+        }
     )
     addNumberOption(
         HighJumpFeature,
@@ -13657,11 +13701,16 @@ function Module.init(context: Runtime): any
         speed = 30,
         climbState = true,
     }
+    local SpiderFeature: any = nil
     local function toggleSpider(enabled: boolean): ()
         disconnectFeatureConnection("Spider")
         if not enabled then
+            if SpiderFeature then
+                SpiderFeature:SetStatus(nil)
+            end
             return
         end
+        SpiderFeature:SetStatus(spiderSettings.mode)
         local climbing: boolean = false
         featureConnections.Spider = TaskManager:Connect(function(deltaTime: number): ()
             local character: Model?, humanoidOrNil: Humanoid?, rootOrNil: BasePart? =
@@ -13731,7 +13780,7 @@ function Module.init(context: Runtime): any
     end
 
 
-    local SpiderFeature = createUniversalFeature(
+    SpiderFeature = createUniversalFeature(
         "Spider",
         "Climb a wall automatically while moving into it",
         20,
@@ -13744,6 +13793,9 @@ function Module.init(context: Runtime): any
         1,
         function(value: string): ()
             spiderSettings.mode = value
+            if SpiderFeature.enabled then
+                SpiderFeature:SetStatus(value)
+            end
         end,
         "Velocity is smooth and works nearly everywhere; Impulse survives games "
             .. "that rewrite your velocity every frame; CFrame works when both are "
@@ -13854,10 +13906,14 @@ function Module.init(context: Runtime): any
 
 
     local SafeWalkFeature = createUniversalFeature(
-        "Safe Walk",
+        "SafeWalk",
         "Stop horizontal movement before walking over an edge",
         21,
-        toggleSafeWalk
+        toggleSafeWalk,
+        {
+            configKey = "Universal.SafeWalk",
+            categoryName = "Protection",
+        }
     )
     addNumberOption(
         SafeWalkFeature,
@@ -13995,6 +14051,7 @@ function Module.init(context: Runtime): any
         unlockFirstPerson = true,
     }
     local originalZoomState: ZoomState? = nil
+    local ZoomFeature: any = nil
 
     local function toggleZoomUnlocker(enabled: boolean): ()
         disconnectFeatureConnection("ZoomUnlocker")
@@ -14005,8 +14062,10 @@ function Module.init(context: Runtime): any
             originalZoomState = nil
         end
         if not enabled then
+            if ZoomFeature then ZoomFeature:SetStatus(nil) end
             return
         end
+        ZoomFeature:SetStatus(tostring(math.round(zoomSettings.maxDistance)) .. " studs")
         originalZoomState = {
             minDistance = LocalPlayer.CameraMinZoomDistance,
             maxDistance = LocalPlayer.CameraMaxZoomDistance,
@@ -14030,11 +14089,15 @@ function Module.init(context: Runtime): any
     end
 
 
-    local ZoomFeature = createUniversalFeature(
-        "Zoom Unlocker",
+    ZoomFeature = createUniversalFeature(
+        "CameraDistance",
         "Extend camera zoom and optionally leave forced first person",
         23,
-        toggleZoomUnlocker
+        toggleZoomUnlocker,
+        {
+            configKey = "Universal.ZoomUnlocker",
+            categoryName = "Visuals",
+        }
     )
     addNumberOption(
         ZoomFeature,
@@ -14044,6 +14107,9 @@ function Module.init(context: Runtime): any
         2000,
         function(value: number): ()
             zoomSettings.maxDistance = value
+            if ZoomFeature.enabled then
+                ZoomFeature:SetStatus(tostring(math.round(value)) .. " studs")
+            end
         end
     )
     addNumberOption(
@@ -14132,6 +14198,7 @@ function Module.init(context: Runtime): any
     local originalClickDetectors: {[ClickDetector]: number} =
         setmetatable({}, {__mode = "k"}) :: any
     local interactionExtenderEnabled: boolean = false
+    local InteractFeature: any = nil
     local interactionRefreshClock: number = 0
 
     local function refreshInteractionExtender(): ()
@@ -14200,8 +14267,10 @@ function Module.init(context: Runtime): any
         restoreInteractionExtender()
         interactionRefreshClock = 0
         if not enabled then
+            if InteractFeature then InteractFeature:SetStatus(nil) end
             return
         end
+        InteractFeature:SetStatus(tostring(math.round(interactionSettings.distance)) .. " studs")
         interactionExtenderEnabled = true
         featureConnections.InteractExtender = workspace.DescendantAdded:Connect(
             applyInteractionExtension
@@ -14229,7 +14298,7 @@ function Module.init(context: Runtime): any
     end
 
 
-    local InteractFeature = createUniversalFeature(
+    InteractFeature = createUniversalFeature(
         "Interact Extender",
         "Extend prompt and click interaction range without auto-firing",
         24,
@@ -14243,6 +14312,9 @@ function Module.init(context: Runtime): any
         250,
         function(value: number): ()
             interactionSettings.distance = value
+            if InteractFeature.enabled then
+                InteractFeature:SetStatus(tostring(math.round(value)) .. " studs")
+            end
             refreshInteractionExtender()
         end
     )
@@ -14446,6 +14518,7 @@ function Module.init(context: Runtime): any
             .. "The card's key slot is the dash key.",
         Function = function(enabled: boolean): ()
             phaseDashEnabled = enabled
+            phaseDash:SetStatus(enabled and phaseDashSettings.mode or nil)
             -- The dash key is the card's header key slot (bound below), so there
             -- is no private input handler and no "Dash key" row in the panel.
         end,
@@ -14456,6 +14529,9 @@ function Module.init(context: Runtime): any
         Index = 1,
         Function = function(value: string): ()
             phaseDashSettings.mode = value
+            if phaseDash.Enabled then
+                phaseDash:SetStatus(value)
+            end
         end,
     })
     phaseDash:CreateSlider({
@@ -14626,15 +14702,18 @@ function Module.init(context: Runtime): any
 
     local noFall: any
     noFall = framework.Categories.Protection:CreateModule({
-        Name = "No Fall",
+        Name = "NoFall",
         Category = "Protection",
+        ConfigKey = "Universal.NoFall",
         Tooltip = "Fall damage is written by the game, on this client: this "
             .. "hands its formula a landing it considers safe instead of "
             .. "blocking anything.",
         Function = function(enabled: boolean): ()
             if not enabled then
+                noFall:SetStatus(nil)
                 return
             end
+            noFall:SetStatus(noFallSettings.mode)
             local nextRecordResetAt: number = 0
             local landedThisFall: boolean = false
             noFall:Loop(function(): ()
@@ -14709,6 +14788,9 @@ function Module.init(context: Runtime): any
         Index = 1,
         Function = function(value: string): ()
             noFallSettings.mode = value
+            if noFall.Enabled then
+                noFall:SetStatus(value)
+            end
         end,
         Tooltip = "Impact brakes the fall just above the ground, for games "
             .. "that read your landing speed. State closes the humanoid's "
@@ -15260,8 +15342,9 @@ function Module.init(context: Runtime): any
 
     local fly: any
     fly = framework.Categories.Movement:CreateModule({
-        Name = "Fly",
+        Name = "Flight",
         Category = "Movement",
+        ConfigKey = "Universal.Fly",
         Tooltip = "Use WASD to move, Space to rise and LeftControl to descend. "
             .. "Method picks how you travel sideways and Float picks what "
             .. "holds you up; if a game blocks one combination, another "
@@ -15750,9 +15833,11 @@ function Module.init(context: Runtime): any
             state.platformStandController.set("VehicleSpeed", nil)
 
             if not enabled then
+                vehicleSpeed:SetStatus(nil)
                 return
             end
 
+            vehicleSpeed:SetStatus(vehicleSpeedSettings.mode)
             vehicleSpeed:Loop(function(deltaTime: number): ()
                 local assembly, currentHumanoid, vehicleSeat = getVehicleSpeedTarget()
                 if not assembly or not currentHumanoid then
@@ -15917,6 +16002,9 @@ function Module.init(context: Runtime): any
         Index = 1,
         Function = function(value: string): ()
             vehicleSpeedSettings.mode = value
+            if vehicleSpeed.Enabled then
+                vehicleSpeed:SetStatus(value)
+            end
         end,
     })
     vehicleSpeed:CreateSlider({
@@ -16275,23 +16363,28 @@ function Module.init(context: Runtime): any
     local addNumberOption: any = host.addNumberOption
     local workspace: any = host.workspace
     local gravitySettings = {value = 196.2}
+    local GravityFeature: any = nil
     local originalGravity = workspace.Gravity
 
     local function toggleGravity(enabled)
         disconnectFeatureConnection("Gravity")
 
         if not enabled then
+            if GravityFeature then
+                GravityFeature:SetStatus(nil)
+            end
             workspace.Gravity = originalGravity
             return
         end
 
+        GravityFeature:SetStatus(tostring(math.round(gravitySettings.value)))
         originalGravity = workspace.Gravity
         featureConnections.Gravity = TaskManager:Connect(function()
             workspace.Gravity = gravitySettings.value
         end)
     end
 
-    local GravityFeature = createUniversalFeature(
+    GravityFeature = createUniversalFeature(
         "Gravity",
         "Keep workspace gravity at a custom value",
         5,
@@ -16299,6 +16392,9 @@ function Module.init(context: Runtime): any
     )
     addNumberOption(GravityFeature, "Gravity value", gravitySettings.value, 0, 500, function(value)
         gravitySettings.value = value
+        if GravityFeature.enabled then
+            GravityFeature:SetStatus(tostring(math.round(value)))
+        end
     end)
 
     activeCleanup = function(): ()
@@ -16355,6 +16451,7 @@ function Module.init(context: Runtime): any
     local createUniversalFeature: any = host.createUniversalFeature
     local addNumberOption: any = host.addNumberOption
     local jumpPowerSettings = {value = 80}
+    local JumpPowerFeature: any = nil
     local originalJumpPower = setmetatable({}, {__mode = "k"})
 
     local function restoreJumpPower()
@@ -16372,9 +16469,13 @@ function Module.init(context: Runtime): any
         restoreJumpPower()
 
         if not enabled then
+            if JumpPowerFeature then
+                JumpPowerFeature:SetStatus(nil)
+            end
             return
         end
 
+        JumpPowerFeature:SetStatus(tostring(math.round(jumpPowerSettings.value)))
         featureConnections.JumpPower = TaskManager:Connect(function()
             local _, humanoid = getCharacterParts()
             if not humanoid then
@@ -16409,7 +16510,7 @@ function Module.init(context: Runtime): any
     --           is what a fall-mode jump was supposed to do — it used to be an
     --           exact copy of Normal, so it never worked at all.
 
-    local JumpPowerFeature = createUniversalFeature(
+    JumpPowerFeature = createUniversalFeature(
         "Jump Power",
         "Keep character jump power at a custom value",
         6,
@@ -16417,6 +16518,9 @@ function Module.init(context: Runtime): any
     )
     addNumberOption(JumpPowerFeature, "Power", jumpPowerSettings.value, 0, 500, function(value)
         jumpPowerSettings.value = value
+        if JumpPowerFeature.enabled then
+            JumpPowerFeature:SetStatus(tostring(math.round(value)))
+        end
     end)
 
     activeCleanup = function(): ()
@@ -16552,9 +16656,11 @@ function Module.init(context: Runtime): any
             state.infiniteJumpEnabled = false
             state.lastInfiniteJumpAt = -math.huge
             if not enabled then
+                jump:SetStatus(nil)
                 return
             end
             state.infiniteJumpEnabled = true
+            jump:SetStatus(infiniteJumpSettings.mode)
 
             -- `JumpRequest` is the one jump signal every device raises.
             jump:Clean(state.onJumpRequest(function(): ()
@@ -16592,6 +16698,9 @@ function Module.init(context: Runtime): any
         Index = 1,
         Function = function(value: string): ()
             infiniteJumpSettings.mode = value
+            if jump.Enabled then
+                jump:SetStatus(value)
+            end
         end,
     })
     jump:CreateSlider({
@@ -16684,6 +16793,7 @@ function Module.init(context: Runtime): any
     local addNumberOption: any = host.addNumberOption
     local workspace: any = host.workspace
     local fovSettings = {value = 90}
+    local FovFeature: any = nil
     state.fovController = state.fovController or {
         owners = {},
         baselines = setmetatable({}, {__mode = "k"}),
@@ -16735,16 +16845,18 @@ function Module.init(context: Runtime): any
         disconnectFeatureConnection("FOV")
         state.fovController.set("Universal", enabled and fovSettings.value or nil)
         if not enabled then
+            if FovFeature then FovFeature:SetStatus(nil) end
             return
         end
 
+        FovFeature:SetStatus(tostring(math.round(fovSettings.value)))
         featureConnections.FOV = TaskManager:Connect(function()
             state.fovController.set("Universal", fovSettings.value)
             state.fovController.apply(workspace.CurrentCamera)
         end)
     end
 
-    local FovFeature = createUniversalFeature(
+    FovFeature = createUniversalFeature(
         "FOV",
         "Keep the camera field of view fixed",
         10,
@@ -16752,6 +16864,9 @@ function Module.init(context: Runtime): any
     )
     addNumberOption(FovFeature, "Field of view", fovSettings.value, 20, 120, function(value)
         fovSettings.value = value
+        if FovFeature.enabled then
+            FovFeature:SetStatus(tostring(math.round(value)))
+        end
     end)
 
     activeCleanup = function(): ()
@@ -16919,11 +17034,15 @@ function Module.init(context: Runtime): any
     end
 
     local AntiAfkFeature = createUniversalFeature(
-        "Anti-AFK",
+        "AntiAFK",
         "Prevent the local idle event from disconnecting",
         13,
         toggleAntiAfk,
-        {noOptions = true}
+        {
+            noOptions = true,
+            configKey = "Universal.AntiAFK",
+            categoryName = "Utility",
+        }
     )
     addFeatureTooltip(AntiAfkFeature, "Responds only to Roblox's local idle event and "
         .. "disconnects immediately when disabled.")
@@ -16983,15 +17102,29 @@ function Module.init(context: Runtime): any
     local addNumberOption: any = host.addNumberOption
     local antiFlingSettings = {velocityLimit = 120}
     local antiFlingSafeCFrame = nil
+    local AntiFlingFeature: any = nil
+    local antiFlingStatus: string? = nil
+
+    local function setAntiFlingStatus(status: string?): ()
+        if antiFlingStatus == status then
+            return
+        end
+        antiFlingStatus = status
+        if AntiFlingFeature then
+            AntiFlingFeature:SetStatus(status)
+        end
+    end
 
     local function toggleAntiFling(enabled)
         disconnectFeatureConnection("AntiFling")
         antiFlingSafeCFrame = nil
 
         if not enabled then
+            setAntiFlingStatus(nil)
             return
         end
 
+        setAntiFlingStatus("standing by")
         featureConnections.AntiFling = TaskManager:Connect(function()
             -- Your own fling is deliberate; standing on the brakes during it
             -- is the module fighting its owner.
@@ -17009,6 +17142,7 @@ function Module.init(context: Runtime): any
 
             if linearSpeed > antiFlingSettings.velocityLimit
                 or angularSpeed > antiFlingSettings.velocityLimit then
+                setAntiFlingStatus("blocking")
                 root.AssemblyLinearVelocity = Vector3.zero
                 root.AssemblyAngularVelocity = Vector3.zero
                 if antiFlingSafeCFrame then
@@ -17016,12 +17150,13 @@ function Module.init(context: Runtime): any
                 end
             elseif humanoid.FloorMaterial ~= Enum.Material.Air
                 and linearSpeed < antiFlingSettings.velocityLimit * 0.45 then
+                setAntiFlingStatus("standing by")
                 antiFlingSafeCFrame = root.CFrame
             end
         end)
     end
 
-    local AntiFlingFeature = createUniversalFeature(
+    AntiFlingFeature = createUniversalFeature(
         "Anti-Fling",
         "Stop extreme local velocity and return to safety",
         14,
@@ -17087,6 +17222,7 @@ function Module.init(context: Runtime): any
     local addNumberOption: any = host.addNumberOption
     local lagSwitchSettings = {incomingLag = 999}
     local originalIncomingLag = 0
+    local LagSwitchFeature: any = nil
 
     local function setIncomingReplicationLag(value)
         local success = pcall(function()
@@ -17099,10 +17235,12 @@ function Module.init(context: Runtime): any
         disconnectFeatureConnection("LagSwitch")
 
         if not enabled then
+            if LagSwitchFeature then LagSwitchFeature:SetStatus(nil) end
             setIncomingReplicationLag(originalIncomingLag)
             return
         end
 
+        LagSwitchFeature:SetStatus(tostring(math.round(lagSwitchSettings.incomingLag)) .. " ms")
         pcall(function()
             originalIncomingLag = settings():GetService(
                 "NetworkSettings"
@@ -17118,7 +17256,7 @@ function Module.init(context: Runtime): any
         end)
     end
 
-    local LagSwitchFeature = createUniversalFeature(
+    LagSwitchFeature = createUniversalFeature(
         "Lag Switch",
         "Simulate extreme incoming replication delay",
         16,
@@ -17132,6 +17270,9 @@ function Module.init(context: Runtime): any
         999,
         function(value)
             lagSwitchSettings.incomingLag = value
+            if LagSwitchFeature.enabled then
+                LagSwitchFeature:SetStatus(tostring(math.round(value)) .. " ms")
+            end
         end
     )
 
@@ -17547,6 +17688,14 @@ function Module.init(context: Runtime): any
         materials = false,
     }
     local fpsModeEnabled: boolean = false
+    local ImproveFpsFeature: any = nil
+    local function selectedEffectCount(): number
+        local count: number = 0
+        for _name: string, selected: boolean in pairs(fpsSettings) do
+            if selected then count += 1 end
+        end
+        return count
+    end
     -- Weak keys: a part that leaves the world takes its cached values with it
     -- instead of pinning the whole instance in memory until the next restore.
     local fpsVisualCache: any = setmetatable({}, {__mode = "k"})
@@ -17616,8 +17765,10 @@ function Module.init(context: Runtime): any
         restoreFpsObjects()
 
         if not enabled then
+            if ImproveFpsFeature then ImproveFpsFeature:SetStatus(nil) end
             return
         end
+        ImproveFpsFeature:SetStatus(tostring(selectedEffectCount()) .. " effects")
 
         -- The initial sweep is chunked so a large map cannot freeze the client.
         task.spawn(function(): ()
@@ -17649,7 +17800,7 @@ function Module.init(context: Runtime): any
         end
     end
 
-    local ImproveFpsFeature: any = createUniversalFeature(
+    ImproveFpsFeature = createUniversalFeature(
         "Improve FPS",
         "Apply only the selected reversible optimizations",
         26,
@@ -17842,6 +17993,7 @@ function Module.init(context: Runtime): any
     local movementFeatures: any = host.state.movementFeatures
     local MovementScroll: any = host.state.universalScroll
     local freezeSettings = {mode = "Anchor"}
+    local FreezeFeature: any = nil
     local originalFreezeState = setmetatable({}, {__mode = "k"})
 
     local function restoreFreezeMovements()
@@ -17863,9 +18015,13 @@ function Module.init(context: Runtime): any
         restoreFreezeMovements()
 
         if not enabled then
+            if FreezeFeature then
+                FreezeFeature:SetStatus(nil)
+            end
             return
         end
 
+        FreezeFeature:SetStatus(freezeSettings.mode)
         featureConnections.FreezeMovements = TaskManager:Connect(function()
             local _, humanoid, root = getCharacterParts()
             if not humanoid or not root then
@@ -17894,7 +18050,7 @@ function Module.init(context: Runtime): any
         end)
     end
 
-    local FreezeFeature = createUniversalFeature(
+    FreezeFeature = createUniversalFeature(
         "Freeze Movements",
         "Prevent the local character from moving",
         1,
@@ -17911,6 +18067,9 @@ function Module.init(context: Runtime): any
         1,
         function(value)
             freezeSettings.mode = value
+            if FreezeFeature.enabled then
+                FreezeFeature:SetStatus(value)
+            end
         end
     )
     addInformationOption(
@@ -18067,8 +18226,9 @@ function Module.init(context: Runtime): any
 
     local speed: any
     speed = framework.Categories.Movement:CreateModule({
-        Name = "Speed",
+        Name = "SpeedHack",
         Category = "Movement",
+        ConfigKey = "Universal.Speed",
         Order = 1,
         Tooltip = "Move faster, by whichever of five methods this game lets "
             .. "through.",
@@ -18488,8 +18648,12 @@ function Module.init(context: Runtime): any
             hitboxNpcCachedAt = -1
             hitboxNpcCache = {}
             if not enabled then
+                hitboxes:SetStatus(nil)
                 return
             end
+            hitboxes:SetStatus(
+                hitboxSettings.part .. " +" .. tostring(math.round(hitboxSettings.expand))
+            )
             hitboxes:Clean(restoreHitboxes)
             -- Two parts per player is cheap enough to do every frame, and
             -- every frame is what keeps the box on the character while the
@@ -18505,6 +18669,11 @@ function Module.init(context: Runtime): any
         Index = 1,
         Function = function(value: string): ()
             hitboxSettings.part = value
+            if hitboxes.Enabled then
+                hitboxes:SetStatus(
+                    value .. " +" .. tostring(math.round(hitboxSettings.expand))
+                )
+            end
         end,
         Tooltip = "Which part of the character is expanded. Parts the new "
             .. "mode no longer owns are restored on the next sweep.",
@@ -18516,6 +18685,11 @@ function Module.init(context: Runtime): any
         Default = hitboxSettings.expand,
         Function = function(value: number): ()
             hitboxSettings.expand = value
+            if hitboxes.Enabled then
+                hitboxes:SetStatus(
+                    hitboxSettings.part .. " +" .. tostring(math.round(value))
+                )
+            end
         end,
         Tooltip = "Studs added to the target part. Past roughly 10 the box is "
             .. "wider than the character is tall and anyone watching can see "
@@ -19519,6 +19693,7 @@ function Module.init(context: Runtime): any
             .. "Local only: the server and everyone else still see you.",
         Function = function(enabled: boolean): ()
             if not enabled then
+                disguise:SetStatus(nil)
                 local original: HumanoidDescription? = runtime.original
                 runtime.applied = nil
                 state.spoofDescription = nil
@@ -19527,6 +19702,8 @@ function Module.init(context: Runtime): any
                 end
                 return
             end
+            local user: string = tostring(disguise.Options["User"].Value or "")
+            disguise:SetStatus(user ~= "" and string.sub(user, 1, 15) or "waiting")
 
             -- Re-dress after every respawn, or the disguise lasts exactly one
             -- life.
@@ -19866,9 +20043,13 @@ function Module.init(context: Runtime): any
             .. "climb and swim.",
         Function = function(enabled: boolean): ()
             if not enabled then
+                animations:SetStatus(nil)
                 Module.restore(context, runtime)
                 return
             end
+            animations:SetStatus(
+                runtime.selected and string.sub(runtime.selected, 1, 15) or "custom"
+            )
             rememberOriginal()
             -- Re-applied after a respawn, because a fresh character arrives
             -- with the game's own animations.
@@ -19926,6 +20107,9 @@ function Module.init(context: Runtime): any
             end
             runtime.settingSelection = false
             runtime.selected = chosen
+            if animations.Enabled then
+                animations:SetStatus(chosen and string.sub(chosen, 1, 15) or "custom")
+            end
         end,
     })
     animations:CreateButton({
@@ -20362,9 +20546,13 @@ function Module.init(context: Runtime): any
         Tooltip = "Play any emote by id — Roblox's own or UGC.",
         Function = function(enabled: boolean): ()
             if not enabled then
+                emotes:SetStatus(nil)
                 stop()
                 return
             end
+            emotes:SetStatus(
+                runtime.selected and string.sub(runtime.selected, 1, 15) or "custom"
+            )
             -- Dying mid-emote leaves a track pointing at a humanoid that no
             -- longer exists.
             emotes:Event(localPlayer.CharacterAdded, function(): ()
@@ -20402,6 +20590,9 @@ function Module.init(context: Runtime): any
             end
             runtime.settingSelection = false
             runtime.selected = chosen
+            if emotes.Enabled then
+                emotes:SetStatus(chosen and string.sub(chosen, 1, 15) or "custom")
+            end
         end,
     })
     emotes:CreateTextBox({
