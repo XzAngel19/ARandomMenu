@@ -102,6 +102,9 @@ function Module.init(context: Runtime): any
     )
     addNumberOption(FovFeature, "Field of view", fovSettings.value, 20, 120, function(value)
         fovSettings.value = value
+        if FovFeature.enabled then
+            FovFeature:SetStatus(tostring(math.round(value)))
+        end
     end)
 
     activeCleanup = function(): ()

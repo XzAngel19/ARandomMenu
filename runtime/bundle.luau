@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "a7c44569a9e7f494",
+    stamp = "87f53b6501892992",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -14107,6 +14107,9 @@ function Module.init(context: Runtime): any
         2000,
         function(value: number): ()
             zoomSettings.maxDistance = value
+            if ZoomFeature.enabled then
+                ZoomFeature:SetStatus(tostring(math.round(value)) .. " studs")
+            end
         end
     )
     addNumberOption(
@@ -16861,6 +16864,9 @@ function Module.init(context: Runtime): any
     )
     addNumberOption(FovFeature, "Field of view", fovSettings.value, 20, 120, function(value)
         fovSettings.value = value
+        if FovFeature.enabled then
+            FovFeature:SetStatus(tostring(math.round(value)))
+        end
     end)
 
     activeCleanup = function(): ()
@@ -17264,6 +17270,9 @@ function Module.init(context: Runtime): any
         999,
         function(value)
             lagSwitchSettings.incomingLag = value
+            if LagSwitchFeature.enabled then
+                LagSwitchFeature:SetStatus(tostring(math.round(value)) .. " ms")
+            end
         end
     )
 

@@ -102,6 +102,9 @@ function Module.init(context: Runtime): any
         2000,
         function(value: number): ()
             zoomSettings.maxDistance = value
+            if ZoomFeature.enabled then
+                ZoomFeature:SetStatus(tostring(math.round(value)) .. " studs")
+            end
         end
     )
     addNumberOption(

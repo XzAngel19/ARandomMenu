@@ -78,6 +78,9 @@ function Module.init(context: Runtime): any
         999,
         function(value)
             lagSwitchSettings.incomingLag = value
+            if LagSwitchFeature.enabled then
+                LagSwitchFeature:SetStatus(tostring(math.round(value)) .. " ms")
+            end
         end
     )
 
