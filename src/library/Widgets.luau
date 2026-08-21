@@ -98,7 +98,6 @@ function Module.init(context: any): WidgetLibrary
     local runActionButton: any = host.runActionButton
     local colorFromConfig: any = host.colorFromConfig
     local colorToConfig: any = host.colorToConfig
-    local createUniversalFeature: any = host.createUniversalFeature
     -- Places a control on the right-hand side of an option row.
     --
     -- Rows are no longer all the same height, so the vertical band a control may
@@ -2017,7 +2016,9 @@ function Module.init(context: any): WidgetLibrary
     local function createFeatureFromDefinition(
         definition: FeatureDefinition
     ): any
-        local feature: any = createUniversalFeature(
+        -- Read at call time, not captured at init: the card factory is a
+        -- library of its own and may not have loaded when this one did.
+        local feature: any = host.createUniversalFeature(
             definition.name,
             definition.description,
             definition.order,

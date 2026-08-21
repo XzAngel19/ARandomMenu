@@ -641,7 +641,7 @@ appear for the modes that use them.
 line, `init`/`destroy`, its own card, and nothing in the shell that knows it
 exists.
 
-The shell is **16,688 → 7,483 lines**, and **no feature card is left in it**.
+The shell is **16,688 → 6,833 lines**, and **no feature card is left in it**.
 
 One thing the move taught, worth writing down: the remaining features lived
 inside a single enormous `do ... end` that existed only to hand registers back
@@ -758,8 +758,28 @@ Two things the move exposed, both caught by checks rather than by reading:
   own, so it has to hand them back — and it did not. The harness's teardown
   check failed the moment the library existed, which is what that check is for.
 
-The queue: `state` into typed tables, and the last big block in the shell,
-`createUniversalFeature`.
+### The card factory
+
+`createUniversalFeature` — the six hundred lines that build the row a module
+gets on a board: title, description, the switch or button its kind calls for,
+the favourite star, the key slot, the expand arrow, the panel its option rows
+are filed into — is `src/library/Cards.luau`.
+
+It is a library like any other, which means it lands *after* the environment
+every module runs in was built. The loader folds it into the same table the
+option builders use, so one install path covers both, here and in every
+environment a game module gets later. The widget library stopped capturing
+`createUniversalFeature` at init and reads it at call time instead, because it
+can no longer assume the factory exists when it loads.
+
+The build contract followed: the list of names a downloaded file may read is
+now the environment table, plus what the widget library returns, plus anything
+the loader folds in afterwards — so adding another such library needs no edit
+to the checker.
+
+The queue: `state` into typed tables. The shell's four remaining blocks
+(`createTab`, `centerMain`, `validateAssetBytes`, the loading intro) are under
+450 lines each and are genuinely shell work.
 
 ## Module architecture
 
@@ -777,6 +797,7 @@ src/
     SettingsPage.luau    the Config. tab, built the first time it is opened
     MobileActions.luau   placed phone shortcuts: placement, dragging, holds
     FloatingWindows.luau favourites, the overlay menu and the four overlays
+    Cards.luau           the card factory every module calls once
     Entity.luau          player/character cache, team checks, ray queries
     Render.luau          projection, pooled boxes/lines/labels, highlights
   modules/

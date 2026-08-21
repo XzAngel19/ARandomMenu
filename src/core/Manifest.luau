@@ -38,6 +38,9 @@ local Manifest: Manifest = {
         "src/library/Entity.luau",
         "src/library/Weapons.luau",
         "src/library/Render.luau",
+        -- The card factory. Every module calls it, so it comes before the
+        -- pages that read the cards it builds.
+        "src/library/Cards.luau",
         -- Before the pages below: a favourite registers as its card is built,
         -- and the settings page reads the overlay registry.
         "src/library/FloatingWindows.luau",

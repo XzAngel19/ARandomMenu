@@ -127,7 +127,12 @@ def environment_keys(shell: str) -> set:
     exposed = set(re.findall(r"^\s{8}(\w+)\s*=", environment, re.M))
     widgets = open("src/library/Widgets.luau").read()
     returned = widgets[widgets.rindex("    return {") : widgets.rindex("\nend")]
-    return exposed | set(re.findall(r"^\s{8}(\w+)\s*=", returned, re.M))
+    exposed |= set(re.findall(r"^\s{8}(\w+)\s*=", returned, re.M))
+    # Anything else the loader folds into that same table after a library has
+    # arrived — the card factory does this, because it is a library too and
+    # lands after the environment was built.
+    exposed |= set(re.findall(r"widgetBuilders\.(\w+)\s*=", shell))
+    return exposed
 
 
 def host_contract(shell: str, sources: list, failures: list) -> None:
