@@ -23,12 +23,15 @@ type CollisionState = {
     canCollide: boolean,
 }
 
-local VD_KILLER_COLOR: Color3 = Color3.fromRGB(166, 110, 255)
-local VD_ALERT_COLOR: Color3 = Color3.fromRGB(255, 190, 88)
-
 local moduleCleanup: () -> () = function(): () end
 
 local function buildVDFeatures(): ()
+    -- Role colours live with the builder rather than at file scope: the file
+    -- loads in sandboxed test environments whose globals arrive only through
+    -- injection, after the module body has already run.
+    local VD_KILLER_COLOR: Color3 = Color3.fromRGB(166, 110, 255)
+    local VD_ALERT_COLOR: Color3 = Color3.fromRGB(255, 190, 88)
+
     local settings: any = {
         generatorDistance = 1800,
         generatorTransparency = 0.82,

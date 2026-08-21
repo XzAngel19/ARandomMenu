@@ -56,6 +56,50 @@ and Speed.luau both created a feature named "Speed", so the two cards shared
 the `Universal.Speed` configKey and overwrote each other's saved values.
 Its saved options move from `Universal.Speed.*` to `Universal.PhysicsSpeed.*`.
 
+**Ordering caveat (for Agent A).** The kernel re-reads `Show` rules when an
+option is *created* or a value changes — but `register()` attaches a row's
+rule *after* its builder ran, so the last gated row of a panel starts
+visible until something else triggers the pass. Kill Aura dodged it by
+creating the "Show advanced" switch after the block; every module above now
+ends its panel with an ungated row (Fly and Physics Speed put the switch
+after the block, Kill-Aura style; Phase Dash and No Fall end on Cooldown /
+Ground scan), and Infinite Jump — whose every row is gated — closes with
+one explicit `RefreshVisibility()`. The one-line kernel fix is to re-run
+the visibility pass inside `register()` when a rule arrives; when that
+lands, the ordering here stops mattering. `tools/test/suites/movement-b`
+asserts the folded initial state, so the regression is pinned either way.
+
+## Suites
+
+`tools/test/suites/` holds this pass's tests, runnable today with
+`luau tools/test/suites/run-b.luau` (110 checks):
+
+- `movement-b` — Fly, Physics Speed, Phase Dash, Infinite Jump: option
+  contracts, the Show rules per mode, enable/disable task accounting,
+  WalkSpeed restoration, the dash cooldown, the jump interval floor.
+- `protection-b` — No Fall: mode-owned rows, the Impact brake clamping a
+  mocked fall, State mode never touching velocity.
+- `games-b` — VD's Blatant rate caps measured against counting remotes
+  (and the deleted FOV/Fullbright cards staying deleted), TRS firing the
+  pickup remote the attribute scan actually settles on with the clamped
+  reported distance, MM2 initialising with no Redirect left in Shoot's
+  mode list.
+
+Each suite takes `(ctx)` the way the split runner's suites do, so wiring
+them into `run.luau` is one `require` line each — that file is C's, which
+is why the driver exists. Until someone with authority over
+`tools/validate.sh` adds `luau tools/test/suites/run-b.luau` to the test
+step, CI green does not include these checks.
+
+Mock and host gaps the suites shim today, worth absorbing into the real
+files when their owners can (all recorded here because each one cost a
+debugging round): `Vector3:Lerp` (the suites patch it in), `Theme`,
+`TweenService`, `CollectionService`'s tag surface, `Enum.Font`,
+`Sound:Play/Stop`, `Player:GetMouse`, `host.getCharacterParts`,
+`feature.row` on the harness card, and option callbacks being unreachable
+from a test (the suites wrap the builders to record them).
+
+
 ## Module audit (every card under src/modules)
 
 No option anywhere was doing nothing — the deletion passes before this one
