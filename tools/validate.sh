@@ -119,6 +119,37 @@ step "ClickGUI spec matches the Luau widgets"
 # constants, and fails a UI Settings default that does not match Wurst.
 python3 tools/extract_prototype_spec.py --check
 
+step "No hail over the blur"
+# The old menu put fifty-four falling stones between the player and the
+# game. Wurst does not. A comment that remembers they were deleted is
+# fine; a layer that draws them again is not.
+python3 - <<'PYTHON'
+import re
+import subprocess
+
+pattern = re.compile(
+    r'Name\s*=\s*"(BlurHail|HailLayer)"|HAIL_STONE_COUNT|HAIL_COLOR'
+)
+offenders = []
+for path in subprocess.run(
+    ["git", "ls-files", "*.luau", "*.lua"],
+    capture_output=True,
+    text=True,
+).stdout.split():
+    if path.startswith("reference/"):
+        continue
+    text = open(path, encoding="utf-8", errors="replace").read()
+    for match in pattern.finditer(text):
+        line = text.count("\n", 0, match.start()) + 1
+        offenders.append(f"{path}:{line}: {match.group(0)}")
+if offenders:
+    raise SystemExit(
+        "hail / blur-decoration layer reintroduced:\n  "
+        + "\n  ".join(offenders)
+    )
+print("ok")
+PYTHON
+
 step "Product name"
 # Display names of the previous product must not be hard-coded in tools/ or
 # docs/. The filename ARandomMenu.luau stays: it is the loader entry point.

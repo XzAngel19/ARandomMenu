@@ -165,7 +165,8 @@
         "values": [
           "Left",
           "Right"
-        ]
+        ],
+        "portDefault": "Right"
       },
       {
         "window": "HackList",
@@ -309,6 +310,44 @@
         "key": "key.keyboard.y",
         "commands": "sneak"
       }
-    ]
+    ],
+    "chrome": {
+      "titleHeight": 13,
+      "rowHeight": 11,
+      "settingsArrow": 11,
+      "logoWidth": 72,
+      "logoHeight": 18,
+      "logoX": 0,
+      "logoY": 3,
+      "logoChipTop": 6,
+      "logoChipBottom": 17,
+      "hackListLine": 9,
+      "hackListMargin": 2,
+      "hackListSlide": 5,
+      "windowWidth": null
+    },
+    "screenshot": {
+      "file": "docs/design/reference/ref-wurst-719.jpg",
+      "width": 1600,
+      "height": 900,
+      "guiScale": 2,
+      "framebufferWidth": 1920,
+      "framebufferHeight": 1080,
+      "pixelsPerGui": 1.6667,
+      "logoBlit": [
+        124,
+        27
+      ],
+      "hackListLine": 17
+    },
+    "font": {
+      "source": "Minecraft default bitmap (MC.font)",
+      "file": null,
+      "glyphHeight": 8,
+      "lineHeight": 9,
+      "typicalAdvance": 6,
+      "closestVendored": "minecraftFont / Monocraft.otf",
+      "portToday": "BuilderSans / RobotoMono"
+    }
   }
 }

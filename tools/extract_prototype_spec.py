@@ -264,7 +264,12 @@ def clickgui_path() -> str | None:
 def parse_named_constants() -> dict:
     """ALL_CAPS locals in the files the brief named as counterparts."""
     found = {}
-    paths = [WIDGETS, WINDOWS, "src/library/SettingsPage.luau"]
+    paths = [
+        WIDGETS,
+        WINDOWS,
+        "src/library/SettingsPage.luau",
+        "src/library/Furniture.luau",
+    ]
     gui = clickgui_path()
     if gui:
         paths.append(gui)
@@ -432,7 +437,7 @@ def check_wurst_settings(spec: dict, shell: str, constants: dict) -> list[str]:
     failures = []
     theme = parse_theme_preset(shell, "Wurst")
     for row in (spec.get("wurst") or {}).get("settings") or []:
-        wanted = row["default"]
+        wanted = row.get("portDefault", row["default"])
         counterpart = row["luau"]
         value_type = row["type"]
         if counterpart.startswith("Theme."):
@@ -508,7 +513,8 @@ def main() -> int:
             if counterpart.startswith("Theme."):
                 continue
             if counterpart not in constants:
-                settings_owed.append(f"{counterpart}={row['default']}")
+                shown = row.get("portDefault", row["default"])
+                settings_owed.append(f"{counterpart}={shown}")
         shape_n = len(spec["shape"])
         other_n = len(pending)
         print(

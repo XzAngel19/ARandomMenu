@@ -40,6 +40,33 @@ Agent D (unblocked by PRODUCT on the mock):
 - `src/modules/Combat/ProjectileCalibration.luau` does the same
 - `[RTM:…]` log prefixes in those two files
 
+## Wordmark asset and Wurst chrome sizes
+
+Furniture.luau already calls `applyAssetImage("wurstLogo", ...)`. The
+shell's AssetManager has no `wurstLogo` key — it still has `brandLogo` →
+`menu-logo.jpg`. Add:
+
+```
+wurstLogo = {
+    url = ... "assets/wurst/wurst_128.png",
+    fileName = "wurst-128.png",
+    assetType = "image/png",
+}
+```
+
+Do not point the wordmark at `menu-logo.jpg`.
+
+Wurst's own logo blit is **72×18** at (0, 3), chip fill y=6–17. Furniture
+currently draws 87×22. Those Wurst numbers are in `spec.json`
+`wurst.chrome`; the screenshot measurements that confirm them are in
+`wurst.screenshot`. Title bar is **13**, feature row is **11**, HackList
+advances **9** — not the prototype's 22/22/13.
+
+The hail layer is gone. `tools/validate.sh` ("No hail over the blur")
+and `tools/test/suites/furniture.luau` fail if a `BlurHail` / `HailLayer`
+frame, `HAIL_STONE_COUNT` or `HAIL_COLOR` comes back. Do not put a
+decoration on top of the blur.
+
 ## Furniture the suites are waiting on
 
 `tools/test/suites/furniture.luau` is written. Until these exist it
