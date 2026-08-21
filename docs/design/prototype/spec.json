@@ -3,14 +3,14 @@
   "shape": {
     "opacity": 0.86,
     "tooltipOpacity": 0.95,
-    "radius": 4,
+    "radius": 0,
     "rowHeight": 22,
     "borderThickness": 1,
     "maxHeight": 340,
     "scale": 1
   },
   "chrome": {
-    "titleHeight": 22,
+    "titleHeight": 26,
     "gap": 2,
     "snapDistance": 8,
     "windowWidth": 200

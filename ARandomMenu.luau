@@ -318,7 +318,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "3f41eed7eef47ad1"
+local SOURCE_STAMP: string = "e2ba8de8cef2c44c"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -651,7 +651,7 @@ local ThemeEngine = {
     shape = {
         opacity = 0.86,
         tooltipOpacity = 0.95,
-        radius = 4,
+        radius = 0,
         rowHeight = 22,
         borderThickness = 1,
         maxHeight = 340,
@@ -3507,11 +3507,6 @@ state.featureTooltip = create("TextLabel", {
     Visible = false,
     ZIndex = 250,
 }) :: TextLabel
-
-create("UICorner", {
-    Parent = state.featureTooltip,
-    CornerRadius = cornerRadius(4),
-})
 
 create("UIPadding", {
     Parent = state.featureTooltip,

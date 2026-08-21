@@ -72,9 +72,10 @@ local SNAP_DISTANCE: number = 8
 local BASE_Z: number = 150
 local MARGIN: number = 6
 -- The prototype's title bar. Named rather than inline because the parity gate
--- reads this constant and holds it to spec.json — a raw 26 here was already
--- one pixel-decision drifting from the file that is supposed to decide it.
-local TITLE_HEIGHT: number = 22
+-- reads this constant and holds it to spec.json. 26 is Wurst's own 13 logical
+-- pixels at the GUI scale 2 everything here is drawn at — C read it out of
+-- the Java, and the prototype was changed first.
+local TITLE_HEIGHT: number = 26
 -- The prototype's `.tbar` font size, held by the same gate. The title used
 -- to go through makeTextLabel, whose 1.35 multiplier rendered it at 16 px —
 -- visibly heavier than the spec on every window at once.
@@ -86,13 +87,10 @@ function Module.init(context: any): any
     local configData: any = host.configData
     local queueConfigSave: any = host.queueConfigSave
     local create: any = host.create
-    local makeButton: any = host.makeButton
     local Theme: any = host.Theme
     local ThemeEngine: any = host.ThemeEngine
     local CONTROL_FONT: any = host.CONTROL_FONT
     local PopupLayer: any = host.PopupLayer
-    local UI_RADIUS: any = host.UI_RADIUS
-    local cornerRadius: any = host.cornerRadius
     local trackUiConnection: any = host.trackUiConnection
     local UserInputService: any = host.UserInputService
 
@@ -419,16 +417,17 @@ function Module.init(context: any): any
         local closeButton: TextButton? = nil
 
         if not bare then
-            create("UICorner", {
-                Parent = root,
-                CornerRadius = cornerRadius(UI_RADIUS.panel),
-            })
-            create("UIStroke", {
+            -- A Wurst window is a rectangle: no corner radius anywhere, one
+            -- thin border. The border binds to the outline token, which the
+            -- UI Settings Accent row repaints — Wurst's Accent colours title
+            -- bars *and* borders.
+            local edge: UIStroke = (create("UIStroke", {
                 Parent = root,
                 Color = Theme.outline,
-                Transparency = 0.78,
+                Transparency = 0.15,
                 Thickness = 1,
-            })
+            }) :: any) :: UIStroke
+            bind(edge, "Color", "outline")
 
             local bar: Frame = create("Frame", {
                 Parent = root,
@@ -439,22 +438,6 @@ function Module.init(context: any): any
                 ZIndex = 2,
             }) :: Frame
             bind(bar, "BackgroundColor3", "accent")
-            create("UICorner", {
-                Parent = bar,
-                CornerRadius = cornerRadius(UI_RADIUS.panel),
-            })
-            -- The corner rounding would show through under the title bar, so
-            -- the bottom two corners are squared off by a strip.
-            local squareOff: Frame = create("Frame", {
-                Parent = bar,
-                Name = "SquareOff",
-                BackgroundTransparency = 0,
-                BorderSizePixel = 0,
-                Position = UDim2.new(0, 0, 1, -4),
-                Size = UDim2.new(1, 0, 0, 4),
-                ZIndex = 2,
-            }) :: Frame
-            bind(squareOff, "BackgroundColor3", "accent")
 
             local title: TextLabel = (create("TextLabel", {
                 TextTruncate = Enum.TextTruncate.AtEnd,
@@ -472,15 +455,43 @@ function Module.init(context: any): any
             title.ZIndex = 3
             bind(title, "TextColor3", "accentText")
 
-            local buttonX: number = -6
+            local buttonX: number = -5
+            -- Wurst's chrome controls are small squares sitting in the title
+            -- bar — a box with a symbol, not a bare glyph. 16 px is 8 logical
+            -- at the GUI scale 2 the interface is drawn at.
             local function chromeButton(symbol: string): TextButton
-                local button: TextButton = makeButton(bar, symbol) :: TextButton
+                local button: TextButton = (create("TextButton", {
+                    TextTruncate = Enum.TextTruncate.AtEnd,
+                    Parent = bar,
+                    Active = true,
+                    AutoButtonColor = false,
+                    BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+                    BackgroundTransparency = 0.72,
+                    BorderSizePixel = 0,
+                    FontFace = CONTROL_FONT,
+                    Text = symbol,
+                    TextSize = 11,
+                }) :: any) :: TextButton
+                create("UIStroke", {
+                    Parent = button,
+                    Color = Color3.fromRGB(0, 0, 0),
+                    Thickness = 1,
+                    Transparency = 0.55,
+                })
                 button.AnchorPoint = Vector2.new(1, 0.5)
                 button.Position = UDim2.new(1, buttonX, 0.5, 0)
                 button.Size = UDim2.fromOffset(16, 16)
-                button.BackgroundTransparency = 0.6
                 button.ZIndex = 3
                 bind(button, "TextColor3", "accentText")
+                -- Parked with the rest of the chrome so window:Destroy
+                -- releases them; trackUiConnection would keep them alive
+                -- until the whole shell dies.
+                table.insert(chromeConnections, button.MouseEnter:Connect(function(): ()
+                    button.BackgroundTransparency = 0.45
+                end))
+                table.insert(chromeConnections, button.MouseLeave:Connect(function(): ()
+                    button.BackgroundTransparency = 0.72
+                end))
                 buttonX -= 19
                 return button
             end
@@ -489,12 +500,18 @@ function Module.init(context: any): any
                 closeButton = chromeButton("×")
             end
             if definition.pinnable ~= false then
-                local pin: TextButton = chromeButton("•")
+                -- The pin is a square that fills with the enabled token while
+                -- the window is pinned — the same "on means filled" grammar
+                -- as a hack row.
+                local pin: TextButton = chromeButton("▪")
                 local function paintPin(): ()
-                    pin.BackgroundTransparency = window.pinned and 0 or 0.6
+                    pin.BackgroundTransparency = window.pinned and 0 or 0.72
                     pin.BackgroundColor3 = window.pinned
                         and Theme.enabled
-                        or Theme.accent
+                        or Color3.fromRGB(0, 0, 0)
+                    pin.TextColor3 = window.pinned
+                        and Theme.enabledText
+                        or Theme.accentText
                 end
                 table.insert(paintChrome, paintPin)
                 table.insert(chromeConnections, pin.MouseButton1Click:Connect(function(): ()
@@ -584,7 +601,7 @@ function Module.init(context: any): any
     -- alpha. The title bar stays opaque — Wurst fades only the background.
     -- Remembered on the manager so a window created after the slider moved
     -- is born at the same alpha.
-    manager.bodyTransparency = 0.08
+    manager.bodyTransparency = 0.5
     function manager.SetOpacity(alpha: number): ()
         manager.bodyTransparency = math.clamp(1 - alpha, 0, 1)
         for _, window: any in ipairs(manager.list) do

@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "3f41eed7eef47ad1",
+    stamp = "e2ba8de8cef2c44c",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -569,10 +569,7 @@ function Module.init(context: any): WidgetLibrary
             Size = UDim2.fromOffset(11, 11),
             ZIndex = option.ZIndex + 3,
         }) :: any) :: Frame
-        create("UICorner", {
-            Parent = box,
-            CornerRadius = UDim.new(0, 2),
-        })
+        -- A square, as in Wurst — no corner radius on a checkbox.
         local boxStroke: UIStroke = (create("UIStroke", {
             Parent = box,
             ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
@@ -5461,9 +5458,10 @@ local SNAP_DISTANCE: number = 8
 local BASE_Z: number = 150
 local MARGIN: number = 6
 -- The prototype's title bar. Named rather than inline because the parity gate
--- reads this constant and holds it to spec.json — a raw 26 here was already
--- one pixel-decision drifting from the file that is supposed to decide it.
-local TITLE_HEIGHT: number = 22
+-- reads this constant and holds it to spec.json. 26 is Wurst's own 13 logical
+-- pixels at the GUI scale 2 everything here is drawn at — C read it out of
+-- the Java, and the prototype was changed first.
+local TITLE_HEIGHT: number = 26
 -- The prototype's `.tbar` font size, held by the same gate. The title used
 -- to go through makeTextLabel, whose 1.35 multiplier rendered it at 16 px —
 -- visibly heavier than the spec on every window at once.
@@ -5475,13 +5473,10 @@ function Module.init(context: any): any
     local configData: any = host.configData
     local queueConfigSave: any = host.queueConfigSave
     local create: any = host.create
-    local makeButton: any = host.makeButton
     local Theme: any = host.Theme
     local ThemeEngine: any = host.ThemeEngine
     local CONTROL_FONT: any = host.CONTROL_FONT
     local PopupLayer: any = host.PopupLayer
-    local UI_RADIUS: any = host.UI_RADIUS
-    local cornerRadius: any = host.cornerRadius
     local trackUiConnection: any = host.trackUiConnection
     local UserInputService: any = host.UserInputService
 
@@ -5808,16 +5803,17 @@ function Module.init(context: any): any
         local closeButton: TextButton? = nil
 
         if not bare then
-            create("UICorner", {
-                Parent = root,
-                CornerRadius = cornerRadius(UI_RADIUS.panel),
-            })
-            create("UIStroke", {
+            -- A Wurst window is a rectangle: no corner radius anywhere, one
+            -- thin border. The border binds to the outline token, which the
+            -- UI Settings Accent row repaints — Wurst's Accent colours title
+            -- bars *and* borders.
+            local edge: UIStroke = (create("UIStroke", {
                 Parent = root,
                 Color = Theme.outline,
-                Transparency = 0.78,
+                Transparency = 0.15,
                 Thickness = 1,
-            })
+            }) :: any) :: UIStroke
+            bind(edge, "Color", "outline")
 
             local bar: Frame = create("Frame", {
                 Parent = root,
@@ -5828,22 +5824,6 @@ function Module.init(context: any): any
                 ZIndex = 2,
             }) :: Frame
             bind(bar, "BackgroundColor3", "accent")
-            create("UICorner", {
-                Parent = bar,
-                CornerRadius = cornerRadius(UI_RADIUS.panel),
-            })
-            -- The corner rounding would show through under the title bar, so
-            -- the bottom two corners are squared off by a strip.
-            local squareOff: Frame = create("Frame", {
-                Parent = bar,
-                Name = "SquareOff",
-                BackgroundTransparency = 0,
-                BorderSizePixel = 0,
-                Position = UDim2.new(0, 0, 1, -4),
-                Size = UDim2.new(1, 0, 0, 4),
-                ZIndex = 2,
-            }) :: Frame
-            bind(squareOff, "BackgroundColor3", "accent")
 
             local title: TextLabel = (create("TextLabel", {
                 TextTruncate = Enum.TextTruncate.AtEnd,
@@ -5861,15 +5841,43 @@ function Module.init(context: any): any
             title.ZIndex = 3
             bind(title, "TextColor3", "accentText")
 
-            local buttonX: number = -6
+            local buttonX: number = -5
+            -- Wurst's chrome controls are small squares sitting in the title
+            -- bar — a box with a symbol, not a bare glyph. 16 px is 8 logical
+            -- at the GUI scale 2 the interface is drawn at.
             local function chromeButton(symbol: string): TextButton
-                local button: TextButton = makeButton(bar, symbol) :: TextButton
+                local button: TextButton = (create("TextButton", {
+                    TextTruncate = Enum.TextTruncate.AtEnd,
+                    Parent = bar,
+                    Active = true,
+                    AutoButtonColor = false,
+                    BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+                    BackgroundTransparency = 0.72,
+                    BorderSizePixel = 0,
+                    FontFace = CONTROL_FONT,
+                    Text = symbol,
+                    TextSize = 11,
+                }) :: any) :: TextButton
+                create("UIStroke", {
+                    Parent = button,
+                    Color = Color3.fromRGB(0, 0, 0),
+                    Thickness = 1,
+                    Transparency = 0.55,
+                })
                 button.AnchorPoint = Vector2.new(1, 0.5)
                 button.Position = UDim2.new(1, buttonX, 0.5, 0)
                 button.Size = UDim2.fromOffset(16, 16)
-                button.BackgroundTransparency = 0.6
                 button.ZIndex = 3
                 bind(button, "TextColor3", "accentText")
+                -- Parked with the rest of the chrome so window:Destroy
+                -- releases them; trackUiConnection would keep them alive
+                -- until the whole shell dies.
+                table.insert(chromeConnections, button.MouseEnter:Connect(function(): ()
+                    button.BackgroundTransparency = 0.45
+                end))
+                table.insert(chromeConnections, button.MouseLeave:Connect(function(): ()
+                    button.BackgroundTransparency = 0.72
+                end))
                 buttonX -= 19
                 return button
             end
@@ -5878,12 +5886,18 @@ function Module.init(context: any): any
                 closeButton = chromeButton("×")
             end
             if definition.pinnable ~= false then
-                local pin: TextButton = chromeButton("•")
+                -- The pin is a square that fills with the enabled token while
+                -- the window is pinned — the same "on means filled" grammar
+                -- as a hack row.
+                local pin: TextButton = chromeButton("▪")
                 local function paintPin(): ()
-                    pin.BackgroundTransparency = window.pinned and 0 or 0.6
+                    pin.BackgroundTransparency = window.pinned and 0 or 0.72
                     pin.BackgroundColor3 = window.pinned
                         and Theme.enabled
-                        or Theme.accent
+                        or Color3.fromRGB(0, 0, 0)
+                    pin.TextColor3 = window.pinned
+                        and Theme.enabledText
+                        or Theme.accentText
                 end
                 table.insert(paintChrome, paintPin)
                 table.insert(chromeConnections, pin.MouseButton1Click:Connect(function(): ()
@@ -5973,7 +5987,7 @@ function Module.init(context: any): any
     -- alpha. The title bar stays opaque — Wurst fades only the background.
     -- Remembered on the manager so a window created after the slider moved
     -- is born at the same alpha.
-    manager.bodyTransparency = 0.08
+    manager.bodyTransparency = 0.5
     function manager.SetOpacity(alpha: number): ()
         manager.bodyTransparency = math.clamp(1 - alpha, 0, 1)
         for _, window: any in ipairs(manager.list) do
@@ -6085,10 +6099,17 @@ local WINDOW_MAX_HEIGHT: number = 300
 -- refuse.
 local SCALE_MINIMUM: number = 0.7
 local SCALE_MAXIMUM: number = 1.6
-local GRID_MARGIN: number = 12
+local GRID_MARGIN: number = 10
 local WINDOW_GAP: number = 2
-local GRID_GAP: number = 8
-local TITLE_HEIGHT: number = 22
+-- Wurst tiles its first-run grid with a 5-logical gap; 10 at the GUI scale 2
+-- everything is drawn at.
+local GRID_GAP: number = 10
+local TITLE_HEIGHT: number = 26
+-- Wurst wraps its first-run grid only at the screen edge, but on a wide
+-- monitor seven 200 px windows make one strip across the whole top — which
+-- is what the user rejected. Four per row keeps the reference screenshot's
+-- density; deliberate adaptation, recorded here.
+local GRID_COLUMNS: number = 4
 
 -- The order Wurst lists its categories in, as far as ours line up with it.
 -- Anything a game module invents later lands after these, in the order it
@@ -6133,25 +6154,29 @@ function Module.init(context: any): any
         connections = {} :: {RBXScriptConnection},
     }
 
-    -- Left to right until the next window would not fit, then down. Measured
-    -- from the manager's own margin so the first window lines up with anything
-    -- the player later snaps to the edge.
+    -- Left to right until the row is full, then down. 64 clears the wordmark
+    -- and the pill instead of leaving a band of dead game between them and
+    -- the grid.
     local nextX: number = GRID_MARGIN
-    local nextY: number = 96
+    local nextY: number = 64
     local rowHeight: number = 0
+    local placedInRow: number = 0
 
     local function nextSlot(height: number): Vector2
         local viewport: Vector2 = workspace.CurrentCamera
             and (workspace.CurrentCamera :: Camera).ViewportSize
             or Vector2.new(1280, 720)
-        if nextX + WINDOW_WIDTH > viewport.X - GRID_MARGIN then
+        if placedInRow >= GRID_COLUMNS
+            or nextX + WINDOW_WIDTH > viewport.X - GRID_MARGIN then
             nextX = GRID_MARGIN
             nextY += rowHeight + GRID_GAP
             rowHeight = 0
+            placedInRow = 0
         end
         local slot: Vector2 = Vector2.new(nextX, nextY)
         nextX += WINDOW_WIDTH + GRID_GAP
         rowHeight = math.max(rowHeight, height)
+        placedInRow += 1
         return slot
     end
 
@@ -7939,6 +7964,10 @@ local activeCleanup: (() -> ())? = nil
 local WINDOW_WIDTH: number = 214
 local ROW_HEIGHT: number = 22
 local WINDOW_GAP: number = 2
+-- The prototype's title bar — Wurst's 13 logical pixels at GUI scale 2. The
+-- parity gate reads this name in every scanned file, so it has to agree
+-- with WindowManager's.
+local TITLE_HEIGHT: number = 26
 
 function Module.init(context: any): any
     -- Wurst's defaults, verbatim (docs/wurst-features.md). A value that is
@@ -8050,7 +8079,7 @@ function Module.init(context: any): any
                 limit = math.huge
             end
             local wanted: number = math.min(
-                22 + layout.AbsoluteContentSize.Y + WINDOW_GAP * 2,
+                TITLE_HEIGHT + layout.AbsoluteContentSize.Y + WINDOW_GAP * 2,
                 limit
             )
             window.fullHeight = wanted
@@ -8759,7 +8788,7 @@ function Module.init(context: any): any
     -- default) opacity, tooltip opacity and heights at boot.
     local screen: Vector2 = viewport()
     local uiRecord: any = configWindow("UISettings", "UI Settings", {
-        position = Vector2.new(screen.X - WINDOW_WIDTH - 12, 96),
+        position = Vector2.new(screen.X - WINDOW_WIDTH - 12, 64),
         closable = false,
         settingsSized = false,
     })
