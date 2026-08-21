@@ -3251,7 +3251,7 @@ local function fireGunAtTarget(target: Player?): boolean
         return false
     end
 
-    state.mm2ShotFeedback.queue(target, gun, origin, aim, prediction, true)
+    state.mm2ShotFeedback.queue(target, gun, origin, aim, prediction)
     remote:FireServer(origin, aim)
     return true
 end
@@ -3261,11 +3261,9 @@ local function shootMurderer(): ()
 end
 
 local shootFeatureActive: boolean = false
-local shootHookInstalled: boolean = false
-local shootTouchHookInstalled: boolean = false
-local shootHookOriginals: {[string]: any} = {}
-local shootHookWrappers: {[string]: any} = {}
-local shootHookShapes: {[string]: string} = {}
+-- The only WeaponService fact this module relies on: the module table itself,
+-- whose GunFired event replicates every accepted shot back to clients. It is
+-- one of the place fingerprints, so it is verified rather than assumed.
 local weaponServiceModule: any = nil
 type PendingShot = {
     target: Player,
@@ -3372,8 +3370,7 @@ state.mm2ShotFeedback.queue = function(
     gun: Tool?,
     origin: CFrame?,
     aim: CFrame?,
-    _prediction: GunPrediction?,
-    knownFired: boolean
+    _prediction: GunPrediction?
 ): ()
     if not target or not gun or not origin then
         return
@@ -3395,14 +3392,16 @@ state.mm2ShotFeedback.queue = function(
     }
     state.mm2ShotFeedback.pending = candidate
 
-    -- Aim getters may be queried without a shot reaching the server. Expiry is
-    -- therefore cleanup-only; only a correlated GunFired event may show a miss.
+    -- A queued shot is always a real FireServer now, so if no correlated
+    -- GunFired event arrives within a round trip the server never accepted
+    -- it: resolve the candidate as a miss rather than waiting for the
+    -- cleanup expiry below.
     task.delay(1.8, function(): ()
         if state.mm2ShotFeedback.pending == candidate then
             state.mm2ShotFeedback.pending = nil
         end
     end)
-    if knownFired and not state.mm2ShotFeedback.gunFiredConnected then
+    if not state.mm2ShotFeedback.gunFiredConnected then
         task.delay(math.max(0.35, mm2Settings.predictionRtt + 0.18), function(): ()
             if state.mm2ShotFeedback.pending ~= candidate
                 or state.mm2ShotFeedback.gunFiredConnected then
@@ -3664,47 +3663,6 @@ local function findKnifeAuraTarget(
     return closest
 end
 
-local function redirectedTargetCFrame(): (
-    CFrame?,
-    Player?,
-    Tool?,
-    CFrame?,
-    GunPrediction?
-)
-    local target: Player? = getSelectedShootTarget()
-    local character: Model? = LocalPlayer.Character
-    local gun: Tool? = getEquippedWeapon("Gun", "Weapon_Gun")
-    local origin: CFrame? = character and getGunOriginCFrame(character, gun)
-    if target and origin and gun then
-        local aim: CFrame?, prediction: GunPrediction? =
-            computeGunAim(target, origin)
-        return aim, target, gun, origin, prediction
-    end
-    return nil, nil, gun, origin, nil
-end
-
-local function getRedirectedWeaponCFrame(): CFrame?
-    if shootFeatureActive then
-        local targetCFrame: CFrame?,
-            target: Player?,
-            gun: Tool?,
-            origin: CFrame?,
-            prediction: GunPrediction? = redirectedTargetCFrame()
-        if target and gun and origin and targetCFrame then
-            state.mm2ShotFeedback.queue(
-                target,
-                gun,
-                origin,
-                targetCFrame,
-                prediction,
-                false
-            )
-            return targetCFrame
-        end
-    end
-    return nil
-end
-
 local function getWeaponServiceModule(): any
     if type(weaponServiceModule) == "table" then
         return weaponServiceModule
@@ -3743,87 +3701,6 @@ local function connectGunFiredSignal(weaponService: any): boolean
     end
     state.mm2ShotFeedback.gunFiredConnected = false
     return false
-end
-
--- Aim redirection hook.
---
--- The game asks its WeaponService where the player is aiming. Hooking that one
--- call lets the game fire its own shot with our solved aim, which is the most
--- faithful way to redirect — but the method名 differs per input type, and a
--- previous build only knew the desktop one, so touch clients reported
--- "unavailable" and fell back with no explanation.
---
--- Every known aim accessor is hooked instead of a hard-coded pair, and each
--- wrapper returns the same shape the original returned (CFrame or Vector3), so
--- whichever one the client actually calls on this device gets redirected.
-local SHOOT_AIM_METHODS: {string} = {
-    "GetMouseTargetCFrame",
-    "GetTargetCFrame",
-    "GetAimCFrame",
-    "GetMouseHit",
-    "GetTargetPosition",
-    "GetMouseTargetPosition",
-    "GetAimPosition",
-}
-
-local function installShootRedirectHook(): boolean
-    local weaponService: any = getWeaponServiceModule()
-    if type(weaponService) ~= "table" then
-        return false
-    end
-    connectGunFiredSignal(weaponService)
-
-    if shootHookInstalled then
-        return true
-    end
-    if type(state.hookFunction) ~= "function" then
-        return false
-    end
-
-    local hookedAny: boolean = false
-    for _, methodName: string in ipairs(SHOOT_AIM_METHODS) do
-        local original: any = weaponService[methodName]
-        if type(original) == "function" and shootHookOriginals[methodName] == nil then
-            local installed: boolean = pcall(function(): ()
-                local predecessor: any = nil
-                local wrapper: any = nil
-                wrapper = function(self: any, ...: any): any
-                    local targetCFrame: CFrame? = getRedirectedWeaponCFrame()
-                    if not targetCFrame then
-                        return predecessor(self, ...)
-                    end
-                    -- The accessor must answer in the shape the caller
-                    -- expects. Names are not a reliable guide — MM2's own
-                    -- `GetTargetPosition` returns a CFrame — so the real
-                    -- shape is measured once and remembered.
-                    local shape: string? = shootHookShapes[methodName]
-                    if shape == nil then
-                        shape = typeof(predecessor(self, ...))
-                        shootHookShapes[methodName] = shape
-                    end
-                    if shape == "Vector3" then
-                        return targetCFrame.Position
-                    end
-                    return targetCFrame
-                end
-                predecessor = state.hookFunction(original, wrapper)
-                shootHookOriginals[methodName] = predecessor
-                shootHookWrappers[methodName] = wrapper
-            end)
-            if installed and type(shootHookOriginals[methodName]) == "function" then
-                hookedAny = true
-            else
-                shootHookOriginals[methodName] = nil
-                shootHookWrappers[methodName] = nil
-            end
-        elseif shootHookOriginals[methodName] ~= nil then
-            hookedAny = true
-        end
-    end
-
-    shootHookInstalled = hookedAny
-    shootTouchHookInstalled = hookedAny
-    return hookedAny
 end
 
 local function mm2RoleProvider(player: Player): string?
@@ -3909,35 +3786,14 @@ moduleCleanup = function(): ()
     end
 end
 
-local function uninstallShootRedirectHook(): ()
-    local weaponService: any = weaponServiceModule
-    if type(state.hookFunction) == "function" and type(weaponService) == "table" then
-        for methodName: string, original: any in pairs(shootHookOriginals) do
-            local current: any = weaponService[methodName]
-            if type(original) == "function" and type(current) == "function" then
-                local restored: boolean, displaced: any = pcall(
-                    state.hookFunction,
-                    current,
-                    original
-                )
-                -- If something else hooked the same method after us, put its
-                -- wrapper back rather than stealing the chain.
-                if restored
-                    and displaced ~= shootHookWrappers[methodName]
-                    and type(displaced) == "function" then
-                    pcall(state.hookFunction, current, displaced)
-                end
-            end
-        end
-    end
-    table.clear(shootHookOriginals)
-    table.clear(shootHookWrappers)
-    table.clear(shootHookShapes)
-    shootHookInstalled = false
-    shootTouchHookInstalled = false
+-- The shot observer, not a hook: WeaponService.GunFired replicates every
+-- accepted shot back to clients, which is what lets the miss feedback tell
+-- "the server took it" from "the server dropped it".
+local function disconnectGunFiredObserver(): ()
     disconnectFeatureConnection("MM2GunFired")
     state.mm2ShotFeedback.gunFiredConnected = false
 end
+
 local function processKnifeAura(): ()
     local knife: Tool?, localRoot: BasePart? = canUseEquippedKnife()
     if not knife or not localRoot then
@@ -4030,39 +3886,15 @@ end
 
 -- Manual shot.
 --
--- The universal path is the default on every device: aim is solved here with
--- CFrame maths and a raycast, then the gun's own `Shoot` remote is fired with
--- (origin, aim). That needs no mouse, no `hookfunction` and no touch-specific
--- weapon API, which is why it behaves identically on PC, phone and console.
---
--- `gun:Activate()` (letting the game's own client fire, with our redirect hook
--- rewriting its aim) is only used when the player explicitly picks Redirect
--- mode and the hook really is installed for this input type.
+-- One path, on every device: aim is solved here with CFrame maths and a
+-- raycast, then the gun's own `Shoot` remote is fired with (origin, aim).
+-- That needs no mouse, no `hookfunction` and no touch-specific weapon API,
+-- which is why it behaves identically on PC, phone and console.
 local function triggerManualShot(): ()
     -- The key slot fires the module, so the module has to be on for it to do
     -- anything; otherwise a stray keypress would shoot with Shoot disabled.
     if not shootFeatureActive then
         notify("Enable Shoot first.")
-        return
-    end
-    local _, humanoid: Humanoid? = getCharacterParts()
-    local backpack: Backpack? = LocalPlayer:FindFirstChildOfClass("Backpack")
-    local gun: Tool? = getPlayerWeapon(LocalPlayer, "Gun")
-    local touchPreferred: boolean =
-        UserInputService.PreferredInput == Enum.PreferredInput.Touch
-    local activationHookReady: boolean = shootHookInstalled
-        and (not touchPreferred or shootTouchHookInstalled)
-
-    if mm2Settings.shootMode == "Redirect"
-        and gun
-        and humanoid
-        and humanoid:IsA("Humanoid")
-        and activationHookReady then
-        if gun.Parent == backpack then
-            humanoid:EquipTool(gun)
-            task.wait()
-        end
-        gun:Activate()
         return
     end
     shootMurderer()
@@ -4075,11 +3907,17 @@ local function toggleShootMurderer(enabled: boolean): ()
         state.mm2ShotFeedback.pending = nil
         state.mm2ShotFeedback.lastAccepted = nil
         state.mm2ShotFeedback.hide()
-        uninstallShootRedirectHook()
+        disconnectGunFiredObserver()
         return
     end
 
-    installShootRedirectHook()
+    -- Every shot this module makes is a FireServer with a solved aim, so the
+    -- only WeaponService contact needed is the GunFired observer that
+    -- confirms whether the server accepted each one.
+    local weaponService: any = getWeaponServiceModule()
+    if type(weaponService) == "table" then
+        connectGunFiredSignal(weaponService)
+    end
     local motionElapsed: number = 0
     featureConnections.MM2MotionTracker = TaskManager:Connect(function(
         deltaTime: number
@@ -4204,6 +4042,12 @@ registerEspExtra({
     end,
 })
 
+-- Redirect mode is gone the way the throw-redirect below went: it needed a
+-- hook on the WeaponService aim accessor, no capture ever named one, and the
+-- seven guesses usually matched nothing — at which point "Redirect" quietly
+-- fired the same Manual FireServer and the option was a switch that lied.
+-- Manual and Custom both fire the captured payload, (origin, aim), and
+-- WeaponService.GunFired still confirms each shot for the miss feedback.
 local ShootFeature = createUniversalFeature(
     "Shoot",
     "Hitscan aim with filtered motion, RTT compensation, and miss feedback",
@@ -4227,15 +4071,10 @@ end
 addCycleOption(
     ShootFeature,
     "Mode",
-    {"Manual", "Redirect", "Custom"},
+    {"Manual", "Custom"},
     1,
     function(value: string): ()
         mm2Settings.shootMode = value
-        if shootFeatureActive
-            and value == "Redirect"
-            and not installShootRedirectHook() then
-            notify("Shoot Redirect is unavailable; Manual mode still works.")
-        end
         refreshShootOptions()
     end
 )
@@ -4574,7 +4413,7 @@ cleanupMM2Runtime = function()
     toggleShootMurderer(false)
     state.mm2ShotFeedback.hide()
     toggleKnifeAura(false)
-    uninstallShootRedirectHook()
+    disconnectGunFiredObserver()
     toggleGunEsp(false)
     toggleLoopAllInteract(false)
     toggleSprint(false)
