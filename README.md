@@ -1300,11 +1300,14 @@ rather than baked in. `DestroyBlock` is still uncaptured.
 - **Shoot** and **Knife** are device-independent. Aim is solved locally with
   CFrame maths and a raycast, then the gun's own `Shoot` remote is fired with
   `(origin, aim)`: no mouse, no `hookfunction`, no touch-specific weapon API.
-  `gun:Activate()` with the redirect hook is now only used when Redirect mode
-  is explicitly selected *and* the hook is installed for this input type. The
-  hook itself no longer hard-codes the desktop accessor: it hooks every known
-  aim accessor and returns whichever shape the original returned, so touch
-  clients redirect too instead of reporting "unavailable".
+  Redirect mode is gone. It needed to replace a WeaponService aim accessor by
+  name and nothing ever captured what those are called, so the code hooked
+  seven guessed ones; when none matched — the common case, and always on an
+  executor without `hookfunction` — it fell through to the same
+  `Shoot:FireServer(origin, aim)` that Manual already fires. It was a second
+  switch for one behaviour. `WeaponService.GunFired` stayed: it is one of the
+  five place fingerprints, and it now connects as a plain observer for the
+  miss feedback instead of riding along on a hook installer.
 - **Sprint** is the reference `hold` module. The hard-coded LeftControl watch
   is gone entirely: the module is always running, its key slot starts unbound,
   and the key the player picks is the only thing that makes it run — held means

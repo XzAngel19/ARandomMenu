@@ -254,10 +254,24 @@ function Module.init(context: any): Framework
         -- a group.
         local function register(option: any, definition2: any?): Option
             option.Feature = feature
+            local gated: boolean = false
             if definition2 and type(definition2.Show) == "table" then
                 option.Show = definition2.Show
+                gated = true
             end
             created.Options[option.Name] = option
+            -- A rule arriving is itself a reason to run the pass.
+            --
+            -- Rules used to be evaluated only when some option's *value*
+            -- changed, and a rule is attached after its own builder has
+            -- finished — so the last gated row of a panel stayed on screen
+            -- until something else moved. Every module worked around it by
+            -- ending its panel with an ungated row, or by calling
+            -- `RefreshVisibility()` by hand: an ordering rule nobody can see
+            -- in the code and everybody has to remember.
+            if gated then
+                created:RefreshVisibility()
+            end
             return option
         end
 

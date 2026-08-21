@@ -28,9 +28,7 @@
   and now connects as a plain observer for the miss feedback instead of
   riding along on the redirect installer. To bring Redirect back it needs a
   live capture naming the accessor the client actually calls per input
-  type. *(README's MM2 Shoot bullet still describes the hook — needs
-  Agent A's pass.)*
-
+  type.
 
 ## PlaceBlock
 
@@ -46,7 +44,7 @@ on "Show hitbox". Fly and PhysicsSpeed are done: both build through the
 kernel now, the advanced block is declared (`Show = {Option = "Advanced
 settings"}`), and the rows that belong to one mode say so (Fly's Response
 multiplier only for Velocity/Constraint/Pulse; Physics Speed's Burst
-interval only for Pulse, Air control only for Adaptive, Motor torque only
+interval only for Pulse, Air control only in Adaptive, Motor torque only
 under Custom properties, Auto-jump velocity only under Auto jump). Modules
 with a single always-relevant slider (Jump Power, Gravity, FOV, …) have
 nothing to gate.
@@ -56,49 +54,42 @@ and Speed.luau both created a feature named "Speed", so the two cards shared
 the `Universal.Speed` configKey and overwrote each other's saved values.
 Its saved options move from `Universal.Speed.*` to `Universal.PhysicsSpeed.*`.
 
-**Ordering caveat (for Agent A).** The kernel re-reads `Show` rules when an
-option is *created* or a value changes — but `register()` attaches a row's
-rule *after* its builder ran, so the last gated row of a panel starts
-visible until something else triggers the pass. Kill Aura dodged it by
-creating the "Show advanced" switch after the block; every module above now
-ends its panel with an ungated row (Fly and Physics Speed put the switch
-after the block, Kill-Aura style; Phase Dash and No Fall end on Cooldown /
-Ground scan), and Infinite Jump — whose every row is gated — closes with
-one explicit `RefreshVisibility()`. The one-line kernel fix is to re-run
-the visibility pass inside `register()` when a rule arrives; when that
-lands, the ordering here stops mattering. `tools/test/suites/movement-b`
-asserts the folded initial state, so the regression is pinned either way.
+**Ordering caveat — resolved by Agent A.** The kernel used to re-read `Show`
+rules only when an option's *value* changed, and `register()` attaches a
+row's rule *after* its builder ran, so the last gated row of a panel started
+visible until something else triggered the pass. Every module worked around
+it by ending its panel with an ungated row (Fly and Physics Speed put the
+switch after the block, Kill-Aura style; Phase Dash and No Fall end on
+Cooldown / Ground scan) and Infinite Jump — whose every row is gated —
+closed with one explicit `RefreshVisibility()`. `register()` now runs the
+pass itself whenever a rule arrives, so none of those arrangements is load
+bearing any more; they are harmless where they stand and can be undone when
+their files are next touched. `tools/test/suites/movement-engines` asserts
+the folded initial state, so the regression is pinned either way.
 
 ## Suites
 
-`tools/test/suites/` holds this pass's tests, runnable today with
-`luau tools/test/suites/run-b.luau` (110 checks):
+Suites take `(ctx)` the way the split runner's do, so wiring one in is a
+single `require` line in `tools/test/run.luau`.
 
-- `movement-b` — Fly, Physics Speed, Phase Dash, Infinite Jump: option
+- `movement-engines` — Fly, Physics Speed, Phase Dash, Infinite Jump: option
   contracts, the Show rules per mode, enable/disable task accounting,
   WalkSpeed restoration, the dash cooldown, the jump interval floor.
-- `protection-b` — No Fall: mode-owned rows, the Impact brake clamping a
+- `protection` — No Fall: mode-owned rows, the Impact brake clamping a
   mocked fall, State mode never touching velocity.
-- `games-b` — VD's Blatant rate caps measured against counting remotes
+- `games` — VD's Blatant rate caps measured against counting remotes
   (and the deleted FOV/Fullbright cards staying deleted), TRS firing the
   pickup remote the attribute scan actually settles on with the clamped
   reported distance, MM2 initialising with no Redirect left in Shoot's
   mode list.
 
-Each suite takes `(ctx)` the way the split runner's suites do, so wiring
-them into `run.luau` is one `require` line each — that file is C's, which
-is why the driver exists. Until someone with authority over
-`tools/validate.sh` adds `luau tools/test/suites/run-b.luau` to the test
-step, CI green does not include these checks.
-
-Mock and host gaps the suites shim today, worth absorbing into the real
-files when their owners can (all recorded here because each one cost a
-debugging round): `Vector3:Lerp` (the suites patch it in), `Theme`,
-`TweenService`, `CollectionService`'s tag surface, `Enum.Font`,
-`Sound:Play/Stop`, `Player:GetMouse`, `host.getCharacterParts`,
-`feature.row` on the harness card, and option callbacks being unreachable
-from a test (the suites wrap the builders to record them).
-
+Mock and host gaps the suites shim, worth absorbing into the real files when
+their owners can (each one cost a debugging round): `Vector3:Lerp` (the
+suites patch it in), `Theme`, `TweenService`, `CollectionService`'s tag
+surface, `Enum.Font`, `Sound:Play/Stop`, `Player:GetMouse`,
+`host.getCharacterParts`, `feature.row` on the harness card, and option
+callbacks being unreachable from a test (the suites wrap the builders to
+record them).
 
 ## Module audit (every card under src/modules)
 
@@ -205,8 +196,94 @@ killer-power cooldowns (scans whatever attributes replicate), footstep
 and attack animation name matching. If a capture ever lands, the guessed
 name lists are the first thing to replace.
 
+## The MM2 module, feature by feature (4,480 lines — analysis, nothing cut)
 
-## Agent A
+The question put to this pass: which of MM2's cards are universal mechanics
+wearing a game condition, and which are irreducibly MM2. Twelve cards and
+three ESP extras, classified.
 
-`tools/bundle.py` and the stamped loader live on this branch from Agent A.
-This pass does not edit them.
+### Irreducibly MM2 — the card needs a fact only MM2 has
+
+- **Shoot.** The Gun tool's `Shoot` RemoteEvent and its captured
+  `(origin, aim)` payload, WeaponService.GunFired for shot confirmation,
+  role-priority targeting. Every input is an MM2 fact.
+- **Knife Aura.** `HandleTouched:FireServer(root)` is MM2's own stab path.
+- **Trajectory Calibration.** Built on MM2's GunFired/knife events and round
+  windows; the card says so itself.
+- **Instant Role Notify.** Reads MM2's Gameplay round pipeline and role
+  assignment.
+- **Always Show Timer.** Replays MM2's `RoundStart` client handler and drives
+  `MainGUI.Game.Timer` — the whole trick is that specific listener.
+- **Role Fling** *(hybrid)*. The motor — spin, orbit, press, restore — is the
+  universal Fling physics, duplicated here; what MM2 adds is role targeting
+  (Fling Murderer / Sheriff / All Innocents). If the motor were shared with
+  `src/modules/Utility/Fling.luau`, this card would be four buttons and a
+  target picker.
+- **Teleport to Map / Lobby / Get Gun** *(hybrid)*. Teleporting is universal;
+  MM2 supplies the map container (`findMM2Map`, CoinAreas), the lobby and the
+  dropped-gun lookup. Auto Get Gun is the same teleport on a timer.
+
+### Universal with a game condition — the mechanic knows nothing about MM2
+
+- **Sprint.** A hold that re-applies WalkSpeed 30 with a trail. Not one MM2
+  fact in it; it lives here because it was written here. The README already
+  calls it the reference `hold` module — the universal kind.
+- **Loop All Interact.** fireproximityprompt/fireclickdetector over prompts
+  in a container. The sweep scope (the MM2 map) is the only game fact; the
+  mechanic is Interact Extender's sibling.
+- **Hide Names.** Replace names in local UI and leaderboards with Anon. The
+  idea works anywhere; MM2 supplies its leaderboard and name-label paths.
+- **Silence** (Other radios / Trap sounds). Muting Sound instances under
+  name-matched models. Universal muting, MM2's containers.
+- **Auto Play ID.** Loops a local Roblox audio asset by ID. There is no MM2
+  fact at all — this is a Utility card that lives in the wrong file.
+- **ESP extras** (Coins, Traps, Sheriff gun, role colours). Already the right
+  shape: the universal Player ESP draws them, MM2 only registers what a
+  "coin" and a "Murderer" are through the bridge.
+
+### Where that leaves a split, when one is wanted
+
+Nothing above is cut. If the owner takes the split, the order that keeps
+every card working is: Auto Play ID first (pure move), Sprint second (pure
+move), then the conditioned ones (Loop All Interact, Hide Names, Silence)
+which need the game bridge to hand over their containers, and Role Fling
+last, which needs Fling's motor extracted or shared. Shoot, Knife Aura,
+Trajectory Calibration, Instant Role Notify and Always Show Timer stay in
+the game file no matter how far the split goes.
+
+## Suites, second pass: the twenty-one no suite loaded
+
+Five suites, written and validated but stranded when the session lost its
+network — recorded here so the work is not lost if the commit is not:
+
+- `movement-basics` — Speed, Freeze Movements, High Jump, Jump Power, Noclip,
+  Spider.
+- `protection-rescue` — Anti-Fling, Anti-Void, Safe Walk.
+- `utility-misc` — Anti-AFK, Fling, Gravity, Interact Extender, Lag Switch,
+  Rejoin Server. The six that were dead for a week run here for the first
+  time anywhere.
+- `visuals-misc` — Field of View, Fullbright, X-Ray, Zoom Unlocker.
+- `combat-analytics` — Hitboxes, Projectile Calibration.
+
+Three module bugs the third question caught:
+
+- **Anti-AFK** stored its Idled listener under `"AntiAFK"` and its teardown
+  asked for `"AntiAfk"` — the listener outlived the module and kept answering
+  idle kicks after teardown. *(Fixed on the live branch.)*
+- **Gravity**'s teardown only disconnected: unloading the menu with the card
+  on left the workspace at the slider's gravity. It restores now. *(Fixed on
+  the live branch.)*
+- **Fling** called `addTextOption` as a bare global while taking every other
+  builder from `host.` — the mirror image of the five dead modules: it works
+  only because the shell happens to publish that one global. Style, not a
+  defect; still worth taking from `host.` like the rest.
+
+New mock gaps those suites shim (for whoever owns the Host): the harness host
+has no `addFeatureTooltip`, `state.isProtectedTarget`, or `RunService`;
+`workspace.FallenPartsDestroyHeight` and default part `Size`s are unset; the
+mock player has no `Idled`/`GetMouse` and the camera is not parented to
+workspace (restore paths read `Parent`); `Enum.CameraMode`/`Enum.Font` don't
+exist; `settings()` is absent. Also recorded: the option builders' callback
+sits at a different vararg position per builder (toggle/key/text 3, cycle 4,
+number 5) — the suites wrap the builders to record them, and the first
+wrapper had the number position wrong until Hitboxes exposed it.
