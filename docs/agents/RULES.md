@@ -121,3 +121,24 @@ open-source clients released under the same licence. Anything taken from
 it. Do not vendor anything from it until `LICENSE` and `NOTICE.md` exist at the
 repository root, and when you do vendor something, record where it came from and
 at which upstream commit.
+
+## 12. Sync to the integration branch before you read anything
+
+Your session is cut from `main`, and `main` is this project before the refactor:
+no `src/modules/`, no `src/library/`, no `docs/agents/`, a 16,000-line shell,
+197 commits behind. Every file this brief tells you to read is missing there,
+and every file you are asked to change has moved.
+
+`main` is deliberately not being merged into — the loader ships from it, so
+merging would push an unfinished rebuild to every user. Sync your own branch
+instead, once, before doing anything else:
+
+```
+git fetch origin arena/01a01c6e-arandommenu
+git reset --hard FETCH_HEAD
+git push --force-with-lease origin HEAD
+```
+
+You are staying on your own branch; you are giving it the right contents. Later,
+to pick up integration work: `git fetch origin arena/01a01c6e-arandommenu &&
+git merge FETCH_HEAD`.
