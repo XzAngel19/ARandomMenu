@@ -423,7 +423,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "20c8ada1af6978c2"
+local SOURCE_STAMP: string = "83c8f374c89151ec"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -6406,7 +6406,7 @@ local fallbackManifest: any = {
         {path = "src/modules/Movement/PhaseDash.luau", name = "Phase Dash", category = "Movement"},
         {path = "src/modules/Protection/NoFall.luau", name = "No Fall", category = "Protection"},
         {path = "src/modules/Movement/Fly.luau", name = "Fly", category = "Movement"},
-        {path = "src/modules/Movement/PhysicsSpeed.luau", name = "Physics Speed", category = "Movement"},
+        {path = "src/modules/Movement/VehicleSpeed.luau", name = "Vehicle Speed", category = "Movement"},
         {path = "src/modules/Protection/AntiVoid.luau", name = "Anti-Void", category = "Protection"},
         {path = "src/modules/Utility/Gravity.luau", name = "Gravity", category = "Utility"},
         {path = "src/modules/Movement/JumpPower.luau", name = "Jump Power", category = "Movement"},

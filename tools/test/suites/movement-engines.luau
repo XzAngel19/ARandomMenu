@@ -2,7 +2,7 @@
 --
 -- Headless tests: movement cards on the kernel.
 --
--- Fly, Physics Speed, Phase Dash and Infinite Jump build their panels through
+-- Fly, Vehicle Speed, Phase Dash and Infinite Jump build their panels through
 -- the framework now, so the checks assert the Show rules each one declared (a
 -- row is on screen only while its mode owns it) and the enable/disable edges
 -- the kernel took over: a session ends with the task list it started with and
@@ -137,14 +137,14 @@ return function(ctx: any): ()
     check("and restores what the character had",
         humanoid.WalkSpeed == 16, "walkspeed is " .. tostring(humanoid.WalkSpeed))
 
-    section("Physics Speed")
+    section("Vehicle Speed")
 
-    local PhysicsFile: any = require("../../../src/modules/Movement/PhysicsSpeed")
+    local PhysicsFile: any = require("../../../src/modules/Movement/VehicleSpeed")
     Mock.inject(world, PhysicsFile.init)
     local physics: any = PhysicsFile.init(context)
 
     check("the card no longer shares Speed's name",
-        physics.Name == "Physics Speed",
+        physics.Name == "Vehicle Speed",
         "a second card named Speed collided with it in the config keys")
     for _, name: string in ipairs({
         "Mode",
@@ -196,7 +196,7 @@ return function(ctx: any): ()
     local BUDGET_PHYSICS_FRAME_SECONDS: number = 0.010
     local physicsPerFrame: number = ctx.measureFrames(stub.step, 20)
     check(
-        "Physics Speed stays inside the per-frame time budget",
+        "Vehicle Speed stays inside the per-frame time budget",
         physicsPerFrame <= BUDGET_PHYSICS_FRAME_SECONDS,
         string.format("%.4fs/frame", physicsPerFrame)
     )
