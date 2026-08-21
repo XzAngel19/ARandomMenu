@@ -158,39 +158,13 @@ function Module.init(context: any): any
         )
     end
 
+    -- One stacking authority. This used to keep its own ordered list and its
+    -- own base Z, which meant two systems assigning depth to the same frames
+    -- and the winner depending on which ran last.
     local function bringFloatingToFront(record: FloatingWindowRecord): ()
-        for index: number = #FloatingUi.windows, 1, -1 do
-            if FloatingUi.windows[index] == record then
-                table.remove(FloatingUi.windows, index)
-                break
-            end
-        end
-        table.insert(FloatingUi.windows, record)
-        for index: number, window: FloatingWindowRecord in ipairs(FloatingUi.windows) do
-            local baseZ: number = 108 + index * 4
-            window.root.ZIndex = baseZ
-            for _, descendant: Instance in ipairs(window.root:GetDescendants()) do
-                if descendant:IsA("GuiObject") then
-                    local relative: number =
-                        tonumber(descendant:GetAttribute("FloatingDepth")) or 1
-                    descendant.ZIndex = baseZ + relative
-                end
-            end
-        end
+        state.windows.Raise(record.id)
     end
 
-    -- Floating windows.
-    --
-    -- Two flavours share this factory:
-    --   * framed  — favourites, the overlay manager and the per-overlay settings.
-    --               These are tool windows: header, title, close button, panel
-    --               background. They are movable on purpose (the fixed shell is
-    --               the main menu, not these).
-    --   * chrome-less — the HUD overlays (radar, target info, session info, text
-    --               GUI). They render their content and nothing else: no panel,
-    --               no header, no close button, so a circular radar is just a
-    --               circle on screen instead of a circle inside a box. They stay
-    --               movable: the content itself is the drag handle.
     local function createFloatingWindow(
         id: string,
         titleText: string,
@@ -351,78 +325,26 @@ function Module.init(context: any): any
             body = body,
             closeButton = closeButton,
         }
-        -- A chrome-less overlay has no title bar to grab, so the whole surface
-        -- drags it; a framed window only drags from its header, which keeps its
-        -- content clickable.
-        local dragHandle: GuiObject = bare and root or header
-        local dragging: boolean = false
-        local dragInput: InputObject? = nil
-        local dragStart: Vector2 = Vector2.zero
-        local startPosition: Vector2 = position
-
-        trackUiConnection(root.InputBegan:Connect(function(): ()
-            bringFloatingToFront(record)
-        end))
-        trackUiConnection(dragHandle.InputBegan:Connect(function(input: InputObject): ()
-            if bare and not state.visible then
-                return
-            end
-            if input.UserInputType == Enum.UserInputType.MouseButton1
-                or input.UserInputType == Enum.UserInputType.Touch then
-                dragging = true
-                dragInput = input
-                dragStart = Vector2.new(input.Position.X, input.Position.Y)
-                startPosition = Vector2.new(root.Position.X.Offset, root.Position.Y.Offset)
-                bringFloatingToFront(record)
-            end
-        end))
-        trackUiConnection(UserInputService.InputChanged:Connect(function(input: InputObject): ()
-            if not dragging then
-                return
-            end
-            if input == dragInput
-                or (dragInput
-                    and dragInput.UserInputType == Enum.UserInputType.MouseButton1
-                    and input.UserInputType == Enum.UserInputType.MouseMovement) then
-                local pointer: Vector2 = Vector2.new(input.Position.X, input.Position.Y)
-                local nextPosition: Vector2 = clampFloatingPosition(
-                    startPosition + pointer - dragStart,
-                    root.AbsoluteSize
-                )
-                root.Position = UDim2.fromOffset(nextPosition.X, nextPosition.Y)
-            end
-        end))
-        trackUiConnection(UserInputService.InputEnded:Connect(function(input: InputObject): ()
-            if dragging
-                and (input == dragInput
-                    or input.UserInputType == Enum.UserInputType.MouseButton1) then
-                dragging = false
-                dragInput = nil
-                configData.ui.floatingPositions[id] = {
-                    root.Position.X.Offset,
-                    root.Position.Y.Offset,
-                }
-                queueConfigSave()
-            end
-        end))
-        trackUiConnection(closeButton.MouseButton1Click:Connect(function(): ()
-            root.Visible = false
-            if onClose then
-                onClose()
-            end
-        end))
-        bringFloatingToFront(record)
+        -- Drag, clamp, snap, stacking order and the saved position are the
+        -- window manager's, not this library's. They were written out here once
+        -- per window kind and the copies drifted; what stays here is the look,
+        -- which predates the ClickGUI and is not being changed yet.
+        state.windows.Adopt(root, {
+            id = id,
+            body = body,
+            header = header,
+            closeButton = closeButton,
+            headerHeight = headerHeight,
+            dragHandle = bare and root or header,
+            requiresMenuOpen = bare,
+            layered = true,
+            onClose = onClose,
+        })
         return record
     end
 
     function FloatingUi.reclamp(): ()
-        for _, record: FloatingWindowRecord in ipairs(FloatingUi.windows) do
-            local position: Vector2 = clampFloatingPosition(
-                Vector2.new(record.root.Position.X.Offset, record.root.Position.Y.Offset),
-                record.root.AbsoluteSize
-            )
-            record.root.Position = UDim2.fromOffset(position.X, position.Y)
-        end
+        state.windows.Reclamp()
     end
 
     -- Movable windows keep their saved position, but a smaller screen must never

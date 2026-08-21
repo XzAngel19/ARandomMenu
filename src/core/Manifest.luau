@@ -41,6 +41,9 @@ local Manifest: Manifest = {
         -- The card factory. Every module calls it, so it comes before the
         -- pages that read the cards it builds.
         "src/library/Cards.luau",
+        -- Before anything that draws a floating window, because they all ask
+        -- it to build one rather than writing drag and clamp out again.
+        "src/library/WindowManager.luau",
         -- Before the pages below: a favourite registers as its card is built,
         -- and the settings page reads the overlay registry.
         "src/library/FloatingWindows.luau",

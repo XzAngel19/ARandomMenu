@@ -159,6 +159,7 @@ export type MenuState = {
     restyleSettings: (boolean) -> (),               -- Repaint them all
     animationsEnabled: boolean,                     -- Whether the interface animates
     mobileButtonSize: number,                       -- Pixel size of placed phone shortcuts
+    windows: any,                                   -- The window manager: drag, collapse, pin, snap, persistence
     floatingUi: any,                                -- Favourites, the overlay menu and the four overlays
     destroySessionTracking: () -> (),               -- Stop counting kills, deaths and time
     sessionInfo: any,                               -- What that count currently says

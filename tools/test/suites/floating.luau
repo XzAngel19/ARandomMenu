@@ -20,10 +20,21 @@ return function(ctx: any): ()
     -- run: the favourites list, the overlay menu and the four overlays. The
     -- whole subsystem reaches the rest of the menu through one table, so the
     -- checks follow that table rather than the instance tree.
+    -- Drag, clamp, snap, stacking and the saved position belong to the window
+    -- manager now, and in the game the manifest guarantees it loads first. A
+    -- suite that starts the overlays alone has to honour the same order, or it
+    -- is testing a library against a host the product never gives it.
+    local WindowFile: any = require("../../../src/library/WindowManager")
+    Mock.inject(world, WindowFile.init)
+    WindowFile.init(host)
+
     local FloatingFile: any = require("../../../src/library/FloatingWindows")
     Mock.inject(world, FloatingFile.init)
     local tasksBefore: number = stub.taskCount()
     local floating: any = FloatingFile.init(host)
+
+    check("the overlays are managed windows", host.state.windows ~= nil
+        and host.state.windows.Get("Favorites") ~= nil)
 
     check("the library publishes its surface", floating ~= nil
         and rawequal(floating, host.state.floatingUi))
