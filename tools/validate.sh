@@ -112,6 +112,63 @@ else
     echo "ok (nothing vendored)"
 fi
 
+step "Product name"
+# Display names of the previous product must not be hard-coded in tools/ or
+# docs/. The filename ARandomMenu.luau stays: it is the loader entry point.
+# The shell still logs a three-letter prefix and names its GUI after the old
+# product; those live in one constant once the integrator publishes it.
+python3 - <<'PYTHON'
+import subprocess
+
+# Split so this file itself does not contain the banned phrases.
+banned = ("A " + "Random Menu", "Random " + "Testing Menu")
+exempt = (
+    "docs/agents/",
+)
+offenders = []
+for path in subprocess.run(
+    ["git", "ls-files", "tools", "docs", "README.md"],
+    capture_output=True, text=True,
+).stdout.split():
+    if any(path.startswith(prefix) for prefix in exempt):
+        continue
+    text = open(path, encoding="utf-8", errors="replace").read()
+    for needle in banned:
+        if needle in text:
+            offenders.append(f"{path}: {needle!r}")
+if offenders:
+    raise SystemExit(
+        "old product name hard-coded:\n  " + "\n  ".join(offenders)
+        + "\n  the display name is Wurst; the file ARandomMenu.luau keeps its name"
+    )
+PYTHON
+echo "ok"
+
+step "Tracked images stay in asset directories"
+# A screenshot of the desktop is not an asset. Anything we ship as pixels
+# lives under assets/, reference/ or docs/.
+python3 - <<'PYTHON'
+import subprocess
+
+allowed = ("assets/", "reference/", "docs/", "src/gui/")
+suffixes = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")
+offenders = []
+for path in subprocess.run(
+    ["git", "ls-files"], capture_output=True, text=True
+).stdout.split():
+    if not path.lower().endswith(suffixes):
+        continue
+    if any(path.startswith(prefix) for prefix in allowed):
+        continue
+    offenders.append(path)
+if offenders:
+    raise SystemExit(
+        "tracked images outside assets/, reference/ and docs/:\n  "
+        + "\n  ".join(offenders)
+    )
+PYTHON
+echo "ok"
+
 step "JSON manifests"
 python3 -m json.tool src/gui/Current/Images/manifest.json >/dev/null
 python3 -m json.tool src/gui/Current/Assets/manifest.json >/dev/null
