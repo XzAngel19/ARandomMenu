@@ -77,26 +77,38 @@ python3 -m json.tool src/gui/Current/Assets/manifest.json >/dev/null
 echo "ok"
 
 step "Source layout"
-for path in \
-    src/games/Universal.luau \
-    src/games/MM2.luau \
-    src/games/TRS.luau \
-    src/games/VD.luau \
-    src/core/Framework.luau \
-    src/core/Manifest.luau \
-    src/library/Entity.luau \
-    src/library/AssetRegistry.luau \
-    src/library/ProfileRegistry.luau \
-    src/gui/Current/gui.lua \
-    tools/test/run.luau \
-    tools/bundle.py \
-    runtime/bundle.luau
-do
-    test -f "$path" || {
-        echo "missing $path"
-        exit 1
-    }
-done
+# Every .luau under src/ has to be reachable: named by the manifest, or a
+# per-place game module the loader fetches by name. Nothing else runs.
+#
+# This step used to be a hand-written list of files that must exist, which is
+# a check that cannot fail for any reason worth knowing about — and it was
+# actively holding three dead files in place. `src/library/AssetRegistry.luau`
+# and `src/library/ProfileRegistry.luau` were never in the manifest and never
+# loaded by anything; `src/games/Universal.luau` exported a feature order the
+# loader has no way to ask for. A hundred and eighty-six lines that looked
+# like architecture and ran on no client, ever.
+python3 - <<'PYTHON'
+import glob
+import re
+
+manifest = open("src/core/Manifest.luau").read()
+reachable = set(re.findall(r'"(src/[^"]+\.luau)"', manifest))
+reachable.add("src/core/Manifest.luau")
+# Game modules are fetched by name from src/games/ when a place is recognised,
+# so they are reachable without appearing in the manifest.
+reachable |= set(glob.glob("src/games/*.luau"))
+
+orphans = sorted(set(glob.glob("src/**/*.luau", recursive=True)) - reachable)
+if orphans:
+    raise SystemExit(
+        "source files nothing loads:\n  " + "\n  ".join(orphans)
+        + "\n  add them to src/core/Manifest.luau or delete them"
+    )
+
+missing = sorted(path for path in reachable if not glob.glob(path))
+if missing:
+    raise SystemExit("the manifest names files that do not exist:\n  " + "\n  ".join(missing))
+PYTHON
 echo "ok"
 
 step "Module contracts"
