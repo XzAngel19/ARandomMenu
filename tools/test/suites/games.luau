@@ -79,6 +79,10 @@ return function(ctx: any): ()
             "UserInputService",
             "ScreenGui",
             "Theme",
+            -- Same family as Theme: the shell publishes it (ARandomMenu.luau
+            -- around createGameModuleEnvironment) and a game module that
+            -- reads PRODUCT.storageFolder is nil here until this key is.
+            "PRODUCT",
         }
         for _, key: string in ipairs(published) do
             environment[key] = host[key] or host.state[key]
@@ -114,6 +118,14 @@ return function(ctx: any): ()
     host.state.vdFeatures = {}
     local VDFile: any = require("../../../src/games/VD")
     injectGame(VDFile.init)
+    local vdEnv: any = getfenv(VDFile.init)
+    check("PRODUCT is published into the game-module environment",
+        type(vdEnv.PRODUCT) == "table")
+    check("PRODUCT.storageFolder is the folder the shell owns",
+        type(vdEnv.PRODUCT) == "table"
+            and vdEnv.PRODUCT.storageFolder == host.PRODUCT.storageFolder)
+    check("PRODUCT.name is the display name",
+        type(vdEnv.PRODUCT) == "table" and vdEnv.PRODUCT.name == "Wurst")
     local vd: any = VDFile.init(runtime)
 
     check("the module initialises against the stand-in game", vd.Initialized)

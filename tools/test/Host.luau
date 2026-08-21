@@ -620,6 +620,23 @@ function Host.create(world: any): HostStub
         MM2Active = false,
         source = "none",
     }
+    -- Same table the shell publishes into createGameModuleEnvironment.
+    -- Game modules (MM2's telemetry folder, the projectile calibrator) read
+    -- PRODUCT.storageFolder instead of retyping the on-disk name; a host
+    -- that omits it is why those files still carry the literal.
+    --
+    -- guiName / blurName / storageFolder are not branding. They are the
+    -- instance and folder names a scanner would look for, and the folder
+    -- already holds every existing player's configs — renaming it orphans
+    -- them. They stay as they are, on purpose.
+    host.PRODUCT = {
+        name = "Wurst",
+        version = "2.1",
+        logPrefix = "Wurst",
+        guiName = "RandomTestingMenu0001",
+        blurName = "RandomTestingMenu0001Blur",
+        storageFolder = "RandomTestingMenu0001",
+    }
     host.REPOSITORY_RAW_BASE = "https://example.invalid/"
     host.RUNTIME_SAFETY_SOURCE_URL = "https://example.invalid/ARandomMenu.luau"
     host.RUNTIME_COMPATIBILITY_MARKER = "test-marker"

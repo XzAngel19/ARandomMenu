@@ -3,10 +3,10 @@
 -- Headless tests: the ClickGUI contract the rebuild has to keep.
 --
 -- ThemeEngine.Apply is live: a bound instance must repaint when the preset
--- changes, and the default preset is Wurst's own colours. WindowManager is
--- not published yet, so persistence / off-screen restore is skipped rather
--- than failed. The render bucket is what ESP draws on; a regression there
--- is a frame-rate regression in every game.
+-- changes, and the default preset is Wurst's own colours. Persistence, snap
+-- and off-screen restore live in the windows suite against state.windows.
+-- The render bucket is what ESP draws on; a regression there is a
+-- frame-rate regression in every game.
 --
 -- Boots the real shell, the same way the shell suite does, because the
 -- palette and the engine live there — not on the host double.
@@ -129,17 +129,77 @@ return function(ctx: any): ()
         sameColour(bound.BackgroundColor3, rgb(64, 64, 64))
     )
 
-    -- WindowManager is the ClickGUI's layout store. It is not on the shell
-    -- yet; failing here would red the gate for an API nobody has published.
-    -- The floating layer already asserts reclamp, which is the off-screen
-    -- half of the contract that *does* exist.
-    if type(captured.WindowManager) == "table" then
-        check("WindowManager is published", true)
+    -- The 22 tokens. Binding each and switching preset is what proves
+    -- Apply leaves no instance holding a colour from the previous one.
+    local TOKEN_NAMES: {string} = {
+        "background",
+        "sidebar",
+        "surface",
+        "surfaceRaised",
+        "surfaceHover",
+        "surfacePressed",
+        "button",
+        "buttonHover",
+        "buttonPressed",
+        "outline",
+        "accent",
+        "accentDim",
+        "accentFaint",
+        "accentSoft",
+        "accentText",
+        "enabled",
+        "enabledText",
+        "text",
+        "textMuted",
+        "tooltip",
+        "positive",
+        "negative",
+    }
+    check("the theme is 22 tokens", #TOKEN_NAMES == 22)
+    local boundFrames: {[string]: any} = {}
+    local colourBefore: {[string]: any} = {}
+    for _, token: string in ipairs(TOKEN_NAMES) do
+        check("token " .. token .. " exists", Theme[token] ~= nil)
+        local frame: any = Mock.newInstance("Frame")
+        ThemeEngine.Bind(frame, "BackgroundColor3", token)
+        boundFrames[token] = frame
+        colourBefore[token] = frame.BackgroundColor3
+    end
+    ThemeEngine.Apply("Monochrome")
+    for _, token: string in ipairs(TOKEN_NAMES) do
+        local now: any = boundFrames[token].BackgroundColor3
+        if token == "positive" or token == "negative" then
+            check(
+                "semantic " .. token .. " survives Apply",
+                sameColour(now, colourBefore[token])
+            )
+        else
+            check(
+                "Apply repaints " .. token,
+                not sameColour(now, colourBefore[token]),
+                string.format("still %d,%d,%d", channels(now))
+            )
+        end
+    end
+    ThemeEngine.Apply("Wurst")
+
+    -- The manager lives on state.windows, not as a free global. Persistence
+    -- and snap are asserted in the windows suite against the library itself.
+    local published: any = captured.state and captured.state.windows
+    if type(published) == "table" then
+        check("state.windows is published after boot", true)
     else
         check(
-            "WindowManager is not published yet; persistence tests wait on it",
-            captured.WindowManager == nil
+            "state.windows is not published yet; persistence tests wait on it",
+            published == nil
         )
+    end
+
+    if captured.state == nil or type(captured.state.hudList) ~= "table" then
+        check("the HUD list is not published yet; status tests wait on it", true)
+    end
+    if captured.state == nil or type(captured.state.clickRow) ~= "function" then
+        check("the filled row is not published yet; expansion tests wait on it", true)
     end
 
     -- The render bucket runs before the frame it draws into. Firing it is

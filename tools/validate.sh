@@ -112,6 +112,12 @@ else
     echo "ok (nothing vendored)"
 fi
 
+step "ClickGUI spec matches the Luau widgets"
+# spec.json is generated from the prototype, not hand-copied. This step
+# re-parses the prototype, refuses a stale JSON, and checks ThemeEngine.shape
+# (and any named constants Widgets.luau has grown) against it.
+python3 tools/extract_prototype_spec.py --check
+
 step "Product name"
 # Display names of the previous product must not be hard-coded in tools/ or
 # docs/. The filename ARandomMenu.luau stays: it is the loader entry point.
