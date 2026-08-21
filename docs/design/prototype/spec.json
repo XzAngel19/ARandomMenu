@@ -11,7 +11,8 @@
   },
   "chrome": {
     "titleHeight": 22,
-    "gap": 2
+    "gap": 2,
+    "snapDistance": 8
   },
   "components": {
     "sliderBarHeight": 5,

@@ -25,6 +25,7 @@ PROTOTYPE = "docs/design/prototype/index.html"
 SPEC = "docs/design/prototype/spec.json"
 SHELL = "ARandomMenu.luau"
 WIDGETS = "src/library/Widgets.luau"
+WINDOWS = "src/library/WindowManager.luau"
 
 # CSS custom property -> ThemeEngine.shape field. The names on the Luau
 # side are the ones the brief listed; the CSS names are what the prototype
@@ -50,6 +51,7 @@ SHAPE_FROM_ROOT = {
 WIDGET_CONSTANTS = {
     "titleHeight": "TITLE_HEIGHT",
     "gap": "WINDOW_GAP",
+    "snapDistance": "SNAP_DISTANCE",
     "sliderBarHeight": "SLIDER_BAR_HEIGHT",
     "sliderKnobWidth": "SLIDER_KNOB_WIDTH",
     "sliderKnobHeight": "SLIDER_KNOB_HEIGHT",
@@ -112,6 +114,15 @@ def rule_number(body: str, property_name: str):
     return css_number(match.group(1).split()[0])
 
 
+def parse_snap_distance(html: str) -> int:
+    # The prototype's drag handler, not CSS: within S8 pixels of an edge
+    # the window lands flush. WindowManager.SNAP_DISTANCE is the counterpart.
+    match = re.search(r"const S8\s*=\s*(\d+)", html)
+    if not match:
+        raise SystemExit(f"{PROTOTYPE}: snap distance S8 not found")
+    return int(match.group(1))
+
+
 def parse_tooltip_delay(html: str) -> int:
     match = re.search(
         r"function bindTip\(.*?setTimeout\(\(\)=>\{.*?},\s*(\d+)\);",
@@ -155,6 +166,7 @@ def build_spec(html: str) -> dict:
     chrome = {
         "titleHeight": root["title-h"],
         "gap": root["gap"],
+        "snapDistance": parse_snap_distance(html),
     }
     components = {
         "sliderBarHeight": rule_number(bar, "height"),
@@ -192,13 +204,17 @@ def parse_theme_shape(shell: str) -> dict:
     return found
 
 
-def parse_widget_constants(widgets: str) -> dict:
-    """ALL_CAPS number locals — the form the brief asked Widgets to expose."""
+def parse_named_constants() -> dict:
+    """ALL_CAPS number locals in the files the brief named as counterparts."""
     found = {}
-    for name, value in re.findall(
-        r"local ([A-Z][A-Z0-9_]+): number = ([0-9.]+)", widgets
-    ):
-        found[name] = float(value) if "." in value else int(value)
+    for path in (WIDGETS, WINDOWS):
+        if not os.path.exists(path):
+            continue
+        for name, value in re.findall(
+            r"local ([A-Z][A-Z0-9_]+): number = ([0-9.]+)",
+            open(path, encoding="utf-8").read(),
+        ):
+            found[name] = float(value) if "." in value else int(value)
     return found
 
 
@@ -229,8 +245,7 @@ def check_luau(spec: dict) -> list[str]:
                 f"ThemeEngine.shape.{name} = {got} has no prototype token"
             )
 
-    widgets = open(WIDGETS, encoding="utf-8").read()
-    constants = parse_widget_constants(widgets)
+    constants = parse_named_constants()
     pending = {}
     pending.update(spec.get("chrome") or {})
     pending.update(spec.get("components") or {})
@@ -238,15 +253,13 @@ def check_luau(spec: dict) -> list[str]:
         constant = WIDGET_CONSTANTS[spec_name]
         got = constants.get(constant)
         if got is None:
-            # Owed by the integrator (LAUNCH.md). A miss cannot fail the
-            # gate until the constant exists — a red step cannot be
-            # pushed, and C cannot edit Widgets.luau. Once the name
+            # A miss cannot fail until the constant exists — C cannot
+            # edit Widgets.luau or WindowManager.luau. Once the name
             # appears, a wrong value fails and names both sides.
             continue
         if not numbers_close(got, wanted):
             failures.append(
-                f"{WIDGETS} {constant}: {got} != prototype "
-                f"spec.{spec_name} {wanted}"
+                f"{constant}: {got} != prototype spec.{spec_name} {wanted}"
             )
     return failures
 
@@ -281,8 +294,7 @@ def main() -> int:
             for line in failures:
                 print("  " + line)
             return 1
-        widgets = open(WIDGETS, encoding="utf-8").read()
-        constants = parse_widget_constants(widgets)
+        constants = parse_named_constants()
         owed = []
         pending = {}
         pending.update(spec.get("chrome") or {})
