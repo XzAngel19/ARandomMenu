@@ -113,9 +113,10 @@ else
 fi
 
 step "ClickGUI spec matches the Luau widgets"
-# spec.json is generated from the prototype, not hand-copied. This step
-# re-parses the prototype, refuses a stale JSON, and checks ThemeEngine.shape
-# (and any named constants Widgets.luau has grown) against it.
+# spec.json is generated from the prototype (pixels) and from
+# tools/wurst_features.py (official Wurst setting defaults). This step
+# refuses a stale JSON, checks ThemeEngine.shape and any named widget
+# constants, and fails a UI Settings default that does not match Wurst.
 python3 tools/extract_prototype_spec.py --check
 
 step "Product name"

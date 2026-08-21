@@ -8,9 +8,11 @@ JSON drifted, then checks the Luau widgets against the same numbers.
 
 ThemeEngine.shape is the counterpart for the shape tokens. Named constants
 in Widgets.luau are the counterpart for slider / knob / label / delay
-metrics. A constant that exists with the wrong value fails and names both
-sides. A constant that does not exist yet is owed (LAUNCH.md) and cannot
-fail the gate until the integrator adds it — C cannot edit Widgets.luau.
+metrics. Official Wurst setting defaults live under spec.wurst and come
+from tools/wurst_features.py. A constant that exists with the wrong
+value fails and names both sides. A constant that does not exist yet is
+owed and cannot fail the gate until the integrator adds it — C cannot
+edit Widgets.luau.
 """
 
 from __future__ import annotations
@@ -20,6 +22,9 @@ import json
 import os
 import re
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import wurst_features
 
 PROTOTYPE = "docs/design/prototype/index.html"
 SPEC = "docs/design/prototype/spec.json"
@@ -199,13 +204,15 @@ def build_spec(html: str) -> dict:
         luau["chrome"][name] = WIDGET_CONSTANTS[name]
     for name in components:
         luau["components"][name] = WIDGET_CONSTANTS[name]
-    return {
+    spec = {
         "source": PROTOTYPE,
         "shape": shape,
         "chrome": chrome,
         "components": components,
         "luau": luau,
+        "wurst": wurst_features.spec_section(),
     }
+    return spec
 
 
 def dump(spec: dict) -> str:
@@ -230,21 +237,82 @@ def clickgui_path() -> str | None:
 
 
 def parse_named_constants() -> dict:
-    """ALL_CAPS number locals in the files the brief named as counterparts."""
+    """ALL_CAPS locals in the files the brief named as counterparts."""
     found = {}
-    paths = [WIDGETS, WINDOWS]
+    paths = [WIDGETS, WINDOWS, "src/library/SettingsPage.luau"]
     gui = clickgui_path()
     if gui:
         paths.append(gui)
     for path in paths:
         if not os.path.exists(path):
             continue
+        text = open(path, encoding="utf-8").read()
         for name, value in re.findall(
             r"local ([A-Z][A-Z0-9_]+): number = ([0-9.]+)",
-            open(path, encoding="utf-8").read(),
+            text,
         ):
             found[name] = float(value) if "." in value else int(value)
+        for name, value in re.findall(
+            r'local ([A-Z][A-Z0-9_]+): string = "([^"]*)"',
+            text,
+        ):
+            found[name] = value
+        for name, value in re.findall(
+            r"local ([A-Z][A-Z0-9_]+): boolean = (true|false)",
+            text,
+        ):
+            found[name] = value == "true"
+        for name, r, g, b in re.findall(
+            r"local ([A-Z][A-Z0-9_]+): Color3 = Color3\.fromRGB\("
+            r"\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)",
+            text,
+        ):
+            found[name] = f"#{int(r):02X}{int(g):02X}{int(b):02X}"
+        for name, hex_value in re.findall(
+            r'local ([A-Z][A-Z0-9_]+): string = "(#[0-9A-Fa-f]{6})"',
+            text,
+        ):
+            found[name] = hex_value.upper()
     return found
+
+
+def parse_theme_preset(shell: str, preset: str) -> dict:
+    """Color3.fromRGB tokens inside THEME_PRESETS.<preset>."""
+    match = re.search(
+        rf"{re.escape(preset)}\s*=\s*\{{(.*?)\n\s*\}},",
+        shell,
+        re.S,
+    )
+    if not match:
+        return {}
+    found = {}
+    for name, r, g, b in re.findall(
+        r"(\w+)\s*=\s*Color3\.fromRGB\((\d+),\s*(\d+),\s*(\d+)\)",
+        match.group(1),
+    ):
+        found[name] = f"#{int(r):02X}{int(g):02X}{int(b):02X}"
+    return found
+
+
+def hex_color(value) -> str:
+    text = str(value).strip().upper()
+    if text.startswith("0X"):
+        text = "#" + text[2:]
+    if re.fullmatch(r"[0-9A-F]{6}", text):
+        text = "#" + text
+    return text
+
+
+def values_match(wanted, got, value_type: str) -> bool:
+    if value_type == "color":
+        return hex_color(wanted) == hex_color(got)
+    if value_type == "slider":
+        return numbers_close(wanted, got)
+    if value_type == "checkbox":
+        return bool(got) is bool(wanted)
+    if isinstance(wanted, str) and isinstance(got, str):
+        return wanted == got
+    return wanted == got
 
 
 def numbers_close(left, right) -> bool:
@@ -290,6 +358,43 @@ def check_luau(spec: dict) -> list[str]:
             failures.append(
                 f"{constant}: {got} != prototype spec.{spec_name} {wanted}"
             )
+
+    failures.extend(check_wurst_settings(spec, shell, constants))
+    return failures
+
+
+def check_wurst_settings(spec: dict, shell: str, constants: dict) -> list[str]:
+    """Hold named Luau counterparts to official Wurst defaults."""
+    failures = []
+    theme = parse_theme_preset(shell, "Wurst")
+    for row in (spec.get("wurst") or {}).get("settings") or []:
+        wanted = row["default"]
+        counterpart = row["luau"]
+        value_type = row["type"]
+        if counterpart.startswith("Theme."):
+            token = counterpart.split(".", 1)[1]
+            got = theme.get(token)
+            if got is None:
+                failures.append(
+                    f"{counterpart}: no counterpart "
+                    f"(Wurst {row['window']}.{row['name']} {wanted})"
+                )
+                continue
+            if not values_match(wanted, got, value_type):
+                failures.append(
+                    f"{counterpart}: {got} != Wurst "
+                    f"{row['window']}.{row['name']} {wanted}"
+                )
+            continue
+        got = constants.get(counterpart)
+        if got is None:
+            # Owed until the UI Settings window (or the feature) names it.
+            continue
+        if not values_match(wanted, got, value_type):
+            failures.append(
+                f"{counterpart}: {got} != Wurst "
+                f"{row['window']}.{row['name']} {wanted}"
+            )
     return failures
 
 
@@ -332,11 +437,24 @@ def main() -> int:
             constant = WIDGET_CONSTANTS[spec_name]
             if constant not in constants:
                 owed.append(f"{constant}={wanted}")
+        settings_rows = (spec.get("wurst") or {}).get("settings") or []
+        settings_owed = []
+        for row in settings_rows:
+            counterpart = row["luau"]
+            if counterpart.startswith("Theme."):
+                continue
+            if counterpart not in constants:
+                settings_owed.append(f"{counterpart}={row['default']}")
         shape_n = len(spec["shape"])
         other_n = len(pending)
-        print(f"ok · {shape_n} shape tokens · {other_n} widget metrics")
+        print(
+            f"ok · {shape_n} shape tokens · {other_n} widget metrics"
+            f" · {len(settings_rows)} Wurst settings"
+        )
         if owed:
             print("owed · " + ", ".join(owed))
+        if settings_owed:
+            print("owed settings · " + ", ".join(settings_owed))
         return 0
 
     os.makedirs(os.path.dirname(SPEC), exist_ok=True)
