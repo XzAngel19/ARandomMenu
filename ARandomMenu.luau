@@ -318,7 +318,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "6b91fe9820accf87"
+local SOURCE_STAMP: string = "de868e8ff6d10222"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -2466,249 +2466,19 @@ local function notify(message: any): ()
         end)
     end)
 end
-do
-local HAIL_STONE_COUNT: number = state.layout.compact and 34 or 54
-local HAIL_COLOR: Color3 = Color3.fromRGB(228, 231, 238)
-
-type HailStone = {
-    frame: Frame,
-    x: number,
-    y: number,
-    fallSpeed: number,
-    driftSpeed: number,
-    swayAmount: number,
-    swayRate: number,
-    swayPhase: number,
-    length: number,
-}
-
-local HailLayer: CanvasGroup = (create("CanvasGroup", {
-    Parent = ScreenGui,
-    Name = "BlurHail",
-    Active = false,
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    ClipsDescendants = true,
-    GroupTransparency = 1,
-    Position = UDim2.fromScale(0, 0),
-    Size = UDim2.fromScale(1, 1),
-    Visible = false,
-    ZIndex = 0,
-}) :: any) :: CanvasGroup
-
-local hailRandom: Random = Random.new(os.clock() * 1000)
-local hailStones: {HailStone} = {}
-
-local function currentViewport(): Vector2
-    local camera: Camera? = workspace.CurrentCamera
-    local viewport: Vector2 = camera
-        and camera.ViewportSize
-        or Vector2.new(1280, 720)
-    return Vector2.new(
-        math.max(viewport.X, 320),
-        math.max(viewport.Y, 240)
-    )
-end
-
--- `fromTop` seeds a stone just above the screen (used while falling);
--- otherwise the stone is scattered anywhere down the screen, which is what
--- makes the very first frame after opening the menu look like the hail has
--- already been going rather than a single synchronised wave.
-local function respawnStone(
-    stone: HailStone,
-    viewport: Vector2,
-    fromTop: boolean
-): ()
-    local thickness: number = hailRandom:NextNumber(2, 3.4)
-    stone.length = hailRandom:NextNumber(7, 18)
-    stone.fallSpeed = hailRandom:NextNumber(320, 680)
-    stone.driftSpeed = hailRandom:NextNumber(-46, -12)
-    stone.swayAmount = hailRandom:NextNumber(2, 9)
-    stone.swayRate = hailRandom:NextNumber(0.7, 2.1)
-    stone.swayPhase = hailRandom:NextNumber(0, math.pi * 2)
-    stone.x = hailRandom:NextNumber(-40, viewport.X + 40)
-    stone.y = fromTop
-        and hailRandom:NextNumber(-viewport.Y * 0.4, -stone.length)
-        or hailRandom:NextNumber(-stone.length, viewport.Y)
-
-    stone.frame.Size = UDim2.fromOffset(
-        math.round(thickness),
-        math.round(stone.length)
-    )
-    -- Faster stones are drawn slightly brighter and leaning a touch further
-    -- into the wind, which reads as depth without needing more particles.
-    local depth: number = (stone.fallSpeed - 320) / 360
-    stone.frame.BackgroundTransparency = 0.62 - depth * 0.34
-    stone.frame.Rotation = -6 - depth * 5
-end
-
-for index: number = 1, HAIL_STONE_COUNT do
-    local frame: Frame = (create("Frame", {
-        Parent = HailLayer,
-        Name = "Stone" .. tostring(index),
-        AnchorPoint = Vector2.new(0.5, 1),
-        BackgroundColor3 = HAIL_COLOR,
-        BorderSizePixel = 0,
-        Size = UDim2.fromOffset(3, 12),
-        ZIndex = 1,
-    }) :: any) :: Frame
-    create("UICorner", {Parent = frame, CornerRadius = UDim.new(1, 0)})
-
-    local stone: HailStone = {
-        frame = frame,
-        x = 0,
-        y = 0,
-        fallSpeed = 0,
-        driftSpeed = 0,
-        swayAmount = 0,
-        swayRate = 1,
-        swayPhase = 0,
-        length = 12,
-    }
-    respawnStone(stone, currentViewport(), false)
-    hailStones[index] = stone
-end
-
-local hailConnection: RBXScriptConnection? = nil
-local hailFadeTween: Tween? = nil
-local hailRunning: boolean = false
-local hailRequested: boolean = false
-local hailElapsed: number = 0
-
-local function drawStone(stone: HailStone): ()
-    stone.frame.Position = UDim2.fromOffset(
-        math.round(
-            stone.x
-                + math.sin(hailElapsed * stone.swayRate + stone.swayPhase)
-                    * stone.swayAmount
-        ),
-        math.round(stone.y)
-    )
-end
-
-local function stepHail(deltaTime: number): ()
-    -- Guard against the huge delta a background//frozen client produces, which
-    -- would otherwise teleport every stone off screen at once.
-    local step: number = math.min(deltaTime, 1 / 20)
-    hailElapsed += step
-    local viewport: Vector2 = currentViewport()
-    for _, stone: HailStone in ipairs(hailStones) do
-        stone.y += stone.fallSpeed * step
-        stone.x += stone.driftSpeed * step
-        if stone.y - stone.length > viewport.Y
-            or stone.x < -80
-            or stone.x > viewport.X + 80 then
-            respawnStone(stone, viewport, true)
-        end
-        drawStone(stone)
-    end
-end
-
-local function disconnectHail(): ()
-    if hailConnection then
-        hailConnection:Disconnect()
-        hailConnection = nil
-    end
-end
-
-local function cancelHailFade(): ()
-    if hailFadeTween then
-        hailFadeTween:Cancel()
-        hailFadeTween = nil
-    end
-end
-
-local function applyHail(): ()
-    -- Hail is motion, so it follows the "Animations" setting as well as the
-    -- blur: with motion off the layer stays completely inert.
-    local shouldRun: boolean = hailRequested
-        and state.animationsEnabled ~= false
-    if shouldRun == hailRunning then
-        return
-    end
-    hailRunning = shouldRun
-    cancelHailFade()
-
-    if not HailLayer.Parent then
-        disconnectHail()
-        return
-    end
-
-    if shouldRun then
-        local viewport: Vector2 = currentViewport()
-        for _, stone: HailStone in ipairs(hailStones) do
-            respawnStone(stone, viewport, false)
-            drawStone(stone)
-        end
-        HailLayer.Visible = true
-        disconnectHail()
-        hailConnection = RunService.RenderStepped:Connect(stepHail)
-        local fadeIn: Tween = TweenService:Create(
-            HailLayer,
-            TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-            {GroupTransparency = 0}
-        )
-        hailFadeTween = fadeIn
-        fadeIn.Completed:Once(function(): ()
-            if hailFadeTween == fadeIn then
-                hailFadeTween = nil
-            end
-        end)
-        fadeIn:Play()
-        return
-    end
-
-    if state.animationsEnabled == false then
-        disconnectHail()
-        HailLayer.GroupTransparency = 1
-        HailLayer.Visible = false
-        return
-    end
-
-    local fadeOut: Tween = TweenService:Create(
-        HailLayer,
-        TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-        {GroupTransparency = 1}
-    )
-    hailFadeTween = fadeOut
-    fadeOut.Completed:Once(function(): ()
-        if hailFadeTween == fadeOut then
-            hailFadeTween = nil
-        end
-        -- A newer activation may have won the race while this faded out.
-        if hailRunning then
-            return
-        end
-        disconnectHail()
-        if HailLayer.Parent then
-            HailLayer.GroupTransparency = 1
-            HailLayer.Visible = false
-        end
-    end)
-    fadeOut:Play()
-end
-
-state.registerBlurDecoration(function(active: boolean): ()
-    hailRequested = active
-    applyHail()
-end)
-
--- Called by the Animations setting so toggling motion takes effect without
--- having to close and reopen the menu.
-state.refreshBlurDecoration = applyHail
-
--- Hard stop used during teardown: no tweens, no pending callbacks.
-state.destroyBlurDecoration = function(): ()
-    hailRequested = false
-    hailRunning = false
-    cancelHailFade()
-    disconnectHail()
-    if HailLayer.Parent then
-        HailLayer.Visible = false
-        HailLayer:Destroy()
-    end
-end
-end
+-- Nothing is drawn over the blur.
+--
+-- There was a hail layer here: fifty-four falling stones on their own render
+-- loop, with sway, drift, depth shading and a fade in and out. It belonged to
+-- the menu this one replaces. Wurst puts nothing between the player and the
+-- game except its own windows, and a port that keeps somebody else's weather
+-- is not a port.
+--
+-- The three hooks stay because the shell calls them; they now do nothing, which
+-- is cheaper than teaching every caller that the decoration is gone.
+state.registerBlurDecoration(function(_active: boolean): () end)
+state.refreshBlurDecoration = function(): () end
+state.destroyBlurDecoration = function(): () end
 
 
 
@@ -2972,6 +2742,10 @@ local function refreshLauncherVisibility(): ()
     -- but a permanent circle sitting on top of the game, so it is never shown.
     MobileMenuButton.Visible = state.isMobile and not state.visible
 end
+-- Published so the pill can re-run it once it takes over as the launcher: the
+-- fallback circle has to disappear the moment something better exists, and come
+-- back if it does not.
+state.refreshLauncher = refreshLauncherVisibility
 refreshLauncherVisibility()
 state.addMenuVisibilityListener(function(): ()
     refreshLauncherVisibility()
@@ -4694,6 +4468,7 @@ local fallbackManifest: any = {
         "src/library/FloatingWindows.luau",
         "src/library/SettingsPage.luau",
         "src/library/MobileActions.luau",
+        "src/library/Furniture.luau",
     },
     modules = {
         {path = "src/modules/Utility/FriendList.luau", name = "Friend List", category = "Utility"},

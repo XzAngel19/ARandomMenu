@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "6b91fe9820accf87",
+    stamp = "de868e8ff6d10222",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -9998,8 +9998,12 @@ function Module.init(context: any): any
         restyleMenuButton()
     end)
 
+    -- `root`, not `frame`: every other surface the menu publishes — a managed
+    -- window, a drawing set — names its top instance that way, and the suite
+    -- that checks the pill stays on screen with the GUI closed was reading
+    -- `root` and finding nil.
     state.pill = {
-        frame = pillFrame,
+        root = pillFrame,
         restyle = restyleMenuButton,
     }
     -- The shell's fallback circle stands down now that the pill exists.

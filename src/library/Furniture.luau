@@ -670,8 +670,12 @@ function Module.init(context: any): any
         restyleMenuButton()
     end)
 
+    -- `root`, not `frame`: every other surface the menu publishes — a managed
+    -- window, a drawing set — names its top instance that way, and the suite
+    -- that checks the pill stays on screen with the GUI closed was reading
+    -- `root` and finding nil.
     state.pill = {
-        frame = pillFrame,
+        root = pillFrame,
         restyle = restyleMenuButton,
     }
     -- The shell's fallback circle stands down now that the pill exists.
