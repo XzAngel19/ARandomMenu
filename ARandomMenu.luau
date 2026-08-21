@@ -371,19 +371,29 @@ local function computeLayoutMetrics(
         searchHeight = mobile and 30 or 28,
         searchWidth = mobile and 150 or (tablet and 190 or 230),
         contentPadding = contentPadding,
-        cardSpacing = mobile and 7 or 6,
+        cardSpacing = 2,
         cardColumns = cardColumns,
-        cardHeight = mobile and 50 or 44,
+        -- Wurst's row, not the old menu's slab.
+        --
+        -- These were 44 and 50, sized for cards laid out two to a page with a
+        -- description under the title. In a ClickGUI a module is one line, and
+        -- the same line on every device: Vape's Roblox menu is small on a
+        -- phone on purpose, because a menu that grows to fill a phone covers
+        -- the game it is a menu for.
+        cardHeight = 22,
         cardCorner = UI_RADIUS.card,
-        controlHeight = touchEnabled and 32 or 26,
-        optionRowHeight = touchEnabled and 38 or 34,
-        switchWidth = mobile and 44 or 38,
-        switchHeight = mobile and 24 or 20,
-        iconButton = mobile and 26 or 24,
-        keySlotWidth = mobile and 34 or 46,
+        controlHeight = 20,
+        optionRowHeight = 22,
+        -- A filled row already says the module is on, so the switch is a
+        -- second answer to a question nobody asked twice. It stays small
+        -- enough to sit on one line until it is removed outright.
+        switchWidth = 26,
+        switchHeight = 14,
+        iconButton = 16,
+        keySlotWidth = 34,
         touchTarget = touchEnabled and 32 or 24,
-        titleFontSize = mobile and 12 or 12,
-        bodyFontSize = mobile and 10 or 10,
+        titleFontSize = 12,
+        bodyFontSize = 10,
         captionFontSize = 9,
         scrollBar = mobile and 3 or 4,
         -- Height of the launcher dock at the foot of the rail. It stacks its
@@ -423,7 +433,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "6ed76a21bb635bcb"
+local SOURCE_STAMP: string = "0d79b67fed416079"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the

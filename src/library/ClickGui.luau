@@ -35,10 +35,13 @@ local Module = {
 
 local activeCleanup: (() -> ())? = nil
 
--- Wurst's own proportions, scaled to a Roblox viewport: a column of rows about
--- this wide, and a window that stops growing at this height and scrolls.
-local WINDOW_WIDTH: number = 186
-local WINDOW_MAX_HEIGHT: number = 340
+-- Wurst's own proportions. A ClickGUI window is narrow — its job is to hold a
+-- column of one-line rows, not to be a panel — and it is the same width on a
+-- phone as on a desktop, because Vape's Roblox menu is deliberately small on a
+-- phone and that is what makes it usable over a game rather than instead of
+-- one. Nothing here scales with the viewport.
+local WINDOW_WIDTH: number = 160
+local WINDOW_MAX_HEIGHT: number = 300
 local GRID_MARGIN: number = 12
 local GRID_GAP: number = 8
 local TITLE_HEIGHT: number = 22
