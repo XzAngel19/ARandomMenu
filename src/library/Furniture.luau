@@ -3,9 +3,11 @@
 -- The screen furniture: everything Wurst draws on the HUD that is neither a
 -- window nor a row. Today that is the wordmark — Wurst's own logo with the
 -- version next to it, top-left, on the white chip Wurst gives it — the
--- stats block under it (FPS, ping, session time, place), and the HackList:
+-- stats block under it (FPS, ping, session time, place), the HackList:
 -- every enabled module down the right edge, with whatever bracketed status
--- it publishes through card:SetStatus.
+-- it publishes through card:SetStatus — and the pill: the floating rounded
+-- toolbar lifted from Roblox's own in-game top bar, which is the launcher
+-- and the one piece of chrome that stays when the ClickGUI closes.
 --
 -- All of it lives on the same layer as the windows so the one UIScale the
 -- ClickGUI installs moves the whole interface together, and all of it stays
@@ -57,6 +59,15 @@ local HACKLIST_LINE_HEIGHT: number = 18
 local HACKLIST_TOP: number = 56
 local HACKLIST_SLIDE: number = 14
 
+-- The pill's proportions come from the prototype's #pill rule: 32 px round
+-- buttons in a capsule with 5×7 padding, floating 12 px under the top edge.
+local PILL_BUTTON: number = 32
+local PILL_PADDING_X: number = 7
+local PILL_PADDING_Y: number = 5
+local PILL_GAP: number = 2
+local PILL_TOP: number = 12
+local TOOLTIP_DELAY_MS: number = 400
+
 function Module.init(context: any): any
     local host: any = context
     local state: any = host.state
@@ -71,9 +82,15 @@ function Module.init(context: any): any
     local CONTROL_FONT: any = host.CONTROL_FONT
     local TweenService: any = host.TweenService
     local allFeatures: {any} = host.allFeatures
+    local configData: any = host.configData
+    local queueConfigSave: any = host.queueConfigSave
+    local refreshFeatureToggle: any = host.refreshFeatureToggle
+    local notify: any = host.notify
+    local UserInputService: any = host.UserInputService
 
     local Furniture: any = {
         handles = {} :: {any},
+        connections = {} :: {RBXScriptConnection},
     }
 
     -- ------------------------------------------------------------- wordmark
@@ -456,6 +473,212 @@ function Module.init(context: any): any
         refresh = refreshHudList,
     }
 
+    -- ----------------------------------------------------------------- pill
+    -- The five per cent of this menu that is Roblox rather than Wurst: the
+    -- floating capsule from the game's own top bar, as the launcher. It is
+    -- the only rounded, soft element on screen and the only chrome that is
+    -- still there when the ClickGUI is closed — on a phone it is the way
+    -- back in, which is why the shell's old circle stands down below.
+    --
+    -- Two buttons, because two targets exist: the GUI toggle and panic.
+    -- Search, configs, keybinds and UI settings join the capsule when their
+    -- windows do; a button that only raises a toast would be a control that
+    -- lies about having an effect.
+    local pillButtons: number = 2
+    local pillWidth: number = PILL_PADDING_X * 2
+        + PILL_BUTTON * pillButtons
+        + PILL_GAP * (pillButtons - 1)
+        + 9 -- the 1 px separator and its 4 px margins
+
+    local pillFrame: Frame = (create("Frame", {
+        Parent = PopupLayer,
+        Name = "Pill",
+        Active = true,
+        AnchorPoint = Vector2.new(0.5, 0),
+        BackgroundColor3 = Color3.fromRGB(16, 18, 28),
+        BackgroundTransparency = 0.28,
+        BorderSizePixel = 0,
+        Position = UDim2.new(0.5, 0, 0, PILL_TOP),
+        Size = UDim2.fromOffset(pillWidth, PILL_BUTTON + PILL_PADDING_Y * 2),
+        ZIndex = 240,
+    }) :: any) :: Frame
+    create("UICorner", {
+        Parent = pillFrame,
+        CornerRadius = UDim.new(1, 0),
+    })
+    create("UIStroke", {
+        Parent = pillFrame,
+        Color = Color3.fromRGB(255, 255, 255),
+        Thickness = 1,
+        Transparency = 0.91,
+    })
+
+    -- The pill keeps the prototype's own dark glass regardless of theme —
+    -- it imitates Roblox chrome, not Wurst chrome — so only the *active*
+    -- state of a button reads the theme.
+    local PILL_IDLE_TEXT: Color3 = Color3.fromRGB(232, 232, 238)
+
+    local function showPillTip(anchor: GuiObject, text: string): ()
+        local tooltip: TextLabel? = state.featureTooltip
+        if not tooltip then
+            return
+        end
+        state.tooltipToken = state.tooltipToken + 1;
+        (tooltip :: TextLabel).Text = text;
+        (tooltip :: TextLabel).Size = UDim2.fromOffset(
+            math.clamp(#text * 5.5 + 24, 120, 320),
+            30
+        );
+        (tooltip :: TextLabel).Position = UDim2.fromOffset(
+            anchor.AbsolutePosition.X,
+            anchor.AbsolutePosition.Y + anchor.AbsoluteSize.Y + 8
+        );
+        (tooltip :: TextLabel).Visible = true
+    end
+
+    local function hidePillTip(): ()
+        local tooltip: TextLabel? = state.featureTooltip
+        if not tooltip then
+            return
+        end
+        state.tooltipToken = state.tooltipToken + 1;
+        (tooltip :: TextLabel).Visible = false
+    end
+
+    local function pillButton(
+        order: number,
+        offsetX: number,
+        glyph: string,
+        textSize: number,
+        tip: string,
+        onClick: () -> ()
+    ): TextButton
+        local button: TextButton = (create("TextButton", {
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            Parent = pillFrame,
+            Name = "PillButton" .. tostring(order),
+            AutoButtonColor = false,
+            BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            FontFace = CONTROL_FONT,
+            Position = UDim2.fromOffset(offsetX, PILL_PADDING_Y),
+            Size = UDim2.fromOffset(PILL_BUTTON, PILL_BUTTON),
+            Text = glyph,
+            TextColor3 = PILL_IDLE_TEXT,
+            TextSize = textSize,
+            ZIndex = 241,
+        }) :: any) :: TextButton
+        create("UICorner", {
+            Parent = button,
+            CornerRadius = UDim.new(1, 0),
+        })
+        table.insert(Furniture.connections, button.MouseEnter:Connect(function(): ()
+            if not UserInputService.MouseEnabled then
+                return
+            end
+            state.tooltipToken = state.tooltipToken + 1
+            local token: number = state.tooltipToken
+            task.delay(TOOLTIP_DELAY_MS / 1000, function(): ()
+                if state.tooltipToken == token and button.Parent then
+                    showPillTip(button, tip)
+                end
+            end)
+        end))
+        table.insert(Furniture.connections, button.MouseLeave:Connect(function(): ()
+            hidePillTip()
+        end))
+        table.insert(Furniture.connections, button.MouseButton1Click:Connect(function(): ()
+            hidePillTip()
+            onClick()
+        end))
+        return button
+    end
+
+    local menuButton: TextButton = pillButton(
+        1,
+        PILL_PADDING_X,
+        "≡",
+        16,
+        "Show or hide the menu",
+        function(): ()
+            state.setMenuVisible(not state.visible)
+        end
+    )
+
+    create("Frame", {
+        Parent = pillFrame,
+        Name = "PillSeparator",
+        BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+        BackgroundTransparency = 0.86,
+        BorderSizePixel = 0,
+        Position = UDim2.fromOffset(
+            PILL_PADDING_X + PILL_BUTTON + 4,
+            PILL_PADDING_Y + (PILL_BUTTON - 18) // 2
+        ),
+        Size = UDim2.fromOffset(1, 18),
+        ZIndex = 241,
+    })
+
+    pillButton(
+        2,
+        PILL_PADDING_X + PILL_BUTTON + 9 + PILL_GAP,
+        "OFF",
+        10,
+        "Panic: disable every module",
+        function(): ()
+            local disabled: number = 0
+            for _, feature: any in ipairs(allFeatures) do
+                if feature.enabled == true then
+                    -- One module that throws while switching off must not
+                    -- keep the ones after it running; this mirrors the
+                    -- shell's own teardown loop.
+                    pcall(feature.onToggle, false)
+                    feature.enabled = false
+                    configData.states[feature.configKey] = false
+                    disabled += 1
+                    refreshFeatureToggle(feature)
+                end
+            end
+            queueConfigSave()
+            refreshHudList()
+            notify(
+                disabled == 1
+                    and "Panic: 1 module disabled"
+                    or ("Panic: " .. tostring(disabled) .. " modules disabled")
+            )
+        end
+    )
+
+    -- The menu button fills with the accent while the GUI is open, exactly
+    -- like the prototype's `.on` state. Repainted on both the things that
+    -- change it: visibility and the theme.
+    local function restyleMenuButton(): ()
+        if not pillFrame.Parent then
+            return
+        end
+        local open: boolean = state.visible == true
+        menuButton.BackgroundColor3 = Theme.accent
+        menuButton.BackgroundTransparency = open and 0 or 1
+        menuButton.TextColor3 = open and Theme.accentText or PILL_IDLE_TEXT
+    end
+    restyleMenuButton()
+    state.addMenuVisibilityListener(function(): ()
+        restyleMenuButton()
+    end)
+    ThemeEngine.OnChange(function(): ()
+        restyleMenuButton()
+    end)
+
+    state.pill = {
+        frame = pillFrame,
+        restyle = restyleMenuButton,
+    }
+    -- The shell's fallback circle stands down now that the pill exists.
+    if type(state.refreshLauncher) == "function" then
+        state.refreshLauncher()
+    end
+
     activeCleanup = function(): ()
         for _, handle: any in ipairs(Furniture.handles) do
             pcall(function(): ()
@@ -463,10 +686,22 @@ function Module.init(context: any): any
             end)
         end
         Furniture.handles = {}
+        for _, connection: RBXScriptConnection in ipairs(Furniture.connections) do
+            pcall(function(): ()
+                connection:Disconnect()
+            end)
+        end
+        Furniture.connections = {}
         chip:Destroy()
         statsLabel:Destroy()
         hudFrame:Destroy()
+        pillFrame:Destroy()
         state.hudList = nil
+        state.pill = nil
+        -- The fallback launcher becomes the way in again.
+        if type(state.refreshLauncher) == "function" then
+            pcall(state.refreshLauncher)
+        end
     end
     Module.Initialized = true
     return Furniture

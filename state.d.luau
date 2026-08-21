@@ -146,6 +146,8 @@ export type MenuState = {
     mobileButtonSize: number,                       -- Pixel size of placed phone shortcuts
     clickGui: any,                                  -- Wurst's layout: one window per category, cards placed into them
     hudList: any,                                   -- Wurst's HackList: the on-screen list of enabled modules and their card.status brackets
+    pill: any,                                      -- The floating pill toolbar: the launcher, and the one chrome that outlives closing the GUI
+    refreshLauncher: () -> (),                      -- Re-evaluate the fallback mobile circle; the pill supersedes it while it exists
     windows: any,                                   -- The window manager: drag, collapse, pin, snap, persistence
     floatingUi: any,                                -- Favourites, the overlay menu and the four overlays
     destroySessionTracking: () -> (),               -- Stop counting kills, deaths and time

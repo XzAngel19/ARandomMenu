@@ -318,7 +318,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "037602a03853026d"
+local SOURCE_STAMP: string = "5874e97c6c60310a"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -2974,16 +2974,22 @@ end
 -- sight. It used to sit on top of the open window, which made it look like a
 -- second, broken close button.
 local function refreshLauncherVisibility(): ()
-    -- Touch devices only.
+    -- Touch devices only, and only until the pill exists.
     --
-    -- A phone has no key to press, so the button floating over the game is the
-    -- only way back in — and its presence is also how you know the menu
-    -- finished loading, since there is no intro any more. A machine with a
-    -- keyboard has the menu key for both jobs, and there the button is nothing
-    -- but a permanent circle sitting on top of the game, so it is never shown.
-    MobileMenuButton.Visible = state.isMobile and not state.visible
+    -- A phone has no key to press, so a button floating over the game is the
+    -- only way back in. That job now belongs to the pill toolbar the
+    -- furniture library draws; this circle is the fallback for the case
+    -- where that library never arrived, because a phone with no launcher is
+    -- a menu that cannot be reopened. A machine with a keyboard has the menu
+    -- key for both jobs, so there the button is never shown.
+    MobileMenuButton.Visible = state.isMobile
+        and not state.visible
+        and state.pill == nil
 end
 refreshLauncherVisibility()
+-- Published so the furniture library can re-evaluate the fallback the moment
+-- the pill appears, and again if it is torn down.
+state.refreshLauncher = refreshLauncherVisibility
 state.addMenuVisibilityListener(function(): ()
     refreshLauncherVisibility()
 end)
