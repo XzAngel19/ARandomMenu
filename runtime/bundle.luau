@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "de868e8ff6d10222",
+    stamp = "113f2d5493a56d74",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -333,12 +333,19 @@ local Module = {
     Initialized = false,
 }
 
+-- The prototype's component metrics, verbatim (docs/design/prototype/
+-- spec.json, `components`). The parity gate reads these names and fails a
+-- drift, so a number that changes here has to change in the prototype first.
+local LABEL_FONT_SIZE: number = 11.5
+local SLIDER_BAR_HEIGHT: number = 5
+local SLIDER_KNOB_WIDTH: number = 7
+local SLIDER_KNOB_HEIGHT: number = 11
+
 function Module.init(context: any): WidgetLibrary
     local host: any = context
     -- Services come from the shell rather than from `GetService` so the whole
     -- menu watches one input stream: a second UserInputService handle means a
     -- slider drag and the shell's own pointer tracking see different events.
-    local TweenService: any = host.TweenService
     local UserInputService: any = host.UserInputService
     local state: any = host.state
     local configData: any = host.configData
@@ -356,11 +363,8 @@ function Module.init(context: any): WidgetLibrary
     -- them, so a list cannot be clipped by its scrolling parent.
     local PopupLayer: any = host.PopupLayer
     local UI_RADIUS: any = host.UI_RADIUS
-    local UI_MOTION: any = host.UI_MOTION
     local cornerRadius: any = host.cornerRadius
     local trackUiConnection: any = host.trackUiConnection
-    local createToggleSwitch: any = host.createToggleSwitch
-    local setToggleSwitch: any = host.setToggleSwitch
     local applyKeySlotStyle: any = host.applyKeySlotStyle
     local beginKeyCapture: any = host.beginKeyCapture
     local bindActionShortcut: any = host.bindActionShortcut
@@ -420,69 +424,39 @@ function Module.init(context: any): WidgetLibrary
         feature.optionCount += 1
         feature.searchText ..= " " .. string.lower(labelText)
         local rowHeight: number = state.layout.optionRowHeight
+        -- Wurst's setting line: label left, value right, nothing else. The
+        -- row it replaced was a card of its own — fill, rounded corners, a
+        -- hairline stroke and a hover tween — which read as a second deck of
+        -- cards inside every expansion. A line is flat and free.
         local option: Frame = (create("Frame", {
             Parent = feature.options,
             Name = "Option_" .. labelText:gsub("%W", ""),
-            BackgroundColor3 = Theme.surface,
-            BackgroundTransparency = 0.76,
+            BackgroundTransparency = 1,
             BorderSizePixel = 0,
             LayoutOrder = feature.optionCount,
             Size = UDim2.new(1, 0, 0, rowHeight),
             ZIndex = feature.options.ZIndex + 1,
         }) :: any) :: Frame
-        create("UICorner", {
-            Parent = option,
-            CornerRadius = cornerRadius(UI_RADIUS.control),
-        })
-        local optionStroke: UIStroke = (create("UIStroke", {
-            Parent = option,
-            Name = "OptionStroke",
-            ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-            Color = Theme.outline,
-            Thickness = 1,
-            Transparency = 0.82,
-        }) :: any) :: UIStroke
         table.insert(feature.optionRows, option)
 
-        trackUiConnection(option.MouseEnter:Connect(function(): ()
-            TweenService:Create(
-                option,
-                TweenInfo.new(UI_MOTION.fast, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-                {BackgroundTransparency = 0.62}
-            ):Play()
-            TweenService:Create(
-                optionStroke,
-                TweenInfo.new(UI_MOTION.fast, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-                {Transparency = 0.62}
-            ):Play()
-        end))
-        trackUiConnection(option.MouseLeave:Connect(function(): ()
-            TweenService:Create(
-                option,
-                TweenInfo.new(UI_MOTION.fast, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-                {BackgroundTransparency = 0.76}
-            ):Play()
-            TweenService:Create(
-                optionStroke,
-                TweenInfo.new(UI_MOTION.fast, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-                {Transparency = 0.82}
-            ):Play()
-        end))
+        local label: TextLabel = (create("TextLabel", {
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            Parent = option,
+            Name = "OptionLabel",
+            BackgroundTransparency = 1,
+            FontFace = CONTROL_FONT,
+            Position = UDim2.fromOffset(6, 0),
+            Size = UDim2.new(0.48, -6, 1, 0),
+            Text = labelText,
+            TextColor3 = Theme.text,
+            TextSize = LABEL_FONT_SIZE,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            ZIndex = option.ZIndex + 1,
+        }) :: any) :: TextLabel
+        label.Visible = true
 
-        local label: TextLabel =
-            (makeTextLabel(option, labelText, 11) :: any) :: TextLabel
-        label.Name = "OptionLabel"
-        label.TextColor3 = Theme.text
-        label.TextTruncate = Enum.TextTruncate.AtEnd
-        label.ZIndex = option.ZIndex + 1
-        -- The label column always ends at 48% of the row; the control band starts
-        -- at 50%, so no label ever collides with any control type and the left
-        -- edge of every control is the same in every module.
-        label.Position = UDim2.fromOffset(12, 0)
-        label.Size = UDim2.new(0.48, -12, 1, 0)
-
-        option:SetAttribute("ControlTop", 6)
-        option:SetAttribute("ControlHeight", rowHeight - 12)
+        option:SetAttribute("ControlTop", 3)
+        option:SetAttribute("ControlHeight", rowHeight - 6)
 
         feature.updateExpandedSize()
         return option
@@ -581,36 +555,58 @@ function Module.init(context: any): WidgetLibrary
             Text = "",
             ZIndex = option.ZIndex + 2,
         }) :: TextButton
-        local switch: TextButton = createToggleSwitch(option, enabled :: boolean, nil)
-        switch.Name = "OptionSwitch"
-        -- The switch keeps its intrinsic size, so it is pinned to the right edge
-        -- of the control band rather than stretched across it. Its right edge
-        -- lands on exactly the same x as every other control type, which keeps
-        -- toggle-only modules visually aligned with keybind and slider modules.
-        switch.AnchorPoint = Vector2.new(1, 0.5)
-        switch.Position = UDim2.new(
-            1,
-            -10,
-            0,
-            (tonumber(option:GetAttribute("ControlTop")) or 6)
-                + (tonumber(option:GetAttribute("ControlHeight")) or 30) / 2
-        )
-        switch.ZIndex = option.ZIndex + 3
-        for _, descendant: Instance in ipairs(switch:GetDescendants()) do
-            if descendant:IsA("GuiObject") then
-                descendant.ZIndex += option.ZIndex + 2
-            end
-        end
+        -- Wurst's checkbox: a small square in front of the label, filled with
+        -- the enabled colour when on. The pill switch it replaces was the old
+        -- menu's; nothing in Wurst slides.
+        local box: Frame = (create("Frame", {
+            Parent = option,
+            Name = "OptionCheckbox",
+            AnchorPoint = Vector2.new(0, 0.5),
+            BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+            BackgroundTransparency = 0.5,
+            BorderSizePixel = 0,
+            Position = UDim2.new(0, 6, 0.5, 0),
+            Size = UDim2.fromOffset(11, 11),
+            ZIndex = option.ZIndex + 3,
+        }) :: any) :: Frame
+        create("UICorner", {
+            Parent = box,
+            CornerRadius = UDim.new(0, 2),
+        })
+        local boxStroke: UIStroke = (create("UIStroke", {
+            Parent = box,
+            ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+            Color = Theme.outline,
+            Thickness = 1,
+            Transparency = 0.35,
+        }) :: any) :: UIStroke
+        local mark: TextLabel = (create("TextLabel", {
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            Parent = box,
+            Name = "Check",
+            BackgroundTransparency = 1,
+            FontFace = CONTROL_FONT,
+            Size = UDim2.fromScale(1, 1),
+            Text = "✓",
+            TextColor3 = Theme.enabledText,
+            TextSize = 9,
+            Visible = false,
+            ZIndex = option.ZIndex + 4,
+        }) :: any) :: TextLabel
         local optionLabel: TextLabel? =
             option:FindFirstChild("OptionLabel") :: TextLabel?
+        if optionLabel then
+            (optionLabel :: TextLabel).Position = UDim2.fromOffset(23, 0);
+            (optionLabel :: TextLabel).Size = UDim2.new(0.6, -23, 1, 0)
+        end
 
         local function refreshOptionState(): ()
-            setToggleSwitch(switch, enabled :: boolean, true)
-            if optionLabel then
-                optionLabel.TextColor3 = (enabled :: boolean)
-                    and Theme.text
-                    or Theme.textMuted
-            end
+            local on: boolean = enabled :: boolean
+            box.BackgroundColor3 = on and Theme.enabled or Color3.fromRGB(0, 0, 0)
+            box.BackgroundTransparency = on and 0 or 0.5
+            boxStroke.Color = on and Theme.enabled or Theme.outline
+            mark.Visible = on
+            mark.TextColor3 = Theme.enabledText
         end
 
         local function toggleOption(): ()
@@ -622,7 +618,6 @@ function Module.init(context: any): WidgetLibrary
             notify(labelText .. ((enabled :: boolean) and " enabled" or " disabled"))
         end
         trackUiConnection(button.MouseButton1Click:Connect(toggleOption))
-        trackUiConnection(switch.MouseButton1Click:Connect(toggleOption))
 
         refreshOptionState()
         callback(enabled :: boolean)
@@ -751,33 +746,41 @@ function Module.init(context: any): WidgetLibrary
             and maximum % 1 == 0
 
         local option: Frame = createOptionRow(feature, labelText, hintText)
+        -- Wurst's slider is two lines: the label with its value on the right,
+        -- and a thin bar with a square knob underneath, spanning the row. The
+        -- bar is 5 px with a 7×11 knob — the prototype's numbers, which the
+        -- parity gate holds these constants to.
+        option.Size = UDim2.new(1, 0, 0, 26)
+        local headerLabel: TextLabel? =
+            option:FindFirstChild("OptionLabel") :: TextLabel?
+        if headerLabel then
+            (headerLabel :: TextLabel).Size = UDim2.new(0.55, -6, 0, 15)
+        end
+
         local slider: TextButton = (create("TextButton", {
             TextTruncate = Enum.TextTruncate.AtEnd,
-            ClipsDescendants = true,
             Parent = option,
             Name = "Slider",
             Active = true,
             AutoButtonColor = false,
             BackgroundTransparency = 1,
             BorderSizePixel = 0,
+            Position = UDim2.new(0, 0, 0, 13),
+            Size = UDim2.new(1, 0, 0, 13),
             Text = "",
+            ZIndex = option.ZIndex + 1,
         }) :: any) :: TextButton
-        state.layoutOptionControl(option, slider, 0.5)
 
         local track: Frame = (create("Frame", {
             Parent = slider,
             Name = "Track",
-            AnchorPoint = Vector2.new(0, 0.5),
-            BackgroundColor3 = Theme.outline,
+            BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+            BackgroundTransparency = 0.9,
             BorderSizePixel = 0,
-            Position = UDim2.new(0, 0, 0.5, 0),
-            Size = UDim2.new(1, -80, 0, state.layout.touch and 7 or 5),
-            ZIndex = slider.ZIndex + 1,
+            Position = UDim2.new(0, 6, 0, 5),
+            Size = UDim2.new(1, -12, 0, SLIDER_BAR_HEIGHT),
+            ZIndex = option.ZIndex + 1,
         }) :: any) :: Frame
-        create("UICorner", {
-            Parent = track,
-            CornerRadius = UDim.new(1, 0),
-        })
 
         local fill: Frame = (create("Frame", {
             Parent = track,
@@ -785,21 +788,9 @@ function Module.init(context: any): WidgetLibrary
             BackgroundColor3 = Theme.accent,
             BorderSizePixel = 0,
             Size = UDim2.fromScale(0, 1),
+            ZIndex = track.ZIndex + 1,
         }) :: any) :: Frame
-        create("UICorner", {
-            Parent = fill,
-            CornerRadius = UDim.new(1, 0),
-        })
-        create("UIGradient", {
-            Parent = fill,
-            Color = ColorSequence.new({
-                ColorSequenceKeypoint.new(0, Theme.accent),
-                ColorSequenceKeypoint.new(0.52, Theme.accentDim),
-                ColorSequenceKeypoint.new(1, Theme.accentFaint),
-            }),
-        })
 
-        local knobSize: number = state.layout.touch and 18 or 14
         local knob: Frame = (create("Frame", {
             Parent = track,
             Name = "Knob",
@@ -807,22 +798,26 @@ function Module.init(context: any): WidgetLibrary
             BackgroundColor3 = Theme.text,
             BorderSizePixel = 0,
             Position = UDim2.fromScale(0, 0.5),
-            Size = UDim2.fromOffset(knobSize, knobSize),
+            Size = UDim2.fromOffset(SLIDER_KNOB_WIDTH, SLIDER_KNOB_HEIGHT),
+            ZIndex = track.ZIndex + 2,
         }) :: any) :: Frame
-        create("UICorner", {
-            Parent = knob,
-            CornerRadius = UDim.new(1, 0),
-        })
 
         local valueInput: TextBox = (makeTextBox(slider, "") :: any) :: TextBox
         valueInput.Name = "NumericValue"
-        valueInput.AnchorPoint = Vector2.new(1, 0.5)
-        valueInput.Position = UDim2.new(1, 0, 0.5, 0)
-        valueInput.Size = UDim2.fromOffset(72, math.min(30, slider.Size.Y.Offset))
-        valueInput.TextColor3 = Theme.text
-        valueInput.TextXAlignment = Enum.TextXAlignment.Center
+        valueInput.AnchorPoint = Vector2.new(1, 0)
+        valueInput.Position = UDim2.new(1, -6, 0, -13)
+        valueInput.Size = UDim2.new(0.42, 0, 0, 15)
+        valueInput.BackgroundTransparency = 1
+        valueInput.TextColor3 = Theme.textMuted
+        valueInput.TextSize = 11
+        valueInput.TextXAlignment = Enum.TextXAlignment.Right
         valueInput.TextTruncate = Enum.TextTruncate.AtEnd
-        valueInput.ZIndex = slider.ZIndex + 1
+        valueInput.ZIndex = option.ZIndex + 2
+        local valueStroke: UIStroke? =
+            valueInput:FindFirstChild("StyleStroke") :: UIStroke?
+        if valueStroke then
+            (valueStroke :: UIStroke).Transparency = 1
+        end
         -- Spell out the accepted interval so a reader knows what the slider spans
         -- without having to drag it to both ends first.
         valueInput.PlaceholderText = formatCompactNumber(minimum)
@@ -953,30 +948,38 @@ function Module.init(context: any): WidgetLibrary
         local integerOnly: boolean = definition.integer ~= false
 
         local option: Frame = createOptionRow(feature, labelText, definition.hint)
+        -- Same two-line geometry as the single slider: label and interval on
+        -- the first line, the 5 px bar with two 7×11 knobs underneath.
+        option.Size = UDim2.new(1, 0, 0, 26)
+        local rangeLabel: TextLabel? =
+            option:FindFirstChild("OptionLabel") :: TextLabel?
+        if rangeLabel then
+            (rangeLabel :: TextLabel).Size = UDim2.new(0.55, -6, 0, 15)
+        end
         local slider: TextButton = (create("TextButton", {
             TextTruncate = Enum.TextTruncate.AtEnd,
-            ClipsDescendants = true,
             Parent = option,
             Name = "RangeSlider",
             Active = true,
             AutoButtonColor = false,
             BackgroundTransparency = 1,
             BorderSizePixel = 0,
+            Position = UDim2.new(0, 0, 0, 13),
+            Size = UDim2.new(1, 0, 0, 13),
             Text = "",
+            ZIndex = option.ZIndex + 1,
         }) :: any) :: TextButton
-        state.layoutOptionControl(option, slider, 0.5)
 
         local track: Frame = (create("Frame", {
-            Parent = slider,
+            Parent = option,
             Name = "Track",
-            AnchorPoint = Vector2.new(0, 0.5),
-            BackgroundColor3 = Theme.outline,
+            BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+            BackgroundTransparency = 0.9,
             BorderSizePixel = 0,
-            Position = UDim2.new(0, 0, 0.5, 0),
-            Size = UDim2.new(1, -66, 0, state.layout.touch and 7 or 5),
-            ZIndex = slider.ZIndex + 1,
+            Position = UDim2.new(0, 6, 0, 18),
+            Size = UDim2.new(1, -12, 0, SLIDER_BAR_HEIGHT),
+            ZIndex = option.ZIndex + 1,
         }) :: any) :: Frame
-        create("UICorner", {Parent = track, CornerRadius = UDim.new(1, 0)})
 
         -- Only the span between the two handles is filled: the fill *is* the
         -- interval the module rolls inside.
@@ -989,16 +992,7 @@ function Module.init(context: any): WidgetLibrary
             Size = UDim2.fromScale(1, 1),
             ZIndex = track.ZIndex + 1,
         }) :: any) :: Frame
-        create("UICorner", {Parent = span, CornerRadius = UDim.new(1, 0)})
-        create("UIGradient", {
-            Parent = span,
-            Color = ColorSequence.new({
-                ColorSequenceKeypoint.new(0, Theme.accent),
-                ColorSequenceKeypoint.new(1, Theme.accentFaint),
-            }),
-        })
 
-        local knobSize: number = state.layout.touch and 16 or 12
         local function makeKnob(name: string): Frame
             local knob: Frame = (create("Frame", {
                 Parent = track,
@@ -1007,24 +1001,29 @@ function Module.init(context: any): WidgetLibrary
                 BackgroundColor3 = Theme.text,
                 BorderSizePixel = 0,
                 Position = UDim2.fromScale(0, 0.5),
-                Size = UDim2.fromOffset(knobSize, knobSize),
+                Size = UDim2.fromOffset(SLIDER_KNOB_WIDTH, SLIDER_KNOB_HEIGHT),
                 ZIndex = track.ZIndex + 2,
             }) :: any) :: Frame
-            create("UICorner", {Parent = knob, CornerRadius = UDim.new(1, 0)})
             return knob
         end
         local lowKnob: Frame = makeKnob("Low")
         local highKnob: Frame = makeKnob("High")
 
-        local readout: TextLabel =
-            (makeTextLabel(slider, "", 11) :: any) :: TextLabel
-        readout.Name = "RangeValue"
-        readout.AnchorPoint = Vector2.new(1, 0.5)
-        readout.Position = UDim2.new(1, 0, 0.5, 0)
-        readout.Size = UDim2.fromOffset(62, 20)
-        readout.TextColor3 = Theme.text
-        readout.TextXAlignment = Enum.TextXAlignment.Right
-        readout.ZIndex = slider.ZIndex + 2
+        local readout: TextLabel = (create("TextLabel", {
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            Parent = option,
+            Name = "RangeValue",
+            AnchorPoint = Vector2.new(1, 0),
+            BackgroundTransparency = 1,
+            FontFace = CONTROL_FONT,
+            Position = UDim2.new(1, -6, 0, 0),
+            Size = UDim2.new(0.42, 0, 0, 15),
+            Text = "",
+            TextColor3 = Theme.textMuted,
+            TextSize = 11,
+            TextXAlignment = Enum.TextXAlignment.Right,
+            ZIndex = option.ZIndex + 2,
+        }) :: any) :: TextLabel
 
         local function alphaOf(value: number): number
             if maximum == minimum then
@@ -2164,28 +2163,70 @@ function Module.init(context: any): WidgetLibrary
         local optionKey = feature.configKey .. "." .. labelText:gsub("%W", "")
         local color = colorFromConfig(configData.values[optionKey], defaultColor)
         local option = createOptionRow(feature, labelText, hintText)
-        local swatch = makeButton(option, "", 10)
-        swatch.AutoButtonColor = false
-        swatch:SetAttribute("NoHover", true)
-        swatch.AnchorPoint = Vector2.new(1, 0)
-        swatch.Position = UDim2.new(
-            1,
-            -10,
-            0,
-            (tonumber(option:GetAttribute("ControlTop")) or 6) + 1
-        )
-        swatch.Size = UDim2.fromOffset(28, 28)
-        swatch.ZIndex = option.ZIndex + 2
-        swatch.BackgroundColor3 = color
-        create("UICorner", {
-            Parent = swatch,
-            CornerRadius = UDim.new(1, 0),
+        -- Wurst's colour line: the label, its hex on the right, and a thin
+        -- bar of the colour itself underneath. The round swatch it replaces
+        -- said "a colour lives here" without saying which one was readable.
+        option.Size = UDim2.new(1, 0, 0, 26)
+        local colorLabel: TextLabel? =
+            option:FindFirstChild("OptionLabel") :: TextLabel?
+        if colorLabel then
+            (colorLabel :: TextLabel).Size = UDim2.new(0.55, -6, 0, 15)
+        end
+
+        local hexValue: TextLabel = (create("TextLabel", {
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            Parent = option,
+            Name = "HexValue",
+            AnchorPoint = Vector2.new(1, 0),
+            BackgroundTransparency = 1,
+            FontFace = CONTROL_FONT,
+            Position = UDim2.new(1, -6, 0, 0),
+            Size = UDim2.new(0.42, 0, 0, 15),
+            Text = "",
+            TextColor3 = Theme.textMuted,
+            TextSize = 11,
+            TextXAlignment = Enum.TextXAlignment.Right,
+            ZIndex = option.ZIndex + 2,
+        }) :: any) :: TextLabel
+
+        local bar: Frame = (create("Frame", {
+            Parent = option,
+            Name = "ColorBar",
+            BackgroundColor3 = color,
+            BorderSizePixel = 0,
+            Position = UDim2.new(0, 6, 0, 18),
+            Size = UDim2.new(1, -12, 0, 6),
+            ZIndex = option.ZIndex + 1,
+        }) :: any) :: Frame
+
+        local swatch = create("TextButton", {
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            Parent = option,
+            Name = "ColorClickTarget",
+            Active = true,
+            AutoButtonColor = false,
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Size = UDim2.fromScale(1, 1),
+            Text = "",
+            ZIndex = option.ZIndex + 3,
         })
+
+        local function hexOf(value: Color3): string
+            return string.format(
+                "#%02X%02X%02X",
+                math.floor(value.R * 255 + 0.5),
+                math.floor(value.G * 255 + 0.5),
+                math.floor(value.B * 255 + 0.5)
+            )
+        end
+        hexValue.Text = hexOf(color)
 
         swatch.MouseButton1Click:Connect(function()
             colorPicker.open(color, function(newColor)
                 color = newColor
-                swatch.BackgroundColor3 = color
+                bar.BackgroundColor3 = color
+                hexValue.Text = hexOf(color)
                 configData.values[optionKey] = colorToConfig(color)
                 callback(color)
                 queueConfigSave()
@@ -5485,6 +5526,10 @@ local MARGIN: number = 6
 -- reads this constant and holds it to spec.json — a raw 26 here was already
 -- one pixel-decision drifting from the file that is supposed to decide it.
 local TITLE_HEIGHT: number = 22
+-- The prototype's `.tbar` font size, held by the same gate. The title used
+-- to go through makeTextLabel, whose 1.35 multiplier rendered it at 16 px —
+-- visibly heavier than the spec on every window at once.
+local TITLE_FONT_SIZE: number = 11.5
 
 function Module.init(context: any): any
     local host: any = context
@@ -5492,7 +5537,6 @@ function Module.init(context: any): any
     local configData: any = host.configData
     local queueConfigSave: any = host.queueConfigSave
     local create: any = host.create
-    local makeTextLabel: any = host.makeTextLabel
     local makeButton: any = host.makeButton
     local Theme: any = host.Theme
     local ThemeEngine: any = host.ThemeEngine
@@ -5863,9 +5907,15 @@ function Module.init(context: any): any
             }) :: Frame
             bind(squareOff, "BackgroundColor3", "accent")
 
-            local title: TextLabel = makeTextLabel(bar, definition.title or id, 12)
-            title.Name = "Title"
-            title.FontFace = CONTROL_FONT
+            local title: TextLabel = (create("TextLabel", {
+                TextTruncate = Enum.TextTruncate.AtEnd,
+                Parent = bar,
+                Name = "Title",
+                BackgroundTransparency = 1,
+                FontFace = CONTROL_FONT,
+                Text = definition.title or id,
+                TextSize = TITLE_FONT_SIZE,
+            }) :: any) :: TextLabel
             title.AnchorPoint = Vector2.new(0, 0.5)
             title.Position = UDim2.new(0, 8, 0.5, 0)
             title.Size = UDim2.new(1, -60, 1, 0)

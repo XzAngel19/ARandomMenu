@@ -88,8 +88,14 @@ return function(ctx: any): ()
     check("the new value is stored", configStates["Universal.Sample.Teamcheck"] == false)
     check("the config save is queued", host.saves > savesBefore)
 
-    toggleRow:FindFirstChild("OptionSwitch").MouseButton1Click:Fire()
-    check("clicking the switch flips it back", toggleSeen[#toggleSeen] == true)
+    -- Wurst's checkbox: the square in front of the label paints with the
+    -- enabled colour, and clicking the row again flips it back.
+    local checkbox: any = toggleRow:FindFirstChild("OptionCheckbox")
+    check("the row carries the square checkbox", checkbox ~= nil)
+    toggleRow:FindFirstChild("OptionClickTarget").MouseButton1Click:Fire()
+    check("clicking the row again flips it back", toggleSeen[#toggleSeen] == true)
+    check("the checkbox fills when on",
+        checkbox ~= nil and checkbox.BackgroundTransparency == 0)
 
     -- A stored value beats the default, or nothing a player changes survives a
     -- rejoin.
@@ -239,9 +245,9 @@ return function(ctx: any): ()
 
     -- Row geometry ----------------------------------------------------------------------
 
-    -- Every control type ends on the same edge. Panels mixing toggles, sliders and
-    -- key slots used to look ragged because each builder positioned its own
-    -- control, and this is the shared band that fixed it.
+    -- Wurst's line: every label starts on the same left edge, and a slider's
+    -- bar is the prototype's 5 px spanning the row. The old assertion pinned
+    -- the right-hand control band that died with the card-style rows.
     local geometryPanel: any = newPanel("Universal.Geometry")
     widgets.addToggleOption(geometryPanel, "One", false, function(): () end)
     widgets.addNumberOption(geometryPanel, "Two", 1, 0, 10, function(): () end)
@@ -252,23 +258,23 @@ return function(ctx: any): ()
         world.globals.Enum.KeyCode.Unknown,
         function(): () end
     )
-    local rightEdges: {number} = {}
+    local flatRows: boolean = #geometryPanel.optionRows == 4
     for _, row: any in ipairs(geometryPanel.optionRows) do
-        for _, child: any in ipairs(row:GetChildren()) do
-            if child.Name == "Slider" or child.Name == "OptionSwitch"
-                or (child.ClassName == "TextButton" and child.Name ~= "OptionClickTarget") then
-                table.insert(rightEdges, child.Position.X.Offset)
-            end
+        if row.BackgroundTransparency ~= 1 then
+            flatRows = false
         end
     end
-    local sameEdge: boolean = #rightEdges > 0
-    for _, offset: number in ipairs(rightEdges) do
-        if offset ~= -10 then
-            sameEdge = false
-        end
-    end
-    check("every control ends on the same edge", sameEdge,
-        "offsets: " .. table.concat(rightEdges :: any, ", "))
+    check("every row is a flat line, not a card", flatRows)
+    local geometryTrack: any =
+        geometryPanel.optionRows[2]:FindFirstChild("Slider"):FindFirstChild("Track")
+    check("the slider bar is the prototype's 5 px",
+        geometryTrack ~= nil and geometryTrack.Size.Y.Offset == 5,
+        geometryTrack and tostring(geometryTrack.Size.Y.Offset) or "none")
+    local geometryKnob: any = geometryTrack and geometryTrack:FindFirstChild("Knob")
+    check("the knob is the prototype's 7×11",
+        geometryKnob ~= nil
+            and geometryKnob.Size.X.Offset == 7
+            and geometryKnob.Size.Y.Offset == 11)
 
     -- Action, range and list ------------------------------------------------------------
 
