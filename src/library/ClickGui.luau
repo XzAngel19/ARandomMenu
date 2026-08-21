@@ -43,6 +43,7 @@ local activeCleanup: (() -> ())? = nil
 local WINDOW_WIDTH: number = 160
 local WINDOW_MAX_HEIGHT: number = 300
 local GRID_MARGIN: number = 12
+local WINDOW_GAP: number = 2
 local GRID_GAP: number = 8
 local TITLE_HEIGHT: number = 22
 
@@ -75,6 +76,9 @@ function Module.init(context: any): any
     local ClickGui: any = {
         categories = {} :: {[string]: CategoryWindow},
         order = {} :: {string},
+        -- Signals this library opens itself, as opposed to the ones the window
+        -- manager opens on its behalf and releases with the window.
+        connections = {} :: {RBXScriptConnection},
     }
 
     -- Left to right until the next window would not fit, then down. Measured
@@ -116,15 +120,15 @@ function Module.init(context: any): any
 
         local layout: UIListLayout = create("UIListLayout", {
             Parent = window.body,
-            Padding = UDim.new(0, 2),
+            Padding = UDim.new(0, WINDOW_GAP),
             SortOrder = Enum.SortOrder.LayoutOrder,
         }) :: UIListLayout
         create("UIPadding", {
             Parent = window.body,
-            PaddingTop = UDim.new(0, 2),
-            PaddingBottom = UDim.new(0, 2),
-            PaddingLeft = UDim.new(0, 2),
-            PaddingRight = UDim.new(0, 2),
+            PaddingTop = UDim.new(0, WINDOW_GAP),
+            PaddingBottom = UDim.new(0, WINDOW_GAP),
+            PaddingLeft = UDim.new(0, WINDOW_GAP),
+            PaddingRight = UDim.new(0, WINDOW_GAP),
         })
 
         local record: CategoryWindow = {
@@ -149,7 +153,10 @@ function Module.init(context: any): any
                 window.root.Size = UDim2.fromOffset(WINDOW_WIDTH, wanted)
             end
         end
-        layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(resize)
+        table.insert(
+            ClickGui.connections,
+            layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(resize)
+        )
         resize()
         record.resize = resize :: any
         return record
@@ -210,6 +217,12 @@ function Module.init(context: any): any
                 end)
             end
         end
+        for _, connection: RBXScriptConnection in ipairs(ClickGui.connections) do
+            pcall(function(): ()
+                connection:Disconnect()
+            end)
+        end
+        ClickGui.connections = {}
         ClickGui.categories = {}
         ClickGui.order = {}
         state.clickGui = nil

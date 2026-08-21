@@ -81,8 +81,14 @@ return function(ctx: any): ()
         return
     end
 
+    -- A window id is a persistence key, so the categories namespace theirs:
+    -- "Utility" as a bare key would collide the day anything else wants to be
+    -- called Utility, and the collision would silently restore one window's
+    -- position onto the other.
     local function hasWindow(id: string): boolean
-        return windows.Get(id) ~= nil or windows.Get(string.lower(id)) ~= nil
+        return windows.Get("ClickGui_" .. id) ~= nil
+            or windows.Get(id) ~= nil
+            or windows.Get(string.lower(id)) ~= nil
     end
 
     -- The taxonomy the framework already files cards under. Spoof, Favourites

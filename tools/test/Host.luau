@@ -118,6 +118,12 @@ function Host.create(world: any): HostStub
         -- The real factory gives every feature its row. Cards that hide
         -- themselves (VD's killer-only proximity widget) read `.row`.
         feature.row = create("Frame", {Name = name .. "Row"})
+        -- The real factory puts this on every card, which is the whole reason
+        -- all thirty-eight modules can publish a HUD status. A stand-in that
+        -- omits it makes the twenty legacy modules throw here and nowhere else.
+        function feature:SetStatus(status: string?): ()
+            feature.status = status
+        end
         function feature.activate(): ()
             -- Action cards run and keep no state, exactly like the real card.
             if feature.kind == "action" then

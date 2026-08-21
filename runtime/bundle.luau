@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "9773a704d95c6125",
+    stamp = "cb3f7f1f84a143d9",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -5484,6 +5484,10 @@ local SNAP_DISTANCE: number = 8
 -- tooltips, which have to be able to appear over anything.
 local BASE_Z: number = 150
 local MARGIN: number = 6
+-- The prototype's title bar. Named rather than inline because the parity gate
+-- reads this constant and holds it to spec.json — a raw 26 here was already
+-- one pixel-decision drifting from the file that is supposed to decide it.
+local TITLE_HEIGHT: number = 22
 
 function Module.init(context: any): any
     local host: any = context
@@ -5643,7 +5647,18 @@ function Module.init(context: any): any
             fullHeight = root.Size.Y.Offset,
             headerHeight = definition.headerHeight or 0,
             layered = definition.layered == true,
+            -- The manager makes these, so the manager releases them. They are
+            -- also handed to the shell's tracker, which only runs at teardown:
+            -- a window destroyed before that used to leave its drag listeners
+            -- connected to an instance that no longer existed.
+            connections = {} :: {RBXScriptConnection},
         }
+
+        local function own(connection: RBXScriptConnection): RBXScriptConnection
+            table.insert(window.connections, connection)
+            trackUiConnection(connection)
+            return connection
+        end
 
         if type(saved) == "table" and saved.x and saved.y then
             local landed: Vector2 = clamp(
@@ -5686,6 +5701,12 @@ function Module.init(context: any): any
                 table.remove(manager.list, index)
             end
             manager.byId[id] = nil
+            for _, connection: RBXScriptConnection in ipairs(window.connections) do
+                pcall(function(): ()
+                    connection:Disconnect()
+                end)
+            end
+            window.connections = {}
             root:Destroy()
         end
 
@@ -5701,10 +5722,10 @@ function Module.init(context: any): any
             root.Position.Y.Offset
         )
 
-        trackUiConnection(root.InputBegan:Connect(function(): ()
+        own(root.InputBegan:Connect(function(): ()
             raise(window)
         end))
-        trackUiConnection(dragHandle.InputBegan:Connect(function(
+        own(dragHandle.InputBegan:Connect(function(
             input: InputObject
         ): ()
             if requiresMenuOpen and not state.visible then
@@ -5722,7 +5743,7 @@ function Module.init(context: any): any
                 raise(window)
             end
         end))
-        trackUiConnection(UserInputService.InputChanged:Connect(function(
+        own(UserInputService.InputChanged:Connect(function(
             input: InputObject
         ): ()
             if not dragging then
@@ -5739,7 +5760,7 @@ function Module.init(context: any): any
                 root.Position = UDim2.fromOffset(landed.X, landed.Y)
             end
         end))
-        trackUiConnection(UserInputService.InputEnded:Connect(function(
+        own(UserInputService.InputEnded:Connect(function(
             input: InputObject
         ): ()
             if dragging
@@ -5751,7 +5772,7 @@ function Module.init(context: any): any
             end
         end))
         if window.closeButton then
-            trackUiConnection(
+            own(
                 (window.closeButton :: TextButton).MouseButton1Click:Connect(function(): ()
                     root.Visible = false
                     if definition.onClose then
@@ -5769,7 +5790,7 @@ function Module.init(context: any): any
     function manager.Create(definition: WindowDefinition): any
         local id: string = definition.id
         local bare: boolean = definition.chromeless == true
-        local headerHeight: number = bare and 0 or 26
+        local headerHeight: number = bare and 0 or TITLE_HEIGHT
         local saved: any = configData.ui.windows[id]
 
         local position: Vector2 = definition.position
@@ -5801,6 +5822,9 @@ function Module.init(context: any): any
         -- because that does run immediately and used to index a nil table.
         local window: any = nil
         local paintChrome: {() -> ()} = {}
+        -- The chrome is wired before Adopt exists to own it, so its
+        -- connections are parked here and handed over below.
+        local chromeConnections: {RBXScriptConnection} = {}
         local header: Frame? = nil
         local closeButton: TextButton? = nil
 
@@ -5877,14 +5901,14 @@ function Module.init(context: any): any
                         or Theme.accent
                 end
                 table.insert(paintChrome, paintPin)
-                trackUiConnection(pin.MouseButton1Click:Connect(function(): ()
+                table.insert(chromeConnections, pin.MouseButton1Click:Connect(function(): ()
                     window:SetPinned(not window.pinned)
                     paintPin()
                 end))
             end
             if definition.collapsible ~= false then
                 local chevron: TextButton = chromeButton("–")
-                trackUiConnection(chevron.MouseButton1Click:Connect(function(): ()
+                table.insert(chromeConnections, chevron.MouseButton1Click:Connect(function(): ()
                     window:SetCollapsed(not window.collapsed)
                     chevron.Text = window.collapsed and "+" or "–"
                 end))
@@ -5925,6 +5949,10 @@ function Module.init(context: any): any
             onClose = definition.onClose,
         })
         adopted.fullHeight = definition.size.Y
+        for _, connection: RBXScriptConnection in ipairs(chromeConnections) do
+            table.insert(adopted.connections, connection)
+            trackUiConnection(connection)
+        end
         window = adopted
         for _, paint: () -> () in ipairs(paintChrome) do
             paint()
@@ -6047,6 +6075,7 @@ local activeCleanup: (() -> ())? = nil
 local WINDOW_WIDTH: number = 160
 local WINDOW_MAX_HEIGHT: number = 300
 local GRID_MARGIN: number = 12
+local WINDOW_GAP: number = 2
 local GRID_GAP: number = 8
 local TITLE_HEIGHT: number = 22
 
@@ -6079,6 +6108,9 @@ function Module.init(context: any): any
     local ClickGui: any = {
         categories = {} :: {[string]: CategoryWindow},
         order = {} :: {string},
+        -- Signals this library opens itself, as opposed to the ones the window
+        -- manager opens on its behalf and releases with the window.
+        connections = {} :: {RBXScriptConnection},
     }
 
     -- Left to right until the next window would not fit, then down. Measured
@@ -6120,15 +6152,15 @@ function Module.init(context: any): any
 
         local layout: UIListLayout = create("UIListLayout", {
             Parent = window.body,
-            Padding = UDim.new(0, 2),
+            Padding = UDim.new(0, WINDOW_GAP),
             SortOrder = Enum.SortOrder.LayoutOrder,
         }) :: UIListLayout
         create("UIPadding", {
             Parent = window.body,
-            PaddingTop = UDim.new(0, 2),
-            PaddingBottom = UDim.new(0, 2),
-            PaddingLeft = UDim.new(0, 2),
-            PaddingRight = UDim.new(0, 2),
+            PaddingTop = UDim.new(0, WINDOW_GAP),
+            PaddingBottom = UDim.new(0, WINDOW_GAP),
+            PaddingLeft = UDim.new(0, WINDOW_GAP),
+            PaddingRight = UDim.new(0, WINDOW_GAP),
         })
 
         local record: CategoryWindow = {
@@ -6153,7 +6185,10 @@ function Module.init(context: any): any
                 window.root.Size = UDim2.fromOffset(WINDOW_WIDTH, wanted)
             end
         end
-        layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(resize)
+        table.insert(
+            ClickGui.connections,
+            layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(resize)
+        )
         resize()
         record.resize = resize :: any
         return record
@@ -6214,6 +6249,12 @@ function Module.init(context: any): any
                 end)
             end
         end
+        for _, connection: RBXScriptConnection in ipairs(ClickGui.connections) do
+            pcall(function(): ()
+                connection:Disconnect()
+            end)
+        end
+        ClickGui.connections = {}
         ClickGui.categories = {}
         ClickGui.order = {}
         state.clickGui = nil
