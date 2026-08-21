@@ -252,6 +252,80 @@ if [ -n "$luau_analyze" ]; then
         exit 1
     fi
     rm -f "$lint_output"
+
+    # Free globals in a downloaded file.
+    #
+    # Every file under src/ runs with its environment set to the table the
+    # shell builds, so a bare name that is not a local is read from that table
+    # — and is nil when the shell does not publish it. Nothing complains: the
+    # file compiles, loads, and dies the first time it reaches that line.
+    #
+    # Two real defects were sitting in the tree when this was added. The
+    # settings page read `registeredText` and `executorGlobals`, two bootstrap
+    # locals it used to sit beside. And Anti-Fling read `flingRunning` the same
+    # way, so it never stood down during a fling of your own — it fought the
+    # feature it was written to make room for.
+    analyze_output="$(mktemp)"
+    : > "$analyze_output"
+    while IFS= read -r file; do
+        case "$file" in ./src/*) ;; *) continue ;; esac
+        # luau-analyze exits non-zero on any type error, and this repository
+        # has many that are not defects: no Roblox type definitions are fed to
+        # it. Only the unknown-global lines matter here.
+        "$luau_analyze" --defs=env.d.luau "$file" 2>&1 \
+            | sed -n "s#^\(\./[^(]*\)(.*Unknown global '\([^']*\)'.*#\1 \2#p" \
+            >> "$analyze_output" || true
+    done < <(source_files)
+    global_output="$(mktemp)"
+    ANALYZE_OUTPUT="$analyze_output" GLOBAL_OUTPUT="$global_output" python3 - <<'PYTHON'
+import os
+import re
+import sys
+
+sys.path.insert(0, "tools")
+from check_contracts import environment_keys
+
+# `luau-analyze` has no Roblox definitions here, so it reports every free
+# global — `Enum` included. What Roblox itself puts in scope is listed once
+# below; what the *executor* puts in scope is read from env.d.luau, which
+# exists for exactly that purpose and is therefore the only place to add one.
+ROBLOX = {
+    "game", "workspace", "task", "warn", "print", "require", "shared", "script",
+    "tick", "time", "typeof", "delay", "spawn", "wait", "unpack", "newproxy",
+    "gcinfo", "settings", "utf8", "bit32", "buffer", "vector", "debug",
+    "Enum", "Instance", "Color3", "ColorSequence", "ColorSequenceKeypoint",
+    "NumberSequence", "NumberSequenceKeypoint", "NumberRange", "Vector2",
+    "Vector3", "CFrame", "UDim", "UDim2", "TweenInfo", "Ray", "Rect", "Region3",
+    "Font", "BrickColor", "Random", "Axes", "Faces", "PhysicalProperties",
+    "OverlapParams", "RaycastParams", "DateTime", "CatalogSearchParams",
+}
+declarations = open("env.d.luau").read()
+EXECUTOR = set(re.findall(r"^declare (?:function )?(\w+)", declarations, re.M))
+
+published = environment_keys(open("ARandomMenu.luau").read()) | ROBLOX | EXECUTOR
+failures = []
+seen = set()
+for line in open(os.environ["ANALYZE_OUTPUT"]):
+    parts = line.split()
+    if len(parts) != 2:
+        continue
+    path, name = parts
+    if name in published or (path, name) in seen:
+        continue
+    seen.add((path, name))
+    failures.append(f"{path}: reads the global '{name}', which the shell never publishes")
+with open(os.environ["GLOBAL_OUTPUT"], "w") as handle:
+    handle.write("\n".join(sorted(failures)))
+    if failures:
+        handle.write("\n")
+PYTHON
+    rm -f "$analyze_output"
+    if [ -s "$global_output" ]; then
+        cat "$global_output"
+        rm -f "$global_output"
+        exit 1
+    fi
+    rm -f "$global_output"
     echo "ok"
 else
     echo "skipped (luau-analyze not found)"

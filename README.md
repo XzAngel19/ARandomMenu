@@ -641,7 +641,7 @@ appear for the modes that use them.
 line, `init`/`destroy`, its own card, and nothing in the shell that knows it
 exists.
 
-The shell is **16,688 → 10,429 lines**, and **no feature card is left in it**.
+The shell is **16,688 → 9,742 lines**, and **no feature card is left in it**.
 
 One thing the move taught, worth writing down: the remaining features lived
 inside a single enormous `do ... end` that existed only to hand registers back
@@ -687,8 +687,40 @@ selection, and every control type in a mixed panel ends on the same pixel. That
 last one is the shared control band the comments have always claimed exists;
 now something checks it.
 
-The queue: Item Render and the remaining game marks onto `Render.luau`, then
-the settings page and the mobile action layer out of the shell.
+### The settings page
+
+The Config. tab was another eight hundred lines of `ARandomMenu.luau`: interface
+scale and typeface, blur, animations, the toggle key, re-inject, destruct, the
+detected game and the mobile action size. None of it is shell logic — it is a
+page of controls exactly like a module's panel — and it is
+`src/library/SettingsPage.luau` now, built the first time the tab is opened
+rather than at startup.
+
+Moving it surfaced a class of bug worth a check of its own. Every file under
+`src/` runs with its environment set to the table the shell builds, so a bare
+name that is not a local is read from that table and is **nil** when the shell
+does not publish it. Nothing complains: the file compiles, loads, and dies the
+first time it reaches that line. The settings page carried two of them out of
+the shell (`registeredText` and `executorGlobals`, bootstrap locals it used to
+sit beside), and once the check existed it found three more that had been in
+the tree for weeks:
+
+- **Anti-Fling** read `flingRunning`, a local of the shell it once lived in. As
+  a global it is nil, so the module never stood down during a fling of your own
+  — it fought the feature it was written to make room for.
+- **MM2's Role Fling** did `repeat task.wait(0.05) until not flingRunning` for
+  the same reason. `not nil` is true, so the wait fell straight through and
+  every target was flung on top of the last.
+- **MVSD's teardown** called `destroyAllEsp()`, a function that stopped
+  existing when MVSD's marks were folded into the universal ESP. It threw, and
+  the two lines of cleanup after it never ran.
+
+The check reads what the executor provides from `env.d.luau` and what the shell
+provides from the environment table itself, so there is no hand-kept list to go
+stale.
+
+The queue: the mobile action layer and the floating windows out of the shell,
+then `state` into typed tables.
 
 ## Module architecture
 
@@ -703,6 +735,7 @@ src/
     Framework.luau       kernel: categories, modules, options, cleanup
   library/
     Widgets.luau         every control an option row is built from
+    SettingsPage.luau    the Config. tab, built the first time it is opened
     Entity.luau          player/character cache, team checks, ray queries
     Render.luau          projection, pooled boxes/lines/labels, highlights
   modules/

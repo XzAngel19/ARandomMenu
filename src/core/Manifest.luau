@@ -38,6 +38,10 @@ local Manifest: Manifest = {
         "src/library/Entity.luau",
         "src/library/Weapons.luau",
         "src/library/Render.luau",
+        -- Not a service the modules ask for: it fills the Config. tab. It is
+        -- listed here because it needs the same environment and the same
+        -- start-once/stop-once handling every other library gets.
+        "src/library/SettingsPage.luau",
     },
     modules = {
         -- Friend List comes first: every targeting module below asks it who

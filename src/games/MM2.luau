@@ -5038,9 +5038,14 @@ addActionOption(FlingGroup, "Fling All Innocents", function()
                 local target = playerFromRoundKey(key, data)
                 if target and target ~= LocalPlayer then
                     performFling(target)
+                    -- Wait for the fling to land before starting the next
+                    -- one. This used to read a bare `flingRunning`, a local
+                    -- of the shell it once sat inside; as a global it is nil,
+                    -- `not nil` is true, and the loop fell straight through —
+                    -- so every target was flung on top of the last.
                     repeat
                         task.wait(0.05)
-                    until not flingRunning
+                    until not state.flingRunning
                 end
             end
         end

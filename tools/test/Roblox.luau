@@ -437,6 +437,20 @@ local function newInstance(className: string): any
     if className == "TextBox" then
         instance.Focused = signal()
         instance.FocusLost = signal()
+        -- Controls that write into their own field have to know whether the
+        -- player is mid-edit, or a background refresh overwrites what is
+        -- being typed. The harness is never focused unless a test says so.
+        function instance:IsFocused(): boolean
+            return rawget(self, "Focusing") == true
+        end
+        function instance:CaptureFocus(): ()
+            rawset(self, "Focusing", true)
+            self.Focused:Fire()
+        end
+        function instance:ReleaseFocus(enterPressed: boolean?): ()
+            rawset(self, "Focusing", false)
+            self.FocusLost:Fire(enterPressed == true)
+        end
     end
     if className == "Tool" then
         -- Kill Aura learns which weapon you swing by watching this one.
@@ -584,6 +598,10 @@ function Mock.install(): MockWorld
         ScaleType = enumFolder({"Crop", "Fit", "Stretch"}),
         AnimationPriority = enumFolder({"Action", "Movement", "Idle", "Core"}),
         AutomaticSize = enumFolder({"None", "X", "Y", "XY"}),
+        ScrollingDirection = enumFolder({"X", "Y", "XY"}),
+        FillDirection = enumFolder({"Horizontal", "Vertical"}),
+        HorizontalAlignment = enumFolder({"Left", "Center", "Right"}),
+        VerticalAlignment = enumFolder({"Top", "Center", "Bottom"}),
         TextTruncate = enumFolder({"None", "AtEnd", "SplitWord"}),
         AvatarItemType = enumFolder({"Asset", "Bundle"}),
         AvatarAssetType = enumFolder({"EmoteAnimation"}),

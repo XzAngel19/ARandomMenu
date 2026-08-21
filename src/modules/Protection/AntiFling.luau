@@ -27,6 +27,7 @@ function Module.init(context: Runtime): any
     local featureConnections: any = host.featureConnections
     local disconnectFeatureConnection: any = host.disconnectFeatureConnection
     local getCharacterParts: any = host.getCharacterParts
+    local state: any = host.state
     local createUniversalFeature: any = host.createUniversalFeature
     local addNumberOption: any = host.addNumberOption
     local antiFlingSettings = {velocityLimit = 120}
@@ -41,7 +42,9 @@ function Module.init(context: Runtime): any
         end
 
         featureConnections.AntiFling = TaskManager:Connect(function()
-            if flingRunning then
+            -- Your own fling is deliberate; standing on the brakes during it
+            -- is the module fighting its owner.
+            if state.flingRunning then
                 return
             end
 

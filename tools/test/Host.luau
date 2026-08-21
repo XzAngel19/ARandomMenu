@@ -534,7 +534,64 @@ function Host.create(world: any): HostStub
         host.saves += 1
     end
 
-    host.state.layout = {optionRowHeight = 34, touch = false}
+    -- The Config. tab and the layout helper that files a row into a card
+    -- grid. The settings page fills a page the shell owns; the harness owns a
+    -- plain frame instead, which is all the page ever writes into.
+    host.SettingsPage = create("Frame", {Parent = screenGui, Name = "SettingsPage"})
+    host.getFeatureCardParent = function(container: any): any
+        return container
+    end
+    host.setKeySlotCapture = function(button: any, active: boolean): ()
+        button:SetAttribute("Capturing", active)
+    end
+    host.GAME_CHECK = {
+        MM2 = 142823291,
+        MM2Active = false,
+        source = "none",
+    }
+    host.REPOSITORY_RAW_BASE = "https://example.invalid/"
+    host.RUNTIME_SAFETY_SOURCE_URL = "https://example.invalid/ARandomMenu.luau"
+    host.RUNTIME_COMPATIBILITY_MARKER = "test-marker"
+    host.SOURCE_STAMP = "testtesttesttest"
+    -- Every label registered for text scaling. The three make* helpers feed
+    -- it in the shell; here it starts empty and the settings page walks it.
+    host.registeredText = {}
+    -- The mobile shortcut layer, as the shell publishes it. The settings page
+    -- resizes every placed button when the size slider moves, so the harness
+    -- needs the registry even when it is empty.
+    host.state.mobileUi = {
+        actions = {},
+        setActionVisibility = function(_visible: boolean): () end,
+        resetActions = function(): () end,
+        clampButtonPosition = function(at: any, _size: number): any
+            return at
+        end,
+        saveActionPosition = function(_record: any): () end,
+    }
+    host.TEXT_BASE_MULTIPLIER = 1.35
+    host.TEXT_SCALE_MINIMUM = 0.8
+    host.TEXT_SCALE_MAXIMUM = 1.2
+
+    host.state.layout = {optionRowHeight = 34, cardHeight = 38, touch = false}
+    host.state.textScale = 1
+    host.state.animationsEnabled = true
+    host.state.blurEnabled = false
+    host.state.mobileButtonSize = 46
+    host.state.toggleKey = world.globals.Enum.KeyCode.E
+    host.state.onLayout = function(_listener: any): () end
+    host.state.fitTextSize = function(_object: any, size: number): number
+        return size
+    end
+    host.state.refitText = function(): () end
+    host.state.setBlurVisible = function(_visible: boolean): () end
+    host.state.refreshBlurDecoration = function(): () end
+    host.state.listInterfaceFonts = function(): {string}
+        return {"Menu default", "Monocraft"}
+    end
+    host.state.applyInterfaceFont = function(_name: string, _persist: boolean?): () end
+    host.state.destruct = function(): ()
+        world.destructed = true
+    end
     host.state.guiStyle = "Default"
     host.state.isMobile = false
     host.state.addMenuVisibilityListener = function(listener: any): ()

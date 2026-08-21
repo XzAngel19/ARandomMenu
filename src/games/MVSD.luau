@@ -1041,7 +1041,10 @@ local function buildMVSDFeatures(): ()
             runtime.visuals.root:Destroy()
             runtime.visuals = nil
         end
-        destroyAllEsp()
+        -- No local ESP left to destroy: MVSD's marks were folded into the
+        -- universal Player ESP, and the call to the function that drew them
+        -- outlived the function itself. It threw, and the teardown below it
+        -- never ran.
         runtime.selected = nil
         table.clear(runtime.motion)
     end

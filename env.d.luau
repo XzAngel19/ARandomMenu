@@ -33,6 +33,12 @@ declare function getconnections(signal: any): {any}
 
 declare function getcustomasset(path: string): string
 
+-- Interaction helpers. MM2's loop-interact fires the game's own prompts and
+-- click detectors rather than walking the player into them.
+declare function fireclickdetector(detector: any, distance: number?): ()
+
+declare function fireproximityprompt(prompt: any, amount: number?): ()
+
 type Feature = {
     name: string,
     enabled: boolean,

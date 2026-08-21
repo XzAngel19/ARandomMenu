@@ -40,6 +40,16 @@ function Module.init(context: Runtime): any
     -- names in the shell; here they are locals of the module, declared before
     -- the closures that assign them so nothing reads a global by accident.
     local flingRunning: boolean = false
+    -- Published as well as held.
+    --
+    -- Anti-Fling stands down while a fling of your own is in flight. It used
+    -- to read this as a file-scope local it sat beside; once both features
+    -- became modules that read became a global, which is nil, so Anti-Fling
+    -- never stood down and fought the fling it was supposed to allow.
+    local function setFlingRunning(running: boolean): ()
+        flingRunning = running
+        state.flingRunning = running
+    end
     local findPlayerByText: (string) -> Player?
     local performFling: (Player) -> ()
 
@@ -119,11 +129,11 @@ function Module.init(context: Runtime): any
             return
         end
 
-        flingRunning = true
+        setFlingRunning(true)
         task.spawn(function(): ()
             local _, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
             if not humanoid or not root then
-                flingRunning = false
+                setFlingRunning(false)
                 notify("Your character is not ready.")
                 return
             end
@@ -246,7 +256,7 @@ function Module.init(context: Runtime): any
                     savedCameraSubject or finalHumanoid or humanoid
             end
 
-            flingRunning = false
+            setFlingRunning(false)
             if not success then
                 notify("Fling failed: " .. tostring(errorMessage))
             elseif touchedTarget then
@@ -320,7 +330,7 @@ function Module.init(context: Runtime): any
     )
 
     activeCleanup = function(): ()
-        flingRunning = false
+        setFlingRunning(false)
     end
     Module.Initialized = true
     return FlingFeature
