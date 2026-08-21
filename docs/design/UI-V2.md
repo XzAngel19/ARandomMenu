@@ -1,172 +1,167 @@
-# UI v2 — Rail + Canvas
+# UI v2 — the ClickGUI
 
-The menu's chrome is being rebuilt. This document is the target: what it looks
-like, what survives from today's menu, what is deleted, and in what order the
-work happens so the menu is usable at the end of every phase.
+The menu's chrome is being rebuilt. This document is the target.
 
-Mockups: `docs/design/mock-hero.jpg` (the layout and the accent),
-`docs/design/mock-home.jpg` (the Home window), `docs/design/mock-themes.jpg`
-(one window under four themes). `mock-canvas.jpg` is the earlier, colder
-version — kept because the *structure* in it is still right and the comparison
-is the whole point of this document.
+**Wurst is the reference.** Not "inspired by" — the interaction model, the
+density and the customisation surface are copied deliberately, then dressed in
+our own type and spacing. The two screenshots the user supplied are in
+`docs/design/reference/`:
 
-## References, and what each one is for
-
-**Wurst Client's ClickGUI** — the interaction model. Independent windows, one
-per category, dragged where the player wants them. A title bar with a collapse
-chevron. A feature is a row, and a row with settings expands *in place* rather
-than opening a second panel. Nothing is modal, nothing is a page, the layout
-belongs to the player and it persists.
-
-**The Roblox in-game menu** — the surface language. A fixed left rail of icon +
-label, translucent near-black panels, 10-12 px corners, thin dividers instead of
-boxes, generous padding, soft hover. It is the part of Roblox already designed
-to sit on top of a Roblox game.
-
-**Matcha** — the part the first draft was missing. Matcha is dark and simple and
-still does not look like a debug tool, and the reason is that it spends its one
-accent colour *generously* and it surrounds the content with furniture: a
-full-width status strip with FPS, ping and a clock; a build stamp along the
-bottom; toasts in the corner; a list of what is currently enabled. None of that
-is decoration for its own sake — every piece of it answers a question the player
-actually has.
-
-**Today's module row** — kept as-is. The card, the toggle, the keybind pill, the
-favourite and the three-dot menu are the one part of the current menu that is
-finished.
-
-## The correction: alive, not decorated
-
-The first draft was monochrome to the point of being furniture-grade. It read as
-careful and it read as dead. The fix is not more colour everywhere; it is **one
-saturated accent that carries meaning**, and enough chrome around the content
-that the menu feels inhabited.
-
-The accent is never decorative. It means *this is on, this is where you are,
-this is what you are changing*:
-
-| Accent appears | Because |
+| File | What to take from it |
 |---|---|
-| The indicator square of an enabled module, filled, with a soft glow | On/off is the single most-read piece of state in the menu |
-| The rail item you are looking at, as a bar down its left edge | Where you are |
-| The fill of a slider, left of the knob | How much of the range you have taken |
-| A keybind pill, outlined, only when a key is actually bound | Bound and unbound must differ at a glance |
-| A hairline along the top edge of the focused window | Which window has focus, without a heavy border |
-| The count badge on a rail category | How many modules are running in there |
+| `ref-wurst-719.jpg` | The whole ClickGUI: window grid, accent title bars, filled enabled rows, the HackList down the right, the logo and version top-left |
+| `ref-wurst-cyan.jpg` | The Client Settings window — the exact list of things a user is allowed to recolour, and proof the same UI reads completely differently in another palette |
+| `ref-wurst-settings.jpg` | Per-feature settings windows popped out on their own, colour rows with a hex and a bar |
+| `ref-roblox-pill.jpg` | The floating rounded pill toolbar — this is our launcher |
 
-Everything else stays near-black and grey. Two competing hues at once is the
-thing that makes a menu look like a skin pack.
+Matcha stays a secondary reference for the furniture (a stats block, toasts, a
+list of what is running), not for the layout.
 
-Semantic colours are not the accent and never become it. Health green, danger
-red and MM2's role colours label game data; a theme that recolours "murderer"
-is a theme that lies.
+Our mockups: `mock-clickgui.jpg` (layout — the row *labels* in it are generated
+nonsense, read the shapes), `mock-settings.jpg` (a window and the UI Settings
+window, legible).
 
-## The chrome
+## The shape of it
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│ ◈ ARANDOMMENU │ Player123          FPS 144 │ 28 MS │ 12:34 PM │  status strip
-├────┬─────────────────────────────────────────────────────────┤
-│ ▣  │  ┌─ Combat ───────── ⌃ ┐   ┌─ Visuals ─────────── ⌄ ┐    │
-│ ▤  │  │ ■ Aimbot    [V] ⋯   │   │ ■ ESP          [X] ⋯   │    │
-│ ▥ ③│  │ □ Triggerbot    ⋯   │   │ ⌄ □ Chams          ⋯   │    │
-│ ▦  │  └─────────────────────┘   │     Transparency        │    │
-│ ⚙  │                            │     ──────●─────        │    │
-└────┴────────────────────────────┴─────────────────────────┴───┘
-  Ready · v2.1 · Default profile        ┌ ! Game update detected ┐
+ ARANDOMMENU v2.1      ⌜ ☰ ◷ ▤ ✕ ⚙ ⌝            Speed [CFrame ×2]
+ FPS  144                  the pill                   Fly
+ PING  28                                          Player ESP
+ TIME 01:14                                        Anti-Fling
+                                                     HUD list
+ ┌ COMBAT ────── – 📌┐  ┌ MOVEMENT ─── – 📌┐
+ │ Kill Aura      [V]▸│  │ Speed      [F] ▸│
+ │ Aim Assist        ▸│  │ Fly            ▸│
+ │ Trigger Bot        │  │ Noclip          │
+ └────────────────────┘  │ Spider         ▸│
+ ┌ VISUALS ───── – 📌┐  └─────────────────┘
+ │ Player ESP     [X]▾│
+ │   Boxes    Corner ▾│
+ │   Thickness ──●─ 2 │
+ │   ☐ Filled box     │
+ │   Colour  #F0F0F0  │
+ │   ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁  │
+ │ Chams              │
+ └────────────────────┘
 ```
 
-- **Status strip**, full width, top: wordmark, your name, FPS, ping, clock, and
-  the active game module. Numbers in the accent.
-- **Rail**, left, fixed width, a launcher rather than a tab bar — clicking a
-  category opens its window if closed and raises it if open. Badge = modules
-  running in that category.
-- **Canvas**: the windows, draggable, snapping to edges and to each other,
-  remembering position, size, collapse, pin and z-order per profile.
-- **Status line**, bottom left: build stamp, profile, ready state.
-- **Toasts**, bottom right: keybind fired, config saved, game module loaded,
-  something failed. Three seconds, stacked, dismissable.
-- **Home window** (`mock-home.jpg`): a `ViewportFrame` with your own character
-  in it, your ping/FPS/session time, the game, the profile, and the list of what
-  is enabled. This is the window that makes the menu feel like a place instead
-  of a settings dialog, and it is cheap — a clone of the character and a camera.
+- **Wordmark and stats, top-left.** `ARANDOMMENU`, the version, and under it a
+  small monospace block: FPS, ping, session time, place. Wurst puts it exactly
+  here and it is the cheapest thing in the menu that makes it feel like a client
+  rather than a script.
+- **The pill, top-centre.** A floating rounded capsule of icons, lifted straight
+  from Roblox's own in-game top bar (`ref-roblox-pill.jpg`): open/close the
+  GUI, search, configs, keybinds, UI settings, panic. It is the one rounded,
+  soft element on screen, and it is the only chrome that stays visible when the
+  ClickGUI is closed. On a phone it is also the launcher, which is why it
+  replaces the rail from the previous draft.
+- **The windows.** One per category plus Favourites, laid out in a grid on first
+  run, dragged wherever the player likes afterwards. Dense, flat, 4 px corners,
+  1 px border, semi-transparent body. Title bar filled with the accent, name on
+  the left, two small buttons on the right: **collapse** (body hides, title bar
+  stays) and **pin** (window survives closing the GUI, so a player can keep
+  three windows on screen while playing). Height follows content up to
+  **Max height**, then the body scrolls.
+- **The HUD list, right edge.** Wurst's HackList: every enabled module, right
+  aligned, no background, sorted by width, sliding in and out. Each module may
+  publish a short status in brackets — `Speed [CFrame ×2]`, `Auto Farm
+  [3 targets]`, `Aim Assist [locked]`. That bracket is one of the best ideas in
+  Wurst and costs us one optional string per module.
+- **Tooltips** on hover, with their own opacity setting.
 
-## Layout inside a window
+## The row
 
-A narrow window is one column of rows. A window the player has dragged wider
-**flows its groups into two or three columns**, the way Matcha's tabs do, so a
-card like Player ESP with forty controls stops being a mile of scrolling. The
-column count follows the width; the player never picks it.
+Today's card is kept, made denser and given Wurst's read:
 
-A row with settings expands in place: the chevron on the right, the rows below
-pushed down, the module's own controls indented under a hairline that ties them
-to their parent. The kernel's `Show` rules keep working inside an expanded row —
-controls appear and disappear as conditions change and the window's height
-follows. Player ESP has the deepest rule tree in the menu and is the test case.
+- **Enabled is a filled row**, not a small indicator. With 38 modules the
+  question "what is on" must be answerable from across the room.
+- Name on the left. A **keybind pill** only when a key is bound. A **triangle**
+  on the right only when the module has settings.
+- Clicking the row toggles. Clicking the triangle expands the settings inline,
+  pushing the rows below down. Right-click opens the three-dot menu — keybind,
+  favourite, reset, **pop out into its own window** (Wurst does this for X-Ray
+  and the HackList; it is how a player builds a HUD of the four things they
+  actually use).
+- Favourite and three-dot appear on hover, so a resting row is name + state and
+  nothing else.
+
+Inside an expansion, the setting lines are Wurst's exactly: label left, value
+right. A slider is a thin bar with a square knob and its number at the end. A
+checkbox is a small square. A dropdown is a full-width line with a triangle. A
+colour is a label, its hex, and a thin bar of that colour underneath.
+
+`Show` rules keep working inside an expansion — lines appear and disappear as
+conditions change and the window's height follows. Player ESP has the deepest
+rule tree in the menu and is the test case.
+
+## Customisation is the feature
+
+This is the half of Wurst the user actually asked for. One **UI Settings**
+window, styled like every other window, live, no reload
+(`mock-settings.jpg`, and `ref-wurst-cyan.jpg` for what Wurst exposes):
+
+| Colours | Shape | Behaviour |
+|---|---|---|
+| Background | Opacity | Animations on/off |
+| Accent (chrome) | Tooltip opacity | Isolate windows |
+| Enabled (rows) | Corner radius | Tooltips on/off |
+| Text | Border thickness | HUD list: mode, position, sort, colour |
+| Text muted | Row height | Scale |
+| Border | Max height | Snap to edges |
+| Tooltip | Font | |
+
+**Accent and Enabled are two separate tokens**, exactly as Wurst separates
+"Accent" from "Enabled hacks". Filling 38 rows with the same colour that paints
+every title bar is loud; letting the player pick magenta chrome with green rows
+is the whole reason Wurst's screenshots look different from each other.
+
+On top of the raw tokens: named presets — **Monochrome** (default),
+**Wurst** (magenta chrome, green rows), **Cev** (cyan), **Matcha** (pink),
+**Vape**, **Midnight**, **Ember** — and an export/import string so a theme can
+be pasted to a friend. Import applies into a copy, validates text-against-
+surface contrast, and only then swaps; an import that leaves half the tokens
+switched is worse than no import.
+
+Semantic colours are never theme tokens. Health green, danger red and MM2's role
+colours label game data; a theme that recolours "murderer" is a theme that lies.
+
+## Three windows that are not categories
+
+- **UI Settings** — the table above.
+- **Keybinds** — every bound key in one list, rebindable, conflicts flagged.
+- **Configs** — profiles, save, load, autoload per game.
+
+Plus **Search**: fuzzy match over every module name, option name and tooltip.
+Enter toggles the top hit, Tab opens its window and scrolls to it. With 38
+modules and roughly 400 options this is not a nicety.
+
+## What we do not copy from Wurst
+
+Wurst is a Minecraft mod rendered at Minecraft's density with Minecraft's font.
+We keep our type, our spacing rhythm and our 4 px corners, and we keep the
+window bodies genuinely translucent rather than tinted. The default palette
+stays dark and restrained — Wurst's magenta is a *preset*, not the identity.
 
 ## Motion
 
-Everything moves, briefly, and nothing performs.
-
 | | |
 |---|---|
-| Toggle | indicator scales 0.9 → 1 over 0.12 s, glow fades in |
-| Row expand | height tween 0.16 s, content fades in behind it |
-| Window open | scale 0.98 → 1 and fade, 0.15 s |
-| Rail hover | the accent bar grows from its centre, 0.1 s |
-| Toast | slides 12 px and fades, 0.18 s |
+| Toggle | row fill wipes in over 0.10 s |
+| Expand | height tween 0.16 s, lines fade in |
+| Window open | fade and 2 px rise, 0.12 s |
+| HUD list | entry slides in from the right edge, 0.15 s |
+| Tooltip | fade 0.08 s after a 0.4 s hover |
 
-Nothing bounces, nothing spins, nothing lasts longer than 0.2 s. A "reduced
-motion" switch in settings turns all of it off in one place for low-end phones.
-
-## Theming
-
-The default stays dark and restrained — that is a product decision. What changes
-is that it becomes a **preset** rather than a palette compiled into the code.
-
-Every colour comes from one token table:
-
-```
-surface  surfaceRaised  surfaceHover  surfacePressed  stroke  strokeSoft
-text     textMuted      textDisabled
-accent   accentGlow     accentText   accentSoft
-positive negative       warning
-backdrop (colour + transparency + blur)
-```
-
-plus the shape tokens a theme is also allowed to set — corner radius, surface
-transparency, stroke thickness, font, accent glow on/off, gradient title bars.
-A theme that can only change colours is a palette; the four windows in
-`mock-themes.jpg` differ as much by shape as by hue.
-
-Three things must be true and none of them is true today:
-
-1. **No literal colour outside the theme.** 34 `Color3.` literals in the shell,
-   19 in `Widgets`, 7 in `SettingsPage`, 6 in `FloatingWindows`, 5 in `Render`.
-   Each one is a pixel no theme can reach. A gate contract will fail the build
-   on a new one.
-2. **The table must be reactive.** A widget reads `Theme.Surface` once at build
-   time and copies it into a property, so changing the table repaints nothing.
-   `Theme:Bind(instance, "BackgroundColor3", "surface")` registers it so a
-   preset switch repaints live, with a tween.
-3. **One token set.** There are two overlapping ones today (`Surface` and
-   `DefaultSurface`, `Text` and `DefaultText`) left from a GUI style that no
-   longer exists.
-
-Presets: **Monochrome** (white accent), **Vape**, **Matcha** (pink), **Wurst**
-(magenta, gradient title bars, glow on), **Mint**, **Midnight** (cyan),
-**Ember** (amber), and **Custom** with every token exposed and an export/import
-string so a theme can be pasted to a friend. Import applies into a copy,
-validates text-against-surface contrast, and only then swaps — an import that
-leaves half the tokens switched is worse than no import.
+Nothing bounces, nothing spins, nothing exceeds 0.2 s, and the Animations switch
+turns all of it off in one place for low-end phones.
 
 ## Mobile
 
-Six draggable windows do not fit on a phone. The window manager keeps a **Sheet**
-mode: the rail collapses to icons, one window at a time, full width, dragging
-the title bar dismisses instead of moves. The status strip keeps FPS and ping
-and drops the rest. Same rows, same theme, different placement policy.
-`MobileActions` and the launcher button are untouched.
+The pill is already the Roblox-native touch affordance, so it stays. Windows
+become full-width sheets, one at a time, dragged down to dismiss. The stats
+block keeps FPS and ping and drops the rest. The HUD list moves to the top-left
+under the wordmark, where a thumb does not cover it. Same rows, same theme,
+different placement policy. `MobileActions` is untouched.
 
 ## Phases
 
@@ -174,16 +169,21 @@ Each phase ends with a menu that works.
 
 | # | What | Owner |
 |---|------|-------|
-| 0 | One token set, `Theme:Bind`, every literal colour removed, gate contract. No visible change. | A |
-| 1 | `WindowManager`: today's main window becomes window #1 — draggable, collapsible, snapping, persisted. | A |
-| 2 | Rail, status strip, status line, toasts. The tab strip dies. | A |
-| 3 | Category windows, rows that expand in place, multi-column flow, Home window. | A |
-| 4 | Presets, Themes page, custom colours, export/import, motion pass. | A |
+| 0 | One token set (accent and enabled separate), `Theme:Bind`, every literal colour removed, gate contract. No visible change. | A |
+| 1 | `WindowManager`: drag, collapse, pin, max height, scroll, snap, persistence. Today's main window becomes window #1. | A |
+| 2 | Category windows, the dense row, inline expansion. The tab strip dies. | A |
+| 3 | The pill, wordmark, stats block, HUD list, tooltips, toasts. | A |
+| 4 | UI Settings, presets, export/import, Keybinds and Configs windows, Search, motion pass. | A |
+
+Phase 0 is invisible and is most of the risk: 34 `Color3.` literals in the
+shell, 19 in `Widgets`, 7 in `SettingsPage`, 6 in `FloatingWindows`, 5 in
+`Render`, and a `Theme` table that is read once at build time and therefore
+repaints nothing when it changes.
 
 ## What is deleted
 
-`createTab` (431 lines), `centerMain` (341) and the tab strip. The four overlays
-in `FloatingWindows` become ordinary managed windows and stop carrying their own
-copies of drag, clamp, close and persistence. Expect the shell to lose 600-900
-lines and `FloatingWindows` most of its first 600. If those numbers do not move,
-the migration did not happen — something got wrapped instead of replaced.
+`createTab` (431 lines), `centerMain` (341), the tab strip, and the four
+overlays' private copies of drag, clamp, close and persistence in
+`FloatingWindows`. Expect the shell to lose 600-900 lines and `FloatingWindows`
+most of its first 600. If those numbers do not move, something got wrapped
+instead of replaced.
