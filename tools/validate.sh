@@ -514,10 +514,18 @@ probe="$(mktemp /tmp/rtm-probe-XXXXXX.luau)"
 python3 - "$probe" <<'PYTHON'
 import sys
 
-anchor = "local Content: Frame = nil :: any"
+# Anchored on a line that is there because the menu needs it, not because
+# this check does. The previous anchor was a page host; when the page host
+# was deleted it was replaced with a nil local and an empty `if` block, kept
+# alive purely so this grep would keep succeeding — which measured nothing
+# and cost a real line of the file it was measuring.
+anchor = "state.universalScroll = CardBin"
 source = open("ARandomMenu.luau").read()
 if anchor not in source:
-    raise SystemExit("probe anchor missing from ARandomMenu.luau")
+    raise SystemExit(
+        "probe anchor missing from ARandomMenu.luau — point it at another "
+        "statement in the shell's largest scope, do not add one for it"
+    )
 padding = "\n".join(
     "local __probe%d: number = %d" % (index, index) for index in range(1, 4)
 )

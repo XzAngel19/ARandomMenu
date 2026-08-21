@@ -2734,14 +2734,6 @@ state.mvsdScroll = CardBin
 state.bedFightScroll = CardBin
 state.spoofScroll = CardBin
 
--- Probe anchor for the 200-local headroom check. Content used to be the page
--- host; it is now a nil shim kept so the gate can still measure headroom.
-local Content: Frame = nil :: any
-if Content then
-    -- Never true; keeps the local from being reported as unused while the
-    -- probe anchor stays exactly the string the gate looks for.
-end
-
 print("[" .. PRODUCT.logPrefix .. ":Bootstrap] GUI base visible; construyendo funciones universales")
 
 local universalFeatures = {}
