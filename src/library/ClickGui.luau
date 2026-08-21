@@ -54,10 +54,17 @@ local WINDOW_MAX_HEIGHT: number = 300
 -- refuse.
 local SCALE_MINIMUM: number = 0.7
 local SCALE_MAXIMUM: number = 1.6
-local GRID_MARGIN: number = 12
+local GRID_MARGIN: number = 10
 local WINDOW_GAP: number = 2
-local GRID_GAP: number = 8
-local TITLE_HEIGHT: number = 22
+-- Wurst tiles its first-run grid with a 5-logical gap; 10 at the GUI scale 2
+-- everything is drawn at.
+local GRID_GAP: number = 10
+local TITLE_HEIGHT: number = 26
+-- Wurst wraps its first-run grid only at the screen edge, but on a wide
+-- monitor seven 200 px windows make one strip across the whole top — which
+-- is what the user rejected. Four per row keeps the reference screenshot's
+-- density; deliberate adaptation, recorded here.
+local GRID_COLUMNS: number = 4
 
 -- The order Wurst lists its categories in, as far as ours line up with it.
 -- Anything a game module invents later lands after these, in the order it
@@ -102,25 +109,29 @@ function Module.init(context: any): any
         connections = {} :: {RBXScriptConnection},
     }
 
-    -- Left to right until the next window would not fit, then down. Measured
-    -- from the manager's own margin so the first window lines up with anything
-    -- the player later snaps to the edge.
+    -- Left to right until the row is full, then down. 64 clears the wordmark
+    -- and the pill instead of leaving a band of dead game between them and
+    -- the grid.
     local nextX: number = GRID_MARGIN
-    local nextY: number = 96
+    local nextY: number = 64
     local rowHeight: number = 0
+    local placedInRow: number = 0
 
     local function nextSlot(height: number): Vector2
         local viewport: Vector2 = workspace.CurrentCamera
             and (workspace.CurrentCamera :: Camera).ViewportSize
             or Vector2.new(1280, 720)
-        if nextX + WINDOW_WIDTH > viewport.X - GRID_MARGIN then
+        if placedInRow >= GRID_COLUMNS
+            or nextX + WINDOW_WIDTH > viewport.X - GRID_MARGIN then
             nextX = GRID_MARGIN
             nextY += rowHeight + GRID_GAP
             rowHeight = 0
+            placedInRow = 0
         end
         local slot: Vector2 = Vector2.new(nextX, nextY)
         nextX += WINDOW_WIDTH + GRID_GAP
         rowHeight = math.max(rowHeight, height)
+        placedInRow += 1
         return slot
     end
 

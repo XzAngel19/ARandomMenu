@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "0e49012e79541129",
+    stamp = "ca42cbbd45f28ec4",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -569,10 +569,7 @@ function Module.init(context: any): WidgetLibrary
             Size = UDim2.fromOffset(11, 11),
             ZIndex = option.ZIndex + 3,
         }) :: any) :: Frame
-        create("UICorner", {
-            Parent = box,
-            CornerRadius = UDim.new(0, 2),
-        })
+        -- A square, as in Wurst — no corner radius on a checkbox.
         local boxStroke: UIStroke = (create("UIStroke", {
             Parent = box,
             ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
@@ -4752,10 +4749,10 @@ function Module.init(context: any): any
     local makeTextLabel: any = host.makeTextLabel
     local notify: any = host.notify
     local Theme: any = host.Theme
+    local ThemeEngine: any = host.ThemeEngine
     local CONTROL_FONT: any = host.CONTROL_FONT
     local TweenService: any = host.TweenService
     local UI_MOTION: any = host.UI_MOTION
-    local cornerRadius: any = host.cornerRadius
     local trackUiConnection: any = host.trackUiConnection
     local applyKeySlotStyle: any = host.applyKeySlotStyle
     local bindActionShortcut: any = host.bindActionShortcut
@@ -4884,96 +4881,49 @@ function Module.init(context: any): any
         -- frame with "category block + alphabetical position".
         row:SetAttribute("FeatureCategory", categoryName)
         row:SetAttribute("FeatureSortName", string.lower(name))
-        create("UICorner", {
-            Parent = row,
-            Name = "CardCorner",
-            -- Cards are rows in a list, not floating tiles: a small radius keeps
-            -- them reading as one surface instead of a tray of lozenges.
-            CornerRadius = cornerRadius(math.min(state.layout.cardCorner, 8)),
-        })
-        local cardStroke: UIStroke = (create("UIStroke", {
-            Parent = row,
-            Color = state.guiStyle == "Default"
-                and Theme.outline
-                or Theme.outline,
-            Transparency = 1,
-            Thickness = 1,
-        }) :: any) :: UIStroke
-        feature.stroke = cardStroke
-        -- Hairline under the card. A separator instead of a box: forty boxed cards
-        -- read as a spreadsheet, forty separated rows read as a list.
-        local cardRule: Frame = create("Frame", {
-            Parent = row,
-            Name = "CardRule",
-            AnchorPoint = Vector2.new(0.5, 1),
-            BackgroundColor3 = Theme.outline,
-            BackgroundTransparency = 0.86,
-            BorderSizePixel = 0,
-            Position = UDim2.new(0.5, 0, 1, 0),
-            Size = UDim2.new(1, 0, 0, 1),
-            ZIndex = 8,
-        }) :: Frame
-        feature.cardRule = cardRule
-
-        -- The card itself carries the kind (see `state.applyCardSkin`).
+        -- A Wurst row is a rectangle. No corner radius, no stroke, no hairline
+        -- separator — the previous card dressing made forty rows read as a
+        -- tray of lozenges, and none of it is in ref-wurst-719.
 
         local title: TextLabel =
             (makeTextLabel(row, name, state.layout.titleFontSize) :: any) :: TextLabel
         title.FontFace = CONTROL_FONT
-        title.Position = UDim2.fromOffset(12, 0)
-        title.Size = UDim2.new(1, -(state.layout.cardHeight + 96), 0, feature.collapsedHeight)
+        title.Position = UDim2.fromOffset(8, 0)
+        -- Full width minus the arrow reserve; the reserve only exists while
+        -- the module actually has settings (applyLayout keeps this in step).
+        title.Size = UDim2.new(1, -8, 0, feature.collapsedHeight)
         title.TextTruncate = Enum.TextTruncate.AtEnd
         title.TextColor3 = state.guiStyle == "Default"
             and Theme.text
             or Theme.text
         feature.title = title
 
-        local headerControls: Frame = create("Frame", {
+        -- Wurst's settings arrow: an 11-logical-px box on the right end of
+        -- the row (22 here, everything is drawn at GUI scale 2), holding a
+        -- triangle that points down while the settings are closed and up
+        -- while they are open. It is the only decoration a row may carry,
+        -- and it exists only when the module has settings.
+        local arrow: TextButton = (create("TextButton", {
+            TextTruncate = Enum.TextTruncate.AtEnd,
             Parent = row,
-            Name = "HeaderControls",
-            AnchorPoint = Vector2.new(1, 0.5),
+            Name = "Expand",
+            Active = true,
+            AnchorPoint = Vector2.new(1, 0),
+            AutoButtonColor = false,
             BackgroundTransparency = 1,
             BorderSizePixel = 0,
-            Position = UDim2.new(1, -8, 0, feature.collapsedHeight / 2),
-            Size = UDim2.fromOffset(
-                state.layout.iconButton * 2 + state.layout.keySlotWidth + 12,
-                state.layout.iconButton + 4
-            ),
+            FontFace = CONTROL_FONT,
+            Position = UDim2.new(1, 0, 0, 0),
+            Size = UDim2.fromOffset(22, feature.collapsedHeight),
+            Text = "▼",
+            TextSize = 10,
+            Visible = false,
             ZIndex = 9,
-        }) :: Frame
-        create("UIListLayout", {
-            Parent = headerControls,
-            Name = "HeaderControlsLayout",
-            FillDirection = Enum.FillDirection.Horizontal,
-            HorizontalAlignment = Enum.HorizontalAlignment.Right,
-            VerticalAlignment = Enum.VerticalAlignment.Center,
-            Padding = UDim.new(0, state.layout.compact and 4 or 6),
-            SortOrder = Enum.SortOrder.LayoutOrder,
-        })
-        local arrow: TextButton =
-            (makeButton(headerControls, "", 10) :: any) :: TextButton
-        arrow.Name = "Expand"
-        arrow.LayoutOrder = 3
-        arrow:SetAttribute("ThemeRole", "Icon")
-        arrow:SetAttribute("NoPressEffect", true)
-        arrow.BackgroundTransparency = 1
-        arrow.Size =
-            UDim2.fromOffset(state.layout.iconButton, state.layout.iconButton)
-        arrow.TextColor3 = state.guiStyle == "Default"
-            and Theme.textMuted
-            or Theme.textMuted
-        -- Every card shows the three lines, including modules with nothing to
-        -- configure (Anti-AFK, Anti-Void, X-Ray...): a row that silently drops a
-        -- control makes the list look ragged. A card with no options simply never
-        -- opens — the mark is dimmed and the click is ignored, which is checked
-        -- at click time because option rows can be added after the card is built.
-        arrow.Active = true
-        arrow.ZIndex = 9
-        state.applyLinesGlyph(arrow, configuration.noOptions == true)
-        arrow.ZIndex = 9
-        local arrowStroke: UIStroke? = arrow:FindFirstChild("StyleStroke") :: UIStroke?
-        if arrowStroke then
-            arrowStroke.Enabled = false
+        }) :: any) :: TextButton
+        if ThemeEngine and type(ThemeEngine.Bind) == "function" then
+            ThemeEngine.Bind(arrow, "TextColor3", "enabled")
+        else
+            arrow.TextColor3 = Theme.enabled
         end
         feature.arrow = arrow
 
@@ -4989,6 +4939,22 @@ function Module.init(context: any): any
             end
             return false
         end
+
+        -- Options arrive after the card is built (the module adds its rows to
+        -- a card that already exists), so the arrow's existence is re-decided
+        -- every time the panel is remeasured rather than once at creation.
+        local function syncArrow(): ()
+            local expandable: boolean = feature.hasOptions()
+            arrow.Visible = expandable
+            arrow.Text = feature.expanded and "▲" or "▼"
+            title.Size = UDim2.new(
+                1,
+                expandable and -30 or -8,
+                0,
+                feature.collapsedHeight
+            )
+        end
+        feature.syncArrow = syncArrow
 
         local activationTarget: TextButton = create("TextButton", {
             TextTruncate = Enum.TextTruncate.AtEnd,
@@ -5090,7 +5056,7 @@ function Module.init(context: any): any
                     TweenInfo.new(UI_MOTION.slow, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
                     {Size = targetRowSize}
                 ):Play()
-                state.applyLinesGlyph(arrow, false, feature.expanded)
+                syncArrow()
                 if not feature.expanded then
                     task.delay(UI_MOTION.slow + 0.02, function(): ()
                         if not feature.expanded and options.Parent then
@@ -5101,7 +5067,7 @@ function Module.init(context: any): any
             else
                 options.Size = targetOptionsSize
                 row.Size = targetRowSize
-                state.applyLinesGlyph(arrow, false, feature.expanded)
+                syncArrow()
                 options.Visible = feature.expanded
             end
         end
@@ -5113,16 +5079,18 @@ function Module.init(context: any): any
                 end)
         )
 
-        trackUiConnection(arrow.MouseButton1Click:Connect(function(): ()
+        local function toggleExpansion(): ()
             if not feature.hasOptions() then
                 -- Nothing to show: keep the panel shut instead of opening an
                 -- empty box under the card.
-                state.applyLinesGlyph(arrow, true)
+                syncArrow()
                 return
             end
             feature.expanded = not feature.expanded
             updateExpandedSize(true)
-        end))
+        end
+        trackUiConnection(arrow.MouseButton1Click:Connect(toggleExpansion))
+        feature.toggleExpansion = toggleExpansion
 
         -- Hold modules.
         --
@@ -5225,64 +5193,46 @@ function Module.init(context: any): any
         end
 
         trackUiConnection(activationTarget.MouseButton1Click:Connect(activateFeature))
-        do
-            local favoriteButton: TextButton =
-                (makeButton(headerControls, "☆", 11) :: any) :: TextButton
-            favoriteButton.Name = "Favorite"
-            favoriteButton.LayoutOrder = 1
-            favoriteButton:SetAttribute("ThemeRole", "Icon")
-            favoriteButton:SetAttribute("NoPressEffect", true)
-            favoriteButton.BackgroundTransparency = 1
-            favoriteButton.Size =
-                UDim2.fromOffset(state.layout.iconButton, state.layout.iconButton)
-            favoriteButton.ZIndex = 9
-            local favoriteStroke: UIStroke? =
-                favoriteButton:FindFirstChild("StyleStroke") :: UIStroke?
-            if favoriteStroke then
-                favoriteStroke.Enabled = false
+        -- Wurst's right-click: the settings open under the row. The star and
+        -- the permanent key slot that used to sit in every header are gone —
+        -- Wurst rows carry a name and, at most, the arrow.
+        trackUiConnection(activationTarget.InputBegan:Connect(function(input: InputObject): ()
+            if input.UserInputType == Enum.UserInputType.MouseButton2 then
+                toggleExpansion()
             end
-            feature.favoriteButton = favoriteButton
-            trackUiConnection(favoriteButton.MouseButton1Click:Connect(function(): ()
-                state.floatingUi.toggleFavorite(feature)
-            end))
+        end))
+
+        -- On touch there is no keyboard and no right-click: the slot that
+        -- places an on-screen button for the module is the only way a phone
+        -- reaches a shortcut, so the slot survives there and only there.
+        local shortcutButton: TextButton? = nil
+        if state.isMobile then
+            local slot: TextButton =
+                (makeButton(row, "KEY", 9) :: any) :: TextButton
+            slot.Name = "Shortcut"
+            slot.AnchorPoint = Vector2.new(1, 0.5)
+            slot.Position = UDim2.new(1, -30, 0, feature.collapsedHeight / 2)
+            slot.Size = UDim2.fromOffset(
+                state.layout.keySlotWidth,
+                state.layout.iconButton
+            )
+            slot.ZIndex = 9
+            applyKeySlotStyle(slot)
+            slot.TextScaled = true
+            create("UITextSizeConstraint", {
+                Parent = slot,
+                MaxTextSize = 11,
+                MinTextSize = 7,
+            })
+            shortcutButton = slot
         end
-        -- Every card header carries the same three controls — favourite, key
-        -- slot, expand — so the whole list reads as one symmetric grid no matter
-        -- whether the module is a toggle, an action or a category. The key slot
-        -- toggles regular modules, runs actions, and expands/collapses category
-        -- headers (the same path `activateFeature` already provides).
-        local shortcutButton: TextButton =
-            (makeButton(headerControls, "KEY", 9) :: any) :: TextButton
-        shortcutButton.Name = "Shortcut"
-        shortcutButton.LayoutOrder = 2
-        shortcutButton.BackgroundColor3 = state.guiStyle == "Default"
-            and Theme.surface
-            or Theme.surfaceRaised
-        shortcutButton.Size = UDim2.fromOffset(
-            state.layout.keySlotWidth,
-            state.layout.iconButton
-        )
-        shortcutButton.ZIndex = 9
-        applyKeySlotStyle(shortcutButton)
-        shortcutButton.TextScaled = true
-        create("UITextSizeConstraint", {
-            Parent = shortcutButton,
-            MaxTextSize = 11,
-            MinTextSize = 7,
-        })
         feature.shortcutButton = shortcutButton
         if feature.kind == "group" then
-            -- A container has nothing to activate: the slot stays on the card for
-            -- symmetry but never captures a key, never places a mobile button and
-            -- never fires. Pressing it does nothing, by design.
-            shortcutButton.Active = false
-            shortcutButton.AutoButtonColor = false
-            shortcutButton.Text = ""
-            shortcutButton.TextTransparency = 1
-            shortcutButton.BackgroundTransparency = 0.86
-            shortcutButton:SetAttribute("Disabled", true)
-            shortcutButton:SetAttribute("NoHover", true)
-            shortcutButton:SetAttribute("CaptureIdleText", "")
+            -- A container has nothing to activate: no key is ever bound to
+            -- it, so no binding is registered at all.
+            if shortcutButton then
+                (shortcutButton :: TextButton).Visible = false
+            end
         elseif feature.kind == "hold" then
             -- The key is a dead-man switch: held means active, released means
             -- inactive. It never toggles the module on or off.
@@ -5310,7 +5260,7 @@ function Module.init(context: any): any
             )
         end
 
-        feature.headerControls = headerControls
+
 
         -- Point at the card, press a key, the card owns that key — the same
         -- gesture the reference interface uses instead of a capture dialog.
@@ -5322,33 +5272,18 @@ function Module.init(context: any): any
         -- work without a single game module knowing a pixel value.
         feature.applyLayout = function(): ()
             local metrics: LayoutMetrics = state.layout
-            local sideWidth: number =
-                metrics.iconButton * 2 + metrics.keySlotWidth + 12
             feature.collapsedHeight = metrics.cardHeight
-            local cardCorner: UICorner? = row:FindFirstChild("CardCorner") :: UICorner?
-            if cardCorner then
-                cardCorner.CornerRadius = cornerRadius(math.min(metrics.cardCorner, 8))
-            end
-            title.Size =
-                UDim2.new(1, -(sideWidth + 26), 0, metrics.cardHeight)
             state.setTextMetric(title, metrics.titleFontSize)
-            headerControls.Position = UDim2.new(1, -8, 0, metrics.cardHeight / 2)
-            headerControls.Size =
-                UDim2.fromOffset(sideWidth, metrics.iconButton + 4)
-            local controlsLayout: UIListLayout? =
-                headerControls:FindFirstChild("HeaderControlsLayout") :: UIListLayout?
-            if controlsLayout then
-                controlsLayout.Padding = UDim.new(0, metrics.compact and 4 or 6)
+            arrow.Size = UDim2.fromOffset(22, metrics.cardHeight)
+            if shortcutButton then
+                (shortcutButton :: TextButton).Size =
+                    UDim2.fromOffset(metrics.keySlotWidth, metrics.iconButton);
+                (shortcutButton :: TextButton).Position =
+                    UDim2.new(1, -30, 0, metrics.cardHeight / 2)
             end
-            arrow.Size = UDim2.fromOffset(metrics.iconButton, metrics.iconButton)
-            if feature.favoriteButton then
-                feature.favoriteButton.Size =
-                    UDim2.fromOffset(metrics.iconButton, metrics.iconButton)
-            end
-            shortcutButton.Size =
-                UDim2.fromOffset(metrics.keySlotWidth, metrics.iconButton)
             activationTarget.Size = UDim2.new(1, 0, 0, metrics.cardHeight)
             options.Position = UDim2.fromOffset(8, metrics.cardHeight)
+            syncArrow()
             updateExpandedSize(false)
         end
         -- Applied once at creation too, so a card built while the shell is in one
@@ -5523,9 +5458,10 @@ local SNAP_DISTANCE: number = 8
 local BASE_Z: number = 150
 local MARGIN: number = 6
 -- The prototype's title bar. Named rather than inline because the parity gate
--- reads this constant and holds it to spec.json — a raw 26 here was already
--- one pixel-decision drifting from the file that is supposed to decide it.
-local TITLE_HEIGHT: number = 22
+-- reads this constant and holds it to spec.json. 26 is Wurst's own 13 logical
+-- pixels at the GUI scale 2 everything here is drawn at — C read it out of
+-- the Java, and the prototype was changed first.
+local TITLE_HEIGHT: number = 26
 -- The prototype's `.tbar` font size, held by the same gate. The title used
 -- to go through makeTextLabel, whose 1.35 multiplier rendered it at 16 px —
 -- visibly heavier than the spec on every window at once.
@@ -5537,13 +5473,10 @@ function Module.init(context: any): any
     local configData: any = host.configData
     local queueConfigSave: any = host.queueConfigSave
     local create: any = host.create
-    local makeButton: any = host.makeButton
     local Theme: any = host.Theme
     local ThemeEngine: any = host.ThemeEngine
     local CONTROL_FONT: any = host.CONTROL_FONT
     local PopupLayer: any = host.PopupLayer
-    local UI_RADIUS: any = host.UI_RADIUS
-    local cornerRadius: any = host.cornerRadius
     local trackUiConnection: any = host.trackUiConnection
     local UserInputService: any = host.UserInputService
 
@@ -5870,16 +5803,17 @@ function Module.init(context: any): any
         local closeButton: TextButton? = nil
 
         if not bare then
-            create("UICorner", {
-                Parent = root,
-                CornerRadius = cornerRadius(UI_RADIUS.panel),
-            })
-            create("UIStroke", {
+            -- A Wurst window is a rectangle: no corner radius anywhere, one
+            -- thin border. The border binds to the outline token, which the
+            -- UI Settings Accent row repaints — Wurst's Accent colours title
+            -- bars *and* borders.
+            local edge: UIStroke = (create("UIStroke", {
                 Parent = root,
                 Color = Theme.outline,
-                Transparency = 0.78,
+                Transparency = 0.15,
                 Thickness = 1,
-            })
+            }) :: any) :: UIStroke
+            bind(edge, "Color", "outline")
 
             local bar: Frame = create("Frame", {
                 Parent = root,
@@ -5890,22 +5824,6 @@ function Module.init(context: any): any
                 ZIndex = 2,
             }) :: Frame
             bind(bar, "BackgroundColor3", "accent")
-            create("UICorner", {
-                Parent = bar,
-                CornerRadius = cornerRadius(UI_RADIUS.panel),
-            })
-            -- The corner rounding would show through under the title bar, so
-            -- the bottom two corners are squared off by a strip.
-            local squareOff: Frame = create("Frame", {
-                Parent = bar,
-                Name = "SquareOff",
-                BackgroundTransparency = 0,
-                BorderSizePixel = 0,
-                Position = UDim2.new(0, 0, 1, -4),
-                Size = UDim2.new(1, 0, 0, 4),
-                ZIndex = 2,
-            }) :: Frame
-            bind(squareOff, "BackgroundColor3", "accent")
 
             local title: TextLabel = (create("TextLabel", {
                 TextTruncate = Enum.TextTruncate.AtEnd,
@@ -5923,15 +5841,43 @@ function Module.init(context: any): any
             title.ZIndex = 3
             bind(title, "TextColor3", "accentText")
 
-            local buttonX: number = -6
+            local buttonX: number = -5
+            -- Wurst's chrome controls are small squares sitting in the title
+            -- bar — a box with a symbol, not a bare glyph. 16 px is 8 logical
+            -- at the GUI scale 2 the interface is drawn at.
             local function chromeButton(symbol: string): TextButton
-                local button: TextButton = makeButton(bar, symbol) :: TextButton
+                local button: TextButton = (create("TextButton", {
+                    TextTruncate = Enum.TextTruncate.AtEnd,
+                    Parent = bar,
+                    Active = true,
+                    AutoButtonColor = false,
+                    BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+                    BackgroundTransparency = 0.72,
+                    BorderSizePixel = 0,
+                    FontFace = CONTROL_FONT,
+                    Text = symbol,
+                    TextSize = 11,
+                }) :: any) :: TextButton
+                create("UIStroke", {
+                    Parent = button,
+                    Color = Color3.fromRGB(0, 0, 0),
+                    Thickness = 1,
+                    Transparency = 0.55,
+                })
                 button.AnchorPoint = Vector2.new(1, 0.5)
                 button.Position = UDim2.new(1, buttonX, 0.5, 0)
                 button.Size = UDim2.fromOffset(16, 16)
-                button.BackgroundTransparency = 0.6
                 button.ZIndex = 3
                 bind(button, "TextColor3", "accentText")
+                -- Parked with the rest of the chrome so window:Destroy
+                -- releases them; trackUiConnection would keep them alive
+                -- until the whole shell dies.
+                table.insert(chromeConnections, button.MouseEnter:Connect(function(): ()
+                    button.BackgroundTransparency = 0.45
+                end))
+                table.insert(chromeConnections, button.MouseLeave:Connect(function(): ()
+                    button.BackgroundTransparency = 0.72
+                end))
                 buttonX -= 19
                 return button
             end
@@ -5940,12 +5886,18 @@ function Module.init(context: any): any
                 closeButton = chromeButton("×")
             end
             if definition.pinnable ~= false then
-                local pin: TextButton = chromeButton("•")
+                -- The pin is a square that fills with the enabled token while
+                -- the window is pinned — the same "on means filled" grammar
+                -- as a hack row.
+                local pin: TextButton = chromeButton("▪")
                 local function paintPin(): ()
-                    pin.BackgroundTransparency = window.pinned and 0 or 0.6
+                    pin.BackgroundTransparency = window.pinned and 0 or 0.72
                     pin.BackgroundColor3 = window.pinned
                         and Theme.enabled
-                        or Theme.accent
+                        or Color3.fromRGB(0, 0, 0)
+                    pin.TextColor3 = window.pinned
+                        and Theme.enabledText
+                        or Theme.accentText
                 end
                 table.insert(paintChrome, paintPin)
                 table.insert(chromeConnections, pin.MouseButton1Click:Connect(function(): ()
@@ -6035,7 +5987,7 @@ function Module.init(context: any): any
     -- alpha. The title bar stays opaque — Wurst fades only the background.
     -- Remembered on the manager so a window created after the slider moved
     -- is born at the same alpha.
-    manager.bodyTransparency = 0.08
+    manager.bodyTransparency = 0.5
     function manager.SetOpacity(alpha: number): ()
         manager.bodyTransparency = math.clamp(1 - alpha, 0, 1)
         for _, window: any in ipairs(manager.list) do
@@ -6147,10 +6099,17 @@ local WINDOW_MAX_HEIGHT: number = 300
 -- refuse.
 local SCALE_MINIMUM: number = 0.7
 local SCALE_MAXIMUM: number = 1.6
-local GRID_MARGIN: number = 12
+local GRID_MARGIN: number = 10
 local WINDOW_GAP: number = 2
-local GRID_GAP: number = 8
-local TITLE_HEIGHT: number = 22
+-- Wurst tiles its first-run grid with a 5-logical gap; 10 at the GUI scale 2
+-- everything is drawn at.
+local GRID_GAP: number = 10
+local TITLE_HEIGHT: number = 26
+-- Wurst wraps its first-run grid only at the screen edge, but on a wide
+-- monitor seven 200 px windows make one strip across the whole top — which
+-- is what the user rejected. Four per row keeps the reference screenshot's
+-- density; deliberate adaptation, recorded here.
+local GRID_COLUMNS: number = 4
 
 -- The order Wurst lists its categories in, as far as ours line up with it.
 -- Anything a game module invents later lands after these, in the order it
@@ -6195,25 +6154,29 @@ function Module.init(context: any): any
         connections = {} :: {RBXScriptConnection},
     }
 
-    -- Left to right until the next window would not fit, then down. Measured
-    -- from the manager's own margin so the first window lines up with anything
-    -- the player later snaps to the edge.
+    -- Left to right until the row is full, then down. 64 clears the wordmark
+    -- and the pill instead of leaving a band of dead game between them and
+    -- the grid.
     local nextX: number = GRID_MARGIN
-    local nextY: number = 96
+    local nextY: number = 64
     local rowHeight: number = 0
+    local placedInRow: number = 0
 
     local function nextSlot(height: number): Vector2
         local viewport: Vector2 = workspace.CurrentCamera
             and (workspace.CurrentCamera :: Camera).ViewportSize
             or Vector2.new(1280, 720)
-        if nextX + WINDOW_WIDTH > viewport.X - GRID_MARGIN then
+        if placedInRow >= GRID_COLUMNS
+            or nextX + WINDOW_WIDTH > viewport.X - GRID_MARGIN then
             nextX = GRID_MARGIN
             nextY += rowHeight + GRID_GAP
             rowHeight = 0
+            placedInRow = 0
         end
         local slot: Vector2 = Vector2.new(nextX, nextY)
         nextX += WINDOW_WIDTH + GRID_GAP
         rowHeight = math.max(rowHeight, height)
+        placedInRow += 1
         return slot
     end
 
@@ -8001,6 +7964,10 @@ local activeCleanup: (() -> ())? = nil
 local WINDOW_WIDTH: number = 214
 local ROW_HEIGHT: number = 22
 local WINDOW_GAP: number = 2
+-- The prototype's title bar — Wurst's 13 logical pixels at GUI scale 2. The
+-- parity gate reads this name in every scanned file, so it has to agree
+-- with WindowManager's.
+local TITLE_HEIGHT: number = 26
 
 function Module.init(context: any): any
     -- Wurst's defaults, verbatim (docs/wurst-features.md). A value that is
@@ -8112,7 +8079,7 @@ function Module.init(context: any): any
                 limit = math.huge
             end
             local wanted: number = math.min(
-                22 + layout.AbsoluteContentSize.Y + WINDOW_GAP * 2,
+                TITLE_HEIGHT + layout.AbsoluteContentSize.Y + WINDOW_GAP * 2,
                 limit
             )
             window.fullHeight = wanted
@@ -8821,7 +8788,7 @@ function Module.init(context: any): any
     -- default) opacity, tooltip opacity and heights at boot.
     local screen: Vector2 = viewport()
     local uiRecord: any = configWindow("UISettings", "UI Settings", {
-        position = Vector2.new(screen.X - WINDOW_WIDTH - 12, 96),
+        position = Vector2.new(screen.X - WINDOW_WIDTH - 12, 64),
         closable = false,
         settingsSized = false,
     })
@@ -9517,18 +9484,15 @@ local activeCleanup: (() -> ())? = nil
 local WURSTLOGO_BACKGROUND: Color3 = Color3.fromRGB(0, 0, 0)
 local WURSTLOGO_TEXT: Color3 = Color3.fromRGB(0, 0, 0)
 
--- The prototype's #brand block: 14 px from the left edge, 10 from the top,
--- stats 8 px under the wordmark.
+-- The prototype's #brand block: 14 px from the left edge, 10 from the top.
 local FURNITURE_MARGIN_X: number = 14
 local FURNITURE_MARGIN_Y: number = 10
-local STATS_GAP: number = 8
 
--- wurst_128.png is 505×128; at the chip's 22 px it renders 87 px wide.
-local LOGO_HEIGHT: number = 22
-local LOGO_WIDTH: number = 87
-
-local STATS_FONT_SIZE: number = 11
-local STATS_LINE_HEIGHT: number = 17
+-- Wurst draws its logo 72×18 logical; at the GUI scale 2 the interface is
+-- drawn at that is 144×36 (wurst_128.png is 505×128, so 142 keeps the exact
+-- aspect at 36 tall).
+local LOGO_HEIGHT: number = 36
+local LOGO_WIDTH: number = 142
 
 -- Wurst's HackList defaults (docs/wurst-features.md). Everything here is a
 -- live setting once the HackList settings window has been opened; these are
@@ -9566,15 +9530,12 @@ function Module.init(context: any): any
     local ThemeEngine: any = host.ThemeEngine
     local TaskManager: any = host.TaskManager
     local PopupLayer: any = host.PopupLayer
-    local Stats: any = host.Stats
     local TITLE_FONT: any = host.TITLE_FONT
     local CONTROL_FONT: any = host.CONTROL_FONT
     local TweenService: any = host.TweenService
     local allFeatures: {any} = host.allFeatures
     local configData: any = host.configData
     local queueConfigSave: any = host.queueConfigSave
-    local refreshFeatureToggle: any = host.refreshFeatureToggle
-    local notify: any = host.notify
     local UserInputService: any = host.UserInputService
     local colorFromConfig: any = host.colorFromConfig
 
@@ -9628,29 +9589,19 @@ function Module.init(context: any): any
         ZIndex = 21,
     }) :: any) :: TextLabel
 
-    -- The version string sits on the game, not on a slab.
-    --
-    -- WurstLogo does expose a Background whose default is #FFFFFF, and I read
-    -- that out of the wiki and painted an opaque white box with it. The
-    -- reference screenshot already in this repository —
-    -- docs/design/reference/ref-wurst-719.jpg — shows "v7.19 MC1.18.1" as bare
-    -- coloured text beside the sausage with no box anywhere. The image was
-    -- right and the defaults table was being read out of context: the setting
-    -- exists so a settings window can switch a background on, not so one is
-    -- painted before anybody asks.
+    -- The version string sits on the game, not on a slab — ref-wurst-719
+    -- shows "v7.19 MC1.18.1" as bare coloured text beside the sausage. The
+    -- frame exists only so the WurstLogo Background setting has something to
+    -- paint the day a player switches one on; by default it is invisible.
     local versionText: string = tostring(PRODUCT.version)
     local versionChip: Frame = (create("Frame", {
         Parent = chip,
         Name = "VersionChip",
-        -- A ghost of a background rather than Wurst's opaque white, which is
-        -- ugly over a game and was the first thing the user pointed at. Dark
-        -- and mostly transparent: enough to hold the text off the world, not
-        -- enough to be a box.
         BackgroundColor3 = WURSTLOGO_BACKGROUND,
-        BackgroundTransparency = 0.45,
+        BackgroundTransparency = 1,
         BorderSizePixel = 0,
-        Position = UDim2.fromOffset(LOGO_WIDTH + 10, 4),
-        Size = UDim2.fromOffset(12 + #versionText * 9, LOGO_HEIGHT),
+        Position = UDim2.fromOffset(LOGO_WIDTH + 10, 8),
+        Size = UDim2.fromOffset(12 + #versionText * 9, LOGO_HEIGHT - 16),
         ZIndex = 20,
     }) :: any) :: Frame
 
@@ -9682,17 +9633,28 @@ function Module.init(context: any): any
 
     -- Wurst's WurstLogo settings, read from the store at boot and edited
     -- live by the WurstLogo settings window.
+    local logoAlways: boolean = true
+    local function refreshLogoVisibility(): ()
+        -- The wordmark belongs to the ClickGUI screen here (the user's call;
+        -- Wurst itself draws it in-game at all times), and the Visibility
+        -- setting can still remove it: we ship no updater, so "Only when
+        -- outdated" can never fire.
+        chip.Visible = logoAlways and state.visible == true
+    end
     local function setLogoBackground(color: Color3): ()
-        chip.BackgroundColor3 = color
+        versionChip.BackgroundColor3 = color
+        -- Only a value somebody stored paints the chip; the default stays
+        -- bare text, the way every reference screenshot draws the version.
+        versionChip.BackgroundTransparency =
+            configData.values["WurstLogo.Background"] ~= nil and 0.45 or 1
     end
     local function setLogoTextColor(color: Color3): ()
         versionLabel.TextColor3 = color
         logoFallback.TextColor3 = color
     end
     local function setLogoVisibility(value: string): ()
-        -- We ship no updater, so "Only when outdated" can never fire; it
-        -- hides the chip rather than pretending to know about versions.
-        chip.Visible = value == "Always"
+        logoAlways = value == "Always"
+        refreshLogoVisibility()
     end
     setLogoBackground(colorFromConfig(
         configData.values["WurstLogo.Background"],
@@ -9714,37 +9676,8 @@ function Module.init(context: any): any
         SetVisibility = setLogoVisibility,
     }
 
-    -- ---------------------------------------------------------- stats block
-    -- Small, monospace, and rebuilt twice a second — cheap enough that the
-    -- values can read the live theme instead of binding each fragment.
-    local statsLabel: TextLabel = (create("TextLabel", {
-        TextTruncate = Enum.TextTruncate.AtEnd,
-        Name = "StatsBlock",
-        Active = false,
-        BackgroundTransparency = 1,
-        FontFace = Font.new("rbxasset://fonts/families/RobotoMono.json"),
-        Position = UDim2.fromOffset(
-            FURNITURE_MARGIN_X,
-            FURNITURE_MARGIN_Y + LOGO_HEIGHT + 8 + STATS_GAP
-        ),
-        RichText = true,
-        Size = UDim2.fromOffset(220, STATS_LINE_HEIGHT * 4),
-        Text = "",
-        TextColor3 = Theme.text,
-        TextSize = STATS_FONT_SIZE,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        TextYAlignment = Enum.TextYAlignment.Top,
-        ZIndex = 20,
-    }) :: any) :: TextLabel
-    -- Never parented, never shown.
-    --
-    -- Official Wurst 7 draws the sausage and the version in that corner and
-    -- nothing else. FPS, ping, session time and place were the old menu's
-    -- readout, and the user counted them as exactly that. The label is built
-    -- and left unparented rather than ripped out here, because the HackList's
-    -- compact placement still measures against where it used to sit and that
-    -- arithmetic is the next thing to simplify, not this.
-    statsLabel.Parent = nil
+    -- The old menu's FPS/PING/TIME/PLACE readout is gone entirely — Wurst
+    -- draws the sausage and the version in that corner and nothing else.
 
     local function colorHex(color: Color3): string
         return string.format(
@@ -9758,71 +9691,6 @@ function Module.init(context: any): any
     local function escapeRich(text: string): string
         return (text:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"))
     end
-
-    local sessionStartedAt: number = os.clock()
-    local frameCount: number = 0
-    local statsElapsed: number = 0
-
-    local function pingMilliseconds(): number?
-        local ok: boolean, value: any = pcall(function(): number
-            return Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
-        end)
-        if ok and type(value) == "number" then
-            return math.floor(value + 0.5)
-        end
-        return nil
-    end
-
-    local function renderStats(framesPerSecond: number): ()
-        local accent: string = colorHex(Theme.accent)
-        local function line(label: string, value: string): string
-            return label
-                .. ' <font color="'
-                .. accent
-                .. '"><b>'
-                .. value
-                .. "</b></font>"
-        end
-        local ping: number? = pingMilliseconds()
-        local rows: {string} = {
-            line("FPS  ", tostring(framesPerSecond)),
-            line("PING ", ping and tostring(ping) .. "ms" or "—"),
-        }
-        -- A phone keeps FPS and ping and drops the rest: four lines under a
-        -- wordmark is a quarter of a small screen's corner.
-        if not state.layout.compact then
-            local seconds: number = math.floor(os.clock() - sessionStartedAt)
-            table.insert(rows, line(
-                "TIME ",
-                string.format("%02d:%02d", seconds // 60, seconds % 60)
-            ))
-            table.insert(rows, line(
-                "PLACE",
-                escapeRich(tostring(state.activeGameName or "—"))
-            ))
-        end
-        -- Deliberately unused. See the note where StatsBlock used to be.
-        local _unused: string = table.concat(rows, "\n")
-    end
-
-    table.insert(Furniture.handles, TaskManager:Connect(function(): ()
-        frameCount += 1
-    end, "render"))
-
-    table.insert(Furniture.handles, TaskManager:Connect(function(
-        deltaTime: number
-    ): ()
-        statsElapsed += deltaTime
-        if statsElapsed < 0.5 then
-            return
-        end
-        local framesPerSecond: number =
-            math.floor(frameCount / statsElapsed + 0.5)
-        frameCount = 0
-        statsElapsed = 0
-        renderStats(framesPerSecond)
-    end))
-    renderStats(0)
 
     -- ------------------------------------------------------------- HackList
     -- Wurst's list of what is on, one line per enabled module, newest state
@@ -9877,24 +9745,26 @@ function Module.init(context: any): any
     end
 
     local function hudOnLeft(): boolean
-        -- A phone always keeps the list on the left under the stats block,
-        -- where a thumb does not cover it (UI-V2, Mobile); a desktop follows
-        -- Wurst's Position setting, whose default is Left, under the logo.
+        -- A phone always keeps the list on the left, where a thumb does not
+        -- cover it (UI-V2, Mobile); a desktop follows Wurst's Position
+        -- setting, whose default is Left, under the logo.
         return state.layout.compact or hudPosition == "Left"
+    end
+
+    -- Assigned once the Navigator below exists; the left-hand list starts
+    -- under whatever the ClickGUI is currently showing in that corner.
+    local navigatorBottom: () -> number = function(): number
+        return FURNITURE_MARGIN_Y + LOGO_HEIGHT + 8
     end
 
     local function placeHudList(): ()
         if hudOnLeft() then
             hudFrame.AnchorPoint = Vector2.new(0, 0)
-            local statsLines: number = state.layout.compact and 2 or 4
             hudFrame.Position = UDim2.new(
                 0,
                 FURNITURE_MARGIN_X,
                 0,
-                FURNITURE_MARGIN_Y + LOGO_HEIGHT + 8
-                    + STATS_GAP
-                    + STATS_LINE_HEIGHT * statsLines
-                    + STATS_GAP
+                navigatorBottom()
             )
             hudLayout.HorizontalAlignment = Enum.HorizontalAlignment.Left
         else
@@ -10133,22 +10003,196 @@ function Module.init(context: any): any
         end,
     }
 
+    -- ------------------------------------------------------------ Navigator
+    -- Wurst's Navigator: a search field and a flat three-column grid of every
+    -- feature, ordered by how often the player has activated each one, with
+    -- an empty query restoring the preference order and Enter firing the top
+    -- hit. Two deliberate adaptations, recorded here: Wurst gives Navigator
+    -- its own screen, ours lives under the logo on the ClickGUI screen (the
+    -- brief's instruction); and the field is not auto-focused, because over a
+    -- live game a stolen keyboard walks the character into a wall.
+    local NAV_WIDTH: number = 302
+    local NAV_CELL_WIDTH: number = 98
+    local NAV_CELL_HEIGHT: number = 22
+    local NAV_LIMIT: number = 24
+
+    local navFrame: Frame = (create("Frame", {
+        Parent = PopupLayer,
+        Name = "Navigator",
+        Active = true,
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Position = UDim2.fromOffset(
+            FURNITURE_MARGIN_X,
+            FURNITURE_MARGIN_Y + LOGO_HEIGHT + 8
+        ),
+        Size = UDim2.fromOffset(NAV_WIDTH, 26),
+        Visible = false,
+        ZIndex = 20,
+    }) :: any) :: Frame
+
+    local navSearch: TextBox = (create("TextBox", {
+        TextTruncate = Enum.TextTruncate.AtEnd,
+        Parent = navFrame,
+        Name = "Search",
+        BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+        BackgroundTransparency = 0.5,
+        BorderSizePixel = 0,
+        ClearTextOnFocus = false,
+        FontFace = CONTROL_FONT,
+        PlaceholderText = "Search…",
+        Position = UDim2.fromOffset(0, 0),
+        Size = UDim2.new(1, 0, 0, 22),
+        Text = "",
+        TextColor3 = Theme.text,
+        TextSize = 12,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 21,
+    }) :: any) :: TextBox
+    create("UIPadding", {
+        Parent = navSearch,
+        PaddingLeft = UDim.new(0, 6),
+        PaddingRight = UDim.new(0, 6),
+    })
+
+    local navResults: Frame = (create("Frame", {
+        Parent = navFrame,
+        Name = "Results",
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Position = UDim2.fromOffset(0, 26),
+        Size = UDim2.new(1, 0, 0, 0),
+        ZIndex = 21,
+    }) :: any) :: Frame
+    create("UIGridLayout", {
+        Parent = navResults,
+        CellPadding = UDim2.fromOffset(2, 2),
+        CellSize = UDim2.fromOffset(NAV_CELL_WIDTH, NAV_CELL_HEIGHT),
+        SortOrder = Enum.SortOrder.LayoutOrder,
+    })
+
+    local function navPrefs(): any
+        if type(configData.values.NavigatorPrefs) ~= "table" then
+            configData.values.NavigatorPrefs = {}
+        end
+        return configData.values.NavigatorPrefs
+    end
+
+    local navHeight: number = 26
+    local navOrdered: {any} = {}
+    local rebuildNavigator: () -> () = function(): () end
+
+    local function paintNavEntry(button: TextButton, feature: any): ()
+        local on: boolean = feature.enabled == true
+        button.BackgroundColor3 = on and Theme.enabled or Color3.fromRGB(0, 0, 0)
+        button.BackgroundTransparency = on and 0 or 0.5
+        button.TextColor3 = on and Theme.enabledText or Theme.text
+    end
+
+    rebuildNavigator = function(): ()
+        for _, child: Instance in ipairs(navResults:GetChildren()) do
+            if child:IsA("GuiObject") then
+                child:Destroy()
+            end
+        end
+        local query: string = string.lower(navSearch.Text or "")
+        local matches: {any} = {}
+        for _, feature: any in ipairs(allFeatures) do
+            if query == ""
+                or string.find(tostring(feature.searchText), query, 1, true) then
+                table.insert(matches, feature)
+            end
+        end
+        local prefs: any = navPrefs()
+        table.sort(matches, function(left: any, right: any): boolean
+            local leftUses: number = tonumber(prefs[left.name]) or 0
+            local rightUses: number = tonumber(prefs[right.name]) or 0
+            if leftUses ~= rightUses then
+                return leftUses > rightUses
+            end
+            return tostring(left.name) < tostring(right.name)
+        end)
+        navOrdered = {}
+        for index: number, feature: any in ipairs(matches) do
+            if index > NAV_LIMIT then
+                break
+            end
+            table.insert(navOrdered, feature)
+            local entry: TextButton = (create("TextButton", {
+                TextTruncate = Enum.TextTruncate.AtEnd,
+                Parent = navResults,
+                Name = "Nav_" .. tostring(feature.name):gsub("%W", ""),
+                Active = true,
+                AutoButtonColor = false,
+                BorderSizePixel = 0,
+                FontFace = CONTROL_FONT,
+                LayoutOrder = index,
+                Text = tostring(feature.name),
+                TextSize = 11,
+                ZIndex = 22,
+            }) :: any) :: TextButton
+            paintNavEntry(entry, feature)
+            table.insert(Furniture.connections, entry.MouseButton1Click:Connect(function(): ()
+                if type(feature.activate) == "function" then
+                    feature.activate()
+                end
+                prefs[tostring(feature.name)] =
+                    (tonumber(prefs[tostring(feature.name)]) or 0) + 1
+                queueConfigSave()
+                paintNavEntry(entry, feature)
+                refreshHudList()
+            end))
+        end
+        local rows: number = math.ceil(#navOrdered / 3)
+        navHeight = 26 + (rows > 0 and rows * (NAV_CELL_HEIGHT + 2) + 2 or 0)
+        navFrame.Size = UDim2.fromOffset(NAV_WIDTH, navHeight)
+        navResults.Size = UDim2.new(1, 0, 0, navHeight - 26)
+        placeHudList()
+    end
+
+    navigatorBottom = function(): number
+        if navFrame.Visible then
+            return FURNITURE_MARGIN_Y + LOGO_HEIGHT + 8 + navHeight + 8
+        end
+        return FURNITURE_MARGIN_Y + LOGO_HEIGHT + 8
+    end
+
+    table.insert(
+        Furniture.connections,
+        navSearch:GetPropertyChangedSignal("Text"):Connect(rebuildNavigator)
+    )
+    table.insert(Furniture.connections, navSearch.FocusLost:Connect(function(
+        enterPressed: boolean
+    ): ()
+        -- Enter fires the top hit, as Navigator's primary action does.
+        if enterPressed and navOrdered[1] ~= nil then
+            local top: any = navOrdered[1]
+            if type(top.activate) == "function" then
+                top.activate()
+            end
+            navPrefs()[tostring(top.name)] =
+                (tonumber(navPrefs()[tostring(top.name)]) or 0) + 1
+            queueConfigSave()
+            rebuildNavigator()
+            refreshHudList()
+        end
+    end))
+
+    state.navigator = {
+        root = navFrame,
+        refresh = rebuildNavigator,
+    }
+
     -- ----------------------------------------------------------------- pill
-    -- The five per cent of this menu that is Roblox rather than Wurst: the
-    -- floating capsule from the game's own top bar, as the launcher. It is
-    -- the only rounded, soft element on screen and the only chrome that is
-    -- still there when the ClickGUI is closed — on a phone it is the way
-    -- back in, which is why the shell's old circle stands down below.
-    --
-    -- Two buttons, because two targets exist: the GUI toggle and panic.
-    -- Search, configs, keybinds and UI settings join the capsule when their
-    -- windows do; a button that only raises a toast would be a control that
-    -- lies about having an effect.
-    local pillButtons: number = 2
+    -- The five per cent of this menu that is Roblox rather than Wurst: a
+    -- compact adaptation of the game's own top-bar capsule, kept only as the
+    -- launcher. One button — show or hide the menu. The shield, headphones,
+    -- options and cart of the real Roblox pill are the platform's, not ours,
+    -- and the OFF capsule that used to sit here is gone with them.
+    local pillButtons: number = 1
     local pillWidth: number = PILL_PADDING_X * 2
         + PILL_BUTTON * pillButtons
         + PILL_GAP * (pillButtons - 1)
-        + 9 -- the 1 px separator and its 4 px margins
 
     local pillFrame: Frame = (create("Frame", {
         Parent = PopupLayer,
@@ -10266,50 +10310,6 @@ function Module.init(context: any): any
         end
     )
 
-    create("Frame", {
-        Parent = pillFrame,
-        Name = "PillSeparator",
-        BackgroundColor3 = Color3.fromRGB(255, 255, 255),
-        BackgroundTransparency = 0.86,
-        BorderSizePixel = 0,
-        Position = UDim2.fromOffset(
-            PILL_PADDING_X + PILL_BUTTON + 4,
-            PILL_PADDING_Y + (PILL_BUTTON - 18) // 2
-        ),
-        Size = UDim2.fromOffset(1, 18),
-        ZIndex = 241,
-    })
-
-    pillButton(
-        2,
-        PILL_PADDING_X + PILL_BUTTON + 9 + PILL_GAP,
-        "OFF",
-        10,
-        "Panic: disable every module",
-        function(): ()
-            local disabled: number = 0
-            for _, feature: any in ipairs(allFeatures) do
-                if feature.enabled == true then
-                    -- One module that throws while switching off must not
-                    -- keep the ones after it running; this mirrors the
-                    -- shell's own teardown loop.
-                    pcall(feature.onToggle, false)
-                    feature.enabled = false
-                    configData.states[feature.configKey] = false
-                    disabled += 1
-                    refreshFeatureToggle(feature)
-                end
-            end
-            queueConfigSave()
-            refreshHudList()
-            notify(
-                disabled == 1
-                    and "Panic: 1 module disabled"
-                    or ("Panic: " .. tostring(disabled) .. " modules disabled")
-            )
-        end
-    )
-
     -- The menu button fills with the accent while the GUI is open, exactly
     -- like the prototype's `.on` state. Repainted on both the things that
     -- change it: visibility and the theme.
@@ -10323,9 +10323,20 @@ function Module.init(context: any): any
         menuButton.TextColor3 = open and Theme.accentText or PILL_IDLE_TEXT
     end
     restyleMenuButton()
-    state.addMenuVisibilityListener(function(): ()
+    state.addMenuVisibilityListener(function(visible: boolean): ()
         restyleMenuButton()
+        -- The wordmark and the Navigator belong to the ClickGUI screen; the
+        -- HackList stays (it is the in-game HUD) but re-seats itself under
+        -- whichever of the two currently ends that corner.
+        refreshLogoVisibility()
+        navFrame.Visible = visible == true
+        if visible then
+            rebuildNavigator()
+        else
+            placeHudList()
+        end
     end)
+    refreshLogoVisibility()
     ThemeEngine.OnChange(function(): ()
         restyleMenuButton()
     end)
@@ -10357,11 +10368,12 @@ function Module.init(context: any): any
         end
         Furniture.connections = {}
         chip:Destroy()
-        statsLabel:Destroy()
         hudFrame:Destroy()
+        navFrame:Destroy()
         pillFrame:Destroy()
         state.hudList = nil
         state.wurstLogo = nil
+        state.navigator = nil
         state.pill = nil
         -- The fallback launcher becomes the way in again.
         if type(state.refreshLauncher) == "function" then

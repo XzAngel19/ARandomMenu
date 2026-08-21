@@ -300,10 +300,7 @@ function Module.init(context: any): WidgetLibrary
             Size = UDim2.fromOffset(11, 11),
             ZIndex = option.ZIndex + 3,
         }) :: any) :: Frame
-        create("UICorner", {
-            Parent = box,
-            CornerRadius = UDim.new(0, 2),
-        })
+        -- A square, as in Wurst — no corner radius on a checkbox.
         local boxStroke: UIStroke = (create("UIStroke", {
             Parent = box,
             ApplyStrokeMode = Enum.ApplyStrokeMode.Border,

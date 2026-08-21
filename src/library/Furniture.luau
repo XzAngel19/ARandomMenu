@@ -36,18 +36,15 @@ local activeCleanup: (() -> ())? = nil
 local WURSTLOGO_BACKGROUND: Color3 = Color3.fromRGB(0, 0, 0)
 local WURSTLOGO_TEXT: Color3 = Color3.fromRGB(0, 0, 0)
 
--- The prototype's #brand block: 14 px from the left edge, 10 from the top,
--- stats 8 px under the wordmark.
+-- The prototype's #brand block: 14 px from the left edge, 10 from the top.
 local FURNITURE_MARGIN_X: number = 14
 local FURNITURE_MARGIN_Y: number = 10
-local STATS_GAP: number = 8
 
--- wurst_128.png is 505×128; at the chip's 22 px it renders 87 px wide.
-local LOGO_HEIGHT: number = 22
-local LOGO_WIDTH: number = 87
-
-local STATS_FONT_SIZE: number = 11
-local STATS_LINE_HEIGHT: number = 17
+-- Wurst draws its logo 72×18 logical; at the GUI scale 2 the interface is
+-- drawn at that is 144×36 (wurst_128.png is 505×128, so 142 keeps the exact
+-- aspect at 36 tall).
+local LOGO_HEIGHT: number = 36
+local LOGO_WIDTH: number = 142
 
 -- Wurst's HackList defaults (docs/wurst-features.md). Everything here is a
 -- live setting once the HackList settings window has been opened; these are
@@ -85,15 +82,12 @@ function Module.init(context: any): any
     local ThemeEngine: any = host.ThemeEngine
     local TaskManager: any = host.TaskManager
     local PopupLayer: any = host.PopupLayer
-    local Stats: any = host.Stats
     local TITLE_FONT: any = host.TITLE_FONT
     local CONTROL_FONT: any = host.CONTROL_FONT
     local TweenService: any = host.TweenService
     local allFeatures: {any} = host.allFeatures
     local configData: any = host.configData
     local queueConfigSave: any = host.queueConfigSave
-    local refreshFeatureToggle: any = host.refreshFeatureToggle
-    local notify: any = host.notify
     local UserInputService: any = host.UserInputService
     local colorFromConfig: any = host.colorFromConfig
 
@@ -147,29 +141,19 @@ function Module.init(context: any): any
         ZIndex = 21,
     }) :: any) :: TextLabel
 
-    -- The version string sits on the game, not on a slab.
-    --
-    -- WurstLogo does expose a Background whose default is #FFFFFF, and I read
-    -- that out of the wiki and painted an opaque white box with it. The
-    -- reference screenshot already in this repository —
-    -- docs/design/reference/ref-wurst-719.jpg — shows "v7.19 MC1.18.1" as bare
-    -- coloured text beside the sausage with no box anywhere. The image was
-    -- right and the defaults table was being read out of context: the setting
-    -- exists so a settings window can switch a background on, not so one is
-    -- painted before anybody asks.
+    -- The version string sits on the game, not on a slab — ref-wurst-719
+    -- shows "v7.19 MC1.18.1" as bare coloured text beside the sausage. The
+    -- frame exists only so the WurstLogo Background setting has something to
+    -- paint the day a player switches one on; by default it is invisible.
     local versionText: string = tostring(PRODUCT.version)
     local versionChip: Frame = (create("Frame", {
         Parent = chip,
         Name = "VersionChip",
-        -- A ghost of a background rather than Wurst's opaque white, which is
-        -- ugly over a game and was the first thing the user pointed at. Dark
-        -- and mostly transparent: enough to hold the text off the world, not
-        -- enough to be a box.
         BackgroundColor3 = WURSTLOGO_BACKGROUND,
-        BackgroundTransparency = 0.45,
+        BackgroundTransparency = 1,
         BorderSizePixel = 0,
-        Position = UDim2.fromOffset(LOGO_WIDTH + 10, 4),
-        Size = UDim2.fromOffset(12 + #versionText * 9, LOGO_HEIGHT),
+        Position = UDim2.fromOffset(LOGO_WIDTH + 10, 8),
+        Size = UDim2.fromOffset(12 + #versionText * 9, LOGO_HEIGHT - 16),
         ZIndex = 20,
     }) :: any) :: Frame
 
@@ -201,17 +185,28 @@ function Module.init(context: any): any
 
     -- Wurst's WurstLogo settings, read from the store at boot and edited
     -- live by the WurstLogo settings window.
+    local logoAlways: boolean = true
+    local function refreshLogoVisibility(): ()
+        -- The wordmark belongs to the ClickGUI screen here (the user's call;
+        -- Wurst itself draws it in-game at all times), and the Visibility
+        -- setting can still remove it: we ship no updater, so "Only when
+        -- outdated" can never fire.
+        chip.Visible = logoAlways and state.visible == true
+    end
     local function setLogoBackground(color: Color3): ()
-        chip.BackgroundColor3 = color
+        versionChip.BackgroundColor3 = color
+        -- Only a value somebody stored paints the chip; the default stays
+        -- bare text, the way every reference screenshot draws the version.
+        versionChip.BackgroundTransparency =
+            configData.values["WurstLogo.Background"] ~= nil and 0.45 or 1
     end
     local function setLogoTextColor(color: Color3): ()
         versionLabel.TextColor3 = color
         logoFallback.TextColor3 = color
     end
     local function setLogoVisibility(value: string): ()
-        -- We ship no updater, so "Only when outdated" can never fire; it
-        -- hides the chip rather than pretending to know about versions.
-        chip.Visible = value == "Always"
+        logoAlways = value == "Always"
+        refreshLogoVisibility()
     end
     setLogoBackground(colorFromConfig(
         configData.values["WurstLogo.Background"],
@@ -233,37 +228,8 @@ function Module.init(context: any): any
         SetVisibility = setLogoVisibility,
     }
 
-    -- ---------------------------------------------------------- stats block
-    -- Small, monospace, and rebuilt twice a second — cheap enough that the
-    -- values can read the live theme instead of binding each fragment.
-    local statsLabel: TextLabel = (create("TextLabel", {
-        TextTruncate = Enum.TextTruncate.AtEnd,
-        Name = "StatsBlock",
-        Active = false,
-        BackgroundTransparency = 1,
-        FontFace = Font.new("rbxasset://fonts/families/RobotoMono.json"),
-        Position = UDim2.fromOffset(
-            FURNITURE_MARGIN_X,
-            FURNITURE_MARGIN_Y + LOGO_HEIGHT + 8 + STATS_GAP
-        ),
-        RichText = true,
-        Size = UDim2.fromOffset(220, STATS_LINE_HEIGHT * 4),
-        Text = "",
-        TextColor3 = Theme.text,
-        TextSize = STATS_FONT_SIZE,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        TextYAlignment = Enum.TextYAlignment.Top,
-        ZIndex = 20,
-    }) :: any) :: TextLabel
-    -- Never parented, never shown.
-    --
-    -- Official Wurst 7 draws the sausage and the version in that corner and
-    -- nothing else. FPS, ping, session time and place were the old menu's
-    -- readout, and the user counted them as exactly that. The label is built
-    -- and left unparented rather than ripped out here, because the HackList's
-    -- compact placement still measures against where it used to sit and that
-    -- arithmetic is the next thing to simplify, not this.
-    statsLabel.Parent = nil
+    -- The old menu's FPS/PING/TIME/PLACE readout is gone entirely — Wurst
+    -- draws the sausage and the version in that corner and nothing else.
 
     local function colorHex(color: Color3): string
         return string.format(
@@ -277,71 +243,6 @@ function Module.init(context: any): any
     local function escapeRich(text: string): string
         return (text:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"))
     end
-
-    local sessionStartedAt: number = os.clock()
-    local frameCount: number = 0
-    local statsElapsed: number = 0
-
-    local function pingMilliseconds(): number?
-        local ok: boolean, value: any = pcall(function(): number
-            return Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
-        end)
-        if ok and type(value) == "number" then
-            return math.floor(value + 0.5)
-        end
-        return nil
-    end
-
-    local function renderStats(framesPerSecond: number): ()
-        local accent: string = colorHex(Theme.accent)
-        local function line(label: string, value: string): string
-            return label
-                .. ' <font color="'
-                .. accent
-                .. '"><b>'
-                .. value
-                .. "</b></font>"
-        end
-        local ping: number? = pingMilliseconds()
-        local rows: {string} = {
-            line("FPS  ", tostring(framesPerSecond)),
-            line("PING ", ping and tostring(ping) .. "ms" or "—"),
-        }
-        -- A phone keeps FPS and ping and drops the rest: four lines under a
-        -- wordmark is a quarter of a small screen's corner.
-        if not state.layout.compact then
-            local seconds: number = math.floor(os.clock() - sessionStartedAt)
-            table.insert(rows, line(
-                "TIME ",
-                string.format("%02d:%02d", seconds // 60, seconds % 60)
-            ))
-            table.insert(rows, line(
-                "PLACE",
-                escapeRich(tostring(state.activeGameName or "—"))
-            ))
-        end
-        -- Deliberately unused. See the note where StatsBlock used to be.
-        local _unused: string = table.concat(rows, "\n")
-    end
-
-    table.insert(Furniture.handles, TaskManager:Connect(function(): ()
-        frameCount += 1
-    end, "render"))
-
-    table.insert(Furniture.handles, TaskManager:Connect(function(
-        deltaTime: number
-    ): ()
-        statsElapsed += deltaTime
-        if statsElapsed < 0.5 then
-            return
-        end
-        local framesPerSecond: number =
-            math.floor(frameCount / statsElapsed + 0.5)
-        frameCount = 0
-        statsElapsed = 0
-        renderStats(framesPerSecond)
-    end))
-    renderStats(0)
 
     -- ------------------------------------------------------------- HackList
     -- Wurst's list of what is on, one line per enabled module, newest state
@@ -396,24 +297,26 @@ function Module.init(context: any): any
     end
 
     local function hudOnLeft(): boolean
-        -- A phone always keeps the list on the left under the stats block,
-        -- where a thumb does not cover it (UI-V2, Mobile); a desktop follows
-        -- Wurst's Position setting, whose default is Left, under the logo.
+        -- A phone always keeps the list on the left, where a thumb does not
+        -- cover it (UI-V2, Mobile); a desktop follows Wurst's Position
+        -- setting, whose default is Left, under the logo.
         return state.layout.compact or hudPosition == "Left"
+    end
+
+    -- Assigned once the Navigator below exists; the left-hand list starts
+    -- under whatever the ClickGUI is currently showing in that corner.
+    local navigatorBottom: () -> number = function(): number
+        return FURNITURE_MARGIN_Y + LOGO_HEIGHT + 8
     end
 
     local function placeHudList(): ()
         if hudOnLeft() then
             hudFrame.AnchorPoint = Vector2.new(0, 0)
-            local statsLines: number = state.layout.compact and 2 or 4
             hudFrame.Position = UDim2.new(
                 0,
                 FURNITURE_MARGIN_X,
                 0,
-                FURNITURE_MARGIN_Y + LOGO_HEIGHT + 8
-                    + STATS_GAP
-                    + STATS_LINE_HEIGHT * statsLines
-                    + STATS_GAP
+                navigatorBottom()
             )
             hudLayout.HorizontalAlignment = Enum.HorizontalAlignment.Left
         else
@@ -652,22 +555,196 @@ function Module.init(context: any): any
         end,
     }
 
+    -- ------------------------------------------------------------ Navigator
+    -- Wurst's Navigator: a search field and a flat three-column grid of every
+    -- feature, ordered by how often the player has activated each one, with
+    -- an empty query restoring the preference order and Enter firing the top
+    -- hit. Two deliberate adaptations, recorded here: Wurst gives Navigator
+    -- its own screen, ours lives under the logo on the ClickGUI screen (the
+    -- brief's instruction); and the field is not auto-focused, because over a
+    -- live game a stolen keyboard walks the character into a wall.
+    local NAV_WIDTH: number = 302
+    local NAV_CELL_WIDTH: number = 98
+    local NAV_CELL_HEIGHT: number = 22
+    local NAV_LIMIT: number = 24
+
+    local navFrame: Frame = (create("Frame", {
+        Parent = PopupLayer,
+        Name = "Navigator",
+        Active = true,
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Position = UDim2.fromOffset(
+            FURNITURE_MARGIN_X,
+            FURNITURE_MARGIN_Y + LOGO_HEIGHT + 8
+        ),
+        Size = UDim2.fromOffset(NAV_WIDTH, 26),
+        Visible = false,
+        ZIndex = 20,
+    }) :: any) :: Frame
+
+    local navSearch: TextBox = (create("TextBox", {
+        TextTruncate = Enum.TextTruncate.AtEnd,
+        Parent = navFrame,
+        Name = "Search",
+        BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+        BackgroundTransparency = 0.5,
+        BorderSizePixel = 0,
+        ClearTextOnFocus = false,
+        FontFace = CONTROL_FONT,
+        PlaceholderText = "Search…",
+        Position = UDim2.fromOffset(0, 0),
+        Size = UDim2.new(1, 0, 0, 22),
+        Text = "",
+        TextColor3 = Theme.text,
+        TextSize = 12,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 21,
+    }) :: any) :: TextBox
+    create("UIPadding", {
+        Parent = navSearch,
+        PaddingLeft = UDim.new(0, 6),
+        PaddingRight = UDim.new(0, 6),
+    })
+
+    local navResults: Frame = (create("Frame", {
+        Parent = navFrame,
+        Name = "Results",
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Position = UDim2.fromOffset(0, 26),
+        Size = UDim2.new(1, 0, 0, 0),
+        ZIndex = 21,
+    }) :: any) :: Frame
+    create("UIGridLayout", {
+        Parent = navResults,
+        CellPadding = UDim2.fromOffset(2, 2),
+        CellSize = UDim2.fromOffset(NAV_CELL_WIDTH, NAV_CELL_HEIGHT),
+        SortOrder = Enum.SortOrder.LayoutOrder,
+    })
+
+    local function navPrefs(): any
+        if type(configData.values.NavigatorPrefs) ~= "table" then
+            configData.values.NavigatorPrefs = {}
+        end
+        return configData.values.NavigatorPrefs
+    end
+
+    local navHeight: number = 26
+    local navOrdered: {any} = {}
+    local rebuildNavigator: () -> () = function(): () end
+
+    local function paintNavEntry(button: TextButton, feature: any): ()
+        local on: boolean = feature.enabled == true
+        button.BackgroundColor3 = on and Theme.enabled or Color3.fromRGB(0, 0, 0)
+        button.BackgroundTransparency = on and 0 or 0.5
+        button.TextColor3 = on and Theme.enabledText or Theme.text
+    end
+
+    rebuildNavigator = function(): ()
+        for _, child: Instance in ipairs(navResults:GetChildren()) do
+            if child:IsA("GuiObject") then
+                child:Destroy()
+            end
+        end
+        local query: string = string.lower(navSearch.Text or "")
+        local matches: {any} = {}
+        for _, feature: any in ipairs(allFeatures) do
+            if query == ""
+                or string.find(tostring(feature.searchText), query, 1, true) then
+                table.insert(matches, feature)
+            end
+        end
+        local prefs: any = navPrefs()
+        table.sort(matches, function(left: any, right: any): boolean
+            local leftUses: number = tonumber(prefs[left.name]) or 0
+            local rightUses: number = tonumber(prefs[right.name]) or 0
+            if leftUses ~= rightUses then
+                return leftUses > rightUses
+            end
+            return tostring(left.name) < tostring(right.name)
+        end)
+        navOrdered = {}
+        for index: number, feature: any in ipairs(matches) do
+            if index > NAV_LIMIT then
+                break
+            end
+            table.insert(navOrdered, feature)
+            local entry: TextButton = (create("TextButton", {
+                TextTruncate = Enum.TextTruncate.AtEnd,
+                Parent = navResults,
+                Name = "Nav_" .. tostring(feature.name):gsub("%W", ""),
+                Active = true,
+                AutoButtonColor = false,
+                BorderSizePixel = 0,
+                FontFace = CONTROL_FONT,
+                LayoutOrder = index,
+                Text = tostring(feature.name),
+                TextSize = 11,
+                ZIndex = 22,
+            }) :: any) :: TextButton
+            paintNavEntry(entry, feature)
+            table.insert(Furniture.connections, entry.MouseButton1Click:Connect(function(): ()
+                if type(feature.activate) == "function" then
+                    feature.activate()
+                end
+                prefs[tostring(feature.name)] =
+                    (tonumber(prefs[tostring(feature.name)]) or 0) + 1
+                queueConfigSave()
+                paintNavEntry(entry, feature)
+                refreshHudList()
+            end))
+        end
+        local rows: number = math.ceil(#navOrdered / 3)
+        navHeight = 26 + (rows > 0 and rows * (NAV_CELL_HEIGHT + 2) + 2 or 0)
+        navFrame.Size = UDim2.fromOffset(NAV_WIDTH, navHeight)
+        navResults.Size = UDim2.new(1, 0, 0, navHeight - 26)
+        placeHudList()
+    end
+
+    navigatorBottom = function(): number
+        if navFrame.Visible then
+            return FURNITURE_MARGIN_Y + LOGO_HEIGHT + 8 + navHeight + 8
+        end
+        return FURNITURE_MARGIN_Y + LOGO_HEIGHT + 8
+    end
+
+    table.insert(
+        Furniture.connections,
+        navSearch:GetPropertyChangedSignal("Text"):Connect(rebuildNavigator)
+    )
+    table.insert(Furniture.connections, navSearch.FocusLost:Connect(function(
+        enterPressed: boolean
+    ): ()
+        -- Enter fires the top hit, as Navigator's primary action does.
+        if enterPressed and navOrdered[1] ~= nil then
+            local top: any = navOrdered[1]
+            if type(top.activate) == "function" then
+                top.activate()
+            end
+            navPrefs()[tostring(top.name)] =
+                (tonumber(navPrefs()[tostring(top.name)]) or 0) + 1
+            queueConfigSave()
+            rebuildNavigator()
+            refreshHudList()
+        end
+    end))
+
+    state.navigator = {
+        root = navFrame,
+        refresh = rebuildNavigator,
+    }
+
     -- ----------------------------------------------------------------- pill
-    -- The five per cent of this menu that is Roblox rather than Wurst: the
-    -- floating capsule from the game's own top bar, as the launcher. It is
-    -- the only rounded, soft element on screen and the only chrome that is
-    -- still there when the ClickGUI is closed — on a phone it is the way
-    -- back in, which is why the shell's old circle stands down below.
-    --
-    -- Two buttons, because two targets exist: the GUI toggle and panic.
-    -- Search, configs, keybinds and UI settings join the capsule when their
-    -- windows do; a button that only raises a toast would be a control that
-    -- lies about having an effect.
-    local pillButtons: number = 2
+    -- The five per cent of this menu that is Roblox rather than Wurst: a
+    -- compact adaptation of the game's own top-bar capsule, kept only as the
+    -- launcher. One button — show or hide the menu. The shield, headphones,
+    -- options and cart of the real Roblox pill are the platform's, not ours,
+    -- and the OFF capsule that used to sit here is gone with them.
+    local pillButtons: number = 1
     local pillWidth: number = PILL_PADDING_X * 2
         + PILL_BUTTON * pillButtons
         + PILL_GAP * (pillButtons - 1)
-        + 9 -- the 1 px separator and its 4 px margins
 
     local pillFrame: Frame = (create("Frame", {
         Parent = PopupLayer,
@@ -785,50 +862,6 @@ function Module.init(context: any): any
         end
     )
 
-    create("Frame", {
-        Parent = pillFrame,
-        Name = "PillSeparator",
-        BackgroundColor3 = Color3.fromRGB(255, 255, 255),
-        BackgroundTransparency = 0.86,
-        BorderSizePixel = 0,
-        Position = UDim2.fromOffset(
-            PILL_PADDING_X + PILL_BUTTON + 4,
-            PILL_PADDING_Y + (PILL_BUTTON - 18) // 2
-        ),
-        Size = UDim2.fromOffset(1, 18),
-        ZIndex = 241,
-    })
-
-    pillButton(
-        2,
-        PILL_PADDING_X + PILL_BUTTON + 9 + PILL_GAP,
-        "OFF",
-        10,
-        "Panic: disable every module",
-        function(): ()
-            local disabled: number = 0
-            for _, feature: any in ipairs(allFeatures) do
-                if feature.enabled == true then
-                    -- One module that throws while switching off must not
-                    -- keep the ones after it running; this mirrors the
-                    -- shell's own teardown loop.
-                    pcall(feature.onToggle, false)
-                    feature.enabled = false
-                    configData.states[feature.configKey] = false
-                    disabled += 1
-                    refreshFeatureToggle(feature)
-                end
-            end
-            queueConfigSave()
-            refreshHudList()
-            notify(
-                disabled == 1
-                    and "Panic: 1 module disabled"
-                    or ("Panic: " .. tostring(disabled) .. " modules disabled")
-            )
-        end
-    )
-
     -- The menu button fills with the accent while the GUI is open, exactly
     -- like the prototype's `.on` state. Repainted on both the things that
     -- change it: visibility and the theme.
@@ -842,9 +875,20 @@ function Module.init(context: any): any
         menuButton.TextColor3 = open and Theme.accentText or PILL_IDLE_TEXT
     end
     restyleMenuButton()
-    state.addMenuVisibilityListener(function(): ()
+    state.addMenuVisibilityListener(function(visible: boolean): ()
         restyleMenuButton()
+        -- The wordmark and the Navigator belong to the ClickGUI screen; the
+        -- HackList stays (it is the in-game HUD) but re-seats itself under
+        -- whichever of the two currently ends that corner.
+        refreshLogoVisibility()
+        navFrame.Visible = visible == true
+        if visible then
+            rebuildNavigator()
+        else
+            placeHudList()
+        end
     end)
+    refreshLogoVisibility()
     ThemeEngine.OnChange(function(): ()
         restyleMenuButton()
     end)
@@ -876,11 +920,12 @@ function Module.init(context: any): any
         end
         Furniture.connections = {}
         chip:Destroy()
-        statsLabel:Destroy()
         hudFrame:Destroy()
+        navFrame:Destroy()
         pillFrame:Destroy()
         state.hudList = nil
         state.wurstLogo = nil
+        state.navigator = nil
         state.pill = nil
         -- The fallback launcher becomes the way in again.
         if type(state.refreshLauncher) == "function" then

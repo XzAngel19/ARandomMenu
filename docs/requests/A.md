@@ -25,3 +25,17 @@ the stats on a phone, per UI-V2's mobile section). When the HackList
 settings window ships and `HACKLIST_POSITION` becomes a named constant,
 the spec row for it should carry our default, not upstream's — otherwise
 the gate will force a Left default that contradicts the prototype.
+
+## For C, after the fidelity pass (2026-08-21)
+
+- The mock's TextButton carries no `MouseButton2Click`; the row's
+  right-click had to go through `InputBegan` + `UserInputType.MouseButton2`
+  (which is also what real Roblox prefers). If the harness ever grows the
+  signal, the suites can drive right-click directly.
+- spec.json regenerated from the prototype: `titleHeight` 26 (Wurst's 13
+  logical at GUI scale 2), `radius` 0. `TITLE_HEIGHT=26` now exists in
+  WindowManager, ClickGui and SettingsPage; the gate holds all three.
+- New surfaces worth measuring/testing: the Navigator under the logo
+  (search + 3-column grid, preference-ordered, Enter fires the top hit),
+  the 22 px settings arrow that only exists when a module has options,
+  and the logo at 144×36.

@@ -30,6 +30,10 @@ local activeCleanup: (() -> ())? = nil
 local WINDOW_WIDTH: number = 214
 local ROW_HEIGHT: number = 22
 local WINDOW_GAP: number = 2
+-- The prototype's title bar — Wurst's 13 logical pixels at GUI scale 2. The
+-- parity gate reads this name in every scanned file, so it has to agree
+-- with WindowManager's.
+local TITLE_HEIGHT: number = 26
 
 function Module.init(context: any): any
     -- Wurst's defaults, verbatim (docs/wurst-features.md). A value that is
@@ -141,7 +145,7 @@ function Module.init(context: any): any
                 limit = math.huge
             end
             local wanted: number = math.min(
-                22 + layout.AbsoluteContentSize.Y + WINDOW_GAP * 2,
+                TITLE_HEIGHT + layout.AbsoluteContentSize.Y + WINDOW_GAP * 2,
                 limit
             )
             window.fullHeight = wanted
@@ -850,7 +854,7 @@ function Module.init(context: any): any
     -- default) opacity, tooltip opacity and heights at boot.
     local screen: Vector2 = viewport()
     local uiRecord: any = configWindow("UISettings", "UI Settings", {
-        position = Vector2.new(screen.X - WINDOW_WIDTH - 12, 96),
+        position = Vector2.new(screen.X - WINDOW_WIDTH - 12, 64),
         closable = false,
         settingsSized = false,
     })

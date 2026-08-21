@@ -32,10 +32,10 @@ function Module.init(context: any): any
     local makeTextLabel: any = host.makeTextLabel
     local notify: any = host.notify
     local Theme: any = host.Theme
+    local ThemeEngine: any = host.ThemeEngine
     local CONTROL_FONT: any = host.CONTROL_FONT
     local TweenService: any = host.TweenService
     local UI_MOTION: any = host.UI_MOTION
-    local cornerRadius: any = host.cornerRadius
     local trackUiConnection: any = host.trackUiConnection
     local applyKeySlotStyle: any = host.applyKeySlotStyle
     local bindActionShortcut: any = host.bindActionShortcut
@@ -164,96 +164,49 @@ function Module.init(context: any): any
         -- frame with "category block + alphabetical position".
         row:SetAttribute("FeatureCategory", categoryName)
         row:SetAttribute("FeatureSortName", string.lower(name))
-        create("UICorner", {
-            Parent = row,
-            Name = "CardCorner",
-            -- Cards are rows in a list, not floating tiles: a small radius keeps
-            -- them reading as one surface instead of a tray of lozenges.
-            CornerRadius = cornerRadius(math.min(state.layout.cardCorner, 8)),
-        })
-        local cardStroke: UIStroke = (create("UIStroke", {
-            Parent = row,
-            Color = state.guiStyle == "Default"
-                and Theme.outline
-                or Theme.outline,
-            Transparency = 1,
-            Thickness = 1,
-        }) :: any) :: UIStroke
-        feature.stroke = cardStroke
-        -- Hairline under the card. A separator instead of a box: forty boxed cards
-        -- read as a spreadsheet, forty separated rows read as a list.
-        local cardRule: Frame = create("Frame", {
-            Parent = row,
-            Name = "CardRule",
-            AnchorPoint = Vector2.new(0.5, 1),
-            BackgroundColor3 = Theme.outline,
-            BackgroundTransparency = 0.86,
-            BorderSizePixel = 0,
-            Position = UDim2.new(0.5, 0, 1, 0),
-            Size = UDim2.new(1, 0, 0, 1),
-            ZIndex = 8,
-        }) :: Frame
-        feature.cardRule = cardRule
-
-        -- The card itself carries the kind (see `state.applyCardSkin`).
+        -- A Wurst row is a rectangle. No corner radius, no stroke, no hairline
+        -- separator — the previous card dressing made forty rows read as a
+        -- tray of lozenges, and none of it is in ref-wurst-719.
 
         local title: TextLabel =
             (makeTextLabel(row, name, state.layout.titleFontSize) :: any) :: TextLabel
         title.FontFace = CONTROL_FONT
-        title.Position = UDim2.fromOffset(12, 0)
-        title.Size = UDim2.new(1, -(state.layout.cardHeight + 96), 0, feature.collapsedHeight)
+        title.Position = UDim2.fromOffset(8, 0)
+        -- Full width minus the arrow reserve; the reserve only exists while
+        -- the module actually has settings (applyLayout keeps this in step).
+        title.Size = UDim2.new(1, -8, 0, feature.collapsedHeight)
         title.TextTruncate = Enum.TextTruncate.AtEnd
         title.TextColor3 = state.guiStyle == "Default"
             and Theme.text
             or Theme.text
         feature.title = title
 
-        local headerControls: Frame = create("Frame", {
+        -- Wurst's settings arrow: an 11-logical-px box on the right end of
+        -- the row (22 here, everything is drawn at GUI scale 2), holding a
+        -- triangle that points down while the settings are closed and up
+        -- while they are open. It is the only decoration a row may carry,
+        -- and it exists only when the module has settings.
+        local arrow: TextButton = (create("TextButton", {
+            TextTruncate = Enum.TextTruncate.AtEnd,
             Parent = row,
-            Name = "HeaderControls",
-            AnchorPoint = Vector2.new(1, 0.5),
+            Name = "Expand",
+            Active = true,
+            AnchorPoint = Vector2.new(1, 0),
+            AutoButtonColor = false,
             BackgroundTransparency = 1,
             BorderSizePixel = 0,
-            Position = UDim2.new(1, -8, 0, feature.collapsedHeight / 2),
-            Size = UDim2.fromOffset(
-                state.layout.iconButton * 2 + state.layout.keySlotWidth + 12,
-                state.layout.iconButton + 4
-            ),
+            FontFace = CONTROL_FONT,
+            Position = UDim2.new(1, 0, 0, 0),
+            Size = UDim2.fromOffset(22, feature.collapsedHeight),
+            Text = "▼",
+            TextSize = 10,
+            Visible = false,
             ZIndex = 9,
-        }) :: Frame
-        create("UIListLayout", {
-            Parent = headerControls,
-            Name = "HeaderControlsLayout",
-            FillDirection = Enum.FillDirection.Horizontal,
-            HorizontalAlignment = Enum.HorizontalAlignment.Right,
-            VerticalAlignment = Enum.VerticalAlignment.Center,
-            Padding = UDim.new(0, state.layout.compact and 4 or 6),
-            SortOrder = Enum.SortOrder.LayoutOrder,
-        })
-        local arrow: TextButton =
-            (makeButton(headerControls, "", 10) :: any) :: TextButton
-        arrow.Name = "Expand"
-        arrow.LayoutOrder = 3
-        arrow:SetAttribute("ThemeRole", "Icon")
-        arrow:SetAttribute("NoPressEffect", true)
-        arrow.BackgroundTransparency = 1
-        arrow.Size =
-            UDim2.fromOffset(state.layout.iconButton, state.layout.iconButton)
-        arrow.TextColor3 = state.guiStyle == "Default"
-            and Theme.textMuted
-            or Theme.textMuted
-        -- Every card shows the three lines, including modules with nothing to
-        -- configure (Anti-AFK, Anti-Void, X-Ray...): a row that silently drops a
-        -- control makes the list look ragged. A card with no options simply never
-        -- opens — the mark is dimmed and the click is ignored, which is checked
-        -- at click time because option rows can be added after the card is built.
-        arrow.Active = true
-        arrow.ZIndex = 9
-        state.applyLinesGlyph(arrow, configuration.noOptions == true)
-        arrow.ZIndex = 9
-        local arrowStroke: UIStroke? = arrow:FindFirstChild("StyleStroke") :: UIStroke?
-        if arrowStroke then
-            arrowStroke.Enabled = false
+        }) :: any) :: TextButton
+        if ThemeEngine and type(ThemeEngine.Bind) == "function" then
+            ThemeEngine.Bind(arrow, "TextColor3", "enabled")
+        else
+            arrow.TextColor3 = Theme.enabled
         end
         feature.arrow = arrow
 
@@ -269,6 +222,22 @@ function Module.init(context: any): any
             end
             return false
         end
+
+        -- Options arrive after the card is built (the module adds its rows to
+        -- a card that already exists), so the arrow's existence is re-decided
+        -- every time the panel is remeasured rather than once at creation.
+        local function syncArrow(): ()
+            local expandable: boolean = feature.hasOptions()
+            arrow.Visible = expandable
+            arrow.Text = feature.expanded and "▲" or "▼"
+            title.Size = UDim2.new(
+                1,
+                expandable and -30 or -8,
+                0,
+                feature.collapsedHeight
+            )
+        end
+        feature.syncArrow = syncArrow
 
         local activationTarget: TextButton = create("TextButton", {
             TextTruncate = Enum.TextTruncate.AtEnd,
@@ -370,7 +339,7 @@ function Module.init(context: any): any
                     TweenInfo.new(UI_MOTION.slow, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
                     {Size = targetRowSize}
                 ):Play()
-                state.applyLinesGlyph(arrow, false, feature.expanded)
+                syncArrow()
                 if not feature.expanded then
                     task.delay(UI_MOTION.slow + 0.02, function(): ()
                         if not feature.expanded and options.Parent then
@@ -381,7 +350,7 @@ function Module.init(context: any): any
             else
                 options.Size = targetOptionsSize
                 row.Size = targetRowSize
-                state.applyLinesGlyph(arrow, false, feature.expanded)
+                syncArrow()
                 options.Visible = feature.expanded
             end
         end
@@ -393,16 +362,18 @@ function Module.init(context: any): any
                 end)
         )
 
-        trackUiConnection(arrow.MouseButton1Click:Connect(function(): ()
+        local function toggleExpansion(): ()
             if not feature.hasOptions() then
                 -- Nothing to show: keep the panel shut instead of opening an
                 -- empty box under the card.
-                state.applyLinesGlyph(arrow, true)
+                syncArrow()
                 return
             end
             feature.expanded = not feature.expanded
             updateExpandedSize(true)
-        end))
+        end
+        trackUiConnection(arrow.MouseButton1Click:Connect(toggleExpansion))
+        feature.toggleExpansion = toggleExpansion
 
         -- Hold modules.
         --
@@ -505,64 +476,46 @@ function Module.init(context: any): any
         end
 
         trackUiConnection(activationTarget.MouseButton1Click:Connect(activateFeature))
-        do
-            local favoriteButton: TextButton =
-                (makeButton(headerControls, "☆", 11) :: any) :: TextButton
-            favoriteButton.Name = "Favorite"
-            favoriteButton.LayoutOrder = 1
-            favoriteButton:SetAttribute("ThemeRole", "Icon")
-            favoriteButton:SetAttribute("NoPressEffect", true)
-            favoriteButton.BackgroundTransparency = 1
-            favoriteButton.Size =
-                UDim2.fromOffset(state.layout.iconButton, state.layout.iconButton)
-            favoriteButton.ZIndex = 9
-            local favoriteStroke: UIStroke? =
-                favoriteButton:FindFirstChild("StyleStroke") :: UIStroke?
-            if favoriteStroke then
-                favoriteStroke.Enabled = false
+        -- Wurst's right-click: the settings open under the row. The star and
+        -- the permanent key slot that used to sit in every header are gone —
+        -- Wurst rows carry a name and, at most, the arrow.
+        trackUiConnection(activationTarget.InputBegan:Connect(function(input: InputObject): ()
+            if input.UserInputType == Enum.UserInputType.MouseButton2 then
+                toggleExpansion()
             end
-            feature.favoriteButton = favoriteButton
-            trackUiConnection(favoriteButton.MouseButton1Click:Connect(function(): ()
-                state.floatingUi.toggleFavorite(feature)
-            end))
+        end))
+
+        -- On touch there is no keyboard and no right-click: the slot that
+        -- places an on-screen button for the module is the only way a phone
+        -- reaches a shortcut, so the slot survives there and only there.
+        local shortcutButton: TextButton? = nil
+        if state.isMobile then
+            local slot: TextButton =
+                (makeButton(row, "KEY", 9) :: any) :: TextButton
+            slot.Name = "Shortcut"
+            slot.AnchorPoint = Vector2.new(1, 0.5)
+            slot.Position = UDim2.new(1, -30, 0, feature.collapsedHeight / 2)
+            slot.Size = UDim2.fromOffset(
+                state.layout.keySlotWidth,
+                state.layout.iconButton
+            )
+            slot.ZIndex = 9
+            applyKeySlotStyle(slot)
+            slot.TextScaled = true
+            create("UITextSizeConstraint", {
+                Parent = slot,
+                MaxTextSize = 11,
+                MinTextSize = 7,
+            })
+            shortcutButton = slot
         end
-        -- Every card header carries the same three controls — favourite, key
-        -- slot, expand — so the whole list reads as one symmetric grid no matter
-        -- whether the module is a toggle, an action or a category. The key slot
-        -- toggles regular modules, runs actions, and expands/collapses category
-        -- headers (the same path `activateFeature` already provides).
-        local shortcutButton: TextButton =
-            (makeButton(headerControls, "KEY", 9) :: any) :: TextButton
-        shortcutButton.Name = "Shortcut"
-        shortcutButton.LayoutOrder = 2
-        shortcutButton.BackgroundColor3 = state.guiStyle == "Default"
-            and Theme.surface
-            or Theme.surfaceRaised
-        shortcutButton.Size = UDim2.fromOffset(
-            state.layout.keySlotWidth,
-            state.layout.iconButton
-        )
-        shortcutButton.ZIndex = 9
-        applyKeySlotStyle(shortcutButton)
-        shortcutButton.TextScaled = true
-        create("UITextSizeConstraint", {
-            Parent = shortcutButton,
-            MaxTextSize = 11,
-            MinTextSize = 7,
-        })
         feature.shortcutButton = shortcutButton
         if feature.kind == "group" then
-            -- A container has nothing to activate: the slot stays on the card for
-            -- symmetry but never captures a key, never places a mobile button and
-            -- never fires. Pressing it does nothing, by design.
-            shortcutButton.Active = false
-            shortcutButton.AutoButtonColor = false
-            shortcutButton.Text = ""
-            shortcutButton.TextTransparency = 1
-            shortcutButton.BackgroundTransparency = 0.86
-            shortcutButton:SetAttribute("Disabled", true)
-            shortcutButton:SetAttribute("NoHover", true)
-            shortcutButton:SetAttribute("CaptureIdleText", "")
+            -- A container has nothing to activate: no key is ever bound to
+            -- it, so no binding is registered at all.
+            if shortcutButton then
+                (shortcutButton :: TextButton).Visible = false
+            end
         elseif feature.kind == "hold" then
             -- The key is a dead-man switch: held means active, released means
             -- inactive. It never toggles the module on or off.
@@ -590,7 +543,7 @@ function Module.init(context: any): any
             )
         end
 
-        feature.headerControls = headerControls
+
 
         -- Point at the card, press a key, the card owns that key — the same
         -- gesture the reference interface uses instead of a capture dialog.
@@ -602,33 +555,18 @@ function Module.init(context: any): any
         -- work without a single game module knowing a pixel value.
         feature.applyLayout = function(): ()
             local metrics: LayoutMetrics = state.layout
-            local sideWidth: number =
-                metrics.iconButton * 2 + metrics.keySlotWidth + 12
             feature.collapsedHeight = metrics.cardHeight
-            local cardCorner: UICorner? = row:FindFirstChild("CardCorner") :: UICorner?
-            if cardCorner then
-                cardCorner.CornerRadius = cornerRadius(math.min(metrics.cardCorner, 8))
-            end
-            title.Size =
-                UDim2.new(1, -(sideWidth + 26), 0, metrics.cardHeight)
             state.setTextMetric(title, metrics.titleFontSize)
-            headerControls.Position = UDim2.new(1, -8, 0, metrics.cardHeight / 2)
-            headerControls.Size =
-                UDim2.fromOffset(sideWidth, metrics.iconButton + 4)
-            local controlsLayout: UIListLayout? =
-                headerControls:FindFirstChild("HeaderControlsLayout") :: UIListLayout?
-            if controlsLayout then
-                controlsLayout.Padding = UDim.new(0, metrics.compact and 4 or 6)
+            arrow.Size = UDim2.fromOffset(22, metrics.cardHeight)
+            if shortcutButton then
+                (shortcutButton :: TextButton).Size =
+                    UDim2.fromOffset(metrics.keySlotWidth, metrics.iconButton);
+                (shortcutButton :: TextButton).Position =
+                    UDim2.new(1, -30, 0, metrics.cardHeight / 2)
             end
-            arrow.Size = UDim2.fromOffset(metrics.iconButton, metrics.iconButton)
-            if feature.favoriteButton then
-                feature.favoriteButton.Size =
-                    UDim2.fromOffset(metrics.iconButton, metrics.iconButton)
-            end
-            shortcutButton.Size =
-                UDim2.fromOffset(metrics.keySlotWidth, metrics.iconButton)
             activationTarget.Size = UDim2.new(1, 0, 0, metrics.cardHeight)
             options.Position = UDim2.fromOffset(8, metrics.cardHeight)
+            syncArrow()
             updateExpandedSize(false)
         end
         -- Applied once at creation too, so a card built while the shell is in one
