@@ -42,6 +42,14 @@ local activeCleanup: (() -> ())? = nil
 -- one. Nothing here scales with the viewport.
 local WINDOW_WIDTH: number = 160
 local WINDOW_MAX_HEIGHT: number = 300
+-- 1080p is the reference the prototype was drawn at. Below it the interface
+-- would be unreadably small and above it lost, so everything scales with the
+-- viewport's height rather than being redesigned per device — which is what
+-- Vape does on Roblox, and why its menu looks the same shape on a phone as on
+-- a monitor instead of being a second layout.
+local REFERENCE_HEIGHT: number = 1080
+local SCALE_MINIMUM: number = 0.85
+local SCALE_MAXIMUM: number = 1.6
 local GRID_MARGIN: number = 12
 local WINDOW_GAP: number = 2
 local GRID_GAP: number = 8
@@ -64,6 +72,22 @@ function Module.init(context: any): any
     local state: any = host.state
     local create: any = host.create
     local allFeatures: {any} = host.allFeatures
+
+    -- One UIScale over the whole layer. Wurst is bigger than what we shipped —
+    -- the user compared it to Vape and said so — and the answer is not a bigger
+    -- constant, because then it is wrong on every screen that is not the one it
+    -- was picked on.
+    local function viewportScale(): number
+        local camera: Camera? = workspace.CurrentCamera
+        local height: number = camera
+            and (camera :: Camera).ViewportSize.Y
+            or REFERENCE_HEIGHT
+        return math.clamp(
+            (height / REFERENCE_HEIGHT) * 1.35,
+            SCALE_MINIMUM,
+            SCALE_MAXIMUM
+        )
+    end
 
     local windows: any = state.windows
     if not windows then
@@ -116,6 +140,11 @@ function Module.init(context: any): any
             size = Vector2.new(WINDOW_WIDTH, height),
             position = nextSlot(WINDOW_MAX_HEIGHT * 0.5),
             maxHeight = WINDOW_MAX_HEIGHT,
+            -- Wurst gives a category window a collapse arrow and a pin, and no
+            -- close button. Ours had one, and clicking it hid the category for
+            -- good with nothing anywhere to bring it back — the player lost a
+            -- sixth of the menu to a button that looked like it closed a panel.
+            closable = false,
         })
 
         local layout: UIListLayout = create("UIListLayout", {
@@ -185,6 +214,13 @@ function Module.init(context: any): any
     function ClickGui.SetVisible(visible: boolean): ()
         for _, name: string in ipairs(ClickGui.order) do
             local record: CategoryWindow = ClickGui.categories[name]
+            -- The whole point of pinning a window in Wurst is that it stays on
+            -- screen once the GUI is closed, so three pinned windows become a
+            -- HUD. Hiding it with the rest made the pin a button that painted
+            -- itself and did nothing else.
+            if not visible and record.window.pinned then
+                continue
+            end
             record.window:SetVisible(visible)
         end
     end
@@ -201,6 +237,21 @@ function Module.init(context: any): any
     for _, feature: any in ipairs(allFeatures) do
         ClickGui.place(feature)
     end
+
+    -- Applied to the layer the windows live on, so one number moves the whole
+    -- interface and nothing has to be re-measured per device.
+    local scale: UIScale = create("UIScale", {
+        Parent = host.PopupLayer,
+        Name = "ClickGuiScale",
+        Scale = viewportScale(),
+    }) :: UIScale
+    -- `onLayout` takes a listener rather than returning a connection, so there
+    -- is nothing to collect here; the scale instance is destroyed with the
+    -- layer and the listener stops mattering.
+    state.onLayout(function(): ()
+        scale.Scale = viewportScale()
+    end)
+    ClickGui.scale = scale
 
     state.clickGui = ClickGui
     state.addMenuVisibilityListener(function(visible: boolean): ()
