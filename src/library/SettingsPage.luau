@@ -174,7 +174,7 @@ function Module.init(context: any): SettingsPage
             _control: Frame,
             enabled: boolean,
             onToggle: (boolean) -> ()
-        ): (state: boolean) -> ()
+        ): ()
             row:SetAttribute("ToggleRow", true)
             local title: TextLabel = row:FindFirstChild("SettingTitle") :: TextLabel
             local stripe: Frame = create("Frame", {
@@ -240,12 +240,12 @@ function Module.init(context: any): SettingsPage
                 ):Play()
             end))
 
-            -- Returned so an external change (a keybind, a teardown) can push the row
-            -- back in sync without going through a click.
-            return function(nextState: boolean): ()
-                current = nextState
-                paint()
-            end
+            -- No setter is returned. It used to hand one back "so an external
+            -- change could push the row back in sync", and for both rows that
+            -- used this the only consumer was a `state.` publication nothing
+            -- ever read: blur and motion are changed from these rows and
+            -- nowhere else. When something does change them elsewhere, this is
+            -- where the setter comes back.
         end
 
         state.restyleSettings = function(isDefault: boolean): ()
@@ -419,7 +419,7 @@ function Module.init(context: any): SettingsPage
         blurRow.LayoutOrder = 3
 
         -- No switch: the row is the button, exactly like a module card.
-        local setBlurRowState = makeToggleSettingRow(
+        makeToggleSettingRow(
             blurRow,
             blurControl,
             state.blurEnabled,
@@ -431,14 +431,13 @@ function Module.init(context: any): SettingsPage
                 notify(enabled and "Blur mode enabled" or "Blur mode disabled")
             end
         )
-        state.setBlurRowState = setBlurRowState
 
         local motionRow, motionControl = createSettingRow(
             "Interface motion",
             "Smooth transitions for cards, tabs, and menu controls"
         )
         motionRow.LayoutOrder = 4
-        local setMotionRowState = makeToggleSettingRow(
+        makeToggleSettingRow(
             motionRow,
             motionControl,
             state.animationsEnabled,
@@ -453,7 +452,6 @@ function Module.init(context: any): SettingsPage
                 notify(enabled and "Interface motion enabled" or "Interface motion disabled")
             end
         )
-        state.setMotionRowState = setMotionRowState
 
         -- Menu key: keyboard-only. A touch client has no key to bind and reaches the
         -- menu through its floating button, so the row is not built there at all.
@@ -624,7 +622,6 @@ function Module.init(context: any): SettingsPage
         -- One pass once the shell has been laid out: every label sized in scale has a
         -- real AbsoluteSize by then, so this is where those get their cap applied. A
         -- viewport change resizes boxes, so the cap is re-applied then too.
-        state.refitText = updateTextSizes
         state.onLayout(function(): ()
             updateTextSizes()
         end)

@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "bb382e0a8d8f2564",
+    stamp = "534e8d177fdef821",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -6552,7 +6552,6 @@ function Module.init(context: any): any
     local thumbnailGeneration: number = 0
     local displayedTargetUserId: number = 0
     local currentOverlayTarget: Player? = nil
-    state.getOverlayTarget = function(): Player? return currentOverlayTarget end
 
     local function requestTargetThumbnail(player: Player?): ()
         local userId: number = player and player.UserId or 0
@@ -7156,12 +7155,6 @@ function Module.init(context: any): any
     end
     applyProfileLayout(state.layout)
     state.onLayout(applyProfileLayout)
-
-    state.playerCard = {
-        card = ProfileCard,
-        avatar = Avatar,
-        refresh = refreshMeta,
-    }
     end)()
     end
     -- Launchers for the movable tool windows, docked at the foot of the rail.
@@ -7478,7 +7471,7 @@ function Module.init(context: any): SettingsPage
             _control: Frame,
             enabled: boolean,
             onToggle: (boolean) -> ()
-        ): (state: boolean) -> ()
+        ): ()
             row:SetAttribute("ToggleRow", true)
             local title: TextLabel = row:FindFirstChild("SettingTitle") :: TextLabel
             local stripe: Frame = create("Frame", {
@@ -7544,12 +7537,12 @@ function Module.init(context: any): SettingsPage
                 ):Play()
             end))
 
-            -- Returned so an external change (a keybind, a teardown) can push the row
-            -- back in sync without going through a click.
-            return function(nextState: boolean): ()
-                current = nextState
-                paint()
-            end
+            -- No setter is returned. It used to hand one back "so an external
+            -- change could push the row back in sync", and for both rows that
+            -- used this the only consumer was a `state.` publication nothing
+            -- ever read: blur and motion are changed from these rows and
+            -- nowhere else. When something does change them elsewhere, this is
+            -- where the setter comes back.
         end
 
         state.restyleSettings = function(isDefault: boolean): ()
@@ -7723,7 +7716,7 @@ function Module.init(context: any): SettingsPage
         blurRow.LayoutOrder = 3
 
         -- No switch: the row is the button, exactly like a module card.
-        local setBlurRowState = makeToggleSettingRow(
+        makeToggleSettingRow(
             blurRow,
             blurControl,
             state.blurEnabled,
@@ -7735,14 +7728,13 @@ function Module.init(context: any): SettingsPage
                 notify(enabled and "Blur mode enabled" or "Blur mode disabled")
             end
         )
-        state.setBlurRowState = setBlurRowState
 
         local motionRow, motionControl = createSettingRow(
             "Interface motion",
             "Smooth transitions for cards, tabs, and menu controls"
         )
         motionRow.LayoutOrder = 4
-        local setMotionRowState = makeToggleSettingRow(
+        makeToggleSettingRow(
             motionRow,
             motionControl,
             state.animationsEnabled,
@@ -7757,7 +7749,6 @@ function Module.init(context: any): SettingsPage
                 notify(enabled and "Interface motion enabled" or "Interface motion disabled")
             end
         )
-        state.setMotionRowState = setMotionRowState
 
         -- Menu key: keyboard-only. A touch client has no key to bind and reaches the
         -- menu through its floating button, so the row is not built there at all.
@@ -7928,7 +7919,6 @@ function Module.init(context: any): SettingsPage
         -- One pass once the shell has been laid out: every label sized in scale has a
         -- real AbsoluteSize by then, so this is where those get their cap applied. A
         -- viewport change resizes boxes, so the cap is re-applied then too.
-        state.refitText = updateTextSizes
         state.onLayout(function(): ()
             updateTextSizes()
         end)
@@ -8391,7 +8381,6 @@ function Module.init(context: any): any
             record.button.Visible = state.isMobile and not menuVisible
         end
     end
-    state.setMobileActionVisibility = setMobileActionVisibility
 
     local function createMobileAction(
         id: string,
@@ -8725,7 +8714,6 @@ function Module.init(context: any): any
         configData.ui.mobileActions = {}
         queueConfigSave()
     end
-    state.resetMobileActions = resetMobileActions
     state.mobileUi = {
         actions = mobileActions,
         setActionVisibility = setMobileActionVisibility,

@@ -178,7 +178,6 @@ function Module.init(context: any): any
             record.button.Visible = state.isMobile and not menuVisible
         end
     end
-    state.setMobileActionVisibility = setMobileActionVisibility
 
     local function createMobileAction(
         id: string,
@@ -512,7 +511,6 @@ function Module.init(context: any): any
         configData.ui.mobileActions = {}
         queueConfigSave()
     end
-    state.resetMobileActions = resetMobileActions
     state.mobileUi = {
         actions = mobileActions,
         setActionVisibility = setMobileActionVisibility,

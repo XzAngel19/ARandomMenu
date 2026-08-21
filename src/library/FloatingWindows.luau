@@ -1169,7 +1169,6 @@ function Module.init(context: any): any
     local thumbnailGeneration: number = 0
     local displayedTargetUserId: number = 0
     local currentOverlayTarget: Player? = nil
-    state.getOverlayTarget = function(): Player? return currentOverlayTarget end
 
     local function requestTargetThumbnail(player: Player?): ()
         local userId: number = player and player.UserId or 0
@@ -1773,12 +1772,6 @@ function Module.init(context: any): any
     end
     applyProfileLayout(state.layout)
     state.onLayout(applyProfileLayout)
-
-    state.playerCard = {
-        card = ProfileCard,
-        avatar = Avatar,
-        refresh = refreshMeta,
-    }
     end)()
     end
     -- Launchers for the movable tool windows, docked at the foot of the rail.

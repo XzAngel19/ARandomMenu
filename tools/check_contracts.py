@@ -181,6 +181,38 @@ def builder_contract(shell: str, failures: list) -> None:
         )
 
 
+def state_index_contract(sources: list, failures: list) -> None:
+    """Every key of the shared table is named and explained in state.d.luau.
+
+    `state` is how everything reaches everything else, and its cost is not the
+    number of keys but not knowing what is in it: two different things once
+    ended up under `activeGameModule` and one of them silently won. Declaring a
+    key means naming it beside everyone else's, which is the only thing that
+    stops a shared table drifting back into a bag.
+
+    It fails both ways round. An undeclared key is a value nobody can look up;
+    a declared key nothing assigns is documentation describing a menu that does
+    not exist.
+    """
+    index = open("state.d.luau").read()
+    declared = set(re.findall(r"^    (\w+):", index, re.M))
+
+    assigned = set()
+    for path in ["ARandomMenu.luau"] + [p for p in sources if p.startswith("src/")]:
+        assigned |= set(re.findall(r"\bstate\.(\w+)\s*=[^=]", open(path).read()))
+
+    for name in sorted(assigned - declared):
+        failures.append(
+            f"state.{name} is assigned but not declared in state.d.luau — "
+            "add a line saying what it is for"
+        )
+    for name in sorted(declared - assigned):
+        failures.append(
+            f"state.d.luau declares {name}, which nothing assigns any more — "
+            "delete the line"
+        )
+
+
 def connection_contract(shell: str, sources: list, failures: list) -> None:
     """Every named per-frame connection has to be disconnected somewhere.
 
@@ -319,6 +351,7 @@ def main() -> int:
     state_contract(shell, sources, failures)
     builder_contract(shell, failures)
     host_contract(shell, sources, failures)
+    state_index_contract(sources, failures)
     connection_contract(shell, sources, failures)
     card_name_contract(shell, failures)
     text_fits_contract(failures)

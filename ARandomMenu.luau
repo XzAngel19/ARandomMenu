@@ -422,7 +422,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "bb382e0a8d8f2564"
+local SOURCE_STAMP: string = "534e8d177fdef821"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -1536,7 +1536,6 @@ end
         Enum.FontWeight.Bold,
         Enum.FontStyle.Normal
     )
-    state.assetManager = AssetManager
 
 -- Resolving an image means a download, a file write and a getcustomasset
 -- call, so it happens off the bootstrap thread and the caller keeps whatever
@@ -1657,7 +1656,6 @@ state.applyInterfaceFont = function(name: string, persist: boolean?): ()
         end
     end
 
-    state.interfaceFontName = name
     if persist ~= false then
         configData.values.interfaceFont = name
         queueConfigSave()
@@ -1791,7 +1789,6 @@ function SectionManager.initializeAllAsync(): ()
     local failures: number = 0
     -- From here on the status line shows real counts, so the intro's scripted
     -- narration must stop writing to it.
-    state.loadingLabelLocked = true
     if state.loadingLabel then
         state.loadingLabel.Text = "Loading modules 0/" .. tostring(total)
     end
@@ -2866,7 +2863,6 @@ local function centerMain(): ()
     end
 end
 
-state.centerMain = centerMain
 state.onLayout(function(): ()
     centerMain()
 end)
@@ -3777,7 +3773,6 @@ state.onLayout(function(): ()
     end
 end)
 state.tooltipConnections = {} :: {RBXScriptConnection}
-state.bindFeatureTooltip = nil :: ((any, string) -> ())?
 
 do
 local MobileMenuButton = create("TextButton", {
@@ -3990,7 +3985,6 @@ refreshLauncherVisibility()
 state.addMenuVisibilityListener(function(): ()
     refreshLauncherVisibility()
 end)
-state.refreshLauncherVisibility = refreshLauncherVisibility
 
 end
 
@@ -4071,7 +4065,6 @@ TaskManager.connection = RunService.Heartbeat:Connect(function(
     end
 end)
 
-state.taskManager = TaskManager
 
 do
 local function applyGuiStyle(_: string, animate: boolean): ()
@@ -4114,7 +4107,6 @@ local function applyGuiStyle(_: string, animate: boolean): ()
     end
     setTab(state.activeTab)
 end
-state.applyGuiStyle = applyGuiStyle
 
 applyGuiStyle(state.guiStyle, false)
 end
@@ -5056,13 +5048,6 @@ local function setShortcutPressed(binding: any, pressed: boolean): ()
     end
 end
 
-state.releaseShortcut = function(id: string): ()
-    local binding: any = state.shortcutBindings[id]
-    if binding and binding.hold then
-        setShortcutPressed(binding, false)
-    end
-end
-
 local function bindActionShortcut(
     button: TextButton,
     shortcutId: string,
@@ -5454,7 +5439,6 @@ local function addFeatureTooltip(feature: any, text: string): ()
     end))
 end
 
-state.bindFeatureTooltip = addFeatureTooltip
 
 
 -- Everything the flight engines mutate between frames lives here rather than
@@ -6386,7 +6370,6 @@ else
 end
 
 local entityLibrary: any = libraries.entity
-state.entityLibrary = entityLibrary
 state.weaponLibrary = libraries.weapons
 state.renderLibrary = libraries.render
 state.markBoot("libraries", librariesAt)
@@ -6444,7 +6427,6 @@ state.cleanupFrameworkRuntime = function(): ()
     end
     table.clear(loaded)
     state.framework = nil
-    state.entityLibrary = nil
     state.renderLibrary = nil
 end
 state.summarizeBoot()
@@ -6695,7 +6677,6 @@ local function cleanupRuntime(): ()
             state.destroySessionTracking()
         end
         state.sessionInfo = nil
-        state.getOverlayTarget = nil
     end)
 
     -- Disabling the features is what actually removes the effects from the
@@ -6801,7 +6782,6 @@ local function cleanupRuntime(): ()
         end
     end)
 
-    state.destructed = true
 end
 
 -- The GUI is destroyed even when a cleanup step failed: an interface the user
