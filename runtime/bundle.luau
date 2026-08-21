@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "534e8d177fdef821",
+    stamp = "e382f35d7946260c",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -15480,6 +15480,11 @@ function Module.init(context: Runtime): any
 
     activeCleanup = function(): ()
         disconnectFeatureConnection("Gravity")
+        -- And put the world back. Switching the card off restored gravity;
+        -- destroying the menu did not, so a client that closed the menu with
+        -- this on kept falling at the module's rate until it rejoined. The
+        -- file's own header has claimed "restored on disable" the whole time.
+        workspace.Gravity = originalGravity
     end
     Module.Initialized = true
     return GravityFeature
@@ -16101,7 +16106,11 @@ function Module.init(context: Runtime): any
         .. "disconnects immediately when disabled.")
 
     activeCleanup = function(): ()
-        disconnectFeatureConnection("AntiAfk")
+        -- "AntiAFK", not "AntiAfk". The connection is registered under the
+        -- shouted spelling and the toggle drops it under the same one; this
+        -- line named the other casing, so tearing the menu down left the
+        -- Idled listener attached to a player whose menu no longer exists.
+        disconnectFeatureConnection("AntiAFK")
     end
     Module.Initialized = true
     return AntiAfkFeature

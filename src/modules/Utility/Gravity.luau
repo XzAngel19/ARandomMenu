@@ -57,6 +57,11 @@ function Module.init(context: Runtime): any
 
     activeCleanup = function(): ()
         disconnectFeatureConnection("Gravity")
+        -- And put the world back. Switching the card off restored gravity;
+        -- destroying the menu did not, so a client that closed the menu with
+        -- this on kept falling at the module's rate until it rejoined. The
+        -- file's own header has claimed "restored on disable" the whole time.
+        workspace.Gravity = originalGravity
     end
     Module.Initialized = true
     return GravityFeature

@@ -56,7 +56,11 @@ function Module.init(context: Runtime): any
         .. "disconnects immediately when disabled.")
 
     activeCleanup = function(): ()
-        disconnectFeatureConnection("AntiAfk")
+        -- "AntiAFK", not "AntiAfk". The connection is registered under the
+        -- shouted spelling and the toggle drops it under the same one; this
+        -- line named the other casing, so tearing the menu down left the
+        -- Idled listener attached to a player whose menu no longer exists.
+        disconnectFeatureConnection("AntiAFK")
     end
     Module.Initialized = true
     return AntiAfkFeature
