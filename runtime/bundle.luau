@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "9374d064f969a16e",
+    stamp = "11c06ef1d2bbcb95",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -11317,7 +11317,7 @@ return Module
 --
 -- Fly.
 --
--- Six ways of moving and five of staying up, because no single pair works
+-- Seven ways of moving and seven of staying up, because no single pair works
 -- everywhere: a game that clamps velocity ignores Velocity, one that rejects
 -- CFrame writes ignores CFrame, and one watching the humanoid state ignores
 -- both but lets an anchored part under your feet through. Each row in the
@@ -11343,19 +11343,12 @@ local activeCleanup: (() -> ())? = nil
 
 function Module.init(context: Runtime): any
     local host: any = context.host
-    local TaskManager: any = host.TaskManager
-    local featureConnections: any = host.featureConnections
-    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
-    local getCharacterParts: any = host.getCharacterParts
+    local framework: any = context.framework
     local state: any = host.state
-    local createUniversalFeature: any = host.createUniversalFeature
-    local addToggleOption: any = host.addToggleOption
-    local addNumberOption: any = host.addNumberOption
-    local addCycleOption: any = host.addCycleOption
-    local addFeatureTooltip: any = host.addFeatureTooltip
-    local addKeyOption: any = host.addKeyOption
+    local getCharacterParts: any = host.getCharacterParts
     local UserInputService: any = host.UserInputService
-    local workspace: any = host.workspace
+    local currentWorkspace: Workspace = host.workspace or workspace
+
     type FlySettings = {
         method: string,
         floatMethod: string,
@@ -11383,15 +11376,22 @@ function Module.init(context: Runtime): any
         upKey = Enum.KeyCode.Space,
         downKey = Enum.KeyCode.LeftControl,
     }
-    -- Kept on `state` rather than as another bootstrap local: the function that
-    -- builds the menu is already at Luau's 200-register ceiling.
-    state.flyRuntime = {
-        yLevel = nil,
+    -- One session's scratch: the altitude a Hover lock is holding, when the
+    -- next Blink burst is due, the Floor platform, and the WalkSpeed to put
+    -- back. Cleared at both edges of a session so a fresh character can never
+    -- inherit the previous one's numbers.
+    local flyRuntime: any = {
+        yLevel = nil :: number?,
         burstAt = 0,
-        platform = nil,
-        walkSpeed = nil,
-    } :: FlyRuntime
+        platform = nil :: BasePart?,
+        walkSpeed = nil :: number?,
+    }
     local flySmoothedVelocity: Vector3 = Vector3.zero
+    -- PlatformStand is contested: Fly wants the character ragdolled while
+    -- PhysicsSpeed may want it standing, and both can be on at once. The
+    -- controller arbitrates — the last owner to speak wins, and every baseline
+    -- goes back when the last owner leaves. It lives on `state` because the
+    -- two modules share it; it is not Fly's alone.
     state.platformStandController = {
         owners = {},
         baselines = setmetatable({}, {__mode = "k"}),
@@ -11448,6 +11448,14 @@ function Module.init(context: Runtime): any
             end
         end
         flyObjects = setmetatable({}, {__mode = "k"}) :: any
+    end
+
+    local function restoreWalkSpeed(): ()
+        local _, humanoid: Humanoid? = getCharacterParts()
+        if humanoid and flyRuntime.walkSpeed then
+            (humanoid :: Humanoid).WalkSpeed = flyRuntime.walkSpeed :: number
+        end
+        flyRuntime.walkSpeed = nil
     end
 
     local function ensureFlyConstraints(root: BasePart): (LinearVelocity, AlignOrientation)
@@ -11560,8 +11568,8 @@ function Module.init(context: Runtime): any
     --   CFrame      the root is displaced directly and velocity is left at zero,
     --               so speed caps, knockback and ragdolls have nothing to grab.
     --   Blink       CFrame movement saved up and spent in one hop per interval,
-    --               which looks like teleporting rather than gliding.
-    --   Pulse       velocity alternating between a burst and a coast, so the
+    --               which looks like teleporting to a spectator.
+    --   Pulse       bursts of speed with slow coasts between them, so the
     --               average speed stays close to normal while the peaks are fast.
     --   WalkSpeed   raises Humanoid.WalkSpeed and nothing else: keeps animations
     --               and the game's own movement rules, trivially detectable.
@@ -11578,12 +11586,17 @@ function Module.init(context: Runtime): any
     --               as an ordinary player hopping around.
     --   Floor       an invisible anchored part is kept under your feet, so you
     --               are genuinely standing on something the entire flight.
+    --   Bypass      holds the altitude but dips to the ground for a fraction of
+    --               a second every few seconds, so a server that checks whether
+    --               you ever land sees that you do.
+    --
     -- The two engine appliers live in their own block so their registers are
-    -- released back to the bootstrap function, which sits at Luau's 200-local
-    -- ceiling.
-    local toggleFly: (boolean) -> ()
+    -- released back to the bootstrap function; the loop that calls them sits
+    -- with the module, so the pair is declared here and assigned below.
+    local applyFlyHorizontal: (BasePart, Humanoid, Vector3, number) -> ()
+    local applyFlyVertical: (BasePart, Humanoid, number, number) -> ()
     do
-    local function applyFlyHorizontal(
+    applyFlyHorizontal = function(
         root: BasePart,
         humanoid: Humanoid,
         moveDirection: Vector3,
@@ -11594,8 +11607,8 @@ function Module.init(context: Runtime): any
         local target: Vector3 = moveDirection * flySettings.speed
 
         if method == "WalkSpeed" then
-            if not state.flyRuntime.walkSpeed then
-                state.flyRuntime.walkSpeed = humanoid.WalkSpeed
+            if not flyRuntime.walkSpeed then
+                flyRuntime.walkSpeed = humanoid.WalkSpeed
             end
             humanoid.WalkSpeed = flySettings.speed
             return
@@ -11613,10 +11626,10 @@ function Module.init(context: Runtime): any
             local step: Vector3 = moveDirection * flySettings.speed * deltaTime
             if method == "Blink" then
                 local interval: number = math.max(flySettings.burstInterval, 0.05)
-                if os.clock() < state.flyRuntime.burstAt then
+                if os.clock() < flyRuntime.burstAt then
                     step = Vector3.zero
                 else
-                    state.flyRuntime.burstAt = os.clock() + interval
+                    flyRuntime.burstAt = os.clock() + interval
                     step = moveDirection * flySettings.speed * interval
                 end
             end
@@ -11624,7 +11637,7 @@ function Module.init(context: Runtime): any
                 local raycastParams: RaycastParams = RaycastParams.new()
                 raycastParams.FilterType = Enum.RaycastFilterType.Exclude
                 raycastParams.FilterDescendantsInstances = {root.Parent :: Instance}
-                local wallHit: RaycastResult? = workspace:Raycast(
+                local wallHit: RaycastResult? = currentWorkspace:Raycast(
                     root.Position,
                     step + step.Unit * 2,
                     raycastParams
@@ -11668,7 +11681,7 @@ function Module.init(context: Runtime): any
         )
     end
 
-    local function applyFlyVertical(
+    applyFlyVertical = function(
         root: BasePart,
         humanoid: Humanoid,
         vertical: number,
@@ -11679,7 +11692,7 @@ function Module.init(context: Runtime): any
         local targetY: number = vertical * flySettings.verticalSpeed
 
         if method == "Floor" then
-            local platform: BasePart? = state.flyRuntime.platform
+            local platform: BasePart? = flyRuntime.platform
             if not platform or not platform.Parent then
                 local newPlatform: BasePart = Instance.new("Part")
                 newPlatform.Name = "RTM_FlyPlatform"
@@ -11690,8 +11703,8 @@ function Module.init(context: Runtime): any
                 newPlatform.Transparency = 1
                 -- Parented to the camera: it exists for the local physics
                 -- simulation only and never shows up as a part in the world.
-                newPlatform.Parent = workspace.CurrentCamera
-                state.flyRuntime.platform = newPlatform
+                newPlatform.Parent = currentWorkspace.CurrentCamera
+                flyRuntime.platform = newPlatform
                 platform = newPlatform
             end
             local resolved: BasePart = platform :: BasePart
@@ -11721,12 +11734,12 @@ function Module.init(context: Runtime): any
             if (os.clock() % period) > (period * 0.8) then
                 -- Fall honestly for the dip: the humanoid changes state on its
                 -- own, and that state is exactly what the check reads.
-                state.flyRuntime.yLevel = nil
+                flyRuntime.yLevel = nil
                 return
             end
-            local held: number = state.flyRuntime.yLevel or root.Position.Y
+            local held: number = flyRuntime.yLevel or root.Position.Y
             held = held + targetY * deltaTime
-            state.flyRuntime.yLevel = held
+            flyRuntime.yLevel = held
             root.AssemblyLinearVelocity = Vector3.new(
                 currentVelocity.X,
                 0,
@@ -11736,9 +11749,8 @@ function Module.init(context: Runtime): any
             return
         end
 
-
         if method == "Hover" or method == "Jump" then
-            local level: number = state.flyRuntime.yLevel or root.Position.Y
+            local level: number = flyRuntime.yLevel or root.Position.Y
             level = level + targetY * deltaTime
             if flySettings.wallCheck then
                 local offset: number = level - root.Position.Y
@@ -11746,7 +11758,7 @@ function Module.init(context: Runtime): any
                     local raycastParams: RaycastParams = RaycastParams.new()
                     raycastParams.FilterType = Enum.RaycastFilterType.Exclude
                     raycastParams.FilterDescendantsInstances = {root.Parent :: Instance}
-                    local ceilingHit: RaycastResult? = workspace:Raycast(
+                    local ceilingHit: RaycastResult? = currentWorkspace:Raycast(
                         root.Position,
                         Vector3.new(0, offset, 0),
                         raycastParams
@@ -11757,7 +11769,7 @@ function Module.init(context: Runtime): any
                     end
                 end
             end
-            state.flyRuntime.yLevel = level
+            flyRuntime.yLevel = level
             if method == "Hover" then
                 root.AssemblyLinearVelocity = Vector3.new(
                     currentVelocity.X,
@@ -11792,277 +11804,245 @@ function Module.init(context: Runtime): any
             currentVelocity.Z
         )
     end
+    end
 
-    function toggleFly(enabled: boolean): ()
-        disconnectFeatureConnection("Fly")
-        removeFlyObjects()
-        flySmoothedVelocity = Vector3.zero
-        flyTouchVertical = 0
-        state.flyRuntime.yLevel = nil
-        state.flyRuntime.burstAt = 0
-        if state.flyRuntime.platform then
-            (state.flyRuntime.platform :: BasePart):Destroy()
-            state.flyRuntime.platform = nil
-        end
-
-        local _, restoreHumanoid, restoreRoot = getCharacterParts()
-        if restoreHumanoid and state.flyRuntime.walkSpeed then
-            restoreHumanoid.WalkSpeed = state.flyRuntime.walkSpeed :: number
-        end
-        state.flyRuntime.walkSpeed = nil
-
-        if not enabled then
-            if restoreRoot then
-                restoreRoot.AssemblyLinearVelocity = Vector3.zero
-            end
-            if restoreHumanoid then
-                state.platformStandController.set("Fly", false)
-                state.platformStandController.apply(restoreHumanoid)
-            end
-            return
-        end
-
-        featureConnections.Fly = TaskManager:Connect(function(deltaTime: number): ()
-            local _, humanoid, root = getCharacterParts()
-            local camera: Camera? = workspace.CurrentCamera
-            if not humanoid or not root or not camera then
-                -- A respawn invalidates the held altitude; picking it back up
-                -- would teleport the fresh character to the old one's height.
-                state.flyRuntime.yLevel = nil
-                return
-            end
-
-            local method: string = flySettings.method
-            local floatMethod: string = flySettings.floatMethod
-            -- WalkSpeed steering and the two engines that stand on something need
-            -- a humanoid that is still allowed to walk, so PlatformStand is only
-            -- honoured where it does not disable the engine that is running.
-            local canRagdoll: boolean = method ~= "WalkSpeed"
-                and floatMethod ~= "Floor"
-                and floatMethod ~= "Jump"
-            state.platformStandController.set(
-                "Fly",
-                canRagdoll and (flySettings.platformStand or method == "CFrame")
-            )
-            state.platformStandController.apply(humanoid)
-
-            local moveDirection, vertical, cameraForward = getFlyDirection(camera)
-            if flySettings.wallCheck and moveDirection.Magnitude > 0.001 then
-                local raycastParams: RaycastParams = RaycastParams.new()
-                raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-                raycastParams.FilterDescendantsInstances = {root.Parent :: Instance}
-                local wallHit: RaycastResult? = workspace:Raycast(
-                    root.Position,
-                    moveDirection.Unit * 2.75,
-                    raycastParams
-                )
-                if wallHit then
-                    moveDirection = Vector3.zero
-                end
-            end
-
-            if method == "Constraint" then
-                local velocity, orientation = ensureFlyConstraints(root)
-                applyFlyHorizontal(root, humanoid, moveDirection, deltaTime)
-                velocity.Enabled = true
-                velocity.VectorVelocity = Vector3.new(
-                    flySmoothedVelocity.X,
-                    vertical * flySettings.verticalSpeed,
-                    flySmoothedVelocity.Z
-                )
-                orientation.Enabled = flySettings.faceCamera
-                orientation.CFrame = CFrame.lookAt(Vector3.zero, cameraForward)
-                return
-            end
-
-            -- Constraints left behind by a mode switch keep driving the character
-            -- against whatever engine is running now.
+    local fly: any
+    fly = framework.Categories.Movement:CreateModule({
+        Name = "Fly",
+        Category = "Movement",
+        Tooltip = "Use WASD to move, Space to rise and LeftControl to descend. "
+            .. "Method picks how you travel sideways and Float picks what "
+            .. "holds you up; if a game blocks one combination, another "
+            .. "usually works.",
+        Function = function(enabled: boolean): ()
+            -- Both edges of a session start from the same clean state, so a
+            -- respawn or a disable-then-enable can never inherit the previous
+            -- character's altitude, platform or saved WalkSpeed.
             removeFlyObjects()
-            applyFlyHorizontal(root, humanoid, moveDirection, deltaTime)
-            applyFlyVertical(root, humanoid, vertical, deltaTime)
-
-            if floatMethod ~= "Floor" and state.flyRuntime.platform then
-                (state.flyRuntime.platform :: BasePart):Destroy()
-                state.flyRuntime.platform = nil
+            flySmoothedVelocity = Vector3.zero
+            flyTouchVertical = 0
+            flyRuntime.yLevel = nil
+            flyRuntime.burstAt = 0
+            if flyRuntime.platform then
+                (flyRuntime.platform :: BasePart):Destroy()
+                flyRuntime.platform = nil
             end
-            if floatMethod ~= "Hover" and floatMethod ~= "Jump" then
-                state.flyRuntime.yLevel = nil
+            restoreWalkSpeed()
+
+            if not enabled then
+                local _, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
+                if root then
+                    (root :: BasePart).AssemblyLinearVelocity = Vector3.zero
+                end
+                if humanoid then
+                    state.platformStandController.set("Fly", false)
+                    state.platformStandController.apply(humanoid :: Humanoid)
+                end
+                return
             end
 
-            if flySettings.faceCamera and cameraForward.Magnitude > 0.001 then
-                root.CFrame = CFrame.lookAt(root.Position, root.Position + cameraForward)
-            end
-        end)
-    end
-    end
+            fly:Loop(function(deltaTime: number): ()
+                local _, humanoid, root = getCharacterParts()
+                local camera: Camera? = currentWorkspace.CurrentCamera
+                if not humanoid or not root or not camera then
+                    -- A respawn invalidates the held altitude; picking it back up
+                    -- would teleport the fresh character to the old one's height.
+                    flyRuntime.yLevel = nil
+                    return
+                end
 
-    local FlyFeature = createUniversalFeature(
-        "Fly",
-        "Preset-based flight with independent vertical control",
-        1,
-        toggleFly
-    )
-    -- Fly is the reference layout for a module customisation panel: grouped under
-    -- headings, every control carrying a one-line explanation of what it does, and
-    -- the rarely-touched controls folded away behind a single switch.
-    local FlyFlightSection: Frame = state.addSectionOption(FlyFeature, "Flight")
-    local FlyMethodButton: TextButton = addCycleOption(
-        FlyFeature,
-        "Method",
-        {"Velocity", "Constraint", "Impulse", "CFrame", "Blink", "Pulse", "WalkSpeed"},
-        1,
-        function(value: string): ()
+                local method: string = flySettings.method
+                local floatMethod: string = flySettings.floatMethod
+                -- WalkSpeed steering and the two engines that stand on something need
+                -- a humanoid that is still allowed to walk, so PlatformStand is only
+                -- honoured where it does not disable the engine that is running.
+                local canRagdoll: boolean = method ~= "WalkSpeed"
+                    and floatMethod ~= "Floor"
+                    and floatMethod ~= "Jump"
+                state.platformStandController.set(
+                    "Fly",
+                    canRagdoll and (flySettings.platformStand or method == "CFrame")
+                )
+                state.platformStandController.apply(humanoid)
+
+                local moveDirection, vertical, cameraForward = getFlyDirection(camera)
+                if flySettings.wallCheck and moveDirection.Magnitude > 0.001 then
+                    local raycastParams: RaycastParams = RaycastParams.new()
+                    raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+                    raycastParams.FilterDescendantsInstances = {root.Parent :: Instance}
+                    local wallHit: RaycastResult? = currentWorkspace:Raycast(
+                        root.Position,
+                        moveDirection.Unit * 2.75,
+                        raycastParams
+                    )
+                    if wallHit then
+                        moveDirection = Vector3.zero
+                    end
+                end
+
+                if method == "Constraint" then
+                    local velocity, orientation = ensureFlyConstraints(root)
+                    applyFlyHorizontal(root, humanoid, moveDirection, deltaTime)
+                    velocity.Enabled = true
+                    velocity.VectorVelocity = Vector3.new(
+                        flySmoothedVelocity.X,
+                        vertical * flySettings.verticalSpeed,
+                        flySmoothedVelocity.Z
+                    )
+                    orientation.Enabled = flySettings.faceCamera
+                    orientation.CFrame = CFrame.lookAt(Vector3.zero, cameraForward)
+                    return
+                end
+
+                -- Constraints left behind by a mode switch keep driving the character
+                -- against whatever engine is running now.
+                removeFlyObjects()
+                applyFlyHorizontal(root, humanoid, moveDirection, deltaTime)
+                applyFlyVertical(root, humanoid, vertical, deltaTime)
+
+                if floatMethod ~= "Floor" and flyRuntime.platform then
+                    (flyRuntime.platform :: BasePart):Destroy()
+                    flyRuntime.platform = nil
+                end
+                if floatMethod ~= "Hover" and floatMethod ~= "Jump" then
+                    flyRuntime.yLevel = nil
+                end
+
+                if flySettings.faceCamera and cameraForward.Magnitude > 0.001 then
+                    root.CFrame = CFrame.lookAt(root.Position, root.Position + cameraForward)
+                end
+            end)
+        end,
+    })
+
+    fly:CreateSection("Flight")
+    fly:CreateDropdown({
+        Name = "Method",
+        List = {"Velocity", "Constraint", "Impulse", "CFrame", "Blink", "Pulse", "WalkSpeed"},
+        Index = 1,
+        Function = function(value: string): ()
             flySettings.method = value
         end,
-        "Sideways engine. Velocity is smooth, CFrame ignores physics, "
-            .. "WalkSpeed just runs faster."
-    )
-    local FlyFloatButton: TextButton = addCycleOption(
-        FlyFeature,
-        "Float",
-        {"Velocity", "Impulse", "Hover", "Jump", "Bounce", "Floor", "Bypass"},
-        1,
-        function(value: string): ()
+        Tooltip = "Sideways engine. Velocity is smooth, CFrame ignores physics, "
+            .. "WalkSpeed just runs faster.",
+    })
+    fly:CreateDropdown({
+        Name = "Float",
+        List = {"Velocity", "Impulse", "Hover", "Jump", "Bounce", "Floor", "Bypass"},
+        Index = 1,
+        Function = function(value: string): ()
             flySettings.floatMethod = value
         end,
-        "What keeps you airborne. Hover locks an altitude, Floor stands you on "
-            .. "an invisible part, and Bypass drops you to the ground for an "
-            .. "instant every few seconds so the server sees you land."
-    )
-    local FlySpeedRow: Frame = addNumberOption(
-        FlyFeature,
-        "Horizontal speed",
-        flySettings.speed,
-        10,
-        500,
-        function(value: number): ()
+        Tooltip = "What keeps you airborne. Hover locks an altitude, Floor "
+            .. "stands you on an invisible part, and Bypass drops you to the "
+            .. "ground for an instant every few seconds so the server sees "
+            .. "you land.",
+    })
+    fly:CreateSlider({
+        Name = "Horizontal speed",
+        Min = 10,
+        Max = 500,
+        Default = flySettings.speed,
+        Function = function(value: number): ()
             flySettings.speed = value
         end,
-        "Studs per second while holding WASD."
-    )
-    local FlyVerticalRow: Frame = addNumberOption(
-        FlyFeature,
-        "Vertical speed",
-        flySettings.verticalSpeed,
-        10,
-        350,
-        function(value: number): ()
+        Tooltip = "Studs per second while holding WASD.",
+    })
+    fly:CreateSlider({
+        Name = "Vertical speed",
+        Min = 10,
+        Max = 350,
+        Default = flySettings.verticalSpeed,
+        Function = function(value: number): ()
             flySettings.verticalSpeed = value
         end,
-        "Studs per second while rising or descending."
-    )
-    local FlyAdvancedButton: TextButton
-    local FlyAdvancedSection: Frame = state.addSectionOption(FlyFeature, "Advanced")
-    local FlyResponseRow: Frame = addNumberOption(
-        FlyFeature,
-        "Response multiplier",
-        flySettings.response,
-        0.5,
-        2,
-        function(value: number): ()
+        Tooltip = "Studs per second while rising or descending.",
+    })
+    fly:CreateToggle({
+        Name = "Advanced settings",
+        Default = false,
+        Tooltip = "Reveal response tuning, collision behaviour and key bindings.",
+    })
+
+    -- The advanced block, declared: every row below says it belongs to the
+    -- "Advanced settings" switch instead of the switch keeping a list of them.
+    local advanced: any = {Option = "Advanced settings"}
+    fly:CreateSection("Advanced").Show = advanced
+    fly:CreateSlider({
+        Name = "Response multiplier",
+        Show = {advanced, {Option = "Method", Values = {"Velocity", "Constraint", "Pulse"}}},
+        Min = 0.5,
+        Max = 2,
+        Default = flySettings.response,
+        Function = function(value: number): ()
             flySettings.response = value
         end,
-        "How sharply the flight reacts to input. Higher is twitchier."
-    )
-    local FlyBurstRow: Frame = addNumberOption(
-        FlyFeature,
-        "Burst interval (s)",
-        flySettings.burstInterval,
-        0.05,
-        1,
-        function(value: number): ()
+        Tooltip = "How sharply the flight reacts to input. Higher is twitchier.",
+    })
+    fly:CreateSlider({
+        Name = "Burst interval (s)",
+        Show = advanced,
+        Min = 0.05,
+        Max = 1,
+        Default = flySettings.burstInterval,
+        Function = function(value: number): ()
             flySettings.burstInterval = value
         end,
-        "Cycle length for Blink, Pulse and Bounce. Shorter is smoother."
-    )
-    local FlyWallButton: TextButton = addToggleOption(
-        FlyFeature,
-        "Wall check",
-        flySettings.wallCheck,
-        function(value: boolean): ()
+        Tooltip = "Cycle length for Blink, Pulse, Bounce and Bypass. Shorter "
+            .. "is smoother.",
+    })
+    fly:CreateToggle({
+        Name = "Wall check",
+        Show = advanced,
+        Default = flySettings.wallCheck,
+        Function = function(value: boolean): ()
             flySettings.wallCheck = value
         end,
-        "Stop against solid geometry instead of flying through it."
-    )
-    local FlyPlatformButton: TextButton = addToggleOption(
-        FlyFeature,
-        "PlatformStand",
-        flySettings.platformStand,
-        function(value: boolean): ()
+        Tooltip = "Stop against solid geometry instead of flying through it.",
+    })
+    fly:CreateToggle({
+        Name = "PlatformStand",
+        Show = advanced,
+        Default = flySettings.platformStand,
+        Function = function(value: boolean): ()
             flySettings.platformStand = value
         end,
-        "Ragdoll the character while flying. Smoother, but no animations."
-    )
-    local FlyFaceButton: TextButton = addToggleOption(
-        FlyFeature,
-        "Face camera",
-        flySettings.faceCamera,
-        function(value: boolean): ()
+        Tooltip = "Ragdoll the character while flying. Smoother, but no animations.",
+    })
+    fly:CreateToggle({
+        Name = "Face camera",
+        Show = advanced,
+        Default = flySettings.faceCamera,
+        Function = function(value: boolean): ()
             flySettings.faceCamera = value
         end,
-        "Rotate the character to follow wherever the camera looks."
-    )
-    local FlyUpKeyButton: TextButton = addKeyOption(
-        FlyFeature,
-        "Up key",
-        flySettings.upKey,
-        function(value: Enum.KeyCode): ()
+        Tooltip = "Rotate the character to follow wherever the camera looks.",
+    })
+    local upKey: any = fly:CreateBind({
+        Name = "Up key",
+        Show = advanced,
+        Default = flySettings.upKey,
+        Function = function(value: Enum.KeyCode): ()
             flySettings.upKey = value
         end,
-        "Hold to gain altitude."
-    )
-    local FlyDownKeyButton: TextButton = addKeyOption(
-        FlyFeature,
-        "Down key",
-        flySettings.downKey,
-        function(value: Enum.KeyCode): ()
+        Tooltip = "Hold to gain altitude.",
+    })
+    local downKey: any = fly:CreateBind({
+        Name = "Down key",
+        Show = advanced,
+        Default = flySettings.downKey,
+        Function = function(value: Enum.KeyCode): ()
             flySettings.downKey = value
         end,
-        "Hold to lose altitude."
-    )
-    FlyAdvancedButton = addToggleOption(
-        FlyFeature,
-        "Advanced settings",
-        false,
-        function(value: boolean): ()
-            -- The heading folds away with the controls it labels.
-            setOptionVisible(FlyFeature, FlyAdvancedSection, value)
-            setOptionVisible(FlyFeature, FlyResponseRow, value)
-            setOptionVisible(FlyFeature, FlyBurstRow, value)
-            setOptionVisible(FlyFeature, FlyWallButton.Parent :: GuiObject, value)
-            setOptionVisible(FlyFeature, FlyPlatformButton.Parent :: GuiObject, value)
-            setOptionVisible(FlyFeature, FlyFaceButton.Parent :: GuiObject, value)
-            setOptionVisible(FlyFeature, FlyUpKeyButton.Parent :: GuiObject, value)
-            setOptionVisible(FlyFeature, FlyDownKeyButton.Parent :: GuiObject, value)
-        end,
-        "Reveal response tuning, collision behaviour and key bindings."
-    )
-    local FlyMethodRow: GuiObject = FlyMethodButton.Parent :: GuiObject
-    local FlyFloatRow: GuiObject = FlyFloatButton.Parent :: GuiObject
-    local FlyAdvancedRow: GuiObject = FlyAdvancedButton.Parent :: GuiObject
-    -- Explicit order: heading, the everyday controls, the reveal switch, then the
-    -- advanced heading and its controls (which addToggleOption has already hidden
-    -- by running its callback with the stored/default `false`).
-    FlyFlightSection.LayoutOrder = 1
-    FlyMethodRow.LayoutOrder = 2
-    FlyFloatRow.LayoutOrder = 3
-    FlySpeedRow.LayoutOrder = 4
-    FlyVerticalRow.LayoutOrder = 5
-    FlyAdvancedRow.LayoutOrder = 6
-    FlyAdvancedSection.LayoutOrder = 7
-    FlyResponseRow.LayoutOrder = 8
-    FlyBurstRow.LayoutOrder = 9
-    ;(FlyWallButton.Parent :: GuiObject).LayoutOrder = 10
-    ;(FlyPlatformButton.Parent :: GuiObject).LayoutOrder = 11
-    ;(FlyFaceButton.Parent :: GuiObject).LayoutOrder = 12
-    ;(FlyUpKeyButton.Parent :: GuiObject).LayoutOrder = 13
-    ;(FlyDownKeyButton.Parent :: GuiObject).LayoutOrder = 14
+        Tooltip = "Hold to lose altitude.",
+    })
+
     -- Climbing and descending are holds on a keyboard, so they are holds on a
     -- phone too: keep a finger on UP to rise, lift it to level off. They used to
     -- latch on tap, which made hovering at a height nearly impossible.
     if state.bindMobileActionPlacement then
         state.bindMobileActionPlacement(
-            FlyUpKeyButton,
+            upKey.Object,
             "UniversalFlyUp",
             "UP",
             function(): () end,
@@ -12078,7 +12058,7 @@ function Module.init(context: Runtime): any
             }
         )
         state.bindMobileActionPlacement(
-            FlyDownKeyButton,
+            downKey.Object,
             "UniversalFlyDown",
             "DOWN",
             function(): () end,
@@ -12094,18 +12074,13 @@ function Module.init(context: Runtime): any
             }
         )
     end
-    addFeatureTooltip(
-        FlyFeature,
-        "Use WASD to move, Space to rise and LeftControl to descend. "
-            .. "Method picks how you travel sideways and Float picks what holds "
-            .. "you up; if a game blocks one combination, another usually works."
-    )
 
     activeCleanup = function(): ()
-        disconnectFeatureConnection("Fly")
+        removeFlyObjects()
+        restoreWalkSpeed()
     end
     Module.Initialized = true
-    return FlyFeature
+    return fly
 end
 
 function Module.destroy(): ()
@@ -12145,19 +12120,12 @@ local activeCleanup: (() -> ())? = nil
 
 function Module.init(context: Runtime): any
     local host: any = context.host
-    local TaskManager: any = host.TaskManager
-    local featureConnections: any = host.featureConnections
-    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
-    local getCharacterParts: any = host.getCharacterParts
+    local framework: any = context.framework
     local state: any = host.state
-    local createUniversalFeature: any = host.createUniversalFeature
-    local addToggleOption: any = host.addToggleOption
-    local addNumberOption: any = host.addNumberOption
-    local addCycleOption: any = host.addCycleOption
-    local addFeatureTooltip: any = host.addFeatureTooltip
-    local addKeyOption: any = host.addKeyOption
+    local getCharacterParts: any = host.getCharacterParts
     local UserInputService: any = host.UserInputService
-    local workspace: any = host.workspace
+    local currentWorkspace: Workspace = host.workspace or workspace
+
     type PhysicsSpeedSettings = {
         mode: string,
         speed: number,
@@ -12204,10 +12172,11 @@ function Module.init(context: Runtime): any
         sprintKey = Enum.KeyCode.LeftShift,
         preserveMomentum = false,
     }
-    -- The physics-speed helpers are scoped to a block so their registers go
-    -- back to the bootstrap function, which sits at Luau's 200-local ceiling.
+    -- The restore helper is shared with the option that can trigger it
+    -- mid-session, so it is declared here and assigned in the block below,
+    -- which also keeps the physics helpers' registers local to that block.
     local restorePhysicsMotors: () -> ()
-    local togglePhysicsSpeed: (boolean) -> ()
+    local physicsSpeed: any
     do
     local physicsSpeedTeleportClock: number = 0
     local originalVehicleSeats: {[VehicleSeat]: VehicleSeatState} =
@@ -12215,7 +12184,7 @@ function Module.init(context: Runtime): any
     local originalMotorHinges: {[HingeConstraint]: HingeState} =
         setmetatable({}, {__mode = "k"}) :: any
 
-    function restorePhysicsMotors(): ()
+    restorePhysicsMotors = function(): ()
         for seat: VehicleSeat, original: VehicleSeatState in pairs(originalVehicleSeats) do
             if seat.Parent then
                 seat.MaxSpeed = original.maxSpeed
@@ -12304,19 +12273,25 @@ function Module.init(context: Runtime): any
         end
     end
 
-    function togglePhysicsSpeed(enabled: boolean): ()
-        disconnectFeatureConnection("PhysicsSpeed")
-        restorePhysicsMotors()
-        physicsSpeedTeleportClock = 0
+    physicsSpeed = framework.Categories.Movement:CreateModule({
+        Name = "Physics Speed",
+        Category = "Movement",
+        Tooltip = "Fast movement for characters and occupied vehicles. Adaptive "
+            .. "changes air authority and retains flow, Smooth accelerates "
+            .. "predictably, Boost uses physical impulse, CFrame moves the "
+            .. "character without touching its velocity, Pulse alternates "
+            .. "bursts with a normal walk, and Teleport advances in short "
+            .. "steps.",
+        Function = function(enabled: boolean): ()
+            restorePhysicsMotors()
+            physicsSpeedTeleportClock = 0
+            state.platformStandController.set("PhysicsSpeed", nil)
 
-        state.platformStandController.set("PhysicsSpeed", nil)
+            if not enabled then
+                return
+            end
 
-        if not enabled then
-            return
-        end
-
-        featureConnections.PhysicsSpeed =
-            TaskManager:Connect(function(deltaTime: number): ()
+            physicsSpeed:Loop(function(deltaTime: number): ()
                 local assembly, currentHumanoid, vehicleSeat = getPhysicsSpeedTarget()
                 if not assembly or not currentHumanoid then
                     return
@@ -12340,7 +12315,7 @@ function Module.init(context: Runtime): any
                     -- and on touch clients whose control module is bypassed, which
                     -- is exactly why Speed stood still with its own PlatformStand
                     -- option enabled. The shared helper answers on every device.
-                    local camera: Camera? = workspace.CurrentCamera
+                    local camera: Camera? = currentWorkspace.CurrentCamera
                     local forwardScalar: number, rightScalar: number = state.getMoveInput()
                     if camera and (forwardScalar ~= 0 or rightScalar ~= 0) then
                         direction = camera.CFrame.LookVector * forwardScalar
@@ -12360,7 +12335,7 @@ function Module.init(context: Runtime): any
                     raycastParams.FilterDescendantsInstances = {
                         currentHumanoid.Parent :: Instance,
                     }
-                    local wallHit: RaycastResult? = workspace:Raycast(
+                    local wallHit: RaycastResult? = currentWorkspace:Raycast(
                         assembly.Position,
                         direction.Unit * 2.75,
                         raycastParams
@@ -12470,141 +12445,138 @@ function Module.init(context: Runtime): any
                     end
                 end
             end)
-    end
+        end,
+    })
     end
 
-    local PhysicsSpeedFeature = createUniversalFeature(
-        "Speed",
-        "Fast movement for characters and occupied vehicles",
-        9,
-        togglePhysicsSpeed
-    )
-    local SpeedModeButton: TextButton = addCycleOption(
-        PhysicsSpeedFeature,
-        "Mode",
-        {"Adaptive", "Smooth", "Boost", "CFrame", "Pulse", "Teleport"},
-        1,
-        function(value: string): ()
+    physicsSpeed:CreateDropdown({
+        Name = "Mode",
+        List = {"Adaptive", "Smooth", "Boost", "CFrame", "Pulse", "Teleport"},
+        Index = 1,
+        Function = function(value: string): ()
             physicsSpeedSettings.mode = value
-        end
-    )
-    local SpeedValueRow: Frame = addNumberOption(
-        PhysicsSpeedFeature,
-        "Speed",
-        physicsSpeedSettings.speed,
-        5,
-        500,
-        function(value: number): ()
+        end,
+    })
+    physicsSpeed:CreateSlider({
+        Name = "Speed",
+        Min = 5,
+        Max = 500,
+        Default = physicsSpeedSettings.speed,
+        Function = function(value: number): ()
             physicsSpeedSettings.speed = value
-        end
-    )
-    local SpeedVerticalRow: Frame = addNumberOption(
-        PhysicsSpeedFeature,
-        "Vertical speed",
-        physicsSpeedSettings.verticalSpeed,
-        0,
-        300,
-        function(value: number): ()
+        end,
+    })
+    physicsSpeed:CreateToggle({
+        Name = "Advanced settings",
+        Default = false,
+    })
+
+    -- Every row below declares that it belongs to the switch above (and, where
+    -- a mode owns it, to that mode) instead of the switch walking a list.
+    local advanced: any = {Option = "Advanced settings"}
+    physicsSpeed:CreateSlider({
+        Name = "Vertical speed",
+        Show = advanced,
+        Min = 0,
+        Max = 300,
+        Default = physicsSpeedSettings.verticalSpeed,
+        Function = function(value: number): ()
             physicsSpeedSettings.verticalSpeed = value
-        end
-    )
-    local SpeedPlatformButton: TextButton = addToggleOption(
-        PhysicsSpeedFeature,
-        "PlatformStand",
-        physicsSpeedSettings.platformStand,
-        function(value: boolean): ()
+        end,
+    })
+    physicsSpeed:CreateToggle({
+        Name = "PlatformStand",
+        Show = advanced,
+        Default = physicsSpeedSettings.platformStand,
+        Function = function(value: boolean): ()
             physicsSpeedSettings.platformStand = value
-        end
-    )
-    local SpeedMotorRow: Frame = addNumberOption(
-        PhysicsSpeedFeature,
-        "Motor torque",
-        physicsSpeedSettings.motorTorque,
-        1000,
-        250000,
-        function(value: number): ()
-            physicsSpeedSettings.motorTorque = value
-        end
-    )
-    local speedAdvancedVisible: boolean = false
-    local SpeedCustomButton: TextButton = addToggleOption(
-        PhysicsSpeedFeature,
-        "Custom properties",
-        physicsSpeedSettings.customProperties,
-        function(value: boolean): ()
+        end,
+    })
+    physicsSpeed:CreateToggle({
+        Name = "Custom properties",
+        Show = advanced,
+        Default = physicsSpeedSettings.customProperties,
+        Function = function(value: boolean): ()
             physicsSpeedSettings.customProperties = value
-            setOptionVisible(
-                PhysicsSpeedFeature,
-                SpeedMotorRow,
-                speedAdvancedVisible and value
-            )
             if not value then
                 restorePhysicsMotors()
             end
-        end
-    )
-    local SpeedWallButton: TextButton = addToggleOption(
-        PhysicsSpeedFeature,
-        "Wall check",
-        physicsSpeedSettings.wallCheck,
-        function(value: boolean): ()
+        end,
+        Tooltip = "Rewrite the seat and wheel motors of a vehicle you are "
+            .. "sitting in; the originals go back the moment this is off.",
+    })
+    physicsSpeed:CreateSlider({
+        Name = "Motor torque",
+        Show = {advanced, {Option = "Custom properties"}},
+        Min = 1000,
+        Max = 250000,
+        Default = physicsSpeedSettings.motorTorque,
+        Function = function(value: number): ()
+            physicsSpeedSettings.motorTorque = value
+        end,
+    })
+    physicsSpeed:CreateToggle({
+        Name = "Wall check",
+        Show = advanced,
+        Default = physicsSpeedSettings.wallCheck,
+        Function = function(value: boolean): ()
             physicsSpeedSettings.wallCheck = value
-        end
-    )
-    local SpeedDynamics: any = {}
-    SpeedDynamics.acceleration = addNumberOption(
-        PhysicsSpeedFeature,
-        "Acceleration",
-        physicsSpeedSettings.acceleration,
-        1,
-        40,
-        function(value: number): ()
+        end,
+        Tooltip = "Stop against solid geometry instead of moving through it.",
+    })
+    physicsSpeed:CreateSlider({
+        Name = "Acceleration",
+        Show = {advanced, {Option = "Mode", Values = {"Adaptive", "Smooth"}}},
+        Min = 1,
+        Max = 40,
+        Default = physicsSpeedSettings.acceleration,
+        Function = function(value: number): ()
             physicsSpeedSettings.acceleration = value
-        end
-    )
-    SpeedDynamics.burstInterval = addNumberOption(
-        PhysicsSpeedFeature,
-        "Burst interval (s)",
-        physicsSpeedSettings.burstInterval,
-        0.05,
-        1,
-        function(value: number): ()
+        end,
+    })
+    physicsSpeed:CreateSlider({
+        Name = "Burst interval (s)",
+        Show = {advanced, {Option = "Mode", Values = {"Pulse"}}},
+        Min = 0.05,
+        Max = 1,
+        Default = physicsSpeedSettings.burstInterval,
+        Function = function(value: number): ()
             physicsSpeedSettings.burstInterval = value
-        end
-    )
-    SpeedDynamics.airControl = addNumberOption(
-        PhysicsSpeedFeature,
-        "Air control %",
-        physicsSpeedSettings.airControl * 100,
-        10,
-        150,
-        function(value: number): ()
+        end,
+    })
+    physicsSpeed:CreateSlider({
+        Name = "Air control %",
+        Show = {advanced, {Option = "Mode", Values = {"Adaptive"}}},
+        Min = 10,
+        Max = 150,
+        Default = physicsSpeedSettings.airControl * 100,
+        Function = function(value: number): ()
             physicsSpeedSettings.airControl = value / 100
-        end
-    )
-    SpeedDynamics.sprintMultiplier = addNumberOption(
-        PhysicsSpeedFeature,
-        "Sprint multiplier",
-        physicsSpeedSettings.sprintMultiplier,
-        1,
-        4,
-        function(value: number): ()
+        end,
+    })
+    physicsSpeed:CreateSlider({
+        Name = "Sprint multiplier",
+        Show = advanced,
+        Min = 1,
+        Max = 4,
+        Default = physicsSpeedSettings.sprintMultiplier,
+        Function = function(value: number): ()
             physicsSpeedSettings.sprintMultiplier = value
-        end
-    )
-    SpeedDynamics.sprintKey = addKeyOption(
-        PhysicsSpeedFeature,
-        "Sprint key",
-        physicsSpeedSettings.sprintKey,
-        function(value: Enum.KeyCode): ()
+        end,
+    })
+    local sprintKey: any = physicsSpeed:CreateBind({
+        Name = "Sprint key",
+        Show = advanced,
+        Default = physicsSpeedSettings.sprintKey,
+        Function = function(value: Enum.KeyCode): ()
             physicsSpeedSettings.sprintKey = value
-        end
-    )
+        end,
+    })
     -- Sprint is a hold, so its mobile button is a hold too: tap the row's key
     -- slot to place it, then keep a finger on it to sprint.
     if state.bindMobileActionPlacement then
         state.bindMobileActionPlacement(
-            SpeedDynamics.sprintKey,
+            sprintKey.Object,
             "UniversalSpeedSprint",
             "SPRINT",
             function(): () end,
@@ -12618,77 +12590,39 @@ function Module.init(context: Runtime): any
             }
         )
     end
-    SpeedDynamics.preserveMomentum = addToggleOption(
-        PhysicsSpeedFeature,
-        "Preserve momentum",
-        physicsSpeedSettings.preserveMomentum,
-        function(value: boolean): ()
+    physicsSpeed:CreateToggle({
+        Name = "Preserve momentum",
+        Show = advanced,
+        Default = physicsSpeedSettings.preserveMomentum,
+        Function = function(value: boolean): ()
             physicsSpeedSettings.preserveMomentum = value
-        end
-    )
-    local SpeedJumpRow: Frame = addNumberOption(
-        PhysicsSpeedFeature,
-        "Auto-jump velocity",
-        physicsSpeedSettings.jumpVelocity,
-        20,
-        120,
-        function(value: number): ()
-            physicsSpeedSettings.jumpVelocity = value
-        end
-    )
-    local SpeedAutoJumpButton: TextButton = addToggleOption(
-        PhysicsSpeedFeature,
-        "Auto jump",
-        physicsSpeedSettings.autoJump,
-        function(value: boolean): ()
+        end,
+    })
+    physicsSpeed:CreateToggle({
+        Name = "Auto jump",
+        Show = advanced,
+        Default = physicsSpeedSettings.autoJump,
+        Function = function(value: boolean): ()
             physicsSpeedSettings.autoJump = value
-            setOptionVisible(
-                PhysicsSpeedFeature,
-                SpeedJumpRow,
-                speedAdvancedVisible and value
-            )
-        end
-    )
-    local SpeedAdvancedButton: TextButton = addToggleOption(
-        PhysicsSpeedFeature,
-        "Advanced settings",
-        false,
-        function(value: boolean): ()
-            speedAdvancedVisible = value
-            setOptionVisible(PhysicsSpeedFeature, SpeedVerticalRow, value)
-            setOptionVisible(PhysicsSpeedFeature, SpeedPlatformButton.Parent :: GuiObject, value)
-            setOptionVisible(PhysicsSpeedFeature, SpeedCustomButton.Parent :: GuiObject, value)
-            setOptionVisible(PhysicsSpeedFeature, SpeedMotorRow, value and physicsSpeedSettings.customProperties)
-            setOptionVisible(PhysicsSpeedFeature, SpeedWallButton.Parent :: GuiObject, value)
-            setOptionVisible(PhysicsSpeedFeature, SpeedDynamics.acceleration, value)
-            setOptionVisible(PhysicsSpeedFeature, SpeedDynamics.burstInterval, value)
-            setOptionVisible(PhysicsSpeedFeature, SpeedDynamics.airControl, value)
-            setOptionVisible(PhysicsSpeedFeature, SpeedDynamics.sprintMultiplier, value)
-            setOptionVisible(PhysicsSpeedFeature, SpeedDynamics.sprintKey.Parent :: GuiObject, value)
-            setOptionVisible(PhysicsSpeedFeature, SpeedDynamics.preserveMomentum.Parent :: GuiObject, value)
-            setOptionVisible(PhysicsSpeedFeature, SpeedAutoJumpButton.Parent :: GuiObject, value)
-            setOptionVisible(PhysicsSpeedFeature, SpeedJumpRow, value and physicsSpeedSettings.autoJump)
-        end
-    )
-    local SpeedModeRow: GuiObject = SpeedModeButton.Parent :: GuiObject
-    local SpeedAdvancedRow: GuiObject = SpeedAdvancedButton.Parent :: GuiObject
-    SpeedModeRow.LayoutOrder = 1
-    SpeedValueRow.LayoutOrder = 2
-    SpeedAdvancedRow.LayoutOrder = 3
-    addFeatureTooltip(
-        PhysicsSpeedFeature,
-        "Adaptive changes air authority and retains flow, Smooth accelerates predictably, "
-            .. "Boost uses physical impulse, CFrame moves the character without touching its "
-            .. "velocity, Pulse alternates bursts with a normal walk, and Teleport advances in "
-            .. "short steps. Sprint, momentum, wall safety, auto-jump and vehicle tuning are "
-            .. "independently configurable."
-    )
+        end,
+    })
+    physicsSpeed:CreateSlider({
+        Name = "Auto-jump velocity",
+        Show = {advanced, {Option = "Auto jump"}},
+        Min = 20,
+        Max = 120,
+        Default = physicsSpeedSettings.jumpVelocity,
+        Function = function(value: number): ()
+            physicsSpeedSettings.jumpVelocity = value
+        end,
+    })
 
     activeCleanup = function(): ()
-        togglePhysicsSpeed(false)
+        restorePhysicsMotors()
+        state.platformStandController.set("PhysicsSpeed", nil)
     end
     Module.Initialized = true
-    return PhysicsSpeedFeature
+    return physicsSpeed
 end
 
 function Module.destroy(): ()

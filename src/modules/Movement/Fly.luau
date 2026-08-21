@@ -2,7 +2,7 @@
 --
 -- Fly.
 --
--- Six ways of moving and five of staying up, because no single pair works
+-- Seven ways of moving and seven of staying up, because no single pair works
 -- everywhere: a game that clamps velocity ignores Velocity, one that rejects
 -- CFrame writes ignores CFrame, and one watching the humanoid state ignores
 -- both but lets an anchored part under your feet through. Each row in the
@@ -28,19 +28,12 @@ local activeCleanup: (() -> ())? = nil
 
 function Module.init(context: Runtime): any
     local host: any = context.host
-    local TaskManager: any = host.TaskManager
-    local featureConnections: any = host.featureConnections
-    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
-    local getCharacterParts: any = host.getCharacterParts
+    local framework: any = context.framework
     local state: any = host.state
-    local createUniversalFeature: any = host.createUniversalFeature
-    local addToggleOption: any = host.addToggleOption
-    local addNumberOption: any = host.addNumberOption
-    local addCycleOption: any = host.addCycleOption
-    local addFeatureTooltip: any = host.addFeatureTooltip
-    local addKeyOption: any = host.addKeyOption
+    local getCharacterParts: any = host.getCharacterParts
     local UserInputService: any = host.UserInputService
-    local workspace: any = host.workspace
+    local currentWorkspace: Workspace = host.workspace or workspace
+
     type FlySettings = {
         method: string,
         floatMethod: string,
@@ -68,15 +61,22 @@ function Module.init(context: Runtime): any
         upKey = Enum.KeyCode.Space,
         downKey = Enum.KeyCode.LeftControl,
     }
-    -- Kept on `state` rather than as another bootstrap local: the function that
-    -- builds the menu is already at Luau's 200-register ceiling.
-    state.flyRuntime = {
-        yLevel = nil,
+    -- One session's scratch: the altitude a Hover lock is holding, when the
+    -- next Blink burst is due, the Floor platform, and the WalkSpeed to put
+    -- back. Cleared at both edges of a session so a fresh character can never
+    -- inherit the previous one's numbers.
+    local flyRuntime: any = {
+        yLevel = nil :: number?,
         burstAt = 0,
-        platform = nil,
-        walkSpeed = nil,
-    } :: FlyRuntime
+        platform = nil :: BasePart?,
+        walkSpeed = nil :: number?,
+    }
     local flySmoothedVelocity: Vector3 = Vector3.zero
+    -- PlatformStand is contested: Fly wants the character ragdolled while
+    -- PhysicsSpeed may want it standing, and both can be on at once. The
+    -- controller arbitrates — the last owner to speak wins, and every baseline
+    -- goes back when the last owner leaves. It lives on `state` because the
+    -- two modules share it; it is not Fly's alone.
     state.platformStandController = {
         owners = {},
         baselines = setmetatable({}, {__mode = "k"}),
@@ -133,6 +133,14 @@ function Module.init(context: Runtime): any
             end
         end
         flyObjects = setmetatable({}, {__mode = "k"}) :: any
+    end
+
+    local function restoreWalkSpeed(): ()
+        local _, humanoid: Humanoid? = getCharacterParts()
+        if humanoid and flyRuntime.walkSpeed then
+            (humanoid :: Humanoid).WalkSpeed = flyRuntime.walkSpeed :: number
+        end
+        flyRuntime.walkSpeed = nil
     end
 
     local function ensureFlyConstraints(root: BasePart): (LinearVelocity, AlignOrientation)
@@ -245,8 +253,8 @@ function Module.init(context: Runtime): any
     --   CFrame      the root is displaced directly and velocity is left at zero,
     --               so speed caps, knockback and ragdolls have nothing to grab.
     --   Blink       CFrame movement saved up and spent in one hop per interval,
-    --               which looks like teleporting rather than gliding.
-    --   Pulse       velocity alternating between a burst and a coast, so the
+    --               which looks like teleporting to a spectator.
+    --   Pulse       bursts of speed with slow coasts between them, so the
     --               average speed stays close to normal while the peaks are fast.
     --   WalkSpeed   raises Humanoid.WalkSpeed and nothing else: keeps animations
     --               and the game's own movement rules, trivially detectable.
@@ -263,12 +271,17 @@ function Module.init(context: Runtime): any
     --               as an ordinary player hopping around.
     --   Floor       an invisible anchored part is kept under your feet, so you
     --               are genuinely standing on something the entire flight.
+    --   Bypass      holds the altitude but dips to the ground for a fraction of
+    --               a second every few seconds, so a server that checks whether
+    --               you ever land sees that you do.
+    --
     -- The two engine appliers live in their own block so their registers are
-    -- released back to the bootstrap function, which sits at Luau's 200-local
-    -- ceiling.
-    local toggleFly: (boolean) -> ()
+    -- released back to the bootstrap function; the loop that calls them sits
+    -- with the module, so the pair is declared here and assigned below.
+    local applyFlyHorizontal: (BasePart, Humanoid, Vector3, number) -> ()
+    local applyFlyVertical: (BasePart, Humanoid, number, number) -> ()
     do
-    local function applyFlyHorizontal(
+    applyFlyHorizontal = function(
         root: BasePart,
         humanoid: Humanoid,
         moveDirection: Vector3,
@@ -279,8 +292,8 @@ function Module.init(context: Runtime): any
         local target: Vector3 = moveDirection * flySettings.speed
 
         if method == "WalkSpeed" then
-            if not state.flyRuntime.walkSpeed then
-                state.flyRuntime.walkSpeed = humanoid.WalkSpeed
+            if not flyRuntime.walkSpeed then
+                flyRuntime.walkSpeed = humanoid.WalkSpeed
             end
             humanoid.WalkSpeed = flySettings.speed
             return
@@ -298,10 +311,10 @@ function Module.init(context: Runtime): any
             local step: Vector3 = moveDirection * flySettings.speed * deltaTime
             if method == "Blink" then
                 local interval: number = math.max(flySettings.burstInterval, 0.05)
-                if os.clock() < state.flyRuntime.burstAt then
+                if os.clock() < flyRuntime.burstAt then
                     step = Vector3.zero
                 else
-                    state.flyRuntime.burstAt = os.clock() + interval
+                    flyRuntime.burstAt = os.clock() + interval
                     step = moveDirection * flySettings.speed * interval
                 end
             end
@@ -309,7 +322,7 @@ function Module.init(context: Runtime): any
                 local raycastParams: RaycastParams = RaycastParams.new()
                 raycastParams.FilterType = Enum.RaycastFilterType.Exclude
                 raycastParams.FilterDescendantsInstances = {root.Parent :: Instance}
-                local wallHit: RaycastResult? = workspace:Raycast(
+                local wallHit: RaycastResult? = currentWorkspace:Raycast(
                     root.Position,
                     step + step.Unit * 2,
                     raycastParams
@@ -353,7 +366,7 @@ function Module.init(context: Runtime): any
         )
     end
 
-    local function applyFlyVertical(
+    applyFlyVertical = function(
         root: BasePart,
         humanoid: Humanoid,
         vertical: number,
@@ -364,7 +377,7 @@ function Module.init(context: Runtime): any
         local targetY: number = vertical * flySettings.verticalSpeed
 
         if method == "Floor" then
-            local platform: BasePart? = state.flyRuntime.platform
+            local platform: BasePart? = flyRuntime.platform
             if not platform or not platform.Parent then
                 local newPlatform: BasePart = Instance.new("Part")
                 newPlatform.Name = "RTM_FlyPlatform"
@@ -375,8 +388,8 @@ function Module.init(context: Runtime): any
                 newPlatform.Transparency = 1
                 -- Parented to the camera: it exists for the local physics
                 -- simulation only and never shows up as a part in the world.
-                newPlatform.Parent = workspace.CurrentCamera
-                state.flyRuntime.platform = newPlatform
+                newPlatform.Parent = currentWorkspace.CurrentCamera
+                flyRuntime.platform = newPlatform
                 platform = newPlatform
             end
             local resolved: BasePart = platform :: BasePart
@@ -406,12 +419,12 @@ function Module.init(context: Runtime): any
             if (os.clock() % period) > (period * 0.8) then
                 -- Fall honestly for the dip: the humanoid changes state on its
                 -- own, and that state is exactly what the check reads.
-                state.flyRuntime.yLevel = nil
+                flyRuntime.yLevel = nil
                 return
             end
-            local held: number = state.flyRuntime.yLevel or root.Position.Y
+            local held: number = flyRuntime.yLevel or root.Position.Y
             held = held + targetY * deltaTime
-            state.flyRuntime.yLevel = held
+            flyRuntime.yLevel = held
             root.AssemblyLinearVelocity = Vector3.new(
                 currentVelocity.X,
                 0,
@@ -421,9 +434,8 @@ function Module.init(context: Runtime): any
             return
         end
 
-
         if method == "Hover" or method == "Jump" then
-            local level: number = state.flyRuntime.yLevel or root.Position.Y
+            local level: number = flyRuntime.yLevel or root.Position.Y
             level = level + targetY * deltaTime
             if flySettings.wallCheck then
                 local offset: number = level - root.Position.Y
@@ -431,7 +443,7 @@ function Module.init(context: Runtime): any
                     local raycastParams: RaycastParams = RaycastParams.new()
                     raycastParams.FilterType = Enum.RaycastFilterType.Exclude
                     raycastParams.FilterDescendantsInstances = {root.Parent :: Instance}
-                    local ceilingHit: RaycastResult? = workspace:Raycast(
+                    local ceilingHit: RaycastResult? = currentWorkspace:Raycast(
                         root.Position,
                         Vector3.new(0, offset, 0),
                         raycastParams
@@ -442,7 +454,7 @@ function Module.init(context: Runtime): any
                     end
                 end
             end
-            state.flyRuntime.yLevel = level
+            flyRuntime.yLevel = level
             if method == "Hover" then
                 root.AssemblyLinearVelocity = Vector3.new(
                     currentVelocity.X,
@@ -477,277 +489,245 @@ function Module.init(context: Runtime): any
             currentVelocity.Z
         )
     end
+    end
 
-    function toggleFly(enabled: boolean): ()
-        disconnectFeatureConnection("Fly")
-        removeFlyObjects()
-        flySmoothedVelocity = Vector3.zero
-        flyTouchVertical = 0
-        state.flyRuntime.yLevel = nil
-        state.flyRuntime.burstAt = 0
-        if state.flyRuntime.platform then
-            (state.flyRuntime.platform :: BasePart):Destroy()
-            state.flyRuntime.platform = nil
-        end
-
-        local _, restoreHumanoid, restoreRoot = getCharacterParts()
-        if restoreHumanoid and state.flyRuntime.walkSpeed then
-            restoreHumanoid.WalkSpeed = state.flyRuntime.walkSpeed :: number
-        end
-        state.flyRuntime.walkSpeed = nil
-
-        if not enabled then
-            if restoreRoot then
-                restoreRoot.AssemblyLinearVelocity = Vector3.zero
-            end
-            if restoreHumanoid then
-                state.platformStandController.set("Fly", false)
-                state.platformStandController.apply(restoreHumanoid)
-            end
-            return
-        end
-
-        featureConnections.Fly = TaskManager:Connect(function(deltaTime: number): ()
-            local _, humanoid, root = getCharacterParts()
-            local camera: Camera? = workspace.CurrentCamera
-            if not humanoid or not root or not camera then
-                -- A respawn invalidates the held altitude; picking it back up
-                -- would teleport the fresh character to the old one's height.
-                state.flyRuntime.yLevel = nil
-                return
-            end
-
-            local method: string = flySettings.method
-            local floatMethod: string = flySettings.floatMethod
-            -- WalkSpeed steering and the two engines that stand on something need
-            -- a humanoid that is still allowed to walk, so PlatformStand is only
-            -- honoured where it does not disable the engine that is running.
-            local canRagdoll: boolean = method ~= "WalkSpeed"
-                and floatMethod ~= "Floor"
-                and floatMethod ~= "Jump"
-            state.platformStandController.set(
-                "Fly",
-                canRagdoll and (flySettings.platformStand or method == "CFrame")
-            )
-            state.platformStandController.apply(humanoid)
-
-            local moveDirection, vertical, cameraForward = getFlyDirection(camera)
-            if flySettings.wallCheck and moveDirection.Magnitude > 0.001 then
-                local raycastParams: RaycastParams = RaycastParams.new()
-                raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-                raycastParams.FilterDescendantsInstances = {root.Parent :: Instance}
-                local wallHit: RaycastResult? = workspace:Raycast(
-                    root.Position,
-                    moveDirection.Unit * 2.75,
-                    raycastParams
-                )
-                if wallHit then
-                    moveDirection = Vector3.zero
-                end
-            end
-
-            if method == "Constraint" then
-                local velocity, orientation = ensureFlyConstraints(root)
-                applyFlyHorizontal(root, humanoid, moveDirection, deltaTime)
-                velocity.Enabled = true
-                velocity.VectorVelocity = Vector3.new(
-                    flySmoothedVelocity.X,
-                    vertical * flySettings.verticalSpeed,
-                    flySmoothedVelocity.Z
-                )
-                orientation.Enabled = flySettings.faceCamera
-                orientation.CFrame = CFrame.lookAt(Vector3.zero, cameraForward)
-                return
-            end
-
-            -- Constraints left behind by a mode switch keep driving the character
-            -- against whatever engine is running now.
+    local fly: any
+    fly = framework.Categories.Movement:CreateModule({
+        Name = "Fly",
+        Category = "Movement",
+        Tooltip = "Use WASD to move, Space to rise and LeftControl to descend. "
+            .. "Method picks how you travel sideways and Float picks what "
+            .. "holds you up; if a game blocks one combination, another "
+            .. "usually works.",
+        Function = function(enabled: boolean): ()
+            -- Both edges of a session start from the same clean state, so a
+            -- respawn or a disable-then-enable can never inherit the previous
+            -- character's altitude, platform or saved WalkSpeed.
             removeFlyObjects()
-            applyFlyHorizontal(root, humanoid, moveDirection, deltaTime)
-            applyFlyVertical(root, humanoid, vertical, deltaTime)
-
-            if floatMethod ~= "Floor" and state.flyRuntime.platform then
-                (state.flyRuntime.platform :: BasePart):Destroy()
-                state.flyRuntime.platform = nil
+            flySmoothedVelocity = Vector3.zero
+            flyTouchVertical = 0
+            flyRuntime.yLevel = nil
+            flyRuntime.burstAt = 0
+            if flyRuntime.platform then
+                (flyRuntime.platform :: BasePart):Destroy()
+                flyRuntime.platform = nil
             end
-            if floatMethod ~= "Hover" and floatMethod ~= "Jump" then
-                state.flyRuntime.yLevel = nil
+            restoreWalkSpeed()
+
+            if not enabled then
+                local _, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
+                if root then
+                    (root :: BasePart).AssemblyLinearVelocity = Vector3.zero
+                end
+                if humanoid then
+                    state.platformStandController.set("Fly", false)
+                    state.platformStandController.apply(humanoid :: Humanoid)
+                end
+                return
             end
 
-            if flySettings.faceCamera and cameraForward.Magnitude > 0.001 then
-                root.CFrame = CFrame.lookAt(root.Position, root.Position + cameraForward)
-            end
-        end)
-    end
-    end
+            fly:Loop(function(deltaTime: number): ()
+                local _, humanoid, root = getCharacterParts()
+                local camera: Camera? = currentWorkspace.CurrentCamera
+                if not humanoid or not root or not camera then
+                    -- A respawn invalidates the held altitude; picking it back up
+                    -- would teleport the fresh character to the old one's height.
+                    flyRuntime.yLevel = nil
+                    return
+                end
 
-    local FlyFeature = createUniversalFeature(
-        "Fly",
-        "Preset-based flight with independent vertical control",
-        1,
-        toggleFly
-    )
-    -- Fly is the reference layout for a module customisation panel: grouped under
-    -- headings, every control carrying a one-line explanation of what it does, and
-    -- the rarely-touched controls folded away behind a single switch.
-    local FlyFlightSection: Frame = state.addSectionOption(FlyFeature, "Flight")
-    local FlyMethodButton: TextButton = addCycleOption(
-        FlyFeature,
-        "Method",
-        {"Velocity", "Constraint", "Impulse", "CFrame", "Blink", "Pulse", "WalkSpeed"},
-        1,
-        function(value: string): ()
+                local method: string = flySettings.method
+                local floatMethod: string = flySettings.floatMethod
+                -- WalkSpeed steering and the two engines that stand on something need
+                -- a humanoid that is still allowed to walk, so PlatformStand is only
+                -- honoured where it does not disable the engine that is running.
+                local canRagdoll: boolean = method ~= "WalkSpeed"
+                    and floatMethod ~= "Floor"
+                    and floatMethod ~= "Jump"
+                state.platformStandController.set(
+                    "Fly",
+                    canRagdoll and (flySettings.platformStand or method == "CFrame")
+                )
+                state.platformStandController.apply(humanoid)
+
+                local moveDirection, vertical, cameraForward = getFlyDirection(camera)
+                if flySettings.wallCheck and moveDirection.Magnitude > 0.001 then
+                    local raycastParams: RaycastParams = RaycastParams.new()
+                    raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+                    raycastParams.FilterDescendantsInstances = {root.Parent :: Instance}
+                    local wallHit: RaycastResult? = currentWorkspace:Raycast(
+                        root.Position,
+                        moveDirection.Unit * 2.75,
+                        raycastParams
+                    )
+                    if wallHit then
+                        moveDirection = Vector3.zero
+                    end
+                end
+
+                if method == "Constraint" then
+                    local velocity, orientation = ensureFlyConstraints(root)
+                    applyFlyHorizontal(root, humanoid, moveDirection, deltaTime)
+                    velocity.Enabled = true
+                    velocity.VectorVelocity = Vector3.new(
+                        flySmoothedVelocity.X,
+                        vertical * flySettings.verticalSpeed,
+                        flySmoothedVelocity.Z
+                    )
+                    orientation.Enabled = flySettings.faceCamera
+                    orientation.CFrame = CFrame.lookAt(Vector3.zero, cameraForward)
+                    return
+                end
+
+                -- Constraints left behind by a mode switch keep driving the character
+                -- against whatever engine is running now.
+                removeFlyObjects()
+                applyFlyHorizontal(root, humanoid, moveDirection, deltaTime)
+                applyFlyVertical(root, humanoid, vertical, deltaTime)
+
+                if floatMethod ~= "Floor" and flyRuntime.platform then
+                    (flyRuntime.platform :: BasePart):Destroy()
+                    flyRuntime.platform = nil
+                end
+                if floatMethod ~= "Hover" and floatMethod ~= "Jump" then
+                    flyRuntime.yLevel = nil
+                end
+
+                if flySettings.faceCamera and cameraForward.Magnitude > 0.001 then
+                    root.CFrame = CFrame.lookAt(root.Position, root.Position + cameraForward)
+                end
+            end)
+        end,
+    })
+
+    fly:CreateSection("Flight")
+    fly:CreateDropdown({
+        Name = "Method",
+        List = {"Velocity", "Constraint", "Impulse", "CFrame", "Blink", "Pulse", "WalkSpeed"},
+        Index = 1,
+        Function = function(value: string): ()
             flySettings.method = value
         end,
-        "Sideways engine. Velocity is smooth, CFrame ignores physics, "
-            .. "WalkSpeed just runs faster."
-    )
-    local FlyFloatButton: TextButton = addCycleOption(
-        FlyFeature,
-        "Float",
-        {"Velocity", "Impulse", "Hover", "Jump", "Bounce", "Floor", "Bypass"},
-        1,
-        function(value: string): ()
+        Tooltip = "Sideways engine. Velocity is smooth, CFrame ignores physics, "
+            .. "WalkSpeed just runs faster.",
+    })
+    fly:CreateDropdown({
+        Name = "Float",
+        List = {"Velocity", "Impulse", "Hover", "Jump", "Bounce", "Floor", "Bypass"},
+        Index = 1,
+        Function = function(value: string): ()
             flySettings.floatMethod = value
         end,
-        "What keeps you airborne. Hover locks an altitude, Floor stands you on "
-            .. "an invisible part, and Bypass drops you to the ground for an "
-            .. "instant every few seconds so the server sees you land."
-    )
-    local FlySpeedRow: Frame = addNumberOption(
-        FlyFeature,
-        "Horizontal speed",
-        flySettings.speed,
-        10,
-        500,
-        function(value: number): ()
+        Tooltip = "What keeps you airborne. Hover locks an altitude, Floor "
+            .. "stands you on an invisible part, and Bypass drops you to the "
+            .. "ground for an instant every few seconds so the server sees "
+            .. "you land.",
+    })
+    fly:CreateSlider({
+        Name = "Horizontal speed",
+        Min = 10,
+        Max = 500,
+        Default = flySettings.speed,
+        Function = function(value: number): ()
             flySettings.speed = value
         end,
-        "Studs per second while holding WASD."
-    )
-    local FlyVerticalRow: Frame = addNumberOption(
-        FlyFeature,
-        "Vertical speed",
-        flySettings.verticalSpeed,
-        10,
-        350,
-        function(value: number): ()
+        Tooltip = "Studs per second while holding WASD.",
+    })
+    fly:CreateSlider({
+        Name = "Vertical speed",
+        Min = 10,
+        Max = 350,
+        Default = flySettings.verticalSpeed,
+        Function = function(value: number): ()
             flySettings.verticalSpeed = value
         end,
-        "Studs per second while rising or descending."
-    )
-    local FlyAdvancedButton: TextButton
-    local FlyAdvancedSection: Frame = state.addSectionOption(FlyFeature, "Advanced")
-    local FlyResponseRow: Frame = addNumberOption(
-        FlyFeature,
-        "Response multiplier",
-        flySettings.response,
-        0.5,
-        2,
-        function(value: number): ()
+        Tooltip = "Studs per second while rising or descending.",
+    })
+    fly:CreateToggle({
+        Name = "Advanced settings",
+        Default = false,
+        Tooltip = "Reveal response tuning, collision behaviour and key bindings.",
+    })
+
+    -- The advanced block, declared: every row below says it belongs to the
+    -- "Advanced settings" switch instead of the switch keeping a list of them.
+    local advanced: any = {Option = "Advanced settings"}
+    fly:CreateSection("Advanced").Show = advanced
+    fly:CreateSlider({
+        Name = "Response multiplier",
+        Show = {advanced, {Option = "Method", Values = {"Velocity", "Constraint", "Pulse"}}},
+        Min = 0.5,
+        Max = 2,
+        Default = flySettings.response,
+        Function = function(value: number): ()
             flySettings.response = value
         end,
-        "How sharply the flight reacts to input. Higher is twitchier."
-    )
-    local FlyBurstRow: Frame = addNumberOption(
-        FlyFeature,
-        "Burst interval (s)",
-        flySettings.burstInterval,
-        0.05,
-        1,
-        function(value: number): ()
+        Tooltip = "How sharply the flight reacts to input. Higher is twitchier.",
+    })
+    fly:CreateSlider({
+        Name = "Burst interval (s)",
+        Show = advanced,
+        Min = 0.05,
+        Max = 1,
+        Default = flySettings.burstInterval,
+        Function = function(value: number): ()
             flySettings.burstInterval = value
         end,
-        "Cycle length for Blink, Pulse and Bounce. Shorter is smoother."
-    )
-    local FlyWallButton: TextButton = addToggleOption(
-        FlyFeature,
-        "Wall check",
-        flySettings.wallCheck,
-        function(value: boolean): ()
+        Tooltip = "Cycle length for Blink, Pulse, Bounce and Bypass. Shorter "
+            .. "is smoother.",
+    })
+    fly:CreateToggle({
+        Name = "Wall check",
+        Show = advanced,
+        Default = flySettings.wallCheck,
+        Function = function(value: boolean): ()
             flySettings.wallCheck = value
         end,
-        "Stop against solid geometry instead of flying through it."
-    )
-    local FlyPlatformButton: TextButton = addToggleOption(
-        FlyFeature,
-        "PlatformStand",
-        flySettings.platformStand,
-        function(value: boolean): ()
+        Tooltip = "Stop against solid geometry instead of flying through it.",
+    })
+    fly:CreateToggle({
+        Name = "PlatformStand",
+        Show = advanced,
+        Default = flySettings.platformStand,
+        Function = function(value: boolean): ()
             flySettings.platformStand = value
         end,
-        "Ragdoll the character while flying. Smoother, but no animations."
-    )
-    local FlyFaceButton: TextButton = addToggleOption(
-        FlyFeature,
-        "Face camera",
-        flySettings.faceCamera,
-        function(value: boolean): ()
+        Tooltip = "Ragdoll the character while flying. Smoother, but no animations.",
+    })
+    fly:CreateToggle({
+        Name = "Face camera",
+        Show = advanced,
+        Default = flySettings.faceCamera,
+        Function = function(value: boolean): ()
             flySettings.faceCamera = value
         end,
-        "Rotate the character to follow wherever the camera looks."
-    )
-    local FlyUpKeyButton: TextButton = addKeyOption(
-        FlyFeature,
-        "Up key",
-        flySettings.upKey,
-        function(value: Enum.KeyCode): ()
+        Tooltip = "Rotate the character to follow wherever the camera looks.",
+    })
+    local upKey: any = fly:CreateBind({
+        Name = "Up key",
+        Show = advanced,
+        Default = flySettings.upKey,
+        Function = function(value: Enum.KeyCode): ()
             flySettings.upKey = value
         end,
-        "Hold to gain altitude."
-    )
-    local FlyDownKeyButton: TextButton = addKeyOption(
-        FlyFeature,
-        "Down key",
-        flySettings.downKey,
-        function(value: Enum.KeyCode): ()
+        Tooltip = "Hold to gain altitude.",
+    })
+    local downKey: any = fly:CreateBind({
+        Name = "Down key",
+        Show = advanced,
+        Default = flySettings.downKey,
+        Function = function(value: Enum.KeyCode): ()
             flySettings.downKey = value
         end,
-        "Hold to lose altitude."
-    )
-    FlyAdvancedButton = addToggleOption(
-        FlyFeature,
-        "Advanced settings",
-        false,
-        function(value: boolean): ()
-            -- The heading folds away with the controls it labels.
-            setOptionVisible(FlyFeature, FlyAdvancedSection, value)
-            setOptionVisible(FlyFeature, FlyResponseRow, value)
-            setOptionVisible(FlyFeature, FlyBurstRow, value)
-            setOptionVisible(FlyFeature, FlyWallButton.Parent :: GuiObject, value)
-            setOptionVisible(FlyFeature, FlyPlatformButton.Parent :: GuiObject, value)
-            setOptionVisible(FlyFeature, FlyFaceButton.Parent :: GuiObject, value)
-            setOptionVisible(FlyFeature, FlyUpKeyButton.Parent :: GuiObject, value)
-            setOptionVisible(FlyFeature, FlyDownKeyButton.Parent :: GuiObject, value)
-        end,
-        "Reveal response tuning, collision behaviour and key bindings."
-    )
-    local FlyMethodRow: GuiObject = FlyMethodButton.Parent :: GuiObject
-    local FlyFloatRow: GuiObject = FlyFloatButton.Parent :: GuiObject
-    local FlyAdvancedRow: GuiObject = FlyAdvancedButton.Parent :: GuiObject
-    -- Explicit order: heading, the everyday controls, the reveal switch, then the
-    -- advanced heading and its controls (which addToggleOption has already hidden
-    -- by running its callback with the stored/default `false`).
-    FlyFlightSection.LayoutOrder = 1
-    FlyMethodRow.LayoutOrder = 2
-    FlyFloatRow.LayoutOrder = 3
-    FlySpeedRow.LayoutOrder = 4
-    FlyVerticalRow.LayoutOrder = 5
-    FlyAdvancedRow.LayoutOrder = 6
-    FlyAdvancedSection.LayoutOrder = 7
-    FlyResponseRow.LayoutOrder = 8
-    FlyBurstRow.LayoutOrder = 9
-    ;(FlyWallButton.Parent :: GuiObject).LayoutOrder = 10
-    ;(FlyPlatformButton.Parent :: GuiObject).LayoutOrder = 11
-    ;(FlyFaceButton.Parent :: GuiObject).LayoutOrder = 12
-    ;(FlyUpKeyButton.Parent :: GuiObject).LayoutOrder = 13
-    ;(FlyDownKeyButton.Parent :: GuiObject).LayoutOrder = 14
+        Tooltip = "Hold to lose altitude.",
+    })
+
     -- Climbing and descending are holds on a keyboard, so they are holds on a
     -- phone too: keep a finger on UP to rise, lift it to level off. They used to
     -- latch on tap, which made hovering at a height nearly impossible.
     if state.bindMobileActionPlacement then
         state.bindMobileActionPlacement(
-            FlyUpKeyButton,
+            upKey.Object,
             "UniversalFlyUp",
             "UP",
             function(): () end,
@@ -763,7 +743,7 @@ function Module.init(context: Runtime): any
             }
         )
         state.bindMobileActionPlacement(
-            FlyDownKeyButton,
+            downKey.Object,
             "UniversalFlyDown",
             "DOWN",
             function(): () end,
@@ -779,18 +759,13 @@ function Module.init(context: Runtime): any
             }
         )
     end
-    addFeatureTooltip(
-        FlyFeature,
-        "Use WASD to move, Space to rise and LeftControl to descend. "
-            .. "Method picks how you travel sideways and Float picks what holds "
-            .. "you up; if a game blocks one combination, another usually works."
-    )
 
     activeCleanup = function(): ()
-        disconnectFeatureConnection("Fly")
+        removeFlyObjects()
+        restoreWalkSpeed()
     end
     Module.Initialized = true
-    return FlyFeature
+    return fly
 end
 
 function Module.destroy(): ()
