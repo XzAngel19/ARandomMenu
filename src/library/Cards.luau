@@ -649,6 +649,20 @@ function Module.init(context: any): any
         -- mode never keeps sizes from another.
         feature.applyLayout()
 
+        -- What the HUD list writes in brackets after the module's name, the
+        -- way Wurst prints `AutoTotem [0 totems]`. It lives on the card rather
+        -- than on the framework's wrapper because only eighteen of the
+        -- thirty-eight modules have a wrapper — the other twenty build their
+        -- card straight through this factory, and a status only half the menu
+        -- can publish is a list that lies by omission.
+        --
+        -- `nil` means say nothing, which is the right answer for most modules
+        -- most of the time; `[on]` is noise, since the name is in the list
+        -- precisely because it is on.
+        function feature:SetStatus(status: string?): ()
+            feature.status = status
+        end
+
         registry[name] = feature
         table.insert(allFeatures, feature)
         -- Favourites and the overlay menu are a downloaded layer. A card that

@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "d1b40bf7f7ed8b4b",
+    stamp = "33c38459fe2f12d5",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -2949,13 +2949,13 @@ function Module.init(context: any): Framework
             onToggle(not created.Enabled)
         end
 
-        -- What the HUD list writes in brackets after the module's name, the
-        -- way Wurst prints `AutoTotem [0 totems]`. Only the module knows what
-        -- is worth saying, and only while it is running; `nil` means say
-        -- nothing, which is the right answer for most of them most of the
-        -- time. A bracket that always reads `[on]` is noise.
+        -- The status belongs to the card, which every module has, rather than
+        -- to this wrapper, which only eighteen of them do. This forwards.
         function created:SetStatus(status: string?): ()
             created.Status = status
+            if feature and type(feature.SetStatus) == "function" then
+                feature:SetStatus(status)
+            end
         end
 
         function created:Notify(message: string): ()
@@ -5321,6 +5321,20 @@ function Module.init(context: any): any
         -- Applied once at creation too, so a card built while the shell is in one
         -- mode never keeps sizes from another.
         feature.applyLayout()
+
+        -- What the HUD list writes in brackets after the module's name, the
+        -- way Wurst prints `AutoTotem [0 totems]`. It lives on the card rather
+        -- than on the framework's wrapper because only eighteen of the
+        -- thirty-eight modules have a wrapper — the other twenty build their
+        -- card straight through this factory, and a status only half the menu
+        -- can publish is a list that lies by omission.
+        --
+        -- `nil` means say nothing, which is the right answer for most modules
+        -- most of the time; `[on]` is noise, since the name is in the list
+        -- precisely because it is on.
+        function feature:SetStatus(status: string?): ()
+            feature.status = status
+        end
 
         registry[name] = feature
         table.insert(allFeatures, feature)
