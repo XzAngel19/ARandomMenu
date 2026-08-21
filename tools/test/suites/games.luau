@@ -30,13 +30,6 @@ return function(ctx: any): ()
                 character and character:FindFirstChild("HumanoidRootPart")
         end
     end
-    if world.globals.Theme == nil then
-        world.globals.Theme = host.Theme
-    end
-    if world.globals.TweenService == nil then
-        world.globals.TweenService = world.globals.game:GetService("TweenService")
-    end
-
     -- The real card factory gives every feature its row; the harness factory
     -- stops at the table. Cards that hide their row (VD's killer-only
     -- proximity widget) read `.row`, so give them one.

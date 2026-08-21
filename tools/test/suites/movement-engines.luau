@@ -18,16 +18,6 @@ return function(ctx: any): ()
     local check: (string, boolean, string?) -> () = ctx.check
     local section: (string) -> () = ctx.section
 
-    -- The shell publishes its palette and services to every downloaded file;
-    -- the harness keeps them on the host only. Two lines make them globals
-    -- again, the way the module environments see them.
-    if world.globals.Theme == nil then
-        world.globals.Theme = host.Theme
-    end
-    if world.globals.TweenService == nil then
-        world.globals.TweenService = world.globals.game:GetService("TweenService")
-    end
-
     -- The shell publishes these helpers; the harness host did not, because no
     -- module that needed them ran headless before this pass. Idempotent, so
     -- the shared runner can hand us a context that already has them.

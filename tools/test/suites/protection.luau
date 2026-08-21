@@ -25,10 +25,6 @@ return function(ctx: any): ()
                 character and character:FindFirstChild("HumanoidRootPart")
         end
     end
-    if world.globals.Theme == nil then
-        world.globals.Theme = host.Theme
-    end
-
     local character: any = world.localPlayer.Character
     local humanoid: any = character:FindFirstChildOfClass("Humanoid")
     local root: any = character:FindFirstChild("HumanoidRootPart")

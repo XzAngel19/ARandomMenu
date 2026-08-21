@@ -883,6 +883,7 @@ function Mock.install(): MockWorld
         return tween
     end
     services.TweenService = tweenService
+    globals.TweenService = tweenService
 
     local inputService: any = newInstance("UserInputService")
     inputService.TouchEnabled = false
