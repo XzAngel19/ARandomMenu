@@ -1,17 +1,18 @@
-# The workflow this repository should run, kept here because a GitHub App
-# cannot push to `.github/workflows/`.
+# The workflow this repository runs, staged here because a GitHub App cannot
+# push to `.github/workflows/`.
 #
-# Copy this file over `.github/workflows/validate.yml` yourself. It replaces
-# every hand-written step with one call to `tools/validate.sh`, which is the
-# same list of checks, in the same order, that runs locally — so a green tick
-# here and a green run on your machine mean the same thing.
+# It is live now: everything below this header is byte for byte what
+# `.github/workflows/validate.yml` contains, and the gate fails if the two
+# ever drift apart. That is the whole reason this copy still exists — an agent
+# that needs to change CI edits this file and asks for it to be copied across,
+# instead of describing the change in a pull request nobody can apply.
 #
-# The current workflow fails for a reason that has nothing to do with the menu:
-# its "strict Luau headers" step walks every .lua file in the repository,
-# including `reference/vape-v4-universal.lua`, which is third-party source and
-# starts with its own watermark line. `tools/validate.sh` excludes `reference/`
-# from that check (and from compilation) precisely because that directory is
-# not ours to reformat.
+# It replaces every hand-written step with one call to `tools/validate.sh`, so
+# a green tick here and a green run on your machine mean the same thing. The
+# hand-written version it replaced walked every .lua file in the repository
+# for its header check, including `reference/vape-v4-universal.lua` — third
+# party source that starts with its own watermark line, and that
+# `tools/validate.sh` excludes precisely because it is not ours to reformat.
 
 name: Validate repository
 

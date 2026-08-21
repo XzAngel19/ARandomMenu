@@ -193,6 +193,30 @@ grep -q 'RUNTIME_SAFETY_SOURCE_URL' ARandomMenu.luau
 ! grep -q 'corner.Enabled' src/gui/Current/gui.lua
 echo "ok"
 
+step "The staged workflow matches the live one"
+# `tools/workflow-validate.yml` is where a change to CI is written, because an
+# agent cannot push to `.github/workflows/`. A staged copy that has silently
+# drifted from the live file is worse than no copy at all: it describes a
+# pipeline that is not running.
+python3 - <<'PYTHON'
+# Both files are compared from the first line of the workflow itself. The
+# comment block above it is allowed to differ: the staged copy explains why it
+# exists, and the live one carries whatever the person who pasted it kept.
+marker = "name: Validate repository"
+def workflow(path: str) -> str:
+    text = open(path).read()
+    if marker not in text:
+        raise SystemExit(path + " contains no workflow")
+    return text[text.index(marker):]
+
+if workflow("tools/workflow-validate.yml") != workflow(".github/workflows/validate.yml"):
+    raise SystemExit(
+        "tools/workflow-validate.yml and .github/workflows/validate.yml differ.\n"
+        "  Copy everything from 'name: Validate repository' onwards across."
+    )
+PYTHON
+echo "ok"
+
 step "Bundle stamp matches the sources"
 # A stale runtime/bundle.luau serving old code while the repo says otherwise is
 # the class of silent rot the stamp exists to prevent.
