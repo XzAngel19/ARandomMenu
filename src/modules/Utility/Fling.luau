@@ -33,6 +33,12 @@ function Module.init(context: Runtime): any
     local addToggleOption: any = host.addToggleOption
     local addNumberOption: any = host.addNumberOption
     local addFeatureTooltip: any = host.addFeatureTooltip
+    -- Taken from `host.` like every other builder. As a bare global it
+    -- happened to work in the game — the shell publishes that name into the
+    -- environment — but it is the mirror image of the five modules that died
+    -- reading a field the shell did *not* publish, and nothing outside the
+    -- game can call it.
+    local addTextOption: any = host.addTextOption
     local workspace: any = host.workspace
     local RunService: any = host.RunService
 
