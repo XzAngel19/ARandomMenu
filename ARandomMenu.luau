@@ -1164,46 +1164,9 @@ local AssetManager: any = {
             version = 1,
             assetType = "image/png",
         },
-        brandLogo = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Brand/menu-logo.jpg",
-            fileName = "brand-logo-v1.jpg",
-            fallback = "",
-            version = 1,
-            assetType = "image/jpeg",
-        },
-        navSettings = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Icons/nav-settings.png",
-            fileName = "nav-settings-v1.png",
-            fallback = "",
-            version = 1,
-            assetType = "image/png",
-        },
-        windowFavorites = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Icons/window-favorites.png",
-            fileName = "window-favorites-v1.png",
-            fallback = "",
-            version = 1,
-            assetType = "image/png",
-        },
-        windowOverlays = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Icons/window-overlays.png",
-            fileName = "window-overlays-v1.png",
-            fallback = "",
-            version = 1,
-            assetType = "image/png",
-        },
-        profileBanner = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Brand/profile-banner.png",
-            fileName = "profile-banner-v1.png",
-            fallback = "",
-            version = 1,
-            assetType = "image/png",
-        },
+        -- The old menu's artwork — brand logo, nav icons, banners — is gone
+        -- from this registry. Nothing draws it any more, and a registry entry
+        -- for an image nobody shows is a download waiting to be wrong.
     } :: {[string]: AssetDefinition},
 }
 
@@ -1590,14 +1553,21 @@ state.applyInterfaceFont = function(name: string, persist: boolean?): ()
         if descendant:IsA("TextLabel")
             or descendant:IsA("TextButton")
             or descendant:IsA("TextBox") then
-            local current: Font = (descendant :: any).FontFace
-            local weight: Enum.FontWeight = hasWeights
-                and current.Weight
-                or resolvedBase.Weight
-            local ok: boolean = pcall(function(): ()
-                (descendant :: any).FontFace = Font.new(family, weight, current.Style)
-            end)
-            if not ok then
+            -- A label built without an explicit face has no FontFace to read
+            -- a weight from; it simply takes the resolved base.
+            local current: Font? = (descendant :: any).FontFace
+            if current then
+                local weight: Enum.FontWeight = hasWeights
+                    and (current :: Font).Weight
+                    or resolvedBase.Weight
+                local ok: boolean = pcall(function(): ()
+                    (descendant :: any).FontFace =
+                        Font.new(family, weight, (current :: Font).Style)
+                end)
+                if not ok then
+                    (descendant :: any).FontFace = resolvedBase
+                end
+            else
                 (descendant :: any).FontFace = resolvedBase
             end
         end
@@ -2473,9 +2443,9 @@ local MobileMenuButton = create("TextButton", {
     Position = UDim2.new(1, -18, 0, 18),
     AnchorPoint = Vector2.new(1, 0),
     Size = UDim2.fromOffset(52, 52),
-    Text = "RTM",
+    Text = "≡",
     TextColor3 = Theme.text,
-    TextSize = 11,
+    TextSize = 20,
     Visible = state.isMobile,
     ZIndex = 190,
 }) :: TextButton
@@ -2489,26 +2459,9 @@ create("UIStroke", {
     Transparency = 0.55,
     Thickness = 1,
 })
-
--- The launcher wears the menu's own logo, cropped to the button's circle. The
--- "RTM" lettering underneath stays as the fallback for executors that cannot
--- turn a downloaded file into an asset id.
-local MobileMenuIcon: ImageLabel = create("ImageLabel", {
-    Parent = MobileMenuButton,
-    Name = "BrandIcon",
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    Image = "",
-    ScaleType = Enum.ScaleType.Crop,
-    Size = UDim2.fromScale(1, 1),
-    ZIndex = 191,
-}) :: ImageLabel
-create("UICorner", {Parent = MobileMenuIcon, CornerRadius = UDim.new(1, 0)})
-if state.applyAssetImage then
-    state.applyAssetImage("brandLogo", MobileMenuIcon, function(): ()
-        MobileMenuButton.Text = ""
-    end)
-end
+-- No brand image on the launcher any more: menu-logo.jpg was the previous
+-- product's art, and this circle only exists as the fallback way in when the
+-- pill failed to arrive. The glyph matches the pill's own button.
 
 -- The launcher can be moved.
 --
@@ -3663,7 +3616,7 @@ end
 
 -- The build used to be printed on the intro; the intro carries no words now,
 -- so it goes to the console where a bug report can still quote it.
-print("[RTM] build loader-v3")
+print("[" .. PRODUCT.logPrefix .. "] build loader-v3")
 
 state.logBootstrapError = function(message: string): ()
     warn("[" .. PRODUCT.logPrefix .. ":Bootstrap] " .. message)
@@ -4626,16 +4579,20 @@ end
 -- Config. tab was old UI; UI Settings is a window (phase 4), not a tab
 
 
--- Restore the saved typeface once the interface exists. A repository font is a
--- download, so this waits its turn on its own thread rather than holding the
--- menu closed while it arrives.
+-- Restore the saved typeface once the interface exists — and when nothing is
+-- saved, default to Monocraft. Wurst ships no TTF at all: every label in the
+-- real client is Minecraft's bitmap font, and Monocraft is the closest face
+-- this repository vendors. applyInterfaceFont only swaps once the download
+-- has resolved, so an executor without getcustomasset simply keeps
+-- BuilderSans — the safe fallback, never a blank label.
 do
     local savedFont: string = tostring(configData.values.interfaceFont or "")
-    if savedFont ~= "" and savedFont ~= "Menu default" then
-        task.spawn(function(): ()
-            state.applyInterfaceFont(savedFont, false)
-        end)
+    if savedFont == "" or savedFont == "Menu default" then
+        savedFont = "Minecraft (Monocraft)"
     end
+    task.spawn(function(): ()
+        state.applyInterfaceFont(savedFont, false)
+    end)
 end
 
 do
