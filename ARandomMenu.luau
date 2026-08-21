@@ -318,7 +318,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "a5bb6bdc274790c7"
+local SOURCE_STAMP: string = "5e97b82da5b7c203"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -1263,6 +1263,17 @@ local AssetManager: any = {
             url = REPOSITORY_RAW_BASE
                 .. "src/gui/Current/Assets/Brand/profile-banner.png",
             fileName = "profile-banner-v1.png",
+            fallback = "",
+            version = 1,
+            assetType = "image/png",
+        },
+        -- Wurst's own wordmark, vendored from the pinned upstream commit
+        -- (assets/wurst/manifest.json records the source and its sha256).
+        -- Drawn by the furniture library top-left, exactly where Wurst puts
+        -- it; the consumer keeps a text fallback like every image here.
+        wurstLogo = {
+            url = REPOSITORY_RAW_BASE .. "assets/wurst/wurst_128.png",
+            fileName = "wurst-logo-v1.png",
             fallback = "",
             version = 1,
             assetType = "image/png",
@@ -4727,6 +4738,7 @@ local fallbackManifest: any = {
         "src/library/FloatingWindows.luau",
         "src/library/SettingsPage.luau",
         "src/library/MobileActions.luau",
+        "src/library/Furniture.luau",
     },
     modules = {
         {path = "src/modules/Utility/FriendList.luau", name = "Friend List", category = "Utility"},

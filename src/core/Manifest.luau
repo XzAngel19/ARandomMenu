@@ -57,6 +57,9 @@ local Manifest: Manifest = {
         -- Placed phone shortcuts. The launcher that opens the menu is not here:
         -- it stays in the shell, because on a phone it is the only way in.
         "src/library/MobileActions.luau",
+        -- The HUD furniture: wordmark, stats block. Last because it only
+        -- draws — nothing below it asks it for anything.
+        "src/library/Furniture.luau",
     },
     modules = {
         -- Friend List comes first: every targeting module below asks it who
