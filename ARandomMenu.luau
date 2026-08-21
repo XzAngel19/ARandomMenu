@@ -318,7 +318,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "5dd24eff7ad672a3"
+local SOURCE_STAMP: string = "c98cb6db755ffa89"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -878,6 +878,10 @@ end
 
 findExistingGui()
 
+-- Older builds parented a BlurEffect under this name; a reinject must not
+-- leave a stale one dimming the game, so the name is still swept even though
+-- this build never creates one. Wurst puts nothing between the player and
+-- the game except its own windows.
 local oldBlur = Lighting:FindFirstChild(BLUR_NAME)
 if oldBlur then
     oldBlur:Destroy()
@@ -931,16 +935,6 @@ PopupLayer.Size = UDim2.fromScale(1, 1)
 PopupLayer.ZIndex = 150
 PopupLayer.Parent = ScreenGui
 
-local BLUR_STRENGTH: number = 16
-local Blur = Instance.new("BlurEffect")
-Blur.Name = BLUR_NAME
-Blur.Size = 0
--- Start disabled. An enabled BlurEffect that merely has Size 0 still keeps the
--- blur pass alive, so the effect is only ever enabled while it is actually
--- being used and is switched off again the moment the menu hides.
-Blur.Enabled = false
-Blur.Parent = Lighting
-
 local savedToggleKey = Enum.KeyCode.RightShift
 if type(configData.ui.toggleKey) == "string" then
     pcall(function()
@@ -983,10 +977,9 @@ local state: any = {
 -- meant one of the two silently winning.
 state.activeGameName = ACTIVE_GAME_MODULE
 -- Settings that used to be rows on the old Config. page. The page is gone —
--- Wurst has no text-scale, blur or launcher-size settings — but the stored
--- values keep applying so an existing install does not change under its
--- player the day the rows disappeared.
-state.blurEnabled = configData.ui.blurEnabled ~= false
+-- Wurst has no text-scale or launcher-size settings — but the stored values
+-- keep applying so an existing install does not change under its player the
+-- day the rows disappeared. The blur went entirely, controller and all.
 state.textScale = configData.ui.textScaleCalibrationVersion == 2
     and math.clamp(
         tonumber(configData.ui.textScale) or 1,
@@ -1059,106 +1052,16 @@ local function trackUiConnection(
     return connection
 end
 
--- Single owner of the blur effect.
---
--- The blur exists only to dim the game *while the menu is on screen*. It is
--- defined here, next to the shared state, because it must be reachable from
--- every path that can show or hide the menu (keyboard toggle, mobile button,
--- mobile-shortcut placement, destruct). Previously it lived inside the
--- Settings tab builder, which runs asynchronously and much later: any toggle
--- that happened before -- or instead of -- that builder fell through to a
--- fallback branch that flipped `Main.Visible` without ever touching the blur,
--- leaving the screen blurred with the menu closed.
--- Decorations that live on top of the blur (the falling hail layer) publish a
--- setter on `state.blurDecorationSetActive`. They are built much later than
--- the blur controller, so the controller only ever talks to that indirection:
--- if nothing has registered yet the calls are no-ops, and whatever registers
--- later is immediately synchronised with the current blur state. This keeps
--- the "menu closed => nothing left on screen" guarantee the blur itself has.
--- It is kept on `state` rather than in a local because `bootstrap()` is a
--- single function scope sitting near Luau's 200 local-register ceiling.
-local function setBlurDecorationActive(active: boolean): ()
-    local setActive: any = state.blurDecorationSetActive
-    if type(setActive) == "function" then
-        pcall(setActive, active)
-    end
-end
-
-local blurTween: Tween? = nil
-local function applyBlur(animate: boolean?): ()
-    local shouldBlur: boolean = state.visible == true
-        and state.blurEnabled == true
-    local targetSize: number = shouldBlur and BLUR_STRENGTH or 0
-    setBlurDecorationActive(shouldBlur)
-
-    if blurTween then
-        blurTween:Cancel()
-        blurTween = nil
-    end
-    if not Blur.Parent then
-        return
-    end
-
-    if shouldBlur then
-        -- Enable before tweening in so the ramp is visible.
-        Blur.Enabled = true
-    end
-
-    if animate and state.animationsEnabled ~= false then
-        local tween: Tween = TweenService:Create(
-            Blur,
-            TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-            {Size = targetSize}
-        )
-        blurTween = tween
-        tween.Completed:Once(function(): ()
-            if blurTween == tween then
-                blurTween = nil
-            end
-            -- Release the blur pass once it has finished fading out.
-            if not shouldBlur and Blur.Parent then
-                Blur.Size = 0
-                Blur.Enabled = false
-            end
-        end)
-        tween:Play()
-    else
-        Blur.Size = targetSize
-        Blur.Enabled = shouldBlur
-    end
-end
-state.setBlurVisible = applyBlur
-
--- Force the blur off regardless of the menu state. Used when the menu is
--- temporarily hidden by an overlay flow and during teardown.
-local function suspendBlur(): ()
-    if blurTween then
-        blurTween:Cancel()
-        blurTween = nil
-    end
-    setBlurDecorationActive(false)
-    if Blur.Parent then
-        Blur.Size = 0
-        Blur.Enabled = false
-    end
-end
-state.suspendBlur = suspendBlur
-
--- Registration point for the hail layer (or any future blur decoration).
--- Registering immediately pushes the current blur state into the decoration so
--- it can never start out of sync with a menu that is already open or closed.
-state.registerBlurDecoration = function(setActive: (boolean) -> ()): ()
-    state.blurDecorationSetActive = setActive
-    pcall(
-        setActive,
-        state.visible == true and state.blurEnabled == true
-    )
-end
+-- There is no blur controller any more. The old menu dimmed the whole game
+-- behind a BlurEffect while it was open, with a hail layer drawn on top;
+-- Wurst draws its windows over the untouched game and nothing else, so the
+-- effect, its tween, its suspension hooks and its decoration registry are
+-- gone. The one thing that survives is the sweep above that removes a stale
+-- effect left by an older build.
 
 -- Authoritative menu visibility entry point. Subsystems (mobile buttons,
 -- floating windows) attach their own side effects as listeners as soon as they
--- are built, so this is safe to call at any point during startup and the blur
--- is updated even when a subsystem has not initialized yet.
+-- are built, so this is safe to call at any point during startup.
 local menuVisibilityListeners: {(boolean) -> ()} = {}
 state.addMenuVisibilityListener = function(listener: (boolean) -> ()): ()
     table.insert(menuVisibilityListeners, listener)
@@ -1182,7 +1085,6 @@ local function setMenuVisibleCore(visible: boolean): ()
     for _, listener: (boolean) -> () in ipairs(menuVisibilityListeners) do
         pcall(listener, visible)
     end
-    applyBlur(true)
 end
 state.setMenuVisible = setMenuVisibleCore
 
@@ -2489,19 +2391,6 @@ local function notify(message: any): ()
         end)
     end)
 end
--- Nothing is drawn over the blur.
---
--- There was a hail layer here: fifty-four falling stones on their own render
--- loop, with sway, drift, depth shading and a fade in and out. It belonged to
--- the menu this one replaces. Wurst puts nothing between the player and the
--- game except its own windows, and a port that keeps somebody else's weather
--- is not a port.
---
--- The three hooks stay because the shell calls them; they now do nothing, which
--- is cheaper than teaching every caller that the decoration is gone.
-state.registerBlurDecoration(function(_active: boolean): () end)
-state.refreshBlurDecoration = function(): () end
-state.destroyBlurDecoration = function(): () end
 
 
 
@@ -5007,17 +4896,6 @@ local function cleanupRuntime(): ()
     end
     cleanupStep("config", saveConfigNow)
 
-    -- Always release the blur, even if it was mid-tween.
-    cleanupStep("blur", function(): ()
-        suspendBlur()
-        if state.destroyBlurDecoration then
-            state.destroyBlurDecoration()
-        end
-        if Blur.Parent then
-            Blur:Destroy()
-        end
-    end)
-
 end
 
 -- The GUI is destroyed even when a cleanup step failed: an interface the user
@@ -5052,9 +4930,6 @@ ScreenGui.AncestryChanged:Connect(function(_: Instance, parent: Instance?): ()
 end)
 
 SectionManager.initializeAllAsync()
--- Sync the blur with the initial menu state (the argument is "animate", not
--- the target state) so it matches state.visible instead of being forced off.
-state.setBlurVisible(false)
 task.defer(saveConfigNow)
 
 print(

@@ -37,15 +37,6 @@ export type MenuState = {
     applyInterfaceFont: (string, boolean?) -> (),   -- Switch the whole interface to a typeface
     customFontAssets: {[string]: any},              -- Downloaded faces, so a second switch costs nothing
 
-    -- Blur behind the window
-    blurEnabled: boolean,                           -- Whether the player wants it at all
-    setBlurVisible: (boolean) -> (),                -- Apply it; the argument is *animate*, not the target state
-    suspendBlur: () -> (),                          -- Drop it for one frame, for screenshots and placement mode
-    registerBlurDecoration: ((boolean) -> ()) -> (), -- A skin adds its own decoration on top of the blur
-    blurDecorationSetActive: (boolean) -> (),       -- Turn that decoration on or off
-    refreshBlurDecoration: () -> (),                -- Rebuild it after a skin change
-    destroyBlurDecoration: () -> (),                -- Release it on teardown
-
     -- Cards and their boards
     universalScroll: Frame,                   -- Compatibility shim: old Universal board, now CardBin until modules migrate
     spoofScroll: Frame,                       -- Compatibility shim: old Spoof board, now CardBin

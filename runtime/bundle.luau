@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "5dd24eff7ad672a3",
+    stamp = "c98cb6db755ffa89",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -9378,7 +9378,6 @@ function Module.init(context: any): any
         -- Hide the menu so the player can see where the button is going. The old
         -- central Main frame is gone; visibility now drives ClickGUI windows.
         state.setMenuVisible(false)
-        state.suspendBlur()
 
         local placement: PendingMobilePlacement =
             pendingMobilePlacement :: PendingMobilePlacement
