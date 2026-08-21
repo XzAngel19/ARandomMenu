@@ -56,20 +56,26 @@ return function(ctx: any): ()
     -- set a game card's option the way the panel would.
     if not host.optionCallbacks then
         host.optionCallbacks = {}
-        for _, builder: string in ipairs({
-            "addToggleOption",
-            "addNumberOption",
-            "addCycleOption",
-            "addKeyOption",
-            "addTextOption",
-        }) do
+        -- Where each builder's callback sits among the varargs, after the
+        -- feature: (label, default, callback) for toggles, keys and text
+        -- boxes, (label, values, index, callback) for cycles, and
+        -- (label, default, min, max, callback) for numbers.
+        --
+        -- These were guessed once and the guess was wrong for every builder
+        -- but the cycle, so `setOption` set `.Value` and drove no callback at
+        -- all — the checks below still passed, which is what made it invisible.
+        local callbackPosition: {[string]: number} = {
+            addToggleOption = 3,
+            addKeyOption = 3,
+            addTextOption = 3,
+            addCycleOption = 4,
+            addNumberOption = 5,
+        }
+        for builder: string, position: number in pairs(callbackPosition) do
             local original: any = host[builder]
             host[builder] = function(feature: any, ...: any): any
                 local label: any = select(1, ...)
-                local callback: any = select(4, ...)
-                if builder == "addNumberOption" or builder == "addTextOption" then
-                    callback = select(6, ...)
-                end
+                local callback: any = select(position, ...)
                 if type(callback) == "function" then
                     host.optionCallbacks[feature] = host.optionCallbacks[feature] or {}
                     host.optionCallbacks[feature][label] = callback
