@@ -39,6 +39,7 @@ function Module.init(context: Runtime): any
 
     local container: Frame = render:Layer("PlayerEspLayer")
     local pool: {[Player]: boolean} = {}
+    local lastStatusAt: number = -math.huge
     local visibilityCache: any = setmetatable({}, {__mode = "k"})
 
     local esp: any
@@ -51,12 +52,24 @@ function Module.init(context: Runtime): any
         Function = function(enabled: boolean): ()
             container.Visible = enabled
             if not enabled then
+                esp:SetStatus(nil)
                 render:ReleaseAll(container)
                 table.clear(pool)
                 return
             end
+            lastStatusAt = -math.huge
+            esp:SetStatus("0")
             esp:Render(function(): ()
                 Module.render(context, container, pool, esp, visibilityCache)
+                local now: number = os.clock()
+                if now - lastStatusAt >= 0.25 then
+                    lastStatusAt = now
+                    local count: number = 0
+                    for _player: Player in pairs(pool) do
+                        count += 1
+                    end
+                    esp:SetStatus(tostring(count))
+                end
             end)
             esp:Event(players.PlayerRemoving, function(player: Player): ()
                 render:Release(container, player)

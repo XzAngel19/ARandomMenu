@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "73c30170e989eed1",
+    stamp = "59b92e4c61385918",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -10038,6 +10038,7 @@ function Module.init(context: Runtime): any
 
     local container: Frame = render:Layer("PlayerEspLayer")
     local pool: {[Player]: boolean} = {}
+    local lastStatusAt: number = -math.huge
     local visibilityCache: any = setmetatable({}, {__mode = "k"})
 
     local esp: any
@@ -10050,12 +10051,24 @@ function Module.init(context: Runtime): any
         Function = function(enabled: boolean): ()
             container.Visible = enabled
             if not enabled then
+                esp:SetStatus(nil)
                 render:ReleaseAll(container)
                 table.clear(pool)
                 return
             end
+            lastStatusAt = -math.huge
+            esp:SetStatus("0")
             esp:Render(function(): ()
                 Module.render(context, container, pool, esp, visibilityCache)
+                local now: number = os.clock()
+                if now - lastStatusAt >= 0.25 then
+                    lastStatusAt = now
+                    local count: number = 0
+                    for _player: Player in pairs(pool) do
+                        count += 1
+                    end
+                    esp:SetStatus(tostring(count))
+                end
             end)
             esp:Event(players.PlayerRemoving, function(player: Player): ()
                 render:Release(container, player)
@@ -10726,6 +10739,7 @@ function Module.init(context: Runtime): any
     local currentWorkspace: Workspace = host.workspace or workspace
 
     local nextSwingAt: number = 0
+    local nextStatusAt: number = 0
     local highlights: {[Player]: Highlight} = {}
     local targetPanel: any = nil
 
@@ -10873,6 +10887,15 @@ function Module.init(context: Runtime): any
     local aura: any = nil
     local weapons: any = context.weapons
 
+    local function updateTargetStatus(count: number): ()
+        local now: number = os.clock()
+        if now < nextStatusAt then
+            return
+        end
+        nextStatusAt = now + 0.25
+        aura:SetStatus(tostring(count) .. " in range")
+    end
+
     -- The weapon the player last swung by hand. Everything else is a fallback.
     local learnedWeapon: string? = nil
     local learnConnections: {RBXScriptConnection} = {}
@@ -10979,11 +11002,14 @@ function Module.init(context: Runtime): any
             .. "range, rate, field of view and rotation.",
         Function = function(enabled: boolean): ()
             nextSwingAt = 0
+            nextStatusAt = 0
             if not enabled then
+                aura:SetStatus(nil)
                 clearHighlights()
                 showTarget(nil)
                 return
             end
+            aura:SetStatus("0 in range")
 
             aura:Clean(function(): ()
                 clearHighlights()
@@ -11016,10 +11042,12 @@ function Module.init(context: Runtime): any
                 local options: any = aura.Options
                 if options["Activation"].Value == "Hold key"
                     and not userInput:IsKeyDown(options["Hold key"].Value) then
+                    updateTargetStatus(0)
                     clearHighlights()
                     return
                 end
                 if not entityLibrary:IsAlive() then
+                    updateTargetStatus(0)
                     clearHighlights()
                     return
                 end
@@ -11032,6 +11060,7 @@ function Module.init(context: Runtime): any
                     if options["Require tool"].Value then
                         -- Opt-in only. Most games this module is useful in do
                         -- not put a Tool in your hands at all.
+                        updateTargetStatus(0)
                         clearHighlights()
                         showTarget(nil)
                         return
@@ -11047,6 +11076,7 @@ function Module.init(context: Runtime): any
                     Angle = options["Field of view"].Value,
                     Sort = options["Priority"].Value,
                 })
+                updateTargetStatus(#targets)
                 if #targets == 0 then
                     clearHighlights()
                     showTarget(nil)
@@ -14987,6 +15017,7 @@ function Module.init(context: Runtime): any
             restoreWalkSpeed()
 
             if not enabled then
+                fly:SetStatus(nil)
                 local _, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
                 if root then
                     (root :: BasePart).AssemblyLinearVelocity = Vector3.zero
@@ -14998,6 +15029,7 @@ function Module.init(context: Runtime): any
                 return
             end
 
+            fly:SetStatus(flySettings.method)
             fly:Loop(function(deltaTime: number): ()
                 local _, humanoid, root = getCharacterParts()
                 local camera: Camera? = currentWorkspace.CurrentCamera
@@ -15079,6 +15111,9 @@ function Module.init(context: Runtime): any
         Index = 1,
         Function = function(value: string): ()
             flySettings.method = value
+            if fly.Enabled then
+                fly:SetStatus(value)
+            end
         end,
         Tooltip = "Sideways engine. Velocity is smooth, CFrame ignores physics, "
             .. "WalkSpeed just runs faster.",
@@ -17775,9 +17810,15 @@ function Module.init(context: Runtime): any
         Function = function(enabled: boolean): ()
             runtime.nextTeleportAt = 0
             if not enabled then
+                speed:SetStatus(nil)
                 restoreWalkSpeed()
                 return
             end
+            speed:SetStatus(
+                tostring(speed.Options["Mode"].Value)
+                    .. " "
+                    .. tostring(math.round(speed.Options["Speed"].Value))
+            )
             speed:Clean(restoreWalkSpeed)
             speed:Loop(function(deltaTime: number): ()
                 local options: any = speed.Options
@@ -17875,6 +17916,13 @@ function Module.init(context: Runtime): any
         Name = "Mode",
         List = {"WalkSpeed", "Velocity", "Impulse", "CFrame", "Teleport"},
         Index = 1,
+        Function = function(value: string): ()
+            if speed.Enabled then
+                speed:SetStatus(
+                    value .. " " .. tostring(math.round(speed.Options["Speed"].Value))
+                )
+            end
+        end,
         Tooltip = "WalkSpeed is the quietest and the first thing a game "
             .. "clamps; CFrame works where the others are ignored; Teleport is "
             .. "the fastest and the most obvious.",
@@ -17884,6 +17932,15 @@ function Module.init(context: Runtime): any
         Min = 16,
         Max = 200,
         Default = 32,
+        Function = function(value: number): ()
+            if speed.Enabled then
+                speed:SetStatus(
+                    tostring(speed.Options["Mode"].Value)
+                        .. " "
+                        .. tostring(math.round(value))
+                )
+            end
+        end,
         Tooltip = "Studs per second. A default character walks at 16, sprints "
             .. "in most games at 24-28; past about 60 you are visibly not "
             .. "running.",

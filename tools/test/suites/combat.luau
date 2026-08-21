@@ -199,6 +199,8 @@ return function(ctx: any): ()
         "touches: " .. tostring(world.touchFires))
     check("highlights the target",
         enemy.Character:FindFirstChild("RTM_KillAuraTarget") ~= nil)
+    check("the HUD status counts targets in range",
+        aura.Status == "1 in range", tostring(aura.Status))
 
     -- Rate limit: a second step in the same instant must not swing again.
     local beforeRate: number = sword.Activations or 0
@@ -216,6 +218,8 @@ return function(ctx: any): ()
         "activations: " .. tostring(sword.Activations))
     check("clears the highlight of a protected player",
         enemy.Character:FindFirstChild("RTM_KillAuraTarget") == nil)
+    check("the HUD count drops when no target remains",
+        aura.Status == "0 in range", tostring(aura.Status))
     host.state.friendList.names = {}
 
     -- Out of range is out of range.

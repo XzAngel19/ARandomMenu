@@ -135,9 +135,15 @@ function Module.init(context: Runtime): any
         Function = function(enabled: boolean): ()
             runtime.nextTeleportAt = 0
             if not enabled then
+                speed:SetStatus(nil)
                 restoreWalkSpeed()
                 return
             end
+            speed:SetStatus(
+                tostring(speed.Options["Mode"].Value)
+                    .. " "
+                    .. tostring(math.round(speed.Options["Speed"].Value))
+            )
             speed:Clean(restoreWalkSpeed)
             speed:Loop(function(deltaTime: number): ()
                 local options: any = speed.Options
@@ -235,6 +241,13 @@ function Module.init(context: Runtime): any
         Name = "Mode",
         List = {"WalkSpeed", "Velocity", "Impulse", "CFrame", "Teleport"},
         Index = 1,
+        Function = function(value: string): ()
+            if speed.Enabled then
+                speed:SetStatus(
+                    value .. " " .. tostring(math.round(speed.Options["Speed"].Value))
+                )
+            end
+        end,
         Tooltip = "WalkSpeed is the quietest and the first thing a game "
             .. "clamps; CFrame works where the others are ignored; Teleport is "
             .. "the fastest and the most obvious.",
@@ -244,6 +257,15 @@ function Module.init(context: Runtime): any
         Min = 16,
         Max = 200,
         Default = 32,
+        Function = function(value: number): ()
+            if speed.Enabled then
+                speed:SetStatus(
+                    tostring(speed.Options["Mode"].Value)
+                        .. " "
+                        .. tostring(math.round(value))
+                )
+            end
+        end,
         Tooltip = "Studs per second. A default character walks at 16, sprints "
             .. "in most games at 24-28; past about 60 you are visibly not "
             .. "running.",

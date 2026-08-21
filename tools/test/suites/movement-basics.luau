@@ -93,7 +93,10 @@ return function(ctx: any): ()
     check("the WalkSpeed engine writes the slider value",
         humanoid.WalkSpeed == speed.Options["Speed"].Value,
         "walkspeed is " .. tostring(humanoid.WalkSpeed))
+    check("the HUD status names the live engine and speed",
+        speed.Status == "WalkSpeed 32", tostring(speed.Status))
     speed.Feature.activate()
+    check("the HUD status clears with the module", speed.Status == nil)
     check("and puts the character's own speed back",
         humanoid.WalkSpeed == 16, "walkspeed is " .. tostring(humanoid.WalkSpeed))
 

@@ -77,6 +77,8 @@ return function(ctx: any): ()
         layer ~= nil and #layer.Children == 1,
         layer and ("sets: " .. tostring(#layer.Children)) or "no layer"
     )
+    check("the HUD status counts the targets being drawn",
+        esp.Status == "1", tostring(esp.Status))
 
     local drawings: any = layer and layer.Children[1]
     local nameTag: any = drawings and drawings:FindFirstChild("NameTag")

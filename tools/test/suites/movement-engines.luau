@@ -105,6 +105,8 @@ return function(ctx: any): ()
     local baseline: number = stub.taskCount()
     fly.Feature.activate()
     check("a session takes exactly one task", stub.taskCount() == baseline + 1)
+    check("the HUD status names the active flight engine",
+        fly.Status == "CFrame", tostring(fly.Status))
     stub.step(1 / 60)
     stub.step(1 / 60)
     check("the flight loop runs against the stand-in character",
