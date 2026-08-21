@@ -49,19 +49,23 @@ local LOGO_WIDTH: number = 87
 local STATS_FONT_SIZE: number = 11
 local STATS_LINE_HEIGHT: number = 17
 
--- Wurst's HackList defaults (docs/wurst-features.md). Mode, sort order and
--- animations are behaviour this file implements; the enums keep Wurst's
--- values so the settings window that later exposes them starts from parity.
--- Position is the one place the port deviates on purpose: Wurst hangs the
--- list under its logo on the left, our prototype gives that corner to the
--- wordmark and the stats and sends the list to the right edge.
+-- Wurst's HackList defaults (docs/wurst-features.md). Everything here is a
+-- live setting once the HackList settings window has been opened; these are
+-- the values a fresh install shows, and they are Wurst's own — including
+-- Position = Left, under the logo, exactly where Wurst hangs the list.
+local HACKLIST_MODE: string = "Auto"
+local HACKLIST_POSITION: string = "Left"
 local HACKLIST_COLOR: Color3 = Color3.fromRGB(255, 255, 255)
+local HACKLIST_SORT_BY: string = "Name"
 local HACKLIST_REVERSE: boolean = false
 local HACKLIST_ANIMATIONS: boolean = true
 local HACKLIST_FONT_SIZE: number = 13
 local HACKLIST_LINE_HEIGHT: number = 18
 local HACKLIST_TOP: number = 56
 local HACKLIST_SLIDE: number = 14
+
+-- Wurst's WurstLogo defaults: a white chip with black text, visible always.
+local WURSTLOGO_VISIBILITY: string = "Always"
 
 -- The pill's proportions come from the prototype's #pill rule: 32 px round
 -- buttons in a capsule with 5×7 padding, floating 12 px under the top edge.
@@ -91,6 +95,7 @@ function Module.init(context: any): any
     local refreshFeatureToggle: any = host.refreshFeatureToggle
     local notify: any = host.notify
     local UserInputService: any = host.UserInputService
+    local colorFromConfig: any = host.colorFromConfig
 
     local Furniture: any = {
         handles = {} :: {any},
@@ -168,7 +173,7 @@ function Module.init(context: any): any
         ZIndex = 20,
     }) :: any) :: Frame
 
-    create("TextLabel", {
+    local versionLabel: TextLabel = (create("TextLabel", {
         TextTruncate = Enum.TextTruncate.AtEnd,
         Parent = versionChip,
         Name = "Version",
@@ -185,7 +190,7 @@ function Module.init(context: any): any
         TextSize = 16,
         TextXAlignment = Enum.TextXAlignment.Left,
         ZIndex = 21,
-    })
+    }) :: any) :: TextLabel
 
     if type(state.applyAssetImage) == "function" then
         state.applyAssetImage("wurstLogo", logoImage, function(): ()
@@ -193,6 +198,40 @@ function Module.init(context: any): any
             logoFallback.Visible = false
         end)
     end
+
+    -- Wurst's WurstLogo settings, read from the store at boot and edited
+    -- live by the WurstLogo settings window.
+    local function setLogoBackground(color: Color3): ()
+        chip.BackgroundColor3 = color
+    end
+    local function setLogoTextColor(color: Color3): ()
+        versionLabel.TextColor3 = color
+        logoFallback.TextColor3 = color
+    end
+    local function setLogoVisibility(value: string): ()
+        -- We ship no updater, so "Only when outdated" can never fire; it
+        -- hides the chip rather than pretending to know about versions.
+        chip.Visible = value == "Always"
+    end
+    setLogoBackground(colorFromConfig(
+        configData.values["WurstLogo.Background"],
+        WURSTLOGO_BACKGROUND
+    ))
+    setLogoTextColor(colorFromConfig(
+        configData.values["WurstLogo.Text"],
+        WURSTLOGO_TEXT
+    ))
+    local storedLogoVisibility: any = configData.values["WurstLogo.Visibility"]
+    setLogoVisibility(type(storedLogoVisibility) == "string"
+        and storedLogoVisibility
+        or WURSTLOGO_VISIBILITY)
+
+    state.wurstLogo = {
+        root = chip,
+        SetBackground = setLogoBackground,
+        SetTextColor = setLogoTextColor,
+        SetVisibility = setLogoVisibility,
+    }
 
     -- ---------------------------------------------------------- stats block
     -- Small, monospace, and rebuilt twice a second — cheap enough that the
@@ -332,19 +371,48 @@ function Module.init(context: any): any
         SortOrder = Enum.SortOrder.LayoutOrder,
     }) :: any) :: UIListLayout
 
-    -- On a phone the list moves to the left edge under the stats block,
-    -- where a thumb on the right half of the screen does not cover it
-    -- (UI-V2, Mobile). Same rows, different placement policy.
+    -- The live HackList settings, read from the store at boot; the HackList
+    -- settings window edits them through the setters published below.
+    local hudMode: string = type(configData.values["HackList.Mode"]) == "string"
+        and configData.values["HackList.Mode"]
+        or HACKLIST_MODE
+    local hudPosition: string = type(configData.values["HackList.Position"]) == "string"
+        and configData.values["HackList.Position"]
+        or HACKLIST_POSITION
+    local hudColor: Color3 = colorFromConfig(
+        configData.values["HackList.Color"],
+        HACKLIST_COLOR
+    )
+    local hudSortBy: string = type(configData.values["HackList.Sortby"]) == "string"
+        and configData.values["HackList.Sortby"]
+        or HACKLIST_SORT_BY
+    local hudReverse: boolean = HACKLIST_REVERSE
+    if configData.states["HackList.Reversesorting"] ~= nil then
+        hudReverse = configData.states["HackList.Reversesorting"] == true
+    end
+    local hudAnimations: boolean = HACKLIST_ANIMATIONS
+    if configData.states["HackList.Animations"] ~= nil then
+        hudAnimations = configData.states["HackList.Animations"] == true
+    end
+
+    local function hudOnLeft(): boolean
+        -- A phone always keeps the list on the left under the stats block,
+        -- where a thumb does not cover it (UI-V2, Mobile); a desktop follows
+        -- Wurst's Position setting, whose default is Left, under the logo.
+        return state.layout.compact or hudPosition == "Left"
+    end
+
     local function placeHudList(): ()
-        if state.layout.compact then
+        if hudOnLeft() then
             hudFrame.AnchorPoint = Vector2.new(0, 0)
+            local statsLines: number = state.layout.compact and 2 or 4
             hudFrame.Position = UDim2.new(
                 0,
                 FURNITURE_MARGIN_X,
                 0,
                 FURNITURE_MARGIN_Y + LOGO_HEIGHT + 8
                     + STATS_GAP
-                    + STATS_LINE_HEIGHT * 2
+                    + STATS_LINE_HEIGHT * statsLines
                     + STATS_GAP
             )
             hudLayout.HorizontalAlignment = Enum.HorizontalAlignment.Left
@@ -363,7 +431,7 @@ function Module.init(context: any): any
     local hudRows: {[string]: any} = {}
 
     local function hudAlignment(): Enum.TextXAlignment
-        return state.layout.compact
+        return hudOnLeft()
             and Enum.TextXAlignment.Left
             or Enum.TextXAlignment.Right
     end
@@ -382,7 +450,7 @@ function Module.init(context: any): any
     end
 
     local function animationsOn(): boolean
-        return HACKLIST_ANIMATIONS and state.animationsEnabled ~= false
+        return hudAnimations and state.animationsEnabled ~= false
     end
 
     local function newHudRow(name: string): any
@@ -404,7 +472,7 @@ function Module.init(context: any): any
             RichText = true,
             Size = UDim2.new(1, 0, 1, 0),
             Text = "",
-            TextColor3 = HACKLIST_COLOR,
+            TextColor3 = hudColor,
             TextSize = HACKLIST_FONT_SIZE,
             TextXAlignment = hudAlignment(),
             ZIndex = 20,
@@ -456,15 +524,49 @@ function Module.init(context: any): any
                 })
             end
         end
-        -- Wurst's default sort is by name; Width (rendered pixel width,
-        -- recomputed per tick) arrives with the settings window that can
-        -- switch to it. Reverse is Wurst's other axis and already works.
-        table.sort(entries, function(left: any, right: any): boolean
-            if HACKLIST_REVERSE then
-                return left.name > right.name
+
+        -- Wurst's two sort axes. Width is the rendered width of the line;
+        -- the prototype's #hud sorts by text length for the same effect,
+        -- and that is the measure used here — widest first, as Wurst draws.
+        local function before(left: any, right: any): boolean
+            if hudSortBy == "Width" then
+                local leftWidth: number = #left.name
+                    + (left.status and #tostring(left.status) + 3 or 0)
+                local rightWidth: number = #right.name
+                    + (right.status and #tostring(right.status) + 3 or 0)
+                if leftWidth ~= rightWidth then
+                    return leftWidth > rightWidth
+                end
             end
             return left.name < right.name
+        end
+        table.sort(entries, function(left: any, right: any): boolean
+            if hudReverse then
+                return before(right, left)
+            end
+            return before(left, right)
         end)
+
+        -- Wurst's Mode: Hidden renders nothing; Count renders the number of
+        -- active hacks; Auto renders the whole list only while it fits on
+        -- the screen, and falls back to the count when it does not.
+        if hudMode == "Hidden" then
+            entries = {}
+        elseif #entries > 0 then
+            local camera: Camera? = workspace.CurrentCamera
+            local screenHeight: number = camera
+                and (camera :: Camera).ViewportSize.Y
+                or 720
+            local available: number = screenHeight - HACKLIST_TOP - 12
+            local overflows: boolean =
+                #entries * (HACKLIST_LINE_HEIGHT + 1) > available
+            if hudMode == "Count" or (hudMode == "Auto" and overflows) then
+                entries = {{
+                    name = tostring(#entries) .. " hacks active",
+                    status = nil,
+                }}
+            end
+        end
 
         local signature: {string} = {}
         for _, entry: any in ipairs(entries) do
@@ -474,7 +576,7 @@ function Module.init(context: any): any
             )
         end
         local composed: string = table.concat(signature, "\2")
-            .. (state.layout.compact and "\3compact" or "")
+            .. (hudOnLeft() and "\3left" or "\3right")
         if composed == hudSignature then
             return
         end
@@ -512,9 +614,42 @@ function Module.init(context: any): any
     end))
     refreshHudList()
 
+    local function forceHudRefresh(): ()
+        hudSignature = "\0stale"
+        refreshHudList()
+    end
+
     state.hudList = {
         frame = hudFrame,
         refresh = refreshHudList,
+        -- The HackList settings window drives these; persistence belongs to
+        -- its rows, which write the same keys this file read at boot.
+        SetMode = function(value: string): ()
+            hudMode = value
+            forceHudRefresh()
+        end,
+        SetPosition = function(value: string): ()
+            hudPosition = value
+            placeHudList()
+            forceHudRefresh()
+        end,
+        SetColor = function(color: Color3): ()
+            hudColor = color
+            for _, row: any in pairs(hudRows) do
+                row.label.TextColor3 = color
+            end
+        end,
+        SetSortBy = function(value: string): ()
+            hudSortBy = value
+            forceHudRefresh()
+        end,
+        SetReverse = function(value: boolean): ()
+            hudReverse = value
+            forceHudRefresh()
+        end,
+        SetAnimations = function(value: boolean): ()
+            hudAnimations = value
+        end,
     }
 
     -- ----------------------------------------------------------------- pill
@@ -745,6 +880,7 @@ function Module.init(context: any): any
         hudFrame:Destroy()
         pillFrame:Destroy()
         state.hudList = nil
+        state.wurstLogo = nil
         state.pill = nil
         -- The fallback launcher becomes the way in again.
         if type(state.refreshLauncher) == "function" then

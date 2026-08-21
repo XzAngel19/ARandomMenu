@@ -434,7 +434,6 @@ function Module.init(context: any): any
         -- Hide the menu so the player can see where the button is going. The old
         -- central Main frame is gone; visibility now drives ClickGUI windows.
         state.setMenuVisible(false)
-        state.suspendBlur()
 
         local placement: PendingMobilePlacement =
             pendingMobilePlacement :: PendingMobilePlacement

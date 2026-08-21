@@ -75,6 +75,10 @@ local MARGIN: number = 6
 -- reads this constant and holds it to spec.json — a raw 26 here was already
 -- one pixel-decision drifting from the file that is supposed to decide it.
 local TITLE_HEIGHT: number = 22
+-- The prototype's `.tbar` font size, held by the same gate. The title used
+-- to go through makeTextLabel, whose 1.35 multiplier rendered it at 16 px —
+-- visibly heavier than the spec on every window at once.
+local TITLE_FONT_SIZE: number = 11.5
 
 function Module.init(context: any): any
     local host: any = context
@@ -82,7 +86,6 @@ function Module.init(context: any): any
     local configData: any = host.configData
     local queueConfigSave: any = host.queueConfigSave
     local create: any = host.create
-    local makeTextLabel: any = host.makeTextLabel
     local makeButton: any = host.makeButton
     local Theme: any = host.Theme
     local ThemeEngine: any = host.ThemeEngine
@@ -393,7 +396,7 @@ function Module.init(context: any): any
             Parent = PopupLayer,
             Name = "Window_" .. id,
             Active = true,
-            BackgroundTransparency = bare and 1 or 0.08,
+            BackgroundTransparency = bare and 1 or manager.bodyTransparency,
             BorderSizePixel = 0,
             ClipsDescendants = not bare,
             Position = UDim2.fromOffset(position.X, position.Y),
@@ -453,9 +456,15 @@ function Module.init(context: any): any
             }) :: Frame
             bind(squareOff, "BackgroundColor3", "accent")
 
-            local title: TextLabel = makeTextLabel(bar, definition.title or id, 12)
-            title.Name = "Title"
-            title.FontFace = CONTROL_FONT
+            local title: TextLabel = (create("TextLabel", {
+                TextTruncate = Enum.TextTruncate.AtEnd,
+                Parent = bar,
+                Name = "Title",
+                BackgroundTransparency = 1,
+                FontFace = CONTROL_FONT,
+                Text = definition.title or id,
+                TextSize = TITLE_FONT_SIZE,
+            }) :: any) :: TextLabel
             title.AnchorPoint = Vector2.new(0, 0.5)
             title.Position = UDim2.new(0, 8, 0.5, 0)
             title.Size = UDim2.new(1, -60, 1, 0)
@@ -567,6 +576,20 @@ function Module.init(context: any): any
             window.root.Visible = visible and window.wasVisible == true
             if visible == false then
                 window.wasVisible = window.root.Visible
+            end
+        end
+    end
+
+    -- Wurst's ClickGUI Opacity setting: the body of every window at one
+    -- alpha. The title bar stays opaque — Wurst fades only the background.
+    -- Remembered on the manager so a window created after the slider moved
+    -- is born at the same alpha.
+    manager.bodyTransparency = 0.08
+    function manager.SetOpacity(alpha: number): ()
+        manager.bodyTransparency = math.clamp(1 - alpha, 0, 1)
+        for _, window: any in ipairs(manager.list) do
+            if window.headerHeight and window.headerHeight > 0 then
+                window.root.BackgroundTransparency = manager.bodyTransparency
             end
         end
     end
