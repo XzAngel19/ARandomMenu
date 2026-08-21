@@ -116,6 +116,7 @@ function Module.init(context: Runtime): any
     local currentWorkspace: Workspace = host.workspace or workspace
 
     local nextSwingAt: number = 0
+    local nextStatusAt: number = 0
     local highlights: {[Player]: Highlight} = {}
     local targetPanel: any = nil
 
@@ -263,6 +264,15 @@ function Module.init(context: Runtime): any
     local aura: any = nil
     local weapons: any = context.weapons
 
+    local function updateTargetStatus(count: number): ()
+        local now: number = os.clock()
+        if now < nextStatusAt then
+            return
+        end
+        nextStatusAt = now + 0.25
+        aura:SetStatus(tostring(count) .. " in range")
+    end
+
     -- The weapon the player last swung by hand. Everything else is a fallback.
     local learnedWeapon: string? = nil
     local learnConnections: {RBXScriptConnection} = {}
@@ -369,11 +379,14 @@ function Module.init(context: Runtime): any
             .. "range, rate, field of view and rotation.",
         Function = function(enabled: boolean): ()
             nextSwingAt = 0
+            nextStatusAt = 0
             if not enabled then
+                aura:SetStatus(nil)
                 clearHighlights()
                 showTarget(nil)
                 return
             end
+            aura:SetStatus("0 in range")
 
             aura:Clean(function(): ()
                 clearHighlights()
@@ -406,10 +419,12 @@ function Module.init(context: Runtime): any
                 local options: any = aura.Options
                 if options["Activation"].Value == "Hold key"
                     and not userInput:IsKeyDown(options["Hold key"].Value) then
+                    updateTargetStatus(0)
                     clearHighlights()
                     return
                 end
                 if not entityLibrary:IsAlive() then
+                    updateTargetStatus(0)
                     clearHighlights()
                     return
                 end
@@ -422,6 +437,7 @@ function Module.init(context: Runtime): any
                     if options["Require tool"].Value then
                         -- Opt-in only. Most games this module is useful in do
                         -- not put a Tool in your hands at all.
+                        updateTargetStatus(0)
                         clearHighlights()
                         showTarget(nil)
                         return
@@ -437,6 +453,7 @@ function Module.init(context: Runtime): any
                     Angle = options["Field of view"].Value,
                     Sort = options["Priority"].Value,
                 })
+                updateTargetStatus(#targets)
                 if #targets == 0 then
                     clearHighlights()
                     showTarget(nil)

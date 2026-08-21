@@ -39,7 +39,7 @@ function Module.init(context: Runtime): any
 
     local container: Frame = render:Layer("PlayerEspLayer")
     local pool: {[Player]: boolean} = {}
-    local accumulator: number = 0
+    local lastStatusAt: number = -math.huge
     local visibilityCache: any = setmetatable({}, {__mode = "k"})
 
     local esp: any
@@ -52,18 +52,24 @@ function Module.init(context: Runtime): any
         Function = function(enabled: boolean): ()
             container.Visible = enabled
             if not enabled then
+                esp:SetStatus(nil)
                 render:ReleaseAll(container)
                 table.clear(pool)
                 return
             end
-            esp:Loop(function(deltaTime: number): ()
-                accumulator += deltaTime
-                local interval: number = esp.Options["Refresh interval"].Value
-                if accumulator < interval then
-                    return
-                end
-                accumulator = 0
+            lastStatusAt = -math.huge
+            esp:SetStatus("0")
+            esp:Render(function(): ()
                 Module.render(context, container, pool, esp, visibilityCache)
+                local now: number = os.clock()
+                if now - lastStatusAt >= 0.25 then
+                    lastStatusAt = now
+                    local count: number = 0
+                    for _player: Player in pairs(pool) do
+                        count += 1
+                    end
+                    esp:SetStatus(tostring(count))
+                end
             end)
             esp:Event(players.PlayerRemoving, function(player: Player): ()
                 render:Release(container, player)
@@ -197,15 +203,6 @@ function Module.init(context: Runtime): any
         Max = 24,
         Default = 13,
     })
-    esp:CreateSlider({
-        Name = "Refresh interval",
-        Min = 0,
-        Max = 0.2,
-        Default = 0.03,
-        Tooltip = "Seconds between redraws. 0 redraws every frame, which no "
-            .. "display needs and every frame budget notices.",
-    })
-
     -- What the game adds.
     --
     -- Roles and per-game objects are not built into this module: the game

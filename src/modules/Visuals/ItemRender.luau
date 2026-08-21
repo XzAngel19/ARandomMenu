@@ -50,7 +50,6 @@ function Module.init(context: Runtime): any
     -- lump; this is a list you switch a single object on and off in.
     local known: {string} = {}
     local wanted: {string} = {}
-    local accumulator: number = 0
     local picking: boolean = false
 
     local function release(instance: Instance): ()
@@ -159,12 +158,7 @@ function Module.init(context: Runtime): any
                 indexConnections = {}
                 table.clear(index)
             end)
-            render:Loop(function(deltaTime: number): ()
-                accumulator += deltaTime
-                if accumulator < render.Options["Refresh interval"].Value then
-                    return
-                end
-                accumulator = 0
+            render:Render(function(): ()
                 if indexDirty then
                     rebuildIndex()
                 end
@@ -279,15 +273,6 @@ function Module.init(context: Runtime): any
         Name = "Colour",
         Default = Color3.fromRGB(232, 232, 236),
     })
-    render:CreateSlider({
-        Name = "Refresh interval",
-        Min = 0,
-        Max = 1,
-        Default = 0.2,
-        Tooltip = "Seconds between sweeps of the workspace. Objects do not "
-            .. "move as often as players do.",
-    })
-
     -- The picker: one tap, one name, menu back.
     local pickConnection: RBXScriptConnection = userInput.InputBegan:Connect(
         function(input: InputObject, processed: boolean): ()

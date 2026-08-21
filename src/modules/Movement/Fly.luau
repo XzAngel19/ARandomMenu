@@ -515,6 +515,7 @@ function Module.init(context: Runtime): any
             restoreWalkSpeed()
 
             if not enabled then
+                fly:SetStatus(nil)
                 local _, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
                 if root then
                     (root :: BasePart).AssemblyLinearVelocity = Vector3.zero
@@ -526,6 +527,7 @@ function Module.init(context: Runtime): any
                 return
             end
 
+            fly:SetStatus(flySettings.method)
             fly:Loop(function(deltaTime: number): ()
                 local _, humanoid, root = getCharacterParts()
                 local camera: Camera? = currentWorkspace.CurrentCamera
@@ -607,6 +609,9 @@ function Module.init(context: Runtime): any
         Index = 1,
         Function = function(value: string): ()
             flySettings.method = value
+            if fly.Enabled then
+                fly:SetStatus(value)
+            end
         end,
         Tooltip = "Sideways engine. Velocity is smooth, CFrame ignores physics, "
             .. "WalkSpeed just runs faster.",
