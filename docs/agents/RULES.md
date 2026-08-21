@@ -112,3 +112,12 @@ work evaporates while you do it. Then report what happened.
   expected; the global contract compensates by reading `env.d.luau`.
 - `curl` to raw.githubusercontent is SSL-blocked. `gh api` works.
 - Downloading CI logs is blocked. Verify CI by job step name and conclusion.
+
+## 11. The licence, now that this is a Wurst port
+
+Wurst7 is GPL-3.0 and its README says so in bold: the code may only be used in
+open-source clients released under the same licence. Anything taken from
+`Wurst-Imperium/Wurst7` — an asset, a string, an algorithm — carries that with
+it. Do not vendor anything from it until `LICENSE` and `NOTICE.md` exist at the
+repository root, and when you do vendor something, record where it came from and
+at which upstream commit.
