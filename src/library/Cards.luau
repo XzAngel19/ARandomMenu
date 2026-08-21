@@ -53,6 +53,7 @@ function Module.init(context: any): any
     -- Repainting a card belongs to the shell's skin, not to the factory.
     local applyFeaturePresentation: any = host.applyFeaturePresentation
     local refreshFeatureToggle: any = host.refreshFeatureToggle
+    local addFeatureTooltip: any = host.addFeatureTooltip
 
     local function createUniversalFeature(
         name: string,
@@ -662,6 +663,14 @@ function Module.init(context: any): any
             state.clickGui.place(feature)
         end
         applyFeaturePresentation(feature, state.guiStyle == "Default")
+
+        -- Every card describes itself, so every card gets the hover tooltip —
+        -- the prototype binds `card.t` on each row. Modules that call
+        -- `addFeatureTooltip` themselves only replace this text with a longer
+        -- one; the binding is made once either way.
+        if type(addFeatureTooltip) == "function" and description ~= "" then
+            addFeatureTooltip(feature, description)
+        end
 
         -- No "Toggle key" option row any more: every card already carries a key
         -- slot in its header and that slot is the only place an activation key

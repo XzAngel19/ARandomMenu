@@ -318,7 +318,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "b7a15374119cd54d"
+local SOURCE_STAMP: string = "a5bb6bdc274790c7"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -3880,11 +3880,13 @@ local function hideFeatureTooltip(): ()
     state.featureTooltip.Visible = false
 end
 
-local COMPACT_FEATURE_CARDS: boolean = true
+-- Wurst shows a hack's description after the cursor has rested on its entry;
+-- the prototype fixed that rest at 400 ms (`bindTip`). The old binding here
+-- waited for a *press* instead — a tooltip you could only read while holding
+-- the button that toggles the module — and was then switched off entirely
+-- behind a constant, so no card showed one at all.
+local TOOLTIP_DELAY_MS: number = 400
 local function addFeatureTooltip(feature: any, text: string): ()
-    if COMPACT_FEATURE_CARDS then
-        return
-    end
     feature.tooltipText = text
     if feature.tooltipBound then
         return
@@ -3892,18 +3894,48 @@ local function addFeatureTooltip(feature: any, text: string): ()
     feature.tooltipBound = true
 
     local row: Frame = feature.row :: Frame
+    local hovering: boolean = false
     local heldInput: InputObject? = nil
     local heldStart: Vector2? = nil
 
+    table.insert(state.tooltipConnections, row.MouseEnter:Connect(function(): ()
+        -- Touch synthesises enter events too; the long-press path below owns
+        -- touch, so only a real pointer schedules a hover tooltip.
+        if not UserInputService.MouseEnabled then
+            return
+        end
+        hovering = true
+        state.tooltipToken = state.tooltipToken + 1
+        local hoverToken: number = state.tooltipToken
+        task.delay(TOOLTIP_DELAY_MS / 1000, function(): ()
+            if hovering and state.tooltipToken == hoverToken then
+                -- Read the pointer at show time, not at enter time: 400 ms is
+                -- long enough to cross half the row.
+                showFeatureTooltip(
+                    row,
+                    feature.tooltipText,
+                    UserInputService:GetMouseLocation()
+                )
+            end
+        end)
+    end))
+
     table.insert(state.tooltipConnections, row.MouseLeave:Connect(function(): ()
+        hovering = false
         heldInput = nil
         heldStart = nil
         hideFeatureTooltip()
     end))
 
     table.insert(state.tooltipConnections, row.InputBegan:Connect(function(input: InputObject): ()
-        if input.UserInputType ~= Enum.UserInputType.Touch
-            and input.UserInputType ~= Enum.UserInputType.MouseButton1 then
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            -- A click means the player is toggling, not reading; whatever the
+            -- hover scheduled or showed gets out of the way.
+            hovering = false
+            hideFeatureTooltip()
+            return
+        end
+        if input.UserInputType ~= Enum.UserInputType.Touch then
             return
         end
 
@@ -3911,12 +3943,13 @@ local function addFeatureTooltip(feature: any, text: string): ()
         heldStart = Vector2.new(input.Position.X, input.Position.Y)
         state.tooltipToken = state.tooltipToken + 1
         local pressToken: number = state.tooltipToken
-        task.delay(0.42, function(): ()
+        task.delay(TOOLTIP_DELAY_MS / 1000, function(): ()
             if heldInput == input and state.tooltipToken == pressToken then
-                local pointer: Vector2 = input.UserInputType == Enum.UserInputType.Touch
-                    and Vector2.new(input.Position.X, input.Position.Y)
-                    or UserInputService:GetMouseLocation()
-                showFeatureTooltip(row, feature.tooltipText, pointer)
+                showFeatureTooltip(
+                    row,
+                    feature.tooltipText,
+                    Vector2.new(input.Position.X, input.Position.Y)
+                )
             end
         end)
     end))
