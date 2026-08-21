@@ -52,39 +52,6 @@ return function(ctx: any): ()
         host.cardRowsPatched = true
     end
 
-    -- Record each option callback as the widgets receive it, so a suite can
-    -- set a game card's option the way the panel would.
-    if not host.optionCallbacks then
-        host.optionCallbacks = {}
-        -- Where each builder's callback sits among the varargs, after the
-        -- feature: (label, default, callback) for toggles, keys and text
-        -- boxes, (label, values, index, callback) for cycles, and
-        -- (label, default, min, max, callback) for numbers.
-        --
-        -- These were guessed once and the guess was wrong for every builder
-        -- but the cycle, so `setOption` set `.Value` and drove no callback at
-        -- all — the checks below still passed, which is what made it invisible.
-        local callbackPosition: {[string]: number} = {
-            addToggleOption = 3,
-            addKeyOption = 3,
-            addTextOption = 3,
-            addCycleOption = 4,
-            addNumberOption = 5,
-        }
-        for builder: string, position: number in pairs(callbackPosition) do
-            local original: any = host[builder]
-            host[builder] = function(feature: any, ...: any): any
-                local label: any = select(1, ...)
-                local callback: any = select(position, ...)
-                if type(callback) == "function" then
-                    host.optionCallbacks[feature] = host.optionCallbacks[feature] or {}
-                    host.optionCallbacks[feature][label] = callback
-                end
-                return original(feature, ...)
-            end
-        end
-    end
-
     -- The mock auto-creates services as bare instances; CollectionService
     -- needs its tag surface for the game modules that watch tagged objects.
     local collectionService: any = world.services.CollectionService

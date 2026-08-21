@@ -351,6 +351,16 @@ if missing:
 PYTHON
 echo "ok"
 
+step "Option callbacks live in one place"
+# Four suites each wrapped the builders. Two of them guessed the callback
+# position wrong and recorded nothing, then passed anyway. The wrap belongs
+# on run.luau; a suite that carries its own copy is the next silent miss.
+if grep -n 'if not host.optionCallbacks' tools/test/suites/*.luau; then
+    echo "a suite is wrapping option builders; that lives in tools/test/run.luau"
+    exit 1
+fi
+echo "ok"
+
 step "Bundle stamp matches the sources"
 # A stale runtime/bundle.luau serving old code while the repo says otherwise is
 # the class of silent rot the stamp exists to prevent.
