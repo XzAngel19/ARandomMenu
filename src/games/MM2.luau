@@ -1608,17 +1608,6 @@ type MotionSample = {
 local motionSamples: {[Player]: MotionSample} =
     setmetatable({}, {__mode = "k"}) :: any
 
-local function getPointerPosition(): Vector2
-    local camera: Camera? = workspace.CurrentCamera
-    if state.isMobile and camera then
-        -- A touch action button is not an aiming cursor. Mobile targeting uses
-        -- the camera center so tapping SHOOT/GUN cannot pull selection toward
-        -- the button's screen position.
-        return camera.ViewportSize / 2
-    end
-    return UserInputService:GetMouseLocation()
-end
-
 local function getFilteredVelocity(player: Player, root: BasePart): Vector3
     local now: number = os.clock()
     local velocity: Vector3 = root.AssemblyLinearVelocity
@@ -1718,50 +1707,6 @@ local function getGunLeadSeconds(): (number, number)
         0.25
     )
     return horizontalLead, verticalLead
-end
-
--- Correct zero-gravity branch adapted from prediction.lua. MM2 throwing knives
--- move linearly; their tagged projectile reports ThrowSpeed, with 96 as fallback.
-local function solveLinearIntercept(
-    origin: Vector3,
-    projectileSpeed: number,
-    targetPosition: Vector3,
-    targetVelocity: Vector3,
-    latency: number
-): (Vector3?, number?)
-    local compensatedPosition: Vector3 = targetPosition + targetVelocity * latency
-    local displacement: Vector3 = compensatedPosition - origin
-    local a: number = targetVelocity:Dot(targetVelocity)
-        - projectileSpeed * projectileSpeed
-    local b: number = 2 * displacement:Dot(targetVelocity)
-    local c: number = displacement:Dot(displacement)
-    local travelTime: number? = nil
-
-    if math.abs(a) < 1e-6 then
-        if math.abs(b) > 1e-6 then
-            local linearTime: number = -c / b
-            travelTime = linearTime > 0 and linearTime or nil
-        end
-    else
-        local discriminant: number = b * b - 4 * a * c
-        if discriminant >= 0 then
-            local root: number = math.sqrt(discriminant)
-            local first: number = (-b - root) / (2 * a)
-            local second: number = (-b + root) / (2 * a)
-            if first > 0 and second > 0 then
-                travelTime = math.min(first, second)
-            elseif first > 0 then
-                travelTime = first
-            elseif second > 0 then
-                travelTime = second
-            end
-        end
-    end
-
-    if not travelTime then
-        return nil, nil
-    end
-    return compensatedPosition + targetVelocity * travelTime, travelTime
 end
 
 local function getGunOriginCFrame(character: Model, _gun: Tool?): CFrame?
@@ -3643,81 +3588,24 @@ state.mm2ShotFeedback.handleGunFired = function(
 end
 
 type KnifeSettings = {
-    redirect: boolean,
     aura: boolean,
     auraRange: number,
-    showTarget: boolean,
-    targetClosestToMouse: boolean,
 }
 
 type KnifeRuntimeState = {
-    visual: BoxHandleAdornment?,
-    redirectTarget: Player?,
-    redirectScore: number,
-    redirectLockedAt: number,
-    velocityTarget: Player?,
-    velocity: Vector3,
-    velocitySampleAt: number,
-    observedProjectileSpeed: number,
     lastAuraSwing: number,
 }
 
 local knifeSettings: KnifeSettings = {
-    redirect = false,
     aura = false,
     auraRange = 14,
-    showTarget = true,
-    targetClosestToMouse = true,
 }
 state.mm2KnifeRuntime = {
-    visual = nil,
-    redirectTarget = nil,
-    redirectScore = math.huge,
-    redirectLockedAt = 0,
-    velocityTarget = nil,
-    velocity = Vector3.zero,
-    velocitySampleAt = 0,
-    observedProjectileSpeed = 96,
     lastAuraSwing = -math.huge,
 } :: KnifeRuntimeState
 
 local function getEquippedWeapon(name: string, _tag: string): Tool?
     return getPlayerWeapon(LocalPlayer, name, true)
-end
-
-local KNIFE_TARGET_HYSTERESIS_PIXELS: number = 6
-local KNIFE_TARGET_MAX_LOCK_SECONDS: number = 0.12
-
-local function getKnifeProjectileSpeed(knife: Tool): number
-    local localCharacter: Model? = LocalPlayer.Character
-    local knifeHandle: BasePart? = knife:FindFirstChild("Handle") :: BasePart?
-    for _, projectile: Instance in ipairs(
-        CollectionService:GetTagged("ThrowingKnife")
-    ) do
-        local handleLink: Instance? = projectile:FindFirstChild("HandleLink")
-        local linkedHandle: Instance? = handleLink
-                and handleLink:IsA("ObjectValue")
-                and handleLink.Value
-            or nil
-        local belongsToLocalKnife: boolean = linkedHandle ~= nil
-            and (
-                linkedHandle == knifeHandle
-                or linkedHandle:IsDescendantOf(knife)
-                or (
-                    localCharacter ~= nil
-                    and linkedHandle:IsDescendantOf(localCharacter)
-                )
-            )
-        if belongsToLocalKnife then
-            local speed: number? =
-                tonumber(projectile:GetAttribute("ThrowSpeed"))
-            if speed and speed >= 24 and speed <= 300 then
-                state.mm2KnifeRuntime.observedProjectileSpeed = speed
-                break
-            end
-        end
-    end
-    return state.mm2KnifeRuntime.observedProjectileSpeed
 end
 
 local function canUseEquippedKnife(): (Tool?, BasePart?)
@@ -3752,107 +3640,6 @@ local function isValidKnifeTarget(player: Player): boolean
         and player.Character:FindFirstChild("HumanoidRootPart") ~= nil
 end
 
-local function getKnifeCandidateScore(
-    player: Player,
-    localRoot: BasePart,
-    pointer: Vector2,
-    camera: Camera
-): (number?, boolean)
-    local targetCharacter: Model? = player.Character
-    local root: BasePart? = targetCharacter
-        and targetCharacter:FindFirstChild("HumanoidRootPart")
-        :: BasePart?
-    if not root then
-        return nil, false
-    end
-
-    if not knifeSettings.targetClosestToMouse then
-        return (root.Position - localRoot.Position).Magnitude, true
-    end
-
-    local viewport: Vector3, visible: boolean =
-        camera:WorldToViewportPoint(root.Position)
-    if not visible then
-        return nil, false
-    end
-    return (
-        pointer - Vector2.new(viewport.X, viewport.Y)
-    ).Magnitude, true
-end
-
-local function findKnifeRedirectCandidate(
-    localRoot: BasePart
-): (Player?, number)
-    local camera: Camera? = workspace.CurrentCamera
-    if not camera then
-        return nil, math.huge
-    end
-
-    local pointer: Vector2 = getPointerPosition()
-    local closest: Player? = nil
-    local closestScore: number = math.huge
-    for _, player: Player in ipairs(Players:GetPlayers()) do
-        if isValidKnifeTarget(player) then
-            local score: number?, eligible: boolean = getKnifeCandidateScore(
-                player,
-                localRoot,
-                pointer,
-                camera
-            )
-            if eligible and score and score < closestScore then
-                closest = player
-                closestScore = score
-            end
-        end
-    end
-    return closest, closestScore
-end
-
-local function getLockedKnifeRedirectTarget(localRoot: BasePart): Player?
-    local acquired: Player?, acquiredScore: number =
-        findKnifeRedirectCandidate(localRoot)
-    local current: Player? = state.mm2KnifeRuntime.redirectTarget
-    local currentScore: number = math.huge
-    local camera: Camera? = workspace.CurrentCamera
-    if current and isValidKnifeTarget(current) and camera then
-        local score: number?, eligible: boolean = getKnifeCandidateScore(
-            current,
-            localRoot,
-            getPointerPosition(),
-            camera
-        )
-        if eligible and score then
-            currentScore = score
-        else
-            current = nil
-        end
-    else
-        current = nil
-    end
-
-    local now: number = os.clock()
-    local shouldSwitch: boolean = current == nil
-        or acquired == nil
-        or acquired == current
-        or acquiredScore + KNIFE_TARGET_HYSTERESIS_PIXELS < currentScore
-        or now - state.mm2KnifeRuntime.redirectLockedAt
-            >= KNIFE_TARGET_MAX_LOCK_SECONDS
-    local selected: Player? = shouldSwitch and acquired or current
-    local selectedScore: number = selected == acquired
-        and acquiredScore
-        or currentScore
-
-    if selected ~= state.mm2KnifeRuntime.redirectTarget then
-        state.mm2KnifeRuntime.redirectTarget = selected
-        state.mm2KnifeRuntime.redirectLockedAt = now
-        state.mm2KnifeRuntime.velocityTarget = nil
-        state.mm2KnifeRuntime.velocity = Vector3.zero
-        state.mm2KnifeRuntime.velocitySampleAt = 0
-    end
-    state.mm2KnifeRuntime.redirectScore = selectedScore
-    return selected
-end
-
 local function findKnifeAuraTarget(
     localRoot: BasePart,
     maxDistance: number
@@ -3877,263 +3664,6 @@ local function findKnifeAuraTarget(
     return closest
 end
 
-local function clearKnifeAuraVisuals(): ()
-    local visual: BoxHandleAdornment? = state.mm2KnifeRuntime.visual
-    if visual then
-        visual:Destroy()
-        state.mm2KnifeRuntime.visual = nil
-    end
-end
-
-local function updateKnifeAuraVisual(
-    target: Player?,
-    predictedCFrame: CFrame?,
-    _travelTime: number?
-): ()
-    local knife: Tool? = canUseEquippedKnife()
-    local character: Model? = target and target.Character
-    local root: BasePart? = target
-        and character
-        and character:FindFirstChild("HumanoidRootPart")
-        :: BasePart?
-    if not knife
-        or not target
-        or not character
-        or not root
-        or not knifeSettings.showTarget then
-        clearKnifeAuraVisuals()
-        return
-    end
-
-    local visual: BoxHandleAdornment? = state.mm2KnifeRuntime.visual
-    if not visual then
-        local box: BoxHandleAdornment = Instance.new("BoxHandleAdornment")
-        box.Name = "RTM_KnifePredictionEnvelope"
-        box.AlwaysOnTop = true
-        box.ZIndex = 20
-        box.Color3 = Color3.fromRGB(180, 45, 35)
-        box.Transparency = 0.48
-        box.Size = Vector3.new(5.5, 7, 5.5)
-        box.Parent = ScreenGui
-        state.mm2KnifeRuntime.visual = box
-        visual = box
-    end
-    if visual then
-        local predictedPosition: Vector3 = predictedCFrame
-                and predictedCFrame.Position
-            or root.Position
-        local localPosition: Vector3 =
-            root.CFrame:PointToObjectSpace(predictedPosition)
-        local desiredCFrame: CFrame = CFrame.new(localPosition)
-        local sameAdornee: boolean = visual.Adornee == root
-        visual.Adornee = root
-        visual.CFrame = sameAdornee
-                and visual.CFrame:Lerp(desiredCFrame, 0.45)
-            or desiredCFrame
-    end
-end
-
-local function getStableKnifeVelocity(
-    target: Player,
-    targetRoot: BasePart
-): Vector3
-    local now: number = os.clock()
-    local rawVelocity: Vector3 = targetRoot.AssemblyLinearVelocity
-    if rawVelocity.Magnitude > 110 then
-        rawVelocity = rawVelocity.Unit * 110
-    end
-
-    local previousTarget: Player? = state.mm2KnifeRuntime.velocityTarget
-    local previousVelocity: Vector3 = state.mm2KnifeRuntime.velocity
-    local previousSampleAt: number = state.mm2KnifeRuntime.velocitySampleAt
-    local deltaTime: number = now - previousSampleAt
-    if previousTarget ~= target or deltaTime <= 0 or deltaTime > 0.35 then
-        state.mm2KnifeRuntime.velocityTarget = target
-        state.mm2KnifeRuntime.velocity = rawVelocity
-        state.mm2KnifeRuntime.velocitySampleAt = now
-        return rawVelocity
-    end
-    if deltaTime < 1 / 120 then
-        return previousVelocity
-    end
-
-    local alpha: number = 1 - math.exp(-deltaTime * 10)
-    local velocity: Vector3 = previousVelocity:Lerp(
-        rawVelocity,
-        math.clamp(alpha, 0.08, 0.65)
-    )
-    state.mm2KnifeRuntime.velocity = velocity
-    state.mm2KnifeRuntime.velocitySampleAt = now
-    return velocity
-end
-
-local function getKnifeAcceleration(target: Player): Vector3
-    local sample: MotionSample? = motionSamples[target]
-    if not sample then
-        return Vector3.zero
-    end
-    if not sample.grounded then
-        return Vector3.new(0, -workspace.Gravity, 0)
-    end
-
-    local horizontal: Vector3 = Vector3.new(
-        sample.acceleration.X,
-        0,
-        sample.acceleration.Z
-    ) * sample.stability
-    if horizontal.Magnitude > 70 then
-        horizontal = horizontal.Unit * 70
-    end
-    return horizontal
-end
-
--- prediction.lua solves the same interception equation through polynomial roots.
--- MM2 knives have zero projectile gravity, so a short fixed-point refinement is
--- both cheaper and able to include the target's acceleration and one-way RTT.
-local function solveKnifeIntercept(
-    origin: Vector3,
-    projectileSpeed: number,
-    targetPosition: Vector3,
-    targetVelocity: Vector3,
-    targetAcceleration: Vector3,
-    latency: number
-): (Vector3?, number?)
-    if projectileSpeed <= 0 then
-        return nil, nil
-    end
-
-    local releasePosition: Vector3 = targetPosition
-        + targetVelocity * latency
-        + targetAcceleration * (0.5 * latency * latency)
-    local releaseVelocity: Vector3 =
-        targetVelocity + targetAcceleration * latency
-    local linearAim: Vector3?, linearTime: number? = solveLinearIntercept(
-        origin,
-        projectileSpeed,
-        releasePosition,
-        releaseVelocity,
-        0
-    )
-    local travelTime: number = linearTime
-        or (releasePosition - origin).Magnitude / projectileSpeed
-    if travelTime <= 0 or travelTime > 3 then
-        return nil, nil
-    end
-
-    local predicted: Vector3 = linearAim or releasePosition
-    for _iteration: number = 1, 5 do
-        local totalTime: number = latency + travelTime
-        predicted = targetPosition
-            + targetVelocity * totalTime
-            + targetAcceleration * (0.5 * totalTime * totalTime)
-        local refinedTime: number =
-            (predicted - origin).Magnitude / projectileSpeed
-        if refinedTime <= 0 or refinedTime > 3 then
-            return nil, nil
-        end
-        if math.abs(refinedTime - travelTime) < 0.0015 then
-            travelTime = refinedTime
-            break
-        end
-        travelTime += (refinedTime - travelTime) * 0.72
-    end
-    return predicted, travelTime
-end
-
-local function redirectedKnifeCFrame(updateVisual: boolean?): CFrame?
-    local knife: Tool?, localRoot: BasePart? = canUseEquippedKnife()
-    local target: Player? = localRoot
-        and getLockedKnifeRedirectTarget(localRoot)
-        or nil
-    local targetRoot: BasePart? = target
-        and target.Character
-        and target.Character:FindFirstChild("HumanoidRootPart")
-        :: BasePart?
-    if not knife or not localRoot or not target or not targetRoot then
-        if updateVisual then
-            clearKnifeAuraVisuals()
-        end
-        return nil
-    end
-
-    local handle: BasePart? = knife:FindFirstChild("Handle") :: BasePart?
-    if not handle or not handle:IsA("BasePart") then
-        if updateVisual then
-            clearKnifeAuraVisuals()
-        end
-        return nil
-    end
-
-    local origin: Vector3 = handle.Position
-    local targetVelocity: Vector3 = getStableKnifeVelocity(target, targetRoot)
-    local targetAcceleration: Vector3 = getKnifeAcceleration(target)
-    local latency: number = math.clamp(
-        getEstimatedLatency() * 0.5 + (1 / 60),
-        0.025,
-        0.18
-    )
-    local projectileSpeed: number = getKnifeProjectileSpeed(knife)
-    local predictedRoot: Vector3?, rootTravelTime: number? =
-        solveKnifeIntercept(
-            origin,
-            projectileSpeed,
-            targetRoot.Position,
-            targetVelocity,
-            targetAcceleration,
-            latency
-        )
-    if not predictedRoot then
-        if updateVisual then
-            clearKnifeAuraVisuals()
-        end
-        return nil
-    end
-
-    local selectedAim: Vector3? = nil
-    local targetCharacter: Model = target.Character :: Model
-    for _, partName: string in ipairs({
-        "UpperTorso",
-        "Torso",
-        "HumanoidRootPart",
-        "Head",
-    }) do
-        local targetPart: BasePart? =
-            targetCharacter:FindFirstChild(partName) :: BasePart?
-        if targetPart and targetPart:IsA("BasePart") then
-            local predictedPart: Vector3? = solveKnifeIntercept(
-                origin,
-                projectileSpeed,
-                targetPart.Position,
-                targetVelocity,
-                targetAcceleration,
-                latency
-            )
-            if predictedPart then
-                selectedAim = predictedPart
-                break
-            end
-        end
-    end
-    if not selectedAim then
-        if updateVisual then
-            clearKnifeAuraVisuals()
-        end
-        return nil
-    end
-    if updateVisual then
-        updateKnifeAuraVisual(
-            target,
-            CFrame.new(predictedRoot),
-            rootTravelTime
-        )
-    end
-
-    local throwDirection: Vector3 = selectedAim - origin
-    if throwDirection.Magnitude <= 0.001 then
-        return CFrame.new(selectedAim)
-    end
-    return CFrame.lookAt(selectedAim, selectedAim + throwDirection.Unit)
-end
 local function redirectedTargetCFrame(): (
     CFrame?,
     Player?,
@@ -4171,10 +3701,6 @@ local function getRedirectedWeaponCFrame(): CFrame?
             )
             return targetCFrame
         end
-    end
-
-    if knifeSettings.redirect then
-        return redirectedKnifeCFrame()
     end
     return nil
 end
@@ -4321,17 +3847,6 @@ local function mm2TargetProvider(): any
         target = findSheriff()
         source = target and "Murderer priority · Sheriff/Hero" or "Murderer priority"
         if not target then
-            local redirected: Player? = state.mm2KnifeRuntime
-                and state.mm2KnifeRuntime.redirectTarget
-                or nil
-            if redirected
-                and isPlayerAlive(redirected)
-                and not state.isProtectedTarget(redirected) then
-                target = redirected
-                source = "Knife lock"
-            end
-        end
-        if not target then
             for _, player: Player in ipairs(Players:GetPlayers()) do
                 if player ~= LocalPlayer
                     and isPlayerAlive(player)
@@ -4426,9 +3941,6 @@ end
 local function processKnifeAura(): ()
     local knife: Tool?, localRoot: BasePart? = canUseEquippedKnife()
     if not knife or not localRoot then
-        if not knifeSettings.redirect then
-            clearKnifeAuraVisuals()
-        end
         return
     end
 
@@ -4494,14 +4006,7 @@ local function refreshKnifeController(): ()
     disconnectFeatureConnection("MM2KnifeVirtualHitbox")
     disconnectFeatureConnection("MM2KnifeAura")
     disconnectFeatureConnection("MM2KnifeController")
-    if not knifeSettings.redirect and not knifeSettings.aura then
-        state.mm2KnifeRuntime.redirectTarget = nil
-        state.mm2KnifeRuntime.redirectScore = math.huge
-        state.mm2KnifeRuntime.redirectLockedAt = 0
-        state.mm2KnifeRuntime.velocityTarget = nil
-        state.mm2KnifeRuntime.velocity = Vector3.zero
-        state.mm2KnifeRuntime.velocitySampleAt = 0
-        clearKnifeAuraVisuals()
+    if not knifeSettings.aura then
         return
     end
 
@@ -4513,58 +4018,13 @@ local function refreshKnifeController(): ()
                 return
             end
             elapsed %= 0.05
-
-            local knife: Tool? = canUseEquippedKnife()
-            if not knife then
-                state.mm2KnifeRuntime.redirectTarget = nil
-                state.mm2KnifeRuntime.redirectScore = math.huge
-                state.mm2KnifeRuntime.redirectLockedAt = 0
-                state.mm2KnifeRuntime.velocityTarget = nil
-                clearKnifeAuraVisuals()
-                return
-            end
-            if knifeSettings.redirect then
-                getKnifeProjectileSpeed(knife)
-                if not redirectedKnifeCFrame(true) then
-                    clearKnifeAuraVisuals()
-                end
-            end
-            if knifeSettings.aura then
-                processKnifeAura()
-                if not knifeSettings.redirect then
-                    clearKnifeAuraVisuals()
-                end
-            elseif not knifeSettings.redirect then
-                clearKnifeAuraVisuals()
-            end
+            processKnifeAura()
         end)
-end
-
-local function toggleKnifeRedirect(enabled: boolean): ()
-    knifeSettings.redirect = enabled
-    if enabled and not installShootRedirectHook() then
-        notify("Knife Redirect is unavailable in this executor.")
-    end
-    if not enabled then
-        state.mm2KnifeRuntime.redirectTarget = nil
-        state.mm2KnifeRuntime.redirectScore = math.huge
-        state.mm2KnifeRuntime.redirectLockedAt = 0
-        state.mm2KnifeRuntime.velocityTarget = nil
-        state.mm2KnifeRuntime.velocity = Vector3.zero
-        state.mm2KnifeRuntime.velocitySampleAt = 0
-    end
-    refreshKnifeController()
-    if not enabled and not shootFeatureActive then
-        uninstallShootRedirectHook()
-    end
 end
 
 local function toggleKnifeAura(enabled: boolean): ()
     knifeSettings.aura = enabled
     state.mm2KnifeRuntime.lastAuraSwing = -math.huge
-    if enabled and not knifeSettings.redirect then
-        clearKnifeAuraVisuals()
-    end
     refreshKnifeController()
 end
 
@@ -4615,9 +4075,7 @@ local function toggleShootMurderer(enabled: boolean): ()
         state.mm2ShotFeedback.pending = nil
         state.mm2ShotFeedback.lastAccepted = nil
         state.mm2ShotFeedback.hide()
-        if not knifeSettings.redirect then
-            uninstallShootRedirectHook()
-        end
+        uninstallShootRedirectHook()
         return
     end
 
@@ -4840,40 +4298,23 @@ addInformationOption(
     "Schema 2 records 30 Hz target windows only around your shots/throws. It stays isolated from Universal analytics and never changes weapon arguments."
 )
 
+-- KnifeThrown was never captured, so a throw-redirect that rewrites aim
+-- through hookfunction would be inventing the payload. Aura stays: it
+-- fires HandleTouched with the target's root, which is the game's own stab.
 local KnifeFeature = createUniversalFeature(
-    "Knife",
-    "Normal projectile redirect and extended native stab detection",
+    "Knife Aura",
+    "Stabs the nearest valid target in range through the game's own HandleTouched",
     6,
-    function(): () end,
+    toggleKnifeAura,
     {
-        category = true,
         parent = MM2Scroll,
         registry = mm2Features,
     }
 )
-addToggleOption(KnifeFeature, "Redirect", false, toggleKnifeRedirect)
-addToggleOption(KnifeFeature, "Knife Aura", false, toggleKnifeAura)
-addNumberOption(KnifeFeature, "Aura detection range", 14, 7, 30, function(
+addNumberOption(KnifeFeature, "Range", 14, 7, 30, function(
     value: number
 ): ()
     knifeSettings.auraRange = value
-end)
-addToggleOption(KnifeFeature, "Target closest to mouse", true, function(
-    value: boolean
-): ()
-    knifeSettings.targetClosestToMouse = value
-    state.mm2KnifeRuntime.redirectTarget = nil
-    state.mm2KnifeRuntime.redirectScore = math.huge
-    state.mm2KnifeRuntime.redirectLockedAt = 0
-    state.mm2KnifeRuntime.velocityTarget = nil
-end)
-addToggleOption(KnifeFeature, "Prediction envelope", true, function(
-    value: boolean
-): ()
-    knifeSettings.showTarget = value
-    if not value then
-        clearKnifeAuraVisuals()
-    end
 end)
 
 createUniversalFeature(
@@ -5128,7 +4569,6 @@ cleanupMM2Runtime = function()
     toggleShootMurderer(false)
     state.mm2ShotFeedback.hide()
     toggleKnifeAura(false)
-    toggleKnifeRedirect(false)
     uninstallShootRedirectHook()
     toggleGunEsp(false)
     toggleLoopAllInteract(false)

@@ -422,7 +422,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "7f9eda12e8af1cfc"
+local SOURCE_STAMP: string = "29b7a29a0605ab29"
 local BOOT_FINGERPRINT_SECONDS: number = 0
 local PENDING_FINGERPRINT: boolean = false
 
@@ -10526,10 +10526,6 @@ end)
 
 if not initialized then
     -- Nowhere on screen to say it any more: the intro that used to carry the
-    -- message is gone, so the console is the report.
-    warn("[RTM:Bootstrap] Inicialización detenida:\n" .. tostring(bootstrapError))
-end
- that used to carry the
     -- message is gone, so the console is the report.
     warn("[RTM:Bootstrap] Inicialización detenida:\n" .. tostring(bootstrapError))
 end

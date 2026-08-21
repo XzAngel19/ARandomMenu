@@ -628,10 +628,10 @@ function Module.init(runtime: any): any
     --
     -- The bed is broken by hitting it, and hitting in this game is the touch
     -- button plus the weapon's own contact events — the same pair Kill Aura
-    -- uses on players. `MineBlock` is right there in ReplicatedStorage, but its
-    -- arguments are not in the dump, so this drives the game's own controls
-    -- instead of inventing a call. Turn on the Remote Logger, break one bed by
-    -- hand, and the log will say exactly what a future version could send.
+    -- uses on players. `MineBlock` was captured as tool name, the block part,
+    -- its grid position, the swing origin and the swing direction; beds live
+    -- outside `PlayersBlocksContainer`, so the captured call is opt-in rather
+    -- than the default. The default path still presses the game's own swing.
     local nukerSettings: any = {
         range = 18,
         rate = 8,
@@ -782,20 +782,16 @@ function Module.init(runtime: any): any
 
     -- Scaffold ----------------------------------------------------------------
     --
-    -- Real blocks, not a local platform: this game places a block when you
-    -- press its own build control while pointing at where the block should go,
-    -- so that is what this does. It equips a block from the hotbar, aims the
-    -- camera down behind you, and presses.
-    --
-    -- The one thing it cannot do yet is call `PlaceBlock` directly — the dump
-    -- has the remote but not its arguments. Run the Remote Logger, place one
-    -- block by hand, and the log will name them; the call then replaces the
-    -- button press with no other change.
-    local scaffoldSettings: any = {rate = 6, reach = 6, pitch = true}
+    -- Real blocks, not a local platform. `PlaceBlock` was captured as the
+    -- block's name, a hotbar slot (3 and 5 in the logs) and a world position,
+    -- so this sends that call under your feet when there is a gap. Equipping
+    -- the hotbar slot first is only so the view model matches what the remote
+    -- claims; the camera does not have to point anywhere.
+    local scaffoldSettings: any = {rate = 6, reach = 6, variant = 3}
 
     -- Both GUI lookups are cached for a second: they walk the PlayerGui, and
     -- the scaffold asks several times a second.
-    local guiCache: any = {at = -1, block = nil, place = nil}
+    local guiCache: any = {at = -1, block = nil}
 
     local function blockSlot(): GuiButton?
         if os.clock() - guiCache.at < 1 then
@@ -826,26 +822,24 @@ function Module.init(runtime: any): any
         return nil
     end
 
-    local function placeControl(): GuiButton?
-        if guiCache.place and (guiCache.place :: GuiButton).Parent then
-            return guiCache.place
-        end
-        local playerGui: Instance? = LocalPlayer:FindFirstChild("PlayerGui")
-        if not playerGui then
-            return nil
-        end
-        for _, descendant: Instance in ipairs(playerGui:GetDescendants()) do
-            if not descendant:IsA("GuiButton") then
-                continue
-            end
-            local lowered: string = string.lower(descendant.Name)
-            if string.find(lowered, "place", 1, true)
-                or string.find(lowered, "build", 1, true) then
-                guiCache.place = descendant :: GuiButton
-                return guiCache.place
+    local function scaffoldBlockName(): string
+        local camera: Camera? = workspace.CurrentCamera
+        local viewModel: Instance? = camera and camera:FindFirstChild("ViewModel")
+        if viewModel then
+            for _, child: Instance in ipairs(viewModel:GetChildren()) do
+                local name: string = string.lower(child.Name)
+                if string.find(name, "wool", 1, true)
+                    or string.find(name, "plank", 1, true)
+                    or string.find(name, "block", 1, true) then
+                    return child.Name
+                end
             end
         end
-        return nil
+        local slot: GuiButton? = blockSlot()
+        if slot then
+            return slot.Name
+        end
+        return "Wool"
     end
 
     local ScaffoldFeature: any = createUniversalFeature(
@@ -899,34 +893,19 @@ function Module.init(runtime: any): any
                         weapons:PressButton(slot :: GuiButton)
                     end
 
-                    local camera: Camera? = workspace.CurrentCamera
-                    if scaffoldSettings.pitch and camera then
-                        -- Look at where the block has to go for the frame the
-                        -- placement is fired on, then let the player's own
-                        -- camera continue: the game raycasts from the camera.
-                        local resolvedCamera: Camera = camera :: Camera
-                        local original: CFrame = resolvedCamera.CFrame
-                        resolvedCamera.CFrame = CFrame.lookAt(
-                            original.Position,
-                            resolvedRoot.Position - Vector3.new(0, 4, 0)
+                    local grid: number = 3
+                    local base: Vector3 = resolvedRoot.Position
+                        - Vector3.new(0, resolvedHumanoid.HipHeight + 1, 0)
+                    fireRemote(
+                        "ItemsRemotes.PlaceBlock",
+                        scaffoldBlockName(),
+                        scaffoldSettings.variant,
+                        Vector3.new(
+                            math.floor(base.X / grid + 0.5) * grid,
+                            math.floor(base.Y / grid + 0.5) * grid,
+                            math.floor(base.Z / grid + 0.5) * grid
                         )
-                        task.defer(function(): ()
-                            if resolvedCamera.Parent then
-                                resolvedCamera.CFrame = original
-                            end
-                        end)
-                    end
-
-                    local control: GuiButton? = placeControl()
-                    if control and weapons then
-                        weapons:PressButton(control :: GuiButton)
-                        return
-                    end
-                    -- Desktop: placement is the mouse.
-                    local click: any = environment.mouse1click
-                    if type(click) == "function" then
-                        pcall(click)
-                    end
+                    )
                 end)
         end,
         {parent = scroll, registry = registry, categoryName = "Movement"}
@@ -951,18 +930,21 @@ function Module.init(runtime: any): any
             scaffoldSettings.reach = value
         end
     )
-    addToggleOption(
+    addNumberOption(
         ScaffoldFeature,
-        "Aim down",
-        true,
-        function(value: boolean): ()
-            scaffoldSettings.pitch = value
+        "Variant",
+        scaffoldSettings.variant,
+        0,
+        12,
+        function(value: number): ()
+            scaffoldSettings.variant = value
         end
     )
     addInformationOption(
         ScaffoldFeature,
-        "Uses the game's own hotbar and build control. Log PlaceBlock with the "
-            .. "Remote Logger and it can be called directly instead."
+        "Fires PlaceBlock as captured: block name, hotbar slot (3 and 5 in the "
+            .. "logs), world position. Variant is that slot. Server Scaffold is "
+            .. "the same remote with tiles ahead and a typed block name."
     )
 
     -- Void warning ------------------------------------------------------------
