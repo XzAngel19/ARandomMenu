@@ -71,18 +71,6 @@ return function(ctx: any): ()
         check("option: " .. name, hitboxes.Options[name] ~= nil)
     end
 
-    -- The stand-in rig has no sizes of its own, and Hitboxes adds studs to
-    -- what it finds; every character the sweep can reach needs a starting
-    -- number — earlier suites left their players in the world.
-    for _, player: any in ipairs(host.Players:GetPlayers()) do
-        if player ~= world.localPlayer and player.Character then
-            for _, part: any in ipairs(player.Character:GetDescendants()) do
-                if part:IsA("BasePart") then
-                    part.Size = vector3(1, 1, 1)
-                end
-            end
-        end
-    end
     local rootSize: any = vector3(2, 2, 1)
     local headSize: any = vector3(1.2, 1.2, 1.2)
     enemyRoot.Size = rootSize

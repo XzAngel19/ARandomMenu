@@ -115,6 +115,9 @@ function Host.create(world: any): HostStub
             optionRows = {},
             options = {},
         }
+        -- The real factory gives every feature its row. Cards that hide
+        -- themselves (VD's killer-only proximity widget) read `.row`.
+        feature.row = create("Frame", {Name = name .. "Row"})
         function feature.activate(): ()
             -- Action cards run and keep no state, exactly like the real card.
             if feature.kind == "action" then

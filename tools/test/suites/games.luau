@@ -22,71 +22,7 @@ return function(ctx: any): ()
     local check: (string, boolean, string?) -> () = ctx.check
     local section: (string) -> () = ctx.section
 
-    -- The real card factory gives every feature its row; the harness factory
-    -- stops at the table. Cards that hide their row (VD's killer-only
-    -- proximity widget) read `.row`, so give them one.
-    if not host.cardRowsPatched then
-        local originalCreateFeature: any = host.createUniversalFeature
-        host.createUniversalFeature = function(...: any): any
-            local feature: any = originalCreateFeature(...)
-            if feature and feature.row == nil then
-                feature.row = host.create("Frame", {Name = feature.name .. "Row"})
-            end
-            return feature
-        end
-        host.cardRowsPatched = true
-    end
-
-    -- The mock auto-creates services as bare instances; CollectionService
-    -- needs its tag surface for the game modules that watch tagged objects.
     local collectionService: any = world.services.CollectionService
-    if collectionService == nil or collectionService.GetInstanceAddedSignal == nil then
-        collectionService = Mock.newInstance("CollectionService")
-        local tagged: {[string]: {any}} = {}
-        local signals: {[string]: {any}} = {}
-        function collectionService:HasTag(instance: any, tag: string): boolean
-            local list: {any} = tagged[tag]
-            return list ~= nil and table.find(list, instance) ~= nil
-        end
-        function collectionService:GetInstanceAddedSignal(tag: string): any
-            signals[tag] = signals[tag] or {
-                Connect = function(_self: any, _callback: any): any
-                    return {Connected = true, Disconnect = function(self2: any): ()
-                        self2.Connected = false
-                    end}
-                end,
-            }
-            return signals[tag]
-        end
-        function collectionService:GetTagged(tag: string): {any}
-            return tagged[tag] or {}
-        end
-        world.services.CollectionService = collectionService
-    end
-
-    -- And their sounds need the playback surface a bare instance lacks.
-    do
-        local originalInstanceNew: any = world.globals.Instance.new
-        world.globals.Instance.new = function(className: string, ...: any): any
-            local instance: any = originalInstanceNew(className, ...)
-            if className == "Sound" and instance.Stop == nil then
-                function instance:Play(): () end
-                function instance:Stop(): () end
-                instance.IsPlaying = false
-            end
-            return instance
-        end
-    end
-
-    -- The game files name their fonts; the mock's Enum has no Font folder.
-    if world.globals.Enum.Font == nil then
-        world.globals.Enum.Font = {}
-        for _, face: string in ipairs({
-            "Gotham", "GothamMedium", "GothamSemibold", "GothamBold", "GothamBlack",
-        }) do
-            world.globals.Enum.Font[face] = {Name = face, Value = face}
-        end
-    end
 
     local gameService: any = world.globals.game
     local function service(name: string): any
@@ -319,18 +255,6 @@ return function(ctx: any): ()
     trs.destroy()
 
     section("MM2: Shoot says what it does")
-
-    -- The stand-in player has no mouse; Trajectory Calibration reads one hit
-    -- point from it when it builds.
-    if world.localPlayer.GetMouse == nil then
-        function world.localPlayer:GetMouse(): any
-            return {
-                Hit = {
-                    Position = world.vector3(0, 0, -10),
-                },
-            }
-        end
-    end
 
     -- MM2 builds its effects folders, its sound and its shared state while the
     -- file loads, so a sandboxed environment cannot require it until that work
