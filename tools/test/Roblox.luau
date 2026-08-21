@@ -225,6 +225,12 @@ local function newInstance(className: string): any
         instance.Visible = true
         instance.Text = ""
         instance.TextSize = 14
+        -- Roblox always answers these; a test that never laid anything out
+        -- still gets a rectangle rather than nil, so arithmetic on a size —
+        -- which is what clamping a window inside the viewport is — reaches an
+        -- assertion instead of a stack trace.
+        instance.AbsoluteSize = vector2(0, 0)
+        instance.AbsolutePosition = vector2(0, 0)
     end
 
     setmetatable(instance, {
@@ -458,6 +464,13 @@ local function newInstance(className: string): any
     end
     if className == "Model" or className == "Backpack" then
         instance.ChildAdded = signal()
+    end
+    if className == "Humanoid" then
+        -- The session panel counts deaths, and a stand-in humanoid that never
+        -- announces one makes that counter untestable.
+        instance.Died = signal()
+        instance.HealthChanged = signal()
+        instance.StateChanged = signal()
     end
 
     return instance

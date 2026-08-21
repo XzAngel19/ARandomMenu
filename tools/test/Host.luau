@@ -556,6 +556,45 @@ function Host.create(world: any): HostStub
     -- Every label registered for text scaling. The three make* helpers feed
     -- it in the shell; here it starts empty and the settings page walks it.
     host.registeredText = {}
+    -- What the floating overlays draw with: the profile card's fixed height,
+    -- the readout typeface, the tab switcher a favourite jumps through, the
+    -- live card registry, and the network counters the session panel reads.
+    -- Shell pieces the floating layer draws into or through: the sidebar the
+    -- profile card sits at the bottom of, the three-line glyph every "open the
+    -- settings of this row" button wears, and the asset loader.
+    host.state.shells = {
+        defaultSidebar = create("Frame", {Parent = screenGui, Name = "Sidebar"}),
+    }
+    host.state.applyLinesGlyph = function(button: any, _active: boolean?): ()
+        button:SetAttribute("Glyph", "lines")
+    end
+    host.state.applyAssetImage = function(_name: string, _target: any, done: any?): ()
+        if done then
+            done()
+        end
+    end
+    host.state.activeGameName = nil
+
+    host.PROFILE_CARD_HEIGHT = 62
+    host.VALVE_FONT = "Control"
+    host.allFeatures = features
+    host.setTab = function(name: string): ()
+        world.currentTab = name
+    end
+    host.Stats = {
+        Network = {
+            ServerStatsItem = {
+                ["Data Ping"] = {
+                    GetValue = function(): number
+                        return world.ping or 42
+                    end,
+                },
+            },
+        },
+        GetTotalMemoryUsageMb = function(): number
+            return 512
+        end,
+    }
     -- The mobile shortcut layer, as the shell publishes it. The settings page
     -- resizes every placed button when the size slider moves, so the harness
     -- needs the registry even when it is empty.
@@ -572,7 +611,45 @@ function Host.create(world: any): HostStub
     host.TEXT_SCALE_MINIMUM = 0.8
     host.TEXT_SCALE_MAXIMUM = 1.2
 
-    host.state.layout = {optionRowHeight = 34, cardHeight = 38, touch = false}
+    -- The responsive metrics, with the desktop values `computeLayoutMetrics`
+    -- produces. Copied whole rather than filled in a field at a time: a
+    -- library reading a metric the stub forgot gets nil, and nil in an
+    -- arithmetic expression is a stack trace, not a failed assertion.
+    host.state.layout = {
+        mode = "desktop",
+        compact = false,
+        touch = false,
+        shellWidth = 900,
+        shellHeight = 560,
+        shellCorner = 8,
+        sidebarWidth = 168,
+        sidebarCollapsed = false,
+        sidebarPadding = 10,
+        navRowHeight = 30,
+        navIconSize = 22,
+        navFontSize = 11,
+        brandHeight = 46,
+        headerHeight = 44,
+        searchHeight = 28,
+        searchWidth = 230,
+        contentPadding = 14,
+        cardSpacing = 6,
+        cardColumns = 2,
+        cardHeight = 44,
+        cardCorner = 4,
+        controlHeight = 26,
+        optionRowHeight = 34,
+        switchWidth = 38,
+        switchHeight = 20,
+        iconButton = 24,
+        keySlotWidth = 46,
+        touchTarget = 24,
+        titleFontSize = 12,
+        bodyFontSize = 10,
+        captionFontSize = 9,
+        scrollBar = 4,
+        launcherHeight = 28,
+    }
     host.state.textScale = 1
     host.state.animationsEnabled = true
     host.state.blurEnabled = false

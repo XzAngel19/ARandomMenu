@@ -38,6 +38,9 @@ local Manifest: Manifest = {
         "src/library/Entity.luau",
         "src/library/Weapons.luau",
         "src/library/Render.luau",
+        -- Before the pages below: a favourite registers as its card is built,
+        -- and the settings page reads the overlay registry.
+        "src/library/FloatingWindows.luau",
         -- Not a service the modules ask for: it fills the Config. tab. It is
         -- listed here because it needs the same environment and the same
         -- start-once/stop-once handling every other library gets.

@@ -641,7 +641,7 @@ appear for the modes that use them.
 line, `init`/`destroy`, its own card, and nothing in the shell that knows it
 exists.
 
-The shell is **16,688 → 9,291 lines**, and **no feature card is left in it**.
+The shell is **16,688 → 7,483 lines**, and **no feature card is left in it**.
 
 One thing the move taught, worth writing down: the remaining features lived
 inside a single enormous `do ... end` that existed only to hand registers back
@@ -734,8 +734,32 @@ their menu. Every call site already asked `if state.bindMobileActionPlacement
 then`, because the layer only ever existed on touch devices, so nothing needed
 a guard added for the new ordering.
 
-The queue: the floating windows out of the shell, then `state` into typed
-tables.
+### The floating layer
+
+Everything the menu draws *outside* its own window — the favourites list, the
+overlay menu, and the four overlays with their compact settings windows — is
+`src/library/FloatingWindows.luau`. Eighteen hundred lines, and most of the
+reason the shell was still five figures long. It always reached the rest of
+the menu through one table, `state.floatingUi`, which is why the move is a
+relocation and not a rewrite.
+
+Two things the move exposed, both caught by checks rather than by reading:
+
+- The shell published `state.activeGameModule` (the loaded game module) and the
+  overlay wanted the game's *name*, which is a different thing and can change
+  seconds later when the fingerprint resolves. The name is `state.activeGameName`
+  now, written at both points where detection lands, and the first attempt to
+  publish it wrote to a **global** named `state` — the shell's own table is
+  declared three hundred lines further down. The `GlobalUsedAsLocal` lint
+  caught that before it ran anywhere.
+- The layer owns two per-frame loops: the overlay redraw and the profile card's
+  clock. In the shell they simply ran for the life of the menu and were swept up
+  when the task manager was destroyed. A library is started and stopped on its
+  own, so it has to hand them back — and it did not. The harness's teardown
+  check failed the moment the library existed, which is what that check is for.
+
+The queue: `state` into typed tables, and the last big block in the shell,
+`createUniversalFeature`.
 
 ## Module architecture
 
@@ -752,6 +776,7 @@ src/
     Widgets.luau         every control an option row is built from
     SettingsPage.luau    the Config. tab, built the first time it is opened
     MobileActions.luau   placed phone shortcuts: placement, dragging, holds
+    FloatingWindows.luau favourites, the overlay menu and the four overlays
     Entity.luau          player/character cache, team checks, ray queries
     Render.luau          projection, pooled boxes/lines/labels, highlights
   modules/
