@@ -90,6 +90,37 @@ return function(ctx: any): ()
     check("a character without an animate script is left alone",
         AnimationFile.patchAnimateScript(enemy.Character, {RunAnimation = 999}) == false)
 
+    -- Roblox's default animation packs contain assets such as 619512767. That
+    -- id is a container, not a clip Animator can load. Opening it yields the
+    -- Animation child whose id belongs in the Animate script.
+    local avatarEditor: any = world.globals.game:GetService("AvatarEditorService")
+    function avatarEditor:GetItemDetails(_bundleId: number, _itemType: any): any
+        return {
+            BundledItems = {
+                {Name = "Default Run", Id = 619512767},
+            },
+        }
+    end
+    local loadedContainer: any = nil
+    world.globals.game.GetObjects = function(_self: any, asset: string): {any}
+        check("the bundle item is opened before use",
+            asset == "rbxassetid://619512767", asset)
+        local container: any = Mock.newInstance("Folder")
+        local clip: any = Mock.newInstance("Animation")
+        clip.AnimationId = "rbxassetid://913376220"
+        clip.Parent = container
+        loadedContainer = container
+        return {container}
+    end
+    Mock.inject(world, AnimationFile.resolveClipId)
+    Mock.inject(world, AnimationFile.resolveBundle)
+    local resolvedBundle: any = AnimationFile.resolveBundle(12345)
+    check("a bundle container resolves to its playable clip",
+        resolvedBundle.RunAnimation == 913376220,
+        tostring(resolvedBundle.RunAnimation))
+    check("the temporary asset container is destroyed",
+        loadedContainer ~= nil and loadedContainer.Destroyed == true)
+
     local EmoteFile: any = require("../../../src/modules/Spoof/EmotePlayer")
     Mock.inject(world, EmoteFile.init)
     local emotePlayer: any = EmoteFile.init(espContext)
@@ -108,10 +139,38 @@ return function(ctx: any): ()
             and animatorInstance.Tracks[1].IsPlaying == true
             and animatorInstance.Tracks[1].AnimationId == "rbxassetid://507770239",
         animatorInstance and tostring(#animatorInstance.Tracks) or "no animator")
+    local firstTrack: any = animatorInstance.Tracks[1]
     emotePlayer.Feature.options["Stop"].run()
-    check("stopping stops the track",
-        animatorInstance.Tracks[1].IsPlaying == false)
+    check("stopping destroys the track, not only its playback",
+        firstTrack.IsPlaying == false and firstTrack.Destroyed == true)
+
+    emotePlayer.Feature.options["Play"].run()
+    local oneShot: any = animatorInstance.Tracks[#animatorInstance.Tracks]
+    oneShot.Stopped:Fire()
+    check("a finished one-shot destroys itself", oneShot.Destroyed == true)
+
+    -- More than Animator's 64-track ceiling can be requested over one session.
+    -- At most the current track may remain alive, and teardown owns that one.
+    for _ = 1, 70 do
+        emotePlayer.Feature.options["Play"].run()
+    end
+    local liveTracks: number = 0
+    for _, track: any in ipairs(animatorInstance.Tracks) do
+        if not track.Destroyed then
+            liveTracks += 1
+        end
+    end
+    check("replaying never accumulates live tracks past Animator's limit",
+        liveTracks == 1, "live tracks: " .. tostring(liveTracks))
     emotePlayer:Toggle()
+    liveTracks = 0
+    for _, track: any in ipairs(animatorInstance.Tracks) do
+        if not track.Destroyed then
+            liveTracks += 1
+        end
+    end
+    check("module teardown destroys every track it loaded",
+        liveTracks == 0, "live tracks: " .. tostring(liveTracks))
 
     -- Teardown -------------------------------------------------------------------
 

@@ -43,6 +43,7 @@ function Module.init(context: Runtime): any
 
     local runtime: any = {
         track = nil :: AnimationTrack?,
+        tracks = {} :: {[AnimationTrack]: boolean},
         catalog = {} :: {any},
         byLabel = {} :: {[string]: number},
         searching = false,
@@ -93,16 +94,33 @@ function Module.init(context: Runtime): any
         return rows
     end
 
-    local function stop(): ()
-        local track: AnimationTrack? = runtime.track
-        runtime.track = nil
-        if track then
-            local resolved: AnimationTrack = track :: AnimationTrack
+    local function destroyTrack(track: AnimationTrack, stopFirst: boolean): ()
+        runtime.tracks[track] = nil
+        if runtime.track == track then
+            runtime.track = nil
+        end
+        if stopFirst then
             pcall(function(): ()
-                resolved:Stop(0.15)
-                resolved:Destroy()
+                track:Stop(0.15)
             end)
         end
+        pcall(function(): ()
+            track:Destroy()
+        end)
+    end
+
+    local function stop(): ()
+        local track: AnimationTrack? = runtime.track
+        if track then
+            destroyTrack(track :: AnimationTrack, true)
+        end
+    end
+
+    local function destroyAllTracks(): ()
+        for track: AnimationTrack in pairs(runtime.tracks) do
+            destroyTrack(track, true)
+        end
+        runtime.track = nil
     end
 
     local emotes: any
@@ -116,7 +134,7 @@ function Module.init(context: Runtime): any
         Function = function(enabled: boolean): ()
             if not enabled then
                 emotes:SetStatus(nil)
-                stop()
+                destroyAllTracks()
                 return
             end
             emotes:SetStatus(
@@ -125,9 +143,9 @@ function Module.init(context: Runtime): any
             -- Dying mid-emote leaves a track pointing at a humanoid that no
             -- longer exists.
             emotes:Event(localPlayer.CharacterAdded, function(): ()
-                stop()
+                destroyAllTracks()
             end)
-            emotes:Clean(stop)
+            emotes:Clean(destroyAllTracks)
         end,
     })
 
@@ -207,7 +225,7 @@ function Module.init(context: Runtime): any
         Tooltip = "Play the ticked emote, or the id in the box.",
         Function = function(): ()
             task.spawn(function(): ()
-                Module.play(context, emotes, runtime, animator, stop)
+                Module.play(context, emotes, runtime, animator, stop, destroyTrack)
             end)
         end,
     })
@@ -225,7 +243,7 @@ function Module.init(context: Runtime): any
     )
 
     activeCleanup = function(): ()
-        stop()
+        destroyAllTracks()
         runtime.catalog = {}
         runtime.byLabel = {}
         runtime.selected = nil
@@ -294,7 +312,8 @@ function Module.play(
     emotes: any,
     runtime: any,
     animator: () -> Animator?,
-    stop: () -> ()
+    stop: () -> (),
+    destroyTrack: (AnimationTrack, boolean) -> ()
 ): ()
     local typed: number? = tonumber(
         trimmed(tostring(emotes.Options["Emote ID"].Value or ""))
@@ -329,6 +348,7 @@ function Module.play(
     local resolved: AnimationTrack = track :: AnimationTrack
     resolved.Priority = Enum.AnimationPriority.Action
     resolved.Looped = emotes.Options["Loop"].Value == true
+    runtime.tracks[resolved] = true
     runtime.track = resolved
     local ok: boolean = pcall(function(): ()
         resolved:Play(0.1)
@@ -336,16 +356,16 @@ function Module.play(
     end)
     animation:Destroy()
     if not ok then
+        destroyTrack(resolved, false)
         emotes:Notify("the game refused to play it")
         return
     end
     if not resolved.Looped then
-        -- One-shot emotes clean themselves up, so the Stop button is only for
-        -- the looping ones.
+        -- Stopped tracks still count toward Animator's 64-track ceiling until
+        -- they are destroyed. One-shots therefore release themselves instead
+        -- of only dropping the module's pointer.
         resolved.Stopped:Once(function(): ()
-            if runtime.track == resolved then
-                runtime.track = nil
-            end
+            destroyTrack(resolved, false)
         end)
     end
     emotes:Notify("playing " .. tostring(assetId))

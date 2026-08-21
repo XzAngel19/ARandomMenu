@@ -336,8 +336,58 @@ function Module.search(context: Runtime, animations: any, runtime: any): ()
     animations:Notify(tostring(#found) .. " packs from Roblox")
 end
 
--- A bundle id becomes eight asset ids, keyed by the slot each one's name says
--- it belongs to.
+-- A bundle item is often a container asset, not the AnimationClip that an
+-- Animator can play. Roblox's default pack ids are the common example: putting
+-- 619512767 straight into an Animation reaches LoadAnimation and fails with
+-- "AnimationClip loaded is not valid". GetObjects opens the asset locally; an
+-- Animation child names the real clip, while a KeyframeSequence means the id
+-- was already a clip.
+function Module.resolveClipId(assetId: number): number?
+    local loaded: {Instance} = {}
+    local ok: boolean = pcall(function(): ()
+        loaded = game:GetObjects("rbxassetid://" .. tostring(assetId))
+    end)
+    if not ok then
+        return nil
+    end
+
+    local resolved: number? = nil
+    for _, root: Instance in ipairs(loaded) do
+        if root:IsA("KeyframeSequence") then
+            resolved = assetId
+        end
+        local candidates: {Instance} = {root}
+        for _, descendant: Instance in ipairs(root:GetDescendants()) do
+            table.insert(candidates, descendant)
+        end
+        for _, candidate: Instance in ipairs(candidates) do
+            if candidate:IsA("Animation") then
+                local id: number? = tonumber(
+                    string.match((candidate :: Animation).AnimationId, "%d+")
+                )
+                if id and id > 0 then
+                    resolved = id
+                    break
+                end
+            end
+        end
+        root:Destroy()
+        if resolved then
+            break
+        end
+    end
+    -- GetObjects can return several roots. The answer came from one, but none
+    -- of these temporary containers belongs in the DataModel afterwards.
+    for _, root: Instance in ipairs(loaded) do
+        pcall(function(): ()
+            root:Destroy()
+        end)
+    end
+    return resolved
+end
+
+-- A bundle id becomes eight playable clip ids, keyed by the slot each item's
+-- own name identifies.
 function Module.resolveBundle(bundleId: number): {[string]: number}
     local ids: {[string]: number} = {}
     pcall(function(): ()
@@ -356,7 +406,10 @@ function Module.resolveBundle(bundleId: number): {[string]: number}
             local id: number? = tonumber(item.Id or item.id)
             local slot: string? = slotForName(name)
             if id and slot and not ids[slot] then
-                ids[slot] = id
+                local clipId: number? = Module.resolveClipId(id)
+                if clipId then
+                    ids[slot] = clipId
+                end
             end
         end
     end)
