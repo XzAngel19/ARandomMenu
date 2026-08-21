@@ -143,6 +143,37 @@ return function(ctx: any): ()
     local main: any = gui and gui:FindFirstChild("Main")
     check("the shell frame exists", main ~= nil, gui and "no Main" or "no ScreenGui")
 
+    -- Wurst's layout. The ClickGUI does not draw the cards, it places them, so
+    -- what is checked is that every category has a window and that every card
+    -- the menu built ended up inside one of them — a card parented anywhere
+    -- else is a module the player cannot reach.
+    local clickGui: any = shellState and shellState.clickGui
+    check("the ClickGUI started", clickGui ~= nil)
+    if clickGui then
+        local built: number = 0
+        local placed: number = 0
+        for _, name: string in ipairs(clickGui.order) do
+            local record: any = clickGui.categories[name]
+            built += 1
+            placed += record.count
+        end
+        check("a window per category", built >= 6, tostring(built) .. " windows")
+        -- 38 modules plus whatever the active game module adds. Fewer than
+        -- the module count means cards were left parented to the old page.
+        check(
+            "every card was placed in one",
+            placed >= 38,
+            tostring(placed) .. " cards placed"
+        )
+        check(
+            "the grid does not start every window in the same corner",
+            clickGui.categories.Combat ~= nil
+                and clickGui.categories.Movement ~= nil
+                and clickGui.categories.Combat.window.root.Position
+                    ~= clickGui.categories.Movement.window.root.Position
+        )
+    end
+
     local function findNamed(root: any, name: string): any
         if not root then
             return nil

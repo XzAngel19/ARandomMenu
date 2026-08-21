@@ -423,7 +423,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "33c38459fe2f12d5"
+local SOURCE_STAMP: string = "6ed76a21bb635bcb"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -6385,6 +6385,7 @@ local fallbackManifest: any = {
         "src/library/Render.luau",
         "src/library/Cards.luau",
         "src/library/WindowManager.luau",
+        "src/library/ClickGui.luau",
         "src/library/FloatingWindows.luau",
         "src/library/SettingsPage.luau",
         "src/library/MobileActions.luau",

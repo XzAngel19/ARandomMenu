@@ -44,6 +44,9 @@ local Manifest: Manifest = {
         -- Before anything that draws a floating window, because they all ask
         -- it to build one rather than writing drag and clamp out again.
         "src/library/WindowManager.luau",
+        -- Wurst's layout: one window per category. It only moves the cards
+        -- the factory already built, so it comes after both.
+        "src/library/ClickGui.luau",
         -- Before the pages below: a favourite registers as its card is built,
         -- and the settings page reads the overlay registry.
         "src/library/FloatingWindows.luau",

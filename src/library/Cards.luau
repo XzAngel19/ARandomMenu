@@ -671,6 +671,11 @@ function Module.init(context: any): any
         if state.floatingUi then
             state.floatingUi.registerFeature(feature)
         end
+        -- A game module builds its cards after the libraries have started, so
+        -- the ClickGUI cannot have collected them at init.
+        if state.clickGui then
+            state.clickGui.place(feature)
+        end
         applyFeaturePresentation(feature, state.guiStyle == "Default")
 
         -- No "Toggle key" option row any more: every card already carries a key
