@@ -51,5 +51,256 @@
       "transitionFast": "TRANSITION_FAST",
       "transitionSlow": "TRANSITION_SLOW"
     }
+  },
+  "wurst": {
+    "source": "Wurst7 4a22e53d774b9a28e395874834f099e779685998",
+    "uiSettingsHosts": [
+      "WurstLogo",
+      "HackList",
+      "Keybinds",
+      "WurstOptions",
+      "ClickGUI"
+    ],
+    "absent": [
+      "GlobalToggle",
+      "Isolate windows"
+    ],
+    "settings": [
+      {
+        "window": "ClickGUI",
+        "name": "Background",
+        "type": "color",
+        "default": "#404040",
+        "description": "Background color",
+        "luau": "Theme.surface"
+      },
+      {
+        "window": "ClickGUI",
+        "name": "Accent",
+        "type": "color",
+        "default": "#101010",
+        "description": "Accent color",
+        "luau": "Theme.accent"
+      },
+      {
+        "window": "ClickGUI",
+        "name": "Text",
+        "type": "color",
+        "default": "#F0F0F0",
+        "description": "Text color",
+        "luau": "Theme.text"
+      },
+      {
+        "window": "ClickGUI",
+        "name": "Opacity",
+        "type": "slider",
+        "default": 0.5,
+        "description": "",
+        "luau": "OPACITY",
+        "min": 0.15,
+        "max": 0.85,
+        "step": 0.01
+      },
+      {
+        "window": "ClickGUI",
+        "name": "Tooltip opacity",
+        "type": "slider",
+        "default": 0.75,
+        "description": "",
+        "luau": "TOOLTIP_OPACITY",
+        "min": 0.15,
+        "max": 1,
+        "step": 0.01
+      },
+      {
+        "window": "ClickGUI",
+        "name": "Max height",
+        "type": "slider",
+        "default": 200,
+        "description": "Maximum window height\n0 = no limit",
+        "luau": "MAX_HEIGHT",
+        "min": 0,
+        "max": 1000,
+        "step": 50
+      },
+      {
+        "window": "ClickGUI",
+        "name": "Max settings height",
+        "type": "slider",
+        "default": 200,
+        "description": "Maximum height for settings windows\n0 = no limit",
+        "luau": "MAX_SETTINGS_HEIGHT",
+        "min": 0,
+        "max": 1000,
+        "step": 50
+      },
+      {
+        "window": "HackList",
+        "name": "Mode",
+        "type": "enum",
+        "default": "Auto",
+        "description": "Auto mode renders the whole list if it fits onto the screen.\nCount mode only renders the number of active hacks.\nHidden mode renders nothing.",
+        "luau": "HACKLIST_MODE",
+        "values": [
+          "Auto",
+          "Count",
+          "Hidden"
+        ]
+      },
+      {
+        "window": "HackList",
+        "name": "Position",
+        "type": "enum",
+        "default": "Left",
+        "description": "Which side of the screen the HackList should be shown on.\nChange this to Right when using TabGUI.",
+        "luau": "HACKLIST_POSITION",
+        "values": [
+          "Left",
+          "Right"
+        ]
+      },
+      {
+        "window": "HackList",
+        "name": "Color",
+        "type": "color",
+        "default": "#FFFFFF",
+        "description": "Color of the HackList text.\nOnly visible when RainbowUI is disabled.",
+        "luau": "HACKLIST_COLOR"
+      },
+      {
+        "window": "HackList",
+        "name": "Sort by",
+        "type": "enum",
+        "default": "Name",
+        "description": "Determines how the HackList entries are sorted.\nOnly visible when Mode is set to Auto.",
+        "luau": "HACKLIST_SORT_BY",
+        "values": [
+          "Name",
+          "Width"
+        ]
+      },
+      {
+        "window": "HackList",
+        "name": "Reverse sorting",
+        "type": "checkbox",
+        "default": false,
+        "description": "",
+        "luau": "HACKLIST_REVERSE"
+      },
+      {
+        "window": "HackList",
+        "name": "Animations",
+        "type": "checkbox",
+        "default": true,
+        "description": "When enabled, entries slide into and out of the HackList as hacks are enabled and disabled.",
+        "luau": "HACKLIST_ANIMATIONS"
+      },
+      {
+        "window": "WurstLogo",
+        "name": "Background",
+        "type": "color",
+        "default": "#FFFFFF",
+        "description": "Background color.\nOnly visible when RainbowUI is disabled.",
+        "luau": "WURSTLOGO_BACKGROUND"
+      },
+      {
+        "window": "WurstLogo",
+        "name": "Text",
+        "type": "color",
+        "default": "#000000",
+        "description": "Text color.",
+        "luau": "WURSTLOGO_TEXT"
+      },
+      {
+        "window": "WurstLogo",
+        "name": "Visibility",
+        "type": "enum",
+        "default": "Always",
+        "description": "",
+        "luau": "WURSTLOGO_VISIBILITY",
+        "values": [
+          "Always",
+          "Only when outdated"
+        ]
+      },
+      {
+        "window": "TabGUI",
+        "name": "Status",
+        "type": "enum",
+        "default": "Disabled",
+        "description": "",
+        "luau": "TABGUI_STATUS",
+        "values": [
+          "Enabled",
+          "Disabled"
+        ]
+      },
+      {
+        "window": "Taco",
+        "name": "Enabled",
+        "type": "checkbox",
+        "default": false,
+        "description": "Spawns a dancing taco on your hotbar.\n\"I love that little guy. So cute!\" -WiZARD",
+        "luau": "TACO_ENABLED"
+      }
+    ],
+    "keybinds": [
+      {
+        "key": "key.keyboard.b",
+        "commands": "fastplace;fastbreak"
+      },
+      {
+        "key": "key.keyboard.c",
+        "commands": "fullbright"
+      },
+      {
+        "key": "key.keyboard.g",
+        "commands": "flight"
+      },
+      {
+        "key": "key.keyboard.semicolon",
+        "commands": "speednuker"
+      },
+      {
+        "key": "key.keyboard.h",
+        "commands": "say /home"
+      },
+      {
+        "key": "key.keyboard.j",
+        "commands": "jesus"
+      },
+      {
+        "key": "key.keyboard.k",
+        "commands": "multiaura"
+      },
+      {
+        "key": "key.keyboard.n",
+        "commands": "nuker"
+      },
+      {
+        "key": "key.keyboard.r",
+        "commands": "killaura"
+      },
+      {
+        "key": "key.keyboard.right.shift",
+        "commands": "navigator"
+      },
+      {
+        "key": "key.keyboard.right.control",
+        "commands": "clickgui"
+      },
+      {
+        "key": "key.keyboard.u",
+        "commands": "freecam"
+      },
+      {
+        "key": "key.keyboard.x",
+        "commands": "x-ray"
+      },
+      {
+        "key": "key.keyboard.y",
+        "commands": "sneak"
+      }
+    ]
   }
 }

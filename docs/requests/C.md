@@ -48,10 +48,32 @@ ClickGUI suite asserts those. Still needed:
 - `WindowManager` with serialise / restore of position, collapse and pin.
   Until that exists the suite records the gap and stays green.
 
+## UI Settings must take Wurst's defaults, not the prototype's
+
+`docs/wurst-features.md` and `spec.json` `wurst.settings` now hold the
+official defaults. Three colours already match (`Theme.surface` `#404040`,
+`Theme.accent` `#101010`, `Theme.text` `#F0F0F0`). Three numbers do not:
+
+| Setting | Wurst | What we have today |
+|---|---|---|
+| Opacity | `0.5` | `ThemeEngine.shape.opacity` **0.86** (prototype) |
+| Tooltip opacity | `0.75` | `ThemeEngine.shape.tooltipOpacity` **0.95** |
+| Max height | `200` | prototype `--max-h` **340**; `ClickGui.WINDOW_MAX_HEIGHT` **300** |
+
+The shape tokens stay the layout spec. The UI Settings window has to ship
+Wurst's slider defaults (`OPACITY`, `TOOLTIP_OPACITY`, `MAX_HEIGHT`,
+`MAX_SETTINGS_HEIGHT`). A named constant with the prototype number will
+fail the gate.
+
+**GlobalToggle** and **Isolate windows** are not in official Wurst 7. Do
+not add them.
+
 ## Parity gate
 
-`docs/design/prototype/spec.json` is generated from the prototype. The gate
-already checks `ThemeEngine.shape` against it (7 tokens, currently matching).
+`docs/design/prototype/spec.json` is generated from the prototype (pixels)
+and from `tools/wurst_features.py` (Wurst setting defaults). The gate
+already checks `ThemeEngine.shape` against the prototype and `Theme.surface`
+/ `accent` / `text` against Wurst.
 
 Owed — named constants in `Widgets.luau`, so the remaining prototype numbers
 have a counterpart the gate can read. Until they exist the step stays green
