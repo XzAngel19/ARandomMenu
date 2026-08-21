@@ -25,14 +25,9 @@ local activeCleanup: (() -> ())? = nil
 
 function Module.init(context: Runtime): any
     local host: any = context.host
-    local TaskManager: any = host.TaskManager
-    local featureConnections: any = host.featureConnections
-    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
+    local framework: any = context.framework
     local getCharacterParts: any = host.getCharacterParts
     local state: any = host.state
-    local createUniversalFeature: any = host.createUniversalFeature
-    local addNumberOption: any = host.addNumberOption
-    local addCycleOption: any = host.addCycleOption
     local UserInputService: any = host.UserInputService
     local infiniteJumpSettings = {
         mode = "Normal",
@@ -43,8 +38,9 @@ function Module.init(context: Runtime): any
         interval = 0.18,
         stackCeiling = 160,
     }
-    -- Both the enabled flag and the rate limiter live on `state`: bootstrap() is
-    -- already at Luau's 200 local-register ceiling.
+    -- Both the enabled flag and the rate limiter live on `state` so the jump
+    -- callback can keep checking them after the module's own teardown has
+    -- started — a signal already dispatching still delivers one last event.
     state.infiniteJumpEnabled = false
     state.lastInfiniteJumpAt = -math.huge
 
@@ -107,98 +103,99 @@ function Module.init(context: Runtime): any
         root.AssemblyLinearVelocity = Vector3.new(velocity.X, vertical, velocity.Z)
     end
 
-    local function toggleInfiniteJump(enabled)
-        disconnectFeatureConnection("InfiniteJump")
-        disconnectFeatureConnection("InfiniteJumpRise")
-        state.infiniteJumpEnabled = false
-        state.lastInfiniteJumpAt = -math.huge
-
-        if not enabled then
-            return
-        end
-        state.infiniteJumpEnabled = true
-
-        -- `JumpRequest` is the one jump signal every device raises.
-        featureConnections.InfiniteJump = state.onJumpRequest(function(): ()
-            if infiniteJumpSettings.mode == "Rise" then
+    local jump: any
+    jump = framework.Categories.Movement:CreateModule({
+        Name = "Infinite Jump",
+        Category = "Movement",
+        Tooltip = "Jump again in mid-air, as a fixed height, a force, a "
+            .. "climbing stack, a hold that rises, or a fall cancel.",
+        Function = function(enabled: boolean): ()
+            state.infiniteJumpEnabled = false
+            state.lastInfiniteJumpAt = -math.huge
+            if not enabled then
                 return
             end
-            performInfiniteJump()
-        end)
+            state.infiniteJumpEnabled = true
 
-        featureConnections.InfiniteJumpRise = TaskManager:Connect(function(): ()
-            if not state.infiniteJumpEnabled
-                or infiniteJumpSettings.mode ~= "Rise"
-                or not state.isJumpHeld() then
-                return
-            end
+            -- `JumpRequest` is the one jump signal every device raises.
+            jump:Clean(state.onJumpRequest(function(): ()
+                if infiniteJumpSettings.mode == "Rise" then
+                    return
+                end
+                performInfiniteJump()
+            end))
 
-            local _, humanoid, root = getCharacterParts()
-            if not humanoid or not root or humanoid.Health <= 0 then
-                return
-            end
+            jump:Loop(function(): ()
+                if not state.infiniteJumpEnabled
+                    or infiniteJumpSettings.mode ~= "Rise"
+                    or not state.isJumpHeld() then
+                    return
+                end
 
-            humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
-            local velocity = root.AssemblyLinearVelocity
-            root.AssemblyLinearVelocity = Vector3.new(
-                velocity.X,
-                infiniteJumpSettings.riseSpeed,
-                velocity.Z
-            )
-        end)
-    end
+                local _, humanoid, root = getCharacterParts()
+                if not humanoid or not root or humanoid.Health <= 0 then
+                    return
+                end
 
-    local InfiniteJumpFeature = createUniversalFeature(
-        "Infinite Jump",
-        "Normal, force-based, stacking, hold-to-rise or fall-cancel jumping",
-        7,
-        toggleInfiniteJump
-    )
-    addCycleOption(
-        InfiniteJumpFeature,
-        "Mode",
-        {"Normal", "Impulse", "Stack", "Rise", "Fall"},
-        1,
-        function(value)
+                humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
+                local velocity = root.AssemblyLinearVelocity
+                root.AssemblyLinearVelocity = Vector3.new(
+                    velocity.X,
+                    infiniteJumpSettings.riseSpeed,
+                    velocity.Z
+                )
+            end)
+        end,
+    })
+    jump:CreateDropdown({
+        Name = "Mode",
+        List = {"Normal", "Impulse", "Stack", "Rise", "Fall"},
+        Index = 1,
+        Function = function(value: string): ()
             infiniteJumpSettings.mode = value
-        end
-    )
-    addNumberOption(
-        InfiniteJumpFeature,
-        "Jump power",
-        infiniteJumpSettings.strength,
-        10,
-        250,
-        function(value)
+        end,
+    })
+    jump:CreateSlider({
+        Name = "Jump power",
+        Show = {Option = "Mode", Values = {"Normal", "Impulse", "Stack"}},
+        Min = 10,
+        Max = 250,
+        Default = infiniteJumpSettings.strength,
+        Function = function(value: number): ()
             infiniteJumpSettings.strength = value
-        end
-    )
-    addNumberOption(
-        InfiniteJumpFeature,
-        "Jump interval (s)",
-        infiniteJumpSettings.interval,
-        0.05,
-        0.6,
-        function(value)
+        end,
+        Tooltip = "Vertical velocity of one jump. Rise and Fall do not launch "
+            .. "you, so they have no power to set.",
+    })
+    jump:CreateSlider({
+        Name = "Jump interval (s)",
+        Show = {Option = "Mode", Values = {"Normal", "Impulse", "Stack", "Fall"}},
+        Min = 0.05,
+        Max = 0.6,
+        Default = infiniteJumpSettings.interval,
+        Function = function(value: number): ()
             infiniteJumpSettings.interval = value
-        end
-    )
-    addNumberOption(
-        InfiniteJumpFeature,
-        "Rise speed",
-        infiniteJumpSettings.riseSpeed,
-        10,
-        350,
-        function(value)
+        end,
+        Tooltip = "Minimum spacing between jumps. Rise ignores it: it is a "
+            .. "hold, not a repeat.",
+    })
+    jump:CreateSlider({
+        Name = "Rise speed",
+        Show = {Option = "Mode", Values = {"Rise"}},
+        Min = 10,
+        Max = 350,
+        Default = infiniteJumpSettings.riseSpeed,
+        Function = function(value: number): ()
             infiniteJumpSettings.riseSpeed = value
-        end
-    )
+        end,
+    })
 
     activeCleanup = function(): ()
-        disconnectFeatureConnection("InfiniteJump")
+        state.infiniteJumpEnabled = false
+        state.lastInfiniteJumpAt = -math.huge
     end
     Module.Initialized = true
-    return InfiniteJumpFeature
+    return jump
 end
 
 function Module.destroy(): ()

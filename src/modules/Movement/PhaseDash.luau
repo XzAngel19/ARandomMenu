@@ -23,13 +23,9 @@ local activeCleanup: (() -> ())? = nil
 
 function Module.init(context: Runtime): any
     local host: any = context.host
-    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
+    local framework: any = context.framework
     local getCharacterParts: any = host.getCharacterParts
     local state: any = host.state
-    local createUniversalFeature: any = host.createUniversalFeature
-    local addToggleOption: any = host.addToggleOption
-    local addNumberOption: any = host.addNumberOption
-    local addCycleOption: any = host.addCycleOption
     type PhaseDashSettings = {
         mode: string,
         distance: number,
@@ -148,116 +144,112 @@ function Module.init(context: Runtime): any
         createPhaseFlash(character)
     end
 
-    local function togglePhaseDash(enabled: boolean): ()
-        disconnectFeatureConnection("PhaseDash")
-        phaseDashEnabled = enabled
-        if not enabled then
-            return
-        end
-        -- The dash key is the card's header key slot (see
-        -- `state.bindFeatureActivationKey` where the module is declared), so there
-        -- is no private input handler and no "Dash key" row in the panel.
-    end
 
-
-    local PhaseDashFeature = createUniversalFeature(
-        "Phase Dash",
-        "Directional dash: collision-aware blink or a velocity slide",
-        25,
-        togglePhaseDash
-    )
-    addCycleOption(
-        PhaseDashFeature,
-        "Mode",
-        {"Blink", "Slide"},
-        1,
-        function(value: string): ()
+    local phaseDash: any
+    phaseDash = framework.Categories.Movement:CreateModule({
+        Name = "Phase Dash",
+        Category = "Movement",
+        Tooltip = "Directional dash: collision-aware blink or a velocity slide. "
+            .. "The card's key slot is the dash key.",
+        Function = function(enabled: boolean): ()
+            phaseDashEnabled = enabled
+            -- The dash key is the card's header key slot (bound below), so there
+            -- is no private input handler and no "Dash key" row in the panel.
+        end,
+    })
+    phaseDash:CreateDropdown({
+        Name = "Mode",
+        List = {"Blink", "Slide"},
+        Index = 1,
+        Function = function(value: string): ()
             phaseDashSettings.mode = value
-        end
-    )
-    addNumberOption(
-        PhaseDashFeature,
-        "Dash distance",
-        phaseDashSettings.distance,
-        4,
-        80,
-        function(value: number): ()
+        end,
+    })
+    phaseDash:CreateSlider({
+        Name = "Dash distance",
+        Show = {Option = "Mode", Values = {"Blink"}},
+        Min = 4,
+        Max = 80,
+        Default = phaseDashSettings.distance,
+        Function = function(value: number): ()
             phaseDashSettings.distance = value
-        end
-    )
-    addNumberOption(
-        PhaseDashFeature,
-        "Cooldown",
-        phaseDashSettings.cooldown,
-        0.1,
-        5,
-        function(value: number): ()
+        end,
+        Tooltip = "How far a blink tries to move before the wall check "
+            .. "shortens it.",
+    })
+    phaseDash:CreateSlider({
+        Name = "Cooldown",
+        Min = 0.1,
+        Max = 5,
+        Default = phaseDashSettings.cooldown,
+        Function = function(value: number): ()
             phaseDashSettings.cooldown = value
-        end
-    )
-    addNumberOption(
-        PhaseDashFeature,
-        "Exit speed",
-        phaseDashSettings.exitSpeed,
-        0,
-        180,
-        function(value: number): ()
+        end,
+    })
+    phaseDash:CreateSlider({
+        Name = "Exit speed",
+        Show = {Option = "Mode", Values = {"Blink"}},
+        Min = 0,
+        Max = 180,
+        Default = phaseDashSettings.exitSpeed,
+        Function = function(value: number): ()
             phaseDashSettings.exitSpeed = value
-        end
-    )
-    addNumberOption(
-        PhaseDashFeature,
-        "Slide speed",
-        phaseDashSettings.slideSpeed,
-        20,
-        250,
-        function(value: number): ()
+        end,
+        Tooltip = "The velocity a blink leaves you with when Preserve "
+            .. "velocity is off.",
+    })
+    phaseDash:CreateSlider({
+        Name = "Slide speed",
+        Show = {Option = "Mode", Values = {"Slide"}},
+        Min = 20,
+        Max = 250,
+        Default = phaseDashSettings.slideSpeed,
+        Function = function(value: number): ()
             phaseDashSettings.slideSpeed = value
-        end
-    )
-    addNumberOption(
-        PhaseDashFeature,
-        "Collision padding",
-        phaseDashSettings.collisionPadding,
-        0,
-        8,
-        function(value: number): ()
+        end,
+    })
+    phaseDash:CreateSlider({
+        Name = "Collision padding",
+        Show = {Option = "Mode", Values = {"Blink"}},
+        Min = 0,
+        Max = 8,
+        Default = phaseDashSettings.collisionPadding,
+        Function = function(value: number): ()
             phaseDashSettings.collisionPadding = value
-        end
-    )
-    addNumberOption(
-        PhaseDashFeature,
-        "Flash duration (s)",
-        phaseDashSettings.flashDuration,
-        0.05,
-        1.2,
-        function(value: number): ()
+        end,
+        Tooltip = "Studs of clearance kept between you and whatever the blink "
+            .. "stopped at.",
+    })
+    phaseDash:CreateSlider({
+        Name = "Flash duration (s)",
+        Min = 0.05,
+        Max = 1.2,
+        Default = phaseDashSettings.flashDuration,
+        Function = function(value: number): ()
             phaseDashSettings.flashDuration = value
-        end
-    )
-    addToggleOption(
-        PhaseDashFeature,
-        "Preserve velocity",
-        phaseDashSettings.preserveVelocity,
-        function(value: boolean): ()
+        end,
+    })
+    phaseDash:CreateToggle({
+        Name = "Preserve velocity",
+        Show = {Option = "Mode", Values = {"Blink"}},
+        Default = phaseDashSettings.preserveVelocity,
+        Function = function(value: boolean): ()
             phaseDashSettings.preserveVelocity = value
-        end
-    )
+        end,
+        Tooltip = "Keep the velocity you had before the blink instead of "
+            .. "replacing it with Exit speed.",
+    })
     -- The dash key is the card's own key slot, not an option row: one module, one
     -- keybind, in the place every other module keeps it. It starts blank like
     -- every other slot — the module used to arrive pre-bound to Q for no reason
     -- the player could see. On touch, tapping the slot places a DASH button.
-    state.bindFeatureActivationKey(
-        PhaseDashFeature,
-        nil,
-        performPhaseDash
-    )
+    state.bindFeatureActivationKey(phaseDash.Feature, nil, performPhaseDash)
 
     activeCleanup = function(): ()
-        disconnectFeatureConnection("PhaseDash")
+        phaseDashEnabled = false
     end
     Module.Initialized = true
-    return PhaseDashFeature
+    return phaseDash
 end
 
 function Module.destroy(): ()

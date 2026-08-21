@@ -56,6 +56,31 @@ and Speed.luau both created a feature named "Speed", so the two cards shared
 the `Universal.Speed` configKey and overwrote each other's saved values.
 Its saved options move from `Universal.Speed.*` to `Universal.PhysicsSpeed.*`.
 
+## Module audit (every card under src/modules)
+
+No option anywhere was doing nothing — the deletion passes before this one
+(TriggerBot "nine rows became six", MM2's ESP regrouping, Knife Redirect's
+two rows) had already cleared the dead weight, and the build's dead-option
+contract keeps it clear. What the audit did find: three legacy cards whose
+rows only exist under one mode of the card, with no way to say so. They are
+kernel modules now, and their rows declare `Show = {Option = "Mode",
+Values = {...}}`:
+
+- **Phase Dash** — Dash distance, Exit speed, Collision padding and
+  Preserve velocity are Blink's; Slide speed is Slide's. Cooldown and Flash
+  duration are the only always-rows left.
+- **Infinite Jump** — Jump power exists for Normal/Impulse/Stack (Rise and
+  Fall never launch you), Jump interval for every repeat mode except Rise,
+  Rise speed only for Rise.
+- **No Fall** — Safe landing speed is the Impact brake (dead in State),
+  Reset fall record is the State trick (dead in Impact). Ground scan stays
+  always: both paths brake near the floor.
+
+Cards with a single always-relevant control (Gravity, FOV, Jump Power,
+Safe Walk, High Jump, Lag Switch, …) still have nothing to gate, and the
+one-option toggles (Noclip, X-Ray, Anti-Void, Anti-AFK, Rejoin) have
+nothing to declare.
+
 ## Agent A
 
 `tools/bundle.py` and the stamped loader live on this branch from Agent A.
