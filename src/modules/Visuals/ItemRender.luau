@@ -159,7 +159,7 @@ function Module.init(context: Runtime): any
                 indexConnections = {}
                 table.clear(index)
             end)
-            render:Loop(function(deltaTime: number): ()
+            render:Render(function(deltaTime: number): ()
                 accumulator += deltaTime
                 if accumulator < render.Options["Refresh interval"].Value then
                     return
@@ -283,9 +283,9 @@ function Module.init(context: Runtime): any
         Name = "Refresh interval",
         Min = 0,
         Max = 1,
-        Default = 0.2,
-        Tooltip = "Seconds between sweeps of the workspace. Objects do not "
-            .. "move as often as players do.",
+        Default = 0,
+        Tooltip = "Seconds between redraws. 0 follows every rendered frame so "
+            .. "labels stay attached while the camera moves.",
     })
 
     -- The picker: one tap, one name, menu back.

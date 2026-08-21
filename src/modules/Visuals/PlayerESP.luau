@@ -56,7 +56,7 @@ function Module.init(context: Runtime): any
                 table.clear(pool)
                 return
             end
-            esp:Loop(function(deltaTime: number): ()
+            esp:Render(function(deltaTime: number): ()
                 accumulator += deltaTime
                 local interval: number = esp.Options["Refresh interval"].Value
                 if accumulator < interval then
@@ -201,9 +201,9 @@ function Module.init(context: Runtime): any
         Name = "Refresh interval",
         Min = 0,
         Max = 0.2,
-        Default = 0.03,
-        Tooltip = "Seconds between redraws. 0 redraws every frame, which no "
-            .. "display needs and every frame budget notices.",
+        Default = 0,
+        Tooltip = "Seconds between redraws. 0 follows every rendered frame so "
+            .. "the overlay stays attached to the camera.",
     })
 
     -- What the game adds.

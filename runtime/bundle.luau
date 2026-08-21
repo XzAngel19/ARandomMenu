@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "76784dc6e38ce36b",
+    stamp = "c534b251ccdcb7d9",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -9691,7 +9691,7 @@ function Module.init(context: Runtime): any
                 indexConnections = {}
                 table.clear(index)
             end)
-            render:Loop(function(deltaTime: number): ()
+            render:Render(function(deltaTime: number): ()
                 accumulator += deltaTime
                 if accumulator < render.Options["Refresh interval"].Value then
                     return
@@ -9815,9 +9815,9 @@ function Module.init(context: Runtime): any
         Name = "Refresh interval",
         Min = 0,
         Max = 1,
-        Default = 0.2,
-        Tooltip = "Seconds between sweeps of the workspace. Objects do not "
-            .. "move as often as players do.",
+        Default = 0,
+        Tooltip = "Seconds between redraws. 0 follows every rendered frame so "
+            .. "labels stay attached while the camera moves.",
     })
 
     -- The picker: one tap, one name, menu back.
@@ -10070,7 +10070,7 @@ function Module.init(context: Runtime): any
                 table.clear(pool)
                 return
             end
-            esp:Loop(function(deltaTime: number): ()
+            esp:Render(function(deltaTime: number): ()
                 accumulator += deltaTime
                 local interval: number = esp.Options["Refresh interval"].Value
                 if accumulator < interval then
@@ -10215,9 +10215,9 @@ function Module.init(context: Runtime): any
         Name = "Refresh interval",
         Min = 0,
         Max = 0.2,
-        Default = 0.03,
-        Tooltip = "Seconds between redraws. 0 redraws every frame, which no "
-            .. "display needs and every frame budget notices.",
+        Default = 0,
+        Tooltip = "Seconds between redraws. 0 follows every rendered frame so "
+            .. "the overlay stays attached to the camera.",
     })
 
     -- What the game adds.
