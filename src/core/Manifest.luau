@@ -42,6 +42,9 @@ local Manifest: Manifest = {
         -- listed here because it needs the same environment and the same
         -- start-once/stop-once handling every other library gets.
         "src/library/SettingsPage.luau",
+        -- Placed phone shortcuts. The launcher that opens the menu is not here:
+        -- it stays in the shell, because on a phone it is the only way in.
+        "src/library/MobileActions.luau",
     },
     modules = {
         -- Friend List comes first: every targeting module below asks it who

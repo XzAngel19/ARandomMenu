@@ -641,7 +641,7 @@ appear for the modes that use them.
 line, `init`/`destroy`, its own card, and nothing in the shell that knows it
 exists.
 
-The shell is **16,688 → 9,742 lines**, and **no feature card is left in it**.
+The shell is **16,688 → 9,291 lines**, and **no feature card is left in it**.
 
 One thing the move taught, worth writing down: the remaining features lived
 inside a single enormous `do ... end` that existed only to hand registers back
@@ -719,8 +719,23 @@ The check reads what the executor provides from `env.d.luau` and what the shell
 provides from the environment table itself, so there is no hand-kept list to go
 stale.
 
-The queue: the mobile action layer and the floating windows out of the shell,
-then `state` into typed tables.
+### The mobile action layer
+
+Placed shortcuts — the buttons a phone player drops on top of the game so a
+feature can be fired without opening the menu — are
+`src/library/MobileActions.luau`: placement mode, dragging, snapping back
+inside the screen, hold bindings that behave like a held key, and remembering
+all of it between sessions.
+
+The launcher, the one button that opens the menu, deliberately did **not** go
+with them. On a phone it is the only way in, so it cannot depend on a download
+arriving: if the library never loads the player loses their shortcuts, not
+their menu. Every call site already asked `if state.bindMobileActionPlacement
+then`, because the layer only ever existed on touch devices, so nothing needed
+a guard added for the new ordering.
+
+The queue: the floating windows out of the shell, then `state` into typed
+tables.
 
 ## Module architecture
 
@@ -736,6 +751,7 @@ src/
   library/
     Widgets.luau         every control an option row is built from
     SettingsPage.luau    the Config. tab, built the first time it is opened
+    MobileActions.luau   placed phone shortcuts: placement, dragging, holds
     Entity.luau          player/character cache, team checks, ray queries
     Render.luau          projection, pooled boxes/lines/labels, highlights
   modules/

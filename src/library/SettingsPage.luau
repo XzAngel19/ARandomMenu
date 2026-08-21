@@ -807,7 +807,10 @@ function Module.init(context: any): SettingsPage
 
             -- Every placed button follows immediately, and is pulled back on screen
             -- if the new size pushed it past an edge.
-            for _, record: MobileActionRecord in pairs(state.mobileUi.actions) do
+            -- `any` rather than the record type: that type belongs to
+            -- src/library/MobileActions.luau, and a downloaded file cannot
+            -- require another one. Naming it here annotated nothing.
+            for _, record: any in pairs(state.mobileUi.actions) do
                 record.button.Size = UDim2.fromOffset(size, size)
                 local clamped: Vector2 = state.mobileUi.clampButtonPosition(
                     Vector2.new(
