@@ -218,6 +218,29 @@ if workflow("tools/workflow-validate.yml") != workflow(".github/workflows/valida
 PYTHON
 echo "ok"
 
+step "Every suite is actually run"
+# A suite file the runner does not require is a hundred green checks that
+# never execute, and the total at the end says nothing is wrong. Three of them
+# arrived at once, written against a second runner that existed while the
+# split was on another branch.
+python3 - <<'PYTHON'
+import os
+import re
+
+listed = set(re.findall(r'require\("\./suites/([\w-]+)"\)', open("tools/test/run.luau").read()))
+present = {name[:-5] for name in os.listdir("tools/test/suites") if name.endswith(".luau")}
+orphans = sorted(present - listed)
+missing = sorted(listed - present)
+if orphans:
+    raise SystemExit(
+        "suites nothing runs:\n  " + "\n  ".join(orphans)
+        + "\n  add them to tools/test/run.luau or delete them"
+    )
+if missing:
+    raise SystemExit("run.luau requires suites that do not exist:\n  " + "\n  ".join(missing))
+PYTHON
+echo "ok"
+
 step "Bundle stamp matches the sources"
 # A stale runtime/bundle.luau serving old code while the repo says otherwise is
 # the class of silent rot the stamp exists to prevent.
