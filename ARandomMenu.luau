@@ -423,6 +423,13 @@ local RUNTIME_RAW_BASE: string =
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
 local SOURCE_STAMP: string = "b79656c8cbf3e8c1"
+-- The clock starts here, when the bootstrap chunk begins running.
+--
+-- It used to start inside the module loader, which is near the *end* of the
+-- work: it reported a third of a second while the player watched the window
+-- being built for however long that takes. Everything between these two
+-- points is now the "gui" phase.
+local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
 local PENDING_FINGERPRINT: boolean = false
 
@@ -5939,8 +5946,11 @@ state.boot = {
     bundle = nil :: {[string]: string}?,
     sources = {} :: {[string]: string},
     timing = {} :: {[string]: number},
-    started = os.clock(),
+    started = BOOT_STARTED_AT,
 }
+-- Everything before the loader: the window, the rail, the boards, the mobile
+-- layer. It is measured as one block because it is one straight line of work.
+state.boot.timing.gui = os.clock() - BOOT_STARTED_AT
 
 state.markBoot = function(phase: string, startedAt: number): ()
     state.boot.timing[phase] = os.clock() - startedAt
@@ -5950,8 +5960,9 @@ state.summarizeBoot = function(): ()
     local timing: any = state.boot.timing
     local total: number = os.clock() - (state.boot.started or os.clock())
     print(string.format(
-        "[RTM:Timing] fingerprint %.2fs · bundle %.2fs · manifest %.2fs · widgets %.2fs · framework %.2fs · libraries %.2fs · modules %.2fs (%d) · game module %.2fs · total %.2fs",
+        "[RTM:Timing] fingerprint %.2fs · gui %.2fs · bundle %.2fs · manifest %.2fs · widgets %.2fs · framework %.2fs · libraries %.2fs · modules %.2fs (%d/%d) · game module %.2fs · total %.2fs",
         BOOT_FINGERPRINT_SECONDS,
+        tonumber(timing.gui) or 0,
         tonumber(timing.bundle) or 0,
         tonumber(timing.manifest) or 0,
         tonumber(timing.widgets) or 0,
@@ -5959,6 +5970,7 @@ state.summarizeBoot = function(): ()
         tonumber(timing.libraries) or 0,
         tonumber(timing.modules) or 0,
         tonumber(timing.moduleCount) or 0,
+        tonumber(timing.moduleTotal) or 0,
         tonumber(timing.game) or 0,
         total
     ))
@@ -6398,7 +6410,22 @@ for _, entry: any in ipairs(manifest.modules) do
     end
 end
 state.boot.timing.moduleCount = moduleCount
+state.boot.timing.moduleTotal = #manifest.modules
 state.markBoot("modules", modulesAt)
+
+-- A module that fails to start is a card that is simply not there, and the
+-- only trace was one `warn` among the loading chatter. Five of thirty-eight
+-- went missing on a real client for a week before anyone counted them.
+if moduleCount < #manifest.modules then
+    local missing: number = #manifest.modules - moduleCount
+    state.logBootstrapError(
+        tostring(missing)
+            .. " de "
+            .. tostring(#manifest.modules)
+            .. " módulos no arrancaron; busca \"Módulo falló\" más arriba"
+    )
+    notify(tostring(missing) .. " módulos no cargaron — revisa la consola")
+end
 
 state.cleanupFrameworkRuntime = function(): ()
     for index: number = #loaded, 1, -1 do
