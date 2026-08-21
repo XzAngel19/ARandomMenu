@@ -5571,6 +5571,14 @@ local function createGameModuleEnvironment(
         featureConnections = featureConnections,
         disconnectFeatureConnection = disconnectFeatureConnection,
         getCharacterParts = getCharacterParts,
+        -- Both of these existed in the shell from the start and neither was
+        -- ever published here. Five modules called `addFeatureTooltip` while
+        -- building their card, got nil, and died mid-init — five cards that
+        -- simply were not in the menu, on every client, for a week. Rejoin
+        -- Server calls `cloneReference` only when its button is pressed, so it
+        -- loaded fine and broke on the click instead.
+        addFeatureTooltip = addFeatureTooltip,
+        cloneReference = cloneReference,
 
         -- The primitives the widget library builds its controls out of. They
         -- are shell-owned — one `create`, one set of design tokens, one config

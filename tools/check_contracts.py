@@ -138,14 +138,21 @@ def environment_keys(shell: str) -> set:
 def host_contract(shell: str, sources: list, failures: list) -> None:
     """Every `host.x` a downloaded file reads has to be something the shell puts there.
 
-    The kernel and the libraries take the same environment the game modules
-    take, and they read it by field rather than as a global — so the same
-    nil-at-runtime failure applies, one layer lower. This is what caught the
-    widget library asking for `PopupLayer` before the shell published it.
+    Every file under src/ takes the same environment, and reads it by field
+    rather than as a global, so a name the shell never published is nil the
+    first time it is touched.
+
+    This check used to look only at src/library/ and src/core/, and the hole
+    cost a week: Spider, Anti-Void, Noclip, Anti-AFK and Fling all called
+    `host.addFeatureTooltip` while building their card, got nil, and died
+    mid-init. Five cards were absent from every client and the only trace was
+    one warn each. Rejoin Server reads `host.cloneReference` inside its button
+    handler, so it loaded fine and broke on the click instead — which is worse,
+    because it looks present.
     """
     exposed = environment_keys(shell)
     for path in sources:
-        if not (path.startswith("src/library/") or path.startswith("src/core/")):
+        if not path.startswith("src/"):
             continue
         for name in sorted(set(re.findall(r"host\.(\w+)", open(path).read()))):
             if name not in exposed:
