@@ -43,7 +43,10 @@ Your sandbox can die at any moment; the remote is the only thing that persists.
 
 ## 4. Stay in your lane
 
-Every agent owns a disjoint set of files, listed in its brief. Do not edit a
+Every agent owns a disjoint set of files, listed in its brief. **A suite that
+tests a module belongs to whoever owns the module** — a fix and the test that
+proves it have to land in the same green commit, and they cannot if two agents
+own the two halves. Do not edit a
 file you do not own, even to fix an obvious bug — two agents editing one file is
 a merge conflict in generated output that nobody can resolve safely.
 
@@ -51,8 +54,16 @@ If you need a change in someone else's file: append the request to
 `docs/requests/<your-letter>.md`, **say it in your chat reply as well**, and
 keep working around it.
 
-Nobody edits `runtime/bundle.luau`. It is generated. The integrator regenerates
-it. If it conflicts, take neither side — regenerate.
+**Regenerating the bundle is not editing the shell.** `python3 tools/bundle.py`
+rewrites `runtime/bundle.luau` and one stamp line in `ARandomMenu.luau`, both of
+which are generated from your sources. Run it whenever the gate tells you the
+stamp is stale, and commit both files with your change — the alternative is what
+happened the first time this was unclear: an agent finished a correct increment
+and then sat on it because it read "do not edit the shell" as "do not run the
+generator".
+
+Never hand-edit either file, and never resolve a conflict inside them: take
+neither side and regenerate.
 
 ## 5. Findings go in the chat reply, not only in a file
 

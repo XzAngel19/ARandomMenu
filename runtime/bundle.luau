@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "8949e7fced1af7b4",
+    stamp = "76784dc6e38ce36b",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -2405,6 +2405,7 @@ export type Module = {
     CleanAll: (self: Module) -> (),
     Toggle: (self: Module, value: boolean?) -> (),
     Notify: (self: Module, message: string) -> (),
+    SetStatus: (self: Module, status: string?) -> (),
 }
 
 export type Category = {
@@ -2946,6 +2947,15 @@ function Module.init(context: any): Framework
                 return
             end
             onToggle(not created.Enabled)
+        end
+
+        -- What the HUD list writes in brackets after the module's name, the
+        -- way Wurst prints `AutoTotem [0 totems]`. Only the module knows what
+        -- is worth saying, and only while it is running; `nil` means say
+        -- nothing, which is the right answer for most of them most of the
+        -- time. A bracket that always reads `[on]` is noise.
+        function created:SetStatus(status: string?): ()
+            created.Status = status
         end
 
         function created:Notify(message: string): ()

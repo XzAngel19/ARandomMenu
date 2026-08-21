@@ -1,188 +1,95 @@
-# Agent C — tooling, tests, licensing and assets
+# Agent C — the harness, and holding the port to its spec
 
-You own **`tools/**`** and **`docs/**`** (except `docs/agents/*`, which belongs to
-the integrator). You do not edit `src/`, `ARandomMenu.luau`, or
-`runtime/bundle.luau`. When a test needs a product change, write it in
-`docs/requests/C.md` **and say it in your chat reply**, then keep going.
+Read `docs/agents/RULES.md` first. Sync before anything else; the recipe is in
+rule 12.
 
-Read `docs/agents/RULES.md` in full before anything else. Then
-`docs/design/UI-V2.md`, and open `docs/design/prototype/index.html` in a browser
-— that prototype is the specification for the interface being built.
+You own **`tools/**`** and **`docs/**`**, with two changes:
 
-## What changed, and why your queue is different now
+- `docs/agents/*` is the integrator's.
+- **The suites that test a module now belong to agent D.** A fix and the test
+  that proves it have to land in the same green commit. You keep the harness
+  itself — `run.luau`, `Roblox.luau`, `Host.luau`, `check_contracts.py`,
+  `validate.sh` — and the suites that test the shell, the libraries and the
+  interface.
 
-The menu is being rebuilt as a deliberate Roblox port of the **Wurst Client**,
-the way `VapeV4ForRoblox` is a port of Vape. Same reading: 95% Wurst, 5% Roblox
-in the layout and the polish. That decision drags three things into your lane
-that were not there before — a licence, an asset pipeline, and a rename.
+Heads up on two files: I edited `tools/test/suites/movement-engines.luau` for
+the PhysicsSpeed → VehicleSpeed rename, and `tools/test/suites/floating.luau` so
+it starts the window manager before the overlays. Both had to be atomic with a
+change on the other side of the fence. Sync before you touch them.
 
-## 1. Licence and attribution
+## The only thing that matters right now
 
-Wurst7 is GPL-3.0 and this repository has no LICENSE file. Since the menu is
-going public as a port, add the paperwork once and stop thinking about it:
-`LICENSE` (GPL-3.0 text), `NOTICE.md` (what came from `Wurst-Imperium/Wurst7`,
-which files, at which upstream commit, with their copyright line), and a
-paragraph at the top of `README.md` saying this is an unofficial port, not
-affiliated, not endorsed. Half an hour of work; do it early so nothing later
-has to wait on it.
+The menu is being turned into a Roblox port of the Wurst Client and the
+interface is being rebuilt this week. Everything below serves that. Anything
+else waits.
 
-## 2. The asset pipeline
-
-Wurst's assets are small and I have already listed them. From
-`Wurst-Imperium/Wurst7`, `src/main/resources/assets/wurst/`:
-
-| File | Use |
-|---|---|
-| `wurst_128.png` | The logo. Goes top-left, next to the wordmark. |
-| `icon.png` | Small mark, for the pill and the loading screen. |
-| `colorpalette.png` | The colour-picker texture. Ours is drawn in code; compare and decide. |
-| `dancingtaco1..4.png` | The taco easter egg. Four frames. Keep it — it is part of what the client *is*. |
-| `translations/en_us.json` | Every hack name, description and setting label in the client. The most useful file in the list: it is the naming and tooltip voice we are copying. |
-
-Skip `shaders/` and `post_effect/` — Minecraft-specific, useless to us.
-
-Write **`tools/fetch_wurst_assets.py`**:
-
-- Downloads those files at a **pinned commit sha**, not `master`.
-- Writes them to `assets/wurst/`, each with its sha256 recorded in
-  `assets/wurst/manifest.json` alongside its upstream path and the pinned sha.
-- Is idempotent, and prints a diff rather than silently overwriting.
-- A gate step re-verifies every checksum, so a corrupted or edited asset fails
-  the build instead of shipping.
-
-Note for context, not for you to implement: the runtime already knows how to
-show these. `ARandomMenu.luau` downloads a PNG, `writefile`s it and resolves it
-through `getcustomasset`/`getsynasset`, with a text fallback when the executor
-has neither. Your job ends at "the bytes are vendored, verified and attributed".
-
-## 2b. The parity spec — the highest-value thing you can build
-
-The interface is being rebuilt to match Wurst, and "matches" has to mean
-something a machine can check, or it will drift the moment two people disagree
-about a padding.
+## 1. The parity spec — do this first
 
 `docs/design/prototype/index.html` is a working ClickGUI and it is the
-specification. Every number in its CSS is a decision: 22 px rows, 22 px title
-bars, a 2 px gap, a 1 px border, a 5 px slider bar with a 7×11 knob, 11.5 px
-labels, 4 px corners, 0.86 body opacity, a 400 ms tooltip delay, 0.10-0.18 s
-transitions.
+specification for the port. Every number in its CSS is a decision: 22 px rows,
+22 px title bars, a 2 px gap, a 1 px border, a 5 px slider bar with a 7×11 knob,
+11.5 px labels, 4 px corners, 0.86 body opacity, a 400 ms tooltip delay,
+transitions between 0.10 s and 0.18 s.
 
 Build two things:
 
-1. **`docs/design/prototype/spec.json`**, generated by a script that parses the
-   prototype's `:root` block and its component rules. Not hand-copied — a
-   hand-copied file is wrong within a week.
-2. **A gate step** that reads `spec.json` and checks the Luau widgets against
-   it. The widgets will expose their metrics through the theme's shape tokens
-   (`ThemeEngine.shape`: `rowHeight`, `radius`, `borderThickness`, `opacity`,
-   `maxHeight`, `scale`) and through named constants in `Widgets.luau`. Any
-   number in the spec that has no counterpart in the code, or a counterpart with
-   a different value, fails the step and names both.
+1. **`docs/design/prototype/spec.json`**, produced by a script that parses the
+   prototype's `:root` block and its component rules. Generated, not hand-copied
+   — a hand-copied file is wrong within a week.
+2. **A gate step** that reads it and holds the Luau side to it. The shape tokens
+   already exist as `ThemeEngine.shape` in the shell (`opacity`,
+   `tooltipOpacity`, `radius`, `rowHeight`, `borderThickness`, `maxHeight`,
+   `scale`); the rest will arrive as named constants in `Widgets.luau` and
+   `WindowManager.luau` as they are ported. Any number in the spec with no
+   counterpart, or a counterpart holding a different value, fails the step and
+   names both sides.
 
-When something in the prototype is wrong, it gets changed there and the gate
-tells us which Luau constants have to follow. That is the whole point.
+I am porting the row and the category windows now. Without this, "matches Wurst"
+means whatever the last person to look at it thought, and it drifts.
 
-## 2c. Wurst's own words
+## 2. Suites ahead of the code, not behind it
 
-`translations/en_us.json` from Wurst is every hack name, every description and
-every setting label in the client — roughly a thousand strings written in one
-consistent voice over eleven years. Our cards have tooltips written by several
-different hands.
+These are the pieces landing over the next few days. Writing the tests first is
+the fastest way to keep the rebuild from breaking what already works — and you
+can write them now, because the behaviours are decided and visible in the
+prototype.
 
-Turn it into `docs/wurst-voice.md`: the naming conventions it reveals (how a
-hack is named versus a setting, when a description warns rather than explains,
-sentence length, capitalisation), plus a table of the Wurst hacks that have a
-counterpart in our menu and what Wurst calls them. Agent D rewrites the tooltips
-from it; you produce the reference.
+- **Windows.** `state.windows` exists: `Create`, `Adopt`, `Get`, `Raise`,
+  `Reclamp`, `SetMenuVisible`. Open several, move one, collapse another, pin a
+  third, serialise, boot again from that config, assert the layout came back.
+  Assert no window can end up fully off-screen. Assert snapping lands flush on a
+  viewport edge and on another window's edge within eight pixels, and does not
+  snap at nine.
+- **Theme.** Extend `clickgui.luau`: assert every one of the 22 tokens is bound
+  somewhere after a boot, and that `Apply` leaves no instance holding a colour
+  from the previous preset.
+- **The row.** When it lands: enabled fills the row, the triangle only exists
+  when the module has options, expanding pushes the rows below down, and the
+  kernel's `Show` rules still hide and reveal inside an expansion while the
+  window's height follows. Player ESP has the deepest rule tree in the menu.
+- **The HUD list.** Agent D is giving every module a `card:SetStatus(text)`.
+  Assert the list contains exactly the enabled cards, that a status appears in
+  brackets, and that a `nil` status prints the bare name.
 
-Do not machine-translate our tooltips into theirs. Their descriptions are about
-Minecraft, and a tooltip that mentions bedrock in a Roblox menu is worse than a
-plain one.
+## 3. Wurst's voice
 
-## 3. The rename
+`assets/wurst/translations/en_us.json` is already vendored. Turn it into
+`docs/wurst-voice.md`: the naming conventions it reveals — how a hack is named
+versus a setting, when a description warns instead of explaining, sentence
+length, capitalisation — plus a table of the Wurst hacks that have a counterpart
+here and what Wurst calls them.
 
-The product becomes **Wurst** (the repo may stay as it is; that is the user's
-call on GitHub). Two things make this less trivial than a search and replace:
+Agent D rewrites the tooltips from it. You produce the reference. Do not
+translate their text: their descriptions are about Minecraft, and a tooltip
+mentioning bedrock in a Roblox menu is worse than a plain one.
 
-- **Do not rename `ARandomMenu.luau`.** It is the loader entry point and its raw
-  URL is inside every user's script. The *file* keeps its name; the *product
-  name* changes.
-- There are roughly 120 occurrences of `ARandomMenu`, `A Random Menu`,
-  `Random Testing Menu` and the `RTM:` log prefix across 21 files.
+## Not now
 
-Your part: `README.md`, `docs/`, `tools/`, and **one gate step** that fails when
-a product name is hard-coded anywhere outside the single constant the shell
-exports. That step is what stops the next rename from being another 120-line
-grep. The integrator does the shell and the libraries; agent D does the modules.
+More mock gaps, more contracts, the workflow header. All still true, none of
+them make the menu look like Wurst today.
 
-## 4. The test-helper duplication
+## Definition of done
 
-Three suites each carry a private copy of the wrapper that records builder
-callbacks, and two of them guessed the callback position wrong (`select(4)`,
-`select(6)`) — they recorded nothing and passed anyway. Correct positions:
-
-```
-addToggleOption = 3   addKeyOption    = 3   addTextOption = 3
-addCycleOption  = 4   addNumberOption = 5
-```
-
-Two copies are fixed; three still exist. It belongs once, on `run.luau`'s `ctx`,
-with the duplicates deleted and a grep-based gate step that fails on a new local
-copy.
-
-## 5. The mock gaps
-
-Each of these is currently shimmed inside individual suites, so every suite has
-its own private idea of what Roblox is. They belong in `tools/test/Roblox.luau`
-and `tools/test/Host.luau`:
-
-`Vector3:Lerp`, `Theme`, `TweenService`, the `CollectionService` tag surface,
-`Enum.Font`, `Sound:Play/Stop`, `Player:GetMouse`, `host.getCharacterParts`,
-`feature.row`, `host.addFeatureTooltip`, `state.isProtectedTarget`,
-`RunService`, `workspace.FallenPartsDestroyHeight`, default part `Size`s,
-`Player.Idled`, camera not parented to workspace, `Enum.CameraMode`,
-`settings()`.
-
-Absorb them one at a time, deleting the suite-local shim in the same commit. A
-mock two suites disagree about is a mock that is lying to one of them.
-
-One of them is now worse than a gap. `tools/test/Host.luau:441` publishes
-`host.Theme` as `setmetatable({}, {__index = themeColour})` — it answers *any*
-name with a colour. The real `Theme` is a fixed set of 22 tokens, so a module
-asking for a token that does not exist gets a plausible colour in the harness
-and `nil` in the game. Make the mock carry the real token list and throw on
-anything else.
-
-## 6. What the ClickGUI will need from the harness
-
-Write these before the code they test where you can — they are the only thing
-that will catch the rebuild breaking something that already worked.
-
-- **Theme.** Boot the shell headless, apply each preset, assert every bound
-  instance changed and none kept a stale colour. Assert the default preset is
-  identical to the palette shipped today.
-- **Windows.** Boot, open every category window, move one, collapse another,
-  pin a third, serialise the layout, boot again from that config, assert it came
-  back. Assert no window can end up fully off-screen.
-- **Rows.** Expand every row that has settings and assert the `Show` rules still
-  hide and reveal correctly inside an expansion, and that the window's height
-  follows. Player ESP has the deepest rule tree in the menu; use it.
-- **RenderStepped budget.** A per-frame budget for the new render bucket, the
-  same shape as the existing Heartbeat one. The ESP is moving onto
-  `RenderStepped`; a regression there is a frame-rate regression in every game.
-
-## 7. Two loose ends nobody has touched
-
-- `Captura de pantalla 2026-08-20 130752.png` (104 KB) is tracked at the repo
-  root and is not an asset. Remove it, and add a rule that fails the gate on a
-  tracked image outside `assets/`, `reference/` and `docs/`.
-- `.github/workflows/validate.yml` carries a stale instruction header. It is the
-  one file we cannot push; write the corrected copy to
-  `tools/workflow-validate.yml` and the user mirrors it, as they did before.
-
-## Not wanted
-
-More gate contracts beyond the ones named here. There are already 21 steps and
-662 checks, and the last few cost more in maintenance than they catch. If you
-find a class of bug that keeps recurring, say so and we will decide — but the
-default answer to a new idea for a contract is no.
+The gate prints `All checks passed.`, the bundle is regenerated with
+`python3 tools/bundle.py` and committed if the stamp moved, and every increment
+is pushed on its own.
