@@ -89,8 +89,8 @@ descriptions. There is no setting that belongs only to this window.
 
 | Name | Type | Default | Description | Here |
 |---|---|---|---|---|
-| WurstLogo | Action | — | Shows the Wurst logo and version on the screen. | none — assets exist (`wurst_128.png`); no HUD logo, no settings window |
-| HackList | Action | — | Shows a list of active hacks on the screen. | none — `card:SetStatus` exists; the list UI does not |
+| WurstLogo | Action | — | Shows the Wurst logo and version on the screen. | has — Furniture draws the chip; the shell still has no `wurstLogo` → `wurst_128.png` mapping |
+| HackList | Action | — | Shows a list of active hacks on the screen. | has — Furniture publishes `state.hudList`; Position default is **Right** on purpose |
 | Keybinds | Action | — | This is just a shortcut to let you open the Keybind Manager from within the GUI. Normally you would go to Wurst Options > Keybinds. | none — each card has a key slot; there is no manager |
 | WurstOptions | Action | — | The main settings menu of Wurst. If you ever lock yourself out of the GUI by deleting your keybinds, this is the place to go to restore them. | none |
 
@@ -109,16 +109,18 @@ Navigator.
 
 | Name | Type | Default | Description | Here |
 |---|---|---|---|---|
-| Mode | Enum | `Auto` (`Auto`, `Count`, `Hidden`) | **Auto** mode renders the whole list if it fits onto the screen. **Count** mode only renders the number of active hacks. **Hidden** mode renders nothing. | none |
-| Position | Enum | `Left` (`Left`, `Right`) | Which side of the screen the HackList should be shown on. Change this to **Right** when using TabGUI. | none |
-| Color | Color | `#FFFFFF` | Color of the HackList text. Only visible when RainbowUI is disabled. | none |
-| Sort by | Enum | `Name` (`Name`, `Width`) | Determines how the HackList entries are sorted. Only visible when Mode is set to Auto. | none |
-| Reverse sorting | Checkbox | off | (none) | none |
-| Animations | Checkbox | on | When enabled, entries slide into and out of the HackList as hacks are enabled and disabled. | none |
+| Mode | Enum | `Auto` (`Auto`, `Count`, `Hidden`) | **Auto** mode renders the whole list if it fits onto the screen. **Count** mode only renders the number of active hacks. **Hidden** mode renders nothing. | none — Furniture implements Auto only |
+| Position | Enum | `Left` (`Left`, `Right`) | Which side of the screen the HackList should be shown on. Change this to **Right** when using TabGUI. | has — port default **Right**; `HACKLIST_POSITION` not named yet |
+| Color | Color | `#FFFFFF` | Color of the HackList text. Only visible when RainbowUI is disabled. | has — `HACKLIST_COLOR` |
+| Sort by | Enum | `Name` (`Name`, `Width`) | Determines how the HackList entries are sorted. Only visible when Mode is set to Auto. | none — Furniture sorts by Name |
+| Reverse sorting | Checkbox | off | (none) | has — `HACKLIST_REVERSE` |
+| Animations | Checkbox | on | When enabled, entries slide into and out of the HackList as hacks are enabled and disabled. | has — `HACKLIST_ANIMATIONS` |
 
 A status string a hack publishes (Flight's speed, Freecam's camera
 speed) is appended to the name in the list. That is `card:SetStatus` on
-our side. The list itself is still unpublished (`state.hudList` is nil).
+our side. Furniture now publishes `state.hudList`. Position's official
+default is Left (under the logo); this port's default is Right, because
+the prototype gives the top-left to the wordmark and the stats.
 
 `Width` sorting is the rendered pixel width of the name, so it has to
 be recomputed every tick. Meaningless as a *pixel* sort on Roblox until
@@ -133,8 +135,8 @@ version on the screen.” No default keybind.
 
 | Name | Type | Default | Description | Here |
 |---|---|---|---|---|
-| Background | Color | `#FFFFFF` | Background color. Only visible when RainbowUI is disabled. | none — do not reuse ClickGUI's `#404040` |
-| Text | Color | `#000000` | Text color. | none — do not reuse ClickGUI's `#F0F0F0` |
+| Background | Color | `#FFFFFF` | Background color. Only visible when RainbowUI is disabled. | has — `WURSTLOGO_BACKGROUND`; do not reuse ClickGUI's `#404040` |
+| Text | Color | `#000000` | Text color. | has — `WURSTLOGO_TEXT`; do not reuse ClickGUI's `#F0F0F0` |
 | Visibility | Enum | `Always` (`Always`, `Only when outdated`) | (none) | meaningless — we do not ship a Wurst updater |
 
 The logo is `wurst_128.png` with the version string next to it
@@ -347,6 +349,45 @@ checkbox, default on; **Zoom in screens** checkbox, default off;
 
 **Links** (Official Website, Wurst Wiki, WurstForum, Twitter, Donate)
 are Alexander's URLs. Do not put them on a Roblox screen.
+
+---
+
+## Chrome and font
+
+Window chrome is not a setting. The numbers live in
+`spec.json` `wurst.chrome` (GUI-scale-1 pixels, from the Java) and
+`wurst.screenshot` (what `ref-wurst-719.jpg` actually measures).
+
+| What | Wurst (GUI-scale-1) | Screenshot (1600×900) | This port today |
+|---|---|---|---|
+| Title bar | **13** (`Window` height = inner + 13) | 13 × 10/6 ≈ 22 | prototype `TITLE_HEIGHT` **22** |
+| Feature row | **11** (`FeatureButton.getDefaultHeight`) | 11 × 10/6 ≈ 18 | prototype row **22** |
+| Settings arrow | **11** (`x3 = x2 - 11`) | — | prototype row |
+| Logo blit | **72×18** at (0, 3), texture `wurst:wurst_128.png` | sausage measures **124×27** (Java predicts 120×30; JPEG fringe) | Furniture **87×22** |
+| Logo chip fill | y=6–17 (11 px), width = `font.width(version) + 76` | — | chip is `LOGO_WIDTH + 46` × `LOGO_HEIGHT + 8` |
+| HackList line | **9** (`posY += 9`) | clusters every **17** (Java predicts 15) | Furniture `HACKLIST_LINE_HEIGHT` **18** |
+| Window width | packed to `max(child + 4, title + 4)` | — | prototype **160** |
+
+`ref-wurst-719.jpg` is 1600×900 = a 1920×1080 framebuffer at GUI scale 2,
+scaled by 5/6. One Wurst pixel is 10/6 screenshot pixels. The magenta in
+that shot is a user palette (Background `#000000`, Text `#FF66CC`); the
+defaults are grey/white. `ref-wurst-cyan.jpg` is a fork (Isolate windows,
+GlobalToggle, Presets) and is not a source for chrome.
+
+### The font
+
+Wurst does not ship a font. Every label is drawn with
+`WurstClient.MC.font` — Minecraft's default **bitmap** renderer
+(`net.minecraft.client.gui.Font`). There is no TTF or OTF in the Wurst7
+tree. Glyphs come from vanilla's bitmap providers (historically
+`assets/minecraft/textures/font/ascii.png`, 8 px tall in a 16×16 grid).
+`Font.lineHeight` is 9, which is why the HackList advances 9. Typical
+Latin advance is 5–6 px plus one of spacing.
+
+The closest face this repository already vendors is Monocraft
+(`minecraftFont`), an OTF that imitates that bitmap. Furniture today
+still paints the chip fallback with `TITLE_FONT` (BuilderSans) and the
+stats with RobotoMono. Those numbers are in `spec.json` `wurst.font`.
 
 ---
 

@@ -119,6 +119,101 @@ step "ClickGUI spec matches the Luau widgets"
 # constants, and fails a UI Settings default that does not match Wurst.
 python3 tools/extract_prototype_spec.py --check
 
+step "No hail over the blur"
+# The old menu put fifty-four falling stones between the player and the
+# game. Wurst does not. A comment that remembers they were deleted is
+# fine; a layer that draws them again is not.
+python3 - <<'PYTHON'
+import re
+import subprocess
+
+pattern = re.compile(
+    r'Name\s*=\s*"(BlurHail|HailLayer)"|HAIL_STONE_COUNT|HAIL_COLOR'
+)
+offenders = []
+for path in subprocess.run(
+    ["git", "ls-files", "*.luau", "*.lua"],
+    capture_output=True,
+    text=True,
+).stdout.split():
+    if path.startswith("reference/"):
+        continue
+    text = open(path, encoding="utf-8", errors="replace").read()
+    for match in pattern.finditer(text):
+        line = text.count("\n", 0, match.start()) + 1
+        offenders.append(f"{path}:{line}: {match.group(0)}")
+if offenders:
+    raise SystemExit(
+        "hail / blur-decoration layer reintroduced:\n  "
+        + "\n  ".join(offenders)
+    )
+print("ok")
+PYTHON
+
+step "No blur effect in the live shell"
+# A removed the BlurEffect. A comment that remembers it is fine;
+# constructing one in the shell or a library is the old menu coming back.
+# src/gui/Current/gui.lua is leftover and is not loaded.
+python3 - <<'PYTHON'
+import re
+import subprocess
+
+pattern = re.compile(r'(Instance\.new|create)\(\s*"BlurEffect"')
+offenders = []
+for path in subprocess.run(
+    ["git", "ls-files", "ARandomMenu.luau", "src/library", "src/core"],
+    capture_output=True,
+    text=True,
+).stdout.split():
+    if not path.endswith((".luau", ".lua")):
+        continue
+    text = open(path, encoding="utf-8", errors="replace").read()
+    for match in pattern.finditer(text):
+        line = text.count("\n", 0, match.start()) + 1
+        offenders.append(f"{path}:{line}: {match.group(0)}")
+if offenders:
+    raise SystemExit(
+        "BlurEffect reintroduced:\n  " + "\n  ".join(offenders)
+    )
+print("ok")
+PYTHON
+
+step "Old brand assets stay out of the ClickGUI"
+# menu-logo.jpg and the Brand/Nav/Window artwork belong to the previous
+# product. ClickGui, Furniture, Cards, Widgets and the bundle must not
+# name them. The shell may still load brandLogo onto the phone circle.
+python3 - <<'PYTHON'
+import subprocess
+
+needles = (
+    "menu-logo.jpg",
+    "Assets/Brand/",
+    "nav-settings",
+    "window-favorites",
+    "window-overlays",
+    "profile-banner",
+)
+paths = [
+    "src/library/ClickGui.luau",
+    "src/library/Furniture.luau",
+    "src/library/Cards.luau",
+    "src/library/Widgets.luau",
+    "runtime/bundle.luau",
+]
+offenders = []
+for path in paths:
+    text = open(path, encoding="utf-8", errors="replace").read()
+    for needle in needles:
+        if needle in text:
+            offenders.append(f"{path}: {needle}")
+if offenders:
+    raise SystemExit(
+        "old brand/nav/window asset referenced:\n  "
+        + "\n  ".join(offenders)
+    )
+print("ok")
+PYTHON
+
 step "Product name"
 # Display names of the previous product must not be hard-coded in tools/ or
 # docs/. The filename ARandomMenu.luau stays: it is the loader entry point.

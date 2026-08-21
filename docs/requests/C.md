@@ -3,124 +3,72 @@
 The integrator owns `ARandomMenu.luau`. Agent D owns `src/modules/**` and
 `src/games/**`. These cannot be done from `tools/` or `docs/`.
 
+## Rows are FeatureButtons, not cards
+
+Wurst's row is a name and, when the feature has settings, an 11 px
+arrow. Cards.luau still draws a favourite star, a hamburger on every
+row, and a keybind box even when the key is empty. Drop the leftovers.
+A no-options row must not reserve space for an arrow.
+
+The triangle that remains has to open that feature's settings window
+(already the panel today). Enabled rows paint `Theme.enabled`, not the
+accent. No `UICorner` on a row.
+
+## Title bar
+
+Category windows: collapse + pin, no close. Settings windows add close.
+Each button is 11 GUI-scale-1 px of a 13 px bar. Prototype layout stays
+`TITLE_HEIGHT` 22 until A chooses to switch the layout spec to Wurst's
+13 — do not invent a 26/22-at-1080 rule.
+
+## WurstLogo background
+
+`WURSTLOGO_BACKGROUND` is seeded `#000000`. Official Wurst always fills
+the chip (`WurstLogo.java` `fill(0, 6, width, 17)`) with the setting,
+default `#FFFFFF` at half alpha. The magenta/cyan in the screenshots is
+a user palette, not a reason to hide the chip. Restore the constant to
+`#FFFFFF` and draw it at 50% alpha. The gate prints the mismatch as
+ungrounded and does not fail.
+
+## Launcher
+
+The pill still has an `OFF` panic glyph. Wurst's HUD has no such
+control. Panic belongs on a keybind, not on the Roblox launcher.
+
+## Font
+
+ClickGUI, settings, tooltips, HackList and KeybindList still resolve
+through `TITLE_FONT` / `CONTROL_FONT` (BuilderSans) and RobotoMono on
+the leftover stats label. Point those surfaces at `minecraftFont`
+(Monocraft) or one central fallback. Do not scatter BuilderSans.
+
+## Official category windows
+
+Combat / Render / Blocks / Movement / Chat / Fun / Items / Other.
+We open Combat / Movement / Visuals / Protection / Utility / Spoof.
+The map is `docs/wurst-categories.md`. Do not open empty Wurst windows.
+
+## Navigator
+
+Not a window under the logo. Navigator is a full-screen GUI. TabGUI is
+the left-edge HUD, default Disabled. The version string (`0.1 Beta`)
+sits next to the sausage.
+
 ## Product name leftovers
 
-`PRODUCT` exists on the shell (`name` / `logPrefix` = Wurst) and is now
-published on the test host and into `injectGame`, so a game module can read
-`PRODUCT.storageFolder` instead of retyping the folder. The name gate still
-only scans `tools/`, `docs/` and `README.md`. It cannot be extended to
-`ARandomMenu.luau` and `src/` until the previous display names leave those
-files — a red gate cannot be pushed.
+Do **not** change `guiName`, `blurName` or `storageFolder`.
 
-Do **not** change `guiName`, `blurName` or `storageFolder`. Those three are
-not branding: the first two are instance names a game can enumerate, and the
-third is the on-disk folder that already holds every existing player's
-configs. Renaming it would silently orphan them.
+- mobile launcher fallback `Text = "RTM"`
+- `print("[RTM] build loader-v3")`
+- previous display names in Cards / FloatingWindows / SettingsPage / Widgets
+- MM2 and ProjectileCalibration still hard-code `RandomTestingMenu0001`
 
-Integrator (shell):
+## Wordmark
 
-- mobile launcher fallback `Text = "RTM"` (`ARandomMenu.luau`, around the
-  MobileMenuButton)
-- `print("[RTM] build loader-v3")` (the build stamp that used to live on
-  the intro)
+Landed: `wurstLogo` → `assets/wurst/wurst_128.png`. Do not point it at
+`menu-logo.jpg` or `brandLogo`. The phone circle may keep `brandLogo`
+until that circle goes away.
 
-Integrator (libraries): the previous display name is still a title fallback
-and a warn prefix in
-
-- `src/gui/Current/gui.lua`
-- `src/library/Cards.luau`
-- `src/library/FloatingWindows.luau`
-- `src/library/SettingsPage.luau`
-- `src/library/Widgets.luau`
-
-Agent D (unblocked by PRODUCT on the mock):
-
-- `src/games/MM2.luau` still hard-codes `RandomTestingMenu0001` as the
-  telemetry folder (`OUTPUT_ROOT`)
-- `src/modules/Combat/ProjectileCalibration.luau` does the same
-- `[RTM:…]` log prefixes in those two files
-
-## Furniture the suites are waiting on
-
-`tools/test/suites/furniture.luau` is written. Until these exist it
-records the gap and stays green.
-
-- **Wordmark.** Resolve `assets/wurst/wurst_128.png` through the
-  `getcustomasset` path. An executor without that function keeps the
-  text fallback (`PRODUCT.name`). The shell still loads `brandLogo` →
-  `menu-logo.jpg` onto the mobile launcher; that is the old product art.
-- **HackList.** Exactly the enabled cards. `card.status` non-nil prints
-  `Name [status]`. `nil` prints the bare name. `card:SetStatus` already
-  exists.
-- **Pill.** Visible with the GUI closed. The mobile launcher is not the
-  pill: it is phone-only and hides when the menu is open.
-- **Tooltip.** 400 ms, not before. The shell still has
-  `task.delay(0.42)` behind `COMPACT_FEATURE_CARDS`, which currently
-  skips tooltips entirely.
-
-## ClickGui UIScale is ungrounded
-
-The prototype does **not** declare a reference resolution or an auto
-factor. Scale is a user slider: default **1**, min **0.7**, max **1.6**,
-two decimals (`numeric(body,"Scale",UI.scale,.7,1.6,2,…)`). Those numbers
-are now in `spec.json` `scaleControl`. `referenceHeight` and `autoFactor`
-are explicitly null.
-
-ClickGui currently does `(viewport.Y / 1080) * 1.35` clamped to
-`SCALE_MINIMUM=0.85` / `SCALE_MAXIMUM=1.6`. The gate prints that as
-`ungrounded` and will not copy 1080 or 1.35 into the spec. Delete
-`REFERENCE_HEIGHT` and the `* 1.35`. The Scale slider, when UI Settings
-lands, is the counterpart of `ThemeEngine.shape.scale` (already 1).
-
-## ClickGUI hooks the harness is waiting on
-
-`ThemeEngine.Bind` / `Apply` and the render bucket landed on live. The
-ClickGUI suite asserts those. Still needed:
-
-- `WindowManager` with serialise / restore of position, collapse and pin.
-  Until that exists the suite records the gap and stays green.
-
-## UI Settings must take Wurst's defaults, not the prototype's
-
-`docs/wurst-features.md` and `spec.json` `wurst.settings` now hold the
-official defaults. Three colours already match (`Theme.surface` `#404040`,
-`Theme.accent` `#101010`, `Theme.text` `#F0F0F0`). Three numbers do not:
-
-| Setting | Wurst | What we have today |
-|---|---|---|
-| Opacity | `0.5` | `ThemeEngine.shape.opacity` **0.86** (prototype) |
-| Tooltip opacity | `0.75` | `ThemeEngine.shape.tooltipOpacity` **0.95** |
-| Max height | `200` | prototype `--max-h` **340**; `ClickGui.WINDOW_MAX_HEIGHT` **300** |
-
-The shape tokens stay the layout spec. The UI Settings window has to ship
-Wurst's slider defaults (`OPACITY`, `TOOLTIP_OPACITY`, `MAX_HEIGHT`,
-`MAX_SETTINGS_HEIGHT`). A named constant with the prototype number will
-fail the gate.
-
-**GlobalToggle** and **Isolate windows** are not in official Wurst 7. Do
-not add them.
-
-## Parity gate
-
-`docs/design/prototype/spec.json` is generated from the prototype (pixels)
-and from `tools/wurst_features.py` (Wurst setting defaults). The gate
-already checks `ThemeEngine.shape` against the prototype and `Theme.surface`
-/ `accent` / `text` against Wurst.
-
-Owed — named constants in `Widgets.luau`, so the remaining prototype numbers
-have a counterpart the gate can read. Until they exist the step stays green
-and prints them as owed; once a name appears, a wrong value fails and names
-both sides. C cannot add them (`src/` is not its lane).
-
-| Constant | Prototype |
-|---|---|
-| `TITLE_HEIGHT` | 22 |
-| `WINDOW_GAP` | 2 |
-| `SLIDER_BAR_HEIGHT` | 5 |
-| `SLIDER_KNOB_WIDTH` | 7 |
-| `SLIDER_KNOB_HEIGHT` | 11 |
-| `TITLE_FONT_SIZE` | 11.5 |
-| `LABEL_FONT_SIZE` | 11.5 |
-| `TOOLTIP_DELAY_MS` | 400 |
-| `TRANSITION_FAST` | 0.1 |
-| `TRANSITION_SLOW` | 0.18 |
+Logo blit is **72×18**. Furniture draws 87×22 (or 118×30 after A's
+later pass — check the constant). Wurst numbers stay in
+`spec.json` `wurst.chrome`.

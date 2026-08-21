@@ -238,6 +238,109 @@ ABSENT: list[str] = [
     "Isolate windows",
 ]
 
+# Logical GUI-scale-1 pixels. The port scales them with one UIScale
+# (ThemeEngine.shape.scale, 0.7-1.6). Do not bind 13 or 22 to a
+# resolution — the unit is Wurst's own pixel, not a 1080p guess.
+CHROME: dict = {
+    "titleHeight": 13,
+    "rowHeight": 11,
+    "settingsArrow": 11,
+    "titleButton": 11,
+    "childInset": 2,
+    "childGap": 2,
+    "logoWidth": 72,
+    "logoHeight": 18,
+    "logoX": 0,
+    "logoY": 3,
+    "logoChipTop": 6,
+    "logoChipBottom": 17,
+    "hackListLine": 9,
+    "hackListMargin": 2,
+    "hackListSlide": 5,
+    "windowWidth": None,
+}
+
+# Setting-row widgets, same unit. Slider and color are two text-rows
+# tall; checkbox and combo are one. Minecraft fill is exclusive on
+# the max corner, so the slider rail y=15..18 is 3 px.
+WIDGETS: dict = {
+    "sliderHeight": 22,
+    "sliderTextHeight": 11,
+    "sliderRailHeight": 3,
+    "sliderRailInset": 2,
+    "sliderKnobWidth": 8,
+    "sliderKnobHeight": 8,
+    "checkboxBox": 11,
+    "checkboxHeight": 11,
+    "checkboxTextPad": 2,
+    "colorHeight": 22,
+    "colorTextHeight": 11,
+    "colorSwatchHeight": 11,
+    "comboHeight": 11,
+    "comboArrow": 11,
+}
+
+# Title-bar controls. Category windows get collapse + pin, no close.
+# Settings windows add close. Each slot is 11 px of the 13 px bar.
+TITLE_BUTTONS: dict = {
+    "size": 11,
+    "category": ["collapse", "pin"],
+    "settings": ["collapse", "pin", "close"],
+}
+
+# Official Wurst category windows, in ClickGui.init order. Ours file
+# cards under a different taxonomy; docs/wurst-categories.md maps them.
+CATEGORIES: list[str] = [
+    "Combat",
+    "Render",
+    "Blocks",
+    "Movement",
+    "Chat",
+    "Fun",
+    "Items",
+    "Other",
+]
+
+# ref-wurst-719.jpg is 1600x900: a 1920x1080 framebuffer at GUI
+# scale 2, scaled by 5/6. One GUI-scale-1 pixel is 10/6 screenshot
+# pixels, so the Java blit 72x18 becomes 120x30 and a HackList
+# line of 9 becomes 15. Measuring the sausage's orange pixels
+# gives 124x27 (JPEG fringe); HackList clusters land every 17.
+# Those two measured numbers confirm the Java, they do not replace
+# it. ref-wurst-cyan.jpg is a fork (Isolate / GlobalToggle) and is
+# not a source for chrome.
+SCREENSHOT: dict = {
+    "file": "docs/design/reference/ref-wurst-719.jpg",
+    "width": 1600,
+    "height": 900,
+    "guiScale": 2,
+    "framebufferWidth": 1920,
+    "framebufferHeight": 1080,
+    "pixelsPerGui": 1.6667,
+    "logoBlit": [124, 27],
+    "hackListLine": 17,
+}
+
+# Wurst draws every label with WurstClient.MC.font — Minecraft's
+# default bitmap renderer, not a font Wurst ships. There is no
+# TTF/OTF in the Wurst7 tree. Glyphs come from vanilla's bitmap
+# providers (historically ascii.png, 8 px tall in a 16x16 grid);
+# Font.lineHeight is 9, which is why the HackList advances 9.
+# Typical Latin advance is 5–6 px plus one of spacing. The closest
+# face this repository already vendors is Monocraft (minecraftFont),
+# an OTF that imitates that bitmap. Furniture today still paints
+# the chip fallback with TITLE_FONT (BuilderSans) and the stats
+# with RobotoMono.
+FONT: dict = {
+    "source": "Minecraft default bitmap (MC.font)",
+    "file": None,
+    "glyphHeight": 8,
+    "lineHeight": 9,
+    "typicalAdvance": 6,
+    "closestVendored": "minecraftFont / Monocraft.otf",
+    "portToday": "BuilderSans / RobotoMono",
+}
+
 
 def spec_section() -> dict:
     """The block extract_prototype_spec.py folds into spec.json."""
@@ -251,7 +354,7 @@ def spec_section() -> dict:
             "description": row["description"],
             "luau": row["luau"],
         }
-        for extra in ("min", "max", "step", "values"):
+        for extra in ("min", "max", "step", "values", "portDefault"):
             if extra in row:
                 entry[extra] = row[extra]
         settings.append(entry)
@@ -263,4 +366,18 @@ def spec_section() -> dict:
         "absent": list(ABSENT),
         "settings": settings,
         "keybinds": [dict(row) for row in KEYBINDS],
+        "chrome": dict(CHROME),
+        "widgets": dict(WIDGETS),
+        "titleButtons": dict(TITLE_BUTTONS),
+        "categories": list(CATEGORIES),
+        "screenshot": dict(SCREENSHOT),
+        "font": dict(FONT),
+        "scale": {
+            "unit": "gui-scale-1",
+            "control": "ThemeEngine.shape.scale",
+            "min": 0.7,
+            "max": 1.6,
+            "default": 1,
+            "viewportFormula": None,
+        },
     }

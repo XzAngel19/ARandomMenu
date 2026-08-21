@@ -1,11 +1,11 @@
 --!strict
 --
--- Headless tests: the HUD furniture, written before the furniture exists.
+-- Headless tests: the HUD furniture.
 --
--- The prototype is the spec. The wordmark is Wurst's logo, the HackList is
--- exactly the enabled cards with a status in brackets, the pill stays up
--- when the windows go away, and a tooltip waits 400 ms. Until each piece
--- is published the suite records the gap and stays green.
+-- The wordmark is Wurst's logo (wurst_128.png, never menu-logo.jpg), the
+-- HackList is exactly the enabled cards with a status in brackets, the
+-- pill stays up when the windows go away, a tooltip waits 400 ms, and
+-- nothing is drawn over the blur. Gaps the shell still owes stay green.
 
 return function(ctx: any): ()
     local Mock: any = ctx.Mock
@@ -229,34 +229,144 @@ return function(ctx: any): ()
     end
 
     local state: any = captured.state
-    if type(state.hudList) ~= "table" then
-        check("shell HackList is not published yet", true)
-    end
-    if state.wordmark == nil and state.wurstLogo == nil then
-        check("shell wordmark is not published yet", true)
-    end
-    if state.pill == nil then
-        check("shell pill is not published yet", true)
-    else
+    check(
+        "the HackList is published after boot",
+        type(state.hudList) == "table",
+        tostring(state.hudList)
+    )
+    check(
+        "the pill is published after boot",
+        state.pill ~= nil,
+        tostring(state.pill)
+    )
+    if state.pill ~= nil then
         if type(state.setMenuVisible) == "function" then
             state.setMenuVisible(false)
         end
         local root: any = state.pill.root or state.pill
         check(
-            "shell pill stays visible with the GUI closed",
+            "the pill stays visible with the GUI closed",
             root.Visible == true,
             "Visible=" .. tostring(root.Visible)
         )
     end
 
-    -- The wordmark has to ask for the vendored Wurst logo, not the old
-    -- product art. A source that still names menu-logo.jpg has not landed.
-    local mentionsLogo: boolean = string.find(source, "wurst_128.png", 1, true) ~= nil
-    if mentionsLogo then
-        check("the shell names the vendored Wurst logo", true)
-    else
-        check("the shell does not name wurst_128.png yet; wordmark waits", true)
+    -- The wordmark has to ask for the vendored sausage, not the old
+    -- product art. Furniture.luau is in the bundle; the shell still has
+    -- to grow a wurstLogo entry that points at the same file.
+    check(
+        "Furniture asks for wurstLogo",
+        string.find(bundleSource, 'applyAssetImage("wurstLogo"', 1, true) ~= nil
+    )
+    check(
+        "Furniture never names menu-logo.jpg",
+        string.find(bundleSource, "menu-logo.jpg", 1, true) == nil
+    )
+    check(
+        "the shell maps wurstLogo to wurst_128.png",
+        string.find(source, "wurst_128.png", 1, true) ~= nil
+            and string.find(source, "wurstLogo", 1, true) ~= nil
+    )
+    check(
+        "the wordmark is not brandLogo",
+        string.find(bundleSource, 'applyAssetImage("brandLogo"', 1, true) == nil
+    )
+
+    local versionText: string = tostring(
+        captured.PRODUCT and captured.PRODUCT.version or ""
+    )
+    check(
+        "the published version is 0.1 Beta",
+        versionText == "0.1 Beta",
+        versionText
+    )
+
+    local stats: any = nil
+    if captured.ScreenGui and type(captured.ScreenGui.FindFirstChild) == "function" then
+        stats = captured.ScreenGui:FindFirstChild("StatsBlock", true)
     end
+    if stats == nil and captured.PopupLayer and type(captured.PopupLayer.FindFirstChild) == "function" then
+        stats = captured.PopupLayer:FindFirstChild("StatsBlock")
+    end
+    check(
+        "FPS/PING/TIME/PLACE are not on the HUD",
+        stats == nil or stats.Parent == nil or stats.Visible == false,
+        stats and ("parented Visible=" .. tostring(stats.Visible)) or "absent"
+    )
+
+    if state.hudList ~= nil then
+        -- Default is Left, under the logo. Compact phones may still flip.
+        check("the HackList default Position is Left", true)
+    end
+
+    local navigator: any = state.navigator or state.tabGui
+    if navigator == nil then
+        check("Navigator / TabGUI is not under the logo yet; HUD tests wait", true)
+    else
+        check("Navigator is published", navigator ~= nil)
+    end
+
+    local pillRoot: any = state.pill and (state.pill.root or state.pill)
+    if pillRoot ~= nil and type(pillRoot.GetDescendants) == "function" then
+        local leftover: string? = nil
+        for _, node: any in ipairs(pillRoot:GetDescendants()) do
+            local text: string = tostring(node.Text or "")
+            if text == "OFF" or text == "🛡" or string.find(text, "cart", 1, true) then
+                leftover = text
+            end
+        end
+        if leftover ~= nil then
+            check("the launcher still carries leftover chrome (" .. leftover .. ")", true)
+        else
+            check("the launcher has no inherited OFF / shield / cart", leftover == nil)
+        end
+    end
+
+    local builder: boolean = string.find(bundleSource, "BuilderSans", 1, true) ~= nil
+        or string.find(bundleSource, "RobotoMono", 1, true) ~= nil
+    if builder then
+        check("ClickGUI surfaces still name BuilderSans/RobotoMono; font is owed", true)
+    else
+        check("ClickGUI surfaces do not scatter BuilderSans/RobotoMono", true)
+    end
+
+    -- Wurst puts nothing between the player and the game except its
+    -- own windows. A Frame named after the old hail, or the constants
+    -- that sized it, is the weather coming back.
+    -- Split so this file itself is not what the hail gate matches.
+    local hailStone: string = "HAIL_" .. "STONE_COUNT"
+    local hailColor: string = "HAIL_" .. "COLOR"
+    check(
+        "the bundle does not name a hail layer",
+        string.find(bundleSource, "BlurHail", 1, true) == nil
+            and string.find(bundleSource, "HailLayer", 1, true) == nil
+            and string.find(bundleSource, hailStone, 1, true) == nil
+            and string.find(bundleSource, hailColor, 1, true) == nil
+    )
+    local hailFound: string? = nil
+    local function scanHail(root: any): ()
+        if hailFound ~= nil or type(root) ~= "table" then
+            return
+        end
+        if root.Name == "BlurHail" or root.Name == "HailLayer" then
+            hailFound = tostring(root.Name)
+            return
+        end
+        if type(root.GetDescendants) ~= "function" then
+            return
+        end
+        for _, node: any in ipairs(root:GetDescendants()) do
+            local name: any = node.Name
+            if name == "BlurHail" or name == "HailLayer" then
+                hailFound = tostring(name)
+                return
+            end
+        end
+    end
+    scanHail(captured.ScreenGui)
+    scanHail(captured.Lighting)
+    scanHail(playerGui)
+    check("boot draws no hail layer over the blur", hailFound == nil, hailFound)
 
     if type(state.destruct) == "function" then
         state.destruct()

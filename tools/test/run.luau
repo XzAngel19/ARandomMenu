@@ -137,6 +137,8 @@ require("./suites/windows")(ctx)
 require("./suites/clickgui")(ctx)
 require("./suites/clickgui-boot")(ctx)
 require("./suites/ui-settings")(ctx)
+require("./suites/rows")(ctx)
+require("./suites/chrome")(ctx)
 require("./suites/furniture")(ctx)
 require("./suites/teardown")(ctx)
 
