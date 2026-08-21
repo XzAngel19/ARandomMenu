@@ -178,7 +178,41 @@ separate causes, and one of them is not yours.
   `Render.luau` is not your file. Confirm the diagnosis, put it in
   `docs/requests/D.md` and in your reply, and the integrator changes it.
 
-## Task 3 — whatever the user reports next
+## Task 3 — what the HUD list needs from every module
+
+This one is yours alone and it is what will make the menu read as Wurst.
+
+Wurst draws a list down the right edge of the screen of every hack that is
+currently on, and the good ones say more than their name:
+`AutoTotem [0 totems]`, `Criticals [Packet]`. Ours is being built now and it can
+carry the same thing, but only the module knows what its own bracket should say.
+
+Give every module that has a meaningful runtime state an optional short status
+string — under about sixteen characters, recomputed no more than a few times a
+second, `nil` when there is nothing worth saying:
+
+```
+Speed [CFrame ×2]        the mode that is actually running, and the multiplier
+Player ESP [12]          how many targets are being drawn
+Kill Aura [3 in range]   what it can currently see
+Fly [Velocity]           which of the four models is in use
+Anti-Fling [standing by] the distinction that matters: armed versus acting
+Auto Farm [3 targets]
+```
+
+The integrator will publish the exact hook — most likely `card:SetStatus(text)`
+plus a `Status` field on the card definition. Wait for it, then do a pass over
+all 38 modules. Where a module has nothing true and short to say, say nothing;
+a bracket that always reads `[on]` is noise.
+
+While you are in every file anyway, fix the tooltips. Agent C is producing
+`docs/wurst-voice.md` from Wurst's own `en_us.json` — a thousand descriptions
+written in one voice over eleven years. Ours were written by several hands and
+it shows. Match the voice, do not copy the text: their descriptions are about
+Minecraft, and a tooltip mentioning bedrock in a Roblox menu is worse than a
+plain one.
+
+## Task 4 — whatever the user reports next
 
 The user is the only source of truth for how the menu feels. 662 checks say the
 code does what it claims; they say nothing about playing it. A report — game,
