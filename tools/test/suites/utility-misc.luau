@@ -17,26 +17,8 @@ return function(ctx: any): ()
     local check: (string, boolean, string?) -> () = ctx.check
     local section: (string) -> () = ctx.section
 
-    if not host.getCharacterParts then
-        host.getCharacterParts = function(): (any, any, any)
-            local character: any = world.localPlayer.Character
-            return character,
-                character and character:FindFirstChildOfClass("Humanoid"),
-                character and character:FindFirstChild("HumanoidRootPart")
-        end
-    end
-    if host.addFeatureTooltip == nil then
-        host.addFeatureTooltip = function(_feature: any, _text: string): () end
-    end
     if world.globals.workspace.FallenPartsDestroyHeight == nil then
         world.globals.workspace.FallenPartsDestroyHeight = -500
-    end
-    if host.state.isProtectedTarget == nil then
-        -- Friend List publishes this in the real runtime and loads first in
-        -- the manifest; a suite that has not loaded it answers "nobody".
-        host.state.isProtectedTarget = function(_player: any): boolean
-            return false
-        end
     end
 
     local vector3: any = world.vector3

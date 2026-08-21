@@ -17,17 +17,6 @@ return function(ctx: any): ()
     local check: (string, boolean, string?) -> () = ctx.check
     local section: (string) -> () = ctx.section
 
-    if not host.getCharacterParts then
-        host.getCharacterParts = function(): (any, any, any)
-            local character: any = world.localPlayer.Character
-            return character,
-                character and character:FindFirstChildOfClass("Humanoid"),
-                character and character:FindFirstChild("HumanoidRootPart")
-        end
-    end
-    if host.addFeatureTooltip == nil then
-        host.addFeatureTooltip = function(_feature: any, _text: string): () end
-    end
     if world.globals.workspace.FallenPartsDestroyHeight == nil then
         -- The engine always answers this; the stand-in workspace does not, and
         -- both Anti-Void and Fling do arithmetic on it without a nil guard

@@ -18,40 +18,6 @@ return function(ctx: any): ()
     local check: (string, boolean, string?) -> () = ctx.check
     local section: (string) -> () = ctx.section
 
-    -- The shell publishes these helpers; the harness host did not, because no
-    -- module that needed them ran headless before this pass. Idempotent, so
-    -- the shared runner can hand us a context that already has them.
-    if not host.getCharacterParts then
-        host.getCharacterParts = function(): (any, any, any)
-            local character: any = world.localPlayer.Character
-            return character,
-                character and character:FindFirstChildOfClass("Humanoid"),
-                character and character:FindFirstChild("HumanoidRootPart")
-        end
-    end
-    if not host.state.onJumpRequest then
-        local jumpCallbacks: {any} = {}
-        world.jumpCallbacks = jumpCallbacks
-        world.fireJumpRequest = function(): ()
-            for _, callback: any in ipairs(table.clone(jumpCallbacks)) do
-                callback()
-            end
-        end
-        host.state.onJumpRequest = function(callback: any): any
-            table.insert(jumpCallbacks, callback)
-            return {
-                Connected = true,
-                Disconnect = function(self: any): ()
-                    self.Connected = false
-                    local index: number? = table.find(jumpCallbacks, callback)
-                    if index then
-                        table.remove(jumpCallbacks, index :: number)
-                    end
-                end,
-            }
-        end
-    end
-
     -- The stand-in humanoid does not model movement state; the modules only
     -- read these, so plain values are enough.
     local character: any = world.localPlayer.Character

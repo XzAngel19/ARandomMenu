@@ -17,14 +17,6 @@ return function(ctx: any): ()
     local check: (string, boolean, string?) -> () = ctx.check
     local section: (string) -> () = ctx.section
 
-    if not host.getCharacterParts then
-        host.getCharacterParts = function(): (any, any, any)
-            local character: any = world.localPlayer.Character
-            return character,
-                character and character:FindFirstChildOfClass("Humanoid"),
-                character and character:FindFirstChild("HumanoidRootPart")
-        end
-    end
     local character: any = world.localPlayer.Character
     local humanoid: any = character:FindFirstChildOfClass("Humanoid")
     local root: any = character:FindFirstChild("HumanoidRootPart")

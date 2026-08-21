@@ -28,6 +28,15 @@ function Host.create(world: any): HostStub
     local notifications: {string} = {}
     local menuListeners: {any} = {}
 
+    -- Infinite Jump (and anything else that launches on the jump button)
+    -- registers here; a suite fires it without an input device.
+    world.jumpCallbacks = {}
+    world.fireJumpRequest = function(): ()
+        for _, callback: any in ipairs(table.clone(world.jumpCallbacks)) do
+            callback()
+        end
+    end
+
     local function create(className: string, properties: any): any
         local instance: any = Mock.newInstance(className)
         local parent: any = nil
@@ -321,6 +330,18 @@ function Host.create(world: any): HostStub
         table.insert(notifications, message)
     end
 
+    -- The shell publishes these on the environment every downloaded file
+    -- runs in. Suites used to each invent a copy, so a module that needed
+    -- one and a suite that had not yet been written disagreed about whether
+    -- they existed.
+    host.getCharacterParts = function(): (any, any, any)
+        local character: any = world.localPlayer.Character
+        return character,
+            character and character:FindFirstChildOfClass("Humanoid"),
+            character and character:FindFirstChild("HumanoidRootPart")
+    end
+    host.addFeatureTooltip = function(_feature: any, _text: string): () end
+
     host.create = create
     host.makeTextLabel = makeTextLabel
     host.makeButton = makeButton
@@ -420,6 +441,22 @@ function Host.create(world: any): HostStub
         end,
         isJumpHeld = function(): boolean
             return false
+        end,
+        isProtectedTarget = function(_player: any): boolean
+            return false
+        end,
+        onJumpRequest = function(callback: any): any
+            table.insert(world.jumpCallbacks, callback)
+            return {
+                Connected = true,
+                Disconnect = function(self: any): ()
+                    self.Connected = false
+                    local index: number? = table.find(world.jumpCallbacks, callback)
+                    if index then
+                        table.remove(world.jumpCallbacks, index :: number)
+                    end
+                end,
+            }
         end,
     }
     for key: string, value: any in pairs(stateTable) do
