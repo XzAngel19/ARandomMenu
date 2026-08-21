@@ -81,6 +81,14 @@ function Vector3Meta.Dot(self: any, other: any): number
     return self.X * other.X + self.Y * other.Y + self.Z * other.Z
 end
 
+function Vector3Meta.Lerp(self: any, other: any, alpha: number): any
+    return vector3(
+        self.X + (other.X - self.X) * alpha,
+        self.Y + (other.Y - self.Y) * alpha,
+        self.Z + (other.Z - self.Z) * alpha
+    )
+end
+
 local Vector2Meta: any = {}
 
 local function vector2(x: number, y: number): any

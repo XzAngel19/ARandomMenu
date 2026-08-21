@@ -28,31 +28,6 @@ return function(ctx: any): ()
         world.globals.TweenService = world.globals.game:GetService("TweenService")
     end
 
-    -- The stand-in vector has arithmetic but not Lerp, which both speed
-    -- engines smooth with. Patched here for the suites; belongs in the mock
-    -- proper (asked for in the PR) the moment its owner can take it.
-    do
-        local vector3lib: any = world.globals.Vector3
-        local originalNew: any = vector3lib.new
-        local function withLerp(value: any): any
-            if value ~= nil and value.Lerp == nil then
-                function value:Lerp(other: any, alpha: number): any
-                    return originalNew(
-                        self.X + (other.X - self.X) * alpha,
-                        self.Y + (other.Y - self.Y) * alpha,
-                        self.Z + (other.Z - self.Z) * alpha
-                    )
-                end
-            end
-            return value
-        end
-        vector3lib.new = function(...: any): any
-            return withLerp(originalNew(...))
-        end
-        withLerp(vector3lib.zero)
-        withLerp(vector3lib.one)
-    end
-
     -- The shell publishes these helpers; the harness host did not, because no
     -- module that needed them ran headless before this pass. Idempotent, so
     -- the shared runner can hand us a context that already has them.
