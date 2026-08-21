@@ -156,9 +156,6 @@ local FEATURE_CATEGORIES: {[string]: string} = {
     ["Quick Actions"] = "Utility",
 }
 
--- Height reserved at the foot of the navigation rail for the player card.
-local PROFILE_CARD_HEIGHT: number = 62
-
 -- Module kinds, on the card.
 --
 -- Three different contracts used to look identical: a toggle you switch, a
@@ -186,43 +183,6 @@ local function featureCategoryRank(category: string): string
     end
     return category
 end
-
--- Sidebar monograms.
---
--- The navigation rail collapses to icons on small viewports, so every tab
--- carries a two-character monogram that is legible at 22px. Plain ASCII on
--- purpose: a glyph font would have to be downloaded and could fail to load.
--- Tab artwork.
---
--- A monogram is a fallback, not an icon. Game tabs show the game's own
--- thumbnail — resolved by the engine through `rbxthumb://`, so there is
--- nothing to download — and the two tabs that are not games get a drawn icon.
--- The Universal tab wears the icon of the game you are actually in — the one
--- place a game's identity still shows in the rail now that games do not own
--- tabs. 0 means "this place".
-local TAB_GAME_ICONS: {[string]: number} = {
-    Universal = 0,
-}
-
--- Drawn icons for the rail entries that are not a game. Spoof keeps its
--- monogram: there is no glyph for "what the server is told about you" that
--- reads at 22px, and inventing one would be worse than two letters.
-local TAB_DRAWN_ICONS: {[string]: string} = {
-    -- The settings page is registered as "Config.", dot included; keying this
-    -- table on "Settings" is why the gear never appeared.
-    ["Config."] = "navSettings",
-}
-
--- Sidebar monograms.
---
--- The navigation rail collapses to icons on small viewports, so every tab
--- carries a two-character monogram that is legible at 22px. Plain ASCII on
--- purpose: a glyph font would have to be downloaded and could fail to load.
-local TAB_MONOGRAMS: {[string]: string} = {
-    ["Universal"] = "UN",
-    ["Spoof"] = "SP",
-    ["Config."] = "CF",
-}
 
 -- ---------------------------------------------------------------------------
 -- Design tokens
@@ -280,22 +240,8 @@ type LayoutMetrics = {
     mode: string,
     compact: boolean,
     touch: boolean,
-    shellWidth: number,
-    shellHeight: number,
-    shellCorner: number,
-    sidebarWidth: number,
-    sidebarCollapsed: boolean,
-    sidebarPadding: number,
-    navRowHeight: number,
-    navIconSize: number,
-    navFontSize: number,
-    brandHeight: number,
-    headerHeight: number,
-    searchHeight: number,
-    searchWidth: number,
     contentPadding: number,
     cardSpacing: number,
-    cardColumns: number,
     cardHeight: number,
     cardCorner: number,
     controlHeight: number,
@@ -309,97 +255,36 @@ type LayoutMetrics = {
     bodyFontSize: number,
     captionFontSize: number,
     scrollBar: number,
-    launcherHeight: number,
 }
 
 local function computeLayoutMetrics(
-    viewport: Vector2,
+    _viewport: Vector2,
     touchEnabled: boolean
 ): LayoutMetrics
-    local width: number = math.max(240, viewport.X)
-    local height: number = math.max(200, viewport.Y)
-
-    -- A phone in landscape is still a phone: a short viewport switches to the
-    -- mobile layout even though it is wide.
     local mode: string = "Desktop"
-    if width < 620 or height < 430 then
+    if touchEnabled then
         mode = "Mobile"
-    elseif width < 1100 then
-        mode = "Tablet"
     end
     local mobile: boolean = mode == "Mobile"
-    local tablet: boolean = mode == "Tablet"
-
-    local shellWidth: number
-    local shellHeight: number
-    if mobile then
-        shellWidth = math.round(math.min(width - 10, math.max(280, width * 0.97)))
-        shellHeight = math.round(math.min(height - 10, math.max(220, height * 0.94)))
-    elseif tablet then
-        shellWidth = math.round(math.clamp(width * 0.9, 460, 900))
-        shellHeight = math.round(math.clamp(height * 0.84, 380, 760))
-    else
-        shellWidth = math.round(math.clamp(width * 0.58, 760, 1080))
-        shellHeight = math.round(math.clamp(height * 0.74, 420, 700))
-    end
-    shellWidth = math.max(240, math.min(shellWidth, math.round(width - (mobile and 8 or 28))))
-    shellHeight = math.max(200, math.min(shellHeight, math.round(height - (mobile and 8 or 28))))
-
-    local sidebarWidth: number = mobile and 58 or (tablet and 132 or 156)
-    local contentPadding: number = mobile and 10 or (tablet and 12 or 14)
-    -- Columns are decided by the room the content area actually has, not by
-    -- the mode: a phone in landscape gets two columns for the same reason a
-    -- desktop does, and a portrait tablet stays on one.
-    local contentWidth: number = shellWidth - sidebarWidth - contentPadding * 2
-    local cardColumns: number = contentWidth >= 560 and 2 or 1
-
     return {
         mode = mode,
         compact = mobile,
         touch = touchEnabled,
-        shellWidth = shellWidth,
-        shellHeight = shellHeight,
-        shellCorner = mobile and 10 or UI_RADIUS.shell,
-        sidebarWidth = sidebarWidth,
-        sidebarCollapsed = mobile,
-        sidebarPadding = mobile and 6 or 10,
-        navRowHeight = mobile and 40 or (tablet and 32 or 30),
-        navIconSize = mobile and 26 or 22,
-        navFontSize = mobile and 9 or 11,
-        brandHeight = mobile and 40 or 46,
-        headerHeight = mobile and 42 or 44,
-        searchHeight = mobile and 30 or 28,
-        searchWidth = mobile and 150 or (tablet and 190 or 230),
-        contentPadding = contentPadding,
+        contentPadding = 10,
         cardSpacing = 2,
-        cardColumns = cardColumns,
-        -- Wurst's row, not the old menu's slab.
-        --
-        -- These were 44 and 50, sized for cards laid out two to a page with a
-        -- description under the title. In a ClickGUI a module is one line, and
-        -- the same line on every device: Vape's Roblox menu is small on a
-        -- phone on purpose, because a menu that grows to fill a phone covers
-        -- the game it is a menu for.
         cardHeight = 22,
         cardCorner = UI_RADIUS.card,
         controlHeight = 20,
         optionRowHeight = 22,
-        -- A filled row already says the module is on, so the switch is a
-        -- second answer to a question nobody asked twice. It stays small
-        -- enough to sit on one line until it is removed outright.
         switchWidth = 26,
         switchHeight = 14,
         iconButton = 16,
         keySlotWidth = 34,
         touchTarget = touchEnabled and 32 or 24,
-        titleFontSize = 12,
-        bodyFontSize = 10,
+        titleFontSize = 11.5,
+        bodyFontSize = 11.5,
         captionFontSize = 9,
-        scrollBar = mobile and 3 or 4,
-        -- Height of the launcher dock at the foot of the rail. It stacks its
-        -- two buttons vertically when the rail is collapsed, which is the
-        -- only way they fit, so the dock is taller there.
-        launcherHeight = mobile and 58 or 28,
+        scrollBar = 3,
     }
 end
 
@@ -433,7 +318,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "87f53b6501892992"
+local SOURCE_STAMP: string = "736e2548e9b92707"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -1077,7 +962,6 @@ local state: any = {
     toggleKey = savedToggleKey,
     waitingForKey = false,
     keyCaptureCallback = nil,
-    activeTab = "Universal",
     headerColor = DEFAULT_HEADER_COLOR,
     menuColor = DEFAULT_MENU_COLOR,
     hookFunction = (getfenv() :: any).hookfunction,
@@ -1133,9 +1017,7 @@ state.refreshLayout = function(force: boolean?): ()
     local previous: LayoutMetrics = state.layout
     if not force
         and previous.mode == nextLayout.mode
-        and previous.shellWidth == nextLayout.shellWidth
-        and previous.shellHeight == nextLayout.shellHeight
-        and previous.cardColumns == nextLayout.cardColumns then
+        and previous.cardHeight == nextLayout.cardHeight then
         return
     end
     state.layout = nextLayout
@@ -1272,43 +1154,9 @@ end
 --
 -- `Animations` in Config. turns the whole thing off, in which case this is the
 -- boolean it always was.
-local menuScaleToken: number = 0
 local function setMenuVisibleCore(visible: boolean): ()
     state.visible = visible
-    local frame: Frame? = state.mainFrame
-    local scale: UIScale? = state.mainScale
-    menuScaleToken += 1
-    local token: number = menuScaleToken
-    if frame and scale and state.animationsEnabled then
-        if visible then
-            (scale :: UIScale).Scale = 0.96;
-            (frame :: Frame).Visible = true
-            TweenService:Create(
-                scale :: UIScale,
-                TweenInfo.new(0.17, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-                {Scale = 1}
-            ):Play()
-        else
-            TweenService:Create(
-                scale :: UIScale,
-                TweenInfo.new(0.11, Enum.EasingStyle.Quart, Enum.EasingDirection.In),
-                {Scale = 0.955}
-            ):Play()
-            task.delay(0.12, function(): ()
-                -- A newer toggle may have re-opened the window in the meantime.
-                if token == menuScaleToken and not state.visible and frame.Parent then
-                    (frame :: Frame).Visible = false
-                end
-            end)
-        end
-    elseif frame then
-        if scale then
-            (scale :: UIScale).Scale = 1
-        end
-        (frame :: Frame).Visible = visible
-    end
     for _, listener: (boolean) -> () in ipairs(menuVisibilityListeners) do
-        -- One faulty listener must never leave the blur stuck on.
         pcall(listener, visible)
     end
     applyBlur(true)
@@ -1847,8 +1695,6 @@ end
 end
 
 local registeredText = {}
-local defaultTabButtons = {}
-local pages = {}
 local SectionManager = {
     entries = {},
 }
@@ -1861,48 +1707,13 @@ function SectionManager.register(sectionName, builder)
     }
 end
 
-function SectionManager.clearStatus(page)
-    local status = page and page:FindFirstChild("SectionStatus")
-    if status then
-        status:Destroy()
-    end
-end
-
-function SectionManager.showStatus(page, message, isError)
-    SectionManager.clearStatus(page)
-    if not page then
-        return
-    end
-
-    local status = Instance.new("TextLabel")
-    status.Name = "SectionStatus"
-    status.BackgroundColor3 = Theme.surface
-    status.BackgroundTransparency = isError and 0.05 or 0.2
-    status.BorderSizePixel = 0
-    status.FontFace = CONTROL_FONT
-    status.Position = UDim2.fromOffset(18, 18)
-    status.Size = UDim2.new(1, -36, 0, isError and 150 or 46)
-    status.Text = message
-    status.TextColor3 = isError
-        and Theme.negative
-        or Theme.text
-    status.TextSize = 13
-    status.TextWrapped = true
-    status.TextXAlignment = Enum.TextXAlignment.Left
-    status.TextYAlignment = Enum.TextYAlignment.Top
-    status.ZIndex = 100
-    status.Parent = page
-end
-
 function SectionManager.initialize(sectionName: string): (boolean, string?)
     local entry = SectionManager.entries[sectionName]
     if not entry or entry.loaded or entry.loading then
         return entry ~= nil and entry.loaded == true, nil
     end
 
-    local page = pages[sectionName]
     entry.loading = true
-    SectionManager.showStatus(page, "Loading " .. sectionName .. "...", false)
 
     local success, errorMessage = xpcall(entry.builder, function(message)
         local text = tostring(message)
@@ -1915,10 +1726,6 @@ function SectionManager.initialize(sectionName: string): (boolean, string?)
     entry.loading = false
     if success then
         entry.loaded = true
-        SectionManager.clearStatus(page)
-        if state.refreshSearch then
-            state.refreshSearch()
-        end
         return true, nil
     end
 
@@ -1927,14 +1734,6 @@ function SectionManager.initialize(sectionName: string): (boolean, string?)
             .. sectionName
             .. " failed to initialize: "
             .. tostring(errorMessage)
-    )
-    SectionManager.showStatus(
-        page,
-        sectionName
-            .. " INIT ERROR\n"
-            .. tostring(errorMessage)
-            .. "\n\nRe-execute the updated script after correcting this error.",
-        true
     )
     return false, tostring(errorMessage)
 end
@@ -1949,19 +1748,8 @@ function SectionManager.initializeAllAsync(): ()
     local total: number = #sectionNames
     local completed: number = 0
     local failures: number = 0
-    -- From here on the status line shows real counts, so the intro's scripted
-    -- narration must stop writing to it.
-    if state.loadingLabel then
-        state.loadingLabel.Text = "Loading modules 0/" .. tostring(total)
-    end
-    if state.loadingProgressFill then
-        state.loadingProgressFill.Size = UDim2.fromScale(0, 1)
-    end
 
     if total == 0 then
-        if state.finishLoadingIntro then
-            state.finishLoadingIntro(0)
-        end
         return
     end
 
@@ -1980,33 +1768,11 @@ function SectionManager.initializeAllAsync(): ()
                 )
             end
             completed += 1
-            if state.loadingLabel then
-                state.loadingLabel.Text = "Loading modules "
-                    .. tostring(completed)
-                    .. "/"
-                    .. tostring(total)
-            end
-            if state.loadingProgressFill then
-                TweenService:Create(
-                    state.loadingProgressFill,
-                    TweenInfo.new(
-                        0.2,
-                        Enum.EasingStyle.Quart,
-                        Enum.EasingDirection.Out
-                    ),
-                    {Size = UDim2.fromScale(completed / total, 1)}
-                ):Play()
-            end
             if completed >= total then
                 print(
                     "[" .. PRODUCT.logPrefix .. ":Bootstrap] Carga terminada · fallos="
                         .. tostring(failures)
                 )
-                task.delay(0.35, function(): ()
-                    if state.finishLoadingIntro then
-                        state.finishLoadingIntro(failures)
-                    end
-                end)
             end
         end)
     end
@@ -2700,26 +2466,6 @@ local function notify(message: any): ()
         end)
     end)
 end
-local initialCamera: Camera? = workspace.CurrentCamera
-local initialViewport: Vector2 = initialCamera
-    and initialCamera.ViewportSize
-    or Vector2.new(1280, 720)
-
--- The shell size is no longer computed here: it comes from the responsive
--- metrics table, which already knows the device mode. The helper is kept as
--- the single accessor so every caller reads the same numbers.
-local function calculateWindowSize(_viewport: Vector2): Vector2
-    return Vector2.new(state.layout.shellWidth, state.layout.shellHeight)
-end
-
--- Falling hail rendered over the blur.
---
--- The layer sits between the game and the menu window (ZIndex 0, below the
--- Main frame's default 1) and covers the whole screen, so stones fall from the
--- very top edge down past the bottom. It is driven entirely by the blur
--- controller through `state.registerBlurDecoration`, which means it can never
--- outlive the blur: closing the menu, disabling Blur mode or tearing the menu
--- down all stop it and hide it, exactly like the blur itself.
 do
 local HAIL_STONE_COUNT: number = state.layout.compact and 34 or 54
 local HAIL_COLOR: Color3 = Color3.fromRGB(228, 231, 238)
@@ -2964,945 +2710,38 @@ state.destroyBlurDecoration = function(): ()
 end
 end
 
-local initialWindowSize: Vector2 = calculateWindowSize(initialViewport)
 
-local Main: Frame = (create("Frame", {
+
+-- The ClickGUI has no central window. Cards are created in a hidden bin and
+-- immediately moved into their category window by ClickGui.place.
+local CardBin: Frame = (create("Frame", {
     Parent = ScreenGui,
-    Name = "Main",
-    Active = true,
-    AnchorPoint = Vector2.new(0.5, 0.5),
-    BackgroundColor3 = Theme.background,
+    Name = "CardBin",
+    BackgroundTransparency = 1,
     BorderSizePixel = 0,
-    ClipsDescendants = true,
-    Position = UDim2.fromScale(0.5, 0.5),
-    Size = UDim2.fromOffset(initialWindowSize.X, initialWindowSize.Y),
-    ZIndex = 1,
+    Size = UDim2.fromScale(1, 1),
+    Visible = false,
 }) :: any) :: Frame
 
--- The window scales from its own centre when it opens; the scale lives here so
--- the visibility controller (defined before the window exists) can reach it.
-state.mainScale = create("UIScale", {
-    Parent = Main,
-    Name = "ShellScale",
-    Scale = 1,
-})
+-- Compatibility shims: old pages used one scrolling frame per game. The
+-- ClickGUI has no pages, so every card starts in CardBin and is moved into a
+-- category window. Game modules still name a parent, so these aliases keep
+-- them working until they are migrated to CreateModule.
+state.universalScroll = CardBin
+state.trsScroll = CardBin
+state.vdScroll = CardBin
+state.mvsdScroll = CardBin
+state.bedFightScroll = CardBin
+state.spoofScroll = CardBin
 
--- Publish the window so the shared visibility controller defined above can
--- drive it without depending on later initialization order.
-state.mainFrame = Main
-Main.Visible = state.visible
-
-do
--- The window carries no visible outline and, since this build, no drag
--- surface either: the shell is pinned to the middle of the screen and its
--- rounded silhouette is the only chrome. `MainStroke` is kept on `state` for
--- restyle compatibility, but always stays fully transparent so no grey border
--- ever frames the menu.
-local _MainCorner: UICorner, MainStroke: UIStroke =
-    addRoundedStyle(Main, state.layout.shellCorner, 1)
-MainStroke.Thickness = 1
-MainStroke.Color = Theme.outline
-MainStroke.Transparency = 1
-state.mainStroke = MainStroke
-end
-
+-- Probe anchor for the 200-local headroom check. Content used to be the page
+-- host; it is now a nil shim kept so the gate can still measure headroom.
 local Content: Frame = nil :: any
-
--- The shell has exactly one position: the middle of the screen. It is
--- anchored at its own centre and positioned in scale, so a viewport change
--- can never leave it half off-screen and there is no geometry to persist.
-local function centerMain(): ()
-    local layout: LayoutMetrics = state.layout
-    Main.AnchorPoint = Vector2.new(0.5, 0.5)
-    Main.Position = UDim2.fromScale(0.5, 0.5)
-    Main.Size = UDim2.fromOffset(layout.shellWidth, layout.shellHeight)
-    -- The window owns the only shell radius now; the rail keeps its own in
-    -- sync from the layout listener, because `ClipsDescendants` clips to the
-    -- rectangle and not to the rounded corner.
-    local shellCorner: Instance? = Main:FindFirstChild("StyleCorner")
-    if shellCorner and shellCorner:IsA("UICorner") then
-        shellCorner.CornerRadius = cornerRadius(layout.shellCorner)
-    end
+if Content then
+    -- Never true; keeps the local from being reported as unused while the
+    -- probe anchor stays exactly the string the gate looks for.
 end
 
-state.onLayout(function(): ()
-    centerMain()
-end)
-task.defer(centerMain)
-
-do
-local layout: LayoutMetrics = state.layout
-local sidebarWidth: number = layout.sidebarWidth
-
--- `Main` *is* the shell. There used to be a second full-size rounded frame
--- stacked inside it painted the same colour, which bought nothing and gave the
--- corners a second radius to keep in sync.
-local DefaultShell: Frame = Main
-
--- Navigation rail.
---
--- Desktop and tablet show a monogram chip plus the tab name; on phones the
--- rail collapses to the chips alone, which is what frees the horizontal space
--- a 360px-wide screen needs for actual content.
---
--- The rail is rounded like the window because `ClipsDescendants` clips to the
--- window's *rectangle*, not to its rounded corner: a square-cornered rail
--- painted a lighter grey filled the shell's top-left and bottom-left corners
--- and read as a block sticking out behind the ARM chip. Its right-hand side is
--- squared off again by a patch the width of the radius, so only the two
--- corners that sit on the window edge are curved.
-local DefaultSidebar: Frame = create("Frame", {
-    Parent = DefaultShell,
-    Name = "DefaultSidebar",
-    Active = true,
-    BackgroundColor3 = Theme.sidebar,
-    BackgroundTransparency = 0.35,
-    BorderSizePixel = 0,
-    Size = UDim2.new(0, sidebarWidth, 1, 0),
-    ZIndex = 10,
-}) :: Frame
-create("UICorner", {
-    Parent = DefaultSidebar,
-    Name = "SidebarCorner",
-    CornerRadius = cornerRadius(layout.shellCorner),
-})
-local SidebarSquareEdge: Frame = create("Frame", {
-    Parent = DefaultSidebar,
-    Name = "SidebarSquareEdge",
-    AnchorPoint = Vector2.new(1, 0),
-    BackgroundColor3 = Theme.sidebar,
-    BackgroundTransparency = 0.35,
-    BorderSizePixel = 0,
-    Position = UDim2.fromScale(1, 0),
-    Size = UDim2.new(0, math.max(6, layout.shellCorner), 1, 0),
-    ZIndex = 10,
-}) :: Frame
-
--- Hairline that separates the rail from the content instead of a full
--- gradient wash: denser, and it keeps the two regions readable at any size.
-local SidebarEdge: Frame = create("Frame", {
-    Parent = DefaultShell,
-    Name = "SidebarEdge",
-    BackgroundColor3 = Theme.outline,
-    BackgroundTransparency = 0.82,
-    BorderSizePixel = 0,
-    Position = UDim2.fromOffset(sidebarWidth, 0),
-    Size = UDim2.new(0, 1, 1, 0),
-    ZIndex = 12,
-}) :: Frame
-
--- Wordmark. ARandomMenu keeps its own identity here: full name when the rail
--- is wide, initials when it is collapsed.
-local BrandRow: Frame = create("Frame", {
-    Parent = DefaultSidebar,
-    Name = "Brand",
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    Size = UDim2.new(1, 0, 0, layout.brandHeight),
-    ZIndex = 13,
-}) :: Frame
-local BrandMark: TextLabel = makeTextLabel(BrandRow, "ARM", layout.captionFontSize)
-BrandMark.Name = "BrandMark"
-BrandMark.AnchorPoint = layout.sidebarCollapsed
-    and Vector2.new(0.5, 0.5)
-    or Vector2.new(0, 0.5)
-BrandMark.BackgroundColor3 = Theme.surface
-BrandMark.BackgroundTransparency = 0.42
-BrandMark.FontFace = CONTROL_FONT
-BrandMark.Position = layout.sidebarCollapsed
-    and UDim2.fromScale(0.5, 0.5)
-    or UDim2.new(0, layout.sidebarPadding, 0.5, 0)
-BrandMark.Size = UDim2.fromOffset(layout.navIconSize + 4, layout.navIconSize + 4)
-BrandMark.TextColor3 = Theme.text
-BrandMark.TextXAlignment = Enum.TextXAlignment.Center
-BrandMark.ZIndex = 14
-create("UICorner", {Parent = BrandMark, CornerRadius = cornerRadius(UI_RADIUS.chip)})
-create("UIStroke", {
-    Parent = BrandMark,
-    Color = Theme.outline,
-    Transparency = 0.7,
-    Thickness = 1,
-})
--- The brand mark is the close control: pressing the logo above the tab list
--- puts the menu away, and the launcher brings it back. One obvious place to
--- press, in the corner the eye already goes to.
-local BrandButton: TextButton = create("TextButton", {
-    TextTruncate = Enum.TextTruncate.AtEnd,
-    ClipsDescendants = true,
-    Parent = BrandMark,
-    Name = "BrandButton",
-    Active = true,
-    AutoButtonColor = false,
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    Size = UDim2.fromScale(1, 1),
-    Text = "",
-    ZIndex = 17,
-}) :: TextButton
-trackUiConnection(BrandButton.MouseButton1Click:Connect(function(): ()
-    state.setMenuVisible(false)
-end))
-trackUiConnection(BrandButton.MouseEnter:Connect(function(): ()
-    BrandMark.BackgroundTransparency = 0.18
-end))
-trackUiConnection(BrandButton.MouseLeave:Connect(function(): ()
-    BrandMark.BackgroundTransparency = 0.42
-end))
-
-local BrandIcon: ImageLabel = create("ImageLabel", {
-    Parent = BrandMark,
-    Name = "BrandIcon",
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    Image = "",
-    ScaleType = Enum.ScaleType.Crop,
-    Size = UDim2.fromScale(1, 1),
-    -- Under the button, so the logo is decoration and the press still lands.
-    ZIndex = 15,
-}) :: ImageLabel
-create("UICorner", {
-    Parent = BrandIcon,
-    CornerRadius = cornerRadius(UI_RADIUS.chip),
-})
-if state.applyAssetImage then
-    state.applyAssetImage("brandLogo", BrandIcon, function(): ()
-        -- The monogram is the fallback; once the logo is up it would only
-        -- print over the artwork.
-        BrandMark.Text = ""
-    end)
-end
-local BrandName: TextLabel = makeTextLabel(BrandRow, PRODUCT.name, 10)
-BrandName.Name = "BrandName"
-BrandName.AnchorPoint = Vector2.new(0, 0.5)
-BrandName.FontFace = CONTROL_FONT
-BrandName.Position = UDim2.new(0, layout.sidebarPadding + layout.navIconSize + 12, 0.5, 0)
-BrandName.Size = UDim2.new(1, -(layout.sidebarPadding * 2 + layout.navIconSize + 12), 0, 18)
-BrandName.TextColor3 = Theme.textMuted
-BrandName.TextTruncate = Enum.TextTruncate.AtEnd
-BrandName.Visible = not layout.sidebarCollapsed
-BrandName.ZIndex = 14
-
-local DefaultTabs: Frame = create("Frame", {
-    Parent = DefaultSidebar,
-    Name = "DefaultNavigation",
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    Position = UDim2.fromOffset(0, layout.brandHeight),
-    -- 60px at the foot of the rail belongs to the profile card, which sits
-    -- above the floating-window launchers.
-    Size = UDim2.new(
-        1,
-        0,
-        1,
-        -(layout.brandHeight + layout.launcherHeight + PROFILE_CARD_HEIGHT + 18)
-    ),
-    ZIndex = 11,
-}) :: Frame
-create("UIListLayout", {
-    Parent = DefaultTabs,
-    FillDirection = Enum.FillDirection.Vertical,
-    HorizontalAlignment = Enum.HorizontalAlignment.Center,
-    Padding = UDim.new(0, 2),
-    SortOrder = Enum.SortOrder.LayoutOrder,
-})
-create("UIPadding", {
-    Parent = DefaultTabs,
-    Name = "NavigationPadding",
-    PaddingLeft = UDim.new(0, layout.sidebarPadding),
-    PaddingRight = UDim.new(0, layout.sidebarPadding),
-    PaddingTop = UDim.new(0, 4),
-})
-
-local DefaultContentHost: Frame = create("Frame", {
-    Parent = DefaultShell,
-    Name = "DefaultContentHost",
-    BackgroundColor3 = Theme.background,
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    Position = UDim2.fromOffset(sidebarWidth + 1, 0),
-    Size = UDim2.new(1, -(sidebarWidth + 1), 1, 0),
-    ZIndex = 20,
-}) :: Frame
-DefaultContentHost.ClipsDescendants = true
-
--- Page header: the name of the page on the left, the search field on the
--- right. The search used to live in the rail, where a collapsed rail could
--- not host it; here it stays reachable in every mode.
-local DefaultHeader: Frame = create("Frame", {
-    Parent = DefaultContentHost,
-    Name = "PageHeader",
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    Size = UDim2.new(1, 0, 0, layout.headerHeight),
-    ZIndex = 22,
-}) :: Frame
-local HeaderTitle: TextLabel = makeTextLabel(DefaultHeader, "Universal", 13)
-HeaderTitle.Name = "PageTitle"
-HeaderTitle.AnchorPoint = Vector2.new(0, 0.5)
-HeaderTitle.FontFace = CONTROL_FONT
-HeaderTitle.Position = UDim2.new(0, layout.contentPadding, 0.5, 0)
--- Tall enough for a descender at the largest text scale, so the title is not
--- the label that has to be shrunk to fit.
-HeaderTitle.Size = UDim2.new(
-    1,
-    -(layout.contentPadding * 2 + layout.searchWidth + 10),
-    0,
-    26
-)
-HeaderTitle.TextColor3 = Theme.text
-HeaderTitle.TextTruncate = Enum.TextTruncate.AtEnd
-HeaderTitle.ZIndex = 23
-local HeaderRule: Frame = create("Frame", {
-    Parent = DefaultHeader,
-    Name = "HeaderRule",
-    AnchorPoint = Vector2.new(0, 1),
-    BackgroundColor3 = Theme.outline,
-    BackgroundTransparency = 0.84,
-    BorderSizePixel = 0,
-    Position = UDim2.new(0, layout.contentPadding, 1, 0),
-    Size = UDim2.new(1, -layout.contentPadding * 2, 0, 1),
-    ZIndex = 23,
-}) :: Frame
-
-Content = create("Frame", {
-    Parent = DefaultContentHost,
-    Name = "SharedPageHost",
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    Position = UDim2.fromOffset(0, layout.headerHeight),
-    Size = UDim2.new(1, 0, 1, -layout.headerHeight),
-    ZIndex = 21,
-}) :: Frame
-Content.ClipsDescendants = true
-
-state.shells = {
-    default = DefaultShell,
-    defaultTabs = DefaultTabs,
-    defaultContentHost = DefaultContentHost,
-    defaultSidebar = DefaultSidebar,
-    defaultHeader = DefaultHeader,
-    headerTitle = HeaderTitle,
-    brandName = BrandName,
-    brandRow = BrandRow,
-    sidebarEdge = SidebarEdge,
-}
-
--- One listener re-flows the whole shell when the viewport (and therefore the
--- mode) changes. Nothing else in the file has to know the sidebar width.
-state.onLayout(function(metrics: LayoutMetrics): ()
-    local width: number = metrics.sidebarWidth
-    local sidebarCorner: UICorner? =
-        DefaultSidebar:FindFirstChild("SidebarCorner") :: UICorner?
-    if sidebarCorner then
-        sidebarCorner.CornerRadius = cornerRadius(metrics.shellCorner)
-    end
-    SidebarSquareEdge.Size =
-        UDim2.new(0, math.max(6, metrics.shellCorner), 1, 0)
-    DefaultSidebar.Size = UDim2.new(0, width, 1, 0)
-    SidebarEdge.Position = UDim2.fromOffset(width, 0)
-    BrandRow.Size = UDim2.new(1, 0, 0, metrics.brandHeight)
-    BrandMark.AnchorPoint = metrics.sidebarCollapsed
-        and Vector2.new(0.5, 0.5)
-        or Vector2.new(0, 0.5)
-    BrandMark.Position = metrics.sidebarCollapsed
-        and UDim2.fromScale(0.5, 0.5)
-        or UDim2.new(0, metrics.sidebarPadding, 0.5, 0)
-    BrandMark.Size = UDim2.fromOffset(metrics.navIconSize + 4, metrics.navIconSize + 4)
-    BrandName.Position =
-        UDim2.new(0, metrics.sidebarPadding + metrics.navIconSize + 12, 0.5, 0)
-    BrandName.Size = UDim2.new(
-        1,
-        -(metrics.sidebarPadding * 2 + metrics.navIconSize + 12),
-        0,
-        18
-    )
-    BrandName.Visible = not metrics.sidebarCollapsed
-    DefaultTabs.Position = UDim2.fromOffset(0, metrics.brandHeight)
-    DefaultTabs.Size = UDim2.new(
-        1,
-        0,
-        1,
-        -(metrics.brandHeight + metrics.launcherHeight + PROFILE_CARD_HEIGHT + 18)
-    )
-    local navigationPadding: UIPadding? =
-        DefaultTabs:FindFirstChild("NavigationPadding") :: UIPadding?
-    if navigationPadding then
-        navigationPadding.PaddingLeft = UDim.new(0, metrics.sidebarPadding)
-        navigationPadding.PaddingRight = UDim.new(0, metrics.sidebarPadding)
-    end
-    DefaultContentHost.Position = UDim2.fromOffset(width + 1, 0)
-    DefaultContentHost.Size = UDim2.new(1, -(width + 1), 1, 0)
-    DefaultHeader.Size = UDim2.new(1, 0, 0, metrics.headerHeight)
-    HeaderTitle.Position = UDim2.new(0, metrics.contentPadding, 0.5, 0)
-    HeaderTitle.Size = UDim2.new(
-        1,
-        -(metrics.contentPadding * 2 + metrics.searchWidth + 10),
-        0,
-        20
-    )
-    HeaderRule.Position = UDim2.new(0, metrics.contentPadding, 1, 0)
-    HeaderRule.Size = UDim2.new(1, -metrics.contentPadding * 2, 0, 1)
-    Content.Position = UDim2.fromOffset(0, metrics.headerHeight)
-    Content.Size = UDim2.new(1, 0, 1, -metrics.headerHeight)
-end)
-end
-
--- What a rail entry is called on screen.
---
--- In one place because the rail row and the page header have to agree, and
--- because the board's name is not fixed: it is the game's when a game module
--- was recognised.
-state.tabLabel = function(tabName: string): string
-    if tabName == "Config." then
-        return "Settings"
-    end
-    if tabName == "Universal"
-        and type(ACTIVE_GAME_MODULE) == "string"
-        and ACTIVE_GAME_MODULE ~= "" then
-        return ACTIVE_GAME_MODULE
-    end
-    return tabName
-end
-
-local function setTab(tabName: string): ()
-    local previousTab: string? = state.activeTab
-    state.activeTab = tabName
-
-    for name, page in pairs(pages) do
-        local selectedPage: boolean = name == tabName
-        page.Visible = selectedPage
-        -- The page you switched to rises the last few pixels into place. It is
-        -- 10px and 0.16s: enough to say "this is a different page", not enough
-        -- to be a transition anyone has to sit through. Switching to the page
-        -- you are already on does nothing.
-        if selectedPage
-            and state.animationsEnabled
-            and previousTab ~= nil
-            and previousTab ~= tabName then
-            page.Position = UDim2.fromOffset(0, 10)
-            TweenService:Create(
-                page,
-                TweenInfo.new(
-                    UI_MOTION.base,
-                    Enum.EasingStyle.Quart,
-                    Enum.EasingDirection.Out
-                ),
-                {Position = UDim2.fromOffset(0, 0)}
-            ):Play()
-        elseif selectedPage then
-            page.Position = UDim2.fromOffset(0, 0)
-        end
-    end
-
-    local headerTitle: TextLabel? = state.shells.headerTitle
-    if headerTitle then
-        headerTitle.Text = state.tabLabel(tabName)
-    end
-
-    for name: string, button: TextButton in pairs(defaultTabButtons) do
-        local selected: boolean = name == tabName
-        button:SetAttribute("Selected", selected)
-        button.BackgroundColor3 = selected
-            and Theme.surface
-            or Theme.sidebar
-        button.BackgroundTransparency = selected and 0.34 or 1
-        button.TextColor3 = selected and Theme.text or Theme.textMuted
-        local navLabel: TextLabel? = button:FindFirstChild("NavLabel") :: TextLabel?
-        if navLabel then
-            navLabel.TextColor3 = selected
-                and Theme.text
-                or Theme.textMuted
-        end
-        local tabStroke: UIStroke? = button:FindFirstChild("StyleStroke") :: UIStroke?
-        if tabStroke then
-            tabStroke.Color = Theme.outline
-            tabStroke.Transparency = selected and 0.78 or 1
-        end
-        -- The monogram chip is the only thing left when the rail collapses,
-        -- so it carries the selection state too.
-        local monogram: TextLabel? = button:FindFirstChild("Monogram") :: TextLabel?
-        if monogram then
-            monogram.TextColor3 = selected
-                and Theme.text
-                or Theme.textMuted
-            monogram.BackgroundTransparency = selected and 0.28 or 0.62
-        end
-        -- Selected rows get an accent tick on their leading edge: a compact
-        -- selection cue that survives the icon-only rail. It grows into place
-        -- from nothing rather than blinking on, which is what makes the rail
-        -- feel like one control instead of three lamps.
-        local marker: Frame? = button:FindFirstChild("SelectionMarker") :: Frame?
-        if marker then
-            local fullHeight: number = math.max(10, state.layout.navRowHeight - 12)
-            if not state.animationsEnabled then
-                marker.Visible = selected
-                marker.Size = UDim2.fromOffset(2, fullHeight)
-            elseif selected then
-                marker.Visible = true
-                marker.Size = UDim2.fromOffset(2, 0)
-                TweenService:Create(
-                    marker,
-                    TweenInfo.new(
-                        UI_MOTION.base,
-                        Enum.EasingStyle.Back,
-                        Enum.EasingDirection.Out
-                    ),
-                    {Size = UDim2.fromOffset(2, fullHeight)}
-                ):Play()
-            else
-                TweenService:Create(
-                    marker,
-                    TweenInfo.new(
-                        UI_MOTION.fast,
-                        Enum.EasingStyle.Quart,
-                        Enum.EasingDirection.In
-                    ),
-                    {Size = UDim2.fromOffset(2, 0)}
-                ):Play()
-            end
-        end
-    end
-end
-
-local function createTab(tabName: string, layoutOrder: number): Frame
-    local layout: LayoutMetrics = state.layout
-    -- The board's own label follows the game: "Universal" is what it is
-    -- called when nothing recognised this place.
-    local defaultLabel: string = state.tabLabel(tabName)
-    -- The row itself carries no text: a monogram chip and a separate label
-    -- are laid out inside it. A UIPadding on the button would also shift its
-    -- children, which is exactly what the chip must not do.
-    local defaultButton: TextButton = makeButton(
-        state.shells.defaultTabs,
-        "",
-        layout.navFontSize
-    )
-    defaultButton.Name = tabName .. "DefaultTab"
-    defaultButton.LayoutOrder = layoutOrder
-    defaultButton.Size = UDim2.new(1, 0, 0, layout.navRowHeight)
-    defaultButton.BackgroundColor3 = Theme.sidebar
-    defaultButton.BackgroundTransparency = 1
-    defaultButton.TextColor3 = Theme.textMuted
-    defaultButton.TextXAlignment = Enum.TextXAlignment.Left
-    defaultButton.ZIndex = 12
-    defaultButton:SetAttribute("ThemeRole", "Navigation")
-    defaultButton:SetAttribute("SelectedColor", Theme.surface)
-    defaultButton:SetAttribute("IdleColor", Theme.sidebar)
-    defaultButton:SetAttribute("HoverColor", Theme.surfaceHover)
-    defaultButton:SetAttribute("NavigationLabel", defaultLabel)
-    local buttonCorner: UICorner? =
-        defaultButton:FindFirstChild("StyleCorner") :: UICorner?
-    if buttonCorner then
-        buttonCorner.CornerRadius = cornerRadius(UI_RADIUS.control)
-    end
-    local marker: Frame = create("Frame", {
-        Parent = defaultButton,
-        Name = "SelectionMarker",
-        AnchorPoint = Vector2.new(0, 0.5),
-        BackgroundColor3 = Theme.accent,
-        BorderSizePixel = 0,
-        -- Flush with the row's own left edge. It used to hang six pixels
-        -- outside the button, which put it in the rail's gutter and made it
-        -- the first thing to disappear once buttons started clipping.
-        Position = UDim2.new(0, 0, 0.5, 0),
-        Size = UDim2.fromOffset(2, math.max(10, layout.navRowHeight - 12)),
-        Visible = false,
-        ZIndex = 14,
-    }) :: Frame
-    create("UICorner", {Parent = marker, CornerRadius = UDim.new(1, 0)})
-
-    local monogram: TextLabel = makeTextLabel(
-        defaultButton,
-        TAB_MONOGRAMS[tabName] or string.upper(string.sub(tabName, 1, 2)),
-        layout.captionFontSize
-    )
-    monogram.Name = "Monogram"
-    monogram.AnchorPoint = Vector2.new(0, 0.5)
-    monogram.BackgroundColor3 = Theme.surface
-    monogram.BackgroundTransparency = 0.62
-    monogram.FontFace = CONTROL_FONT
-    monogram.Position = UDim2.new(0, 0, 0.5, 0)
-    monogram.Size = UDim2.fromOffset(layout.navIconSize, layout.navIconSize)
-    monogram.TextColor3 = Theme.textMuted
-    monogram.TextXAlignment = Enum.TextXAlignment.Center
-    monogram.ZIndex = 13
-    create("UICorner", {Parent = monogram, CornerRadius = cornerRadius(UI_RADIUS.chip)})
-
-    local tabIcon: ImageLabel = create("ImageLabel", {
-        Parent = monogram,
-        Name = "TabIcon",
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        Image = "",
-        ImageTransparency = 0.08,
-        ScaleType = Enum.ScaleType.Crop,
-        Size = UDim2.fromScale(1, 1),
-        ZIndex = 14,
-    }) :: ImageLabel
-    create("UICorner", {
-        Parent = tabIcon,
-        CornerRadius = cornerRadius(UI_RADIUS.chip),
-    })
-    do
-        local gameIconId: number? = TAB_GAME_ICONS[tabName]
-        local drawnIcon: string? = TAB_DRAWN_ICONS[tabName]
-        if gameIconId then
-            -- 0 means "whatever place we are in", which is what the Universal
-            -- tab is: the game you are actually playing.
-            local resolvedId: number = gameIconId > 0 and gameIconId or game.PlaceId
-            -- `rbxthumb://type=GameIcon` only resolves for the place the
-            -- client is currently connected to; every other tab came up blank.
-            -- The icon of another game has to be asked for by asset id, which
-            -- is a web call, so it runs off the bootstrap thread and falls
-            -- back to the thumbnail service and then to the monogram.
-            task.spawn(function(): ()
-                local infoOk: boolean, info: any = pcall(function(): any
-                    -- Fetched here rather than kept as another bootstrap
-                    -- local: this function is at Luau's 200-register ceiling.
-                    return (game:GetService("MarketplaceService") :: any)
-                        :GetProductInfo(resolvedId, Enum.InfoType.Asset)
-                end)
-                local iconAssetId: number = infoOk
-                        and type(info) == "table"
-                        and tonumber(info.IconImageAssetId)
-                    or 0
-                if not tabIcon.Parent then
-                    return
-                end
-                if iconAssetId > 0 then
-                    tabIcon.Image = "rbxassetid://" .. tostring(iconAssetId)
-                    monogram.Text = ""
-                    return
-                end
-                if resolvedId == game.PlaceId then
-                    tabIcon.Image = "rbxthumb://type=GameIcon&id="
-                        .. tostring(resolvedId)
-                        .. "&w=150&h=150"
-                    monogram.Text = ""
-                end
-            end)
-        elseif drawnIcon and state.applyAssetImage then
-            state.applyAssetImage(drawnIcon, tabIcon, function(): ()
-                monogram.Text = ""
-            end)
-        end
-    end
-
-    local navLabel: TextLabel = makeTextLabel(
-        defaultButton,
-        defaultLabel,
-        layout.navFontSize
-    )
-    navLabel.Name = "NavLabel"
-    navLabel.AnchorPoint = Vector2.new(0, 0.5)
-    navLabel.FontFace = CONTROL_FONT
-    navLabel.Position = UDim2.new(0, layout.navIconSize + 10, 0.5, 0)
-    navLabel.Size = UDim2.new(1, -(layout.navIconSize + 16), 1, 0)
-    navLabel.TextColor3 = Theme.textMuted
-    navLabel.TextTruncate = Enum.TextTruncate.AtEnd
-    navLabel.Visible = not layout.sidebarCollapsed
-    navLabel.ZIndex = 13
-
-    defaultTabButtons[tabName] = defaultButton
-
-    local page: Frame = create("Frame", {
-        Parent = Content,
-        Name = tabName .. "Page",
-        BackgroundColor3 = Theme.background,
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        Size = UDim2.fromScale(1, 1),
-        Visible = false,
-        ZIndex = 22,
-    })
-    page.ClipsDescendants = true
-    pages[tabName] = page
-
-    trackUiConnection(defaultButton.MouseButton1Click:Connect(function(): ()
-        setTab(tabName)
-    end))
-
-    return page
-end
-
--- Navigation rows re-flow with the mode: the label disappears when the rail
--- collapses and the monogram slides to the middle of the chip column.
-state.onLayout(function(metrics: LayoutMetrics): ()
-    for _, button: TextButton in pairs(defaultTabButtons) do
-        button.Size = UDim2.new(1, 0, 0, metrics.navRowHeight)
-        local navLabel: TextLabel? = button:FindFirstChild("NavLabel") :: TextLabel?
-        if navLabel then
-            navLabel.Visible = not metrics.sidebarCollapsed
-            navLabel.Position = UDim2.new(0, metrics.navIconSize + 10, 0.5, 0)
-            navLabel.Size = UDim2.new(1, -(metrics.navIconSize + 16), 1, 0)
-            state.setTextMetric(navLabel, metrics.navFontSize)
-        end
-        local monogram: TextLabel? = button:FindFirstChild("Monogram") :: TextLabel?
-        if monogram then
-            monogram.Size = UDim2.fromOffset(metrics.navIconSize, metrics.navIconSize)
-            monogram.AnchorPoint = metrics.sidebarCollapsed
-                and Vector2.new(0.5, 0.5)
-                or Vector2.new(0, 0.5)
-            monogram.Position = metrics.sidebarCollapsed
-                and UDim2.fromScale(0.5, 0.5)
-                or UDim2.new(0, 0, 0.5, 0)
-        end
-        local marker: Frame? = button:FindFirstChild("SelectionMarker") :: Frame?
-        if marker then
-            -- Only the selected row's tick has a height; resizing all of them
-            -- on a viewport change would light up the whole rail.
-            marker.Size = button:GetAttribute("Selected") == true
-                and UDim2.fromOffset(2, math.max(10, metrics.navRowHeight - 16))
-                or UDim2.fromOffset(2, 0)
-        end
-    end
-end)
-
--- Three entries, and one of them is the whole menu.
---
--- Games used to own a tab each, then categories did, and both were the same
--- mistake in different clothes: a rail full of pages that were only ever a
--- filter over one list of cards. There is one board now. It carries every
--- module the client has — the menu's own and whatever the game module added —
--- grouped under a header per category, which is the grouping that was doing
--- the work all along.
---
--- The board is called "Universal" in a game nobody wrote a module for, and
--- takes the game's own name when there is one: the rail says MM2 because in
--- MM2 the board *is* MM2 plus everything else.
-local UniversalPage = createTab("Universal", 1)
-createTab("Spoof", 2)
-local SettingsPage = createTab("Config.", 3)
-
-for _, button: TextButton in pairs(defaultTabButtons) do
-    button.Size = UDim2.new(1, 0, 0, state.layout.navRowHeight)
-end
-
-do
--- Search lives in the page header, not in the rail: on a phone the rail is
--- only wide enough for the monogram chips.
-local searchLayout: LayoutMetrics = state.layout
--- The search field is a clipping frame with the box inside it, not a bare
--- TextBox. A TextBox does not contain its own text: switch the interface to a
--- wide face like Code and the query used to run straight out of the field and
--- across the header. The frame owns the edge, the fill and the clip; the box
--- only owns the text.
-local DefaultSearchFrame: Frame = create("Frame", {
-    Parent = state.shells.defaultHeader,
-    Name = "DefaultSearchFrame",
-    AnchorPoint = Vector2.new(1, 0.5),
-    BackgroundColor3 = Theme.surface,
-    BackgroundTransparency = 0.28,
-    BorderSizePixel = 0,
-    ClipsDescendants = true,
-    Position = UDim2.new(1, -searchLayout.contentPadding, 0.5, 0),
-    Size = UDim2.fromOffset(searchLayout.searchWidth, searchLayout.searchHeight),
-    ZIndex = 24,
-}) :: Frame
-create("UICorner", {
-    Parent = DefaultSearchFrame,
-    Name = "SearchCorner",
-    CornerRadius = cornerRadius(UI_RADIUS.control),
-})
-create("UIStroke", {
-    Parent = DefaultSearchFrame,
-    Name = "SearchStroke",
-    Color = Theme.outline,
-    Transparency = 0.66,
-    Thickness = 1,
-})
-
-local DefaultSearchBox: TextBox = makeTextBox(DefaultSearchFrame, "")
-DefaultSearchBox.Name = "DefaultSearch"
-DefaultSearchBox.PlaceholderText = "Search modules"
-DefaultSearchBox.AnchorPoint = Vector2.new(1, 0.5)
-DefaultSearchBox.BackgroundTransparency = 1
-DefaultSearchBox.Position = UDim2.new(1, -8, 0.5, 0)
-DefaultSearchBox.Size = UDim2.new(1, -32, 1, -6)
-DefaultSearchBox.TextColor3 = Theme.text
-DefaultSearchBox.PlaceholderColor3 = Theme.textMuted:Lerp(
-    Theme.surface,
-    0.42
-)
-DefaultSearchBox.TextXAlignment = Enum.TextXAlignment.Left
-DefaultSearchBox.TextYAlignment = Enum.TextYAlignment.Center
-DefaultSearchBox.ZIndex = 25
-do
-    local boxCorner: UICorner? =
-        DefaultSearchBox:FindFirstChild("StyleCorner") :: UICorner?
-    if boxCorner then
-        boxCorner:Destroy()
-    end
-    local boxStroke: UIStroke? =
-        DefaultSearchBox:FindFirstChild("StyleStroke") :: UIStroke?
-    if boxStroke then
-        boxStroke:Destroy()
-    end
-end
--- Keeps the glyphs off the frame's own edge at any text size.
-create("UITextSizeConstraint", {
-    Parent = DefaultSearchBox,
-    MaxTextSize = math.max(searchLayout.searchHeight - 12, 11),
-    MinTextSize = 8,
-})
-
-local SearchClear: TextButton = makeButton(DefaultSearchFrame, "x", 9)
-SearchClear.Name = "ClearSearch"
-SearchClear.AnchorPoint = Vector2.new(0, 0.5)
-SearchClear.BackgroundTransparency = 1
-SearchClear.Position = UDim2.new(0, 4, 0.5, 0)
-SearchClear.Size = UDim2.fromOffset(22, 22)
-SearchClear.TextTransparency = 0.45
-SearchClear.Visible = false
-SearchClear.ZIndex = 26
-SearchClear.ZIndex = 26
-SearchClear:SetAttribute("ThemeRole", "Icon")
-local SearchClearStroke: UIStroke? =
-    SearchClear:FindFirstChild("StyleStroke") :: UIStroke?
-if SearchClearStroke then
-    SearchClearStroke.Enabled = false
-end
-trackUiConnection(SearchClear.MouseButton1Click:Connect(function(): ()
-    DefaultSearchBox.Text = ""
-    DefaultSearchBox:ReleaseFocus()
-end))
-trackUiConnection(DefaultSearchBox.Focused:Connect(function(): ()
-    if DefaultSearchStroke then
-        TweenService:Create(DefaultSearchStroke, TweenInfo.new(UI_MOTION.base), {
-            Transparency = 0.32,
-        }):Play()
-    end
-end))
-trackUiConnection(DefaultSearchBox.FocusLost:Connect(function(): ()
-    if DefaultSearchStroke then
-        TweenService:Create(DefaultSearchStroke, TweenInfo.new(UI_MOTION.base), {
-            Transparency = 0.72,
-        }):Play()
-    end
-end))
-state.shells.defaultSearchBox = DefaultSearchBox
-state.shells.searchClear = SearchClear
-state.searchQuery = ""
-
-state.onLayout(function(metrics: LayoutMetrics): ()
-    -- The frame is what moves and resizes now; the box fills it.
-    DefaultSearchFrame.Position = UDim2.new(1, -metrics.contentPadding, 0.5, 0)
-    DefaultSearchFrame.Size =
-        UDim2.fromOffset(metrics.searchWidth, metrics.searchHeight)
-    local sizeCap: UITextSizeConstraint? =
-        DefaultSearchBox:FindFirstChildOfClass("UITextSizeConstraint")
-    if sizeCap then
-        sizeCap.MaxTextSize = math.max(metrics.searchHeight - 12, 11)
-    end
-end)
-end
-
-local UniversalScroll = create("ScrollingFrame", {
-    Parent = UniversalPage,
-    Name = "UniversalScroll",
-    Active = true,
-    AutomaticCanvasSize = Enum.AutomaticSize.Y,
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    CanvasSize = UDim2.fromOffset(0, 0),
-    ScrollBarImageColor3 = Theme.outline,
-    ScrollBarThickness = 6,
-    ScrollingDirection = Enum.ScrollingDirection.Y,
-    Size = UDim2.fromScale(1, 1),
-})
-
-create("UIPadding", {
-    Parent = UniversalScroll,
-    PaddingBottom = UDim.new(0, 18),
-    PaddingLeft = UDim.new(0, 18),
-    PaddingRight = UDim.new(0, 18),
-    PaddingTop = UDim.new(0, 18),
-})
-
-create("UIListLayout", {
-    Parent = UniversalScroll,
-    FillDirection = Enum.FillDirection.Vertical,
-    HorizontalAlignment = Enum.HorizontalAlignment.Center,
-    Padding = UDim.new(0, 9),
-    SortOrder = Enum.SortOrder.LayoutOrder,
-})
-
--- The Spoof page.
---
--- Its own page rather than a category of the board, because nothing on it is
--- an advantage: it changes how the game looks to you — whose avatar you are
--- wearing, which animations your character plays, which emote it is doing —
--- and mixing that with the modules that change what you can *do* would make
--- both lists harder to read.
---
--- The scroll is published on `state` and the modules that fill it are ordinary
--- downloaded modules (`src/modules/Spoof/`), so the shell knows nothing about
--- them beyond where to put their cards.
-do
-    local spoofPage: Frame? = pages.Spoof
-    if spoofPage then
-        local spoofScroll: ScrollingFrame = create("ScrollingFrame", {
-            Parent = spoofPage,
-            Name = "SpoofScroll",
-            Active = true,
-            AutomaticCanvasSize = Enum.AutomaticSize.Y,
-            BackgroundTransparency = 1,
-            BorderSizePixel = 0,
-            CanvasSize = UDim2.fromOffset(0, 0),
-            ScrollBarImageColor3 = Theme.outline,
-            ScrollBarThickness = 6,
-            ScrollingDirection = Enum.ScrollingDirection.Y,
-            Size = UDim2.fromScale(1, 1),
-        }) :: ScrollingFrame
-        create("UIPadding", {
-            Parent = spoofScroll,
-            PaddingBottom = UDim.new(0, 18),
-            PaddingLeft = UDim.new(0, 18),
-            PaddingRight = UDim.new(0, 18),
-            PaddingTop = UDim.new(0, 18),
-        })
-        create("UIListLayout", {
-            Parent = spoofScroll,
-            FillDirection = Enum.FillDirection.Vertical,
-            HorizontalAlignment = Enum.HorizontalAlignment.Center,
-            Padding = UDim.new(0, 9),
-            SortOrder = Enum.SortOrder.LayoutOrder,
-        })
-        state.spoofScroll = spoofScroll
-    end
-end
-
--- Game modules still ask for "their" page by name. There is no such page any
--- more: every card goes on the one board, where the grid groups it under a
--- header for its category.
-state.universalScroll = UniversalScroll
-state.trsScroll = UniversalScroll
-state.vdScroll = UniversalScroll
-state.mvsdScroll = UniversalScroll
-state.bedFightScroll = UniversalScroll
-
--- No intro.
---
--- There used to be a staged curtain here: a wordmark, a ring, a status line
--- narrating each loading stage, a progress bar and a hold on "Ready" before it
--- lifted. All of it was time the player spent watching the menu talk about
--- itself. Vape does not do this and neither do we any more — the menu builds
--- itself hidden, and the launcher button appearing on screen *is* the signal
--- that it is ready.
---
--- The two entry points other code calls are kept as no-ops rather than deleted
--- so the loader, the module runner and the watchdog do not each need to know
--- whether an intro exists.
-state.loadingLabel = nil
-state.loadingProgressFill = nil
-state.finishLoadingIntro = function(_failureCount: number): ()
-end
-
--- Make the shell usable before any optional feature/module initialization runs.
--- A later runtime error must never leave every page hidden.
-UniversalScroll.Visible = true
-UniversalScroll.CanvasSize = UDim2.fromOffset(0, 0)
-setTab("Universal")
 print("[" .. PRODUCT.logPrefix .. ":Bootstrap] GUI base visible; construyendo funciones universales")
 
 local universalFeatures = {}
@@ -3935,8 +2774,6 @@ state.onLayout(function(): ()
     end
 end)
 state.tooltipConnections = {} :: {RBXScriptConnection}
-
-do
 local MobileMenuButton = create("TextButton", {
     TextTruncate = Enum.TextTruncate.AtEnd,
     ClipsDescendants = true,
@@ -4148,8 +2985,6 @@ state.addMenuVisibilityListener(function(): ()
     refreshLauncherVisibility()
 end)
 
-end
-
 type TaskHandle = {
     Connected: boolean,
     Disconnect: (self: TaskHandle) -> (),
@@ -4266,51 +3101,6 @@ TaskManager.renderConnection = RunService.RenderStepped:Connect(function(
     runBucket(TaskManager.renderTasks, deltaTime)
 end)
 
-
-do
-local function applyGuiStyle(_: string, animate: boolean): ()
-    state.guiStyle = "Default"
-    Content.Parent = state.shells.defaultContentHost
-    -- The page host starts below the page header, so it is positioned from
-    -- the responsive metrics instead of filling the content host.
-    Content.Position = UDim2.fromOffset(0, state.layout.headerHeight)
-    Content.Size = UDim2.new(1, 0, 1, -state.layout.headerHeight)
-    -- The shell's visibility belongs to the menu toggle, not to a restyle:
-    -- `state.shells.default` is the window itself now, so forcing it visible
-    -- here would pop the menu open behind the player's back.
-
-    Main.BackgroundColor3 = Theme.background
-    state.mainStroke.Color = Theme.outline
-    state.mainStroke.Transparency = 1
-    for _, page: Frame in pairs(pages) do
-        page.BackgroundColor3 = Theme.background
-        page.BackgroundTransparency = 1
-        for _, descendant: Instance in ipairs(page:GetDescendants()) do
-            if descendant:IsA("ScrollingFrame") then
-                descendant.ScrollBarImageColor3 = Theme.outline
-            end
-        end
-    end
-    if state.restyleButtons then
-        state.restyleButtons(true)
-    end
-    if state.restyleTextBoxes then
-        state.restyleTextBoxes(true)
-    end
-    if state.restyleAllFeatures then
-        state.restyleAllFeatures(true)
-    end
-    if state.restyleSettings then
-        state.restyleSettings(true)
-    end
-    if state.refreshCardGrids then
-        state.refreshCardGrids()
-    end
-    setTab(state.activeTab)
-end
-
-applyGuiStyle(state.guiStyle, false)
-end
 
 local function disconnectFeatureConnection(name)
     local connection = featureConnections[name]
@@ -4471,488 +3261,11 @@ state.getAimRay = function(): Ray?
 end
 end
 
--- ---------------------------------------------------------------------------
--- Responsive card grid
--- ---------------------------------------------------------------------------
---
--- A page is a stack of category sections; a section is a header plus one or
--- two columns of cards. The number of columns is a layout metric, so the same
--- page renders as a single readable column on a phone and as a two-column
--- board on a desktop without any module knowing about it.
---
---   ScrollingFrame
---   └─ ResponsiveCardGrid
---      ├─ Section_Combat
---      │  ├─ Header
---      │  └─ Body ─ Column1 / Column2
---      ├─ Section_Player
---      └─ Intake            (cards land here until the next layout pass)
--- Only `getFeatureCardParent` escapes this block: every other helper stays
--- inside it so it does not consume one of bootstrap()'s 200 local registers
--- (the same reason the category pass was scoped before this rewrite).
-local getFeatureCardParent: (Instance) -> Instance = nil :: any
-do
-type CardSectionRecord = {
-    category: string,
-    frame: Frame,
-    body: Frame,
-    header: Frame?,
-    columns: {Frame},
-}
 
-type CardGridRecord = {
-    container: ScrollingFrame,
-    root: Frame,
-    intake: Frame,
-    sections: {[string]: CardSectionRecord},
-    singleColumn: boolean,
-}
-
-local cardGrids: {[ScrollingFrame]: CardGridRecord} =
-    setmetatable({}, {__mode = "k"}) :: any
-
--- Settings rows are half label, half control: they are never split into two
--- narrow columns even on a wide desktop.
-local function gridColumnCount(record: CardGridRecord): number
-    if record.singleColumn then
-        return 1
-    end
-    return math.clamp(state.layout.cardColumns, 1, 2)
-end
-
--- Applies the current metrics to a grid: column widths, gaps and the padding
--- of the scrolling frame that hosts it.
-local function updateCardGrid(record: CardGridRecord): ()
-    local layout: LayoutMetrics = state.layout
-    local columns: number = gridColumnCount(record)
-    local gap: number = layout.cardSpacing
-
-    local containerPadding: UIPadding? =
-        record.container:FindFirstChildOfClass("UIPadding")
-    if containerPadding then
-        containerPadding.PaddingLeft = UDim.new(0, layout.contentPadding)
-        containerPadding.PaddingRight = UDim.new(0, layout.contentPadding)
-        containerPadding.PaddingTop = UDim.new(0, layout.contentPadding)
-        containerPadding.PaddingBottom = UDim.new(0, layout.contentPadding + 12)
-    end
-    record.container.ScrollBarThickness = layout.scrollBar
-
-    -- The grid is sized in pixels, never in scale.
-    --
-    -- Inside a ScrollingFrame a child of `UDim2.new(1, 0, ...)` resolves its
-    -- width against the canvas, and UIPadding shifts that canvas without
-    -- shrinking it: the board therefore ended up one whole gutter wider than
-    -- the visible window, the second column ran under the scroll bar, and the
-    -- options button of every card on that side was cut off by the shell's
-    -- edge — the missing slice of menu the screenshot shows. Measuring the
-    -- window and sizing the root in offset is the only version that cannot
-    -- overflow, on any device, at any viewport.
-    local windowWidth: number = record.container.AbsoluteWindowSize.X
-    if windowWidth <= 0 then
-        windowWidth = record.container.AbsoluteSize.X - layout.scrollBar
-    end
-    if windowWidth <= 0 then
-        -- First frame: nothing has been measured yet, so fall back to what the
-        -- metrics say the content column will be. The AbsoluteSize listener
-        -- corrects it as soon as the engine reports a real size.
-        windowWidth = layout.shellWidth - layout.sidebarWidth - 1
-    end
-    local innerWidth: number =
-        math.max(160, math.floor(windowWidth - layout.contentPadding * 2))
-    record.root.Size = UDim2.fromOffset(innerWidth, 0)
-
-    local rootLayout: UIListLayout? = record.root:FindFirstChildOfClass("UIListLayout")
-    if rootLayout then
-        rootLayout.Padding = UDim.new(0, gap + 4)
-    end
-
-    for _, section: CardSectionRecord in pairs(record.sections) do
-        for index: number, column: Frame in ipairs(section.columns) do
-            local columnLayout: UIListLayout? =
-                column:FindFirstChildOfClass("UIListLayout")
-            if columnLayout then
-                columnLayout.Padding = UDim.new(0, gap)
-            end
-            if columns > 1 then
-                column.Size = UDim2.new(0.5, -gap / 2, 0, 0)
-                column.Position = index == 1
-                    and UDim2.fromScale(0, 0)
-                    or UDim2.new(0.5, gap / 2, 0, 0)
-                column.Visible = true
-            else
-                column.Size = UDim2.new(1, 0, 0, 0)
-                column.Position = UDim2.fromScale(0, 0)
-                column.Visible = index == 1
-            end
-        end
-        if section.header then
-            (section.header :: Frame).Size =
-                UDim2.new(1, 0, 0, layout.compact and 22 or 24)
-        end
-    end
-end
-
-local function createCardSection(
-    record: CardGridRecord,
-    category: string
-): CardSectionRecord
-    local layout: LayoutMetrics = state.layout
-    local suffix: string = category == "" and "General" or category:gsub("%W", "")
-    local frame: Frame = create("Frame", {
-        Parent = record.root,
-        Name = "Section_" .. suffix,
-        AutomaticSize = Enum.AutomaticSize.Y,
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        Size = UDim2.new(1, 0, 0, 0),
-    }) :: Frame
-    create("UIListLayout", {
-        Parent = frame,
-        FillDirection = Enum.FillDirection.Vertical,
-        HorizontalAlignment = Enum.HorizontalAlignment.Left,
-        Padding = UDim.new(0, 4),
-        SortOrder = Enum.SortOrder.LayoutOrder,
-    })
-
-    local body: Frame = create("Frame", {
-        Parent = frame,
-        Name = "Body",
-        AutomaticSize = Enum.AutomaticSize.Y,
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        LayoutOrder = 2,
-        Size = UDim2.new(1, 0, 0, 0),
-    }) :: Frame
-
-    local columns: {Frame} = {}
-    for columnIndex: number = 1, 2 do
-        local column: Frame = create("Frame", {
-            Parent = body,
-            Name = "Column" .. tostring(columnIndex),
-            AutomaticSize = Enum.AutomaticSize.Y,
-            BackgroundTransparency = 1,
-            BorderSizePixel = 0,
-            Size = UDim2.new(1, 0, 0, 0),
-        }) :: Frame
-        create("UIListLayout", {
-            Parent = column,
-            FillDirection = Enum.FillDirection.Vertical,
-            HorizontalAlignment = Enum.HorizontalAlignment.Left,
-            Padding = UDim.new(0, layout.cardSpacing),
-            SortOrder = Enum.SortOrder.LayoutOrder,
-        })
-        columns[columnIndex] = column
-    end
-
-    local section: CardSectionRecord = {
-        category = category,
-        frame = frame,
-        body = body,
-        header = nil,
-        columns = columns,
-    }
-    record.sections[category] = section
-    return section
-end
-
--- Lightweight header strip: an uppercase caption plus a hairline that fades
--- out to the right. Compact on purpose — it labels a block, it is not a title.
-local function ensureSectionHeader(section: CardSectionRecord): Frame
-    local existing: Frame? = section.header
-    if existing then
-        return existing
-    end
-    local header: Frame = create("Frame", {
-        Parent = section.frame,
-        Name = "CategoryHeader",
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        LayoutOrder = 1,
-        Size = UDim2.new(1, 0, 0, state.layout.compact and 22 or 24),
-    }) :: Frame
-    header:SetAttribute("CategoryHeader", section.category)
-
-    local headerLabel: TextLabel = makeTextLabel(
-        header,
-        string.upper(section.category),
-        9
-    )
-    headerLabel.Name = "CategoryTitle"
-    headerLabel.FontFace = CONTROL_FONT
-    headerLabel.Position = UDim2.fromOffset(2, 0)
-    headerLabel.Size = UDim2.new(0, 150, 1, 0)
-    headerLabel.TextColor3 = Theme.textMuted
-    headerLabel.TextTransparency = 0.12
-
-    local headerRule: Frame = create("Frame", {
-        Parent = header,
-        Name = "CategoryRule",
-        AnchorPoint = Vector2.new(1, 0.5),
-        BackgroundColor3 = Theme.outline,
-        BackgroundTransparency = 0.7,
-        BorderSizePixel = 0,
-        Position = UDim2.new(1, -2, 0.5, 0),
-        Size = UDim2.new(1, -158, 0, 1),
-    }) :: Frame
-    create("UIGradient", {
-        Parent = headerRule,
-        Transparency = NumberSequence.new({
-            NumberSequenceKeypoint.new(0, 1),
-            NumberSequenceKeypoint.new(1, 0.25),
-        }),
-    })
-
-    section.header = header
-    return header
-end
-
--- Full re-flow of one grid: group the cards by category, order the categories
--- (catch-all last) and the cards inside each one, then balance them across the
--- available columns. Cards keep their own LayoutOrder when they are not
--- categorised (the settings page relies on it).
-local function refreshCategoryLayout(record: CardGridRecord): ()
-    local grouped: {[string]: {GuiObject}} = {}
-    local categories: {string} = {}
-
-    local function collect(parent: Instance): ()
-        for _, child: Instance in ipairs(parent:GetChildren()) do
-            if not child:IsA("GuiObject") then
-                continue
-            end
-            if type(child:GetAttribute("CategoryHeader")) == "string" then
-                continue
-            end
-            local attribute: any = child:GetAttribute("FeatureCategory")
-            local category: string = type(attribute) == "string" and attribute or ""
-            local bucket: {GuiObject}? = grouped[category]
-            if not bucket then
-                bucket = {}
-                grouped[category] = bucket
-                table.insert(categories, category)
-            end
-            table.insert(bucket :: {GuiObject}, child :: GuiObject)
-        end
-    end
-
-    collect(record.intake)
-    for _, section: CardSectionRecord in pairs(record.sections) do
-        for _, column: Frame in ipairs(section.columns) do
-            collect(column)
-        end
-    end
-
-    table.sort(categories, function(left: string, right: string): boolean
-        return featureCategoryRank(left) < featureCategoryRank(right)
-    end)
-
-    -- Uncategorised pages (settings) never grow a header; a page with a single
-    -- category does not need one either.
-    local showHeaders: boolean = #categories > 1
-    local columns: number = gridColumnCount(record)
-    local spacing: number = state.layout.cardSpacing
-
-    for index: number, category: string in ipairs(categories) do
-        local section: CardSectionRecord = record.sections[category]
-            or createCardSection(record, category)
-        section.frame.LayoutOrder = index
-        section.frame.Visible = true
-
-        if showHeaders and category ~= "" then
-            ensureSectionHeader(section)
-        elseif section.header then
-            (section.header :: Frame):Destroy()
-            section.header = nil
-        end
-
-        local cards: {GuiObject} = grouped[category]
-        if category == "" then
-            table.sort(cards, function(left: GuiObject, right: GuiObject): boolean
-                if left.LayoutOrder == right.LayoutOrder then
-                    return left.Name < right.Name
-                end
-                return left.LayoutOrder < right.LayoutOrder
-            end)
-        else
-            table.sort(cards, function(left: GuiObject, right: GuiObject): boolean
-                local leftName: any = left:GetAttribute("FeatureSortName")
-                local rightName: any = right:GetAttribute("FeatureSortName")
-                return tostring(leftName or left.Name)
-                    < tostring(rightName or right.Name)
-            end)
-            for cardIndex: number, card: GuiObject in ipairs(cards) do
-                card.LayoutOrder = index * 1000 + cardIndex
-            end
-        end
-
-        -- Balance by measured height instead of alternating, so one tall
-        -- expanded card cannot leave a column half empty.
-        local filled: {number} = {0, 0}
-        for _, card: GuiObject in ipairs(cards) do
-            local target: number = 1
-            if columns > 1 and filled[2] < filled[1] then
-                target = 2
-            end
-            if card.Parent ~= section.columns[target] then
-                card.Parent = section.columns[target]
-            end
-            filled[target] += card.AbsoluteSize.Y > 0
-                and card.AbsoluteSize.Y + spacing
-                or card.Size.Y.Offset + spacing
-        end
-    end
-
-    -- Sections whose last card was removed.
-    for category: string, section: CardSectionRecord in pairs(record.sections) do
-        if not grouped[category] then
-            section.frame:Destroy()
-            record.sections[category] = nil
-        end
-    end
-
-    updateCardGrid(record)
-end
-
--- Hide a category header (and its whole section) when the active search
--- filtered away every card underneath it, so the page never shows a dangling
--- title or a gap.
-local function refreshCategoryVisibility(record: CardGridRecord): ()
-    for _, section: CardSectionRecord in pairs(record.sections) do
-        local visible: boolean = false
-        for _, column: Frame in ipairs(section.columns) do
-            for _, child: Instance in ipairs(column:GetChildren()) do
-                if child:IsA("GuiObject") and child.Visible then
-                    visible = true
-                    break
-                end
-            end
-            if visible then
-                break
-            end
-        end
-        section.frame.Visible = visible
-    end
-end
-
-state.refreshCategoryVisibility = function(): ()
-    for _, record: CardGridRecord in pairs(cardGrids) do
-        refreshCategoryVisibility(record)
-    end
-end
-
-state.refreshCardGrids = function(): ()
-    for _, record: CardGridRecord in pairs(cardGrids) do
-        refreshCategoryLayout(record)
-        refreshCategoryVisibility(record)
-    end
-end
-
--- Re-sorting on every single card creation would be O(n^2) during bootstrap,
--- so creations only mark the layout dirty and one pass runs on the next frame.
-do
-local categoryLayoutDirty: boolean = false
-state.invalidateCategoryLayout = function(): ()
-    if categoryLayoutDirty then
-        return
-    end
-    categoryLayoutDirty = true
-    task.defer(function(): ()
-        categoryLayoutDirty = false
-        state.refreshCardGrids()
-    end)
-end
-end
-
--- A mode change (phone rotated, window resized) re-balances every page.
-state.onLayout(function(): ()
-    if state.refreshCardGrids then
-        state.refreshCardGrids()
-    end
-end)
-
-getFeatureCardParent = function(container: Instance): Instance
-    if not container:IsA("ScrollingFrame") then
-        return container
-    end
-
-    local record: CardGridRecord? = cardGrids[container]
-    if not record then
-        container.AutomaticCanvasSize = Enum.AutomaticSize.Y
-        local oldLayout: UIListLayout? =
-            container:FindFirstChildOfClass("UIListLayout")
-        if oldLayout then
-            oldLayout:Destroy()
-        end
-
-        local root: Frame = create("Frame", {
-            Parent = container,
-            Name = "ResponsiveCardGrid",
-            AutomaticSize = Enum.AutomaticSize.Y,
-            BackgroundTransparency = 1,
-            BorderSizePixel = 0,
-            Size = UDim2.new(1, 0, 0, 0),
-        }) :: Frame
-        create("UIListLayout", {
-            Parent = root,
-            FillDirection = Enum.FillDirection.Vertical,
-            HorizontalAlignment = Enum.HorizontalAlignment.Left,
-            Padding = UDim.new(0, state.layout.cardSpacing + 4),
-            SortOrder = Enum.SortOrder.LayoutOrder,
-        })
-
-        -- Landing area for cards created between two layout passes. It is a
-        -- plain single column, so a card is never mispositioned even if it is
-        -- rendered for one frame before the pass runs.
-        local intake: Frame = create("Frame", {
-            Parent = root,
-            Name = "Intake",
-            AutomaticSize = Enum.AutomaticSize.Y,
-            BackgroundTransparency = 1,
-            BorderSizePixel = 0,
-            LayoutOrder = 100000,
-            Size = UDim2.new(1, 0, 0, 0),
-        }) :: Frame
-        create("UIListLayout", {
-            Parent = intake,
-            FillDirection = Enum.FillDirection.Vertical,
-            HorizontalAlignment = Enum.HorizontalAlignment.Left,
-            Padding = UDim.new(0, state.layout.cardSpacing),
-            SortOrder = Enum.SortOrder.LayoutOrder,
-        })
-
-        record = {
-            container = container,
-            root = root,
-            intake = intake,
-            sections = {},
-            singleColumn = container:GetAttribute("CardGridSingleColumn") == true,
-        }
-        cardGrids[container] = record
-        -- The grid is measured, not scaled, so it has to re-measure whenever
-        -- the window it lives in changes width: a viewport change, the rail
-        -- collapsing, or the scroll bar appearing the first time the canvas
-        -- overflows (which narrows the window by its own thickness).
-        local measured: CardGridRecord = record :: CardGridRecord
-        trackUiConnection(
-            container:GetPropertyChangedSignal("AbsoluteSize"):Connect(function(): ()
-                updateCardGrid(measured)
-            end)
-        )
-        pcall(function(): ()
-            trackUiConnection(
-                container:GetPropertyChangedSignal("AbsoluteWindowSize")
-                    :Connect(function(): ()
-                        updateCardGrid(measured)
-                    end)
-            )
-        end)
-        updateCardGrid(measured)
-    end
-
-    if state.invalidateCategoryLayout then
-        state.invalidateCategoryLayout()
-    end
-    return (record :: CardGridRecord).intake
-end
+-- Cards are created in a hidden bin and moved into ClickGUI windows. The old
+-- responsive grid that balanced two columns inside a scrolling page is gone.
+local function getFeatureCardParent(_container: Instance): Instance
+    return CardBin
 end
 
 -- (The old check-control factory lived here. Nothing uses a check widget any
@@ -4969,11 +3282,6 @@ local function applyFeaturePresentation(feature: any, isDefault: boolean): ()
     end
     if state.applyCardSkin then
         state.applyCardSkin(feature, false)
-    end
-    if feature.subtitle then
-        feature.subtitle.TextColor3 = isDefault
-            and Theme.textMuted
-            or Theme.textMuted
     end
     if feature.options then
         feature.options.BackgroundTransparency = 1
@@ -5668,9 +3976,8 @@ end
 
 
 -- The one shared board. The name stays because every downloaded game module
--- still asks for `MM2Scroll`.
-local MM2Scroll: ScrollingFrame = UniversalScroll
-
+-- still asks for `MM2Scroll`. It is now an alias to CardBin.
+local MM2Scroll: Frame = CardBin
 
 local cleanupMM2Runtime = function() end
 
@@ -5784,7 +4091,7 @@ local function createGameModuleEnvironment(
         -- The Config. page frame and the helper that files a row into the
         -- right column of a card grid: the settings page fills a layout the
         -- shell owns rather than laying itself out.
-        SettingsPage = SettingsPage,
+        SettingsPage = CardBin,
         getFeatureCardParent = getFeatureCardParent,
         -- Where this runtime came from, for the page that shows it and
         -- re-injects it.
@@ -5801,7 +4108,6 @@ local function createGameModuleEnvironment(
         -- The window frame and the viewport the shell measured at start: the
         -- mobile layer hides the window while a shortcut is being placed and
         -- keeps a placed button inside the screen.
-        Main = Main,
         initialViewport = initialViewport,
         -- Used by the floating overlays: the profile card's fixed height, the
         -- readout typeface, and the tab switcher a favourite jumps through.
@@ -5809,14 +4115,11 @@ local function createGameModuleEnvironment(
         -- it under a section, the default board, and the registries it joins.
         FEATURE_CATEGORIES = FEATURE_CATEGORIES,
         DEFAULT_FEATURE_CATEGORY = DEFAULT_FEATURE_CATEGORY,
-        UniversalScroll = UniversalScroll,
         universalFeatures = universalFeatures,
         movementFeatures = movementFeatures,
         applyFeaturePresentation = applyFeaturePresentation,
         refreshFeatureToggle = refreshFeatureToggle,
-        PROFILE_CARD_HEIGHT = PROFILE_CARD_HEIGHT,
         VALVE_FONT = VALVE_FONT,
-        setTab = setTab,
         trackUiConnection = trackUiConnection,
         createToggleSwitch = createToggleSwitch,
         setToggleSwitch = setToggleSwitch,
@@ -5993,9 +4296,9 @@ local function registerPlaceModule(
         end
         local runtime: any = {
             Menu = {
-                Root = Main,
+                Root = CardBin,
                 ScreenGui = ScreenGui,
-                Pages = pages,
+                Pages = {},
                 Components = state.components,
                 Notify = notify,
             },
@@ -6657,89 +4960,8 @@ state.summarizeBoot()
 end)()
 end
 
-local noResultsLabels: {[string]: TextLabel} = {}
-for sectionName: string, page: GuiObject in pairs(pages) do
-    local label: TextLabel = (makeTextLabel(
-        page,
-        "No modules match your search",
-        13
-    ) :: any) :: TextLabel
-    label.Name = "NoSearchResults"
-    label.AnchorPoint = Vector2.new(0.5, 0.5)
-    label.Position = UDim2.fromScale(0.5, 0.5)
-    label.Size = UDim2.new(1, -50, 0, 40)
-    label.TextColor3 = Theme.textMuted
-    label.TextXAlignment = Enum.TextXAlignment.Center
-    label.Visible = false
-    label.ZIndex = 90
-    noResultsLabels[sectionName] = label
-end
+-- Config. tab was old UI; UI Settings is a window (phase 4), not a tab
 
-local function refreshSearch(): ()
-    local query: string = string.lower(tostring(state.searchQuery or ""))
-    query = string.match(query, "^%s*(.-)%s*$") or ""
-    -- One board means one count: a card's registry ("MM2", "BedFight") used to
-    -- name the page it lived on, and there is no such page any more.
-    local totalMatches: number = 0
-    for _, feature: any in ipairs(allFeatures) do
-        local searchable: string = feature.searchText
-        local matches: boolean = query == ""
-            or string.find(searchable, query, 1, true) ~= nil
-        feature.row.Visible = matches
-        if matches then
-            totalMatches += 1
-        end
-        if feature.title then
-            if query ~= "" and matches and not feature.enabled then
-                feature.title.TextColor3 = Theme.accent
-            else
-                applyFeaturePresentation(feature, state.guiStyle == "Default")
-            end
-        end
-    end
-
-    for sectionName: string, label: TextLabel in pairs(noResultsLabels) do
-        label.Visible = sectionName == "Universal"
-            and #allFeatures > 0
-            and totalMatches == 0
-    end
-
-    -- Drop the headers of categories the query emptied out.
-    if state.refreshCategoryVisibility then
-        state.refreshCategoryVisibility()
-    end
-end
-state.refreshSearch = refreshSearch
-local searchRefreshToken: number = 0
-trackUiConnection(
-    state.shells.defaultSearchBox:GetPropertyChangedSignal("Text"):Connect(
-        function(): ()
-            state.searchQuery = state.shells.defaultSearchBox.Text
-            state.shells.searchClear.Visible = state.searchQuery ~= ""
-            searchRefreshToken += 1
-            local token: number = searchRefreshToken
-            task.delay(0.06, function(): ()
-                if token == searchRefreshToken then
-                    refreshSearch()
-                end
-            end)
-        end
-    )
-)
-
--- The Config. page is `src/library/SettingsPage.luau`. It publishes its
--- builder when it loads; this only says which tab it fills and when.
---
--- Raising here is deliberate: `SectionManager.initialize` catches it and
--- prints it on the page itself, which is a far better answer than a tab that
--- opens onto nothing.
-SectionManager.register("Config.", function(): ()
-    local builder: any = state.buildSettingsPage
-    if type(builder) ~= "function" then
-        error("src/library/SettingsPage.luau no se cargó")
-    end
-    builder()
-end)
 
 -- Restore the saved typeface once the interface exists. A repository font is a
 -- download, so this waits its turn on its own thread rather than holding the
@@ -6767,7 +4989,7 @@ local function initializeWindowInput(): ()
 -- pulls every floating window back inside the new screen bounds.
 local function reflowForViewport(force: boolean?): ()
     task.defer(function(): ()
-        if not Main.Parent then
+        if not ScreenGui.Parent then
             return
         end
         state.refreshLayout(force)
@@ -7040,7 +5262,6 @@ ScreenGui.AncestryChanged:Connect(function(_: Instance, parent: Instance?): ()
 end)
 
 SectionManager.initializeAllAsync()
-setTab("Universal")
 -- Sync the blur with the initial menu state (the argument is "animate", not
 -- the target state) so it matches state.visible instead of being forced off.
 state.setBlurVisible(false)

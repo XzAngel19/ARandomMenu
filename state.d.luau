@@ -19,12 +19,6 @@
 export type MenuState = {
     -- The window itself
     visible: boolean,                               -- Is the shell on screen right now
-    activeTab: string,                              -- Which board the rail is showing
-    guiStyle: string,                               -- Name of the active skin; every restyle branches on it
-    mainFrame: Frame,                               -- The window. Held so teardown and layout can find it without a search
-    mainScale: UIScale,                             -- Drives the open and close animation
-    mainStroke: UIStroke,                           -- The window's hairline border, repainted by the skin
-    shells: {[string]: Instance},                   -- Named pieces of the chrome (sidebar, search box) other files draw into
     layout: LayoutMetrics,                          -- The responsive metrics for the current viewport
     layoutListeners: {() -> ()},                    -- Everything that must be re-measured when the viewport changes
     onLayout: (() -> ()) -> (),                     -- Register such a listener
@@ -53,12 +47,12 @@ export type MenuState = {
     destroyBlurDecoration: () -> (),                -- Release it on teardown
 
     -- Cards and their boards
-    universalScroll: ScrollingFrame,                -- The Universal board every module files into by default
-    spoofScroll: ScrollingFrame,                    -- The Spoof board
-    mvsdScroll: ScrollingFrame,                     -- Per-game boards, created when that game is recognised
-    trsScroll: ScrollingFrame,
-    vdScroll: ScrollingFrame,
-    bedFightScroll: ScrollingFrame,
+    universalScroll: Frame,                   -- Compatibility shim: old Universal board, now CardBin until modules migrate
+    spoofScroll: Frame,                       -- Compatibility shim: old Spoof board, now CardBin
+    mvsdScroll: Frame,                        -- Compatibility shim: per-game boards, now CardBin
+    trsScroll: Frame,                         -- Compatibility shim: TRS board, now CardBin
+    vdScroll: Frame,                          -- Compatibility shim: VD board, now CardBin
+    bedFightScroll: Frame,                    -- Compatibility shim: BedFight board, now CardBin
     movementFeatures: {[string]: any},              -- Card registries, one per board, keyed by card name
     spoofFeatures: {[string]: any},
     mvsdFeatures: {[string]: any},
@@ -70,15 +64,9 @@ export type MenuState = {
     restyleButtons: (boolean) -> (),                -- The same for loose buttons
     restyleTextBoxes: (boolean) -> (),              -- and for text fields
     applyLinesGlyph: (Instance, boolean?) -> (),    -- Draw the three-line 'open its settings' mark
-    refreshCardGrids: () -> (),                     -- Re-flow every board
-    refreshCategoryVisibility: () -> (),            -- Hide sections whose cards are all filtered out
-    invalidateCategoryLayout: () -> (),             -- Force the next flow to recompute sections
     featureTooltip: TextLabel,                      -- The single tooltip label every card borrows
     tooltipToken: number,                           -- Guards against a stale tooltip appearing after the pointer left
     tooltipConnections: {RBXScriptConnection},      -- Its listeners, released with the window
-    searchQuery: string,                            -- What is typed in the search box
-    refreshSearch: () -> (),                        -- Re-filter the boards against it
-    tabLabel: (string) -> string,                   -- The name a board shows, which is the game's name when one is recognised
 
     -- Option rows, built by src/library/Widgets.luau
     layoutOptionControl: (Frame, GuiObject, number?) -> (), -- Place a control in the row's shared right-hand band
@@ -143,9 +131,6 @@ export type MenuState = {
     weaponLibrary: any,                             -- Shared weapon discovery
     logBootstrap: (string) -> (),                   -- Loading progress, to the console
     logBootstrapError: (string) -> (),              -- and its failures
-    loadingLabel: TextLabel?,                       -- The intro's status line
-    loadingProgressFill: Frame?,                    -- and its bar
-    finishLoadingIntro: (number) -> (),             -- Close the intro, reporting how many modules failed
     cleanupFrameworkRuntime: () -> (),              -- Stop every downloaded module and library
     cleanupTRSRuntime: () -> (),                    -- Per-game teardown, published by that game's module
     cleanupVDRuntime: () -> (),

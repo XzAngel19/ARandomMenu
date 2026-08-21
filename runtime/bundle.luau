@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "87f53b6501892992",
+    stamp = "736e2548e9b92707",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -4720,8 +4720,8 @@ function Module.init(context: any): any
     -- a name nobody classified ends up.
     local FEATURE_CATEGORIES: any = host.FEATURE_CATEGORIES
     local DEFAULT_FEATURE_CATEGORY: any = host.DEFAULT_FEATURE_CATEGORY
-    -- The default board, and the registries a card files itself into.
-    local UniversalScroll: any = host.UniversalScroll
+    -- The registries a card files itself into. The old board (UniversalScroll)
+    -- is gone; cards start in CardBin and are moved into ClickGUI windows.
     local universalFeatures: any = host.universalFeatures
     local movementFeatures: any = host.movementFeatures
     local mm2Features: any = host.mm2Features
@@ -4813,10 +4813,15 @@ function Module.init(context: any): any
         feature.isHoldAction = feature.kind == "hold"
         feature.isAlwaysOn = feature.kind == "hold" or feature.kind == "group"
 
-        local requestedParent: Instance =
-            configuration.parent or UniversalScroll
+        local requestedParent: Instance? =
+            configuration.parent :: any
+        local fallback: Instance = (host :: any).ScreenGui or (host :: any).PopupLayer or ({} :: any)
+        local rowParent: Instance = getFeatureCardParent(requestedParent or fallback)
+        if type(rowParent) ~= "table" or (rowParent :: any).Children == nil then
+            rowParent = fallback
+        end
         local row: Frame = (create("Frame", {
-            Parent = getFeatureCardParent(requestedParent),
+            Parent = rowParent,
             Name = name:gsub("%W", "") .. "Feature",
             Active = true,
             BackgroundColor3 = state.guiStyle == "Default"
@@ -4834,9 +4839,6 @@ function Module.init(context: any): any
         -- frame with "category block + alphabetical position".
         row:SetAttribute("FeatureCategory", categoryName)
         row:SetAttribute("FeatureSortName", string.lower(name))
-        if state.invalidateCategoryLayout then
-            state.invalidateCategoryLayout()
-        end
         create("UICorner", {
             Parent = row,
             Name = "CardCorner",
@@ -4880,19 +4882,6 @@ function Module.init(context: any): any
             and Theme.text
             or Theme.text
         feature.title = title
-
-        local subtitle: TextLabel =
-            (makeTextLabel(row, description, state.layout.bodyFontSize) :: any) :: TextLabel
-        subtitle.Name = "Description"
-        subtitle.Position = UDim2.fromOffset(12, math.round(feature.collapsedHeight * 0.58))
-        subtitle.Size = UDim2.new(1, -(state.layout.cardHeight + 96), 0, 24)
-        subtitle.TextColor3 = state.guiStyle == "Default"
-            and Theme.textMuted
-            or Theme.textMuted
-        subtitle.TextTruncate = Enum.TextTruncate.AtEnd
-        subtitle.TextWrapped = true
-        subtitle.Visible = false
-        feature.subtitle = subtitle
 
         local headerControls: Frame = create("Frame", {
             Parent = row,
@@ -5298,10 +5287,6 @@ function Module.init(context: any): any
             title.Size =
                 UDim2.new(1, -(sideWidth + 26), 0, metrics.cardHeight)
             state.setTextMetric(title, metrics.titleFontSize)
-            subtitle.Position =
-                UDim2.fromOffset(12, math.round(metrics.cardHeight * 0.58))
-            subtitle.Size = UDim2.new(1, -(sideWidth + 26), 0, 24)
-            state.setTextMetric(subtitle, metrics.bodyFontSize)
             headerControls.Position = UDim2.new(1, -8, 0, metrics.cardHeight / 2)
             headerControls.Size =
                 UDim2.fromOffset(sideWidth, metrics.iconButton + 4)
@@ -6334,10 +6319,6 @@ function Module.init(context: any): any
     local Stats: any = host.Stats
     local TaskManager: any = host.TaskManager
     local allFeatures: any = host.allFeatures
-    local PROFILE_CARD_HEIGHT: any = host.PROFILE_CARD_HEIGHT
-    -- A favourite jumps to the page its card lives on, so the layer needs the
-    -- shell's tab switcher.
-    local setTab: any = host.setTab
 
     -- Per-frame work this layer owns. In the shell these two loops simply ran
     -- for the life of the menu and were swept up when the task manager was
@@ -6725,7 +6706,6 @@ function Module.init(context: any): any
                 row.MouseButton1Click:Connect(function(): ()
                     if feature.isCategory then
                         state.setMenuVisible(true)
-                        setTab("Universal")
                     end
                     feature.activate()
                 end)
@@ -7812,269 +7792,6 @@ function Module.init(context: any): any
     end))
 
 
-    -- ---------------------------------------------------------------------------
-    -- Player card
-    -- ---------------------------------------------------------------------------
-    --
-    -- Who is running the menu, docked at the foot of the rail: the account's own
-    -- avatar, its display name and handle, and how long this account has been
-    -- using the menu. The "since" date and the session count are stored in the
-    -- config file, so they survive rejoins; the session clock restarts with the
-    -- injection.
-    --
-    -- The avatar comes from `rbxthumb://`, which the engine resolves itself — no
-    -- download, no executor file API, and it works on the first frame.
-    do
-    (function(): ()
-    local profileKey: string = "profile." .. tostring(LocalPlayer.UserId)
-    local storedFirstSeen: number? = tonumber(configData.values[profileKey .. ".firstSeen"])
-    local firstSeen: number = storedFirstSeen or os.time()
-    local sessions: number =
-        (tonumber(configData.values[profileKey .. ".sessions"]) or 0) + 1
-    configData.values[profileKey .. ".firstSeen"] = firstSeen
-    configData.values[profileKey .. ".sessions"] = sessions
-    queueConfigSave()
-    local sessionStart: number = os.clock()
-
-    local ProfileCard: Frame = create("Frame", {
-        Parent = state.shells.defaultSidebar,
-        Name = "PlayerCard",
-        AnchorPoint = Vector2.new(0.5, 1),
-        BackgroundColor3 = Theme.surface,
-        BackgroundTransparency = 0.35,
-        BorderSizePixel = 0,
-        Position = UDim2.new(0.5, 0, 1, -(state.layout.launcherHeight + 14)),
-        Size = UDim2.new(1, -(state.layout.sidebarPadding * 2), 0, PROFILE_CARD_HEIGHT - 8),
-        ZIndex = 24,
-    }) :: Frame
-    create("UICorner", {
-        Parent = ProfileCard,
-        CornerRadius = cornerRadius(UI_RADIUS.control),
-    })
-    create("UIStroke", {
-        Parent = ProfileCard,
-        Color = Theme.outline,
-        Transparency = 0.68,
-        Thickness = 1,
-    })
-
-    local ProfileBanner: ImageLabel = create("ImageLabel", {
-        Parent = ProfileCard,
-        Name = "Banner",
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        Image = "",
-        ImageTransparency = 0.35,
-        ScaleType = Enum.ScaleType.Crop,
-        Size = UDim2.fromScale(1, 1),
-        ZIndex = 24,
-    }) :: ImageLabel
-    create("UICorner", {
-        Parent = ProfileBanner,
-        CornerRadius = cornerRadius(UI_RADIUS.control),
-    })
-    if state.applyAssetImage then
-        state.applyAssetImage("profileBanner", ProfileBanner)
-    end
-
-    local Avatar: ImageLabel = create("ImageLabel", {
-        Parent = ProfileCard,
-        Name = "Avatar",
-        AnchorPoint = Vector2.new(0, 0.5),
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        Image = "rbxthumb://type=AvatarHeadShot&id="
-            .. tostring(LocalPlayer.UserId)
-            .. "&w=150&h=150",
-        Position = UDim2.new(0, 6, 0.5, 0),
-        Size = UDim2.fromOffset(34, 34),
-        ZIndex = 25,
-    }) :: ImageLabel
-    -- No plate and no ring: the head shot already arrives inside a circle, and a
-    -- frame behind it only showed up as a grey square in the corners.
-
-    local ProfileName: TextLabel =
-        (makeTextLabel(ProfileCard, LocalPlayer.DisplayName, 11) :: any) :: TextLabel
-    ProfileName.Name = "DisplayName"
-    ProfileName.FontFace = CONTROL_FONT
-    ProfileName.Position = UDim2.fromOffset(46, 3)
-    ProfileName.Size = UDim2.new(1, -52, 0, 21)
-    ProfileName.TextColor3 = Theme.text
-    ProfileName.TextTruncate = Enum.TextTruncate.AtEnd
-    ProfileName.ZIndex = 25
-
-    local ProfileHandle: TextLabel =
-        (makeTextLabel(ProfileCard, "@" .. LocalPlayer.Name, 9) :: any) :: TextLabel
-    ProfileHandle.Name = "Handle"
-    ProfileHandle.Position = UDim2.fromOffset(46, 25)
-    ProfileHandle.Size = UDim2.new(1, -52, 0, 18)
-    ProfileHandle.TextColor3 = Theme.textMuted
-    ProfileHandle.TextTruncate = Enum.TextTruncate.AtEnd
-    ProfileHandle.ZIndex = 25
-
-    local ProfileMeta: TextLabel = (makeTextLabel(ProfileCard, "", 9) :: any) :: TextLabel
-    ProfileMeta.Name = "Meta"
-    ProfileMeta.Position = UDim2.fromOffset(46, 43)
-    ProfileMeta.Size = UDim2.new(1, -52, 0, 18)
-    ProfileMeta.TextColor3 = Theme.textMuted
-    ProfileMeta.TextTruncate = Enum.TextTruncate.AtEnd
-    ProfileMeta.ZIndex = 25
-
-    local function describeSession(): string
-        local minutes: number = math.floor((os.clock() - sessionStart) / 60)
-        if minutes < 60 then
-            return tostring(minutes) .. "m"
-        end
-        return tostring(math.floor(minutes / 60)) .. "h " .. tostring(minutes % 60) .. "m"
-    end
-
-    local function refreshMeta(): ()
-        ProfileMeta.Text = os.date("!%d/%m/%Y", firstSeen)
-            .. "  ·  "
-            .. tostring(sessions)
-            .. (sessions == 1 and " sesión" or " sesiones")
-            .. "  ·  "
-            .. describeSession()
-    end
-    refreshMeta()
-
-    -- Once a minute is enough for a clock measured in minutes, and it keeps the
-    -- card off the per-frame budget.
-    local metaClock: number = 0
-    table.insert(ownedTasks, TaskManager:Connect(function(deltaTime: number): ()
-        metaClock += deltaTime
-        if metaClock < 30 then
-            return
-        end
-        metaClock = 0
-        refreshMeta()
-    end))
-
-    local function applyProfileLayout(metrics: LayoutMetrics): ()
-        ProfileCard.Position = UDim2.new(0.5, 0, 1, -(metrics.launcherHeight + 14))
-        ProfileCard.Size = metrics.sidebarCollapsed
-            and UDim2.fromOffset(40, 40)
-            or UDim2.new(1, -(metrics.sidebarPadding * 2), 0, PROFILE_CARD_HEIGHT - 8)
-        -- Collapsed rail: the avatar is the card.
-        Avatar.AnchorPoint = metrics.sidebarCollapsed
-            and Vector2.new(0.5, 0.5)
-            or Vector2.new(0, 0.5)
-        Avatar.Position = metrics.sidebarCollapsed
-            and UDim2.fromScale(0.5, 0.5)
-            or UDim2.new(0, 6, 0.5, 0)
-        ProfileName.Visible = not metrics.sidebarCollapsed
-        ProfileHandle.Visible = not metrics.sidebarCollapsed
-        ProfileMeta.Visible = not metrics.sidebarCollapsed
-        ProfileBanner.Visible = not metrics.sidebarCollapsed
-    end
-    applyProfileLayout(state.layout)
-    state.onLayout(applyProfileLayout)
-    end)()
-    end
-    -- Launchers for the movable tool windows, docked at the foot of the rail.
-    -- They stack vertically when the rail collapses, which is the only way two
-    -- 32px buttons fit inside a 58px icon rail.
-    local FloatingButtons: Frame = create("Frame", {
-        Parent = state.shells.defaultSidebar,
-        Name = "FloatingWindowButtons",
-        AnchorPoint = Vector2.new(0.5, 1),
-        BackgroundColor3 = Theme.surface,
-        BackgroundTransparency = 0.42,
-        BorderSizePixel = 0,
-        Position = UDim2.new(0.5, 0, 1, -8),
-        Size = UDim2.fromOffset(
-            state.layout.sidebarCollapsed and 34 or 72,
-            state.layout.launcherHeight
-        ),
-        ZIndex = 24,
-    }) :: Frame
-    create("UICorner", {
-        Parent = FloatingButtons,
-        CornerRadius = cornerRadius(UI_RADIUS.control),
-    })
-    create("UIStroke", {
-        Parent = FloatingButtons,
-        Color = Theme.outline,
-        Transparency = 0.62,
-    })
-    local FloatingButtonsLayout: UIListLayout = create("UIListLayout", {
-        Parent = FloatingButtons,
-        FillDirection = state.layout.sidebarCollapsed
-            and Enum.FillDirection.Vertical
-            or Enum.FillDirection.Horizontal,
-        HorizontalAlignment = Enum.HorizontalAlignment.Center,
-        VerticalAlignment = Enum.VerticalAlignment.Center,
-        Padding = UDim.new(0, 2),
-    }) :: UIListLayout
-
-    local function createFloatingLauncher(
-        name: string,
-        fallbackText: string,
-        callback: () -> (),
-        iconAsset: string?
-    ): TextButton
-        local button: TextButton = makeButton(FloatingButtons, fallbackText, 8)
-        button.Name = name
-        button.BackgroundTransparency = 1
-        button.Size = UDim2.fromOffset(30, 24)
-        button.ZIndex = 25
-        button:SetAttribute("ThemeRole", "Icon")
-        local stroke: UIStroke? = button:FindFirstChild("StyleStroke") :: UIStroke?
-        if stroke then
-            stroke.Enabled = false
-        end
-        -- The three-letter labels were placeholders. The icon replaces the text
-        -- once it resolves, and the text stays put if it never does.
-        if iconAsset and state.applyAssetImage then
-            local icon: ImageLabel = create("ImageLabel", {
-                Parent = button,
-                Name = "Icon",
-                AnchorPoint = Vector2.new(0.5, 0.5),
-                BackgroundTransparency = 1,
-                BorderSizePixel = 0,
-                Image = "",
-                ImageTransparency = 0.12,
-                Position = UDim2.fromScale(0.5, 0.5),
-                Size = UDim2.fromOffset(18, 18),
-                ZIndex = 26,
-            }) :: ImageLabel
-            create("UICorner", {Parent = icon, CornerRadius = cornerRadius(UI_RADIUS.chip)})
-            state.applyAssetImage(iconAsset, icon, function(): ()
-                button.Text = ""
-            end)
-        end
-        trackUiConnection(button.MouseButton1Click:Connect(callback))
-        return button
-    end
-
-    state.onLayout(function(metrics: LayoutMetrics): ()
-        FloatingButtons.Size = UDim2.fromOffset(
-            metrics.sidebarCollapsed and 34 or 72,
-            metrics.launcherHeight
-        )
-        FloatingButtonsLayout.FillDirection = metrics.sidebarCollapsed
-            and Enum.FillDirection.Vertical
-            or Enum.FillDirection.Horizontal
-    end)
-
-    createFloatingLauncher("Favorites", "FAV", function(): ()
-        FavoritesWindow.root.Visible = not FavoritesWindow.root.Visible
-        configData.ui.favoritesWindowOpen = FavoritesWindow.root.Visible
-        if FavoritesWindow.root.Visible then
-            refreshFavorites()
-            bringFloatingToFront(FavoritesWindow)
-        end
-        queueConfigSave()
-    end, "windowFavorites")
-    createFloatingLauncher("Overlays", "OVR", function(): ()
-        OverlayMenu.root.Visible = not OverlayMenu.root.Visible
-        configData.ui.overlayMenuOpen = OverlayMenu.root.Visible
-        if OverlayMenu.root.Visible then
-            bringFloatingToFront(OverlayMenu)
-        end
-        queueConfigSave()
-    end, "windowOverlays")
-
     FavoritesWindow.root.Visible = configData.ui.favoritesWindowOpen == true
     OverlayMenu.root.Visible = configData.ui.overlayMenuOpen == true
     for overlayId: string, overlay: any in pairs(FloatingUi.overlays) do
@@ -9086,10 +8803,9 @@ function Module.init(context: any): any
     local UI_MOTION: any = host.UI_MOTION
     local cornerRadius: any = host.cornerRadius
     local trackUiConnection: any = host.trackUiConnection
-    -- The window itself, hidden while a button is being placed so the player
-    -- can see where it is going, and the viewport the shell measured at start.
-    local Main: any = host.Main
-    local initialViewport: any = host.initialViewport
+    -- The viewport the shell measured at start, and the hidden bin that holds
+    -- cards before they are placed. Main (the old central window) is gone.
+    local initialViewport: any = host.initialViewport or Vector2.new(1280, 720)
 
     type MobileActionRecord = {
         id: string,
@@ -9449,9 +9165,9 @@ function Module.init(context: any): any
                 and "\nHOLD THE BUTTON TO KEEP IT ACTIVE"
                 or "\nHOLD THE CIRCLE LATER TO REMOVE IT")
         MobilePlacementOverlay.Visible = true
-        Main.Visible = false
-        -- The menu is hidden for placement, so drop the blur rather than leaving
-        -- the screen dimmed behind the overlay.
+        -- Hide the menu so the player can see where the button is going. The old
+        -- central Main frame is gone; visibility now drives ClickGUI windows.
+        state.setMenuVisible(false)
         state.suspendBlur()
 
         local placement: PendingMobilePlacement =

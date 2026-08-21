@@ -60,7 +60,7 @@ return function(ctx: any): ()
     check("the card is created with its title",
         fly ~= nil and fly.title ~= nil and fly.title.Text == "Fly")
     check("the row is parented to the board",
-        fly.row ~= nil and fly.row:IsDescendantOf(host.UniversalScroll))
+        fly.row ~= nil and fly.row:IsDescendantOf(host.ScreenGui))
     check("taxonomy files Fly under Movement",
         fly.categoryName == "Movement"
             and fly.row:GetAttribute("FeatureCategory") == "Movement")

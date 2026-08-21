@@ -141,7 +141,9 @@ return function(ctx: any): ()
     check("the window is built", gui ~= nil)
 
     local main: any = gui and gui:FindFirstChild("Main")
-    check("the shell frame exists", main ~= nil, gui and "no Main" or "no ScreenGui")
+    check("the old shell frame is gone", main == nil, main and "Main still exists" or "no Main")
+    local bin: any = gui and gui:FindFirstChild("CardBin")
+    check("the card bin exists", bin ~= nil, gui and "no CardBin" or "no ScreenGui")
 
     -- Wurst's layout. The ClickGUI does not draw the cards, it places them, so
     -- what is checked is that every category has a window and that every card
@@ -193,16 +195,16 @@ return function(ctx: any): ()
     end
 
     check(
-        "the rail has the Universal tab",
-        findNamed(gui, "UniversalDefaultTab") ~= nil
+        "the old rail Universal tab is gone",
+        findNamed(gui, "UniversalDefaultTab") == nil
     )
     check(
-        "the rail has the Spoof tab",
-        findNamed(gui, "SpoofDefaultTab") ~= nil
+        "the old rail Spoof tab is gone",
+        findNamed(gui, "SpoofDefaultTab") == nil
     )
     check(
-        "the rail has the Config. tab",
-        findNamed(gui, "Config.DefaultTab") ~= nil
+        "the old rail Config. tab is gone",
+        findNamed(gui, "Config.DefaultTab") == nil
     )
 
     check("state was captured", shellState ~= nil)
@@ -250,13 +252,15 @@ return function(ctx: any): ()
     check(
         "the toggle key opens the menu",
         shellState ~= nil and shellState.visible == true
-            and main ~= nil and main.Visible == true
+            and clickGui ~= nil and clickGui.categories.Combat ~= nil
+            and clickGui.categories.Combat.window.root.Visible == true
     )
     pressToggle()
     check(
         "the toggle key closes the menu",
         shellState ~= nil and shellState.visible == false
-            and main ~= nil and main.Visible == false
+            and clickGui ~= nil and clickGui.categories.Combat ~= nil
+            and clickGui.categories.Combat.window.root.Visible == false
     )
 
     if shellState and type(shellState.destruct) == "function" then

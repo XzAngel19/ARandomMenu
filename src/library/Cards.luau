@@ -44,8 +44,8 @@ function Module.init(context: any): any
     -- a name nobody classified ends up.
     local FEATURE_CATEGORIES: any = host.FEATURE_CATEGORIES
     local DEFAULT_FEATURE_CATEGORY: any = host.DEFAULT_FEATURE_CATEGORY
-    -- The default board, and the registries a card files itself into.
-    local UniversalScroll: any = host.UniversalScroll
+    -- The registries a card files itself into. The old board (UniversalScroll)
+    -- is gone; cards start in CardBin and are moved into ClickGUI windows.
     local universalFeatures: any = host.universalFeatures
     local movementFeatures: any = host.movementFeatures
     local mm2Features: any = host.mm2Features
@@ -137,10 +137,15 @@ function Module.init(context: any): any
         feature.isHoldAction = feature.kind == "hold"
         feature.isAlwaysOn = feature.kind == "hold" or feature.kind == "group"
 
-        local requestedParent: Instance =
-            configuration.parent or UniversalScroll
+        local requestedParent: Instance? =
+            configuration.parent :: any
+        local fallback: Instance = (host :: any).ScreenGui or (host :: any).PopupLayer or ({} :: any)
+        local rowParent: Instance = getFeatureCardParent(requestedParent or fallback)
+        if type(rowParent) ~= "table" or (rowParent :: any).Children == nil then
+            rowParent = fallback
+        end
         local row: Frame = (create("Frame", {
-            Parent = getFeatureCardParent(requestedParent),
+            Parent = rowParent,
             Name = name:gsub("%W", "") .. "Feature",
             Active = true,
             BackgroundColor3 = state.guiStyle == "Default"
@@ -158,9 +163,6 @@ function Module.init(context: any): any
         -- frame with "category block + alphabetical position".
         row:SetAttribute("FeatureCategory", categoryName)
         row:SetAttribute("FeatureSortName", string.lower(name))
-        if state.invalidateCategoryLayout then
-            state.invalidateCategoryLayout()
-        end
         create("UICorner", {
             Parent = row,
             Name = "CardCorner",
@@ -204,19 +206,6 @@ function Module.init(context: any): any
             and Theme.text
             or Theme.text
         feature.title = title
-
-        local subtitle: TextLabel =
-            (makeTextLabel(row, description, state.layout.bodyFontSize) :: any) :: TextLabel
-        subtitle.Name = "Description"
-        subtitle.Position = UDim2.fromOffset(12, math.round(feature.collapsedHeight * 0.58))
-        subtitle.Size = UDim2.new(1, -(state.layout.cardHeight + 96), 0, 24)
-        subtitle.TextColor3 = state.guiStyle == "Default"
-            and Theme.textMuted
-            or Theme.textMuted
-        subtitle.TextTruncate = Enum.TextTruncate.AtEnd
-        subtitle.TextWrapped = true
-        subtitle.Visible = false
-        feature.subtitle = subtitle
 
         local headerControls: Frame = create("Frame", {
             Parent = row,
@@ -622,10 +611,6 @@ function Module.init(context: any): any
             title.Size =
                 UDim2.new(1, -(sideWidth + 26), 0, metrics.cardHeight)
             state.setTextMetric(title, metrics.titleFontSize)
-            subtitle.Position =
-                UDim2.fromOffset(12, math.round(metrics.cardHeight * 0.58))
-            subtitle.Size = UDim2.new(1, -(sideWidth + 26), 0, 24)
-            state.setTextMetric(subtitle, metrics.bodyFontSize)
             headerControls.Position = UDim2.new(1, -8, 0, metrics.cardHeight / 2)
             headerControls.Size =
                 UDim2.fromOffset(sideWidth, metrics.iconButton + 4)

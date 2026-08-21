@@ -69,10 +69,9 @@ function Module.init(context: any): any
     local UI_MOTION: any = host.UI_MOTION
     local cornerRadius: any = host.cornerRadius
     local trackUiConnection: any = host.trackUiConnection
-    -- The window itself, hidden while a button is being placed so the player
-    -- can see where it is going, and the viewport the shell measured at start.
-    local Main: any = host.Main
-    local initialViewport: any = host.initialViewport
+    -- The viewport the shell measured at start, and the hidden bin that holds
+    -- cards before they are placed. Main (the old central window) is gone.
+    local initialViewport: any = host.initialViewport or Vector2.new(1280, 720)
 
     type MobileActionRecord = {
         id: string,
@@ -432,9 +431,9 @@ function Module.init(context: any): any
                 and "\nHOLD THE BUTTON TO KEEP IT ACTIVE"
                 or "\nHOLD THE CIRCLE LATER TO REMOVE IT")
         MobilePlacementOverlay.Visible = true
-        Main.Visible = false
-        -- The menu is hidden for placement, so drop the blur rather than leaving
-        -- the screen dimmed behind the overlay.
+        -- Hide the menu so the player can see where the button is going. The old
+        -- central Main frame is gone; visibility now drives ClickGUI windows.
+        state.setMenuVisible(false)
         state.suspendBlur()
 
         local placement: PendingMobilePlacement =
