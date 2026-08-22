@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "863c7ec581d6f7b5",
+    stamp = "7ebf12af16b74194",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -6559,6 +6559,24 @@ function Module.init(context: any): any
         end
     end
 
+    -- Reset layout: every category window back on the first-run grid, in
+    -- the official order, with every saved position already forgotten by
+    -- the caller. Settings windows re-cascade the next time they open.
+    function ClickGui.Retile(): ()
+        nextX = GRID_MARGIN
+        nextY = 64
+        rowHeight = 0
+        for _, name: string in ipairs(ClickGui.order) do
+            local record: CategoryWindow = ClickGui.categories[name]
+            if record then
+                local slot: Vector2 = nextSlot(
+                    record.window.fullHeight or WINDOW_MAX_HEIGHT * 0.5
+                )
+                record.window.root.Position = UDim2.fromOffset(slot.X, slot.Y)
+            end
+        end
+    end
+
     -- Re-clamp every category window after the Max height slider moves;
     -- each record's own resize already knows how to read the live limit.
     function ClickGui.RefreshHeights(): ()
@@ -9014,6 +9032,7 @@ function Module.init(context: any): any
                 {"Keybinds", nil, 26},
                 {"Reinject latest", nil, 26},
                 {"Destruct", nil, 26},
+                {"Reset layout", nil, 26},
                 {"Game check: Universal only"},
             }),
         })
@@ -9128,6 +9147,17 @@ function Module.init(context: any): any
             end)
         end))
 
+        actionRow(optionsRecord, 4, "Reset layout", function(): ()
+            -- Saved geometry gone, category grid re-tiled now, settings
+            -- windows re-cascade on their next open.
+            configData.ui.windows = {}
+            queueConfigSave()
+            if state.clickGui and state.clickGui.Retile then
+                state.clickGui.Retile()
+            end
+            notify("Layout reset")
+        end)
+
         -- The game check readout: *how* the game was recognised, which is
         -- what tells you a clone was matched by structure, not PlaceId.
         local recognised: string = GAME_CHECK.MM2Active and "MM2"
@@ -9142,7 +9172,7 @@ function Module.init(context: any): any
             Name = "GameCheck",
             BackgroundTransparency = 1,
             FontFace = CONTROL_FONT,
-            LayoutOrder = 4,
+            LayoutOrder = 5,
             Size = UDim2.new(1, 0, 0, ROW_HEIGHT),
             Text = "  Game check: " .. recognised,
             TextColor3 = Theme.textMuted,
@@ -9943,6 +9973,12 @@ function Module.init(context: any): any
     -- WURSTLOGO_BACKGROUND is the default for. Painting the whole block white
     -- put the transparent logo on a white slab, which is not how Wurst looks
     -- anywhere.
+    -- The chip ends immediately after the version string — the band must
+    -- never run on toward the HD icon or any other UI. 12 px is the bitmap
+    -- advance at the 16 px line.
+    local versionText: string = tostring(PRODUCT.version)
+    local versionWidth: number = 8 + #versionText * 12
+    local chipWidth: number = LOGO_WIDTH + 10 + versionWidth + 4
     local chip: Frame = (create("Frame", {
         Parent = PopupLayer,
         Name = "WurstLogo",
@@ -9950,7 +9986,7 @@ function Module.init(context: any): any
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
         Position = UDim2.fromOffset(FURNITURE_MARGIN_X, FURNITURE_MARGIN_Y),
-        Size = UDim2.fromOffset(LOGO_WIDTH + 130, LOGO_HEIGHT + 8),
+        Size = UDim2.fromOffset(chipWidth, LOGO_HEIGHT + 8),
         ZIndex = 20,
     }) :: any) :: Frame
 
@@ -9967,7 +10003,7 @@ function Module.init(context: any): any
         BackgroundTransparency = 0.5,
         BorderSizePixel = 0,
         Position = UDim2.fromOffset(0, 12),
-        Size = UDim2.new(1, 0, 0, 22),
+        Size = UDim2.fromOffset(chipWidth, 22),
         ZIndex = 20,
     }) :: any) :: Frame
 
@@ -10000,15 +10036,16 @@ function Module.init(context: any): any
     }) :: any) :: TextLabel
 
     -- The version string rides the background stripe, so it uses Wurst's own
-    -- default text colour (#000000) — readable now that the band exists.
-    local versionText: string = tostring(PRODUCT.version)
+    -- default text colour (#000000) — readable now that the band exists. Its
+    -- frame matches the stripe's band exactly, so the text centres on the
+    -- same baseline the band was drawn for.
     local versionChip: Frame = (create("Frame", {
         Parent = chip,
         Name = "VersionChip",
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
-        Position = UDim2.fromOffset(LOGO_WIDTH + 10, 8),
-        Size = UDim2.fromOffset(12 + #versionText * 9, LOGO_HEIGHT - 16),
+        Position = UDim2.fromOffset(LOGO_WIDTH + 10, 12),
+        Size = UDim2.fromOffset(versionWidth, 22),
         ZIndex = 20,
     }) :: any) :: Frame
 

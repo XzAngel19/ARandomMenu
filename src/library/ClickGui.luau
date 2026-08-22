@@ -249,6 +249,24 @@ function Module.init(context: any): any
         end
     end
 
+    -- Reset layout: every category window back on the first-run grid, in
+    -- the official order, with every saved position already forgotten by
+    -- the caller. Settings windows re-cascade the next time they open.
+    function ClickGui.Retile(): ()
+        nextX = GRID_MARGIN
+        nextY = 64
+        rowHeight = 0
+        for _, name: string in ipairs(ClickGui.order) do
+            local record: CategoryWindow = ClickGui.categories[name]
+            if record then
+                local slot: Vector2 = nextSlot(
+                    record.window.fullHeight or WINDOW_MAX_HEIGHT * 0.5
+                )
+                record.window.root.Position = UDim2.fromOffset(slot.X, slot.Y)
+            end
+        end
+    end
+
     -- Re-clamp every category window after the Max height slider moves;
     -- each record's own resize already knows how to read the live limit.
     function ClickGui.RefreshHeights(): ()

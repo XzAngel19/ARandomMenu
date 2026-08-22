@@ -777,6 +777,7 @@ function Module.init(context: any): any
                 {"Keybinds", nil, 26},
                 {"Reinject latest", nil, 26},
                 {"Destruct", nil, 26},
+                {"Reset layout", nil, 26},
                 {"Game check: Universal only"},
             }),
         })
@@ -891,6 +892,17 @@ function Module.init(context: any): any
             end)
         end))
 
+        actionRow(optionsRecord, 4, "Reset layout", function(): ()
+            -- Saved geometry gone, category grid re-tiled now, settings
+            -- windows re-cascade on their next open.
+            configData.ui.windows = {}
+            queueConfigSave()
+            if state.clickGui and state.clickGui.Retile then
+                state.clickGui.Retile()
+            end
+            notify("Layout reset")
+        end)
+
         -- The game check readout: *how* the game was recognised, which is
         -- what tells you a clone was matched by structure, not PlaceId.
         local recognised: string = GAME_CHECK.MM2Active and "MM2"
@@ -905,7 +917,7 @@ function Module.init(context: any): any
             Name = "GameCheck",
             BackgroundTransparency = 1,
             FontFace = CONTROL_FONT,
-            LayoutOrder = 4,
+            LayoutOrder = 5,
             Size = UDim2.new(1, 0, 0, ROW_HEIGHT),
             Text = "  Game check: " .. recognised,
             TextColor3 = Theme.textMuted,

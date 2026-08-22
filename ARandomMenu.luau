@@ -363,7 +363,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "863c7ec581d6f7b5"
+local SOURCE_STAMP: string = "7ebf12af16b74194"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -936,6 +936,11 @@ local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = GUI_NAME
 ScreenGui.ResetOnSpawn = false
 ScreenGui.IgnoreGuiInset = true
+-- Roblox machine-translates every label for a non-English client unless told
+-- otherwise, which is how the menu showed "Otras razones", "Desactivado" and
+-- "Hacer zoom". One flag at the root covers every descendant: the interface
+-- speaks Wurst's English, always. (VD's in-world billboards set their own.)
+ScreenGui.AutoLocalize = false
 ScreenGui.DisplayOrder = 999999
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 ScreenGui:SetAttribute("BuildId", "0001-S17")
@@ -1046,6 +1051,24 @@ state.mobileButtonSize = math.clamp(
     120
 )
 configData.ui.guiStyle = nil
+-- Schema 2: the Wurst rebuild. Values an older build stored contradict the
+-- port — window geometry for windows that no longer exist (the "WurstLogo |
+-- Emote Player" pile-up was two eras' saved positions coinciding), Max
+-- height sliders stored before the official 200 default existed, and the
+-- WurstLogo colours from the ghost-chip era. One flag, one sweep;
+-- everything falls back to Wurst's own defaults and persists fresh.
+if configData.ui.wurstSchema ~= 2 then
+    configData.ui.wurstSchema = 2
+    configData.ui.windows = {}
+    configData.values["ClickGUI.Maxheight"] = nil
+    configData.values["ClickGUI.Maxsettingsheight"] = nil
+    configData.values["ClickGUI.Opacity"] = nil
+    configData.values["ClickGUI.Tooltipopacity"] = nil
+    configData.values["WurstLogo.Background"] = nil
+    configData.values["WurstLogo.Text"] = nil
+    configData.values["WurstLogo.Visibility"] = nil
+    queueConfigSave()
+end
 configData.ui.textScaleCalibrationVersion = 2
 
 -- ---------------------------------------------------------------------------
@@ -1743,6 +1766,15 @@ local function create(className, properties)
         if property ~= "Parent" then
             object[property] = value
         end
+    end
+
+    -- Belt to the root flag's braces: every text object the menu builds
+    -- refuses machine translation individually, so a label parented outside
+    -- the main ScreenGui (billboards, overlays) is covered too.
+    if object:IsA("TextLabel")
+        or object:IsA("TextButton")
+        or object:IsA("TextBox") then
+        object.AutoLocalize = false
     end
 
     if properties and properties.Parent then
