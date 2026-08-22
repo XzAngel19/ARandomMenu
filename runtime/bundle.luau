@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "d2371bb0628cb7fa",
+    stamp = "f28fc13021ea2646",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -11711,6 +11711,7 @@ function Module.init(context: any): any
     local colorFromConfig: any = host.colorFromConfig
     local ScreenGui: any = host.ScreenGui
     local makeTextBox: any = host.makeTextBox
+    local notify: any = host.notify or function(_message: any): () end
 
     local Furniture: any = {
         handles = {} :: {any},
@@ -12841,22 +12842,72 @@ function Module.init(context: any): any
         if boxStroke then
             boxStroke:Destroy()
         end
+        -- The dock talks to exactly one resolver: D's registry,
+        -- state.moduleSearch.Execute. Return, KeypadEnter and the mobile
+        -- keyboard all land on FocusLost(true) or the on-screen-keyboard
+        -- signal, and the token guarantees exactly one Execute per
+        -- submit however many of those fire for it. Nothing runs while
+        -- typing; there are no suggestions and no dropdown.
+        local lastSubmitAt: number = -math.huge
+        local function submitSearch(): ()
+            local now: number = os.clock()
+            if now - lastSubmitAt < 0.2 then
+                return
+            end
+            lastSubmitAt = now
+            local query: string = tostring(searchBox.Text or "")
+            if query:gsub("%s", "") == "" then
+                return
+            end
+            local search: any = state.moduleSearch
+            if type(search) ~= "table" or type(search.Execute) ~= "function" then
+                notify("Module search is not available")
+                return
+            end
+            local result: any = search.Execute(query)
+            local status: string = tostring(result and result.status)
+            if status == "success" then
+                searchBox.Text = ""
+                local entryName: string = tostring(
+                    result.entry and result.entry.displayName or query
+                )
+                notify(entryName .. ": "
+                    .. (result.enabled and "enabled" or "disabled"))
+            elseif status == "ambiguous" then
+                local names: {string} = {}
+                for index: number, match: any in ipairs(result.matches or {}) do
+                    if index > 4 then
+                        table.insert(names, "…")
+                        break
+                    end
+                    table.insert(names, tostring(match.displayName))
+                end
+                notify("Ambiguous: " .. table.concat(names, ", "))
+            elseif status == "not_toggleable" then
+                notify(tostring(
+                    result.entry and result.entry.displayName or query
+                ) .. " has nothing to toggle")
+            else
+                notify("No module matches \"" .. query .. "\"")
+            end
+        end
         table.insert(
             Furniture.connections,
             searchBox.FocusLost:Connect(function(enterPressed: boolean): ()
-                if enterPressed ~= true then
-                    return
-                end
-                local query: string = tostring(searchBox.Text or "")
-                searchBox.Text = ""
-                if query:gsub("%s", "") == "" then
-                    return
-                end
-                if type(state.invokeModuleSearch) == "function" then
-                    state.invokeModuleSearch(query)
+                if enterPressed == true then
+                    submitSearch()
                 end
             end)
         )
+        -- The on-screen keyboard's submit, where the platform offers it.
+        pcall(function(): ()
+            table.insert(
+                Furniture.connections,
+                (searchBox :: any).ReturnPressedFromOnScreenKeyboard:Connect(
+                    submitSearch
+                )
+            )
+        end)
     end
 
     -- The menu button fills with the accent while the GUI is open, exactly

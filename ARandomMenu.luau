@@ -363,7 +363,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "d2371bb0628cb7fa"
+local SOURCE_STAMP: string = "f28fc13021ea2646"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -3478,61 +3478,16 @@ state.mvsdFeatures = {}
 local allFeatures: {any} = {}
 local featureConnections = {}
 
--- The dock's search resolver. One query, one honest answer: an exact
--- name match toggles that module; a unique substring match toggles it
--- too; several candidates is "ambiguous" with the names spelled out;
--- none is "not found". Only real module toggles — action rows and
--- category headings are administrative surface and never run from a
--- search box. D's registry can replace this wholesale by reassigning
--- the field; the dock calls whatever is published here.
+-- Compatibility wrapper only: the dock and anything else that wants a
+-- search goes through D's registry, state.moduleSearch.Execute. This
+-- boolean form survives for older callers and does exactly nothing more.
 state.invokeModuleSearch = function(query: string): boolean
-    local wanted: string = string.lower(tostring(query or ""):gsub("^%s+", ""):gsub("%s+$", ""))
-    if wanted == "" then
+    local search: any = state.moduleSearch
+    if type(search) ~= "table" or type(search.Execute) ~= "function" then
         return false
     end
-    local exact: any = nil
-    local partial: {any} = {}
-    for _, feature: any in ipairs(allFeatures) do
-        if not feature.isAction and not feature.isCategory and feature.name then
-            local name: string = string.lower(tostring(feature.name))
-            if name == wanted then
-                exact = feature
-                break
-            end
-            if string.find(name, wanted, 1, true) ~= nil then
-                table.insert(partial, feature)
-            end
-        end
-    end
-    local target: any = exact or (#partial == 1 and partial[1] or nil)
-    if target then
-        if type(target.activate) == "function" then
-            local ok: boolean, failure: any = pcall(target.activate)
-            if ok then
-                notify(tostring(target.name) .. ": "
-                    .. (target.enabled and "enabled" or "disabled"))
-                return true
-            end
-            warn("[" .. PRODUCT.logPrefix .. "] search toggle: " .. tostring(failure))
-            return false
-        end
-        notify(tostring(target.name) .. " has nothing to toggle")
-        return false
-    end
-    if #partial > 1 then
-        local names: {string} = {}
-        for index: number, feature: any in ipairs(partial) do
-            if index > 4 then
-                table.insert(names, "…")
-                break
-            end
-            table.insert(names, tostring(feature.name))
-        end
-        notify("Ambiguous: " .. table.concat(names, ", "))
-        return false
-    end
-    notify("No module matches \"" .. tostring(query) .. "\"")
-    return false
+    local result: any = search.Execute(query)
+    return type(result) == "table" and result.status == "success"
 end
 
 -- Every module card re-applies the responsive metrics through its own
