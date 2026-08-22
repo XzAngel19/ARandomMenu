@@ -109,7 +109,24 @@ function Module.init(context: any): any
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
         Position = UDim2.fromOffset(FURNITURE_MARGIN_X, FURNITURE_MARGIN_Y),
-        Size = UDim2.fromOffset(LOGO_WIDTH + 46, LOGO_HEIGHT + 8),
+        Size = UDim2.fromOffset(LOGO_WIDTH + 130, LOGO_HEIGHT + 8),
+        ZIndex = 20,
+    }) :: any) :: Frame
+
+    -- Wurst's WurstLogo background: a half-alpha band behind rows 6..17 of
+    -- the 18-logical-tall logo — 12..34 at the GUI scale 2 everything is
+    -- drawn at — spanning the mark and the version string. The default is
+    -- the Java's own: #FFFFFF at getColorI(128), i.e. 50% alpha. It is a
+    -- stripe, never an opaque box; the WurstLogo Settings window recolours
+    -- it live.
+    local logoStripe: Frame = (create("Frame", {
+        Parent = chip,
+        Name = "BackgroundStripe",
+        BackgroundColor3 = WURSTLOGO_BACKGROUND,
+        BackgroundTransparency = 0.5,
+        BorderSizePixel = 0,
+        Position = UDim2.fromOffset(0, 12),
+        Size = UDim2.new(1, 0, 0, 22),
         ZIndex = 20,
     }) :: any) :: Frame
 
@@ -141,15 +158,12 @@ function Module.init(context: any): any
         ZIndex = 21,
     }) :: any) :: TextLabel
 
-    -- The version string sits on the game, not on a slab — ref-wurst-719
-    -- shows "v7.19 MC1.18.1" as bare coloured text beside the sausage. The
-    -- frame exists only so the WurstLogo Background setting has something to
-    -- paint the day a player switches one on; by default it is invisible.
+    -- The version string rides the background stripe, so it uses Wurst's own
+    -- default text colour (#000000) — readable now that the band exists.
     local versionText: string = tostring(PRODUCT.version)
     local versionChip: Frame = (create("Frame", {
         Parent = chip,
         Name = "VersionChip",
-        BackgroundColor3 = WURSTLOGO_BACKGROUND,
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
         Position = UDim2.fromOffset(LOGO_WIDTH + 10, 8),
@@ -166,11 +180,7 @@ function Module.init(context: any): any
         Position = UDim2.fromOffset(0, 0),
         Size = UDim2.fromScale(1, 1),
         Text = versionText,
-        -- Wurst prints the version in the interface's own accent, which is why
-        -- it is magenta in one reference shot and cyan in the other. Its
-        -- default text colour is black, which on no background over a dark game
-        -- is invisible.
-        TextColor3 = Theme.accent,
+        TextColor3 = WURSTLOGO_TEXT,
         TextSize = 16,
         TextXAlignment = Enum.TextXAlignment.Left,
         ZIndex = 21,
@@ -194,11 +204,7 @@ function Module.init(context: any): any
         chip.Visible = logoAlways and state.visible == true
     end
     local function setLogoBackground(color: Color3): ()
-        versionChip.BackgroundColor3 = color
-        -- Only a value somebody stored paints the chip; the default stays
-        -- bare text, the way every reference screenshot draws the version.
-        versionChip.BackgroundTransparency =
-            configData.values["WurstLogo.Background"] ~= nil and 0.45 or 1
+        logoStripe.BackgroundColor3 = color
     end
     local function setLogoTextColor(color: Color3): ()
         versionLabel.TextColor3 = color

@@ -123,6 +123,12 @@ return function(ctx: any): ()
     optionRow.Size = world.globals.UDim2.fromOffset(0, 34)
     optionRow.Parent = expandable.options
     table.insert(expandable.optionRows, optionRow)
+    -- The widget builders call updateExpandedSize as each row lands; the
+    -- suite bypasses them, so it remeasures by hand — which is also what
+    -- creates the arrow, since the arrow does not exist before the first
+    -- real option does.
+    expandable.updateExpandedSize(false)
+    check("an option row publishes hasSettings", expandable.hasSettings == true)
     check("the options panel starts closed", expandable.options.Visible == false)
     expandable.arrow.MouseButton1Click:Fire()
     check("expanding a card with options shows the panel",
@@ -132,7 +138,9 @@ return function(ctx: any): ()
         noOptions = true,
     })
     check("a noOptions card reports no options", bare.hasOptions() == false)
-    bare.arrow.MouseButton1Click:Fire()
+    check("a noOptions card has no settings metadata", bare.hasSettings ~= true)
+    check("a noOptions card draws no arrow at all", bare.arrow == nil)
+    bare.toggleExpansion()
     check("a noOptions card does not open a panel",
         bare.expanded == false and bare.options.Visible == false)
 

@@ -78,6 +78,10 @@ return function(ctx: any): ()
     optionRow.Size = world.globals.UDim2.fromOffset(0, 34)
     optionRow.Parent = withOptions.options
     table.insert(withOptions.optionRows, optionRow)
+    -- The widget builders remeasure as each row lands, and the remeasure is
+    -- what creates the arrow; the suite bypasses the builders, so it calls
+    -- the same remeasure by hand.
+    withOptions.updateExpandedSize(false)
     if withOptions.arrow == nil then
         check("a row with options is missing its settings arrow", false)
     else
