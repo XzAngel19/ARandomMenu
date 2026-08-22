@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "181f06977d4cd90b",
+    stamp = "d36b898904f8a3e7",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -12158,13 +12158,35 @@ function Module.init(context: any): any
         menuButton.TextColor3 = open and Theme.accentText or PILL_IDLE_TEXT
     end
     restyleMenuButton()
-    state.addMenuVisibilityListener(function(_visible: boolean): ()
+    state.addMenuVisibilityListener(function(visible: boolean): ()
         restyleMenuButton()
         -- The wordmark belongs to the ClickGUI screen; the HackList stays —
         -- it is the in-game HUD. Navigator is its own screen now and ignores
         -- the ClickGUI entirely.
         refreshLogoVisibility()
         placeHudList()
+        -- Boot placement runs while the GUI is closed, when every window is
+        -- hidden and therefore invisible to the free-rectangle search. The
+        -- moment the GUI really shows, any auto-placed settings or
+        -- management window standing on a neighbour reflows to a free
+        -- rectangle. Registered here, in the last library, so every other
+        -- visibility listener has already restored what should be showing;
+        -- hand-moved windows are never touched.
+        if visible then
+            task.defer(function(): ()
+                local manager: any = state.windows
+                if not manager or type(manager.ReflowWindow) ~= "function" then
+                    return
+                end
+                for _, window: any in ipairs(manager.list or {}) do
+                    if (window.featureSettings or window.managementWindow)
+                        and window.root.Visible
+                        and not window.userMoved then
+                        manager.ReflowWindow(window)
+                    end
+                end
+            end)
+        end
     end)
     refreshLogoVisibility()
     ThemeEngine.OnChange(function(): ()
