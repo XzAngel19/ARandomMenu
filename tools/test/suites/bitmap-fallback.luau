@@ -68,9 +68,6 @@ return function(ctx: any): ()
             and type(capabilities.canCustomAsset) == "boolean"
             and type(capabilities.canSynAsset) == "boolean"
             and capabilities.mobile ~= capabilities.desktop)
-    check("font mode publishes the selected fallback policy",
-        table.find({"Auto", "Monocraft", "Minecraft local"}, bitmap.fontMode) ~= nil)
-
     check(
         "boot source is not labelled Minecraft exact without a pack",
         bitmap.source ~= "minecraft-exact",

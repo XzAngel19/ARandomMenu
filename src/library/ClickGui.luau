@@ -316,6 +316,9 @@ function Module.init(context: any): any
                     record.window.fullHeight or WINDOW_MAX_HEIGHT * 0.5
                 )
                 record.window.root.Position = UDim2.fromOffset(slot.X, slot.Y)
+                if type(windows.ClampWindow) == "function" then
+                    windows.ClampWindow(record.window)
+                end
             end
         end
     end

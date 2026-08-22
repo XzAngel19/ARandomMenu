@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "9d8e7c9b78632af2",
+    stamp = "74f13dd6d73f0e57",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -6017,11 +6017,21 @@ function Module.init(context: any): any
                     if state.tooltipToken ~= token or not square.Parent then
                         return
                     end
-                    tooltip.Text = tipText()
+                    local rawText: string = tipText()
+                    local bitmap: any = state.bitmapText
+                    local measured: number = bitmap
+                            and type(bitmap.measure) == "function"
+                            and tonumber(bitmap.measure({{text = rawText}}, 16))
+                        or #rawText * 8
+                    local width: number = math.clamp(measured + 24, 140, 360)
+                    local wrapped: string = rawText
+                    local lines: number = 1
+                    if bitmap and type(bitmap.wrap) == "function" then
+                        wrapped, lines = bitmap.wrap(rawText, width - 24, 16)
+                    end
+                    tooltip.Text = wrapped
                     tooltip.TextTransparency = 1
-                    tooltip.Size = UDim2.fromOffset(
-                        math.clamp(#tooltip.Text * 8 + 24, 140, 360), 30
-                    )
+                    tooltip.Size = UDim2.fromOffset(width, math.max(30, lines * 18 + 12))
                     tooltip.Position = UDim2.fromOffset(
                         square.AbsolutePosition.X,
                         square.AbsolutePosition.Y + square.AbsoluteSize.Y + 8
@@ -6032,6 +6042,8 @@ function Module.init(context: any): any
                         }, {
                             Name = "Glyphs",
                             TextSize = 16,
+                            maxWidth = width - 24,
+                            ellipsis = true,
                             ZIndex = 251,
                         })
                     end
@@ -7925,6 +7937,9 @@ function Module.init(context: any): any
                     record.window.fullHeight or WINDOW_MAX_HEIGHT * 0.5
                 )
                 record.window.root.Position = UDim2.fromOffset(slot.X, slot.Y)
+                if type(windows.ClampWindow) == "function" then
+                    windows.ClampWindow(record.window)
+                end
             end
         end
     end
@@ -13047,17 +13062,41 @@ function Module.init(context: any): any
         if not tooltip then
             return
         end
-        state.tooltipToken = state.tooltipToken + 1;
-        (tooltip :: TextLabel).Text = text;
-        (tooltip :: TextLabel).Size = UDim2.fromOffset(
-            math.clamp(#text * 5.5 + 24, 120, 320),
-            30
-        );
-        (tooltip :: TextLabel).Position = UDim2.fromOffset(
+        state.tooltipToken = state.tooltipToken + 1
+        local bitmap: any = state.bitmapText
+        local measured: number = bitmap
+                and type(bitmap.measure) == "function"
+                and tonumber(bitmap.measure({{text = text}}, 16))
+            or #text * 8
+        local width: number = math.clamp(measured + 24, 120, 320)
+        local wrapped: string = text
+        local lines: number = 1
+        if bitmap and type(bitmap.wrap) == "function" then
+            wrapped, lines = bitmap.wrap(text, width - 24, 16)
+        end
+        local resolvedTooltip: TextLabel = tooltip :: TextLabel
+        resolvedTooltip.Text = wrapped
+        resolvedTooltip.TextTransparency = 1
+        resolvedTooltip.Size = UDim2.fromOffset(
+            width,
+            math.max(30, lines * 18 + 12)
+        )
+        resolvedTooltip.Position = UDim2.fromOffset(
             anchor.AbsolutePosition.X,
             -- Above the dock, which sits at the bottom now.
-            anchor.AbsolutePosition.Y - 38
-        );
+            anchor.AbsolutePosition.Y - (math.max(30, lines * 18 + 12) + 8)
+        )
+        if bitmap and type(bitmap.draw) == "function" then
+            bitmap.draw(tooltip, {{text = wrapped}}, {
+                Name = "Glyphs",
+                TextSize = 16,
+                maxWidth = width - 24,
+                ellipsis = true,
+                ZIndex = 251,
+            })
+        else
+            (tooltip :: TextLabel).TextTransparency = 0
+        end
         (tooltip :: TextLabel).Visible = true
     end
 

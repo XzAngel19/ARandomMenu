@@ -737,11 +737,21 @@ function Module.init(context: any): any
                     if state.tooltipToken ~= token or not square.Parent then
                         return
                     end
-                    tooltip.Text = tipText()
+                    local rawText: string = tipText()
+                    local bitmap: any = state.bitmapText
+                    local measured: number = bitmap
+                            and type(bitmap.measure) == "function"
+                            and tonumber(bitmap.measure({{text = rawText}}, 16))
+                        or #rawText * 8
+                    local width: number = math.clamp(measured + 24, 140, 360)
+                    local wrapped: string = rawText
+                    local lines: number = 1
+                    if bitmap and type(bitmap.wrap) == "function" then
+                        wrapped, lines = bitmap.wrap(rawText, width - 24, 16)
+                    end
+                    tooltip.Text = wrapped
                     tooltip.TextTransparency = 1
-                    tooltip.Size = UDim2.fromOffset(
-                        math.clamp(#tooltip.Text * 8 + 24, 140, 360), 30
-                    )
+                    tooltip.Size = UDim2.fromOffset(width, math.max(30, lines * 18 + 12))
                     tooltip.Position = UDim2.fromOffset(
                         square.AbsolutePosition.X,
                         square.AbsolutePosition.Y + square.AbsoluteSize.Y + 8
@@ -752,6 +762,8 @@ function Module.init(context: any): any
                         }, {
                             Name = "Glyphs",
                             TextSize = 16,
+                            maxWidth = width - 24,
+                            ellipsis = true,
                             ZIndex = 251,
                         })
                     end

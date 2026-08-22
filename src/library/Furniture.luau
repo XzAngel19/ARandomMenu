@@ -1108,17 +1108,41 @@ function Module.init(context: any): any
         if not tooltip then
             return
         end
-        state.tooltipToken = state.tooltipToken + 1;
-        (tooltip :: TextLabel).Text = text;
-        (tooltip :: TextLabel).Size = UDim2.fromOffset(
-            math.clamp(#text * 5.5 + 24, 120, 320),
-            30
-        );
-        (tooltip :: TextLabel).Position = UDim2.fromOffset(
+        state.tooltipToken = state.tooltipToken + 1
+        local bitmap: any = state.bitmapText
+        local measured: number = bitmap
+                and type(bitmap.measure) == "function"
+                and tonumber(bitmap.measure({{text = text}}, 16))
+            or #text * 8
+        local width: number = math.clamp(measured + 24, 120, 320)
+        local wrapped: string = text
+        local lines: number = 1
+        if bitmap and type(bitmap.wrap) == "function" then
+            wrapped, lines = bitmap.wrap(text, width - 24, 16)
+        end
+        local resolvedTooltip: TextLabel = tooltip :: TextLabel
+        resolvedTooltip.Text = wrapped
+        resolvedTooltip.TextTransparency = 1
+        resolvedTooltip.Size = UDim2.fromOffset(
+            width,
+            math.max(30, lines * 18 + 12)
+        )
+        resolvedTooltip.Position = UDim2.fromOffset(
             anchor.AbsolutePosition.X,
             -- Above the dock, which sits at the bottom now.
-            anchor.AbsolutePosition.Y - 38
-        );
+            anchor.AbsolutePosition.Y - (math.max(30, lines * 18 + 12) + 8)
+        )
+        if bitmap and type(bitmap.draw) == "function" then
+            bitmap.draw(tooltip, {{text = wrapped}}, {
+                Name = "Glyphs",
+                TextSize = 16,
+                maxWidth = width - 24,
+                ellipsis = true,
+                ZIndex = 251,
+            })
+        else
+            (tooltip :: TextLabel).TextTransparency = 0
+        end
         (tooltip :: TextLabel).Visible = true
     end
 

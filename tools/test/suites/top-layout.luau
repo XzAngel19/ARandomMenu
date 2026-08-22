@@ -11,6 +11,18 @@ return function(ctx: any): ()
 
     section("TopLayout")
 
+    local bundle: string = tostring(ctx.bundleSource or "")
+    check("Retile routes assigned slots through manager pixel snap",
+        string.find(bundle, "windows.ClampWindow(record.window)", 1, true) ~= nil)
+    check("keybind tooltip uses bitmap measure and wrap",
+        string.find(bundle, "bitmap.wrap(rawText", 1, true) ~= nil
+            and string.find(bundle, "#tooltip.Text * 8", 1, true) == nil)
+    check("dock tooltip uses bitmap measure and wrap",
+        string.find(bundle, "bitmap.wrap(text", 1, true) ~= nil
+            and string.find(bundle, "#text * 5.5", 1, true) == nil)
+    check("tooltip bitmap draws request ASCII ellipsis",
+        string.find(bundle, "ellipsis = true", 1, true) ~= nil)
+
     local boot: any = bootShell(ctx)
     check("top-layout boot runs", boot.ok == true, boot.error)
     if not boot.ok then
