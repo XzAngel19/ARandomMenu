@@ -12,15 +12,15 @@ GUI-scale-1. Prototype `titleHeight` 26 is 13 × 2, not a 1080p invention.
 | Pixel icons (triangle, pin, cross, check) | exact | ClickGuiIcons, not Unicode. |
 | Category windows: pin + collapse, no close | exact | Window.java. |
 | Official eight names in KNOWN_CATEGORIES | exact | Combat, Render, Blocks, Movement, Chat, Fun, Items, Other. |
-| Occupied windows only (empty Blocks/Chat/Items still shown) | **incorrecta** | Official does not open an empty category as a giant window. Hide waits on A. |
-| Settings inline in the category row | **incorrecta** | Official opens `<Feature> Settings`. Suite waits. |
-| Settings windows stacked on first run | **incorrecta** until positions stay distinct | SettingsPage offsets Y; gate holds that. |
+| Occupied windows only (empty Blocks/Chat/Items hidden) | exact | Empty official categories stay in the contract and draw no window. |
+| Independent `<Feature> Settings` window | exact | `OpenFeatureSettings`; options reparent; row height unchanged. |
+| Settings cascade step 28×30 | **incorrecta** | Avoids superposition; AABBs of ~200×66 windows still overlap. |
 | Window width 200 / packed settings | adaptación Roblox aprobable | Category 200; settings pack via `packedWidth`. |
 | WurstLogo stripe y=12..34, alpha 0.5 | exact | Java fill y=6..17. |
-| WurstLogo band `LOGO_WIDTH + 130` | **incorrecta** | Must pack to logo + gap + version. |
-| WurstLogo.Background seeded `#000000` | **incorrecta** | Java default `#FFFFFF`. |
-| AutoLocalize left at Roblox default | **incorrecta** | Capture translated Other/Text/Disabled/Zoom. |
-| Titles left-aligned from x=8 | **incorrecta** | Official names are centred; arrow must not shift the centre. |
+| WurstLogo band packed to version | exact | `LOGO_WIDTH + 10 + (8 + #version × 12) + 4`. `+ 130` is gone. |
+| WurstLogo.Background seeded `#FFFFFF` | exact | Java default, half-alpha stripe y=6..17. |
+| AutoLocalize = false on helpers and roots | exact | Capture no longer translates Other/Text/Disabled/Zoom. |
+| Titles centred on the full row | exact | Arrow does not move the centre. |
 | RUN / KEY via `makeButton` (rounded in the shell) | **incorrecta** | Official action/combo/textbox are rectangles. |
 | addSectionOption uppercase headings | **incorrecta** if DISPLAY/FILTERS/STYLE/FLIGHT | Official has no decorative chips. |
 | Keybinds lists unbound modules | **incorrecta** | Official manager is bound keys + menu key. |
