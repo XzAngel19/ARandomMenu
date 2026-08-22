@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "ffc543f4c9408f31",
+    stamp = "17b6c8c2b784d733",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -6426,11 +6426,20 @@ function Module.init(context: any): any
             root.Size.X.Offset, root.Size.Y.Offset
     end
 
+    -- A logical coordinate snapped to the device pixel grid: at scale
+    -- 1.25 a window at logical x=6 sits at 7.5 physical pixels and its
+    -- 1 px border blurs across two. Every write funnels through clamp()
+    -- or snap(), so this is the one place geometry gets snapped.
+    local function snapPixel(value: number): number
+        local factor: number = layerScale()
+        return math.round(value * factor) / factor
+    end
+
     local function clamp(position: Vector2, size: Vector2): Vector2
         local screen: Vector2 = logicalViewport()
         return Vector2.new(
-            math.clamp(position.X, MARGIN, math.max(MARGIN, screen.X - size.X - MARGIN)),
-            math.clamp(position.Y, MARGIN, math.max(MARGIN, screen.Y - size.Y - MARGIN))
+            snapPixel(math.clamp(position.X, MARGIN, math.max(MARGIN, screen.X - size.X - MARGIN))),
+            snapPixel(math.clamp(position.Y, MARGIN, math.max(MARGIN, screen.Y - size.Y - MARGIN)))
         )
     end
 
@@ -6535,7 +6544,7 @@ function Module.init(context: any): any
                 break
             end
         end
-        return Vector2.new(x, y)
+        return Vector2.new(snapPixel(x), snapPixel(y))
     end
 
     local function raise(window: any): ()
@@ -7301,13 +7310,22 @@ function Module.init(context: any): any
         end
 
         -- Packed to content: the widest option label decides, the way Wurst
-        -- sizes a settings window. 12 px is the bitmap advance at the 16 px
-        -- line; 72 covers the widest value column.
+        -- sizes a settings window. The width comes from the contract's own
+        -- measure — the same advances the renderer draws with — and the
+        -- glyph-count estimate survives only for the harness host, which
+        -- does not publish the contract. 72 covers the widest value column.
+        local bitmapText: any = state.bitmapText
         local width: number = 200
         for _, optionRow: any in ipairs(feature.optionRows or {}) do
             local label: any = optionRow:FindFirstChild("OptionLabel")
             local text: string = label and tostring(label.Text) or ""
-            width = math.max(width, 8 + #text * 12 + 24 + 72)
+            local labelWidth: number
+            if bitmapText and type(bitmapText.measure) == "function" then
+                labelWidth = bitmapText.measure({{text = text}}, 16)
+            else
+                labelWidth = #text * 12
+            end
+            width = math.max(width, 8 + labelWidth + 24 + 72)
         end
         width = math.min(width, 420)
 
@@ -7362,7 +7380,6 @@ function Module.init(context: any): any
             options.Position = UDim2.fromOffset(0, 0)
             options.Size = UDim2.new(1, 0, 0, feature.optionsHeight or 40)
             options.Parent = window.body
-            local bitmapText: any = state.bitmapText
             if bitmapText and type(bitmapText.adoptTree) == "function" then
                 table.insert(
                     window.connections,

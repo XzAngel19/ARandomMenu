@@ -363,7 +363,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "ffc543f4c9408f31"
+local SOURCE_STAMP: string = "17b6c8c2b784d733"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -2045,8 +2045,12 @@ state.bitmapText = {
     -- Labels already adopted, weak-keyed: adopt is idempotent and a
     -- sweep may visit the same instance twice.
     _adopted = setmetatable({}, {__mode = "k"}) :: any,
+    -- The packing width. Post-A2 this is measure() itself — atlas
+    -- advances when the atlas is live, the 12 px estimate until then —
+    -- so no consumer can drift from the renderer by multiplying a
+    -- constant. Callers keep the one-string signature.
     width = function(text: any): number
-        return #tostring(text) * 12
+        return state.bitmapText.measure({{text = tostring(text)}}, 16)
     end,
     make = function(properties: any): TextLabel
         local resolved: any = {}
@@ -2201,6 +2205,39 @@ state.bitmapText.measure = function(segments: {any}, textSize: number?): number
     return widest
 end
 
+-- Word-wrap, centrally: lines accumulate words while they fit the
+-- logical width at the given size, measured by the same advances the
+-- renderer draws with; an over-long single word breaks rather than
+-- overflowing. Returns the text with newlines and the line count.
+-- The tooltip consumes this; anything else that wraps must too.
+state.bitmapText.wrap = function(
+    text: any,
+    wrapWidth: number,
+    textSize: number?
+): (string, number)
+    local contract: any = state.bitmapText
+    local lines: {string} = {}
+    local current: string = ""
+    for word: string in string.gmatch(tostring(text or ""), "%S+") do
+        local candidate: string = current == "" and word
+            or (current .. " " .. word)
+        if contract.measure({{text = candidate}}, textSize) <= wrapWidth
+            or current == "" then
+            current = candidate
+        else
+            table.insert(lines, current)
+            current = word
+        end
+    end
+    if current ~= "" then
+        table.insert(lines, current)
+    end
+    if #lines == 0 then
+        lines = {""}
+    end
+    return table.concat(lines, "\n"), #lines
+end
+
 -- Text on the Wurst contract. Segments carry their own colours (the
 -- HackList's muted bracket without RichText); options:
 --
@@ -2229,6 +2266,7 @@ state.bitmapText.draw = function(
     local align: string = tostring(resolvedOptions.align or "Left")
     local shadow: boolean = resolvedOptions.shadow == true
     local maxWidth: number? = tonumber(resolvedOptions.maxWidth)
+    local wantsEllipsis: boolean = resolvedOptions.ellipsis == true
     local transparency: number = tonumber(resolvedOptions.transparency) or 0
     local atlas: any = contract.atlas
 
@@ -2242,7 +2280,7 @@ state.bitmapText.draw = function(
     local parts: {string} = {
         tostring(textSize), align, tostring(shadow),
         tostring(maxWidth), tostring(atlas.ready),
-        tostring(transparency),
+        tostring(transparency), tostring(wantsEllipsis),
         string.format("%.4f", deviceScale),
         tostring(raster and raster.size),
         tostring(atlas.generation),
@@ -2354,6 +2392,8 @@ state.bitmapText.draw = function(
         local x: number = 0
         local y: number = 0
         local lineCount: number = 1
+        local truncated: boolean = false
+        local lastColor: Color3 = Theme.text
         local function blit(code: number, paint: Color3, dx: number, dy: number, z: number): ()
             local index: number = code - atlas.first
             local glyph: ImageLabel = nextGlyph()
@@ -2376,6 +2416,7 @@ state.bitmapText.draw = function(
             local shade: Color3 = Color3.new(
                 color.R * 0.25, color.G * 0.25, color.B * 0.25
             )
+            lastColor = color
             contract.eachCode(tostring(segment.text or ""), function(code: number): ()
                 if code == 10 then
                     x = 0
@@ -2385,6 +2426,7 @@ state.bitmapText.draw = function(
                 end
                 local advance: number = contractAdvanceFor(atlas, code, scale)
                 if maxWidth ~= nil and x + advance > maxWidth then
+                    truncated = true
                     return
                 end
                 if code ~= 32 then
@@ -2400,6 +2442,24 @@ state.bitmapText.draw = function(
                 x += advance
                 width = math.max(width, x)
             end)
+        end
+        -- Optional ellipsis: two ASCII dots where the clip cut, in the
+        -- last segment's colour. The atlas has no U+2026; two periods are
+        -- the honest bitmap spelling and never fake a glyph.
+        if truncated and wantsEllipsis then
+            local dot: number = 46
+            local dotAdvance: number = contractAdvanceFor(atlas, dot, scale)
+            local budget: number = (maxWidth :: number)
+            local dotX: number = math.min(x, budget - dotAdvance * 2)
+            if dotX >= 0 then
+                if shadow then
+                    blit(dot, Color3.new(lastColor.R * 0.25, lastColor.G * 0.25, lastColor.B * 0.25), dotX + shadowOffset, y + shadowOffset, zIndex + 1)
+                    blit(dot, Color3.new(lastColor.R * 0.25, lastColor.G * 0.25, lastColor.B * 0.25), dotX + dotAdvance + shadowOffset, y + shadowOffset, zIndex + 1)
+                end
+                blit(dot, lastColor, dotX, y, zIndex + 2)
+                blit(dot, lastColor, dotX + dotAdvance, y, zIndex + 2)
+                width = math.max(width, dotX + dotAdvance * 2)
+            end
         end
         height = glyphHeight + (lineCount - 1) * lineAdvance
     else
@@ -4589,29 +4649,12 @@ local function showFeatureTooltip(row: Frame, text: string, pointer: Vector2?): 
 
     local bitmap: any = state.bitmapText
     local innerLimit: number = 488
-    -- Word wrap by measured width: words accumulate while they fit,
-    -- and a single over-long word breaks rather than overflowing.
-    local lines: {string} = {}
-    local current: string = ""
-    for word: string in string.gmatch(tostring(text), "%S+") do
-        local candidate: string = current == "" and word or (current .. " " .. word)
-        if bitmap.measure({{text = candidate}}, 16) <= innerLimit or current == "" then
-            current = candidate
-        else
-            table.insert(lines, current)
-            current = word
-        end
-    end
-    if current ~= "" then
-        table.insert(lines, current)
-    end
-    if #lines == 0 then
-        lines = {""}
-    end
-    local wrapped: string = table.concat(lines, "\n")
+    -- Wrapping is the contract's job now (A2): one word-wrap for every
+    -- surface, measured by the same advances the renderer draws with.
+    local wrapped: string, lineTotal: number = bitmap.wrap(text, innerLimit, 16)
     local measured: number = bitmap.measure({{text = wrapped}}, 16)
     local width: number = math.clamp(measured + 24, 210, 520)
-    local height: number = math.max(30, #lines * bitmap.lineHeight + 12)
+    local height: number = math.max(30, lineTotal * bitmap.lineHeight + 12)
     state.featureTooltip.Size = UDim2.fromOffset(width, height)
     bitmap.draw(state.featureTooltip, {
         {text = wrapped, color = Color3.fromRGB(205, 205, 205)},
