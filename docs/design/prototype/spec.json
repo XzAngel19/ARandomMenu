@@ -16,11 +16,11 @@
     "windowWidth": 200
   },
   "components": {
-    "sliderBarHeight": 5,
-    "sliderKnobWidth": 7,
-    "sliderKnobHeight": 11,
-    "titleFontSize": 11.5,
-    "labelFontSize": 11.5,
+    "sliderBarHeight": 6,
+    "sliderKnobWidth": 16,
+    "sliderKnobHeight": 16,
+    "titleFontSize": 16,
+    "labelFontSize": 16,
     "tooltipDelayMs": 400,
     "transitionFast": 0.1,
     "transitionSlow": 0.18

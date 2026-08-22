@@ -79,7 +79,7 @@ local TITLE_HEIGHT: number = 26
 -- The prototype's `.tbar` font size, held by the same gate. The title used
 -- to go through makeTextLabel, whose 1.35 multiplier rendered it at 16 px —
 -- visibly heavier than the spec on every window at once.
-local TITLE_FONT_SIZE: number = 11.5
+local TITLE_FONT_SIZE: number = 16
 
 function Module.init(context: any): any
     local host: any = context
@@ -93,6 +93,20 @@ function Module.init(context: any): any
     local PopupLayer: any = host.PopupLayer
     local trackUiConnection: any = host.trackUiConnection
     local UserInputService: any = host.UserInputService
+    -- The pixel-sprite pen the widget library publishes. The harness's host
+    -- stub does not carry it, so a stand-in draws an empty container there.
+    local drawPixelIcon: any = host.drawPixelIcon
+        or function(parent: Instance, _kind: string, _color: Color3?): Frame
+            local existing: Instance? = (parent :: any):FindFirstChild("PixelIcon")
+            if existing then
+                existing:Destroy()
+            end
+            return create("Frame", {
+                Parent = parent,
+                Name = "PixelIcon",
+                BackgroundTransparency = 1,
+            }) :: Frame
+        end
 
     configData.ui = configData.ui or {}
     configData.ui.windows = configData.ui.windows or {}
@@ -457,9 +471,12 @@ function Module.init(context: any): any
 
             local buttonX: number = -5
             -- Wurst's chrome controls are small squares sitting in the title
-            -- bar — a box with a symbol, not a bare glyph. 16 px is 8 logical
-            -- at the GUI scale 2 the interface is drawn at.
-            local function chromeButton(symbol: string): TextButton
+            -- bar, each carrying a pixel-drawn sprite — the reference
+            -- screenshots show a red triangle for minimise, a green pin and
+            -- a red cross, and none of them is a font glyph. 22 px is the
+            -- titleButton's 11 logical at the GUI scale 2 everything is
+            -- drawn at.
+            local function chromeButton(kind: string, paint: Color3): TextButton
                 local button: TextButton = (create("TextButton", {
                     TextTruncate = Enum.TextTruncate.AtEnd,
                     Parent = bar,
@@ -469,7 +486,7 @@ function Module.init(context: any): any
                     BackgroundTransparency = 0.72,
                     BorderSizePixel = 0,
                     FontFace = CONTROL_FONT,
-                    Text = symbol,
+                    Text = "",
                     TextSize = 11,
                 }) :: any) :: TextButton
                 create("UIStroke", {
@@ -480,9 +497,9 @@ function Module.init(context: any): any
                 })
                 button.AnchorPoint = Vector2.new(1, 0.5)
                 button.Position = UDim2.new(1, buttonX, 0.5, 0)
-                button.Size = UDim2.fromOffset(16, 16)
+                button.Size = UDim2.fromOffset(22, 22)
                 button.ZIndex = 3
-                bind(button, "TextColor3", "accentText")
+                drawPixelIcon(button, kind, paint)
                 -- Parked with the rest of the chrome so window:Destroy
                 -- releases them; trackUiConnection would keep them alive
                 -- until the whole shell dies.
@@ -492,26 +509,22 @@ function Module.init(context: any): any
                 table.insert(chromeConnections, button.MouseLeave:Connect(function(): ()
                     button.BackgroundTransparency = 0.72
                 end))
-                buttonX -= 19
+                buttonX -= 25
                 return button
             end
 
             if definition.closable ~= false then
-                closeButton = chromeButton("×")
+                closeButton = chromeButton("cross", Color3.fromRGB(204, 0, 0))
             end
             if definition.pinnable ~= false then
-                -- The pin is a square that fills with the enabled token while
-                -- the window is pinned — the same "on means filled" grammar
-                -- as a hack row.
-                local pin: TextButton = chromeButton("▪")
+                -- The pin sprite is Wurst's green; the square fills while the
+                -- window is pinned — on means filled, like a hack row.
+                local pin: TextButton = chromeButton("pin", Color3.fromRGB(0, 204, 0))
                 local function paintPin(): ()
-                    pin.BackgroundTransparency = window.pinned and 0 or 0.72
+                    pin.BackgroundTransparency = window.pinned and 0.2 or 0.72
                     pin.BackgroundColor3 = window.pinned
-                        and Theme.enabled
+                        and Color3.fromRGB(0, 80, 0)
                         or Color3.fromRGB(0, 0, 0)
-                    pin.TextColor3 = window.pinned
-                        and Theme.enabledText
-                        or Theme.accentText
                 end
                 table.insert(paintChrome, paintPin)
                 table.insert(chromeConnections, pin.MouseButton1Click:Connect(function(): ()
@@ -520,14 +533,22 @@ function Module.init(context: any): any
                 end))
             end
             if definition.collapsible ~= false then
-                local chevron: TextButton = chromeButton("–")
+                -- The minimise triangle is the dark red of the reference
+                -- screenshots; it points up while the body shows (fold me)
+                -- and down while collapsed (unfold me).
+                local chevron: TextButton = chromeButton("up", Color3.fromRGB(170, 32, 32))
+                local function paintChevron(): ()
+                    drawPixelIcon(
+                        chevron,
+                        window.collapsed and "down" or "up",
+                        Color3.fromRGB(170, 32, 32)
+                    )
+                end
                 table.insert(chromeConnections, chevron.MouseButton1Click:Connect(function(): ()
                     window:SetCollapsed(not window.collapsed)
-                    chevron.Text = window.collapsed and "+" or "–"
+                    paintChevron()
                 end))
-                table.insert(paintChrome, function(): ()
-                    chevron.Text = window.collapsed and "+" or "–"
-                end)
+                table.insert(paintChrome, paintChevron)
             end
             header = bar
         end
