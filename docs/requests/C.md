@@ -5,57 +5,92 @@ The integrator owns `ARandomMenu.luau`. Agent D owns `src/modules/**` and
 
 ## Landed — do not regress
 
-- Eight official windows, in order: Combat, Render, Blocks, Movement,
-  Chat, Fun, Items, Other. Visuals / Protection / Utility / Spoof are
-  aliases, not windows. The gate fails if they come back as titles.
+- Eight official names stay in `KNOWN_CATEGORIES`. Occupied windows
+  (Combat, Render, Movement, Fun, Other) exist. Visuals / Protection /
+  Utility / Spoof are not windows.
 - Feature rows: no star, no hamburger, no empty keybind box. `hasSettings`
   is derived. The triangle exists only when there are options.
-- Navigator is its own screen: search, three columns, preference sort,
-  Enter, Space, arrows, Escape / Backspace, TabGUI default Disabled.
-- WurstLogo stripe at scale-2 y=12 height 22 (logical y=6..17), half
-  alpha, live `SetBackground`. Version `0.1 Beta`. Never an opaque slab.
-- UI Settings order: WurstLogo, HackList, Keybinds, WurstOptions, then
-  Background, Accent, Text, Opacity, Tooltip opacity, Max height, Max
-  settings height. Shortcuts open windows; they do not toggle.
+- Navigator is its own screen. TabGUI default Disabled.
+- WurstLogo stripe at scale-2 y=12 height 22, half alpha, live setters.
+  Version `0.1 Beta`. Never an opaque slab.
+- UI Settings shortcuts open windows. Slider rail 6 / knob 16×16 /
+  checkbox 22 / colour 44. Pixel icons, not `+` `–` `▪`.
+- Settings windows from SettingsPage are not born superimposed. Click
+  raises ZIndex. Max height default 200.
 
-## Still owed
+## Still owed — do not fail until these land
 
-### WurstLogo seed colour
+### Independent SettingsWindow
 
-Furniture still names `WURSTLOGO_BACKGROUND = #000000`. Official default
-is `#FFFFFF` at half alpha (`WurstLogo.java`). The stripe draw is right;
-switch the constant to white in the same commit. Extract prints the
-black seed as ungrounded and will fail the moment the name stays and
-the value is still wrong after you change the comment to claim white.
+Cards still parents `Options` to the category row. Opening settings
+grows the category window. The suite `settings-window.luau` waits.
 
-### Slider rail and knob
+Land:
 
-Java `SliderComponent` (GUI-scale-1): height 22, rail y=15..18 (3 px,
-exclusive max), inset 2, knob 8×8. At the port's GUI scale 2 that is
-rail 6, knob 16×16. Widgets still ships the prototype 5 / 7×11.
+- `"<Feature> Settings"` as a WindowManager window
+- opening does not change the category row height or canvas
+- options are not descendants of the category body
+- triangle and right-click open the same window
+- open twice reuses it
+- close, collapse, pin, reopen
+- Max settings height
+- drag + persist
+- teardown without leftover tasks
+- a module without options never creates the window
 
-The gate accepts prototype **or** official so you can land the Java
-numbers without a red step. A third pair fails. Extract prints the
-prototype pair as ungrounded until you switch.
+The suite flips to blocking the moment that window exists.
 
-### Checkbox glyph and shortcut chevron
+### Hide empty Blocks / Chat / Items
 
-Official checkbox is a filled square, no mark. Official FeatureButtons
-have no `›`. Please drop `Text = "✓"` from `OptionCheckbox` and `Text =
-"›"` from the UI Settings shortcuts. The gate already fails `+`, `–`,
-`▪` as icons; it will fail those two the moment they are gone from the
-product, so remove them rather than replacing them with another glyph.
+They stay in `KNOWN_CATEGORIES`. They must not be visible windows with
+zero modules. clickgui-boot and chrome no longer require those three
+as visible windows — you can hide them without a red gate. A Chat
+module must still create Chat in official order.
 
-### Packed window width
+### AutoLocalize = false
 
-Official windows pack to `max(font.width(name)+15, title+4)`. The port
-uses 200 (category) and 214 (settings). Recorded as a Roblox adaptation
-until you pack. Do not invent a 1080p width.
+`makeTextLabel` / `makeButton` / `makeTextBox` and the ScreenGui /
+Popup roots have to set `AutoLocalize = false`. The capture translated
+Other / Text / Disabled / Zoom. The suite waits. Setting
+`AutoLocalize = true` already fails.
 
-### TabGUI / Taco constants
+### RUN / textbox / list still rounded via the shell helper
 
-`TABGUI_STATUS` and `TACO_ENABLED` are still owed names. Shipping no
-TabGUI matches the official Disabled default.
+Widgets no longer creates `UICorner` except the colour-picker SV
+cursor. `makeButton` in the shell still calls `addRoundedStyle`. Strip
+that for settings surfaces, or stop using `makeButton` for RUN / KEY /
+text boxes.
+
+### Keybinds lists unbound modules
+
+`rebuildKeybinds` still walks every `shortcutBindings` entry, including
+`Unknown`. Official manager only lists bound keys plus the menu key.
+Drop the empty pills. Pack the width. Do not truncate `RightControl`.
+
+### Titles centred
+
+Category rows still left-align from x=8 and shrink for the arrow.
+Official names are centred; the arrow must not move the centre.
+
+### WurstLogo band width
+
+Chip is still `LOGO_WIDTH + 130`. Pack to logo + gap + real version
+width so the band does not reach other HUD elements. Migrate a stored
+incompatible colour/width.
+
+### Config schema
+
+Add a schema/version for layout and UI Settings. A stored Max height
+of 1000 (the old default) must not survive as a Wurst default. Code
+defaults stay 200 / 200. Migration must not touch binds or module
+`configKeys`.
+
+### Font
+
+Libraries already take `CONTROL_FONT`. Do not hard-code BuilderSans or
+RobotoMono in Cards / Widgets / SettingsPage / WindowManager /
+Furniture / ClickGui. The face is still Monocraft `FontFace` — a
+vector stand-in, not MC.font bitmap. Do not claim "font exacta".
 
 ## Product name leftovers
 

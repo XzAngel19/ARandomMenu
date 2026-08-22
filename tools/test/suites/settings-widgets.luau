@@ -4,10 +4,8 @@
 -- and Wurst7 4a22e53 (SliderComponent, CheckboxComponent, ColorComponent).
 --
 -- Logical units stay GUI-scale-1 (rail 3, knob 8×8, checkbox 11, color 22).
--- The port draws at GUI scale 2, so 6 / 16×16 / 22 / 44 are the same
--- numbers, not 1080p inventions. The prototype still ships rail 5 and
--- knob 7×11; either pair is accepted so A can land the official sizes
--- without a permanent red. A third pair is invented and fails.
+-- A landed the official pair at GUI scale 2: rail 6, knob 16×16,
+-- checkbox 22, colour/slider 44. Those are the same numbers, not 1080p.
 
 return function(ctx: any): ()
     local Mock: any = ctx.Mock
@@ -61,15 +59,12 @@ return function(ctx: any): ()
         end
     end
 
-    local function isOfficialOrPrototypeRail(height: number): boolean
-        -- Official 3 logical, 6 at GUI scale 2, or the prototype's 5.
-        return height == 3 or height == 5 or height == 6
+    local function isOfficialRail(height: number): boolean
+        return height == 3 or height == 6
     end
 
-    local function isOfficialOrPrototypeKnob(width: number, height: number): boolean
-        return (width == 8 and height == 8)
-            or (width == 16 and height == 16)
-            or (width == 7 and height == 11)
+    local function isOfficialKnob(width: number, height: number): boolean
+        return (width == 8 and height == 8) or (width == 16 and height == 16)
     end
 
     -- Checkbox ----------------------------------------------------------------
@@ -111,8 +106,8 @@ return function(ctx: any): ()
     check("a slider builds a two-line row", sliderRow ~= nil)
     if sliderRow ~= nil then
         check(
-            "a slider is taller than a single text row",
-            sliderRow.Size.Y.Offset >= 22,
+            "a slider is two text-rows tall (22 logical, 44 at scale 2)",
+            sliderRow.Size.Y.Offset == 44,
             tostring(sliderRow.Size.Y.Offset)
         )
         local slider: any = sliderRow:FindFirstChild("Slider")
@@ -129,16 +124,16 @@ return function(ctx: any): ()
         check("the slider has a rail", track ~= nil)
         if track ~= nil then
             check(
-                "the rail is prototype 5 or official 3/6",
-                isOfficialOrPrototypeRail(track.Size.Y.Offset),
+                "the rail is official 3 logical (6 at scale 2)",
+                isOfficialRail(track.Size.Y.Offset),
                 tostring(track.Size.Y.Offset)
             )
             local knob: any = track:FindFirstChild("Knob")
             check("the slider has a square knob", knob ~= nil)
             if knob ~= nil then
                 check(
-                    "the knob is prototype 7×11 or official 8×8 / 16×16",
-                    isOfficialOrPrototypeKnob(knob.Size.X.Offset, knob.Size.Y.Offset),
+                    "the knob is official 8×8 logical (16×16 at scale 2)",
+                    isOfficialKnob(knob.Size.X.Offset, knob.Size.Y.Offset),
                     tostring(knob.Size.X.Offset) .. "x" .. tostring(knob.Size.Y.Offset)
                 )
             end
@@ -208,6 +203,55 @@ return function(ctx: any): ()
 
     -- Theme.enabled is what an on-checkbox fills with, and what the
     -- capture's green names use. It is independent of Background/Accent/Text.
+    -- Combo / action / section ------------------------------------------------
+
+    local comboPanel: any = newPanel("Settings.Combo")
+    widgets.addCycleOption(
+        comboPanel,
+        "Mode",
+        { "Auto", "Count", "Hidden" },
+        1,
+        function(): () end
+    )
+    local comboRow: any = comboPanel.optionRows[1]
+    local comboValue: any = comboRow and comboRow:FindFirstChild("ComboValue")
+    check("a combo is a rectangular line, not a pill", comboValue ~= nil)
+    if comboValue ~= nil then
+        check(
+            "the combo value is right-aligned",
+            comboValue.TextXAlignment == world.globals.Enum.TextXAlignment.Right
+        )
+        check(
+            "the combo has no corner radius",
+            comboValue:FindFirstChildOfClass("UICorner") == nil
+        )
+    end
+
+    local actionPanel: any = newPanel("Settings.Action")
+    widgets.addActionOption(actionPanel, "Rejoin", function(): () end)
+    local actionRow: any = actionPanel.optionRows[1]
+    check("an action row builds", actionRow ~= nil)
+    if actionRow ~= nil then
+        check(
+            "Widgets itself does not round the action row",
+            actionRow:FindFirstChildOfClass("UICorner") == nil
+        )
+    end
+
+    local sectionPanel: any = newPanel("Settings.Section")
+    widgets.addSectionOption(sectionPanel, "Advanced")
+    local sectionTitle: any = sectionPanel.optionRows[1]
+        and sectionPanel.optionRows[1]:FindFirstChild("SectionTitle")
+    if sectionTitle ~= nil then
+        local heading: string = tostring(sectionTitle.Text)
+        check(
+            "section headings are not the old DISPLAY/FILTERS/STYLE chips",
+            heading ~= "DISPLAY"
+                and heading ~= "FILTERS"
+                and heading ~= "STYLE"
+        )
+    end
+
     check(
         "Theme.enabled exists so the capture green can be applied",
         host.Theme.enabled ~= nil

@@ -195,4 +195,44 @@ return function(ctx: any): ()
         check("loading persists like a manual rebind",
             host.configData.values["Shortcut.UniversalKillAura"] == "Q")
     end
+
+    -- First-run settings windows must not share a pixel. The capture
+    -- stacked them; SettingsPage offsets Y (120 / 180 / 140 / 220).
+    local logoWin: any = windows.Get("WurstLogo")
+    local hackWin: any = windows.Get("HackList")
+    if logoWin ~= nil and hackWin ~= nil then
+        check(
+            "WurstLogo and HackList are not born superimposed",
+            logoWin.root.Position.X.Offset ~= hackWin.root.Position.X.Offset
+                or logoWin.root.Position.Y.Offset ~= hackWin.root.Position.Y.Offset
+        )
+        local beforeZ: number = logoWin.root.ZIndex
+        logoWin.root.InputBegan:Fire({
+            UserInputType = world.globals.Enum.UserInputType.MouseButton1,
+            Position = world.globals.Vector2.new(0, 0),
+        })
+        check(
+            "clicking a settings window raises it",
+            logoWin.root.ZIndex >= beforeZ
+        )
+    end
+    if uiWindow ~= nil and logoWin ~= nil then
+        check(
+            "UI Settings is not born on top of WurstLogo",
+            uiWindow.root.Position.X.Offset ~= logoWin.root.Position.X.Offset
+                or uiWindow.root.Position.Y.Offset ~= logoWin.root.Position.Y.Offset
+        )
+    end
+
+    local menuKey: string = tostring(host.state.toggleKey and host.state.toggleKey.Name or "")
+    check(
+        "the published menu key is a complete name",
+        menuKey ~= "" and string.find(menuKey, "…", 1, true) == nil,
+        menuKey
+    )
+    check(
+        "Max height default stays Wurst 200, not the old 1000",
+        host.state.uiMaxHeight == 200,
+        tostring(host.state.uiMaxHeight)
+    )
 end

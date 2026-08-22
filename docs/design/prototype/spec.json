@@ -378,7 +378,16 @@
         124,
         27
       ],
-      "hackListLine": 17
+      "hackListLine": 17,
+      "absoluteAtScale2": {
+        "titleHeight": 26,
+        "rowHeight": 22,
+        "logoWidth": 144,
+        "logoHeight": 36,
+        "settingsLine": 22,
+        "sliderHeight": 44,
+        "glyphLineHeight": 16
+      }
     },
     "font": {
       "source": "Minecraft default bitmap (MC.font)",
