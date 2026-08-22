@@ -77,6 +77,11 @@ return function(ctx: any): ()
         end
         hideDock()
         check("setting false hides the desktop dock", pill.Visible == false)
+        -- RightControl is a toggle. Start closed so this assertion verifies
+        -- that the keyboard can still open Wurst without the dock.
+        if type(state.setMenuVisible) == "function" then
+            state.setMenuVisible(false)
+        end
         world.services.UserInputService.InputBegan:Fire({
             UserInputType = world.globals.Enum.UserInputType.Keyboard,
             KeyCode = state.toggleKey,

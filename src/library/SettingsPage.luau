@@ -1704,8 +1704,9 @@ function Module.init(context: any): any
             state.hudList.SetVisible(value)
         end
     end)
-    local touchPrimary: boolean = UserInputService.TouchEnabled == true
-        and UserInputService.MouseEnabled ~= true
+    -- Use the shell's device classification. Mobile executors frequently
+    -- emulate MouseEnabled, but the dock must remain mandatory on a phone.
+    local touchPrimary: boolean = state.isMobile == true
     if not touchPrimary then
         addToggleOption(uiPanel, "Show dock", true, function(value: boolean): ()
             uiSettingsValues["Show dock"] = value

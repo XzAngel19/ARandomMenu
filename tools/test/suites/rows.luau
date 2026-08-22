@@ -163,7 +163,10 @@ return function(ctx: any): ()
     check("a bindable toggle grows the square", square ~= nil)
     local actionCard: any = createCard("Square Action", "Runs once.", 111,
         function(): () end, {kind = "action"})
-    check("an action card gets no square", actionCard.bindSquare == nil)
+    check(
+        "a bindable action card gets the approved keybind square",
+        actionCard.bindSquare ~= nil
+    )
     local groupCard: any = createCard("Square Group", "A heading.", 112,
         function(): () end, {kind = "group"})
     check("a group gets no square", groupCard.bindSquare == nil)

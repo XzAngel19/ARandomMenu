@@ -603,9 +603,9 @@ function Module.init(context: any): any
 
         -- ------------------------------------------------- keybind square
         -- A small permanent square on the row's left end, for bindable
-        -- modules only: toggles and holds. Never groups, never action
-        -- cards (Rejoin runs once; it is not a binding surface), never a
-        -- feature without a registered binding. A user-approved addition
+        -- modules only: toggles, actions and holds. Never groups and never a
+        -- feature without a registered binding. Rejoin is not a card anymore,
+        -- so management actions remain outside this surface. A user-approved addition
         -- drawn in Wurst's grammar: flat rectangle, thin stroke, no
         -- corner, no glyph, no "Press a key" — the capturing tint is the
         -- canonical setKeySlotCapture recolour, which finds the stroke by
@@ -615,7 +615,9 @@ function Module.init(context: any): any
         -- square again cancels, Backspace/Delete clears, and nothing in
         -- any path reads or writes feature.enabled or calls activate.
         -- Hidden while no physical keyboard exists; one arriving shows it.
-        if (feature.kind == "toggle" or feature.kind == "hold")
+        if (feature.kind == "toggle"
+                or feature.kind == "action"
+                or feature.kind == "hold")
             and not state.isMobile
             and type(beginKeyCapture) == "function"
             and type(state.shortcutBindings) == "table"

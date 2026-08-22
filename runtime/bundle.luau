@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "57ad5bf3546f4d25",
+    stamp = "ffc543f4c9408f31",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -5861,9 +5861,9 @@ function Module.init(context: any): any
 
         -- ------------------------------------------------- keybind square
         -- A small permanent square on the row's left end, for bindable
-        -- modules only: toggles and holds. Never groups, never action
-        -- cards (Rejoin runs once; it is not a binding surface), never a
-        -- feature without a registered binding. A user-approved addition
+        -- modules only: toggles, actions and holds. Never groups and never a
+        -- feature without a registered binding. Rejoin is not a card anymore,
+        -- so management actions remain outside this surface. A user-approved addition
         -- drawn in Wurst's grammar: flat rectangle, thin stroke, no
         -- corner, no glyph, no "Press a key" — the capturing tint is the
         -- canonical setKeySlotCapture recolour, which finds the stroke by
@@ -5873,7 +5873,9 @@ function Module.init(context: any): any
         -- square again cancels, Backspace/Delete clears, and nothing in
         -- any path reads or writes feature.enabled or calls activate.
         -- Hidden while no physical keyboard exists; one arriving shows it.
-        if (feature.kind == "toggle" or feature.kind == "hold")
+        if (feature.kind == "toggle"
+                or feature.kind == "action"
+                or feature.kind == "hold")
             and not state.isMobile
             and type(beginKeyCapture) == "function"
             and type(state.shortcutBindings) == "table"
@@ -11270,8 +11272,9 @@ function Module.init(context: any): any
             state.hudList.SetVisible(value)
         end
     end)
-    local touchPrimary: boolean = UserInputService.TouchEnabled == true
-        and UserInputService.MouseEnabled ~= true
+    -- Use the shell's device classification. Mobile executors frequently
+    -- emulate MouseEnabled, but the dock must remain mandatory on a phone.
+    local touchPrimary: boolean = state.isMobile == true
     if not touchPrimary then
         addToggleOption(uiPanel, "Show dock", true, function(value: boolean): ()
             uiSettingsValues["Show dock"] = value
@@ -13140,22 +13143,17 @@ function Module.init(context: any): any
             boxStroke:Destroy()
         end
         -- The dock talks to exactly one resolver: D's registry,
-        -- state.moduleSearch.Execute. Return, KeypadEnter and the mobile
-        -- keyboard all land on FocusLost(true) or the on-screen-keyboard
-        -- signal, and the token guarantees exactly one Execute per
-        -- submit however many of those fire for it. Nothing runs while
-        -- typing; there are no suggestions and no dropdown.
-        local lastSubmitAt: number = -math.huge
+        -- state.moduleSearch.Execute. Every submit consumes and clears the
+        -- query before invoking it. If FocusLost and the mobile-keyboard
+        -- signal both fire for the same Enter, the second event sees an empty
+        -- box; a later deliberate submit is never rejected by a wall-clock
+        -- debounce. Nothing runs while typing and no results list exists.
         local function submitSearch(): ()
-            local now: number = os.clock()
-            if now - lastSubmitAt < 0.2 then
-                return
-            end
-            lastSubmitAt = now
             local query: string = tostring(searchBox.Text or "")
             if query:gsub("%s", "") == "" then
                 return
             end
+            searchBox.Text = ""
             local search: any = state.moduleSearch
             if type(search) ~= "table" or type(search.Execute) ~= "function" then
                 notify("Module search is not available")
@@ -13212,8 +13210,10 @@ function Module.init(context: any): any
     -- preference persists but never reaches a touch-primary device,
     -- where the dock is the only door and stays visible regardless of
     -- any stored desktop value. Hiding never destroys: Visible only.
-    local touchPrimary: boolean = UserInputService.TouchEnabled == true
-        and UserInputService.MouseEnabled ~= true
+    -- Executors on phones often emulate a mouse. The shell's device decision
+    -- is authoritative: a phone can never lose its only launcher because an
+    -- emulated MouseEnabled flag made it look like desktop.
+    local touchPrimary: boolean = state.isMobile == true
     local function setDockVisible(value: boolean): ()
         if touchPrimary then
             pillFrame.Visible = true

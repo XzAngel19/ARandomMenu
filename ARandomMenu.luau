@@ -363,7 +363,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "57ad5bf3546f4d25"
+local SOURCE_STAMP: string = "ffc543f4c9408f31"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -2062,6 +2062,20 @@ state.bitmapText = {
     end,
 }
 
+-- Capability report only: it decides which honest fallback is possible and
+-- is exposed to diagnostics/tests. It never promises exact pixels on an
+-- executor that cannot read files or register a local image.
+local fontEnvironment: any = getfenv()
+state.bitmapText.capabilities = {
+    canHttp = type((game :: any).HttpGet) == "function",
+    canRead = type(fontEnvironment.readfile) == "function",
+    canWrite = type(fontEnvironment.writefile) == "function",
+    canCustomAsset = type(fontEnvironment.getcustomasset) == "function",
+    canSynAsset = type(fontEnvironment.getsynasset) == "function",
+    mobile = state.isMobile == true,
+    desktop = state.isMobile ~= true,
+}
+
 -- The crisp-scale family: the same OFL Monocraft rasterised at 8 / 16 /
 -- 24 / 32 by tools/make_font_atlas.py. A fractional UIScale cannot get
 -- pixel-perfect glyphs out of one raster, so draw() picks the member
@@ -2672,10 +2686,12 @@ state.bitmapText.probePack = function(selection: string): boolean
         if not isfile(imagePath) then
             return
         end
-        if type(getcustomasset) ~= "function" then
+        local registerAsset: any = fontEnvironment.getcustomasset
+            or fontEnvironment.getsynasset
+        if type(registerAsset) ~= "function" then
             return
         end
-        local assetOk: boolean, assetId: any = pcall(getcustomasset, imagePath)
+        local assetOk: boolean, assetId: any = pcall(registerAsset, imagePath)
         if assetOk and type(assetId) == "string" and assetId ~= "" then
             contract.loadExactAtlas(assetId, manifest.runtime)
             contract.source = pack.source

@@ -1243,22 +1243,17 @@ function Module.init(context: any): any
             boxStroke:Destroy()
         end
         -- The dock talks to exactly one resolver: D's registry,
-        -- state.moduleSearch.Execute. Return, KeypadEnter and the mobile
-        -- keyboard all land on FocusLost(true) or the on-screen-keyboard
-        -- signal, and the token guarantees exactly one Execute per
-        -- submit however many of those fire for it. Nothing runs while
-        -- typing; there are no suggestions and no dropdown.
-        local lastSubmitAt: number = -math.huge
+        -- state.moduleSearch.Execute. Every submit consumes and clears the
+        -- query before invoking it. If FocusLost and the mobile-keyboard
+        -- signal both fire for the same Enter, the second event sees an empty
+        -- box; a later deliberate submit is never rejected by a wall-clock
+        -- debounce. Nothing runs while typing and no results list exists.
         local function submitSearch(): ()
-            local now: number = os.clock()
-            if now - lastSubmitAt < 0.2 then
-                return
-            end
-            lastSubmitAt = now
             local query: string = tostring(searchBox.Text or "")
             if query:gsub("%s", "") == "" then
                 return
             end
+            searchBox.Text = ""
             local search: any = state.moduleSearch
             if type(search) ~= "table" or type(search.Execute) ~= "function" then
                 notify("Module search is not available")
@@ -1315,8 +1310,10 @@ function Module.init(context: any): any
     -- preference persists but never reaches a touch-primary device,
     -- where the dock is the only door and stays visible regardless of
     -- any stored desktop value. Hiding never destroys: Visible only.
-    local touchPrimary: boolean = UserInputService.TouchEnabled == true
-        and UserInputService.MouseEnabled ~= true
+    -- Executors on phones often emulate a mouse. The shell's device decision
+    -- is authoritative: a phone can never lose its only launcher because an
+    -- emulated MouseEnabled flag made it look like desktop.
+    local touchPrimary: boolean = state.isMobile == true
     local function setDockVisible(value: boolean): ()
         if touchPrimary then
             pillFrame.Visible = true

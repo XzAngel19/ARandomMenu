@@ -110,13 +110,15 @@ return function(ctx: any): ()
     end
     assertSquareShape(toggleSquare, "toggle square")
 
-    -- Title stays centred on the full row; the square floats over the
-    -- right end the way the settings arrow already does.
+    -- The visible title region keeps equal clearance on both sides, so its
+    -- centre remains the row centre while neither square nor arrow can cover it.
     if toggle.title and toggle.title.Size then
+        local leftInset: number = toggle.title.Position.X.Offset
+        local rightInset: number = -(toggle.title.Size.X.Offset + leftInset)
         check(
-            "the title stays centred on the full row",
-            toggle.title.Size.X.Offset == 0,
-            tostring(toggle.title.Size.X.Offset)
+            "the title keeps symmetric clearance around the row centre",
+            leftInset >= 0 and leftInset == rightInset,
+            tostring(leftInset) .. "/" .. tostring(rightInset)
         )
     elseif toggle.drawTitle ~= nil then
         check("the bitmap title stays a full-row centre draw", true)
@@ -191,6 +193,7 @@ return function(ctx: any): ()
         world.services.UserInputService.InputBegan:Fire({
             UserInputType = world.globals.Enum.UserInputType.MouseButton1,
             KeyCode = world.globals.Enum.KeyCode.Unknown,
+            Position = world.globals.Vector2.new(-100, -100),
         }, false)
         check("click outside is accepted as a cancel path", true)
         check(
