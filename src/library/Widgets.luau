@@ -96,6 +96,18 @@ function Module.init(context: any): WidgetLibrary
     local create: any = host.create
     local makeButton: any = host.makeButton
     local makeTextBox: any = host.makeTextBox
+    -- The shell's makeTextBox dresses its box with the old menu's
+    -- StyleCorner (radius 0 since the port — invisible, but still an
+    -- instance the settings grammar does not own). Every box a widget
+    -- creates comes through here: corner gone, Wurst keeps rectangles.
+    local function flatTextBox(parent: Instance, initial: any): TextBox
+        local box: TextBox = (makeTextBox(parent, initial) :: any) :: TextBox
+        local corner: UICorner? = box:FindFirstChild("StyleCorner") :: UICorner?
+        if corner then
+            corner:Destroy()
+        end
+        return box
+    end
     local makeTextLabel: any = host.makeTextLabel
     local notify: any = host.notify
     local Theme: any = host.Theme
@@ -564,8 +576,18 @@ function Module.init(context: any): WidgetLibrary
         -- learn what the ends are.
         local minText: string = formatCompactNumber(minimum)
         local maxText: string = formatCompactNumber(maximum)
-        local minWidth: number = #minText * 9 + 4
-        local maxWidth: number = #maxText * 9 + 4
+        -- Measured through the contract when it is up (A2: nobody
+        -- multiplies a constant past measure), the 9-px estimate only for
+        -- the harness host. TextSize 12 is what the labels render at.
+        local bitmapContract: any = state.bitmapText
+        local function endLabelWidth(endText: string): number
+            if bitmapContract and type(bitmapContract.measure) == "function" then
+                return bitmapContract.measure({{text = endText}}, 12) + 4
+            end
+            return #endText * 9 + 4
+        end
+        local minWidth: number = endLabelWidth(minText)
+        local maxWidth: number = endLabelWidth(maxText)
         create("TextLabel", {
             TextTruncate = Enum.TextTruncate.AtEnd,
             Parent = slider,
@@ -637,7 +659,7 @@ function Module.init(context: any): WidgetLibrary
             ZIndex = track.ZIndex + 2,
         }) :: any) :: Frame
 
-        local valueInput: TextBox = (makeTextBox(slider, "") :: any) :: TextBox
+        local valueInput: TextBox = (flatTextBox(slider, "") :: any) :: TextBox
         valueInput.Name = "NumericValue"
         valueInput.AnchorPoint = Vector2.new(1, 0)
         valueInput.Position = UDim2.new(1, -CHILD_INSET, 0, -22)
@@ -864,7 +886,7 @@ function Module.init(context: any): WidgetLibrary
         option:SetAttribute("Min", minimum)
         option:SetAttribute("Max", maximum)
         option:SetAttribute("Step", step or (integerOnly and 1 or 0))
-        local highBox: TextBox = (makeTextBox(option, "") :: any) :: TextBox
+        local highBox: TextBox = (flatTextBox(option, "") :: any) :: TextBox
         highBox.Name = "HighValue"
         highBox.AnchorPoint = Vector2.new(1, 0)
         highBox.Position = UDim2.new(1, -CHILD_INSET, 0, 0)
@@ -890,7 +912,7 @@ function Module.init(context: any): WidgetLibrary
             TextXAlignment = Enum.TextXAlignment.Center,
             ZIndex = option.ZIndex + 2,
         }) :: any) :: TextLabel
-        local lowBox: TextBox = (makeTextBox(option, "") :: any) :: TextBox
+        local lowBox: TextBox = (flatTextBox(option, "") :: any) :: TextBox
         lowBox.Name = "LowValue"
         lowBox.AnchorPoint = Vector2.new(1, 0)
         lowBox.Position = UDim2.new(1, -CHILD_INSET - 52 - 14, 0, 0)
@@ -1208,7 +1230,7 @@ function Module.init(context: any): WidgetLibrary
                 Size = UDim2.new(1, -8, 0, searchHeight - 4),
                 ZIndex = 402,
             }) :: Frame
-            local box: TextBox = makeTextBox(filterFrame, "")
+            local box: TextBox = flatTextBox(filterFrame, "")
             box.Name = "FilterBox"
             box.BackgroundTransparency = 1
             box.PlaceholderText = "Search"
@@ -1863,7 +1885,7 @@ function Module.init(context: any): WidgetLibrary
             initialText = defaultText or ""
         end
         local option = createOptionRow(feature, labelText, hintText)
-        local box = makeTextBox(option, initialText)
+        local box = flatTextBox(option, initialText)
         box.PlaceholderText = "Enter value"
         -- Centred: the placeholder and the value sit in the middle of the field
         -- instead of hugging its left edge.
@@ -2022,7 +2044,7 @@ function Module.init(context: any): WidgetLibrary
             -- from somewhere, or three numbers out of another tool. Both write the
             -- same colour and both update the preview as soon as the field loses
             -- focus.
-            local hex = makeTextBox(panel, "#ffffff")
+            local hex = flatTextBox(panel, "#ffffff")
             hex.Name = "HexField"
             hex.Position = UDim2.fromOffset(15, 218)
             hex.Size = UDim2.fromOffset(150, 30)
@@ -2030,7 +2052,7 @@ function Module.init(context: any): WidgetLibrary
             hex.TextXAlignment = Enum.TextXAlignment.Center
             hex.ZIndex = 81
 
-            local rgb = makeTextBox(panel, "255, 255, 255")
+            local rgb = flatTextBox(panel, "255, 255, 255")
             rgb.Name = "RgbField"
             rgb.Position = UDim2.fromOffset(174, 218)
             rgb.Size = UDim2.fromOffset(151, 30)

@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "ffc543f4c9408f31",
+    stamp = "9d8e7c9b78632af2",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -365,6 +365,18 @@ function Module.init(context: any): WidgetLibrary
     local create: any = host.create
     local makeButton: any = host.makeButton
     local makeTextBox: any = host.makeTextBox
+    -- The shell's makeTextBox dresses its box with the old menu's
+    -- StyleCorner (radius 0 since the port — invisible, but still an
+    -- instance the settings grammar does not own). Every box a widget
+    -- creates comes through here: corner gone, Wurst keeps rectangles.
+    local function flatTextBox(parent: Instance, initial: any): TextBox
+        local box: TextBox = (makeTextBox(parent, initial) :: any) :: TextBox
+        local corner: UICorner? = box:FindFirstChild("StyleCorner") :: UICorner?
+        if corner then
+            corner:Destroy()
+        end
+        return box
+    end
     local makeTextLabel: any = host.makeTextLabel
     local notify: any = host.notify
     local Theme: any = host.Theme
@@ -833,8 +845,18 @@ function Module.init(context: any): WidgetLibrary
         -- learn what the ends are.
         local minText: string = formatCompactNumber(minimum)
         local maxText: string = formatCompactNumber(maximum)
-        local minWidth: number = #minText * 9 + 4
-        local maxWidth: number = #maxText * 9 + 4
+        -- Measured through the contract when it is up (A2: nobody
+        -- multiplies a constant past measure), the 9-px estimate only for
+        -- the harness host. TextSize 12 is what the labels render at.
+        local bitmapContract: any = state.bitmapText
+        local function endLabelWidth(endText: string): number
+            if bitmapContract and type(bitmapContract.measure) == "function" then
+                return bitmapContract.measure({{text = endText}}, 12) + 4
+            end
+            return #endText * 9 + 4
+        end
+        local minWidth: number = endLabelWidth(minText)
+        local maxWidth: number = endLabelWidth(maxText)
         create("TextLabel", {
             TextTruncate = Enum.TextTruncate.AtEnd,
             Parent = slider,
@@ -906,7 +928,7 @@ function Module.init(context: any): WidgetLibrary
             ZIndex = track.ZIndex + 2,
         }) :: any) :: Frame
 
-        local valueInput: TextBox = (makeTextBox(slider, "") :: any) :: TextBox
+        local valueInput: TextBox = (flatTextBox(slider, "") :: any) :: TextBox
         valueInput.Name = "NumericValue"
         valueInput.AnchorPoint = Vector2.new(1, 0)
         valueInput.Position = UDim2.new(1, -CHILD_INSET, 0, -22)
@@ -1133,7 +1155,7 @@ function Module.init(context: any): WidgetLibrary
         option:SetAttribute("Min", minimum)
         option:SetAttribute("Max", maximum)
         option:SetAttribute("Step", step or (integerOnly and 1 or 0))
-        local highBox: TextBox = (makeTextBox(option, "") :: any) :: TextBox
+        local highBox: TextBox = (flatTextBox(option, "") :: any) :: TextBox
         highBox.Name = "HighValue"
         highBox.AnchorPoint = Vector2.new(1, 0)
         highBox.Position = UDim2.new(1, -CHILD_INSET, 0, 0)
@@ -1159,7 +1181,7 @@ function Module.init(context: any): WidgetLibrary
             TextXAlignment = Enum.TextXAlignment.Center,
             ZIndex = option.ZIndex + 2,
         }) :: any) :: TextLabel
-        local lowBox: TextBox = (makeTextBox(option, "") :: any) :: TextBox
+        local lowBox: TextBox = (flatTextBox(option, "") :: any) :: TextBox
         lowBox.Name = "LowValue"
         lowBox.AnchorPoint = Vector2.new(1, 0)
         lowBox.Position = UDim2.new(1, -CHILD_INSET - 52 - 14, 0, 0)
@@ -1477,7 +1499,7 @@ function Module.init(context: any): WidgetLibrary
                 Size = UDim2.new(1, -8, 0, searchHeight - 4),
                 ZIndex = 402,
             }) :: Frame
-            local box: TextBox = makeTextBox(filterFrame, "")
+            local box: TextBox = flatTextBox(filterFrame, "")
             box.Name = "FilterBox"
             box.BackgroundTransparency = 1
             box.PlaceholderText = "Search"
@@ -2132,7 +2154,7 @@ function Module.init(context: any): WidgetLibrary
             initialText = defaultText or ""
         end
         local option = createOptionRow(feature, labelText, hintText)
-        local box = makeTextBox(option, initialText)
+        local box = flatTextBox(option, initialText)
         box.PlaceholderText = "Enter value"
         -- Centred: the placeholder and the value sit in the middle of the field
         -- instead of hugging its left edge.
@@ -2291,7 +2313,7 @@ function Module.init(context: any): WidgetLibrary
             -- from somewhere, or three numbers out of another tool. Both write the
             -- same colour and both update the preview as soon as the field loses
             -- focus.
-            local hex = makeTextBox(panel, "#ffffff")
+            local hex = flatTextBox(panel, "#ffffff")
             hex.Name = "HexField"
             hex.Position = UDim2.fromOffset(15, 218)
             hex.Size = UDim2.fromOffset(150, 30)
@@ -2299,7 +2321,7 @@ function Module.init(context: any): WidgetLibrary
             hex.TextXAlignment = Enum.TextXAlignment.Center
             hex.ZIndex = 81
 
-            local rgb = makeTextBox(panel, "255, 255, 255")
+            local rgb = flatTextBox(panel, "255, 255, 255")
             rgb.Name = "RgbField"
             rgb.Position = UDim2.fromOffset(174, 218)
             rgb.Size = UDim2.fromOffset(151, 30)
@@ -6426,11 +6448,20 @@ function Module.init(context: any): any
             root.Size.X.Offset, root.Size.Y.Offset
     end
 
+    -- A logical coordinate snapped to the device pixel grid: at scale
+    -- 1.25 a window at logical x=6 sits at 7.5 physical pixels and its
+    -- 1 px border blurs across two. Every write funnels through clamp()
+    -- or snap(), so this is the one place geometry gets snapped.
+    local function snapPixel(value: number): number
+        local factor: number = layerScale()
+        return math.round(value * factor) / factor
+    end
+
     local function clamp(position: Vector2, size: Vector2): Vector2
         local screen: Vector2 = logicalViewport()
         return Vector2.new(
-            math.clamp(position.X, MARGIN, math.max(MARGIN, screen.X - size.X - MARGIN)),
-            math.clamp(position.Y, MARGIN, math.max(MARGIN, screen.Y - size.Y - MARGIN))
+            snapPixel(math.clamp(position.X, MARGIN, math.max(MARGIN, screen.X - size.X - MARGIN))),
+            snapPixel(math.clamp(position.Y, MARGIN, math.max(MARGIN, screen.Y - size.Y - MARGIN)))
         )
     end
 
@@ -6535,7 +6566,7 @@ function Module.init(context: any): any
                 break
             end
         end
-        return Vector2.new(x, y)
+        return Vector2.new(snapPixel(x), snapPixel(y))
     end
 
     local function raise(window: any): ()
@@ -7301,13 +7332,22 @@ function Module.init(context: any): any
         end
 
         -- Packed to content: the widest option label decides, the way Wurst
-        -- sizes a settings window. 12 px is the bitmap advance at the 16 px
-        -- line; 72 covers the widest value column.
+        -- sizes a settings window. The width comes from the contract's own
+        -- measure — the same advances the renderer draws with — and the
+        -- glyph-count estimate survives only for the harness host, which
+        -- does not publish the contract. 72 covers the widest value column.
+        local bitmapText: any = state.bitmapText
         local width: number = 200
         for _, optionRow: any in ipairs(feature.optionRows or {}) do
             local label: any = optionRow:FindFirstChild("OptionLabel")
             local text: string = label and tostring(label.Text) or ""
-            width = math.max(width, 8 + #text * 12 + 24 + 72)
+            local labelWidth: number
+            if bitmapText and type(bitmapText.measure) == "function" then
+                labelWidth = bitmapText.measure({{text = text}}, 16)
+            else
+                labelWidth = #text * 12
+            end
+            width = math.max(width, 8 + labelWidth + 24 + 72)
         end
         width = math.min(width, 420)
 
@@ -7362,7 +7402,6 @@ function Module.init(context: any): any
             options.Position = UDim2.fromOffset(0, 0)
             options.Size = UDim2.new(1, 0, 0, feature.optionsHeight or 40)
             options.Parent = window.body
-            local bitmapText: any = state.bitmapText
             if bitmapText and type(bitmapText.adoptTree) == "function" then
                 table.insert(
                     window.connections,
