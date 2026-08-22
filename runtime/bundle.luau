@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "6500ff1d3a57a726",
+    stamp = "1bf36048acb1ea12",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -16692,39 +16692,29 @@ function Module.init(context: Runtime): any
     local wurstOptions: any = host.state
         and rawget(host.state, "wurstOptions")
     if wurstOptions and type(wurstOptions.RegisterAction) == "function" then
-        local definition: any = {
-            id = actionId,
-            displayName = "Rejoin Server",
-            description = "Reconnect to the current server instance",
-            configKey = "Universal.RejoinServer",
-            callback = rejoinCurrentServer,
-        }
         local registered: boolean, registration: any = pcall(
             wurstOptions.RegisterAction,
-            definition
+            actionId,
+            "Rejoin Server",
+            rejoinCurrentServer,
+            {
+                description = "Reconnect to the current server instance",
+                configKey = "Universal.RejoinServer",
+            }
         )
-        if not registered then
-            registered, registration = pcall(
-                wurstOptions.RegisterAction,
-                wurstOptions,
-                definition
-            )
-        end
         if not registered then
             error("Wurst Options refused Rejoin Server: " .. tostring(registration))
         end
         activeCleanup = function(): ()
-            if type(registration) == "function" then
-                registration()
-            elseif type(registration) == "table"
-                and type(registration.Destroy) == "function" then
-                registration:Destroy()
+            if type(registration) == "table"
+                and type(registration.Unregister) == "function" then
+                registration.Unregister()
             elseif type(wurstOptions.UnregisterAction) == "function" then
                 pcall(wurstOptions.UnregisterAction, actionId)
             end
         end
         Module.Initialized = true
-        return registration or definition
+        return registration
     end
 
     -- Until A's Wurst Options registry is present, keep the existing action

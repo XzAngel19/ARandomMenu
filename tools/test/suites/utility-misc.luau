@@ -237,43 +237,43 @@ return function(ctx: any): ()
 
     local RejoinFile: any = require("../../../src/modules/Utility/RejoinServer")
     Mock.inject(world, RejoinFile.init)
-    local rejoin: any = RejoinFile.init(context)
-
-    check("card is registered as an action", rejoin.name == "Rejoin Server")
-    rejoin.activate()
-    check("one press asks for the same place and job id",
-        #teleportCalls == 1
+    local wurstOptions: any = host.state.wurstOptions
+    local featuresBeforeOptions: number = #stub.features
+    local optionsRegistration: any = RejoinFile.init(context)
+    check(
+        "Wurst Options registers Rejoin through the live action API",
+        optionsRegistration ~= nil
+            and type(wurstOptions) == "table"
+            and table.find(wurstOptions.List(), "RejoinServer") ~= nil
+    )
+    check(
+        "Wurst Options path creates no duplicate feature row",
+        #stub.features == featuresBeforeOptions
+    )
+    check(
+        "invoking Rejoin asks for the same place and job id",
+        wurstOptions.InvokeAction("RejoinServer") == true
+            and #teleportCalls == 1
             and teleportCalls[1][1] == world.globals.game.PlaceId
             and teleportCalls[1][2] == world.globals.game.JobId,
-        "calls: " .. tostring(#teleportCalls))
+        "calls: " .. tostring(#teleportCalls)
+    )
+    RejoinFile.destroy()
+    check(
+        "teardown unregisters the Wurst Options action",
+        table.find(wurstOptions.List(), "RejoinServer") == nil
+    )
 
-    RejoinFile.destroy()
-    local featuresBeforeOptions: number = #stub.features
-    local registeredActions: {any} = {}
-    local unregisters: number = 0
-    host.state.wurstOptions = {
-        RegisterAction = function(definition: any): () -> ()
-            table.insert(registeredActions, definition)
-            return function(): ()
-                unregisters += 1
-            end
-        end,
-    }
-    local optionsRegistration: any = RejoinFile.init(context)
-    check("Wurst Options registers exactly one Rejoin action",
-        #registeredActions == 1 and optionsRegistration ~= nil)
-    check("Wurst Options path creates no duplicate feature row",
-        #stub.features == featuresBeforeOptions)
-    check("registered Rejoin is an action with stable identity",
-        registeredActions[1].id == "RejoinServer"
-            and registeredActions[1].displayName == "Rejoin Server"
-            and registeredActions[1].configKey == "Universal.RejoinServer"
-            and type(registeredActions[1].callback) == "function")
-    registeredActions[1].callback()
-    check("the registered action keeps the teleport callback", #teleportCalls == 2)
-    RejoinFile.destroy()
-    check("teardown unregisters the Wurst Options action", unregisters == 1)
+    -- Compatibility fallback for a host that loads the module before the
+    -- settings library publishes Wurst Options. The integrated product takes
+    -- the registry path above and therefore never draws this duplicate row.
     host.state.wurstOptions = nil
+    local fallback: any = RejoinFile.init(context)
+    check("a legacy host receives an action card", fallback.name == "Rejoin Server")
+    fallback.activate()
+    check("the compatibility action keeps the teleport callback", #teleportCalls == 2)
+    RejoinFile.destroy()
+    host.state.wurstOptions = wurstOptions
 
     -- Leave the shared world as the next suite expects it.
     root.AssemblyLinearVelocity = vector3(0, 0, 0)
