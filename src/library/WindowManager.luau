@@ -296,7 +296,12 @@ function Module.init(context: any): any
             -- Step 1, not 4: the ScreenGui is Sibling-ordered, so only the
             -- roots compete at this level and fifty windows still stay
             -- under the pill (240), the tooltip (250) and the popups.
-            local base: number = BASE_Z + order
+            -- Capped one below the pill so no census of windows, however
+            -- absurd, ever climbs a window root over the global chrome —
+            -- choice lists (400s) and the colour picker (460s) stay above
+            -- every window either way, so a raised window's own popups
+            -- cannot land behind another window.
+            local base: number = math.min(BASE_Z + order, 239)
             entry.root.ZIndex = base
             -- Windows whose children declare a depth get restacked with the
             -- window. Without it a raised overlay draws its own body under the

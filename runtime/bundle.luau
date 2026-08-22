@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "d5368ebf8f34ddfb",
+    stamp = "acca3cef3e09870e",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -5766,7 +5766,12 @@ function Module.init(context: any): any
             -- Step 1, not 4: the ScreenGui is Sibling-ordered, so only the
             -- roots compete at this level and fifty windows still stay
             -- under the pill (240), the tooltip (250) and the popups.
-            local base: number = BASE_Z + order
+            -- Capped one below the pill so no census of windows, however
+            -- absurd, ever climbs a window root over the global chrome —
+            -- choice lists (400s) and the colour picker (460s) stay above
+            -- every window either way, so a raised window's own popups
+            -- cannot land behind another window.
+            local base: number = math.min(BASE_Z + order, 239)
             entry.root.ZIndex = base
             -- Windows whose children declare a depth get restacked with the
             -- window. Without it a raised overlay draws its own body under the
@@ -8783,6 +8788,14 @@ function Module.init(context: any): any
             position = definition.position,
             closable = definition.closable ~= false,
         })
+        -- Every management window is placed by the same manager contract the
+        -- feature settings use; the anchor is the window this one opened
+        -- from, so Keybinds and Wurst Options land beside UI Settings
+        -- instead of on the crossed hard-coded spots the capture showed.
+        window.managementWindow = true
+        if definition.anchor ~= nil then
+            window.placementAnchor = definition.anchor
+        end
         local layout: UIListLayout = (create("UIListLayout", {
             Parent = window.body,
             Padding = UDim.new(0, WINDOW_GAP),
@@ -8820,7 +8833,13 @@ function Module.init(context: any): any
             if not window.collapsed then
                 window.root.Size = UDim2.fromOffset(width, wanted)
             end
-            if windows.ClampWindow then
+            -- The second placement, not a bare clamp: a window that chose
+            -- its spot at birth height and grew must move to a free
+            -- rectangle rather than end up over a neighbour. A hand-moved
+            -- window is only clamped back on screen.
+            if windows.ReflowWindow then
+                windows.ReflowWindow(window)
+            elseif windows.ClampWindow then
                 windows.ClampWindow(window)
             end
         end
@@ -8915,10 +8934,23 @@ function Module.init(context: any): any
 
     local function raiseOpen(record: any): ()
         record.open = true
+        -- First open runs the manager's placement — content is complete by
+        -- now, so the window is measured at its real size, anchored to the
+        -- window it opened from, and lands on a rectangle that overlaps
+        -- nothing. A saved manual position wins inside PlaceWindow itself.
+        if not record.placed then
+            record.placed = true
+            if windows.PlaceWindow then
+                windows.PlaceWindow(record.window)
+            end
+        end
         record.window:SetVisible(true)
     end
 
     -- ------------------------------------------------------------ WurstLogo
+    -- Forward-declared: the lazy windows anchor their placement to the UI
+    -- Settings window they open from, which is built below them.
+    local uiRecord: any = nil
     local logoRecord: any = nil
     local function openWurstLogo(): ()
         if logoRecord then
@@ -8928,6 +8960,7 @@ function Module.init(context: any): any
         local screen: Vector2 = viewport()
         logoRecord = configWindow("WurstLogo", "WurstLogo", {
             position = Vector2.new(screen.X - WINDOW_WIDTH * 2 - 32, 120),
+            anchor = uiRecord and uiRecord.window,
             settingsSized = true,
             -- Packed to its own content, as Wurst sizes it: the combo's
             -- longest value plus its arrow decides the width.
@@ -8973,6 +9006,7 @@ function Module.init(context: any): any
         local screen: Vector2 = viewport()
         hackListRecord = configWindow("HackList", "HackList", {
             position = Vector2.new(screen.X - WINDOW_WIDTH * 2 - 32, 180),
+            anchor = uiRecord and uiRecord.window,
             settingsSized = true,
             width = packedWidth({
                 {"Mode", "Hidden", 26},
@@ -9225,6 +9259,7 @@ function Module.init(context: any): any
         local screen: Vector2 = viewport()
         profilesRecord = configWindow("KeybindProfiles", "Keybind Profiles", {
             position = Vector2.new(screen.X - WINDOW_WIDTH * 2 - 32, 260),
+            anchor = keybindsRecord and keybindsRecord.window,
             settingsSized = true,
         })
 
@@ -9380,6 +9415,7 @@ function Module.init(context: any): any
         end
         keybindsRecord = configWindow("Keybinds", "Keybinds", {
             position = Vector2.new(screen.X - WINDOW_WIDTH * 2 - 32, 140),
+            anchor = uiRecord and uiRecord.window,
             settingsSized = true,
             width = packedWidth(keybindRows),
         })
@@ -9427,6 +9463,7 @@ function Module.init(context: any): any
         local screen: Vector2 = viewport()
         optionsRecord = configWindow("WurstOptions", "Wurst Options", {
             position = Vector2.new(screen.X - WINDOW_WIDTH * 2 - 32, 220),
+            anchor = uiRecord and uiRecord.window,
             settingsSized = true,
             width = packedWidth({
                 {"Keybinds", nil, 26},
@@ -9548,12 +9585,26 @@ function Module.init(context: any): any
         end))
 
         actionRow(optionsRecord, 4, "Reset layout", function(): ()
-            -- Saved geometry gone, category grid re-tiled now, settings
-            -- windows re-cascade on their next open.
+            -- Saved geometry gone, category grid re-tiled now. Every window
+            -- also forgets it was ever hand-moved — that is what "reset"
+            -- promises — and the settings and management windows still on
+            -- screen re-run placement immediately instead of waiting for a
+            -- reopen while standing on the freshly tiled grid.
             configData.ui.windows = {}
             queueConfigSave()
+            for _, window: any in ipairs(windows.list or {}) do
+                window.userMoved = nil
+            end
             if state.clickGui and state.clickGui.Retile then
                 state.clickGui.Retile()
+            end
+            if windows.PlaceWindow then
+                for _, window: any in ipairs(windows.list or {}) do
+                    if (window.featureSettings or window.managementWindow)
+                        and window.root.Visible then
+                        windows.PlaceWindow(window, {force = true})
+                    end
+                end
             end
             notify("Layout reset")
         end)
@@ -9589,7 +9640,7 @@ function Module.init(context: any): any
     -- category window, and building it is also what applies the stored (or
     -- default) opacity, tooltip opacity and heights at boot.
     local screen: Vector2 = viewport()
-    local uiRecord: any = configWindow("UISettings", "UI Settings", {
+    uiRecord = configWindow("UISettings", "UI Settings", {
         position = Vector2.new(screen.X - WINDOW_WIDTH - 12, 64),
         closable = false,
         settingsSized = false,
@@ -9678,6 +9729,15 @@ function Module.init(context: any): any
             record.resize()
         end
     end)
+
+    -- UI Settings is eager and its rows are all in place now: one reflow at
+    -- the real measured size keeps its top-right default when that spot is
+    -- free and moves it to a free rectangle when the category grid already
+    -- reached it. A saved manual position only gets clamped.
+    uiRecord.placed = true
+    if windows.ReflowWindow then
+        windows.ReflowWindow(uiRecord.window)
+    end
 
     -- The configuration windows follow the GUI the way category windows do,
     -- except the pinned ones, which is the whole point of pinning.
