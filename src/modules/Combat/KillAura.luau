@@ -597,7 +597,6 @@ function Module.init(context: Runtime): any
         end,
     })
 
-    aura:CreateSection("Weapon")
     -- Melee only, and only when asked.
     --
     -- This list used to offer everything the client owned: bows, blocks, the
@@ -646,7 +645,6 @@ function Module.init(context: Runtime): any
             .. "but indistinguishable from swinging by hand.",
     })
 
-    aura:CreateSection("Targeting")
     aura:CreateSlider({
         Name = "Swing range",
         Min = 5,
@@ -687,7 +685,6 @@ function Module.init(context: Runtime): any
     -- "Show advanced" switch instead of the switch keeping a list of them,
     -- which is one place to change instead of three.
     local advanced: any = {Option = "Show advanced"}
-    aura:CreateSection("Advanced").Show = advanced
     aura:CreateDropdown({
         Name = "Activation",
         Show = advanced,

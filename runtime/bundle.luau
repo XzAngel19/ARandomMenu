@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "0a46e3f41ff7c831",
+    stamp = "3e4cee7fe0aa57ed",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -11195,7 +11195,6 @@ function Module.init(context: Runtime): any
         end,
     })
 
-    render:CreateSection("Objects")
     local objectList: any
     objectList = render:CreateList({
         Name = "Objects",
@@ -11275,7 +11274,6 @@ function Module.init(context: Runtime): any
         end,
     })
 
-    render:CreateSection("Display")
     render:CreateToggle({
         Name = "Show distance",
         Default = true,
@@ -11586,7 +11584,6 @@ function Module.init(context: Runtime): any
         end,
     })
 
-    esp:CreateSection("Display")
     esp:CreateDropdown({
         Name = "Boxes",
         List = {"Corner", "Full", "Off"},
@@ -11656,7 +11653,6 @@ function Module.init(context: Runtime): any
         Tooltip = "Overlay fills the body through walls, Outline only rims it.",
     })
 
-    esp:CreateSection("Filters")
     esp:CreateToggle({
         Name = "Team check",
         Default = false,
@@ -11674,7 +11670,6 @@ function Module.init(context: Runtime): any
         Default = 2000,
     })
 
-    esp:CreateSection("Style")
     -- One colour, not three.
     --
     -- "Enemy", "friendly" and "hidden" were three rows to answer one question,
@@ -11716,7 +11711,6 @@ function Module.init(context: Runtime): any
     local extraRuntime: any = {
         roles = nil :: any,
         extras = {} :: {any},
-        sections = {roles = false, world = false},
     }
     Module.bridge = extraRuntime
 
@@ -11747,10 +11741,6 @@ function Module.init(context: Runtime): any
                 end)
             end
         end
-        if not extraRuntime.sections.roles then
-            extraRuntime.sections.roles = true
-            esp:CreateSection("Roles · " .. tostring(provider.Name or "Game"))
-        end
         esp:CreateToggle({
             Name = "Role colours",
             Default = true,
@@ -11780,10 +11770,6 @@ function Module.init(context: Runtime): any
     end
 
     local function addExtraRows(extra: any): ()
-        if not extraRuntime.sections.world then
-            extraRuntime.sections.world = true
-            esp:CreateSection("World")
-        end
         table.insert(extraRuntime.extras, extra)
         esp:CreateToggle({
             Name = extra.Name,
@@ -12724,7 +12710,6 @@ function Module.init(context: Runtime): any
         end,
     })
 
-    aura:CreateSection("Weapon")
     -- Melee only, and only when asked.
     --
     -- This list used to offer everything the client owned: bows, blocks, the
@@ -12773,7 +12758,6 @@ function Module.init(context: Runtime): any
             .. "but indistinguishable from swinging by hand.",
     })
 
-    aura:CreateSection("Targeting")
     aura:CreateSlider({
         Name = "Swing range",
         Min = 5,
@@ -12814,7 +12798,6 @@ function Module.init(context: Runtime): any
     -- "Show advanced" switch instead of the switch keeping a list of them,
     -- which is one place to change instead of three.
     local advanced: any = {Option = "Show advanced"}
-    aura:CreateSection("Advanced").Show = advanced
     aura:CreateDropdown({
         Name = "Activation",
         Show = advanced,
@@ -13349,7 +13332,6 @@ function Module.init(context: Runtime): any
         end,
     })
 
-    logger:CreateSection("Capture")
     logger:CreateTextBox({
         Name = "Only containing",
         Default = "",
@@ -13375,7 +13357,6 @@ function Module.init(context: Runtime): any
             .. "few. Useful for a remote whose shape changes; heavier.",
     })
 
-    logger:CreateSection("Output")
     logger:CreateButton({
         Name = "Save to file",
         Tooltip = "Writes ARandomMenu/RemoteLogs/<place>-<time>.txt and .json",
@@ -13530,7 +13511,6 @@ function Module.init(context: Runtime): any
         end,
     })
 
-    teleport:CreateSection("Destination")
     teleport:CreateDropdown({
         Name = "Destination",
         List = {
@@ -13588,7 +13568,6 @@ function Module.init(context: Runtime): any
     -- window" only means something for Tap point; "Skip friends" only for
     -- Nearest player; the two offsets only where there is something to stand
     -- next to.
-    teleport:CreateSection("Travel")
     teleport:CreateSlider({
         Name = "Arm window",
         Show = {Option = "Destination", Values = {"Tap point"}},
@@ -14496,7 +14475,6 @@ function Module.init(context: Runtime): any
         Tooltip = "Minimum seconds between two shots.",
     })
 
-    trigger:CreateSection("Targeting")
     trigger:CreateDropdown({
         Name = "Target part",
         List = {"Any", "Head", "Torso"},
@@ -16682,7 +16660,6 @@ function Module.init(context: Runtime): any
         end,
     })
 
-    fly:CreateSection("Flight")
     fly:CreateDropdown({
         Name = "Method",
         List = {"Velocity", "Constraint", "Impulse", "CFrame", "Blink", "Pulse", "WalkSpeed"},
@@ -16731,7 +16708,6 @@ function Module.init(context: Runtime): any
     -- The advanced block, declared: every row below says it belongs to the
     -- "Advanced settings" switch instead of the switch keeping a list of them.
     local advanced: any = {Option = "Advanced settings"}
-    fly:CreateSection("Advanced").Show = advanced
     fly:CreateSlider({
         Name = "Response multiplier",
         Show = {advanced, {Option = "Method", Values = {"Velocity", "Constraint", "Pulse"}}},

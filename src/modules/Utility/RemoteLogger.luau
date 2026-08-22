@@ -383,7 +383,6 @@ function Module.init(context: Runtime): any
         end,
     })
 
-    logger:CreateSection("Capture")
     logger:CreateTextBox({
         Name = "Only containing",
         Default = "",
@@ -409,7 +408,6 @@ function Module.init(context: Runtime): any
             .. "few. Useful for a remote whose shape changes; heavier.",
     })
 
-    logger:CreateSection("Output")
     logger:CreateButton({
         Name = "Save to file",
         Tooltip = "Writes ARandomMenu/RemoteLogs/<place>-<time>.txt and .json",

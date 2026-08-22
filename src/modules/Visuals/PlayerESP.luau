@@ -84,7 +84,6 @@ function Module.init(context: Runtime): any
         end,
     })
 
-    esp:CreateSection("Display")
     esp:CreateDropdown({
         Name = "Boxes",
         List = {"Corner", "Full", "Off"},
@@ -154,7 +153,6 @@ function Module.init(context: Runtime): any
         Tooltip = "Overlay fills the body through walls, Outline only rims it.",
     })
 
-    esp:CreateSection("Filters")
     esp:CreateToggle({
         Name = "Team check",
         Default = false,
@@ -172,7 +170,6 @@ function Module.init(context: Runtime): any
         Default = 2000,
     })
 
-    esp:CreateSection("Style")
     -- One colour, not three.
     --
     -- "Enemy", "friendly" and "hidden" were three rows to answer one question,
@@ -214,7 +211,6 @@ function Module.init(context: Runtime): any
     local extraRuntime: any = {
         roles = nil :: any,
         extras = {} :: {any},
-        sections = {roles = false, world = false},
     }
     Module.bridge = extraRuntime
 
@@ -245,10 +241,6 @@ function Module.init(context: Runtime): any
                 end)
             end
         end
-        if not extraRuntime.sections.roles then
-            extraRuntime.sections.roles = true
-            esp:CreateSection("Roles · " .. tostring(provider.Name or "Game"))
-        end
         esp:CreateToggle({
             Name = "Role colours",
             Default = true,
@@ -278,10 +270,6 @@ function Module.init(context: Runtime): any
     end
 
     local function addExtraRows(extra: any): ()
-        if not extraRuntime.sections.world then
-            extraRuntime.sections.world = true
-            esp:CreateSection("World")
-        end
         table.insert(extraRuntime.extras, extra)
         esp:CreateToggle({
             Name = extra.Name,

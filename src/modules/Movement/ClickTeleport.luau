@@ -71,7 +71,6 @@ function Module.init(context: Runtime): any
         end,
     })
 
-    teleport:CreateSection("Destination")
     teleport:CreateDropdown({
         Name = "Destination",
         List = {
@@ -129,7 +128,6 @@ function Module.init(context: Runtime): any
     -- window" only means something for Tap point; "Skip friends" only for
     -- Nearest player; the two offsets only where there is something to stand
     -- next to.
-    teleport:CreateSection("Travel")
     teleport:CreateSlider({
         Name = "Arm window",
         Show = {Option = "Destination", Values = {"Tap point"}},
