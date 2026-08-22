@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "95668e67320c4204",
+    stamp = "181f06977d4cd90b",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -779,8 +779,11 @@ function Module.init(context: any): WidgetLibrary
         local optionKey: string =
             feature.configKey .. "." .. labelText:gsub("%W", "")
         local storedValue: number? = tonumber(configData.values[optionKey])
+        -- A stored value is clamped into the row's own range on load: a
+        -- config written by an older build (Max height 1000) or edited by
+        -- hand must not smuggle an out-of-range number past the slider.
         local value: number = isFiniteNumber(storedValue)
-            and (storedValue :: number)
+            and math.clamp(storedValue :: number, minimum, maximum)
             or defaultValue
         local integerOnly: boolean = defaultValue % 1 == 0
             and minimum % 1 == 0
@@ -5894,15 +5897,22 @@ function Module.init(context: any): any
         end
 
         if type(saved) == "table" and saved.x and saved.y then
-            local landed: Vector2 = clamp(
-                Vector2.new(saved.x, saved.y),
-                Vector2.new(root.Size.X.Offset, root.Size.Y.Offset)
-            )
-            root.Position = UDim2.fromOffset(landed.X, landed.Y)
-            -- A stored position is one the user chose. Placement and reflow
-            -- must never move it; only the clamp above may, and only to keep
-            -- the window on a screen that shrank since it was saved.
-            window.userMoved = true
+            -- tonumber, not trust: a corrupt store must clamp to a sane
+            -- spot, never throw while restoring a window.
+            local savedX: number? = tonumber(saved.x)
+            local savedY: number? = tonumber(saved.y)
+            if savedX and savedY then
+                local landed: Vector2 = clamp(
+                    Vector2.new(savedX, savedY),
+                    Vector2.new(root.Size.X.Offset, root.Size.Y.Offset)
+                )
+                root.Position = UDim2.fromOffset(landed.X, landed.Y)
+                -- A stored position is one the user chose. Placement and
+                -- reflow must never move it; only the clamp above may, and
+                -- only to keep the window on a screen that shrank since it
+                -- was saved.
+                window.userMoved = true
+            end
         end
 
         function window:SetVisible(visible: boolean): ()
@@ -9619,9 +9629,16 @@ function Module.init(context: any): any
                     end
                     for _, binding: any in pairs(state.shortcutBindings) do
                         local savedName: any = snapshot[tostring(binding.id)]
-                        local savedKey: Enum.KeyCode? = nil
+                        local savedKey: any = nil
                         if type(savedName) == "string" and savedName ~= "" then
-                            savedKey = (Enum.KeyCode :: any)[savedName]
+                            -- pcall, not trust: a profile edited by hand can
+                            -- carry a key name Enum.KeyCode throws on.
+                            local resolved: boolean, candidate: any = pcall(function(): any
+                                return (Enum.KeyCode :: any)[savedName]
+                            end)
+                            if resolved then
+                                savedKey = candidate
+                            end
                         end
                         binding.key = savedKey or Enum.KeyCode.Unknown
                         persistBindingKey(binding)

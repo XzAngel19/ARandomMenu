@@ -368,15 +368,22 @@ function Module.init(context: any): any
         end
 
         if type(saved) == "table" and saved.x and saved.y then
-            local landed: Vector2 = clamp(
-                Vector2.new(saved.x, saved.y),
-                Vector2.new(root.Size.X.Offset, root.Size.Y.Offset)
-            )
-            root.Position = UDim2.fromOffset(landed.X, landed.Y)
-            -- A stored position is one the user chose. Placement and reflow
-            -- must never move it; only the clamp above may, and only to keep
-            -- the window on a screen that shrank since it was saved.
-            window.userMoved = true
+            -- tonumber, not trust: a corrupt store must clamp to a sane
+            -- spot, never throw while restoring a window.
+            local savedX: number? = tonumber(saved.x)
+            local savedY: number? = tonumber(saved.y)
+            if savedX and savedY then
+                local landed: Vector2 = clamp(
+                    Vector2.new(savedX, savedY),
+                    Vector2.new(root.Size.X.Offset, root.Size.Y.Offset)
+                )
+                root.Position = UDim2.fromOffset(landed.X, landed.Y)
+                -- A stored position is one the user chose. Placement and
+                -- reflow must never move it; only the clamp above may, and
+                -- only to keep the window on a screen that shrank since it
+                -- was saved.
+                window.userMoved = true
+            end
         end
 
         function window:SetVisible(visible: boolean): ()

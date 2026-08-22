@@ -510,8 +510,11 @@ function Module.init(context: any): WidgetLibrary
         local optionKey: string =
             feature.configKey .. "." .. labelText:gsub("%W", "")
         local storedValue: number? = tonumber(configData.values[optionKey])
+        -- A stored value is clamped into the row's own range on load: a
+        -- config written by an older build (Max height 1000) or edited by
+        -- hand must not smuggle an out-of-range number past the slider.
         local value: number = isFiniteNumber(storedValue)
-            and (storedValue :: number)
+            and math.clamp(storedValue :: number, minimum, maximum)
             or defaultValue
         local integerOnly: boolean = defaultValue % 1 == 0
             and minimum % 1 == 0

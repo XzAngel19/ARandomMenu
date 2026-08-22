@@ -822,9 +822,16 @@ function Module.init(context: any): any
                     end
                     for _, binding: any in pairs(state.shortcutBindings) do
                         local savedName: any = snapshot[tostring(binding.id)]
-                        local savedKey: Enum.KeyCode? = nil
+                        local savedKey: any = nil
                         if type(savedName) == "string" and savedName ~= "" then
-                            savedKey = (Enum.KeyCode :: any)[savedName]
+                            -- pcall, not trust: a profile edited by hand can
+                            -- carry a key name Enum.KeyCode throws on.
+                            local resolved: boolean, candidate: any = pcall(function(): any
+                                return (Enum.KeyCode :: any)[savedName]
+                            end)
+                            if resolved then
+                                savedKey = candidate
+                            end
                         end
                         binding.key = savedKey or Enum.KeyCode.Unknown
                         persistBindingKey(binding)

@@ -363,7 +363,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "95668e67320c4204"
+local SOURCE_STAMP: string = "181f06977d4cd90b"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -3863,8 +3863,12 @@ local function bindActionShortcut(
     }
     local savedName: any = configData.values[optionKey]
     if type(savedName) == "string" and savedName ~= "" then
-        local savedKey: Enum.KeyCode? = Enum.KeyCode[savedName]
-        if savedKey then
+        -- pcall, not trust: indexing Enum.KeyCode with a corrupt stored
+        -- name throws, and a broken store must fall back to unbound.
+        local resolved: boolean, savedKey: any = pcall(function(): any
+            return (Enum.KeyCode :: any)[savedName]
+        end)
+        if resolved and savedKey then
             binding.key = savedKey
         end
     end
