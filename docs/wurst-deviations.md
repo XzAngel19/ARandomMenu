@@ -1,6 +1,9 @@
 # A's deliberate differences vs official Wurst 7
 
-Classified against Wurst7 `4a22e53`, `ref-wurst-719.jpg`,
+Classified against Wurst 7.19 `v7.19` / `dbc25e9` (identity) and the
+7.54.1 GUI APPLY list in `docs/wurst-7.19-to-7.54.1-gui-delta.md`.
+`4a22e53` is a later tree, not the identity pin. Also
+`ref-wurst-719.jpg`,
 `ref-wurst-settings.jpg` and the new Roblox capture. Logical units stay
 GUI-scale-1. Prototype `titleHeight` 26 is 13 × 2, not a 1080p invention.
 
@@ -14,7 +17,7 @@ GUI-scale-1. Prototype `titleHeight` 26 is 13 × 2, not a 1080p invention.
 | Official eight names in KNOWN_CATEGORIES | exact | Combat, Render, Blocks, Movement, Chat, Fun, Items, Other. |
 | Occupied windows only (empty Blocks/Chat/Items hidden) | exact | Empty official categories stay in the contract and draw no window. |
 | Independent `<Feature> Settings` window | exact | `OpenFeatureSettings`; options reparent; row height unchanged. |
-| Settings cascade step 28×30 | **incorrecta** | Avoids superposition; AABBs of ~200×66 windows still overlap. |
+| Settings cascade step 28×30 | exact (replaced) | `FindFreeRect` + `ReflowWindow`; AABB after the second pass is empty. |
 | Window width 200 / packed settings | adaptación Roblox aprobable | Category 200; settings pack via `packedWidth`. |
 | WurstLogo stripe y=12..34, alpha 0.5 | exact | Java fill y=6..17. |
 | WurstLogo band packed to version | exact | `LOGO_WIDTH + 10 + (8 + #version × 12) + 4`. `+ 130` is gone. |
@@ -28,5 +31,5 @@ GUI-scale-1. Prototype `titleHeight` 26 is 13 × 2, not a 1080p invention.
 | Navigator as its own screen + keys | exact | RightCtrl = ClickGUI, RightShift = Navigator. |
 | No TabGUI (default Disabled) | exact | Shipping none matches Disabled. |
 | Pill as one-button Roblox launcher | adaptación Roblox aprobable | The 5% Roblox. |
-| Monocraft atlas (`monocraft-16.png`) | adaptación Roblox aprobable | OFL fallback, not 1.18.1 `default.json`. Do not claim font exacta. Authority: `docs/minecraft-1.18.1-font.md`. |
+| Monocraft atlas (`monocraft-16.png`) | adaptación Roblox aprobable | OFL fallback. 7.54.1 does not change the 1.18.1 font baseline. |
 | One ClickGui UIScale, user Scale 0.7–1.6 | exact | No 1080 / 1.35 formula. |

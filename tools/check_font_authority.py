@@ -108,6 +108,11 @@ def check_manifest() -> dict:
         fail("manifest lineHeight must stay 9")
     if (data.get("fallback") or {}).get("exactMinecraft") is not False:
         fail("fallback.exactMinecraft must be false")
+    authority = os.path.join(ROOT, "docs/wurst-gui-authority.json")
+    if os.path.exists(authority):
+        gui = json.load(open(authority, encoding="utf-8"))
+        if (gui.get("identity") or {}).get("minecraft") != "1.18.1":
+            fail("GUI identity minecraft must stay 1.18.1; 7.54.1 is not the font baseline")
     return data
 
 
