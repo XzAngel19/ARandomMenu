@@ -855,6 +855,65 @@ function Mock.install(): MockWorld
         world.folders = world.folders or {}
         world.folders[path] = true
     end
+    -- The rest of the executor filesystem, on the same world.files map
+    -- writefile already uses. Cache sweeps and loadConfig are untestable
+    -- without these; they must not invent a second store.
+    local function normalizeFsPath(path: string): string
+        return (tostring(path):gsub("\\", "/"):gsub("/+$", ""))
+    end
+    globals.isfile = function(path: string): boolean
+        return world.files[path] ~= nil or world.files[normalizeFsPath(path)] ~= nil
+    end
+    globals.readfile = function(path: string): string
+        local contents: any = world.files[path]
+        if contents == nil then
+            contents = world.files[normalizeFsPath(path)]
+        end
+        if type(contents) ~= "string" then
+            error(path .. " was never written", 0)
+        end
+        return contents
+    end
+    globals.delfile = function(path: string): ()
+        local key: string = path
+        if world.files[key] == nil then
+            key = normalizeFsPath(path)
+        end
+        if world.files[key] == nil then
+            error(path .. " was never written", 0)
+        end
+        world.files[key] = nil
+    end
+    globals.listfiles = function(folder: string): {string}
+        local prefix: string = normalizeFsPath(folder)
+        local slash: string = prefix .. "/"
+        local seen: {[string]: boolean} = {}
+        local listed: {string} = {}
+        local function consider(entry: string): ()
+            local normalized: string = normalizeFsPath(entry)
+            if normalized == prefix or string.sub(normalized, 1, #slash) ~= slash then
+                return
+            end
+            local rest: string = string.sub(normalized, #slash + 1)
+            local first: string? = string.match(rest, "^([^/]+)")
+            if first == nil then
+                return
+            end
+            local child: string = prefix .. "/" .. first
+            if seen[child] then
+                return
+            end
+            seen[child] = true
+            table.insert(listed, child)
+        end
+        for path: string in pairs(world.files) do
+            consider(path)
+        end
+        for path: string in pairs(world.folders or {}) do
+            consider(path)
+        end
+        return listed
+    end
     globals.setclipboard = function(contents: string): ()
         world.clipboard = contents
     end
