@@ -9,8 +9,9 @@ local-profiles/
 __pycache__/
 *.pyc
 
-# Official Minecraft 1.18.1 font extract and any atlas derived from it.
-# Mojang assets — download on explicit update, never vendor.
+# Official Minecraft font extracts and derived atlases are local build inputs.
+# Mojang assets are downloaded explicitly and never vendored.
 /cache/minecraft-1.18.1/
 /assets/font/minecraft-atlas.png
 /assets/font/minecraft-atlas.json
+/build/

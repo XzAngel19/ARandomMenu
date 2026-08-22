@@ -129,6 +129,19 @@ function Module.init(context: any): any
         return math.clamp(wanted * fit, SCALE_MINIMUM, SCALE_MAXIMUM)
     end
 
+    -- The viewport in the space the windows are laid out in: screen pixels
+    -- divided by the scale the layer runs at. nextSlot used the raw camera
+    -- viewport, so at any scale other than 1 the first-run grid wrapped at
+    -- the wrong edge — too early below 1, past the screen above it.
+    local function logicalViewport(): Vector2
+        local camera: Camera? = workspace.CurrentCamera
+        local viewport: Vector2 = camera
+            and (camera :: Camera).ViewportSize
+            or Vector2.new(CALIBRATION_WIDTH, CALIBRATION_HEIGHT)
+        local factor: number = viewportScale()
+        return Vector2.new(viewport.X / factor, viewport.Y / factor)
+    end
+
     local windows: any = state.windows
     if not windows then
         -- The manifest orders the manager before this, so reaching here means
@@ -154,9 +167,7 @@ function Module.init(context: any): any
     local rowHeight: number = 0
 
     local function nextSlot(height: number): Vector2
-        local viewport: Vector2 = workspace.CurrentCamera
-            and (workspace.CurrentCamera :: Camera).ViewportSize
-            or Vector2.new(1280, 720)
+        local viewport: Vector2 = logicalViewport()
         if nextX + WINDOW_WIDTH > viewport.X - GRID_MARGIN then
             nextX = GRID_MARGIN
             nextY += rowHeight + GRID_GAP

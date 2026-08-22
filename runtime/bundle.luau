@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "0faa6f0858ea7e48",
+    stamp = "0945bd08e2eed4de",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -4977,20 +4977,53 @@ function Module.init(context: any): any
         -- separator — the previous card dressing made forty rows read as a
         -- tray of lozenges, and none of it is in ref-wurst-719.
 
-        local title: TextLabel =
-            (makeTextLabel(row, name, state.layout.titleFontSize) :: any) :: TextLabel
-        title.FontFace = CONTROL_FONT
-        -- Wurst centres the hack's name on the whole row — ref-wurst-719 —
-        -- and the settings arrow floats over the right end without moving
-        -- that centre, so the label always spans the full row.
-        title.Position = UDim2.fromOffset(0, 0)
-        title.Size = UDim2.new(1, 0, 0, feature.collapsedHeight)
-        title.TextXAlignment = Enum.TextXAlignment.Center
-        title.TextTruncate = Enum.TextTruncate.AtEnd
-        title.TextColor3 = state.guiStyle == "Default"
-            and Theme.text
-            or Theme.text
-        feature.title = title
+        -- The hack's name on the bitmap contract, centred on the whole row —
+        -- ref-wurst-719 — with the settings arrow floating over the right
+        -- end without moving that centre. The TextLabel branch is the
+        -- harness stand-in: the shell always publishes state.bitmapText, so
+        -- at runtime only the glyph path draws, and no second label exists.
+        -- applyCardSkin repaints through drawTitle, which the pool makes an
+        -- in-place recolour rather than a rebuild.
+        local bitmapText: any = state.bitmapText
+        local title: TextLabel? = nil
+        if bitmapText and type(bitmapText.draw) == "function" then
+            feature.drawTitle = function(color: Color3?, transparency: number?): ()
+                if color ~= nil then
+                    feature.titleColor = color
+                end
+                if transparency ~= nil then
+                    feature.titleTransparency = transparency
+                end
+                bitmapText.draw(row, {
+                    {
+                        text = name,
+                        color = feature.titleColor or Theme.text,
+                    },
+                }, {
+                    Name = "Title",
+                    TextSize = state.layout.titleFontSize,
+                    ZIndex = 7,
+                    align = "Center",
+                    transparency = feature.titleTransparency or 0,
+                })
+            end
+            feature.drawTitle(Theme.text, 0)
+        else
+            title = (makeTextLabel(row, name, state.layout.titleFontSize) :: any) :: TextLabel
+            local label: TextLabel = title :: TextLabel
+            label.FontFace = CONTROL_FONT
+            -- Wurst centres the hack's name on the whole row — ref-wurst-719 —
+            -- and the settings arrow floats over the right end without moving
+            -- that centre, so the label always spans the full row.
+            label.Position = UDim2.fromOffset(0, 0)
+            label.Size = UDim2.new(1, 0, 0, feature.collapsedHeight)
+            label.TextXAlignment = Enum.TextXAlignment.Center
+            label.TextTruncate = Enum.TextTruncate.AtEnd
+            label.TextColor3 = state.guiStyle == "Default"
+                and Theme.text
+                or Theme.text
+            feature.title = label
+        end
 
         -- Wurst's settings arrow: an 11-logical-px box on the right end of
         -- the row (22 here, everything is drawn at GUI scale 2), holding a
@@ -5076,7 +5109,9 @@ function Module.init(context: any): any
             ZIndex = 6,
         }) :: TextButton
         feature.activationTarget = activationTarget
-        title.ZIndex = 7
+        if title then
+            (title :: TextLabel).ZIndex = 7
+        end
 
         trackUiConnection(row.MouseEnter:Connect(function(): ()
             state.applyCardSkin(feature, true)
@@ -5354,7 +5389,12 @@ function Module.init(context: any): any
         feature.applyLayout = function(): ()
             local metrics: LayoutMetrics = state.layout
             feature.collapsedHeight = metrics.cardHeight
-            state.setTextMetric(title, metrics.titleFontSize)
+            if title then
+                state.setTextMetric(title, metrics.titleFontSize)
+            elseif feature.drawTitle then
+                -- The bitmap title re-reads the layout size on every draw.
+                feature.drawTitle(nil, nil)
+            end
             if arrow then
                 (arrow :: TextButton).Size =
                     UDim2.fromOffset(22, metrics.cardHeight)
@@ -5541,6 +5581,10 @@ local SNAP_DISTANCE: number = 8
 -- tooltips, which have to be able to appear over anything.
 local BASE_Z: number = 150
 local MARGIN: number = 6
+-- Minimum clearance between two placed windows, and the offset an anchored
+-- placement leaves beside its category. 10 is ClickGui's GRID_GAP — Wurst's
+-- 5-logical first-run gap at the GUI scale 2 everything is drawn at.
+local PLACEMENT_GAP: number = 10
 -- The prototype's title bar. Named rather than inline because the parity gate
 -- reads this constant and holds it to spec.json. 26 is Wurst's own 13 logical
 -- pixels at the GUI scale 2 everything here is drawn at — C read it out of
@@ -5586,7 +5630,15 @@ function Module.init(context: any): any
         byId = {} :: {[string]: any},
     }
 
-    local function viewport(): Vector2
+    -- ------------------------------------------------------ coordinate space
+    -- Two spaces exist and only two: "screen" is the camera's device pixels,
+    -- and "logical" is the space window offsets live in, which is screen
+    -- divided by the one UIScale the ClickGUI puts over the popup layer.
+    -- Everything the manager stores, compares or persists is logical. The
+    -- old code mixed them — Position offsets (logical) against ViewportSize
+    -- (screen), AbsoluteSize (screen) against Size offsets (logical) — and
+    -- every mix was invisible at scale 1 and a layout bug at any other.
+    local function screenViewport(): Vector2
         local camera: Camera? = workspace.CurrentCamera
         if camera then
             return (camera :: Camera).ViewportSize
@@ -5594,8 +5646,46 @@ function Module.init(context: any): any
         return Vector2.new(1280, 720)
     end
 
+    -- ClickGui parents one UIScale named ClickGuiScale to the popup layer.
+    -- Before it exists (boot order) or without it (harness) the two spaces
+    -- coincide.
+    local function layerScale(): number
+        local instance: any = PopupLayer
+            and (PopupLayer :: Instance):FindFirstChild("ClickGuiScale")
+        local value: number = instance and tonumber(instance.Scale) or 1
+        if value ~= value or value <= 0 then
+            value = 1
+        end
+        return value
+    end
+
+    local function logicalViewport(): Vector2
+        local screen: Vector2 = screenViewport()
+        local factor: number = layerScale()
+        return Vector2.new(screen.X / factor, screen.Y / factor)
+    end
+
+    local function screenToLogical(point: Vector2): Vector2
+        local factor: number = layerScale()
+        return Vector2.new(point.X / factor, point.Y / factor)
+    end
+
+    local function logicalToScreen(point: Vector2): Vector2
+        local factor: number = layerScale()
+        return Vector2.new(point.X * factor, point.Y * factor)
+    end
+
+    -- A window's logical rectangle. Size offsets are the truth — under a
+    -- UIScale, AbsoluteSize is these numbers multiplied back into screen
+    -- pixels, and the mock harness does not keep the two in step anyway.
+    local function windowRect(window: any): (number, number, number, number)
+        local root: any = window.root
+        return root.Position.X.Offset, root.Position.Y.Offset,
+            root.Size.X.Offset, root.Size.Y.Offset
+    end
+
     local function clamp(position: Vector2, size: Vector2): Vector2
-        local screen: Vector2 = viewport()
+        local screen: Vector2 = logicalViewport()
         return Vector2.new(
             math.clamp(position.X, MARGIN, math.max(MARGIN, screen.X - size.X - MARGIN)),
             math.clamp(position.Y, MARGIN, math.max(MARGIN, screen.Y - size.Y - MARGIN))
@@ -5616,6 +5706,41 @@ function Module.init(context: any): any
         )
         root.Position = UDim2.fromOffset(landed.X, landed.Y)
     end
+
+    -- The window's real logical footprint: what it occupies once its content
+    -- has grown, not the guess it was born with. Collapsed windows cost their
+    -- title bar; open ones cost the larger of their current size and the full
+    -- height their resize recorded, because a window that is about to grow to
+    -- fullHeight must reserve that space before it does.
+    function manager.MeasureWindow(window: any): Vector2
+        local root: any = window and window.root
+        if not root then
+            return Vector2.zero
+        end
+        local width: number = root.Size.X.Offset
+        local height: number
+        if window.collapsed then
+            height = window.headerHeight or root.Size.Y.Offset
+        else
+            height = math.max(root.Size.Y.Offset, tonumber(window.fullHeight) or 0)
+        end
+        return Vector2.new(width, height)
+    end
+
+    -- The same rectangle in screen pixels, for anything that must compare a
+    -- window against raw input coordinates or the camera.
+    function manager.AbsoluteRect(window: any): (number, number, number, number)
+        local x: number, y: number, w: number, h: number = windowRect(window)
+        local origin: Vector2 = logicalToScreen(Vector2.new(x, y))
+        local extent: Vector2 = logicalToScreen(Vector2.new(w, h))
+        return origin.X, origin.Y, extent.X, extent.Y
+    end
+
+    -- Published so every library placing near windows shares this one
+    -- coordinate space instead of re-deriving its own against the camera.
+    manager.LogicalViewport = logicalViewport
+    manager.ScreenToLogical = screenToLogical
+    manager.LogicalToScreen = logicalToScreen
 
     local function bind(instance: Instance, property: string, token: string): ()
         if ThemeEngine and type(ThemeEngine.Bind) == "function" then
@@ -5640,22 +5765,19 @@ function Module.init(context: any): any
     -- screen would tile windows against the walls and never against each other,
     -- which is the arrangement players actually build.
     local function snap(window: any, position: Vector2, size: Vector2): Vector2
-        local screen: Vector2 = viewport()
+        local screen: Vector2 = logicalViewport()
         local xLines: {number} = {MARGIN, screen.X - size.X - MARGIN}
         local yLines: {number} = {MARGIN, screen.Y - size.Y - MARGIN}
         for _, other: any in ipairs(manager.list) do
             if other ~= window and other.root.Visible then
-                local otherPosition: Vector2 = Vector2.new(
-                    other.root.Position.X.Offset,
-                    other.root.Position.Y.Offset
-                )
-                local otherSize: Vector2 = other.root.AbsoluteSize
-                table.insert(xLines, otherPosition.X)
-                table.insert(xLines, otherPosition.X + otherSize.X)
-                table.insert(xLines, otherPosition.X - size.X)
-                table.insert(yLines, otherPosition.Y)
-                table.insert(yLines, otherPosition.Y + otherSize.Y)
-                table.insert(yLines, otherPosition.Y - size.Y)
+                local otherX: number, otherY: number, otherW: number, otherH: number =
+                    windowRect(other)
+                table.insert(xLines, otherX)
+                table.insert(xLines, otherX + otherW)
+                table.insert(xLines, otherX - size.X)
+                table.insert(yLines, otherY)
+                table.insert(yLines, otherY + otherH)
+                table.insert(yLines, otherY - size.Y)
             end
         end
         local x: number, y: number = position.X, position.Y
@@ -5684,7 +5806,12 @@ function Module.init(context: any): any
             -- Step 1, not 4: the ScreenGui is Sibling-ordered, so only the
             -- roots compete at this level and fifty windows still stay
             -- under the pill (240), the tooltip (250) and the popups.
-            local base: number = BASE_Z + order
+            -- Capped one below the pill so no census of windows, however
+            -- absurd, ever climbs a window root over the global chrome —
+            -- choice lists (400s) and the colour picker (460s) stay above
+            -- every window either way, so a raised window's own popups
+            -- cannot land behind another window.
+            local base: number = math.min(BASE_Z + order, 239)
             entry.root.ZIndex = base
             -- Windows whose children declare a depth get restacked with the
             -- window. Without it a raised overlay draws its own body under the
@@ -5756,6 +5883,10 @@ function Module.init(context: any): any
                 Vector2.new(root.Size.X.Offset, root.Size.Y.Offset)
             )
             root.Position = UDim2.fromOffset(landed.X, landed.Y)
+            -- A stored position is one the user chose. Placement and reflow
+            -- must never move it; only the clamp above may, and only to keep
+            -- the window on a screen that shrank since it was saved.
+            window.userMoved = true
         end
 
         function window:SetVisible(visible: boolean): ()
@@ -5770,9 +5901,12 @@ function Module.init(context: any): any
             if window.body then
                 (window.body :: any).Visible = not collapsed
             end
+            -- Width in logical offsets, never AbsoluteSize: under a UIScale
+            -- the absolute width is scaled, and writing it back as an offset
+            -- widened the window a little on every collapse.
             root.Size = collapsed
-                and UDim2.fromOffset(root.AbsoluteSize.X, window.headerHeight)
-                or UDim2.fromOffset(root.AbsoluteSize.X, window.fullHeight)
+                and UDim2.fromOffset(root.Size.X.Offset, window.headerHeight)
+                or UDim2.fromOffset(root.Size.X.Offset, window.fullHeight)
             persist(window)
         end
 
@@ -5843,9 +5977,17 @@ function Module.init(context: any): any
                 or (dragInput
                     and dragInput.UserInputType == Enum.UserInputType.MouseButton1
                     and input.UserInputType == Enum.UserInputType.MouseMovement) then
+                -- The pointer moves in screen pixels; the window in logical
+                -- offsets. Dividing the delta by the layer scale keeps the
+                -- window under the cursor at every scale instead of lagging
+                -- it below 1 and overshooting it above.
                 local pointer: Vector2 = Vector2.new(input.Position.X, input.Position.Y)
-                local size: Vector2 = root.AbsoluteSize
-                local wanted: Vector2 = startPosition + pointer - dragStart
+                local delta: Vector2 = screenToLogical(pointer - dragStart)
+                local size: Vector2 = Vector2.new(
+                    root.Size.X.Offset,
+                    root.Size.Y.Offset
+                )
+                local wanted: Vector2 = startPosition + delta
                 local landed: Vector2 = snap(window, clamp(wanted, size), size)
                 root.Position = UDim2.fromOffset(landed.X, landed.Y)
             end
@@ -5858,6 +6000,9 @@ function Module.init(context: any): any
                     or input.UserInputType == Enum.UserInputType.MouseButton1) then
                 dragging = false
                 dragInput = nil
+                -- From here on this is the user's position: reflow keeps its
+                -- hands off it, and only the viewport clamp may move it.
+                window.userMoved = true
                 persist(window)
             end
         end))
@@ -5941,21 +6086,52 @@ function Module.init(context: any): any
             }) :: Frame
             bind(bar, "BackgroundColor3", "accent")
 
-            local title: TextLabel = (create("TextLabel", {
-                TextTruncate = Enum.TextTruncate.AtEnd,
-                Parent = bar,
-                Name = "Title",
-                BackgroundTransparency = 1,
-                FontFace = CONTROL_FONT,
-                Text = definition.title or id,
-                TextSize = TITLE_FONT_SIZE,
-            }) :: any) :: TextLabel
-            title.AnchorPoint = Vector2.new(0, 0.5)
-            title.Position = UDim2.new(0, 8, 0.5, 0)
-            title.Size = UDim2.new(1, -60, 1, 0)
-            title.TextXAlignment = Enum.TextXAlignment.Left
-            title.ZIndex = 3
-            bind(title, "TextColor3", "accentText")
+            -- The title on the bitmap contract. The TextLabel branch is the
+            -- harness stand-in: the shell always publishes state.bitmapText,
+            -- so at runtime only the glyph path runs — a migrated surface
+            -- draws no second label. Wurst paints titles plain (no shadow);
+            -- 68 = the chrome buttons' span plus the 8 px inset. The old
+            -- label bound its colour to the accentText token, so the drawn
+            -- title re-renders on theme changes to keep that behaviour —
+            -- the pool makes it an in-place tint.
+            local bitmapText: any = state.bitmapText
+            if bitmapText and type(bitmapText.draw) == "function" then
+                local function paintTitle(): ()
+                    if root.Parent == nil then
+                        return
+                    end
+                    bitmapText.draw(bar, {
+                        {text = definition.title or id, color = Theme.accentText},
+                    }, {
+                        Name = "Title",
+                        TextSize = TITLE_FONT_SIZE,
+                        ZIndex = 3,
+                        AnchorPoint = Vector2.new(0, 0.5),
+                        Position = UDim2.new(0, 8, 0.5, 0),
+                        maxWidth = math.max(40, definition.size.X - 68),
+                    })
+                end
+                paintTitle()
+                if ThemeEngine and type(ThemeEngine.OnChange) == "function" then
+                    ThemeEngine.OnChange(paintTitle)
+                end
+            else
+                local title: TextLabel = (create("TextLabel", {
+                    TextTruncate = Enum.TextTruncate.AtEnd,
+                    Parent = bar,
+                    Name = "Title",
+                    BackgroundTransparency = 1,
+                    FontFace = CONTROL_FONT,
+                    Text = definition.title or id,
+                    TextSize = TITLE_FONT_SIZE,
+                }) :: any) :: TextLabel
+                title.AnchorPoint = Vector2.new(0, 0.5)
+                title.Position = UDim2.new(0, 8, 0.5, 0)
+                title.Size = UDim2.new(1, -60, 1, 0)
+                title.TextXAlignment = Enum.TextXAlignment.Left
+                title.ZIndex = 3
+                bind(title, "TextColor3", "accentText")
+            end
 
             local buttonX: number = -5
             -- Wurst's chrome controls are small squares sitting in the title
@@ -6106,19 +6282,14 @@ function Module.init(context: any): any
         end
     end
 
-    -- ------------------------------------------------------ feature settings
-    -- Wurst pops a hack's settings into a window of its own — nothing ever
-    -- expands inside a category window. One lazy window per feature, reused
-    -- on every open, cascaded on first placement so no two are born on top
-    -- of each other, packed to its widest option label, capped by Wurst's
-    -- "Max settings height", and following the GUI like every other window
-    -- unless pinned. This is the one contract: the row's triangle, the
-    -- right-click and the Navigator all come through here.
-    -- First placement by rectangle intersection: candidate slots walk a
-    -- coarse grid and the first one whose rectangle overlaps no visible
-    -- window wins. Only when the whole screen is occupied does it fall back
-    -- to stacking from the top-left — a diagonal cascade guessed blind and
-    -- still landed on whatever the guess did not know about.
+    -- ------------------------------------------------------ placement contract
+    -- Placement belongs to the manager, and every window comes through the
+    -- same four verbs: MeasureWindow reads the real footprint, FindFreeRect
+    -- picks a spot whose rectangle overlaps nothing, PlaceWindow applies one
+    -- to a window that has never been moved by hand, and ReflowWindow re-runs
+    -- the search after content has really been measured — the second
+    -- placement, because a window that chose a slot at its birth height and
+    -- then grew is standing on whatever the guess did not know about.
     local function intersects(
         ax: number, ay: number, aw: number, ah: number,
         bx: number, by: number, bw: number, bh: number
@@ -6126,8 +6297,112 @@ function Module.init(context: any): any
         return ax < bx + bw and bx < ax + aw and ay < by + bh and by < ay + ah
     end
 
-    local function freeSlot(width: number, height: number): Vector2
-        local screen: Vector2 = viewport()
+    -- Every visible window's logical rectangle at its full measured size,
+    -- excluding at most the window being placed. Collapsed windows cost a
+    -- title bar; growing ones reserve the height they are about to reach.
+    local function obstacleRects(excludeWindow: any): {{number}}
+        local rects: {{number}} = {}
+        for _, other: any in ipairs(manager.list) do
+            local root: any = other.root
+            if other ~= excludeWindow and root and root.Visible ~= false then
+                local size: Vector2 = manager.MeasureWindow(other)
+                table.insert(rects, {
+                    root.Position.X.Offset,
+                    root.Position.Y.Offset,
+                    size.X,
+                    size.Y,
+                })
+            end
+        end
+        return rects
+    end
+
+    -- A candidate rectangle is free when it sits whole inside the viewport
+    -- margins and clears every obstacle by the placement gap. The obstacles
+    -- are inflated rather than the candidate, and the test is strict, so a
+    -- window parked exactly one gap from a neighbour still counts as free —
+    -- flush-plus-gap is the arrangement the anchors below aim for.
+    local function rectIsFree(
+        x: number, y: number, width: number, height: number,
+        obstacles: {{number}}
+    ): boolean
+        local screen: Vector2 = logicalViewport()
+        if x < MARGIN or y < MARGIN
+            or x + width > screen.X - MARGIN
+            or y + height > screen.Y - MARGIN then
+            return false
+        end
+        for _, rect: {number} in ipairs(obstacles) do
+            if intersects(
+                x, y, width, height,
+                rect[1] - PLACEMENT_GAP, rect[2] - PLACEMENT_GAP,
+                rect[3] + PLACEMENT_GAP * 2, rect[4] + PLACEMENT_GAP * 2
+            ) then
+                return false
+            end
+        end
+        return true
+    end
+
+    -- The preferred anchor is a window or a {x, y, width, height} table.
+    local function anchorRect(preferredAnchor: any): {number}?
+        if type(preferredAnchor) ~= "table" then
+            return nil
+        end
+        local root: any = preferredAnchor.root
+        if root then
+            if root.Parent == nil then
+                return nil
+            end
+            local size: Vector2 = manager.MeasureWindow(preferredAnchor)
+            return {root.Position.X.Offset, root.Position.Y.Offset, size.X, size.Y}
+        end
+        local x: number? = tonumber(preferredAnchor.x)
+        local y: number? = tonumber(preferredAnchor.y)
+        if x and y then
+            return {
+                x, y,
+                tonumber(preferredAnchor.width) or 0,
+                tonumber(preferredAnchor.height) or 0,
+            }
+        end
+        return nil
+    end
+
+    -- Wurst parks a hack's settings beside the hack: right of its category
+    -- first, then left, then below, and only then anywhere free — the grid
+    -- scan. The fallback returns the clamped top-left corner and is reached
+    -- only when no free rectangle exists at all.
+    function manager.FindFreeRect(
+        desiredSize: Vector2,
+        preferredAnchor: any?,
+        excludeWindow: any?
+    ): Vector2
+        local width: number = desiredSize.X
+        local height: number = desiredSize.Y
+        local obstacles: {{number}} = obstacleRects(excludeWindow)
+        local screen: Vector2 = logicalViewport()
+        -- A side candidate keeps its x and slides up just enough to fit the
+        -- viewport, so "right of the category" survives a window taller than
+        -- the room left below the anchor's own y.
+        local function fitY(y: number): number
+            return math.max(MARGIN, math.min(y, screen.Y - height - MARGIN))
+        end
+
+        local anchor: {number}? = anchorRect(preferredAnchor)
+        if anchor then
+            local candidates: {{number}} = {
+                {anchor[1] + anchor[3] + PLACEMENT_GAP, fitY(anchor[2])},
+                {anchor[1] - width - PLACEMENT_GAP, fitY(anchor[2])},
+                {anchor[1], anchor[2] + anchor[4] + PLACEMENT_GAP},
+            }
+            for _, candidate: {number} in ipairs(candidates) do
+                if rectIsFree(candidate[1], candidate[2], width, height, obstacles) then
+                    return Vector2.new(candidate[1], candidate[2])
+                end
+            end
+        end
+
         local step: number = 40
         local yLimit: number = math.max(64, screen.Y - height - MARGIN)
         local xLimit: number = math.max(MARGIN, screen.X - width - MARGIN)
@@ -6135,28 +6410,107 @@ function Module.init(context: any): any
         while y <= yLimit do
             local x: number = MARGIN
             while x <= xLimit do
-                local collides: boolean = false
-                for _, other: any in ipairs(manager.list) do
-                    local root: any = other.root
-                    if root and root.Visible ~= false then
-                        if intersects(
-                            x, y, width, height,
-                            root.Position.X.Offset, root.Position.Y.Offset,
-                            root.Size.X.Offset, root.Size.Y.Offset
-                        ) then
-                            collides = true
-                            break
-                        end
-                    end
-                end
-                if not collides then
+                if rectIsFree(x, y, width, height, obstacles) then
                     return Vector2.new(x, y)
                 end
                 x += step
             end
             y += step
         end
-        return Vector2.new(MARGIN, 64)
+        return clamp(Vector2.new(MARGIN, 64), desiredSize)
+    end
+
+    -- First placement for a window the user has never dragged. A manual
+    -- position always wins; `force` exists for Reset layout, which has just
+    -- forgotten every manual position on purpose.
+    function manager.PlaceWindow(window: any, options: any?): ()
+        if not window or not window.root then
+            return
+        end
+        local opts: any = options or {}
+        if opts.anchor ~= nil then
+            window.placementAnchor = opts.anchor
+        end
+        if window.userMoved and opts.force ~= true then
+            manager.ClampWindow(window)
+            return
+        end
+        local size: Vector2 = manager.MeasureWindow(window)
+        local landed: Vector2 = manager.FindFreeRect(
+            size,
+            window.placementAnchor,
+            window
+        )
+        window.root.Position = UDim2.fromOffset(landed.X, landed.Y)
+        manager.ClampWindow(window)
+    end
+
+    -- The second placement. Called after content has really been measured:
+    -- a hand-placed window is only clamped back on screen, a placed one
+    -- stays put while its grown rectangle still fits where it is, and moves
+    -- to a fresh free rectangle — same anchor preference — when it no longer
+    -- does. Growth near a neighbour relocates instead of overlapping.
+    function manager.ReflowWindow(window: any): ()
+        if not window or not window.root then
+            return
+        end
+        if window.userMoved then
+            manager.ClampWindow(window)
+            return
+        end
+        local size: Vector2 = manager.MeasureWindow(window)
+        local x: number = window.root.Position.X.Offset
+        local y: number = window.root.Position.Y.Offset
+        if rectIsFree(x, y, size.X, size.Y, obstacleRects(window)) then
+            return
+        end
+        local landed: Vector2 = manager.FindFreeRect(
+            size,
+            window.placementAnchor,
+            window
+        )
+        window.root.Position = UDim2.fromOffset(landed.X, landed.Y)
+        manager.ClampWindow(window)
+    end
+
+    -- ------------------------------------------------------ feature settings
+    -- Wurst pops a hack's settings into a window of its own — nothing ever
+    -- expands inside a category window. One lazy window per feature, reused
+    -- on every open, packed to its widest option label, capped by Wurst's
+    -- "Max settings height", and following the GUI like every other window
+    -- unless pinned. This is the one contract: the row's triangle, the
+    -- right-click and the Navigator all come through here. Placement goes
+    -- through FindFreeRect with the feature's category window as the
+    -- preferred anchor — right of the category, like official Wurst.
+
+    -- The window the feature's row lives in, for the anchor. The row's
+    -- parent is a window body and the body's parent its root; before
+    -- ClickGui has adopted the row, the category window is still findable
+    -- through the published categories table.
+    local function categoryAnchor(feature: any): any
+        local row: any = feature and feature.row
+        local rowRoot: any = row and row.Parent and (row.Parent :: any).Parent
+        if rowRoot then
+            for _, entry: any in ipairs(manager.list) do
+                if entry.root == rowRoot then
+                    return entry
+                end
+            end
+        end
+        local gui: any = state.clickGui
+        if row and gui and type(gui.categories) == "table"
+            and type(row.GetAttribute) == "function" then
+            local raw: any = row:GetAttribute("FeatureCategory")
+            local name: any = raw
+            if type(host.normalizeFeatureCategory) == "function" then
+                name = host.normalizeFeatureCategory(raw)
+            end
+            local record: any = name and gui.categories[name]
+            if record and record.window then
+                return record.window
+            end
+        end
+        return nil
     end
 
     function manager.OpenFeatureSettings(feature: any): any
@@ -6197,7 +6551,11 @@ function Module.init(context: any): any
             TITLE_HEIGHT + (feature.optionsHeight or 40),
             expectedLimit
         )
-        local slot: Vector2 = freeSlot(width, expectedHeight)
+        local anchor: any = categoryAnchor(feature)
+        local slot: Vector2 = manager.FindFreeRect(
+            Vector2.new(width, expectedHeight),
+            anchor
+        )
 
         local window: any = manager.Create({
             id = id,
@@ -6213,6 +6571,7 @@ function Module.init(context: any): any
             end,
         })
         window.featureSettings = true
+        window.placementAnchor = anchor
         feature.settingsWindow = window
 
         -- The card's option rows move home: they were built into the card's
@@ -6237,8 +6596,12 @@ function Module.init(context: any): any
             if not window.collapsed then
                 window.root.Size = UDim2.fromOffset(width, wanted)
             end
-            -- Growing near an edge must never push the window off screen.
-            manager.ClampWindow(window)
+            -- The second placement: the slot was chosen at the birth-guess
+            -- height, and the real measure may no longer fit there. Reflow
+            -- keeps a hand-moved window where the user put it and moves a
+            -- placed one to a fresh free rectangle instead of letting it
+            -- grow over a neighbour; both end clamped on screen.
+            manager.ReflowWindow(window)
         end
         window.resizeToOptions = resizeToOptions
         resizeToOptions()
@@ -6321,13 +6684,8 @@ function Module.init(context: any): any
     -- stranded outside the viewport.
     function manager.Reclamp(): ()
         for _, window: any in ipairs(manager.list) do
-            local landed: Vector2 = clamp(
-                Vector2.new(
-                    window.root.Position.X.Offset,
-                    window.root.Position.Y.Offset
-                ),
-                window.root.AbsoluteSize
-            )
+            local x: number, y: number, w: number, h: number = windowRect(window)
+            local landed: Vector2 = clamp(Vector2.new(x, y), Vector2.new(w, h))
             window.root.Position = UDim2.fromOffset(landed.X, landed.Y)
         end
     end
@@ -6494,6 +6852,19 @@ function Module.init(context: any): any
         return math.clamp(wanted * fit, SCALE_MINIMUM, SCALE_MAXIMUM)
     end
 
+    -- The viewport in the space the windows are laid out in: screen pixels
+    -- divided by the scale the layer runs at. nextSlot used the raw camera
+    -- viewport, so at any scale other than 1 the first-run grid wrapped at
+    -- the wrong edge — too early below 1, past the screen above it.
+    local function logicalViewport(): Vector2
+        local camera: Camera? = workspace.CurrentCamera
+        local viewport: Vector2 = camera
+            and (camera :: Camera).ViewportSize
+            or Vector2.new(CALIBRATION_WIDTH, CALIBRATION_HEIGHT)
+        local factor: number = viewportScale()
+        return Vector2.new(viewport.X / factor, viewport.Y / factor)
+    end
+
     local windows: any = state.windows
     if not windows then
         -- The manifest orders the manager before this, so reaching here means
@@ -6519,9 +6890,7 @@ function Module.init(context: any): any
     local rowHeight: number = 0
 
     local function nextSlot(height: number): Vector2
-        local viewport: Vector2 = workspace.CurrentCamera
-            and (workspace.CurrentCamera :: Camera).ViewportSize
-            or Vector2.new(1280, 720)
+        local viewport: Vector2 = logicalViewport()
         if nextX + WINDOW_WIDTH > viewport.X - GRID_MARGIN then
             nextX = GRID_MARGIN
             nextY += rowHeight + GRID_GAP
@@ -8441,6 +8810,12 @@ function Module.init(context: any): any
     }
 
     local function viewport(): Vector2
+        -- The manager's logical space — window offsets under the ClickGUI's
+        -- UIScale — not the camera's raw pixels, which differ at any scale
+        -- other than 1 and put "top right" off the visible screen.
+        if type(windows.LogicalViewport) == "function" then
+            return windows.LogicalViewport()
+        end
         local camera: Camera? = workspace.CurrentCamera
         return camera and (camera :: Camera).ViewportSize or Vector2.new(1280, 720)
     end
@@ -8484,6 +8859,14 @@ function Module.init(context: any): any
             position = definition.position,
             closable = definition.closable ~= false,
         })
+        -- Every management window is placed by the same manager contract the
+        -- feature settings use; the anchor is the window this one opened
+        -- from, so Keybinds and Wurst Options land beside UI Settings
+        -- instead of on the crossed hard-coded spots the capture showed.
+        window.managementWindow = true
+        if definition.anchor ~= nil then
+            window.placementAnchor = definition.anchor
+        end
         local layout: UIListLayout = (create("UIListLayout", {
             Parent = window.body,
             Padding = UDim.new(0, WINDOW_GAP),
@@ -8521,7 +8904,13 @@ function Module.init(context: any): any
             if not window.collapsed then
                 window.root.Size = UDim2.fromOffset(width, wanted)
             end
-            if windows.ClampWindow then
+            -- The second placement, not a bare clamp: a window that chose
+            -- its spot at birth height and grew must move to a free
+            -- rectangle rather than end up over a neighbour. A hand-moved
+            -- window is only clamped back on screen.
+            if windows.ReflowWindow then
+                windows.ReflowWindow(window)
+            elseif windows.ClampWindow then
                 windows.ClampWindow(window)
             end
         end
@@ -8616,10 +9005,23 @@ function Module.init(context: any): any
 
     local function raiseOpen(record: any): ()
         record.open = true
+        -- First open runs the manager's placement — content is complete by
+        -- now, so the window is measured at its real size, anchored to the
+        -- window it opened from, and lands on a rectangle that overlaps
+        -- nothing. A saved manual position wins inside PlaceWindow itself.
+        if not record.placed then
+            record.placed = true
+            if windows.PlaceWindow then
+                windows.PlaceWindow(record.window)
+            end
+        end
         record.window:SetVisible(true)
     end
 
     -- ------------------------------------------------------------ WurstLogo
+    -- Forward-declared: the lazy windows anchor their placement to the UI
+    -- Settings window they open from, which is built below them.
+    local uiRecord: any = nil
     local logoRecord: any = nil
     local function openWurstLogo(): ()
         if logoRecord then
@@ -8629,6 +9031,7 @@ function Module.init(context: any): any
         local screen: Vector2 = viewport()
         logoRecord = configWindow("WurstLogo", "WurstLogo", {
             position = Vector2.new(screen.X - WINDOW_WIDTH * 2 - 32, 120),
+            anchor = uiRecord and uiRecord.window,
             settingsSized = true,
             -- Packed to its own content, as Wurst sizes it: the combo's
             -- longest value plus its arrow decides the width.
@@ -8674,6 +9077,7 @@ function Module.init(context: any): any
         local screen: Vector2 = viewport()
         hackListRecord = configWindow("HackList", "HackList", {
             position = Vector2.new(screen.X - WINDOW_WIDTH * 2 - 32, 180),
+            anchor = uiRecord and uiRecord.window,
             settingsSized = true,
             width = packedWidth({
                 {"Mode", "Hidden", 26},
@@ -8926,6 +9330,7 @@ function Module.init(context: any): any
         local screen: Vector2 = viewport()
         profilesRecord = configWindow("KeybindProfiles", "Keybind Profiles", {
             position = Vector2.new(screen.X - WINDOW_WIDTH * 2 - 32, 260),
+            anchor = keybindsRecord and keybindsRecord.window,
             settingsSized = true,
         })
 
@@ -9081,6 +9486,7 @@ function Module.init(context: any): any
         end
         keybindsRecord = configWindow("Keybinds", "Keybinds", {
             position = Vector2.new(screen.X - WINDOW_WIDTH * 2 - 32, 140),
+            anchor = uiRecord and uiRecord.window,
             settingsSized = true,
             width = packedWidth(keybindRows),
         })
@@ -9128,6 +9534,7 @@ function Module.init(context: any): any
         local screen: Vector2 = viewport()
         optionsRecord = configWindow("WurstOptions", "Wurst Options", {
             position = Vector2.new(screen.X - WINDOW_WIDTH * 2 - 32, 220),
+            anchor = uiRecord and uiRecord.window,
             settingsSized = true,
             width = packedWidth({
                 {"Keybinds", nil, 26},
@@ -9249,12 +9656,26 @@ function Module.init(context: any): any
         end))
 
         actionRow(optionsRecord, 4, "Reset layout", function(): ()
-            -- Saved geometry gone, category grid re-tiled now, settings
-            -- windows re-cascade on their next open.
+            -- Saved geometry gone, category grid re-tiled now. Every window
+            -- also forgets it was ever hand-moved — that is what "reset"
+            -- promises — and the settings and management windows still on
+            -- screen re-run placement immediately instead of waiting for a
+            -- reopen while standing on the freshly tiled grid.
             configData.ui.windows = {}
             queueConfigSave()
+            for _, window: any in ipairs(windows.list or {}) do
+                window.userMoved = nil
+            end
             if state.clickGui and state.clickGui.Retile then
                 state.clickGui.Retile()
+            end
+            if windows.PlaceWindow then
+                for _, window: any in ipairs(windows.list or {}) do
+                    if (window.featureSettings or window.managementWindow)
+                        and window.root.Visible then
+                        windows.PlaceWindow(window, {force = true})
+                    end
+                end
             end
             notify("Layout reset")
         end)
@@ -9290,7 +9711,7 @@ function Module.init(context: any): any
     -- category window, and building it is also what applies the stored (or
     -- default) opacity, tooltip opacity and heights at boot.
     local screen: Vector2 = viewport()
-    local uiRecord: any = configWindow("UISettings", "UI Settings", {
+    uiRecord = configWindow("UISettings", "UI Settings", {
         position = Vector2.new(screen.X - WINDOW_WIDTH - 12, 64),
         closable = false,
         settingsSized = false,
@@ -9379,6 +9800,15 @@ function Module.init(context: any): any
             record.resize()
         end
     end)
+
+    -- UI Settings is eager and its rows are all in place now: one reflow at
+    -- the real measured size keeps its top-right default when that spot is
+    -- free and moves it to a free rectangle when the category grid already
+    -- reached it. A saved manual position only gets clamped.
+    uiRecord.placed = true
+    if windows.ReflowWindow then
+        windows.ReflowWindow(uiRecord.window)
+    end
 
     -- The configuration windows follow the GUI the way category windows do,
     -- except the pinned ones, which is the whole point of pinning.
@@ -10167,29 +10597,60 @@ function Module.init(context: any): any
         ZIndex = 20,
     }) :: any) :: Frame
 
-    local versionLabel: TextLabel = (create("TextLabel", {
-        TextTruncate = Enum.TextTruncate.AtEnd,
-        Parent = versionChip,
-        Name = "Version",
-        BackgroundTransparency = 1,
-        FontFace = TITLE_FONT,
-        Position = UDim2.fromOffset(0, 0),
-        Size = UDim2.fromScale(1, 1),
-        Text = versionText,
-        TextColor3 = WURSTLOGO_TEXT,
-        TextSize = 16,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        ZIndex = 21,
-    }) :: any) :: TextLabel
+    -- The version renders on the bitmap contract; the TextLabel branch is
+    -- the harness stand-in, since the shell always publishes
+    -- state.bitmapText. Colour is captured per draw, so the WurstLogo Text
+    -- setting redraws instead of repainting a property.
+    local bitmapText: any = state.bitmapText
+    local drawsVersion: boolean = bitmapText ~= nil
+        and type(bitmapText.draw) == "function"
+    local versionColor: Color3 = WURSTLOGO_TEXT
+    local versionLabel: TextLabel? = nil
+    local function drawVersion(): ()
+        if drawsVersion then
+            bitmapText.draw(versionChip, {
+                {text = versionText, color = versionColor},
+            }, {
+                Name = "Version",
+                TextSize = 16,
+                ZIndex = 21,
+                align = "Left",
+            })
+        end
+    end
+    if drawsVersion then
+        drawVersion()
+    else
+        versionLabel = (create("TextLabel", {
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            Parent = versionChip,
+            Name = "Version",
+            BackgroundTransparency = 1,
+            FontFace = TITLE_FONT,
+            Position = UDim2.fromOffset(0, 0),
+            Size = UDim2.fromScale(1, 1),
+            Text = versionText,
+            TextColor3 = WURSTLOGO_TEXT,
+            TextSize = 16,
+            TextXAlignment = Enum.TextXAlignment.Left,
+        }) :: any) :: TextLabel
+    end
 
     -- The band's width came from a character-count estimate; the rendered
-    -- TextBounds are the truth. The moment the label really measures (and
-    -- again if the interface font swaps under it), the chip, the stripe and
-    -- the version frame shrink-wrap the actual text — the band ends exactly
+    -- truth replaces it — bitmap contract's measure() on the glyph path,
+    -- TextBounds on the stand-in. Either way the chip, the stripe and the
+    -- version frame shrink-wrap the actual text — the band ends exactly
     -- after "0.1 Beta", never a pixel into the game's own UI.
     local function fitLogoBand(): ()
-        local bounds: any = (versionLabel :: any).TextBounds
-        local measured: number = bounds and tonumber(bounds.X) or 0
+        local measured: number = 0
+        if drawsVersion and type(bitmapText.measure) == "function" then
+            measured = tonumber(bitmapText.measure(
+                {{text = versionText}}, 16
+            )) or 0
+        elseif versionLabel then
+            local bounds: any = (versionLabel :: any).TextBounds
+            measured = bounds and tonumber(bounds.X) or 0
+        end
         if measured <= 0 then
             return
         end
@@ -10199,10 +10660,18 @@ function Module.init(context: any): any
         chip.Size = UDim2.fromOffset(fittedChip, LOGO_HEIGHT + 8)
         logoStripe.Size = UDim2.fromOffset(fittedChip, 22)
     end
-    table.insert(
-        Furniture.connections,
-        versionLabel:GetPropertyChangedSignal("TextBounds"):Connect(fitLogoBand)
-    )
+    if versionLabel then
+        table.insert(
+            Furniture.connections,
+            (versionLabel :: TextLabel):GetPropertyChangedSignal("TextBounds")
+                :Connect(fitLogoBand)
+        )
+    end
+    if drawsVersion and type(bitmapText.onReady) == "table" then
+        -- The atlas advance (11) is narrower than the packing estimate
+        -- (12): when the real glyphs land, the band re-fits to them.
+        table.insert(bitmapText.onReady, fitLogoBand)
+    end
     task.defer(fitLogoBand)
 
     if type(state.applyAssetImage) == "function" then
@@ -10226,7 +10695,12 @@ function Module.init(context: any): any
         logoStripe.BackgroundColor3 = color
     end
     local function setLogoTextColor(color: Color3): ()
-        versionLabel.TextColor3 = color
+        versionColor = color
+        if drawsVersion then
+            drawVersion()
+        elseif versionLabel then
+            (versionLabel :: TextLabel).TextColor3 = color
+        end
         logoFallback.TextColor3 = color
     end
     local function setLogoVisibility(value: string): ()
@@ -10469,10 +10943,20 @@ function Module.init(context: any): any
         if hudMode == "Hidden" then
             entries = {}
         elseif #entries > 0 then
-            local camera: Camera? = workspace.CurrentCamera
-            local screenHeight: number = camera
-                and (camera :: Camera).ViewportSize.Y
-                or 720
+            -- Fit is judged in the HackList's own space: the list draws in
+            -- logical pixels under the ClickGUI's UIScale, so the screen
+            -- height must come through the same conversion or Auto flips to
+            -- the count at the wrong number of rows.
+            local screenHeight: number
+            local manager: any = state.windows
+            if manager and type(manager.LogicalViewport) == "function" then
+                screenHeight = manager.LogicalViewport().Y
+            else
+                local camera: Camera? = workspace.CurrentCamera
+                screenHeight = camera
+                    and (camera :: Camera).ViewportSize.Y
+                    or 720
+            end
             local available: number = screenHeight - HACKLIST_TOP - 12
             local overflows: boolean =
                 #entries * (HACKLIST_LINE_HEIGHT + 1) > available

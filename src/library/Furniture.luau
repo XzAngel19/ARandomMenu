@@ -195,29 +195,60 @@ function Module.init(context: any): any
         ZIndex = 20,
     }) :: any) :: Frame
 
-    local versionLabel: TextLabel = (create("TextLabel", {
-        TextTruncate = Enum.TextTruncate.AtEnd,
-        Parent = versionChip,
-        Name = "Version",
-        BackgroundTransparency = 1,
-        FontFace = TITLE_FONT,
-        Position = UDim2.fromOffset(0, 0),
-        Size = UDim2.fromScale(1, 1),
-        Text = versionText,
-        TextColor3 = WURSTLOGO_TEXT,
-        TextSize = 16,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        ZIndex = 21,
-    }) :: any) :: TextLabel
+    -- The version renders on the bitmap contract; the TextLabel branch is
+    -- the harness stand-in, since the shell always publishes
+    -- state.bitmapText. Colour is captured per draw, so the WurstLogo Text
+    -- setting redraws instead of repainting a property.
+    local bitmapText: any = state.bitmapText
+    local drawsVersion: boolean = bitmapText ~= nil
+        and type(bitmapText.draw) == "function"
+    local versionColor: Color3 = WURSTLOGO_TEXT
+    local versionLabel: TextLabel? = nil
+    local function drawVersion(): ()
+        if drawsVersion then
+            bitmapText.draw(versionChip, {
+                {text = versionText, color = versionColor},
+            }, {
+                Name = "Version",
+                TextSize = 16,
+                ZIndex = 21,
+                align = "Left",
+            })
+        end
+    end
+    if drawsVersion then
+        drawVersion()
+    else
+        versionLabel = (create("TextLabel", {
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            Parent = versionChip,
+            Name = "Version",
+            BackgroundTransparency = 1,
+            FontFace = TITLE_FONT,
+            Position = UDim2.fromOffset(0, 0),
+            Size = UDim2.fromScale(1, 1),
+            Text = versionText,
+            TextColor3 = WURSTLOGO_TEXT,
+            TextSize = 16,
+            TextXAlignment = Enum.TextXAlignment.Left,
+        }) :: any) :: TextLabel
+    end
 
     -- The band's width came from a character-count estimate; the rendered
-    -- TextBounds are the truth. The moment the label really measures (and
-    -- again if the interface font swaps under it), the chip, the stripe and
-    -- the version frame shrink-wrap the actual text — the band ends exactly
+    -- truth replaces it — bitmap contract's measure() on the glyph path,
+    -- TextBounds on the stand-in. Either way the chip, the stripe and the
+    -- version frame shrink-wrap the actual text — the band ends exactly
     -- after "0.1 Beta", never a pixel into the game's own UI.
     local function fitLogoBand(): ()
-        local bounds: any = (versionLabel :: any).TextBounds
-        local measured: number = bounds and tonumber(bounds.X) or 0
+        local measured: number = 0
+        if drawsVersion and type(bitmapText.measure) == "function" then
+            measured = tonumber(bitmapText.measure(
+                {{text = versionText}}, 16
+            )) or 0
+        elseif versionLabel then
+            local bounds: any = (versionLabel :: any).TextBounds
+            measured = bounds and tonumber(bounds.X) or 0
+        end
         if measured <= 0 then
             return
         end
@@ -227,10 +258,18 @@ function Module.init(context: any): any
         chip.Size = UDim2.fromOffset(fittedChip, LOGO_HEIGHT + 8)
         logoStripe.Size = UDim2.fromOffset(fittedChip, 22)
     end
-    table.insert(
-        Furniture.connections,
-        versionLabel:GetPropertyChangedSignal("TextBounds"):Connect(fitLogoBand)
-    )
+    if versionLabel then
+        table.insert(
+            Furniture.connections,
+            (versionLabel :: TextLabel):GetPropertyChangedSignal("TextBounds")
+                :Connect(fitLogoBand)
+        )
+    end
+    if drawsVersion and type(bitmapText.onReady) == "table" then
+        -- The atlas advance (11) is narrower than the packing estimate
+        -- (12): when the real glyphs land, the band re-fits to them.
+        table.insert(bitmapText.onReady, fitLogoBand)
+    end
     task.defer(fitLogoBand)
 
     if type(state.applyAssetImage) == "function" then
@@ -254,7 +293,12 @@ function Module.init(context: any): any
         logoStripe.BackgroundColor3 = color
     end
     local function setLogoTextColor(color: Color3): ()
-        versionLabel.TextColor3 = color
+        versionColor = color
+        if drawsVersion then
+            drawVersion()
+        elseif versionLabel then
+            (versionLabel :: TextLabel).TextColor3 = color
+        end
         logoFallback.TextColor3 = color
     end
     local function setLogoVisibility(value: string): ()
@@ -497,10 +541,20 @@ function Module.init(context: any): any
         if hudMode == "Hidden" then
             entries = {}
         elseif #entries > 0 then
-            local camera: Camera? = workspace.CurrentCamera
-            local screenHeight: number = camera
-                and (camera :: Camera).ViewportSize.Y
-                or 720
+            -- Fit is judged in the HackList's own space: the list draws in
+            -- logical pixels under the ClickGUI's UIScale, so the screen
+            -- height must come through the same conversion or Auto flips to
+            -- the count at the wrong number of rows.
+            local screenHeight: number
+            local manager: any = state.windows
+            if manager and type(manager.LogicalViewport) == "function" then
+                screenHeight = manager.LogicalViewport().Y
+            else
+                local camera: Camera? = workspace.CurrentCamera
+                screenHeight = camera
+                    and (camera :: Camera).ViewportSize.Y
+                    or 720
+            end
             local available: number = screenHeight - HACKLIST_TOP - 12
             local overflows: boolean =
                 #entries * (HACKLIST_LINE_HEIGHT + 1) > available
