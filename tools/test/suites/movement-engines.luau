@@ -66,7 +66,6 @@ return function(ctx: any): ()
         "Float",
         "Horizontal speed",
         "Vertical speed",
-        "Advanced settings",
         "Response multiplier",
         "Burst interval (s)",
         "Wall check",
@@ -78,15 +77,11 @@ return function(ctx: any): ()
         check("option: " .. name, fly.Options[name] ~= nil)
     end
 
-    check("the advanced block starts folded",
-        rows("Response multiplier") and rows("Burst interval (s)")
-            and rows("Wall check") and rows("PlatformStand")
-            and rows("Face camera") and rows("Up key") and rows("Down key"),
-        "a gated row is visible before Advanced settings is on")
-
-    ctx.setOption(fly, "Advanced settings", true)
-    check("the switch reveals the block it labels",
-        not rows("Burst interval (s)") and not rows("Wall check"))
+    check("presentation-only Advanced settings is gone",
+        fly.Options["Advanced settings"] == nil)
+    check("ordinary controls are available without an extra gate",
+        not rows("Burst interval (s)") and not rows("Wall check")
+            and not rows("PlatformStand") and not rows("Up key"))
     ctx.setOption(fly, "Method", "Impulse")
     check("response stays hidden for an engine that does not smooth",
         rows("Response multiplier"),
@@ -94,9 +89,6 @@ return function(ctx: any): ()
     ctx.setOption(fly, "Method", "Velocity")
     check("response appears for the engines that track it",
         not rows("Response multiplier"))
-    ctx.setOption(fly, "Advanced settings", false)
-    check("switching it off folds the whole block again",
-        rows("Response multiplier") and rows("Burst interval (s)"))
 
     -- CFrame steering: the one engine whose loop needs neither Lerp nor
     -- ApplyImpulse, which the stand-in does not model.

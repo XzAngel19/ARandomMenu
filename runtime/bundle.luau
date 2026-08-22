@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "a6249dd714981d8f",
+    stamp = "d62eb6aa8502794b",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -7855,6 +7855,14 @@ function Module.init(context: any): any
         }
         ClickGui.categories[name] = record
         table.insert(ClickGui.order, name)
+        table.sort(ClickGui.order, function(left: string, right: string): boolean
+            local leftRank: number = table.find(CATEGORY_ORDER, left) or math.huge
+            local rightRank: number = table.find(CATEGORY_ORDER, right) or math.huge
+            if leftRank == rightRank then
+                return left < right
+            end
+            return leftRank < rightRank
+        end)
 
         -- The window is exactly as tall as what is in it, until it reaches the
         -- limit and the body scrolls. A window padded out to a fixed height is
@@ -7917,6 +7925,17 @@ function Module.init(context: any): any
         (row :: Frame).Size = UDim2.new(1, 0, 0, feature.collapsedHeight or 22)
         if record.resize then
             (record.resize :: () -> ())()
+        end
+        local userMoved: boolean = false
+        for _, category: string in ipairs(ClickGui.order) do
+            local candidate: CategoryWindow? = ClickGui.categories[category]
+            if candidate and candidate.window.userMoved == true then
+                userMoved = true
+                break
+            end
+        end
+        if not userMoved and type(ClickGui.Retile) == "function" then
+            ClickGui.Retile()
         end
     end
 
@@ -15430,24 +15449,18 @@ function Module.init(context: Runtime): any
             .. "not a person, and a server that logs click rates knows it.",
     })
 
-    -- The advanced block, declared. Every row below says it belongs to the
-    -- "Show advanced" switch instead of the switch keeping a list of them,
-    -- which is one place to change instead of three.
-    local advanced: any = {Option = "Show advanced"}
     aura:CreateDropdown({
         Name = "Activation",
-        Show = advanced,
         List = {"Always", "Hold key"},
         Index = 1,
     })
     aura:CreateBind({
         Name = "Hold key",
-        Show = {advanced, {Option = "Activation", Values = {"Hold key"}}},
+        Show = {Option = "Activation", Values = {"Hold key"}},
         Default = Enum.KeyCode.Unknown,
     })
     aura:CreateSlider({
         Name = "Attack range",
-        Show = advanced,
         Min = 5,
         Max = 40,
         Default = 14,
@@ -15456,7 +15469,6 @@ function Module.init(context: Runtime): any
     })
     aura:CreateSlider({
         Name = "Field of view",
-        Show = advanced,
         Min = 30,
         Max = 360,
         Default = 220,
@@ -15464,7 +15476,6 @@ function Module.init(context: Runtime): any
     })
     aura:CreateDropdown({
         Name = "Rotation",
-        Show = advanced,
         List = {"Off", "Silent", "Face"},
         Index = 2,
         Tooltip = "Silent turns you for the swing only and puts you back; "
@@ -15472,7 +15483,6 @@ function Module.init(context: Runtime): any
     })
     aura:CreateSlider({
         Name = "Hits per swing",
-        Show = advanced,
         Min = 1,
         Max = 8,
         Default = 1,
@@ -15481,7 +15491,6 @@ function Module.init(context: Runtime): any
     })
     aura:CreateToggle({
         Name = "Hit through walls",
-        Show = advanced,
         Default = true,
         Tooltip = "Fire contact damage even when the target is behind "
             .. "geometry. Independent of the wall check, which decides "
@@ -15489,32 +15498,27 @@ function Module.init(context: Runtime): any
     })
     aura:CreateToggle({
         Name = "Contact damage",
-        Show = advanced,
         Default = true,
         Tooltip = "Also fire the weapon's touch events. Needed by most melee "
             .. "weapons; requires firetouchinterest.",
     })
     aura:CreateToggle({
         Name = "Wall check",
-        Show = advanced,
         Default = false,
         Tooltip = "Off by default: the aura hits through walls and floors "
             .. "until you ask it not to.",
     })
     aura:CreateToggle({
         Name = "Team check",
-        Show = advanced,
         Default = false,
     })
     aura:CreateToggle({
         Name = "Require tool",
-        Show = advanced,
         Default = false,
         Tooltip = "Do nothing while your hands are empty.",
     })
     aura:CreateToggle({
         Name = "Auto equip",
-        Show = advanced,
         Default = false,
         Tooltip = "Pull the weapon out of the backpack when empty-handed. Off "
             .. "by default: most games this module helps in do not need "
@@ -15527,12 +15531,10 @@ function Module.init(context: Runtime): any
     })
     aura:CreateToggle({
         Name = "Highlight targets",
-        Show = advanced,
         Default = false,
     })
     aura:CreateToggle({
         Name = "Show target",
-        Show = advanced,
         Default = false,
         Tooltip = "Corner readout with the current target's avatar, health "
             .. "and distance.",
@@ -15544,14 +15546,8 @@ function Module.init(context: Runtime): any
     })
     aura:CreateColor({
         Name = "Highlight colour",
-        Show = {advanced, {Option = "Highlight targets"}},
+        Show = {Option = "Highlight targets"},
         Default = Color3.fromRGB(235, 110, 110),
-    })
-
-    aura:CreateToggle({
-        Name = "Show advanced",
-        Default = false,
-        Tooltip = "Everything above works on its own; this reveals the rest.",
     })
 
     aura:CreateNote(
@@ -19392,12 +19388,9 @@ function Module.init(context: Runtime): any
         end,
         Tooltip = "Studs per second while rising or descending.",
     })
-    -- The advanced block, declared: every row below says it belongs to the
-    -- "Advanced settings" switch instead of the switch keeping a list of them.
-    local advanced: any = {Option = "Advanced settings"}
     fly:CreateSlider({
         Name = "Response multiplier",
-        Show = {advanced, {Option = "Method", Values = {"Velocity", "Constraint", "Pulse"}}},
+        Show = {Option = "Method", Values = {"Velocity", "Constraint", "Pulse"}},
         Min = 0.5,
         Max = 2,
         Default = flySettings.response,
@@ -19408,7 +19401,6 @@ function Module.init(context: Runtime): any
     })
     fly:CreateSlider({
         Name = "Burst interval (s)",
-        Show = advanced,
         Min = 0.05,
         Max = 1,
         Default = flySettings.burstInterval,
@@ -19420,7 +19412,6 @@ function Module.init(context: Runtime): any
     })
     fly:CreateToggle({
         Name = "Wall check",
-        Show = advanced,
         Default = flySettings.wallCheck,
         Function = function(value: boolean): ()
             flySettings.wallCheck = value
@@ -19429,7 +19420,6 @@ function Module.init(context: Runtime): any
     })
     fly:CreateToggle({
         Name = "PlatformStand",
-        Show = advanced,
         Default = flySettings.platformStand,
         Function = function(value: boolean): ()
             flySettings.platformStand = value
@@ -19438,7 +19428,6 @@ function Module.init(context: Runtime): any
     })
     fly:CreateToggle({
         Name = "Face camera",
-        Show = advanced,
         Default = flySettings.faceCamera,
         Function = function(value: boolean): ()
             flySettings.faceCamera = value
@@ -19447,7 +19436,6 @@ function Module.init(context: Runtime): any
     })
     local upKey: any = fly:CreateBind({
         Name = "Up key",
-        Show = advanced,
         Default = flySettings.upKey,
         Function = function(value: Enum.KeyCode): ()
             flySettings.upKey = value
@@ -19456,7 +19444,6 @@ function Module.init(context: Runtime): any
     })
     local downKey: any = fly:CreateBind({
         Name = "Down key",
-        Show = advanced,
         Default = flySettings.downKey,
         Function = function(value: Enum.KeyCode): ()
             flySettings.downKey = value
@@ -19464,11 +19451,6 @@ function Module.init(context: Runtime): any
         Tooltip = "Hold to lose altitude.",
     })
 
-    fly:CreateToggle({
-        Name = "Advanced settings",
-        Default = false,
-        Tooltip = "Everything above works on its own; this reveals the rest.",
-    })
 
     -- Climbing and descending are holds on a keyboard, so they are holds on a
     -- phone too: keep a finger on UP to rise, lift it to level off. They used to

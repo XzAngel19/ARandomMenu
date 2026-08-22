@@ -164,9 +164,11 @@ return function(ctx: any): ()
         aura.Options["Highlight colour"] ~= nil
             and aura.Options["Attack colour"] == nil
             and aura.Options["Reach colour"] == nil)
-    check("advanced rows start hidden",
+    check("presentation-only Show advanced is gone",
+        aura.Options["Show advanced"] == nil)
+    check("real combat controls stay directly available",
         aura.Options["Rotation"].Object ~= nil
-            and aura.Options["Rotation"].Object.Parent.Visible == false)
+            and aura.Options["Rotation"].Object.Parent.Visible == true)
 
     -- The enemy sits 30 studs away; bring them into reach.
     enemy.Character:FindFirstChild("HumanoidRootPart").Position = world.vector3(0, 0, -8)

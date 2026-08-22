@@ -101,19 +101,33 @@ return function(ctx: any): ()
     )
     check("no category overlaps the logo", overlapLogo == nil, overlapLogo)
 
-    -- Official tile order is CATEGORY_ORDER in ClickGui. The live
-    -- ClickGui.order today follows first-module-load (libraries start
-    -- before modules, so the official pre-pass sees an empty list).
-    -- Hold the source contract; flipping order-on-screen waits on A
-    -- running that pass after modules exist.
-    check(
-        "ClickGui declares official CATEGORY_ORDER Combat, Render, …",
-        string.find(ctx.bundleSource or "", '"Combat"', 1, true) ~= nil
-            and string.find(ctx.bundleSource or "", "CATEGORY_ORDER", 1, true) ~= nil
-    )
+    local officialOrder: {[string]: number} = {
+        Combat = 1, Render = 2, Blocks = 3, Movement = 4,
+        Chat = 5, Fun = 6, Items = 7, Other = 8,
+    }
+    local previousRank: number = 0
+    local orderDrift: string? = nil
+    for _, category: string in ipairs(state.clickGui and state.clickGui.order or {}) do
+        local rank: number = officialOrder[category] or math.huge
+        if rank <= previousRank then
+            orderDrift = category
+        end
+        previousRank = rank
+    end
+    check("loaded categories follow CATEGORY_ORDER", orderDrift == nil, orderDrift)
     if state.clickGui and type(state.clickGui.Retile) == "function" then
         state.clickGui.Retile()
         check("Reset layout / Retile is published", true)
+        previousRank = 0
+        orderDrift = nil
+        for _, category: string in ipairs(state.clickGui.order) do
+            local rank: number = officialOrder[category] or math.huge
+            if rank <= previousRank then
+                orderDrift = category
+            end
+            previousRank = rank
+        end
+        check("Reset layout preserves CATEGORY_ORDER", orderDrift == nil, orderDrift)
     end
 
     -- Wrap: a phone-width viewport must start a second row.

@@ -234,6 +234,14 @@ function Module.init(context: any): any
         }
         ClickGui.categories[name] = record
         table.insert(ClickGui.order, name)
+        table.sort(ClickGui.order, function(left: string, right: string): boolean
+            local leftRank: number = table.find(CATEGORY_ORDER, left) or math.huge
+            local rightRank: number = table.find(CATEGORY_ORDER, right) or math.huge
+            if leftRank == rightRank then
+                return left < right
+            end
+            return leftRank < rightRank
+        end)
 
         -- The window is exactly as tall as what is in it, until it reaches the
         -- limit and the body scrolls. A window padded out to a fixed height is
@@ -296,6 +304,17 @@ function Module.init(context: any): any
         (row :: Frame).Size = UDim2.new(1, 0, 0, feature.collapsedHeight or 22)
         if record.resize then
             (record.resize :: () -> ())()
+        end
+        local userMoved: boolean = false
+        for _, category: string in ipairs(ClickGui.order) do
+            local candidate: CategoryWindow? = ClickGui.categories[category]
+            if candidate and candidate.window.userMoved == true then
+                userMoved = true
+                break
+            end
+        end
+        if not userMoved and type(ClickGui.Retile) == "function" then
+            ClickGui.Retile()
         end
     end
 

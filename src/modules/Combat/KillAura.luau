@@ -681,24 +681,18 @@ function Module.init(context: Runtime): any
             .. "not a person, and a server that logs click rates knows it.",
     })
 
-    -- The advanced block, declared. Every row below says it belongs to the
-    -- "Show advanced" switch instead of the switch keeping a list of them,
-    -- which is one place to change instead of three.
-    local advanced: any = {Option = "Show advanced"}
     aura:CreateDropdown({
         Name = "Activation",
-        Show = advanced,
         List = {"Always", "Hold key"},
         Index = 1,
     })
     aura:CreateBind({
         Name = "Hold key",
-        Show = {advanced, {Option = "Activation", Values = {"Hold key"}}},
+        Show = {Option = "Activation", Values = {"Hold key"}},
         Default = Enum.KeyCode.Unknown,
     })
     aura:CreateSlider({
         Name = "Attack range",
-        Show = advanced,
         Min = 5,
         Max = 40,
         Default = 14,
@@ -707,7 +701,6 @@ function Module.init(context: Runtime): any
     })
     aura:CreateSlider({
         Name = "Field of view",
-        Show = advanced,
         Min = 30,
         Max = 360,
         Default = 220,
@@ -715,7 +708,6 @@ function Module.init(context: Runtime): any
     })
     aura:CreateDropdown({
         Name = "Rotation",
-        Show = advanced,
         List = {"Off", "Silent", "Face"},
         Index = 2,
         Tooltip = "Silent turns you for the swing only and puts you back; "
@@ -723,7 +715,6 @@ function Module.init(context: Runtime): any
     })
     aura:CreateSlider({
         Name = "Hits per swing",
-        Show = advanced,
         Min = 1,
         Max = 8,
         Default = 1,
@@ -732,7 +723,6 @@ function Module.init(context: Runtime): any
     })
     aura:CreateToggle({
         Name = "Hit through walls",
-        Show = advanced,
         Default = true,
         Tooltip = "Fire contact damage even when the target is behind "
             .. "geometry. Independent of the wall check, which decides "
@@ -740,32 +730,27 @@ function Module.init(context: Runtime): any
     })
     aura:CreateToggle({
         Name = "Contact damage",
-        Show = advanced,
         Default = true,
         Tooltip = "Also fire the weapon's touch events. Needed by most melee "
             .. "weapons; requires firetouchinterest.",
     })
     aura:CreateToggle({
         Name = "Wall check",
-        Show = advanced,
         Default = false,
         Tooltip = "Off by default: the aura hits through walls and floors "
             .. "until you ask it not to.",
     })
     aura:CreateToggle({
         Name = "Team check",
-        Show = advanced,
         Default = false,
     })
     aura:CreateToggle({
         Name = "Require tool",
-        Show = advanced,
         Default = false,
         Tooltip = "Do nothing while your hands are empty.",
     })
     aura:CreateToggle({
         Name = "Auto equip",
-        Show = advanced,
         Default = false,
         Tooltip = "Pull the weapon out of the backpack when empty-handed. Off "
             .. "by default: most games this module helps in do not need "
@@ -778,12 +763,10 @@ function Module.init(context: Runtime): any
     })
     aura:CreateToggle({
         Name = "Highlight targets",
-        Show = advanced,
         Default = false,
     })
     aura:CreateToggle({
         Name = "Show target",
-        Show = advanced,
         Default = false,
         Tooltip = "Corner readout with the current target's avatar, health "
             .. "and distance.",
@@ -795,14 +778,8 @@ function Module.init(context: Runtime): any
     })
     aura:CreateColor({
         Name = "Highlight colour",
-        Show = {advanced, {Option = "Highlight targets"}},
+        Show = {Option = "Highlight targets"},
         Default = Color3.fromRGB(235, 110, 110),
-    })
-
-    aura:CreateToggle({
-        Name = "Show advanced",
-        Default = false,
-        Tooltip = "Everything above works on its own; this reveals the rest.",
     })
 
     aura:CreateNote(

@@ -648,12 +648,9 @@ function Module.init(context: Runtime): any
         end,
         Tooltip = "Studs per second while rising or descending.",
     })
-    -- The advanced block, declared: every row below says it belongs to the
-    -- "Advanced settings" switch instead of the switch keeping a list of them.
-    local advanced: any = {Option = "Advanced settings"}
     fly:CreateSlider({
         Name = "Response multiplier",
-        Show = {advanced, {Option = "Method", Values = {"Velocity", "Constraint", "Pulse"}}},
+        Show = {Option = "Method", Values = {"Velocity", "Constraint", "Pulse"}},
         Min = 0.5,
         Max = 2,
         Default = flySettings.response,
@@ -664,7 +661,6 @@ function Module.init(context: Runtime): any
     })
     fly:CreateSlider({
         Name = "Burst interval (s)",
-        Show = advanced,
         Min = 0.05,
         Max = 1,
         Default = flySettings.burstInterval,
@@ -676,7 +672,6 @@ function Module.init(context: Runtime): any
     })
     fly:CreateToggle({
         Name = "Wall check",
-        Show = advanced,
         Default = flySettings.wallCheck,
         Function = function(value: boolean): ()
             flySettings.wallCheck = value
@@ -685,7 +680,6 @@ function Module.init(context: Runtime): any
     })
     fly:CreateToggle({
         Name = "PlatformStand",
-        Show = advanced,
         Default = flySettings.platformStand,
         Function = function(value: boolean): ()
             flySettings.platformStand = value
@@ -694,7 +688,6 @@ function Module.init(context: Runtime): any
     })
     fly:CreateToggle({
         Name = "Face camera",
-        Show = advanced,
         Default = flySettings.faceCamera,
         Function = function(value: boolean): ()
             flySettings.faceCamera = value
@@ -703,7 +696,6 @@ function Module.init(context: Runtime): any
     })
     local upKey: any = fly:CreateBind({
         Name = "Up key",
-        Show = advanced,
         Default = flySettings.upKey,
         Function = function(value: Enum.KeyCode): ()
             flySettings.upKey = value
@@ -712,7 +704,6 @@ function Module.init(context: Runtime): any
     })
     local downKey: any = fly:CreateBind({
         Name = "Down key",
-        Show = advanced,
         Default = flySettings.downKey,
         Function = function(value: Enum.KeyCode): ()
             flySettings.downKey = value
@@ -720,11 +711,6 @@ function Module.init(context: Runtime): any
         Tooltip = "Hold to lose altitude.",
     })
 
-    fly:CreateToggle({
-        Name = "Advanced settings",
-        Default = false,
-        Tooltip = "Everything above works on its own; this reveals the rest.",
-    })
 
     -- Climbing and descending are holds on a keyboard, so they are holds on a
     -- phone too: keep a finger on UP to rise, lift it to level off. They used to
