@@ -1869,6 +1869,15 @@ state.bitmapText = {
     -- advance is 11 (Monocraft's, below); packing keeps the rounder 12 so a
     -- window is never a pixel too narrow for the estimate that sized it.
     advance = 12,
+    -- Minecraft's font ascent is 7 of its 8 logical rows: 14 at the GUI
+    -- scale 2 the interface is drawn at. Surfaces mixing glyph sizes align
+    -- to this, scaled by TextSize / 16.
+    ascent = 14,
+    -- What the atlas actually holds. Monocraft is the committed OFL
+    -- fallback; the exact Minecraft 1.18.1 providers come through
+    -- tools/fetch_mc_font.py once the provenance gate blesses shipping
+    -- them. While this says fallback, nothing may claim "Minecraft exact".
+    source = "monocraft-fallback",
     -- The rasterised truth: Monocraft baked into a fixed-cell grid by
     -- tools/make_font_atlas.py. These numbers are that tool's output and
     -- change only when the atlas is regenerated.
@@ -1882,8 +1891,27 @@ state.bitmapText = {
         cellWidth = 11,
         cellHeight = 17,
         advance = 11,
+        -- Codepoints outside the grid render as this cell ("?"), the way
+        -- Minecraft substitutes its missing glyph instead of collapsing
+        -- the advance and shifting everything after it.
+        fallbackGlyph = 63,
     },
     onReady = {} :: {() -> ()},
+    -- The renderer's own meter, because "pooling works" is a claim and
+    -- these are the numbers behind it: draws that ran, draws skipped by
+    -- signature, glyphs created versus reused, and the cost of the last
+    -- draw in milliseconds.
+    stats = {
+        draws = 0,
+        skipped = 0,
+        glyphsCreated = 0,
+        glyphsReused = 0,
+        lastDrawMs = 0,
+    },
+    -- Live draw records, weak-keyed by holder: what was asked for, so the
+    -- atlas resolving re-renders every surface without any of them
+    -- registering by hand.
+    _live = setmetatable({}, {__mode = "k"}) :: any,
     width = function(text: any): number
         return #tostring(text) * 12
     end,
@@ -1901,84 +1929,223 @@ state.bitmapText = {
     end,
 }
 
--- One line of glyphs, drawn from the atlas when it has resolved and as a
--- Monocraft TextLabel until then (or forever, on an executor without
--- getcustomasset — the fallback is the same text, never a blank). Segments
--- carry their own colours, which is how the HackList keeps its muted
--- bracket without RichText. Returns the holder frame; drawing again into
--- the same parent under the same name replaces the previous line.
+-- One codepoint at a time, UTF-8 when the text is valid UTF-8 and raw
+-- bytes when it is not — a fallback glyph per byte beats an error, and
+-- executors feed this strings from anywhere.
+state.bitmapText.eachCode = function(text: string, visit: (number) -> ()): ()
+    if utf8.len(text) ~= nil then
+        for _, code: number in utf8.codes(text) do
+            visit(code)
+        end
+    else
+        for position: number = 1, #text do
+            visit(string.byte(text, position) or 63)
+        end
+    end
+end
+
+-- The width draw() will actually occupy: atlas advances when the atlas is
+-- live, the packing estimate until then. Newlines reset the caret; the
+-- widest line wins.
+state.bitmapText.measure = function(segments: {any}, textSize: number?): number
+    local contract: any = state.bitmapText
+    local scale: number = (tonumber(textSize) or 16) / contract.size
+    local advance: number = (contract.atlas.ready
+        and contract.atlas.advance
+        or contract.advance) * scale
+    local widest: number = 0
+    local x: number = 0
+    for _, segment: any in ipairs(segments) do
+        contract.eachCode(tostring(segment.text or ""), function(code: number): ()
+            if code == 10 then
+                x = 0
+            else
+                x += advance
+                widest = math.max(widest, x)
+            end
+        end)
+    end
+    return widest
+end
+
+-- Text on the Wurst contract. Segments carry their own colours (the
+-- HackList's muted bracket without RichText); options:
+--
+--   Name       replaces a previous draw of the same name in the parent
+--   TextSize   16 default (the 8-logical Minecraft size at GUI scale 2)
+--   ZIndex     base depth; shadow sits at +1, ink at +2
+--   align      "Left" | "Center" | "Right" — where the holder anchors
+--   shadow     Minecraft's drop shadow: same glyphs at +2,+2 in the text
+--              colour quartered, under the ink
+--   maxWidth   clip: glyphs past it are not drawn, the holder clips
+--
+-- Glyph ImageLabels are pooled per holder: a redraw reuses them in place,
+-- resizes the pool by the difference, and a draw whose signature has not
+-- changed does nothing at all. Nothing here recreates per frame.
 state.bitmapText.draw = function(
     parent: Instance,
     segments: {any},
     options: any
 ): Frame
+    local startedAt: number = os.clock()
+    local contract: any = state.bitmapText
     local resolvedOptions: any = options or {}
     local name: string = tostring(resolvedOptions.Name or "BitmapText")
-    local previous: Instance? = (parent :: any):FindFirstChild(name)
-    if previous then
-        previous:Destroy()
-    end
     local textSize: number = tonumber(resolvedOptions.TextSize) or 16
     local zIndex: number = tonumber(resolvedOptions.ZIndex) or 20
-    local alignRight: boolean = resolvedOptions.align == "Right"
-    local atlas: any = state.bitmapText.atlas
+    local align: string = tostring(resolvedOptions.align or "Left")
+    local shadow: boolean = resolvedOptions.shadow == true
+    local maxWidth: number? = tonumber(resolvedOptions.maxWidth)
+    local atlas: any = contract.atlas
 
-    local holder: Frame = (create("Frame", {
-        Parent = parent,
-        Name = name,
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        AnchorPoint = alignRight and Vector2.new(1, 0.5) or Vector2.new(0, 0.5),
-        Position = alignRight
-            and UDim2.new(1, 0, 0.5, 0)
-            or UDim2.new(0, 0, 0.5, 0),
-        ZIndex = zIndex,
-    }) :: any) :: Frame
+    -- The signature is the draw: same text, colours, size, mode and
+    -- layout means the pixels are already right and the call costs a
+    -- string compare.
+    local parts: {string} = {
+        tostring(textSize), align, tostring(shadow),
+        tostring(maxWidth), tostring(atlas.ready),
+    }
+    for _, segment: any in ipairs(segments) do
+        local color: Color3 = segment.color or Theme.text
+        table.insert(parts, tostring(segment.text or ""))
+        table.insert(parts, string.format(
+            "%02X%02X%02X",
+            math.floor(color.R * 255 + 0.5),
+            math.floor(color.G * 255 + 0.5),
+            math.floor(color.B * 255 + 0.5)
+        ))
+    end
+    local signature: string = table.concat(parts, "\1")
 
+    local holder: any = (parent :: any):FindFirstChild(name)
+    local record: any = holder and contract._live[holder]
+    if holder and not record then
+        -- Same name, not ours — an old TextLabel a migration replaced.
+        holder:Destroy()
+        holder = nil
+    end
+    if not holder then
+        holder = create("Frame", {
+            Parent = parent,
+            Name = name,
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+        })
+        record = {glyphs = {} :: {ImageLabel}, fallback = nil :: TextLabel?}
+        contract._live[holder] = record
+    end
+    record.request = {parent = parent, segments = segments, options = resolvedOptions}
+
+    holder.ZIndex = zIndex
+    if resolvedOptions.AnchorPoint or resolvedOptions.Position then
+        holder.AnchorPoint = resolvedOptions.AnchorPoint or Vector2.new(0, 0.5)
+        holder.Position = resolvedOptions.Position or UDim2.new(0, 0, 0.5, 0)
+    elseif align == "Right" then
+        holder.AnchorPoint = Vector2.new(1, 0.5)
+        holder.Position = UDim2.new(1, 0, 0.5, 0)
+    elseif align == "Center" then
+        holder.AnchorPoint = Vector2.new(0.5, 0.5)
+        holder.Position = UDim2.new(0.5, 0, 0.5, 0)
+    else
+        holder.AnchorPoint = Vector2.new(0, 0.5)
+        holder.Position = UDim2.new(0, 0, 0.5, 0)
+    end
+
+    if record.signature == signature then
+        contract.stats.skipped += 1
+        return holder :: Frame
+    end
+    record.signature = signature
+
+    local used: number = 0
+    local function nextGlyph(): ImageLabel
+        used += 1
+        local glyph: ImageLabel? = record.glyphs[used]
+        if glyph then
+            contract.stats.glyphsReused += 1
+        else
+            glyph = (create("ImageLabel", {
+                Parent = holder,
+                Name = "G",
+                BackgroundTransparency = 1,
+                BorderSizePixel = 0,
+            }) :: any) :: ImageLabel
+            -- Pixelated, when the engine offers it: a pixel font
+            -- bilinear-blurred is worse than no atlas at all.
+            pcall(function(): ()
+                (glyph :: any).ResampleMode = Enum.ResamplerMode.Pixelated
+            end)
+            record.glyphs[used] = glyph
+            contract.stats.glyphsCreated += 1
+        end
+        (glyph :: ImageLabel).Visible = true
+        return glyph :: ImageLabel
+    end
+
+    local width: number = 0
+    local height: number = 0
     if atlas.ready and atlas.image then
+        if record.fallback then
+            (record.fallback :: TextLabel).Visible = false
+        end
         local scale: number = textSize / atlas.size
         local advance: number = atlas.advance * scale
         local glyphWidth: number = atlas.cellWidth * scale
         local glyphHeight: number = atlas.cellHeight * scale
+        local lineAdvance: number = contract.lineHeight * (textSize / contract.size)
+        local shadowOffset: number = 2 * scale
         local x: number = 0
+        local y: number = 0
+        local lineCount: number = 1
+        local function blit(code: number, paint: Color3, dx: number, dy: number, z: number): ()
+            local index: number = code - atlas.first
+            local glyph: ImageLabel = nextGlyph()
+            glyph.Image = atlas.image
+            glyph.ImageColor3 = paint
+            glyph.ImageRectOffset = Vector2.new(
+                (index % atlas.columns) * atlas.cellWidth,
+                (index // atlas.columns) * atlas.cellHeight
+            )
+            glyph.ImageRectSize = Vector2.new(atlas.cellWidth, atlas.cellHeight)
+            glyph.Position = UDim2.fromOffset(dx, dy)
+            glyph.Size = UDim2.fromOffset(glyphWidth, glyphHeight)
+            glyph.ZIndex = z
+        end
         for _, segment: any in ipairs(segments) do
-            local text: string = tostring(segment.text or "")
-            for position: number = 1, #text do
-                local code: number = string.byte(text, position)
-                if code >= atlas.first and code <= atlas.last then
-                    local index: number = code - atlas.first
-                    local glyph: ImageLabel = (create("ImageLabel", {
-                        Parent = holder,
-                        Name = "G",
-                        BackgroundTransparency = 1,
-                        BorderSizePixel = 0,
-                        Image = atlas.image,
-                        ImageColor3 = segment.color or Theme.text,
-                        ImageRectOffset = Vector2.new(
-                            (index % atlas.columns) * atlas.cellWidth,
-                            (index // atlas.columns) * atlas.cellHeight
-                        ),
-                        ImageRectSize = Vector2.new(
-                            atlas.cellWidth,
-                            atlas.cellHeight
-                        ),
-                        Position = UDim2.fromOffset(x, 0),
-                        Size = UDim2.fromOffset(glyphWidth, glyphHeight),
-                        ZIndex = zIndex + 1,
-                    }) :: any) :: ImageLabel
-                    -- Pixelated, when the engine offers it: a pixel font
-                    -- bilinear-blurred is worse than no atlas at all. The
-                    -- stand-in Roblox has no ResamplerMode; real Roblox does.
-                    pcall(function(): ()
-                        (glyph :: any).ResampleMode = Enum.ResamplerMode.Pixelated
-                    end)
+            local color: Color3 = segment.color or Theme.text
+            -- Minecraft's shadow is the text colour quartered, one logical
+            -- pixel down-right — 2 px at the scale everything draws at.
+            local shade: Color3 = Color3.new(
+                color.R * 0.25, color.G * 0.25, color.B * 0.25
+            )
+            contract.eachCode(tostring(segment.text or ""), function(code: number): ()
+                if code == 10 then
+                    x = 0
+                    y += lineAdvance
+                    lineCount += 1
+                    return
+                end
+                if maxWidth ~= nil and x + advance > maxWidth then
+                    return
+                end
+                if code ~= 32 then
+                    local mapped: number = code
+                    if code < atlas.first or code > atlas.last then
+                        mapped = atlas.fallbackGlyph
+                    end
+                    if shadow then
+                        blit(mapped, shade, x + shadowOffset, y + shadowOffset, zIndex + 1)
+                    end
+                    blit(mapped, color, x, y, zIndex + 2)
                 end
                 x += advance
-            end
+                width = math.max(width, x)
+            end)
         end
-        holder.Size = UDim2.fromOffset(x, glyphHeight)
+        height = glyphHeight + (lineCount - 1) * lineAdvance
     else
         local composed: {string} = {}
+        local estimated: number = 0
         for _, segment: any in ipairs(segments) do
             local text: string = tostring(segment.text or "")
                 :gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;")
@@ -1990,36 +2157,61 @@ state.bitmapText.draw = function(
                 math.floor(color.B * 255 + 0.5),
                 text
             ))
-        end
-        local estimated: number = 0
-        for _, segment: any in ipairs(segments) do
             estimated += #tostring(segment.text or "")
         end
-        state.bitmapText.make({
-            Parent = holder,
-            Name = "Fallback",
-            BackgroundTransparency = 1,
-            RichText = true,
-            Size = UDim2.new(1, 0, 1, 0),
-            Text = table.concat(composed),
-            TextColor3 = Theme.text,
-            TextSize = textSize,
-            TextXAlignment = alignRight
-                and Enum.TextXAlignment.Right
-                or Enum.TextXAlignment.Left,
-            ZIndex = zIndex + 1,
-        })
-        holder.Size = UDim2.fromOffset(
-            estimated * math.floor(textSize * 0.75),
-            math.floor(textSize * 1.125)
-        )
+        local fallback: TextLabel? = record.fallback
+        if not fallback then
+            fallback = contract.make({
+                Parent = holder,
+                Name = "Fallback",
+                BackgroundTransparency = 1,
+                RichText = true,
+                Size = UDim2.new(1, 0, 1, 0),
+                TextColor3 = Theme.text,
+            })
+            record.fallback = fallback
+        end
+        local label: TextLabel = fallback :: TextLabel
+        label.Visible = true
+        label.Text = table.concat(composed)
+        label.TextSize = textSize
+        label.TextXAlignment = align == "Right" and Enum.TextXAlignment.Right
+            or align == "Center" and Enum.TextXAlignment.Center
+            or Enum.TextXAlignment.Left
+        label.ZIndex = zIndex + 1
+        width = estimated * math.floor(textSize * 0.75)
+        height = math.floor(textSize * 1.125)
     end
-    return holder
+
+    for index: number = used + 1, #record.glyphs do
+        (record.glyphs[index] :: ImageLabel).Visible = false
+    end
+
+    if maxWidth ~= nil then
+        width = math.min(width, maxWidth)
+    end
+    holder.ClipsDescendants = maxWidth ~= nil
+    holder.Size = UDim2.fromOffset(width, height)
+    holder:SetAttribute("MeasuredWidth", width)
+    contract.stats.draws += 1
+    contract.stats.lastDrawMs = (os.clock() - startedAt) * 1000
+    return holder :: Frame
+end
+
+-- Explicit teardown for a surface that is done with its line: the pool
+-- dies with the holder, the weak registry lets go on its own.
+state.bitmapText.release = function(holder: Instance?): ()
+    if holder then
+        state.bitmapText._live[holder] = nil
+        holder:Destroy()
+    end
 end
 
 -- The atlas arrives like every other asset: downloaded, verified, turned
--- into an id off the boot thread. Surfaces that want to re-render the
--- moment it lands register in onReady.
+-- into an id off the boot thread. Every live draw re-renders itself the
+-- moment it lands — the signatures all carry atlas.ready, so the redraws
+-- do real work exactly once — and onReady still fires for surfaces that
+-- rebuild more than their glyphs.
 task.spawn(function(): ()
     if type(state.resolveAsset) ~= "function" then
         return
@@ -2033,6 +2225,17 @@ task.spawn(function(): ()
     end
     state.bitmapText.atlas.image = assetId
     state.bitmapText.atlas.ready = true
+    for holder: any, record: any in pairs(state.bitmapText._live) do
+        if holder.Parent ~= nil and record.request ~= nil then
+            pcall(function(): ()
+                state.bitmapText.draw(
+                    record.request.parent,
+                    record.request.segments,
+                    record.request.options
+                )
+            end)
+        end
+    end
     for _, listener: () -> () in ipairs(state.bitmapText.onReady) do
         pcall(listener)
     end
