@@ -363,7 +363,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "807d94ac3b2e4cf6"
+local SOURCE_STAMP: string = "669e80c75c522a71"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -936,6 +936,19 @@ if oldBlur then
     oldBlur:Destroy()
 end
 
+-- The user's verdict from real captures brought the blur back: the menu
+-- reads far better over a softened game. One BlurEffect, named so the
+-- reinject sweep above always finds it, enabled exactly while the GUI
+-- is open and destroyed with everything else at destruct.
+local MenuBlur: any = nil
+pcall(function(): ()
+    MenuBlur = Instance.new("BlurEffect")
+    MenuBlur.Name = BLUR_NAME
+    MenuBlur.Size = 14
+    MenuBlur.Enabled = false
+    MenuBlur.Parent = Lighting
+end)
+
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = GUI_NAME
 ScreenGui.ResetOnSpawn = false
@@ -1261,6 +1274,11 @@ end
 -- boolean it always was.
 local function setMenuVisibleCore(visible: boolean): ()
     state.visible = visible
+    if MenuBlur then
+        pcall(function(): ()
+            MenuBlur.Enabled = visible == true
+        end)
+    end
     for _, listener: (boolean) -> () in ipairs(menuVisibilityListeners) do
         pcall(listener, visible)
     end
@@ -4212,10 +4230,13 @@ state.applyCardSkin = function(feature: any, hovered: boolean?): ()
     local fill: Color3 = Theme.surface
 
     if feature.isCategory then
-        -- A heading, not a button: flat text on the window body.
-        surface = 1
+        -- A heading, not a button — but the pointer still deserves an
+        -- answer: the captures showed Friend List and Projectile
+        -- Calibration reading as dead rows. A soft wash on hover, never
+        -- the toggle fill.
+        surface = isHovered and 0.7 or 1
         titleColor = Theme.text
-        titleTransparency = 0.3
+        titleTransparency = isHovered and 0.1 or 0.3
     elseif feature.isAction then
         surface = isHovered and 0.3 or 0.5
     elseif feature.isHoldAction then
@@ -4245,6 +4266,19 @@ state.applyCardSkin = function(feature: any, hovered: boolean?): ()
         titleLabel.TextTransparency = titleTransparency
     end
 end
+
+-- A theme write repaints every row the moment it lands. The captures
+-- showed the old behaviour plainly: change Background and the rows kept
+-- their colour until the pointer visited each one, because the skin
+-- only ran on hover and toggle. One walk per token write; plain
+-- property writes, no rebuild.
+ThemeEngine.OnChange(function(): ()
+    for _, feature: any in ipairs(allFeatures) do
+        if feature.row then
+            pcall(state.applyCardSkin, feature, false)
+        end
+    end
+end)
 
 local function refreshFeatureToggle(feature: any): ()
     if feature.isCategory or feature.isAction then
@@ -6010,6 +6044,12 @@ local function cleanupRuntime(): ()
     end
     runtimeCleaned = true
 
+    cleanupStep("blur", function(): ()
+        if MenuBlur then
+            MenuBlur:Destroy()
+            MenuBlur = nil
+        end
+    end)
     cleanupStep("session", function(): ()
         if type(state.destroySessionTracking) == "function" then
             state.destroySessionTracking()

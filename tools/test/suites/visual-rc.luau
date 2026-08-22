@@ -693,11 +693,21 @@ return function(ctx: any): ()
                 and windows.Get("Monochrome") == nil
                 and windows.Get("GlobalToggle") == nil
         )
+        -- The user's capture review reversed the blur ban: the shell now
+        -- owns exactly one managed BlurEffect (PRODUCT.blurName, follows
+        -- menu visibility, destroyed at destruct). The hail layer stays
+        -- dead, and no library may construct a second blur.
         check(
-            "C9: no hail / blur layer names in the bundle",
+            "C9: no hail layer names in the bundle",
             string.find(bundle, "BlurHail", 1, true) == nil
                 and string.find(bundle, "HailLayer", 1, true) == nil
-                and string.find(source, 'Instance.new("BlurEffect"', 1, true) == nil
+                and string.find(bundle, 'Instance.new("BlurEffect"', 1, true) == nil
+        )
+        check(
+            "C9: the shell owns the one managed menu blur",
+            string.find(source, "MenuBlur.Name = BLUR_NAME", 1, true) ~= nil
+                and string.find(source, "MenuBlur.Enabled = visible == true", 1, true) ~= nil
+                and string.find(source, 'cleanupStep("blur"', 1, true) ~= nil
         )
         check(
             "C9: source stamp is published",

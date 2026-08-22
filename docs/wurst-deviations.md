@@ -34,3 +34,8 @@ GUI-scale-1. Prototype `titleHeight` 26 is 13 × 2, not a 1080p invention.
 | Pill as one-button Roblox launcher | adaptación Roblox aprobable | The 5% Roblox. |
 | Monocraft atlas (`monocraft-16.png`) | adaptación Roblox aprobable | OFL fallback. 7.54.1 does not change the 1.18.1 font baseline. |
 | One ClickGui UIScale, user Scale 0.7–1.6 | exact | No 1080 / 1.35 formula. |
+- **Menu blur (user mandate, capture review 2026-08-22):** Wurst draws
+  nothing between the player and the game; this port now does — one
+  BlurEffect under `PRODUCT.blurName`, enabled exactly while the GUI is
+  open, destroyed at destruct. Reversed from the earlier ban at the
+  user's explicit order after real captures.

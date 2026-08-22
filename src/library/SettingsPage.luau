@@ -1588,10 +1588,16 @@ function Module.init(context: any): any
     local uiSettingsValues: {[string]: any} = {}
     state.uiSettings = uiSettingsValues
 
+    -- "Enabled" is a user-approved addition over Wurst 7.19: the fill an
+    -- active module row wears was hard green until now. It rides the same
+    -- token machinery as the other three, so applyCardSkin repaints every
+    -- row the moment it changes.
+    local CLICKGUI_ENABLED: Color3 = Color3.fromRGB(32, 175, 32)
     for _, row: any in ipairs({
         {label = "Background", default = CLICKGUI_BACKGROUND, tokens = {"surface", "background"}},
         {label = "Accent", default = CLICKGUI_ACCENT, tokens = {"accent", "outline"}},
         {label = "Text", default = CLICKGUI_TEXT, tokens = {"text", "accentText"}},
+        {label = "Enabled", default = CLICKGUI_ENABLED, tokens = {"enabled"}},
     }) do
         local tokens: {string} = row.tokens
         local labelText: string = row.label

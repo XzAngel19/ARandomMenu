@@ -150,16 +150,18 @@ if offenders:
 print("ok")
 PYTHON
 
-step "No blur effect in the live shell"
-# A removed the BlurEffect. A comment that remembers it is fine;
-# constructing one in the shell or a library is the old menu coming back.
-# src/gui/Current/gui.lua is leftover and is not loaded.
+step "The menu blur is the one managed effect"
+# The user's capture review reversed the old ban: the menu must blur
+# the game while it is open. Exactly one BlurEffect, created in the
+# shell under PRODUCT.blurName so the reinject sweep always finds it,
+# driven by menu visibility, destroyed at destruct. A second
+# construction site anywhere is the old menu coming back.
 python3 - <<'PYTHON'
 import re
 import subprocess
 
 pattern = re.compile(r'(Instance\.new|create)\(\s*"BlurEffect"')
-offenders = []
+sites = []
 for path in subprocess.run(
     ["git", "ls-files", "ARandomMenu.luau", "src/library", "src/core"],
     capture_output=True,
@@ -170,11 +172,19 @@ for path in subprocess.run(
     text = open(path, encoding="utf-8", errors="replace").read()
     for match in pattern.finditer(text):
         line = text.count("\n", 0, match.start()) + 1
-        offenders.append(f"{path}:{line}: {match.group(0)}")
-if offenders:
-    raise SystemExit(
-        "BlurEffect reintroduced:\n  " + "\n  ".join(offenders)
-    )
+        sites.append(f"{path}:{line}")
+shell = open("ARandomMenu.luau", encoding="utf-8", errors="replace").read()
+problems = []
+if len(sites) != 1 or not sites[0].startswith("ARandomMenu.luau"):
+    problems.append("expected exactly one BlurEffect site in the shell, got: " + (", ".join(sites) or "none"))
+if "MenuBlur.Name = BLUR_NAME" not in shell:
+    problems.append("the blur must take PRODUCT.blurName so the reinject sweep finds it")
+if "MenuBlur.Enabled = visible == true" not in shell:
+    problems.append("the blur must follow menu visibility, never stay on")
+if 'cleanupStep("blur"' not in shell:
+    problems.append("destruct must destroy the blur")
+if problems:
+    raise SystemExit("\n".join(problems))
 print("ok")
 PYTHON
 
