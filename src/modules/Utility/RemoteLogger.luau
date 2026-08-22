@@ -101,6 +101,8 @@ function Module.init(context: Runtime): any
     local framework: any = context.framework
     local httpService: HttpService = host.HttpService
     local state: any = host.state
+    local product: any = host.PRODUCT
+    local remoteLogFolder: string = product.storageFolder .. "/RemoteLogs"
 
     local log: {[string]: any} = {}
     local order: {string} = {}
@@ -277,7 +279,7 @@ function Module.init(context: Runtime): any
 
     local function buildReport(): string
         local lines: {string} = {
-            "-- ARandomMenu remote log",
+            "-- " .. tostring(product.name) .. " remote log",
             "-- place " .. tostring(game.PlaceId),
             "-- " .. tostring(#order) .. " remotes",
             "",
@@ -312,16 +314,17 @@ function Module.init(context: Runtime): any
             return
         end
         if type(makeFolder) == "function" and type(isFolder) == "function" then
-            if not isFolder("ARandomMenu") then
-                pcall(makeFolder, "ARandomMenu")
+            if not isFolder(product.storageFolder) then
+                pcall(makeFolder, product.storageFolder)
             end
-            if not isFolder("ARandomMenu/RemoteLogs") then
-                pcall(makeFolder, "ARandomMenu/RemoteLogs")
+            if not isFolder(remoteLogFolder) then
+                pcall(makeFolder, remoteLogFolder)
             end
         end
 
         local stamp: string = tostring(math.round(os.time()))
-        local base: string = "ARandomMenu/RemoteLogs/"
+        local base: string = remoteLogFolder
+            .. "/"
             .. tostring(game.PlaceId)
             .. "-"
             .. stamp
@@ -410,7 +413,7 @@ function Module.init(context: Runtime): any
 
     logger:CreateButton({
         Name = "Save to file",
-        Tooltip = "Writes ARandomMenu/RemoteLogs/<place>-<time>.txt and .json",
+        Tooltip = "Writes " .. remoteLogFolder .. "/<place>-<time>.txt and .json",
         Function = saveReport,
     })
     logger:CreateButton({

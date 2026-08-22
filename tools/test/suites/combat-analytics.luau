@@ -132,6 +132,28 @@ return function(ctx: any): ()
     end)
     check("the status action answers", statusOk)
 
+    world.globals.DateTime = world.globals.DateTime or {
+        now = function(): any
+            return {ToIsoDate = function(): string return "test" end}
+        end,
+    }
+    local saveRow: any = card and card.options["Save analytics"]
+    if saveRow and saveRow.run then
+        getfenv(saveRow.run).DateTime = world.globals.DateTime
+        saveRow.run()
+    end
+    local analyticsPath: string? = nil
+    for path: string in pairs(world.files) do
+        if string.find(path, "Projectile_Calibration", 1, true) then
+            analyticsPath = path
+        end
+    end
+    check("analytics use PRODUCT.storageFolder",
+        analyticsPath ~= nil
+            and string.sub(analyticsPath :: string, 1, #host.PRODUCT.storageFolder)
+                == host.PRODUCT.storageFolder,
+        tostring(analyticsPath))
+
     check("nothing is left running", stub.taskCount() == baseline)
 
     -- Leave the shared world as the next suite expects it.

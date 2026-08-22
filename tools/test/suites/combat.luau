@@ -689,11 +689,15 @@ return function(ctx: any): ()
 
     -- Saving writes a readable report and a machine-readable one.
     logger.Feature.options["Save to file"].run()
-    check("writes a text report", world.files["ARandomMenu/RemoteLogs"] == nil
-        or true)
     local wroteText: boolean = false
     local wroteJson: boolean = false
+    local usedStorageFolder: boolean = true
     for path: string in pairs(world.files) do
+        if string.find(path, "RemoteLogs", 1, true) then
+            usedStorageFolder = usedStorageFolder
+                and string.sub(path, 1, #host.PRODUCT.storageFolder)
+                    == host.PRODUCT.storageFolder
+        end
         if string.find(path, "%.txt$") then
             wroteText = true
         end
@@ -701,6 +705,7 @@ return function(ctx: any): ()
             wroteJson = true
         end
     end
+    check("saved under PRODUCT.storageFolder", usedStorageFolder)
     check("saved a readable log", wroteText)
     check("saved a machine-readable log", wroteJson)
 

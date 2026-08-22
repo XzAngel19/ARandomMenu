@@ -16,6 +16,9 @@ local Module = {
 local moduleCleanup: () -> () = function(): () end
 
 local function buildMM2Features()
+local host: any = getfenv()
+local trajectoryLogPrefix: string = "[" .. tostring(host.PRODUCT.logPrefix)
+    .. ":MM2:Trajectory]"
 local MM2Effects = create("Folder", {
     Parent = ScreenGui,
     Name = "MM2Effects",
@@ -1822,7 +1825,7 @@ local function createTrajectoryCalibration(): any
         getEstimates: (self: Controller) -> Estimates,
     }
 
-    local OUTPUT_ROOT: string = "RandomTestingMenu0001"
+    local OUTPUT_ROOT: string = host.PRODUCT.storageFolder
     local OUTPUT_FOLDER: string = OUTPUT_ROOT .. "/Telemetry"
     local OUTPUT_PATH: string = OUTPUT_FOLDER
         .. "/MM2_Trajectory_Calibration.json"
@@ -2356,7 +2359,7 @@ local function createTrajectoryCalibration(): any
 
     saveSnapshot = function(reason: string): boolean
         if type(environment.writefile) ~= "function" then
-            warn("[RTM:MM2:Trajectory] writefile no está disponible; no se pudo guardar.")
+            warn(trajectoryLogPrefix .. " writefile no está disponible; no se pudo guardar.")
             return false
         end
         local payload: {[string]: any} = {
@@ -2396,7 +2399,7 @@ local function createTrajectoryCalibration(): any
             payload
         )
         if not encodedOk or type(encoded) ~= "string" then
-            warn("[RTM:MM2:Trajectory] JSONEncode falló: " .. tostring(encoded))
+            warn(trajectoryLogPrefix .. " JSONEncode falló: " .. tostring(encoded))
             return false
         end
         if type(environment.makefolder) == "function" then
@@ -2409,12 +2412,12 @@ local function createTrajectoryCalibration(): any
             encoded
         )
         if not writeOk then
-            warn("[RTM:MM2:Trajectory] writefile falló: " .. tostring(writeError))
+            warn(trajectoryLogPrefix .. " writefile falló: " .. tostring(writeError))
             return false
         end
         runtime.dirty = false
         print(
-            "[RTM:MM2:Trajectory] Guardado "
+            trajectoryLogPrefix .. " Guardado "
                 .. OUTPUT_PATH
                 .. " ("
                 .. tostring(#encoded)
@@ -2460,7 +2463,7 @@ local function createTrajectoryCalibration(): any
                 )
             end
             warn(
-                "[RTM:MM2:Trajectory] Caché schema 1 ignorada; schema 2 inicia limpio."
+                trajectoryLogPrefix .. " Caché schema 1 ignorada; schema 2 inicia limpio."
             )
             return
         end
@@ -2511,7 +2514,7 @@ local function createTrajectoryCalibration(): any
                 }
             end
         end
-        print("[RTM:MM2:Trajectory] Perfil acumulativo restaurado.")
+        print(trajectoryLogPrefix .. " Perfil acumulativo restaurado.")
     end
 
     local function normalizeGun(value: any): Tool?
@@ -2903,7 +2906,7 @@ local function createTrajectoryCalibration(): any
                 task.wait(0.25)
             end
             if not weaponModule then
-                warn("[RTM:MM2:Trajectory] WeaponService no apareció; Knife sigue activo.")
+                warn(trajectoryLogPrefix .. " WeaponService no apareció; Knife sigue activo.")
                 return
             end
             local loaded: boolean, weaponService: any = pcall(
@@ -2912,7 +2915,7 @@ local function createTrajectoryCalibration(): any
             )
             if not loaded or type(weaponService) ~= "table" then
                 warn(
-                    "[RTM:MM2:Trajectory] No se pudo observar WeaponService: "
+                    trajectoryLogPrefix .. " No se pudo observar WeaponService: "
                         .. tostring(weaponService)
                 )
                 return
@@ -2922,10 +2925,10 @@ local function createTrajectoryCalibration(): any
             end)
             if connected and connection then
                 trackConnection(connection :: RBXScriptConnection)
-                print("[RTM:MM2:Trajectory] Confirmación GunFired conectada.")
+                print(trajectoryLogPrefix .. " Confirmación GunFired conectada.")
             else
                 warn(
-                    "[RTM:MM2:Trajectory] GunFired no es compatible: "
+                    trajectoryLogPrefix .. " GunFired no es compatible: "
                         .. tostring(connection)
                 )
             end
@@ -2942,7 +2945,7 @@ local function createTrajectoryCalibration(): any
         -- fingerprinting a clone); refusing here on PlaceId alone would leave
         -- every copy of the game without calibration.
         if not (GAME_CHECK.MM2Active or game.PlaceId == Module.PlaceId) then
-            warn("[RTM:MM2:Trajectory] Inicio omitido fuera de MM2.")
+            warn(trajectoryLogPrefix .. " Inicio omitido fuera de MM2.")
             return
         end
         runtime.active = true
@@ -2961,7 +2964,7 @@ local function createTrajectoryCalibration(): any
             )
         )
         installGunConfirmation()
-        print("[RTM:MM2:Trajectory] Calibración pasiva iniciada en segundo plano.")
+        print(trajectoryLogPrefix .. " Calibración pasiva iniciada en segundo plano.")
     end
 
     function controller:save(reason: string?): boolean
