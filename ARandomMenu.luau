@@ -363,7 +363,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "42340f0de360bcc2"
+local SOURCE_STAMP: string = "8904e348955324fa"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -914,9 +914,13 @@ local function findExistingGui()
     end
 
     for _, location in ipairs(locations) do
+        -- Every copy, not just the first: a reinject that raced its own
+        -- cleanup could stack two shells, and destroying one of them left
+        -- the other drawing a second logo and a second pill forever.
         local existing = location:FindFirstChild(GUI_NAME)
-        if existing then
+        while existing do
             existing:Destroy()
+            existing = location:FindFirstChild(GUI_NAME)
         end
     end
 end

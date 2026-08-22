@@ -190,6 +190,9 @@ function Module.init(context: any): any
             if not window.collapsed then
                 window.root.Size = UDim2.fromOffset(width, wanted)
             end
+            if windows.ClampWindow then
+                windows.ClampWindow(window)
+            end
         end
         record.resize = resize
         table.insert(

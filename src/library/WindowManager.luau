@@ -132,6 +132,21 @@ function Module.init(context: any): any
         )
     end
 
+    -- Full containment: after any resize the window must still fit the
+    -- viewport whole, so growing a settings window near the bottom edge
+    -- walks it back up instead of running it off screen.
+    function manager.ClampWindow(window: any): ()
+        local root: any = window and window.root
+        if not root then
+            return
+        end
+        local landed: Vector2 = clamp(
+            Vector2.new(root.Position.X.Offset, root.Position.Y.Offset),
+            Vector2.new(root.Size.X.Offset, root.Size.Y.Offset)
+        )
+        root.Position = UDim2.fromOffset(landed.X, landed.Y)
+    end
+
     local function bind(instance: Instance, property: string, token: string): ()
         if ThemeEngine and type(ThemeEngine.Bind) == "function" then
             ThemeEngine.Bind(instance, property, token)
@@ -196,7 +211,10 @@ function Module.init(context: any): any
         end
         table.insert(manager.list, window)
         for order: number, entry: any in ipairs(manager.list) do
-            local base: number = BASE_Z + order * 4
+            -- Step 1, not 4: the ScreenGui is Sibling-ordered, so only the
+            -- roots compete at this level and fifty windows still stay
+            -- under the pill (240), the tooltip (250) and the popups.
+            local base: number = BASE_Z + order
             entry.root.ZIndex = base
             -- Windows whose children declare a depth get restacked with the
             -- window. Without it a raised overlay draws its own body under the
@@ -626,7 +644,51 @@ function Module.init(context: any): any
     -- "Max settings height", and following the GUI like every other window
     -- unless pinned. This is the one contract: the row's triangle, the
     -- right-click and the Navigator all come through here.
-    local settingsCascade: number = 0
+    -- First placement by rectangle intersection: candidate slots walk a
+    -- coarse grid and the first one whose rectangle overlaps no visible
+    -- window wins. Only when the whole screen is occupied does it fall back
+    -- to stacking from the top-left — a diagonal cascade guessed blind and
+    -- still landed on whatever the guess did not know about.
+    local function intersects(
+        ax: number, ay: number, aw: number, ah: number,
+        bx: number, by: number, bw: number, bh: number
+    ): boolean
+        return ax < bx + bw and bx < ax + aw and ay < by + bh and by < ay + ah
+    end
+
+    local function freeSlot(width: number, height: number): Vector2
+        local screen: Vector2 = viewport()
+        local step: number = 40
+        local yLimit: number = math.max(64, screen.Y - height - MARGIN)
+        local xLimit: number = math.max(MARGIN, screen.X - width - MARGIN)
+        local y: number = 64
+        while y <= yLimit do
+            local x: number = MARGIN
+            while x <= xLimit do
+                local collides: boolean = false
+                for _, other: any in ipairs(manager.list) do
+                    local root: any = other.root
+                    if root and root.Visible ~= false then
+                        if intersects(
+                            x, y, width, height,
+                            root.Position.X.Offset, root.Position.Y.Offset,
+                            root.Size.X.Offset, root.Size.Y.Offset
+                        ) then
+                            collides = true
+                            break
+                        end
+                    end
+                end
+                if not collides then
+                    return Vector2.new(x, y)
+                end
+                x += step
+            end
+            y += step
+        end
+        return Vector2.new(MARGIN, 64)
+    end
+
     function manager.OpenFeatureSettings(feature: any): any
         if type(feature) ~= "table" or feature.row == nil then
             return nil
@@ -655,21 +717,17 @@ function Module.init(context: any): any
         end
         width = math.min(width, 420)
 
-        local viewport: Vector2 = workspace.CurrentCamera
-            and (workspace.CurrentCamera :: Camera).ViewportSize
-            or Vector2.new(1280, 720)
-        local step: number = settingsCascade % 6
-        local slot: Vector2 = Vector2.new(
-            math.max(
-                20,
-                math.min(
-                    viewport.X * 0.45 + step * 28,
-                    viewport.X - width - 20
-                )
-            ),
-            110 + step * 30 + (settingsCascade // 6) * 14
+        -- The expected height decides which slots can even hold the
+        -- window, so the search uses the same cap the resize will.
+        local expectedLimit: number = tonumber(state.uiMaxSettingsHeight) or 200
+        if expectedLimit <= 0 then
+            expectedLimit = 600
+        end
+        local expectedHeight: number = math.min(
+            TITLE_HEIGHT + (feature.optionsHeight or 40),
+            expectedLimit
         )
-        settingsCascade += 1
+        local slot: Vector2 = freeSlot(width, expectedHeight)
 
         local window: any = manager.Create({
             id = id,
@@ -709,9 +767,35 @@ function Module.init(context: any): any
             if not window.collapsed then
                 window.root.Size = UDim2.fromOffset(width, wanted)
             end
+            -- Growing near an edge must never push the window off screen.
+            manager.ClampWindow(window)
         end
         window.resizeToOptions = resizeToOptions
         resizeToOptions()
+
+        -- The width above was packed from character counts, which is an
+        -- estimate. Once the labels have really rendered, their TextBounds
+        -- are the truth; one deferred re-pack replaces the estimate and
+        -- re-clamps. Harness labels never render, so zero bounds are left
+        -- alone.
+        task.defer(function(): ()
+            if not window.root.Parent then
+                return
+            end
+            local widest: number = 0
+            for _, optionRow: any in ipairs(feature.optionRows or {}) do
+                local label: any = optionRow:FindFirstChild("OptionLabel")
+                local bounds: any = label and label.TextBounds
+                local measured: number = bounds and tonumber(bounds.X) or 0
+                if measured > 0 then
+                    widest = math.max(widest, 8 + measured + 24 + 72)
+                end
+            end
+            if widest > 0 then
+                width = math.clamp(widest, 160, 420)
+                resizeToOptions()
+            end
+        end)
 
         feature.expanded = true
         if feature.syncArrow then

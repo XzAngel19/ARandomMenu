@@ -96,6 +96,23 @@ function Module.init(context: any): any
         connections = {} :: {RBXScriptConnection},
     }
 
+    -- A reinject that raced its own cleanup once left two of everything on
+    -- screen — two logos, two pills, two lists. The furniture is idempotent
+    -- now: whatever of it already lives on this layer dies before the new
+    -- set is built.
+    for _, ghostName: string in ipairs({
+        "WurstLogo",
+        "HackList",
+        "Navigator",
+        "Pill",
+    }) do
+        local ghost: Instance? = PopupLayer:FindFirstChild(ghostName)
+        while ghost do
+            ghost:Destroy()
+            ghost = PopupLayer:FindFirstChild(ghostName)
+        end
+    end
+
     -- ------------------------------------------------------------- wordmark
     -- Wurst's WurstLogo feature. The sausage sits on the game with nothing
     -- behind it; only the version string gets the white chip, which is what
@@ -192,6 +209,29 @@ function Module.init(context: any): any
         TextXAlignment = Enum.TextXAlignment.Left,
         ZIndex = 21,
     }) :: any) :: TextLabel
+
+    -- The band's width came from a character-count estimate; the rendered
+    -- TextBounds are the truth. The moment the label really measures (and
+    -- again if the interface font swaps under it), the chip, the stripe and
+    -- the version frame shrink-wrap the actual text — the band ends exactly
+    -- after "0.1 Beta", never a pixel into the game's own UI.
+    local function fitLogoBand(): ()
+        local bounds: any = (versionLabel :: any).TextBounds
+        local measured: number = bounds and tonumber(bounds.X) or 0
+        if measured <= 0 then
+            return
+        end
+        local fittedVersion: number = 8 + measured
+        local fittedChip: number = LOGO_WIDTH + 10 + fittedVersion + 4
+        versionChip.Size = UDim2.fromOffset(fittedVersion, 22)
+        chip.Size = UDim2.fromOffset(fittedChip, LOGO_HEIGHT + 8)
+        logoStripe.Size = UDim2.fromOffset(fittedChip, 22)
+    end
+    table.insert(
+        Furniture.connections,
+        versionLabel:GetPropertyChangedSignal("TextBounds"):Connect(fitLogoBand)
+    )
+    task.defer(fitLogoBand)
 
     if type(state.applyAssetImage) == "function" then
         state.applyAssetImage("wurstLogo", logoImage, function(): ()

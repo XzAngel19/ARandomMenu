@@ -230,6 +230,11 @@ function Module.init(context: any): any
             if not window.collapsed then
                 window.root.Size = UDim2.fromOffset(WINDOW_WIDTH, wanted)
             end
+            -- A category that grows near the bottom edge walks back up
+            -- instead of running off the viewport.
+            if windows.ClampWindow then
+                windows.ClampWindow(window)
+            end
         end
         table.insert(
             ClickGui.connections,

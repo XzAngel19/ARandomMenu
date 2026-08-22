@@ -1631,7 +1631,7 @@ function Module.init(context: any): WidgetLibrary
                 Position = UDim2.new(0.5, -170, 0.5, -150),
                 Size = UDim2.fromOffset(340, 300),
                 Visible = false,
-                ZIndex = 80,
+                ZIndex = 460,
             })
 
             local title = makeTextLabel(panel, "COLOR", 14)
@@ -1664,7 +1664,7 @@ function Module.init(context: any): WidgetLibrary
                 BackgroundColor3 = Theme.background,
                 BorderSizePixel = 0,
                 Size = UDim2.fromScale(1, 1),
-                ZIndex = 82,
+                ZIndex = 462,
             })
             create("UIGradient", {
                 Parent = shade,
@@ -1681,7 +1681,7 @@ function Module.init(context: any): WidgetLibrary
                 BorderColor3 = Theme.surface,
                 BorderSizePixel = 2,
                 Size = UDim2.fromOffset(12, 12),
-                ZIndex = 83,
+                ZIndex = 463,
             })
             create("UICorner", {
                 Parent = svCursor,
@@ -1715,7 +1715,7 @@ function Module.init(context: any): WidgetLibrary
                 BorderSizePixel = 1,
                 Position = UDim2.new(0.5, 0, 0, 0),
                 Size = UDim2.new(1, 6, 0, 5),
-                ZIndex = 83,
+                ZIndex = 463,
             })
 
             local preview = create("Frame", {
@@ -1725,7 +1725,7 @@ function Module.init(context: any): WidgetLibrary
                 BorderSizePixel = 1,
                 Position = UDim2.fromOffset(273, 45),
                 Size = UDim2.fromOffset(48, 48),
-                ZIndex = 81,
+                ZIndex = 461,
             })
 
             local apply = makeButton(panel, "APPLY", 11)
