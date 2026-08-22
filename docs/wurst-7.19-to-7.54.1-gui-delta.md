@@ -115,9 +115,10 @@ Each is a global window/settings behaviour, not a new hack.
   settings window is closed, collapsed, or hidden with the menu.
   Raising another window must not leave a combo attached to a
   clipped row.
-- **Status vs port:** menu-hide closes ChoiceList (**blocking**, C6).
-  Scroll-clip / owner-window close remain **NEEDS_EVIDENCE**. Do not
-  fail those until A lands `closeInvalidPopups`.
+- **Status vs port:** menu-hide closes ChoiceList (**blocking**).
+  Owner-window close and scroll-clip are **blocking the moment**
+  `closeInvalidPopups` / `closePopupsOutsideArea` exist on `state`.
+  Until A publishes them the suite records the gap and stays green.
 
 ### APPLY-5 — Pixel title-bar icons
 

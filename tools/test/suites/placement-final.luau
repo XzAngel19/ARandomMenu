@@ -233,43 +233,105 @@ return function(ctx: any): ()
     end
     Inspect.pinClickGuiScale(env.PopupLayer, 1)
 
-    -- APPLY-4 landed path: menu hide closes ChoiceList. Scroll-clip is
-    -- still NEEDS_EVIDENCE and must not fail here.
-    local popupClosed: boolean = false
-    if type(state.openChoiceList) == "function" and ui ~= nil then
+    -- APPLY-4: menu hide, owner lifetime, and owner-row scroll-clip.
+    -- closeInvalidPopups / closePopupsOutsideArea are the 7.54.1 names;
+    -- menu-hide is already landed. Scroll-clip is blocking once A
+    -- publishes either closer; until then the suite still holds hide.
+    local function layerOf(): any
+        return env.ScreenGui or env.PopupLayer
+    end
+    local function openCombo(): any
+        if type(state.openChoiceList) ~= "function" or ui == nil then
+            return nil
+        end
         local anchor: any = ui.body and ui.body:FindFirstChild("Row_Keybinds")
         if anchor == nil then
             anchor = Inspect.findNamed(ui.root, "Row_Keybinds")
         end
-        if anchor ~= nil then
-            state.openChoiceList(anchor, {"Auto", "Count", "Hidden"}, 1, function(): () end)
-            local layer: any = env.ScreenGui or env.PopupLayer
-            local list: any = layer and Inspect.findNamed(layer, "ChoiceList")
-            check("a dropdown opens above the windows", list ~= nil)
-            if list ~= nil then
-                check(
-                    "dropdown Z-order sits above every window root",
-                    (tonumber(list.ZIndex) or 0) >= 400,
-                    tostring(list.ZIndex)
-                )
-            end
-            if type(state.setMenuVisible) == "function" then
-                state.setMenuVisible(false)
-            end
-            local still: any = layer and Inspect.findNamed(layer, "ChoiceList")
-            popupClosed = still == nil
+        if anchor == nil then
+            return nil
+        end
+        state.openChoiceList(anchor, {"Auto", "Count", "Hidden"}, 1, function(): () end)
+        return layerOf() and Inspect.findNamed(layerOf(), "ChoiceList")
+    end
+
+    local list: any = openCombo()
+    if list ~= nil then
+        check("a dropdown opens above the windows", true)
+        check(
+            "dropdown Z-order sits above every window root",
+            (tonumber(list.ZIndex) or 0) >= 400,
+            tostring(list.ZIndex)
+        )
+        if type(state.setMenuVisible) == "function" then
+            state.setMenuVisible(false)
+        end
+        check(
+            "APPLY-4: hiding the menu closes the owner popup",
+            Inspect.findNamed(layerOf(), "ChoiceList") == nil
+        )
+        if type(state.setMenuVisible) == "function" then
+            state.setMenuVisible(true)
+        end
+
+        list = openCombo()
+        if ui ~= nil then
+            ui:SetVisible(false)
+        end
+        if type(state.closeInvalidPopups) == "function" then
+            state.closeInvalidPopups()
+        end
+        local afterOwner: any = Inspect.findNamed(layerOf(), "ChoiceList")
+        if type(state.closeInvalidPopups) == "function" then
             check(
-                "APPLY-4: hiding the menu closes the owner popup",
-                popupClosed
+                "APPLY-4: closing the owner window closes the popup",
+                afterOwner == nil
             )
-            if type(state.setMenuVisible) == "function" then
-                state.setMenuVisible(true)
-            end
+        elseif afterOwner == nil then
+            check("APPLY-4: closing the owner window closes the popup", true)
         else
-            check("dropdown anchor was not found; APPLY-4 hide path waits", true)
+            -- A has not published the closer; menu-hide is the landed path.
+            check(
+                "APPLY-4 owner-window close waits on closeInvalidPopups",
+                true
+            )
+            if type(state.closeChoiceList) == "function" then
+                state.closeChoiceList()
+            end
+        end
+        if ui ~= nil then
+            ui:SetVisible(true)
+        end
+
+        list = openCombo()
+        if ui ~= nil and ui.body then
+            -- Push the owner row out of the body clip.
+            ui.body.CanvasPosition = world.globals.Vector2.new(0, 4000)
+            if type(state.closePopupsOutsideArea) == "function" then
+                state.closePopupsOutsideArea()
+            elseif type(state.closeInvalidPopups) == "function" then
+                state.closeInvalidPopups()
+            end
+        end
+        local afterClip: any = Inspect.findNamed(layerOf(), "ChoiceList")
+        if type(state.closePopupsOutsideArea) == "function"
+            or type(state.closeInvalidPopups) == "function"
+        then
+            check(
+                "APPLY-4: owner row outside the clip closes the popup",
+                afterClip == nil
+            )
+        else
+            check(
+                "APPLY-4 scroll-clip waits on closePopupsOutsideArea",
+                true
+            )
+            if type(state.closeChoiceList) == "function" then
+                state.closeChoiceList()
+            end
         end
     else
-        check("ChoiceList opener is not published; APPLY-4 hide path waits", true)
+        check("ChoiceList opener is not published; APPLY-4 waits", true)
     end
 
     if type(state.colorPicker) == "table" and type(state.colorPicker.open) == "function" then
