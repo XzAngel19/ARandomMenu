@@ -562,7 +562,13 @@ function Module.init(context: any): any
         -- keybind list is two columns of words. The text itself is the
         -- rebind target, wide enough that RightControl never truncates,
         -- and a conflicted key is painted in the warning colour.
-        local function keybindRow(labelText: string, slotText: string, conflicted: boolean, onSlot: (TextButton) -> ()): ()
+        local function keybindRow(
+            labelText: string,
+            slotText: string,
+            conflicted: boolean,
+            onSlot: (TextButton) -> (),
+            onRemove: (() -> ())?
+        ): ()
             order += 1
             local row: Frame = (create("Frame", {
                 Parent = container,
@@ -609,6 +615,17 @@ function Module.init(context: any): any
             trackUiConnection(slot.MouseButton1Click:Connect(function(): ()
                 onSlot(slot)
             end))
+            -- Right-click removes the binding — the mock's InputBegan
+            -- route, because it has no MouseButton2Click.
+            if onRemove then
+                trackUiConnection(slot.InputBegan:Connect(function(
+                    input: InputObject
+                ): ()
+                    if input.UserInputType == Enum.UserInputType.MouseButton2 then
+                        (onRemove :: () -> ())()
+                    end
+                end))
+            end
         end
 
         -- The menu key first: it is the one bind that can lock a player out,
@@ -651,6 +668,15 @@ function Module.init(context: any): any
                     end
                     rebuildKeybinds()
                 end)
+            end, function(): ()
+                -- Right-click: the binding is gone, the module is not.
+                binding.key = Enum.KeyCode.Unknown
+                persistBindingKey(binding)
+                if binding.refresh then
+                    binding.refresh()
+                end
+                rebuildKeybinds()
+                notify(featureLabel(tostring(binding.id)) .. " unbound")
             end)
         end
 
@@ -846,6 +872,232 @@ function Module.init(context: any): any
         raiseOpen(profilesRecord)
     end
 
+    -- ------------------------------------------------------- Add keybind
+    -- Wurst's Add dialog: the missing desktop path to a NEW bind. The
+    -- chooser lists every bindable action — the existing modules'
+    -- bindings and the registered actions, nothing invented — without
+    -- parking unbound modules permanently in the Keybinds window. Click
+    -- an action, press a key; Escape cancels the capture; a key that
+    -- already binds something else asks Replace / Keep both / Cancel.
+    local addRecord: any = nil
+    local addList: Frame? = nil
+    local pendingConflict: any = nil
+    local rebuildAddList: () -> () = function(): () end
+
+    local function applyBinding(
+        binding: any,
+        keyCode: Enum.KeyCode,
+        clearOther: any
+    ): ()
+        binding.key = keyCode
+        persistBindingKey(binding)
+        if binding.refresh then
+            binding.refresh()
+        end
+        if clearOther then
+            clearOther.key = Enum.KeyCode.Unknown
+            persistBindingKey(clearOther)
+            if clearOther.refresh then
+                clearOther.refresh()
+            end
+        end
+        pendingConflict = nil
+        rebuildKeybinds()
+        rebuildAddList()
+        notify(featureLabel(tostring(binding.id)) .. " bound to " .. keyCode.Name)
+    end
+
+    rebuildAddList = function(): ()
+        local container: Frame? = addList
+        if not container then
+            return
+        end
+        for _, child: Instance in ipairs((container :: Frame):GetChildren()) do
+            if child:IsA("GuiObject") then
+                child:Destroy()
+            end
+        end
+        local order: number = 0
+        local function addRow(
+            labelText: string,
+            valueText: string,
+            warning: boolean,
+            onClick: ((TextButton) -> ())?
+        ): ()
+            order += 1
+            local row: TextButton = (create("TextButton", {
+                TextTruncate = Enum.TextTruncate.AtEnd,
+                Parent = container,
+                Name = "Add_" .. labelText:gsub("%W", ""),
+                Active = onClick ~= nil,
+                AutoButtonColor = false,
+                BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+                BackgroundTransparency = onClick ~= nil and 0.5 or 1,
+                BorderSizePixel = 0,
+                FontFace = CONTROL_FONT,
+                LayoutOrder = order,
+                Size = UDim2.new(1, 0, 0, ROW_HEIGHT),
+                Text = "",
+                ZIndex = (container :: Frame).ZIndex + 1,
+            }) :: any) :: TextButton
+            create("TextLabel", {
+                TextTruncate = Enum.TextTruncate.AtEnd,
+                Parent = row,
+                Name = "Label",
+                BackgroundTransparency = 1,
+                FontFace = CONTROL_FONT,
+                Position = UDim2.fromOffset(6, 0),
+                Size = UDim2.new(1, -120, 1, 0),
+                Text = labelText,
+                TextColor3 = warning and Theme.negative or Theme.text,
+                TextSize = 16,
+                TextXAlignment = Enum.TextXAlignment.Left,
+                ZIndex = row.ZIndex + 1,
+            })
+            local slot: TextButton = (create("TextButton", {
+                TextTruncate = Enum.TextTruncate.AtEnd,
+                Parent = row,
+                Name = "Key",
+                Active = onClick ~= nil,
+                AnchorPoint = Vector2.new(1, 0),
+                AutoButtonColor = false,
+                BackgroundTransparency = 1,
+                BorderSizePixel = 0,
+                FontFace = CONTROL_FONT,
+                Position = UDim2.new(1, -6, 0, 0),
+                Size = UDim2.fromOffset(110, ROW_HEIGHT),
+                Text = valueText,
+                TextColor3 = Theme.textMuted,
+                TextSize = 16,
+                TextXAlignment = Enum.TextXAlignment.Right,
+                ZIndex = row.ZIndex + 1,
+            }) :: any) :: TextButton
+            slot:SetAttribute("CaptureIdleText", valueText)
+            if onClick then
+                trackUiConnection(row.MouseButton1Click:Connect(function(): ()
+                    (onClick :: (TextButton) -> ())(slot)
+                end))
+                trackUiConnection(slot.MouseButton1Click:Connect(function(): ()
+                    (onClick :: (TextButton) -> ())(slot)
+                end))
+                trackUiConnection(row.MouseEnter:Connect(function(): ()
+                    row.BackgroundTransparency = 0.3
+                end))
+                trackUiConnection(row.MouseLeave:Connect(function(): ()
+                    row.BackgroundTransparency = 0.5
+                end))
+            end
+        end
+
+        if pendingConflict then
+            -- The conflict question, as rows: Wurst asks before stealing
+            -- a key, and Cancel walks away with nothing changed.
+            local conflict: any = pendingConflict
+            addRow(
+                conflict.key.Name .. " already binds "
+                    .. featureLabel(tostring(conflict.other.id)),
+                "",
+                true,
+                nil
+            )
+            addRow("Replace it", "", false, function(_slot: TextButton): ()
+                applyBinding(conflict.binding, conflict.key, conflict.other)
+            end)
+            addRow("Keep both", "", false, function(_slot: TextButton): ()
+                applyBinding(conflict.binding, conflict.key, nil)
+            end)
+            addRow("Cancel", "", false, function(_slot: TextButton): ()
+                pendingConflict = nil
+                rebuildAddList()
+            end)
+        else
+            addRow("Click an action, then press a key", "", false, nil)
+            for _, binding: any in ipairs(sortedBindings()) do
+                local bound: boolean = binding.key ~= nil
+                    and binding.key ~= Enum.KeyCode.Unknown
+                addRow(
+                    featureLabel(tostring(binding.id)),
+                    bound and binding.key.Name or "—",
+                    false,
+                    function(slot: TextButton): ()
+                        beginKeyCapture(slot, function(keyCode: Enum.KeyCode): ()
+                            local other: any = nil
+                            for _, candidate: any in pairs(state.shortcutBindings) do
+                                if candidate ~= binding
+                                    and candidate.key == keyCode then
+                                    other = candidate
+                                    break
+                                end
+                            end
+                            if other then
+                                pendingConflict = {
+                                    binding = binding,
+                                    key = keyCode,
+                                    other = other,
+                                }
+                                rebuildAddList()
+                            else
+                                applyBinding(binding, keyCode, nil)
+                            end
+                        end)
+                    end
+                )
+            end
+        end
+
+        if addRecord then
+            if addRecord.repack then
+                local rows: {{any}} = {
+                    {"Click an action, then press a key", nil, 12},
+                }
+                for _, binding: any in ipairs(sortedBindings()) do
+                    table.insert(rows, {
+                        featureLabel(tostring(binding.id)),
+                        binding.key and binding.key ~= Enum.KeyCode.Unknown
+                            and binding.key.Name
+                            or "—",
+                        12,
+                    })
+                end
+                addRecord.repack(rows)
+            end
+            addRecord.resize()
+        end
+    end
+
+    local function openAddKeybind(): ()
+        pendingConflict = nil
+        if addRecord then
+            rebuildAddList()
+            raiseOpen(addRecord)
+            return
+        end
+        local screen: Vector2 = viewport()
+        addRecord = configWindow("KeybindAdd", "Add Keybind", {
+            position = Vector2.new(screen.X - WINDOW_WIDTH * 2 - 32, 200),
+            anchor = keybindsRecord and keybindsRecord.window,
+            settingsSized = true,
+            packRows = {{"Click an action, then press a key", nil, 12}},
+        })
+        addList = (create("Frame", {
+            Parent = addRecord.window.body,
+            Name = "AddList",
+            AutomaticSize = Enum.AutomaticSize.Y,
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            LayoutOrder = 1,
+            Size = UDim2.new(1, 0, 0, 0),
+            ZIndex = addRecord.window.body.ZIndex + 1,
+        }) :: any) :: Frame
+        create("UIListLayout", {
+            Parent = addList,
+            Padding = UDim.new(0, WINDOW_GAP),
+            SortOrder = Enum.SortOrder.LayoutOrder,
+        })
+        rebuildAddList()
+        raiseOpen(addRecord)
+    end
+
     local function openKeybinds(): ()
         if keybindsRecord then
             raiseOpen(keybindsRecord)
@@ -886,6 +1138,7 @@ function Module.init(context: any): any
             Padding = UDim.new(0, WINDOW_GAP),
             SortOrder = Enum.SortOrder.LayoutOrder,
         })
+        actionRow(keybindsRecord, 99, "Add", openAddKeybind)
         actionRow(keybindsRecord, 100, "Reset keybinds", function(): ()
             for _, binding: any in pairs(state.shortcutBindings) do
                 binding.key = Enum.KeyCode.Unknown
