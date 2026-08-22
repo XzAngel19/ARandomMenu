@@ -33,6 +33,9 @@ local activeController: any = nil
 function Module.init(context: Runtime): any
     local host: any = context.host
     local state: any = host.state
+    local product: any = host.PRODUCT
+    local logPrefix: string = "[" .. tostring(product.logPrefix)
+        .. ":UniversalTrajectory]"
     local notify: any = host.notify
     local createUniversalFeature: any = host.createUniversalFeature
     local addNumberOption: any = host.addNumberOption
@@ -107,7 +110,7 @@ function Module.init(context: Runtime): any
 
         local executorEnvironment: {[string]: any} = getfenv() :: any
         local mouse: Mouse = LocalPlayer:GetMouse()
-        local outputRoot: string = "RandomTestingMenu0001"
+        local outputRoot: string = product.storageFolder
         local outputTelemetry: string = outputRoot .. "/Telemetry"
         local outputFolder: string = outputTelemetry .. "/Universal"
         local outputPath: string = outputFolder
@@ -235,7 +238,7 @@ function Module.init(context: Runtime): any
 
         saveSnapshot = function(reason: string): boolean
             if type(executorEnvironment.writefile) ~= "function" then
-                warn("[RTM:UniversalTrajectory] writefile no está disponible.")
+                warn(logPrefix .. " writefile no está disponible.")
                 return false
             end
             local payload: {[string]: any} = {
@@ -267,7 +270,7 @@ function Module.init(context: Runtime): any
                 payload
             )
             if not encodedOk or type(encoded) ~= "string" then
-                warn("[RTM:UniversalTrajectory] JSONEncode falló: " .. tostring(encoded))
+                warn(logPrefix .. " JSONEncode falló: " .. tostring(encoded))
                 return false
             end
             if type(executorEnvironment.makefolder) == "function" then
@@ -281,12 +284,12 @@ function Module.init(context: Runtime): any
                 encoded
             )
             if not writeOk then
-                warn("[RTM:UniversalTrajectory] writefile falló: " .. tostring(writeError))
+                warn(logPrefix .. " writefile falló: " .. tostring(writeError))
                 return false
             end
             runtime.dirty = false
             print(
-                "[RTM:UniversalTrajectory] Guardado "
+                logPrefix .. " Guardado "
                     .. outputPath
                     .. " ("
                     .. tostring(#encoded)
@@ -613,7 +616,7 @@ function Module.init(context: Runtime): any
             if not enabled then
                 runtime.enabled = false
                 disconnectAll()
-                print("[RTM:UniversalTrajectory] Calibración detenida.")
+                print(logPrefix .. " Calibración detenida.")
                 return
             end
             runtime.enabled = true
@@ -629,7 +632,7 @@ function Module.init(context: Runtime): any
                 considerCandidate
             ))
             print(
-                "[RTM:UniversalTrajectory] Activa · buckets "
+                logPrefix .. " Activa · buckets "
                     .. tostring(tuning.bucketWidthMs)
                     .. " ms · salida "
                     .. outputPath
@@ -644,7 +647,7 @@ function Module.init(context: Runtime): any
             local deleteFile: any = executorEnvironment.delfile
             local isFile: any = executorEnvironment.isfile
             if type(deleteFile) ~= "function" then
-                warn("[RTM:UniversalTrajectory] delfile no está disponible.")
+                warn(logPrefix .. " delfile no está disponible.")
                 return false
             end
             local exists: boolean = true
@@ -656,7 +659,7 @@ function Module.init(context: Runtime): any
                 local deleted: boolean, deleteError: any = pcall(deleteFile, outputPath)
                 if not deleted then
                     warn(
-                        "[RTM:UniversalTrajectory] delfile falló: "
+                        logPrefix .. " delfile falló: "
                             .. tostring(deleteError)
                     )
                     return false
@@ -668,7 +671,7 @@ function Module.init(context: Runtime): any
             runtime.totalProjectiles = 0
             runtime.rejectedCandidates = 0
             runtime.dirty = false
-            print("[RTM:UniversalTrajectory] Dataset de esta sesión eliminado.")
+            print(logPrefix .. " Dataset de esta sesión eliminado.")
             return true
         end
 
