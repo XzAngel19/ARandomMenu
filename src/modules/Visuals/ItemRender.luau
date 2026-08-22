@@ -170,7 +170,6 @@ function Module.init(context: Runtime): any
         end,
     })
 
-    render:CreateSection("Objects")
     local objectList: any
     objectList = render:CreateList({
         Name = "Objects",
@@ -250,7 +249,6 @@ function Module.init(context: Runtime): any
         end,
     })
 
-    render:CreateSection("Display")
     render:CreateToggle({
         Name = "Show distance",
         Default = true,

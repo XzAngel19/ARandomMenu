@@ -603,7 +603,6 @@ function Module.init(context: Runtime): any
         end,
     })
 
-    fly:CreateSection("Flight")
     fly:CreateDropdown({
         Name = "Method",
         List = {"Velocity", "Constraint", "Impulse", "CFrame", "Blink", "Pulse", "WalkSpeed"},
@@ -652,7 +651,6 @@ function Module.init(context: Runtime): any
     -- The advanced block, declared: every row below says it belongs to the
     -- "Advanced settings" switch instead of the switch keeping a list of them.
     local advanced: any = {Option = "Advanced settings"}
-    fly:CreateSection("Advanced").Show = advanced
     fly:CreateSlider({
         Name = "Response multiplier",
         Show = {advanced, {Option = "Method", Values = {"Velocity", "Constraint", "Pulse"}}},

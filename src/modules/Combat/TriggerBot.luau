@@ -165,7 +165,6 @@ function Module.init(context: Runtime): any
         Tooltip = "Minimum seconds between two shots.",
     })
 
-    trigger:CreateSection("Targeting")
     trigger:CreateDropdown({
         Name = "Target part",
         List = {"Any", "Head", "Torso"},
