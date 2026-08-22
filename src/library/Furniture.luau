@@ -707,6 +707,39 @@ function Module.init(context: any): any
         end
     end
 
+    -- The visible door back to the ClickGUI, top-left of the Navigator:
+    -- one click switches the style, closes this screen and opens Wurst's
+    -- windows through the state machine. Escape still closes; the dock
+    -- button is the same exit. Nobody gets trapped in a full screen.
+    local wurstDoor: TextButton = (create("TextButton", {
+        TextTruncate = Enum.TextTruncate.AtEnd,
+        Parent = navScreen,
+        Name = "WurstDoor",
+        Active = true,
+        AutoButtonColor = false,
+        BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+        BackgroundTransparency = 0.4,
+        BorderSizePixel = 0,
+        FontFace = CONTROL_FONT,
+        Position = UDim2.fromOffset(14, 14),
+        Size = UDim2.fromOffset(170, 26),
+        Text = "< Wurst ClickGUI",
+        TextColor3 = Color3.fromRGB(232, 232, 238),
+        TextSize = 14,
+        ZIndex = 248,
+    }) :: any) :: TextButton
+    table.insert(Furniture.connections, wurstDoor.MouseEnter:Connect(function(): ()
+        wurstDoor.BackgroundTransparency = 0.2
+    end))
+    table.insert(Furniture.connections, wurstDoor.MouseLeave:Connect(function(): ()
+        wurstDoor.BackgroundTransparency = 0.4
+    end))
+    table.insert(Furniture.connections, wurstDoor.MouseButton1Click:Connect(function(): ()
+        if type(state.SetMenuStyle) == "function" then
+            state.SetMenuStyle("Wurst", true)
+        end
+    end))
+
     local navColumn: Frame = (create("Frame", {
         Parent = navScreen,
         Name = "Column",
@@ -1026,7 +1059,12 @@ function Module.init(context: any): any
         BorderSizePixel = 0,
         Position = UDim2.new(0.5, 0, 1, -DOCK_BOTTOM_MARGIN),
         Size = UDim2.fromOffset(pillWidth, PILL_BUTTON + PILL_PADDING_Y * 2),
-        ZIndex = 240,
+        -- Above the Navigator's dim (246) either way: as a ScreenGui
+        -- sibling the dock already outranks the whole popup layer, and
+        -- on the PopupLayer fallback this keeps it over the dim and the
+        -- grid, under the toasts (300). The dock is the way out of every
+        -- surface; nothing may bury it.
+        ZIndex = 249,
     }) :: any) :: Frame
     create("UICorner", {
         Parent = pillFrame,
@@ -1129,6 +1167,14 @@ function Module.init(context: any): any
         16,
         "Show or hide the menu",
         function(): ()
+            -- With the Navigator open, the dock button is the way back to
+            -- Wurst: switch the style, close the Navigator, open the
+            -- ClickGUI, persist — the state machine does all four. The
+            -- user is never trapped in a surface.
+            if navScreen.Visible and type(state.SetMenuStyle) == "function" then
+                state.SetMenuStyle("Wurst", true)
+                return
+            end
             if type(state.openMenuSurface) == "function" then
                 state.openMenuSurface()
             else

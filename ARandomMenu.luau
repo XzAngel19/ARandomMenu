@@ -363,7 +363,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "324847851230431d"
+local SOURCE_STAMP: string = "d2371bb0628cb7fa"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -1105,6 +1105,46 @@ state.fontPack = (function(): string
     return "Minecraft 1.18.1"
 end)()
 
+-- The one menu-style state machine. Everything that changes the style —
+-- the UI Settings row, the Navigator's "Wurst ClickGUI" door, the dock —
+-- comes through here: persist, close whatever surface is open so the
+-- two never stack, open the new one when asked, tell the listeners.
+-- It touches nothing else: no enabled state, no settings, no window
+-- positions, no binds.
+state.menuStyleListeners = {} :: {(string) -> ()}
+
+state.SetMenuStyle = function(style: string, openImmediately: boolean?): ()
+    if style ~= "Wurst" and style ~= "Navigator" then
+        return
+    end
+    state.menuStyle = style
+    configData.values["UI.MenuStyle"] = style
+    queueConfigSave()
+    local navigator: any = state.navigator
+    local navigatorOpen: boolean = navigator ~= nil
+        and navigator.root ~= nil
+        and navigator.root.Visible == true
+    if style == "Wurst" then
+        if navigatorOpen and type(navigator.Close) == "function" then
+            navigator.Close()
+        end
+        if openImmediately and not state.visible then
+            state.setMenuVisible(true)
+        end
+    else
+        if state.visible then
+            state.setMenuVisible(false)
+        end
+        if openImmediately and navigator
+            and type(navigator.Open) == "function" then
+            navigator.Open()
+        end
+    end
+    for _, listener: (string) -> () in ipairs(state.menuStyleListeners) do
+        pcall(listener, style)
+    end
+end
+
 state.openMenuSurface = function(): ()
     if state.menuStyle == "Navigator" then
         local navigator: any = state.navigator
@@ -1121,6 +1161,13 @@ state.openMenuSurface = function(): ()
             navigator.Open()
             return
         end
+    end
+    -- Wurst style: the Navigator must never linger behind the ClickGUI —
+    -- RightShift can have opened it regardless of the saved style.
+    local navigator: any = state.navigator
+    if navigator and navigator.root and navigator.root.Visible
+        and type(navigator.Close) == "function" then
+        navigator.Close()
     end
     state.setMenuVisible(not state.visible)
 end

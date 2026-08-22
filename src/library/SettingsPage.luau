@@ -1653,9 +1653,18 @@ function Module.init(context: any): any
         table.find(menuStyles, tostring(state.menuStyle)) or 1,
         function(value: string): ()
             uiSettingsValues["Menu style"] = value
-            state.menuStyle = value
-            configData.values["UI.MenuStyle"] = value
-            queueConfigSave()
+            -- The one state machine: persists, closes whatever surface is
+            -- open, opens the selected one immediately, tells listeners.
+            -- The widget replays the stored value once at boot; only a
+            -- real change opens a surface — a menu must never open itself.
+            local changed: boolean = value ~= tostring(state.menuStyle)
+            if type(state.SetMenuStyle) == "function" then
+                state.SetMenuStyle(value, changed)
+            else
+                state.menuStyle = value
+                configData.values["UI.MenuStyle"] = value
+                queueConfigSave()
+            end
         end
     )
     uiSettingsValues["Menu style"] = tostring(state.menuStyle)
