@@ -25,6 +25,9 @@ export type MenuState = {
     refreshLayout: (boolean?) -> (),                -- Re-measure now; the flag forces it even if the mode has not changed
     setMenuVisible: (boolean) -> (),                -- Open or close the window, animations included
     menuStyle: string,                              -- "Wurst" (ClickGUI windows) or "Navigator" (Navigator as the main surface); stored as UI.MenuStyle
+    SetMenuStyle: (string, boolean?) -> (),         -- The one style state machine: persist, close the open surface, optionally open the new one, notify listeners
+    menuStyleListeners: {(string) -> ()},           -- Called with the new style after SetMenuStyle lands it
+    fontPack: string,                               -- "Minecraft 1.18.1" (authority) / "Minecraft 26.2" (optional local pack) / "Monocraft"; stored as UI.FontPack
     openMenuSurface: () -> (),                      -- Open/close whichever surface menuStyle selects; the toggle key and the dock come through here
     invokeModuleSearch: (string) -> boolean,        -- The dock's search resolver: exact/unique match toggles a module, ambiguous/none notify; replaceable by D's registry
     addMenuVisibilityListener: ((boolean) -> ()) -> (), -- Be told when it opens or closes
@@ -137,6 +140,9 @@ export type MenuState = {
     clickGui: any,                                  -- Wurst's layout: one window per category, cards placed into them
     moduleSearch: any,                              -- GUI-independent exact module registry: Resolve/Execute over the fixed 38-card inventory
     hudList: any,                                   -- Wurst's HackList: the on-screen list of enabled modules and their card.status brackets
+    uiShowHackList: boolean,                        -- Show HackList (UI Settings): the overlay's visibility, seeded before Furniture builds
+    uiShowDock: boolean,                            -- Show dock (UI Settings, desktop only): the launcher's visibility; touch-primary ignores it
+    dock: any,                                      -- The bottom-centre launcher: root frame and SetVisible
     navigator: any,                                 -- Wurst's Navigator adaptation: the search and preference-ordered grid under the logo
     wurstLogo: any,                                 -- The logo chip's live setters, driven by the WurstLogo settings window
     uiMaxHeight: number,                            -- Wurst's ClickGUI "Max height" in pixels; 0 means no limit, read by every category window

@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "bf6f5c1960573fdb",
+    stamp = "57ad5bf3546f4d25",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -5294,6 +5294,8 @@ function Module.init(context: any): any
     local Theme: any = host.Theme
     local CONTROL_FONT: any = host.CONTROL_FONT
     local trackUiConnection: any = host.trackUiConnection
+    local beginKeyCapture: any = host.beginKeyCapture
+    local UserInputService: any = host.UserInputService
     local applyKeySlotStyle: any = host.applyKeySlotStyle
     local bindActionShortcut: any = host.bindActionShortcut
     local getFeatureCardParent: any = host.getFeatureCardParent
@@ -5475,6 +5477,11 @@ function Module.init(context: any): any
                     ZIndex = 7,
                     align = "Center",
                     transparency = feature.titleTransparency or 0,
+                    -- The row is 196 inside the category window's padding;
+                    -- 28 px of symmetric clearance keeps the bind square
+                    -- (left) and the settings arrow (right) out of the
+                    -- name without moving its centre a pixel.
+                    maxWidth = 140,
                 })
             end
             feature.drawTitle(Theme.text, 0)
@@ -5485,8 +5492,12 @@ function Module.init(context: any): any
             -- Wurst centres the hack's name on the whole row — ref-wurst-719 —
             -- and the settings arrow floats over the right end without moving
             -- that centre, so the label always spans the full row.
-            label.Position = UDim2.fromOffset(0, 0)
-            label.Size = UDim2.new(1, 0, 0, feature.collapsedHeight)
+            -- Symmetric 28 px insets: the bind square floats on the left
+            -- and the arrow on the right, and neither may invade the name
+            -- — nor may the name's centre move, so the clearance is the
+            -- same on both sides.
+            label.Position = UDim2.fromOffset(28, 0)
+            label.Size = UDim2.new(1, -56, 0, feature.collapsedHeight)
             label.TextXAlignment = Enum.TextXAlignment.Center
             label.TextTruncate = Enum.TextTruncate.AtEnd
             label.TextColor3 = state.guiStyle == "Default"
@@ -5847,6 +5858,247 @@ function Module.init(context: any): any
         end
 
 
+
+        -- ------------------------------------------------- keybind square
+        -- A small permanent square on the row's left end, for bindable
+        -- modules only: toggles and holds. Never groups, never action
+        -- cards (Rejoin runs once; it is not a binding surface), never a
+        -- feature without a registered binding. A user-approved addition
+        -- drawn in Wurst's grammar: flat rectangle, thin stroke, no
+        -- corner, no glyph, no "Press a key" — the capturing tint is the
+        -- canonical setKeySlotCapture recolour, which finds the stroke by
+        -- its StyleStroke name. Capture and assignment go through the one
+        -- keybind machine (beginKeyCapture + binding.assign): Escape
+        -- cancels globally, a press off the square cancels, clicking the
+        -- square again cancels, Backspace/Delete clears, and nothing in
+        -- any path reads or writes feature.enabled or calls activate.
+        -- Hidden while no physical keyboard exists; one arriving shows it.
+        if (feature.kind == "toggle" or feature.kind == "hold")
+            and not state.isMobile
+            and type(beginKeyCapture) == "function"
+            and type(state.shortcutBindings) == "table"
+            and state.shortcutBindings[feature.configKey] ~= nil then
+            local binding: any = state.shortcutBindings[feature.configKey]
+            local UNBOUND_BG: Color3 = Color3.fromRGB(0, 0, 0)
+            local BOUND_BG: Color3 = Color3.fromRGB(0, 80, 0)
+            local CONFLICT_BG: Color3 = Color3.fromRGB(80, 0, 0)
+            local BOUND_EDGE: Color3 = Color3.fromRGB(0, 204, 0)
+            local CONFLICT_EDGE: Color3 = Color3.fromRGB(204, 0, 0)
+            local square: TextButton = (create("TextButton", {
+                TextTruncate = Enum.TextTruncate.AtEnd,
+                Parent = row,
+                Name = "BindSquare",
+                Active = true,
+                AnchorPoint = Vector2.new(0, 0.5),
+                AutoButtonColor = false,
+                BackgroundColor3 = UNBOUND_BG,
+                BackgroundTransparency = 0.55,
+                BorderSizePixel = 0,
+                FontFace = CONTROL_FONT,
+                Position = UDim2.new(0, 4, 0.5, 0),
+                Size = UDim2.fromOffset(12, 12),
+                Text = "",
+                -- The canonical capturer writes "..." into its button; the
+                -- square never shows text, so its ink stays invisible and
+                -- the state reads from colour alone.
+                TextTransparency = 1,
+                TextSize = 8,
+                ZIndex = 8,
+            }) :: any) :: TextButton
+            square:SetAttribute("CaptureIdleText", "")
+            local edge: UIStroke = (create("UIStroke", {
+                Parent = square,
+                Name = "StyleStroke",
+                Color = Theme.outline,
+                Thickness = 1,
+                Transparency = 0.6,
+            }) :: any) :: UIStroke
+
+            local capturing: boolean = false
+            local function conflictWith(): any
+                if binding.key == nil or binding.key == Enum.KeyCode.Unknown then
+                    return nil
+                end
+                for _, other: any in pairs(state.shortcutBindings) do
+                    if other ~= binding and other.key == binding.key then
+                        return other
+                    end
+                end
+                return nil
+            end
+            local function syncSquare(): ()
+                if capturing then
+                    return
+                end
+                local bound: boolean = binding.key ~= nil
+                    and binding.key ~= Enum.KeyCode.Unknown
+                local conflict: any = bound and conflictWith() or nil
+                if conflict then
+                    square.BackgroundColor3 = CONFLICT_BG
+                    square.BackgroundTransparency = 0.35
+                    edge.Color = CONFLICT_EDGE
+                    edge.Transparency = 0.15
+                elseif bound then
+                    square.BackgroundColor3 = BOUND_BG
+                    square.BackgroundTransparency = 0.35
+                    edge.Color = BOUND_EDGE
+                    edge.Transparency = 0.25
+                else
+                    square.BackgroundColor3 = UNBOUND_BG
+                    square.BackgroundTransparency = 0.55
+                    edge.Color = Theme.outline
+                    edge.Transparency = 0.6
+                end
+            end
+            feature.bindSquare = square
+            feature.syncBindSquare = syncSquare
+            syncSquare()
+
+            -- No physical keyboard, no square; one arriving shows it.
+            local function syncKeyboard(): ()
+                square.Visible = UserInputService == nil
+                    or UserInputService.KeyboardEnabled ~= false
+            end
+            syncKeyboard()
+            pcall(function(): ()
+                trackUiConnection(
+                    UserInputService:GetPropertyChangedSignal("KeyboardEnabled")
+                        :Connect(syncKeyboard)
+                )
+            end)
+
+            -- Tooltip after the same 400 ms every card surface waits: the
+            -- key when bound, the conflict by name when conflicted.
+            local function tipText(): string
+                local bound: boolean = binding.key ~= nil
+                    and binding.key ~= Enum.KeyCode.Unknown
+                if not bound then
+                    return "Bind: click, then press a key"
+                end
+                local conflict: any = conflictWith()
+                if conflict then
+                    return binding.key.Name .. " — also bound to "
+                        .. tostring(conflict.id)
+                end
+                return "Bound: " .. binding.key.Name
+            end
+            trackUiConnection(square.MouseEnter:Connect(function(): ()
+                local tooltip: any = state.featureTooltip
+                if not tooltip then
+                    return
+                end
+                state.tooltipToken = (state.tooltipToken or 0) + 1
+                local token: number = state.tooltipToken
+                task.delay(0.4, function(): ()
+                    if state.tooltipToken ~= token or not square.Parent then
+                        return
+                    end
+                    tooltip.Text = tipText()
+                    tooltip.TextTransparency = 1
+                    tooltip.Size = UDim2.fromOffset(
+                        math.clamp(#tooltip.Text * 8 + 24, 140, 360), 30
+                    )
+                    tooltip.Position = UDim2.fromOffset(
+                        square.AbsolutePosition.X,
+                        square.AbsolutePosition.Y + square.AbsoluteSize.Y + 8
+                    )
+                    if state.bitmapText and type(state.bitmapText.draw) == "function" then
+                        state.bitmapText.draw(tooltip, {
+                            {text = tooltip.Text},
+                        }, {
+                            Name = "Glyphs",
+                            TextSize = 16,
+                            ZIndex = 251,
+                        })
+                    end
+                    tooltip.Visible = true
+                end)
+            end))
+            trackUiConnection(square.MouseLeave:Connect(function(): ()
+                state.tooltipToken = (state.tooltipToken or 0) + 1
+                if state.featureTooltip then
+                    state.featureTooltip.Visible = false
+                end
+            end))
+
+            local outsideConnection: RBXScriptConnection? = nil
+            local function cleanupCapture(): ()
+                capturing = false
+                if outsideConnection then
+                    pcall(function(): ()
+                        (outsideConnection :: RBXScriptConnection):Disconnect()
+                    end)
+                    outsideConnection = nil
+                end
+                syncSquare()
+                -- The canonical machine tweens the button back to the
+                -- neutral slot colours as it releases; one more sync after
+                -- that motion lands keeps the square's own state colours.
+                task.delay(0.2, function(): ()
+                    if square.Parent and not capturing then
+                        syncSquare()
+                    end
+                end)
+            end
+            trackUiConnection(square.MouseButton1Click:Connect(function(): ()
+                if capturing then
+                    -- Clicking the square again cancels the capture.
+                    if state.keyCaptureCancel then
+                        state.keyCaptureCancel()
+                    else
+                        cleanupCapture()
+                    end
+                    return
+                end
+                capturing = true
+                beginKeyCapture(square, function(keyCode: Enum.KeyCode): ()
+                    -- Backspace / Delete clear; the canonical clear is
+                    -- assigning the key that is already bound. Nothing
+                    -- here touches enabled or activate.
+                    local backspaceKey: any = (Enum.KeyCode :: any).Backspace
+                    local deleteKey: any = (Enum.KeyCode :: any).Delete
+                    if keyCode == backspaceKey or keyCode == deleteKey then
+                        if binding.key ~= Enum.KeyCode.Unknown
+                            and type(binding.assign) == "function" then
+                            binding.assign(binding.key)
+                        end
+                    elseif type(binding.assign) == "function" then
+                        binding.assign(keyCode)
+                    end
+                    cleanupCapture()
+                end)
+                -- Chain the canonical cancel so Escape — or another capture
+                -- stealing the machine — restores the square's own colours.
+                local baseCancel: any = state.keyCaptureCancel
+                state.keyCaptureCancel = function(): ()
+                    if baseCancel then
+                        baseCancel()
+                    end
+                    cleanupCapture()
+                end
+                -- A press anywhere off the square cancels the capture.
+                pcall(function(): ()
+                    outsideConnection = UserInputService.InputBegan:Connect(function(
+                        input: InputObject
+                    ): ()
+                        if input.UserInputType ~= Enum.UserInputType.MouseButton1
+                            and input.UserInputType ~= Enum.UserInputType.Touch then
+                            return
+                        end
+                        local px: number = input.Position.X
+                        local py: number = input.Position.Y
+                        local ax: number = square.AbsolutePosition.X
+                        local ay: number = square.AbsolutePosition.Y
+                        if px < ax or px > ax + square.AbsoluteSize.X
+                            or py < ay or py > ay + square.AbsoluteSize.Y then
+                            if state.keyCaptureCancel then
+                                state.keyCaptureCancel()
+                            end
+                        end
+                    end)
+                end)
+            end))
+        end
 
         -- Point at the card, press a key, the card owns that key — the same
         -- gesture the reference interface uses instead of a capture dialog.
@@ -10820,6 +11072,9 @@ function Module.init(context: any): any
         if sourceName == "minecraft-exact" then
             return "Font: Minecraft 1.18.1 (exact, local pack)"
         end
+        if sourceName == "minecraft-26.2-local" then
+            return "Font: Minecraft 26.2 (optional local pack)"
+        end
         if sourceName == "monocraft-fallback" then
             return "Font: Monocraft fallback (OFL)"
         end
@@ -10964,12 +11219,68 @@ function Module.init(context: any): any
         table.find(menuStyles, tostring(state.menuStyle)) or 1,
         function(value: string): ()
             uiSettingsValues["Menu style"] = value
-            state.menuStyle = value
-            configData.values["UI.MenuStyle"] = value
-            queueConfigSave()
+            -- The one state machine: persists, closes whatever surface is
+            -- open, opens the selected one immediately, tells listeners.
+            -- The widget replays the stored value once at boot; only a
+            -- real change opens a surface — a menu must never open itself.
+            local changed: boolean = value ~= tostring(state.menuStyle)
+            if type(state.SetMenuStyle) == "function" then
+                state.SetMenuStyle(value, changed)
+            else
+                state.menuStyle = value
+                configData.values["UI.MenuStyle"] = value
+                queueConfigSave()
+            end
         end
     )
     uiSettingsValues["Menu style"] = tostring(state.menuStyle)
+
+    -- Which font pack renders. The visual authority stays Minecraft
+    -- 1.18.1; 26.2 is an optional local pack; Monocraft is the committed
+    -- fallback. Selecting a pack that is not installed keeps rendering
+    -- Monocraft and warns exactly once — the switch itself is live.
+    local fontPacks: {string} = {"Minecraft 1.18.1", "Minecraft 26.2", "Monocraft"}
+    addCycleOption(
+        uiPanel,
+        "Font pack",
+        fontPacks,
+        table.find(fontPacks, tostring(state.fontPack)) or 1,
+        function(value: string): ()
+            uiSettingsValues["Font pack"] = value
+            configData.values["UI.FontPack"] = value
+            queueConfigSave()
+            if state.bitmapText
+                and type(state.bitmapText.applyFontPack) == "function" then
+                state.bitmapText.applyFontPack(value)
+            end
+        end
+    )
+    uiSettingsValues["Font pack"] = tostring(state.fontPack)
+
+    -- The two HUD visibility rows. Show HackList hides the overlay only —
+    -- module state and statuses are untouched. Show dock exists on
+    -- desktop only: a touch-primary device has no RightControl, so its
+    -- dock is the one door and never hides; the desktop preference
+    -- persists without ever reaching mobile. Both replay their stored
+    -- value here, before Furniture builds, which is how Furniture seeds.
+    addToggleOption(uiPanel, "Show HackList", true, function(value: boolean): ()
+        uiSettingsValues["Show HackList"] = value
+        state.uiShowHackList = value
+        if state.hudList and type(state.hudList.SetVisible) == "function" then
+            state.hudList.SetVisible(value)
+        end
+    end)
+    local touchPrimary: boolean = UserInputService.TouchEnabled == true
+        and UserInputService.MouseEnabled ~= true
+    if not touchPrimary then
+        addToggleOption(uiPanel, "Show dock", true, function(value: boolean): ()
+            uiSettingsValues["Show dock"] = value
+            state.uiShowDock = value
+            if state.dock and type(state.dock.SetVisible) == "function" then
+                state.dock.SetVisible(value)
+            end
+        end)
+    end
 
     -- UI Settings is eager and its rows are all in place now: one reflow at
     -- the real measured size keeps its top-right default when that spot is
@@ -11677,6 +11988,7 @@ function Module.init(context: any): any
     local colorFromConfig: any = host.colorFromConfig
     local ScreenGui: any = host.ScreenGui
     local makeTextBox: any = host.makeTextBox
+    local notify: any = host.notify or function(_message: any): () end
 
     local Furniture: any = {
         handles = {} :: {any},
@@ -12098,7 +12410,16 @@ function Module.init(context: any): any
     local hudSignature: string = ""
     local hudElapsed: number = 0
 
+    -- Show HackList: the overlay only. Hidden means the frame is not
+    -- Visible and the poll skips its rebuild; module state and statuses
+    -- are untouched — the list simply is not drawn. Seeded by the UI
+    -- Settings replay, which runs before this library.
+    local hudVisible: boolean = state.uiShowHackList ~= false
+
     local function refreshHudList(): ()
+        if not hudVisible then
+            return
+        end
         local entries: {any} = {}
         for _, feature: any in ipairs(allFeatures) do
             if feature.enabled == true and not feature.isCategory then
@@ -12222,9 +12543,20 @@ function Module.init(context: any): any
         table.insert(state.bitmapText.onReady, forceHudRefresh)
     end
 
+    hudFrame.Visible = hudVisible
+    local function setHackListVisible(value: boolean): ()
+        hudVisible = value ~= false
+        hudFrame.Visible = hudVisible
+        if hudVisible then
+            forceHudRefresh()
+        end
+    end
+    Furniture.SetHackListVisible = setHackListVisible
+
     state.hudList = {
         frame = hudFrame,
         refresh = refreshHudList,
+        SetVisible = setHackListVisible,
         -- The HackList settings window drives these; persistence belongs to
         -- its rows, which write the same keys this file read at boot.
         SetMode = function(value: string): ()
@@ -12292,6 +12624,39 @@ function Module.init(context: any): any
             table.insert(Furniture.connections, bitmap.adoptTree(navScreen))
         end
     end
+
+    -- The visible door back to the ClickGUI, top-left of the Navigator:
+    -- one click switches the style, closes this screen and opens Wurst's
+    -- windows through the state machine. Escape still closes; the dock
+    -- button is the same exit. Nobody gets trapped in a full screen.
+    local wurstDoor: TextButton = (create("TextButton", {
+        TextTruncate = Enum.TextTruncate.AtEnd,
+        Parent = navScreen,
+        Name = "WurstDoor",
+        Active = true,
+        AutoButtonColor = false,
+        BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+        BackgroundTransparency = 0.4,
+        BorderSizePixel = 0,
+        FontFace = CONTROL_FONT,
+        Position = UDim2.fromOffset(14, 14),
+        Size = UDim2.fromOffset(170, 26),
+        Text = "< Wurst ClickGUI",
+        TextColor3 = Color3.fromRGB(232, 232, 238),
+        TextSize = 14,
+        ZIndex = 248,
+    }) :: any) :: TextButton
+    table.insert(Furniture.connections, wurstDoor.MouseEnter:Connect(function(): ()
+        wurstDoor.BackgroundTransparency = 0.2
+    end))
+    table.insert(Furniture.connections, wurstDoor.MouseLeave:Connect(function(): ()
+        wurstDoor.BackgroundTransparency = 0.4
+    end))
+    table.insert(Furniture.connections, wurstDoor.MouseButton1Click:Connect(function(): ()
+        if type(state.SetMenuStyle) == "function" then
+            state.SetMenuStyle("Wurst", true)
+        end
+    end))
 
     local navColumn: Frame = (create("Frame", {
         Parent = navScreen,
@@ -12612,7 +12977,12 @@ function Module.init(context: any): any
         BorderSizePixel = 0,
         Position = UDim2.new(0.5, 0, 1, -DOCK_BOTTOM_MARGIN),
         Size = UDim2.fromOffset(pillWidth, PILL_BUTTON + PILL_PADDING_Y * 2),
-        ZIndex = 240,
+        -- Above the Navigator's dim (246) either way: as a ScreenGui
+        -- sibling the dock already outranks the whole popup layer, and
+        -- on the PopupLayer fallback this keeps it over the dim and the
+        -- grid, under the toasts (300). The dock is the way out of every
+        -- surface; nothing may bury it.
+        ZIndex = 249,
     }) :: any) :: Frame
     create("UICorner", {
         Parent = pillFrame,
@@ -12715,6 +13085,14 @@ function Module.init(context: any): any
         16,
         "Show or hide the menu",
         function(): ()
+            -- With the Navigator open, the dock button is the way back to
+            -- Wurst: switch the style, close the Navigator, open the
+            -- ClickGUI, persist — the state machine does all four. The
+            -- user is never trapped in a surface.
+            if navScreen.Visible and type(state.SetMenuStyle) == "function" then
+                state.SetMenuStyle("Wurst", true)
+                return
+            end
             if type(state.openMenuSurface) == "function" then
                 state.openMenuSurface()
             else
@@ -12761,23 +13139,94 @@ function Module.init(context: any): any
         if boxStroke then
             boxStroke:Destroy()
         end
+        -- The dock talks to exactly one resolver: D's registry,
+        -- state.moduleSearch.Execute. Return, KeypadEnter and the mobile
+        -- keyboard all land on FocusLost(true) or the on-screen-keyboard
+        -- signal, and the token guarantees exactly one Execute per
+        -- submit however many of those fire for it. Nothing runs while
+        -- typing; there are no suggestions and no dropdown.
+        local lastSubmitAt: number = -math.huge
+        local function submitSearch(): ()
+            local now: number = os.clock()
+            if now - lastSubmitAt < 0.2 then
+                return
+            end
+            lastSubmitAt = now
+            local query: string = tostring(searchBox.Text or "")
+            if query:gsub("%s", "") == "" then
+                return
+            end
+            local search: any = state.moduleSearch
+            if type(search) ~= "table" or type(search.Execute) ~= "function" then
+                notify("Module search is not available")
+                return
+            end
+            local result: any = search.Execute(query)
+            local status: string = tostring(result and result.status)
+            if status == "success" then
+                searchBox.Text = ""
+                local entryName: string = tostring(
+                    result.entry and result.entry.displayName or query
+                )
+                notify(entryName .. ": "
+                    .. (result.enabled and "enabled" or "disabled"))
+            elseif status == "ambiguous" then
+                local names: {string} = {}
+                for index: number, match: any in ipairs(result.matches or {}) do
+                    if index > 4 then
+                        table.insert(names, "…")
+                        break
+                    end
+                    table.insert(names, tostring(match.displayName))
+                end
+                notify("Ambiguous: " .. table.concat(names, ", "))
+            elseif status == "not_toggleable" then
+                notify(tostring(
+                    result.entry and result.entry.displayName or query
+                ) .. " has nothing to toggle")
+            else
+                notify("No module matches \"" .. query .. "\"")
+            end
+        end
         table.insert(
             Furniture.connections,
             searchBox.FocusLost:Connect(function(enterPressed: boolean): ()
-                if enterPressed ~= true then
-                    return
-                end
-                local query: string = tostring(searchBox.Text or "")
-                searchBox.Text = ""
-                if query:gsub("%s", "") == "" then
-                    return
-                end
-                if type(state.invokeModuleSearch) == "function" then
-                    state.invokeModuleSearch(query)
+                if enterPressed == true then
+                    submitSearch()
                 end
             end)
         )
+        -- The on-screen keyboard's submit, where the platform offers it.
+        pcall(function(): ()
+            table.insert(
+                Furniture.connections,
+                (searchBox :: any).ReturnPressedFromOnScreenKeyboard:Connect(
+                    submitSearch
+                )
+            )
+        end)
     end
+
+    -- Show dock. Desktop can hide the launcher (RightControl still
+    -- opens the menu — the key handler never lived in the dock); the
+    -- preference persists but never reaches a touch-primary device,
+    -- where the dock is the only door and stays visible regardless of
+    -- any stored desktop value. Hiding never destroys: Visible only.
+    local touchPrimary: boolean = UserInputService.TouchEnabled == true
+        and UserInputService.MouseEnabled ~= true
+    local function setDockVisible(value: boolean): ()
+        if touchPrimary then
+            pillFrame.Visible = true
+            return
+        end
+        pillFrame.Visible = value ~= false
+    end
+    setDockVisible(state.uiShowDock ~= false)
+    Furniture.SetDockVisible = setDockVisible
+    state.dock = {
+        root = pillFrame,
+        SetVisible = setDockVisible,
+    }
 
     -- The menu button fills with the accent while the GUI is open, exactly
     -- like the prototype's `.on` state. Repainted on both the things that

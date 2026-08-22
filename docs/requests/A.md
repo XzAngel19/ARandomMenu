@@ -191,3 +191,81 @@ the gate will force a Left default that contradicts the prototype.
   commit, per the lane rule — C, please re-bless.
 - `state.invokeModuleSearch` is the dock's resolver and is designed to
   be replaced wholesale by D's registry (reassign the field).
+
+## Optional 26.2 font pack (2026-08-22, fourth)
+
+- The installer now builds per-version packs: `--version 1.18.1|26.2`,
+  `--source <minecraft-dir>` (auto-detects version json / client jar /
+  asset index and verifies jar vs the json's own hash AND the
+  per-version pin: 26.2 client `2dc72797…`, asset index 32 `773791…`,
+  read off piston-meta 2026-08-22), recursive default.json through
+  `reference` includes, real provider types per version — bitmap,
+  space, legacy_unicode, unihex (rasterised only when no bitmap covers
+  ASCII), unknown recorded verbatim. Packs land in `MinecraftFont/`
+  vs `MinecraftFont-26.2/`; a manifest in the wrong slot fails
+  `--check`. Versions never share an atlas.
+- Runtime: UI Settings "Font pack" = Minecraft 1.18.1 (default —
+  the visual authority does not move) / Minecraft 26.2 / Monocraft,
+  stored as `UI.FontPack`, applied live via
+  `state.bitmapText.applyFontPack` (atlas generation in the draw
+  signatures repaints exactly once). A selected-but-missing pack warns
+  once per selection and renders Monocraft; a loaded pack disables the
+  Monocraft 8/24/32 raster variants so two fonts never mix on screen.
+  Sources: minecraft-exact / minecraft-26.2-local /
+  monocraft-fallback / unavailable, all visible in Wurst Options.
+- C: the offline installer tests still pass byte-compatible; the
+  `/cache/` gitignore now covers everything (a synthetic test fixture
+  briefly landed in dea7201 and was swept in 8766c50 — no Mojang
+  bytes, but cache is never Git's).
+
+## Bug pass: style machine, Navigator exit, dock submit, HUD toggles, raster rule (2026-08-22, fifth)
+
+- `state.SetMenuStyle(style, openImmediately)` is the one style path
+  (persist, close the open surface, open on demand, notify
+  `state.menuStyleListeners`; touches nothing else). UI Settings calls
+  it with openImmediately only on a real change (the widget replays at
+  boot). openMenuSurface also closes a RightShift-opened Navigator
+  before showing Wurst — the two surfaces can never coexist.
+- Navigator exits: dock at Z 249 (above the 246 dim even on the
+  PopupLayer fallback), the ≡ button returns to Wurst while the
+  Navigator is open, and a "< Wurst ClickGUI" door sits inside the
+  screen. Escape unchanged.
+- The dock submits exclusively through `state.moduleSearch.Execute`
+  (D's registry) with a 0.2 s token so FocusLost(true) and the
+  on-screen-keyboard signal cannot double-fire; all four statuses
+  notify. `state.invokeModuleSearch` is now a three-line wrapper over
+  the same Execute.
+- Show HackList / Show dock in UI Settings (defaults true, live,
+  persisted; `Furniture.SetHackListVisible` + `state.hudList.SetVisible`
+  + `state.dock.SetVisible`). Touch-primary devices keep the dock
+  always visible and never see the Show dock row; hidden means
+  Visible=false, never destruction; RightControl is independent.
+- `pickAtlas` is downscale-only: smallest ready raster covering the
+  physical target, largest only when everything undershoots, 8 px only
+  for targets <= 8. Verified headless at 0.7/1/1.25/1.4/1.6 and a
+  short viewport: NoFall title clipped inside the chrome, integer
+  physical rects, dropdown glyphs never from an upscaled 8.
+
+## Keybind square (2026-08-22, sixth)
+
+- Every bindable row (kind toggle/hold; never group, never action cards
+  like Rejoin, never a feature without a registered binding) grows a
+  permanent 12×12 flat square at x=4, vertically centred on the 22 px
+  row: thin StyleStroke, no UICorner, no text ever — the canonical
+  capturer's "..." is written into an invisible ink. States: unbound
+  (dark, stroke 0.6), capturing (the canonical setKeySlotCapture tint —
+  no second system), bound (green edge 0.25 over a dark green fill),
+  conflict (red edge 0.15; the 400 ms tooltip names the other binding).
+- Capture is exclusively beginKeyCapture + binding.assign: next key
+  assigns, the bound key or Backspace/Delete clears, Escape cancels
+  globally, a press off the square cancels, clicking the square again
+  cancels, and no path reads or writes feature.enabled or calls
+  activate — held by the rows suite (24 new checks) and a full-boot
+  sim at 0.7/1/1.25/1.6 (32 squares, 0 on wrong kinds).
+- The title's clearance went symmetric (28 px both sides, bitmap
+  maxWidth 140): the square and the arrow can never be invaded by a
+  long name and the centre does not move — the rows suite now asserts
+  the symmetry instead of the full-width offset.
+- No physical keyboard → square hidden; KeyboardEnabled flipping shows
+  it live. Binding contract additions: feature.bindSquare,
+  feature.syncBindSquare.
