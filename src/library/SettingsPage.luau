@@ -70,7 +70,6 @@ function Module.init(context: any): any
     local CONTROL_FONT: any = host.CONTROL_FONT
     local UserInputService: any = host.UserInputService
     local trackUiConnection: any = host.trackUiConnection
-    local applyKeySlotStyle: any = host.applyKeySlotStyle
     local beginKeyCapture: any = host.beginKeyCapture
     local setKeySlotCapture: any = host.setKeySlotCapture
     local GAME_CHECK: any = host.GAME_CHECK
@@ -469,6 +468,10 @@ function Module.init(context: any): any
         end
 
         local order: number = 0
+        -- A key is compact right-aligned text, not a capsule: Wurst's
+        -- keybind list is two columns of words. The text itself is the
+        -- rebind target, wide enough that RightControl never truncates,
+        -- and a conflicted key is painted in the warning colour.
         local function keybindRow(labelText: string, slotText: string, conflicted: boolean, onSlot: (TextButton) -> ()): ()
             order += 1
             local row: Frame = (create("Frame", {
@@ -487,23 +490,32 @@ function Module.init(context: any): any
                 BackgroundTransparency = 1,
                 FontFace = CONTROL_FONT,
                 Position = UDim2.fromOffset(6, 0),
-                Size = UDim2.new(1, -66, 1, 0),
+                Size = UDim2.new(1, -160, 1, 0),
                 Text = labelText,
                 TextColor3 = Theme.text,
-                TextSize = 11.5,
+                TextSize = 16,
                 TextXAlignment = Enum.TextXAlignment.Left,
                 ZIndex = row.ZIndex + 1,
             })
-            local slot: TextButton = (makeButton(row, slotText, 9) :: any) :: TextButton
-            slot.AnchorPoint = Vector2.new(1, 0.5)
-            slot.Position = UDim2.new(1, -6, 0.5, 0)
-            slot.Size = UDim2.fromOffset(52, 16)
-            slot.ZIndex = row.ZIndex + 1
-            applyKeySlotStyle(slot)
+            local slot: TextButton = (create("TextButton", {
+                TextTruncate = Enum.TextTruncate.AtEnd,
+                Parent = row,
+                Name = "Key",
+                Active = true,
+                AnchorPoint = Vector2.new(1, 0),
+                AutoButtonColor = false,
+                BackgroundTransparency = 1,
+                BorderSizePixel = 0,
+                FontFace = CONTROL_FONT,
+                Position = UDim2.new(1, -6, 0, 0),
+                Size = UDim2.fromOffset(150, ROW_HEIGHT),
+                Text = slotText,
+                TextColor3 = conflicted and Theme.negative or Theme.textMuted,
+                TextSize = 16,
+                TextXAlignment = Enum.TextXAlignment.Right,
+                ZIndex = row.ZIndex + 1,
+            }) :: any) :: TextButton
             slot:SetAttribute("CaptureIdleText", slotText)
-            if conflicted then
-                slot.TextColor3 = Theme.negative
-            end
             trackUiConnection(slot.MouseButton1Click:Connect(function(): ()
                 onSlot(slot)
             end))
@@ -524,11 +536,18 @@ function Module.init(context: any): any
             end)
         end
 
+        -- Only the menu key and the bindings that exist. Wurst's manager
+        -- lists keybinds, not one empty capsule per module — an unbound
+        -- module simply is not a keybind. New keys are still made on the
+        -- card slots (touch) or by loading a profile.
         for _, binding: any in ipairs(sortedBindings()) do
             local bound: boolean = binding.key ~= nil
                 and binding.key ~= Enum.KeyCode.Unknown
-            local slotText: string = bound and binding.key.Name or ""
-            local conflicted: boolean = bound and (keyUses[binding.key.Name] or 0) > 1
+            if not bound then
+                continue
+            end
+            local slotText: string = binding.key.Name
+            local conflicted: boolean = (keyUses[binding.key.Name] or 0) > 1
             keybindRow(featureLabel(tostring(binding.id)), slotText, conflicted, function(slot: TextButton): ()
                 beginKeyCapture(slot, function(keyCode: Enum.KeyCode): ()
                     -- Pressing the bound key again clears it, the same
@@ -716,12 +735,15 @@ function Module.init(context: any): any
         local screen: Vector2 = viewport()
         local keybindRows: {{any}} = {
             {"Reset keybinds", nil, 26},
+            {"Open menu", "RightControl", 12},
         }
         for _, binding: any in pairs(state.shortcutBindings) do
-            table.insert(
-                keybindRows,
-                {featureLabel(tostring(binding.id)), nil, 66}
-            )
+            if binding.key and binding.key ~= Enum.KeyCode.Unknown then
+                table.insert(
+                    keybindRows,
+                    {featureLabel(tostring(binding.id)), binding.key.Name, 12}
+                )
+            end
         end
         keybindsRecord = configWindow("Keybinds", "Keybinds", {
             position = Vector2.new(screen.X - WINDOW_WIDTH * 2 - 32, 140),
@@ -777,6 +799,7 @@ function Module.init(context: any): any
                 {"Keybinds", nil, 26},
                 {"Reinject latest", nil, 26},
                 {"Destruct", nil, 26},
+                {"Reset layout", nil, 26},
                 {"Game check: Universal only"},
             }),
         })
@@ -891,6 +914,17 @@ function Module.init(context: any): any
             end)
         end))
 
+        actionRow(optionsRecord, 4, "Reset layout", function(): ()
+            -- Saved geometry gone, category grid re-tiled now, settings
+            -- windows re-cascade on their next open.
+            configData.ui.windows = {}
+            queueConfigSave()
+            if state.clickGui and state.clickGui.Retile then
+                state.clickGui.Retile()
+            end
+            notify("Layout reset")
+        end)
+
         -- The game check readout: *how* the game was recognised, which is
         -- what tells you a clone was matched by structure, not PlaceId.
         local recognised: string = GAME_CHECK.MM2Active and "MM2"
@@ -905,7 +939,7 @@ function Module.init(context: any): any
             Name = "GameCheck",
             BackgroundTransparency = 1,
             FontFace = CONTROL_FONT,
-            LayoutOrder = 4,
+            LayoutOrder = 5,
             Size = UDim2.new(1, 0, 0, ROW_HEIGHT),
             Text = "  Game check: " .. recognised,
             TextColor3 = Theme.textMuted,
@@ -999,6 +1033,14 @@ function Module.init(context: any): any
     addNumberOption(uiPanel, "Max settings height", MAX_SETTINGS_HEIGHT, 0, 1000, function(value: number): ()
         uiSettingsValues["Max settings height"] = value
         maxSettingsHeight = value
+        -- Published: the window manager caps every popped-out feature
+        -- settings window with the same slider.
+        state.uiMaxSettingsHeight = value
+        for _, window: any in ipairs((state.windows and state.windows.list) or {}) do
+            if window.featureSettings and window.resizeToOptions then
+                window.resizeToOptions()
+            end
+        end
         for _, record: any in ipairs(Settings.records) do
             record.resize()
         end

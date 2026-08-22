@@ -618,6 +618,137 @@ function Module.init(context: any): any
         end
     end
 
+    -- ------------------------------------------------------ feature settings
+    -- Wurst pops a hack's settings into a window of its own — nothing ever
+    -- expands inside a category window. One lazy window per feature, reused
+    -- on every open, cascaded on first placement so no two are born on top
+    -- of each other, packed to its widest option label, capped by Wurst's
+    -- "Max settings height", and following the GUI like every other window
+    -- unless pinned. This is the one contract: the row's triangle, the
+    -- right-click and the Navigator all come through here.
+    local settingsCascade: number = 0
+    function manager.OpenFeatureSettings(feature: any): any
+        if type(feature) ~= "table" or feature.row == nil then
+            return nil
+        end
+        local id: string = "FeatureSettings_"
+            .. tostring(feature.configKey or feature.name):gsub("%W", "")
+        local existing: any = manager.byId[id]
+        if existing then
+            existing.root.Visible = true
+            feature.expanded = true
+            if feature.syncArrow then
+                feature.syncArrow()
+            end
+            raise(existing)
+            return existing
+        end
+
+        -- Packed to content: the widest option label decides, the way Wurst
+        -- sizes a settings window. 12 px is the bitmap advance at the 16 px
+        -- line; 72 covers the widest value column.
+        local width: number = 200
+        for _, optionRow: any in ipairs(feature.optionRows or {}) do
+            local label: any = optionRow:FindFirstChild("OptionLabel")
+            local text: string = label and tostring(label.Text) or ""
+            width = math.max(width, 8 + #text * 12 + 24 + 72)
+        end
+        width = math.min(width, 420)
+
+        local viewport: Vector2 = workspace.CurrentCamera
+            and (workspace.CurrentCamera :: Camera).ViewportSize
+            or Vector2.new(1280, 720)
+        local step: number = settingsCascade % 6
+        local slot: Vector2 = Vector2.new(
+            math.max(
+                20,
+                math.min(
+                    viewport.X * 0.45 + step * 28,
+                    viewport.X - width - 20
+                )
+            ),
+            110 + step * 30 + (settingsCascade // 6) * 14
+        )
+        settingsCascade += 1
+
+        local window: any = manager.Create({
+            id = id,
+            title = tostring(feature.name) .. " Settings",
+            size = Vector2.new(width, TITLE_HEIGHT + 40),
+            position = slot,
+            closable = true,
+            onClose = function(): ()
+                feature.expanded = false
+                if feature.syncArrow then
+                    feature.syncArrow()
+                end
+            end,
+        })
+        window.featureSettings = true
+        feature.settingsWindow = window
+
+        -- The card's option rows move home: they were built into the card's
+        -- hidden panel and live in this window from now on. The category
+        -- window keeps exactly its height and rows.
+        local options: any = feature.options
+        if options then
+            options.Visible = true
+            options.Position = UDim2.fromOffset(0, 0)
+            options.Size = UDim2.new(1, 0, 0, feature.optionsHeight or 40)
+            options.Parent = window.body
+        end
+
+        local function resizeToOptions(): ()
+            local wanted: number = TITLE_HEIGHT + (feature.optionsHeight or 40)
+            local limit: number = tonumber(state.uiMaxSettingsHeight) or 200
+            if limit <= 0 then
+                limit = math.huge
+            end
+            wanted = math.min(wanted, limit)
+            window.fullHeight = wanted
+            if not window.collapsed then
+                window.root.Size = UDim2.fromOffset(width, wanted)
+            end
+        end
+        window.resizeToOptions = resizeToOptions
+        resizeToOptions()
+
+        feature.expanded = true
+        if feature.syncArrow then
+            feature.syncArrow()
+        end
+        window.root.Visible = true
+        raise(window)
+        return window
+    end
+
+    -- Whole-window bring-to-front, published: raising re-stacks every root
+    -- (the ScreenGui is Sibling-ordered, so the root's ZIndex carries the
+    -- entire window above the rest).
+    function manager.BringToFront(window: any): ()
+        if window then
+            raise(window)
+        end
+    end
+
+    -- Feature settings windows follow the GUI the way category windows do,
+    -- pinned ones excepted — pinning is how a settings window becomes HUD.
+    state.addMenuVisibilityListener(function(visible: boolean): ()
+        for _, window: any in ipairs(manager.list) do
+            if window.featureSettings then
+                if not visible and window.pinned then
+                    continue
+                end
+                if visible then
+                    window.root.Visible = window.wasOpenWithMenu == true
+                else
+                    window.wasOpenWithMenu = window.root.Visible
+                    window.root.Visible = false
+                end
+            end
+        end
+    end)
+
     -- Wurst's ClickGUI Opacity setting: the body of every window at one
     -- alpha. The title bar stays opaque — Wurst fades only the background.
     -- Remembered on the manager so a window created after the slider moved

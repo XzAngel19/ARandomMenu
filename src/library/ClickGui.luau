@@ -54,6 +54,14 @@ local WINDOW_MAX_HEIGHT: number = 300
 -- refuse.
 local SCALE_MINIMUM: number = 0.7
 local SCALE_MAXIMUM: number = 1.6
+-- The screen the port is calibrated against. Every logical measure here is
+-- Wurst's at GUI scale 2, which reads right on a 1600×900 viewport; a
+-- smaller screen scales the whole layer down uniformly, a larger one up —
+-- one number for everything, never a component resized on its own. The
+-- player's Scale slider (ThemeEngine.shape.scale, default 1) multiplies on
+-- top, so the UI Settings control keeps working.
+local CALIBRATION_WIDTH: number = 1600
+local CALIBRATION_HEIGHT: number = 900
 local GRID_MARGIN: number = 10
 local WINDOW_GAP: number = 2
 -- Wurst tiles its first-run grid with a 5-logical gap; 10 at the GUI scale 2
@@ -76,6 +84,27 @@ local CATEGORY_ORDER: {string} = {
     "Other",
 }
 
+-- The same aliases the shell and the Framework carry — the contract is one,
+-- copied because a downloaded file cannot reach the shell's locals at
+-- require time, and because the harness boots this file against a host that
+-- predates the contract.
+local CATEGORY_ALIASES: {[string]: string} = {
+    ["Visuals"] = "Render",
+    ["Protection"] = "Movement",
+    ["Utility"] = "Other",
+    ["Spoof"] = "Fun",
+    ["General"] = "Other",
+    ["Player"] = "Movement",
+}
+
+local function fallbackNormalize(raw: any): string
+    local name: string = tostring(raw or "Other")
+    if table.find(CATEGORY_ORDER, name) ~= nil then
+        return name
+    end
+    return CATEGORY_ALIASES[name] or "Other"
+end
+
 function Module.init(context: any): any
     local host: any = context
     local state: any = host.state
@@ -89,7 +118,15 @@ function Module.init(context: any): any
     local function viewportScale(): number
         local shape: any = host.ThemeEngine and host.ThemeEngine.shape
         local wanted: number = shape and tonumber(shape.scale) or 1
-        return math.clamp(wanted, SCALE_MINIMUM, SCALE_MAXIMUM)
+        local camera: Camera? = workspace.CurrentCamera
+        local viewport: Vector2 = camera
+            and (camera :: Camera).ViewportSize
+            or Vector2.new(CALIBRATION_WIDTH, CALIBRATION_HEIGHT)
+        local fit: number = math.min(
+            viewport.X / CALIBRATION_WIDTH,
+            viewport.Y / CALIBRATION_HEIGHT
+        )
+        return math.clamp(wanted * fit, SCALE_MINIMUM, SCALE_MAXIMUM)
     end
 
     local windows: any = state.windows
@@ -218,13 +255,31 @@ function Module.init(context: any): any
         local raw: any = (row :: Frame):GetAttribute("FeatureCategory")
         local name: string = type(normalizeFeatureCategory) == "function"
             and normalizeFeatureCategory(raw)
-            or tostring(raw or "Other")
+            or fallbackNormalize(raw)
         local record: CategoryWindow = categoryWindow(name)
         record.count += 1;
         (row :: Frame).Parent = record.window.body;
         (row :: Frame).Size = UDim2.new(1, 0, 0, feature.collapsedHeight or 22)
         if record.resize then
             (record.resize :: () -> ())()
+        end
+    end
+
+    -- Reset layout: every category window back on the first-run grid, in
+    -- the official order, with every saved position already forgotten by
+    -- the caller. Settings windows re-cascade the next time they open.
+    function ClickGui.Retile(): ()
+        nextX = GRID_MARGIN
+        nextY = 64
+        rowHeight = 0
+        for _, name: string in ipairs(ClickGui.order) do
+            local record: CategoryWindow = ClickGui.categories[name]
+            if record then
+                local slot: Vector2 = nextSlot(
+                    record.window.fullHeight or WINDOW_MAX_HEIGHT * 0.5
+                )
+                record.window.root.Position = UDim2.fromOffset(slot.X, slot.Y)
+            end
         end
     end
 
@@ -253,11 +308,27 @@ function Module.init(context: any): any
         end
     end
 
-    -- Categories that exist before a single card does, so the grid comes out in
-    -- Wurst's order rather than in whichever order the modules happened to
-    -- finish loading.
+    -- One window per category that actually holds a module, tiled in the
+    -- official order with the empty ones omitted — Blocks, Items and Chat
+    -- stay in the contract but draw nothing while nothing lives in them.
+    -- The first pass walks the official order so the grid comes out in
+    -- Wurst's sequence rather than module-load order; a category that gains
+    -- its first module later gets its window then, at the next free slot.
+    local function resolvedCategory(feature: any): string
+        local row: any = feature and feature.row
+        local raw: any = row and row:GetAttribute("FeatureCategory")
+        if type(normalizeFeatureCategory) == "function" then
+            return normalizeFeatureCategory(raw)
+        end
+        return fallbackNormalize(raw)
+    end
     for _, name: string in ipairs(CATEGORY_ORDER) do
-        categoryWindow(name)
+        for _, feature: any in ipairs(allFeatures) do
+            if resolvedCategory(feature) == name then
+                categoryWindow(name)
+                break
+            end
+        end
     end
 
     -- Cards built before this library started — which is all of them, since the

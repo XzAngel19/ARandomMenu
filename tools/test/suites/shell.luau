@@ -159,7 +159,10 @@ return function(ctx: any): ()
             built += 1
             placed += record.count
         end
-        check("a window per category", built >= 6, tostring(built) .. " windows")
+        -- Five populated official categories at boot (Combat, Render,
+        -- Movement, Fun, Other); Blocks, Items and Chat are empty and must
+        -- not draw a window.
+        check("a window per populated category", built >= 5, tostring(built) .. " windows")
         -- 38 modules plus whatever the active game module adds. Fewer than
         -- the module count means cards were left parented to the old page.
         check(

@@ -277,6 +277,12 @@ function Module.init(context: any): WidgetLibrary
     --
     -- On `state` as well as in the returned table, for the same reason as
     -- `layoutOptionControl`.
+    -- Wurst's settings windows carry no group headings — the Java lists
+    -- rows and nothing else, and DISPLAY / FILTERS / STYLE on screen were
+    -- the old menu's taxonomy showing through. The builder stays because
+    -- the modules call it (their grouping intent is real and may matter to
+    -- a future surface), but what it returns is invisible and zero-height:
+    -- it neither draws nor occupies a line.
     state.addSectionOption = function(feature: any, titleText: string): Frame
         feature.optionCount += 1
         local section: Frame = (create("Frame", {
@@ -285,43 +291,11 @@ function Module.init(context: any): WidgetLibrary
             BackgroundTransparency = 1,
             BorderSizePixel = 0,
             LayoutOrder = feature.optionCount,
-            Size = UDim2.new(1, 0, 0, 22),
+            Size = UDim2.new(1, 0, 0, 0),
+            Visible = false,
             ZIndex = feature.options.ZIndex + 1,
         }) :: any) :: Frame
         table.insert(feature.optionRows, section)
-
-        local title: TextLabel = (makeTextLabel(
-            section,
-            string.upper(titleText),
-            9
-        ) :: any) :: TextLabel
-        title.Name = "SectionTitle"
-        title.FontFace = CONTROL_FONT
-        title.Position = UDim2.fromOffset(4, 0)
-        title.Size = UDim2.new(0, 130, 1, 0)
-        title.TextColor3 = Theme.textMuted
-        title.TextTransparency = 0.22
-        title.ZIndex = section.ZIndex + 1
-
-        local rule: Frame = create("Frame", {
-            Parent = section,
-            Name = "SectionRule",
-            AnchorPoint = Vector2.new(1, 0.5),
-            BackgroundColor3 = Theme.outline,
-            BackgroundTransparency = 0.72,
-            BorderSizePixel = 0,
-            Position = UDim2.new(1, -4, 0.5, 0),
-            Size = UDim2.new(1, -142, 0, 1),
-            ZIndex = section.ZIndex + 1,
-        }) :: Frame
-        create("UIGradient", {
-            Parent = rule,
-            Transparency = NumberSequence.new({
-                NumberSequenceKeypoint.new(0, 1),
-                NumberSequenceKeypoint.new(1, 0.3),
-            }),
-        })
-
         feature.updateExpandedSize()
         return section
     end

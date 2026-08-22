@@ -363,7 +363,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "3e4cee7fe0aa57ed"
+local SOURCE_STAMP: string = "42340f0de360bcc2"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -936,6 +936,11 @@ local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = GUI_NAME
 ScreenGui.ResetOnSpawn = false
 ScreenGui.IgnoreGuiInset = true
+-- Roblox machine-translates every label for a non-English client unless told
+-- otherwise, which is how the menu showed "Otras razones", "Desactivado" and
+-- "Hacer zoom". One flag at the root covers every descendant: the interface
+-- speaks Wurst's English, always. (VD's in-world billboards set their own.)
+ScreenGui.AutoLocalize = false
 ScreenGui.DisplayOrder = 999999
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 ScreenGui:SetAttribute("BuildId", "0001-S17")
@@ -1046,6 +1051,24 @@ state.mobileButtonSize = math.clamp(
     120
 )
 configData.ui.guiStyle = nil
+-- Schema 2: the Wurst rebuild. Values an older build stored contradict the
+-- port — window geometry for windows that no longer exist (the "WurstLogo |
+-- Emote Player" pile-up was two eras' saved positions coinciding), Max
+-- height sliders stored before the official 200 default existed, and the
+-- WurstLogo colours from the ghost-chip era. One flag, one sweep;
+-- everything falls back to Wurst's own defaults and persists fresh.
+if configData.ui.wurstSchema ~= 2 then
+    configData.ui.wurstSchema = 2
+    configData.ui.windows = {}
+    configData.values["ClickGUI.Maxheight"] = nil
+    configData.values["ClickGUI.Maxsettingsheight"] = nil
+    configData.values["ClickGUI.Opacity"] = nil
+    configData.values["ClickGUI.Tooltipopacity"] = nil
+    configData.values["WurstLogo.Background"] = nil
+    configData.values["WurstLogo.Text"] = nil
+    configData.values["WurstLogo.Visibility"] = nil
+    queueConfigSave()
+end
 configData.ui.textScaleCalibrationVersion = 2
 
 -- ---------------------------------------------------------------------------
@@ -1745,6 +1768,15 @@ local function create(className, properties)
         end
     end
 
+    -- Belt to the root flag's braces: every text object the menu builds
+    -- refuses machine translation individually, so a label parented outside
+    -- the main ScreenGui (billboards, overlays) is covered too.
+    if object:IsA("TextLabel")
+        or object:IsA("TextButton")
+        or object:IsA("TextBox") then
+        object.AutoLocalize = false
+    end
+
     if properties and properties.Parent then
         object.Parent = properties.Parent
     end
@@ -1767,8 +1799,16 @@ end
 -- The window itself passes a larger radius so the shell reads as one smooth,
 -- pill-shaped surface; the 30 cap keeps small controls from turning into
 -- circles.
-local function cornerRadius(radius: number): UDim
-    return UDim.new(0, math.clamp(math.round(radius * 1.3), 5, 30))
+--
+-- Except that Wurst has no rounded surface anywhere, so since the port this
+-- returns zero for every caller: one change squared every button, text box,
+-- toast and dropdown at once instead of hunting corners one by one. The
+-- helper keeps its name and signature because forty call sites describe a
+-- shape with it; the shape is now a rectangle. The two survivors that stay
+-- genuinely round — the Roblox pill and the phone fallback circle — use
+-- UDim.new(1, 0) directly and never came through here.
+local function cornerRadius(_radius: number): UDim
+    return UDim.new(0, 0)
 end
 
 local function addRoundedStyle(
@@ -1790,6 +1830,38 @@ local function addRoundedStyle(
     stroke.Parent = object
     return corner, stroke
 end
+
+-- ---------------------------------------------------------------------------
+-- Bitmap text contract
+-- ---------------------------------------------------------------------------
+--
+-- Wurst's every label is Minecraft's 8 px bitmap font on a 9 px line. This
+-- port does not rasterise that font yet — Monocraft, the vendored pixel
+-- face, stands in — but ClickGUI surfaces ask *here* for their text, so the
+-- day an atlas renderer exists it replaces the inside of `make` and no call
+-- site moves. The metrics are the contract: 16 px glyphs on an 18 px line
+-- with a 12 px advance — 8/9/6 logical at the GUI scale 2 the interface is
+-- drawn at. `width` is the packing estimate the content-sized windows use.
+state.bitmapText = {
+    size = 16,
+    lineHeight = 18,
+    advance = 12,
+    width = function(text: any): number
+        return #tostring(text) * 12
+    end,
+    make = function(properties: any): TextLabel
+        local resolved: any = {}
+        for key: string, value: any in pairs(properties or {}) do
+            resolved[key] = value
+        end
+        resolved.FontFace = CONTROL_FONT
+        resolved.TextSize = resolved.TextSize or 16
+        if resolved.TextTruncate == nil then
+            resolved.TextTruncate = Enum.TextTruncate.AtEnd
+        end
+        return (create("TextLabel", resolved) :: any) :: TextLabel
+    end,
+}
 
 -- Every label registers the *logical* size it was designed at; the text-scale
 -- slider multiplies that. `state.registeredTextIndex` lets the responsive
@@ -2049,7 +2121,6 @@ local function createToggleSwitch(
         Size = UDim2.fromOffset(markSize, markSize),
         ZIndex = button.ZIndex + 1,
     }) :: Frame
-    create("UICorner", {Parent = frame, CornerRadius = UDim.new(0, 4)})
     create("UIStroke", {
         Parent = frame,
         Name = "MarkStroke",
@@ -2059,7 +2130,7 @@ local function createToggleSwitch(
     })
     -- The inner block is what fills; keeping it separate from the outline lets
     -- the mark grow into place instead of blinking on.
-    local core: Frame = create("Frame", {
+    local _core: Frame = create("Frame", {
         Parent = frame,
         Name = "Knob",
         AnchorPoint = Vector2.new(0.5, 0.5),
@@ -2070,7 +2141,6 @@ local function createToggleSwitch(
         Size = UDim2.fromScale(0, 0),
         ZIndex = frame.ZIndex + 1,
     }) :: Frame
-    create("UICorner", {Parent = core, CornerRadius = UDim.new(0, 2)})
     setToggleSwitch(button, enabled, false)
     return button
 end
@@ -2120,7 +2190,7 @@ state.applyLinesGlyph = function(
             ZIndex = button.ZIndex + 1,
         }) :: Frame
         for index: number = 1, 3 do
-            local bar: Frame = create("Frame", {
+            local _bar: Frame = create("Frame", {
                 Parent = glyph,
                 Name = "Line" .. tostring(index),
                 AnchorPoint = Vector2.new(0.5, 0.5),
@@ -2132,7 +2202,6 @@ state.applyLinesGlyph = function(
                 Size = UDim2.fromOffset(index == 2 and 9 or 12, 1),
                 ZIndex = button.ZIndex + 2,
             }) :: Frame
-            create("UICorner", {Parent = bar, CornerRadius = UDim.new(1, 0)})
         end
     end
     local barTransparency: number = dimmed and 0.74 or (active and 0.02 or 0.3)
@@ -2375,7 +2444,7 @@ local function notify(message: any): ()
         Transparency = state.guiStyle == "Default" and 0.42 or 0.22,
         Thickness = 1,
     })
-    local accent: Frame = (create("Frame", {
+    local _accent: Frame = (create("Frame", {
         Parent = toast,
         BackgroundColor3 = state.guiStyle == "Default"
             and Theme.accent
@@ -2384,10 +2453,6 @@ local function notify(message: any): ()
         Size = UDim2.new(0, 4, 1, 0),
         ZIndex = 302,
     }) :: any) :: Frame
-    create("UICorner", {
-        Parent = accent,
-        CornerRadius = UDim.new(1, 0),
-    })
 
     local label: TextLabel = (makeTextLabel(toast, text, 12) :: any)
         :: TextLabel
@@ -4012,6 +4077,15 @@ local function registerPlaceModule(
                 end
                 if feature.row and feature.row.Parent then
                     feature.row:Destroy()
+                end
+                -- A popped-out settings window belongs to its feature; a
+                -- feature that goes takes the window, or the window leaks
+                -- with the option rows still parented inside it.
+                if feature.settingsWindow then
+                    pcall(function(): ()
+                        feature.settingsWindow:Destroy()
+                    end)
+                    feature.settingsWindow = nil
                 end
                 table.remove(allFeatures, index)
                 if state.floatingUi and state.floatingUi.unregisterFeature then

@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "3e4cee7fe0aa57ed",
+    stamp = "42340f0de360bcc2",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -546,6 +546,12 @@ function Module.init(context: any): WidgetLibrary
     --
     -- On `state` as well as in the returned table, for the same reason as
     -- `layoutOptionControl`.
+    -- Wurst's settings windows carry no group headings — the Java lists
+    -- rows and nothing else, and DISPLAY / FILTERS / STYLE on screen were
+    -- the old menu's taxonomy showing through. The builder stays because
+    -- the modules call it (their grouping intent is real and may matter to
+    -- a future surface), but what it returns is invisible and zero-height:
+    -- it neither draws nor occupies a line.
     state.addSectionOption = function(feature: any, titleText: string): Frame
         feature.optionCount += 1
         local section: Frame = (create("Frame", {
@@ -554,43 +560,11 @@ function Module.init(context: any): WidgetLibrary
             BackgroundTransparency = 1,
             BorderSizePixel = 0,
             LayoutOrder = feature.optionCount,
-            Size = UDim2.new(1, 0, 0, 22),
+            Size = UDim2.new(1, 0, 0, 0),
+            Visible = false,
             ZIndex = feature.options.ZIndex + 1,
         }) :: any) :: Frame
         table.insert(feature.optionRows, section)
-
-        local title: TextLabel = (makeTextLabel(
-            section,
-            string.upper(titleText),
-            9
-        ) :: any) :: TextLabel
-        title.Name = "SectionTitle"
-        title.FontFace = CONTROL_FONT
-        title.Position = UDim2.fromOffset(4, 0)
-        title.Size = UDim2.new(0, 130, 1, 0)
-        title.TextColor3 = Theme.textMuted
-        title.TextTransparency = 0.22
-        title.ZIndex = section.ZIndex + 1
-
-        local rule: Frame = create("Frame", {
-            Parent = section,
-            Name = "SectionRule",
-            AnchorPoint = Vector2.new(1, 0.5),
-            BackgroundColor3 = Theme.outline,
-            BackgroundTransparency = 0.72,
-            BorderSizePixel = 0,
-            Position = UDim2.new(1, -4, 0.5, 0),
-            Size = UDim2.new(1, -142, 0, 1),
-            ZIndex = section.ZIndex + 1,
-        }) :: Frame
-        create("UIGradient", {
-            Parent = rule,
-            Transparency = NumberSequence.new({
-                NumberSequenceKeypoint.new(0, 1),
-                NumberSequenceKeypoint.new(1, 0.3),
-            }),
-        })
-
         feature.updateExpandedSize()
         return section
     end
@@ -4851,8 +4825,6 @@ function Module.init(context: any): any
     local notify: any = host.notify
     local Theme: any = host.Theme
     local CONTROL_FONT: any = host.CONTROL_FONT
-    local TweenService: any = host.TweenService
-    local UI_MOTION: any = host.UI_MOTION
     local trackUiConnection: any = host.trackUiConnection
     local applyKeySlotStyle: any = host.applyKeySlotStyle
     local bindActionShortcut: any = host.bindActionShortcut
@@ -5008,10 +4980,12 @@ function Module.init(context: any): any
         local title: TextLabel =
             (makeTextLabel(row, name, state.layout.titleFontSize) :: any) :: TextLabel
         title.FontFace = CONTROL_FONT
-        title.Position = UDim2.fromOffset(8, 0)
-        -- Full width minus the arrow reserve; the reserve only exists while
-        -- the module actually has settings (applyLayout keeps this in step).
-        title.Size = UDim2.new(1, -8, 0, feature.collapsedHeight)
+        -- Wurst centres the hack's name on the whole row — ref-wurst-719 —
+        -- and the settings arrow floats over the right end without moving
+        -- that centre, so the label always spans the full row.
+        title.Position = UDim2.fromOffset(0, 0)
+        title.Size = UDim2.new(1, 0, 0, feature.collapsedHeight)
+        title.TextXAlignment = Enum.TextXAlignment.Center
         title.TextTruncate = Enum.TextTruncate.AtEnd
         title.TextColor3 = state.guiStyle == "Default"
             and Theme.text
@@ -5076,19 +5050,14 @@ function Module.init(context: any): any
                 (arrow :: TextButton).Visible = expandable
                 -- Wurst's own green pixel triangle, whatever the palette —
                 -- the reference screenshots keep it green on magenta and on
-                -- pink alike. Down while closed, up while open.
+                -- pink alike. Down while closed, up while open. The title
+                -- keeps its full-row centre either way.
                 drawPixelIcon(
                     arrow :: TextButton,
                     feature.expanded and "up" or "down",
                     Color3.fromRGB(0, 204, 0)
                 )
             end
-            title.Size = UDim2.new(
-                1,
-                expandable and -30 or -8,
-                0,
-                feature.collapsedHeight
-            )
         end
         feature.syncArrow = syncArrow
 
@@ -5152,10 +5121,11 @@ function Module.init(context: any): any
             SortOrder = Enum.SortOrder.LayoutOrder,
         }) :: any) :: UIListLayout
 
-        local function updateExpandedSize(animate: boolean?): ()
-            -- Rows are no longer a uniform height (hint rows are taller, section
-            -- headings shorter), so the fallback used before the layout has
-            -- measured anything sums the declared heights instead of assuming 38.
+        local function updateExpandedSize(_animate: boolean?): ()
+            -- Options never expand inside the category window any more —
+            -- Wurst pops them into a settings window of their own. This
+            -- remeasure keeps the panel's height current for that window
+            -- and re-decides the arrow; the row's own height never moves.
             local visibleOptions: number = 0
             local declaredHeight: number = 0
             for _, optionRow: GuiObject in ipairs(feature.optionRows) do
@@ -5171,42 +5141,12 @@ function Module.init(context: any): any
             end
             -- +8 = the panel's 4px top and 4px bottom UIPadding.
             local optionsHeight: number = measuredHeight + 8
-            local targetOptionsSize: UDim2 = UDim2.new(1, -8, 0, optionsHeight)
-            local targetRowSize: UDim2 = UDim2.new(
-                1,
-                0,
-                0,
-                feature.expanded
-                    and feature.collapsedHeight + optionsHeight + 6
-                    or feature.collapsedHeight
-            )
-            if feature.expanded then
-                options.Visible = true
-            end
-            if animate and state.animationsEnabled then
-                TweenService:Create(
-                    options,
-                    TweenInfo.new(UI_MOTION.slow, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-                    {Size = targetOptionsSize}
-                ):Play()
-                TweenService:Create(
-                    row,
-                    TweenInfo.new(UI_MOTION.slow, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-                    {Size = targetRowSize}
-                ):Play()
-                syncArrow()
-                if not feature.expanded then
-                    task.delay(UI_MOTION.slow + 0.02, function(): ()
-                        if not feature.expanded and options.Parent then
-                            options.Visible = false
-                        end
-                    end)
-                end
-            else
-                options.Size = targetOptionsSize
-                row.Size = targetRowSize
-                syncArrow()
-                options.Visible = feature.expanded
+            feature.optionsHeight = optionsHeight
+            options.Size = UDim2.new(1, 0, 0, optionsHeight)
+            syncArrow()
+            local settingsWindow: any = feature.settingsWindow
+            if settingsWindow and settingsWindow.resizeToOptions then
+                settingsWindow.resizeToOptions()
             end
         end
         feature.updateExpandedSize = updateExpandedSize
@@ -5219,13 +5159,17 @@ function Module.init(context: any): any
 
         toggleExpansion = function(): ()
             if not feature.hasOptions() then
-                -- Nothing to show: keep the panel shut instead of opening an
-                -- empty box under the card.
+                -- Nothing to show: no window for an empty panel.
                 syncArrow()
                 return
             end
-            feature.expanded = not feature.expanded
-            updateExpandedSize(true)
+            -- The triangle, the right-click and the Navigator all open the
+            -- same window through the one contract. A second call raises
+            -- the existing window rather than duplicating it.
+            local windows: any = state.windows
+            if windows and type(windows.OpenFeatureSettings) == "function" then
+                windows.OpenFeatureSettings(feature)
+            end
         end
         feature.toggleExpansion = toggleExpansion
 
@@ -6144,6 +6088,137 @@ function Module.init(context: any): any
         end
     end
 
+    -- ------------------------------------------------------ feature settings
+    -- Wurst pops a hack's settings into a window of its own — nothing ever
+    -- expands inside a category window. One lazy window per feature, reused
+    -- on every open, cascaded on first placement so no two are born on top
+    -- of each other, packed to its widest option label, capped by Wurst's
+    -- "Max settings height", and following the GUI like every other window
+    -- unless pinned. This is the one contract: the row's triangle, the
+    -- right-click and the Navigator all come through here.
+    local settingsCascade: number = 0
+    function manager.OpenFeatureSettings(feature: any): any
+        if type(feature) ~= "table" or feature.row == nil then
+            return nil
+        end
+        local id: string = "FeatureSettings_"
+            .. tostring(feature.configKey or feature.name):gsub("%W", "")
+        local existing: any = manager.byId[id]
+        if existing then
+            existing.root.Visible = true
+            feature.expanded = true
+            if feature.syncArrow then
+                feature.syncArrow()
+            end
+            raise(existing)
+            return existing
+        end
+
+        -- Packed to content: the widest option label decides, the way Wurst
+        -- sizes a settings window. 12 px is the bitmap advance at the 16 px
+        -- line; 72 covers the widest value column.
+        local width: number = 200
+        for _, optionRow: any in ipairs(feature.optionRows or {}) do
+            local label: any = optionRow:FindFirstChild("OptionLabel")
+            local text: string = label and tostring(label.Text) or ""
+            width = math.max(width, 8 + #text * 12 + 24 + 72)
+        end
+        width = math.min(width, 420)
+
+        local viewport: Vector2 = workspace.CurrentCamera
+            and (workspace.CurrentCamera :: Camera).ViewportSize
+            or Vector2.new(1280, 720)
+        local step: number = settingsCascade % 6
+        local slot: Vector2 = Vector2.new(
+            math.max(
+                20,
+                math.min(
+                    viewport.X * 0.45 + step * 28,
+                    viewport.X - width - 20
+                )
+            ),
+            110 + step * 30 + (settingsCascade // 6) * 14
+        )
+        settingsCascade += 1
+
+        local window: any = manager.Create({
+            id = id,
+            title = tostring(feature.name) .. " Settings",
+            size = Vector2.new(width, TITLE_HEIGHT + 40),
+            position = slot,
+            closable = true,
+            onClose = function(): ()
+                feature.expanded = false
+                if feature.syncArrow then
+                    feature.syncArrow()
+                end
+            end,
+        })
+        window.featureSettings = true
+        feature.settingsWindow = window
+
+        -- The card's option rows move home: they were built into the card's
+        -- hidden panel and live in this window from now on. The category
+        -- window keeps exactly its height and rows.
+        local options: any = feature.options
+        if options then
+            options.Visible = true
+            options.Position = UDim2.fromOffset(0, 0)
+            options.Size = UDim2.new(1, 0, 0, feature.optionsHeight or 40)
+            options.Parent = window.body
+        end
+
+        local function resizeToOptions(): ()
+            local wanted: number = TITLE_HEIGHT + (feature.optionsHeight or 40)
+            local limit: number = tonumber(state.uiMaxSettingsHeight) or 200
+            if limit <= 0 then
+                limit = math.huge
+            end
+            wanted = math.min(wanted, limit)
+            window.fullHeight = wanted
+            if not window.collapsed then
+                window.root.Size = UDim2.fromOffset(width, wanted)
+            end
+        end
+        window.resizeToOptions = resizeToOptions
+        resizeToOptions()
+
+        feature.expanded = true
+        if feature.syncArrow then
+            feature.syncArrow()
+        end
+        window.root.Visible = true
+        raise(window)
+        return window
+    end
+
+    -- Whole-window bring-to-front, published: raising re-stacks every root
+    -- (the ScreenGui is Sibling-ordered, so the root's ZIndex carries the
+    -- entire window above the rest).
+    function manager.BringToFront(window: any): ()
+        if window then
+            raise(window)
+        end
+    end
+
+    -- Feature settings windows follow the GUI the way category windows do,
+    -- pinned ones excepted — pinning is how a settings window becomes HUD.
+    state.addMenuVisibilityListener(function(visible: boolean): ()
+        for _, window: any in ipairs(manager.list) do
+            if window.featureSettings then
+                if not visible and window.pinned then
+                    continue
+                end
+                if visible then
+                    window.root.Visible = window.wasOpenWithMenu == true
+                else
+                    window.wasOpenWithMenu = window.root.Visible
+                    window.root.Visible = false
+                end
+            end
+        end
+    end)
+
     -- Wurst's ClickGUI Opacity setting: the body of every window at one
     -- alpha. The title bar stays opaque — Wurst fades only the background.
     -- Remembered on the manager so a window created after the slider moved
@@ -6260,6 +6335,14 @@ local WINDOW_MAX_HEIGHT: number = 300
 -- refuse.
 local SCALE_MINIMUM: number = 0.7
 local SCALE_MAXIMUM: number = 1.6
+-- The screen the port is calibrated against. Every logical measure here is
+-- Wurst's at GUI scale 2, which reads right on a 1600×900 viewport; a
+-- smaller screen scales the whole layer down uniformly, a larger one up —
+-- one number for everything, never a component resized on its own. The
+-- player's Scale slider (ThemeEngine.shape.scale, default 1) multiplies on
+-- top, so the UI Settings control keeps working.
+local CALIBRATION_WIDTH: number = 1600
+local CALIBRATION_HEIGHT: number = 900
 local GRID_MARGIN: number = 10
 local WINDOW_GAP: number = 2
 -- Wurst tiles its first-run grid with a 5-logical gap; 10 at the GUI scale 2
@@ -6282,6 +6365,27 @@ local CATEGORY_ORDER: {string} = {
     "Other",
 }
 
+-- The same aliases the shell and the Framework carry — the contract is one,
+-- copied because a downloaded file cannot reach the shell's locals at
+-- require time, and because the harness boots this file against a host that
+-- predates the contract.
+local CATEGORY_ALIASES: {[string]: string} = {
+    ["Visuals"] = "Render",
+    ["Protection"] = "Movement",
+    ["Utility"] = "Other",
+    ["Spoof"] = "Fun",
+    ["General"] = "Other",
+    ["Player"] = "Movement",
+}
+
+local function fallbackNormalize(raw: any): string
+    local name: string = tostring(raw or "Other")
+    if table.find(CATEGORY_ORDER, name) ~= nil then
+        return name
+    end
+    return CATEGORY_ALIASES[name] or "Other"
+end
+
 function Module.init(context: any): any
     local host: any = context
     local state: any = host.state
@@ -6295,7 +6399,15 @@ function Module.init(context: any): any
     local function viewportScale(): number
         local shape: any = host.ThemeEngine and host.ThemeEngine.shape
         local wanted: number = shape and tonumber(shape.scale) or 1
-        return math.clamp(wanted, SCALE_MINIMUM, SCALE_MAXIMUM)
+        local camera: Camera? = workspace.CurrentCamera
+        local viewport: Vector2 = camera
+            and (camera :: Camera).ViewportSize
+            or Vector2.new(CALIBRATION_WIDTH, CALIBRATION_HEIGHT)
+        local fit: number = math.min(
+            viewport.X / CALIBRATION_WIDTH,
+            viewport.Y / CALIBRATION_HEIGHT
+        )
+        return math.clamp(wanted * fit, SCALE_MINIMUM, SCALE_MAXIMUM)
     end
 
     local windows: any = state.windows
@@ -6424,13 +6536,31 @@ function Module.init(context: any): any
         local raw: any = (row :: Frame):GetAttribute("FeatureCategory")
         local name: string = type(normalizeFeatureCategory) == "function"
             and normalizeFeatureCategory(raw)
-            or tostring(raw or "Other")
+            or fallbackNormalize(raw)
         local record: CategoryWindow = categoryWindow(name)
         record.count += 1;
         (row :: Frame).Parent = record.window.body;
         (row :: Frame).Size = UDim2.new(1, 0, 0, feature.collapsedHeight or 22)
         if record.resize then
             (record.resize :: () -> ())()
+        end
+    end
+
+    -- Reset layout: every category window back on the first-run grid, in
+    -- the official order, with every saved position already forgotten by
+    -- the caller. Settings windows re-cascade the next time they open.
+    function ClickGui.Retile(): ()
+        nextX = GRID_MARGIN
+        nextY = 64
+        rowHeight = 0
+        for _, name: string in ipairs(ClickGui.order) do
+            local record: CategoryWindow = ClickGui.categories[name]
+            if record then
+                local slot: Vector2 = nextSlot(
+                    record.window.fullHeight or WINDOW_MAX_HEIGHT * 0.5
+                )
+                record.window.root.Position = UDim2.fromOffset(slot.X, slot.Y)
+            end
         end
     end
 
@@ -6459,11 +6589,27 @@ function Module.init(context: any): any
         end
     end
 
-    -- Categories that exist before a single card does, so the grid comes out in
-    -- Wurst's order rather than in whichever order the modules happened to
-    -- finish loading.
+    -- One window per category that actually holds a module, tiled in the
+    -- official order with the empty ones omitted — Blocks, Items and Chat
+    -- stay in the contract but draw nothing while nothing lives in them.
+    -- The first pass walks the official order so the grid comes out in
+    -- Wurst's sequence rather than module-load order; a category that gains
+    -- its first module later gets its window then, at the next free slot.
+    local function resolvedCategory(feature: any): string
+        local row: any = feature and feature.row
+        local raw: any = row and row:GetAttribute("FeatureCategory")
+        if type(normalizeFeatureCategory) == "function" then
+            return normalizeFeatureCategory(raw)
+        end
+        return fallbackNormalize(raw)
+    end
     for _, name: string in ipairs(CATEGORY_ORDER) do
-        categoryWindow(name)
+        for _, feature: any in ipairs(allFeatures) do
+            if resolvedCategory(feature) == name then
+                categoryWindow(name)
+                break
+            end
+        end
     end
 
     -- Cards built before this library started — which is all of them, since the
@@ -8166,7 +8312,6 @@ function Module.init(context: any): any
     local CONTROL_FONT: any = host.CONTROL_FONT
     local UserInputService: any = host.UserInputService
     local trackUiConnection: any = host.trackUiConnection
-    local applyKeySlotStyle: any = host.applyKeySlotStyle
     local beginKeyCapture: any = host.beginKeyCapture
     local setKeySlotCapture: any = host.setKeySlotCapture
     local GAME_CHECK: any = host.GAME_CHECK
@@ -8565,6 +8710,10 @@ function Module.init(context: any): any
         end
 
         local order: number = 0
+        -- A key is compact right-aligned text, not a capsule: Wurst's
+        -- keybind list is two columns of words. The text itself is the
+        -- rebind target, wide enough that RightControl never truncates,
+        -- and a conflicted key is painted in the warning colour.
         local function keybindRow(labelText: string, slotText: string, conflicted: boolean, onSlot: (TextButton) -> ()): ()
             order += 1
             local row: Frame = (create("Frame", {
@@ -8583,23 +8732,32 @@ function Module.init(context: any): any
                 BackgroundTransparency = 1,
                 FontFace = CONTROL_FONT,
                 Position = UDim2.fromOffset(6, 0),
-                Size = UDim2.new(1, -66, 1, 0),
+                Size = UDim2.new(1, -160, 1, 0),
                 Text = labelText,
                 TextColor3 = Theme.text,
-                TextSize = 11.5,
+                TextSize = 16,
                 TextXAlignment = Enum.TextXAlignment.Left,
                 ZIndex = row.ZIndex + 1,
             })
-            local slot: TextButton = (makeButton(row, slotText, 9) :: any) :: TextButton
-            slot.AnchorPoint = Vector2.new(1, 0.5)
-            slot.Position = UDim2.new(1, -6, 0.5, 0)
-            slot.Size = UDim2.fromOffset(52, 16)
-            slot.ZIndex = row.ZIndex + 1
-            applyKeySlotStyle(slot)
+            local slot: TextButton = (create("TextButton", {
+                TextTruncate = Enum.TextTruncate.AtEnd,
+                Parent = row,
+                Name = "Key",
+                Active = true,
+                AnchorPoint = Vector2.new(1, 0),
+                AutoButtonColor = false,
+                BackgroundTransparency = 1,
+                BorderSizePixel = 0,
+                FontFace = CONTROL_FONT,
+                Position = UDim2.new(1, -6, 0, 0),
+                Size = UDim2.fromOffset(150, ROW_HEIGHT),
+                Text = slotText,
+                TextColor3 = conflicted and Theme.negative or Theme.textMuted,
+                TextSize = 16,
+                TextXAlignment = Enum.TextXAlignment.Right,
+                ZIndex = row.ZIndex + 1,
+            }) :: any) :: TextButton
             slot:SetAttribute("CaptureIdleText", slotText)
-            if conflicted then
-                slot.TextColor3 = Theme.negative
-            end
             trackUiConnection(slot.MouseButton1Click:Connect(function(): ()
                 onSlot(slot)
             end))
@@ -8620,11 +8778,18 @@ function Module.init(context: any): any
             end)
         end
 
+        -- Only the menu key and the bindings that exist. Wurst's manager
+        -- lists keybinds, not one empty capsule per module — an unbound
+        -- module simply is not a keybind. New keys are still made on the
+        -- card slots (touch) or by loading a profile.
         for _, binding: any in ipairs(sortedBindings()) do
             local bound: boolean = binding.key ~= nil
                 and binding.key ~= Enum.KeyCode.Unknown
-            local slotText: string = bound and binding.key.Name or ""
-            local conflicted: boolean = bound and (keyUses[binding.key.Name] or 0) > 1
+            if not bound then
+                continue
+            end
+            local slotText: string = binding.key.Name
+            local conflicted: boolean = (keyUses[binding.key.Name] or 0) > 1
             keybindRow(featureLabel(tostring(binding.id)), slotText, conflicted, function(slot: TextButton): ()
                 beginKeyCapture(slot, function(keyCode: Enum.KeyCode): ()
                     -- Pressing the bound key again clears it, the same
@@ -8812,12 +8977,15 @@ function Module.init(context: any): any
         local screen: Vector2 = viewport()
         local keybindRows: {{any}} = {
             {"Reset keybinds", nil, 26},
+            {"Open menu", "RightControl", 12},
         }
         for _, binding: any in pairs(state.shortcutBindings) do
-            table.insert(
-                keybindRows,
-                {featureLabel(tostring(binding.id)), nil, 66}
-            )
+            if binding.key and binding.key ~= Enum.KeyCode.Unknown then
+                table.insert(
+                    keybindRows,
+                    {featureLabel(tostring(binding.id)), binding.key.Name, 12}
+                )
+            end
         end
         keybindsRecord = configWindow("Keybinds", "Keybinds", {
             position = Vector2.new(screen.X - WINDOW_WIDTH * 2 - 32, 140),
@@ -8873,6 +9041,7 @@ function Module.init(context: any): any
                 {"Keybinds", nil, 26},
                 {"Reinject latest", nil, 26},
                 {"Destruct", nil, 26},
+                {"Reset layout", nil, 26},
                 {"Game check: Universal only"},
             }),
         })
@@ -8987,6 +9156,17 @@ function Module.init(context: any): any
             end)
         end))
 
+        actionRow(optionsRecord, 4, "Reset layout", function(): ()
+            -- Saved geometry gone, category grid re-tiled now, settings
+            -- windows re-cascade on their next open.
+            configData.ui.windows = {}
+            queueConfigSave()
+            if state.clickGui and state.clickGui.Retile then
+                state.clickGui.Retile()
+            end
+            notify("Layout reset")
+        end)
+
         -- The game check readout: *how* the game was recognised, which is
         -- what tells you a clone was matched by structure, not PlaceId.
         local recognised: string = GAME_CHECK.MM2Active and "MM2"
@@ -9001,7 +9181,7 @@ function Module.init(context: any): any
             Name = "GameCheck",
             BackgroundTransparency = 1,
             FontFace = CONTROL_FONT,
-            LayoutOrder = 4,
+            LayoutOrder = 5,
             Size = UDim2.new(1, 0, 0, ROW_HEIGHT),
             Text = "  Game check: " .. recognised,
             TextColor3 = Theme.textMuted,
@@ -9095,6 +9275,14 @@ function Module.init(context: any): any
     addNumberOption(uiPanel, "Max settings height", MAX_SETTINGS_HEIGHT, 0, 1000, function(value: number): ()
         uiSettingsValues["Max settings height"] = value
         maxSettingsHeight = value
+        -- Published: the window manager caps every popped-out feature
+        -- settings window with the same slider.
+        state.uiMaxSettingsHeight = value
+        for _, window: any in ipairs((state.windows and state.windows.list) or {}) do
+            if window.featureSettings and window.resizeToOptions then
+                window.resizeToOptions()
+            end
+        end
         for _, record: any in ipairs(Settings.records) do
             record.resize()
         end
@@ -9721,11 +9909,10 @@ local activeCleanup: (() -> ())? = nil
 -- WurstLogo.Text #000000. Deliberately not theme tokens — the chip is white
 -- in every Wurst screenshot regardless of palette, which is what makes the
 -- sausage readable on any background.
--- Wurst's documented default is #FFFFFF, and an opaque white slab over a game
--- is the first thing the user pointed at. Kept as a token so a settings window
--- can expose it, but seeded dark and drawn at 45% so it reads as a ghost behind
--- the version rather than as a box.
-local WURSTLOGO_BACKGROUND: Color3 = Color3.fromRGB(0, 0, 0)
+-- The Java's own default: #FFFFFF drawn at half alpha as the y=6..17 band —
+-- a stripe, not a slab. The ghost-era dark seed that lived here was why the
+-- band came out black; schema 2 already swept any stored copy of it.
+local WURSTLOGO_BACKGROUND: Color3 = Color3.fromRGB(255, 255, 255)
 local WURSTLOGO_TEXT: Color3 = Color3.fromRGB(0, 0, 0)
 
 -- The prototype's #brand block: 14 px from the left edge, 10 from the top.
@@ -9748,7 +9935,8 @@ local HACKLIST_COLOR: Color3 = Color3.fromRGB(255, 255, 255)
 local HACKLIST_SORT_BY: string = "Name"
 local HACKLIST_REVERSE: boolean = false
 local HACKLIST_ANIMATIONS: boolean = true
-local HACKLIST_FONT_SIZE: number = 13
+-- The bitmap line: 16 px glyphs on the contract's 18 px line (8/9 logical).
+local HACKLIST_FONT_SIZE: number = 16
 local HACKLIST_LINE_HEIGHT: number = 18
 local HACKLIST_TOP: number = 56
 local HACKLIST_SLIDE: number = 14
@@ -9794,6 +9982,12 @@ function Module.init(context: any): any
     -- WURSTLOGO_BACKGROUND is the default for. Painting the whole block white
     -- put the transparent logo on a white slab, which is not how Wurst looks
     -- anywhere.
+    -- The chip ends immediately after the version string — the band must
+    -- never run on toward the HD icon or any other UI. 12 px is the bitmap
+    -- advance at the 16 px line.
+    local versionText: string = tostring(PRODUCT.version)
+    local versionWidth: number = 8 + #versionText * 12
+    local chipWidth: number = LOGO_WIDTH + 10 + versionWidth + 4
     local chip: Frame = (create("Frame", {
         Parent = PopupLayer,
         Name = "WurstLogo",
@@ -9801,7 +9995,7 @@ function Module.init(context: any): any
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
         Position = UDim2.fromOffset(FURNITURE_MARGIN_X, FURNITURE_MARGIN_Y),
-        Size = UDim2.fromOffset(LOGO_WIDTH + 130, LOGO_HEIGHT + 8),
+        Size = UDim2.fromOffset(chipWidth, LOGO_HEIGHT + 8),
         ZIndex = 20,
     }) :: any) :: Frame
 
@@ -9818,7 +10012,7 @@ function Module.init(context: any): any
         BackgroundTransparency = 0.5,
         BorderSizePixel = 0,
         Position = UDim2.fromOffset(0, 12),
-        Size = UDim2.new(1, 0, 0, 22),
+        Size = UDim2.fromOffset(chipWidth, 22),
         ZIndex = 20,
     }) :: any) :: Frame
 
@@ -9851,15 +10045,16 @@ function Module.init(context: any): any
     }) :: any) :: TextLabel
 
     -- The version string rides the background stripe, so it uses Wurst's own
-    -- default text colour (#000000) — readable now that the band exists.
-    local versionText: string = tostring(PRODUCT.version)
+    -- default text colour (#000000) — readable now that the band exists. Its
+    -- frame matches the stripe's band exactly, so the text centres on the
+    -- same baseline the band was drawn for.
     local versionChip: Frame = (create("Frame", {
         Parent = chip,
         Name = "VersionChip",
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
-        Position = UDim2.fromOffset(LOGO_WIDTH + 10, 8),
-        Size = UDim2.fromOffset(12 + #versionText * 9, LOGO_HEIGHT - 16),
+        Position = UDim2.fromOffset(LOGO_WIDTH + 10, 12),
+        Size = UDim2.fromOffset(versionWidth, 22),
         ZIndex = 20,
     }) :: any) :: Frame
 
@@ -10063,21 +10258,42 @@ function Module.init(context: any): any
             Size = UDim2.new(1, 0, 0, HACKLIST_LINE_HEIGHT),
             ZIndex = 20,
         }) :: any) :: Frame
-        local label: TextLabel = (create("TextLabel", {
-            TextTruncate = Enum.TextTruncate.AtEnd,
-            Parent = container,
-            Name = "Entry",
-            BackgroundTransparency = 1,
-            FontFace = CONTROL_FONT,
-            Position = UDim2.fromOffset(0, 0),
-            RichText = true,
-            Size = UDim2.new(1, 0, 1, 0),
-            Text = "",
-            TextColor3 = hudColor,
-            TextSize = HACKLIST_FONT_SIZE,
-            TextXAlignment = hudAlignment(),
-            ZIndex = 20,
-        }) :: any) :: TextLabel
+        -- Through the bitmap text contract: the HackList is the first full
+        -- surface on it, so the day the atlas renderer lands, these entries
+        -- change rasteriser without this file moving.
+        local bitmapText: any = state.bitmapText
+        local label: TextLabel
+        if bitmapText and type(bitmapText.make) == "function" then
+            label = bitmapText.make({
+                Parent = container,
+                Name = "Entry",
+                BackgroundTransparency = 1,
+                Position = UDim2.fromOffset(0, 0),
+                RichText = true,
+                Size = UDim2.new(1, 0, 1, 0),
+                Text = "",
+                TextColor3 = hudColor,
+                TextSize = HACKLIST_FONT_SIZE,
+                TextXAlignment = hudAlignment(),
+                ZIndex = 20,
+            })
+        else
+            label = (create("TextLabel", {
+                TextTruncate = Enum.TextTruncate.AtEnd,
+                Parent = container,
+                Name = "Entry",
+                BackgroundTransparency = 1,
+                FontFace = CONTROL_FONT,
+                Position = UDim2.fromOffset(0, 0),
+                RichText = true,
+                Size = UDim2.new(1, 0, 1, 0),
+                Text = "",
+                TextColor3 = hudColor,
+                TextSize = HACKLIST_FONT_SIZE,
+                TextXAlignment = hudAlignment(),
+                ZIndex = 20,
+            }) :: any) :: TextLabel
+        end
         if animationsOn() then
             label.Position = UDim2.fromOffset(HACKLIST_SLIDE, 0)
             label.TextTransparency = 1

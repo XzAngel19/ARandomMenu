@@ -29,11 +29,10 @@ local activeCleanup: (() -> ())? = nil
 -- WurstLogo.Text #000000. Deliberately not theme tokens — the chip is white
 -- in every Wurst screenshot regardless of palette, which is what makes the
 -- sausage readable on any background.
--- Wurst's documented default is #FFFFFF, and an opaque white slab over a game
--- is the first thing the user pointed at. Kept as a token so a settings window
--- can expose it, but seeded dark and drawn at 45% so it reads as a ghost behind
--- the version rather than as a box.
-local WURSTLOGO_BACKGROUND: Color3 = Color3.fromRGB(0, 0, 0)
+-- The Java's own default: #FFFFFF drawn at half alpha as the y=6..17 band —
+-- a stripe, not a slab. The ghost-era dark seed that lived here was why the
+-- band came out black; schema 2 already swept any stored copy of it.
+local WURSTLOGO_BACKGROUND: Color3 = Color3.fromRGB(255, 255, 255)
 local WURSTLOGO_TEXT: Color3 = Color3.fromRGB(0, 0, 0)
 
 -- The prototype's #brand block: 14 px from the left edge, 10 from the top.
@@ -56,7 +55,8 @@ local HACKLIST_COLOR: Color3 = Color3.fromRGB(255, 255, 255)
 local HACKLIST_SORT_BY: string = "Name"
 local HACKLIST_REVERSE: boolean = false
 local HACKLIST_ANIMATIONS: boolean = true
-local HACKLIST_FONT_SIZE: number = 13
+-- The bitmap line: 16 px glyphs on the contract's 18 px line (8/9 logical).
+local HACKLIST_FONT_SIZE: number = 16
 local HACKLIST_LINE_HEIGHT: number = 18
 local HACKLIST_TOP: number = 56
 local HACKLIST_SLIDE: number = 14
@@ -102,6 +102,12 @@ function Module.init(context: any): any
     -- WURSTLOGO_BACKGROUND is the default for. Painting the whole block white
     -- put the transparent logo on a white slab, which is not how Wurst looks
     -- anywhere.
+    -- The chip ends immediately after the version string — the band must
+    -- never run on toward the HD icon or any other UI. 12 px is the bitmap
+    -- advance at the 16 px line.
+    local versionText: string = tostring(PRODUCT.version)
+    local versionWidth: number = 8 + #versionText * 12
+    local chipWidth: number = LOGO_WIDTH + 10 + versionWidth + 4
     local chip: Frame = (create("Frame", {
         Parent = PopupLayer,
         Name = "WurstLogo",
@@ -109,7 +115,7 @@ function Module.init(context: any): any
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
         Position = UDim2.fromOffset(FURNITURE_MARGIN_X, FURNITURE_MARGIN_Y),
-        Size = UDim2.fromOffset(LOGO_WIDTH + 130, LOGO_HEIGHT + 8),
+        Size = UDim2.fromOffset(chipWidth, LOGO_HEIGHT + 8),
         ZIndex = 20,
     }) :: any) :: Frame
 
@@ -126,7 +132,7 @@ function Module.init(context: any): any
         BackgroundTransparency = 0.5,
         BorderSizePixel = 0,
         Position = UDim2.fromOffset(0, 12),
-        Size = UDim2.new(1, 0, 0, 22),
+        Size = UDim2.fromOffset(chipWidth, 22),
         ZIndex = 20,
     }) :: any) :: Frame
 
@@ -159,15 +165,16 @@ function Module.init(context: any): any
     }) :: any) :: TextLabel
 
     -- The version string rides the background stripe, so it uses Wurst's own
-    -- default text colour (#000000) — readable now that the band exists.
-    local versionText: string = tostring(PRODUCT.version)
+    -- default text colour (#000000) — readable now that the band exists. Its
+    -- frame matches the stripe's band exactly, so the text centres on the
+    -- same baseline the band was drawn for.
     local versionChip: Frame = (create("Frame", {
         Parent = chip,
         Name = "VersionChip",
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
-        Position = UDim2.fromOffset(LOGO_WIDTH + 10, 8),
-        Size = UDim2.fromOffset(12 + #versionText * 9, LOGO_HEIGHT - 16),
+        Position = UDim2.fromOffset(LOGO_WIDTH + 10, 12),
+        Size = UDim2.fromOffset(versionWidth, 22),
         ZIndex = 20,
     }) :: any) :: Frame
 
@@ -371,21 +378,42 @@ function Module.init(context: any): any
             Size = UDim2.new(1, 0, 0, HACKLIST_LINE_HEIGHT),
             ZIndex = 20,
         }) :: any) :: Frame
-        local label: TextLabel = (create("TextLabel", {
-            TextTruncate = Enum.TextTruncate.AtEnd,
-            Parent = container,
-            Name = "Entry",
-            BackgroundTransparency = 1,
-            FontFace = CONTROL_FONT,
-            Position = UDim2.fromOffset(0, 0),
-            RichText = true,
-            Size = UDim2.new(1, 0, 1, 0),
-            Text = "",
-            TextColor3 = hudColor,
-            TextSize = HACKLIST_FONT_SIZE,
-            TextXAlignment = hudAlignment(),
-            ZIndex = 20,
-        }) :: any) :: TextLabel
+        -- Through the bitmap text contract: the HackList is the first full
+        -- surface on it, so the day the atlas renderer lands, these entries
+        -- change rasteriser without this file moving.
+        local bitmapText: any = state.bitmapText
+        local label: TextLabel
+        if bitmapText and type(bitmapText.make) == "function" then
+            label = bitmapText.make({
+                Parent = container,
+                Name = "Entry",
+                BackgroundTransparency = 1,
+                Position = UDim2.fromOffset(0, 0),
+                RichText = true,
+                Size = UDim2.new(1, 0, 1, 0),
+                Text = "",
+                TextColor3 = hudColor,
+                TextSize = HACKLIST_FONT_SIZE,
+                TextXAlignment = hudAlignment(),
+                ZIndex = 20,
+            })
+        else
+            label = (create("TextLabel", {
+                TextTruncate = Enum.TextTruncate.AtEnd,
+                Parent = container,
+                Name = "Entry",
+                BackgroundTransparency = 1,
+                FontFace = CONTROL_FONT,
+                Position = UDim2.fromOffset(0, 0),
+                RichText = true,
+                Size = UDim2.new(1, 0, 1, 0),
+                Text = "",
+                TextColor3 = hudColor,
+                TextSize = HACKLIST_FONT_SIZE,
+                TextXAlignment = hudAlignment(),
+                ZIndex = 20,
+            }) :: any) :: TextLabel
+        end
         if animationsOn() then
             label.Position = UDim2.fromOffset(HACKLIST_SLIDE, 0)
             label.TextTransparency = 1

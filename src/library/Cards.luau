@@ -33,8 +33,6 @@ function Module.init(context: any): any
     local notify: any = host.notify
     local Theme: any = host.Theme
     local CONTROL_FONT: any = host.CONTROL_FONT
-    local TweenService: any = host.TweenService
-    local UI_MOTION: any = host.UI_MOTION
     local trackUiConnection: any = host.trackUiConnection
     local applyKeySlotStyle: any = host.applyKeySlotStyle
     local bindActionShortcut: any = host.bindActionShortcut
@@ -190,10 +188,12 @@ function Module.init(context: any): any
         local title: TextLabel =
             (makeTextLabel(row, name, state.layout.titleFontSize) :: any) :: TextLabel
         title.FontFace = CONTROL_FONT
-        title.Position = UDim2.fromOffset(8, 0)
-        -- Full width minus the arrow reserve; the reserve only exists while
-        -- the module actually has settings (applyLayout keeps this in step).
-        title.Size = UDim2.new(1, -8, 0, feature.collapsedHeight)
+        -- Wurst centres the hack's name on the whole row — ref-wurst-719 —
+        -- and the settings arrow floats over the right end without moving
+        -- that centre, so the label always spans the full row.
+        title.Position = UDim2.fromOffset(0, 0)
+        title.Size = UDim2.new(1, 0, 0, feature.collapsedHeight)
+        title.TextXAlignment = Enum.TextXAlignment.Center
         title.TextTruncate = Enum.TextTruncate.AtEnd
         title.TextColor3 = state.guiStyle == "Default"
             and Theme.text
@@ -258,19 +258,14 @@ function Module.init(context: any): any
                 (arrow :: TextButton).Visible = expandable
                 -- Wurst's own green pixel triangle, whatever the palette —
                 -- the reference screenshots keep it green on magenta and on
-                -- pink alike. Down while closed, up while open.
+                -- pink alike. Down while closed, up while open. The title
+                -- keeps its full-row centre either way.
                 drawPixelIcon(
                     arrow :: TextButton,
                     feature.expanded and "up" or "down",
                     Color3.fromRGB(0, 204, 0)
                 )
             end
-            title.Size = UDim2.new(
-                1,
-                expandable and -30 or -8,
-                0,
-                feature.collapsedHeight
-            )
         end
         feature.syncArrow = syncArrow
 
@@ -334,10 +329,11 @@ function Module.init(context: any): any
             SortOrder = Enum.SortOrder.LayoutOrder,
         }) :: any) :: UIListLayout
 
-        local function updateExpandedSize(animate: boolean?): ()
-            -- Rows are no longer a uniform height (hint rows are taller, section
-            -- headings shorter), so the fallback used before the layout has
-            -- measured anything sums the declared heights instead of assuming 38.
+        local function updateExpandedSize(_animate: boolean?): ()
+            -- Options never expand inside the category window any more —
+            -- Wurst pops them into a settings window of their own. This
+            -- remeasure keeps the panel's height current for that window
+            -- and re-decides the arrow; the row's own height never moves.
             local visibleOptions: number = 0
             local declaredHeight: number = 0
             for _, optionRow: GuiObject in ipairs(feature.optionRows) do
@@ -353,42 +349,12 @@ function Module.init(context: any): any
             end
             -- +8 = the panel's 4px top and 4px bottom UIPadding.
             local optionsHeight: number = measuredHeight + 8
-            local targetOptionsSize: UDim2 = UDim2.new(1, -8, 0, optionsHeight)
-            local targetRowSize: UDim2 = UDim2.new(
-                1,
-                0,
-                0,
-                feature.expanded
-                    and feature.collapsedHeight + optionsHeight + 6
-                    or feature.collapsedHeight
-            )
-            if feature.expanded then
-                options.Visible = true
-            end
-            if animate and state.animationsEnabled then
-                TweenService:Create(
-                    options,
-                    TweenInfo.new(UI_MOTION.slow, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-                    {Size = targetOptionsSize}
-                ):Play()
-                TweenService:Create(
-                    row,
-                    TweenInfo.new(UI_MOTION.slow, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-                    {Size = targetRowSize}
-                ):Play()
-                syncArrow()
-                if not feature.expanded then
-                    task.delay(UI_MOTION.slow + 0.02, function(): ()
-                        if not feature.expanded and options.Parent then
-                            options.Visible = false
-                        end
-                    end)
-                end
-            else
-                options.Size = targetOptionsSize
-                row.Size = targetRowSize
-                syncArrow()
-                options.Visible = feature.expanded
+            feature.optionsHeight = optionsHeight
+            options.Size = UDim2.new(1, 0, 0, optionsHeight)
+            syncArrow()
+            local settingsWindow: any = feature.settingsWindow
+            if settingsWindow and settingsWindow.resizeToOptions then
+                settingsWindow.resizeToOptions()
             end
         end
         feature.updateExpandedSize = updateExpandedSize
@@ -401,13 +367,17 @@ function Module.init(context: any): any
 
         toggleExpansion = function(): ()
             if not feature.hasOptions() then
-                -- Nothing to show: keep the panel shut instead of opening an
-                -- empty box under the card.
+                -- Nothing to show: no window for an empty panel.
                 syncArrow()
                 return
             end
-            feature.expanded = not feature.expanded
-            updateExpandedSize(true)
+            -- The triangle, the right-click and the Navigator all open the
+            -- same window through the one contract. A second call raises
+            -- the existing window rather than duplicating it.
+            local windows: any = state.windows
+            if windows and type(windows.OpenFeatureSettings) == "function" then
+                windows.OpenFeatureSettings(feature)
+            end
         end
         feature.toggleExpansion = toggleExpansion
 
