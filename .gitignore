@@ -8,3 +8,4 @@ local-profiles/
 /register-stats.json
 __pycache__/
 *.pyc
+/build/

@@ -1,0 +1,46 @@
+{
+  "comment": [
+    "Pin for the Minecraft 1.18.1 font pipeline (tools/fetch_mc_font.py).",
+    "This file holds URLs and hashes only. No Mojang asset is committed to",
+    "this repository: the textures are downloaded from Mojang's official",
+    "distribution servers at build time, verified against these hashes, and",
+    "kept out of Git until agent C's provenance/licence gate says otherwise.",
+    "Wurst 7.19 targets Minecraft 1.18.1, which is why this exact version."
+  ],
+  "game": "Minecraft",
+  "version": "1.18.1",
+  "releaseTime": "2021-12-10T08:23:00+00:00",
+  "versionManifest": {
+    "url": "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json",
+    "comment": "Not hash-pinned: Mojang appends new versions to it. The 1.18.1 entry inside it must match versionJson below."
+  },
+  "versionJson": {
+    "url": "https://piston-meta.mojang.com/v1/packages/7ff864e988a2c29907154d5f9701e87e5d5e554a/1.18.1.json",
+    "sha1": "7ff864e988a2c29907154d5f9701e87e5d5e554a"
+  },
+  "client": {
+    "url": "https://piston-data.mojang.com/v1/objects/7e46fb47609401970e2818989fa584fd467cd036/client.jar",
+    "sha1": "7e46fb47609401970e2818989fa584fd467cd036",
+    "size": 20042090
+  },
+  "assetIndex": {
+    "id": "1.18",
+    "url": "https://piston-meta.mojang.com/v1/packages/d31a2e85ae149dd1b1a7070b22cb8887892fda6c/1.18.json",
+    "sha1": "d31a2e85ae149dd1b1a7070b22cb8887892fda6c",
+    "size": 348724
+  },
+  "resources": {
+    "url": "https://resources.download.minecraft.net/{first2}/{hash}",
+    "comment": "Asset objects are content-addressed by their own sha1, which is the verification."
+  },
+  "font": {
+    "defaultJson": "assets/minecraft/font/default.json",
+    "comment": "default.json and the bitmap provider textures live inside client.jar; glyph_sizes.bin and the legacy unicode pages live in the asset objects. The tool reads whatever default.json really declares - the provider list is not assumed here, it is extracted from the verified jar."
+  },
+  "fallback": {
+    "name": "monocraft-fallback",
+    "atlas": "assets/font/monocraft-16.png",
+    "metrics": "assets/font/monocraft-16.json",
+    "comment": "Monocraft (OFL) is the committed fallback. It is a Minecraft-inspired vector font, not Mojang's bitmap font, and must never be labelled 'Minecraft exact'."
+  }
+}

@@ -93,3 +93,32 @@ the gate will force a Left default that contradicts the prototype.
   contract's `make`; migrating them to `draw` is mechanical but not done.
   ImageLabel cost is ~1 per glyph — fine for the HackList's ~300, worth
   measuring before the 38-row category windows move over.
+
+## Minecraft 1.18.1 font pipeline (2026-08-22)
+
+- Wurst 7.19 targets Minecraft 1.18.1, so the exact font is that
+  version's `assets/minecraft/font/default.json` providers, not
+  Monocraft. `tools/fetch_mc_font.py` + the pinned
+  `assets/font/minecraft-1.18.1.lock.json` are the pipeline: official
+  version manifest → version json (sha1
+  `7ff864e988a2c29907154d5f9701e87e5d5e554a`) → client.jar (sha1
+  `7e46fb47609401970e2818989fa584fd467cd036`, 20 042 090 bytes) → asset
+  index 1.18 (sha1 `d31a2e85ae149dd1b1a7070b22cb8887892fda6c`), every
+  step hash-verified, providers read from the verified jar (bitmap and
+  legacy_unicode, any number of pages), per-glyph advances measured
+  with Minecraft's own rightmost-ink rule, and a reproducible
+  `font-manifest.json` with no timestamps.
+- **No Mojang texture is committed.** Output goes to `build/mc-font/`
+  (now gitignored). The lock file and the emitted metrics are numbers
+  and URLs, nothing more. Committing the textures waits on C's
+  provenance/licence determination — tell A the blessed method and the
+  vendoring moves behind it.
+- `--exact` fails loudly when an official asset cannot be produced;
+  without it the menu keeps working on `monocraft-fallback`
+  (`assets/font/monocraft-16.png`, OFL), which is never to be labelled
+  "Minecraft exact".
+- The sandbox blocks TLS to piston-meta (RULES.md §10), so the tool is
+  exercised on real machines; the lock hashes were read from the
+  official manifest through the proxied fetch. Request to C: a gate
+  that runs `fetch_mc_font.py --check` where the network allows it, or
+  at least holds the lock file's hashes stable.
