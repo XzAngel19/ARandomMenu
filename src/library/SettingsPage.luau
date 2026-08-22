@@ -72,6 +72,7 @@ function Module.init(context: any): any
     local trackUiConnection: any = host.trackUiConnection
     local beginKeyCapture: any = host.beginKeyCapture
     local setKeySlotCapture: any = host.setKeySlotCapture
+    local bindActionShortcut: any = host.bindActionShortcut
     local GAME_CHECK: any = host.GAME_CHECK
     local ScreenGui: any = host.ScreenGui
     local allFeatures: {any} = host.allFeatures or {}
@@ -1160,6 +1161,334 @@ function Module.init(context: any): any
     -- page lands here because it is management, not decoration: the reinject
     -- and destruct actions and the game check readout.
     local optionsRecord: any = nil
+    -- ------------------------------------------------- Wurst Options actions
+    -- The action API, published as state.wurstOptions. Every row in the
+    -- Wurst Options window comes from one registry: deterministic order
+    -- (registration sequence — the built-ins register first, so they keep
+    -- Wurst's own sequence and later registrations land after them), no
+    -- duplicate ids (re-registering updates in place), live enabled /
+    -- visible / label state, invoke with the failure warned rather than
+    -- swallowed, and an optional shortcut that makes the action bindable
+    -- through the keybind manager's Add dialog. No module, no category,
+    -- no hack — a labelled callback and nothing more.
+    local actionEntries: {any} = {}
+    local actionIndex: {[string]: any} = {}
+    local actionSequence: number = 0
+    local refreshActionRows: () -> () = function(): () end
+
+    state.wurstOptions = {
+        RegisterAction = function(id: any, label: any, callback: any, options: any?): any
+            local key: string = tostring(id)
+            local configuration: any = options or {}
+            local entry: any = actionIndex[key]
+            if entry == nil then
+                actionSequence += 1
+                entry = {id = key, order = actionSequence}
+                actionIndex[key] = entry
+                table.insert(actionEntries, entry)
+            end
+            entry.label = tostring(label)
+            entry.callback = callback
+            entry.enabled = configuration.enabled ~= false
+            entry.visible = configuration.visible ~= false
+            entry.static = configuration.static == true
+            if entry.handle == nil then
+                local handle: any = {}
+                function handle.SetLabel(text: any): ()
+                    entry.label = tostring(text)
+                    if entry.rowLabel and entry.rowLabel.Parent then
+                        entry.rowLabel.Text = entry.label
+                    end
+                end
+                function handle.SetEnabled(value: boolean): ()
+                    entry.enabled = value == true
+                    refreshActionRows()
+                end
+                function handle.SetVisible(value: boolean): ()
+                    entry.visible = value == true
+                    refreshActionRows()
+                end
+                function handle.Unregister(): ()
+                    state.wurstOptions.UnregisterAction(entry.id)
+                end
+                entry.handle = handle
+            end
+            if configuration.shortcut == true
+                and entry.shortcutBound ~= true
+                and type(bindActionShortcut) == "function" then
+                entry.shortcutBound = true
+                bindActionShortcut(nil, "Action " .. key, entry.label, function(): ()
+                    state.wurstOptions.InvokeAction(key)
+                end)
+            end
+            refreshActionRows()
+            return entry.handle
+        end,
+        UnregisterAction = function(id: any): boolean
+            local key: string = tostring(id)
+            local entry: any = actionIndex[key]
+            if entry == nil then
+                return false
+            end
+            actionIndex[key] = nil
+            local at: number? = table.find(actionEntries, entry)
+            if at then
+                table.remove(actionEntries, at)
+            end
+            refreshActionRows()
+            return true
+        end,
+        InvokeAction = function(id: any): boolean
+            local entry: any = actionIndex[tostring(id)]
+            if entry == nil
+                or entry.enabled ~= true
+                or entry.visible ~= true
+                or type(entry.callback) ~= "function" then
+                return false
+            end
+            local ok: boolean, failure: any = pcall(entry.callback)
+            if not ok then
+                warn("[Wurst] Action " .. tostring(id) .. ": " .. tostring(failure))
+            end
+            return ok
+        end,
+        List = function(): {string}
+            local ids: {string} = {}
+            for _, entry: any in ipairs(actionEntries) do
+                table.insert(ids, entry.id)
+            end
+            return ids
+        end,
+    }
+
+    refreshActionRows = function(): ()
+        if not optionsRecord then
+            return
+        end
+        local body: any = optionsRecord.window.body
+        for _, child: Instance in ipairs(body:GetChildren()) do
+            if child:IsA("GuiObject")
+                and child:GetAttribute("RegisteredAction") == true then
+                child:Destroy()
+            end
+        end
+        local packRows: {{any}} = {}
+        for _, entry: any in ipairs(actionEntries) do
+            if entry.visible then
+                table.insert(packRows, {entry.label, nil, 26})
+                if entry.static then
+                    -- A readout, not a button: the game check line.
+                    local label: TextLabel = (create("TextLabel", {
+                        TextTruncate = Enum.TextTruncate.AtEnd,
+                        Parent = body,
+                        Name = "Static_" .. entry.id:gsub("%W", ""),
+                        BackgroundTransparency = 1,
+                        FontFace = CONTROL_FONT,
+                        LayoutOrder = entry.order,
+                        Size = UDim2.new(1, 0, 0, ROW_HEIGHT),
+                        Text = "  " .. entry.label,
+                        TextColor3 = Theme.textMuted,
+                        TextSize = 11,
+                        TextXAlignment = Enum.TextXAlignment.Left,
+                        ZIndex = body.ZIndex + 1,
+                    }) :: any) :: TextLabel
+                    label:SetAttribute("RegisteredAction", true)
+                    entry.rowLabel = label
+                else
+                    local row: TextButton = actionRow(
+                        optionsRecord,
+                        entry.order,
+                        entry.label,
+                        function(): ()
+                            state.wurstOptions.InvokeAction(entry.id)
+                        end
+                    )
+                    row:SetAttribute("RegisteredAction", true)
+                    local rowLabel: any = row:FindFirstChild("Label")
+                    entry.rowLabel = rowLabel
+                    if not entry.enabled then
+                        row.Active = false
+                        if rowLabel then
+                            rowLabel.TextColor3 = Theme.textMuted
+                        end
+                    end
+                end
+            end
+        end
+        if optionsRecord.repack then
+            optionsRecord.repack(packRows)
+        end
+        optionsRecord.resize()
+    end
+
+    -- The built-ins, through the same API. Their registration order is
+    -- Wurst Options' own row order; anything registered later — D's
+    -- Rejoin Server, say — lands after them, deterministically.
+    local reinjectBusy: boolean = false
+    local reinjectHandle: any = nil
+    local function runReinject(): ()
+        local function setReinjectLabel(text: string): ()
+            if reinjectHandle then
+                reinjectHandle.SetLabel(text)
+            end
+        end
+        if reinjectBusy then
+            return
+        end
+        local compiler: any = (getfenv() :: any).loadstring
+        if type(compiler) ~= "function" then
+            notify("Reinject unavailable: this executor has no loadstring")
+            return
+        end
+        reinjectBusy = true
+        setReinjectLabel("Downloading…")
+        local sourceUrls: {string} = {
+            REPOSITORY_RAW_BASE .. "ARandomMenu.luau",
+            RUNTIME_SAFETY_SOURCE_URL,
+        }
+        local sourceOrError: any = nil
+        local downloaded: boolean = false
+        local downloadFailures: {string} = {}
+        for _, candidateUrl: string in ipairs(sourceUrls) do
+            local requestUrl: string = candidateUrl
+                .. "?reinject=v3&v="
+                .. SOURCE_STAMP
+            local requestOk: boolean, bodyOrError: any = pcall(function(): string
+                return (game :: any):HttpGet(requestUrl, true)
+            end)
+            local current: boolean = requestOk
+                and type(bodyOrError) == "string"
+                and #bodyOrError >= 1024
+                and bodyOrError:find(RUNTIME_COMPATIBILITY_MARKER, 1, true) ~= nil
+            if current then
+                downloaded = true
+                sourceOrError = bodyOrError
+                break
+            end
+            table.insert(downloadFailures, tostring(bodyOrError))
+        end
+        if not downloaded then
+            reinjectBusy = false
+            setReinjectLabel("Reinject latest")
+            notify("Could not download the latest build")
+            warn("[Wurst] Reinject download: "
+                .. table.concat(downloadFailures, " | "))
+            return
+        end
+        local compiled: any = nil
+        local compileError: any = nil
+        local compiledOk: boolean, compileResult: any, returnedError: any = pcall(
+            compiler,
+            sourceOrError,
+            "@ARandomMenu.luau"
+        )
+        if compiledOk then
+            compiled = compileResult
+            compileError = returnedError
+        else
+            compileError = compileResult
+        end
+        if type(compiled) ~= "function" then
+            reinjectBusy = false
+            setReinjectLabel("Reinject latest")
+            notify("The downloaded build could not be compiled")
+            warn("[Wurst] Reinject compile: " .. tostring(compileError))
+            return
+        end
+        setReinjectLabel("Restarting…")
+        task.defer(function(): ()
+            local executed: boolean, executionError: any = xpcall(
+                compiled,
+                debug.traceback
+            )
+            if not executed then
+                reinjectBusy = false
+                setReinjectLabel("Reinject latest")
+                warn("[Wurst] Reinject runtime: " .. tostring(executionError))
+            end
+        end)
+    end
+
+    local destructHandle: any = nil
+    local function runDestruct(): ()
+        if destructHandle then
+            destructHandle.SetLabel("Removing…")
+        end
+        task.defer(function(): ()
+            local destruct: any = state.destruct
+            if type(destruct) ~= "function" then
+                -- The teardown routine is defined at the very end of
+                -- bootstrap; if it is somehow missing, remove the
+                -- interface anyway instead of a label stuck mid-word.
+                pcall(function(): ()
+                    ScreenGui:Destroy()
+                end)
+                return
+            end
+            local ok: boolean, failure: any = pcall(destruct)
+            if not ok then
+                warn("[Wurst] Destruct: " .. tostring(failure))
+                pcall(function(): ()
+                    ScreenGui:Destroy()
+                end)
+            end
+        end)
+    end
+
+    local function runResetLayout(): ()
+        -- Saved geometry gone, category grid re-tiled now. Every window
+        -- also forgets it was ever hand-moved — that is what "reset"
+        -- promises — and the settings and management windows still on
+        -- screen re-run placement immediately instead of waiting for a
+        -- reopen while standing on the freshly tiled grid. Hidden ones
+        -- are marked stale and re-place on their next open, so they do
+        -- not pile onto each other while invisible.
+        configData.ui.windows = {}
+        queueConfigSave()
+        for _, window: any in ipairs(windows.list or {}) do
+            window.userMoved = nil
+        end
+        if state.clickGui and state.clickGui.Retile then
+            state.clickGui.Retile()
+        end
+        for _, window: any in ipairs(windows.list or {}) do
+            if window.featureSettings or window.managementWindow then
+                if window.root.Visible and windows.PlaceWindow then
+                    windows.PlaceWindow(window, {force = true})
+                else
+                    window.stalePlacement = true
+                end
+            end
+        end
+        for _, record: any in ipairs(Settings.records) do
+            if not record.window.root.Visible then
+                record.placed = false
+            end
+        end
+        notify("Layout reset")
+    end
+
+    -- The game check readout: *how* the game was recognised, which is
+    -- what tells you a clone was matched by structure, not PlaceId.
+    local recognised: string = GAME_CHECK.MM2Active and "MM2"
+        or GAME_CHECK.TRSActive and "TRS"
+        or GAME_CHECK.VDActive and "VD"
+        or GAME_CHECK.BedFightActive and "BedFight"
+        or GAME_CHECK.MVSDActive and "MVSD"
+        or "Universal only"
+
+    state.wurstOptions.RegisterAction("Keybinds", "Keybinds", openKeybinds)
+    reinjectHandle = state.wurstOptions.RegisterAction(
+        "Reinject", "Reinject latest", runReinject
+    )
+    destructHandle = state.wurstOptions.RegisterAction(
+        "Destruct", "Destruct", runDestruct
+    )
+    state.wurstOptions.RegisterAction("ResetLayout", "Reset layout", runResetLayout)
+    state.wurstOptions.RegisterAction(
+        "GameCheck", "Game check: " .. recognised, nil, {static = true}
+    )
+
     local function openWurstOptions(): ()
         if optionsRecord then
             raiseOpen(optionsRecord)
@@ -1170,181 +1499,9 @@ function Module.init(context: any): any
             position = Vector2.new(screen.X - WINDOW_WIDTH * 2 - 32, 220),
             anchor = uiRecord and uiRecord.window,
             settingsSized = true,
-            packRows = {
-                {"Keybinds", nil, 26},
-                {"Reinject latest", nil, 26},
-                {"Destruct", nil, 26},
-                {"Reset layout", nil, 26},
-                {"Game check: Universal only"},
-            },
+            packRows = {{"Reinject latest", nil, 26}},
         })
-
-        actionRow(optionsRecord, 1, "Keybinds", openKeybinds)
-
-        local reinjectBusy: boolean = false
-        local reinjectRow: TextButton = actionRow(optionsRecord, 2, "Reinject latest", function(): () end)
-        local reinjectLabel: TextLabel = reinjectRow:FindFirstChild("Label") :: TextLabel
-        trackUiConnection(reinjectRow.MouseButton1Click:Connect(function(): ()
-            if reinjectBusy then
-                return
-            end
-            local compiler: any = (getfenv() :: any).loadstring
-            if type(compiler) ~= "function" then
-                notify("Reinject unavailable: this executor has no loadstring")
-                return
-            end
-            reinjectBusy = true
-            reinjectLabel.Text = "Downloading…"
-            local sourceUrls: {string} = {
-                REPOSITORY_RAW_BASE .. "ARandomMenu.luau",
-                RUNTIME_SAFETY_SOURCE_URL,
-            }
-            local sourceOrError: any = nil
-            local downloaded: boolean = false
-            local downloadFailures: {string} = {}
-            for _, candidateUrl: string in ipairs(sourceUrls) do
-                local requestUrl: string = candidateUrl
-                    .. "?reinject=v3&v="
-                    .. SOURCE_STAMP
-                local requestOk: boolean, bodyOrError: any = pcall(function(): string
-                    return (game :: any):HttpGet(requestUrl, true)
-                end)
-                local current: boolean = requestOk
-                    and type(bodyOrError) == "string"
-                    and #bodyOrError >= 1024
-                    and bodyOrError:find(RUNTIME_COMPATIBILITY_MARKER, 1, true) ~= nil
-                if current then
-                    downloaded = true
-                    sourceOrError = bodyOrError
-                    break
-                end
-                table.insert(downloadFailures, tostring(bodyOrError))
-            end
-            if not downloaded then
-                reinjectBusy = false
-                reinjectLabel.Text = "Reinject latest"
-                notify("Could not download the latest build")
-                warn("[Wurst] Reinject download: "
-                    .. table.concat(downloadFailures, " | "))
-                return
-            end
-            local compiled: any = nil
-            local compileError: any = nil
-            local compiledOk: boolean, compileResult: any, returnedError: any = pcall(
-                compiler,
-                sourceOrError,
-                "@ARandomMenu.luau"
-            )
-            if compiledOk then
-                compiled = compileResult
-                compileError = returnedError
-            else
-                compileError = compileResult
-            end
-            if type(compiled) ~= "function" then
-                reinjectBusy = false
-                reinjectLabel.Text = "Reinject latest"
-                notify("The downloaded build could not be compiled")
-                warn("[Wurst] Reinject compile: " .. tostring(compileError))
-                return
-            end
-            reinjectLabel.Text = "Restarting…"
-            task.defer(function(): ()
-                local executed: boolean, executionError: any = xpcall(
-                    compiled,
-                    debug.traceback
-                )
-                if not executed then
-                    reinjectBusy = false
-                    if reinjectLabel.Parent then
-                        reinjectLabel.Text = "Reinject latest"
-                    end
-                    warn("[Wurst] Reinject runtime: " .. tostring(executionError))
-                end
-            end)
-        end))
-
-        local destructRow: TextButton = actionRow(optionsRecord, 3, "Destruct", function(): () end)
-        local destructLabel: TextLabel = destructRow:FindFirstChild("Label") :: TextLabel
-        trackUiConnection(destructRow.MouseButton1Click:Connect(function(): ()
-            destructLabel.Text = "Removing…"
-            task.defer(function(): ()
-                local destruct: any = state.destruct
-                if type(destruct) ~= "function" then
-                    -- The teardown routine is defined at the very end of
-                    -- bootstrap; if it is somehow missing, remove the
-                    -- interface anyway instead of a label stuck mid-word.
-                    pcall(function(): ()
-                        ScreenGui:Destroy()
-                    end)
-                    return
-                end
-                local ok: boolean, failure: any = pcall(destruct)
-                if not ok then
-                    warn("[Wurst] Destruct: " .. tostring(failure))
-                    pcall(function(): ()
-                        ScreenGui:Destroy()
-                    end)
-                end
-            end)
-        end))
-
-        actionRow(optionsRecord, 4, "Reset layout", function(): ()
-            -- Saved geometry gone, category grid re-tiled now. Every window
-            -- also forgets it was ever hand-moved — that is what "reset"
-            -- promises — and the settings and management windows still on
-            -- screen re-run placement immediately instead of waiting for a
-            -- reopen while standing on the freshly tiled grid. Hidden ones
-            -- are marked stale and re-place on their next open, so they do
-            -- not pile onto each other while invisible.
-            configData.ui.windows = {}
-            queueConfigSave()
-            for _, window: any in ipairs(windows.list or {}) do
-                window.userMoved = nil
-            end
-            if state.clickGui and state.clickGui.Retile then
-                state.clickGui.Retile()
-            end
-            for _, window: any in ipairs(windows.list or {}) do
-                if window.featureSettings or window.managementWindow then
-                    if window.root.Visible and windows.PlaceWindow then
-                        windows.PlaceWindow(window, {force = true})
-                    else
-                        window.stalePlacement = true
-                    end
-                end
-            end
-            for _, record: any in ipairs(Settings.records) do
-                if not record.window.root.Visible then
-                    record.placed = false
-                end
-            end
-            notify("Layout reset")
-        end)
-
-        -- The game check readout: *how* the game was recognised, which is
-        -- what tells you a clone was matched by structure, not PlaceId.
-        local recognised: string = GAME_CHECK.MM2Active and "MM2"
-            or GAME_CHECK.TRSActive and "TRS"
-            or GAME_CHECK.VDActive and "VD"
-            or GAME_CHECK.BedFightActive and "BedFight"
-            or GAME_CHECK.MVSDActive and "MVSD"
-            or "Universal only"
-        create("TextLabel", {
-            TextTruncate = Enum.TextTruncate.AtEnd,
-            Parent = optionsRecord.window.body,
-            Name = "GameCheck",
-            BackgroundTransparency = 1,
-            FontFace = CONTROL_FONT,
-            LayoutOrder = 5,
-            Size = UDim2.new(1, 0, 0, ROW_HEIGHT),
-            Text = "  Game check: " .. recognised,
-            TextColor3 = Theme.textMuted,
-            TextSize = 11,
-            TextXAlignment = Enum.TextXAlignment.Left,
-            ZIndex = optionsRecord.window.body.ZIndex + 1,
-        })
-        optionsRecord.resize()
+        refreshActionRows()
         raiseOpen(optionsRecord)
     end
 
@@ -1505,6 +1662,7 @@ function Module.init(context: any): any
         end
         Settings.connections = {}
         state.uiSettings = nil
+        state.wurstOptions = nil
     end
     Module.Initialized = true
     return Settings
