@@ -580,19 +580,31 @@ function Module.init(context: any): any
             -- harness stand-in: the shell always publishes state.bitmapText,
             -- so at runtime only the glyph path runs — a migrated surface
             -- draws no second label. Wurst paints titles plain (no shadow);
-            -- 68 = the chrome buttons' span plus the 8 px inset.
+            -- 68 = the chrome buttons' span plus the 8 px inset. The old
+            -- label bound its colour to the accentText token, so the drawn
+            -- title re-renders on theme changes to keep that behaviour —
+            -- the pool makes it an in-place tint.
             local bitmapText: any = state.bitmapText
             if bitmapText and type(bitmapText.draw) == "function" then
-                bitmapText.draw(bar, {
-                    {text = definition.title or id, color = Theme.accentText},
-                }, {
-                    Name = "Title",
-                    TextSize = TITLE_FONT_SIZE,
-                    ZIndex = 3,
-                    AnchorPoint = Vector2.new(0, 0.5),
-                    Position = UDim2.new(0, 8, 0.5, 0),
-                    maxWidth = math.max(40, definition.size.X - 68),
-                })
+                local function paintTitle(): ()
+                    if root.Parent == nil then
+                        return
+                    end
+                    bitmapText.draw(bar, {
+                        {text = definition.title or id, color = Theme.accentText},
+                    }, {
+                        Name = "Title",
+                        TextSize = TITLE_FONT_SIZE,
+                        ZIndex = 3,
+                        AnchorPoint = Vector2.new(0, 0.5),
+                        Position = UDim2.new(0, 8, 0.5, 0),
+                        maxWidth = math.max(40, definition.size.X - 68),
+                    })
+                end
+                paintTitle()
+                if ThemeEngine and type(ThemeEngine.OnChange) == "function" then
+                    ThemeEngine.OnChange(paintTitle)
+                end
             else
                 local title: TextLabel = (create("TextLabel", {
                     TextTruncate = Enum.TextTruncate.AtEnd,

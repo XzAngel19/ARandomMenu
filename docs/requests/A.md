@@ -122,3 +122,36 @@ the gate will force a Left default that contradicts the prototype.
   official manifest through the proxied fetch. Request to C: a gate
   that runs `fetch_mc_font.py --check` where the network allows it, or
   at least holds the lock file's hashes stable.
+
+## Universal placement + bitmap renderer (2026-08-22, later)
+
+- WindowManager now owns placement for every window: one coordinate
+  space (logical = screen / the layer's UIScale; helpers
+  LogicalViewport / ScreenToLogical / LogicalToScreen / MeasureWindow /
+  AbsoluteRect published), FindFreeRect (AABB with a 10 px gap,
+  obstacles measured at fullHeight, anchor right → left → below → grid
+  scan → clamped fallback), PlaceWindow (manual positions win),
+  ReflowWindow (the mandatory second placement after real measures).
+  Feature settings anchor to their category window; the SettingsPage
+  management windows anchor to UI Settings and place on first open;
+  Reset layout forgets userMoved and re-places what is visible.
+- `state.bitmapText` extended: pooling per holder (signature skip,
+  in-place reuse, surplus hidden), ascent 14, Minecraft shadow,
+  Left/Center/Right, maxWidth clipping, newline handling, transparency,
+  measure(), MeasuredWidth attribute, release(), stats
+  (draws/skips/created/reused/lastDrawMs), auto re-render of every live
+  draw when the atlas resolves.
+- Migrated off TextLabels at runtime: version chip, window titles
+  (theme-change re-tint via ThemeEngine.OnChange), category feature
+  rows (applyCardSkin recolours by pooled redraw), HackList (already).
+  The TextLabel branches that remain are harness stand-ins only — the
+  host stub does not publish the contract.
+- **Still owed on the migration list (in order):** settings labels and
+  values (OptionLabel is load-bearing: WindowManager packing reads its
+  Text/TextBounds, widgets reposition it, suites read it — needs its
+  own careful checkpoint), Keybinds rows, Navigator cells, tooltips.
+  Each will stop creating its TextLabel when it moves.
+- Also owed: settings windows re-pack width only on the first deferred
+  pass (pre-existing); the A2 downloader cannot run inside the sandbox
+  (TLS to piston-meta blocked) — exercised on real machines, lock
+  hashes pinned from the official manifest.
