@@ -166,6 +166,7 @@ return function(ctx: any): ()
     end
     local framework: any = host.state.framework
     local modulesByFeature: {[any]: any} = {}
+    local openedSettings: {any} = {}
     if framework then
         for _, module: any in pairs(framework.Modules or {}) do
             modulesByFeature[module.Feature] = module
@@ -197,16 +198,61 @@ return function(ctx: any): ()
             feature.hasSettings == realSettings,
             tostring(feature.hasSettings) .. " ~= " .. tostring(realSettings))
 
-        if realSettings
-            and feature.arrow then
-            feature.arrow.MouseButton1Click:Fire()
-            check("module options expand: " .. feature.name,
-                feature.expanded == true and feature.options.Visible == true)
+        if realSettings then
             local module: any = modulesByFeature[feature]
+            local valuesBefore: {[string]: any} = {}
             if module then
                 for optionName: string, option: any in pairs(module.Options or {}) do
+                    valuesBefore[optionName] = option.Value
+                end
+            elseif type(feature.options) == "table" then
+                for optionName: string, option: any in pairs(feature.options) do
+                    if type(option) == "table" and option.value ~= nil then
+                        valuesBefore[optionName] = option.value
+                    end
+                end
+            end
+
+            local visibilityBefore: {[any]: boolean} = {}
+            for _, optionRow: any in ipairs(feature.optionRows or {}) do
+                visibilityBefore[optionRow] = optionRow.Visible == true
+            end
+            local rowHeight: number = feature.row.Size.Y.Offset
+            local category: any = gui and gui.categories
+                and gui.categories[entry.category]
+            local categoryHeight: number? = category and category.window.fullHeight
+            local enabledBefore: boolean = feature.enabled == true
+            local first: any = windows.OpenFeatureSettings(feature)
+
+            local settingsId: string = "FeatureSettings_"
+                .. tostring(feature.configKey or feature.name):gsub("%W", "")
+            check("module settings window opens: " .. feature.name, first ~= nil)
+            check("category row height stays fixed: " .. feature.name,
+                feature.row.Size.Y.Offset == rowHeight,
+                tostring(rowHeight) .. " -> " .. tostring(feature.row.Size.Y.Offset))
+            if categoryHeight ~= nil then
+                check("category window height stays fixed: " .. feature.name,
+                    category.window.fullHeight == categoryHeight,
+                    tostring(categoryHeight) .. " -> "
+                        .. tostring(category.window.fullHeight))
+            end
+            check("opening settings keeps enabled state: " .. feature.name,
+                (feature.enabled == true) == enabledBefore)
+            check("settings leave the category row: " .. feature.name,
+                first ~= nil and feature.options.Parent == first.body)
+            for optionRow: any, wasVisible: boolean in pairs(visibilityBefore) do
+                check("Show survives settings open: " .. feature.name
+                        .. "/" .. tostring(optionRow.Name),
+                    (optionRow.Visible == true) == wasVisible)
+            end
+
+            if module then
+                for optionName: string, option: any in pairs(module.Options or {}) do
+                    check(feature.name .. " value survives open: " .. optionName,
+                        option.Value == valuesBefore[optionName])
                     if option.Show then
-                        local rules: {any} = option.Show.Option and {option.Show} or option.Show
+                        local rules: {any} = option.Show.Option and {option.Show}
+                            or option.Show
                         local expected: boolean = true
                         for _, rule: any in ipairs(rules) do
                             local source: any = module.Options[rule.Option]
@@ -214,7 +260,8 @@ return function(ctx: any): ()
                             if source ~= nil then
                                 holds = type(rule.Values) == "table"
                                         and table.find(rule.Values, source.Value) ~= nil
-                                    or type(rule.Values) ~= "table" and source.Value == true
+                                    or type(rule.Values) ~= "table"
+                                        and source.Value == true
                             end
                             if rule.Invert == true then
                                 holds = not holds
@@ -225,13 +272,40 @@ return function(ctx: any): ()
                         if row and row.ClassName ~= "Frame" then
                             row = row.Parent
                         end
-                        check(feature.name .. " Show: " .. optionName,
+                        check(feature.name .. " Show survives reparent: " .. optionName,
                             row ~= nil and row.Visible == expected,
                             "expected " .. tostring(expected))
                     end
                 end
             end
-            feature.arrow.MouseButton1Click:Fire()
+
+            if first and first.closeButton then
+                first.closeButton.MouseButton1Click:Fire()
+            end
+            check("closing settings keeps module enabled: " .. feature.name,
+                (feature.enabled == true) == enabledBefore)
+            check("settings window closes: " .. feature.name,
+                first ~= nil and first.root.Visible == false)
+            local second: any = windows.OpenFeatureSettings(feature)
+            check("reopening settings reuses the window: " .. feature.name,
+                first ~= nil and rawequal(first, second))
+            check("reopening settings restores visibility: " .. feature.name,
+                second ~= nil and second.root.Visible == true)
+            check("reopening keeps category height: " .. feature.name,
+                feature.row.Size.Y.Offset == rowHeight)
+            for optionRow: any, wasVisible: boolean in pairs(visibilityBefore) do
+                check("Show survives settings reopen: " .. feature.name
+                        .. "/" .. tostring(optionRow.Name),
+                    (optionRow.Visible == true) == wasVisible)
+            end
+            table.insert(openedSettings, {
+                feature = feature,
+                id = settingsId,
+                window = second,
+            })
+            if second and second.closeButton then
+                second.closeButton.MouseButton1Click:Fire()
+            end
         end
 
         local focusedElsewhere: boolean = entry.path
@@ -265,6 +339,20 @@ return function(ctx: any): ()
                 remainingConnections == moduleConnections,
                 "before: " .. tostring(moduleConnections)
                     .. " after: " .. tostring(remainingConnections))
+        end
+    end
+
+    for _, record: any in ipairs(openedSettings) do
+        local window: any = record.window
+        if window then
+            window:Destroy()
+            record.feature.settingsWindow = nil
+            check("settings teardown unregisters window: " .. record.feature.name,
+                windows.Get(record.id) == nil)
+            check("settings teardown destroys root: " .. record.feature.name,
+                window.root.Parent == nil or window.root.Destroyed == true)
+            check("settings teardown disconnects window: " .. record.feature.name,
+                #window.connections == 0)
         end
     end
 
