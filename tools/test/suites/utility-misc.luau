@@ -247,6 +247,34 @@ return function(ctx: any): ()
             and teleportCalls[1][2] == world.globals.game.JobId,
         "calls: " .. tostring(#teleportCalls))
 
+    RejoinFile.destroy()
+    local featuresBeforeOptions: number = #stub.features
+    local registeredActions: {any} = {}
+    local unregisters: number = 0
+    host.state.wurstOptions = {
+        RegisterAction = function(definition: any): () -> ()
+            table.insert(registeredActions, definition)
+            return function(): ()
+                unregisters += 1
+            end
+        end,
+    }
+    local optionsRegistration: any = RejoinFile.init(context)
+    check("Wurst Options registers exactly one Rejoin action",
+        #registeredActions == 1 and optionsRegistration ~= nil)
+    check("Wurst Options path creates no duplicate feature row",
+        #stub.features == featuresBeforeOptions)
+    check("registered Rejoin is an action with stable identity",
+        registeredActions[1].id == "RejoinServer"
+            and registeredActions[1].displayName == "Rejoin Server"
+            and registeredActions[1].configKey == "Universal.RejoinServer"
+            and type(registeredActions[1].callback) == "function")
+    registeredActions[1].callback()
+    check("the registered action keeps the teleport callback", #teleportCalls == 2)
+    RejoinFile.destroy()
+    check("teardown unregisters the Wurst Options action", unregisters == 1)
+    host.state.wurstOptions = nil
+
     -- Leave the shared world as the next suite expects it.
     root.AssemblyLinearVelocity = vector3(0, 0, 0)
     while #stub.notifications > 0 do
