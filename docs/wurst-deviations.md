@@ -26,7 +26,7 @@ GUI-scale-1. Prototype `titleHeight` 26 is 13 × 2, not a 1080p invention.
 | Titles centred on the full row | exact | Arrow does not move the centre. |
 | RUN / KEY via `makeButton` (rounded in the shell) | **incorrecta** | Official action/combo/textbox are rectangles. |
 | addSectionOption uppercase headings | **incorrecta** if DISPLAY/FILTERS/STYLE/FLIGHT | Official has no decorative chips. |
-| Keybinds lists unbound modules | **incorrecta** | Official manager is bound keys + menu key. |
+| Keybinds lists unbound modules | exact (replaced) | Manager lists bound keys + menu key. Add dialog (`KeybindAdd`) is the desktop path to a NEW bind. |
 | Max height default 200 | exact | Stored 1000 from the old default must migrate. |
 | Navigator as its own screen + keys | exact | RightCtrl = ClickGUI, RightShift = Navigator. |
 | No TabGUI (default Disabled) | exact | Shipping none matches Disabled. |

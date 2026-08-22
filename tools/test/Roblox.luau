@@ -227,6 +227,13 @@ local function newInstance(className: string): any
         Destroyed = false,
     }
     instance.AncestryChanged = signal()
+    -- adoptTree (and anything else that watches a live tree) hangs off
+    -- DescendantAdded. Without it a window body that is empty at subscribe
+    -- time never adopts the rows built a moment later.
+    instance.DescendantAdded = signal()
+    instance.DescendantRemoving = signal()
+    instance.ChildAdded = signal()
+    instance.ChildRemoved = signal()
     -- Roblox's own defaults for anything drawable. Reading an unset property
     -- used to give nil, so a builder doing `control.ZIndex = math.max(
     -- control.ZIndex, ...)` — which is how every option row stacks its
@@ -240,6 +247,7 @@ local function newInstance(className: string): any
         -- Roblox's own default. The capture translated "Other" because
         -- nobody set this false. Suites assert the product opts out.
         instance.AutoLocalize = true
+        instance.TextTransparency = 0
         -- Roblox always answers these; a test that never laid anything out
         -- still gets a rectangle rather than nil, so arithmetic on a size —
         -- which is what clamping a window inside the viewport is — reaches an
@@ -275,10 +283,46 @@ local function newInstance(className: string): any
                     if index then
                         table.remove(previous.Children, index)
                     end
+                    local function fireRemoved(node: any): ()
+                        local ancestor: any = previous
+                        while ancestor do
+                            local sig: any = rawget(ancestor, "DescendantRemoving")
+                            if sig then
+                                sig:Fire(node)
+                            end
+                            ancestor = rawget(ancestor, "_parent")
+                        end
+                        for _, child: any in ipairs(node.Children) do
+                            fireRemoved(child)
+                        end
+                    end
+                    fireRemoved(self)
+                    local removed: any = rawget(previous, "ChildRemoved")
+                    if removed then
+                        removed:Fire(self)
+                    end
                 end
                 rawset(self, "_parent", value)
                 if value then
                     table.insert(value.Children, self)
+                    local function fireAdded(node: any): ()
+                        local ancestor: any = value
+                        while ancestor do
+                            local sig: any = rawget(ancestor, "DescendantAdded")
+                            if sig then
+                                sig:Fire(node)
+                            end
+                            ancestor = rawget(ancestor, "_parent")
+                        end
+                        for _, child: any in ipairs(node.Children) do
+                            fireAdded(child)
+                        end
+                    end
+                    fireAdded(self)
+                    local added: any = rawget(value, "ChildAdded")
+                    if added then
+                        added:Fire(self)
+                    end
                 end
                 return
             end
