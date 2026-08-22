@@ -105,8 +105,6 @@ function Module.init(context: any): WidgetLibrary
     -- on the shell's own overlay layer rather than inside the row that opened
     -- them, so a list cannot be clipped by its scrolling parent.
     local PopupLayer: any = host.PopupLayer
-    local UI_RADIUS: any = host.UI_RADIUS
-    local cornerRadius: any = host.cornerRadius
     local trackUiConnection: any = host.trackUiConnection
     local applyKeySlotStyle: any = host.applyKeySlotStyle
     local beginKeyCapture: any = host.beginKeyCapture
@@ -961,7 +959,6 @@ function Module.init(context: any): WidgetLibrary
             Size = UDim2.fromOffset(math.round(anchorSize.X), listHeight),
             ZIndex = 400,
         }) :: Frame
-        create("UICorner", {Parent = list, CornerRadius = cornerRadius(UI_RADIUS.control)})
         create("UIStroke", {
             Parent = list,
             Color = Theme.outline,
@@ -982,10 +979,6 @@ function Module.init(context: any): WidgetLibrary
                 Size = UDim2.new(1, -8, 0, searchHeight - 4),
                 ZIndex = 402,
             }) :: Frame
-            create("UICorner", {
-                Parent = filterFrame,
-                CornerRadius = cornerRadius(UI_RADIUS.chip),
-            })
             local box: TextBox = makeTextBox(filterFrame, "")
             box.Name = "FilterBox"
             box.BackgroundTransparency = 1
@@ -1065,7 +1058,6 @@ function Module.init(context: any): WidgetLibrary
                 TextSize = 11,
                 ZIndex = 402,
             }) :: any) :: TextButton
-            create("UICorner", {Parent = item, CornerRadius = cornerRadius(UI_RADIUS.chip)})
             create("UIPadding", {
                 Parent = item,
                 PaddingLeft = UDim.new(0, 8),
@@ -1181,7 +1173,6 @@ function Module.init(context: any): WidgetLibrary
             Size = UDim2.fromOffset(math.round(anchorSize.X), listHeight),
             ZIndex = 400,
         }) :: Frame
-        create("UICorner", {Parent = list, CornerRadius = cornerRadius(UI_RADIUS.control)})
         create("UIStroke", {
             Parent = list,
             Color = Theme.outline,
@@ -1243,7 +1234,6 @@ function Module.init(context: any): WidgetLibrary
                 TextSize = 11,
                 ZIndex = 402,
             }) :: any) :: TextButton
-            create("UICorner", {Parent = row, CornerRadius = cornerRadius(UI_RADIUS.chip)})
             create("UIPadding", {
                 Parent = row,
                 PaddingLeft = UDim.new(0, 26),
@@ -1282,7 +1272,6 @@ function Module.init(context: any): WidgetLibrary
                 Size = UDim2.fromOffset(11, 11),
                 ZIndex = 403,
             }) :: Frame
-            create("UICorner", {Parent = mark, CornerRadius = UDim.new(0, 3)})
             local markStroke: UIStroke = (create("UIStroke", {
                 Parent = mark,
                 Color = Theme.textMuted,
@@ -1300,7 +1289,6 @@ function Module.init(context: any): WidgetLibrary
                 Size = UDim2.fromScale(0, 0),
                 ZIndex = 404,
             }) :: Frame
-            create("UICorner", {Parent = fill, CornerRadius = UDim.new(0, 2)})
 
             local function paint(): ()
                 local on: boolean = selected[item] == true
@@ -1671,10 +1659,6 @@ function Module.init(context: any): WidgetLibrary
                 Visible = false,
                 ZIndex = 80,
             })
-            create("UICorner", {
-                Parent = panel,
-                CornerRadius = cornerRadius(8),
-            })
 
             local title = makeTextLabel(panel, "COLOR", 14)
             title.FontFace = CONTROL_FONT
@@ -1768,10 +1752,6 @@ function Module.init(context: any): WidgetLibrary
                 Position = UDim2.fromOffset(273, 45),
                 Size = UDim2.fromOffset(48, 48),
                 ZIndex = 81,
-            })
-            create("UICorner", {
-                Parent = preview,
-                CornerRadius = UDim.new(1, 0),
             })
 
             local apply = makeButton(panel, "APPLY", 11)
