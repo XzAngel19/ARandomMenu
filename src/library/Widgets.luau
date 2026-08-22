@@ -897,6 +897,80 @@ function Module.init(context: any): WidgetLibrary
     -- clicking the same button four times to get back to the one you wanted.
     state.closeChoiceList = function(): () end
 
+    -- APPLY-4, 7.54.1's closeInvalidPopups: a popup dies with its owner.
+    -- Walk up from the row that opened it to the scrolling body and the
+    -- window root; any of these invalidates the popup — the window hiding
+    -- (close, or the menu closing), collapsing (the body hides), being
+    -- destroyed, or the owner row scrolling out of the body's clip. The
+    -- returned connections belong to the popup and are disconnected with
+    -- it. The harness's mock instances hold AbsolutePosition at zero, so
+    -- the scroll test never false-fires there.
+    local function watchPopupOwner(
+        owner: any,
+        onInvalid: () -> ()
+    ): {RBXScriptConnection}
+        local connections: {RBXScriptConnection} = {}
+        if owner == nil then
+            return connections
+        end
+        local scroller: any = nil
+        local windowRoot: any = nil
+        local node: any = owner
+        while node ~= nil do
+            if scroller == nil and type(node.IsA) == "function"
+                and node:IsA("ScrollingFrame") then
+                scroller = node
+                windowRoot = node.Parent
+                break
+            end
+            node = node.Parent
+        end
+        local function watch(instance: any, property: string, test: () -> boolean): ()
+            pcall(function(): ()
+                table.insert(
+                    connections,
+                    instance:GetPropertyChangedSignal(property):Connect(function(): ()
+                        if test() then
+                            onInvalid()
+                        end
+                    end)
+                )
+            end)
+        end
+        if windowRoot then
+            watch(windowRoot, "Visible", function(): boolean
+                return windowRoot.Visible ~= true
+            end)
+            pcall(function(): ()
+                table.insert(
+                    connections,
+                    windowRoot.AncestryChanged:Connect(function(): ()
+                        if windowRoot.Parent == nil then
+                            onInvalid()
+                        end
+                    end)
+                )
+            end)
+        end
+        if scroller then
+            -- Collapse hides the body; scrolling can clip the row away.
+            watch(scroller, "Visible", function(): boolean
+                return scroller.Visible ~= true
+            end)
+            watch(scroller, "CanvasPosition", function(): boolean
+                local ok: boolean, clippedOut: any = pcall(function(): boolean
+                    local top: number = scroller.AbsolutePosition.Y
+                    local bottom: number = top + scroller.AbsoluteSize.Y
+                    local rowTop: number = owner.AbsolutePosition.Y
+                    local rowBottom: number = rowTop + owner.AbsoluteSize.Y
+                    return rowBottom < top or rowTop > bottom
+                end)
+                return ok and clippedOut == true
+            end)
+        end
+        return connections
+    end
+
     local function openChoiceList(
         anchor: TextButton,
         values: {string},
@@ -1008,6 +1082,7 @@ function Module.init(context: any): WidgetLibrary
 
         local closed: boolean = false
         local outsideConnection: RBXScriptConnection? = nil
+        local ownerConnections: {RBXScriptConnection} = {}
         local function close(): ()
             if closed then
                 return
@@ -1017,10 +1092,19 @@ function Module.init(context: any): WidgetLibrary
                 outsideConnection:Disconnect()
                 outsideConnection = nil
             end
+            for _, connection: RBXScriptConnection in ipairs(ownerConnections) do
+                pcall(function(): ()
+                    connection:Disconnect()
+                end)
+            end
+            ownerConnections = {}
             list:Destroy()
             state.closeChoiceList = function(): () end
         end
         state.closeChoiceList = close
+        -- APPLY-4: the list dies when its owner window closes, collapses,
+        -- hides, is destroyed, or the owner row scrolls out of the clip.
+        ownerConnections = watchPopupOwner(anchor, close)
 
         local rowsByValue: {[string]: TextButton} = {}
         for itemIndex: number, value: string in ipairs(values) do
@@ -1187,6 +1271,7 @@ function Module.init(context: any): WidgetLibrary
 
         local closed: boolean = false
         local outsideConnection: RBXScriptConnection? = nil
+        local ownerConnections: {RBXScriptConnection} = {}
         local function close(): ()
             if closed then
                 return
@@ -1196,10 +1281,19 @@ function Module.init(context: any): WidgetLibrary
                 outsideConnection:Disconnect()
                 outsideConnection = nil
             end
+            for _, connection: RBXScriptConnection in ipairs(ownerConnections) do
+                pcall(function(): ()
+                    connection:Disconnect()
+                end)
+            end
+            ownerConnections = {}
             list:Destroy()
             state.closeChoiceList = function(): () end
         end
         state.closeChoiceList = close
+        -- APPLY-4: the list dies when its owner window closes, collapses,
+        -- hides, is destroyed, or the owner row scrolls out of the clip.
+        ownerConnections = watchPopupOwner(anchor, close)
 
         local function makeRow(text: string, order: number): TextButton
             local row: TextButton = (create("TextButton", {
@@ -1630,7 +1724,7 @@ function Module.init(context: any): WidgetLibrary
 
     local colorPicker = {}
 
-    colorPicker.open = function(initialColor, onApply)
+    colorPicker.open = function(initialColor, onApply, ownerRow)
         if not colorPicker.panel then
             local panel = create("Frame", {
                 Parent = PopupLayer,
@@ -1930,6 +2024,24 @@ function Module.init(context: any): WidgetLibrary
         colorPicker.callback = onApply
         colorPicker.panel.Visible = true
         colorPicker.update()
+        -- APPLY-4 for the picker: it hides when its owner row's window
+        -- closes, collapses, hides, dies, or the row scrolls out of the
+        -- clip. The watch belongs to this opening; the next open replaces
+        -- it, and firing disconnects itself.
+        for _, connection in ipairs(colorPicker.ownerConnections or {}) do
+            pcall(function()
+                connection:Disconnect()
+            end)
+        end
+        colorPicker.ownerConnections = watchPopupOwner(ownerRow, function()
+            colorPicker.panel.Visible = false
+            for _, connection in ipairs(colorPicker.ownerConnections or {}) do
+                pcall(function()
+                    connection:Disconnect()
+                end)
+            end
+            colorPicker.ownerConnections = {}
+        end)
     end
 
     -- Published so the shell's teardown can drop the two drag connections the
@@ -2008,7 +2120,7 @@ function Module.init(context: any): WidgetLibrary
                 configData.values[optionKey] = colorToConfig(color)
                 callback(color)
                 queueConfigSave()
-            end)
+            end, swatch)
         end)
 
         callback(color)
