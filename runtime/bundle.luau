@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "42340f0de360bcc2",
+    stamp = "0faa6f0858ea7e48",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -1900,7 +1900,7 @@ function Module.init(context: any): WidgetLibrary
                 Position = UDim2.new(0.5, -170, 0.5, -150),
                 Size = UDim2.fromOffset(340, 300),
                 Visible = false,
-                ZIndex = 80,
+                ZIndex = 460,
             })
 
             local title = makeTextLabel(panel, "COLOR", 14)
@@ -1933,7 +1933,7 @@ function Module.init(context: any): WidgetLibrary
                 BackgroundColor3 = Theme.background,
                 BorderSizePixel = 0,
                 Size = UDim2.fromScale(1, 1),
-                ZIndex = 82,
+                ZIndex = 462,
             })
             create("UIGradient", {
                 Parent = shade,
@@ -1950,7 +1950,7 @@ function Module.init(context: any): WidgetLibrary
                 BorderColor3 = Theme.surface,
                 BorderSizePixel = 2,
                 Size = UDim2.fromOffset(12, 12),
-                ZIndex = 83,
+                ZIndex = 463,
             })
             create("UICorner", {
                 Parent = svCursor,
@@ -1984,7 +1984,7 @@ function Module.init(context: any): WidgetLibrary
                 BorderSizePixel = 1,
                 Position = UDim2.new(0.5, 0, 0, 0),
                 Size = UDim2.new(1, 6, 0, 5),
-                ZIndex = 83,
+                ZIndex = 463,
             })
 
             local preview = create("Frame", {
@@ -1994,7 +1994,7 @@ function Module.init(context: any): WidgetLibrary
                 BorderSizePixel = 1,
                 Position = UDim2.fromOffset(273, 45),
                 Size = UDim2.fromOffset(48, 48),
-                ZIndex = 81,
+                ZIndex = 461,
             })
 
             local apply = makeButton(panel, "APPLY", 11)
@@ -5602,6 +5602,21 @@ function Module.init(context: any): any
         )
     end
 
+    -- Full containment: after any resize the window must still fit the
+    -- viewport whole, so growing a settings window near the bottom edge
+    -- walks it back up instead of running it off screen.
+    function manager.ClampWindow(window: any): ()
+        local root: any = window and window.root
+        if not root then
+            return
+        end
+        local landed: Vector2 = clamp(
+            Vector2.new(root.Position.X.Offset, root.Position.Y.Offset),
+            Vector2.new(root.Size.X.Offset, root.Size.Y.Offset)
+        )
+        root.Position = UDim2.fromOffset(landed.X, landed.Y)
+    end
+
     local function bind(instance: Instance, property: string, token: string): ()
         if ThemeEngine and type(ThemeEngine.Bind) == "function" then
             ThemeEngine.Bind(instance, property, token)
@@ -5666,7 +5681,10 @@ function Module.init(context: any): any
         end
         table.insert(manager.list, window)
         for order: number, entry: any in ipairs(manager.list) do
-            local base: number = BASE_Z + order * 4
+            -- Step 1, not 4: the ScreenGui is Sibling-ordered, so only the
+            -- roots compete at this level and fifty windows still stay
+            -- under the pill (240), the tooltip (250) and the popups.
+            local base: number = BASE_Z + order
             entry.root.ZIndex = base
             -- Windows whose children declare a depth get restacked with the
             -- window. Without it a raised overlay draws its own body under the
@@ -6096,7 +6114,51 @@ function Module.init(context: any): any
     -- "Max settings height", and following the GUI like every other window
     -- unless pinned. This is the one contract: the row's triangle, the
     -- right-click and the Navigator all come through here.
-    local settingsCascade: number = 0
+    -- First placement by rectangle intersection: candidate slots walk a
+    -- coarse grid and the first one whose rectangle overlaps no visible
+    -- window wins. Only when the whole screen is occupied does it fall back
+    -- to stacking from the top-left — a diagonal cascade guessed blind and
+    -- still landed on whatever the guess did not know about.
+    local function intersects(
+        ax: number, ay: number, aw: number, ah: number,
+        bx: number, by: number, bw: number, bh: number
+    ): boolean
+        return ax < bx + bw and bx < ax + aw and ay < by + bh and by < ay + ah
+    end
+
+    local function freeSlot(width: number, height: number): Vector2
+        local screen: Vector2 = viewport()
+        local step: number = 40
+        local yLimit: number = math.max(64, screen.Y - height - MARGIN)
+        local xLimit: number = math.max(MARGIN, screen.X - width - MARGIN)
+        local y: number = 64
+        while y <= yLimit do
+            local x: number = MARGIN
+            while x <= xLimit do
+                local collides: boolean = false
+                for _, other: any in ipairs(manager.list) do
+                    local root: any = other.root
+                    if root and root.Visible ~= false then
+                        if intersects(
+                            x, y, width, height,
+                            root.Position.X.Offset, root.Position.Y.Offset,
+                            root.Size.X.Offset, root.Size.Y.Offset
+                        ) then
+                            collides = true
+                            break
+                        end
+                    end
+                end
+                if not collides then
+                    return Vector2.new(x, y)
+                end
+                x += step
+            end
+            y += step
+        end
+        return Vector2.new(MARGIN, 64)
+    end
+
     function manager.OpenFeatureSettings(feature: any): any
         if type(feature) ~= "table" or feature.row == nil then
             return nil
@@ -6125,21 +6187,17 @@ function Module.init(context: any): any
         end
         width = math.min(width, 420)
 
-        local viewport: Vector2 = workspace.CurrentCamera
-            and (workspace.CurrentCamera :: Camera).ViewportSize
-            or Vector2.new(1280, 720)
-        local step: number = settingsCascade % 6
-        local slot: Vector2 = Vector2.new(
-            math.max(
-                20,
-                math.min(
-                    viewport.X * 0.45 + step * 28,
-                    viewport.X - width - 20
-                )
-            ),
-            110 + step * 30 + (settingsCascade // 6) * 14
+        -- The expected height decides which slots can even hold the
+        -- window, so the search uses the same cap the resize will.
+        local expectedLimit: number = tonumber(state.uiMaxSettingsHeight) or 200
+        if expectedLimit <= 0 then
+            expectedLimit = 600
+        end
+        local expectedHeight: number = math.min(
+            TITLE_HEIGHT + (feature.optionsHeight or 40),
+            expectedLimit
         )
-        settingsCascade += 1
+        local slot: Vector2 = freeSlot(width, expectedHeight)
 
         local window: any = manager.Create({
             id = id,
@@ -6179,9 +6237,35 @@ function Module.init(context: any): any
             if not window.collapsed then
                 window.root.Size = UDim2.fromOffset(width, wanted)
             end
+            -- Growing near an edge must never push the window off screen.
+            manager.ClampWindow(window)
         end
         window.resizeToOptions = resizeToOptions
         resizeToOptions()
+
+        -- The width above was packed from character counts, which is an
+        -- estimate. Once the labels have really rendered, their TextBounds
+        -- are the truth; one deferred re-pack replaces the estimate and
+        -- re-clamps. Harness labels never render, so zero bounds are left
+        -- alone.
+        task.defer(function(): ()
+            if not window.root.Parent then
+                return
+            end
+            local widest: number = 0
+            for _, optionRow: any in ipairs(feature.optionRows or {}) do
+                local label: any = optionRow:FindFirstChild("OptionLabel")
+                local bounds: any = label and label.TextBounds
+                local measured: number = bounds and tonumber(bounds.X) or 0
+                if measured > 0 then
+                    widest = math.max(widest, 8 + measured + 24 + 72)
+                end
+            end
+            if widest > 0 then
+                width = math.clamp(widest, 160, 420)
+                resizeToOptions()
+            end
+        end)
 
         feature.expanded = true
         if feature.syncArrow then
@@ -6510,6 +6594,11 @@ function Module.init(context: any): any
             window.fullHeight = wanted
             if not window.collapsed then
                 window.root.Size = UDim2.fromOffset(WINDOW_WIDTH, wanted)
+            end
+            -- A category that grows near the bottom edge walks back up
+            -- instead of running off the viewport.
+            if windows.ClampWindow then
+                windows.ClampWindow(window)
             end
         end
         table.insert(
@@ -8432,6 +8521,9 @@ function Module.init(context: any): any
             if not window.collapsed then
                 window.root.Size = UDim2.fromOffset(width, wanted)
             end
+            if windows.ClampWindow then
+                windows.ClampWindow(window)
+            end
         end
         record.resize = resize
         table.insert(
@@ -9976,6 +10068,23 @@ function Module.init(context: any): any
         connections = {} :: {RBXScriptConnection},
     }
 
+    -- A reinject that raced its own cleanup once left two of everything on
+    -- screen — two logos, two pills, two lists. The furniture is idempotent
+    -- now: whatever of it already lives on this layer dies before the new
+    -- set is built.
+    for _, ghostName: string in ipairs({
+        "WurstLogo",
+        "HackList",
+        "Navigator",
+        "Pill",
+    }) do
+        local ghost: Instance? = PopupLayer:FindFirstChild(ghostName)
+        while ghost do
+            ghost:Destroy()
+            ghost = PopupLayer:FindFirstChild(ghostName)
+        end
+    end
+
     -- ------------------------------------------------------------- wordmark
     -- Wurst's WurstLogo feature. The sausage sits on the game with nothing
     -- behind it; only the version string gets the white chip, which is what
@@ -10073,6 +10182,29 @@ function Module.init(context: any): any
         ZIndex = 21,
     }) :: any) :: TextLabel
 
+    -- The band's width came from a character-count estimate; the rendered
+    -- TextBounds are the truth. The moment the label really measures (and
+    -- again if the interface font swaps under it), the chip, the stripe and
+    -- the version frame shrink-wrap the actual text — the band ends exactly
+    -- after "0.1 Beta", never a pixel into the game's own UI.
+    local function fitLogoBand(): ()
+        local bounds: any = (versionLabel :: any).TextBounds
+        local measured: number = bounds and tonumber(bounds.X) or 0
+        if measured <= 0 then
+            return
+        end
+        local fittedVersion: number = 8 + measured
+        local fittedChip: number = LOGO_WIDTH + 10 + fittedVersion + 4
+        versionChip.Size = UDim2.fromOffset(fittedVersion, 22)
+        chip.Size = UDim2.fromOffset(fittedChip, LOGO_HEIGHT + 8)
+        logoStripe.Size = UDim2.fromOffset(fittedChip, 22)
+    end
+    table.insert(
+        Furniture.connections,
+        versionLabel:GetPropertyChangedSignal("TextBounds"):Connect(fitLogoBand)
+    )
+    task.defer(fitLogoBand)
+
     if type(state.applyAssetImage) == "function" then
         state.applyAssetImage("wurstLogo", logoImage, function(): ()
             logoImage.Visible = true
@@ -10123,19 +10255,6 @@ function Module.init(context: any): any
 
     -- The old menu's FPS/PING/TIME/PLACE readout is gone entirely — Wurst
     -- draws the sausage and the version in that corner and nothing else.
-
-    local function colorHex(color: Color3): string
-        return string.format(
-            "#%02X%02X%02X",
-            math.floor(color.R * 255 + 0.5),
-            math.floor(color.G * 255 + 0.5),
-            math.floor(color.B * 255 + 0.5)
-        )
-    end
-
-    local function escapeRich(text: string): string
-        return (text:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"))
-    end
 
     -- ------------------------------------------------------------- HackList
     -- Wurst's list of what is on, one line per enabled module, newest state
@@ -10226,27 +10345,30 @@ function Module.init(context: any): any
     -- fighting the layout for its position.
     local hudRows: {[string]: any} = {}
 
-    local function hudAlignment(): Enum.TextXAlignment
-        return hudOnLeft()
-            and Enum.TextXAlignment.Left
-            or Enum.TextXAlignment.Right
-    end
-
-    local function composeHudText(name: string, status: string?): string
-        local text: string = escapeRich(name)
-        if status and status ~= "" then
-            text = text
-                .. ' <font color="'
-                .. colorHex(Theme.textMuted)
-                .. '">['
-                .. escapeRich(status)
-                .. "]</font>"
-        end
-        return text
-    end
-
     local function animationsOn(): boolean
         return hudAnimations and state.animationsEnabled ~= false
+    end
+
+    -- One container per entry; the glyph line inside it is drawn through
+    -- the bitmap text contract, so these entries rasterise from the atlas
+    -- the moment it resolves and fall back to Monocraft text until then.
+    local function drawHudEntry(row: any, name: string, status: string?): ()
+        local segments: {any} = {{text = name, color = hudColor}}
+        if status and status ~= "" then
+            table.insert(segments, {
+                text = " [" .. tostring(status) .. "]",
+                color = Theme.textMuted,
+            })
+        end
+        local bitmapText: any = state.bitmapText
+        if bitmapText and type(bitmapText.draw) == "function" then
+            row.holder = bitmapText.draw(row.container, segments, {
+                Name = "Entry",
+                TextSize = HACKLIST_FONT_SIZE,
+                ZIndex = 20,
+                align = hudOnLeft() and "Left" or "Right",
+            })
+        end
     end
 
     local function newHudRow(name: string): any
@@ -10258,66 +10380,43 @@ function Module.init(context: any): any
             Size = UDim2.new(1, 0, 0, HACKLIST_LINE_HEIGHT),
             ZIndex = 20,
         }) :: any) :: Frame
-        -- Through the bitmap text contract: the HackList is the first full
-        -- surface on it, so the day the atlas renderer lands, these entries
-        -- change rasteriser without this file moving.
-        local bitmapText: any = state.bitmapText
-        local label: TextLabel
-        if bitmapText and type(bitmapText.make) == "function" then
-            label = bitmapText.make({
-                Parent = container,
-                Name = "Entry",
-                BackgroundTransparency = 1,
-                Position = UDim2.fromOffset(0, 0),
-                RichText = true,
-                Size = UDim2.new(1, 0, 1, 0),
-                Text = "",
-                TextColor3 = hudColor,
-                TextSize = HACKLIST_FONT_SIZE,
-                TextXAlignment = hudAlignment(),
-                ZIndex = 20,
-            })
-        else
-            label = (create("TextLabel", {
-                TextTruncate = Enum.TextTruncate.AtEnd,
-                Parent = container,
-                Name = "Entry",
-                BackgroundTransparency = 1,
-                FontFace = CONTROL_FONT,
-                Position = UDim2.fromOffset(0, 0),
-                RichText = true,
-                Size = UDim2.new(1, 0, 1, 0),
-                Text = "",
-                TextColor3 = hudColor,
-                TextSize = HACKLIST_FONT_SIZE,
-                TextXAlignment = hudAlignment(),
-                ZIndex = 20,
-            }) :: any) :: TextLabel
+        return {container = container}
+    end
+
+    local function slideHudRow(row: any): ()
+        if not animationsOn() or not row.holder then
+            return
         end
-        if animationsOn() then
-            label.Position = UDim2.fromOffset(HACKLIST_SLIDE, 0)
-            label.TextTransparency = 1
-            TweenService:Create(
-                label,
-                TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-                {
-                    Position = UDim2.fromOffset(0, 0),
-                    TextTransparency = 0,
-                }
-            ):Play()
-        end
-        return {container = container, label = label}
+        local holder: Frame = row.holder :: Frame
+        local resting: UDim2 = holder.Position
+        -- Spelled out instead of UDim2 addition: the harness's UDim2
+        -- stand-in has no arithmetic.
+        holder.Position = UDim2.new(
+            resting.X.Scale,
+            resting.X.Offset + HACKLIST_SLIDE,
+            resting.Y.Scale,
+            resting.Y.Offset
+        )
+        TweenService:Create(
+            holder,
+            TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+            {Position = resting}
+        ):Play()
     end
 
     local function dropHudRow(row: any): ()
-        if animationsOn() then
+        if animationsOn() and row.holder then
+            local holder: Frame = row.holder :: Frame
+            local slid: UDim2 = UDim2.new(
+                holder.Position.X.Scale,
+                holder.Position.X.Offset + HACKLIST_SLIDE,
+                holder.Position.Y.Scale,
+                holder.Position.Y.Offset
+            )
             local tween: Tween = TweenService:Create(
-                row.label,
+                holder,
                 TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-                {
-                    Position = UDim2.fromOffset(HACKLIST_SLIDE, 0),
-                    TextTransparency = 1,
-                }
+                {Position = slid}
             )
             tween.Completed:Connect(function(): ()
                 row.container:Destroy()
@@ -10403,13 +10502,16 @@ function Module.init(context: any): any
         for order: number, entry: any in ipairs(entries) do
             wanted[entry.name] = true
             local row: any = hudRows[entry.name]
+            local isNew: boolean = row == nil
             if not row then
                 row = newHudRow(entry.name)
                 hudRows[entry.name] = row
             end
             row.container.LayoutOrder = order
-            row.label.Text = composeHudText(entry.name, entry.status)
-            row.label.TextXAlignment = hudAlignment()
+            drawHudEntry(row, entry.name, entry.status)
+            if isNew then
+                slideHudRow(row)
+            end
         end
         for name: string, row: any in pairs(hudRows) do
             if not wanted[name] then
@@ -10434,6 +10536,12 @@ function Module.init(context: any): any
     local function forceHudRefresh(): ()
         hudSignature = "\0stale"
         refreshHudList()
+    end
+
+    -- The atlas resolves off-thread; the moment it lands, the list redraws
+    -- through it instead of waiting for the next enable/disable.
+    if state.bitmapText and type(state.bitmapText.onReady) == "table" then
+        table.insert(state.bitmapText.onReady, forceHudRefresh)
     end
 
     state.hudList = {
