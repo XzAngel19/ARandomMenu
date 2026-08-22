@@ -1066,6 +1066,12 @@ function Module.init(context: any): any
             size = Vector2.new(width, TITLE_HEIGHT + 40),
             position = slot,
             closable = true,
+            -- The Java: SettingsWindow calls setClosable(true) and
+            -- setMinimizable(false) — a feature's settings window has a
+            -- close button and no collapse chevron, in 7.19 and unchanged
+            -- through 7.54.1 (same file at both tags). SetCollapsed stays
+            -- functional on the window object; only the chrome is absent.
+            collapsible = false,
             onClose = function(): ()
                 feature.expanded = false
                 if feature.syncArrow then
