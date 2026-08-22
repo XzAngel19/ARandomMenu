@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "ed4ac5dc0a81a46f",
+    stamp = "193863fced5826a0",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -10652,6 +10652,36 @@ function Module.init(context: any): any
     state.wurstOptions.RegisterAction(
         "GameCheck", "Game check: " .. recognised, nil, {static = true}
     )
+
+    -- Font status, honestly: which of the three sources is really
+    -- rendering. Clicking the row prints the install instructions for the
+    -- exact pack — the runtime never downloads Mojang assets itself.
+    local function fontStatusLabel(): string
+        local sourceName: string = tostring(
+            (state.bitmapText and state.bitmapText.source) or "unavailable"
+        )
+        if sourceName == "minecraft-exact" then
+            return "Font: Minecraft 1.18.1 (exact, local pack)"
+        end
+        if sourceName == "monocraft-fallback" then
+            return "Font: Monocraft fallback (OFL)"
+        end
+        return "Font: vector stand-in (no atlas)"
+    end
+    local fontHandle: any = state.wurstOptions.RegisterAction(
+        "FontStatus",
+        fontStatusLabel(),
+        function(): ()
+            notify("Exact font: run tools/install_minecraft_font.py --update "
+                .. "on your PC, then copy MinecraftFont/ into the executor "
+                .. "workspace and reinject")
+        end
+    )
+    if state.bitmapText and type(state.bitmapText.onReady) == "table" then
+        table.insert(state.bitmapText.onReady, function(): ()
+            fontHandle.SetLabel(fontStatusLabel())
+        end)
+    end
 
     local function openWurstOptions(): ()
         if optionsRecord then

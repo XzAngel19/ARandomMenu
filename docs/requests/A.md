@@ -167,3 +167,27 @@ the gate will force a Left default that contradicts the prototype.
   7.54.1 hack, module, category, hack option, `Manifest.modules`
   change, and any GUI change not demonstrated by direct source
   comparison. Zero new modules were added in this pass.
+
+## Installer + dock + menu style pass (2026-08-22, third)
+
+- `tools/install_minecraft_font.py` is the one-command installer:
+  drives `fetch_minecraft_font.py --update` (SHA1-verified client),
+  reads the real 1.18.1 `default.json`, measures per-glyph advances by
+  the rightmost-ink rule (space = 4), records ascent / lineHeight 9 /
+  shadow {1,1,×0.25}, copies ascii/accented/european, re-grids ASCII
+  32..126 into the renderer's 16-column layout (`runtime-ascii.png`),
+  and writes `MinecraftFont/manifest.json` with per-file SHA1s.
+  `--check` verifies; `--output` relocates; it refuses to write under
+  assets/. legacy_unicode is recorded, pages not fetched (CDN; ASCII
+  covers the GUI). Runtime: the shell probes
+  `MinecraftFont/manifest.json` in the executor workspace, verifies
+  format/version/runtime table, loads through `loadExactAtlas`, flips
+  `source` to minecraft-exact, and never opens client.jar from Luau.
+  Wurst Options shows the live Font status row; clicking it prints the
+  install instructions.
+- Idle glyph budget re-measured at 552 after A4's min/max rail labels
+  and the Menu style row (static content, not a leak); ceiling moved
+  550 → 700 in C's bitmap-budget suite + doc, same ~35% margin. Same
+  commit, per the lane rule — C, please re-bless.
+- `state.invokeModuleSearch` is the dock's resolver and is designed to
+  be replaced wholesale by D's registry (reassign the field).

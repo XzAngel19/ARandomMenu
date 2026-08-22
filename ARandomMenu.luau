@@ -363,7 +363,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "ed4ac5dc0a81a46f"
+local SOURCE_STAMP: string = "193863fced5826a0"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -2525,6 +2525,54 @@ end
 task.spawn(function(): ()
     if type(state.resolveAsset) ~= "function" then
         state.bitmapText.source = "unavailable"
+        return
+    end
+    -- A locally installed Minecraft 1.18.1 pack first. It is never
+    -- downloaded here and never committed: tools/install_minecraft_font.py
+    -- builds MinecraftFont/ from the official client on the user's own
+    -- machine, hash-verified against the pinned manifest, and the user
+    -- drops the folder into the executor workspace. The runtime checks the
+    -- manifest before trusting a pixel; when it holds, the renderer flips
+    -- to minecraft-exact through the same loadExactAtlas plug.
+    pcall(function(): ()
+        if type(isfile) ~= "function" or type(readfile) ~= "function" then
+            return
+        end
+        local manifestPath: string = "MinecraftFont/manifest.json"
+        if not isfile(manifestPath) then
+            return
+        end
+        local manifest: any = HttpService:JSONDecode(readfile(manifestPath))
+        if type(manifest) ~= "table"
+            or manifest.format ~= "wurst-minecraft-font-v1"
+            or manifest.version ~= "1.18.1"
+            or type(manifest.runtime) ~= "table" then
+            warn("[" .. PRODUCT.logPrefix
+                .. ":Assets] MinecraftFont/ present but not the 1.18.1 pack; ignoring")
+            return
+        end
+        local imagePath: string = "MinecraftFont/"
+            .. tostring(manifest.runtime.image or "runtime-ascii.png")
+        if not isfile(imagePath) then
+            warn("[" .. PRODUCT.logPrefix
+                .. ":Assets] MinecraftFont/ manifest names a missing atlas; ignoring")
+            return
+        end
+        -- Bare, like loadConfig reads isfile/readfile: the environment
+        -- helper lives inside the asset manager's own block. getsynasset
+        -- executors are reached through the manager's registry path; the
+        -- local pack needs only the declared getcustomasset.
+        if type(getcustomasset) ~= "function" then
+            return
+        end
+        local assetOk: boolean, assetId: any = pcall(getcustomasset, imagePath)
+        if assetOk and type(assetId) == "string" and assetId ~= "" then
+            state.bitmapText.loadExactAtlas(assetId, manifest.runtime)
+            print("[" .. PRODUCT.logPrefix
+                .. ":Assets] Minecraft 1.18.1 exact font loaded from MinecraftFont/")
+        end
+    end)
+    if state.bitmapText.source == "minecraft-exact" then
         return
     end
     -- An exact atlas, if a local build registered one. Unknown keys are
