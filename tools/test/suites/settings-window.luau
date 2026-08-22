@@ -240,16 +240,25 @@ return function(ctx: any): ()
     if first ~= nil and otherWindow ~= nil then
         local ax: number, ay: number = offsetOf(first)
         local bx: number, by: number = offsetOf(otherWindow)
-        -- A's cascade steps 28×30, which is smaller than a ~200×66 window,
-        -- so the AABBs still overlap. Superposition (same origin) is the
-        -- defect the cascade already avoids; full AABB non-intersection
-        -- waits on a step at least as large as the window.
         check(
             "two first-open settings are not born at the same origin",
             ax ~= bx or ay ~= by,
             tostring(ax) .. "," .. tostring(ay)
                 .. " vs "
                 .. tostring(bx) .. "," .. tostring(by)
+        )
+        local aw: number, ah: number = sizeOf(first)
+        local bw: number, bh: number = sizeOf(otherWindow)
+        local overlap: boolean = ax < bx + bw
+            and bx < ax + aw
+            and ay < by + bh
+            and by < ay + ah
+        check(
+            "two first-open settings have zero AABB intersection after layout",
+            overlap == false,
+            tostring(ax) .. "," .. tostring(ay) .. " " .. tostring(aw) .. "x" .. tostring(ah)
+                .. " vs "
+                .. tostring(bx) .. "," .. tostring(by) .. " " .. tostring(bw) .. "x" .. tostring(bh)
         )
 
         windows.BringToFront(first)

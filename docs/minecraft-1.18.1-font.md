@@ -1,5 +1,10 @@
 # Minecraft 1.18.1 font authority
 
+Wurst **7.54.1 does not change this baseline.** That release runs on
+later Minecraft versions whose `unihex` / Unifont zip is a different
+stack. The port's visual font remains 7.19 / MC 1.18.1. See
+`docs/wurst-7.19-to-7.54.1-gui-delta.md`.
+
 Wurst 7.19 draws every label with `WurstClient.MC.font`
 (`net.minecraft.client.gui.Font`). That object is **Minecraft 1.18.1's
 default font**, not a face Wurst ships. This file is the pin so A and

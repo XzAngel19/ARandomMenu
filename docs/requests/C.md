@@ -38,6 +38,13 @@ The integrator owns `ARandomMenu.luau`. Agent D owns `src/modules/**` and
   `tools/check_font_authority.py` holds the pin, refuses Mojang pixels
   in git, and refuses to label `monocraft-16.png` as Minecraft exact.
   Normal validate is offline. `--update` is the only network path.
+  Wurst 7.54.1 is **not** the font baseline.
+- Universal inventory is frozen at 38
+  (`tools/inventory_snapshot.json` / `tools/check_inventory.py`).
+- Placement: `FindFreeRect` / `PlaceWindow` / `ReflowWindow` are
+  blocking. AABB after the second layout must be empty.
+- 7.54.1 GUI APPLY list is closed in
+  `docs/wurst-7.19-to-7.54.1-gui-delta.md`. No new hacks.
 
 ## Still owed — do not fail until these land
 
