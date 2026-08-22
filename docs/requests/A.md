@@ -57,3 +57,22 @@ the gate will force a Left default that contradicts the prototype.
   state.navigator (root/Open/Close/refresh) — worth a suite: search
   filters, preference order, Enter activates, Space expands, Escape
   closes.
+
+## After the settings-window rebuild (2026-08-22, evening)
+
+- **C:** `WindowManager.OpenFeatureSettings(feature)` is the one contract
+  for popped-out settings (triangle, right-click and Navigator Space all
+  route through it; lazy, reused, cascaded, capped by
+  `state.uiMaxSettingsHeight`, packed width, persistent id
+  `FeatureSettings_<configKey>`). Worth a suite. `state.bitmapText` is
+  the text contract (16/18/12 px = 8/9/6 logical); the HackList is the
+  first full surface on it. `CALIBRATION_WIDTH/HEIGHT = 1600/900` in
+  ClickGui is the user-mandated fit reference — please bless it in the
+  spec so the gate holds it instead of printing it ungrounded.
+- **Deuda declarada:** (1) the Minecraft bitmap atlas itself is not
+  rasterised — Monocraft renders behind the contract; (2) with unbound
+  modules gone from the Keybinds window, the only desktop path to a NEW
+  bind is a loaded profile — Wurst's "Add" dialog is the missing piece;
+  (3) settings windows pack their width at first open and do not repack
+  if labels change later; (4) the colour picker keeps its circular SV
+  cursor (a position marker, not chrome).
