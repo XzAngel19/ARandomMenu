@@ -54,13 +54,11 @@ return function(ctx: any): ()
         )
     end
 
-    if host.ScreenGui ~= nil then
-        local rootFlag: any = host.ScreenGui.AutoLocalize
-        if rootFlag ~= nil then
-            check(
-                "the ScreenGui root disables AutoLocalize",
-                rootFlag == false
-            )
-        end
-    end
+    -- The suite-wide host is a harness fixture created before the production
+    -- shell executes, so its ScreenGui does not prove the live root's flag.
+    -- Hold the live assignment directly instead of testing the mock fixture.
+    check(
+        "the live ScreenGui root disables AutoLocalize",
+        string.find(source, "ScreenGui.AutoLocalize = false", 1, true) ~= nil
+    )
 end

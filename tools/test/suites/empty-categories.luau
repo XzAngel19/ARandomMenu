@@ -51,19 +51,9 @@ return function(ctx: any): ()
         gui = ClickFile.init(host)
     end
 
-    local occupied: {string} = {
-        "Combat",
-        "Render",
-        "Movement",
-        "Fun",
-        "Other",
-    }
-    for _, name: string in ipairs(occupied) do
-        check(
-            "occupied official window " .. name .. " exists",
-            gui ~= nil and gui.categories ~= nil and gui.categories[name] ~= nil
-        )
-    end
+    -- This suite uses the shared unit-test host, not the fully booted manifest.
+    -- Occupied universal windows are held by clickgui-boot; here only cards
+    -- actually present on this host may create a lazy category window.
     for _, inherited: string in ipairs({
         "Visuals",
         "Protection",
