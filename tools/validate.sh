@@ -186,6 +186,8 @@ step "Font authority is Minecraft 1.18.1"
 # Offline. Pins, OFL fallback, no Mojang pixels in git. The network
 # path is tools/fetch_minecraft_font.py --update and is not this step.
 python3 tools/check_font_authority.py --check
+python3 tools/install_minecraft_font.py --check
+python3 tools/test/test_install_minecraft_font.py
 
 step "WurstLogo band is packed"
 # The band used to be LOGO_WIDTH + 130, which ran on toward the HUD.

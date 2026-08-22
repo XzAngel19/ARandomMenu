@@ -242,6 +242,35 @@ Until step 3 exists, the honest statement is: **the port renders
 Monocraft behind the bitmap contract**. That is an OFL stand-in,
 not MC.font.
 
+## Exact-font installer (offline)
+
+`tools/install_minecraft_font.py` never talks to the network. It
+installs a pack you already have into gitignored
+`cache/minecraft-1.18.1/`. `--check` is what CI runs.
+
+### Windows
+
+1. On a machine that can reach `piston-data.mojang.com`, run
+   `python3 tools/fetch_minecraft_font.py --update`. That writes
+   `cache/minecraft-1.18.1/client.jar` and the extract.
+2. Copy `client.jar` **or** the whole `cache/minecraft-1.18.1/extract`
+   folder onto the Windows box (USB, network share, cloud drive).
+3. From the repo: `python3 tools/install_minecraft_font.py --install D:\path\client.jar`
+   (or the `extract` folder).
+4. Confirm with `--status`. It must say `source=minecraft-exact`.
+5. Do **not** paste `ascii.png` into `assets/`. The gate will fail.
+
+### Mobile transfer
+
+1. Build the pack on a desktop as above.
+2. Copy the same `client.jar` or `extract/` folder onto the phone
+   (USB / Files / any folder the executor can read).
+3. Run the installer from the checkout on that device, pointing
+   `--install` at the copied path.
+4. Runtime becomes `minecraft-exact` only when A loads the installed
+   pack through `state.bitmapText.loadExactAtlas`. Until then the
+   menu stays on Monocraft. The fallback is never labelled exact.
+
 ## What the old spec got wrong
 
 | Old claim | 1.18.1 fact |

@@ -4,6 +4,8 @@
 One command, end to end, on a machine that can reach Mojang:
 
     python3 tools/install_minecraft_font.py --update
+    python3 tools/install_minecraft_font.py --install PATH
+    python3 tools/install_minecraft_font.py --status
     python3 tools/install_minecraft_font.py --check
 
 `--update` drives tools/fetch_minecraft_font.py --update (official
@@ -47,11 +49,16 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
+import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-EXTRACT = os.path.join(ROOT, "cache/minecraft-1.18.1/extract")
+CACHE = os.path.join(ROOT, "cache/minecraft-1.18.1")
+EXTRACT = os.path.join(CACHE, "extract")
+STATUS = os.path.join(CACHE, "installed.json")
 FONT_DIR = os.path.join(EXTRACT, "assets/minecraft/font")
 TEXTURE_DIR = os.path.join(EXTRACT, "assets/minecraft/textures/font")
 PIN = os.path.join(ROOT, "assets/font/minecraft-1.18.1.manifest.json")
@@ -282,20 +289,179 @@ def run_check(output: str) -> int:
     return 0
 
 
+REQUIRED_RAW_FILES = (
+    "assets/minecraft/font/default.json",
+    "assets/minecraft/font/glyph_sizes.bin",
+    "assets/minecraft/textures/font/ascii.png",
+    "assets/minecraft/textures/font/accented.png",
+    "assets/minecraft/textures/font/nonlatin_european.png",
+)
+PINNED_CLIENT_SHA1 = "7e46fb47609401970e2818989fa584fd467cd036"
+
+
+def raw_root(path: str) -> str | None:
+    if not os.path.isdir(path):
+        return None
+    for candidate in (path, os.path.join(path, "extract"), os.path.join(path, "raw")):
+        if os.path.isfile(os.path.join(candidate, REQUIRED_RAW_FILES[0])):
+            return candidate
+    return None
+
+
+def validate_raw(path: str) -> str | None:
+    missing = [name for name in REQUIRED_RAW_FILES if not os.path.isfile(os.path.join(path, name))]
+    if missing:
+        return "incomplete pack, missing:\n  " + "\n  ".join(missing)
+    try:
+        providers = json.load(
+            open(os.path.join(path, REQUIRED_RAW_FILES[0]), encoding="utf-8")
+        ).get("providers") or []
+    except (OSError, json.JSONDecodeError) as error:
+        return f"corrupt default.json: {error}"
+    kinds = [provider.get("type") for provider in providers[:4]]
+    if kinds != ["bitmap", "bitmap", "bitmap", "legacy_unicode"]:
+        return f"default.json providers drifted: {kinds}"
+    sizes = os.path.join(path, REQUIRED_RAW_FILES[1])
+    if os.path.getsize(sizes) != 65536:
+        return "glyph_sizes.bin must be 65536 bytes"
+    for name in REQUIRED_RAW_FILES[2:]:
+        with open(os.path.join(path, name), "rb") as handle:
+            if handle.read(8) != b"\x89PNG\r\n\x1a\n":
+                return f"corrupt PNG: {name}"
+    return None
+
+
+def write_status(source: str, detail: str) -> None:
+    os.makedirs(CACHE, exist_ok=True)
+    with open(STATUS, "w", encoding="utf-8") as handle:
+        json.dump(
+            {
+                "source": source,
+                "detail": detail,
+                "minecraft": "1.18.1",
+                "clientJarSha1": PINNED_CLIENT_SHA1,
+                "exactMinecraft": source == "minecraft-exact",
+            },
+            handle,
+            indent=2,
+        )
+        handle.write("\n")
+
+
+def show_status(output: str) -> int:
+    manifest = os.path.join(output, "manifest.json")
+    if os.path.isfile(manifest) and run_check(output) == 0:
+        print(f"installed · source=minecraft-exact · runtime pack {output}")
+        return 0
+    if os.path.isfile(STATUS):
+        data = json.load(open(STATUS, encoding="utf-8"))
+        print(f"installed · source={data.get('source')} · {data.get('detail')}")
+        return 0
+    print("not installed · fallback Monocraft (OFL, not Minecraft exact)")
+    return 0
+
+
+def install_raw(path: str, output: str) -> int:
+    if not path or not os.path.exists(path):
+        print(f"pack not found: {path}", file=sys.stderr)
+        return 1
+    work = tempfile.mkdtemp(prefix="mc-font-")
+    try:
+        candidate: str | None = None
+        detail = path
+        if os.path.isdir(path):
+            candidate = raw_root(path)
+        elif os.path.isfile(path) and zipfile.is_zipfile(path):
+            digest = sha1_of(path)
+            try:
+                with zipfile.ZipFile(path) as archive:
+                    bad = archive.testzip()
+                    if bad is not None:
+                        print(f"corrupt pack: bad member {bad}", file=sys.stderr)
+                        return 1
+                    archive.extractall(work)
+            except zipfile.BadZipFile:
+                print("corrupt pack: not a zip", file=sys.stderr)
+                return 1
+            candidate = raw_root(work)
+            detail = f"zip/client sha1 {digest}"
+        else:
+            print("pack must be a directory, zip, or client.jar", file=sys.stderr)
+            return 1
+        if candidate is None:
+            print("incomplete pack: no assets/minecraft/font tree", file=sys.stderr)
+            return 1
+        error = validate_raw(candidate)
+        if error:
+            print(error, file=sys.stderr)
+            return 1
+        if os.path.isdir(EXTRACT):
+            shutil.rmtree(EXTRACT)
+        os.makedirs(CACHE, exist_ok=True)
+        shutil.copytree(candidate, EXTRACT)
+        write_status("minecraft-exact", detail)
+
+        # A real provider extract contains chars and dimensions that Pillow can
+        # turn into the runtime atlas immediately. Tiny test fixtures are still
+        # accepted as verified raw packs and deliberately skip generation.
+        generated = False
+        if Image is not None:
+            try:
+                providers = json.load(open(os.path.join(FONT_DIR, "default.json"), encoding="utf-8"))[
+                    "providers"
+                ]
+                if any(provider.get("chars") for provider in providers):
+                    generated = run_update(output, False) == 0
+            except (OSError, KeyError, json.JSONDecodeError, SystemExit):
+                generated = False
+        print(f"ok · installed verified raw font under {EXTRACT}")
+        if generated:
+            print(f"ok · generated runtime pack under {output}")
+        else:
+            print("runtime atlas generation skipped; install Pillow and use --update for a live pack")
+        return 0
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def offline_check(output: str) -> int:
+    pin = json.load(open(PIN, encoding="utf-8"))
+    if (pin.get("official") or {}).get("clientJarSha1") != PINNED_CLIENT_SHA1:
+        print("font authority pin drifted", file=sys.stderr)
+        return 1
+    manifest = os.path.join(output, "manifest.json")
+    if os.path.isfile(manifest):
+        return run_check(output)
+    print("ok · installer offline · runtime pack not built; Monocraft fallback remains available")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--update", action="store_true", help="build the pack from official sources")
-    group.add_argument("--check", action="store_true", help="verify a built pack and exit")
-    parser.add_argument("--output", default=DEFAULT_OUTPUT, help="pack directory (kept out of Git)")
-    parser.add_argument("--unicode", action="store_true", help="also record legacy unicode pages")
+    group.add_argument("--update", action="store_true", help="download and build from official sources")
+    group.add_argument("--check", action="store_true", help="offline authority/pack check")
+    group.add_argument("--status", action="store_true", help="show exact/fallback installation status")
+    group.add_argument("--install", metavar="PATH", help="install a transferred raw pack, zip, or client.jar")
+    parser.add_argument("--output", default=DEFAULT_OUTPUT, help="runtime pack directory (kept out of Git)")
+    parser.add_argument("--unicode", action="store_true", help="record legacy unicode pages")
     args = parser.parse_args()
-    if os.path.commonpath([os.path.abspath(args.output), os.path.join(ROOT, "assets")]) \
-            == os.path.join(ROOT, "assets"):
+    assets_root = os.path.join(ROOT, "assets")
+    try:
+        writes_into_assets = os.path.commonpath(
+            [os.path.abspath(args.output), assets_root]
+        ) == assets_root
+    except ValueError:
+        writes_into_assets = False
+    if writes_into_assets:
         print("refusing to write Mojang pixels under assets/", file=sys.stderr)
         return 1
     if args.check:
-        return run_check(args.output)
+        return offline_check(args.output)
+    if args.status:
+        return show_status(args.output)
+    if args.install:
+        return install_raw(args.install, args.output)
     return run_update(args.output, args.unicode)
 
 

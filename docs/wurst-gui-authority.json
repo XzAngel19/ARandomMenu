@@ -22,7 +22,7 @@
     "APPLY-1 live max height sliders (already)",
     "APPLY-2 persist position + display clamp (already, keep MARGIN 6)",
     "APPLY-3 settings beside category via FindFreeRect (already)",
-    "APPLY-4 close popups when owner gone (menu-hide blocking; scroll-clip NEEDS_EVIDENCE)",
+    "APPLY-4 close popups when owner gone (menu-hide blocking; owner/scroll-clip block when published)",
     "APPLY-5 pixel title-bar icons (already)"
   ],
   "forbid": [

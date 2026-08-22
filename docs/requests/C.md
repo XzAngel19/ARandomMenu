@@ -49,21 +49,52 @@ The integrator owns `ARandomMenu.luau`. Agent D owns `src/modules/**` and
 - APPLY-1 live Max height / Max settings height = 200.
 - APPLY-2 persist + display clamp, keep MARGIN 6.
 - APPLY-3 settings beside the category via FindFreeRect.
-- APPLY-4 menu-hide closes ChoiceList (blocking). Scroll-clip is still
-  NEEDS_EVIDENCE.
+- APPLY-4 menu-hide closes ChoiceList (blocking). Owner-window close
+  and scroll-clip become blocking the moment A publishes
+  `closeInvalidPopups` / `closePopupsOutsideArea`.
 - APPLY-5 pixel title-bar icons.
 - Keybinds "Add" dialog exists (`KeybindAdd`). Dynamic packing
   (`repack` / `repackWidth`) is live. Config schema 2 drops a stored
   Max height of 1000.
 
+- NoFall Settings title stays in the header, clipped, one holder,
+  no body/chrome invasion, at scales 0.7 / 1 / 1.25 / 1.6.
+- Monocraft fallback: OFL, checksum, 176×102, ASCII 32..126, cell
+  11×17 / advance 11, Pixelated, integer glyph offsets. Never labelled
+  Minecraft exact.
+- Exact font installer (`tools/install_minecraft_font.py`) is offline.
+  `--check` is the gate. A transferred pack becomes `minecraft-exact`
+  under `cache/`; corrupt / incomplete packs are rejected.
+- Numeric slider: min/max visible, current editable, FocusLost,
+  invalid / NaN / inf rejected, drag clamps. Speed is a single value.
+  CPS is an ordered low/high range.
+- Menu style: default Wurst, RightControl selected, RightShift is
+  Navigator only. Theme switch does not toggle modules.
+- Categories sit at the logo height, do not overlap it, wrap, and
+  keep manual positions across reflow. Reset layout clears `userMoved`.
+
 ## Still owed — do not fail until these land
 
-### APPLY-4 scroll-clip popup close
+### APPLY-4 owner-window + scroll-clip
 
-Menu-hide already closes ChoiceList. Closing the owner window and
-scrolling the owner row out of the body clip are still
-NEEDS_EVIDENCE. Do not fail those until A lands `closeInvalidPopups`
-/ `closePopupsOutsideArea`.
+Menu-hide is blocking. Publish `state.closeInvalidPopups` and
+`state.closePopupsOutsideArea` (7.54.1 names). C8 flips those two
+checks the moment the functions exist.
+
+### ClickGui.order follows module-load, not CATEGORY_ORDER
+
+Libraries start before modules, so the official pre-pass sees an
+empty `allFeatures` and the first window created is whichever
+module loads first (Other). Retile then follows that order.
+Re-run the CATEGORY_ORDER pass after modules exist (or rebuild
+`ClickGui.order` from it) so Combat, Render, … tile left to right.
+
+### Bottom command dock
+
+`state.commandDock` is not published. Search left, submit right, no
+results list, module aliases only, no Wurst Options actions, no
+fuzzy activation. The suite holds the negative contract (no old
+palette) until the dock lands.
 
 ### RUN / textbox / list still rounded via the shell helper
 
