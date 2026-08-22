@@ -43,7 +43,9 @@ return function(ctx: any): ()
             or Inspect.findNamed(ui.root, "Option_Commanddock")
             or Inspect.findNamed(ui.root, "Option_Showcommanddock")
     end
-    local setter: any = state.setDockVisible or state.setCommandDockVisible
+    local setter: any = (state.dock and state.dock.SetVisible)
+        or state.setDockVisible
+        or state.setCommandDockVisible
     if settingRow == nil and type(setter) ~= "function" then
         check(
             "desktop Show dock setting waits on A; RightControl still opens the menu",

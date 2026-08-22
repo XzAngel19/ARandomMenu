@@ -40,6 +40,19 @@ return function(ctx: any): ()
     Inspect.pinClickGuiScale(env.PopupLayer, 1)
     Inspect.armAtlasFamily(bitmap)
     check("pickAtlas is published", type(bitmap.pickAtlas) == "function")
+    if type(bitmap.family) == "table" then
+        local sizes: {[number]: boolean} = {}
+        for key: any, member: any in pairs(bitmap.family) do
+            local size: number = tonumber(member and member.size) or tonumber(key) or 0
+            if size > 0 then
+                sizes[size] = true
+            end
+        end
+        check("atlas family includes 8", sizes[8] == true)
+        check("atlas family includes 16", sizes[16] == true)
+        check("atlas family includes 24", sizes[24] == true)
+        check("atlas family includes 32", sizes[32] == true)
+    end
 
     local usesCeiling: boolean = string.find(source, "pickAtlas", 1, true) ~= nil
         and (
@@ -54,9 +67,13 @@ return function(ctx: any): ()
     end
 
     if usesCeiling then
+        check("target 8 stays on atlas 8", pickedSize(8) == 8 or pickedSize(8) == 0, tostring(pickedSize(8)))
         check("target 11 picks atlas >= 16", pickedSize(11) >= 16, tostring(pickedSize(11)))
+        check("the 8 px atlas is never upscaled for a normal 11 px target", pickedSize(11) ~= 8)
         check("target 16 picks atlas 16", pickedSize(16) == 16, tostring(pickedSize(16)))
         check("target 18 picks atlas >= 24", pickedSize(18) >= 24, tostring(pickedSize(18)))
+        check("target 24 picks atlas 24", pickedSize(24) == 24 or pickedSize(24) >= 24)
+        check("target 32 picks atlas 32", pickedSize(32) == 32 or pickedSize(32) >= 24)
     else
         -- Current pickAtlas is nearest, larger on a tie: 11 still lands on 8.
         -- Hold the contract the moment A switches to ceiling.

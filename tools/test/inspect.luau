@@ -237,6 +237,36 @@ function Inspect.wurstVisible(state: any): boolean
         and combat.window.root.Visible == true
 end
 
+function Inspect.findBindSquare(feature: any): any
+    if feature == nil then
+        return nil
+    end
+    local named: any = feature.bindSquare
+        or feature.keybindSquare
+        or feature.keySquare
+        or feature.bind
+    if named ~= nil then
+        return named
+    end
+    local row: any = feature.row
+    if row == nil or type(row.FindFirstChild) ~= "function" then
+        return nil
+    end
+    for _, name: string in ipairs({
+        "BindSquare",
+        "KeybindSquare",
+        "KeySquare",
+        "Bind",
+        "Keybind",
+    }) do
+        local child: any = row:FindFirstChild(name)
+        if child ~= nil then
+            return child
+        end
+    end
+    return nil
+end
+
 function Inspect.navigatorVisible(state: any): boolean
     local nav: any = state and state.navigator
     local root: any = nav and nav.root

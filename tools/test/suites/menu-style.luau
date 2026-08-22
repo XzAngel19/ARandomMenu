@@ -144,6 +144,31 @@ return function(ctx: any): ()
     end
     sameSnapshot(beforeStyle, "changing theme")
 
+    -- D/A publish state.SetMenuStyle as the one state machine. The moment
+    -- it exists the cycle is blocking: persist, close the other surface,
+    -- open the selected one, leave module state alone.
+    if type(state.SetMenuStyle) == "function" then
+        local beforeMachine: any = snapshot()
+        state.SetMenuStyle("Navigator", true)
+        check(
+            "SetMenuStyle switches instantly to Navigator",
+            Inspect.navigatorVisible(state) == true
+                and Inspect.wurstVisible(state) == false
+        )
+        check(
+            "SetMenuStyle never leaves both surfaces up",
+            not (Inspect.navigatorVisible(state) and Inspect.wurstVisible(state))
+        )
+        sameSnapshot(beforeMachine, "SetMenuStyle Navigator")
+        state.SetMenuStyle("Wurst", true)
+        check(
+            "SetMenuStyle switches instantly back to Wurst",
+            Inspect.wurstVisible(state) == true
+                and Inspect.navigatorVisible(state) == false
+        )
+        sameSnapshot(beforeMachine, "SetMenuStyle Wurst")
+    end
+
     local ui: any = state.windows and state.windows.Get and state.windows.Get("UISettings")
     check("UI Settings is reachable for Menu style", ui ~= nil)
     local pickedNavigator: boolean = false

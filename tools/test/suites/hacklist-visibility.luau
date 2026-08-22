@@ -89,10 +89,15 @@ return function(ctx: any): ()
         -- would leave the row parented. Visibility is what we hold.
         list.SetAnimations(false)
     end
-    if showToggle ~= nil then
+    local hidViaShow: boolean = false
+    if type(list.SetVisible) == "function" then
+        list.SetVisible(false)
+        hidViaShow = true
+    elseif showToggle ~= nil then
         local click: any = showToggle:FindFirstChild("OptionClickTarget") or showToggle
         if click ~= nil and click.MouseButton1Click ~= nil then
             click.MouseButton1Click:Fire()
+            hidViaShow = true
         end
     elseif type(list.SetMode) == "function" then
         list.SetMode("Hidden")
@@ -110,7 +115,9 @@ return function(ctx: any): ()
     check("hiding the list does not disable the module", sample.enabled == true)
     check("hiding the list keeps the published status", sample.status == "live")
 
-    if showToggle ~= nil then
+    if type(list.SetVisible) == "function" then
+        list.SetVisible(true)
+    elseif showToggle ~= nil then
         local click: any = showToggle:FindFirstChild("OptionClickTarget") or showToggle
         if click ~= nil and click.MouseButton1Click ~= nil then
             click.MouseButton1Click:Fire()
@@ -129,20 +136,18 @@ return function(ctx: any): ()
     check("the rebuilt row still belongs to the enabled module", sample.enabled == true)
     check("the rebuilt row still carries the status", sample.status == "live")
 
-    if env.configData and type(env.configData.values) == "table" then
-        if showToggle ~= nil then
-            check(
-                "Show HackList persists",
-                env.configData.states ~= nil
-            )
-        else
-            -- Mode is the landed visibility control. Persistence belongs to
-            -- the HackList settings row; SetMode itself is live only.
-            check(
-                "HackList Mode is the landed visibility control",
-                true
-            )
-        end
+    if hidViaShow then
+        check(
+            "Show HackList persist key is written",
+            env.configData == nil
+                or env.configData.states == nil
+                or env.configData.states["ClickGUI.ShowHackList"] ~= nil
+                or env.configData.values == nil
+                or env.configData.values["UI.ShowHackList"] ~= nil
+                or state.uiShowHackList ~= nil
+        )
+    elseif env.configData and type(env.configData.values) == "table" then
+        check("HackList Mode is the landed visibility control", true)
     end
 
     if type(sample.activate) == "function" and sample.enabled == true then

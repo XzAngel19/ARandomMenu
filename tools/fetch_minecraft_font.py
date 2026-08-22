@@ -36,6 +36,9 @@ def update() -> int:
     official = pin["official"]
     url = official["clientJar"]
     wanted = official["clientJarSha1"]
+    if not str(url).startswith("https://"):
+        print(f"refusing non-HTTPS client URL: {url}", file=sys.stderr)
+        return 1
     os.makedirs(CACHE, exist_ok=True)
     jar_path = os.path.join(CACHE, "client.jar")
     print(f"GET {url}")

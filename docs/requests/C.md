@@ -9,9 +9,11 @@ The integrator owns `ARandomMenu.luau`. Agent D owns `src/modules/**` and
   (Combat, Render, Movement, Fun, Other) exist. Visuals / Protection /
   Utility / Spoof are not windows. Empty Blocks / Chat / Items stay in
   the contract and draw no window until a module lands in them.
-- Feature rows: no star, no hamburger, no empty keybind box. `hasSettings`
-  is derived. The triangle exists only when there are options. Titles are
-  centred on the full row; the arrow does not move the centre.
+- Feature rows: no star, no hamburger. The keybind square is an approved
+  user-requested adaptation and replaces the old ban on desktop key
+  slots. `hasSettings` is derived. The triangle exists only when there
+  are options. Titles are centred on the full row; the arrow does not
+  move the centre. The leftover KEY pill stays forbidden.
 - Navigator is its own screen. TabGUI default Disabled.
 - WurstLogo stripe at scale-2 y=12 height 22, half alpha, seed `#FFFFFF`.
   Version `0.1 Beta`. Chip packs to
@@ -85,7 +87,24 @@ The integrator owns `ARandomMenu.luau`. Agent D owns `src/modules/**` and
 - Bitmap glyphs snap to integer physical pixels at scales
   0.7 / 1 / 1.25 / 1.6. The Mode combo stays a ComboValue.
 
+- Capability matrix: full executor, getsynasset-only, no filesystem,
+  no HTTP assets, mobile full, mobile limited. Each boot falls back
+  and tears down. Never labelled minecraft-exact without a pack.
+- Private font URLs: HTTPS only, hash required, 32 MiB pack cap,
+  corrupt rollback, no loadstring of remote bytes, cache outside
+  `assets/`, no Mojang pixels in git
+  (`tools/check_private_font.py`).
+
 ## Still owed — do not fail until these land
+
+### Keybind square
+
+Cards still hide the desktop bind target. Publish a 22 px square on
+bindable rows only (toggle / action / hold; never group). No pill,
+no corner, no KEY caption. Click captures; Escape and click-outside
+cancel; Backspace / Delete clear. The square must not activate the
+module or flip `enabled`. Hide it on a keyboard-less phone. The
+suite flips the moment `bindSquare` / `BindSquare` exists.
 
 ### APPLY-4 owner-window + scroll-clip
 
@@ -114,10 +133,10 @@ same way. `state.commandDock` as a name is optional.
 ### Menu style cycle does not switch surfaces
 
 `addCycleOption("Menu style")` writes `state.menuStyle` and
-`UI.MenuStyle` and stops. Selecting Navigator while Wurst is open
-must close Wurst and open Navigator **in that callback**; the
-reverse too. `openMenuSurface` already follows the stored style.
-RightShift currently can leave both up — close the other surface.
+`UI.MenuStyle` and stops. Publish `state.SetMenuStyle(style, open)`
+as the one state machine (A's 567f0ee). The suite becomes blocking
+the moment that function exists. RightShift currently can leave
+both up — close the other surface.
 
 ### Navigator back row
 

@@ -535,6 +535,8 @@ local function newInstance(className: string): any
             rawset(self, "Focusing", false)
             self.FocusLost:Fire(enterPressed == true)
         end
+        -- A's dock listens here for the on-screen keyboard submit.
+        instance.ReturnPressedFromOnScreenKeyboard = signal()
     end
     if className == "Tool" then
         -- Kill Aura learns which weapon you swing by watching this one.
@@ -708,6 +710,7 @@ function Mock.install(): MockWorld
             "RightShift",
             "Escape",
             "Backspace",
+            "Delete",
             "Tab",
             "Return",
             "KeypadEnter",

@@ -188,6 +188,7 @@ step "Font authority is Minecraft 1.18.1"
 python3 tools/check_font_authority.py --check
 python3 tools/install_minecraft_font.py --check
 python3 tools/test/test_install_minecraft_font.py
+python3 tools/check_private_font.py
 
 step "WurstLogo band is packed"
 # The band used to be LOGO_WIDTH + 130, which ran on toward the HUD.
