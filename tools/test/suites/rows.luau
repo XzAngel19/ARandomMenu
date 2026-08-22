@@ -65,9 +65,12 @@ return function(ctx: any): ()
         "Visible=" .. tostring(bare.arrow and bare.arrow.Visible)
     )
     if bare.title and bare.title.Size then
+        -- The name is centred on the whole row now (ref-wurst-719); the
+        -- arrow floats over the right end without moving that centre, so
+        -- the title spans the full width whether or not settings exist.
         check(
             "hasSettings=false reserves no arrow column",
-            bare.title.Size.X.Offset == -8,
+            bare.title.Size.X.Offset == 0,
             "title offset " .. tostring(bare.title.Size.X.Offset)
         )
     end

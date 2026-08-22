@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "7ebf12af16b74194",
+    stamp = "7f70b803328d4e85",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -546,6 +546,12 @@ function Module.init(context: any): WidgetLibrary
     --
     -- On `state` as well as in the returned table, for the same reason as
     -- `layoutOptionControl`.
+    -- Wurst's settings windows carry no group headings — the Java lists
+    -- rows and nothing else, and DISPLAY / FILTERS / STYLE on screen were
+    -- the old menu's taxonomy showing through. The builder stays because
+    -- the modules call it (their grouping intent is real and may matter to
+    -- a future surface), but what it returns is invisible and zero-height:
+    -- it neither draws nor occupies a line.
     state.addSectionOption = function(feature: any, titleText: string): Frame
         feature.optionCount += 1
         local section: Frame = (create("Frame", {
@@ -554,43 +560,11 @@ function Module.init(context: any): WidgetLibrary
             BackgroundTransparency = 1,
             BorderSizePixel = 0,
             LayoutOrder = feature.optionCount,
-            Size = UDim2.new(1, 0, 0, 22),
+            Size = UDim2.new(1, 0, 0, 0),
+            Visible = false,
             ZIndex = feature.options.ZIndex + 1,
         }) :: any) :: Frame
         table.insert(feature.optionRows, section)
-
-        local title: TextLabel = (makeTextLabel(
-            section,
-            string.upper(titleText),
-            9
-        ) :: any) :: TextLabel
-        title.Name = "SectionTitle"
-        title.FontFace = CONTROL_FONT
-        title.Position = UDim2.fromOffset(4, 0)
-        title.Size = UDim2.new(0, 130, 1, 0)
-        title.TextColor3 = Theme.textMuted
-        title.TextTransparency = 0.22
-        title.ZIndex = section.ZIndex + 1
-
-        local rule: Frame = create("Frame", {
-            Parent = section,
-            Name = "SectionRule",
-            AnchorPoint = Vector2.new(1, 0.5),
-            BackgroundColor3 = Theme.outline,
-            BackgroundTransparency = 0.72,
-            BorderSizePixel = 0,
-            Position = UDim2.new(1, -4, 0.5, 0),
-            Size = UDim2.new(1, -142, 0, 1),
-            ZIndex = section.ZIndex + 1,
-        }) :: Frame
-        create("UIGradient", {
-            Parent = rule,
-            Transparency = NumberSequence.new({
-                NumberSequenceKeypoint.new(0, 1),
-                NumberSequenceKeypoint.new(1, 0.3),
-            }),
-        })
-
         feature.updateExpandedSize()
         return section
     end
@@ -5006,10 +4980,12 @@ function Module.init(context: any): any
         local title: TextLabel =
             (makeTextLabel(row, name, state.layout.titleFontSize) :: any) :: TextLabel
         title.FontFace = CONTROL_FONT
-        title.Position = UDim2.fromOffset(8, 0)
-        -- Full width minus the arrow reserve; the reserve only exists while
-        -- the module actually has settings (applyLayout keeps this in step).
-        title.Size = UDim2.new(1, -8, 0, feature.collapsedHeight)
+        -- Wurst centres the hack's name on the whole row — ref-wurst-719 —
+        -- and the settings arrow floats over the right end without moving
+        -- that centre, so the label always spans the full row.
+        title.Position = UDim2.fromOffset(0, 0)
+        title.Size = UDim2.new(1, 0, 0, feature.collapsedHeight)
+        title.TextXAlignment = Enum.TextXAlignment.Center
         title.TextTruncate = Enum.TextTruncate.AtEnd
         title.TextColor3 = state.guiStyle == "Default"
             and Theme.text
@@ -5074,19 +5050,14 @@ function Module.init(context: any): any
                 (arrow :: TextButton).Visible = expandable
                 -- Wurst's own green pixel triangle, whatever the palette —
                 -- the reference screenshots keep it green on magenta and on
-                -- pink alike. Down while closed, up while open.
+                -- pink alike. Down while closed, up while open. The title
+                -- keeps its full-row centre either way.
                 drawPixelIcon(
                     arrow :: TextButton,
                     feature.expanded and "up" or "down",
                     Color3.fromRGB(0, 204, 0)
                 )
             end
-            title.Size = UDim2.new(
-                1,
-                expandable and -30 or -8,
-                0,
-                feature.collapsedHeight
-            )
         end
         feature.syncArrow = syncArrow
 
@@ -8325,7 +8296,6 @@ function Module.init(context: any): any
     local CONTROL_FONT: any = host.CONTROL_FONT
     local UserInputService: any = host.UserInputService
     local trackUiConnection: any = host.trackUiConnection
-    local applyKeySlotStyle: any = host.applyKeySlotStyle
     local beginKeyCapture: any = host.beginKeyCapture
     local setKeySlotCapture: any = host.setKeySlotCapture
     local GAME_CHECK: any = host.GAME_CHECK
@@ -8724,6 +8694,10 @@ function Module.init(context: any): any
         end
 
         local order: number = 0
+        -- A key is compact right-aligned text, not a capsule: Wurst's
+        -- keybind list is two columns of words. The text itself is the
+        -- rebind target, wide enough that RightControl never truncates,
+        -- and a conflicted key is painted in the warning colour.
         local function keybindRow(labelText: string, slotText: string, conflicted: boolean, onSlot: (TextButton) -> ()): ()
             order += 1
             local row: Frame = (create("Frame", {
@@ -8742,23 +8716,32 @@ function Module.init(context: any): any
                 BackgroundTransparency = 1,
                 FontFace = CONTROL_FONT,
                 Position = UDim2.fromOffset(6, 0),
-                Size = UDim2.new(1, -66, 1, 0),
+                Size = UDim2.new(1, -160, 1, 0),
                 Text = labelText,
                 TextColor3 = Theme.text,
-                TextSize = 11.5,
+                TextSize = 16,
                 TextXAlignment = Enum.TextXAlignment.Left,
                 ZIndex = row.ZIndex + 1,
             })
-            local slot: TextButton = (makeButton(row, slotText, 9) :: any) :: TextButton
-            slot.AnchorPoint = Vector2.new(1, 0.5)
-            slot.Position = UDim2.new(1, -6, 0.5, 0)
-            slot.Size = UDim2.fromOffset(52, 16)
-            slot.ZIndex = row.ZIndex + 1
-            applyKeySlotStyle(slot)
+            local slot: TextButton = (create("TextButton", {
+                TextTruncate = Enum.TextTruncate.AtEnd,
+                Parent = row,
+                Name = "Key",
+                Active = true,
+                AnchorPoint = Vector2.new(1, 0),
+                AutoButtonColor = false,
+                BackgroundTransparency = 1,
+                BorderSizePixel = 0,
+                FontFace = CONTROL_FONT,
+                Position = UDim2.new(1, -6, 0, 0),
+                Size = UDim2.fromOffset(150, ROW_HEIGHT),
+                Text = slotText,
+                TextColor3 = conflicted and Theme.negative or Theme.textMuted,
+                TextSize = 16,
+                TextXAlignment = Enum.TextXAlignment.Right,
+                ZIndex = row.ZIndex + 1,
+            }) :: any) :: TextButton
             slot:SetAttribute("CaptureIdleText", slotText)
-            if conflicted then
-                slot.TextColor3 = Theme.negative
-            end
             trackUiConnection(slot.MouseButton1Click:Connect(function(): ()
                 onSlot(slot)
             end))
@@ -8779,11 +8762,18 @@ function Module.init(context: any): any
             end)
         end
 
+        -- Only the menu key and the bindings that exist. Wurst's manager
+        -- lists keybinds, not one empty capsule per module — an unbound
+        -- module simply is not a keybind. New keys are still made on the
+        -- card slots (touch) or by loading a profile.
         for _, binding: any in ipairs(sortedBindings()) do
             local bound: boolean = binding.key ~= nil
                 and binding.key ~= Enum.KeyCode.Unknown
-            local slotText: string = bound and binding.key.Name or ""
-            local conflicted: boolean = bound and (keyUses[binding.key.Name] or 0) > 1
+            if not bound then
+                continue
+            end
+            local slotText: string = binding.key.Name
+            local conflicted: boolean = (keyUses[binding.key.Name] or 0) > 1
             keybindRow(featureLabel(tostring(binding.id)), slotText, conflicted, function(slot: TextButton): ()
                 beginKeyCapture(slot, function(keyCode: Enum.KeyCode): ()
                     -- Pressing the bound key again clears it, the same
@@ -8971,12 +8961,15 @@ function Module.init(context: any): any
         local screen: Vector2 = viewport()
         local keybindRows: {{any}} = {
             {"Reset keybinds", nil, 26},
+            {"Open menu", "RightControl", 12},
         }
         for _, binding: any in pairs(state.shortcutBindings) do
-            table.insert(
-                keybindRows,
-                {featureLabel(tostring(binding.id)), nil, 66}
-            )
+            if binding.key and binding.key ~= Enum.KeyCode.Unknown then
+                table.insert(
+                    keybindRows,
+                    {featureLabel(tostring(binding.id)), binding.key.Name, 12}
+                )
+            end
         end
         keybindsRecord = configWindow("Keybinds", "Keybinds", {
             position = Vector2.new(screen.X - WINDOW_WIDTH * 2 - 32, 140),

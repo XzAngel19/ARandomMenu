@@ -363,7 +363,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "7ebf12af16b74194"
+local SOURCE_STAMP: string = "7f70b803328d4e85"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -1799,8 +1799,16 @@ end
 -- The window itself passes a larger radius so the shell reads as one smooth,
 -- pill-shaped surface; the 30 cap keeps small controls from turning into
 -- circles.
-local function cornerRadius(radius: number): UDim
-    return UDim.new(0, math.clamp(math.round(radius * 1.3), 5, 30))
+--
+-- Except that Wurst has no rounded surface anywhere, so since the port this
+-- returns zero for every caller: one change squared every button, text box,
+-- toast and dropdown at once instead of hunting corners one by one. The
+-- helper keeps its name and signature because forty call sites describe a
+-- shape with it; the shape is now a rectangle. The two survivors that stay
+-- genuinely round — the Roblox pill and the phone fallback circle — use
+-- UDim.new(1, 0) directly and never came through here.
+local function cornerRadius(_radius: number): UDim
+    return UDim.new(0, 0)
 end
 
 local function addRoundedStyle(
@@ -2081,7 +2089,6 @@ local function createToggleSwitch(
         Size = UDim2.fromOffset(markSize, markSize),
         ZIndex = button.ZIndex + 1,
     }) :: Frame
-    create("UICorner", {Parent = frame, CornerRadius = UDim.new(0, 4)})
     create("UIStroke", {
         Parent = frame,
         Name = "MarkStroke",
@@ -2091,7 +2098,7 @@ local function createToggleSwitch(
     })
     -- The inner block is what fills; keeping it separate from the outline lets
     -- the mark grow into place instead of blinking on.
-    local core: Frame = create("Frame", {
+    local _core: Frame = create("Frame", {
         Parent = frame,
         Name = "Knob",
         AnchorPoint = Vector2.new(0.5, 0.5),
@@ -2102,7 +2109,6 @@ local function createToggleSwitch(
         Size = UDim2.fromScale(0, 0),
         ZIndex = frame.ZIndex + 1,
     }) :: Frame
-    create("UICorner", {Parent = core, CornerRadius = UDim.new(0, 2)})
     setToggleSwitch(button, enabled, false)
     return button
 end
@@ -2152,7 +2158,7 @@ state.applyLinesGlyph = function(
             ZIndex = button.ZIndex + 1,
         }) :: Frame
         for index: number = 1, 3 do
-            local bar: Frame = create("Frame", {
+            local _bar: Frame = create("Frame", {
                 Parent = glyph,
                 Name = "Line" .. tostring(index),
                 AnchorPoint = Vector2.new(0.5, 0.5),
@@ -2164,7 +2170,6 @@ state.applyLinesGlyph = function(
                 Size = UDim2.fromOffset(index == 2 and 9 or 12, 1),
                 ZIndex = button.ZIndex + 2,
             }) :: Frame
-            create("UICorner", {Parent = bar, CornerRadius = UDim.new(1, 0)})
         end
     end
     local barTransparency: number = dimmed and 0.74 or (active and 0.02 or 0.3)
@@ -2407,7 +2412,7 @@ local function notify(message: any): ()
         Transparency = state.guiStyle == "Default" and 0.42 or 0.22,
         Thickness = 1,
     })
-    local accent: Frame = (create("Frame", {
+    local _accent: Frame = (create("Frame", {
         Parent = toast,
         BackgroundColor3 = state.guiStyle == "Default"
             and Theme.accent
@@ -2416,10 +2421,6 @@ local function notify(message: any): ()
         Size = UDim2.new(0, 4, 1, 0),
         ZIndex = 302,
     }) :: any) :: Frame
-    create("UICorner", {
-        Parent = accent,
-        CornerRadius = UDim.new(1, 0),
-    })
 
     local label: TextLabel = (makeTextLabel(toast, text, 12) :: any)
         :: TextLabel

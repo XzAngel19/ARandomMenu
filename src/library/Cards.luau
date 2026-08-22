@@ -188,10 +188,12 @@ function Module.init(context: any): any
         local title: TextLabel =
             (makeTextLabel(row, name, state.layout.titleFontSize) :: any) :: TextLabel
         title.FontFace = CONTROL_FONT
-        title.Position = UDim2.fromOffset(8, 0)
-        -- Full width minus the arrow reserve; the reserve only exists while
-        -- the module actually has settings (applyLayout keeps this in step).
-        title.Size = UDim2.new(1, -8, 0, feature.collapsedHeight)
+        -- Wurst centres the hack's name on the whole row — ref-wurst-719 —
+        -- and the settings arrow floats over the right end without moving
+        -- that centre, so the label always spans the full row.
+        title.Position = UDim2.fromOffset(0, 0)
+        title.Size = UDim2.new(1, 0, 0, feature.collapsedHeight)
+        title.TextXAlignment = Enum.TextXAlignment.Center
         title.TextTruncate = Enum.TextTruncate.AtEnd
         title.TextColor3 = state.guiStyle == "Default"
             and Theme.text
@@ -256,19 +258,14 @@ function Module.init(context: any): any
                 (arrow :: TextButton).Visible = expandable
                 -- Wurst's own green pixel triangle, whatever the palette —
                 -- the reference screenshots keep it green on magenta and on
-                -- pink alike. Down while closed, up while open.
+                -- pink alike. Down while closed, up while open. The title
+                -- keeps its full-row centre either way.
                 drawPixelIcon(
                     arrow :: TextButton,
                     feature.expanded and "up" or "down",
                     Color3.fromRGB(0, 204, 0)
                 )
             end
-            title.Size = UDim2.new(
-                1,
-                expandable and -30 or -8,
-                0,
-                feature.collapsedHeight
-            )
         end
         feature.syncArrow = syncArrow
 
