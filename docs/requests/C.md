@@ -19,104 +19,76 @@ The integrator owns `ARandomMenu.luau`. Agent D owns `src/modules/**` and
   Never an opaque slab.
 - UI Settings shortcuts open windows. Slider rail 6 / knob 16×16 /
   checkbox 22 / colour 44. Pixel icons, not `+` `–` `▪`.
-- Settings windows from SettingsPage are not born superimposed. Click
-  raises ZIndex. Max height default 200.
 - Independent SettingsWindow: `WindowManager.OpenFeatureSettings(feature)`
-  is the one contract (triangle, right-click, Navigator Space). Persistent
-  id `FeatureSettings_<configKey>`. Title `"<name> Settings"`. Options
-  reparent to `window.body`. Category row height never changes. Reused on
-  the second open. Closable / collapsible / pinnable. A module without
-  options never creates one.
-- Settings placement already held: not born at the same origin; clamped
-  inside the viewport (MARGIN 6); sits to the right of its category when
-  there is room. `BringToFront` raises that window's root above siblings.
+  is the one contract. Persistent id `FeatureSettings_<configKey>`.
+- Placement: `FindFreeRect` / `PlaceWindow` / `ReflowWindow` are
+  blocking. AABB after content and the second layout must be empty.
+  Feature settings sit to the right of their category when there is room.
+  Manual positions win; Reset layout forgets `userMoved` and re-places.
+  An invalid persisted position is clamped (MARGIN 6).
 - `makeTextLabel` / `makeButton` / `makeTextBox` and the ScreenGui /
   Popup roots set `AutoLocalize = false`.
 - ClickGui calibration viewport is 1600×900 (`CALIBRATION_WIDTH/HEIGHT`).
-  The spec holds those two names to the screenshot.
 - Font authority is Minecraft 1.18.1 (`docs/minecraft-1.18.1-font.md`).
-  `tools/check_font_authority.py` holds the pin, refuses Mojang pixels
-  in git, and refuses to label `monocraft-16.png` as Minecraft exact.
-  Normal validate is offline. `--update` is the only network path.
   Wurst 7.54.1 is **not** the font baseline.
 - Universal inventory is frozen at 38
   (`tools/inventory_snapshot.json` / `tools/check_inventory.py`).
-- Placement: `FindFreeRect` / `PlaceWindow` / `ReflowWindow` are
-  blocking. AABB after the second layout must be empty.
 - 7.54.1 GUI APPLY list is closed in
   `docs/wurst-7.19-to-7.54.1-gui-delta.md`. No new hacks.
+- Bitmap contract (A `13b48da`): `state.bitmapText.draw` / `adopt` /
+  `adoptTree` / `release`. Migrated surfaces: version, titles, feature
+  rows, HackList, settings OptionLabel / combo / hex, Keybinds, Add
+  Keybind, Profiles, Wurst Options, UI Settings, Navigator, tooltips.
+  Slider `NumericValue` stays a TextBox (typed input). The harness
+  stand-in is the only TextLabel title branch. C4 fails a regression
+  to a second visible TextLabel on those surfaces.
+- Bitmap budgets (C5) are measured, not guessed: see
+  `docs/bitmap-budgets.md`. Idle < 550 glyphs; five settings < 1600;
+  Navigator delta < 800; open/close 20× does not leak; destruct leaves
+  zero live records.
+- APPLY-1 live Max height / Max settings height = 200.
+- APPLY-2 persist + display clamp, keep MARGIN 6.
+- APPLY-3 settings beside the category via FindFreeRect.
+- APPLY-4 menu-hide closes ChoiceList (blocking). Scroll-clip is still
+  NEEDS_EVIDENCE.
+- APPLY-5 pixel title-bar icons.
+- Keybinds "Add" dialog exists (`KeybindAdd`). Dynamic packing
+  (`repack` / `repackWidth`) is live. Config schema 2 drops a stored
+  Max height of 1000.
 
 ## Still owed — do not fail until these land
 
-### Settings cascade still overlaps in AABB
+### APPLY-4 scroll-clip popup close
 
-A's first-open cascade is `Δx=28, Δy=30` on a ~200×66 window. Two
-windows are not superimposed, but their AABBs still intersect. Grow the
-step to at least `(width, height)` (or park each window flush to its
-category) before C flips the intersection gate from "same origin" to
-full AABB.
-
-### Flush to the category
-
-Official Wurst parks a settings window next to the hack. Today the
-cascade starts at 45% of the viewport, which is to the right of a
-left-hand category when there is room, but not flush to
-`category.right + GRID_GAP`. The suite holds the weak form. Flush is
-owed.
-
-### BringToFront does not raise popups
-
-`raise` restacks `root.ZIndex` (`BASE_Z + order * 4`). Feature settings
-are not `layered`, so descendants keep their own Z. The colour picker
-is Z=80 and stays under every window (~150+). ChoiceList is Z=400 and
-stays above. Hold: after `BringToFront`, that root is strictly above
-the other settings root. Raising the picker / setting `layered` is
-owed if the picker must sit on the raised window.
-
-### Settings width does not repack
-
-Windows pack their width at first open and do not repack if labels
-change later. A's declared debt.
+Menu-hide already closes ChoiceList. Closing the owner window and
+scrolling the owner row out of the body clip are still
+NEEDS_EVIDENCE. Do not fail those until A lands `closeInvalidPopups`
+/ `closePopupsOutsideArea`.
 
 ### RUN / textbox / list still rounded via the shell helper
 
 Widgets no longer creates `UICorner` except the colour-picker SV
-cursor. `makeButton` in the shell still calls `addRoundedStyle`. Strip
-that for settings surfaces, or stop using `makeButton` for RUN / KEY /
-text boxes.
-
-### Config schema
-
-Add a schema/version for layout and UI Settings. A stored Max height
-of 1000 (the old default) must not survive as a Wurst default. Code
-defaults stay 200 / 200. Migration must not touch binds or module
-`configKeys`.
+cursor. `makeButton` in the shell still calls `addRoundedStyle`.
+Strip that for settings surfaces, or stop using `makeButton` for RUN
+/ KEY / text boxes.
 
 ### Font — see `docs/minecraft-1.18.1-font.md`
 
-C1 is published. 1.18.1 is a four-provider stack, not `ascii.png` /
-advance 6. Official client SHA1
-`7e46fb47609401970e2818989fa584fd467cd036`. Do not vendor Mojang
-pixels. Strategy: official downloader on explicit update, generate
-locally (gitignored), Monocraft fallback in CI. Do not label
-`monocraft-16.png` as Minecraft exact.
-
-Libraries already take `CONTROL_FONT`. Do not hard-code BuilderSans or
-RobotoMono. A's Monocraft atlas is the legal fallback behind
-`state.bitmapText`. Migrating titles / rows / settings / Navigator
-to `draw` waits on A, one surface at a time; C4 will flip each
-surface only after it lands.
-
-### Keybinds "Add" dialog
-
-Unbound modules are gone from the Keybinds window. The only desktop
-path to a NEW bind is a loaded profile. Wurst's "Add" dialog is the
-missing piece.
+1.18.1 is a four-provider stack, not `ascii.png` / advance 6.
+Official client SHA1 `7e46fb47609401970e2818989fa584fd467cd036`.
+Do not vendor Mojang pixels. Monocraft (`assets/font/monocraft-16.png`,
+OFL) is the committed fallback. Do not label it "Minecraft exact".
 
 ### TABGUI_STATUS / TACO_ENABLED
 
 Named counterparts still owed. Shipping no TabGUI matches Disabled;
 Taco stays off. Do not fail until the names exist.
+
+### Furniture pill tooltip
+
+The official tooltip path (`showFeatureTooltip`) draws on the bitmap
+contract. The pill's own tip still writes `state.featureTooltip.Text`
+without hiding the vector ink. That is Furniture, not a C4 fail.
 
 ## Product name leftovers
 
