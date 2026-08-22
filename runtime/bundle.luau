@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "f28fc13021ea2646",
+    stamp = "a10ac6be7b9c5d22",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -11005,6 +11005,31 @@ function Module.init(context: any): any
     )
     uiSettingsValues["Font pack"] = tostring(state.fontPack)
 
+    -- The two HUD visibility rows. Show HackList hides the overlay only —
+    -- module state and statuses are untouched. Show dock exists on
+    -- desktop only: a touch-primary device has no RightControl, so its
+    -- dock is the one door and never hides; the desktop preference
+    -- persists without ever reaching mobile. Both replay their stored
+    -- value here, before Furniture builds, which is how Furniture seeds.
+    addToggleOption(uiPanel, "Show HackList", true, function(value: boolean): ()
+        uiSettingsValues["Show HackList"] = value
+        state.uiShowHackList = value
+        if state.hudList and type(state.hudList.SetVisible) == "function" then
+            state.hudList.SetVisible(value)
+        end
+    end)
+    local touchPrimary: boolean = UserInputService.TouchEnabled == true
+        and UserInputService.MouseEnabled ~= true
+    if not touchPrimary then
+        addToggleOption(uiPanel, "Show dock", true, function(value: boolean): ()
+            uiSettingsValues["Show dock"] = value
+            state.uiShowDock = value
+            if state.dock and type(state.dock.SetVisible) == "function" then
+                state.dock.SetVisible(value)
+            end
+        end)
+    end
+
     -- UI Settings is eager and its rows are all in place now: one reflow at
     -- the real measured size keeps its top-right default when that spot is
     -- free and moves it to a free rectangle when the category grid already
@@ -12133,7 +12158,16 @@ function Module.init(context: any): any
     local hudSignature: string = ""
     local hudElapsed: number = 0
 
+    -- Show HackList: the overlay only. Hidden means the frame is not
+    -- Visible and the poll skips its rebuild; module state and statuses
+    -- are untouched — the list simply is not drawn. Seeded by the UI
+    -- Settings replay, which runs before this library.
+    local hudVisible: boolean = state.uiShowHackList ~= false
+
     local function refreshHudList(): ()
+        if not hudVisible then
+            return
+        end
         local entries: {any} = {}
         for _, feature: any in ipairs(allFeatures) do
             if feature.enabled == true and not feature.isCategory then
@@ -12257,9 +12291,20 @@ function Module.init(context: any): any
         table.insert(state.bitmapText.onReady, forceHudRefresh)
     end
 
+    hudFrame.Visible = hudVisible
+    local function setHackListVisible(value: boolean): ()
+        hudVisible = value ~= false
+        hudFrame.Visible = hudVisible
+        if hudVisible then
+            forceHudRefresh()
+        end
+    end
+    Furniture.SetHackListVisible = setHackListVisible
+
     state.hudList = {
         frame = hudFrame,
         refresh = refreshHudList,
+        SetVisible = setHackListVisible,
         -- The HackList settings window drives these; persistence belongs to
         -- its rows, which write the same keys this file read at boot.
         SetMode = function(value: string): ()
@@ -12909,6 +12954,27 @@ function Module.init(context: any): any
             )
         end)
     end
+
+    -- Show dock. Desktop can hide the launcher (RightControl still
+    -- opens the menu — the key handler never lived in the dock); the
+    -- preference persists but never reaches a touch-primary device,
+    -- where the dock is the only door and stays visible regardless of
+    -- any stored desktop value. Hiding never destroys: Visible only.
+    local touchPrimary: boolean = UserInputService.TouchEnabled == true
+        and UserInputService.MouseEnabled ~= true
+    local function setDockVisible(value: boolean): ()
+        if touchPrimary then
+            pillFrame.Visible = true
+            return
+        end
+        pillFrame.Visible = value ~= false
+    end
+    setDockVisible(state.uiShowDock ~= false)
+    Furniture.SetDockVisible = setDockVisible
+    state.dock = {
+        root = pillFrame,
+        SetVisible = setDockVisible,
+    }
 
     -- The menu button fills with the accent while the GUI is open, exactly
     -- like the prototype's `.on` state. Repainted on both the things that

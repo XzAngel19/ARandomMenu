@@ -1691,6 +1691,31 @@ function Module.init(context: any): any
     )
     uiSettingsValues["Font pack"] = tostring(state.fontPack)
 
+    -- The two HUD visibility rows. Show HackList hides the overlay only —
+    -- module state and statuses are untouched. Show dock exists on
+    -- desktop only: a touch-primary device has no RightControl, so its
+    -- dock is the one door and never hides; the desktop preference
+    -- persists without ever reaching mobile. Both replay their stored
+    -- value here, before Furniture builds, which is how Furniture seeds.
+    addToggleOption(uiPanel, "Show HackList", true, function(value: boolean): ()
+        uiSettingsValues["Show HackList"] = value
+        state.uiShowHackList = value
+        if state.hudList and type(state.hudList.SetVisible) == "function" then
+            state.hudList.SetVisible(value)
+        end
+    end)
+    local touchPrimary: boolean = UserInputService.TouchEnabled == true
+        and UserInputService.MouseEnabled ~= true
+    if not touchPrimary then
+        addToggleOption(uiPanel, "Show dock", true, function(value: boolean): ()
+            uiSettingsValues["Show dock"] = value
+            state.uiShowDock = value
+            if state.dock and type(state.dock.SetVisible) == "function" then
+                state.dock.SetVisible(value)
+            end
+        end)
+    end
+
     -- UI Settings is eager and its rows are all in place now: one reflow at
     -- the real measured size keeps its top-right default when that spot is
     -- free and moves it to a free rectangle when the category grid already

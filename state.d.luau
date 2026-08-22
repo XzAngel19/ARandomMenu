@@ -140,6 +140,9 @@ export type MenuState = {
     clickGui: any,                                  -- Wurst's layout: one window per category, cards placed into them
     moduleSearch: any,                              -- GUI-independent exact module registry: Resolve/Execute over the fixed 38-card inventory
     hudList: any,                                   -- Wurst's HackList: the on-screen list of enabled modules and their card.status brackets
+    uiShowHackList: boolean,                        -- Show HackList (UI Settings): the overlay's visibility, seeded before Furniture builds
+    uiShowDock: boolean,                            -- Show dock (UI Settings, desktop only): the launcher's visibility; touch-primary ignores it
+    dock: any,                                      -- The bottom-centre launcher: root frame and SetVisible
     navigator: any,                                 -- Wurst's Navigator adaptation: the search and preference-ordered grid under the logo
     wurstLogo: any,                                 -- The logo chip's live setters, driven by the WurstLogo settings window
     uiMaxHeight: number,                            -- Wurst's ClickGUI "Max height" in pixels; 0 means no limit, read by every category window
