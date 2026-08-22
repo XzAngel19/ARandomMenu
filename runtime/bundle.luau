@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "033cd91c0e77b133",
+    stamp = "6500ff1d3a57a726",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -2480,6 +2480,7 @@ export type Module = {
     Enabled: boolean,
     Feature: any,
     Options: {[string]: Option},
+    OptionMetadata: {any},
 
     CreateToggle: (self: Module, definition: any) -> Option,
     CreateSlider: (self: Module, definition: any) -> Option,
@@ -2626,13 +2627,52 @@ function Module.init(context: any): Framework
     -- replays the stored value through the callback the moment the row is
     -- created — a callback that would otherwise be writing into a table that
     -- does not exist yet.
-    local function newOption(name: string, initialValue: any): any
+    local function newOption(
+        name: string,
+        initialValue: any,
+        optionType: string,
+        definition: any?
+    ): any
+        local source: any = definition or {}
+        local defaultValue: any = initialValue
+        if type(initialValue) == "table" then
+            defaultValue = table.clone(initialValue)
+        end
         local option: any = {
             Name = name,
             Value = initialValue,
             Object = nil,
+            Metadata = {
+                id = "",
+                configKey = "",
+                label = name,
+                type = optionType,
+                default = defaultValue,
+                current = initialValue,
+                min = source.Min,
+                max = source.Max,
+                step = source.Step,
+                values = source.List and table.clone(source.List) or nil,
+                callback = source.Function,
+                show = source.Show,
+                visible = source.Show == nil,
+                action = optionType == "action",
+                bind = optionType == "bind",
+                color = optionType == "color",
+                rangeLow = source.DefaultMin,
+                rangeHigh = source.DefaultMax,
+            },
         }
+        function option:SetValue(value: any): ()
+            self.Value = value
+            self.Metadata.current = value
+            if type(value) == "table" and value.Min ~= nil and value.Max ~= nil then
+                self.Metadata.rangeLow = value.Min
+                self.Metadata.rangeHigh = value.Max
+            end
+        end
         function option:SetVisible(visible: boolean): ()
+            self.Metadata.visible = visible
             local row: any = self.Object
             if typeof(row) == "Instance" and row.ClassName ~= "Frame" then
                 row = row.Parent
@@ -2652,6 +2692,7 @@ function Module.init(context: any): Framework
             Category = categoryName,
             Enabled = false,
             Options = {},
+            OptionMetadata = {},
             Cleanup = {},
         }
 
@@ -2697,6 +2738,7 @@ function Module.init(context: any): Framework
             }
         )
         created.Feature = feature
+        feature.frameworkModule = true
 
         -- Conditional rows, declared rather than wired.
         --
@@ -2719,12 +2761,17 @@ function Module.init(context: any): Framework
         -- a group.
         local function register(option: any, definition2: any?): Option
             option.Feature = feature
+            local optionId: string = option.Name:gsub("%W", "")
+            option.Metadata.id = optionId
+            option.Metadata.configKey = feature.configKey .. "." .. optionId
             local gated: boolean = false
             if definition2 and type(definition2.Show) == "table" then
                 option.Show = definition2.Show
                 gated = true
             end
             created.Options[option.Name] = option
+            table.insert(created.OptionMetadata, option.Metadata)
+            feature.optionMetadata = created.OptionMetadata
             -- A rule arriving is itself a reason to run the pass.
             --
             -- Rules used to be evaluated only when some option's *value*
@@ -2788,19 +2835,25 @@ function Module.init(context: any): Framework
             end
         end
 
+        local function valueCallback(option: any, definition2: any): (any) -> ()
+            local function changed(value: any): ()
+                option:SetValue(value)
+                if type(definition2.Function) == "function" then
+                    definition2.Function(value)
+                end
+                created:RefreshVisibility()
+            end
+            option.Metadata.callback = changed
+            return changed
+        end
+
         function created:CreateToggle(definition2: any): Option
-            local option: any = newOption(definition2.Name, definition2.Default == true)
+            local option: any = newOption(definition2.Name, definition2.Default == true, "toggle", definition2)
             option.Object = host.addToggleOption(
                 feature,
                 definition2.Name,
                 definition2.Default == true,
-                function(value: boolean): ()
-                    option.Value = value
-                    if type(definition2.Function) == "function" then
-                        definition2.Function(value)
-                    end
-                    created:RefreshVisibility()
-                end,
+                valueCallback(option, definition2),
                 definition2.Tooltip
             )
             return register(option, definition2)
@@ -2808,20 +2861,14 @@ function Module.init(context: any): Framework
 
         function created:CreateSlider(definition2: any): Option
             local default: number = definition2.Default or definition2.Min or 0
-            local option: any = newOption(definition2.Name, default)
+            local option: any = newOption(definition2.Name, default, "slider", definition2)
             option.Object = host.addNumberOption(
                 feature,
                 definition2.Name,
                 default,
                 definition2.Min or 0,
                 definition2.Max or 100,
-                function(value: number): ()
-                    option.Value = value
-                    if type(definition2.Function) == "function" then
-                        definition2.Function(value)
-                    end
-                    created:RefreshVisibility()
-                end,
+                valueCallback(option, definition2),
                 definition2.Tooltip
             )
             return register(option, definition2)
@@ -2837,7 +2884,7 @@ function Module.init(context: any): Framework
             local maximum: number = definition2.Max or 100
             local low: number = definition2.DefaultMin or minimum
             local high: number = definition2.DefaultMax or maximum
-            local option: any = newOption(definition2.Name, {Min = low, Max = high})
+            local option: any = newOption(definition2.Name, {Min = low, Max = high}, "range", definition2)
             local builder: any = host.addRangeOption
                 or (host.state and host.state.addRangeOption)
             option.GetRandomValue = function(_self: any): number
@@ -2849,20 +2896,23 @@ function Module.init(context: any): Framework
             if type(builder) ~= "function" then
                 return register(option)
             end
+            local function rangeChanged(newLow: number, newHigh: number): ()
+                option:SetValue({Min = newLow, Max = newHigh})
+                if type(definition2.Function) == "function" then
+                    definition2.Function(newLow, newHigh)
+                end
+                created:RefreshVisibility()
+            end
+            option.Metadata.callback = rangeChanged
             option.Object = builder(feature, definition2.Name, {
                 min = minimum,
                 max = maximum,
+                step = definition2.Step,
                 defaultLow = low,
                 defaultHigh = high,
                 integer = definition2.Decimal == nil,
                 hint = definition2.Tooltip,
-                onChanged = function(newLow: number, newHigh: number): ()
-                    option.Value = {Min = newLow, Max = newHigh}
-                    if type(definition2.Function) == "function" then
-                        definition2.Function(newLow, newHigh)
-                    end
-                    created:RefreshVisibility()
-                end,
+                onChanged = rangeChanged,
             })
             return register(option, definition2)
         end
@@ -2870,19 +2920,13 @@ function Module.init(context: any): Framework
         function created:CreateDropdown(definition2: any): Option
             local list: {string} = definition2.List or {}
             local index: number = definition2.Index or 1
-            local option: any = newOption(definition2.Name, list[index])
+            local option: any = newOption(definition2.Name, list[index], "dropdown", definition2)
             option.Object = host.addCycleOption(
                 feature,
                 definition2.Name,
                 list,
                 index,
-                function(value: string): ()
-                    option.Value = value
-                    if type(definition2.Function) == "function" then
-                        definition2.Function(value)
-                    end
-                    created:RefreshVisibility()
-                end,
+                valueCallback(option, definition2),
                 definition2.Tooltip
             )
             return register(option, definition2)
@@ -2890,18 +2934,12 @@ function Module.init(context: any): Framework
 
         function created:CreateBind(definition2: any): Option
             local default: Enum.KeyCode = definition2.Default or Enum.KeyCode.Unknown
-            local option: any = newOption(definition2.Name, default)
+            local option: any = newOption(definition2.Name, default, "bind", definition2)
             option.Object = host.addKeyOption(
                 feature,
                 definition2.Name,
                 default,
-                function(value: Enum.KeyCode): ()
-                    option.Value = value
-                    if type(definition2.Function) == "function" then
-                        definition2.Function(value)
-                    end
-                    created:RefreshVisibility()
-                end,
+                valueCallback(option, definition2),
                 definition2.Tooltip
             )
             return register(option, definition2)
@@ -2909,18 +2947,12 @@ function Module.init(context: any): Framework
 
         function created:CreateTextBox(definition2: any): Option
             local default: string = definition2.Default or ""
-            local option: any = newOption(definition2.Name, default)
+            local option: any = newOption(definition2.Name, default, "text", definition2)
             option.Object = host.addTextOption(
                 feature,
                 definition2.Name,
                 default,
-                function(value: string): ()
-                    option.Value = value
-                    if type(definition2.Function) == "function" then
-                        definition2.Function(value)
-                    end
-                    created:RefreshVisibility()
-                end,
+                valueCallback(option, definition2),
                 definition2.Persist ~= false,
                 definition2.Tooltip
             )
@@ -2929,18 +2961,12 @@ function Module.init(context: any): Framework
 
         function created:CreateColor(definition2: any): Option
             local default: Color3 = definition2.Default or Color3.new(1, 1, 1)
-            local option: any = newOption(definition2.Name, default)
+            local option: any = newOption(definition2.Name, default, "color", definition2)
             option.Object = host.addColorOption(
                 feature,
                 definition2.Name,
                 default,
-                function(value: Color3): ()
-                    option.Value = value
-                    if type(definition2.Function) == "function" then
-                        definition2.Function(value)
-                    end
-                    created:RefreshVisibility()
-                end,
+                valueCallback(option, definition2),
                 definition2.Tooltip
             )
             return register(option, definition2)
@@ -2949,7 +2975,7 @@ function Module.init(context: any): Framework
         -- A list is a set, not a choice: "which of the nine swords this game
         -- gave me should the module use" cannot be answered by a dropdown.
         function created:CreateList(definition2: any): Option
-            local option: any = newOption(definition2.Name, {})
+            local option: any = newOption(definition2.Name, {}, "list", definition2)
             option.Selected = {}
             -- `state` is the fallback for hosts that expose the builder
             -- there rather than in the module environment.
@@ -2962,19 +2988,21 @@ function Module.init(context: any): Framework
             local optionKey: string = feature.configKey
                 .. "."
                 .. definition2.Name:gsub("%W", "")
+            local function listChanged(selected: any, names: {string}): ()
+                option:SetValue(selected)
+                option.Selected = names
+                if type(definition2.Function) == "function" then
+                    definition2.Function(selected, names)
+                end
+                created:RefreshVisibility()
+            end
+            option.Metadata.callback = listChanged
             option.Object = builder(feature, definition2.Name, {
                 items = definition2.Items,
                 default = definition2.Default,
                 hint = definition2.Tooltip,
                 emptyText = definition2.EmptyText,
-                onChanged = function(selected: any, names: {string}): ()
-                    option.Value = selected
-                    option.Selected = names
-                    if type(definition2.Function) == "function" then
-                        definition2.Function(selected, names)
-                    end
-                    created:RefreshVisibility()
-                end,
+                onChanged = listChanged,
             })
             -- Tick, untick and re-read from the module side.
             local controls: any = host.state
@@ -3000,22 +3028,24 @@ function Module.init(context: any): Framework
         end
 
         function created:CreateButton(definition2: any): Option
-            local option: any = newOption(definition2.Name, nil)
+            local option: any = newOption(definition2.Name, nil, "action", definition2)
+            local function run(): ()
+                if type(definition2.Function) == "function" then
+                    definition2.Function()
+                end
+            end
+            option.Metadata.callback = run
             option.Object = host.addActionOption(
                 feature,
                 definition2.Name,
-                function(): ()
-                    if type(definition2.Function) == "function" then
-                        definition2.Function()
-                    end
-                end,
+                run,
                 definition2.Tooltip
             )
             return register(option, definition2)
         end
 
         function created:CreateSection(name: string): Option
-            local option: any = newOption(name, nil)
+            local option: any = newOption(name, nil, "section", nil)
             option.Object = host.addSectionOption
                 and host.addSectionOption(feature, name)
                 or nil
@@ -16658,8 +16688,48 @@ function Module.init(context: Runtime): any
         )
         teleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
     end
+    local actionId: string = "RejoinServer"
+    local wurstOptions: any = host.state
+        and rawget(host.state, "wurstOptions")
+    if wurstOptions and type(wurstOptions.RegisterAction) == "function" then
+        local definition: any = {
+            id = actionId,
+            displayName = "Rejoin Server",
+            description = "Reconnect to the current server instance",
+            configKey = "Universal.RejoinServer",
+            callback = rejoinCurrentServer,
+        }
+        local registered: boolean, registration: any = pcall(
+            wurstOptions.RegisterAction,
+            definition
+        )
+        if not registered then
+            registered, registration = pcall(
+                wurstOptions.RegisterAction,
+                wurstOptions,
+                definition
+            )
+        end
+        if not registered then
+            error("Wurst Options refused Rejoin Server: " .. tostring(registration))
+        end
+        activeCleanup = function(): ()
+            if type(registration) == "function" then
+                registration()
+            elseif type(registration) == "table"
+                and type(registration.Destroy) == "function" then
+                registration:Destroy()
+            elseif type(wurstOptions.UnregisterAction) == "function" then
+                pcall(wurstOptions.UnregisterAction, actionId)
+            end
+        end
+        Module.Initialized = true
+        return registration or definition
+    end
 
-
+    -- Until A's Wurst Options registry is present, keep the existing action
+    -- reachable. It remains an action (never a persistent toggle), and this
+    -- branch disappears automatically as soon as RegisterAction is published.
     local feature: any = createUniversalFeature(
         "Rejoin Server",
         "Reconnect to the current server instance",
@@ -16668,9 +16738,7 @@ function Module.init(context: Runtime): any
         {action = true, noOptions = true, categoryName = "Other"}
     )
 
-    activeCleanup = function(): ()
-        -- Nothing to undo: teleporting is one call.
-    end
+    activeCleanup = function(): () end
     Module.Initialized = true
     return feature
 end

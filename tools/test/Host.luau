@@ -129,6 +129,7 @@ function Host.create(world: any): HostStub
             onToggle = onToggle,
             optionRows = {},
             options = {},
+            optionMetadata = {},
             hasSettings = false,
         }
         function feature.hasOptions(): boolean
@@ -158,6 +159,44 @@ function Host.create(world: any): HostStub
         return feature
     end
 
+    local function recordOptionMetadata(
+        feature: any,
+        label: string,
+        optionType: string,
+        defaultValue: any,
+        callback: any,
+        extra: any?
+    ): any
+        if feature.frameworkModule == true then
+            return nil
+        end
+        feature.optionMetadata = feature.optionMetadata or {}
+        local source: any = extra or {}
+        local id: string = label:gsub("%W", "")
+        local entry: any = {
+            id = id,
+            configKey = feature.configKey .. "." .. id,
+            label = label,
+            type = optionType,
+            default = defaultValue,
+            current = defaultValue,
+            min = source.min,
+            max = source.max,
+            step = source.step,
+            values = source.values,
+            callback = callback,
+            show = source.show,
+            visible = source.show == nil,
+            action = optionType == "action",
+            bind = optionType == "bind",
+            color = optionType == "color",
+            rangeLow = source.rangeLow,
+            rangeHigh = source.rangeHigh,
+        }
+        table.insert(feature.optionMetadata, entry)
+        return entry
+    end
+
     host.addToggleOption = function(
         feature: any,
         label: string,
@@ -167,6 +206,7 @@ function Host.create(world: any): HostStub
     ): any
         local button: any = makeButton(optionRow(feature, label), label, 11)
         feature.options[label] = {kind = "toggle", value = default}
+        recordOptionMetadata(feature, label, "toggle", default, callback)
         -- The real builder replays the stored value so panels that fold
         -- controls away start in the right shape.
         callback(default)
@@ -187,6 +227,10 @@ function Host.create(world: any): HostStub
             label .. ": default " .. tostring(default) .. " is outside its range"
         )
         feature.options[label] = {kind = "number", value = default}
+        recordOptionMetadata(feature, label, "slider", default, callback, {
+            min = minimum,
+            max = maximum,
+        })
         callback(default)
         return optionRow(feature, label)
     end
@@ -206,6 +250,14 @@ function Host.create(world: any): HostStub
         )
         assert(low <= high, label .. ": minimum default above the maximum")
         feature.options[label] = {kind = "range", low = low, high = high}
+        recordOptionMetadata(feature, label, "range", {Min = low, Max = high},
+            definition.onChanged, {
+                min = definition.min,
+                max = definition.max,
+                step = definition.step,
+                rangeLow = low,
+                rangeHigh = high,
+            })
         if definition.onChanged then
             definition.onChanged(low, high)
         end
@@ -223,6 +275,9 @@ function Host.create(world: any): HostStub
         assert(#values > 0, label .. ": empty cycle list")
         assert(values[index] ~= nil, label .. ": index outside the list")
         feature.options[label] = {kind = "cycle", value = values[index], list = values}
+        recordOptionMetadata(feature, label, "dropdown", values[index], callback, {
+            values = table.clone(values),
+        })
         callback(values[index])
         return makeButton(optionRow(feature, label), values[index], 11)
     end
@@ -235,6 +290,7 @@ function Host.create(world: any): HostStub
         _hint: string?
     ): any
         feature.options[label] = {kind = "key", value = default}
+        recordOptionMetadata(feature, label, "bind", default, callback)
         callback(default)
         return makeButton(optionRow(feature, label), "KEY", 9)
     end
@@ -248,6 +304,7 @@ function Host.create(world: any): HostStub
         _hint: string?
     ): any
         feature.options[label] = {kind = "text", value = default}
+        recordOptionMetadata(feature, label, "text", default, callback)
         callback(default)
         return create("TextBox", {
             Parent = optionRow(feature, label),
@@ -263,6 +320,7 @@ function Host.create(world: any): HostStub
         _hint: string?
     ): any
         feature.options[label] = {kind = "colour", value = default, set = callback}
+        recordOptionMetadata(feature, label, "color", default, callback)
         callback(default)
         return makeButton(optionRow(feature, label), "", 10)
     end
@@ -274,6 +332,7 @@ function Host.create(world: any): HostStub
         _hint: string?
     ): any
         feature.options[label] = {kind = "action", run = callback}
+        recordOptionMetadata(feature, label, "action", nil, callback)
         return makeButton(optionRow(feature, label), "RUN", 11)
     end
 
@@ -304,6 +363,8 @@ function Host.create(world: any): HostStub
             end
         end
         feature.options[label] = entry
+        recordOptionMetadata(feature, label, "list", definition.default or {},
+            definition.onChanged)
         -- Same controls table the real builder publishes, so a module can tick
         -- an entry it just learned.
         host.state.listControls = host.state.listControls or {}
@@ -321,6 +382,7 @@ function Host.create(world: any): HostStub
     end
 
     host.addSectionOption = function(feature: any, label: string): any
+        recordOptionMetadata(feature, label, "section", nil, nil)
         return optionRow(feature, label)
     end
 
