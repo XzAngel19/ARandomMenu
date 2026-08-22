@@ -267,14 +267,14 @@ return function(ctx: any): ()
     check("every row is a flat line, not a card", flatRows)
     local geometryTrack: any =
         geometryPanel.optionRows[2]:FindFirstChild("Slider"):FindFirstChild("Track")
-    check("the slider bar is the prototype's 5 px",
-        geometryTrack ~= nil and geometryTrack.Size.Y.Offset == 5,
+    check("the slider rail is the Java's 3 logical (6 px)",
+        geometryTrack ~= nil and geometryTrack.Size.Y.Offset == 6,
         geometryTrack and tostring(geometryTrack.Size.Y.Offset) or "none")
     local geometryKnob: any = geometryTrack and geometryTrack:FindFirstChild("Knob")
-    check("the knob is the prototype's 7×11",
+    check("the knob is the Java's 8×8 (16×16 px)",
         geometryKnob ~= nil
-            and geometryKnob.Size.X.Offset == 7
-            and geometryKnob.Size.Y.Offset == 11)
+            and geometryKnob.Size.X.Offset == 16
+            and geometryKnob.Size.Y.Offset == 16)
 
     -- Action, range and list ------------------------------------------------------------
 

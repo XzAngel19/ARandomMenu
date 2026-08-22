@@ -98,11 +98,13 @@ return function(ctx: any): ()
             "the settings arrow is visible only once options exist",
             withOptions.arrow.Visible == true
         )
-        local glyph: string = tostring(withOptions.arrow.Text or "")
+        -- The triangle is a pixel sprite now, not a font glyph: the button
+        -- carries no text and a PixelIcon container instead.
+        local sprite: any = withOptions.arrow:FindFirstChild("PixelIcon")
         check(
-            "the control is a triangle, not a hamburger",
-            glyph == "▼" or glyph == "▲",
-            glyph
+            "the control is a pixel triangle, not a hamburger or a glyph",
+            tostring(withOptions.arrow.Text or "") == "" and sprite ~= nil,
+            tostring(withOptions.arrow.Text or "")
         )
         withOptions.arrow.MouseButton1Click:Fire()
         check(

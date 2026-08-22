@@ -85,6 +85,20 @@ function Module.init(context: any): any
     local addNumberOption: any = host.addNumberOption
     local addCycleOption: any = host.addCycleOption
     local addColorOption: any = host.addColorOption
+    -- The pixel-sprite pen the widget library publishes; a stand-in for the
+    -- harness host, which does not carry it.
+    local drawPixelIcon: any = host.drawPixelIcon
+        or function(parent: Instance, _kind: string, _color: Color3?): Frame
+            local existing: Instance? = (parent :: any):FindFirstChild("PixelIcon")
+            if existing then
+                existing:Destroy()
+            end
+            return create("Frame", {
+                Parent = parent,
+                Name = "PixelIcon",
+                BackgroundTransparency = 1,
+            }) :: Frame
+        end
 
     local windows: any = state.windows
     if not windows then
@@ -108,15 +122,35 @@ function Module.init(context: any): any
 
     -- One window of setting lines. `settingsSized` windows follow the "Max
     -- settings height" slider; the UI Settings window follows "Max height".
+    -- Wurst packs a settings window to its content — no window is 200 px
+    -- because 200 was convenient. Monocraft advances ~12 px per glyph at the
+    -- 16 px bitmap size, so a row's natural width is estimable without
+    -- TextService, which the environment does not publish: label + gap +
+    -- value + whatever the row appends (an arrow box, a checkbox).
+    local function textWidth(text: any): number
+        return #tostring(text) * 12
+    end
+    local function packedWidth(rows: {{any}}): number
+        local widest: number = 150
+        for _, row: {any} in ipairs(rows) do
+            local labelWidth: number = textWidth(row[1])
+            local valueWidth: number = row[2] ~= nil and textWidth(row[2]) or 0
+            local extra: number = tonumber(row[3]) or 0
+            widest = math.max(widest, 8 + labelWidth + 24 + valueWidth + extra)
+        end
+        return widest
+    end
+
     local function configWindow(
         id: string,
         title: string,
         definition: any
     ): any
+        local width: number = tonumber(definition.width) or WINDOW_WIDTH
         local window: any = windows.Create({
             id = id,
             title = title,
-            size = Vector2.new(WINDOW_WIDTH, 30),
+            size = Vector2.new(width, 30),
             position = definition.position,
             closable = definition.closable ~= false,
         })
@@ -133,7 +167,12 @@ function Module.init(context: any): any
             PaddingRight = UDim.new(0, WINDOW_GAP),
         })
 
-        local record: any = {window = window, layout = layout, open = false}
+        local record: any = {
+            window = window,
+            layout = layout,
+            open = false,
+            width = width,
+        }
         local function resize(): ()
             local limit: number
             if definition.settingsSized then
@@ -150,7 +189,7 @@ function Module.init(context: any): any
             )
             window.fullHeight = wanted
             if not window.collapsed then
-                window.root.Size = UDim2.fromOffset(WINDOW_WIDTH, wanted)
+                window.root.Size = UDim2.fromOffset(width, wanted)
             end
         end
         record.resize = resize
@@ -211,27 +250,26 @@ function Module.init(context: any): any
             BackgroundTransparency = 1,
             FontFace = CONTROL_FONT,
             Position = UDim2.fromOffset(6, 0),
-            Size = UDim2.new(1, -20, 1, 0),
+            Size = UDim2.new(1, -28, 1, 0),
             Text = labelText,
             TextColor3 = Theme.text,
-            TextSize = 11.5,
+            TextSize = 16,
             TextXAlignment = Enum.TextXAlignment.Left,
             ZIndex = row.ZIndex + 1,
         })
-        create("TextLabel", {
-            TextTruncate = Enum.TextTruncate.AtEnd,
+        local arrowBox: Frame = (create("Frame", {
             Parent = row,
             Name = "Arrow",
             AnchorPoint = Vector2.new(1, 0),
             BackgroundTransparency = 1,
-            FontFace = CONTROL_FONT,
-            Position = UDim2.new(1, -6, 0, 0),
-            Size = UDim2.fromOffset(10, ROW_HEIGHT),
-            Text = "›",
-            TextColor3 = Theme.textMuted,
-            TextSize = 12,
+            BorderSizePixel = 0,
+            Position = UDim2.new(1, -4, 0, 0),
+            Size = UDim2.fromOffset(22, ROW_HEIGHT),
             ZIndex = row.ZIndex + 1,
-        })
+        }) :: any) :: Frame
+        -- The feature shortcut's arrow is the same pixel-drawn green triangle
+        -- every other Wurst arrow is, pointing right: it opens a window.
+        drawPixelIcon(arrowBox, "right", Color3.fromRGB(0, 204, 0))
         trackUiConnection(row.MouseEnter:Connect(function(): ()
             row.BackgroundTransparency = 0.3
         end))
@@ -259,6 +297,13 @@ function Module.init(context: any): any
         logoRecord = configWindow("WurstLogo", "WurstLogo", {
             position = Vector2.new(screen.X - WINDOW_WIDTH * 2 - 32, 120),
             settingsSized = true,
+            -- Packed to its own content, as Wurst sizes it: the combo's
+            -- longest value plus its arrow decides the width.
+            width = packedWidth({
+                {"Background", "#FFFFFF"},
+                {"Text", "#000000"},
+                {"Visibility", "Only when outdated", 26},
+            }),
         })
         local panel: any = panelFor(logoRecord, "WurstLogo")
         addColorOption(panel, "Background", WURSTLOGO_BACKGROUND, function(color: Color3): ()
@@ -297,6 +342,14 @@ function Module.init(context: any): any
         hackListRecord = configWindow("HackList", "HackList", {
             position = Vector2.new(screen.X - WINDOW_WIDTH * 2 - 32, 180),
             settingsSized = true,
+            width = packedWidth({
+                {"Mode", "Hidden", 26},
+                {"Position", "Right", 26},
+                {"Color", "#FFFFFF"},
+                {"Sort by", "Width", 26},
+                {"Reverse sorting", nil, 30},
+                {"Animations", nil, 30},
+            }),
         })
         local panel: any = panelFor(hackListRecord, "HackList")
         local modes: {string} = {"Auto", "Count", "Hidden"}
@@ -661,9 +714,19 @@ function Module.init(context: any): any
             return
         end
         local screen: Vector2 = viewport()
+        local keybindRows: {{any}} = {
+            {"Reset keybinds", nil, 26},
+        }
+        for _, binding: any in pairs(state.shortcutBindings) do
+            table.insert(
+                keybindRows,
+                {featureLabel(tostring(binding.id)), nil, 66}
+            )
+        end
         keybindsRecord = configWindow("Keybinds", "Keybinds", {
             position = Vector2.new(screen.X - WINDOW_WIDTH * 2 - 32, 140),
             settingsSized = true,
+            width = packedWidth(keybindRows),
         })
         keybindsList = (create("Frame", {
             Parent = keybindsRecord.window.body,
@@ -710,6 +773,12 @@ function Module.init(context: any): any
         optionsRecord = configWindow("WurstOptions", "Wurst Options", {
             position = Vector2.new(screen.X - WINDOW_WIDTH * 2 - 32, 220),
             settingsSized = true,
+            width = packedWidth({
+                {"Keybinds", nil, 26},
+                {"Reinject latest", nil, 26},
+                {"Destruct", nil, 26},
+                {"Game check: Universal only"},
+            }),
         })
 
         actionRow(optionsRecord, 1, "Keybinds", openKeybinds)
@@ -857,6 +926,19 @@ function Module.init(context: any): any
         position = Vector2.new(screen.X - WINDOW_WIDTH - 12, 64),
         closable = false,
         settingsSized = false,
+        width = packedWidth({
+            {"WurstLogo", nil, 26},
+            {"HackList", nil, 26},
+            {"Keybinds", nil, 26},
+            {"WurstOptions", nil, 26},
+            {"Background", "#404040"},
+            {"Accent", "#101010"},
+            {"Text", "#F0F0F0"},
+            {"Opacity", "0.85"},
+            {"Tooltip opacity", "0.75"},
+            {"Max height", "1000"},
+            {"Max settings height", "1000"},
+        }),
     })
     uiRecord.open = true
 

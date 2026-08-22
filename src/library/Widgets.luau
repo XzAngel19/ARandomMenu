@@ -65,14 +65,26 @@ local Module = {
 }
 
 -- The prototype's component metrics, verbatim (docs/design/prototype/
--- spec.json, `components`). The parity gate reads these names and fails a
--- drift, so a number that changes here has to change in the prototype first.
-local LABEL_FONT_SIZE: number = 11.5
-local SLIDER_BAR_HEIGHT: number = 5
-local SLIDER_KNOB_WIDTH: number = 7
-local SLIDER_KNOB_HEIGHT: number = 11
+-- spec.json, `components`) — which since the Java audit carry Wurst's own
+-- geometry at GUI scale 2: an 8 px bitmap line rendered at 16, a 3-logical
+-- slider rail at 6, an 8×8 knob at 16×16. The parity gate reads these names
+-- and fails a drift, so a number that changes here changes in the prototype
+-- first.
+local LABEL_FONT_SIZE: number = 16
+local SLIDER_BAR_HEIGHT: number = 6
+local SLIDER_KNOB_WIDTH: number = 16
+local SLIDER_KNOB_HEIGHT: number = 16
+-- Wurst's child metrics (spec.wurst.chrome, logical 2 → 4 at scale 2).
+local CHILD_INSET: number = 4
+local CHILD_GAP: number = 4
 
 function Module.init(context: any): WidgetLibrary
+    -- Wurst draws every arrow and checkmark in its own green, regardless of
+    -- the player's palette — the reference screenshots show green triangles
+    -- on a magenta theme and on a pink one. Not a theme token on purpose.
+    -- Inside init because Color3 only exists once the environment is
+    -- installed.
+    local WURST_GREEN: Color3 = Color3.fromRGB(0, 204, 0)
     local host: any = context
     -- Services come from the shell rather than from `GetService` so the whole
     -- menu watches one input stream: a second UserInputService handle means a
@@ -93,8 +105,6 @@ function Module.init(context: any): WidgetLibrary
     -- on the shell's own overlay layer rather than inside the row that opened
     -- them, so a list cannot be clipped by its scrolling parent.
     local PopupLayer: any = host.PopupLayer
-    local UI_RADIUS: any = host.UI_RADIUS
-    local cornerRadius: any = host.cornerRadius
     local trackUiConnection: any = host.trackUiConnection
     local applyKeySlotStyle: any = host.applyKeySlotStyle
     local beginKeyCapture: any = host.beginKeyCapture
@@ -115,6 +125,73 @@ function Module.init(context: any): WidgetLibrary
     -- On `state` rather than in the returned table: the shell reads it too, and
     -- so does every game module that positions a control of its own, so there
     -- is one place the band is defined and one place to change it.
+    -- Pixel sprites, the way the bitmap client draws its icons: stacked
+    -- 2×2-px "logical pixels", no Unicode — a font glyph moves with the
+    -- typeface, a sprite does not. Wurst's arrows, pin, cross and checkmark
+    -- are all four-to-nine rectangles.
+    --   kind: "down" | "up" | "right" | "cross" | "pin" | "check"
+    -- The container is transparent, centred in its parent, and carries the
+    -- name "PixelIcon" so a repaint can find it.
+    local function drawPixelIcon(
+        parent: Instance,
+        kind: string,
+        color: Color3?
+    ): Frame
+        local paint: Color3 = color or WURST_GREEN
+        local existing: Instance? = (parent :: any):FindFirstChild("PixelIcon")
+        if existing then
+            existing:Destroy()
+        end
+        local sizes: {[string]: {number}} = {
+            down = {14, 8},
+            up = {14, 8},
+            right = {8, 14},
+            cross = {10, 10},
+            pin = {10, 10},
+            check = {12, 10},
+        }
+        local size: {number} = sizes[kind] or {10, 10}
+        local container: Frame = (create("Frame", {
+            Parent = parent,
+            Name = "PixelIcon",
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Position = UDim2.fromScale(0.5, 0.5),
+            Size = UDim2.fromOffset(size[1], size[2]),
+            ZIndex = (tonumber((parent :: any).ZIndex) or 1) + 1,
+        }) :: any) :: Frame
+        local function px(x: number, y: number, w: number, h: number): ()
+            create("Frame", {
+                Parent = container,
+                BackgroundColor3 = paint,
+                BorderSizePixel = 0,
+                Position = UDim2.fromOffset(x * 2, y * 2),
+                Size = UDim2.fromOffset(w * 2, h * 2),
+                ZIndex = container.ZIndex + 1,
+            })
+        end
+        if kind == "down" then
+            px(0, 0, 7, 1); px(1, 1, 5, 1); px(2, 2, 3, 1); px(3, 3, 1, 1)
+        elseif kind == "up" then
+            px(3, 0, 1, 1); px(2, 1, 3, 1); px(1, 2, 5, 1); px(0, 3, 7, 1)
+        elseif kind == "right" then
+            px(0, 0, 1, 7); px(1, 1, 1, 5); px(2, 2, 1, 3); px(3, 3, 1, 1)
+        elseif kind == "cross" then
+            px(0, 0, 1, 1); px(4, 0, 1, 1)
+            px(1, 1, 1, 1); px(3, 1, 1, 1)
+            px(2, 2, 1, 1)
+            px(1, 3, 1, 1); px(3, 3, 1, 1)
+            px(0, 4, 1, 1); px(4, 4, 1, 1)
+        elseif kind == "pin" then
+            px(1, 0, 3, 3); px(2, 3, 1, 2)
+        elseif kind == "check" then
+            px(0, 2, 1, 1); px(1, 3, 1, 1); px(2, 4, 1, 1)
+            px(3, 3, 1, 1); px(4, 2, 1, 1); px(5, 1, 1, 1)
+        end
+        return container
+    end
+
     state.layoutOptionControl = function(
         option: Frame,
         control: GuiObject,
@@ -176,8 +253,8 @@ function Module.init(context: any): WidgetLibrary
             Name = "OptionLabel",
             BackgroundTransparency = 1,
             FontFace = CONTROL_FONT,
-            Position = UDim2.fromOffset(6, 0),
-            Size = UDim2.new(0.48, -6, 1, 0),
+            Position = UDim2.fromOffset(CHILD_INSET, 0),
+            Size = UDim2.new(0.55, -CHILD_INSET, 0, rowHeight),
             Text = labelText,
             TextColor3 = Theme.text,
             TextSize = LABEL_FONT_SIZE,
@@ -296,11 +373,12 @@ function Module.init(context: any): WidgetLibrary
             BackgroundColor3 = Color3.fromRGB(0, 0, 0),
             BackgroundTransparency = 0.5,
             BorderSizePixel = 0,
-            Position = UDim2.new(0, 6, 0.5, 0),
-            Size = UDim2.fromOffset(11, 11),
+            Position = UDim2.new(0, CHILD_INSET, 0.5, 0),
+            Size = UDim2.fromOffset(22, 22),
             ZIndex = option.ZIndex + 3,
         }) :: any) :: Frame
-        -- A square, as in Wurst — no corner radius on a checkbox.
+        -- An 11×11-logical square (22 here), as the Java sizes it — no
+        -- corner radius on a checkbox.
         local boxStroke: UIStroke = (create("UIStroke", {
             Parent = box,
             ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
@@ -308,24 +386,17 @@ function Module.init(context: any): WidgetLibrary
             Thickness = 1,
             Transparency = 0.35,
         }) :: any) :: UIStroke
-        local mark: TextLabel = (create("TextLabel", {
-            TextTruncate = Enum.TextTruncate.AtEnd,
-            Parent = box,
-            Name = "Check",
-            BackgroundTransparency = 1,
-            FontFace = CONTROL_FONT,
-            Size = UDim2.fromScale(1, 1),
-            Text = "✓",
-            TextColor3 = Theme.enabledText,
-            TextSize = 9,
-            Visible = false,
-            ZIndex = option.ZIndex + 4,
-        }) :: any) :: TextLabel
+        -- The checkmark is a pixel sprite in Wurst's own green, the way the
+        -- bitmap client draws it — never a font glyph.
+        local mark: Frame = drawPixelIcon(box, "check", WURST_GREEN)
+        mark.Visible = false
         local optionLabel: TextLabel? =
             option:FindFirstChild("OptionLabel") :: TextLabel?
         if optionLabel then
-            (optionLabel :: TextLabel).Position = UDim2.fromOffset(23, 0);
-            (optionLabel :: TextLabel).Size = UDim2.new(0.6, -23, 1, 0)
+            (optionLabel :: TextLabel).Position =
+                UDim2.fromOffset(CHILD_INSET + 22 + CHILD_GAP, 0);
+            (optionLabel :: TextLabel).Size =
+                UDim2.new(1, -(CHILD_INSET + 22 + CHILD_GAP), 1, 0)
         end
 
         local function refreshOptionState(): ()
@@ -334,7 +405,6 @@ function Module.init(context: any): WidgetLibrary
             box.BackgroundTransparency = on and 0 or 0.5
             boxStroke.Color = on and Theme.enabled or Theme.outline
             mark.Visible = on
-            mark.TextColor3 = Theme.enabledText
         end
 
         local function toggleOption(): ()
@@ -474,15 +544,16 @@ function Module.init(context: any): WidgetLibrary
             and maximum % 1 == 0
 
         local option: Frame = createOptionRow(feature, labelText, hintText)
-        -- Wurst's slider is two lines: the label with its value on the right,
-        -- and a thin bar with a square knob underneath, spanning the row. The
-        -- bar is 5 px with a 7×11 knob — the prototype's numbers, which the
-        -- parity gate holds these constants to.
-        option.Size = UDim2.new(1, 0, 0, 26)
+        -- Wurst's SliderComponent is 22 logical tall — 44 here: an 11-tall
+        -- text line (label left, value right) over an 11-tall rail zone. The
+        -- rail is 3 logical (6 px) and the knob 8×8 (16×16); the parity gate
+        -- holds these constants to the spec.
+        option.Size = UDim2.new(1, 0, 0, 44)
         local headerLabel: TextLabel? =
             option:FindFirstChild("OptionLabel") :: TextLabel?
         if headerLabel then
-            (headerLabel :: TextLabel).Size = UDim2.new(0.55, -6, 0, 15)
+            (headerLabel :: TextLabel).Size =
+                UDim2.new(0.55, -CHILD_INSET, 0, 22)
         end
 
         local slider: TextButton = (create("TextButton", {
@@ -493,8 +564,8 @@ function Module.init(context: any): WidgetLibrary
             AutoButtonColor = false,
             BackgroundTransparency = 1,
             BorderSizePixel = 0,
-            Position = UDim2.new(0, 0, 0, 13),
-            Size = UDim2.new(1, 0, 0, 13),
+            Position = UDim2.new(0, 0, 0, 22),
+            Size = UDim2.new(1, 0, 0, 22),
             Text = "",
             ZIndex = option.ZIndex + 1,
         }) :: any) :: TextButton
@@ -505,8 +576,8 @@ function Module.init(context: any): WidgetLibrary
             BackgroundColor3 = Color3.fromRGB(255, 255, 255),
             BackgroundTransparency = 0.9,
             BorderSizePixel = 0,
-            Position = UDim2.new(0, 6, 0, 5),
-            Size = UDim2.new(1, -12, 0, SLIDER_BAR_HEIGHT),
+            Position = UDim2.new(0, CHILD_INSET, 0, (22 - SLIDER_BAR_HEIGHT) // 2),
+            Size = UDim2.new(1, -CHILD_INSET * 2, 0, SLIDER_BAR_HEIGHT),
             ZIndex = option.ZIndex + 1,
         }) :: any) :: Frame
 
@@ -533,11 +604,11 @@ function Module.init(context: any): WidgetLibrary
         local valueInput: TextBox = (makeTextBox(slider, "") :: any) :: TextBox
         valueInput.Name = "NumericValue"
         valueInput.AnchorPoint = Vector2.new(1, 0)
-        valueInput.Position = UDim2.new(1, -6, 0, -13)
-        valueInput.Size = UDim2.new(0.42, 0, 0, 15)
+        valueInput.Position = UDim2.new(1, -CHILD_INSET, 0, -22)
+        valueInput.Size = UDim2.new(0.42, 0, 0, 22)
         valueInput.BackgroundTransparency = 1
         valueInput.TextColor3 = Theme.textMuted
-        valueInput.TextSize = 11
+        valueInput.TextSize = LABEL_FONT_SIZE
         valueInput.TextXAlignment = Enum.TextXAlignment.Right
         valueInput.TextTruncate = Enum.TextTruncate.AtEnd
         valueInput.ZIndex = option.ZIndex + 2
@@ -676,13 +747,14 @@ function Module.init(context: any): WidgetLibrary
         local integerOnly: boolean = definition.integer ~= false
 
         local option: Frame = createOptionRow(feature, labelText, definition.hint)
-        -- Same two-line geometry as the single slider: label and interval on
-        -- the first line, the 5 px bar with two 7×11 knobs underneath.
-        option.Size = UDim2.new(1, 0, 0, 26)
+        -- Same 22-logical geometry as the single slider: text line over an
+        -- 11-tall rail zone, two 8×8 knobs on the 3-logical rail.
+        option.Size = UDim2.new(1, 0, 0, 44)
         local rangeLabel: TextLabel? =
             option:FindFirstChild("OptionLabel") :: TextLabel?
         if rangeLabel then
-            (rangeLabel :: TextLabel).Size = UDim2.new(0.55, -6, 0, 15)
+            (rangeLabel :: TextLabel).Size =
+                UDim2.new(0.55, -CHILD_INSET, 0, 22)
         end
         local slider: TextButton = (create("TextButton", {
             TextTruncate = Enum.TextTruncate.AtEnd,
@@ -692,8 +764,8 @@ function Module.init(context: any): WidgetLibrary
             AutoButtonColor = false,
             BackgroundTransparency = 1,
             BorderSizePixel = 0,
-            Position = UDim2.new(0, 0, 0, 13),
-            Size = UDim2.new(1, 0, 0, 13),
+            Position = UDim2.new(0, 0, 0, 22),
+            Size = UDim2.new(1, 0, 0, 22),
             Text = "",
             ZIndex = option.ZIndex + 1,
         }) :: any) :: TextButton
@@ -704,8 +776,8 @@ function Module.init(context: any): WidgetLibrary
             BackgroundColor3 = Color3.fromRGB(255, 255, 255),
             BackgroundTransparency = 0.9,
             BorderSizePixel = 0,
-            Position = UDim2.new(0, 6, 0, 18),
-            Size = UDim2.new(1, -12, 0, SLIDER_BAR_HEIGHT),
+            Position = UDim2.new(0, CHILD_INSET, 0, 22 + (22 - SLIDER_BAR_HEIGHT) // 2),
+            Size = UDim2.new(1, -CHILD_INSET * 2, 0, SLIDER_BAR_HEIGHT),
             ZIndex = option.ZIndex + 1,
         }) :: any) :: Frame
 
@@ -744,11 +816,11 @@ function Module.init(context: any): WidgetLibrary
             AnchorPoint = Vector2.new(1, 0),
             BackgroundTransparency = 1,
             FontFace = CONTROL_FONT,
-            Position = UDim2.new(1, -6, 0, 0),
-            Size = UDim2.new(0.42, 0, 0, 15),
+            Position = UDim2.new(1, -CHILD_INSET, 0, 0),
+            Size = UDim2.new(0.42, 0, 0, 22),
             Text = "",
             TextColor3 = Theme.textMuted,
-            TextSize = 11,
+            TextSize = LABEL_FONT_SIZE,
             TextXAlignment = Enum.TextXAlignment.Right,
             ZIndex = option.ZIndex + 2,
         }) :: any) :: TextLabel
@@ -887,7 +959,6 @@ function Module.init(context: any): WidgetLibrary
             Size = UDim2.fromOffset(math.round(anchorSize.X), listHeight),
             ZIndex = 400,
         }) :: Frame
-        create("UICorner", {Parent = list, CornerRadius = cornerRadius(UI_RADIUS.control)})
         create("UIStroke", {
             Parent = list,
             Color = Theme.outline,
@@ -908,10 +979,6 @@ function Module.init(context: any): WidgetLibrary
                 Size = UDim2.new(1, -8, 0, searchHeight - 4),
                 ZIndex = 402,
             }) :: Frame
-            create("UICorner", {
-                Parent = filterFrame,
-                CornerRadius = cornerRadius(UI_RADIUS.chip),
-            })
             local box: TextBox = makeTextBox(filterFrame, "")
             box.Name = "FilterBox"
             box.BackgroundTransparency = 1
@@ -991,7 +1058,6 @@ function Module.init(context: any): WidgetLibrary
                 TextSize = 11,
                 ZIndex = 402,
             }) :: any) :: TextButton
-            create("UICorner", {Parent = item, CornerRadius = cornerRadius(UI_RADIUS.chip)})
             create("UIPadding", {
                 Parent = item,
                 PaddingLeft = UDim.new(0, 8),
@@ -1107,7 +1173,6 @@ function Module.init(context: any): WidgetLibrary
             Size = UDim2.fromOffset(math.round(anchorSize.X), listHeight),
             ZIndex = 400,
         }) :: Frame
-        create("UICorner", {Parent = list, CornerRadius = cornerRadius(UI_RADIUS.control)})
         create("UIStroke", {
             Parent = list,
             Color = Theme.outline,
@@ -1169,7 +1234,6 @@ function Module.init(context: any): WidgetLibrary
                 TextSize = 11,
                 ZIndex = 402,
             }) :: any) :: TextButton
-            create("UICorner", {Parent = row, CornerRadius = cornerRadius(UI_RADIUS.chip)})
             create("UIPadding", {
                 Parent = row,
                 PaddingLeft = UDim.new(0, 26),
@@ -1208,7 +1272,6 @@ function Module.init(context: any): WidgetLibrary
                 Size = UDim2.fromOffset(11, 11),
                 ZIndex = 403,
             }) :: Frame
-            create("UICorner", {Parent = mark, CornerRadius = UDim.new(0, 3)})
             local markStroke: UIStroke = (create("UIStroke", {
                 Parent = mark,
                 Color = Theme.textMuted,
@@ -1226,7 +1289,6 @@ function Module.init(context: any): WidgetLibrary
                 Size = UDim2.fromScale(0, 0),
                 ZIndex = 404,
             }) :: Frame
-            create("UICorner", {Parent = fill, CornerRadius = UDim.new(0, 2)})
 
             local function paint(): ()
                 local on: boolean = selected[item] == true
@@ -1420,50 +1482,50 @@ function Module.init(context: any): WidgetLibrary
                 end
             end
         end
-        local button = makeButton(option, values[index], 11)
-        state.layoutOptionControl(option, button, 0.5)
-        button.TextXAlignment = Enum.TextXAlignment.Left
-        create("UIPadding", {
-            Parent = button,
-            Name = "ChoicePadding",
-            PaddingLeft = UDim.new(0, 8),
-            PaddingRight = UDim.new(0, 20),
-        })
-
-        -- A caret, because this opens a list; the old counter ("2/4") only made
-        -- sense while the control was a button you had to click four times.
-        local caret: Frame = create("Frame", {
-            Parent = button,
-            Name = "Caret",
-            AnchorPoint = Vector2.new(1, 0.5),
+        -- Wurst's ComboBox: an 11-logical line (22 here), the current value
+        -- right-aligned against an 11-wide arrow box holding the pixel-drawn
+        -- green triangle from the screenshots. The whole line is the click
+        -- target; nothing about it is a modern button.
+        local button: TextButton = (create("TextButton", {
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            Parent = option,
+            Name = "ComboValue",
+            Active = true,
+            AutoButtonColor = false,
             BackgroundTransparency = 1,
             BorderSizePixel = 0,
-            Position = UDim2.new(1, -8, 0.5, 0),
-            Size = UDim2.fromOffset(10, 6),
-            ZIndex = button.ZIndex + 1,
-        }) :: Frame
-        for _, side: number in ipairs({-1, 1}) do
-            local blade: Frame = create("Frame", {
-                Parent = caret,
-                Name = side < 0 and "Left" or "Right",
-                AnchorPoint = Vector2.new(0.5, 0.5),
-                BackgroundColor3 = Theme.textMuted,
-                BackgroundTransparency = 0.25,
-                BorderSizePixel = 0,
-                Position = UDim2.new(0.5, side * 2, 0.5, 0),
-                Rotation = side * 38,
-                Size = UDim2.fromOffset(7, 1),
-                ZIndex = button.ZIndex + 2,
-            }) :: Frame
-            create("UICorner", {Parent = blade, CornerRadius = UDim.new(1, 0)})
-        end
+            FontFace = CONTROL_FONT,
+            Position = UDim2.fromOffset(0, 0),
+            Size = UDim2.new(1, -(22 + CHILD_INSET), 1, 0),
+            Text = values[index],
+            TextColor3 = Theme.text,
+            TextSize = LABEL_FONT_SIZE,
+            TextXAlignment = Enum.TextXAlignment.Right,
+            ZIndex = option.ZIndex + 2,
+        }) :: any) :: TextButton
+
+        local arrowBox: TextButton = (create("TextButton", {
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            Parent = option,
+            Name = "ComboArrow",
+            Active = true,
+            AnchorPoint = Vector2.new(1, 0),
+            AutoButtonColor = false,
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Position = UDim2.new(1, -CHILD_INSET, 0, 0),
+            Size = UDim2.fromOffset(22, 22),
+            Text = "",
+            ZIndex = option.ZIndex + 2,
+        }) :: any) :: TextButton
+        drawPixelIcon(arrowBox, "down", WURST_GREEN)
 
         local function refreshChoiceVisual(): ()
             button.Text = values[index]
         end
         refreshChoiceVisual()
 
-        button.MouseButton1Click:Connect(function()
+        local function openList(): ()
             openChoiceList(button, values, index, function(picked: number): ()
                 index = picked
                 refreshChoiceVisual()
@@ -1471,7 +1533,9 @@ function Module.init(context: any): WidgetLibrary
                 configData.values[optionKey] = values[index]
                 queueConfigSave()
             end)
-        end)
+        end
+        button.MouseButton1Click:Connect(openList)
+        arrowBox.MouseButton1Click:Connect(openList)
 
         callback(values[index])
         return button :: TextButton
@@ -1595,10 +1659,6 @@ function Module.init(context: any): WidgetLibrary
                 Visible = false,
                 ZIndex = 80,
             })
-            create("UICorner", {
-                Parent = panel,
-                CornerRadius = cornerRadius(8),
-            })
 
             local title = makeTextLabel(panel, "COLOR", 14)
             title.FontFace = CONTROL_FONT
@@ -1692,10 +1752,6 @@ function Module.init(context: any): WidgetLibrary
                 Position = UDim2.fromOffset(273, 45),
                 Size = UDim2.fromOffset(48, 48),
                 ZIndex = 81,
-            })
-            create("UICorner", {
-                Parent = preview,
-                CornerRadius = UDim.new(1, 0),
             })
 
             local apply = makeButton(panel, "APPLY", 11)
@@ -1891,14 +1947,15 @@ function Module.init(context: any): WidgetLibrary
         local optionKey = feature.configKey .. "." .. labelText:gsub("%W", "")
         local color = colorFromConfig(configData.values[optionKey], defaultColor)
         local option = createOptionRow(feature, labelText, hintText)
-        -- Wurst's colour line: the label, its hex on the right, and a thin
-        -- bar of the colour itself underneath. The round swatch it replaces
-        -- said "a colour lives here" without saying which one was readable.
-        option.Size = UDim2.new(1, 0, 0, 26)
+        -- Wurst's colour component is 22 logical tall — 44 here: the label
+        -- with its hex right-aligned on the text line, and an 11-logical
+        -- (22 px) bar of the colour itself filling the lower half.
+        option.Size = UDim2.new(1, 0, 0, 44)
         local colorLabel: TextLabel? =
             option:FindFirstChild("OptionLabel") :: TextLabel?
         if colorLabel then
-            (colorLabel :: TextLabel).Size = UDim2.new(0.55, -6, 0, 15)
+            (colorLabel :: TextLabel).Size =
+                UDim2.new(0.55, -CHILD_INSET, 0, 22)
         end
 
         local hexValue: TextLabel = (create("TextLabel", {
@@ -1908,11 +1965,11 @@ function Module.init(context: any): WidgetLibrary
             AnchorPoint = Vector2.new(1, 0),
             BackgroundTransparency = 1,
             FontFace = CONTROL_FONT,
-            Position = UDim2.new(1, -6, 0, 0),
-            Size = UDim2.new(0.42, 0, 0, 15),
+            Position = UDim2.new(1, -CHILD_INSET, 0, 0),
+            Size = UDim2.new(0.42, 0, 0, 22),
             Text = "",
             TextColor3 = Theme.textMuted,
-            TextSize = 11,
+            TextSize = LABEL_FONT_SIZE,
             TextXAlignment = Enum.TextXAlignment.Right,
             ZIndex = option.ZIndex + 2,
         }) :: any) :: TextLabel
@@ -1922,8 +1979,8 @@ function Module.init(context: any): WidgetLibrary
             Name = "ColorBar",
             BackgroundColor3 = color,
             BorderSizePixel = 0,
-            Position = UDim2.new(0, 6, 0, 18),
-            Size = UDim2.new(1, -12, 0, 6),
+            Position = UDim2.new(0, CHILD_INSET, 0, 22),
+            Size = UDim2.new(1, -CHILD_INSET * 2, 0, 22),
             ZIndex = option.ZIndex + 1,
         }) :: any) :: Frame
 
@@ -2102,6 +2159,7 @@ function Module.init(context: any): WidgetLibrary
         addSectionOption = state.addSectionOption,
         addInformationOption = addInformationOption,
         setOptionVisible = setOptionVisible,
+        drawPixelIcon = drawPixelIcon,
     }
 end
 

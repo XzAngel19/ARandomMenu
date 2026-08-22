@@ -32,7 +32,6 @@ function Module.init(context: any): any
     local makeTextLabel: any = host.makeTextLabel
     local notify: any = host.notify
     local Theme: any = host.Theme
-    local ThemeEngine: any = host.ThemeEngine
     local CONTROL_FONT: any = host.CONTROL_FONT
     local TweenService: any = host.TweenService
     local UI_MOTION: any = host.UI_MOTION
@@ -55,6 +54,20 @@ function Module.init(context: any): any
     local applyFeaturePresentation: any = host.applyFeaturePresentation
     local refreshFeatureToggle: any = host.refreshFeatureToggle
     local addFeatureTooltip: any = host.addFeatureTooltip
+    -- The pixel-sprite pen the widget library publishes; a stand-in for the
+    -- harness host, which does not carry it.
+    local drawPixelIcon: any = host.drawPixelIcon
+        or function(parent: Instance, _kind: string, _color: Color3?): Frame
+            local existing: Instance? = (parent :: any):FindFirstChild("PixelIcon")
+            if existing then
+                existing:Destroy()
+            end
+            return create("Frame", {
+                Parent = parent,
+                Name = "PixelIcon",
+                BackgroundTransparency = 1,
+            }) :: Frame
+        end
 
     local function createUniversalFeature(
         name: string,
@@ -231,15 +244,10 @@ function Module.init(context: any): any
                     FontFace = CONTROL_FONT,
                     Position = UDim2.new(1, 0, 0, 0),
                     Size = UDim2.fromOffset(22, feature.collapsedHeight),
-                    Text = "▼",
+                    Text = "",
                     TextSize = 10,
                     ZIndex = 9,
                 }) :: any) :: TextButton
-                if ThemeEngine and type(ThemeEngine.Bind) == "function" then
-                    ThemeEngine.Bind(built, "TextColor3", "enabled")
-                else
-                    built.TextColor3 = Theme.enabled
-                end
                 trackUiConnection(built.MouseButton1Click:Connect(function(): ()
                     toggleExpansion()
                 end))
@@ -247,8 +255,15 @@ function Module.init(context: any): any
                 feature.arrow = built
             end
             if arrow then
-                (arrow :: TextButton).Visible = expandable;
-                (arrow :: TextButton).Text = feature.expanded and "▲" or "▼"
+                (arrow :: TextButton).Visible = expandable
+                -- Wurst's own green pixel triangle, whatever the palette —
+                -- the reference screenshots keep it green on magenta and on
+                -- pink alike. Down while closed, up while open.
+                drawPixelIcon(
+                    arrow :: TextButton,
+                    feature.expanded and "up" or "down",
+                    Color3.fromRGB(0, 204, 0)
+                )
             end
             title.Size = UDim2.new(
                 1,
@@ -290,30 +305,32 @@ function Module.init(context: any): any
         -- that: three nested rounded rectangles for one setting. The panel is
         -- transparent now, so an expanded card shows the card and its rows, and
         -- nothing in between.
+        -- Wurst's child metrics: settings are inset 2 logical (4 px) from
+        -- the row and separated by the same 2-logical gap.
         local options: Frame = (create("Frame", {
             Parent = row,
             Name = "Options",
             Active = true,
             BackgroundTransparency = 1,
             BorderSizePixel = 0,
-            Position = UDim2.fromOffset(8, feature.collapsedHeight),
-            Size = UDim2.new(1, -16, 0, 0),
+            Position = UDim2.fromOffset(4, feature.collapsedHeight),
+            Size = UDim2.new(1, -8, 0, 0),
             Visible = false,
             ZIndex = row.ZIndex + 10,
         }) :: any) :: Frame
         feature.options = options
         create("UIPadding", {
             Parent = options,
-            PaddingBottom = UDim.new(0, 6),
-            PaddingLeft = UDim.new(0, 2),
-            PaddingRight = UDim.new(0, 2),
-            PaddingTop = UDim.new(0, 2),
+            PaddingBottom = UDim.new(0, 4),
+            PaddingLeft = UDim.new(0, 0),
+            PaddingRight = UDim.new(0, 0),
+            PaddingTop = UDim.new(0, 4),
         })
         local optionsLayout: UIListLayout = (create("UIListLayout", {
             Parent = options,
             FillDirection = Enum.FillDirection.Vertical,
             HorizontalAlignment = Enum.HorizontalAlignment.Center,
-            Padding = UDim.new(0, 6),
+            Padding = UDim.new(0, 4),
             SortOrder = Enum.SortOrder.LayoutOrder,
         }) :: any) :: UIListLayout
 
@@ -332,11 +349,11 @@ function Module.init(context: any): any
             local measuredHeight: number = optionsLayout.AbsoluteContentSize.Y
             if visibleOptions > 0 and measuredHeight <= 0 then
                 measuredHeight = declaredHeight
-                    + math.max(0, visibleOptions - 1) * 6
+                    + math.max(0, visibleOptions - 1) * 4
             end
-            -- +8 = the panel's 2px top and 6px bottom UIPadding.
+            -- +8 = the panel's 4px top and 4px bottom UIPadding.
             local optionsHeight: number = measuredHeight + 8
-            local targetOptionsSize: UDim2 = UDim2.new(1, -16, 0, optionsHeight)
+            local targetOptionsSize: UDim2 = UDim2.new(1, -8, 0, optionsHeight)
             local targetRowSize: UDim2 = UDim2.new(
                 1,
                 0,
@@ -587,7 +604,7 @@ function Module.init(context: any): any
                     UDim2.new(1, -30, 0, metrics.cardHeight / 2)
             end
             activationTarget.Size = UDim2.new(1, 0, 0, metrics.cardHeight)
-            options.Position = UDim2.fromOffset(8, metrics.cardHeight)
+            options.Position = UDim2.fromOffset(4, metrics.cardHeight)
             syncArrow()
             updateExpandedSize(false)
         end
