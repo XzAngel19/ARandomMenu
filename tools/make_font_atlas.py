@@ -37,13 +37,25 @@ FONT = "src/gui/Current/Assets/Typography/Monocraft.otf"
 OUT_PNG = "assets/font/monocraft-16.png"
 OUT_JSON = "assets/font/monocraft-16.json"
 SIZE = 16
+# The whole OFL family. Fractional UIScales cannot get pixel-perfect
+# glyphs out of one raster; the runtime picks the size closest to the
+# final physical glyph and snaps to integer device pixels. 16 is the
+# contract size; 8 / 24 / 32 cover scale 0.5 / 1.5 / 2.
+SIZES = (8, 16, 24, 32)
+
+
+def paths_for(size: int) -> tuple[str, str]:
+    return (
+        f"assets/font/monocraft-{size}.png",
+        f"assets/font/monocraft-{size}.json",
+    )
 COLUMNS = 16
 FIRST = 32
 LAST = 126
 
 
-def build() -> tuple[Image.Image, dict]:
-    font = ImageFont.truetype(FONT, SIZE)
+def build(size: int = SIZE) -> tuple[Image.Image, dict]:
+    font = ImageFont.truetype(FONT, size)
     ascent, descent = font.getmetrics()
     advance = int(round(font.getlength("M")))
     cell_w = advance
@@ -60,7 +72,7 @@ def build() -> tuple[Image.Image, dict]:
         draw.text((x, y), chr(code), font=font, fill=(255, 255, 255, 255))
     metrics = {
         "font": "Monocraft (OFL — licence beside the OTF)",
-        "size": SIZE,
+        "size": size,
         "first": FIRST,
         "last": LAST,
         "columns": COLUMNS,
@@ -114,6 +126,20 @@ def main() -> int:
         if open(OUT_JSON, encoding="utf-8").read() != rendered_json:
             print("atlas metrics stale; run tools/make_font_atlas.py")
             return 1
+        # The rest of the family: every committed size must be current.
+        # A missing size fails only if it was ever committed — 16 is the
+        # one mandatory atlas, the rest are the crisp-scale variants.
+        for size in SIZES:
+            if size == SIZE:
+                continue
+            png_path, json_path = paths_for(size)
+            if not (os.path.exists(png_path) and os.path.exists(json_path)):
+                continue
+            sized_image, sized_metrics = build(size)
+            sized_json = json.dumps(sized_metrics, indent=2) + "\n"
+            if open(json_path, encoding="utf-8").read() != sized_json:
+                print(f"atlas {size} metrics stale; run tools/make_font_atlas.py")
+                return 1
         print(
             "atlas ok · "
             + hashlib.sha256(open(OUT_PNG, "rb").read()).hexdigest()[:16]
@@ -123,16 +149,19 @@ def main() -> int:
     if Image is None:
         print("Pillow is required to write the atlas: pip3 install pillow")
         return 1
-    image, metrics = build()
-    rendered_json = json.dumps(metrics, indent=2) + "\n"
-    os.makedirs(os.path.dirname(OUT_PNG), exist_ok=True)
-    image.save(OUT_PNG)
-    with open(OUT_JSON, "w") as handle:
-        handle.write(rendered_json)
-    print(
-        f"atlas {image.width}x{image.height} · cell {metrics['cellWidth']}x"
-        f"{metrics['cellHeight']} · advance {metrics['advance']}"
-    )
+    for size in SIZES:
+        png_path, json_path = paths_for(size)
+        image, metrics = build(size)
+        rendered_json = json.dumps(metrics, indent=2) + "\n"
+        os.makedirs(os.path.dirname(png_path), exist_ok=True)
+        image.save(png_path)
+        with open(json_path, "w") as handle:
+            handle.write(rendered_json)
+        print(
+            f"atlas {size}: {image.width}x{image.height} · cell "
+            f"{metrics['cellWidth']}x{metrics['cellHeight']} · advance "
+            f"{metrics['advance']}"
+        )
     return 0
 
 

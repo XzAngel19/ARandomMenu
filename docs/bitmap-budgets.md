@@ -7,7 +7,7 @@ not releasing.
 
 | Situation | Measured | Ceiling | Why |
 |---|---|---|---|
-| Idle ClickGUI (menu open, five category windows + UI Settings + titles + rows + version) | 402 glyphs / 45 holders | **550** | ~12 glyphs/title × 5 + feature names + chrome |
+| Idle ClickGUI (menu open, five category windows + UI Settings + titles + rows + version) | 552 glyphs (re-measured 2026-08-22 after the numeric rows gained min/max rail labels and UI Settings the Menu style row) | **700** | ~12 glyphs/title × 5 + feature names + chrome |
 | Same + five open Feature Settings | 1273 glyphs / 197 holders | **1600** | labels and values now adopted |
 | Navigator open (delta over the current live set) | 348 glyphs | **800** | 3-column grid of adopted cells |
 | HackList of enabled names | subset of idle | **250** | one ImageLabel per glyph, plus shadow copies if enabled |

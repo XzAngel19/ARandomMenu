@@ -1,0 +1,12 @@
+{
+  "font": "Monocraft (OFL \u2014 licence beside the OTF)",
+  "size": 32,
+  "first": 32,
+  "last": 126,
+  "columns": 16,
+  "cellWidth": 21,
+  "cellHeight": 33,
+  "advance": 21,
+  "ascent": 29,
+  "descent": 4
+}

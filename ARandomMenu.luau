@@ -363,7 +363,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "1bf36048acb1ea12"
+local SOURCE_STAMP: string = "193863fced5826a0"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -1061,19 +1061,56 @@ configData.ui.guiStyle = nil
 -- height sliders stored before the official 200 default existed, and the
 -- WurstLogo colours from the ghost-chip era. One flag, one sweep;
 -- everything falls back to Wurst's own defaults and persists fresh.
-if configData.ui.wurstSchema ~= 2 then
-    configData.ui.wurstSchema = 2
+if configData.ui.wurstSchema ~= 3 then
+    if configData.ui.wurstSchema ~= 2 then
+        -- The pre-Wurst store: drop everything the old shell wrote.
+        configData.values["ClickGUI.Maxheight"] = nil
+        configData.values["ClickGUI.Maxsettingsheight"] = nil
+        configData.values["ClickGUI.Opacity"] = nil
+        configData.values["ClickGUI.Tooltipopacity"] = nil
+        configData.values["WurstLogo.Background"] = nil
+        configData.values["WurstLogo.Text"] = nil
+        configData.values["WurstLogo.Visibility"] = nil
+    end
+    -- Schema 3: the default layout moved to the top row beside the
+    -- wordmark. Saved window geometry from the old 64-px grid is dropped
+    -- once so the new disposition applies; every position moved by hand
+    -- *after* this migration persists exactly as before. Binds and
+    -- module configKeys are untouched.
+    configData.ui.wurstSchema = 3
     configData.ui.windows = {}
-    configData.values["ClickGUI.Maxheight"] = nil
-    configData.values["ClickGUI.Maxsettingsheight"] = nil
-    configData.values["ClickGUI.Opacity"] = nil
-    configData.values["ClickGUI.Tooltipopacity"] = nil
-    configData.values["WurstLogo.Background"] = nil
-    configData.values["WurstLogo.Text"] = nil
-    configData.values["WurstLogo.Visibility"] = nil
     queueConfigSave()
 end
 configData.ui.textScaleCalibrationVersion = 2
+
+-- Wurst or Navigator as the main surface. `UI.MenuStyle` is the stored
+-- name; RightControl and the dock open whichever is selected, RightShift
+-- keeps opening the Navigator directly, and switching styles touches no
+-- module state, no window position and no bind — it only changes what
+-- the open gesture shows.
+state.menuStyle = configData.values["UI.MenuStyle"] == "Navigator"
+    and "Navigator"
+    or "Wurst"
+
+state.openMenuSurface = function(): ()
+    if state.menuStyle == "Navigator" then
+        local navigator: any = state.navigator
+        if navigator and navigator.root and navigator.root.Visible then
+            navigator.Close()
+            return
+        end
+        -- Navigator is the main surface in this style: the category
+        -- windows stay closed behind it instead of peeking through.
+        if state.visible then
+            state.setMenuVisible(false)
+        end
+        if navigator and type(navigator.Open) == "function" then
+            navigator.Open()
+            return
+        end
+    end
+    state.setMenuVisible(not state.visible)
+end
 
 -- ---------------------------------------------------------------------------
 -- Layout controller
@@ -1248,6 +1285,33 @@ local AssetManager: any = {
         bitmapFontAtlas = {
             url = REPOSITORY_RAW_BASE .. "assets/font/monocraft-16.png",
             fileName = "monocraft-16-v1.png",
+            fallback = "",
+            version = 1,
+            assetType = "image/png",
+        },
+        -- The crisp-scale variants of the same OFL fallback: fractional
+        -- UIScales cannot get pixel-perfect glyphs out of one raster, so
+        -- the renderer picks the size closest to the final physical glyph
+        -- and snaps to device pixels. Metrics for these are fixed at
+        -- build time by tools/make_font_atlas.py and mirrored in the
+        -- contract's atlas family below.
+        bitmapFontAtlas8 = {
+            url = REPOSITORY_RAW_BASE .. "assets/font/monocraft-8.png",
+            fileName = "monocraft-8-v1.png",
+            fallback = "",
+            version = 1,
+            assetType = "image/png",
+        },
+        bitmapFontAtlas24 = {
+            url = REPOSITORY_RAW_BASE .. "assets/font/monocraft-24.png",
+            fileName = "monocraft-24-v1.png",
+            fallback = "",
+            version = 1,
+            assetType = "image/png",
+        },
+        bitmapFontAtlas32 = {
+            url = REPOSITORY_RAW_BASE .. "assets/font/monocraft-32.png",
+            fileName = "monocraft-32-v1.png",
             fallback = "",
             version = 1,
             assetType = "image/png",
@@ -1891,6 +1955,8 @@ state.bitmapText = {
         cellWidth = 11,
         cellHeight = 17,
         advance = 11,
+        ascent = 15,
+        descent = 2,
         -- Codepoints outside the grid render as this cell ("?"), the way
         -- Minecraft substitutes its missing glyph instead of collapsing
         -- the advance and shifting everything after it.
@@ -1931,6 +1997,73 @@ state.bitmapText = {
         return (create("TextLabel", resolved) :: any) :: TextLabel
     end,
 }
+
+-- The crisp-scale family: the same OFL Monocraft rasterised at 8 / 16 /
+-- 24 / 32 by tools/make_font_atlas.py. A fractional UIScale cannot get
+-- pixel-perfect glyphs out of one raster, so draw() picks the member
+-- whose size is closest to the final *physical* glyph and snaps every
+-- rect to integer device pixels. Layout metrics (advances, packing,
+-- measure) always come from the 16 px contract atlas, so which raster
+-- paints never moves a single caret. 16 is the mandatory member; the
+-- rest resolve lazily and are simply better pixels when present.
+state.bitmapText.family = {
+    [8] = {
+        ready = false, image = nil :: string?, size = 8, columns = 16,
+        cellWidth = 5, cellHeight = 9, advance = 5, ascent = 8, descent = 1,
+        asset = "bitmapFontAtlas8",
+    },
+    [16] = state.bitmapText.atlas,
+    [24] = {
+        ready = false, image = nil :: string?, size = 24, columns = 16,
+        cellWidth = 16, cellHeight = 25, advance = 16, ascent = 22, descent = 3,
+        asset = "bitmapFontAtlas24",
+    },
+    [32] = {
+        ready = false, image = nil :: string?, size = 32, columns = 16,
+        cellWidth = 21, cellHeight = 33, advance = 21, ascent = 29, descent = 4,
+        asset = "bitmapFontAtlas32",
+    },
+}
+
+-- The UIScale the popup layer runs at — the number that turns logical
+-- offsets into device pixels. Everything the renderer snaps, it snaps
+-- against this.
+state.bitmapText.layerScale = function(): number
+    local instance: any = PopupLayer:FindFirstChild("ClickGuiScale")
+    local value: number = instance and tonumber(instance.Scale) or 1
+    if value ~= value or value <= 0 then
+        value = 1
+    end
+    return value
+end
+
+-- The raster for a physical glyph height: the ready family member with
+-- the closest size, larger on a tie (downscaling a pixel font blurs
+-- less than upscaling it). The 16 px member is the floor — it is the
+-- one the boot resolves first.
+state.bitmapText.pickAtlas = function(physicalSize: number): any
+    local contract: any = state.bitmapText
+    local best: any = nil
+    local bestDistance: number = math.huge
+    for _, member: any in pairs(contract.family) do
+        if member.ready and member.image then
+            local distance: number = math.abs(member.size - physicalSize)
+            if distance < bestDistance
+                or (distance == bestDistance and best ~= nil
+                    and member.size > best.size) then
+                best = member
+                bestDistance = distance
+            end
+        end
+    end
+    return best or contract.atlas
+end
+
+-- The baseline a mixed-size line aligns to, in logical pixels.
+state.bitmapText.baselineFor = function(textSize: number?): number
+    local contract: any = state.bitmapText
+    return contract.atlas.ascent * ((tonumber(textSize) or 16) / contract.atlas.size)
+end
 
 -- One codepoint at a time, UTF-8 when the text is valid UTF-8 and raw
 -- bytes when it is not — a fallback glyph per byte beats an error, and
@@ -2013,11 +2146,17 @@ state.bitmapText.draw = function(
 
     -- The signature is the draw: same text, colours, size, mode and
     -- layout means the pixels are already right and the call costs a
-    -- string compare.
+    -- string compare. The device scale and the raster choice are part
+    -- of it: a UIScale change or a sharper atlas arriving re-renders,
+    -- and nothing else does.
+    local deviceScale: number = contract.layerScale()
+    local raster: any = contract.pickAtlas(textSize * deviceScale)
     local parts: {string} = {
         tostring(textSize), align, tostring(shadow),
         tostring(maxWidth), tostring(atlas.ready),
         tostring(transparency),
+        string.format("%.4f", deviceScale),
+        tostring(raster and raster.size),
     }
     for _, segment: any in ipairs(segments) do
         local color: Color3 = segment.color or Theme.text
@@ -2102,26 +2241,42 @@ state.bitmapText.draw = function(
         if record.fallback then
             (record.fallback :: TextLabel).Visible = false
         end
+        -- Layout runs on the 16 px contract atlas — advances, packing and
+        -- measure never depend on which raster paints. The raster is the
+        -- family member nearest the physical glyph, and every rect it
+        -- draws is snapped to integer device pixels: a pixel font at a
+        -- fractional position is blur, and blur is worse than no atlas.
         local scale: number = textSize / atlas.size
-        local glyphWidth: number = atlas.cellWidth * scale
-        local glyphHeight: number = atlas.cellHeight * scale
-        local lineAdvance: number = contract.lineHeight * (textSize / contract.size)
-        local shadowOffset: number = 2 * scale
+        local function snapPx(value: number): number
+            return math.round(value * deviceScale) / deviceScale
+        end
+        local rasterScale: number = textSize / raster.size
+        local pixelStep: number = 1 / deviceScale
+        local glyphWidth: number = math.max(
+            pixelStep,
+            snapPx(raster.cellWidth * rasterScale)
+        )
+        local glyphHeight: number = math.max(
+            pixelStep,
+            snapPx(raster.cellHeight * rasterScale)
+        )
+        local lineAdvance: number = contract.lineHeight * scale
+        local shadowOffset: number = math.max(pixelStep, snapPx(2 * scale))
         local x: number = 0
         local y: number = 0
         local lineCount: number = 1
         local function blit(code: number, paint: Color3, dx: number, dy: number, z: number): ()
             local index: number = code - atlas.first
             local glyph: ImageLabel = nextGlyph()
-            glyph.Image = atlas.image
+            glyph.Image = raster.image
             glyph.ImageColor3 = paint
             glyph.ImageTransparency = transparency
             glyph.ImageRectOffset = Vector2.new(
-                (index % atlas.columns) * atlas.cellWidth,
-                (index // atlas.columns) * atlas.cellHeight
+                (index % raster.columns) * raster.cellWidth,
+                (index // raster.columns) * raster.cellHeight
             )
-            glyph.ImageRectSize = Vector2.new(atlas.cellWidth, atlas.cellHeight)
-            glyph.Position = UDim2.fromOffset(dx, dy)
+            glyph.ImageRectSize = Vector2.new(raster.cellWidth, raster.cellHeight)
+            glyph.Position = UDim2.fromOffset(snapPx(dx), snapPx(dy))
             glyph.Size = UDim2.fromOffset(glyphWidth, glyphHeight)
             glyph.ZIndex = z
         end
@@ -2372,6 +2527,54 @@ task.spawn(function(): ()
         state.bitmapText.source = "unavailable"
         return
     end
+    -- A locally installed Minecraft 1.18.1 pack first. It is never
+    -- downloaded here and never committed: tools/install_minecraft_font.py
+    -- builds MinecraftFont/ from the official client on the user's own
+    -- machine, hash-verified against the pinned manifest, and the user
+    -- drops the folder into the executor workspace. The runtime checks the
+    -- manifest before trusting a pixel; when it holds, the renderer flips
+    -- to minecraft-exact through the same loadExactAtlas plug.
+    pcall(function(): ()
+        if type(isfile) ~= "function" or type(readfile) ~= "function" then
+            return
+        end
+        local manifestPath: string = "MinecraftFont/manifest.json"
+        if not isfile(manifestPath) then
+            return
+        end
+        local manifest: any = HttpService:JSONDecode(readfile(manifestPath))
+        if type(manifest) ~= "table"
+            or manifest.format ~= "wurst-minecraft-font-v1"
+            or manifest.version ~= "1.18.1"
+            or type(manifest.runtime) ~= "table" then
+            warn("[" .. PRODUCT.logPrefix
+                .. ":Assets] MinecraftFont/ present but not the 1.18.1 pack; ignoring")
+            return
+        end
+        local imagePath: string = "MinecraftFont/"
+            .. tostring(manifest.runtime.image or "runtime-ascii.png")
+        if not isfile(imagePath) then
+            warn("[" .. PRODUCT.logPrefix
+                .. ":Assets] MinecraftFont/ manifest names a missing atlas; ignoring")
+            return
+        end
+        -- Bare, like loadConfig reads isfile/readfile: the environment
+        -- helper lives inside the asset manager's own block. getsynasset
+        -- executors are reached through the manager's registry path; the
+        -- local pack needs only the declared getcustomasset.
+        if type(getcustomasset) ~= "function" then
+            return
+        end
+        local assetOk: boolean, assetId: any = pcall(getcustomasset, imagePath)
+        if assetOk and type(assetId) == "string" and assetId ~= "" then
+            state.bitmapText.loadExactAtlas(assetId, manifest.runtime)
+            print("[" .. PRODUCT.logPrefix
+                .. ":Assets] Minecraft 1.18.1 exact font loaded from MinecraftFont/")
+        end
+    end)
+    if state.bitmapText.source == "minecraft-exact" then
+        return
+    end
     -- An exact atlas, if a local build registered one. Unknown keys are
     -- an error path in the asset manager, so the probe is pcall'd and
     -- silent — absence is the normal case, not a warning.
@@ -2399,6 +2602,21 @@ task.spawn(function(): ()
         print("[" .. PRODUCT.logPrefix
             .. ":Assets] Minecraft-exact atlas not present; rendering with "
             .. "the Monocraft fallback (OFL)")
+        -- The crisp-scale variants, silently: each family member that
+        -- resolves is simply better pixels at its physical size, and the
+        -- signatures carry the raster choice so only surfaces whose
+        -- choice changes redo any work.
+        for _, member: any in pairs(state.bitmapText.family) do
+            if member ~= state.bitmapText.atlas and member.asset then
+                pcall(function(): ()
+                    local memberId: string? = (state.resolveAsset(member.asset))
+                    if memberId then
+                        member.image = memberId
+                        member.ready = true
+                    end
+                end)
+            end
+        end
     end
     for holder: any, record: any in pairs(state.bitmapText._live) do
         if holder.Parent ~= nil and record.request ~= nil then
@@ -2413,6 +2631,26 @@ task.spawn(function(): ()
     end
     for _, listener: () -> () in ipairs(state.bitmapText.onReady) do
         pcall(listener)
+    end
+end)
+
+-- A viewport or Scale-slider change moves the device scale, which moves
+-- every snapped rect and possibly the raster choice. One walk over the
+-- live draws; the signatures carry the scale, so an unchanged surface
+-- costs a string compare and a changed one redraws in place — no stale
+-- glyphs from the previous scale survive, because the redraw reuses the
+-- same pooled labels.
+state.onLayout(function(): ()
+    for holder: any, record: any in pairs(state.bitmapText._live) do
+        if holder.Parent ~= nil and record.request ~= nil then
+            pcall(function(): ()
+                state.bitmapText.draw(
+                    record.request.parent,
+                    record.request.segments,
+                    record.request.options
+                )
+            end)
+        end
     end
 end)
 
@@ -3084,6 +3322,63 @@ state.mvsdFeatures = {}
 local allFeatures: {any} = {}
 local featureConnections = {}
 
+-- The dock's search resolver. One query, one honest answer: an exact
+-- name match toggles that module; a unique substring match toggles it
+-- too; several candidates is "ambiguous" with the names spelled out;
+-- none is "not found". Only real module toggles — action rows and
+-- category headings are administrative surface and never run from a
+-- search box. D's registry can replace this wholesale by reassigning
+-- the field; the dock calls whatever is published here.
+state.invokeModuleSearch = function(query: string): boolean
+    local wanted: string = string.lower(tostring(query or ""):gsub("^%s+", ""):gsub("%s+$", ""))
+    if wanted == "" then
+        return false
+    end
+    local exact: any = nil
+    local partial: {any} = {}
+    for _, feature: any in ipairs(allFeatures) do
+        if not feature.isAction and not feature.isCategory and feature.name then
+            local name: string = string.lower(tostring(feature.name))
+            if name == wanted then
+                exact = feature
+                break
+            end
+            if string.find(name, wanted, 1, true) ~= nil then
+                table.insert(partial, feature)
+            end
+        end
+    end
+    local target: any = exact or (#partial == 1 and partial[1] or nil)
+    if target then
+        if type(target.activate) == "function" then
+            local ok: boolean, failure: any = pcall(target.activate)
+            if ok then
+                notify(tostring(target.name) .. ": "
+                    .. (target.enabled and "enabled" or "disabled"))
+                return true
+            end
+            warn("[" .. PRODUCT.logPrefix .. "] search toggle: " .. tostring(failure))
+            return false
+        end
+        notify(tostring(target.name) .. " has nothing to toggle")
+        return false
+    end
+    if #partial > 1 then
+        local names: {string} = {}
+        for index: number, feature: any in ipairs(partial) do
+            if index > 4 then
+                table.insert(names, "…")
+                break
+            end
+            table.insert(names, tostring(feature.name))
+        end
+        notify("Ambiguous: " .. table.concat(names, ", "))
+        return false
+    end
+    notify("No module matches \"" .. tostring(query) .. "\"")
+    return false
+end
+
 -- Every module card re-applies the responsive metrics through its own
 -- `applyLayout` hook when the viewport mode changes. Registering the listener
 -- once here (instead of once per card) keeps the listener list short and means
@@ -3271,7 +3566,7 @@ do
         if travelled >= 6 then
             return
         end
-        state.setMenuVisible(not state.visible)
+        state.openMenuSurface()
     end))
 end
 
@@ -5443,7 +5738,7 @@ state.globalInputBeganConnection = UserInputService.InputBegan:Connect(function(
 
     if input.UserInputType == Enum.UserInputType.Keyboard
         and input.KeyCode == state.toggleKey then
-        state.setMenuVisible(not state.visible)
+        state.openMenuSurface()
     end
 end)
 end

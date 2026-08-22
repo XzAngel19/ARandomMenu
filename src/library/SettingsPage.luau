@@ -1496,6 +1496,36 @@ function Module.init(context: any): any
         "GameCheck", "Game check: " .. recognised, nil, {static = true}
     )
 
+    -- Font status, honestly: which of the three sources is really
+    -- rendering. Clicking the row prints the install instructions for the
+    -- exact pack — the runtime never downloads Mojang assets itself.
+    local function fontStatusLabel(): string
+        local sourceName: string = tostring(
+            (state.bitmapText and state.bitmapText.source) or "unavailable"
+        )
+        if sourceName == "minecraft-exact" then
+            return "Font: Minecraft 1.18.1 (exact, local pack)"
+        end
+        if sourceName == "monocraft-fallback" then
+            return "Font: Monocraft fallback (OFL)"
+        end
+        return "Font: vector stand-in (no atlas)"
+    end
+    local fontHandle: any = state.wurstOptions.RegisterAction(
+        "FontStatus",
+        fontStatusLabel(),
+        function(): ()
+            notify("Exact font: run tools/install_minecraft_font.py --update "
+                .. "on your PC, then copy MinecraftFont/ into the executor "
+                .. "workspace and reinject")
+        end
+    )
+    if state.bitmapText and type(state.bitmapText.onReady) == "table" then
+        table.insert(state.bitmapText.onReady, function(): ()
+            fontHandle.SetLabel(fontStatusLabel())
+        end)
+    end
+
     local function openWurstOptions(): ()
         if optionsRecord then
             raiseOpen(optionsRecord)
@@ -1606,6 +1636,26 @@ function Module.init(context: any): any
             record.resize()
         end
     end)
+
+    -- Which surface the open gesture shows: Wurst's ClickGUI windows, or
+    -- the Navigator alone as the main screen. Stored under UI.MenuStyle;
+    -- switching touches nothing else — no enabled state, no settings, no
+    -- window positions, no binds. RightShift keeps its direct Navigator
+    -- door either way.
+    local menuStyles: {string} = {"Wurst", "Navigator"}
+    addCycleOption(
+        uiPanel,
+        "Menu style",
+        menuStyles,
+        table.find(menuStyles, tostring(state.menuStyle)) or 1,
+        function(value: string): ()
+            uiSettingsValues["Menu style"] = value
+            state.menuStyle = value
+            configData.values["UI.MenuStyle"] = value
+            queueConfigSave()
+        end
+    )
+    uiSettingsValues["Menu style"] = tostring(state.menuStyle)
 
     -- UI Settings is eager and its rows are all in place now: one reflow at
     -- the real measured size keeps its top-right default when that spot is

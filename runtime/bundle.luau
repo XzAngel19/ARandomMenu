@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "1bf36048acb1ea12",
+    stamp = "193863fced5826a0",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -774,7 +774,8 @@ function Module.init(context: any): WidgetLibrary
         minimum: number,
         maximum: number,
         callback: (number) -> (),
-        hintText: string?
+        hintText: string?,
+        stepValue: number?
     ): Frame
         local optionKey: string =
             feature.configKey .. "." .. labelText:gsub("%W", "")
@@ -802,6 +803,16 @@ function Module.init(context: any): WidgetLibrary
                 UDim2.new(0.55, -CHILD_INSET, 0, 22)
         end
 
+        local step: number? = tonumber(stepValue)
+        if step ~= nil and step <= 0 then
+            step = nil
+        end
+        -- The row's numeric contract, readable by anything that walks it:
+        -- the values are metadata whether or not the labels are bitmap.
+        option:SetAttribute("Min", minimum)
+        option:SetAttribute("Max", maximum)
+        option:SetAttribute("Step", step or (integerOnly and 1 or 0))
+
         local slider: TextButton = (create("TextButton", {
             TextTruncate = Enum.TextTruncate.AtEnd,
             Parent = option,
@@ -816,14 +827,62 @@ function Module.init(context: any): WidgetLibrary
             ZIndex = option.ZIndex + 1,
         }) :: any) :: TextButton
 
+        -- The interval, spelled on the rail line: minimum at the left end,
+        -- maximum at the right, the rail between them. The current value
+        -- stays editable in the box above; nobody has to drag to an end to
+        -- learn what the ends are.
+        local minText: string = formatCompactNumber(minimum)
+        local maxText: string = formatCompactNumber(maximum)
+        local minWidth: number = #minText * 9 + 4
+        local maxWidth: number = #maxText * 9 + 4
+        create("TextLabel", {
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            Parent = slider,
+            Name = "MinLabel",
+            BackgroundTransparency = 1,
+            FontFace = CONTROL_FONT,
+            Position = UDim2.new(0, CHILD_INSET, 0, 0),
+            Size = UDim2.new(0, minWidth, 1, 0),
+            Text = minText,
+            TextColor3 = Theme.textMuted,
+            TextSize = 12,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            ZIndex = option.ZIndex + 1,
+        })
+        create("TextLabel", {
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            Parent = slider,
+            Name = "MaxLabel",
+            AnchorPoint = Vector2.new(1, 0),
+            BackgroundTransparency = 1,
+            FontFace = CONTROL_FONT,
+            Position = UDim2.new(1, -CHILD_INSET, 0, 0),
+            Size = UDim2.new(0, maxWidth, 1, 0),
+            Text = maxText,
+            TextColor3 = Theme.textMuted,
+            TextSize = 12,
+            TextXAlignment = Enum.TextXAlignment.Right,
+            ZIndex = option.ZIndex + 1,
+        })
+
         local track: Frame = (create("Frame", {
             Parent = slider,
             Name = "Track",
             BackgroundColor3 = Color3.fromRGB(255, 255, 255),
             BackgroundTransparency = 0.9,
             BorderSizePixel = 0,
-            Position = UDim2.new(0, CHILD_INSET, 0, (22 - SLIDER_BAR_HEIGHT) // 2),
-            Size = UDim2.new(1, -CHILD_INSET * 2, 0, SLIDER_BAR_HEIGHT),
+            Position = UDim2.new(
+                0,
+                CHILD_INSET + minWidth + CHILD_GAP,
+                0,
+                (22 - SLIDER_BAR_HEIGHT) // 2
+            ),
+            Size = UDim2.new(
+                1,
+                -(CHILD_INSET * 2 + minWidth + maxWidth + CHILD_GAP * 2),
+                0,
+                SLIDER_BAR_HEIGHT
+            ),
             ZIndex = option.ZIndex + 1,
         }) :: any) :: Frame
 
@@ -870,21 +929,30 @@ function Module.init(context: any): WidgetLibrary
             .. formatCompactNumber(maximum)
 
         local editing: boolean = false
+        -- Every path — drag, typed text, stored value — lands on the same
+        -- rule: snap to the step (or to integers when the row is integer),
+        -- then clamp. NaN and inf never reach here; isFiniteNumber refuses
+        -- them at the door.
+        local function quantize(raw: number): number
+            local stepped: number = raw
+            if step ~= nil then
+                stepped = minimum
+                    + math.round((stepped - minimum) / (step :: number))
+                        * (step :: number)
+            elseif integerOnly then
+                stepped = math.round(stepped)
+            end
+            return math.clamp(stepped, minimum, maximum)
+        end
         local function setValue(
             nextValue: number,
             persist: boolean,
-            fromSlider: boolean
+            _fromSlider: boolean
         ): ()
             if not isFiniteNumber(nextValue) then
                 return
             end
-            value = nextValue
-            if fromSlider then
-                value = math.clamp(value, minimum, maximum)
-                if integerOnly then
-                    value = math.round(value)
-                end
-            end
+            value = quantize(nextValue)
             local alpha: number = maximum == minimum
                 and 0
                 or math.clamp((value - minimum) / (maximum - minimum), 0, 1)
@@ -1055,21 +1123,61 @@ function Module.init(context: any): WidgetLibrary
         local lowKnob: Frame = makeKnob("Low")
         local highKnob: Frame = makeKnob("High")
 
-        local readout: TextLabel = (create("TextLabel", {
+        -- Both ends editable, the way the single-value box already is:
+        -- low on the left of the dash, high on the right. Enter or focus
+        -- loss confirms; junk restores; the pair keeps low <= high.
+        local step: number? = tonumber(definition.step)
+        if step ~= nil and step <= 0 then
+            step = nil
+        end
+        option:SetAttribute("Min", minimum)
+        option:SetAttribute("Max", maximum)
+        option:SetAttribute("Step", step or (integerOnly and 1 or 0))
+        local highBox: TextBox = (makeTextBox(option, "") :: any) :: TextBox
+        highBox.Name = "HighValue"
+        highBox.AnchorPoint = Vector2.new(1, 0)
+        highBox.Position = UDim2.new(1, -CHILD_INSET, 0, 0)
+        highBox.Size = UDim2.fromOffset(52, 22)
+        highBox.BackgroundTransparency = 1
+        highBox.TextColor3 = Theme.textMuted
+        highBox.TextSize = LABEL_FONT_SIZE
+        highBox.TextXAlignment = Enum.TextXAlignment.Right
+        highBox.TextTruncate = Enum.TextTruncate.AtEnd
+        highBox.ZIndex = option.ZIndex + 2
+        local _dash: TextLabel = (create("TextLabel", {
             TextTruncate = Enum.TextTruncate.AtEnd,
             Parent = option,
-            Name = "RangeValue",
+            Name = "RangeDash",
             AnchorPoint = Vector2.new(1, 0),
             BackgroundTransparency = 1,
             FontFace = CONTROL_FONT,
-            Position = UDim2.new(1, -CHILD_INSET, 0, 0),
-            Size = UDim2.new(0.42, 0, 0, 22),
-            Text = "",
+            Position = UDim2.new(1, -CHILD_INSET - 52, 0, 0),
+            Size = UDim2.fromOffset(14, 22),
+            Text = " – ",
             TextColor3 = Theme.textMuted,
             TextSize = LABEL_FONT_SIZE,
-            TextXAlignment = Enum.TextXAlignment.Right,
+            TextXAlignment = Enum.TextXAlignment.Center,
             ZIndex = option.ZIndex + 2,
         }) :: any) :: TextLabel
+        local lowBox: TextBox = (makeTextBox(option, "") :: any) :: TextBox
+        lowBox.Name = "LowValue"
+        lowBox.AnchorPoint = Vector2.new(1, 0)
+        lowBox.Position = UDim2.new(1, -CHILD_INSET - 52 - 14, 0, 0)
+        lowBox.Size = UDim2.fromOffset(52, 22)
+        lowBox.BackgroundTransparency = 1
+        lowBox.TextColor3 = Theme.textMuted
+        lowBox.TextSize = LABEL_FONT_SIZE
+        lowBox.TextXAlignment = Enum.TextXAlignment.Right
+        lowBox.TextTruncate = Enum.TextTruncate.AtEnd
+        lowBox.ZIndex = option.ZIndex + 2
+        for _, box: TextBox in ipairs({lowBox, highBox}) do
+            local stroke: UIStroke? = box:FindFirstChild("StyleStroke") :: UIStroke?
+            if stroke then
+                (stroke :: UIStroke).Transparency = 1
+            end
+        end
+        local editingLow: boolean = false
+        local editingHigh: boolean = false
 
         local function alphaOf(value: number): number
             if maximum == minimum then
@@ -1085,7 +1193,12 @@ function Module.init(context: any): WidgetLibrary
             span.Size = UDim2.fromScale(math.max(highAlpha - lowAlpha, 0), 1)
             lowKnob.Position = UDim2.fromScale(lowAlpha, 0.5)
             highKnob.Position = UDim2.fromScale(highAlpha, 0.5)
-            readout.Text = formatCompactNumber(low) .. " – " .. formatCompactNumber(high)
+            if not editingLow then
+                lowBox.Text = formatCompactNumber(low)
+            end
+            if not editingHigh then
+                highBox.Text = formatCompactNumber(high)
+            end
             if type(definition.onChanged) == "function" then
                 definition.onChanged(low, high)
             end
@@ -1108,7 +1221,27 @@ function Module.init(context: any): WidgetLibrary
                 1
             )
             local value: number = minimum + (maximum - minimum) * alpha
-            return integerOnly and math.round(value) or value
+            if step ~= nil then
+                value = minimum
+                    + math.round((value - minimum) / (step :: number))
+                        * (step :: number)
+            elseif integerOnly then
+                value = math.round(value)
+            end
+            return math.clamp(value, minimum, maximum)
+        end
+
+        -- The typed path shares the drag path's rules: quantise, clamp,
+        -- and keep the pair ordered. Invalid text restores the old value.
+        local function quantizeTyped(raw: number): number
+            if step ~= nil then
+                raw = minimum
+                    + math.round((raw - minimum) / (step :: number))
+                        * (step :: number)
+            elseif integerOnly then
+                raw = math.round(raw)
+            end
+            return math.clamp(raw, minimum, maximum)
         end
 
         local function updateFromScreenX(screenX: number): ()
@@ -1150,6 +1283,43 @@ function Module.init(context: any): WidgetLibrary
             }
         end))
 
+        trackUiConnection(lowBox.Focused:Connect(function(): ()
+            editingLow = true
+            lowBox.Text = tostring(low)
+            lowBox.CursorPosition = #lowBox.Text + 1
+        end))
+        trackUiConnection(lowBox.FocusLost:Connect(function(): ()
+            local parsed: number? = tonumber(lowBox.Text)
+            editingLow = false
+            if not isFiniteNumber(parsed) then
+                lowBox.Text = formatCompactNumber(low)
+                notify(labelText .. ": invalid numeric value")
+                return
+            end
+            low = math.min(quantizeTyped(parsed :: number), high)
+            refreshRange(true)
+            notify(labelText .. ": "
+                .. formatCompactNumber(low) .. " – " .. formatCompactNumber(high))
+        end))
+        trackUiConnection(highBox.Focused:Connect(function(): ()
+            editingHigh = true
+            highBox.Text = tostring(high)
+            highBox.CursorPosition = #highBox.Text + 1
+        end))
+        trackUiConnection(highBox.FocusLost:Connect(function(): ()
+            local parsed: number? = tonumber(highBox.Text)
+            editingHigh = false
+            if not isFiniteNumber(parsed) then
+                highBox.Text = formatCompactNumber(high)
+                notify(labelText .. ": invalid numeric value")
+                return
+            end
+            high = math.max(quantizeTyped(parsed :: number), low)
+            refreshRange(true)
+            notify(labelText .. ": "
+                .. formatCompactNumber(low) .. " – " .. formatCompactNumber(high))
+        end))
+
         task.defer(function(): ()
             if option.Parent then
                 refreshRange(false)
@@ -1165,6 +1335,80 @@ function Module.init(context: any): WidgetLibrary
     -- the options underneath it and the value is picked directly, instead of
     -- clicking the same button four times to get back to the one you wanted.
     state.closeChoiceList = function(): () end
+
+    -- APPLY-4, 7.54.1's closeInvalidPopups: a popup dies with its owner.
+    -- Walk up from the row that opened it to the scrolling body and the
+    -- window root; any of these invalidates the popup — the window hiding
+    -- (close, or the menu closing), collapsing (the body hides), being
+    -- destroyed, or the owner row scrolling out of the body's clip. The
+    -- returned connections belong to the popup and are disconnected with
+    -- it. The harness's mock instances hold AbsolutePosition at zero, so
+    -- the scroll test never false-fires there.
+    local function watchPopupOwner(
+        owner: any,
+        onInvalid: () -> ()
+    ): {RBXScriptConnection}
+        local connections: {RBXScriptConnection} = {}
+        if owner == nil then
+            return connections
+        end
+        local scroller: any = nil
+        local windowRoot: any = nil
+        local node: any = owner
+        while node ~= nil do
+            if scroller == nil and type(node.IsA) == "function"
+                and node:IsA("ScrollingFrame") then
+                scroller = node
+                windowRoot = node.Parent
+                break
+            end
+            node = node.Parent
+        end
+        local function watch(instance: any, property: string, test: () -> boolean): ()
+            pcall(function(): ()
+                table.insert(
+                    connections,
+                    instance:GetPropertyChangedSignal(property):Connect(function(): ()
+                        if test() then
+                            onInvalid()
+                        end
+                    end)
+                )
+            end)
+        end
+        if windowRoot then
+            watch(windowRoot, "Visible", function(): boolean
+                return windowRoot.Visible ~= true
+            end)
+            pcall(function(): ()
+                table.insert(
+                    connections,
+                    windowRoot.AncestryChanged:Connect(function(): ()
+                        if windowRoot.Parent == nil then
+                            onInvalid()
+                        end
+                    end)
+                )
+            end)
+        end
+        if scroller then
+            -- Collapse hides the body; scrolling can clip the row away.
+            watch(scroller, "Visible", function(): boolean
+                return scroller.Visible ~= true
+            end)
+            watch(scroller, "CanvasPosition", function(): boolean
+                local ok: boolean, clippedOut: any = pcall(function(): boolean
+                    local top: number = scroller.AbsolutePosition.Y
+                    local bottom: number = top + scroller.AbsoluteSize.Y
+                    local rowTop: number = owner.AbsolutePosition.Y
+                    local rowBottom: number = rowTop + owner.AbsoluteSize.Y
+                    return rowBottom < top or rowTop > bottom
+                end)
+                return ok and clippedOut == true
+            end)
+        end
+        return connections
+    end
 
     local function openChoiceList(
         anchor: TextButton,
@@ -1277,6 +1521,7 @@ function Module.init(context: any): WidgetLibrary
 
         local closed: boolean = false
         local outsideConnection: RBXScriptConnection? = nil
+        local ownerConnections: {RBXScriptConnection} = {}
         local function close(): ()
             if closed then
                 return
@@ -1286,10 +1531,19 @@ function Module.init(context: any): WidgetLibrary
                 outsideConnection:Disconnect()
                 outsideConnection = nil
             end
+            for _, connection: RBXScriptConnection in ipairs(ownerConnections) do
+                pcall(function(): ()
+                    connection:Disconnect()
+                end)
+            end
+            ownerConnections = {}
             list:Destroy()
             state.closeChoiceList = function(): () end
         end
         state.closeChoiceList = close
+        -- APPLY-4: the list dies when its owner window closes, collapses,
+        -- hides, is destroyed, or the owner row scrolls out of the clip.
+        ownerConnections = watchPopupOwner(anchor, close)
 
         local rowsByValue: {[string]: TextButton} = {}
         for itemIndex: number, value: string in ipairs(values) do
@@ -1456,6 +1710,7 @@ function Module.init(context: any): WidgetLibrary
 
         local closed: boolean = false
         local outsideConnection: RBXScriptConnection? = nil
+        local ownerConnections: {RBXScriptConnection} = {}
         local function close(): ()
             if closed then
                 return
@@ -1465,10 +1720,19 @@ function Module.init(context: any): WidgetLibrary
                 outsideConnection:Disconnect()
                 outsideConnection = nil
             end
+            for _, connection: RBXScriptConnection in ipairs(ownerConnections) do
+                pcall(function(): ()
+                    connection:Disconnect()
+                end)
+            end
+            ownerConnections = {}
             list:Destroy()
             state.closeChoiceList = function(): () end
         end
         state.closeChoiceList = close
+        -- APPLY-4: the list dies when its owner window closes, collapses,
+        -- hides, is destroyed, or the owner row scrolls out of the clip.
+        ownerConnections = watchPopupOwner(anchor, close)
 
         local function makeRow(text: string, order: number): TextButton
             local row: TextButton = (create("TextButton", {
@@ -1899,7 +2163,7 @@ function Module.init(context: any): WidgetLibrary
 
     local colorPicker = {}
 
-    colorPicker.open = function(initialColor, onApply)
+    colorPicker.open = function(initialColor, onApply, ownerRow)
         if not colorPicker.panel then
             local panel = create("Frame", {
                 Parent = PopupLayer,
@@ -2199,6 +2463,24 @@ function Module.init(context: any): WidgetLibrary
         colorPicker.callback = onApply
         colorPicker.panel.Visible = true
         colorPicker.update()
+        -- APPLY-4 for the picker: it hides when its owner row's window
+        -- closes, collapses, hides, dies, or the row scrolls out of the
+        -- clip. The watch belongs to this opening; the next open replaces
+        -- it, and firing disconnects itself.
+        for _, connection in ipairs(colorPicker.ownerConnections or {}) do
+            pcall(function()
+                connection:Disconnect()
+            end)
+        end
+        colorPicker.ownerConnections = watchPopupOwner(ownerRow, function()
+            colorPicker.panel.Visible = false
+            for _, connection in ipairs(colorPicker.ownerConnections or {}) do
+                pcall(function()
+                    connection:Disconnect()
+                end)
+            end
+            colorPicker.ownerConnections = {}
+        end)
     end
 
     -- Published so the shell's teardown can drop the two drag connections the
@@ -2277,7 +2559,7 @@ function Module.init(context: any): WidgetLibrary
                 configData.values[optionKey] = colorToConfig(color)
                 callback(color)
                 queueConfigSave()
-            end)
+            end, swatch)
         end)
 
         callback(color)
@@ -6156,6 +6438,12 @@ function Module.init(context: any): any
                     if root.Parent == nil then
                         return
                     end
+                    -- The clip is read from the window's width *now*, not
+                    -- the width it was born with: repack narrows feature
+                    -- settings after the real measure, and a stale clip is
+                    -- exactly the ghost title running over the chrome
+                    -- buttons the capture showed. 68 = the chrome span
+                    -- plus the 8 px inset.
                     bitmapText.draw(bar, {
                         {text = definition.title or id, color = Theme.accentText},
                     }, {
@@ -6164,13 +6452,22 @@ function Module.init(context: any): any
                         ZIndex = 3,
                         AnchorPoint = Vector2.new(0, 0.5),
                         Position = UDim2.new(0, 8, 0.5, 0),
-                        maxWidth = math.max(40, definition.size.X - 68),
+                        maxWidth = math.max(40, root.Size.X.Offset - 68),
                     })
                 end
                 paintTitle()
                 if ThemeEngine and type(ThemeEngine.OnChange) == "function" then
                     ThemeEngine.OnChange(paintTitle)
                 end
+                -- Any resize re-clips the title in the same frame — the
+                -- draw's signature makes an unchanged repaint a string
+                -- compare, so this costs nothing while the width holds.
+                pcall(function(): ()
+                    table.insert(
+                        chromeConnections,
+                        root:GetPropertyChangedSignal("Size"):Connect(paintTitle)
+                    )
+                end)
             else
                 local title: TextLabel = (create("TextLabel", {
                     TextTruncate = Enum.TextTruncate.AtEnd,
@@ -7021,12 +7318,26 @@ function Module.init(context: any): any
     }
 
     -- Left to right until the next window would pass the available edge,
-    -- then down — Wurst's own first-run rule. With eight category windows
-    -- plus UI Settings the row wraps wherever the viewport says, not at a
-    -- column count somebody picked.
-    local nextX: number = GRID_MARGIN
-    local nextY: number = 64
-    local rowHeight: number = 0
+    -- then down — Wurst's own first-run rule. The default top row is
+    -- [WURST 0.1 Beta][Combat][Render][Movement][Fun][Other]: the first
+    -- category starts after the wordmark's real packed width, on the
+    -- wordmark's own top edge (Furniture parks the chip at 14,10), and
+    -- wrapped rows fall back to the left margin below the logo's height.
+    -- The chip width is the same formula Furniture packs with —
+    -- LOGO_WIDTH 142 + 10 + (8 + #version × 12) + 4; the atlas re-fit
+    -- narrows the chip a few pixels later, which only widens the gap.
+    -- On a viewport too short for even one window beside the logo, the
+    -- first slot wraps immediately and the row starts under the chip.
+    local productVersion: string = tostring(
+        (host.PRODUCT and host.PRODUCT.version) or "0.1 Beta"
+    )
+    local LOGO_CHIP_WIDTH: number = 142 + 10 + (8 + #productVersion * 12) + 4
+    local LOGO_CHIP_HEIGHT: number = 44
+    local TOP_ROW_X: number = 14 + LOGO_CHIP_WIDTH + GRID_GAP
+    local TOP_ROW_Y: number = 10
+    local nextX: number = TOP_ROW_X
+    local nextY: number = TOP_ROW_Y
+    local rowHeight: number = LOGO_CHIP_HEIGHT
 
     local function nextSlot(height: number): Vector2
         local viewport: Vector2 = logicalViewport()
@@ -7151,9 +7462,12 @@ function Module.init(context: any): any
     -- the official order, with every saved position already forgotten by
     -- the caller. Settings windows re-cascade the next time they open.
     function ClickGui.Retile(): ()
-        nextX = GRID_MARGIN
-        nextY = 64
-        rowHeight = 0
+        -- Reset layout lands on the same default disposition first-run
+        -- uses: wordmark first, categories after its real width, wrap
+        -- below the chip.
+        nextX = TOP_ROW_X
+        nextY = TOP_ROW_Y
+        rowHeight = LOGO_CHIP_HEIGHT
         for _, name: string in ipairs(ClickGui.order) do
             local record: CategoryWindow = ClickGui.categories[name]
             if record then
@@ -10339,6 +10653,36 @@ function Module.init(context: any): any
         "GameCheck", "Game check: " .. recognised, nil, {static = true}
     )
 
+    -- Font status, honestly: which of the three sources is really
+    -- rendering. Clicking the row prints the install instructions for the
+    -- exact pack — the runtime never downloads Mojang assets itself.
+    local function fontStatusLabel(): string
+        local sourceName: string = tostring(
+            (state.bitmapText and state.bitmapText.source) or "unavailable"
+        )
+        if sourceName == "minecraft-exact" then
+            return "Font: Minecraft 1.18.1 (exact, local pack)"
+        end
+        if sourceName == "monocraft-fallback" then
+            return "Font: Monocraft fallback (OFL)"
+        end
+        return "Font: vector stand-in (no atlas)"
+    end
+    local fontHandle: any = state.wurstOptions.RegisterAction(
+        "FontStatus",
+        fontStatusLabel(),
+        function(): ()
+            notify("Exact font: run tools/install_minecraft_font.py --update "
+                .. "on your PC, then copy MinecraftFont/ into the executor "
+                .. "workspace and reinject")
+        end
+    )
+    if state.bitmapText and type(state.bitmapText.onReady) == "table" then
+        table.insert(state.bitmapText.onReady, function(): ()
+            fontHandle.SetLabel(fontStatusLabel())
+        end)
+    end
+
     local function openWurstOptions(): ()
         if optionsRecord then
             raiseOpen(optionsRecord)
@@ -10449,6 +10793,26 @@ function Module.init(context: any): any
             record.resize()
         end
     end)
+
+    -- Which surface the open gesture shows: Wurst's ClickGUI windows, or
+    -- the Navigator alone as the main screen. Stored under UI.MenuStyle;
+    -- switching touches nothing else — no enabled state, no settings, no
+    -- window positions, no binds. RightShift keeps its direct Navigator
+    -- door either way.
+    local menuStyles: {string} = {"Wurst", "Navigator"}
+    addCycleOption(
+        uiPanel,
+        "Menu style",
+        menuStyles,
+        table.find(menuStyles, tostring(state.menuStyle)) or 1,
+        function(value: string): ()
+            uiSettingsValues["Menu style"] = value
+            state.menuStyle = value
+            configData.values["UI.MenuStyle"] = value
+            queueConfigSave()
+        end
+    )
+    uiSettingsValues["Menu style"] = tostring(state.menuStyle)
 
     -- UI Settings is eager and its rows are all in place now: one reflow at
     -- the real measured size keeps its top-right default when that spot is
@@ -11135,7 +11499,6 @@ local PILL_BUTTON: number = 32
 local PILL_PADDING_X: number = 7
 local PILL_PADDING_Y: number = 5
 local PILL_GAP: number = 2
-local PILL_TOP: number = 12
 local TOOLTIP_DELAY_MS: number = 400
 
 function Module.init(context: any): any
@@ -11155,6 +11518,8 @@ function Module.init(context: any): any
     local queueConfigSave: any = host.queueConfigSave
     local UserInputService: any = host.UserInputService
     local colorFromConfig: any = host.colorFromConfig
+    local ScreenGui: any = host.ScreenGui
+    local makeTextBox: any = host.makeTextBox
 
     local Furniture: any = {
         handles = {} :: {any},
@@ -11175,6 +11540,15 @@ function Module.init(context: any): any
         while ghost do
             ghost:Destroy()
             ghost = PopupLayer:FindFirstChild(ghostName)
+        end
+        -- The dock lives on the raw ScreenGui (outside the ClickGUI's
+        -- UIScale); a reinject must not leave two of it either.
+        if ScreenGui then
+            local screenGhost: Instance? = ScreenGui:FindFirstChild(ghostName)
+            while screenGhost do
+                screenGhost:Destroy()
+                screenGhost = ScreenGui:FindFirstChild(ghostName)
+            end
         end
     end
 
@@ -12054,26 +12428,32 @@ function Module.init(context: any): any
         Close = closeNavigator,
     }
 
-    -- ----------------------------------------------------------------- pill
-    -- The five per cent of this menu that is Roblox rather than Wurst: a
-    -- compact adaptation of the game's own top-bar capsule, kept only as the
-    -- launcher. One button — show or hide the menu. The shield, headphones,
-    -- options and cart of the real Roblox pill are the platform's, not ours,
-    -- and the OFF capsule that used to sit here is gone with them.
-    local pillButtons: number = 1
+    -- ----------------------------------------------------------------- dock
+    -- The launcher, bottom-centre: [ Search module... ][ ≡ ]. The five per
+    -- cent of this menu that is Roblox rather than Wurst. It lives on the
+    -- raw ScreenGui, outside the ClickGUI's UIScale, sits 70 px above the
+    -- bottom so it clears where most games park their hotbar, and stays
+    -- visible with the GUI closed — it is how the GUI opens. Enter in the
+    -- search box resolves a module by name through
+    -- state.invokeModuleSearch (success / not found / ambiguous all
+    -- notify), then clears itself; it never runs administrative actions.
+    -- The ≡ button opens whichever surface UI.MenuStyle selects.
+    local DOCK_SEARCH_WIDTH: number = 190
+    local DOCK_BOTTOM_MARGIN: number = 70
     local pillWidth: number = PILL_PADDING_X * 2
-        + PILL_BUTTON * pillButtons
-        + PILL_GAP * (pillButtons - 1)
+        + DOCK_SEARCH_WIDTH
+        + PILL_GAP
+        + PILL_BUTTON
 
     local pillFrame: Frame = (create("Frame", {
-        Parent = PopupLayer,
+        Parent = ScreenGui or PopupLayer,
         Name = "Pill",
         Active = true,
-        AnchorPoint = Vector2.new(0.5, 0),
+        AnchorPoint = Vector2.new(0.5, 1),
         BackgroundColor3 = Color3.fromRGB(16, 18, 28),
         BackgroundTransparency = 0.28,
         BorderSizePixel = 0,
-        Position = UDim2.new(0.5, 0, 0, PILL_TOP),
+        Position = UDim2.new(0.5, 0, 1, -DOCK_BOTTOM_MARGIN),
         Size = UDim2.fromOffset(pillWidth, PILL_BUTTON + PILL_PADDING_Y * 2),
         ZIndex = 240,
     }) :: any) :: Frame
@@ -12106,7 +12486,8 @@ function Module.init(context: any): any
         );
         (tooltip :: TextLabel).Position = UDim2.fromOffset(
             anchor.AbsolutePosition.X,
-            anchor.AbsolutePosition.Y + anchor.AbsoluteSize.Y + 8
+            -- Above the dock, which sits at the bottom now.
+            anchor.AbsolutePosition.Y - 38
         );
         (tooltip :: TextLabel).Visible = true
     end
@@ -12172,14 +12553,74 @@ function Module.init(context: any): any
 
     local menuButton: TextButton = pillButton(
         1,
-        PILL_PADDING_X,
+        PILL_PADDING_X + DOCK_SEARCH_WIDTH + PILL_GAP,
         "≡",
         16,
         "Show or hide the menu",
         function(): ()
-            state.setMenuVisible(not state.visible)
+            if type(state.openMenuSurface) == "function" then
+                state.openMenuSurface()
+            else
+                state.setMenuVisible(not state.visible)
+            end
         end
     )
+
+    -- The search half of the dock. A TextBox stays vector for its caret;
+    -- Enter submits, the box clears, and the resolver notifies success,
+    -- not-found or ambiguous. On touch the platform keyboard opens with
+    -- focus, which is the mobile path.
+    local searchShell: Frame = (create("Frame", {
+        Parent = pillFrame,
+        Name = "DockSearch",
+        BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+        BackgroundTransparency = 0.94,
+        BorderSizePixel = 0,
+        Position = UDim2.fromOffset(PILL_PADDING_X, PILL_PADDING_Y),
+        Size = UDim2.fromOffset(DOCK_SEARCH_WIDTH, PILL_BUTTON),
+        ZIndex = 241,
+    }) :: any) :: Frame
+    create("UICorner", {
+        Parent = searchShell,
+        CornerRadius = UDim.new(1, 0),
+    })
+    if type(makeTextBox) == "function" then
+        local searchBox: TextBox = (makeTextBox(searchShell, "") :: any) :: TextBox
+        searchBox.Name = "DockSearchBox"
+        searchBox.BackgroundTransparency = 1
+        searchBox.ClearTextOnFocus = false
+        searchBox.PlaceholderText = "Search module..."
+        searchBox.Position = UDim2.fromOffset(12, 0)
+        searchBox.Size = UDim2.new(1, -18, 1, 0)
+        searchBox.TextColor3 = PILL_IDLE_TEXT
+        searchBox.TextSize = 13
+        searchBox.TextXAlignment = Enum.TextXAlignment.Left
+        searchBox.ZIndex = 242
+        local boxCorner: UICorner? = searchBox:FindFirstChild("StyleCorner") :: UICorner?
+        if boxCorner then
+            boxCorner:Destroy()
+        end
+        local boxStroke: UIStroke? = searchBox:FindFirstChild("StyleStroke") :: UIStroke?
+        if boxStroke then
+            boxStroke:Destroy()
+        end
+        table.insert(
+            Furniture.connections,
+            searchBox.FocusLost:Connect(function(enterPressed: boolean): ()
+                if enterPressed ~= true then
+                    return
+                end
+                local query: string = tostring(searchBox.Text or "")
+                searchBox.Text = ""
+                if query:gsub("%s", "") == "" then
+                    return
+                end
+                if type(state.invokeModuleSearch) == "function" then
+                    state.invokeModuleSearch(query)
+                end
+            end)
+        )
+    end
 
     -- The menu button fills with the accent while the GUI is open, exactly
     -- like the prototype's `.on` state. Repainted on both the things that

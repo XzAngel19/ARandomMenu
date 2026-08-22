@@ -113,7 +113,12 @@ return function(ctx: any): ()
     -- Measured 2026-08-22 against this harness (A 13b48da, atlas armed):
     -- idle ClickGUI 402 glyphs / 45 holders. Five settings 1273 / 197.
     -- Navigator added none on top of that. Destruct left 0.
-    local IDLE_GLYPH_CEILING: number = 550
+    -- Re-measured after A4: the numeric rows spell min and max on the
+    -- rail (UI Settings alone adds eight such labels) and UI Settings
+    -- gained the Menu style row — idle measured 552 on 2026-08-22. The
+    -- ceiling keeps C's ~35% leak margin over the measure; it is still a
+    -- leak alarm, not a target.
+    local IDLE_GLYPH_CEILING: number = 700
     local FIVE_SETTINGS_CEILING: number = 1600
     local NAVIGATOR_CEILING: number = 800
     local HACKLIST_CEILING: number = 250
