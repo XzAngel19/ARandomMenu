@@ -363,7 +363,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "7f70b803328d4e85"
+local SOURCE_STAMP: string = "82197b35bd6901d5"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -1830,6 +1830,38 @@ local function addRoundedStyle(
     stroke.Parent = object
     return corner, stroke
 end
+
+-- ---------------------------------------------------------------------------
+-- Bitmap text contract
+-- ---------------------------------------------------------------------------
+--
+-- Wurst's every label is Minecraft's 8 px bitmap font on a 9 px line. This
+-- port does not rasterise that font yet — Monocraft, the vendored pixel
+-- face, stands in — but ClickGUI surfaces ask *here* for their text, so the
+-- day an atlas renderer exists it replaces the inside of `make` and no call
+-- site moves. The metrics are the contract: 16 px glyphs on an 18 px line
+-- with a 12 px advance — 8/9/6 logical at the GUI scale 2 the interface is
+-- drawn at. `width` is the packing estimate the content-sized windows use.
+state.bitmapText = {
+    size = 16,
+    lineHeight = 18,
+    advance = 12,
+    width = function(text: any): number
+        return #tostring(text) * 12
+    end,
+    make = function(properties: any): TextLabel
+        local resolved: any = {}
+        for key: string, value: any in pairs(properties or {}) do
+            resolved[key] = value
+        end
+        resolved.FontFace = CONTROL_FONT
+        resolved.TextSize = resolved.TextSize or 16
+        if resolved.TextTruncate == nil then
+            resolved.TextTruncate = Enum.TextTruncate.AtEnd
+        end
+        return (create("TextLabel", resolved) :: any) :: TextLabel
+    end,
+}
 
 -- Every label registers the *logical* size it was designed at; the text-scale
 -- slider multiplies that. `state.registeredTextIndex` lets the responsive

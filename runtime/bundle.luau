@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "7f70b803328d4e85",
+    stamp = "82197b35bd6901d5",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -6335,6 +6335,14 @@ local WINDOW_MAX_HEIGHT: number = 300
 -- refuse.
 local SCALE_MINIMUM: number = 0.7
 local SCALE_MAXIMUM: number = 1.6
+-- The screen the port is calibrated against. Every logical measure here is
+-- Wurst's at GUI scale 2, which reads right on a 1600×900 viewport; a
+-- smaller screen scales the whole layer down uniformly, a larger one up —
+-- one number for everything, never a component resized on its own. The
+-- player's Scale slider (ThemeEngine.shape.scale, default 1) multiplies on
+-- top, so the UI Settings control keeps working.
+local CALIBRATION_WIDTH: number = 1600
+local CALIBRATION_HEIGHT: number = 900
 local GRID_MARGIN: number = 10
 local WINDOW_GAP: number = 2
 -- Wurst tiles its first-run grid with a 5-logical gap; 10 at the GUI scale 2
@@ -6391,7 +6399,15 @@ function Module.init(context: any): any
     local function viewportScale(): number
         local shape: any = host.ThemeEngine and host.ThemeEngine.shape
         local wanted: number = shape and tonumber(shape.scale) or 1
-        return math.clamp(wanted, SCALE_MINIMUM, SCALE_MAXIMUM)
+        local camera: Camera? = workspace.CurrentCamera
+        local viewport: Vector2 = camera
+            and (camera :: Camera).ViewportSize
+            or Vector2.new(CALIBRATION_WIDTH, CALIBRATION_HEIGHT)
+        local fit: number = math.min(
+            viewport.X / CALIBRATION_WIDTH,
+            viewport.Y / CALIBRATION_HEIGHT
+        )
+        return math.clamp(wanted * fit, SCALE_MINIMUM, SCALE_MAXIMUM)
     end
 
     local windows: any = state.windows
@@ -9893,11 +9909,10 @@ local activeCleanup: (() -> ())? = nil
 -- WurstLogo.Text #000000. Deliberately not theme tokens — the chip is white
 -- in every Wurst screenshot regardless of palette, which is what makes the
 -- sausage readable on any background.
--- Wurst's documented default is #FFFFFF, and an opaque white slab over a game
--- is the first thing the user pointed at. Kept as a token so a settings window
--- can expose it, but seeded dark and drawn at 45% so it reads as a ghost behind
--- the version rather than as a box.
-local WURSTLOGO_BACKGROUND: Color3 = Color3.fromRGB(0, 0, 0)
+-- The Java's own default: #FFFFFF drawn at half alpha as the y=6..17 band —
+-- a stripe, not a slab. The ghost-era dark seed that lived here was why the
+-- band came out black; schema 2 already swept any stored copy of it.
+local WURSTLOGO_BACKGROUND: Color3 = Color3.fromRGB(255, 255, 255)
 local WURSTLOGO_TEXT: Color3 = Color3.fromRGB(0, 0, 0)
 
 -- The prototype's #brand block: 14 px from the left edge, 10 from the top.
@@ -9920,7 +9935,8 @@ local HACKLIST_COLOR: Color3 = Color3.fromRGB(255, 255, 255)
 local HACKLIST_SORT_BY: string = "Name"
 local HACKLIST_REVERSE: boolean = false
 local HACKLIST_ANIMATIONS: boolean = true
-local HACKLIST_FONT_SIZE: number = 13
+-- The bitmap line: 16 px glyphs on the contract's 18 px line (8/9 logical).
+local HACKLIST_FONT_SIZE: number = 16
 local HACKLIST_LINE_HEIGHT: number = 18
 local HACKLIST_TOP: number = 56
 local HACKLIST_SLIDE: number = 14
@@ -10242,21 +10258,42 @@ function Module.init(context: any): any
             Size = UDim2.new(1, 0, 0, HACKLIST_LINE_HEIGHT),
             ZIndex = 20,
         }) :: any) :: Frame
-        local label: TextLabel = (create("TextLabel", {
-            TextTruncate = Enum.TextTruncate.AtEnd,
-            Parent = container,
-            Name = "Entry",
-            BackgroundTransparency = 1,
-            FontFace = CONTROL_FONT,
-            Position = UDim2.fromOffset(0, 0),
-            RichText = true,
-            Size = UDim2.new(1, 0, 1, 0),
-            Text = "",
-            TextColor3 = hudColor,
-            TextSize = HACKLIST_FONT_SIZE,
-            TextXAlignment = hudAlignment(),
-            ZIndex = 20,
-        }) :: any) :: TextLabel
+        -- Through the bitmap text contract: the HackList is the first full
+        -- surface on it, so the day the atlas renderer lands, these entries
+        -- change rasteriser without this file moving.
+        local bitmapText: any = state.bitmapText
+        local label: TextLabel
+        if bitmapText and type(bitmapText.make) == "function" then
+            label = bitmapText.make({
+                Parent = container,
+                Name = "Entry",
+                BackgroundTransparency = 1,
+                Position = UDim2.fromOffset(0, 0),
+                RichText = true,
+                Size = UDim2.new(1, 0, 1, 0),
+                Text = "",
+                TextColor3 = hudColor,
+                TextSize = HACKLIST_FONT_SIZE,
+                TextXAlignment = hudAlignment(),
+                ZIndex = 20,
+            })
+        else
+            label = (create("TextLabel", {
+                TextTruncate = Enum.TextTruncate.AtEnd,
+                Parent = container,
+                Name = "Entry",
+                BackgroundTransparency = 1,
+                FontFace = CONTROL_FONT,
+                Position = UDim2.fromOffset(0, 0),
+                RichText = true,
+                Size = UDim2.new(1, 0, 1, 0),
+                Text = "",
+                TextColor3 = hudColor,
+                TextSize = HACKLIST_FONT_SIZE,
+                TextXAlignment = hudAlignment(),
+                ZIndex = 20,
+            }) :: any) :: TextLabel
+        end
         if animationsOn() then
             label.Position = UDim2.fromOffset(HACKLIST_SLIDE, 0)
             label.TextTransparency = 1

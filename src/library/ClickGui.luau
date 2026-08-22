@@ -54,6 +54,14 @@ local WINDOW_MAX_HEIGHT: number = 300
 -- refuse.
 local SCALE_MINIMUM: number = 0.7
 local SCALE_MAXIMUM: number = 1.6
+-- The screen the port is calibrated against. Every logical measure here is
+-- Wurst's at GUI scale 2, which reads right on a 1600×900 viewport; a
+-- smaller screen scales the whole layer down uniformly, a larger one up —
+-- one number for everything, never a component resized on its own. The
+-- player's Scale slider (ThemeEngine.shape.scale, default 1) multiplies on
+-- top, so the UI Settings control keeps working.
+local CALIBRATION_WIDTH: number = 1600
+local CALIBRATION_HEIGHT: number = 900
 local GRID_MARGIN: number = 10
 local WINDOW_GAP: number = 2
 -- Wurst tiles its first-run grid with a 5-logical gap; 10 at the GUI scale 2
@@ -110,7 +118,15 @@ function Module.init(context: any): any
     local function viewportScale(): number
         local shape: any = host.ThemeEngine and host.ThemeEngine.shape
         local wanted: number = shape and tonumber(shape.scale) or 1
-        return math.clamp(wanted, SCALE_MINIMUM, SCALE_MAXIMUM)
+        local camera: Camera? = workspace.CurrentCamera
+        local viewport: Vector2 = camera
+            and (camera :: Camera).ViewportSize
+            or Vector2.new(CALIBRATION_WIDTH, CALIBRATION_HEIGHT)
+        local fit: number = math.min(
+            viewport.X / CALIBRATION_WIDTH,
+            viewport.Y / CALIBRATION_HEIGHT
+        )
+        return math.clamp(wanted * fit, SCALE_MINIMUM, SCALE_MAXIMUM)
     end
 
     local windows: any = state.windows
