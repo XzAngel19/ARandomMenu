@@ -123,6 +123,114 @@ return function(ctx: any): ()
         end
     end
 
+    -- Exercise every universal module through the same cards the ClickGUI
+    -- reparents. This catches dependencies on old pages, scroll hosts and tabs
+    -- that focused gameplay tests do not see.
+    local cardsByName: {[string]: any} = {}
+    for _, feature: any in ipairs(cards) do
+        if type(feature.name) == "string" then
+            cardsByName[feature.name] = feature
+        end
+    end
+    local renamed: {[string]: string} = {
+        ["Item Render"] = "ItemESP",
+        ["Player ESP"] = "PlayerESP",
+        ["Kill Aura"] = "Killaura",
+        ["High Jump"] = "HighJump",
+        ["Safe Walk"] = "SafeWalk",
+        ["Zoom Unlocker"] = "CameraDistance",
+        ["No Fall"] = "NoFall",
+        Fly = "Flight",
+        ["Anti-AFK"] = "AntiAFK",
+        Speed = "SpeedHack",
+    }
+    local framework: any = host.state.framework
+    local modulesByFeature: {[any]: any} = {}
+    if framework then
+        for _, module: any in pairs(framework.Modules or {}) do
+            modulesByFeature[module.Feature] = module
+        end
+    end
+
+    for _, entry: any in ipairs(Manifest.modules or {}) do
+        local displayName: string = renamed[entry.name] or entry.name
+        local feature: any = cardsByName[displayName]
+        check("module card loaded: " .. displayName, feature ~= nil, displayName)
+        if not feature then
+            continue
+        end
+
+        if type(feature.hasOptions) == "function" and feature.hasOptions()
+            and feature.arrow then
+            feature.arrow.MouseButton1Click:Fire()
+            check("module options expand: " .. feature.name,
+                feature.expanded == true and feature.options.Visible == true)
+            local module: any = modulesByFeature[feature]
+            if module then
+                for optionName: string, option: any in pairs(module.Options or {}) do
+                    if option.Show then
+                        local rules: {any} = option.Show.Option and {option.Show} or option.Show
+                        local expected: boolean = true
+                        for _, rule: any in ipairs(rules) do
+                            local source: any = module.Options[rule.Option]
+                            local holds: boolean = false
+                            if source ~= nil then
+                                holds = type(rule.Values) == "table"
+                                        and table.find(rule.Values, source.Value) ~= nil
+                                    or type(rule.Values) ~= "table" and source.Value == true
+                            end
+                            if rule.Invert == true then
+                                holds = not holds
+                            end
+                            expected = expected and holds
+                        end
+                        local row: any = option.Object
+                        if row and row.ClassName ~= "Frame" then
+                            row = row.Parent
+                        end
+                        check(feature.name .. " Show: " .. optionName,
+                            row ~= nil and row.Visible == expected,
+                            "expected " .. tostring(expected))
+                    end
+                end
+            end
+            feature.arrow.MouseButton1Click:Fire()
+        end
+
+        local focusedElsewhere: boolean = entry.path
+                == "src/modules/Utility/RejoinServer.luau"
+            or entry.path == "src/modules/Utility/LagSwitch.luau"
+            or entry.path == "src/modules/Movement/HighJump.luau"
+            or entry.path == "src/modules/Movement/ClickTeleport.luau"
+        if feature.kind == "toggle" and not focusedElsewhere then
+            if feature.enabled == true then
+                pcall(feature.activate)
+            end
+            local moduleTasks: number = stub.taskCount()
+            local moduleConnections: number = 0
+            for _name: string in pairs(host.featureConnections) do
+                moduleConnections += 1
+            end
+            local ok: boolean, failure: any = pcall(function(): ()
+                feature.activate()
+                stub.step(1 / 60)
+                feature.activate()
+            end)
+            check("module toggles cleanly: " .. feature.name, ok, tostring(failure))
+            check("module teardown releases tasks: " .. feature.name,
+                stub.taskCount() == moduleTasks,
+                "before: " .. tostring(moduleTasks) .. " after: " .. tostring(stub.taskCount()))
+            local remainingConnections: number = 0
+            for _name: string in pairs(host.featureConnections) do
+                remainingConnections += 1
+            end
+            check("module teardown releases named connections: " .. feature.name,
+                remainingConnections == moduleConnections,
+                "before: " .. tostring(moduleConnections)
+                    .. " after: " .. tostring(remainingConnections))
+        end
+    end
+
     if type(ClickFile.destroy) == "function" then
         ClickFile.destroy()
     end

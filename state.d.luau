@@ -151,7 +151,6 @@ export type MenuState = {
     flingRunning: boolean,                          -- A fling of your own is in flight; Anti-Fling stands down
     fovController: any,                             -- One owner for the camera's field of view
     platformStandController: any,                   -- One owner for PlatformStand, so two engines cannot fight
-    speedSprintHeld: boolean,                       -- The sprint key is down
     infiniteJumpEnabled: boolean,                   -- Read by the movement engines that must not fight it
     lastInfiniteJumpAt: number,
     toggleFullbright: (boolean) -> (),              -- So a game module can force it

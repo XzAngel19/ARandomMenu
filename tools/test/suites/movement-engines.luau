@@ -141,72 +141,92 @@ return function(ctx: any): ()
 
     section("Vehicle Speed")
 
-    local PhysicsFile: any = require("../../../src/modules/Movement/VehicleSpeed")
-    Mock.inject(world, PhysicsFile.init)
-    local physics: any = PhysicsFile.init(context)
+    local VehicleFile: any = require("../../../src/modules/Movement/VehicleSpeed")
+    Mock.inject(world, VehicleFile.init)
+    local vehicle: any = VehicleFile.init(context)
 
-    check("the card no longer shares Speed's name",
-        physics.Name == "Vehicle Speed",
-        "a second card named Speed collided with it in the config keys")
-    for _, name: string in ipairs({
-        "Mode",
-        "Speed",
-        "Advanced settings",
-        "Vertical speed",
-        "PlatformStand",
-        "Custom properties",
-        "Motor torque",
-        "Wall check",
-        "Acceleration",
-        "Burst interval (s)",
-        "Air control %",
-        "Sprint multiplier",
-        "Sprint key",
-        "Preserve momentum",
-        "Auto jump",
-        "Auto-jump velocity",
-    }) do
-        check("option: " .. name, physics.Options[name] ~= nil)
+    check("the card is registered", vehicle.Name == "Vehicle Speed")
+    for _, name: string in ipairs({"Mode", "Multiplier", "Motor torque"}) do
+        check("option: " .. name, vehicle.Options[name] ~= nil)
     end
+    for _, removed: string in ipairs({
+        "Speed", "Vertical speed", "PlatformStand", "Air control %", "Sprint key", "Auto jump",
+    }) do
+        check("character option removed: " .. removed, vehicle.Options[removed] == nil)
+    end
+    check("the four routes are ordered from least to most invasive",
+        table.concat(vehicle.Feature.options["Mode"].list or {}, ",")
+            == "Multiplier,Motors,Velocity,Seat")
+    check("motor torque hides outside the motor route", rows("Motor torque"))
+    ctx.setOption(vehicle, "Mode", "Motors")
+    check("motor torque appears for the motor route", not rows("Motor torque"))
+    ctx.setOption(vehicle, "Mode", "Multiplier")
 
-    check("the advanced rows start folded",
-        rows("Vertical speed") and rows("Acceleration") and rows("Sprint key"))
-    check("burst interval hides while the mode cannot burst", rows("Burst interval (s)"))
-    ctx.setOption(physics, "Advanced settings", true)
-    check("adaptive owns acceleration and air control",
-        not rows("Acceleration") and not rows("Air control %"))
-    ctx.setOption(physics, "Mode", "Pulse")
-    check("pulse swaps them for the burst interval",
-        rows("Acceleration") and rows("Air control %") and not rows("Burst interval (s)"))
-    ctx.setOption(physics, "Custom properties", false)
-    check("motor torque only exists while properties are customised",
-        rows("Motor torque"))
-    ctx.setOption(physics, "Auto jump", true)
-    check("the jump velocity follows its switch",
-        not rows("Auto-jump velocity"))
+    local vehicleModel: any = Mock.newInstance("Model")
+    vehicleModel.Name = "TestVehicle"
+    vehicleModel.Parent = world.workspace
+    local chassis: any = Mock.newInstance("Part")
+    chassis.Name = "Chassis"
+    chassis.Parent = vehicleModel
+    local seat: any = Mock.newInstance("VehicleSeat")
+    seat.Name = "DriverSeat"
+    seat.MaxSpeed = 40
+    seat.Torque = 1200
+    seat.TurnSpeed = 1.5
+    seat.ThrottleFloat = 1
+    seat.AssemblyRootPart = chassis
+    seat.Parent = vehicleModel
+    world.globals.Enum.ActuatorType = world.globals.Enum.ActuatorType or {Motor = "Motor"}
+    local hinge: any = Mock.newInstance("HingeConstraint")
+    hinge.ActuatorType = world.globals.Enum.ActuatorType.Motor
+    hinge.AngularVelocity = 10
+    hinge.MotorMaxTorque = 100
+    hinge.Parent = vehicleModel
+    humanoid.SeatPart = seat
 
-    ctx.setOption(physics, "Mode", "Adaptive")
-    ctx.setOption(physics, "Custom properties", true)
-    physics.Feature.activate()
-    check("vehicle speed reports the active route",
-        physics.Status == "Adaptive", tostring(physics.Status))
-    check("a session takes exactly one task",
-        stub.taskCount() == baseline + 1)
+    chassis.AssemblyLinearVelocity = world.vector3(0, 0, -10)
+    local vehicleBaseline: number = stub.taskCount()
+    vehicle.Feature.activate()
+    check("vehicle status reports the route", vehicle.Status == "multiplier")
     stub.step(1 / 60)
+    check("the current vehicle speed is multiplied", chassis.AssemblyLinearVelocity.Z == -20)
     stub.step(1 / 60)
+    check("the multiplier does not compound frame over frame", chassis.AssemblyLinearVelocity.Z == -20)
+    chassis.AssemblyLinearVelocity = world.vector3(20, 0, 0)
+    stub.step(1 / 60)
+    check("the multiplier keeps the vehicle's steering direction",
+        chassis.AssemblyLinearVelocity.X > 0 and math.abs(chassis.AssemblyLinearVelocity.Z) < 0.001)
+    vehicle.Feature.activate()
+    check("disabling releases the task", stub.taskCount() == vehicleBaseline)
 
-    -- Wall-clock, not the mocked os.clock. Raise only with a comment saying
-    -- what got more expensive.
-    local BUDGET_PHYSICS_FRAME_SECONDS: number = 0.010
-    local physicsPerFrame: number = ctx.measureFrames(stub.step, 20)
-    check(
-        "Vehicle Speed stays inside the per-frame time budget",
-        physicsPerFrame <= BUDGET_PHYSICS_FRAME_SECONDS,
-        string.format("%.4fs/frame", physicsPerFrame)
-    )
+    ctx.setOption(vehicle, "Mode", "Motors")
+    ctx.setOption(vehicle, "Multiplier", 2)
+    ctx.setOption(vehicle, "Motor torque", 1000)
+    vehicle.Feature.activate()
+    stub.step(1 / 60)
+    check("the motor route multiplies wheel speed without compounding",
+        hinge.AngularVelocity == 20 and hinge.MotorMaxTorque == 1000)
+    stub.step(1 / 60)
+    check("motor speed remains stable on the next frame", hinge.AngularVelocity == 20)
+    vehicle.Feature.activate()
+    check("seat and motor originals are restored exactly",
+        hinge.AngularVelocity == 10 and hinge.MotorMaxTorque == 100
+            and seat.MaxSpeed == 40 and seat.Torque == 1200 and seat.TurnSpeed == 1.5)
 
-    physics.Feature.activate()
-    check("disabling releases the task", stub.taskCount() == baseline)
+    humanoid.SeatPart = nil
+    root.AssemblyRootPart = root
+    root.AssemblyLinearVelocity = world.vector3(3, 4, 5)
+    local originalWalkSpeed: number = humanoid.WalkSpeed
+    ctx.setOption(vehicle, "Mode", "Multiplier")
+    vehicle.Feature.activate()
+    stub.step(1 / 60)
+    check("an unseated character is never treated as a vehicle",
+        root.AssemblyLinearVelocity.X == 3 and root.AssemblyLinearVelocity.Y == 4
+            and root.AssemblyLinearVelocity.Z == 5 and humanoid.WalkSpeed == originalWalkSpeed)
+    vehicle.Feature.activate()
+    root.AssemblyRootPart = nil
+    root.AssemblyLinearVelocity = world.vector3(0, 0, 0)
+    vehicleModel:Destroy()
 
     section("Phase Dash")
 

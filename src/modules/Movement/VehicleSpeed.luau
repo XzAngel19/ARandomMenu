@@ -2,16 +2,15 @@
 --
 -- Vehicle Speed.
 --
--- Speed for the things the humanoid does not own: a vehicle seat's MaxSpeed,
--- the torque of the hinges driving its wheels, and PlatformStand while you are
--- in one. Every original value is recorded per instance and put back, because
--- a seat left at ten times its torque stays broken for everyone who sits in it
--- afterwards.
+-- Speed moves a character; this moves the assembly the character is sitting
+-- in. Four routes exist because vehicle scripts disagree about what they leave
+-- writable. Multiplier comes first because it keeps the velocity direction the
+-- vehicle produced, so steering remains the game's. Motors, a direct chassis
+-- velocity and the VehicleSeat properties are progressively more invasive.
 --
--- It used to be called "Physics Speed", which said what it touched rather than
--- what it is for, and the name cost us a real bug: the vehicle work was already
--- here and nobody looking for it found it. Speed moves a character; this moves
--- whatever the character is sitting in.
+-- Every seat and hinge property is restored from its own recorded value. A
+-- vehicle left with boosted torque remains broken for the next driver, so
+-- restoring an assumed default is not enough.
 
 export type Runtime = {
     framework: any,
@@ -29,72 +28,42 @@ local Module = {
 local activeCleanup: (() -> ())? = nil
 
 function Module.init(context: Runtime): any
-    local host: any = context.host
     local framework: any = context.framework
-    local state: any = host.state
-    local getCharacterParts: any = host.getCharacterParts
-    local UserInputService: any = host.UserInputService
-    local currentWorkspace: Workspace = host.workspace or workspace
-
-    type VehicleSpeedSettings = {
-        mode: string,
-        speed: number,
-        verticalSpeed: number,
-        platformStand: boolean,
-        customProperties: boolean,
-        motorTorque: number,
-        wallCheck: boolean,
-        autoJump: boolean,
-        jumpVelocity: number,
-        acceleration: number,
-        burstInterval: number,
-        airControl: number,
-        sprintMultiplier: number,
-        sprintKey: Enum.KeyCode,
-        preserveMomentum: boolean,
-    }
+    local getCharacterParts: any = context.host.getCharacterParts
 
     type VehicleSeatState = {
         maxSpeed: number,
         torque: number,
         turnSpeed: number,
     }
-
     type HingeState = {
         angularVelocity: number,
         motorMaxTorque: number,
     }
 
-    local vehicleSpeedSettings: VehicleSpeedSettings = {
-        mode = "Smooth",
-        speed = 50,
-        verticalSpeed = 50,
-        platformStand = false,
-        customProperties = true,
+    local settings = {
+        mode = "Multiplier",
+        multiplier = 2,
         motorTorque = 50000,
-        wallCheck = true,
-        autoJump = false,
-        jumpVelocity = 45,
-        acceleration = 14,
-        burstInterval = 0.2,
-        airControl = 0.72,
-        sprintMultiplier = 1.65,
-        sprintKey = Enum.KeyCode.LeftShift,
-        preserveMomentum = false,
     }
-    -- The restore helper is shared with the option that can trigger it
-    -- mid-session, so it is declared here and assigned in the block below,
-    -- which also keeps the physics helpers' registers local to that block.
-    local restorePhysicsMotors: () -> ()
-    local vehicleSpeed: any
-    do
-    local vehicleTeleportClock: number = 0
     local originalVehicleSeats: {[VehicleSeat]: VehicleSeatState} =
         setmetatable({}, {__mode = "k"}) :: any
     local originalMotorHinges: {[HingeConstraint]: HingeState} =
         setmetatable({}, {__mode = "k"}) :: any
+    -- The excess is separate from the vehicle's own speed. Subtracting last
+    -- frame's excess before applying the multiplier again is what prevents
+    -- 2x from becoming 4x, 8x and then a car in orbit.
+    local velocityExcess: {[BasePart]: number} =
+        setmetatable({}, {__mode = "k"}) :: any
+    local motorExcess: {[HingeConstraint]: number} =
+        setmetatable({}, {__mode = "k"}) :: any
 
-    restorePhysicsMotors = function(): ()
+    local function clearBoostHistory(): ()
+        velocityExcess = setmetatable({}, {__mode = "k"}) :: any
+        motorExcess = setmetatable({}, {__mode = "k"}) :: any
+    end
+
+    local function restoreVehicle(): ()
         for seat: VehicleSeat, original: VehicleSeatState in pairs(originalVehicleSeats) do
             if seat.Parent then
                 seat.MaxSpeed = original.maxSpeed
@@ -103,7 +72,6 @@ function Module.init(context: Runtime): any
             end
         end
         originalVehicleSeats = setmetatable({}, {__mode = "k"}) :: any
-
         for hinge: HingeConstraint, original: HingeState in pairs(originalMotorHinges) do
             if hinge.Parent then
                 hinge.AngularVelocity = original.angularVelocity
@@ -111,432 +79,209 @@ function Module.init(context: Runtime): any
             end
         end
         originalMotorHinges = setmetatable({}, {__mode = "k"}) :: any
+        clearBoostHistory()
     end
 
-    local function getVehicleSpeedTarget(): (BasePart?, Humanoid?, VehicleSeat?)
-        local _, humanoid, root = getCharacterParts()
-        if not humanoid or not root then
-            return nil, humanoid, nil
+    local function resolveVehicle(): (BasePart?, Model?, VehicleSeat?)
+        local character: Model?, humanoid: Humanoid?, root: BasePart? =
+            getCharacterParts()
+        if not character or not humanoid or not root then
+            return nil, nil, nil
         end
-
         local seatPart: BasePart? = humanoid.SeatPart
-        if seatPart and seatPart:IsA("VehicleSeat") then
-            return seatPart.AssemblyRootPart or seatPart, humanoid, seatPart
-        end
+        local assembly: BasePart? = nil
         if seatPart then
-            return seatPart.AssemblyRootPart or seatPart, humanoid, nil
+            assembly = seatPart.AssemblyRootPart or seatPart
+        else
+            -- Some games weld the character straight onto a chassis. The
+            -- assembly root leaving the character is the general signal; an
+            -- ordinary standing character must never fall through to Speed.
+            assembly = root.AssemblyRootPart
+            if not assembly or assembly:IsDescendantOf(character) then
+                return nil, nil, nil
+            end
         end
-
-        return root.AssemblyRootPart or root, humanoid, nil
+        local resolvedAssembly: BasePart = assembly :: BasePart
+        local model: Model? = (seatPart or resolvedAssembly):FindFirstAncestorOfClass("Model")
+        local vehicleSeat: VehicleSeat? = seatPart
+                and seatPart:IsA("VehicleSeat")
+                and seatPart :: VehicleSeat
+            or nil
+        return resolvedAssembly, model, vehicleSeat
     end
 
-    local function tunePhysicsMotors(seat: VehicleSeat): ()
-        local model: Model? = seat:FindFirstAncestorOfClass("Model")
+    local function rememberParts(model: Model?): ()
         if not model then
             return
         end
-
         for _, descendant: Instance in ipairs(model:GetDescendants()) do
-            if descendant:IsA("VehicleSeat") then
-                local original: VehicleSeatState? = originalVehicleSeats[descendant]
-                if not original then
-                    original = {
-                        maxSpeed = descendant.MaxSpeed,
-                        torque = descendant.Torque,
-                        turnSpeed = descendant.TurnSpeed,
-                    }
-                    originalVehicleSeats[descendant] = original
-                end
-                local resolvedOriginal: VehicleSeatState = original :: VehicleSeatState
-                descendant.MaxSpeed = vehicleSpeedSettings.speed
-                descendant.Torque = math.max(
-                    resolvedOriginal.torque,
-                    vehicleSpeedSettings.motorTorque
-                )
-                descendant.TurnSpeed = math.max(
-                    resolvedOriginal.turnSpeed,
-                    vehicleSpeedSettings.speed * 0.35
-                )
+            if descendant:IsA("VehicleSeat")
+                and originalVehicleSeats[descendant] == nil then
+                originalVehicleSeats[descendant] = {
+                    maxSpeed = descendant.MaxSpeed,
+                    torque = descendant.Torque,
+                    turnSpeed = descendant.TurnSpeed,
+                }
             elseif descendant:IsA("HingeConstraint")
-                and descendant.ActuatorType == Enum.ActuatorType.Motor then
-                local original: HingeState? = originalMotorHinges[descendant]
-                if not original then
-                    original = {
-                        angularVelocity = descendant.AngularVelocity,
-                        motorMaxTorque = descendant.MotorMaxTorque,
-                    }
-                    originalMotorHinges[descendant] = original
-                end
-                local resolvedOriginal: HingeState = original :: HingeState
-
-                local sign: number = resolvedOriginal.angularVelocity < 0 and -1 or 1
-                descendant.AngularVelocity = sign
-                    * math.max(
-                        math.abs(resolvedOriginal.angularVelocity),
-                        vehicleSpeedSettings.speed / 3
-                    )
-                descendant.MotorMaxTorque = math.max(
-                    resolvedOriginal.motorMaxTorque,
-                    vehicleSpeedSettings.motorTorque
-                )
+                and descendant.ActuatorType == Enum.ActuatorType.Motor
+                and originalMotorHinges[descendant] == nil then
+                originalMotorHinges[descendant] = {
+                    angularVelocity = descendant.AngularVelocity,
+                    motorMaxTorque = descendant.MotorMaxTorque,
+                }
             end
         end
     end
 
+    local function boostedBase(current: number, previousExcess: number): number
+        local base: number = math.max(current - previousExcess, 0)
+        if base < 0.01 and current > 0.01 then
+            base = current / math.max(settings.multiplier, 1)
+        end
+        return base
+    end
+
+    local function boostVelocity(assembly: BasePart, forcedDirection: Vector3?): ()
+        local current: Vector3 = assembly.AssemblyLinearVelocity
+        local horizontal: Vector3 = Vector3.new(current.X, 0, current.Z)
+        local speed: number = horizontal.Magnitude
+        if speed < 0.01 then
+            velocityExcess[assembly] = 0
+            return
+        end
+        local base: number = boostedBase(speed, velocityExcess[assembly] or 0)
+        local target: number = base * settings.multiplier
+        local direction: Vector3 = forcedDirection or horizontal.Unit
+        direction = Vector3.new(direction.X, 0, direction.Z)
+        if direction.Magnitude < 0.01 then
+            return
+        end
+        direction = direction.Unit
+        assembly.AssemblyLinearVelocity = direction * target
+            + Vector3.new(0, current.Y, 0)
+        velocityExcess[assembly] = math.max(target - base, 0)
+    end
+
+    local function boostMotors(model: Model?): ()
+        rememberParts(model)
+        for hinge: HingeConstraint, original: HingeState in pairs(originalMotorHinges) do
+            if not hinge.Parent or (model and not hinge:IsDescendantOf(model)) then
+                continue
+            end
+            local current: number = hinge.AngularVelocity
+            local sign: number = current < 0 and -1 or 1
+            local magnitude: number = math.abs(current)
+            local base: number = boostedBase(magnitude, motorExcess[hinge] or 0)
+            local target: number = base * settings.multiplier
+            hinge.AngularVelocity = sign * target
+            hinge.MotorMaxTorque = math.max(
+                original.motorMaxTorque * settings.multiplier,
+                settings.motorTorque
+            )
+            motorExcess[hinge] = math.max(target - base, 0)
+        end
+    end
+
+    local function boostSeatProperties(model: Model?, seat: VehicleSeat?): ()
+        rememberParts(model)
+        if seat and originalVehicleSeats[seat] == nil then
+            originalVehicleSeats[seat] = {
+                maxSpeed = seat.MaxSpeed,
+                torque = seat.Torque,
+                turnSpeed = seat.TurnSpeed,
+            }
+        end
+        for candidate: VehicleSeat, original: VehicleSeatState in pairs(originalVehicleSeats) do
+            if not candidate.Parent
+                or (model and not candidate:IsDescendantOf(model)) then
+                continue
+            end
+            candidate.MaxSpeed = original.maxSpeed * settings.multiplier
+            candidate.Torque = original.torque * settings.multiplier
+            candidate.TurnSpeed = original.turnSpeed * settings.multiplier
+        end
+    end
+
+    local vehicleSpeed: any
     vehicleSpeed = framework.Categories.Movement:CreateModule({
         Name = "Vehicle Speed",
         Category = "Movement",
-        Tooltip = "Fast movement for characters and occupied vehicles. Adaptive "
-            .. "changes air authority and retains flow, Smooth accelerates "
-            .. "predictably, Boost uses physical impulse, CFrame moves the "
-            .. "character without touching its velocity, Pulse alternates "
-            .. "bursts with a normal walk, and Teleport advances in short "
-            .. "steps.",
+        Tooltip = "Multiplies the speed of the vehicle you are driving. Try "
+            .. "Multiplier first, then Motors, Velocity and Seat.",
         Function = function(enabled: boolean): ()
-            restorePhysicsMotors()
-            vehicleTeleportClock = 0
-            state.platformStandController.set("VehicleSpeed", nil)
-
+            restoreVehicle()
             if not enabled then
                 vehicleSpeed:SetStatus(nil)
                 return
             end
-
-            vehicleSpeed:SetStatus(vehicleSpeedSettings.mode)
-            vehicleSpeed:Loop(function(deltaTime: number): ()
-                local assembly, currentHumanoid, vehicleSeat = getVehicleSpeedTarget()
-                if not assembly or not currentHumanoid then
+            vehicleSpeed:SetStatus(string.lower(settings.mode))
+            vehicleSpeed:Loop(function(): ()
+                local assembly: BasePart?, model: Model?, seat: VehicleSeat? =
+                    resolveVehicle()
+                if not assembly then
                     return
                 end
-
-                state.platformStandController.set(
-                    "VehicleSpeed",
-                    vehicleSpeedSettings.platformStand
-                )
-                state.platformStandController.apply(currentHumanoid)
-
-                if vehicleSeat and vehicleSpeedSettings.customProperties then
-                    tunePhysicsMotors(vehicleSeat)
-                end
-
-                local direction: Vector3 = currentHumanoid.MoveDirection
-                if vehicleSeat then
-                    direction = vehicleSeat.CFrame.LookVector * vehicleSeat.ThrottleFloat
+                if settings.mode == "Multiplier" then
+                    boostVelocity(assembly :: BasePart, nil)
+                elseif settings.mode == "Motors" then
+                    boostMotors(model)
+                elseif settings.mode == "Velocity" then
+                    local direction: Vector3? = seat
+                        and (seat :: VehicleSeat).CFrame.LookVector
+                            * (seat :: VehicleSeat).ThrottleFloat
+                        or nil
+                    boostVelocity(assembly :: BasePart, direction)
                 else
-                    -- Humanoid.MoveDirection reads zero while PlatformStand is on
-                    -- and on touch clients whose control module is bypassed, which
-                    -- is exactly why Speed stood still with its own PlatformStand
-                    -- option enabled. The shared helper answers on every device.
-                    local camera: Camera? = currentWorkspace.CurrentCamera
-                    local forwardScalar: number, rightScalar: number = state.getMoveInput()
-                    if camera and (forwardScalar ~= 0 or rightScalar ~= 0) then
-                        direction = camera.CFrame.LookVector * forwardScalar
-                            + camera.CFrame.RightVector * rightScalar
-                    end
-                end
-                direction = Vector3.new(direction.X, 0, direction.Z)
-                if direction.Magnitude > 1 then
-                    direction = direction.Unit
-                end
-
-                local wallBlocked: boolean = false
-                if vehicleSpeedSettings.wallCheck
-                    and direction.Magnitude > 0.001 then
-                    local raycastParams: RaycastParams = RaycastParams.new()
-                    raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-                    raycastParams.FilterDescendantsInstances = {
-                        currentHumanoid.Parent :: Instance,
-                    }
-                    local wallHit: RaycastResult? = currentWorkspace:Raycast(
-                        assembly.Position,
-                        direction.Unit * 2.75,
-                        raycastParams
-                    )
-                    if wallHit then
-                        direction = Vector3.zero
-                        wallBlocked = true
-                    end
-                end
-
-                if not vehicleSeat
-                    and vehicleSpeedSettings.autoJump
-                    and direction.Magnitude > 0.001
-                    and currentHumanoid.FloorMaterial ~= Enum.Material.Air then
-                    currentHumanoid.Jump = true
-                    local jumpVelocity: Vector3 = assembly.AssemblyLinearVelocity
-                    assembly.AssemblyLinearVelocity = Vector3.new(
-                        jumpVelocity.X,
-                        math.max(jumpVelocity.Y, vehicleSpeedSettings.jumpVelocity),
-                        jumpVelocity.Z
-                    )
-                end
-
-                local currentVelocity: Vector3 = assembly.AssemblyLinearVelocity
-                local grounded: boolean = currentHumanoid.FloorMaterial ~= Enum.Material.Air
-                -- Touch clients hold a placed SPRINT button instead of a key.
-                local sprinting: boolean = state.speedSprintHeld == true
-                    or (not state.isMobile
-                        and UserInputService:IsKeyDown(vehicleSpeedSettings.sprintKey))
-                local resolvedSpeed: number = vehicleSpeedSettings.speed
-                    * (sprinting and vehicleSpeedSettings.sprintMultiplier or 1)
-                if vehicleSpeedSettings.mode == "Adaptive" and not grounded then
-                    resolvedSpeed *= vehicleSpeedSettings.airControl
-                end
-                local vertical: number = math.clamp(
-                    currentVelocity.Y,
-                    -vehicleSpeedSettings.verticalSpeed,
-                    vehicleSpeedSettings.verticalSpeed
-                )
-                local currentHorizontal: Vector3 = Vector3.new(
-                    currentVelocity.X,
-                    0,
-                    currentVelocity.Z
-                )
-                local keepMomentum: boolean = vehicleSpeedSettings.preserveMomentum
-                    or vehicleSpeedSettings.mode == "Adaptive"
-                local targetHorizontal: Vector3 = not wallBlocked
-                        and direction.Magnitude > 0.001
-                        and direction * resolvedSpeed
-                    or not wallBlocked and keepMomentum and currentHorizontal
-                    or Vector3.zero
-                local targetVelocity: Vector3 = targetHorizontal
-                    + Vector3.new(0, vertical, 0)
-
-                if vehicleSpeedSettings.mode == "Smooth"
-                    or vehicleSpeedSettings.mode == "Adaptive" then
-                    local alpha: number = 1 - math.exp(
-                        -vehicleSpeedSettings.acceleration * deltaTime
-                    )
-                    local smoothedHorizontal: Vector3 = currentHorizontal:Lerp(
-                        targetHorizontal,
-                        alpha
-                    )
-                    assembly.AssemblyLinearVelocity = smoothedHorizontal
-                        + Vector3.new(0, vertical, 0)
-                elseif vehicleSpeedSettings.mode == "Boost" then
-                    local correction: Vector3 = targetVelocity - currentVelocity
-                    assembly:ApplyImpulse(
-                        correction
-                            * assembly.AssemblyMass
-                            * math.clamp(deltaTime * 9, 0, 1)
-                    )
-                elseif vehicleSpeedSettings.mode == "CFrame" then
-                    -- Displacement instead of velocity: a speed cap has nothing to
-                    -- clamp, and the walk the game already gives us is subtracted
-                    -- so the total stays at the slider value.
-                    local extra: number = math.max(
-                        resolvedSpeed - currentHumanoid.WalkSpeed,
-                        0
-                    )
-                    if not wallBlocked and direction.Magnitude > 0.001 then
-                        assembly.CFrame = assembly.CFrame
-                            + direction * extra * deltaTime
-                    end
-                elseif vehicleSpeedSettings.mode == "Pulse" then
-                    -- Bursts with a coast between them: the average speed stays
-                    -- close to a normal player's, only the peaks are fast.
-                    local period: number = math.max(
-                        vehicleSpeedSettings.burstInterval,
-                        0.05
-                    ) * 2
-                    local burst: boolean = (os.clock() % period) < (period * 0.5)
-                    local pulseSpeed: number = burst
-                        and resolvedSpeed
-                        or currentHumanoid.WalkSpeed
-                    assembly.AssemblyLinearVelocity = (
-                        not wallBlocked and direction * pulseSpeed or Vector3.zero
-                    ) + Vector3.new(0, vertical, 0)
-                elseif vehicleSpeedSettings.mode == "Teleport" then
-                    vehicleTeleportClock = vehicleTeleportClock + deltaTime
-                    if vehicleTeleportClock >= 0.14 then
-                        assembly.CFrame = assembly.CFrame
-                            + direction
-                                * resolvedSpeed
-                                * vehicleTeleportClock
-                        vehicleTeleportClock = 0
-                    end
+                    boostSeatProperties(model, seat)
                 end
             end)
+            vehicleSpeed:Clean(restoreVehicle)
         end,
     })
-    end
 
     vehicleSpeed:CreateDropdown({
         Name = "Mode",
-        List = {"Adaptive", "Smooth", "Boost", "CFrame", "Pulse", "Teleport"},
+        List = {"Multiplier", "Motors", "Velocity", "Seat"},
         Index = 1,
         Function = function(value: string): ()
-            vehicleSpeedSettings.mode = value
+            restoreVehicle()
+            settings.mode = value
             if vehicleSpeed.Enabled then
-                vehicleSpeed:SetStatus(value)
+                vehicleSpeed:SetStatus(string.lower(value))
             end
         end,
+        Tooltip = "Multiplier preserves the vehicle's current steering; Motors "
+            .. "drives wheel constraints; Velocity rewrites the chassis; Seat "
+            .. "changes classic VehicleSeat properties.",
     })
     vehicleSpeed:CreateSlider({
-        Name = "Speed",
-        Min = 5,
-        Max = 500,
-        Default = vehicleSpeedSettings.speed,
+        Name = "Multiplier",
+        Min = 1,
+        Max = 10,
+        Default = settings.multiplier,
         Function = function(value: number): ()
-            vehicleSpeedSettings.speed = value
+            clearBoostHistory()
+            settings.multiplier = value
         end,
-    })
-    -- Every row below declares that it belongs to the switch after the block
-    -- (and, where a mode owns it, to that mode) instead of the switch walking
-    -- a list.
-    local advanced: any = {Option = "Advanced settings"}
-    vehicleSpeed:CreateSlider({
-        Name = "Vertical speed",
-        Show = advanced,
-        Min = 0,
-        Max = 300,
-        Default = vehicleSpeedSettings.verticalSpeed,
-        Function = function(value: number): ()
-            vehicleSpeedSettings.verticalSpeed = value
-        end,
-    })
-    vehicleSpeed:CreateToggle({
-        Name = "PlatformStand",
-        Show = advanced,
-        Default = vehicleSpeedSettings.platformStand,
-        Function = function(value: boolean): ()
-            vehicleSpeedSettings.platformStand = value
-        end,
-    })
-    vehicleSpeed:CreateToggle({
-        Name = "Custom properties",
-        Show = advanced,
-        Default = vehicleSpeedSettings.customProperties,
-        Function = function(value: boolean): ()
-            vehicleSpeedSettings.customProperties = value
-            if not value then
-                restorePhysicsMotors()
-            end
-        end,
-        Tooltip = "Rewrite the seat and wheel motors of a vehicle you are "
-            .. "sitting in; the originals go back the moment this is off.",
+        Tooltip = "A driver asks for 2x, not an absolute walking speed. The "
+            .. "vehicle still supplies its own direction and base speed.",
     })
     vehicleSpeed:CreateSlider({
         Name = "Motor torque",
-        Show = {advanced, {Option = "Custom properties"}},
+        Show = {Option = "Mode", Values = {"Motors"}},
         Min = 1000,
         Max = 250000,
-        Default = vehicleSpeedSettings.motorTorque,
+        Default = settings.motorTorque,
         Function = function(value: number): ()
-            vehicleSpeedSettings.motorTorque = value
+            settings.motorTorque = value
         end,
     })
-    vehicleSpeed:CreateToggle({
-        Name = "Wall check",
-        Show = advanced,
-        Default = vehicleSpeedSettings.wallCheck,
-        Function = function(value: boolean): ()
-            vehicleSpeedSettings.wallCheck = value
-        end,
-        Tooltip = "Stop against solid geometry instead of moving through it.",
-    })
-    vehicleSpeed:CreateSlider({
-        Name = "Acceleration",
-        Show = {advanced, {Option = "Mode", Values = {"Adaptive", "Smooth"}}},
-        Min = 1,
-        Max = 40,
-        Default = vehicleSpeedSettings.acceleration,
-        Function = function(value: number): ()
-            vehicleSpeedSettings.acceleration = value
-        end,
-    })
-    vehicleSpeed:CreateSlider({
-        Name = "Burst interval (s)",
-        Show = {advanced, {Option = "Mode", Values = {"Pulse"}}},
-        Min = 0.05,
-        Max = 1,
-        Default = vehicleSpeedSettings.burstInterval,
-        Function = function(value: number): ()
-            vehicleSpeedSettings.burstInterval = value
-        end,
-    })
-    vehicleSpeed:CreateSlider({
-        Name = "Air control %",
-        Show = {advanced, {Option = "Mode", Values = {"Adaptive"}}},
-        Min = 10,
-        Max = 150,
-        Default = vehicleSpeedSettings.airControl * 100,
-        Function = function(value: number): ()
-            vehicleSpeedSettings.airControl = value / 100
-        end,
-    })
-    vehicleSpeed:CreateSlider({
-        Name = "Sprint multiplier",
-        Show = advanced,
-        Min = 1,
-        Max = 4,
-        Default = vehicleSpeedSettings.sprintMultiplier,
-        Function = function(value: number): ()
-            vehicleSpeedSettings.sprintMultiplier = value
-        end,
-    })
-    local sprintKey: any = vehicleSpeed:CreateBind({
-        Name = "Sprint key",
-        Show = advanced,
-        Default = vehicleSpeedSettings.sprintKey,
-        Function = function(value: Enum.KeyCode): ()
-            vehicleSpeedSettings.sprintKey = value
-        end,
-    })
-    -- Sprint is a hold, so its mobile button is a hold too: tap the row's key
-    -- slot to place it, then keep a finger on it to sprint.
-    if state.bindMobileActionPlacement then
-        state.bindMobileActionPlacement(
-            sprintKey.Object,
-            "UniversalSpeedSprint",
-            "SPRINT",
-            function(): () end,
-            {
-                onPress = function(): ()
-                    state.speedSprintHeld = true
-                end,
-                onRelease = function(): ()
-                    state.speedSprintHeld = false
-                end,
-            }
-        )
-    end
-    vehicleSpeed:CreateToggle({
-        Name = "Preserve momentum",
-        Show = advanced,
-        Default = vehicleSpeedSettings.preserveMomentum,
-        Function = function(value: boolean): ()
-            vehicleSpeedSettings.preserveMomentum = value
-        end,
-    })
-    vehicleSpeed:CreateToggle({
-        Name = "Auto jump",
-        Show = advanced,
-        Default = vehicleSpeedSettings.autoJump,
-        Function = function(value: boolean): ()
-            vehicleSpeedSettings.autoJump = value
-        end,
-    })
-    vehicleSpeed:CreateSlider({
-        Name = "Auto-jump velocity",
-        Show = {advanced, {Option = "Auto jump"}},
-        Min = 20,
-        Max = 120,
-        Default = vehicleSpeedSettings.jumpVelocity,
-        Function = function(value: number): ()
-            vehicleSpeedSettings.jumpVelocity = value
-        end,
-    })
-    vehicleSpeed:CreateToggle({
-        Name = "Advanced settings",
-        Default = false,
-        Tooltip = "Everything above works on its own; this reveals the rest.",
-    })
+    vehicleSpeed:CreateNote(
+        "If one route is clamped, try the next. Every seat and motor property "
+            .. "returns to the value this vehicle had before the module touched it."
+    )
 
-    activeCleanup = function(): ()
-        restorePhysicsMotors()
-        state.platformStandController.set("VehicleSpeed", nil)
-    end
+    activeCleanup = restoreVehicle
     Module.Initialized = true
     return vehicleSpeed
 end
