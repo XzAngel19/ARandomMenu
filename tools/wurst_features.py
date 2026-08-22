@@ -319,6 +319,18 @@ SCREENSHOT: dict = {
     "pixelsPerGui": 1.6667,
     "logoBlit": [124, 27],
     "hackListLine": 17,
+    # AbsoluteSize at the port's GUI scale 2, which is how 1600×900
+    # (1920×1080 @ scale 2 × 5/6) measures. These are not 1080p
+    # inventions: they are 13/11/72×18/9 logical × 2.
+    "absoluteAtScale2": {
+        "titleHeight": 26,
+        "rowHeight": 22,
+        "logoWidth": 144,
+        "logoHeight": 36,
+        "settingsLine": 22,
+        "sliderHeight": 44,
+        "glyphLineHeight": 16,
+    },
 }
 
 # Wurst draws every label with WurstClient.MC.font — Minecraft's

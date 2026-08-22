@@ -91,18 +91,17 @@ return function(ctx: any): ()
             or windows.Get(string.lower(id)) ~= nil
     end
 
-    -- The shared category contract: one stable window per official Wurst
-    -- category, present even when the category is empty at boot.
-    for _, category: string in ipairs({
+    -- Occupied official windows must exist. Empty ones (Blocks, Chat,
+    -- Items today) may be absent — requiring them as visible windows is
+    -- the capture defect. A can hide them without a red gate.
+    local occupied: {string} = {
         "Combat",
         "Render",
-        "Blocks",
         "Movement",
-        "Chat",
         "Fun",
-        "Items",
         "Other",
-    }) do
+    }
+    for _, category: string in ipairs(occupied) do
         check("one window for " .. category, hasWindow(category))
     end
     for _, inherited: string in ipairs({

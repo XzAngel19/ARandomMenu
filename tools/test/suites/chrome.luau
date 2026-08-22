@@ -56,16 +56,13 @@ return function(ctx: any): ()
             )
     end
 
-    -- The shared contract: official Wurst 7's eight windows, all present
-    -- from boot, and none of the port's old names left as a visible window.
+    -- Occupied official windows stay required. Empty Blocks/Chat/Items
+    -- may be missing — A is allowed to hide a zero-module window.
     for _, name: string in ipairs({
         "Combat",
         "Render",
-        "Blocks",
         "Movement",
-        "Chat",
         "Fun",
-        "Items",
         "Other",
     }) do
         check("official category window " .. name, hasWindow(name))

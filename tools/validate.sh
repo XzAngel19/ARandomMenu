@@ -214,6 +214,47 @@ if offenders:
 print("ok")
 PYTHON
 
+step "Settings surfaces stay rectangular"
+# A stripped the last rounded corners from popups. The only documented
+# UICorner left in Widgets is the colour-picker's circular SV cursor.
+python3 - <<'PYTHON'
+import os
+import re
+
+paths = (
+    "src/library/Widgets.luau",
+    "src/library/SettingsPage.luau",
+    "src/library/Cards.luau",
+    "src/library/ClickGui.luau",
+    "src/library/WindowManager.luau",
+)
+allowed = {
+    "src/library/Widgets.luau": ("svCursor",),
+}
+offenders = []
+for path in paths:
+    if not os.path.exists(path):
+        continue
+    text = open(path, encoding="utf-8", errors="replace").read()
+    for match in re.finditer(r'create\("UICorner"', text):
+        line = text.count("\n", 0, match.start()) + 1
+        window = text[max(0, match.start() - 500): match.end() + 80]
+        ok = False
+        for token in allowed.get(path, ()):
+            if token in window:
+                ok = True
+        if not ok:
+            offenders.append(f"{path}:{line}")
+    for needle in ('"DISPLAY"', '"FILTERS"', '"STYLE"', '"FLIGHT"'):
+        if needle in text and "Section" in text:
+            offenders.append(f"{path}: decorative {needle}")
+if offenders:
+    raise SystemExit(
+        "rounded or decorative leftovers:\\n  " + "\\n  ".join(offenders)
+    )
+print("ok")
+PYTHON
+
 step "Settings widgets stay Wurst"
 # Official Wurst checkboxes are squares, colour rows are two lines with
 # a right-aligned hex, and setting rows do not invent +, –, ▪ icons.

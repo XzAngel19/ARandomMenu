@@ -237,6 +237,9 @@ local function newInstance(className: string): any
         instance.Visible = true
         instance.Text = ""
         instance.TextSize = 14
+        -- Roblox's own default. The capture translated "Other" because
+        -- nobody set this false. Suites assert the product opts out.
+        instance.AutoLocalize = true
         -- Roblox always answers these; a test that never laid anything out
         -- still gets a rectangle rather than nil, so arithmetic on a size —
         -- which is what clamping a window inside the viewport is — reaches an
@@ -456,6 +459,7 @@ local function newInstance(className: string): any
         instance.MouseButton1Click = signal()
         instance.MouseButton1Down = signal()
         instance.MouseButton1Up = signal()
+        instance.MouseButton2Click = signal()
         instance.Activated = signal()
     end
     -- Pointer signals on everything that can be drawn. The widget library
