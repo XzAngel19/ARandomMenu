@@ -363,7 +363,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "41d81e7bca353ed9"
+local SOURCE_STAMP: string = "4714db6c645dd3d2"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -1074,6 +1074,35 @@ if configData.ui.wurstSchema ~= 2 then
     queueConfigSave()
 end
 configData.ui.textScaleCalibrationVersion = 2
+
+-- Wurst or Navigator as the main surface. `UI.MenuStyle` is the stored
+-- name; RightControl and the dock open whichever is selected, RightShift
+-- keeps opening the Navigator directly, and switching styles touches no
+-- module state, no window position and no bind — it only changes what
+-- the open gesture shows.
+state.menuStyle = configData.values["UI.MenuStyle"] == "Navigator"
+    and "Navigator"
+    or "Wurst"
+
+state.openMenuSurface = function(): ()
+    if state.menuStyle == "Navigator" then
+        local navigator: any = state.navigator
+        if navigator and navigator.root and navigator.root.Visible then
+            navigator.Close()
+            return
+        end
+        -- Navigator is the main surface in this style: the category
+        -- windows stay closed behind it instead of peeking through.
+        if state.visible then
+            state.setMenuVisible(false)
+        end
+        if navigator and type(navigator.Open) == "function" then
+            navigator.Open()
+            return
+        end
+    end
+    state.setMenuVisible(not state.visible)
+end
 
 -- ---------------------------------------------------------------------------
 -- Layout controller
@@ -3237,6 +3266,63 @@ state.mvsdFeatures = {}
 local allFeatures: {any} = {}
 local featureConnections = {}
 
+-- The dock's search resolver. One query, one honest answer: an exact
+-- name match toggles that module; a unique substring match toggles it
+-- too; several candidates is "ambiguous" with the names spelled out;
+-- none is "not found". Only real module toggles — action rows and
+-- category headings are administrative surface and never run from a
+-- search box. D's registry can replace this wholesale by reassigning
+-- the field; the dock calls whatever is published here.
+state.invokeModuleSearch = function(query: string): boolean
+    local wanted: string = string.lower(tostring(query or ""):gsub("^%s+", ""):gsub("%s+$", ""))
+    if wanted == "" then
+        return false
+    end
+    local exact: any = nil
+    local partial: {any} = {}
+    for _, feature: any in ipairs(allFeatures) do
+        if not feature.isAction and not feature.isCategory and feature.name then
+            local name: string = string.lower(tostring(feature.name))
+            if name == wanted then
+                exact = feature
+                break
+            end
+            if string.find(name, wanted, 1, true) ~= nil then
+                table.insert(partial, feature)
+            end
+        end
+    end
+    local target: any = exact or (#partial == 1 and partial[1] or nil)
+    if target then
+        if type(target.activate) == "function" then
+            local ok: boolean, failure: any = pcall(target.activate)
+            if ok then
+                notify(tostring(target.name) .. ": "
+                    .. (target.enabled and "enabled" or "disabled"))
+                return true
+            end
+            warn("[" .. PRODUCT.logPrefix .. "] search toggle: " .. tostring(failure))
+            return false
+        end
+        notify(tostring(target.name) .. " has nothing to toggle")
+        return false
+    end
+    if #partial > 1 then
+        local names: {string} = {}
+        for index: number, feature: any in ipairs(partial) do
+            if index > 4 then
+                table.insert(names, "…")
+                break
+            end
+            table.insert(names, tostring(feature.name))
+        end
+        notify("Ambiguous: " .. table.concat(names, ", "))
+        return false
+    end
+    notify("No module matches \"" .. tostring(query) .. "\"")
+    return false
+end
+
 -- Every module card re-applies the responsive metrics through its own
 -- `applyLayout` hook when the viewport mode changes. Registering the listener
 -- once here (instead of once per card) keeps the listener list short and means
@@ -3424,7 +3510,7 @@ do
         if travelled >= 6 then
             return
         end
-        state.setMenuVisible(not state.visible)
+        state.openMenuSurface()
     end))
 end
 
@@ -5596,7 +5682,7 @@ state.globalInputBeganConnection = UserInputService.InputBegan:Connect(function(
 
     if input.UserInputType == Enum.UserInputType.Keyboard
         and input.KeyCode == state.toggleKey then
-        state.setMenuVisible(not state.visible)
+        state.openMenuSurface()
     end
 end)
 end

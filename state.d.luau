@@ -24,6 +24,9 @@ export type MenuState = {
     onLayout: (() -> ()) -> (),                     -- Register such a listener
     refreshLayout: (boolean?) -> (),                -- Re-measure now; the flag forces it even if the mode has not changed
     setMenuVisible: (boolean) -> (),                -- Open or close the window, animations included
+    menuStyle: string,                              -- "Wurst" (ClickGUI windows) or "Navigator" (Navigator as the main surface); stored as UI.MenuStyle
+    openMenuSurface: () -> (),                      -- Open/close whichever surface menuStyle selects; the toggle key and the dock come through here
+    invokeModuleSearch: (string) -> boolean,        -- The dock's search resolver: exact/unique match toggles a module, ambiguous/none notify; replaceable by D's registry
     addMenuVisibilityListener: ((boolean) -> ()) -> (), -- Be told when it opens or closes
     destruct: () -> (),                             -- Remove the menu from the client entirely
 

@@ -1607,6 +1607,26 @@ function Module.init(context: any): any
         end
     end)
 
+    -- Which surface the open gesture shows: Wurst's ClickGUI windows, or
+    -- the Navigator alone as the main screen. Stored under UI.MenuStyle;
+    -- switching touches nothing else — no enabled state, no settings, no
+    -- window positions, no binds. RightShift keeps its direct Navigator
+    -- door either way.
+    local menuStyles: {string} = {"Wurst", "Navigator"}
+    addCycleOption(
+        uiPanel,
+        "Menu style",
+        menuStyles,
+        table.find(menuStyles, tostring(state.menuStyle)) or 1,
+        function(value: string): ()
+            uiSettingsValues["Menu style"] = value
+            state.menuStyle = value
+            configData.values["UI.MenuStyle"] = value
+            queueConfigSave()
+        end
+    )
+    uiSettingsValues["Menu style"] = tostring(state.menuStyle)
+
     -- UI Settings is eager and its rows are all in place now: one reflow at
     -- the real measured size keeps its top-right default when that spot is
     -- free and moves it to a free rectangle when the category grid already

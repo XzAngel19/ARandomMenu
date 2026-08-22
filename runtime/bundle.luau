@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "41d81e7bca353ed9",
+    stamp = "4714db6c645dd3d2",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -10747,6 +10747,26 @@ function Module.init(context: any): any
         end
     end)
 
+    -- Which surface the open gesture shows: Wurst's ClickGUI windows, or
+    -- the Navigator alone as the main screen. Stored under UI.MenuStyle;
+    -- switching touches nothing else — no enabled state, no settings, no
+    -- window positions, no binds. RightShift keeps its direct Navigator
+    -- door either way.
+    local menuStyles: {string} = {"Wurst", "Navigator"}
+    addCycleOption(
+        uiPanel,
+        "Menu style",
+        menuStyles,
+        table.find(menuStyles, tostring(state.menuStyle)) or 1,
+        function(value: string): ()
+            uiSettingsValues["Menu style"] = value
+            state.menuStyle = value
+            configData.values["UI.MenuStyle"] = value
+            queueConfigSave()
+        end
+    )
+    uiSettingsValues["Menu style"] = tostring(state.menuStyle)
+
     -- UI Settings is eager and its rows are all in place now: one reflow at
     -- the real measured size keeps its top-right default when that spot is
     -- free and moves it to a free rectangle when the category grid already
@@ -11432,7 +11452,6 @@ local PILL_BUTTON: number = 32
 local PILL_PADDING_X: number = 7
 local PILL_PADDING_Y: number = 5
 local PILL_GAP: number = 2
-local PILL_TOP: number = 12
 local TOOLTIP_DELAY_MS: number = 400
 
 function Module.init(context: any): any
@@ -11452,6 +11471,8 @@ function Module.init(context: any): any
     local queueConfigSave: any = host.queueConfigSave
     local UserInputService: any = host.UserInputService
     local colorFromConfig: any = host.colorFromConfig
+    local ScreenGui: any = host.ScreenGui
+    local makeTextBox: any = host.makeTextBox
 
     local Furniture: any = {
         handles = {} :: {any},
@@ -11472,6 +11493,15 @@ function Module.init(context: any): any
         while ghost do
             ghost:Destroy()
             ghost = PopupLayer:FindFirstChild(ghostName)
+        end
+        -- The dock lives on the raw ScreenGui (outside the ClickGUI's
+        -- UIScale); a reinject must not leave two of it either.
+        if ScreenGui then
+            local screenGhost: Instance? = ScreenGui:FindFirstChild(ghostName)
+            while screenGhost do
+                screenGhost:Destroy()
+                screenGhost = ScreenGui:FindFirstChild(ghostName)
+            end
         end
     end
 
@@ -12351,26 +12381,32 @@ function Module.init(context: any): any
         Close = closeNavigator,
     }
 
-    -- ----------------------------------------------------------------- pill
-    -- The five per cent of this menu that is Roblox rather than Wurst: a
-    -- compact adaptation of the game's own top-bar capsule, kept only as the
-    -- launcher. One button — show or hide the menu. The shield, headphones,
-    -- options and cart of the real Roblox pill are the platform's, not ours,
-    -- and the OFF capsule that used to sit here is gone with them.
-    local pillButtons: number = 1
+    -- ----------------------------------------------------------------- dock
+    -- The launcher, bottom-centre: [ Search module... ][ ≡ ]. The five per
+    -- cent of this menu that is Roblox rather than Wurst. It lives on the
+    -- raw ScreenGui, outside the ClickGUI's UIScale, sits 70 px above the
+    -- bottom so it clears where most games park their hotbar, and stays
+    -- visible with the GUI closed — it is how the GUI opens. Enter in the
+    -- search box resolves a module by name through
+    -- state.invokeModuleSearch (success / not found / ambiguous all
+    -- notify), then clears itself; it never runs administrative actions.
+    -- The ≡ button opens whichever surface UI.MenuStyle selects.
+    local DOCK_SEARCH_WIDTH: number = 190
+    local DOCK_BOTTOM_MARGIN: number = 70
     local pillWidth: number = PILL_PADDING_X * 2
-        + PILL_BUTTON * pillButtons
-        + PILL_GAP * (pillButtons - 1)
+        + DOCK_SEARCH_WIDTH
+        + PILL_GAP
+        + PILL_BUTTON
 
     local pillFrame: Frame = (create("Frame", {
-        Parent = PopupLayer,
+        Parent = ScreenGui or PopupLayer,
         Name = "Pill",
         Active = true,
-        AnchorPoint = Vector2.new(0.5, 0),
+        AnchorPoint = Vector2.new(0.5, 1),
         BackgroundColor3 = Color3.fromRGB(16, 18, 28),
         BackgroundTransparency = 0.28,
         BorderSizePixel = 0,
-        Position = UDim2.new(0.5, 0, 0, PILL_TOP),
+        Position = UDim2.new(0.5, 0, 1, -DOCK_BOTTOM_MARGIN),
         Size = UDim2.fromOffset(pillWidth, PILL_BUTTON + PILL_PADDING_Y * 2),
         ZIndex = 240,
     }) :: any) :: Frame
@@ -12403,7 +12439,8 @@ function Module.init(context: any): any
         );
         (tooltip :: TextLabel).Position = UDim2.fromOffset(
             anchor.AbsolutePosition.X,
-            anchor.AbsolutePosition.Y + anchor.AbsoluteSize.Y + 8
+            -- Above the dock, which sits at the bottom now.
+            anchor.AbsolutePosition.Y - 38
         );
         (tooltip :: TextLabel).Visible = true
     end
@@ -12469,14 +12506,74 @@ function Module.init(context: any): any
 
     local menuButton: TextButton = pillButton(
         1,
-        PILL_PADDING_X,
+        PILL_PADDING_X + DOCK_SEARCH_WIDTH + PILL_GAP,
         "≡",
         16,
         "Show or hide the menu",
         function(): ()
-            state.setMenuVisible(not state.visible)
+            if type(state.openMenuSurface) == "function" then
+                state.openMenuSurface()
+            else
+                state.setMenuVisible(not state.visible)
+            end
         end
     )
+
+    -- The search half of the dock. A TextBox stays vector for its caret;
+    -- Enter submits, the box clears, and the resolver notifies success,
+    -- not-found or ambiguous. On touch the platform keyboard opens with
+    -- focus, which is the mobile path.
+    local searchShell: Frame = (create("Frame", {
+        Parent = pillFrame,
+        Name = "DockSearch",
+        BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+        BackgroundTransparency = 0.94,
+        BorderSizePixel = 0,
+        Position = UDim2.fromOffset(PILL_PADDING_X, PILL_PADDING_Y),
+        Size = UDim2.fromOffset(DOCK_SEARCH_WIDTH, PILL_BUTTON),
+        ZIndex = 241,
+    }) :: any) :: Frame
+    create("UICorner", {
+        Parent = searchShell,
+        CornerRadius = UDim.new(1, 0),
+    })
+    if type(makeTextBox) == "function" then
+        local searchBox: TextBox = (makeTextBox(searchShell, "") :: any) :: TextBox
+        searchBox.Name = "DockSearchBox"
+        searchBox.BackgroundTransparency = 1
+        searchBox.ClearTextOnFocus = false
+        searchBox.PlaceholderText = "Search module..."
+        searchBox.Position = UDim2.fromOffset(12, 0)
+        searchBox.Size = UDim2.new(1, -18, 1, 0)
+        searchBox.TextColor3 = PILL_IDLE_TEXT
+        searchBox.TextSize = 13
+        searchBox.TextXAlignment = Enum.TextXAlignment.Left
+        searchBox.ZIndex = 242
+        local boxCorner: UICorner? = searchBox:FindFirstChild("StyleCorner") :: UICorner?
+        if boxCorner then
+            boxCorner:Destroy()
+        end
+        local boxStroke: UIStroke? = searchBox:FindFirstChild("StyleStroke") :: UIStroke?
+        if boxStroke then
+            boxStroke:Destroy()
+        end
+        table.insert(
+            Furniture.connections,
+            searchBox.FocusLost:Connect(function(enterPressed: boolean): ()
+                if enterPressed ~= true then
+                    return
+                end
+                local query: string = tostring(searchBox.Text or "")
+                searchBox.Text = ""
+                if query:gsub("%s", "") == "" then
+                    return
+                end
+                if type(state.invokeModuleSearch) == "function" then
+                    state.invokeModuleSearch(query)
+                end
+            end)
+        )
+    end
 
     -- The menu button fills with the accent while the GUI is open, exactly
     -- like the prototype's `.on` state. Repainted on both the things that
