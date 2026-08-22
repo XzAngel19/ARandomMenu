@@ -22,6 +22,8 @@ local Module = {
     Initialized = false,
 }
 
+local moduleCleanup: () -> () = function(): () end
+
 function Module.init(context: any): any
     local host: any = context
     local state: any = host.state
@@ -48,6 +50,7 @@ function Module.init(context: any): any
     local movementFeatures: any = host.movementFeatures
     local mm2Features: any = host.mm2Features
     local allFeatures: any = host.allFeatures
+    local registeredSearchFeatures: {any} = {}
     -- Repainting a card belongs to the shell's skin, not to the factory.
     local applyFeaturePresentation: any = host.applyFeaturePresentation
     local refreshFeatureToggle: any = host.refreshFeatureToggle
@@ -127,6 +130,7 @@ function Module.init(context: any): any
                 or (configuration.category == true and "group")
                 or "toggle",
             silentAction = configuration.silentAction == true,
+            searchable = configuration.searchable ~= false,
             onHold = configuration.onHold,
             optionCount = 0,
             optionRows = {},
@@ -659,6 +663,15 @@ function Module.init(context: any): any
             addFeatureTooltip(feature, description)
         end
 
+        -- The searchable registry is independent of ClickGUI and Navigator.
+        -- Cards are its source of truth because all 38 modules, framework and
+        -- legacy alike, pass through this factory exactly once.
+        local search: any = state.moduleSearch
+        if search and type(search.Register) == "function" then
+            search.Register(feature)
+            table.insert(registeredSearchFeatures, feature)
+        end
+
         -- No "Toggle key" option row any more: every card already carries a key
         -- slot in its header and that slot is the only place an activation key
         -- lives, on desktop and on touch alike.
@@ -704,13 +717,22 @@ function Module.init(context: any): any
         return feature
     end
 
+    moduleCleanup = function(): ()
+        local search: any = state.moduleSearch
+        if search and type(search.Unregister) == "function" then
+            for _, feature: any in ipairs(registeredSearchFeatures) do
+                search.Unregister(feature)
+            end
+        end
+        table.clear(registeredSearchFeatures)
+    end
     Module.Initialized = true
     return {createUniversalFeature = createUniversalFeature}
 end
 
--- Nothing to tear down: a card is a child of the board the shell destroys, and
--- every connection it makes went through `trackUiConnection`.
 function Module.destroy(): ()
+    moduleCleanup()
+    moduleCleanup = function(): () end
     Module.Initialized = false
 end
 

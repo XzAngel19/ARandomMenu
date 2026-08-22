@@ -249,6 +249,98 @@ return function(ctx: any): ()
         string.format("%.3fs", boot.elapsed)
     )
 
+    local search: any = shellState and shellState.moduleSearch
+    check("module search is published independently of ClickGUI",
+        type(search) == "table"
+            and type(search.Resolve) == "function"
+            and type(search.Execute) == "function")
+    check("module search contains exactly the 38-module inventory",
+        search ~= nil and #search.entries == 38,
+        search and tostring(#search.entries) or "missing")
+    for _, entry: any in ipairs(search.entries or {}) do
+        check("module search keybind metadata: " .. tostring(entry.displayName),
+            type(entry.actionId) == "string"
+                and entry.actionId == entry.configKey
+                and type(entry.displayName) == "string"
+                and type(entry.currentKey) == "function"
+                and type(entry.conflict) == "function"
+                and type(entry.capture) == "function"
+                and type(entry.remove) == "function"
+                and type(entry.invoke) == "function")
+        check("fresh module binding is Unknown: " .. tostring(entry.displayName),
+            entry.currentKey() == world.globals.Enum.KeyCode.Unknown)
+    end
+    for query: string, expected: string in pairs({
+        ESP = "PlayerESP",
+        PlayerESP = "PlayerESP",
+        ItemESP = "ItemESP",
+        AutoClicker = "Auto Clicker",
+        KillAura = "Killaura",
+        Killaura = "Killaura",
+        Fly = "Flight",
+        Speed = "SpeedHack",
+        NoFall = "NoFall",
+    }) do
+        local result: any = search and search.Resolve(query)
+        check("module search alias " .. query,
+            result ~= nil and result.status == "success"
+                and result.entry.displayName == expected,
+            result and result.status or "missing")
+    end
+    local flightBinding: any = search.Resolve("Flight").entry
+    local speedBinding: any = search.Resolve("SpeedHack").entry
+    local captureKey: any = world.globals.Enum.KeyCode.Q or world.globals.Enum.KeyCode.Unknown
+    if captureKey ~= world.globals.Enum.KeyCode.Unknown then
+        check("module binding can be captured", flightBinding.capture(captureKey))
+        check("captured key is current", flightBinding.currentKey() == captureKey)
+        speedBinding.capture(captureKey)
+        check("duplicate keys report conflicts",
+            flightBinding.conflict() and speedBinding.conflict())
+        flightBinding.remove()
+        speedBinding.remove()
+        check("remove returns bindings to Unknown",
+            flightBinding.currentKey() == world.globals.Enum.KeyCode.Unknown
+                and speedBinding.currentKey() == world.globals.Enum.KeyCode.Unknown)
+    end
+    check("module search normalizes spaces, hyphens and underscores",
+        search.Resolve("PLAYER_ E-S-P").status == "success")
+    check("module search never fuzzy-matches partial input",
+        search.Resolve("Fl").status == "not_found")
+    check("empty module search does nothing",
+        search.Resolve("").status == "not_found")
+    check("unknown module search does nothing",
+        search.Resolve("definitely-not-a-module").status == "not_found")
+    local duplicateA: any = {
+        name = "Collision", configKey = "Test.A", kind = "toggle",
+        searchable = true, enabled = false, activate = function(): () end,
+    }
+    local duplicateB: any = {
+        name = "Colli-sion", configKey = "Test.B", kind = "toggle",
+        searchable = true, enabled = false, activate = function(): () end,
+    }
+    search.Register(duplicateA)
+    search.Register(duplicateB)
+    check("duplicate normalized names are ambiguous",
+        search.Resolve("collision").status == "ambiguous")
+    search.Unregister(duplicateA)
+    search.Unregister(duplicateB)
+    check("sensitive Wurst Options actions are excluded",
+        search.Resolve("Rejoin Server").status == "not_found"
+            and search.Resolve("Destruct").status == "not_found"
+            and search.Resolve("Reinject latest").status == "not_found")
+    check("group cards cannot be executed from quick search",
+        search.Execute("Projectile Calibration").status == "not_toggleable")
+
+    local flightBefore: any = search.Resolve("Flight")
+    local wasEnabled: boolean = flightBefore.entry.enabled()
+    local executed: any = search.Execute("Fly")
+    check("Execute toggles one exact module once",
+        executed.status == "success"
+            and flightBefore.entry.enabled() ~= wasEnabled)
+    search.Execute("Flight")
+    check("second exact Execute restores the module",
+        flightBefore.entry.enabled() == wasEnabled)
+
     local inputService: any = world.services.UserInputService
     -- Official Wurst: RightCtrl opens ClickGUI, RightShift opens Navigator.
     -- The mock used to omit RightControl, so the shell fell back to
@@ -280,6 +372,8 @@ return function(ctx: any): ()
     if shellState and type(shellState.destruct) == "function" then
         shellState.destruct()
     end
+    check("destruct removes module search and its callbacks",
+        shellState == nil or shellState.moduleSearch == nil)
     check(
         "destruct removes the window",
         gui == nil or gui.Parent == nil or gui.Destroyed == true

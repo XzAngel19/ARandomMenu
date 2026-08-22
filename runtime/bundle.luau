@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "193863fced5826a0",
+    stamp = "bf6f5c1960573fdb",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -2905,6 +2905,124 @@ function Module.init(context: any): Framework
         Host = host,
     }
 
+    local function normalizeSearchName(value: any): string
+        return string.lower(tostring(value or "")):gsub("[%s%-%_]", "")
+    end
+    local moduleSearch: any = {
+        entries = {},
+        aliases = {
+            esp = "playeresp",
+            playeresp = "playeresp",
+            itemesp = "itemesp",
+            autoclicker = "autoclicker",
+            killaura = "killaura",
+            fly = "flight",
+            speed = "speedhack",
+            nofall = "nofall",
+        },
+    }
+    function moduleSearch.Register(feature: any): ()
+        if type(feature) ~= "table" then
+            return
+        end
+        local normalized: string = normalizeSearchName(feature.name)
+        local binding: any = host.state.shortcutBindings
+            and host.state.shortcutBindings[feature.configKey]
+        local entry: any = {
+            normalized = normalized,
+            displayName = feature.name,
+            configKey = feature.configKey,
+            actionId = feature.configKey,
+            aliases = {},
+            kind = feature.kind,
+            searchable = feature.searchable ~= false,
+            feature = feature,
+            activate = feature.activate,
+            invoke = feature.activate,
+        }
+        function entry.currentKey(): any
+            return binding and binding.key or Enum.KeyCode.Unknown
+        end
+        function entry.conflict(): boolean
+            local key: any = entry.currentKey()
+            if key == nil or key == Enum.KeyCode.Unknown then
+                return false
+            end
+            local uses: number = 0
+            for _, candidate: any in pairs(host.state.shortcutBindings or {}) do
+                if candidate.key == key then
+                    uses += 1
+                end
+            end
+            return uses > 1
+        end
+        function entry.capture(key: Enum.KeyCode): boolean
+            return binding ~= nil and binding.assign(key) == true
+        end
+        function entry.remove(): ()
+            if binding and binding.key ~= Enum.KeyCode.Unknown then
+                binding.assign(binding.key)
+            end
+        end
+        for alias: string, target: string in pairs(moduleSearch.aliases) do
+            if target == normalized then
+                table.insert(entry.aliases, alias)
+            end
+        end
+        table.sort(entry.aliases)
+        function entry.enabled(): boolean
+            return feature.enabled == true
+        end
+        table.insert(moduleSearch.entries, entry)
+    end
+    function moduleSearch.Unregister(feature: any): ()
+        for index: number = #moduleSearch.entries, 1, -1 do
+            if moduleSearch.entries[index].feature == feature then
+                table.remove(moduleSearch.entries, index)
+            end
+        end
+    end
+    function moduleSearch.Resolve(query: any): any
+        local normalized: string = normalizeSearchName(query)
+        if normalized == "" then
+            return {status = "not_found"}
+        end
+        normalized = moduleSearch.aliases[normalized] or normalized
+        local matches: {any} = {}
+        for _, entry: any in ipairs(moduleSearch.entries) do
+            if entry.searchable and entry.normalized == normalized then
+                table.insert(matches, entry)
+            end
+        end
+        if #matches == 0 then
+            return {status = "not_found"}
+        end
+        if #matches > 1 then
+            return {status = "ambiguous", matches = matches}
+        end
+        return {status = "success", entry = matches[1]}
+    end
+    function moduleSearch.Execute(query: any): any
+        local result: any = moduleSearch.Resolve(query)
+        if result.status ~= "success" then
+            return result
+        end
+        local entry: any = result.entry
+        if entry.kind ~= "toggle" and entry.kind ~= "action" then
+            return {status = "not_toggleable", entry = entry}
+        end
+        if type(entry.activate) ~= "function" then
+            return {status = "not_toggleable", entry = entry}
+        end
+        entry.activate()
+        return {
+            status = "success",
+            entry = entry,
+            enabled = entry.enabled(),
+        }
+    end
+    host.state.moduleSearch = moduleSearch
+
     -- The option table is built before the control, because every builder
     -- replays the stored value through the callback the moment the row is
     -- created — a callback that would otherwise be writing into a table that
@@ -2920,6 +3038,18 @@ function Module.init(context: any): Framework
         if type(initialValue) == "table" then
             defaultValue = table.clone(initialValue)
         end
+        local step: number? = source.Step
+        if step == nil and (optionType == "slider" or optionType == "range") then
+            local integerOnly: boolean = type(source.Min) == "number"
+                and type(source.Max) == "number"
+                and source.Min % 1 == 0
+                and source.Max % 1 == 0
+                and ((type(initialValue) == "number" and initialValue % 1 == 0)
+                    or (type(initialValue) == "table"
+                        and initialValue.Min % 1 == 0
+                        and initialValue.Max % 1 == 0))
+            step = integerOnly and 1 or 0
+        end
         local option: any = {
             Name = name,
             Value = initialValue,
@@ -2933,7 +3063,7 @@ function Module.init(context: any): Framework
                 current = initialValue,
                 min = source.Min,
                 max = source.Max,
-                step = source.Step,
+                step = step,
                 values = source.List and table.clone(source.List) or nil,
                 callback = source.Function,
                 show = source.Show,
@@ -3014,6 +3144,7 @@ function Module.init(context: any): Framework
                 categoryName = categoryName,
                 kind = kind,
                 silentAction = definition.Silent == true,
+                searchable = definition.Searchable ~= false,
                 registry = definition.Registry,
                 parent = definition.Parent,
                 configKey = definition.ConfigKey,
@@ -3457,6 +3588,10 @@ function Module.init(context: any): Framework
         framework.Categories = {}
         framework.Modules = {}
         framework.Order = {}
+        if host.state.moduleSearch == moduleSearch then
+            host.state.moduleSearch = nil
+        end
+        table.clear(moduleSearch.entries)
         if activeFramework == framework then
             activeFramework = nil
         end
@@ -5145,6 +5280,8 @@ local Module = {
     Initialized = false,
 }
 
+local moduleCleanup: () -> () = function(): () end
+
 function Module.init(context: any): any
     local host: any = context
     local state: any = host.state
@@ -5171,6 +5308,7 @@ function Module.init(context: any): any
     local movementFeatures: any = host.movementFeatures
     local mm2Features: any = host.mm2Features
     local allFeatures: any = host.allFeatures
+    local registeredSearchFeatures: {any} = {}
     -- Repainting a card belongs to the shell's skin, not to the factory.
     local applyFeaturePresentation: any = host.applyFeaturePresentation
     local refreshFeatureToggle: any = host.refreshFeatureToggle
@@ -5250,6 +5388,7 @@ function Module.init(context: any): any
                 or (configuration.category == true and "group")
                 or "toggle",
             silentAction = configuration.silentAction == true,
+            searchable = configuration.searchable ~= false,
             onHold = configuration.onHold,
             optionCount = 0,
             optionRows = {},
@@ -5782,6 +5921,15 @@ function Module.init(context: any): any
             addFeatureTooltip(feature, description)
         end
 
+        -- The searchable registry is independent of ClickGUI and Navigator.
+        -- Cards are its source of truth because all 38 modules, framework and
+        -- legacy alike, pass through this factory exactly once.
+        local search: any = state.moduleSearch
+        if search and type(search.Register) == "function" then
+            search.Register(feature)
+            table.insert(registeredSearchFeatures, feature)
+        end
+
         -- No "Toggle key" option row any more: every card already carries a key
         -- slot in its header and that slot is the only place an activation key
         -- lives, on desktop and on touch alike.
@@ -5827,13 +5975,22 @@ function Module.init(context: any): any
         return feature
     end
 
+    moduleCleanup = function(): ()
+        local search: any = state.moduleSearch
+        if search and type(search.Unregister) == "function" then
+            for _, feature: any in ipairs(registeredSearchFeatures) do
+                search.Unregister(feature)
+            end
+        end
+        table.clear(registeredSearchFeatures)
+    end
     Module.Initialized = true
     return {createUniversalFeature = createUniversalFeature}
 end
 
--- Nothing to tear down: a card is a child of the board the shell destroys, and
--- every connection it makes went through `trackUiConnection`.
 function Module.destroy(): ()
+    moduleCleanup()
+    moduleCleanup = function(): () end
     Module.Initialized = false
 end
 
@@ -17146,7 +17303,22 @@ function Module.init(context: Runtime): any
         if not registered then
             error("Wurst Options refused Rejoin Server: " .. tostring(registration))
         end
+        local search: any = rawget(host.state, "moduleSearch")
+        local searchFeature: any = {
+            name = "Rejoin Server",
+            configKey = "Universal.RejoinServer",
+            kind = "action",
+            searchable = false,
+            enabled = false,
+            activate = rejoinCurrentServer,
+        }
+        if search and type(search.Register) == "function" then
+            search.Register(searchFeature)
+        end
         activeCleanup = function(): ()
+            if search and type(search.Unregister) == "function" then
+                search.Unregister(searchFeature)
+            end
             if type(registration) == "table"
                 and type(registration.Unregister) == "function" then
                 registration.Unregister()
@@ -17166,7 +17338,12 @@ function Module.init(context: Runtime): any
         "Reconnect to the current server instance",
         22,
         rejoinCurrentServer,
-        {action = true, noOptions = true, categoryName = "Other"}
+        {
+            action = true,
+            noOptions = true,
+            categoryName = "Other",
+            searchable = false,
+        }
     )
 
     activeCleanup = function(): () end

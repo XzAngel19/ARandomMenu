@@ -227,9 +227,15 @@ function Host.create(world: any): HostStub
             label .. ": default " .. tostring(default) .. " is outside its range"
         )
         feature.options[label] = {kind = "number", value = default}
+        local step: number = default % 1 == 0
+                and minimum % 1 == 0
+                and maximum % 1 == 0
+            and 1
+            or 0
         recordOptionMetadata(feature, label, "slider", default, callback, {
             min = minimum,
             max = maximum,
+            step = step,
         })
         callback(default)
         return optionRow(feature, label)
@@ -254,7 +260,8 @@ function Host.create(world: any): HostStub
             definition.onChanged, {
                 min = definition.min,
                 max = definition.max,
-                step = definition.step,
+                step = definition.step
+                    or (definition.integer ~= false and 1 or 0),
                 rangeLow = low,
                 rangeHigh = high,
             })

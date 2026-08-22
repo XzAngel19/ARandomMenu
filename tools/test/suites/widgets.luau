@@ -163,6 +163,20 @@ return function(ctx: any): ()
     })
     check("releasing ends the drag", sliderSeen == 1000)
 
+    local function loadedNumber(stored: any): number
+        configValues["Universal.Clamp.Value"] = stored
+        local panel: any = newPanel("Universal.Clamp")
+        local seen: number = -1
+        widgets.addNumberOption(panel, "Value", 25, 10, 50, function(value: number): ()
+            seen = value
+        end)
+        return seen
+    end
+    check("stored number above range clamps", loadedNumber(999) == 50)
+    check("stored number below range clamps", loadedNumber(-999) == 10)
+    check("stored NaN falls back to default", loadedNumber(0 / 0) == 25)
+    check("stored infinity falls back to default", loadedNumber(math.huge) == 25)
+
     -- Cycle, key slot and text field --------------------------------------------------
 
     local cyclePanel: any = newPanel("Universal.Cycle")
@@ -178,6 +192,26 @@ return function(ctx: any): ()
         end
     )
     check("a cycle starts on its stored value", cycleSeen == "Velocity")
+    configValues["Universal.InvalidCycle.Mode"] = "RemovedMode"
+    local invalidCycle: string = ""
+    widgets.addCycleOption(
+        newPanel("Universal.InvalidCycle"),
+        "Mode",
+        {"WalkSpeed", "Velocity", "CFrame"},
+        1,
+        function(value: string): () invalidCycle = value end
+    )
+    check("invalid stored dropdown falls back to a valid default",
+        invalidCycle == "WalkSpeed")
+    configValues["Universal.Removed.OldOption"] = "legacy"
+    local replacementSeen: boolean = false
+    widgets.addToggleOption(
+        newPanel("Universal.Removed"),
+        "Current option",
+        false,
+        function(value: boolean): () replacementSeen = value end
+    )
+    check("removed option data is ignored safely", replacementSeen == false)
 
     local keySeen: any = nil
     local keyButton: any = widgets.addKeyOption(

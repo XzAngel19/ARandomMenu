@@ -13,6 +13,7 @@ return function(ctx: any): ()
     local Mock: any = ctx.Mock
     local world: any = ctx.world
     local host: any = ctx.host
+    local stub: any = ctx.stub
     local check: (string, boolean, string?) -> () = ctx.check
     local section: (string) -> () = ctx.section
 
@@ -189,7 +190,20 @@ return function(ctx: any): ()
     end
     check("the saved profile is listed", loadButton ~= nil)
     if loadButton then
+        local tasksBeforeProfile: number = stub.taskCount()
+        local connectionsBeforeProfile: number = 0
+        for _name: string in pairs(host.featureConnections) do
+            connectionsBeforeProfile += 1
+        end
         loadButton.MouseButton1Click:Fire()
+        check("profile load does not duplicate tasks",
+            stub.taskCount() == tasksBeforeProfile)
+        local connectionsAfterProfile: number = 0
+        for _name: string in pairs(host.featureConnections) do
+            connectionsAfterProfile += 1
+        end
+        check("profile load does not duplicate module connections",
+            connectionsAfterProfile == connectionsBeforeProfile)
         check("loading restores the key",
             binding.key == world.globals.Enum.KeyCode.Q)
         check("loading persists like a manual rebind",

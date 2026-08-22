@@ -48,7 +48,22 @@ function Module.init(context: Runtime): any
         if not registered then
             error("Wurst Options refused Rejoin Server: " .. tostring(registration))
         end
+        local search: any = rawget(host.state, "moduleSearch")
+        local searchFeature: any = {
+            name = "Rejoin Server",
+            configKey = "Universal.RejoinServer",
+            kind = "action",
+            searchable = false,
+            enabled = false,
+            activate = rejoinCurrentServer,
+        }
+        if search and type(search.Register) == "function" then
+            search.Register(searchFeature)
+        end
         activeCleanup = function(): ()
+            if search and type(search.Unregister) == "function" then
+                search.Unregister(searchFeature)
+            end
             if type(registration) == "table"
                 and type(registration.Unregister) == "function" then
                 registration.Unregister()
@@ -68,7 +83,12 @@ function Module.init(context: Runtime): any
         "Reconnect to the current server instance",
         22,
         rejoinCurrentServer,
-        {action = true, noOptions = true, categoryName = "Other"}
+        {
+            action = true,
+            noOptions = true,
+            categoryName = "Other",
+            searchable = false,
+        }
     )
 
     activeCleanup = function(): () end
