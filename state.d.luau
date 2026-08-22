@@ -25,6 +25,7 @@ export type MenuState = {
     refreshLayout: (boolean?) -> (),                -- Re-measure now; the flag forces it even if the mode has not changed
     setMenuVisible: (boolean) -> (),                -- Open or close the window, animations included
     menuStyle: string,                              -- "Wurst" (ClickGUI windows) or "Navigator" (Navigator as the main surface); stored as UI.MenuStyle
+    fontPack: string,                               -- "Minecraft 1.18.1" (authority) / "Minecraft 26.2" (optional local pack) / "Monocraft"; stored as UI.FontPack
     openMenuSurface: () -> (),                      -- Open/close whichever surface menuStyle selects; the toggle key and the dock come through here
     invokeModuleSearch: (string) -> boolean,        -- The dock's search resolver: exact/unique match toggles a module, ambiguous/none notify; replaceable by D's registry
     addMenuVisibilityListener: ((boolean) -> ()) -> (), -- Be told when it opens or closes

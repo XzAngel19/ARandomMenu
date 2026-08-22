@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "bf6f5c1960573fdb",
+    stamp = "324847851230431d",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -10820,6 +10820,9 @@ function Module.init(context: any): any
         if sourceName == "minecraft-exact" then
             return "Font: Minecraft 1.18.1 (exact, local pack)"
         end
+        if sourceName == "minecraft-26.2-local" then
+            return "Font: Minecraft 26.2 (optional local pack)"
+        end
         if sourceName == "monocraft-fallback" then
             return "Font: Monocraft fallback (OFL)"
         end
@@ -10970,6 +10973,28 @@ function Module.init(context: any): any
         end
     )
     uiSettingsValues["Menu style"] = tostring(state.menuStyle)
+
+    -- Which font pack renders. The visual authority stays Minecraft
+    -- 1.18.1; 26.2 is an optional local pack; Monocraft is the committed
+    -- fallback. Selecting a pack that is not installed keeps rendering
+    -- Monocraft and warns exactly once — the switch itself is live.
+    local fontPacks: {string} = {"Minecraft 1.18.1", "Minecraft 26.2", "Monocraft"}
+    addCycleOption(
+        uiPanel,
+        "Font pack",
+        fontPacks,
+        table.find(fontPacks, tostring(state.fontPack)) or 1,
+        function(value: string): ()
+            uiSettingsValues["Font pack"] = value
+            configData.values["UI.FontPack"] = value
+            queueConfigSave()
+            if state.bitmapText
+                and type(state.bitmapText.applyFontPack) == "function" then
+                state.bitmapText.applyFontPack(value)
+            end
+        end
+    )
+    uiSettingsValues["Font pack"] = tostring(state.fontPack)
 
     -- UI Settings is eager and its rows are all in place now: one reflow at
     -- the real measured size keeps its top-right default when that spot is

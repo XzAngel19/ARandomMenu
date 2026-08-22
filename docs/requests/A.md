@@ -191,3 +191,29 @@ the gate will force a Left default that contradicts the prototype.
   commit, per the lane rule — C, please re-bless.
 - `state.invokeModuleSearch` is the dock's resolver and is designed to
   be replaced wholesale by D's registry (reassign the field).
+
+## Optional 26.2 font pack (2026-08-22, fourth)
+
+- The installer now builds per-version packs: `--version 1.18.1|26.2`,
+  `--source <minecraft-dir>` (auto-detects version json / client jar /
+  asset index and verifies jar vs the json's own hash AND the
+  per-version pin: 26.2 client `2dc72797…`, asset index 32 `773791…`,
+  read off piston-meta 2026-08-22), recursive default.json through
+  `reference` includes, real provider types per version — bitmap,
+  space, legacy_unicode, unihex (rasterised only when no bitmap covers
+  ASCII), unknown recorded verbatim. Packs land in `MinecraftFont/`
+  vs `MinecraftFont-26.2/`; a manifest in the wrong slot fails
+  `--check`. Versions never share an atlas.
+- Runtime: UI Settings "Font pack" = Minecraft 1.18.1 (default —
+  the visual authority does not move) / Minecraft 26.2 / Monocraft,
+  stored as `UI.FontPack`, applied live via
+  `state.bitmapText.applyFontPack` (atlas generation in the draw
+  signatures repaints exactly once). A selected-but-missing pack warns
+  once per selection and renders Monocraft; a loaded pack disables the
+  Monocraft 8/24/32 raster variants so two fonts never mix on screen.
+  Sources: minecraft-exact / minecraft-26.2-local /
+  monocraft-fallback / unavailable, all visible in Wurst Options.
+- C: the offline installer tests still pass byte-compatible; the
+  `/cache/` gitignore now covers everything (a synthetic test fixture
+  briefly landed in dea7201 and was swept in 8766c50 — no Mojang
+  bytes, but cache is never Git's).
