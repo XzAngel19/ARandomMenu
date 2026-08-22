@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "d7eb21ccb8e5ec7c",
+    stamp = "61a9496e33e4f2b0",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -6538,6 +6538,12 @@ function Module.init(context: any): any
         local existing: any = manager.byId[id]
         if existing then
             existing.root.Visible = true
+            -- Reset layout ran while this window was closed: its stored
+            -- spot is stale, so reopening re-runs placement once.
+            if existing.stalePlacement then
+                existing.stalePlacement = nil
+                manager.PlaceWindow(existing, {force = true})
+            end
             feature.expanded = true
             if feature.syncArrow then
                 feature.syncArrow()
@@ -6618,6 +6624,10 @@ function Module.init(context: any): any
                 limit = math.huge
             end
             wanted = math.min(wanted, limit)
+            -- A short viewport caps harder than the slider: a window
+            -- taller than the screen cannot be clamped into it, so the
+            -- body scrolls instead.
+            wanted = math.min(wanted, logicalViewport().Y - MARGIN * 2)
             window.fullHeight = wanted
             if not window.collapsed then
                 window.root.Size = UDim2.fromOffset(width, wanted)
@@ -6632,29 +6642,48 @@ function Module.init(context: any): any
         window.resizeToOptions = resizeToOptions
         resizeToOptions()
 
-        -- The width above was packed from character counts, which is an
-        -- estimate. Once the labels have really rendered, their TextBounds
-        -- are the truth; one deferred re-pack replaces the estimate and
-        -- re-clamps. Harness labels never render, so zero bounds are left
-        -- alone.
-        task.defer(function(): ()
+        -- Dynamic packing. The width was estimated from character counts;
+        -- the truth is the bitmap contract's measured advances (or, on the
+        -- harness stand-in, rendered TextBounds). Re-run whenever the text
+        -- underneath could have changed: the deferred first pass, the atlas
+        -- resolving, and any caller that edits labels. Only a real change
+        -- moves anything, and the reflow after it respects a hand-placed
+        -- window.
+        local function repackWidth(): ()
             if not window.root.Parent then
                 return
             end
+            local bitmapText: any = state.bitmapText
             local widest: number = 0
             for _, optionRow: any in ipairs(feature.optionRows or {}) do
                 local label: any = optionRow:FindFirstChild("OptionLabel")
-                local bounds: any = label and label.TextBounds
-                local measured: number = bounds and tonumber(bounds.X) or 0
-                if measured > 0 then
-                    widest = math.max(widest, 8 + measured + 24 + 72)
+                if label then
+                    local measured: number = 0
+                    if bitmapText and type(bitmapText.measure) == "function" then
+                        measured = tonumber(bitmapText.measure(
+                            {{text = label.Text}},
+                            tonumber(label.TextSize) or 16
+                        )) or 0
+                    end
+                    if measured <= 0 then
+                        local bounds: any = label.TextBounds
+                        measured = bounds and tonumber(bounds.X) or 0
+                    end
+                    if measured > 0 then
+                        widest = math.max(widest, 8 + measured + 24 + 72)
+                    end
                 end
             end
             if widest > 0 then
-                width = math.clamp(widest, 160, 420)
-                resizeToOptions()
+                local packed: number = math.clamp(widest, 160, 420)
+                if packed ~= width then
+                    width = packed
+                    resizeToOptions()
+                end
             end
-        end)
+        end
+        window.repackWidth = repackWidth
+        task.defer(repackWidth)
 
         feature.expanded = true
         if feature.syncArrow then
@@ -6671,6 +6700,44 @@ function Module.init(context: any): any
     function manager.BringToFront(window: any): ()
         if window then
             raise(window)
+        end
+    end
+
+    -- Removable diagnostic, never drawn: the logical rectangle of every
+    -- window plus the scale and viewport the manager is reasoning with.
+    -- For reading placement bugs off a live session; nothing renders it.
+    function manager.DebugRects(): any
+        local rects: {any} = {}
+        for _, window: any in ipairs(manager.list) do
+            local x: number, y: number, w: number, h: number = windowRect(window)
+            table.insert(rects, {
+                id = window.id,
+                x = x, y = y, width = w, height = h,
+                visible = window.root.Visible == true,
+                userMoved = window.userMoved == true,
+                collapsed = window.collapsed == true,
+            })
+        end
+        return {
+            scale = layerScale(),
+            viewport = logicalViewport(),
+            windows = rects,
+        }
+    end
+
+    -- Dynamic packing, atlas edition: when the glyphs land, every packed
+    -- settings window re-measures against real advances instead of the
+    -- estimate it was born with.
+    do
+        local bitmapText: any = state.bitmapText
+        if bitmapText and type(bitmapText.onReady) == "table" then
+            table.insert(bitmapText.onReady, function(): ()
+                for _, window: any in ipairs(manager.list) do
+                    if window.featureSettings and window.repackWidth then
+                        window.repackWidth()
+                    end
+                end
+            end)
         end
     end
 
@@ -6982,6 +7049,10 @@ function Module.init(context: any): any
             if limit <= 0 then
                 limit = math.huge
             end
+            -- A short viewport caps harder than the slider: a category
+            -- taller than the screen cannot be clamped into it, so the
+            -- body scrolls instead.
+            limit = math.min(limit, logicalViewport().Y - 12)
             local wanted: number = math.min(
                 TITLE_HEIGHT + layout.AbsoluteContentSize.Y + 4,
                 limit
@@ -8854,11 +8925,20 @@ function Module.init(context: any): any
     -- One window of setting lines. `settingsSized` windows follow the "Max
     -- settings height" slider; the UI Settings window follows "Max height".
     -- Wurst packs a settings window to its content — no window is 200 px
-    -- because 200 was convenient. Monocraft advances ~12 px per glyph at the
-    -- 16 px bitmap size, so a row's natural width is estimable without
-    -- TextService, which the environment does not publish: label + gap +
-    -- value + whatever the row appends (an arrow box, a checkbox).
+    -- because 200 was convenient. The width comes from the bitmap
+    -- contract's measured advances when the contract is up (the estimate
+    -- 12 px per glyph stands in on the harness): label + gap + value +
+    -- whatever the row appends (an arrow box, a checkbox).
     local function textWidth(text: any): number
+        local bitmapText: any = state.bitmapText
+        if bitmapText and type(bitmapText.measure) == "function" then
+            local measured: number = tonumber(bitmapText.measure(
+                {{text = tostring(text)}}, 16
+            )) or 0
+            if measured > 0 then
+                return measured
+            end
+        end
         return #tostring(text) * 12
     end
     local function packedWidth(rows: {{any}}): number
@@ -8877,7 +8957,13 @@ function Module.init(context: any): any
         title: string,
         definition: any
     ): any
-        local width: number = tonumber(definition.width) or WINDOW_WIDTH
+        -- The pack rows are kept on the record so the window can repack
+        -- when the truth changes — the atlas resolving, a keybind list
+        -- rebuilding, a profile renamed. `width` alone is the legacy path.
+        local packRows: {{any}}? = definition.packRows
+        local width: number = packRows and packedWidth(packRows)
+            or tonumber(definition.width)
+            or WINDOW_WIDTH
         local window: any = windows.Create({
             id = id,
             title = title,
@@ -8923,6 +9009,7 @@ function Module.init(context: any): any
             layout = layout,
             open = false,
             width = width,
+            packRows = packRows,
         }
         local function resize(): ()
             local limit: number
@@ -8934,13 +9021,19 @@ function Module.init(context: any): any
             if limit <= 0 then
                 limit = math.huge
             end
+            -- A short viewport caps harder than either slider: a window
+            -- taller than the screen cannot be clamped into it, so the
+            -- body scrolls instead.
+            if type(windows.LogicalViewport) == "function" then
+                limit = math.min(limit, windows.LogicalViewport().Y - 12)
+            end
             local wanted: number = math.min(
                 TITLE_HEIGHT + layout.AbsoluteContentSize.Y + WINDOW_GAP * 2,
                 limit
             )
             window.fullHeight = wanted
             if not window.collapsed then
-                window.root.Size = UDim2.fromOffset(width, wanted)
+                window.root.Size = UDim2.fromOffset(record.width, wanted)
             end
             -- The second placement, not a bare clamp: a window that chose
             -- its spot at birth height and grew must move to a free
@@ -8953,6 +9046,22 @@ function Module.init(context: any): any
             end
         end
         record.resize = resize
+        -- Dynamic packing: re-derive the width from the current pack rows
+        -- (optionally replaced — the keybind list is rebuilt wholesale)
+        -- and only touch the window when the number really moved.
+        record.repack = function(rowsOverride: {{any}}?): ()
+            if rowsOverride ~= nil then
+                record.packRows = rowsOverride
+            end
+            if record.packRows == nil then
+                return
+            end
+            local packed: number = packedWidth(record.packRows)
+            if packed ~= record.width then
+                record.width = packed
+                resize()
+            end
+        end
         table.insert(
             Settings.connections,
             layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(resize)
@@ -9047,8 +9156,10 @@ function Module.init(context: any): any
         -- now, so the window is measured at its real size, anchored to the
         -- window it opened from, and lands on a rectangle that overlaps
         -- nothing. A saved manual position wins inside PlaceWindow itself.
-        if not record.placed then
+        -- Reset layout marks closed windows stale; those re-place here too.
+        if not record.placed or record.window.stalePlacement then
             record.placed = true
+            record.window.stalePlacement = nil
             if windows.PlaceWindow then
                 windows.PlaceWindow(record.window)
             end
@@ -9073,11 +9184,11 @@ function Module.init(context: any): any
             settingsSized = true,
             -- Packed to its own content, as Wurst sizes it: the combo's
             -- longest value plus its arrow decides the width.
-            width = packedWidth({
+            packRows = {
                 {"Background", "#FFFFFF"},
                 {"Text", "#000000"},
                 {"Visibility", "Only when outdated", 26},
-            }),
+            },
         })
         local panel: any = panelFor(logoRecord, "WurstLogo")
         addColorOption(panel, "Background", WURSTLOGO_BACKGROUND, function(color: Color3): ()
@@ -9117,14 +9228,14 @@ function Module.init(context: any): any
             position = Vector2.new(screen.X - WINDOW_WIDTH * 2 - 32, 180),
             anchor = uiRecord and uiRecord.window,
             settingsSized = true,
-            width = packedWidth({
+            packRows = {
                 {"Mode", "Hidden", 26},
                 {"Position", "Right", 26},
                 {"Color", "#FFFFFF"},
                 {"Sort by", "Width", 26},
                 {"Reverse sorting", nil, 30},
                 {"Animations", nil, 30},
-            }),
+            },
         })
         local panel: any = panelFor(hackListRecord, "HackList")
         local modes: {string} = {"Auto", "Count", "Hidden"}
@@ -9341,6 +9452,26 @@ function Module.init(context: any): any
         end
 
         if keybindsRecord then
+            -- Dynamic packing: the list is the content, so a longer module
+            -- name or a wider key re-derives the window's width from the
+            -- rows that exist right now.
+            local rows: {{any}} = {
+                {"Open menu", "RightControl", 12},
+                {"Reset keybinds", nil, 26},
+                {"Add", nil, 26},
+                {"Profiles…", nil, 26},
+            }
+            for _, binding: any in ipairs(sortedBindings()) do
+                if binding.key and binding.key ~= Enum.KeyCode.Unknown then
+                    table.insert(
+                        rows,
+                        {featureLabel(tostring(binding.id)), binding.key.Name, 12}
+                    )
+                end
+            end
+            if keybindsRecord.repack then
+                keybindsRecord.repack(rows)
+            end
             keybindsRecord.resize()
         end
     end
@@ -9476,6 +9607,15 @@ function Module.init(context: any): any
                 end))
             end
             if profilesRecord then
+                -- Dynamic packing: a long profile name widens the window
+                -- the moment it exists.
+                if profilesRecord.repack then
+                    local rows: {{any}} = {{"New profile name", nil, 60}}
+                    for _, name: string in ipairs(names) do
+                        table.insert(rows, {name, nil, 66})
+                    end
+                    profilesRecord.repack(rows)
+                end
                 profilesRecord.resize()
             end
         end
@@ -9526,7 +9666,7 @@ function Module.init(context: any): any
             position = Vector2.new(screen.X - WINDOW_WIDTH * 2 - 32, 140),
             anchor = uiRecord and uiRecord.window,
             settingsSized = true,
-            width = packedWidth(keybindRows),
+            packRows = keybindRows,
         })
         keybindsList = (create("Frame", {
             Parent = keybindsRecord.window.body,
@@ -9574,13 +9714,13 @@ function Module.init(context: any): any
             position = Vector2.new(screen.X - WINDOW_WIDTH * 2 - 32, 220),
             anchor = uiRecord and uiRecord.window,
             settingsSized = true,
-            width = packedWidth({
+            packRows = {
                 {"Keybinds", nil, 26},
                 {"Reinject latest", nil, 26},
                 {"Destruct", nil, 26},
                 {"Reset layout", nil, 26},
                 {"Game check: Universal only"},
-            }),
+            },
         })
 
         actionRow(optionsRecord, 1, "Keybinds", openKeybinds)
@@ -9698,7 +9838,9 @@ function Module.init(context: any): any
             -- also forgets it was ever hand-moved — that is what "reset"
             -- promises — and the settings and management windows still on
             -- screen re-run placement immediately instead of waiting for a
-            -- reopen while standing on the freshly tiled grid.
+            -- reopen while standing on the freshly tiled grid. Hidden ones
+            -- are marked stale and re-place on their next open, so they do
+            -- not pile onto each other while invisible.
             configData.ui.windows = {}
             queueConfigSave()
             for _, window: any in ipairs(windows.list or {}) do
@@ -9707,12 +9849,18 @@ function Module.init(context: any): any
             if state.clickGui and state.clickGui.Retile then
                 state.clickGui.Retile()
             end
-            if windows.PlaceWindow then
-                for _, window: any in ipairs(windows.list or {}) do
-                    if (window.featureSettings or window.managementWindow)
-                        and window.root.Visible then
+            for _, window: any in ipairs(windows.list or {}) do
+                if window.featureSettings or window.managementWindow then
+                    if window.root.Visible and windows.PlaceWindow then
                         windows.PlaceWindow(window, {force = true})
+                    else
+                        window.stalePlacement = true
                     end
+                end
+            end
+            for _, record: any in ipairs(Settings.records) do
+                if not record.window.root.Visible then
+                    record.placed = false
                 end
             end
             notify("Layout reset")
@@ -9753,7 +9901,7 @@ function Module.init(context: any): any
         position = Vector2.new(screen.X - WINDOW_WIDTH - 12, 64),
         closable = false,
         settingsSized = false,
-        width = packedWidth({
+        packRows = {
             {"WurstLogo", nil, 26},
             {"HackList", nil, 26},
             {"Keybinds", nil, 26},
@@ -9765,7 +9913,7 @@ function Module.init(context: any): any
             {"Tooltip opacity", "0.75"},
             {"Max height", "1000"},
             {"Max settings height", "1000"},
-        }),
+        },
     })
     uiRecord.open = true
 
@@ -9846,6 +9994,19 @@ function Module.init(context: any): any
     uiRecord.placed = true
     if windows.ReflowWindow then
         windows.ReflowWindow(uiRecord.window)
+    end
+
+    -- Dynamic packing, atlas edition: when the glyphs land, every packed
+    -- management window re-derives its width from real advances instead
+    -- of the estimate it was born with.
+    if state.bitmapText and type(state.bitmapText.onReady) == "table" then
+        table.insert(state.bitmapText.onReady, function(): ()
+            for _, record: any in ipairs(Settings.records) do
+                if record.repack then
+                    record.repack()
+                end
+            end
+        end)
     end
 
     -- The configuration windows follow the GUI the way category windows do,

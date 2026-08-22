@@ -1012,6 +1012,12 @@ function Module.init(context: any): any
         local existing: any = manager.byId[id]
         if existing then
             existing.root.Visible = true
+            -- Reset layout ran while this window was closed: its stored
+            -- spot is stale, so reopening re-runs placement once.
+            if existing.stalePlacement then
+                existing.stalePlacement = nil
+                manager.PlaceWindow(existing, {force = true})
+            end
             feature.expanded = true
             if feature.syncArrow then
                 feature.syncArrow()
@@ -1092,6 +1098,10 @@ function Module.init(context: any): any
                 limit = math.huge
             end
             wanted = math.min(wanted, limit)
+            -- A short viewport caps harder than the slider: a window
+            -- taller than the screen cannot be clamped into it, so the
+            -- body scrolls instead.
+            wanted = math.min(wanted, logicalViewport().Y - MARGIN * 2)
             window.fullHeight = wanted
             if not window.collapsed then
                 window.root.Size = UDim2.fromOffset(width, wanted)
@@ -1106,29 +1116,48 @@ function Module.init(context: any): any
         window.resizeToOptions = resizeToOptions
         resizeToOptions()
 
-        -- The width above was packed from character counts, which is an
-        -- estimate. Once the labels have really rendered, their TextBounds
-        -- are the truth; one deferred re-pack replaces the estimate and
-        -- re-clamps. Harness labels never render, so zero bounds are left
-        -- alone.
-        task.defer(function(): ()
+        -- Dynamic packing. The width was estimated from character counts;
+        -- the truth is the bitmap contract's measured advances (or, on the
+        -- harness stand-in, rendered TextBounds). Re-run whenever the text
+        -- underneath could have changed: the deferred first pass, the atlas
+        -- resolving, and any caller that edits labels. Only a real change
+        -- moves anything, and the reflow after it respects a hand-placed
+        -- window.
+        local function repackWidth(): ()
             if not window.root.Parent then
                 return
             end
+            local bitmapText: any = state.bitmapText
             local widest: number = 0
             for _, optionRow: any in ipairs(feature.optionRows or {}) do
                 local label: any = optionRow:FindFirstChild("OptionLabel")
-                local bounds: any = label and label.TextBounds
-                local measured: number = bounds and tonumber(bounds.X) or 0
-                if measured > 0 then
-                    widest = math.max(widest, 8 + measured + 24 + 72)
+                if label then
+                    local measured: number = 0
+                    if bitmapText and type(bitmapText.measure) == "function" then
+                        measured = tonumber(bitmapText.measure(
+                            {{text = label.Text}},
+                            tonumber(label.TextSize) or 16
+                        )) or 0
+                    end
+                    if measured <= 0 then
+                        local bounds: any = label.TextBounds
+                        measured = bounds and tonumber(bounds.X) or 0
+                    end
+                    if measured > 0 then
+                        widest = math.max(widest, 8 + measured + 24 + 72)
+                    end
                 end
             end
             if widest > 0 then
-                width = math.clamp(widest, 160, 420)
-                resizeToOptions()
+                local packed: number = math.clamp(widest, 160, 420)
+                if packed ~= width then
+                    width = packed
+                    resizeToOptions()
+                end
             end
-        end)
+        end
+        window.repackWidth = repackWidth
+        task.defer(repackWidth)
 
         feature.expanded = true
         if feature.syncArrow then
@@ -1145,6 +1174,44 @@ function Module.init(context: any): any
     function manager.BringToFront(window: any): ()
         if window then
             raise(window)
+        end
+    end
+
+    -- Removable diagnostic, never drawn: the logical rectangle of every
+    -- window plus the scale and viewport the manager is reasoning with.
+    -- For reading placement bugs off a live session; nothing renders it.
+    function manager.DebugRects(): any
+        local rects: {any} = {}
+        for _, window: any in ipairs(manager.list) do
+            local x: number, y: number, w: number, h: number = windowRect(window)
+            table.insert(rects, {
+                id = window.id,
+                x = x, y = y, width = w, height = h,
+                visible = window.root.Visible == true,
+                userMoved = window.userMoved == true,
+                collapsed = window.collapsed == true,
+            })
+        end
+        return {
+            scale = layerScale(),
+            viewport = logicalViewport(),
+            windows = rects,
+        }
+    end
+
+    -- Dynamic packing, atlas edition: when the glyphs land, every packed
+    -- settings window re-measures against real advances instead of the
+    -- estimate it was born with.
+    do
+        local bitmapText: any = state.bitmapText
+        if bitmapText and type(bitmapText.onReady) == "table" then
+            table.insert(bitmapText.onReady, function(): ()
+                for _, window: any in ipairs(manager.list) do
+                    if window.featureSettings and window.repackWidth then
+                        window.repackWidth()
+                    end
+                end
+            end)
         end
     end
 
