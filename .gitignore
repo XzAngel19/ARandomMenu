@@ -11,8 +11,7 @@ __pycache__/
 
 # Official Minecraft font extracts and derived atlases are local build inputs.
 # Mojang assets are downloaded explicitly and never vendored.
-/cache/minecraft-1.18.1/
+/cache/
 /assets/font/minecraft-atlas.png
 /assets/font/minecraft-atlas.json
 /build/
-/cache/MinecraftFont/
