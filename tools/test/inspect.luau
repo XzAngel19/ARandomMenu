@@ -164,4 +164,83 @@ function Inspect.pinClickGuiScale(hostOrLayer: any, scale: number): any
     return node
 end
 
+function Inspect.featureNamed(env: any, name: string): any
+    for _, feature: any in ipairs((env and env.allFeatures) or {}) do
+        if feature.name == name or feature.configKey == name then
+            return feature
+        end
+    end
+    return nil
+end
+
+function Inspect.armAtlasFamily(bitmap: any): ()
+    Inspect.armAtlas(bitmap)
+    if bitmap == nil or type(bitmap.family) ~= "table" then
+        return
+    end
+    for _, member: any in pairs(bitmap.family) do
+        if type(member) == "table" then
+            member.image = member.image or ("harness-" .. tostring(member.size))
+            member.ready = true
+        end
+    end
+end
+
+function Inspect.pickChoice(root: any, rowName: string, value: string): boolean
+    local row: any = Inspect.findNamed(root, rowName)
+    if row == nil then
+        return false
+    end
+    local combo: any = row:FindFirstChild("ComboValue") or row
+    if combo == nil or combo.MouseButton1Click == nil then
+        return false
+    end
+    combo.MouseButton1Click:Fire()
+    local list: any = Inspect.findNamed(root, "ChoiceList")
+    if list == nil then
+        return false
+    end
+    for _, node: any in ipairs(list:GetDescendants()) do
+        if tostring(node.Text or "") == value and node.MouseButton1Click ~= nil then
+            node.MouseButton1Click:Fire()
+            return true
+        end
+    end
+    return false
+end
+
+function Inspect.dockSearch(state: any): any
+    local pill: any = state and state.pill
+    local root: any = pill and (pill.root or pill)
+    if root == nil then
+        return nil
+    end
+    return Inspect.findNamed(root, "DockSearchBox")
+        or Inspect.findNamed(root, "Search")
+        or Inspect.findNamed(root, "Query")
+end
+
+function Inspect.wurstVisible(state: any): boolean
+    if state == nil then
+        return false
+    end
+    if state.visible == true then
+        return true
+    end
+    local clickGui: any = state.clickGui
+    local combat: any = clickGui
+        and clickGui.categories
+        and clickGui.categories.Combat
+    return combat ~= nil
+        and combat.window ~= nil
+        and combat.window.root ~= nil
+        and combat.window.root.Visible == true
+end
+
+function Inspect.navigatorVisible(state: any): boolean
+    local nav: any = state and state.navigator
+    local root: any = nav and nav.root
+    return root ~= nil and root.Visible == true
+end
+
 return Inspect

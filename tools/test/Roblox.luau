@@ -710,6 +710,7 @@ function Mock.install(): MockWorld
             "Backspace",
             "Tab",
             "Return",
+            "KeypadEnter",
             "Up",
             "Down",
             "Left",
