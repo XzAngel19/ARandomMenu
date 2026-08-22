@@ -10,8 +10,6 @@
 return function(ctx: any): ()
     local check: (string, boolean, string?) -> () = ctx.check
     local section: (string) -> () = ctx.section
-    local host: any = ctx.host
-
     section("AutoLocalize")
 
     local bundle: any = ctx.bundleSource
