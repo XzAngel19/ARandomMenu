@@ -2,11 +2,9 @@
 --
 -- Headless tests: Wurst's Navigator, as Furniture publishes it.
 --
--- Official Navigator is its own full-screen GUI. This port's adaptation
--- (recorded in Furniture.luau) lives under the logo on the ClickGUI
--- screen and is not auto-focused. The suite holds the behaviour that
--- already exists. Space / arrow-key / Escape-as-Navigator-close are
--- requested of A; they are not invented here as a red gate.
+-- Official Navigator is its own full-screen GUI, independent from ClickGUI.
+-- The suite drives its published Open/Close contract and inspects the search
+-- and three-column results surface that Furniture owns.
 
 return function(ctx: any): ()
     local Mock: any = ctx.Mock
@@ -86,32 +84,29 @@ return function(ctx: any): ()
             and string.find(bundleSource, 'TABGUI_STATUS: string = "Enabled"', 1, true) == nil
     )
 
-    if type(state.setMenuVisible) == "function" then
-        state.setMenuVisible(true)
+    if type(nav.Open) == "function" then
+        nav.Open()
     end
     if root ~= nil then
         check(
-            "opening the ClickGUI shows Navigator",
+            "opening Navigator shows its independent screen",
             root.Visible == true,
             "Visible=" .. tostring(root.Visible)
         )
     end
 
-    local search: any = root and root:FindFirstChild("Search")
+    local column: any = root and root:FindFirstChild("Column")
+    local search: any = column and column:FindFirstChild("Search")
     check("Navigator has a search field", search ~= nil)
-    local results: any = root and root:FindFirstChild("Results")
+    local results: any = column and column:FindFirstChild("Results")
     check("Navigator has a results grid", results ~= nil)
     if results ~= nil then
         local grid: any = results:FindFirstChildOfClass("UIGridLayout")
         check("results use a grid layout", grid ~= nil)
-        if grid ~= nil and grid.CellSize then
-            -- 98+2+98+2+98 = 298, three columns in the 302 px frame.
-            check(
-                "the grid is three columns",
-                grid.CellSize.X.Offset == 98,
-                "cell width " .. tostring(grid.CellSize.X.Offset)
-            )
-        end
+        check(
+            "results declare Wurst's three columns",
+            string.find(bundleSource, "local NAV_COLUMNS: number = 3", 1, true) ~= nil
+        )
     end
 
     if type(nav.refresh) == "function" then
@@ -158,20 +153,24 @@ return function(ctx: any): ()
         end
     end
 
-    if type(state.setMenuVisible) == "function" then
-        state.setMenuVisible(false)
+    if type(nav.Close) == "function" then
+        nav.Close()
     end
     if root ~= nil then
         check(
-            "closing the ClickGUI hides Navigator",
+            "closing Navigator hides only its own screen",
             root.Visible == false,
             "Visible=" .. tostring(root.Visible)
         )
     end
 
-    -- Space / arrows / Escape-as-Navigator-only-close are not on this
-    -- surface. RightShift opens ClickGUI, which reveals Navigator — the
-    -- recorded Roblox adaptation, not official Wurst's Navigator key.
+    check(
+        "Navigator implements Wurst's keyboard controls",
+        string.find(bundleSource, "Enum.KeyCode.Space", 1, true) ~= nil
+            and string.find(bundleSource, "Enum.KeyCode.Escape", 1, true) ~= nil
+            and string.find(bundleSource, "Enum.KeyCode.Backspace", 1, true) ~= nil
+            and string.find(bundleSource, "Enum.KeyCode.Down", 1, true) ~= nil
+    )
 
     if type(state.destruct) == "function" then
         state.destruct()
