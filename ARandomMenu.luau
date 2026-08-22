@@ -363,7 +363,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "2ef830f6de196e7a"
+local SOURCE_STAMP: string = "807d94ac3b2e4cf6"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -1099,10 +1099,14 @@ state.menuStyle = configData.values["UI.MenuStyle"] == "Navigator"
 -- and says so exactly once.
 state.fontPack = (function(): string
     local stored: any = configData.values["UI.FontPack"]
-    if stored == "Minecraft 26.2" or stored == "Monocraft" then
+    if stored == "Minecraft 26.2" or stored == "Monocraft"
+        or stored == "Minecraft 1.18.1" then
         return stored
     end
-    return "Minecraft 1.18.1"
+    -- Default: Code, the vector face. No atlas resolves, no pack is
+    -- probed, no warning fires — text renders on the engine's own
+    -- rasteriser, which is the quality bar the captures set.
+    return "Code"
 end)()
 
 -- The one menu-style state machine. Everything that changes the style —
@@ -2045,6 +2049,12 @@ state.bitmapText = {
     -- Labels already adopted, weak-keyed: adopt is idempotent and a
     -- sweep may visit the same instance twice.
     _adopted = setmetatable({}, {__mode = "k"}) :: any,
+    -- Labels waiting for an atlas, weak-keyed to their adopt options. In
+    -- Code (vector) mode nothing ever flushes this: the native TextLabel
+    -- IS the render — crisp, aligned and truncated by the engine — and
+    -- hiding it behind an estimated holder was exactly the misplaced
+    -- text the captures showed.
+    _pendingAdopt = setmetatable({}, {__mode = "k"}) :: any,
     -- The packing width. Post-A2 this is measure() itself — atlas
     -- advances when the atlas is live, the 12 px estimate until then —
     -- so no consumer can drift from the renderer by multiplying a
@@ -2365,6 +2375,9 @@ state.bitmapText.draw = function(
     local width: number = 0
     local height: number = 0
     if atlas.ready and atlas.image then
+        if next(contract._pendingAdopt) ~= nil then
+            contract.flushPendingAdopt()
+        end
         if record.fallback then
             (record.fallback :: TextLabel).Visible = false
         end
@@ -2559,6 +2572,14 @@ state.bitmapText.adopt = function(label: any, options: any?): ()
     if label.Parent ~= nil and contract._live[label.Parent] ~= nil then
         return
     end
+    -- No atlas rendering right now (Code mode, or the atlas has not
+    -- resolved yet): leave the label native and park it. If a bitmap
+    -- atlas ever arms, the pending set is adopted then.
+    if not (contract.atlas.ready and contract.atlas.image) then
+        contract._pendingAdopt[label] = options or true
+        return
+    end
+    contract._pendingAdopt[label] = nil
     local resolvedOptions: any = options or {}
     contract._adopted[label] = true
     label.TextTransparency = 1
@@ -2590,6 +2611,28 @@ state.bitmapText.adopt = function(label: any, options: any?): ()
         label:GetPropertyChangedSignal("TextColor3"):Connect(paint)
         label:GetPropertyChangedSignal("TextSize"):Connect(paint)
     end)
+end
+
+-- Adopt everything that was parked while no atlas rendered. Called
+-- wherever an atlas arms: the boot resolution, loadExactAtlas, a font
+-- pack switch, and the first draw after a harness arms the atlas by
+-- hand.
+state.bitmapText.flushPendingAdopt = function(): ()
+    local contract: any = state.bitmapText
+    if not (contract.atlas.ready and contract.atlas.image) then
+        return
+    end
+    local parked: {Instance} = {}
+    for label: any in pairs(contract._pendingAdopt) do
+        table.insert(parked, label)
+    end
+    for _, label: any in ipairs(parked) do
+        local options: any = contract._pendingAdopt[label]
+        contract._pendingAdopt[label] = nil
+        if label.Parent ~= nil then
+            contract.adopt(label, type(options) == "table" and options or nil)
+        end
+    end
 end
 
 -- Adopt every current and future text object under a root — the one
@@ -2770,7 +2813,16 @@ state.bitmapText.applyFontPack = function(selection: string): ()
     local contract: any = state.bitmapText
     state.fontPack = selection
     contract.restoreFallbackAtlas()
-    if selection ~= "Monocraft" and contract.packs[selection] then
+    if selection == "Code" then
+        -- The vector face: no atlas renders. Labels adopted by an
+        -- earlier bitmap mode keep their holders (their fallback ink is
+        -- the same vector font); fresh surfaces stay native.
+        contract.atlas.ready = false
+        contract.atlas.generation += 1
+        contract.source = "code-vector"
+    end
+    if selection ~= "Monocraft" and selection ~= "Code"
+        and contract.packs[selection] then
         if not contract.probePack(selection)
             and contract._packWarned ~= selection then
             contract._packWarned = selection
@@ -2779,6 +2831,7 @@ state.bitmapText.applyFontPack = function(selection: string): ()
                 .. "\" is not installed; rendering the Monocraft fallback (OFL)")
         end
     end
+    contract.flushPendingAdopt()
     for holder: any, record: any in pairs(contract._live) do
         if holder.Parent ~= nil and record.request ~= nil then
             pcall(function(): ()
@@ -2796,11 +2849,18 @@ state.bitmapText.applyFontPack = function(selection: string): ()
 end
 
 task.spawn(function(): ()
+    local contract: any = state.bitmapText
+    -- Code is the default face and the quality bar: the engine's own
+    -- vector rasteriser, no atlas, no download, no warning. Every other
+    -- selection is opt-in below.
+    if state.fontPack == "Code" then
+        contract.source = "code-vector"
+        return
+    end
     if type(state.resolveAsset) ~= "function" then
         state.bitmapText.source = "unavailable"
         return
     end
-    local contract: any = state.bitmapText
     -- The selected pack first. Packs are local optional installs
     -- (tools/install_minecraft_font.py — never downloaded here, never
     -- committed); the probe verifies the manifest's format and version
@@ -2854,6 +2914,7 @@ task.spawn(function(): ()
             .. "); text renders on the vector stand-in")
         return
     end
+    contract.flushPendingAdopt()
     for holder: any, record: any in pairs(contract._live) do
         if holder.Parent ~= nil and record.request ~= nil then
             pcall(function(): ()
@@ -5789,16 +5850,17 @@ end
 -- Config. tab was old UI; UI Settings is a window (phase 4), not a tab
 
 
--- Restore the saved typeface once the interface exists — and when nothing is
--- saved, default to Monocraft. Wurst ships no TTF at all: every label in the
--- real client is Minecraft's bitmap font, and Monocraft is the closest face
--- this repository vendors. applyInterfaceFont only swaps once the download
--- has resolved, so an executor without getcustomasset simply keeps
--- BuilderSans — the safe fallback, never a blank label.
+-- Restore the saved typeface once the interface exists — and when nothing
+-- is saved, default to Code. The user's verdict on real captures: the
+-- bitmap look does not hold up on Roblox's rasteriser and the Minecraft
+-- pipeline cannot serve every executor, so the menu's working face is the
+-- engine's own monospace — crisp at every size, no download, no atlas.
+-- Monocraft and the Minecraft packs stay available behind the Font pack
+-- row for whoever wants them.
 do
     local savedFont: string = tostring(configData.values.interfaceFont or "")
     if savedFont == "" or savedFont == "Menu default" then
-        savedFont = "Minecraft (Monocraft)"
+        savedFont = "Code"
     end
     task.spawn(function(): ()
         state.applyInterfaceFont(savedFont, false)

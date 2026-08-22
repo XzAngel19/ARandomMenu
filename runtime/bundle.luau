@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "2ef830f6de196e7a",
+    stamp = "807d94ac3b2e4cf6",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -11125,6 +11125,9 @@ function Module.init(context: any): any
         local sourceName: string = tostring(
             (state.bitmapText and state.bitmapText.source) or "unavailable"
         )
+        if sourceName == "code-vector" then
+            return "Font: Code (vector, engine-rendered)"
+        end
         if sourceName == "minecraft-exact" then
             return "Font: Minecraft 1.18.1 (exact, local pack)"
         end
@@ -11295,7 +11298,10 @@ function Module.init(context: any): any
     -- 1.18.1; 26.2 is an optional local pack; Monocraft is the committed
     -- fallback. Selecting a pack that is not installed keeps rendering
     -- Monocraft and warns exactly once — the switch itself is live.
-    local fontPacks: {string} = {"Minecraft 1.18.1", "Minecraft 26.2", "Monocraft"}
+    -- Code first and default: the engine's vector monospace is the
+    -- quality bar the real captures set. The bitmap options survive as
+    -- opt-in for whoever wants the pixel look.
+    local fontPacks: {string} = {"Code", "Monocraft", "Minecraft 1.18.1", "Minecraft 26.2"}
     addCycleOption(
         uiPanel,
         "Font pack",

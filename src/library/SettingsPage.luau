@@ -1503,6 +1503,9 @@ function Module.init(context: any): any
         local sourceName: string = tostring(
             (state.bitmapText and state.bitmapText.source) or "unavailable"
         )
+        if sourceName == "code-vector" then
+            return "Font: Code (vector, engine-rendered)"
+        end
         if sourceName == "minecraft-exact" then
             return "Font: Minecraft 1.18.1 (exact, local pack)"
         end
@@ -1673,7 +1676,10 @@ function Module.init(context: any): any
     -- 1.18.1; 26.2 is an optional local pack; Monocraft is the committed
     -- fallback. Selecting a pack that is not installed keeps rendering
     -- Monocraft and warns exactly once — the switch itself is live.
-    local fontPacks: {string} = {"Minecraft 1.18.1", "Minecraft 26.2", "Monocraft"}
+    -- Code first and default: the engine's vector monospace is the
+    -- quality bar the real captures set. The bitmap options survive as
+    -- opt-in for whoever wants the pixel look.
+    local fontPacks: {string} = {"Code", "Monocraft", "Minecraft 1.18.1", "Minecraft 26.2"}
     addCycleOption(
         uiPanel,
         "Font pack",

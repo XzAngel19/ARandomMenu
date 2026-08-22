@@ -114,6 +114,18 @@ return function(ctx: any): ()
         state.setMenuVisible(true)
     end
 
+    -- The default face is Code: pre-atlas, labels stay NATIVE on purpose —
+    -- the engine's vector rasteriser is the render, and hiding it behind
+    -- an estimated holder was the misplaced text the captures showed.
+    -- This suite tests the bitmap contract, so it arms the atlas up
+    -- front; every adoption assertion below runs under an armed atlas,
+    -- which is exactly when adoption is supposed to happen. The lazy
+    -- pending set flushes on the first draw after arming.
+    Inspect.armAtlas(bitmap)
+    if type(bitmap.flushPendingAdopt) == "function" then
+        bitmap.flushPendingAdopt()
+    end
+
     local windows: any = state.windows
     check("state.windows exists after boot", type(windows) == "table")
 
