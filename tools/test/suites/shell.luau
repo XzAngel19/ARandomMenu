@@ -163,12 +163,18 @@ return function(ctx: any): ()
         -- Movement, Fun, Other); Blocks, Items and Chat are empty and must
         -- not draw a window.
         check("a window per populated category", built >= 5, tostring(built) .. " windows")
-        -- 38 modules plus whatever the active game module adds. Fewer than
-        -- the module count means cards were left parented to the old page.
+        -- Rejoin Server is one of the frozen 38 universal entries, but Wurst
+        -- exposes it as a management action rather than a hack card. The other
+        -- 37 entries (plus any game cards) must be in category windows, and
+        -- Rejoin must be reachable through Wurst Options.
+        local optionActions: {string} = shellState.wurstOptions
+            and shellState.wurstOptions.List()
+            or {}
         check(
-            "every card was placed in one",
-            placed >= 38,
-            tostring(placed) .. " cards placed"
+            "every universal entry is reachable as a card or Wurst Options action",
+            placed >= 37 and table.find(optionActions, "RejoinServer") ~= nil,
+            tostring(placed) .. " cards; Rejoin="
+                .. tostring(table.find(optionActions, "RejoinServer") ~= nil)
         )
         check(
             "the grid does not start every window in the same corner",
