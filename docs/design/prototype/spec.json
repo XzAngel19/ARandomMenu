@@ -1,0 +1,425 @@
+{
+  "source": "docs/design/prototype/index.html",
+  "shape": {
+    "opacity": 0.86,
+    "tooltipOpacity": 0.95,
+    "radius": 0,
+    "rowHeight": 22,
+    "borderThickness": 1,
+    "maxHeight": 340,
+    "scale": 1
+  },
+  "chrome": {
+    "titleHeight": 26,
+    "gap": 2,
+    "snapDistance": 8,
+    "windowWidth": 200
+  },
+  "components": {
+    "sliderBarHeight": 6,
+    "sliderKnobWidth": 16,
+    "sliderKnobHeight": 16,
+    "titleFontSize": 16,
+    "labelFontSize": 16,
+    "tooltipDelayMs": 400,
+    "transitionFast": 0.1,
+    "transitionSlow": 0.18
+  },
+  "luau": {
+    "shape": {
+      "opacity": "ThemeEngine.shape.opacity",
+      "tooltipOpacity": "ThemeEngine.shape.tooltipOpacity",
+      "radius": "ThemeEngine.shape.radius",
+      "rowHeight": "ThemeEngine.shape.rowHeight",
+      "borderThickness": "ThemeEngine.shape.borderThickness",
+      "maxHeight": "ThemeEngine.shape.maxHeight",
+      "scale": "ThemeEngine.shape.scale"
+    },
+    "chrome": {
+      "titleHeight": "TITLE_HEIGHT",
+      "gap": "WINDOW_GAP",
+      "snapDistance": "SNAP_DISTANCE",
+      "windowWidth": "WINDOW_WIDTH"
+    },
+    "components": {
+      "sliderBarHeight": "SLIDER_BAR_HEIGHT",
+      "sliderKnobWidth": "SLIDER_KNOB_WIDTH",
+      "sliderKnobHeight": "SLIDER_KNOB_HEIGHT",
+      "titleFontSize": "TITLE_FONT_SIZE",
+      "labelFontSize": "LABEL_FONT_SIZE",
+      "tooltipDelayMs": "TOOLTIP_DELAY_MS",
+      "transitionFast": "TRANSITION_FAST",
+      "transitionSlow": "TRANSITION_SLOW"
+    }
+  },
+  "scaleControl": {
+    "default": 1,
+    "min": 0.7,
+    "max": 1.6,
+    "decimals": 2,
+    "referenceHeight": null,
+    "autoFactor": null
+  },
+  "wurst": {
+    "source": "Wurst7 4a22e53d774b9a28e395874834f099e779685998",
+    "uiSettingsHosts": [
+      "WurstLogo",
+      "HackList",
+      "Keybinds",
+      "WurstOptions",
+      "ClickGUI"
+    ],
+    "absent": [
+      "GlobalToggle",
+      "Isolate windows"
+    ],
+    "settings": [
+      {
+        "window": "ClickGUI",
+        "name": "Background",
+        "type": "color",
+        "default": "#404040",
+        "description": "Background color",
+        "luau": "Theme.surface"
+      },
+      {
+        "window": "ClickGUI",
+        "name": "Accent",
+        "type": "color",
+        "default": "#101010",
+        "description": "Accent color",
+        "luau": "Theme.accent"
+      },
+      {
+        "window": "ClickGUI",
+        "name": "Text",
+        "type": "color",
+        "default": "#F0F0F0",
+        "description": "Text color",
+        "luau": "Theme.text"
+      },
+      {
+        "window": "ClickGUI",
+        "name": "Opacity",
+        "type": "slider",
+        "default": 0.5,
+        "description": "",
+        "luau": "OPACITY",
+        "min": 0.15,
+        "max": 0.85,
+        "step": 0.01
+      },
+      {
+        "window": "ClickGUI",
+        "name": "Tooltip opacity",
+        "type": "slider",
+        "default": 0.75,
+        "description": "",
+        "luau": "TOOLTIP_OPACITY",
+        "min": 0.15,
+        "max": 1,
+        "step": 0.01
+      },
+      {
+        "window": "ClickGUI",
+        "name": "Max height",
+        "type": "slider",
+        "default": 200,
+        "description": "Maximum window height\n0 = no limit",
+        "luau": "MAX_HEIGHT",
+        "min": 0,
+        "max": 1000,
+        "step": 50
+      },
+      {
+        "window": "ClickGUI",
+        "name": "Max settings height",
+        "type": "slider",
+        "default": 200,
+        "description": "Maximum height for settings windows\n0 = no limit",
+        "luau": "MAX_SETTINGS_HEIGHT",
+        "min": 0,
+        "max": 1000,
+        "step": 50
+      },
+      {
+        "window": "HackList",
+        "name": "Mode",
+        "type": "enum",
+        "default": "Auto",
+        "description": "Auto mode renders the whole list if it fits onto the screen.\nCount mode only renders the number of active hacks.\nHidden mode renders nothing.",
+        "luau": "HACKLIST_MODE",
+        "values": [
+          "Auto",
+          "Count",
+          "Hidden"
+        ]
+      },
+      {
+        "window": "HackList",
+        "name": "Position",
+        "type": "enum",
+        "default": "Left",
+        "description": "Which side of the screen the HackList should be shown on.\nChange this to Right when using TabGUI.",
+        "luau": "HACKLIST_POSITION",
+        "values": [
+          "Left",
+          "Right"
+        ]
+      },
+      {
+        "window": "HackList",
+        "name": "Color",
+        "type": "color",
+        "default": "#FFFFFF",
+        "description": "Color of the HackList text.\nOnly visible when RainbowUI is disabled.",
+        "luau": "HACKLIST_COLOR"
+      },
+      {
+        "window": "HackList",
+        "name": "Sort by",
+        "type": "enum",
+        "default": "Name",
+        "description": "Determines how the HackList entries are sorted.\nOnly visible when Mode is set to Auto.",
+        "luau": "HACKLIST_SORT_BY",
+        "values": [
+          "Name",
+          "Width"
+        ]
+      },
+      {
+        "window": "HackList",
+        "name": "Reverse sorting",
+        "type": "checkbox",
+        "default": false,
+        "description": "",
+        "luau": "HACKLIST_REVERSE"
+      },
+      {
+        "window": "HackList",
+        "name": "Animations",
+        "type": "checkbox",
+        "default": true,
+        "description": "When enabled, entries slide into and out of the HackList as hacks are enabled and disabled.",
+        "luau": "HACKLIST_ANIMATIONS"
+      },
+      {
+        "window": "WurstLogo",
+        "name": "Background",
+        "type": "color",
+        "default": "#FFFFFF",
+        "description": "Background color.\nOnly visible when RainbowUI is disabled.",
+        "luau": "WURSTLOGO_BACKGROUND"
+      },
+      {
+        "window": "WurstLogo",
+        "name": "Text",
+        "type": "color",
+        "default": "#000000",
+        "description": "Text color.",
+        "luau": "WURSTLOGO_TEXT"
+      },
+      {
+        "window": "WurstLogo",
+        "name": "Visibility",
+        "type": "enum",
+        "default": "Always",
+        "description": "",
+        "luau": "WURSTLOGO_VISIBILITY",
+        "values": [
+          "Always",
+          "Only when outdated"
+        ]
+      },
+      {
+        "window": "TabGUI",
+        "name": "Status",
+        "type": "enum",
+        "default": "Disabled",
+        "description": "",
+        "luau": "TABGUI_STATUS",
+        "values": [
+          "Enabled",
+          "Disabled"
+        ]
+      },
+      {
+        "window": "Taco",
+        "name": "Enabled",
+        "type": "checkbox",
+        "default": false,
+        "description": "Spawns a dancing taco on your hotbar.\n\"I love that little guy. So cute!\" -WiZARD",
+        "luau": "TACO_ENABLED"
+      }
+    ],
+    "keybinds": [
+      {
+        "key": "key.keyboard.b",
+        "commands": "fastplace;fastbreak"
+      },
+      {
+        "key": "key.keyboard.c",
+        "commands": "fullbright"
+      },
+      {
+        "key": "key.keyboard.g",
+        "commands": "flight"
+      },
+      {
+        "key": "key.keyboard.semicolon",
+        "commands": "speednuker"
+      },
+      {
+        "key": "key.keyboard.h",
+        "commands": "say /home"
+      },
+      {
+        "key": "key.keyboard.j",
+        "commands": "jesus"
+      },
+      {
+        "key": "key.keyboard.k",
+        "commands": "multiaura"
+      },
+      {
+        "key": "key.keyboard.n",
+        "commands": "nuker"
+      },
+      {
+        "key": "key.keyboard.r",
+        "commands": "killaura"
+      },
+      {
+        "key": "key.keyboard.right.shift",
+        "commands": "navigator"
+      },
+      {
+        "key": "key.keyboard.right.control",
+        "commands": "clickgui"
+      },
+      {
+        "key": "key.keyboard.u",
+        "commands": "freecam"
+      },
+      {
+        "key": "key.keyboard.x",
+        "commands": "x-ray"
+      },
+      {
+        "key": "key.keyboard.y",
+        "commands": "sneak"
+      }
+    ],
+    "chrome": {
+      "titleHeight": 13,
+      "rowHeight": 11,
+      "settingsArrow": 11,
+      "titleButton": 11,
+      "childInset": 2,
+      "childGap": 2,
+      "logoWidth": 72,
+      "logoHeight": 18,
+      "logoX": 0,
+      "logoY": 3,
+      "logoChipTop": 6,
+      "logoChipBottom": 17,
+      "hackListLine": 9,
+      "hackListMargin": 2,
+      "hackListSlide": 5,
+      "windowWidth": null
+    },
+    "widgets": {
+      "sliderHeight": 22,
+      "sliderTextHeight": 11,
+      "sliderRailHeight": 3,
+      "sliderRailInset": 2,
+      "sliderKnobWidth": 8,
+      "sliderKnobHeight": 8,
+      "checkboxBox": 11,
+      "checkboxHeight": 11,
+      "checkboxTextPad": 2,
+      "colorHeight": 22,
+      "colorTextHeight": 11,
+      "colorSwatchHeight": 11,
+      "comboHeight": 11,
+      "comboArrow": 11
+    },
+    "titleButtons": {
+      "size": 11,
+      "category": [
+        "collapse",
+        "pin"
+      ],
+      "settings": [
+        "collapse",
+        "pin",
+        "close"
+      ]
+    },
+    "categories": [
+      "Combat",
+      "Render",
+      "Blocks",
+      "Movement",
+      "Chat",
+      "Fun",
+      "Items",
+      "Other"
+    ],
+    "screenshot": {
+      "file": "docs/design/reference/ref-wurst-719.jpg",
+      "width": 1600,
+      "height": 900,
+      "guiScale": 2,
+      "framebufferWidth": 1920,
+      "framebufferHeight": 1080,
+      "pixelsPerGui": 1.6667,
+      "logoBlit": [
+        124,
+        27
+      ],
+      "hackListLine": 17,
+      "calibrationWidth": 1600,
+      "calibrationHeight": 900,
+      "absoluteAtScale2": {
+        "titleHeight": 26,
+        "rowHeight": 22,
+        "logoWidth": 144,
+        "logoHeight": 36,
+        "settingsLine": 22,
+        "sliderHeight": 44,
+        "glyphLineHeight": 16
+      }
+    },
+    "font": {
+      "source": "Minecraft 1.18.1 default.json provider stack (MC.font)",
+      "versionId": "1.18.1",
+      "file": null,
+      "glyphHeight": 8,
+      "lineHeight": 9,
+      "typicalAdvance": null,
+      "advance": "per-glyph last opaque column + 1",
+      "shadowOffset": [
+        1,
+        1
+      ],
+      "providers": [
+        "bitmap nonlatin_european.png h=8 a=7",
+        "bitmap accented.png h=12 a=10",
+        "bitmap ascii.png h=8 a=7",
+        "legacy_unicode glyph_sizes.bin unicode_page_%s.png"
+      ],
+      "closestVendored": "minecraftFont / Monocraft.otf (OFL)",
+      "portToday": "Monocraft atlas assets/font/monocraft-16.png \u2014 not Minecraft exact",
+      "authority": "docs/minecraft-1.18.1-font.md"
+    },
+    "scale": {
+      "unit": "gui-scale-1",
+      "control": "ThemeEngine.shape.scale",
+      "min": 0.7,
+      "max": 1.6,
+      "default": 1,
+      "viewportFormula": null
+    }
+  }
+}

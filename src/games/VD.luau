@@ -23,12 +23,15 @@ type CollisionState = {
     canCollide: boolean,
 }
 
-local VD_KILLER_COLOR: Color3 = Color3.fromRGB(166, 110, 255)
-local VD_ALERT_COLOR: Color3 = Color3.fromRGB(255, 190, 88)
-
 local moduleCleanup: () -> () = function(): () end
 
 local function buildVDFeatures(): ()
+    -- Role colours live with the builder rather than at file scope: the file
+    -- loads in sandboxed test environments whose globals arrive only through
+    -- injection, after the module body has already run.
+    local VD_KILLER_COLOR: Color3 = Color3.fromRGB(166, 110, 255)
+    local VD_ALERT_COLOR: Color3 = Color3.fromRGB(255, 190, 88)
+
     local settings: any = {
         generatorDistance = 1800,
         generatorTransparency = 0.82,
@@ -51,11 +54,9 @@ local function buildVDFeatures(): ()
         damageBoostDuration = 1,
         walkSpeed = 16,
         lockerRange = 45,
-        fov = 85,
     }
     local runtime: any = {
-        generatorMarkers = {} :: {[Model]: MarkerRecord},
-        playerMarkers = {} :: {[Player]: MarkerRecord},
+        generatorMarkers = {} :: {[Model]: any},
         lockerMarkers = {} :: {[Player]: MarkerRecord},
         generatorStates = {} :: {[Model]: string},
         lockerAlerts = {} :: {[Player]: number},
@@ -82,7 +83,6 @@ local function buildVDFeatures(): ()
         trackedHumanoid = nil :: Humanoid?,
         actionAnimator = nil :: Animator?,
         selectiveCollisions = {} :: {[BasePart]: CollisionState},
-        lighting = nil :: any,
         effectStates = {} :: {[Instance]: any},
         soundStates = {} :: {[Sound]: SoundState},
         soundConnections = {} :: {[Sound]: RBXScriptConnection},
@@ -277,24 +277,35 @@ local function buildVDFeatures(): ()
         local regressing: boolean = generator:GetAttribute("Regressing") == true
             or (regression ~= nil and regression.Playing)
         if progress >= 99.95 then
-            return progress, "COMPLETE", Theme.Success
+            return progress, "COMPLETE", Theme.positive
         elseif regressing then
             return progress, "REGRESSING", VD_ALERT_COLOR
         elseif repairers > 0 then
-            return progress, "REPAIRING x" .. tostring(repairers), Theme.AccentCyan
+            return progress, "REPAIRING x" .. tostring(repairers), Theme.accent
         end
         return progress, "IDLE", Color3.fromRGB(244, 190, 88)
     end
 
     local function toggleGeneratorESP(enabled: boolean): ()
         disconnectFeatureConnection("VDGeneratorESP")
+        local library: any = state.renderLibrary
+        local layer: Frame? = library and library:Layer("VDEspLayer") or nil
         if not enabled then
-            for generator: Model, record: MarkerRecord in pairs(runtime.generatorMarkers) do
-                destroyMarker(record)
-                runtime.generatorMarkers[generator] = nil
+            if library and layer then
+                library:ReleaseAll(layer)
+                layer.Visible = false
+            else
+                for generator: Model, record: MarkerRecord in pairs(runtime.generatorMarkers) do
+                    destroyMarker(record)
+                    runtime.generatorMarkers[generator] = nil
+                end
             end
+            table.clear(runtime.generatorMarkers)
             table.clear(runtime.generatorStates)
             return
+        end
+        if layer then
+            layer.Visible = true
         end
         local elapsed: number = 1
         featureConnections.VDGeneratorESP = TaskManager:Connect(function(deltaTime: number): ()
@@ -304,61 +315,109 @@ local function buildVDFeatures(): ()
             end
             elapsed = 0
             local map: Instance? = getMap()
+            local camera: Camera? = workspace.CurrentCamera
             if not map then
-                for generator: Model, record: MarkerRecord in pairs(runtime.generatorMarkers) do
-                    destroyMarker(record)
-                    runtime.generatorMarkers[generator] = nil
-                    runtime.generatorStates[generator] = nil
+                if library and layer then
+                    library:ReleaseAll(layer)
+                else
+                    for generator: Model, record: MarkerRecord in pairs(runtime.generatorMarkers) do
+                        destroyMarker(record)
+                        runtime.generatorMarkers[generator] = nil
+                        runtime.generatorStates[generator] = nil
+                    end
                 end
+                table.clear(runtime.generatorMarkers)
                 return
             end
+            local localRoot: BasePart? = getRoot(LocalPlayer.Character)
+            local seen: {[Model]: boolean} = {}
             for _, descendant: Instance in ipairs(map:GetDescendants()) do
                 if isGenerator(descendant) then
                     local generator: Model = descendant :: Model
                     local root: BasePart? = getRoot(generator)
-                    if root and not runtime.generatorMarkers[generator] then
+                    if not root then
+                        continue
+                    end
+                    local progress: number, status: string, color: Color3 = generatorState(generator)
+                    local distance: number = if localRoot
+                        then (root.Position - localRoot.Position).Magnitude
+                        else 0
+                    if library and layer and camera then
+                        local projected: Vector2? = library:Project(camera, root.Position)
+                        if projected then
+                            seen[generator] = true
+                            runtime.generatorMarkers[generator] = true :: any
+                            local drawings: any = library:Set(layer, generator)
+                            drawings:Show(true)
+                            drawings:Label(
+                                "NameTag",
+                                string.format(
+                                    "GENERATOR · %.1f%%  %s · %.0f STUDS",
+                                    progress,
+                                    status,
+                                    distance
+                                ),
+                                projected :: Vector2,
+                                0.5,
+                                13,
+                                color,
+                                true
+                            )
+                            drawings:Highlight(
+                                generator,
+                                color,
+                                settings.generatorTransparency,
+                                "Overlay"
+                            )
+                        end
+                    elseif not runtime.generatorMarkers[generator] then
                         runtime.generatorMarkers[generator] = createMarker(
                             generator,
                             root,
-                            Theme.AccentCyan,
+                            Theme.accent,
                             "GENERATOR",
                             settings.generatorDistance
                         )
-                    end
-                end
-            end
-            local localRoot: BasePart? = getRoot(LocalPlayer.Character)
-            for generator: Model, record: MarkerRecord in pairs(runtime.generatorMarkers) do
-                if not generator:IsDescendantOf(map) then
-                    destroyMarker(record)
-                    runtime.generatorMarkers[generator] = nil
-                    runtime.generatorStates[generator] = nil
-                else
-                    local progress: number, status: string, color: Color3 = generatorState(generator)
-                    record.highlight.FillColor = color
-                    record.highlight.OutlineColor = color
-                    record.highlight.FillTransparency = settings.generatorTransparency
-                    if record.billboard then
-                        record.billboard.MaxDistance = settings.generatorDistance
-                    end
-                    if record.label then
-                        local root: BasePart? = getRoot(generator)
-                        local distance: number = if root and localRoot
-                            then (root.Position - localRoot.Position).Magnitude
-                            else 0
-                        record.label.Text = string.format(
-                            "GENERATOR · %.1f%%\n%s · %.0f STUDS",
-                            progress,
-                            status,
-                            distance
-                        )
-                        record.label.TextColor3 = color
                     end
                     local previous: string? = runtime.generatorStates[generator]
                     if previous == "REGRESSING" and status:find("REPAIRING", 1, true) then
                         notify("A survivor touched a regressing generator.")
                     end
                     runtime.generatorStates[generator] = status
+                end
+            end
+            if library and layer then
+                for generator: Model in pairs(runtime.generatorMarkers) do
+                    if not seen[generator] then
+                        library:Release(layer, generator)
+                        runtime.generatorMarkers[generator] = nil
+                    end
+                end
+            else
+                for generator: Model, record: MarkerRecord in pairs(runtime.generatorMarkers) do
+                    if not generator:IsDescendantOf(map) then
+                        destroyMarker(record)
+                        runtime.generatorMarkers[generator] = nil
+                        runtime.generatorStates[generator] = nil
+                    else
+                        local progress: number, status: string, color: Color3 = generatorState(generator)
+                        record.highlight.FillColor = color
+                        record.highlight.OutlineColor = color
+                        record.highlight.FillTransparency = settings.generatorTransparency
+                        if record.label then
+                            local root: BasePart? = getRoot(generator)
+                            local distance: number = if root and localRoot
+                                then (root.Position - localRoot.Position).Magnitude
+                                else 0
+                            record.label.Text = string.format(
+                                "GENERATOR · %.1f%%\n%s · %.0f STUDS",
+                                progress,
+                                status,
+                                distance
+                            )
+                            record.label.TextColor3 = color
+                        end
+                    end
                 end
             end
         end)
@@ -389,13 +448,13 @@ local function buildVDFeatures(): ()
         label.Position = UDim2.fromOffset(12, 4)
         label.Size = UDim2.new(1, -24, 0, 25)
         label.Text = "NEAREST SURVIVOR: NO SIGNAL"
-        label.TextColor3 = Theme.TextMuted
+        label.TextColor3 = Theme.textMuted
         label.TextSize = 14
         label.TextXAlignment = Enum.TextXAlignment.Left
         label.Parent = panel
         local track: Frame = Instance.new("Frame")
         track.Name = "Track"
-        track.BackgroundColor3 = Theme.SurfaceRaised
+        track.BackgroundColor3 = Theme.surfaceRaised
         track.BorderSizePixel = 0
         track.Position = UDim2.fromOffset(12, 36)
         track.Size = UDim2.new(1, -24, 0, 8)
@@ -432,7 +491,7 @@ local function buildVDFeatures(): ()
             if not isRoundActive() or not isLocalKiller() then
                 gui.Enabled = false
                 label.Text = "NEAREST SURVIVOR: NO SIGNAL"
-                label.TextColor3 = Theme.TextMuted
+                label.TextColor3 = Theme.textMuted
                 bar.Size = UDim2.fromScale(0, 1)
                 return
             end
@@ -456,7 +515,7 @@ local function buildVDFeatures(): ()
             end
             if not nearestDistance then
                 label.Text = "NEAREST SURVIVOR: NO SIGNAL"
-                label.TextColor3 = Theme.TextMuted
+                label.TextColor3 = Theme.textMuted
                 bar.Size = UDim2.fromScale(0, 1)
                 return
             end
@@ -464,7 +523,7 @@ local function buildVDFeatures(): ()
             local color: Color3 = if distance <= 25
                 then VD_KILLER_COLOR
                 elseif distance <= 60 then Color3.fromRGB(244, 190, 88)
-                else Theme.Success
+                else Theme.positive
             label.Text = string.format("NEAREST SURVIVOR: %.1f STUDS", distance)
             label.TextColor3 = color
             bar.BackgroundColor3 = color
@@ -475,7 +534,7 @@ local function buildVDFeatures(): ()
     local function survivorStatus(player: Player, character: Model): (string, Color3)
         local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
         if not humanoid then
-            return "UNKNOWN", Theme.TextMuted
+            return "UNKNOWN", Theme.textMuted
         end
         local hooked: boolean = character:GetAttribute("Hooked") == true
             or character:GetAttribute("IsHooked") == true
@@ -497,95 +556,7 @@ local function buildVDFeatures(): ()
         elseif humanoid.Health < humanoid.MaxHealth * 0.75 then
             return "INJURED · " .. string.format("%.0f%%", humanoid.Health / humanoid.MaxHealth * 100), Color3.fromRGB(244, 190, 88)
         end
-        return "HEALTHY", Theme.Success
-    end
-
-    local function clearPlayerMarkers(markers: {[Player]: MarkerRecord}): ()
-        for player: Player, record: MarkerRecord in pairs(markers) do
-            destroyMarker(record)
-            markers[player] = nil
-        end
-    end
-
-    local function updatePlayersESP(): ()
-        local markers: {[Player]: MarkerRecord} = runtime.playerMarkers
-        if not getMap() then
-            clearPlayerMarkers(markers)
-            return
-        end
-        local localRoot: BasePart? = getRoot(LocalPlayer.Character)
-        for _, player: Player in ipairs(Players:GetPlayers()) do
-            local character: Model? = player.Character
-            local root: BasePart? = getRoot(character)
-            local record: MarkerRecord? = markers[player]
-            local killer: boolean = isKillerCharacter(character)
-            local survivor: boolean = player.Team ~= nil
-                and lower((player.Team :: Team).Name) == "survivors"
-            local expectedRole: boolean = if isLocalKiller()
-                then survivor
-                else killer or survivor
-            local valid: boolean = player ~= LocalPlayer
-                and isPlayerInRound(player)
-                and expectedRole
-                and character ~= nil
-                and root ~= nil
-                and character:IsDescendantOf(workspace)
-            if valid and character and root then
-                local distance: number = if localRoot
-                    then (root.Position - localRoot.Position).Magnitude
-                    else 0
-                local status: string
-                local color: Color3
-                if killer then
-                    status = "KILLER"
-                    color = VD_KILLER_COLOR
-                else
-                    status, color = survivorStatus(player, character)
-                end
-                local text: string = string.format(
-                    "%s\n%s · %.0f STUDS",
-                    player.DisplayName,
-                    status,
-                    distance
-                )
-                if not record or record.highlight.Adornee ~= character then
-                    destroyMarker(record)
-                    record = createMarker(character, root, color, text, 2000)
-                    markers[player] = record
-                end
-                record.highlight.FillColor = color
-                record.highlight.OutlineColor = color
-                if record.label then
-                    record.label.TextColor3 = color
-                    record.label.Text = text
-                end
-            elseif record then
-                destroyMarker(record)
-                markers[player] = nil
-            end
-        end
-        for player: Player, record: MarkerRecord in pairs(markers) do
-            if not player.Parent then
-                destroyMarker(record)
-                markers[player] = nil
-            end
-        end
-    end
-
-    local function togglePlayersESP(enabled: boolean): ()
-        disconnectFeatureConnection("VDPlayersESP")
-        clearPlayerMarkers(runtime.playerMarkers)
-        if not enabled then
-            return
-        end
-        local elapsed: number = 1
-        featureConnections.VDPlayersESP = TaskManager:Connect(function(deltaTime: number): ()
-            elapsed += deltaTime
-            if elapsed >= 0.12 then
-                elapsed = 0
-                updatePlayersESP()
-            end
-        end)
+        return "HEALTHY", Theme.positive
     end
 
     local function findRemoteEvent(folderName: string, eventName: string): RemoteEvent?
@@ -767,7 +738,12 @@ local function buildVDFeatures(): ()
             end
             maintainRepairAnimation()
             if settings.autoGeneratorMode == "Blatant" then
-                for _burstIndex: number = 1, 8 do
+                -- Blatant means every tick the game would accept, not a
+                -- frame-rate-driven flood: eight FireServers per frame is
+                -- hundreds per second, which is not cheating visibly, it is
+                -- shouting at the server.
+                if os.clock() - runtime.lastRepairFire >= 0.03 then
+                    runtime.lastRepairFire = os.clock()
                     repairRemote:FireServer(point, true)
                 end
             elseif os.clock() - runtime.lastRepairFire >= settings.autoGeneratorInterval then
@@ -938,10 +914,13 @@ local function buildVDFeatures(): ()
                 return
             end
             if settings.hitAuraMode == "Blatant" then
-                for _burstIndex: number = 1, 4 do
+                -- The reach is what makes this mode blatant; the rate stays
+                -- inside a fast human's. A four-per-frame burst with no clock
+                -- check was hundreds of attacks a second.
+                if os.clock() - runtime.lastHit >= 0.12 then
+                    runtime.lastHit = os.clock()
                     attackRemote:FireServer()
                 end
-                runtime.lastHit = os.clock()
             elseif os.clock() - runtime.lastHit >= settings.hitAuraInterval then
                 runtime.lastHit = os.clock()
                 attackRemote:FireServer()
@@ -1133,7 +1112,7 @@ local function buildVDFeatures(): ()
                         local origin: Vector3 = head.Position
                         local direction: Vector3 = head.CFrame.LookVector
                         line.Color = if isKillerCharacter(player.Character)
-                            then VD_KILLER_COLOR else Theme.AccentCyan
+                            then VD_KILLER_COLOR else Theme.accent
                         line.Size = Vector3.new(0.08, 0.08, length)
                         line.CFrame = CFrame.lookAt(
                             origin + direction * (length / 2),
@@ -1205,7 +1184,7 @@ local function buildVDFeatures(): ()
                     )
                     if not record or record.highlight.Adornee ~= character then
                         destroyMarker(record)
-                        record = createMarker(character, root, Theme.AccentCyan, text, 600)
+                        record = createMarker(character, root, Theme.accent, text, 600)
                         record.highlight.FillTransparency = 0.3
                         record.highlight.OutlineTransparency = 0
                         runtime.lockerMarkers[player] = record
@@ -1489,7 +1468,7 @@ local function buildVDFeatures(): ()
         label.Position = UDim2.new(1, -22, 0.5, 0)
         label.Size = UDim2.fromOffset(260, 100)
         label.Text = "KILLER POWER\nNO DATA"
-        label.TextColor3 = Theme.Text
+        label.TextColor3 = Theme.text
         label.TextSize = 13
         label.TextWrapped = true
         label.Parent = gui
@@ -1546,18 +1525,6 @@ local function buildVDFeatures(): ()
                 elapsed = 0
                 label.Text = cooldownText()
             end
-        end)
-    end
-
-    local function toggleFov(enabled: boolean): ()
-        disconnectFeatureConnection("VDFOV")
-        state.fovController.set("VD", enabled and settings.fov or nil)
-        if not enabled then
-            return
-        end
-        featureConnections.VDFOV = TaskManager:Connect(function(): ()
-            state.fovController.set("VD", settings.fov)
-            state.fovController.apply(workspace.CurrentCamera)
         end)
     end
 
@@ -1626,60 +1593,59 @@ local function buildVDFeatures(): ()
         end)
     end
 
-    local function toggleVDFullbright(enabled: boolean): ()
-        disconnectFeatureConnection("VDFullbright")
-        if not enabled then
-            if runtime.lighting then
-                for property: string, value: any in pairs(runtime.lighting) do
-                    (Lighting :: any)[property] = value
-                end
-                runtime.lighting = nil
+    -- The universal Player ESP learns this game's two roles, so its boxes,
+    -- chams, tracers and name tags all read Killer or Survivor without VD
+    -- having to draw any of them itself.
+    registerRoleProvider({
+        Name = "VD",
+        Roles = {"Killer", "Survivor"},
+        Colors = {
+            Killer = Color3.fromRGB(226, 72, 72),
+            Survivor = Color3.fromRGB(120, 190, 255),
+        },
+        Get = function(player: Player): string?
+            local character: Model? = player.Character
+            if not character then
+                return nil
             end
-            return
-        end
-        runtime.lighting = {
-            Brightness = Lighting.Brightness,
-            ClockTime = Lighting.ClockTime,
-            FogEnd = Lighting.FogEnd,
-            GlobalShadows = Lighting.GlobalShadows,
-            Ambient = Lighting.Ambient,
-            OutdoorAmbient = Lighting.OutdoorAmbient,
-        }
-        featureConnections.VDFullbright = TaskManager:Connect(function(): ()
-            Lighting.Brightness = 3
-            Lighting.ClockTime = 14
-            Lighting.FogEnd = 100000
-            Lighting.GlobalShadows = false
-            Lighting.Ambient = Color3.fromRGB(190, 190, 190)
-            Lighting.OutdoorAmbient = Color3.fromRGB(170, 170, 170)
-        end)
-    end
+            return isKillerCharacter(character) and "Killer" or "Survivor"
+        end,
+    })
 
-    createUniversalFeature(
-        "Players ESP",
-        "Role-aware player ESP; Killer sees Survivors only, Survivors see both roles",
-        1,
-        togglePlayersESP,
-        {parent = state.vdScroll, registry = state.vdFeatures}
-    )
-
-    local GeneratorFeature: any = createUniversalFeature(
-        "Generator & Objective ESP",
-        "Highlight match generators with exact progress, state and distance",
-        2,
-        toggleGeneratorESP,
-        {parent = state.vdScroll, registry = state.vdFeatures}
-    )
-    addNumberOption(GeneratorFeature, "Maximum distance", 1800, 200, 3000, function(value: number): ()
-        settings.generatorDistance = value
-    end)
-    addNumberOption(GeneratorFeature, "Fill transparency", 0.82, 0, 1, function(value: number): ()
-        settings.generatorTransparency = math.clamp(value, 0, 1)
-    end)
-    addInformationOption(
-        GeneratorFeature,
-        "workspace.Map only; Lobby and Spectator objects are ignored."
-    )
+    -- Generators are an option of the universal Player ESP, not a card of
+    -- their own: it is the same "mark a thing through a wall" idea, and the
+    -- only reason it lives in this file is that nothing universal knows what a
+    -- VD generator is. The rows appear only in this game.
+    registerEspExtra({
+        Name = "Generators",
+        Default = false,
+        Tooltip = "Match generators with their exact progress, state and "
+            .. "distance. workspace.Map only; Lobby and Spectator objects are "
+            .. "ignored.",
+        Toggle = toggleGeneratorESP,
+        Options = {
+            {
+                Kind = "number",
+                Name = "max distance",
+                Default = 1800,
+                Min = 200,
+                Max = 3000,
+                Set = function(value: number): ()
+                    settings.generatorDistance = value
+                end,
+            },
+            {
+                Kind = "number",
+                Name = "fill",
+                Default = 0.82,
+                Min = 0,
+                Max = 1,
+                Set = function(value: number): ()
+                    settings.generatorTransparency = math.clamp(value, 0, 1)
+                end,
+            },
+        },
+    })
 
     local GeneratorAuraFeature: any = createUniversalFeature(
         "Auto Generator",
@@ -1897,17 +1863,6 @@ local function buildVDFeatures(): ()
         {parent = state.vdScroll, registry = state.vdFeatures}
     )
 
-    local FovFeature: any = createUniversalFeature(
-        "VD Field of View",
-        "Keep a wider camera view while VD replaces camera properties",
-        16,
-        toggleFov,
-        {parent = state.vdScroll, registry = state.vdFeatures}
-    )
-    addNumberOption(FovFeature, "Field of view", 85, 50, 120, function(value: number): ()
-        settings.fov = math.clamp(value, 50, 120)
-    end)
-
     createUniversalFeature(
         "Optimize Blind / Flash Protection",
         "Disable local flashlight, blind and whiteout overlays as soon as they appear",
@@ -1916,18 +1871,9 @@ local function buildVDFeatures(): ()
         {parent = state.vdScroll, registry = state.vdFeatures}
     )
 
-    createUniversalFeature(
-        "VD Fullbright",
-        "Remove local darkness, fog and shadows and restore them when disabled",
-        18,
-        toggleVDFullbright,
-        {parent = state.vdScroll, registry = state.vdFeatures}
-    )
-
     state.cleanupVDRuntime = function(): ()
         disconnectFeatureConnection("VDProximityVisibility")
         toggleGeneratorESP(false)
-        togglePlayersESP(false)
         toggleAutoGeneratorAura(false)
         toggleAutoParry(false)
         toggleKillerHitAura(false)
@@ -1941,12 +1887,9 @@ local function buildVDFeatures(): ()
         toggleFacingESP(false)
         toggleLockerDetector(false)
         toggleCooldownTracker(false)
-        toggleFov(false)
         toggleNoBlind(false)
-        toggleVDFullbright(false)
         clearFacing()
         clearLockerMarkers()
-        clearPlayerMarkers(runtime.playerMarkers)
         restoreSelectiveCollisions()
         if runtime.visualFolder then
             runtime.visualFolder:Destroy()

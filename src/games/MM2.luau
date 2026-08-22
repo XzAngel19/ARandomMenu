@@ -1,4 +1,9 @@
 --!strict
+--!nolint GlobalUsedAsLocal
+--
+-- `cleanupMM2Runtime` is assigned as a global on purpose: the shell reads the
+-- teardown hook back out of this module's environment when it unloads the
+-- game, so it cannot be a local of the builder that defines it.
 local Module = {
     Name = "MM2",
     PlaceId = 142823291,
@@ -11,13 +16,12 @@ local Module = {
 local moduleCleanup: () -> () = function(): () end
 
 local function buildMM2Features()
+local host: any = getfenv()
+local trajectoryLogPrefix: string = "[" .. tostring(host.PRODUCT.logPrefix)
+    .. ":MM2:Trajectory]"
 local MM2Effects = create("Folder", {
     Parent = ScreenGui,
     Name = "MM2Effects",
-})
-local RoleEffects = create("Folder", {
-    Parent = MM2Effects,
-    Name = "RoleESP",
 })
 local GunEffects = create("Folder", {
     Parent = MM2Effects,
@@ -76,6 +80,9 @@ local mm2Settings = {
     getGunKey = Enum.KeyCode.G,
     instantRoleNotify = false,
     roleEspAll = false,
+    -- Off by default: the round gate needs data the client does not always
+    -- have, and an ESP that silently shows nothing reads as a broken module.
+    roleEspRoundOnly = false,
     roleEspInnocent = false,
     roleEspMurderer = false,
     roleEspSheriff = false,
@@ -93,52 +100,27 @@ local mm2Settings = {
     coinTransparency = 0.8,
     trapColor = Color3.fromRGB(145, 25, 25),
     trapTransparency = 0.7,
-    gunColor = Color3.fromRGB(160, 65, 215),
-    gunTransparency = 0.5,
+    -- Menu palette: the dropped gun reads as light grey chrome, not a
+    -- saturated purple that fights the rest of the interface.
+    gunColor = Color3.fromRGB(226, 226, 232),
+    gunTransparency = 0.55,
     autoPlayId = "",
 }
 
-local friendSettings = {
-    names = {},
-    protectRobloxFriends = true,
-    friendUserIds = {},
-}
-
-local function refreshFriendProtection()
-    friendSettings.friendUserIds = {}
-    if friendSettings.protectRobloxFriends then
-        for _, player in ipairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer then
-                local success, friend = pcall(
-                    LocalPlayer.IsFriendsWithAsync,
-                    LocalPlayer,
-                    player.UserId
-                )
-                if success and friend then
-                    friendSettings.friendUserIds[player.UserId] = true
-                end
-            end
-        end
-    end
-end
-
-state.isProtectedTarget = function(player)
+-- Friend protection is universal now: the list, the Roblox-friend lookup and
+-- the UI all live in src/modules/Utility/FriendList.luau, so the protection
+-- follows the player into every other game instead of existing only here.
+-- MM2 keeps the question it always asked and forwards it.
+state.isProtectedTarget = function(player: Player?): boolean
     if not player or player == LocalPlayer then
         return true
     end
-    if friendSettings.friendUserIds[player.UserId] then
-        return true
+    local friendList: any = state.friendList
+    if friendList and type(friendList.isProtected) == "function" then
+        return friendList.isProtected(player) == true
     end
-    local name = string.lower(player.Name)
-    local displayName = string.lower(player.DisplayName)
-    return friendSettings.names[name] == true
-        or friendSettings.names[displayName] == true
+    return false
 end
-
-featureConnections.MM2FriendPlayerAdded = Players.PlayerAdded:Connect(function()
-    task.defer(refreshFriendProtection)
-end)
-task.spawn(refreshFriendProtection)
 
 local function clearEffects(folder)
     for _, child in ipairs(folder:GetChildren()) do
@@ -374,25 +356,79 @@ local function findSheriff(): Player?
         or findPlayerByRoundRole("Hero")
 end
 
+-- Locating the active map.
+--
+-- This used to require a child called `CoinContainer` *and* one called
+-- `Spawns`. Current MM2 maps ship `CoinAreas` instead (a live map reads
+-- `ResearchFacility > CoinAreas / Interactive / Base / Spawns`), so the lookup
+-- always failed and everything built on it — Teleport to Map, Loop All
+-- Interact, the trap sweep, the dropped-gun search — silently did nothing.
+--
+-- The map is now recognised by any of its coin containers, with the lobby
+-- excluded explicitly because it also owns a `Spawns` model.
+local MM2_MAP_COIN_CONTAINERS: {string} = {
+    "CoinContainer",
+    "CoinAreas",
+    "Coins",
+}
+
+local function isMM2MapModel(object: Instance): boolean
+    if not object:IsA("Model") or object.Name == "Lobby" then
+        return false
+    end
+    for _, containerName: string in ipairs(MM2_MAP_COIN_CONTAINERS) do
+        if object:FindFirstChild(containerName) then
+            return true
+        end
+    end
+    return false
+end
+
 local function findMM2Map(): Instance?
     for _, object: Instance in ipairs(workspace:GetChildren()) do
-        if object:FindFirstChild("CoinContainer")
-            and object:FindFirstChild("Spawns") then
+        if isMM2MapModel(object) then
+            return object
+        end
+    end
+    -- Last resort: a model that holds coin spawn points is a map even if its
+    -- container was renamed again.
+    for _, object: Instance in ipairs(workspace:GetChildren()) do
+        if object:IsA("Model")
+            and object.Name ~= "Lobby"
+            and object:FindFirstChild("Spawns")
+            and object:FindFirstChild("CoinSpawn", true) then
             return object
         end
     end
     return nil
 end
 
+-- The dropped sheriff gun.
+--
+-- It is normally a `GunDrop` model, but when the sheriff dies holding it the
+-- gun can also be lying in the workspace as the plain `Gun` tool, so both are
+-- accepted rather than reporting "no gun" while one is on the floor.
 local function findDroppedGun(): (Model | BasePart)?
     local map: Instance? = findMM2Map()
     local candidate: Instance? = (map and map:FindFirstChild("GunDrop", true))
         or workspace:FindFirstChild("GunDrop", true)
-    if candidate and candidate:IsA("Model") then
+    if candidate
+        and (candidate:IsA("Model") or candidate:IsA("BasePart")) then
         return candidate
     end
-    if candidate and candidate:IsA("BasePart") then
-        return candidate
+
+    for _, object: Instance in ipairs(workspace:GetDescendants()) do
+        if object:IsA("Tool")
+            and (object.Name == "Gun"
+                or CollectionService:HasTag(object, "Weapon_Gun")) then
+            -- A Tool is not a PVInstance: everything downstream pivots to and
+            -- highlights this, so hand back its handle rather than the tool.
+            local handle: Instance? = object:FindFirstChild("Handle")
+                or object:FindFirstChildWhichIsA("BasePart")
+            if handle and handle:IsA("BasePart") then
+                return handle
+            end
+        end
     end
     return nil
 end
@@ -433,16 +469,39 @@ local function createMM2Marker(folder, adornee, labelText, color, transparency)
         billboardReference.Parent = folder
 
         local text = Instance.new("TextLabel")
-        text.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
-        text.BackgroundTransparency = 0.2
-        text.BorderColor3 = color
-        text.BorderSizePixel = 1
-        text.Font = Enum.Font.GothamBold
+        text.BackgroundColor3 = Theme.background
+        text.BackgroundTransparency = 0.28
+        text.BorderSizePixel = 0
+        text.FontFace = CONTROL_FONT
         text.Size = UDim2.fromScale(1, 1)
         text.Text = labelText
-        text.TextColor3 = color
-        text.TextSize = 13
+        text.TextColor3 = Theme.text
+        text.TextSize = 12
         text.Parent = billboard
+
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 6)
+        corner.Parent = text
+
+        local stroke = Instance.new("UIStroke")
+        stroke.Color = Theme.outline
+        stroke.Transparency = 0.55
+        stroke.Thickness = 1
+        stroke.Parent = text
+
+        -- The role colour survives as a slim accent bar; the plate itself
+        -- stays the menu's dark grey so the world ESP matches the interface.
+        local accent = Instance.new("Frame")
+        accent.AnchorPoint = Vector2.new(0.5, 1)
+        accent.BackgroundColor3 = color
+        accent.BorderSizePixel = 0
+        accent.Position = UDim2.new(0.5, 0, 1, -3)
+        accent.Size = UDim2.new(0.55, 0, 0, 2)
+        accent.Parent = text
+
+        local accentCorner = Instance.new("UICorner")
+        accentCorner.CornerRadius = UDim.new(1, 0)
+        accentCorner.Parent = accent
     end
 end
 
@@ -463,104 +522,43 @@ local function createMM2Cham(folder, adornee, color, transparency)
     reference.Parent = folder
 end
 
-local function rebuildRoleEsp()
-    clearEffects(RoleEffects)
-    if not hasActiveRoundRoles() then
-        return
-    end
-
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer and player.Character then
-            local role: string? = getPlayerRole(player) or "Innocent"
-
-            local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
-            local isDead = humanoid and humanoid.Health <= 0
-            local show = mm2Settings.roleEspAll
-                and ((role == "Innocent" and mm2Settings.roleEspInnocent)
-                or (role == "Murderer" and mm2Settings.roleEspMurderer)
-                or ((role == "Sheriff" or role == "Hero")
-                    and mm2Settings.roleEspSheriff))
-
-            if show and isDead then
-                createMM2Cham(
-                    RoleEffects,
-                    player.Character,
-                    mm2Settings.deadColor,
-                    mm2Settings.deadTransparency
-                )
-            elseif show and role == "Murderer" then
-                createMM2Cham(
-                    RoleEffects,
-                    player.Character,
-                    mm2Settings.murdererColor,
-                    mm2Settings.murdererTransparency
-                )
-            elseif show and role == "Sheriff" then
-                createMM2Cham(
-                    RoleEffects,
-                    player.Character,
-                    mm2Settings.sheriffColor,
-                    mm2Settings.sheriffTransparency
-                )
-            elseif show and role == "Hero" then
-                createMM2Cham(
-                    RoleEffects,
-                    player.Character,
-                    mm2Settings.heroColor,
-                    mm2Settings.heroTransparency
-                )
-            elseif show and role == "Innocent" then
-                createMM2Cham(
-                    RoleEffects,
-                    player.Character,
-                    mm2Settings.innocentColor,
-                    mm2Settings.innocentTransparency
-                )
+-- Roles, published instead of drawn.
+--
+-- MM2 used to draw its own player ESP: a Highlight per player, a colour per
+-- role, its own round gate and its own rebuild loop — living next to the
+-- universal Player ESP, which already drew boxes, skeletons, tracers, health
+-- and name tags and knew nothing about roles. Two implementations of one idea.
+--
+-- The game module now publishes only the part that is genuinely MM2's: which
+-- role a player is, and what colour each role should be. The universal ESP
+-- does the drawing, so a murderer is red in the corner box, in the chams, on
+-- the tracer and on the name tag at once, and every filter and style option
+-- applies to it.
+local function registerMM2Roles(): ()
+    registerRoleProvider({
+        Name = "MM2",
+        Roles = {"Murderer", "Sheriff", "Hero", "Innocent"},
+        Colors = {
+            Murderer = mm2Settings.murdererColor,
+            Sheriff = mm2Settings.sheriffColor,
+            Hero = mm2Settings.heroColor,
+            Innocent = mm2Settings.innocentColor,
+        },
+        Get = function(player: Player): string?
+            return getPlayerRole(player)
+        end,
+        SetColor = function(roleName: string, colour: Color3): ()
+            if roleName == "Murderer" then
+                mm2Settings.murdererColor = colour
+            elseif roleName == "Sheriff" then
+                mm2Settings.sheriffColor = colour
+            elseif roleName == "Hero" then
+                mm2Settings.heroColor = colour
+            elseif roleName == "Innocent" then
+                mm2Settings.innocentColor = colour
             end
-        end
-    end
-end
-
-local function refreshRoleEspConnection()
-    disconnectFeatureConnection("MM2RoleESP")
-    clearEffects(RoleEffects)
-
-    if not mm2Settings.roleEspAll
-        or not (mm2Settings.roleEspInnocent
-            or mm2Settings.roleEspMurderer
-            or mm2Settings.roleEspSheriff) then
-        return
-    end
-
-    rebuildRoleEsp()
-    local elapsed = 0
-    featureConnections.MM2RoleESP = TaskManager:Connect(function(deltaTime)
-        elapsed = elapsed + deltaTime
-        if elapsed >= 0.75 then
-            elapsed = 0
-            rebuildRoleEsp()
-        end
-    end)
-end
-
-local function toggleRoleEsp(enabled)
-    mm2Settings.roleEspAll = enabled
-    refreshRoleEspConnection()
-end
-
-local function toggleInnocentEsp(enabled)
-    mm2Settings.roleEspInnocent = enabled
-    refreshRoleEspConnection()
-end
-
-local function toggleMurdererEsp(enabled)
-    mm2Settings.roleEspMurderer = enabled
-    refreshRoleEspConnection()
-end
-
-local function toggleSheriffEsp(enabled)
-    mm2Settings.roleEspSheriff = enabled
-    refreshRoleEspConnection()
+        end,
+    })
 end
 
 local roleNotificationSent = false
@@ -575,7 +573,6 @@ if mm2GameplayRemotes then
             else
                 mm2RoundData = {}
             end
-            rebuildRoleEsp()
 
             local roundActive = hasActiveRoundRoles()
             if not roundActive then
@@ -618,7 +615,7 @@ local function toggleGunEsp(enabled)
             createMM2Marker(
                 GunEffects,
                 gun,
-                "Dropped Gun",
+                "Gun",
                 mm2Settings.gunColor,
                 mm2Settings.gunTransparency
             )
@@ -1224,9 +1221,8 @@ local function toggleAutoPlayId(enabled: boolean): ()
 end
 
 local sprintTrailObjects: {Instance} = {}
-local sprintSpeedOriginal: {[Humanoid]: number} =
-    setmetatable({}, {__mode = "k"}) :: any
-local sprintTouchActive: boolean = false
+
+local MM2_SPRINT_SPEED: number = 30
 
 local function clearSprintTrail(): ()
     for _, object: Instance in ipairs(sprintTrailObjects) do
@@ -1275,167 +1271,94 @@ local function ensureSprintTrail(root: BasePart): Trail
     return trail
 end
 
+-- Sprint.
+--
+-- The module is always running and can never be switched off — pressing its
+-- key does not enable or disable anything and never announces itself. The key
+-- (and only the key the player picked; there is no hard-coded LeftControl any
+-- more) is a dead-man switch: hold it to run, release it to stop.
+local sprintActive: boolean = false
+local sprintBaseSpeed: number? = nil
+
+local function applySprintSpeed(active: boolean): ()
+    local _, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
+    if not humanoid or not root then
+        return
+    end
+    if active then
+        if sprintBaseSpeed == nil and humanoid.WalkSpeed ~= MM2_SPRINT_SPEED then
+            sprintBaseSpeed = humanoid.WalkSpeed
+        end
+        humanoid.WalkSpeed = MM2_SPRINT_SPEED
+    else
+        humanoid.WalkSpeed = sprintBaseSpeed or 16
+        sprintBaseSpeed = nil
+    end
+end
+
+-- Runtime: always connected while the module exists. It does nothing at all
+-- until the key is held, so an idle Sprint costs one cheap check per frame.
 local function toggleSprint(enabled: boolean): ()
     disconnectFeatureConnection("MM2Sprint")
-    clearSprintTrail()
-    for humanoid: Humanoid, speed: number in pairs(sprintSpeedOriginal) do
-        if humanoid and humanoid.Parent then
-            humanoid.WalkSpeed = speed
-        end
-    end
-    sprintSpeedOriginal = setmetatable({}, {__mode = "k"}) :: any
-    sprintTouchActive = state.isMobile and enabled
 
     if not enabled then
+        sprintActive = false
+        clearSprintTrail()
+        applySprintSpeed(false)
         return
     end
 
     featureConnections.MM2Sprint = TaskManager:Connect(function(): ()
-        local _, humanoid, root = getCharacterParts()
-        if not humanoid or not root
-            or not humanoid:IsA("Humanoid")
-            or not root:IsA("BasePart") then
+        local _, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
+        if not humanoid or not root then
             return
         end
-        if sprintSpeedOriginal[humanoid] == nil then
-            sprintSpeedOriginal[humanoid] = humanoid.WalkSpeed
+        if not sprintActive then
+            if sprintBaseSpeed ~= nil then
+                -- The key was released while the character was missing.
+                applySprintSpeed(false)
+            end
+            return
         end
 
-        local trail: Trail = ensureSprintTrail(root)
-        local direction: Vector3 = humanoid.MoveDirection
-        local sprinting: boolean =
-            (sprintTouchActive
-                or UserInputService:IsKeyDown(Enum.KeyCode.LeftControl))
-            and direction.Magnitude > 0.05
-        trail.Enabled = sprinting
-
-        if sprinting then
-            humanoid.WalkSpeed = 30
-            local velocity: Vector3 = root.AssemblyLinearVelocity
-            root.AssemblyLinearVelocity = Vector3.new(
-                direction.X * 30,
-                velocity.Y,
-                direction.Z * 30
-            )
-        elseif humanoid.WalkSpeed == 30 then
-            humanoid.WalkSpeed = sprintSpeedOriginal[humanoid]
-        else
-            sprintSpeedOriginal[humanoid] = humanoid.WalkSpeed
+        -- Re-applied every frame: MM2 resets WalkSpeed on respawn, on round
+        -- start and whenever a weapon is equipped.
+        if humanoid.WalkSpeed ~= MM2_SPRINT_SPEED then
+            if sprintBaseSpeed == nil then
+                sprintBaseSpeed = humanoid.WalkSpeed
+            end
+            humanoid.WalkSpeed = MM2_SPRINT_SPEED
         end
+        ensureSprintTrail(root).Enabled = humanoid.MoveDirection.Magnitude > 0.05
     end)
 end
 
-local fpsSettings = {
-    textures = true,
-    particles = true,
-    shadows = true,
-    materials = false,
-}
-local fpsModeEnabled = false
-local fpsVisualCache = setmetatable({}, {__mode = "k"})
-
-local function cacheFpsProperty(object, property)
-    local data = fpsVisualCache[object]
-    if not data then
-        data = {}
-        fpsVisualCache[object] = data
-    end
-    if data[property] == nil then
-        data[property] = object[property]
-    end
-end
-
-local function applyFpsObject(object)
-    if fpsSettings.textures and (object:IsA("Decal") or object:IsA("Texture")) then
-        cacheFpsProperty(object, "Transparency")
-        object.Transparency = 1
-    elseif fpsSettings.textures and object:IsA("MeshPart") then
-        cacheFpsProperty(object, "TextureID")
-        object.TextureID = ""
-    end
-
-    if fpsSettings.particles
-        and (object:IsA("ParticleEmitter")
-            or object:IsA("Trail")
-            or object:IsA("Beam")
-            or object:IsA("Smoke")
-            or object:IsA("Fire")
-            or object:IsA("Sparkles")) then
-        cacheFpsProperty(object, "Enabled")
-        object.Enabled = false
-    end
-
-    if object:IsA("BasePart") then
-        if fpsSettings.shadows then
-            cacheFpsProperty(object, "CastShadow")
-            object.CastShadow = false
-        end
-        if fpsSettings.materials then
-            cacheFpsProperty(object, "Material")
-            cacheFpsProperty(object, "Reflectance")
-            object.Material = Enum.Material.SmoothPlastic
-            object.Reflectance = 0
-        end
-    end
-end
-
-local function restoreFpsObjects()
-    for object, properties in pairs(fpsVisualCache) do
-        if object and object.Parent then
-            for property, value in pairs(properties) do
-                pcall(function()
-                    object[property] = value
-                end)
-            end
-        end
-    end
-    fpsVisualCache = setmetatable({}, {__mode = "k"})
-end
-
-local function toggleImproveFps(enabled)
-    fpsModeEnabled = enabled
-    disconnectFeatureConnection("MM2ImproveFPS")
-    restoreFpsObjects()
-
-    if not enabled then
+-- Called by the card's key slot: pressed means run, released means stop.
+local function setSprintActive(active: boolean): ()
+    if sprintActive == active then
         return
     end
-
-    task.spawn(function()
-        for index, object in ipairs(workspace:GetDescendants()) do
-            if not fpsModeEnabled then
-                return
-            end
-            applyFpsObject(object)
-            if index % 250 == 0 then
-                task.wait()
-            end
+    sprintActive = active
+    applySprintSpeed(active)
+    if not active then
+        local trail: Instance? = nil
+        local _, _, root: BasePart? = getCharacterParts()
+        if root then
+            trail = root:FindFirstChild("RTM_SprintTail")
         end
-    end)
-    featureConnections.MM2ImproveFPS = workspace.DescendantAdded:Connect(function(object)
-        if fpsModeEnabled then
-            applyFpsObject(object)
+        if trail and trail:IsA("Trail") then
+            trail.Enabled = false
         end
-    end)
+    end
 end
 
-local TimerDisplay: Frame = create("Frame", {
-    Parent = ScreenGui,
-    Name = "MM2RoundTimer",
-    BackgroundColor3 = Color3.fromRGB(24, 24, 24),
-    BackgroundTransparency = 0.12,
-    BorderColor3 = state.headerColor,
-    BorderSizePixel = 1,
-    Position = UDim2.new(1, -205, 0, 58),
-    Size = UDim2.fromOffset(180, 34),
-    Visible = false,
-    ZIndex = 30,
-}) :: Frame
-local TimerText = makeTextLabel(TimerDisplay, "ROUND 0:00", 14)
-TimerText.Font = Enum.Font.GothamBold
-TimerText.TextXAlignment = Enum.TextXAlignment.Center
-TimerText.Size = UDim2.fromScale(1, 1)
-TimerText.ZIndex = 31
+-- Improve FPS moved to the Universal section: stripping textures, particles,
+-- shadows and materials is not MM2-specific. `state.toggleImproveFps` is the
+-- shared implementation; nothing here owns it any more.
+
+-- Round timer state. The remotes tell us when a round starts and ends; the
+-- countdown itself is the game's own label (see below), so the menu draws no
+-- timer window of its own.
 local timerEndsAt = nil
 local timerRemotes = game:GetService("ReplicatedStorage"):FindFirstChild("Remotes")
 local timerGameplay = timerRemotes and timerRemotes:FindFirstChild("Gameplay")
@@ -1471,18 +1394,161 @@ if timerRoundEnd and timerRoundEnd:IsA("RemoteEvent") then
         roundLifecycleActive = false
         roleRefreshGeneration += 1
         mm2RoundData = {}
-        TimerDisplay.Visible = false
     end)
+end
+
+-- Always Show Timer.
+--
+-- MM2 already owns a round countdown: `MainGUI.Game.Timer` with its `XPText`
+-- label. Its HUD script decides who sees it in one place — `RoundStart`'s
+-- client handler shows the frame for every role *except* Innocent, and its
+-- update loop only refreshes the text while your role is not Innocent (the
+-- whole place has exactly one listener on that remote, so nothing else reacts
+-- to it).
+--
+-- So instead of drawing a second timer in the menu's own style, the module
+-- replays that client event locally with the local player marked as a
+-- non-Innocent role. The game's HUD then brings up *its* timer and counts it
+-- down itself: the display is the game's, not ours. Switching the module off
+-- replays the real round data so the HUD goes back to what it was showing.
+local timerSpoofActive: boolean = false
+local revealedTimerObjects: {[Instance]: boolean} =
+    setmetatable({}, {__mode = "k"}) :: any
+
+-- Executors expose different names for "run this client event locally".
+local function fireClientSignal(signal: any, ...: any): boolean
+    if type(getconnections) == "function" then
+        local ok: boolean, connections: any = pcall(getconnections, signal)
+        if ok and type(connections) == "table" then
+            local delivered: boolean = false
+            for _, connection: any in ipairs(connections) do
+                local fired: boolean = false
+                if type(connection.Fire) == "function" then
+                    fired = pcall(connection.Fire, connection, ...)
+                end
+                if not fired and type(connection.Function) == "function" then
+                    fired = pcall(connection.Function, ...)
+                end
+                delivered = delivered or fired
+            end
+            if delivered then
+                return true
+            end
+        end
+    end
+    if type(firesignal) == "function" then
+        return (pcall(firesignal, signal, ...))
+    end
+    return false
+end
+
+local function findGameTimerFrame(): (GuiObject?, TextLabel?)
+    local playerGui: PlayerGui? = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    if not playerGui then
+        return nil, nil
+    end
+    local mainGui: Instance? = playerGui:FindFirstChild("MainGUI")
+    -- Not named `game`: that would shadow the Roblox global inside this scope.
+    local gameFrame: Instance? = mainGui and mainGui:FindFirstChild("Game")
+    local frame: Instance? = gameFrame and gameFrame:FindFirstChild("Timer")
+    if frame and frame:IsA("GuiObject") then
+        local label: Instance? = frame:FindFirstChild("XPText")
+        return frame, (label and label:IsA("TextLabel")) and label or nil
+    end
+    return nil, nil
+end
+
+-- Replays RoundStart locally with our role rewritten, which is what makes the
+-- game itself decide to show and drive its timer.
+local function spoofRoundTimerRole(remaining: number): boolean
+    if not timerRoundStart or not timerRoundStart:IsA("RemoteEvent") then
+        return false
+    end
+    local payload: {[string]: any} = {}
+    for key: any, value: any in pairs(mm2RoundData) do
+        payload[tostring(key)] = value
+    end
+    local mine: {[string]: any} = {}
+    local existing: any = payload[LocalPlayer.Name]
+    if type(existing) == "table" then
+        for key: any, value: any in pairs(existing) do
+            mine[tostring(key)] = value
+        end
+    end
+    mine.Role = "Sheriff"
+    mine.Dead = false
+    payload[LocalPlayer.Name] = mine
+    return fireClientSignal(
+        timerRoundStart.OnClientEvent,
+        math.max(1, math.floor(remaining)),
+        payload
+    )
+end
+
+-- Puts the HUD back the way the server described it.
+local function restoreRoundTimerRole(): ()
+    if timerSpoofActive
+        and timerRoundStart
+        and timerRoundStart:IsA("RemoteEvent")
+        and next(mm2RoundData) ~= nil
+        and timerEndsAt then
+        local remaining: number = math.max(1, math.floor(timerEndsAt - os.clock()))
+        fireClientSignal(timerRoundStart.OnClientEvent, remaining, mm2RoundData)
+    end
+    timerSpoofActive = false
+
+    for object: Instance, _ in pairs(revealedTimerObjects) do
+        if object and object.Parent then
+            local guiObject: any = object
+            pcall(function(): ()
+                guiObject.Visible = false
+            end)
+        end
+    end
+    revealedTimerObjects = setmetatable({}, {__mode = "k"}) :: any
+end
+
+-- Fallback for executors that cannot replay a client event: reveal the frame
+-- and write the countdown in the game's own "1m 7s" format.
+local function formatRoundClock(remaining: number): string
+    local minutes: number = math.floor(remaining / 60)
+    local seconds: number = remaining - minutes * 60
+    if minutes > 0 then
+        return tostring(minutes) .. "m " .. tostring(seconds) .. "s"
+    end
+    return tostring(seconds) .. "s"
+end
+
+local function revealTimerManually(remaining: number): ()
+    local frame: GuiObject?, label: TextLabel? = findGameTimerFrame()
+    if not frame then
+        return
+    end
+    if not frame.Visible then
+        revealedTimerObjects[frame] = true
+        frame.Visible = true
+    end
+    if label then
+        local localRole: string? = getPlayerRole(LocalPlayer)
+        if localRole == nil or localRole == "Innocent" then
+            label.Text = formatRoundClock(remaining)
+            label.TextColor3 = remaining <= 30
+                and Color3.fromRGB(255, 0, 0)
+                or Color3.fromRGB(255, 255, 255)
+        end
+    end
 end
 
 local function toggleAlwaysShowTimer(enabled)
     disconnectFeatureConnection("MM2AlwaysTimer")
-    TimerDisplay.Visible = false
 
     if not enabled then
+        restoreRoundTimerRole()
         return
     end
 
+    -- Ask the server for the remaining time so enabling mid-round does not
+    -- have to wait for the next RoundStart.
     local getTimer = timerRemotes and timerRemotes:FindFirstChild("GetTimer", true)
     if getTimer and getTimer:IsA("RemoteFunction") then
         task.spawn(function()
@@ -1495,22 +1561,39 @@ local function toggleAlwaysShowTimer(enabled)
         end)
     end
 
-    local elapsed = 1
+    local elapsed: number = 1
+    local lastSpoofAt: number = -math.huge
     featureConnections.MM2AlwaysTimer = TaskManager:Connect(function(deltaTime)
-        elapsed = elapsed + deltaTime
-        if elapsed < 0.1 then
+        elapsed += deltaTime
+        if elapsed < 0.35 then
             return
         end
         elapsed = 0
 
-        local remaining = timerEndsAt and math.max(0, math.ceil(timerEndsAt - os.clock()))
-        TimerDisplay.Visible = remaining ~= nil and remaining > 0
-        if TimerDisplay.Visible then
-            local minutes = math.floor(remaining / 60)
-            TimerText.Text = string.format("ROUND %d:%02d", minutes, remaining % 60)
-            TimerText.TextColor3 = remaining <= 30
-                and Color3.fromRGB(190, 55, 55)
-                or Color3.fromRGB(220, 220, 220)
+        local remaining: number? = timerEndsAt
+            and math.max(0, math.ceil(timerEndsAt - os.clock()))
+        if not remaining or remaining <= 0 then
+            if timerSpoofActive then
+                timerSpoofActive = false
+            end
+            return
+        end
+
+        local frame: GuiObject? = findGameTimerFrame()
+        if frame and frame.Visible then
+            -- The game is already showing its own timer: nothing to do.
+            return
+        end
+
+        -- Re-announce at most every two seconds: a new round, a respawn or the
+        -- HUD hiding itself all land here.
+        if os.clock() - lastSpoofAt >= 2 then
+            lastSpoofAt = os.clock()
+            if spoofRoundTimerRole(remaining) then
+                timerSpoofActive = true
+            else
+                revealTimerManually(remaining)
+            end
         end
     end)
 end
@@ -1527,17 +1610,6 @@ type MotionSample = {
 
 local motionSamples: {[Player]: MotionSample} =
     setmetatable({}, {__mode = "k"}) :: any
-
-local function getPointerPosition(): Vector2
-    local camera: Camera? = workspace.CurrentCamera
-    if state.isMobile and camera then
-        -- A touch action button is not an aiming cursor. Mobile targeting uses
-        -- the camera center so tapping SHOOT/GUN cannot pull selection toward
-        -- the button's screen position.
-        return camera.ViewportSize / 2
-    end
-    return UserInputService:GetMouseLocation()
-end
 
 local function getFilteredVelocity(player: Player, root: BasePart): Vector3
     local now: number = os.clock()
@@ -1638,50 +1710,6 @@ local function getGunLeadSeconds(): (number, number)
         0.25
     )
     return horizontalLead, verticalLead
-end
-
--- Correct zero-gravity branch adapted from prediction.lua. MM2 throwing knives
--- move linearly; their tagged projectile reports ThrowSpeed, with 96 as fallback.
-local function solveLinearIntercept(
-    origin: Vector3,
-    projectileSpeed: number,
-    targetPosition: Vector3,
-    targetVelocity: Vector3,
-    latency: number
-): (Vector3?, number?)
-    local compensatedPosition: Vector3 = targetPosition + targetVelocity * latency
-    local displacement: Vector3 = compensatedPosition - origin
-    local a: number = targetVelocity:Dot(targetVelocity)
-        - projectileSpeed * projectileSpeed
-    local b: number = 2 * displacement:Dot(targetVelocity)
-    local c: number = displacement:Dot(displacement)
-    local travelTime: number? = nil
-
-    if math.abs(a) < 1e-6 then
-        if math.abs(b) > 1e-6 then
-            local linearTime: number = -c / b
-            travelTime = linearTime > 0 and linearTime or nil
-        end
-    else
-        local discriminant: number = b * b - 4 * a * c
-        if discriminant >= 0 then
-            local root: number = math.sqrt(discriminant)
-            local first: number = (-b - root) / (2 * a)
-            local second: number = (-b + root) / (2 * a)
-            if first > 0 and second > 0 then
-                travelTime = math.min(first, second)
-            elseif first > 0 then
-                travelTime = first
-            elseif second > 0 then
-                travelTime = second
-            end
-        end
-    end
-
-    if not travelTime then
-        return nil, nil
-    end
-    return compensatedPosition + targetVelocity * travelTime, travelTime
 end
 
 local function getGunOriginCFrame(character: Model, _gun: Tool?): CFrame?
@@ -1797,7 +1825,7 @@ local function createTrajectoryCalibration(): any
         getEstimates: (self: Controller) -> Estimates,
     }
 
-    local OUTPUT_ROOT: string = "RandomTestingMenu0001"
+    local OUTPUT_ROOT: string = host.PRODUCT.storageFolder
     local OUTPUT_FOLDER: string = OUTPUT_ROOT .. "/Telemetry"
     local OUTPUT_PATH: string = OUTPUT_FOLDER
         .. "/MM2_Trajectory_Calibration.json"
@@ -2331,7 +2359,7 @@ local function createTrajectoryCalibration(): any
 
     saveSnapshot = function(reason: string): boolean
         if type(environment.writefile) ~= "function" then
-            warn("[RTM:MM2:Trajectory] writefile no está disponible; no se pudo guardar.")
+            warn(trajectoryLogPrefix .. " writefile no está disponible; no se pudo guardar.")
             return false
         end
         local payload: {[string]: any} = {
@@ -2371,7 +2399,7 @@ local function createTrajectoryCalibration(): any
             payload
         )
         if not encodedOk or type(encoded) ~= "string" then
-            warn("[RTM:MM2:Trajectory] JSONEncode falló: " .. tostring(encoded))
+            warn(trajectoryLogPrefix .. " JSONEncode falló: " .. tostring(encoded))
             return false
         end
         if type(environment.makefolder) == "function" then
@@ -2384,12 +2412,12 @@ local function createTrajectoryCalibration(): any
             encoded
         )
         if not writeOk then
-            warn("[RTM:MM2:Trajectory] writefile falló: " .. tostring(writeError))
+            warn(trajectoryLogPrefix .. " writefile falló: " .. tostring(writeError))
             return false
         end
         runtime.dirty = false
         print(
-            "[RTM:MM2:Trajectory] Guardado "
+            trajectoryLogPrefix .. " Guardado "
                 .. OUTPUT_PATH
                 .. " ("
                 .. tostring(#encoded)
@@ -2419,7 +2447,7 @@ local function createTrajectoryCalibration(): any
         )
         if not decodeOk
             or type(decoded) ~= "table"
-            or decoded.placeId ~= game.PlaceId
+            or decoded.placeId ~= game.PlaceId -- calibration is per server build
             or decoded.schema ~= 2
             or decoded.kind ~= "mm2-trajectory-analytics" then
             if decodeOk
@@ -2435,7 +2463,7 @@ local function createTrajectoryCalibration(): any
                 )
             end
             warn(
-                "[RTM:MM2:Trajectory] Caché schema 1 ignorada; schema 2 inicia limpio."
+                trajectoryLogPrefix .. " Caché schema 1 ignorada; schema 2 inicia limpio."
             )
             return
         end
@@ -2486,7 +2514,7 @@ local function createTrajectoryCalibration(): any
                 }
             end
         end
-        print("[RTM:MM2:Trajectory] Perfil acumulativo restaurado.")
+        print(trajectoryLogPrefix .. " Perfil acumulativo restaurado.")
     end
 
     local function normalizeGun(value: any): Tool?
@@ -2878,7 +2906,7 @@ local function createTrajectoryCalibration(): any
                 task.wait(0.25)
             end
             if not weaponModule then
-                warn("[RTM:MM2:Trajectory] WeaponService no apareció; Knife sigue activo.")
+                warn(trajectoryLogPrefix .. " WeaponService no apareció; Knife sigue activo.")
                 return
             end
             local loaded: boolean, weaponService: any = pcall(
@@ -2887,7 +2915,7 @@ local function createTrajectoryCalibration(): any
             )
             if not loaded or type(weaponService) ~= "table" then
                 warn(
-                    "[RTM:MM2:Trajectory] No se pudo observar WeaponService: "
+                    trajectoryLogPrefix .. " No se pudo observar WeaponService: "
                         .. tostring(weaponService)
                 )
                 return
@@ -2897,10 +2925,10 @@ local function createTrajectoryCalibration(): any
             end)
             if connected and connection then
                 trackConnection(connection :: RBXScriptConnection)
-                print("[RTM:MM2:Trajectory] Confirmación GunFired conectada.")
+                print(trajectoryLogPrefix .. " Confirmación GunFired conectada.")
             else
                 warn(
-                    "[RTM:MM2:Trajectory] GunFired no es compatible: "
+                    trajectoryLogPrefix .. " GunFired no es compatible: "
                         .. tostring(connection)
                 )
             end
@@ -2913,8 +2941,11 @@ local function createTrajectoryCalibration(): any
         if runtime.active then
             return
         end
-        if game.PlaceId ~= Module.PlaceId then
-            warn("[RTM:MM2:Trajectory] Inicio omitido fuera de MM2.")
+        -- The runtime already decided this server is MM2 (by PlaceId or by
+        -- fingerprinting a clone); refusing here on PlaceId alone would leave
+        -- every copy of the game without calibration.
+        if not (GAME_CHECK.MM2Active or game.PlaceId == Module.PlaceId) then
+            warn(trajectoryLogPrefix .. " Inicio omitido fuera de MM2.")
             return
         end
         runtime.active = true
@@ -2933,7 +2964,7 @@ local function createTrajectoryCalibration(): any
             )
         )
         installGunConfirmation()
-        print("[RTM:MM2:Trajectory] Calibración pasiva iniciada en segundo plano.")
+        print(trajectoryLogPrefix .. " Calibración pasiva iniciada en segundo plano.")
     end
 
     function controller:save(reason: string?): boolean
@@ -3223,7 +3254,7 @@ local function fireGunAtTarget(target: Player?): boolean
         return false
     end
 
-    state.mm2ShotFeedback.queue(target, gun, origin, aim, prediction, true)
+    state.mm2ShotFeedback.queue(target, gun, origin, aim, prediction)
     remote:FireServer(origin, aim)
     return true
 end
@@ -3233,12 +3264,9 @@ local function shootMurderer(): ()
 end
 
 local shootFeatureActive: boolean = false
-local shootHookInstalled: boolean = false
-local shootTouchHookInstalled: boolean = false
-local shootHookOriginal: any = nil
-local shootTouchHookOriginal: any = nil
-local shootHookWrapper: any = nil
-local shootTouchHookWrapper: any = nil
+-- The only WeaponService fact this module relies on: the module table itself,
+-- whose GunFired event replicates every accepted shot back to clients. It is
+-- one of the place fingerprints, so it is verified rather than assumed.
 local weaponServiceModule: any = nil
 type PendingShot = {
     target: Player,
@@ -3303,6 +3331,8 @@ create("UICorner", {
     CornerRadius = UDim.new(0, 7),
 })
 state.mm2ShotFeedback.text = create("TextLabel", {
+    TextTruncate = Enum.TextTruncate.AtEnd,
+    ClipsDescendants = true,
     Parent = state.mm2ShotFeedback.root,
     Name = "Countdown",
     BackgroundTransparency = 1,
@@ -3343,8 +3373,7 @@ state.mm2ShotFeedback.queue = function(
     gun: Tool?,
     origin: CFrame?,
     aim: CFrame?,
-    _prediction: GunPrediction?,
-    knownFired: boolean
+    _prediction: GunPrediction?
 ): ()
     if not target or not gun or not origin then
         return
@@ -3366,14 +3395,16 @@ state.mm2ShotFeedback.queue = function(
     }
     state.mm2ShotFeedback.pending = candidate
 
-    -- Aim getters may be queried without a shot reaching the server. Expiry is
-    -- therefore cleanup-only; only a correlated GunFired event may show a miss.
+    -- A queued shot is always a real FireServer now, so if no correlated
+    -- GunFired event arrives within a round trip the server never accepted
+    -- it: resolve the candidate as a miss rather than waiting for the
+    -- cleanup expiry below.
     task.delay(1.8, function(): ()
         if state.mm2ShotFeedback.pending == candidate then
             state.mm2ShotFeedback.pending = nil
         end
     end)
-    if knownFired and not state.mm2ShotFeedback.gunFiredConnected then
+    if not state.mm2ShotFeedback.gunFiredConnected then
         task.delay(math.max(0.35, mm2Settings.predictionRtt + 0.18), function(): ()
             if state.mm2ShotFeedback.pending ~= candidate
                 or state.mm2ShotFeedback.gunFiredConnected then
@@ -3465,8 +3496,12 @@ state.mm2ShotFeedback.resolve = function(
         local currentHumanoid: Humanoid? = targetCharacter
             and targetCharacter:FindFirstChildOfClass("Humanoid")
             :: Humanoid?
+        -- `Players` is a cloneref handle here, so it never compares equal to
+        -- the service `Parent` returns: this used to be true on every shot
+        -- and confirmed every hit, including the misses. A player that left
+        -- the game simply has no parent.
         local hitConfirmed: boolean = directHit
-            or candidate.target.Parent ~= Players
+            or candidate.target.Parent == nil
             or targetCharacter == nil
             or targetCharacter.Parent == nil
             or currentHumanoid == nil
@@ -3555,81 +3590,24 @@ state.mm2ShotFeedback.handleGunFired = function(
 end
 
 type KnifeSettings = {
-    redirect: boolean,
     aura: boolean,
     auraRange: number,
-    showTarget: boolean,
-    targetClosestToMouse: boolean,
 }
 
 type KnifeRuntimeState = {
-    visual: BoxHandleAdornment?,
-    redirectTarget: Player?,
-    redirectScore: number,
-    redirectLockedAt: number,
-    velocityTarget: Player?,
-    velocity: Vector3,
-    velocitySampleAt: number,
-    observedProjectileSpeed: number,
     lastAuraSwing: number,
 }
 
 local knifeSettings: KnifeSettings = {
-    redirect = false,
     aura = false,
     auraRange = 14,
-    showTarget = true,
-    targetClosestToMouse = true,
 }
 state.mm2KnifeRuntime = {
-    visual = nil,
-    redirectTarget = nil,
-    redirectScore = math.huge,
-    redirectLockedAt = 0,
-    velocityTarget = nil,
-    velocity = Vector3.zero,
-    velocitySampleAt = 0,
-    observedProjectileSpeed = 96,
     lastAuraSwing = -math.huge,
 } :: KnifeRuntimeState
 
 local function getEquippedWeapon(name: string, _tag: string): Tool?
     return getPlayerWeapon(LocalPlayer, name, true)
-end
-
-local KNIFE_TARGET_HYSTERESIS_PIXELS: number = 6
-local KNIFE_TARGET_MAX_LOCK_SECONDS: number = 0.12
-
-local function getKnifeProjectileSpeed(knife: Tool): number
-    local localCharacter: Model? = LocalPlayer.Character
-    local knifeHandle: BasePart? = knife:FindFirstChild("Handle") :: BasePart?
-    for _, projectile: Instance in ipairs(
-        CollectionService:GetTagged("ThrowingKnife")
-    ) do
-        local handleLink: Instance? = projectile:FindFirstChild("HandleLink")
-        local linkedHandle: Instance? = handleLink
-                and handleLink:IsA("ObjectValue")
-                and handleLink.Value
-            or nil
-        local belongsToLocalKnife: boolean = linkedHandle ~= nil
-            and (
-                linkedHandle == knifeHandle
-                or linkedHandle:IsDescendantOf(knife)
-                or (
-                    localCharacter ~= nil
-                    and linkedHandle:IsDescendantOf(localCharacter)
-                )
-            )
-        if belongsToLocalKnife then
-            local speed: number? =
-                tonumber(projectile:GetAttribute("ThrowSpeed"))
-            if speed and speed >= 24 and speed <= 300 then
-                state.mm2KnifeRuntime.observedProjectileSpeed = speed
-                break
-            end
-        end
-    end
-    return state.mm2KnifeRuntime.observedProjectileSpeed
 end
 
 local function canUseEquippedKnife(): (Tool?, BasePart?)
@@ -3664,107 +3642,6 @@ local function isValidKnifeTarget(player: Player): boolean
         and player.Character:FindFirstChild("HumanoidRootPart") ~= nil
 end
 
-local function getKnifeCandidateScore(
-    player: Player,
-    localRoot: BasePart,
-    pointer: Vector2,
-    camera: Camera
-): (number?, boolean)
-    local targetCharacter: Model? = player.Character
-    local root: BasePart? = targetCharacter
-        and targetCharacter:FindFirstChild("HumanoidRootPart")
-        :: BasePart?
-    if not root then
-        return nil, false
-    end
-
-    if not knifeSettings.targetClosestToMouse then
-        return (root.Position - localRoot.Position).Magnitude, true
-    end
-
-    local viewport: Vector3, visible: boolean =
-        camera:WorldToViewportPoint(root.Position)
-    if not visible then
-        return nil, false
-    end
-    return (
-        pointer - Vector2.new(viewport.X, viewport.Y)
-    ).Magnitude, true
-end
-
-local function findKnifeRedirectCandidate(
-    localRoot: BasePart
-): (Player?, number)
-    local camera: Camera? = workspace.CurrentCamera
-    if not camera then
-        return nil, math.huge
-    end
-
-    local pointer: Vector2 = getPointerPosition()
-    local closest: Player? = nil
-    local closestScore: number = math.huge
-    for _, player: Player in ipairs(Players:GetPlayers()) do
-        if isValidKnifeTarget(player) then
-            local score: number?, eligible: boolean = getKnifeCandidateScore(
-                player,
-                localRoot,
-                pointer,
-                camera
-            )
-            if eligible and score and score < closestScore then
-                closest = player
-                closestScore = score
-            end
-        end
-    end
-    return closest, closestScore
-end
-
-local function getLockedKnifeRedirectTarget(localRoot: BasePart): Player?
-    local acquired: Player?, acquiredScore: number =
-        findKnifeRedirectCandidate(localRoot)
-    local current: Player? = state.mm2KnifeRuntime.redirectTarget
-    local currentScore: number = math.huge
-    local camera: Camera? = workspace.CurrentCamera
-    if current and isValidKnifeTarget(current) and camera then
-        local score: number?, eligible: boolean = getKnifeCandidateScore(
-            current,
-            localRoot,
-            getPointerPosition(),
-            camera
-        )
-        if eligible and score then
-            currentScore = score
-        else
-            current = nil
-        end
-    else
-        current = nil
-    end
-
-    local now: number = os.clock()
-    local shouldSwitch: boolean = current == nil
-        or acquired == nil
-        or acquired == current
-        or acquiredScore + KNIFE_TARGET_HYSTERESIS_PIXELS < currentScore
-        or now - state.mm2KnifeRuntime.redirectLockedAt
-            >= KNIFE_TARGET_MAX_LOCK_SECONDS
-    local selected: Player? = shouldSwitch and acquired or current
-    local selectedScore: number = selected == acquired
-        and acquiredScore
-        or currentScore
-
-    if selected ~= state.mm2KnifeRuntime.redirectTarget then
-        state.mm2KnifeRuntime.redirectTarget = selected
-        state.mm2KnifeRuntime.redirectLockedAt = now
-        state.mm2KnifeRuntime.velocityTarget = nil
-        state.mm2KnifeRuntime.velocity = Vector3.zero
-        state.mm2KnifeRuntime.velocitySampleAt = 0
-    end
-    state.mm2KnifeRuntime.redirectScore = selectedScore
-    return selected
-end
-
 local function findKnifeAuraTarget(
     localRoot: BasePart,
     maxDistance: number
@@ -3787,308 +3664,6 @@ local function findKnifeAuraTarget(
         end
     end
     return closest
-end
-
-local function clearKnifeAuraVisuals(): ()
-    local visual: BoxHandleAdornment? = state.mm2KnifeRuntime.visual
-    if visual then
-        visual:Destroy()
-        state.mm2KnifeRuntime.visual = nil
-    end
-end
-
-local function updateKnifeAuraVisual(
-    target: Player?,
-    predictedCFrame: CFrame?,
-    _travelTime: number?
-): ()
-    local knife: Tool? = canUseEquippedKnife()
-    local character: Model? = target and target.Character
-    local root: BasePart? = target
-        and character
-        and character:FindFirstChild("HumanoidRootPart")
-        :: BasePart?
-    if not knife
-        or not target
-        or not character
-        or not root
-        or not knifeSettings.showTarget then
-        clearKnifeAuraVisuals()
-        return
-    end
-
-    local visual: BoxHandleAdornment? = state.mm2KnifeRuntime.visual
-    if not visual then
-        local box: BoxHandleAdornment = Instance.new("BoxHandleAdornment")
-        box.Name = "RTM_KnifePredictionEnvelope"
-        box.AlwaysOnTop = true
-        box.ZIndex = 20
-        box.Color3 = Color3.fromRGB(180, 45, 35)
-        box.Transparency = 0.48
-        box.Size = Vector3.new(5.5, 7, 5.5)
-        box.Parent = ScreenGui
-        state.mm2KnifeRuntime.visual = box
-        visual = box
-    end
-    if visual then
-        local predictedPosition: Vector3 = predictedCFrame
-                and predictedCFrame.Position
-            or root.Position
-        local localPosition: Vector3 =
-            root.CFrame:PointToObjectSpace(predictedPosition)
-        local desiredCFrame: CFrame = CFrame.new(localPosition)
-        local sameAdornee: boolean = visual.Adornee == root
-        visual.Adornee = root
-        visual.CFrame = sameAdornee
-                and visual.CFrame:Lerp(desiredCFrame, 0.45)
-            or desiredCFrame
-    end
-end
-
-local function getStableKnifeVelocity(
-    target: Player,
-    targetRoot: BasePart
-): Vector3
-    local now: number = os.clock()
-    local rawVelocity: Vector3 = targetRoot.AssemblyLinearVelocity
-    if rawVelocity.Magnitude > 110 then
-        rawVelocity = rawVelocity.Unit * 110
-    end
-
-    local previousTarget: Player? = state.mm2KnifeRuntime.velocityTarget
-    local previousVelocity: Vector3 = state.mm2KnifeRuntime.velocity
-    local previousSampleAt: number = state.mm2KnifeRuntime.velocitySampleAt
-    local deltaTime: number = now - previousSampleAt
-    if previousTarget ~= target or deltaTime <= 0 or deltaTime > 0.35 then
-        state.mm2KnifeRuntime.velocityTarget = target
-        state.mm2KnifeRuntime.velocity = rawVelocity
-        state.mm2KnifeRuntime.velocitySampleAt = now
-        return rawVelocity
-    end
-    if deltaTime < 1 / 120 then
-        return previousVelocity
-    end
-
-    local alpha: number = 1 - math.exp(-deltaTime * 10)
-    local velocity: Vector3 = previousVelocity:Lerp(
-        rawVelocity,
-        math.clamp(alpha, 0.08, 0.65)
-    )
-    state.mm2KnifeRuntime.velocity = velocity
-    state.mm2KnifeRuntime.velocitySampleAt = now
-    return velocity
-end
-
-local function getKnifeAcceleration(target: Player): Vector3
-    local sample: MotionSample? = motionSamples[target]
-    if not sample then
-        return Vector3.zero
-    end
-    if not sample.grounded then
-        return Vector3.new(0, -workspace.Gravity, 0)
-    end
-
-    local horizontal: Vector3 = Vector3.new(
-        sample.acceleration.X,
-        0,
-        sample.acceleration.Z
-    ) * sample.stability
-    if horizontal.Magnitude > 70 then
-        horizontal = horizontal.Unit * 70
-    end
-    return horizontal
-end
-
--- prediction.lua solves the same interception equation through polynomial roots.
--- MM2 knives have zero projectile gravity, so a short fixed-point refinement is
--- both cheaper and able to include the target's acceleration and one-way RTT.
-local function solveKnifeIntercept(
-    origin: Vector3,
-    projectileSpeed: number,
-    targetPosition: Vector3,
-    targetVelocity: Vector3,
-    targetAcceleration: Vector3,
-    latency: number
-): (Vector3?, number?)
-    if projectileSpeed <= 0 then
-        return nil, nil
-    end
-
-    local releasePosition: Vector3 = targetPosition
-        + targetVelocity * latency
-        + targetAcceleration * (0.5 * latency * latency)
-    local releaseVelocity: Vector3 =
-        targetVelocity + targetAcceleration * latency
-    local linearAim: Vector3?, linearTime: number? = solveLinearIntercept(
-        origin,
-        projectileSpeed,
-        releasePosition,
-        releaseVelocity,
-        0
-    )
-    local travelTime: number = linearTime
-        or (releasePosition - origin).Magnitude / projectileSpeed
-    if travelTime <= 0 or travelTime > 3 then
-        return nil, nil
-    end
-
-    local predicted: Vector3 = linearAim or releasePosition
-    for _iteration: number = 1, 5 do
-        local totalTime: number = latency + travelTime
-        predicted = targetPosition
-            + targetVelocity * totalTime
-            + targetAcceleration * (0.5 * totalTime * totalTime)
-        local refinedTime: number =
-            (predicted - origin).Magnitude / projectileSpeed
-        if refinedTime <= 0 or refinedTime > 3 then
-            return nil, nil
-        end
-        if math.abs(refinedTime - travelTime) < 0.0015 then
-            travelTime = refinedTime
-            break
-        end
-        travelTime += (refinedTime - travelTime) * 0.72
-    end
-    return predicted, travelTime
-end
-
-local function redirectedKnifeCFrame(updateVisual: boolean?): CFrame?
-    local knife: Tool?, localRoot: BasePart? = canUseEquippedKnife()
-    local target: Player? = localRoot
-        and getLockedKnifeRedirectTarget(localRoot)
-        or nil
-    local targetRoot: BasePart? = target
-        and target.Character
-        and target.Character:FindFirstChild("HumanoidRootPart")
-        :: BasePart?
-    if not knife or not localRoot or not target or not targetRoot then
-        if updateVisual then
-            clearKnifeAuraVisuals()
-        end
-        return nil
-    end
-
-    local handle: BasePart? = knife:FindFirstChild("Handle") :: BasePart?
-    if not handle or not handle:IsA("BasePart") then
-        if updateVisual then
-            clearKnifeAuraVisuals()
-        end
-        return nil
-    end
-
-    local origin: Vector3 = handle.Position
-    local targetVelocity: Vector3 = getStableKnifeVelocity(target, targetRoot)
-    local targetAcceleration: Vector3 = getKnifeAcceleration(target)
-    local latency: number = math.clamp(
-        getEstimatedLatency() * 0.5 + (1 / 60),
-        0.025,
-        0.18
-    )
-    local projectileSpeed: number = getKnifeProjectileSpeed(knife)
-    local predictedRoot: Vector3?, rootTravelTime: number? =
-        solveKnifeIntercept(
-            origin,
-            projectileSpeed,
-            targetRoot.Position,
-            targetVelocity,
-            targetAcceleration,
-            latency
-        )
-    if not predictedRoot then
-        if updateVisual then
-            clearKnifeAuraVisuals()
-        end
-        return nil
-    end
-
-    local selectedAim: Vector3? = nil
-    local targetCharacter: Model = target.Character :: Model
-    for _, partName: string in ipairs({
-        "UpperTorso",
-        "Torso",
-        "HumanoidRootPart",
-        "Head",
-    }) do
-        local targetPart: BasePart? =
-            targetCharacter:FindFirstChild(partName) :: BasePart?
-        if targetPart and targetPart:IsA("BasePart") then
-            local predictedPart: Vector3? = solveKnifeIntercept(
-                origin,
-                projectileSpeed,
-                targetPart.Position,
-                targetVelocity,
-                targetAcceleration,
-                latency
-            )
-            if predictedPart then
-                selectedAim = predictedPart
-                break
-            end
-        end
-    end
-    if not selectedAim then
-        if updateVisual then
-            clearKnifeAuraVisuals()
-        end
-        return nil
-    end
-    if updateVisual then
-        updateKnifeAuraVisual(
-            target,
-            CFrame.new(predictedRoot),
-            rootTravelTime
-        )
-    end
-
-    local throwDirection: Vector3 = selectedAim - origin
-    if throwDirection.Magnitude <= 0.001 then
-        return CFrame.new(selectedAim)
-    end
-    return CFrame.lookAt(selectedAim, selectedAim + throwDirection.Unit)
-end
-local function redirectedTargetCFrame(): (
-    CFrame?,
-    Player?,
-    Tool?,
-    CFrame?,
-    GunPrediction?
-)
-    local target: Player? = getSelectedShootTarget()
-    local character: Model? = LocalPlayer.Character
-    local gun: Tool? = getEquippedWeapon("Gun", "Weapon_Gun")
-    local origin: CFrame? = character and getGunOriginCFrame(character, gun)
-    if target and origin and gun then
-        local aim: CFrame?, prediction: GunPrediction? =
-            computeGunAim(target, origin)
-        return aim, target, gun, origin, prediction
-    end
-    return nil, nil, gun, origin, nil
-end
-
-local function getRedirectedWeaponCFrame(): CFrame?
-    if shootFeatureActive then
-        local targetCFrame: CFrame?,
-            target: Player?,
-            gun: Tool?,
-            origin: CFrame?,
-            prediction: GunPrediction? = redirectedTargetCFrame()
-        if target and gun and origin and targetCFrame then
-            state.mm2ShotFeedback.queue(
-                target,
-                gun,
-                origin,
-                targetCFrame,
-                prediction,
-                false
-            )
-            return targetCFrame
-        end
-    end
-
-    if knifeSettings.redirect then
-        return redirectedKnifeCFrame()
-    end
-    return nil
 end
 
 local function getWeaponServiceModule(): any
@@ -4131,70 +3706,6 @@ local function connectGunFiredSignal(weaponService: any): boolean
     return false
 end
 
-local function installShootRedirectHook(): boolean
-    local weaponService: any = getWeaponServiceModule()
-    if type(weaponService) ~= "table" then
-        return false
-    end
-    connectGunFiredSignal(weaponService)
-
-    local touchPreferred: boolean =
-        UserInputService.PreferredInput == Enum.PreferredInput.Touch
-    if shootHookInstalled then
-        return not touchPreferred or shootTouchHookInstalled
-    end
-    if type(state.hookFunction) ~= "function"
-        or type(weaponService.GetMouseTargetCFrame) ~= "function" then
-        return false
-    end
-
-    local mouseHooked: boolean = pcall(function(): ()
-        local predecessor: any = nil
-        local wrapper: any = nil
-        wrapper = function(self: any, ...: any): any
-            local targetCFrame: CFrame? = getRedirectedWeaponCFrame()
-            if targetCFrame then
-                return targetCFrame
-            end
-            return predecessor(self, ...)
-        end
-        predecessor = state.hookFunction(
-            weaponService.GetMouseTargetCFrame,
-            wrapper
-        )
-        shootHookOriginal = predecessor
-        shootHookWrapper = wrapper
-    end)
-    if not mouseHooked or type(shootHookOriginal) ~= "function" then
-        return false
-    end
-
-    shootHookInstalled = true
-    if type(weaponService.GetTargetPosition) == "function" then
-        shootTouchHookInstalled = pcall(function(): ()
-            local predecessor: any = nil
-            local wrapper: any = nil
-            wrapper = function(self: any, ...: any): any
-                local targetCFrame: CFrame? = getRedirectedWeaponCFrame()
-                if targetCFrame then
-                    return targetCFrame.Position
-                end
-                return predecessor(self, ...)
-            end
-            predecessor = state.hookFunction(
-                weaponService.GetTargetPosition,
-                wrapper
-            )
-            shootTouchHookOriginal = predecessor
-            shootTouchHookWrapper = wrapper
-        end)
-        shootTouchHookInstalled = shootTouchHookInstalled
-            and type(shootTouchHookOriginal) == "function"
-    end
-
-    return not touchPreferred or shootTouchHookInstalled
-end
-
 local function mm2RoleProvider(player: Player): string?
     if roundLifecycleActive == false then
         return nil
@@ -4215,17 +3726,6 @@ local function mm2TargetProvider(): any
     elseif localRole == "Murderer" then
         target = findSheriff()
         source = target and "Murderer priority · Sheriff/Hero" or "Murderer priority"
-        if not target then
-            local redirected: Player? = state.mm2KnifeRuntime
-                and state.mm2KnifeRuntime.redirectTarget
-                or nil
-            if redirected
-                and isPlayerAlive(redirected)
-                and not state.isProtectedTarget(redirected) then
-                target = redirected
-                source = "Knife lock"
-            end
-        end
         if not target then
             for _, player: Player in ipairs(Players:GetPlayers()) do
                 if player ~= LocalPlayer
@@ -4271,10 +3771,10 @@ local function mm2TargetProvider(): any
         role = role,
         source = source,
         accent = role == "Murderer"
-            and Theme.Danger
+            and Theme.negative
             or ((role == "Sheriff" or role == "Hero")
-                and Theme.AccentCyan
-                or Theme.Success),
+                and Theme.accent
+                or Theme.positive),
     }
 end
 
@@ -4289,57 +3789,17 @@ moduleCleanup = function(): ()
     end
 end
 
-local function uninstallShootRedirectHook(): ()
-    local weaponService: any = weaponServiceModule
-    local touchRestored: boolean = not shootTouchHookInstalled
-    local mouseRestored: boolean = not shootHookInstalled
-    if type(state.hookFunction) == "function" and type(weaponService) == "table" then
-        if shootTouchHookInstalled
-            and shootTouchHookOriginal
-            and type(weaponService.GetTargetPosition) == "function" then
-            local restored: boolean, displaced: any = pcall(
-                state.hookFunction,
-                weaponService.GetTargetPosition,
-                shootTouchHookOriginal
-            )
-            touchRestored = restored and displaced == shootTouchHookWrapper
-            if restored and not touchRestored and type(displaced) == "function" then
-                pcall(state.hookFunction, weaponService.GetTargetPosition, displaced)
-            end
-        end
-        if shootHookInstalled
-            and shootHookOriginal
-            and type(weaponService.GetMouseTargetCFrame) == "function" then
-            local restored: boolean, displaced: any = pcall(
-                state.hookFunction,
-                weaponService.GetMouseTargetCFrame,
-                shootHookOriginal
-            )
-            mouseRestored = restored and displaced == shootHookWrapper
-            if restored and not mouseRestored and type(displaced) == "function" then
-                pcall(state.hookFunction, weaponService.GetMouseTargetCFrame, displaced)
-            end
-        end
-    end
-    if touchRestored then
-        shootTouchHookInstalled = false
-        shootTouchHookOriginal = nil
-        shootTouchHookWrapper = nil
-    end
-    if mouseRestored then
-        shootHookInstalled = false
-        shootHookOriginal = nil
-        shootHookWrapper = nil
-    end
+-- The shot observer, not a hook: WeaponService.GunFired replicates every
+-- accepted shot back to clients, which is what lets the miss feedback tell
+-- "the server took it" from "the server dropped it".
+local function disconnectGunFiredObserver(): ()
     disconnectFeatureConnection("MM2GunFired")
     state.mm2ShotFeedback.gunFiredConnected = false
 end
+
 local function processKnifeAura(): ()
     local knife: Tool?, localRoot: BasePart? = canUseEquippedKnife()
     if not knife or not localRoot then
-        if not knifeSettings.redirect then
-            clearKnifeAuraVisuals()
-        end
         return
     end
 
@@ -4405,14 +3865,7 @@ local function refreshKnifeController(): ()
     disconnectFeatureConnection("MM2KnifeVirtualHitbox")
     disconnectFeatureConnection("MM2KnifeAura")
     disconnectFeatureConnection("MM2KnifeController")
-    if not knifeSettings.redirect and not knifeSettings.aura then
-        state.mm2KnifeRuntime.redirectTarget = nil
-        state.mm2KnifeRuntime.redirectScore = math.huge
-        state.mm2KnifeRuntime.redirectLockedAt = 0
-        state.mm2KnifeRuntime.velocityTarget = nil
-        state.mm2KnifeRuntime.velocity = Vector3.zero
-        state.mm2KnifeRuntime.velocitySampleAt = 0
-        clearKnifeAuraVisuals()
+    if not knifeSettings.aura then
         return
     end
 
@@ -4424,85 +3877,32 @@ local function refreshKnifeController(): ()
                 return
             end
             elapsed %= 0.05
-
-            local knife: Tool? = canUseEquippedKnife()
-            if not knife then
-                state.mm2KnifeRuntime.redirectTarget = nil
-                state.mm2KnifeRuntime.redirectScore = math.huge
-                state.mm2KnifeRuntime.redirectLockedAt = 0
-                state.mm2KnifeRuntime.velocityTarget = nil
-                clearKnifeAuraVisuals()
-                return
-            end
-            if knifeSettings.redirect then
-                getKnifeProjectileSpeed(knife)
-                if not redirectedKnifeCFrame(true) then
-                    clearKnifeAuraVisuals()
-                end
-            end
-            if knifeSettings.aura then
-                processKnifeAura()
-                if not knifeSettings.redirect then
-                    clearKnifeAuraVisuals()
-                end
-            elseif not knifeSettings.redirect then
-                clearKnifeAuraVisuals()
-            end
+            processKnifeAura()
         end)
-end
-
-local function toggleKnifeRedirect(enabled: boolean): ()
-    knifeSettings.redirect = enabled
-    if enabled and not installShootRedirectHook() then
-        notify("Knife Redirect is unavailable in this executor.")
-    end
-    if not enabled then
-        state.mm2KnifeRuntime.redirectTarget = nil
-        state.mm2KnifeRuntime.redirectScore = math.huge
-        state.mm2KnifeRuntime.redirectLockedAt = 0
-        state.mm2KnifeRuntime.velocityTarget = nil
-        state.mm2KnifeRuntime.velocity = Vector3.zero
-        state.mm2KnifeRuntime.velocitySampleAt = 0
-    end
-    refreshKnifeController()
-    if not enabled and not shootFeatureActive then
-        uninstallShootRedirectHook()
-    end
 end
 
 local function toggleKnifeAura(enabled: boolean): ()
     knifeSettings.aura = enabled
     state.mm2KnifeRuntime.lastAuraSwing = -math.huge
-    if enabled and not knifeSettings.redirect then
-        clearKnifeAuraVisuals()
-    end
     refreshKnifeController()
 end
 
+-- Manual shot.
+--
+-- One path, on every device: aim is solved here with CFrame maths and a
+-- raycast, then the gun's own `Shoot` remote is fired with (origin, aim).
+-- That needs no mouse, no `hookfunction` and no touch-specific weapon API,
+-- which is why it behaves identically on PC, phone and console.
 local function triggerManualShot(): ()
-    local _, humanoid: Humanoid? = getCharacterParts()
-    local backpack: Backpack? = LocalPlayer:FindFirstChildOfClass("Backpack")
-    local gun: Tool? = getPlayerWeapon(LocalPlayer, "Gun")
-    local touchPreferred: boolean =
-        UserInputService.PreferredInput == Enum.PreferredInput.Touch
-    local activationHookReady: boolean = shootHookInstalled
-        and (not touchPreferred or shootTouchHookInstalled)
-
-    if gun
-        and humanoid
-        and humanoid:IsA("Humanoid")
-        and activationHookReady then
-        if gun.Parent == backpack then
-            humanoid:EquipTool(gun)
-            task.wait()
-        end
-        gun:Activate()
-    else
-        shootMurderer()
+    -- The key slot fires the module, so the module has to be on for it to do
+    -- anything; otherwise a stray keypress would shoot with Shoot disabled.
+    if not shootFeatureActive then
+        notify("Enable Shoot first.")
+        return
     end
+    shootMurderer()
 end
 local function toggleShootMurderer(enabled: boolean): ()
-    disconnectFeatureConnection("MM2ShootKey")
     disconnectFeatureConnection("MM2MotionTracker")
     shootFeatureActive = enabled
 
@@ -4510,13 +3910,17 @@ local function toggleShootMurderer(enabled: boolean): ()
         state.mm2ShotFeedback.pending = nil
         state.mm2ShotFeedback.lastAccepted = nil
         state.mm2ShotFeedback.hide()
-        if not knifeSettings.redirect then
-            uninstallShootRedirectHook()
-        end
+        disconnectGunFiredObserver()
         return
     end
 
-    installShootRedirectHook()
+    -- Every shot this module makes is a FireServer with a solved aim, so the
+    -- only WeaponService contact needed is the GunFired observer that
+    -- confirms whether the server accepted each one.
+    local weaponService: any = getWeaponServiceModule()
+    if type(weaponService) == "table" then
+        connectGunFiredSignal(weaponService)
+    end
     local motionElapsed: number = 0
     featureConnections.MM2MotionTracker = TaskManager:Connect(function(
         deltaTime: number
@@ -4537,20 +3941,7 @@ local function toggleShootMurderer(enabled: boolean): ()
         end
     end)
 
-    featureConnections.MM2ShootKey = UserInputService.InputBegan:Connect(function(
-        input,
-        processed
-    )
-        if not processed
-            and not state.keyCaptureCallback
-            and not state.waitingForKey
-            and not UserInputService:GetFocusedTextBox()
-            and (mm2Settings.shootMode == "Manual"
-                or mm2Settings.shootMode == "Custom")
-            and input.KeyCode == mm2Settings.shootKey then
-            triggerManualShot()
-        end
-    end)
+    -- No private key handler: the card's key slot owns the binding.
 end
 
 local function teleportToMap()
@@ -4608,102 +3999,58 @@ local _InstantRolesFeature = createUniversalFeature(
     }
 )
 
-local RoleEspFeature = createUniversalFeature(
-    "Player ESP",
-    "Role highlights, coins, and traps",
-    2,
-    toggleRoleEsp,
-    {
-        parent = MM2Scroll,
-        registry = mm2Features,
-    }
-)
-addToggleOption(RoleEspFeature, "Innocent ESP", false, toggleInnocentEsp)
-addColorOption(RoleEspFeature, "Innocent ESP color", mm2Settings.innocentColor, function(value)
-    mm2Settings.innocentColor = value
-end)
-addNumberOption(RoleEspFeature, "Innocent transparency", 6.2, 0, 10, function(value)
-    mm2Settings.innocentTransparency = value / 10
-    if mm2Settings.roleEspAll then
-        rebuildRoleEsp()
-    end
-end)
-addColorOption(RoleEspFeature, "Dead ESP color", mm2Settings.deadColor, function(value)
-    mm2Settings.deadColor = value
-end)
-addNumberOption(RoleEspFeature, "Dead transparency", 5.8, 0, 10, function(value)
-    mm2Settings.deadTransparency = value / 10
-    if mm2Settings.roleEspAll then
-        rebuildRoleEsp()
-    end
-end)
-addToggleOption(RoleEspFeature, "Murderer ESP", false, toggleMurdererEsp)
-addColorOption(RoleEspFeature, "Murderer color", mm2Settings.murdererColor, function(value)
-    mm2Settings.murdererColor = value
-end)
-addNumberOption(RoleEspFeature, "Murderer transparency", 5.5, 0, 10, function(value)
-    mm2Settings.murdererTransparency = value / 10
-    if mm2Settings.roleEspAll then
-        rebuildRoleEsp()
-    end
-end)
-addToggleOption(RoleEspFeature, "Sheriff ESP", false, toggleSheriffEsp)
-addColorOption(RoleEspFeature, "Sheriff color", mm2Settings.sheriffColor, function(value)
-    mm2Settings.sheriffColor = value
-end)
-addNumberOption(RoleEspFeature, "Sheriff transparency", 5.5, 0, 10, function(value)
-    mm2Settings.sheriffTransparency = value / 10
-    if mm2Settings.roleEspAll then
-        rebuildRoleEsp()
-    end
-end)
-addColorOption(RoleEspFeature, "Hero color", mm2Settings.heroColor, function(value)
-    mm2Settings.heroColor = value
-end)
-addNumberOption(RoleEspFeature, "Hero transparency", 5.5, 0, 10, function(value)
-    mm2Settings.heroTransparency = value / 10
-    if mm2Settings.roleEspAll then
-        rebuildRoleEsp()
-    end
-end)
-addToggleOption(RoleEspFeature, "Coin Chams", false, toggleCoinChams)
-addColorOption(RoleEspFeature, "Coin color", mm2Settings.coinColor, function(value)
-    mm2Settings.coinColor = value
-    if coinChamsEnabled then
-        toggleCoinChams(true)
-    end
-end)
-addNumberOption(RoleEspFeature, "Coin transparency", 8, 0, 10, function(value)
-    mm2Settings.coinTransparency = value / 10
-    if coinChamsEnabled then
-        toggleCoinChams(true)
-    end
-end)
-addToggleOption(RoleEspFeature, "Trap ESP", false, toggleTrapEsp)
-addColorOption(RoleEspFeature, "Trap color", mm2Settings.trapColor, function(value)
-    mm2Settings.trapColor = value
-end)
-addNumberOption(RoleEspFeature, "Trap transparency", 7, 0, 10, function(value)
-    mm2Settings.trapTransparency = value / 10
-end)
+-- Roles and MM2's own objects are contributed to the universal Player ESP
+-- instead of being a second ESP card: the role colours arrive as colour rows,
+-- and coins, traps and the dropped gun arrive as toggles in its World section.
+-- MM2 keeps its own implementations of those three — they are chams over
+-- objects the universal module has no way to find.
+registerMM2Roles()
+registerEspExtra({
+    Name = "Coins",
+    Default = false,
+    Color = mm2Settings.coinColor,
+    Tooltip = "Every coin on the map, through walls.",
+    Toggle = function(enabled: boolean): ()
+        toggleCoinChams(enabled)
+    end,
+    SetColor = function(colour: Color3): ()
+        mm2Settings.coinColor = colour
+        if coinChamsEnabled then
+            toggleCoinChams(true)
+        end
+    end,
+})
+registerEspExtra({
+    Name = "Traps",
+    Default = false,
+    Color = mm2Settings.trapColor,
+    Tooltip = "The murderer's placed traps.",
+    Toggle = function(enabled: boolean): ()
+        toggleTrapEsp(enabled)
+    end,
+    SetColor = function(colour: Color3): ()
+        mm2Settings.trapColor = colour
+    end,
+})
+registerEspExtra({
+    Name = "Sheriff gun",
+    Default = false,
+    Color = mm2Settings.gunColor,
+    Tooltip = "The gun on the floor after the sheriff dies.",
+    Toggle = function(enabled: boolean): ()
+        toggleGunEsp(enabled)
+    end,
+    SetColor = function(colour: Color3): ()
+        mm2Settings.gunColor = colour
+    end,
+})
 
-local GunVisualsFeature = createUniversalFeature(
-    "Gun Visuals",
-    "Highlight the dropped sheriff gun",
-    3,
-    toggleGunEsp,
-    {
-        parent = MM2Scroll,
-        registry = mm2Features,
-    }
-)
-addColorOption(GunVisualsFeature, "Gun color", mm2Settings.gunColor, function(value)
-    mm2Settings.gunColor = value
-end)
-addNumberOption(GunVisualsFeature, "Gun transparency", 5, 0, 10, function(value)
-    mm2Settings.gunTransparency = value / 10
-end)
-
+-- Redirect mode is gone the way the throw-redirect below went: it needed a
+-- hook on the WeaponService aim accessor, no capture ever named one, and the
+-- seven guesses usually matched nothing — at which point "Redirect" quietly
+-- fired the same Manual FireServer and the option was a switch that lied.
+-- Manual and Custom both fire the captured payload, (origin, aim), and
+-- WeaponService.GunFired still confirms each shot for the miss feedback.
 local ShootFeature = createUniversalFeature(
     "Shoot",
     "Hitscan aim with filtered motion, RTT compensation, and miss feedback",
@@ -4714,17 +4061,8 @@ local ShootFeature = createUniversalFeature(
         registry = mm2Features,
     }
 )
-local ShootKeyButton
 local ShootTargetBox
 local function refreshShootOptions(): ()
-    if ShootKeyButton then
-        setOptionVisible(
-            ShootFeature,
-            ShootKeyButton.Parent :: GuiObject,
-            mm2Settings.shootMode == "Manual"
-                or mm2Settings.shootMode == "Custom"
-        )
-    end
     if ShootTargetBox then
         setOptionVisible(
             ShootFeature,
@@ -4736,31 +4074,19 @@ end
 addCycleOption(
     ShootFeature,
     "Mode",
-    {"Manual", "Redirect", "Custom"},
+    {"Manual", "Custom"},
     1,
     function(value: string): ()
         mm2Settings.shootMode = value
-        if shootFeatureActive
-            and value == "Redirect"
-            and not installShootRedirectHook() then
-            notify("Shoot Redirect is unavailable; Manual mode still works.")
-        end
         refreshShootOptions()
     end
 )
-ShootKeyButton = addKeyOption(
-    ShootFeature,
-    "Manual key",
-    mm2Settings.shootKey,
-    function(value: Enum.KeyCode): ()
-        mm2Settings.shootKey = value
-    end
-)
-if state.bindMobileActionPlacement then
-    state.bindMobileActionPlacement(
-        ShootKeyButton,
-        "MM2ManualShoot",
-        "SHOOT",
+-- The shot key lives in the card header like every other module: rebind it
+-- there on desktop, or tap the slot on touch to drop a SHOOT button on screen.
+if state.bindFeatureActivationKey then
+    state.bindFeatureActivationKey(
+        ShootFeature,
+        mm2Settings.shootKey,
         triggerManualShot
     )
 end
@@ -4814,40 +4140,23 @@ addInformationOption(
     "Schema 2 records 30 Hz target windows only around your shots/throws. It stays isolated from Universal analytics and never changes weapon arguments."
 )
 
+-- KnifeThrown was never captured, so a throw-redirect that rewrites aim
+-- through hookfunction would be inventing the payload. Aura stays: it
+-- fires HandleTouched with the target's root, which is the game's own stab.
 local KnifeFeature = createUniversalFeature(
-    "Knife",
-    "Normal projectile redirect and extended native stab detection",
+    "Knife Aura",
+    "Stabs the nearest valid target in range through the game's own HandleTouched",
     6,
-    function(): () end,
+    toggleKnifeAura,
     {
-        category = true,
         parent = MM2Scroll,
         registry = mm2Features,
     }
 )
-addToggleOption(KnifeFeature, "Redirect", false, toggleKnifeRedirect)
-addToggleOption(KnifeFeature, "Knife Aura", false, toggleKnifeAura)
-addNumberOption(KnifeFeature, "Aura detection range", 14, 7, 30, function(
+addNumberOption(KnifeFeature, "Range", 14, 7, 30, function(
     value: number
 ): ()
     knifeSettings.auraRange = value
-end)
-addToggleOption(KnifeFeature, "Target closest to mouse", true, function(
-    value: boolean
-): ()
-    knifeSettings.targetClosestToMouse = value
-    state.mm2KnifeRuntime.redirectTarget = nil
-    state.mm2KnifeRuntime.redirectScore = math.huge
-    state.mm2KnifeRuntime.redirectLockedAt = 0
-    state.mm2KnifeRuntime.velocityTarget = nil
-end)
-addToggleOption(KnifeFeature, "Prediction envelope", true, function(
-    value: boolean
-): ()
-    knifeSettings.showTarget = value
-    if not value then
-        clearKnifeAuraVisuals()
-    end
 end)
 
 createUniversalFeature(
@@ -4894,55 +4203,25 @@ autoPlayInput = addTextOption(AutoPlayFeature, "Play ID", mm2Settings.autoPlayId
     end
 end)
 
+-- Always on, never toggled: pick a key in the card's slot (or tap the slot on
+-- a phone to drop a SPRINT button) and hold it to run.
 createUniversalFeature(
     "Sprint",
-    "Hold LeftControl while moving for 30 speed and a yellow trail",
+    "Hold your key to run at 30 speed with a trail",
     10,
     toggleSprint,
     {
+        kind = "hold",
+        onHold = setSprintActive,
         noOptions = true,
         parent = MM2Scroll,
         registry = mm2Features,
     }
 )
 
-local FpsFeature = createUniversalFeature(
-    "Improve FPS",
-    "Apply only the selected reversible optimizations",
-    11,
-    toggleImproveFps,
-    {
-        parent = MM2Scroll,
-        registry = mm2Features,
-    }
-)
-addToggleOption(FpsFeature, "Remove textures", true, function(value)
-    fpsSettings.textures = value
-    if fpsModeEnabled then
-        toggleImproveFps(true)
-    end
-end)
-addToggleOption(FpsFeature, "Disable particles", true, function(value)
-    fpsSettings.particles = value
-    if fpsModeEnabled then
-        toggleImproveFps(true)
-    end
-end)
-addToggleOption(FpsFeature, "Disable shadows", true, function(value)
-    fpsSettings.shadows = value
-    if fpsModeEnabled then
-        toggleImproveFps(true)
-    end
-end)
-addToggleOption(FpsFeature, "Simple materials", false, function(value)
-    fpsSettings.materials = value
-    if fpsModeEnabled then
-        toggleImproveFps(true)
-    end
-end)
 createUniversalFeature(
     "Always Show Timer",
-    "Show the RoundStart timer above the coin bag",
+    "Reveal the game's own round countdown, murderer or not",
     13,
     toggleAlwaysShowTimer,
     {
@@ -5009,7 +4288,7 @@ addNumberOption(
 )
 
 local FlingGroup = createUniversalFeature(
-    "Fling",
+    "Role Fling",
     "Role-based fling actions",
     15,
     function() end,
@@ -5042,40 +4321,19 @@ addActionOption(FlingGroup, "Fling All Innocents", function()
                 local target = playerFromRoundKey(key, data)
                 if target and target ~= LocalPlayer then
                     performFling(target)
+                    -- Wait for the fling to land before starting the next
+                    -- one. This used to read a bare `flingRunning`, a local
+                    -- of the shell it once sat inside; as a global it is nil,
+                    -- `not nil` is true, and the loop fell straight through —
+                    -- so every target was flung on top of the last.
                     repeat
                         task.wait(0.05)
-                    until not flingRunning
+                    until not state.flingRunning
                 end
             end
         end
     end)
 end)
-
-local FriendFeature = createUniversalFeature(
-    "FriendList",
-    "Protect listed players from targeting and damage helpers",
-    16,
-    function() end,
-    {
-        category = true,
-        parent = MM2Scroll,
-        registry = mm2Features,
-    }
-)
-addTextOption(FriendFeature, "Protected names", "", function(value)
-    friendSettings.names = {}
-    for name in string.gmatch(string.lower(value), "[^,%s]+") do
-        friendSettings.names[name] = true
-    end
-end)
-addToggleOption(FriendFeature, "Protect Roblox friends", true, function(value)
-    friendSettings.protectRobloxFriends = value
-    task.spawn(refreshFriendProtection)
-end)
-addInformationOption(
-    FriendFeature,
-    "Separate names with commas. Shoot, Knife Aura and Fling will ignore them."
-)
 
 local hiddenNameLabels = setmetatable({}, {__mode = "k"})
 local function toggleHideNames(enabled)
@@ -5145,6 +4403,8 @@ createUniversalFeature(
     }
 )
 
+-- Deliberately global: the shell calls `cleanupMM2Runtime` when it tears the
+-- game module down, so it cannot be a local of this builder.
 cleanupMM2Runtime = function()
     if state.gameRoleProvider == mm2RoleProvider then
         state.gameRoleProvider = nil
@@ -5156,22 +4416,18 @@ cleanupMM2Runtime = function()
     toggleShootMurderer(false)
     state.mm2ShotFeedback.hide()
     toggleKnifeAura(false)
-    toggleKnifeRedirect(false)
-    uninstallShootRedirectHook()
-    toggleRoleEsp(false)
+    disconnectGunFiredObserver()
     toggleGunEsp(false)
     toggleLoopAllInteract(false)
     toggleSprint(false)
     toggleHideNames(false)
     toggleAutoGetGun(false)
-    toggleImproveFps(false)
     toggleAlwaysShowTimer(false)
     toggleCoinChams(false)
     toggleTrapEsp(false)
     toggleMuteOtherRadios(false)
     toggleMuteTrapSounds(false)
     for _, connectionName: string in ipairs({
-        "MM2FriendPlayerAdded",
         "MM2PlayerDataChanged",
         "MM2TimerTrackerStart",
         "MM2TimerTrackerEnd",

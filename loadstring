@@ -12,8 +12,29 @@ local HttpService: HttpService =
 
 local REQUIRED_RUNTIME_MARKER: string =
     "Initialization error — check executor console"
+
+-- Branch selection.
+--
+-- `main` is what everybody gets. Setting `ARANDOMMENU_BRANCH` before running
+-- this loader points it at a work branch instead, and the bootstrap it
+-- downloads reads the same global to fetch its game modules from there too —
+-- so a branch can be tested end to end without merging it first:
+--
+--   getgenv().ARANDOMMENU_BRANCH = "arena/01a01c6e-arandommenu"
+local REQUESTED_BRANCH: string = "main"
+do
+    local override: any = executorEnvironment.ARANDOMMENU_BRANCH
+    if type(override) == "string" and override ~= "" then
+        REQUESTED_BRANCH = (string.gsub(override, "^refs/heads/", ""))
+    end
+end
+
 local MAIN_SOURCE_URL: string =
     "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/main/ARandomMenu.luau"
+local BRANCH_SOURCE_URL: string =
+    "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/"
+        .. REQUESTED_BRANCH
+        .. "/ARandomMenu.luau"
 local SAFETY_SOURCE_URL: string =
     "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/4b10e4bfe00aa356afb3e0420a72e745327f6259/ARandomMenu.luau"
 
@@ -22,10 +43,18 @@ type SourceCandidate = {
     url: string,
 }
 
-local SOURCE_CANDIDATES: {SourceCandidate} = {
-    {label = "main", url = MAIN_SOURCE_URL},
-    {label = "known-good snapshot", url = SAFETY_SOURCE_URL},
-}
+local SOURCE_CANDIDATES: {SourceCandidate} = {}
+if REQUESTED_BRANCH ~= "main" then
+    table.insert(SOURCE_CANDIDATES, {
+        label = "branch " .. REQUESTED_BRANCH,
+        url = BRANCH_SOURCE_URL,
+    })
+end
+table.insert(SOURCE_CANDIDATES, {label = "main", url = MAIN_SOURCE_URL})
+table.insert(SOURCE_CANDIDATES, {
+    label = "known-good snapshot",
+    url = SAFETY_SOURCE_URL,
+})
 
 local function validateSource(candidate: any): (boolean, string?)
     if type(candidate) ~= "string" then

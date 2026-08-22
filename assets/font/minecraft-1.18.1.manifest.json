@@ -1,0 +1,126 @@
+{
+  "schema": 1,
+  "purpose": "Pin the official Minecraft 1.18.1 font stack. Authored by this port. Not a Mojang asset and not a copy of default.json.",
+  "minecraft": {
+    "versionId": "1.18.1",
+    "type": "release",
+    "releaseDate": "2021-12-10",
+    "protocol": 757,
+    "dataVersion": 2865,
+    "resourcePackFormat": 8,
+    "dataPackFormat": 8,
+    "minimumJava": 17
+  },
+  "official": {
+    "versionManifestV2": "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json",
+    "versionJson": "https://piston-meta.mojang.com/v1/packages/b0bdc637e4c4cbf0501500cbaad5a757b04848ed/1.18.1.json",
+    "versionJsonSha1": "b0bdc637e4c4cbf0501500cbaad5a757b04848ed",
+    "clientJar": "https://piston-data.mojang.com/v1/objects/7e46fb47609401970e2818989fa584fd467cd036/client.jar",
+    "clientJarSha1": "7e46fb47609401970e2818989fa584fd467cd036",
+    "serverJarSha1": "125e5adf40c659fd3bce3e66e67a16bb49ecc1b9",
+    "wikiVersion": "https://minecraft.wiki/w/Java_Edition_1.18.1",
+    "wikiFont": "https://minecraft.wiki/w/Font"
+  },
+  "wurst": {
+    "shipsFont": false,
+    "renderer": "net.minecraft.client.gui.Font",
+    "access": "WurstClient.MC.font",
+    "pinnedCommit": "4a22e53d774b9a28e395874834f099e779685998"
+  },
+  "fonts": {
+    "default": "assets/minecraft/font/default.json",
+    "uniform": "assets/minecraft/font/uniform.json",
+    "alt": "assets/minecraft/font/alt.json",
+    "illageralt": "assets/minecraft/font/illageralt.json"
+  },
+  "defaultProviders": [
+    {
+      "index": 0,
+      "type": "bitmap",
+      "file": "minecraft:font/nonlatin_european.png",
+      "texture": "assets/minecraft/textures/font/nonlatin_european.png",
+      "height": 8,
+      "heightDeclared": false,
+      "ascent": 7,
+      "rows": 67,
+      "columns": 16,
+      "glyphCount": 1072
+    },
+    {
+      "index": 1,
+      "type": "bitmap",
+      "file": "minecraft:font/accented.png",
+      "texture": "assets/minecraft/textures/font/accented.png",
+      "height": 12,
+      "heightDeclared": true,
+      "ascent": 10,
+      "rows": 75,
+      "columns": 16,
+      "glyphCount": 1200
+    },
+    {
+      "index": 2,
+      "type": "bitmap",
+      "file": "minecraft:font/ascii.png",
+      "texture": "assets/minecraft/textures/font/ascii.png",
+      "height": 8,
+      "heightDeclared": false,
+      "ascent": 7,
+      "rows": 16,
+      "columns": 16,
+      "glyphCount": 256,
+      "printableAscii": "rows 2-7 are U+0020..U+007E; other rows are CP437-like extras; U+0000 marks empty cells"
+    },
+    {
+      "index": 3,
+      "type": "legacy_unicode",
+      "sizes": "minecraft:font/glyph_sizes.bin",
+      "sizesPath": "assets/minecraft/font/glyph_sizes.bin",
+      "sizesBytes": 65536,
+      "template": "minecraft:font/unicode_page_%s.png",
+      "texturePattern": "assets/minecraft/textures/font/unicode_page_XX.png",
+      "pageCountObserved": 222
+    }
+  ],
+  "absentIn1181": ["space", "ttf", "unihex", "reference", "include"],
+  "metrics": {
+    "lineHeight": 9,
+    "defaultBitmapHeight": 8,
+    "shadowOffset": [1, 1],
+    "shadowRgbScale": 0.25,
+    "advance": "per-glyph: last opaque column + 1; not a constant",
+    "typicalAdvanceIsNotAContract": true,
+    "missingGlyph": "tofu rectangle"
+  },
+  "doNotVendor": [
+    "client.jar",
+    "ascii.png",
+    "accented.png",
+    "nonlatin_european.png",
+    "ascii_sga.png",
+    "asciillager.png",
+    "unicode_page_",
+    "glyph_sizes.bin",
+    "default.json",
+    "alt.json",
+    "uniform.json",
+    "illageralt.json"
+  ],
+  "fallback": {
+    "name": "Monocraft",
+    "licence": "SIL OFL 1.1",
+    "otf": "src/gui/Current/Assets/Typography/Monocraft.otf",
+    "oflText": "src/gui/Current/Assets/Typography/Monocraft-OFL.txt",
+    "atlas": "assets/font/monocraft-16.png",
+    "metrics": "assets/font/monocraft-16.json",
+    "exactMinecraft": false
+  },
+  "strategy": "download-official-on-update / generate-locally-do-not-version / fallback-monocraft",
+  "observedThirdPartyDefaultJson": {
+    "note": "Read only to describe the provider stack when piston-meta was unreachable. Not an official distribution. Downloader must use client.jar.",
+    "source": "InventivetalentDev/minecraft-assets ref 1.18.1",
+    "path": "assets/minecraft/font/default.json",
+    "bytes": 19293,
+    "sha256": "bc3f24f1b1bae34659723c5794284e74a246e1aed099c524362d8b899dcb2cea"
+  }
+}

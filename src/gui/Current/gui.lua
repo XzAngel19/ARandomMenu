@@ -354,6 +354,7 @@ local function makeLabel(
     registry: {Instance}?
 ): TextLabel
     local label: TextLabel = create("TextLabel", {
+        TextTruncate = Enum.TextTruncate.AtEnd,
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
         Font = Enum.Font.Gotham,
@@ -379,6 +380,7 @@ local function makeButton(
     registry: {Instance}?
 ): TextButton
     local button: TextButton = create("TextButton", {
+        TextTruncate = Enum.TextTruncate.AtEnd,
         AutoButtonColor = false,
         BackgroundColor3 = THEME.Surface,
         BorderSizePixel = 0,
@@ -971,6 +973,7 @@ function Gui.new(options: GuiOptions?): GuiController
                 valueLabel.Size = UDim2.fromOffset(42, 38)
                 valueLabel.TextXAlignment = Enum.TextXAlignment.Right
                 local track: TextButton = create("TextButton", {
+                    TextTruncate = Enum.TextTruncate.AtEnd,
                     AutoButtonColor = false,
                     BackgroundColor3 = Color3.fromRGB(50, 50, 55),
                     BorderSizePixel = 0,

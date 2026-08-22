@@ -1,23 +1,24 @@
 --!strict
 --[[
-    A Random Menu
+    Wurst
+    An unofficial Roblox port of the Minecraft Wurst Client.
     Standalone, client-sided Roblox GUI.
 
     Default controls:
       - RightShift: show/hide the menu
-      - Drag the left navigation surface to move the fixed-size menu
+
+    The shell itself is fixed: it is always centred on the screen and its size
+    comes from the responsive metrics table (Mobile / Tablet / Desktop). Only
+    the floating tool windows and the HUD overlays can be moved.
 ]]
 
-local bootstrapStatusLabel: TextLabel? = nil
 -- Raised by the xpcall handler at the bottom of the file. The loading intro
 -- reads it so its scripted narration and its watchdog never overwrite or hide
 -- the initialization error message.
-local bootstrapFailed: boolean = false
 local RUNTIME_COMPATIBILITY_MARKER: string =
     "Initialization error — check executor console"
 local RUNTIME_SAFETY_SOURCE_URL: string =
     "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/4b10e4bfe00aa356afb3e0420a72e745327f6259/ARandomMenu.luau"
-local RUNTIME_BUILD_LABEL: string = "loader-v3"
 
 -- Module taxonomy.
 --
@@ -30,37 +31,194 @@ local RUNTIME_BUILD_LABEL: string = "loader-v3"
 --
 -- These live at file scope on purpose: `bootstrap()` is one enormous function
 -- and is close to Luau's 200 local-register ceiling.
-local DEFAULT_FEATURE_CATEGORY: string = "General"
-local FEATURE_CATEGORIES: {[string]: string} = {
-    ["Anti-AFK"] = "Utility",
-    ["Anti-Fling"] = "Protection",
-    ["Anti-Void"] = "Protection",
-    ["CTRL + Click Teleport"] = "Player",
-    ["FOV"] = "Visuals",
-    ["Fling"] = "Combat",
-    ["Fly"] = "Player",
-    ["Freeze Movements"] = "Player",
-    ["Fullbright"] = "Visuals",
-    ["Gravity"] = "Utility",
-    ["High Jump"] = "Player",
-    ["Hitboxes"] = "Combat",
-    ["Infinite Jump"] = "Player",
-    ["Interact Extender"] = "Utility",
-    ["Jump Power"] = "Player",
-    ["Lag Switch"] = "Utility",
-    ["Noclip"] = "Player",
-    ["Phase Dash"] = "Player",
-    ["Player ESP"] = "Visuals",
-    ["Projectile Calibration"] = "Combat",
-    ["Rejoin Server"] = "Utility",
-    ["Safe Walk"] = "Protection",
-    ["Soft Landing"] = "Protection",
-    ["Speed"] = "Player",
-    ["Spider"] = "Player",
-    ["Walk Speed"] = "Player",
-    ["X-Ray"] = "Visuals",
-    ["Zoom Unlocker"] = "Visuals",
+--
+-- Wurst has no "General": an uncategorised feature belongs to Other, which is
+-- a real window with a real name at the pinned commit.
+local DEFAULT_FEATURE_CATEGORY: string = "Other"
+
+-- The shared category contract: official Wurst 7 windows, in the exact order
+-- ClickGui.init() builds them at 4a22e53d. Every surface that names a
+-- category — the framework's taxonomy, the ClickGUI grid, the card factory —
+-- resolves against this list and nothing else.
+local OFFICIAL_CATEGORIES: {string} = {
+    "Combat",
+    "Render",
+    "Blocks",
+    "Movement",
+    "Chat",
+    "Fun",
+    "Items",
+    "Other",
 }
+
+-- The port's old names, funnelled into official windows until D refiles each
+-- card (docs/wurst-categories.md carries the per-card mapping). An alias is a
+-- bridge, not a home: it exists so no module ever lands in a window that is
+-- not one of Wurst's eight while the per-module moves happen in D's lane.
+--   Visuals    → Render    (ESP, lighting, camera — Wurst's Render)
+--   Protection → Movement  (NoFall, SafeWalk map there in the Java; the rest
+--                           D moves individually)
+--   Utility    → Other     (AntiAFK, Reach, AutoReconnect live in Other)
+--   Spoof      → Fun       (no Wurst window; Fun is where Wurst keeps the
+--                           appearance toys)
+local CATEGORY_ALIASES: {[string]: string} = {
+    ["Visuals"] = "Render",
+    ["Protection"] = "Movement",
+    ["Utility"] = "Other",
+    ["Spoof"] = "Fun",
+    ["General"] = "Other",
+    ["Player"] = "Movement",
+}
+
+local function normalizeFeatureCategory(name: any): string
+    local resolved: string = tostring(name or DEFAULT_FEATURE_CATEGORY)
+    if table.find(OFFICIAL_CATEGORIES, resolved) ~= nil then
+        return resolved
+    end
+    return CATEGORY_ALIASES[resolved] or DEFAULT_FEATURE_CATEGORY
+end
+
+-- The taxonomy, sorted the way it reads on screen:
+--
+--   Movement    getting around: speed, flight, jumps, teleports, phasing.
+--   Combat      aiming and hitting: only things that help you fight.
+--   Visuals     what you can see: ESP, lighting, camera.
+--   Protection  what stops something happening to you.
+--   Utility     one-shot tools and session helpers that fit nowhere else.
+--
+-- "Player" used to hold everything that moved the character, which made it a
+-- second General; it is "Movement" now, which is what those modules are. And
+-- Fling is not a combat aid — it does not help you fight, it throws another
+-- player around — so it sits with the other one-shot tools.
+local FEATURE_CATEGORIES: {[string]: string} = {
+    -- Movement
+    ["Click Teleport"] = "Movement",
+    ["Fly"] = "Movement",
+    ["Freeze Movements"] = "Movement",
+    ["High Jump"] = "Movement",
+    ["Infinite Jump"] = "Movement",
+    ["Jump Power"] = "Movement",
+    ["Noclip"] = "Movement",
+    ["Phase Dash"] = "Movement",
+    ["Speed"] = "Movement",
+    ["Spider"] = "Movement",
+    ["Walk Speed"] = "Movement",
+
+    -- Combat
+    ["Hitboxes"] = "Combat",
+    ["Projectile Calibration"] = "Combat",
+
+    -- Visuals
+    ["FOV"] = "Render",
+    ["Fullbright"] = "Render",
+    ["Player ESP"] = "Render",
+    ["X-Ray"] = "Render",
+    ["Zoom Unlocker"] = "Render",
+
+    -- Protection
+    ["Anti-Fling"] = "Movement",
+    ["Anti-Void"] = "Movement",
+    ["Safe Walk"] = "Movement",
+    ["No Fall"] = "Movement",
+
+    -- Utility
+    ["Anti-AFK"] = "Other",
+    ["Fling"] = "Other",
+    ["Gravity"] = "Other",
+    ["Improve FPS"] = "Other",
+    ["Interact Extender"] = "Other",
+    ["Lag Switch"] = "Other",
+    ["Rejoin Server"] = "Other",
+
+    -- Everything a game module adds is filed here too.
+    --
+    -- A game module used to get a page of its own, so its cards never needed a
+    -- category and every one of them landed in the catch-all. They are modules
+    -- like any other now — BedFight's Server Aura is a combat module, its
+    -- Scaffold is a movement module — so the taxonomy names them here, in one
+    -- table, instead of asking five game files to describe themselves.
+
+    -- MM2
+    ["Instant Role Notify"] = "Other",
+    ["Shoot"] = "Combat",
+    ["Trajectory Calibration"] = "Combat",
+    ["Knife"] = "Combat",
+    ["Loop All Interact"] = "Other",
+    ["Silence"] = "Other",
+    ["Auto Play ID"] = "Other",
+    ["Sprint"] = "Movement",
+    ["Always Show Timer"] = "Render",
+    ["Teleport"] = "Movement",
+    ["Role Fling"] = "Other",
+    ["Hide Names"] = "Movement",
+
+    -- TRS
+    ["Auto Tackle"] = "Combat",
+    ["Auto Dribble"] = "Combat",
+    ["Auto Pickup"] = "Other",
+    ["Pass Assist"] = "Combat",
+    ["Shoot Assist"] = "Combat",
+    ["Power Shot"] = "Combat",
+    ["Large Shoot"] = "Combat",
+    ["Best Goal Visual"] = "Render",
+    ["Ball Trajectory"] = "Render",
+    ["Goalkeeper Assist"] = "Combat",
+    ["Auto Header"] = "Combat",
+
+    -- VD
+    ["Auto Generator"] = "Other",
+    ["Auto Parry / Auto Block"] = "Movement",
+    ["Killer Hit Aura"] = "Combat",
+    ["Fast Vault Optimizer"] = "Movement",
+    ["Cooldown Modifier"] = "Other",
+    ["Damage Boost"] = "Movement",
+    ["Noclip (Vaults & Pallets)"] = "Movement",
+    ["WalkSpeed Hack"] = "Movement",
+    ["Silent Steps / Anti-Sound"] = "Movement",
+    ["Killer Proximity Visualizer"] = "Render",
+    ["Line of Sight ESP"] = "Render",
+    ["Locker & Hideout Detector"] = "Render",
+    ["Killer Power Cooldowns"] = "Render",
+    ["VD Field of View"] = "Render",
+    ["Optimize Blind / Flash Protection"] = "Movement",
+    ["VD Fullbright"] = "Render",
+
+    -- MVSD (its ESP is an option of the universal one now)
+    ["Silent Aim"] = "Combat",
+    ["Auto Shoot"] = "Combat",
+    ["Trigger Opportunity"] = "Render",
+
+    -- BedFight (beds and generators are options of the universal ESP)
+    ["Round Info"] = "Render",
+    ["Auto Swing"] = "Combat",
+    ["Bed Nuker"] = "Combat",
+    ["Scaffold"] = "Movement",
+    ["Anti Void"] = "Movement",
+    ["Server Aura"] = "Combat",
+    ["Server Scaffold"] = "Movement",
+    ["Server Miner"] = "Other",
+    ["Auto Buy"] = "Other",
+    ["Quick Actions"] = "Other",
+}
+
+-- Module kinds, on the card.
+--
+-- Three different contracts used to look identical: a toggle you switch, a
+-- button that runs once, and an always-on module whose card is only a
+-- container for its options. Every card now carries a chip that says which it
+-- is, and the accent stripe is coloured to match, so the difference is visible
+-- before you click anything.
+--
+-- The marker is a shape, not a caption: a word like "TOGGLE" on every card is
+-- noise once you have seen it twice, and it eats the width the module name
+-- needs. All four are drawn in the interface's own greys — a coloured chip per
+-- kind turned the board into a paint chart.
+--
+--   toggle  a square that fills when the module is on.
+--   action  a chevron: press it and it goes.
+--   hold    two upright bars: live only while a finger is on the key.
+--   group   three stacked rules: a container of settings, always running.
+
 
 -- Sort key for a whole category. The catch-all always sinks to the bottom;
 -- every real category is ordered alphabetically.
@@ -70,6 +228,174 @@ local function featureCategoryRank(category: string): string
     end
     return category
 end
+
+-- ---------------------------------------------------------------------------
+-- Design tokens
+-- ---------------------------------------------------------------------------
+--
+-- Radii, motion durations and shadow strengths are declared exactly once so
+-- the whole shell keeps a single silhouette and a single rhythm. Sizes that
+-- depend on the viewport live in `computeLayoutMetrics` below instead; these
+-- are the values that never change with the device.
+--
+-- They sit at file scope (like the feature taxonomy) because `bootstrap()` is
+-- one enormous function and is close to Luau's 200 local-register ceiling.
+-- Vape's shell is closer to a terminal than to a phone app: small radii, hard
+-- edges, and contrast carried by the fill rather than by soft corners. These
+-- are the four radii the whole interface is built from.
+local UI_RADIUS: {[string]: number} = {
+    shell = 8,
+    panel = 5,
+    card = 4,
+    control = 3,
+    chip = 3,
+}
+-- The reference interface animates in roughly 0.16s. Everything the shell
+-- tweens uses one of these three durations.
+local UI_MOTION: {[string]: number} = {
+    fast = 0.1,
+    base = 0.16,
+    slow = 0.22,
+}
+-- There is deliberately no ambient shadow behind the shell.
+--
+-- It used to be faked with stacked rounded frames, but `cornerRadius()` caps
+-- every radius at 30px: a frame 44px wider than the shell therefore kept
+-- square-ish corners around a tightly rounded window and rendered as four
+-- grey blocks poking out of the corners. A convincing soft shadow needs a
+-- 9-slice image asset, and this runtime deliberately downloads none, so the
+-- shell simply has no shadow.
+
+-- ---------------------------------------------------------------------------
+-- Responsive layout metrics
+-- ---------------------------------------------------------------------------
+--
+-- One table drives every size in the interface. Modules never read it: they
+-- ask the shared component factories for a card, a row or a control, and the
+-- factories size themselves from here. That is what lets phones, tablets and
+-- desktops get genuinely different layouts without touching a single game
+-- module.
+--
+-- Three modes rather than one scale factor:
+--   * Mobile  — phone (either orientation): near-fullscreen shell, collapsed
+--               icon rail, one column, finger-sized controls.
+--   * Tablet  — reduced rail, one column unless the content area is wide.
+--   * Desktop — full rail with labels, two columns when they fit, more air.
+type LayoutMetrics = {
+    mode: string,
+    compact: boolean,
+    touch: boolean,
+    contentPadding: number,
+    cardSpacing: number,
+    cardHeight: number,
+    cardCorner: number,
+    controlHeight: number,
+    optionRowHeight: number,
+    switchWidth: number,
+    switchHeight: number,
+    iconButton: number,
+    keySlotWidth: number,
+    touchTarget: number,
+    titleFontSize: number,
+    bodyFontSize: number,
+    captionFontSize: number,
+    scrollBar: number,
+}
+
+local function computeLayoutMetrics(
+    _viewport: Vector2,
+    touchEnabled: boolean
+): LayoutMetrics
+    local mode: string = "Desktop"
+    if touchEnabled then
+        mode = "Mobile"
+    end
+    local mobile: boolean = mode == "Mobile"
+    return {
+        mode = mode,
+        compact = mobile,
+        touch = touchEnabled,
+        contentPadding = 10,
+        cardSpacing = 2,
+        cardHeight = 22,
+        cardCorner = UI_RADIUS.card,
+        controlHeight = 20,
+        optionRowHeight = 22,
+        switchWidth = 26,
+        switchHeight = 14,
+        iconButton = 16,
+        keySlotWidth = 34,
+        touchTarget = touchEnabled and 32 or 24,
+        titleFontSize = 11.5,
+        bodyFontSize = 11.5,
+        captionFontSize = 9,
+        scrollBar = 3,
+    }
+end
+
+-- Which branch the runtime pulls its game modules from.
+--
+-- The loader and this bootstrap both live on `main`, so an injected menu
+-- always ran main's game modules — which is why work reviewed on a branch
+-- still looked unchanged in game. Setting `ARANDOMMENU_BRANCH` before loading
+-- points the whole runtime (bootstrap *and* the per-game modules it fetches)
+-- at that branch instead:
+--
+--   getgenv().ARANDOMMENU_BRANCH = "arena/01a01c6e-arandommenu"
+--   loadstring(game:HttpGet(
+--       "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/"
+--           .. getgenv().ARANDOMMENU_BRANCH .. "/ARandomMenu.luau"))()
+--
+-- It defaults to `main`, so normal injections are unaffected.
+local RUNTIME_BRANCH: string = "main"
+do
+    local override: any = (getfenv() :: any).ARANDOMMENU_BRANCH
+    if type(override) == "string" and override ~= "" then
+        RUNTIME_BRANCH = (override:gsub("^refs/heads/", ""))
+    end
+end
+local RUNTIME_RAW_BASE: string =
+    "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/"
+        .. RUNTIME_BRANCH
+        .. "/"
+
+-- Content stamp of every file packed into runtime/bundle.luau. Written by
+-- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
+-- `?v=` so the CDN and the executor can cache a URL that still changes the
+-- moment the content does.
+local SOURCE_STAMP: string = "ffc543f4c9408f31"
+-- The clock starts here, when the bootstrap chunk begins running.
+--
+-- It used to start inside the module loader, which is near the *end* of the
+-- work: it reported a third of a second while the player watched the window
+-- being built for however long that takes. Everything between these two
+-- points is now the "gui" phase.
+local BOOT_STARTED_AT: number = os.clock()
+local BOOT_FINGERPRINT_SECONDS: number = 0
+local PENDING_FINGERPRINT: boolean = false
+
+-- The product's own name, in one place.
+--
+-- Everything a player reads — the wordmark, the log prefix, the notification
+-- title — comes from here, so the next rename is one line and not a hundred
+-- and twenty.
+--
+-- Three names deliberately do *not* follow it. `guiName`, `blurName` and
+-- `storageFolder` are not branding: the first two are the instance names a
+-- game can enumerate under CoreGui and Lighting, so naming them after the
+-- product would announce the menu to anything scanning for it, and the third
+-- is a folder on disk that already holds every existing player's saved
+-- configs. Renaming it would silently orphan all of them.
+local PRODUCT = {
+    name = "Wurst",
+    version = "0.1 Beta",
+    -- Prefixes every console line as `[Wurst:Bootstrap]` and friends.
+    logPrefix = "Wurst",
+    guiName = "RandomTestingMenu0001",
+    blurName = "RandomTestingMenu0001Blur",
+    storageFolder = "RandomTestingMenu0001",
+}
+
 
 local function bootstrap(): ()
 local executorGlobals: any = getfenv()
@@ -95,28 +421,159 @@ local Stats: Stats = cloneReference(game:GetService("Stats"))
 local LocalPlayer: Player = Players.LocalPlayer :: Player
 local PlayerGui: PlayerGui = LocalPlayer:WaitForChild("PlayerGui") :: PlayerGui
 
-local GUI_NAME = "RandomTestingMenu0001"
-local BLUR_NAME = "RandomTestingMenu0001Blur"
-local CONFIG_FOLDER = "RandomTestingMenu0001"
+local GUI_NAME = PRODUCT.guiName
+local BLUR_NAME = PRODUCT.blurName
+local CONFIG_FOLDER = PRODUCT.storageFolder
 local CONFIG_PROFILE_FOLDER = CONFIG_FOLDER .. "/Profiles"
 local CONFIG_FILE = CONFIG_PROFILE_FOLDER
     .. "/Game_"
     .. tostring(game.GameId > 0 and game.GameId or game.PlaceId)
     .. ".Config"
-local REPOSITORY_RAW_BASE =
-    "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/main/"
+local REPOSITORY_RAW_BASE = RUNTIME_RAW_BASE
 
 local GAME_MODULES: {[number]: string} = {
+    [71480482338212] = "BedFight",
     [142823291] = "MM2",
     [14315258385] = "TRS",
     [93978595733734] = "VD",
     [135856908115931] = "MVSD",
 }
 
+-- ---------------------------------------------------------------------------
+-- Game fingerprinting
+-- ---------------------------------------------------------------------------
+--
+-- MM2 is cloned constantly ("MMV" and friends): same game, different PlaceId,
+-- so a PlaceId table alone leaves every copy with no game tab at all. A copy
+-- cannot strip the structure the game is *built* on, though — the remotes its
+-- rounds run through, the weapon service its guns call, the HUD it clones into
+-- PlayerGui — so when the PlaceId is unknown the runtime looks for that
+-- structure instead.
+--
+-- Deliberately conservative: several independent markers must match, and each
+-- one is a path the real game genuinely needs, so an unrelated game cannot
+-- score high enough by accident. Nothing here waits on the network; it reads
+-- what has already replicated.
+type GameFingerprint = {
+    module: string,
+    required: number,
+    markers: {(ReplicatedStorage) -> boolean},
+}
+
+local GAME_FINGERPRINTS: {GameFingerprint} = {
+    {
+        module = "MM2",
+        required = 4,
+        markers = {
+            -- The round pipeline: these four remotes are what every MM2 round
+            -- is driven by.
+            function(replicated: ReplicatedStorage): boolean
+                local remotes: Instance? = replicated:FindFirstChild("Remotes")
+                local gameplay: Instance? = remotes
+                    and remotes:FindFirstChild("Gameplay")
+                if not gameplay then
+                    return false
+                end
+                local found: number = 0
+                for _, name: string in ipairs({
+                    "RoundStart",
+                    "RoundEndFade",
+                    "GetCurrentPlayerData",
+                    "PlayerDataChanged",
+                }) do
+                    if gameplay:FindFirstChild(name) then
+                        found += 1
+                    end
+                end
+                return found >= 3
+            end,
+            -- The weapon service the knife and gun both go through.
+            function(replicated: ReplicatedStorage): boolean
+                local services: Instance? =
+                    replicated:FindFirstChild("ClientServices")
+                local weaponService: Instance? = services
+                    and services:FindFirstChild("WeaponService")
+                return weaponService ~= nil
+                    and weaponService:FindFirstChild("GunFired") ~= nil
+            end,
+            -- The HUD that carries the round timer and the role selector.
+            function(replicated: ReplicatedStorage): boolean
+                local mainGui: Instance? = replicated:FindFirstChild("MainGUI")
+                local gameFrame: Instance? = mainGui
+                    and mainGui:FindFirstChild("Game")
+                return gameFrame ~= nil
+                    and gameFrame:FindFirstChild("Timer") ~= nil
+            end,
+            -- MM2 gives the murderer its own collision group.
+            function(_replicated: ReplicatedStorage): boolean
+                local ok: boolean, groups: any = pcall(function(): any
+                    return game:GetService("PhysicsService")
+                        :GetRegisteredCollisionGroups()
+                end)
+                if not ok or type(groups) ~= "table" then
+                    return false
+                end
+                for _, group: any in ipairs(groups) do
+                    if type(group) == "table" and group.name == "Murderer" then
+                        return true
+                    end
+                end
+                return false
+            end,
+            -- Coin containers/areas are in every MM2 map.
+            function(_replicated: ReplicatedStorage): boolean
+                for _, object: Instance in ipairs(workspace:GetChildren()) do
+                    if object:IsA("Model")
+                        and object.Name ~= "Lobby"
+                        and (object:FindFirstChild("CoinContainer")
+                            or object:FindFirstChild("CoinAreas")) then
+                        return true
+                    end
+                end
+                return false
+            end,
+        },
+    },
+}
+
+local function detectGameModuleByStructure(): (string?, number)
+    local replicated: ReplicatedStorage = game:GetService("ReplicatedStorage")
+    for _, fingerprint: GameFingerprint in ipairs(GAME_FINGERPRINTS) do
+        local score: number = 0
+        for _, marker: (ReplicatedStorage) -> boolean in ipairs(fingerprint.markers) do
+            local ok: boolean, matched: any = pcall(marker, replicated)
+            if ok and matched == true then
+                score += 1
+            end
+        end
+        if score >= fingerprint.required then
+            return fingerprint.module, score
+        end
+    end
+    return nil, 0
+end
+
 local ACTIVE_GAME_MODULE: string? = GAME_MODULES[game.PlaceId]
+local ACTIVE_GAME_SOURCE: string = ACTIVE_GAME_MODULE and "PlaceId" or "none"
+PENDING_FINGERPRINT = ACTIVE_GAME_MODULE == nil
+if not ACTIVE_GAME_MODULE then
+    -- One look, no wait. A clone that has already replicated is recognised
+    -- here; one that is still streaming is picked up later, off the path that
+    -- builds the window. Waiting three seconds for markers that never arrive
+    -- was a blank screen in every game that is not one of the five PlaceIds.
+    local fingerprintAt: number = os.clock()
+    local detected: string?, score: number = detectGameModuleByStructure()
+    BOOT_FINGERPRINT_SECONDS = os.clock() - fingerprintAt
+    if detected then
+        ACTIVE_GAME_MODULE = detected
+        ACTIVE_GAME_SOURCE = "fingerprint " .. tostring(score) .. " markers"
+        PENDING_FINGERPRINT = false
+    end
+end
 
 local GAME_CHECK = {
     MM2 = 142823291,
+    BedFight = 71480482338212,
     TRS = 14315258385,
     VD = 93978595733734,
     MVSD = 135856908115931,
@@ -124,50 +581,211 @@ local GAME_CHECK = {
     TRSActive = ACTIVE_GAME_MODULE == "TRS",
     VDActive = ACTIVE_GAME_MODULE == "VD",
     MVSDActive = ACTIVE_GAME_MODULE == "MVSD",
+    BedFightActive = ACTIVE_GAME_MODULE == "BedFight",
 }
 
 function GAME_CHECK.matches(identifier: number): boolean
-    return game.PlaceId == identifier
+    if game.PlaceId == identifier then
+        return true
+    end
+    -- A recognised clone answers for the game it is a copy of, so modules that
+    -- gate on `GAME_CHECK.matches(GAME_CHECK.MM2)` keep working there.
+    for placeId: number, moduleName: string in pairs(GAME_MODULES) do
+        if placeId == identifier then
+            return ACTIVE_GAME_MODULE == moduleName
+        end
+    end
+    return false
 end
--- Neutral monochrome palette. The interface is intentionally themeless: every
--- surface is a shade of black/grey and the single accent is plain white, so no
--- decorative identity leaks into the runtime.
-local DEFAULT_HEADER_COLOR: Color3 = Color3.fromRGB(236, 236, 238)
-local DEFAULT_MENU_COLOR: Color3 = Color3.fromRGB(8, 8, 9)
-local DEFAULT_SURFACE_COLOR: Color3 = Color3.fromRGB(26, 26, 28)
-local DEFAULT_BORDER_COLOR: Color3 = Color3.fromRGB(92, 92, 98)
 
-local Theme: {[string]: Color3} = {
-    Background = Color3.fromRGB(8, 8, 9),
-    Surface = Color3.fromRGB(26, 26, 28),
-    SurfaceRaised = Color3.fromRGB(32, 32, 35),
-    SurfaceHover = Color3.fromRGB(40, 40, 44),
-    SurfacePressed = Color3.fromRGB(48, 48, 52),
-    Accent = Color3.fromRGB(236, 236, 238),
-    AccentCyan = Color3.fromRGB(236, 236, 238),
-    AccentViolet = Color3.fromRGB(196, 196, 202),
-    AccentPink = Color3.fromRGB(160, 160, 168),
-    AccentSoft = Color3.fromRGB(52, 52, 56),
-    DefaultBackground = Color3.fromRGB(8, 8, 9),
-    DefaultSidebar = Color3.fromRGB(13, 13, 14),
-    DefaultSurface = Color3.fromRGB(26, 26, 28),
-    DefaultSurfaceHover = Color3.fromRGB(40, 40, 44),
-    DefaultButton = Color3.fromRGB(32, 32, 35),
-    DefaultButtonHover = Color3.fromRGB(46, 46, 50),
-    DefaultButtonPressed = Color3.fromRGB(56, 56, 61),
-    DefaultOutline = Color3.fromRGB(92, 92, 98),
-    DefaultAccent = Color3.fromRGB(236, 236, 238),
-    DefaultText = Color3.fromRGB(245, 245, 247),
-    DefaultTextMuted = Color3.fromRGB(158, 158, 166),
-    Text = Color3.fromRGB(245, 245, 247),
-    TextMuted = Color3.fromRGB(158, 158, 166),
-    Outline = Color3.fromRGB(92, 92, 98),
-    -- Status colours stay semantic: they label gameplay data (roles, health,
-    -- failures) rather than the menu chrome, so they remain readable while the
-    -- interface itself stays monochrome.
-    Success = Color3.fromRGB(126, 196, 138),
-    Danger = Color3.fromRGB(214, 106, 106),
+GAME_CHECK.source = ACTIVE_GAME_SOURCE
+-- Colour tokens.
+--
+-- One set, not two. There used to be `Surface` and `DefaultSurface`, `Text` and
+-- `DefaultText`, `Outline` and `DefaultOutline` — leftovers from a second GUI
+-- style that no longer exists. Half the menu read one set and half read the
+-- other, so changing a colour either had to be done twice or only took in half
+-- the window.
+--
+-- The defaults are the Wurst Client's own: background #404040, accent #101010,
+-- text #F0F0F0. The magenta most Wurst screenshots show is a theme its user
+-- picked, not what the client ships with.
+--
+-- `accent` paints chrome — title bars, borders, slider fills. `enabled` paints
+-- a module that is on. They are two tokens rather than one because Wurst
+-- separates them too, and for the same reason: filling every enabled row with
+-- the colour that already paints eight title bars is unreadable.
+export type ThemeShape = {
+    opacity: number,
+    tooltipOpacity: number,
+    radius: number,
+    rowHeight: number,
+    borderThickness: number,
+    maxHeight: number,
+    scale: number,
 }
+
+local THEME_PRESETS: {[string]: {[string]: Color3}} = {
+    -- What Wurst looks like out of the box.
+    Wurst = {
+        background = Color3.fromRGB(64, 64, 64),
+        sidebar = Color3.fromRGB(48, 48, 48),
+        surface = Color3.fromRGB(64, 64, 64),
+        surfaceRaised = Color3.fromRGB(74, 74, 74),
+        surfaceHover = Color3.fromRGB(86, 86, 86),
+        surfacePressed = Color3.fromRGB(96, 96, 96),
+        button = Color3.fromRGB(56, 56, 56),
+        buttonHover = Color3.fromRGB(72, 72, 72),
+        buttonPressed = Color3.fromRGB(84, 84, 84),
+        outline = Color3.fromRGB(16, 16, 16),
+        accent = Color3.fromRGB(16, 16, 16),
+        accentDim = Color3.fromRGB(36, 36, 36),
+        accentFaint = Color3.fromRGB(56, 56, 56),
+        accentSoft = Color3.fromRGB(40, 40, 40),
+        accentText = Color3.fromRGB(240, 240, 240),
+        -- Green at half alpha over #404040 is what a Wurst player actually
+        -- sees on an enabled hack; the token is that result, because our rows
+        -- are drawn opaque.
+        enabled = Color3.fromRGB(32, 175, 32),
+        enabledText = Color3.fromRGB(240, 240, 240),
+        text = Color3.fromRGB(240, 240, 240),
+        textMuted = Color3.fromRGB(168, 168, 168),
+        tooltip = Color3.fromRGB(24, 24, 24),
+    },
+    -- The palette this menu shipped with before the port.
+    Monochrome = {
+        background = Color3.fromRGB(8, 8, 9),
+        sidebar = Color3.fromRGB(13, 13, 14),
+        surface = Color3.fromRGB(26, 26, 28),
+        surfaceRaised = Color3.fromRGB(32, 32, 35),
+        surfaceHover = Color3.fromRGB(40, 40, 44),
+        surfacePressed = Color3.fromRGB(48, 48, 52),
+        button = Color3.fromRGB(32, 32, 35),
+        buttonHover = Color3.fromRGB(46, 46, 50),
+        buttonPressed = Color3.fromRGB(56, 56, 61),
+        outline = Color3.fromRGB(92, 92, 98),
+        accent = Color3.fromRGB(236, 236, 238),
+        accentDim = Color3.fromRGB(196, 196, 202),
+        accentFaint = Color3.fromRGB(160, 160, 168),
+        accentSoft = Color3.fromRGB(52, 52, 56),
+        accentText = Color3.fromRGB(8, 8, 9),
+        enabled = Color3.fromRGB(236, 236, 238),
+        enabledText = Color3.fromRGB(8, 8, 9),
+        text = Color3.fromRGB(245, 245, 247),
+        textMuted = Color3.fromRGB(158, 158, 166),
+        tooltip = Color3.fromRGB(16, 16, 18),
+    },
+}
+
+-- Read by every widget. Mutated in place by `ThemeEngine.Apply`, never
+-- replaced, because half the menu captured a reference to it at build time.
+local Theme: {[string]: Color3} = {}
+for token: string, value: Color3 in pairs(THEME_PRESETS.Wurst) do
+    Theme[token] = value
+end
+-- Semantic colours are not theme tokens and no preset may set them. They label
+-- game data — health, a failure, a role — and a theme that recolours "murderer"
+-- is a theme that lies.
+Theme.positive = Color3.fromRGB(126, 196, 138)
+Theme.negative = Color3.fromRGB(214, 106, 106)
+
+local ThemeEngine = {
+    name = "Wurst",
+    presets = THEME_PRESETS,
+    tokens = Theme,
+    shape = {
+        opacity = 0.86,
+        tooltipOpacity = 0.95,
+        radius = 0,
+        rowHeight = 22,
+        borderThickness = 1,
+        maxHeight = 340,
+        scale = 1,
+    } :: ThemeShape,
+}
+
+-- Instance -> list of {property, token}. Weak keys, so a window that is
+-- destroyed stops being repainted without anything having to unregister it.
+local themeBindings: any = setmetatable({}, {__mode = "k"})
+local themeListeners: {(string) -> ()} = {}
+
+-- A widget that reads `Theme.surface` once and copies it into a property is
+-- painted for the life of that instance. Binding instead records the intent, so
+-- switching preset repaints what is already on screen.
+function ThemeEngine.Bind(
+    instance: Instance,
+    property: string,
+    token: string
+): Instance
+    local record: any = themeBindings[instance]
+    if not record then
+        record = {}
+        themeBindings[instance] = record
+    end
+    table.insert(record, {property = property, token = token})
+    local value: Color3? = Theme[token]
+    if value then
+        (instance :: any)[property] = value
+    end
+    return instance
+end
+
+function ThemeEngine.OnChange(callback: (string) -> ()): ()
+    table.insert(themeListeners, callback)
+end
+
+-- One token, repainted live. ThemeEngine.Apply is a whole preset; the UI
+-- Settings window edits Background, Accent and Text one at a time, the way
+-- Wurst's ClickGUI settings do, and each edit has to reach everything that
+-- bound the token without waiting for a preset switch.
+function ThemeEngine.Set(token: string, value: Color3): ()
+    Theme[token] = value
+    for instance: any, record: any in pairs(themeBindings) do
+        for _, binding: any in ipairs(record) do
+            if binding.token == token then
+                pcall(function(): ()
+                    instance[binding.property] = value
+                end)
+            end
+        end
+    end
+    for _, listener: (string) -> () in ipairs(themeListeners) do
+        pcall(listener, ThemeEngine.name)
+    end
+end
+
+function ThemeEngine.Apply(name: string): boolean
+    local preset: {[string]: Color3}? = THEME_PRESETS[name]
+    if not preset then
+        return false
+    end
+    for token: string, value: Color3 in pairs(preset :: {[string]: Color3}) do
+        Theme[token] = value
+    end
+    ThemeEngine.name = name
+    for instance: any, record: any in pairs(themeBindings) do
+        for _, binding: any in ipairs(record) do
+            local value: Color3? = Theme[binding.token]
+            if value then
+                -- One dead instance must not stop the repaint of every
+                -- instance after it in the table.
+                pcall(function(): ()
+                    instance[binding.property] = value
+                end)
+            end
+        end
+    end
+    for _, listener: (string) -> () in ipairs(themeListeners) do
+        pcall(listener, name)
+    end
+    return true
+end
+
+local DEFAULT_HEADER_COLOR: Color3 = Theme.text
+local DEFAULT_MENU_COLOR: Color3 = Theme.background
+local DEFAULT_SURFACE_COLOR: Color3 = Theme.surface
+local DEFAULT_BORDER_COLOR: Color3 = Theme.outline
+
 local TITLE_FONT: Font = Font.new(
     "rbxasset://fonts/families/BuilderSans.json",
     Enum.FontWeight.Bold,
@@ -183,7 +801,6 @@ local CONTROL_FONT: Font = Font.new(
     Enum.FontWeight.SemiBold,
     Enum.FontStyle.Normal
 )
-local DISPLAY_FONT: Font = TITLE_FONT
 local VALVE_FONT: Font = CONTROL_FONT
 local TEXT_BASE_MULTIPLIER: number = 1.35
 local TEXT_SCALE_MINIMUM: number = 0.8
@@ -217,6 +834,13 @@ local function loadConfig()
         configData.values = type(loaded.values) == "table" and loaded.values or {}
         configData.ui = type(loaded.ui) == "table" and loaded.ui or {}
     end
+
+    -- The shell is fixed and centred, so any window geometry written by an
+    -- older build is dropped on load instead of being honoured. Floating
+    -- window positions (`ui.floatingPositions`) are kept: those windows are
+    -- still movable on purpose.
+    configData.ui.windowPosition = nil
+    configData.ui.windowSize = nil
 end
 
 local function saveConfigNow()
@@ -290,15 +914,23 @@ local function findExistingGui()
     end
 
     for _, location in ipairs(locations) do
+        -- Every copy, not just the first: a reinject that raced its own
+        -- cleanup could stack two shells, and destroying one of them left
+        -- the other drawing a second logo and a second pill forever.
         local existing = location:FindFirstChild(GUI_NAME)
-        if existing then
+        while existing do
             existing:Destroy()
+            existing = location:FindFirstChild(GUI_NAME)
         end
     end
 end
 
 findExistingGui()
 
+-- Older builds parented a BlurEffect under this name; a reinject must not
+-- leave a stale one dimming the game, so the name is still swept even though
+-- this build never creates one. Wurst puts nothing between the player and
+-- the game except its own windows.
 local oldBlur = Lighting:FindFirstChild(BLUR_NAME)
 if oldBlur then
     oldBlur:Destroy()
@@ -308,6 +940,11 @@ local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = GUI_NAME
 ScreenGui.ResetOnSpawn = false
 ScreenGui.IgnoreGuiInset = true
+-- Roblox machine-translates every label for a non-English client unless told
+-- otherwise, which is how the menu showed "Otras razones", "Desactivado" and
+-- "Hacer zoom". One flag at the root covers every descendant: the interface
+-- speaks Wurst's English, always. (VD's in-world billboards set their own.)
+ScreenGui.AutoLocalize = false
 ScreenGui.DisplayOrder = 999999
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 ScreenGui:SetAttribute("BuildId", "0001-S17")
@@ -352,17 +989,13 @@ PopupLayer.Size = UDim2.fromScale(1, 1)
 PopupLayer.ZIndex = 150
 PopupLayer.Parent = ScreenGui
 
-local BLUR_STRENGTH: number = 16
-local Blur = Instance.new("BlurEffect")
-Blur.Name = BLUR_NAME
-Blur.Size = 0
--- Start disabled. An enabled BlurEffect that merely has Size 0 still keeps the
--- blur pass alive, so the effect is only ever enabled while it is actually
--- being used and is switched off again the moment the menu hides.
-Blur.Enabled = false
-Blur.Parent = Lighting
-
-local savedToggleKey = Enum.KeyCode.RightShift
+-- Wurst's own default binds: right-ctrl opens the ClickGUI, right-shift opens
+-- Navigator. The menu key used to default to RightShift here; a stored key
+-- still wins, so nobody's muscle memory changes under them — only a fresh
+-- install gets Wurst's pair. The `or` is for the test harness, whose Enum
+-- stand-in does not carry RightControl yet (noted in docs/requests/A.md).
+local savedToggleKey = (Enum.KeyCode :: any).RightControl
+    or Enum.KeyCode.RightShift
 if type(configData.ui.toggleKey) == "string" then
     pcall(function()
         savedToggleKey = Enum.KeyCode[configData.ui.toggleKey]
@@ -370,29 +1003,23 @@ if type(configData.ui.toggleKey) == "string" then
     end)
 end
 
+-- `state` is the one table every downloaded file reads the menu through.
+--
+-- Note the ordering: it does not exist yet where the game is detected above,
+-- so `activeGameName` is published a few lines below this table rather than
+-- beside the detection. Writing it there assigned a *global* named `state`,
+-- which is nil to everything that matters.
 local state: any = {
-    visible = true,
+    -- The shell starts hidden. There is no intro to watch while the menu
+    -- builds itself, so the launcher appearing is the signal that it is ready
+    -- — press it and the window is already complete.
+    visible = false,
     isMobile = IS_MOBILE_DEVICE,
     guiStyle = "Default",
-    blurEnabled = configData.ui.blurEnabled ~= false,
-    textScale = configData.ui.textScaleCalibrationVersion == 2
-        and math.clamp(
-            tonumber(configData.ui.textScale) or 1,
-            TEXT_SCALE_MINIMUM,
-            TEXT_SCALE_MAXIMUM
-        )
-        or 1,
     mobileMenuButtonVisible = true,
-    animationsEnabled = configData.ui.animationsEnabled ~= false,
-    mobileButtonSize = math.clamp(
-        tonumber(configData.ui.mobileButtonSize) or 52,
-        42,
-        72
-    ),
     toggleKey = savedToggleKey,
     waitingForKey = false,
     keyCaptureCallback = nil,
-    activeTab = "Universal",
     headerColor = DEFAULT_HEADER_COLOR,
     menuColor = DEFAULT_MENU_COLOR,
     hookFunction = (getfenv() :: any).hookfunction,
@@ -405,8 +1032,193 @@ local state: any = {
     styledButtons = {} :: {TextButton},
     styledTextBoxes = {} :: {TextBox},
 }
+-- The *name* of the recognised game. `state.activeGameModule` is already
+-- taken, by the loaded module table itself, and reusing the key would have
+-- meant one of the two silently winning.
+state.activeGameName = ACTIVE_GAME_MODULE
+-- Settings that used to be rows on the old Config. page. The page is gone —
+-- Wurst has no text-scale or launcher-size settings — but the stored values
+-- keep applying so an existing install does not change under its player the
+-- day the rows disappeared. The blur went entirely, controller and all.
+state.textScale = configData.ui.textScaleCalibrationVersion == 2
+    and math.clamp(
+        tonumber(configData.ui.textScale) or 1,
+        TEXT_SCALE_MINIMUM,
+        TEXT_SCALE_MAXIMUM
+    )
+    or 1
+state.animationsEnabled = configData.ui.animationsEnabled ~= false
+-- Free-form pixel size, only sanity-clamped.
+state.mobileButtonSize = math.clamp(
+    tonumber(configData.ui.mobileButtonSize) or 52,
+    28,
+    120
+)
 configData.ui.guiStyle = nil
+-- Schema 2: the Wurst rebuild. Values an older build stored contradict the
+-- port — window geometry for windows that no longer exist (the "WurstLogo |
+-- Emote Player" pile-up was two eras' saved positions coinciding), Max
+-- height sliders stored before the official 200 default existed, and the
+-- WurstLogo colours from the ghost-chip era. One flag, one sweep;
+-- everything falls back to Wurst's own defaults and persists fresh.
+if configData.ui.wurstSchema ~= 3 then
+    if configData.ui.wurstSchema ~= 2 then
+        -- The pre-Wurst store: drop everything the old shell wrote.
+        configData.values["ClickGUI.Maxheight"] = nil
+        configData.values["ClickGUI.Maxsettingsheight"] = nil
+        configData.values["ClickGUI.Opacity"] = nil
+        configData.values["ClickGUI.Tooltipopacity"] = nil
+        configData.values["WurstLogo.Background"] = nil
+        configData.values["WurstLogo.Text"] = nil
+        configData.values["WurstLogo.Visibility"] = nil
+    end
+    -- Schema 3: the default layout moved to the top row beside the
+    -- wordmark. Saved window geometry from the old 64-px grid is dropped
+    -- once so the new disposition applies; every position moved by hand
+    -- *after* this migration persists exactly as before. Binds and
+    -- module configKeys are untouched.
+    configData.ui.wurstSchema = 3
+    configData.ui.windows = {}
+    queueConfigSave()
+end
 configData.ui.textScaleCalibrationVersion = 2
+
+-- Wurst or Navigator as the main surface. `UI.MenuStyle` is the stored
+-- name; RightControl and the dock open whichever is selected, RightShift
+-- keeps opening the Navigator directly, and switching styles touches no
+-- module state, no window position and no bind — it only changes what
+-- the open gesture shows.
+state.menuStyle = configData.values["UI.MenuStyle"] == "Navigator"
+    and "Navigator"
+    or "Wurst"
+
+-- Which font pack the player asked for. UI.FontPack stores the name;
+-- the default is the visual authority, Minecraft 1.18.1. Packs are
+-- optional local installs (tools/install_minecraft_font.py); when the
+-- selected one is missing, the committed Monocraft fallback renders
+-- and says so exactly once.
+state.fontPack = (function(): string
+    local stored: any = configData.values["UI.FontPack"]
+    if stored == "Minecraft 26.2" or stored == "Monocraft" then
+        return stored
+    end
+    return "Minecraft 1.18.1"
+end)()
+
+-- The one menu-style state machine. Everything that changes the style —
+-- the UI Settings row, the Navigator's "Wurst ClickGUI" door, the dock —
+-- comes through here: persist, close whatever surface is open so the
+-- two never stack, open the new one when asked, tell the listeners.
+-- It touches nothing else: no enabled state, no settings, no window
+-- positions, no binds.
+state.menuStyleListeners = {} :: {(string) -> ()}
+
+state.SetMenuStyle = function(style: string, openImmediately: boolean?): ()
+    if style ~= "Wurst" and style ~= "Navigator" then
+        return
+    end
+    state.menuStyle = style
+    configData.values["UI.MenuStyle"] = style
+    queueConfigSave()
+    local navigator: any = state.navigator
+    local navigatorOpen: boolean = navigator ~= nil
+        and navigator.root ~= nil
+        and navigator.root.Visible == true
+    if style == "Wurst" then
+        if navigatorOpen and type(navigator.Close) == "function" then
+            navigator.Close()
+        end
+        if openImmediately and not state.visible then
+            state.setMenuVisible(true)
+        end
+    else
+        if state.visible then
+            state.setMenuVisible(false)
+        end
+        if openImmediately and navigator
+            and type(navigator.Open) == "function" then
+            navigator.Open()
+        end
+    end
+    for _, listener: (string) -> () in ipairs(state.menuStyleListeners) do
+        pcall(listener, style)
+    end
+end
+
+state.openMenuSurface = function(): ()
+    if state.menuStyle == "Navigator" then
+        local navigator: any = state.navigator
+        if navigator and navigator.root and navigator.root.Visible then
+            navigator.Close()
+            return
+        end
+        -- Navigator is the main surface in this style: the category
+        -- windows stay closed behind it instead of peeking through.
+        if state.visible then
+            state.setMenuVisible(false)
+        end
+        if navigator and type(navigator.Open) == "function" then
+            navigator.Open()
+            return
+        end
+    end
+    -- Wurst style: the Navigator must never linger behind the ClickGUI —
+    -- RightShift can have opened it regardless of the saved style.
+    local navigator: any = state.navigator
+    if navigator and navigator.root and navigator.root.Visible
+        and type(navigator.Close) == "function" then
+        navigator.Close()
+    end
+    state.setMenuVisible(not state.visible)
+end
+
+-- ---------------------------------------------------------------------------
+-- Layout controller
+-- ---------------------------------------------------------------------------
+--
+-- `state.layout` is the single source of truth for every size in the shell.
+-- Anything that has to change when the viewport changes registers a listener
+-- through `state.onLayout` and is called again with the new metrics; nothing
+-- polls, and no game module ever has to know a pixel value.
+--
+-- These are plain fields on `state` rather than locals because `bootstrap()`
+-- is one function scope sitting near Luau's 200 local-register ceiling.
+state.layout = computeLayoutMetrics(
+    (workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize)
+        or Vector2.new(1280, 720),
+    UserInputService.TouchEnabled
+)
+state.layoutListeners = {} :: {(LayoutMetrics) -> ()}
+
+state.onLayout = function(listener: (LayoutMetrics) -> ()): ()
+    table.insert(state.layoutListeners, listener)
+end
+
+-- `force` re-applies the current metrics even when nothing changed, which is
+-- what the initial pass and the style refresh use.
+state.refreshLayout = function(force: boolean?): ()
+    local camera: Camera? = workspace.CurrentCamera
+    local viewport: Vector2 = camera
+        and camera.ViewportSize
+        or Vector2.new(1280, 720)
+    local nextLayout: LayoutMetrics = computeLayoutMetrics(
+        viewport,
+        UserInputService.TouchEnabled
+    )
+    local previous: LayoutMetrics = state.layout
+    if not force
+        and previous.mode == nextLayout.mode
+        and previous.cardHeight == nextLayout.cardHeight then
+        return
+    end
+    state.layout = nextLayout
+    for _, listener: (LayoutMetrics) -> () in ipairs(state.layoutListeners) do
+        local ok: boolean, failure: any = pcall(listener, nextLayout)
+        if not ok then
+            warn("[" .. PRODUCT.name .. "] layout listener: " .. tostring(failure))
+        end
+    end
+end
 
 local function trackUiConnection(
     connection: RBXScriptConnection
@@ -415,121 +1227,39 @@ local function trackUiConnection(
     return connection
 end
 
--- Single owner of the blur effect.
---
--- The blur exists only to dim the game *while the menu is on screen*. It is
--- defined here, next to the shared state, because it must be reachable from
--- every path that can show or hide the menu (keyboard toggle, mobile button,
--- mobile-shortcut placement, destruct). Previously it lived inside the
--- Settings tab builder, which runs asynchronously and much later: any toggle
--- that happened before -- or instead of -- that builder fell through to a
--- fallback branch that flipped `Main.Visible` without ever touching the blur,
--- leaving the screen blurred with the menu closed.
--- Decorations that live on top of the blur (the falling hail layer) publish a
--- setter on `state.blurDecorationSetActive`. They are built much later than
--- the blur controller, so the controller only ever talks to that indirection:
--- if nothing has registered yet the calls are no-ops, and whatever registers
--- later is immediately synchronised with the current blur state. This keeps
--- the "menu closed => nothing left on screen" guarantee the blur itself has.
--- It is kept on `state` rather than in a local because `bootstrap()` is a
--- single function scope sitting near Luau's 200 local-register ceiling.
-local function setBlurDecorationActive(active: boolean): ()
-    local setActive: any = state.blurDecorationSetActive
-    if type(setActive) == "function" then
-        pcall(setActive, active)
-    end
-end
-
-local blurTween: Tween? = nil
-local function applyBlur(animate: boolean?): ()
-    local shouldBlur: boolean = state.visible == true
-        and state.blurEnabled == true
-    local targetSize: number = shouldBlur and BLUR_STRENGTH or 0
-    setBlurDecorationActive(shouldBlur)
-
-    if blurTween then
-        blurTween:Cancel()
-        blurTween = nil
-    end
-    if not Blur.Parent then
-        return
-    end
-
-    if shouldBlur then
-        -- Enable before tweening in so the ramp is visible.
-        Blur.Enabled = true
-    end
-
-    if animate and state.animationsEnabled ~= false then
-        local tween: Tween = TweenService:Create(
-            Blur,
-            TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-            {Size = targetSize}
-        )
-        blurTween = tween
-        tween.Completed:Once(function(): ()
-            if blurTween == tween then
-                blurTween = nil
-            end
-            -- Release the blur pass once it has finished fading out.
-            if not shouldBlur and Blur.Parent then
-                Blur.Size = 0
-                Blur.Enabled = false
-            end
-        end)
-        tween:Play()
-    else
-        Blur.Size = targetSize
-        Blur.Enabled = shouldBlur
-    end
-end
-state.setBlurVisible = applyBlur
-
--- Force the blur off regardless of the menu state. Used when the menu is
--- temporarily hidden by an overlay flow and during teardown.
-local function suspendBlur(): ()
-    if blurTween then
-        blurTween:Cancel()
-        blurTween = nil
-    end
-    setBlurDecorationActive(false)
-    if Blur.Parent then
-        Blur.Size = 0
-        Blur.Enabled = false
-    end
-end
-state.suspendBlur = suspendBlur
-
--- Registration point for the hail layer (or any future blur decoration).
--- Registering immediately pushes the current blur state into the decoration so
--- it can never start out of sync with a menu that is already open or closed.
-state.registerBlurDecoration = function(setActive: (boolean) -> ()): ()
-    state.blurDecorationSetActive = setActive
-    pcall(
-        setActive,
-        state.visible == true and state.blurEnabled == true
-    )
-end
+-- There is no blur controller any more. The old menu dimmed the whole game
+-- behind a BlurEffect while it was open, with a hail layer drawn on top;
+-- Wurst draws its windows over the untouched game and nothing else, so the
+-- effect, its tween, its suspension hooks and its decoration registry are
+-- gone. The one thing that survives is the sweep above that removes a stale
+-- effect left by an older build.
 
 -- Authoritative menu visibility entry point. Subsystems (mobile buttons,
 -- floating windows) attach their own side effects as listeners as soon as they
--- are built, so this is safe to call at any point during startup and the blur
--- is updated even when a subsystem has not initialized yet.
+-- are built, so this is safe to call at any point during startup.
 local menuVisibilityListeners: {(boolean) -> ()} = {}
 state.addMenuVisibilityListener = function(listener: (boolean) -> ()): ()
     table.insert(menuVisibilityListeners, listener)
 end
 
+-- Opening and closing the window.
+--
+-- It used to appear and disappear on a boolean, which reads as a glitch rather
+-- than as a window: nothing tells the eye where it came from. It scales in
+-- from 96% with a slight overshoot instead — the same gesture the other menus
+-- in this account use for their panels, and short enough (0.17s) that it never
+-- gets in the way of a player who is toggling it mid-fight. Closing is faster
+-- than opening, because waiting to hide something is worse than waiting to see
+-- it, and the frame is only hidden once the tween has finished so the shrink
+-- is actually visible.
+--
+-- `Animations` in Config. turns the whole thing off, in which case this is the
+-- boolean it always was.
 local function setMenuVisibleCore(visible: boolean): ()
     state.visible = visible
-    if state.mainFrame then
-        state.mainFrame.Visible = visible
-    end
     for _, listener: (boolean) -> () in ipairs(menuVisibilityListeners) do
-        -- One faulty listener must never leave the blur stuck on.
         pcall(listener, visible)
     end
-    applyBlur(true)
 end
 state.setMenuVisible = setMenuVisibleCore
 
@@ -584,6 +1314,71 @@ local AssetManager: any = {
             version = 1,
             assetType = "font/otf",
         },
+        -- Brand artwork. Both are resolved lazily and every consumer keeps a
+        -- text fallback, so an executor without getcustomasset simply keeps
+        -- the lettering it had.
+        -- Monocraft: a Minecraft-shaped OFL font, kept in the repository so
+        -- the picker has one pixel face that is not a Roblox built-in.
+        minecraftFont = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/gui/Current/Assets/Typography/Monocraft.otf",
+            fileName = "monocraft-v1.otf",
+            fallback = "",
+            version = 1,
+            assetType = "font/otf",
+        },
+        -- Wurst's own wordmark, vendored from Wurst-Imperium/Wurst7 at the
+        -- pinned commit and checksummed by the gate. The transparent 505x128
+        -- sausage, not icon.png — that one is the same mark on an opaque black
+        -- square, built to be a repository avatar, and it renders as a black
+        -- brick anywhere with a background behind it.
+        wurstLogo = {
+            url = REPOSITORY_RAW_BASE .. "assets/wurst/wurst_128.png",
+            fileName = "wurst-logo-v1.png",
+            fallback = "",
+            version = 1,
+            assetType = "image/png",
+        },
+        -- The bitmap font atlas the text contract renders through: Monocraft
+        -- rasterised into a fixed-cell grid by tools/make_font_atlas.py.
+        -- OFL; the licence ships beside the OTF it was rendered from.
+        bitmapFontAtlas = {
+            url = REPOSITORY_RAW_BASE .. "assets/font/monocraft-16.png",
+            fileName = "monocraft-16-v1.png",
+            fallback = "",
+            version = 1,
+            assetType = "image/png",
+        },
+        -- The crisp-scale variants of the same OFL fallback: fractional
+        -- UIScales cannot get pixel-perfect glyphs out of one raster, so
+        -- the renderer picks the size closest to the final physical glyph
+        -- and snaps to device pixels. Metrics for these are fixed at
+        -- build time by tools/make_font_atlas.py and mirrored in the
+        -- contract's atlas family below.
+        bitmapFontAtlas8 = {
+            url = REPOSITORY_RAW_BASE .. "assets/font/monocraft-8.png",
+            fileName = "monocraft-8-v1.png",
+            fallback = "",
+            version = 1,
+            assetType = "image/png",
+        },
+        bitmapFontAtlas24 = {
+            url = REPOSITORY_RAW_BASE .. "assets/font/monocraft-24.png",
+            fileName = "monocraft-24-v1.png",
+            fallback = "",
+            version = 1,
+            assetType = "image/png",
+        },
+        bitmapFontAtlas32 = {
+            url = REPOSITORY_RAW_BASE .. "assets/font/monocraft-32.png",
+            fileName = "monocraft-32-v1.png",
+            fallback = "",
+            version = 1,
+            assetType = "image/png",
+        },
+        -- The old menu's artwork — brand logo, nav icons, banners — is gone
+        -- from this registry. Nothing draws it any more, and a registry entry
+        -- for an image nobody shows is a download waiting to be wrong.
     } :: {[string]: AssetDefinition},
 }
 
@@ -792,7 +1587,7 @@ function AssetManager.resolve(logicalName: string): (string?, string?)
     local cachedBytes: string?, cacheError: string? =
         AssetManager.readVerifiedCache(path, definition)
     if not cachedBytes then
-        print("[RTM:Assets] caché no reutilizable: " .. tostring(cacheError))
+        print("[" .. PRODUCT.logPrefix .. ":Assets] caché no reutilizable: " .. tostring(cacheError))
         local downloaded: string?, downloadError: string? =
             AssetManager.download(definition)
         if not downloaded then
@@ -831,7 +1626,7 @@ function AssetManager.resolveFont(
     local assetId: string?, loadError: string? = AssetManager.resolve(logicalName)
     if not assetId then
         warn(
-            "[RTM:Assets] fuente fallback para "
+            "[" .. PRODUCT.logPrefix .. ":Assets] fuente fallback para "
                 .. logicalName
                 .. ": "
                 .. tostring(loadError)
@@ -846,35 +1641,185 @@ function AssetManager.resolveFont(
     )
     if not fontOk or typeof(fontFace) ~= "Font" then
         warn(
-            "[RTM:Assets] Font.new fallback para "
+            "[" .. PRODUCT.logPrefix .. ":Assets] Font.new fallback para "
                 .. logicalName
                 .. ": "
                 .. tostring(fontFace)
         )
         return fallbackFont
     end
-    print("[RTM:Assets] fuente cargada: " .. logicalName)
+    print("[" .. PRODUCT.logPrefix .. ":Assets] fuente cargada: " .. logicalName)
     return fontFace
 end
 
-    DISPLAY_FONT = AssetManager.resolveFont(
-        "candyFont",
-        TITLE_FONT,
-        Enum.FontWeight.Regular,
-        Enum.FontStyle.Normal
-    )
     VALVE_FONT = AssetManager.resolveFont(
         "valveFont",
         CONTROL_FONT,
         Enum.FontWeight.Bold,
         Enum.FontStyle.Normal
     )
-    state.assetManager = AssetManager
+
+-- Resolving an image means a download, a file write and a getcustomasset
+-- call, so it happens off the bootstrap thread and the caller keeps whatever
+-- it was already showing until the id arrives.
+-- Interface fonts.
+--
+-- Everything the menu draws goes through three faces — a bold one for titles,
+-- a semibold one for controls and a regular one for body text — and all three
+-- are built from one family, so choosing a font here re-skins the whole
+-- interface without touching a single call site.
+state.customFontAssets = {
+    ["Minecraft (Monocraft)"] = "minecraftFont",
+    ["Candy Fruits"] = "candyFont",
+    ["Valve"] = "valveFont",
+}
+
+state.listInterfaceFonts = function(): {string}
+    local names: {string} = {"Menu default"}
+    -- Read from the engine rather than a hard-coded list: a client with newer
+    -- faces should offer them, and one with fewer should not lie about them.
+    for _, item: EnumItem in ipairs(Enum.Font:GetEnumItems()) do
+        if item ~= Enum.Font.Unknown then
+            table.insert(names, item.Name)
+        end
+    end
+    for name: string in pairs(state.customFontAssets) do
+        table.insert(names, name)
+    end
+    table.sort(names, function(first: string, second: string): boolean
+        if first == "Menu default" then
+            return true
+        end
+        if second == "Menu default" then
+            return false
+        end
+        return first < second
+    end)
+    return names
+end
+
+state.resolveInterfaceFont = function(name: string): Font?
+    if name == "Menu default" then
+        return Font.new(
+            "rbxasset://fonts/families/BuilderSans.json",
+            Enum.FontWeight.Regular,
+            Enum.FontStyle.Normal
+        )
+    end
+    local customAsset: string? = state.customFontAssets[name]
+    if customAsset then
+        -- Downloaded, cached and turned into an asset id by the same path the
+        -- decorative fonts already use; falls back to the current face.
+        return AssetManager.resolveFont(
+            customAsset,
+            CONTROL_FONT,
+            Enum.FontWeight.Regular,
+            Enum.FontStyle.Normal
+        )
+    end
+    local enumOk: boolean, enumItem: any = pcall(function(): any
+        return (Enum.Font :: any)[name]
+    end)
+    if not enumOk or typeof(enumItem) ~= "EnumItem" then
+        return nil
+    end
+    local fontOk: boolean, face: any = pcall(Font.fromEnum, enumItem)
+    if not fontOk then
+        return nil
+    end
+    return face :: Font
+end
+
+state.applyInterfaceFont = function(name: string, persist: boolean?): ()
+    local base: Font? = state.resolveInterfaceFont(name)
+    if not base then
+        return
+    end
+    local resolvedBase: Font = base :: Font
+    local family: string = resolvedBase.Family
+    local style: Enum.FontStyle = resolvedBase.Style
+    -- A Roblox family is a JSON manifest listing one file per weight; a font
+    -- the repository ships is a single file with a single weight (Monocraft is
+    -- Regular 400 and nothing else). Asking such a file for Bold gets you
+    -- either a synthetic smear or nothing at all, so single-file faces are used
+    -- at the one weight they have and the hierarchy comes from size alone.
+    local hasWeights: boolean =
+        string.find(family, "fonts/families/", 1, true) ~= nil
+    local titleWeight: Enum.FontWeight = hasWeights
+        and Enum.FontWeight.Bold
+        or resolvedBase.Weight
+    local controlWeight: Enum.FontWeight = hasWeights
+        and Enum.FontWeight.SemiBold
+        or resolvedBase.Weight
+    local bodyWeight: Enum.FontWeight = hasWeights
+        and Enum.FontWeight.Regular
+        or resolvedBase.Weight
+    TITLE_FONT = Font.new(family, titleWeight, style)
+    CONTROL_FONT = Font.new(family, controlWeight, style)
+    THIN_FONT = Font.new(family, bodyWeight, style)
+    VALVE_FONT = CONTROL_FONT
+
+    -- Each label keeps the weight it was designed with, so headings stay
+    -- heavier than body text in whichever family was picked.
+    for _, descendant: Instance in ipairs(ScreenGui:GetDescendants()) do
+        if descendant:IsA("TextLabel")
+            or descendant:IsA("TextButton")
+            or descendant:IsA("TextBox") then
+            -- A label built without an explicit face has no FontFace to read
+            -- a weight from; it simply takes the resolved base.
+            local current: Font? = (descendant :: any).FontFace
+            if current then
+                local weight: Enum.FontWeight = hasWeights
+                    and (current :: Font).Weight
+                    or resolvedBase.Weight
+                local ok: boolean = pcall(function(): ()
+                    (descendant :: any).FontFace =
+                        Font.new(family, weight, (current :: Font).Style)
+                end)
+                if not ok then
+                    (descendant :: any).FontFace = resolvedBase
+                end
+            else
+                (descendant :: any).FontFace = resolvedBase
+            end
+        end
+    end
+
+    if persist ~= false then
+        configData.values.interfaceFont = name
+        queueConfigSave()
+    end
+end
+
+-- The raw resolve, for consumers that are not ImageLabels — the bitmap
+-- font atlas wants the asset id itself.
+state.resolveAsset = function(logicalName: string): (string?, string?)
+    return AssetManager.resolve(logicalName)
+end
+
+state.applyAssetImage = function(
+    logicalName: string,
+    image: ImageLabel,
+    onApplied: (() -> ())?
+): ()
+    task.spawn(function(): ()
+        local assetId: string?, failure: string? = AssetManager.resolve(logicalName)
+        if not assetId then
+            warn("[" .. PRODUCT.logPrefix .. ":Assets] " .. logicalName .. ": " .. tostring(failure))
+            return
+        end
+        if not image.Parent then
+            return
+        end
+        image.Image = assetId :: string
+        if onApplied then
+            onApplied()
+        end
+    end)
+end
 end
 
 local registeredText = {}
-local defaultTabButtons = {}
-local pages = {}
 local SectionManager = {
     entries = {},
 }
@@ -887,48 +1832,13 @@ function SectionManager.register(sectionName, builder)
     }
 end
 
-function SectionManager.clearStatus(page)
-    local status = page and page:FindFirstChild("SectionStatus")
-    if status then
-        status:Destroy()
-    end
-end
-
-function SectionManager.showStatus(page, message, isError)
-    SectionManager.clearStatus(page)
-    if not page then
-        return
-    end
-
-    local status = Instance.new("TextLabel")
-    status.Name = "SectionStatus"
-    status.BackgroundColor3 = Theme.DefaultSurface
-    status.BackgroundTransparency = isError and 0.05 or 0.2
-    status.BorderSizePixel = 0
-    status.FontFace = CONTROL_FONT
-    status.Position = UDim2.fromOffset(18, 18)
-    status.Size = UDim2.new(1, -36, 0, isError and 150 or 46)
-    status.Text = message
-    status.TextColor3 = isError
-        and Theme.Danger
-        or Theme.DefaultText
-    status.TextSize = 13
-    status.TextWrapped = true
-    status.TextXAlignment = Enum.TextXAlignment.Left
-    status.TextYAlignment = Enum.TextYAlignment.Top
-    status.ZIndex = 100
-    status.Parent = page
-end
-
 function SectionManager.initialize(sectionName: string): (boolean, string?)
     local entry = SectionManager.entries[sectionName]
     if not entry or entry.loaded or entry.loading then
         return entry ~= nil and entry.loaded == true, nil
     end
 
-    local page = pages[sectionName]
     entry.loading = true
-    SectionManager.showStatus(page, "Loading " .. sectionName .. "...", false)
 
     local success, errorMessage = xpcall(entry.builder, function(message)
         local text = tostring(message)
@@ -941,26 +1851,14 @@ function SectionManager.initialize(sectionName: string): (boolean, string?)
     entry.loading = false
     if success then
         entry.loaded = true
-        SectionManager.clearStatus(page)
-        if state.refreshSearch then
-            state.refreshSearch()
-        end
         return true, nil
     end
 
     warn(
-        "[Random Testing Menu] "
+        "[" .. PRODUCT.name .. "] "
             .. sectionName
             .. " failed to initialize: "
             .. tostring(errorMessage)
-    )
-    SectionManager.showStatus(
-        page,
-        sectionName
-            .. " INIT ERROR\n"
-            .. tostring(errorMessage)
-            .. "\n\nRe-execute the updated script after correcting this error.",
-        true
     )
     return false, tostring(errorMessage)
 end
@@ -975,65 +1873,31 @@ function SectionManager.initializeAllAsync(): ()
     local total: number = #sectionNames
     local completed: number = 0
     local failures: number = 0
-    -- From here on the status line shows real counts, so the intro's scripted
-    -- narration must stop writing to it.
-    state.loadingLabelLocked = true
-    if state.loadingLabel then
-        state.loadingLabel.Text = "Loading modules 0/" .. tostring(total)
-    end
-    if state.loadingProgressFill then
-        state.loadingProgressFill.Size = UDim2.fromScale(0, 1)
-    end
 
     if total == 0 then
-        if state.finishLoadingIntro then
-            state.finishLoadingIntro(0)
-        end
         return
     end
 
     for _, sectionName: string in ipairs(sectionNames) do
         task.spawn(function(): ()
-            print("[RTM:Bootstrap] Inicializando sección " .. sectionName)
+            print("[" .. PRODUCT.logPrefix .. ":Bootstrap] Inicializando sección " .. sectionName)
             local success: boolean, errorMessage: string? =
                 SectionManager.initialize(sectionName)
             if not success then
                 failures += 1
                 warn(
-                    "[RTM:Bootstrap] Sección "
+                    "[" .. PRODUCT.logPrefix .. ":Bootstrap] Sección "
                         .. sectionName
                         .. " falló: "
                         .. tostring(errorMessage)
                 )
             end
             completed += 1
-            if state.loadingLabel then
-                state.loadingLabel.Text = "Loading modules "
-                    .. tostring(completed)
-                    .. "/"
-                    .. tostring(total)
-            end
-            if state.loadingProgressFill then
-                TweenService:Create(
-                    state.loadingProgressFill,
-                    TweenInfo.new(
-                        0.2,
-                        Enum.EasingStyle.Quart,
-                        Enum.EasingDirection.Out
-                    ),
-                    {Size = UDim2.fromScale(completed / total, 1)}
-                ):Play()
-            end
             if completed >= total then
                 print(
-                    "[RTM:Bootstrap] Carga terminada · fallos="
+                    "[" .. PRODUCT.logPrefix .. ":Bootstrap] Carga terminada · fallos="
                         .. tostring(failures)
                 )
-                task.delay(0.35, function(): ()
-                    if state.finishLoadingIntro then
-                        state.finishLoadingIntro(failures)
-                    end
-                end)
             end
         end)
     end
@@ -1046,6 +1910,15 @@ local function create(className, properties)
         if property ~= "Parent" then
             object[property] = value
         end
+    end
+
+    -- Belt to the root flag's braces: every text object the menu builds
+    -- refuses machine translation individually, so a label parented outside
+    -- the main ScreenGui (billboards, overlays) is covered too.
+    if object:IsA("TextLabel")
+        or object:IsA("TextButton")
+        or object:IsA("TextBox") then
+        object.AutoLocalize = false
     end
 
     if properties and properties.Parent then
@@ -1070,8 +1943,16 @@ end
 -- The window itself passes a larger radius so the shell reads as one smooth,
 -- pill-shaped surface; the 30 cap keeps small controls from turning into
 -- circles.
-local function cornerRadius(radius: number): UDim
-    return UDim.new(0, math.clamp(math.round(radius * 1.3), 5, 30))
+--
+-- Except that Wurst has no rounded surface anywhere, so since the port this
+-- returns zero for every caller: one change squared every button, text box,
+-- toast and dropdown at once instead of hunting corners one by one. The
+-- helper keeps its name and signature because forty call sites describe a
+-- shape with it; the shape is now a rectangle. The two survivors that stay
+-- genuinely round — the Roblox pill and the phone fallback circle — use
+-- UDim.new(1, 0) directly and never came through here.
+local function cornerRadius(_radius: number): UDim
+    return UDim.new(0, 0)
 end
 
 local function addRoundedStyle(
@@ -1087,21 +1968,884 @@ local function addRoundedStyle(
     local stroke: UIStroke = Instance.new("UIStroke")
     stroke.Name = "StyleStroke"
     stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-    stroke.Color = Theme.Outline
+    stroke.Color = Theme.outline
     stroke.Thickness = 1
     stroke.Transparency = strokeTransparency or 0.45
     stroke.Parent = object
     return corner, stroke
 end
 
+-- ---------------------------------------------------------------------------
+-- Bitmap text contract
+-- ---------------------------------------------------------------------------
+--
+-- Wurst's every label is Minecraft's 8 px bitmap font on a 9 px line. This
+-- port does not rasterise that font yet — Monocraft, the vendored pixel
+-- face, stands in — but ClickGUI surfaces ask *here* for their text, so the
+-- day an atlas renderer exists it replaces the inside of `make` and no call
+-- site moves. The metrics are the contract: 16 px glyphs on an 18 px line
+-- with a 12 px advance — 8/9/6 logical at the GUI scale 2 the interface is
+-- drawn at. `width` is the packing estimate the content-sized windows use.
+state.bitmapText = {
+    size = 16,
+    lineHeight = 18,
+    -- The packing estimate the content-sized windows use. The atlas's real
+    -- advance is 11 (Monocraft's, below); packing keeps the rounder 12 so a
+    -- window is never a pixel too narrow for the estimate that sized it.
+    advance = 12,
+    -- Minecraft's font ascent is 7 of its 8 logical rows: 14 at the GUI
+    -- scale 2 the interface is drawn at. Surfaces mixing glyph sizes align
+    -- to this, scaled by TextSize / 16.
+    ascent = 14,
+    -- What the atlas actually holds. Monocraft is the committed OFL
+    -- fallback; the exact Minecraft 1.18.1 providers are fetched explicitly
+    -- through tools/fetch_minecraft_font.py into a gitignored local cache.
+    -- While this says fallback, nothing may claim "Minecraft exact".
+    source = "monocraft-fallback",
+    -- The rasterised truth: Monocraft baked into a fixed-cell grid by
+    -- tools/make_font_atlas.py. These numbers are that tool's output and
+    -- change only when the atlas is regenerated.
+    atlas = {
+        ready = false,
+        image = nil :: string?,
+        size = 16,
+        first = 32,
+        last = 126,
+        columns = 16,
+        cellWidth = 11,
+        cellHeight = 17,
+        advance = 11,
+        ascent = 15,
+        descent = 2,
+        -- Bumped whenever the atlas *content* changes (a pack loads, the
+        -- fallback returns): the draw signatures carry it, so a live font
+        -- switch repaints every surface exactly once.
+        generation = 0,
+        -- Codepoints outside the grid render as this cell ("?"), the way
+        -- Minecraft substitutes its missing glyph instead of collapsing
+        -- the advance and shifting everything after it.
+        fallbackGlyph = 63,
+    },
+    onReady = {} :: {() -> ()},
+    -- The renderer's own meter, because "pooling works" is a claim and
+    -- these are the numbers behind it: draws that ran, draws skipped by
+    -- signature, glyphs created versus reused, and the cost of the last
+    -- draw in milliseconds.
+    stats = {
+        draws = 0,
+        skipped = 0,
+        glyphsCreated = 0,
+        glyphsReused = 0,
+        lastDrawMs = 0,
+    },
+    -- Live draw records, weak-keyed by holder: what was asked for, so the
+    -- atlas resolving re-renders every surface without any of them
+    -- registering by hand.
+    _live = setmetatable({}, {__mode = "k"}) :: any,
+    -- Labels already adopted, weak-keyed: adopt is idempotent and a
+    -- sweep may visit the same instance twice.
+    _adopted = setmetatable({}, {__mode = "k"}) :: any,
+    width = function(text: any): number
+        return #tostring(text) * 12
+    end,
+    make = function(properties: any): TextLabel
+        local resolved: any = {}
+        for key: string, value: any in pairs(properties or {}) do
+            resolved[key] = value
+        end
+        resolved.FontFace = CONTROL_FONT
+        resolved.TextSize = resolved.TextSize or 16
+        if resolved.TextTruncate == nil then
+            resolved.TextTruncate = Enum.TextTruncate.AtEnd
+        end
+        return (create("TextLabel", resolved) :: any) :: TextLabel
+    end,
+}
+
+-- Capability report only: it decides which honest fallback is possible and
+-- is exposed to diagnostics/tests. It never promises exact pixels on an
+-- executor that cannot read files or register a local image.
+local fontEnvironment: any = getfenv()
+state.bitmapText.capabilities = {
+    canHttp = type((game :: any).HttpGet) == "function",
+    canRead = type(fontEnvironment.readfile) == "function",
+    canWrite = type(fontEnvironment.writefile) == "function",
+    canCustomAsset = type(fontEnvironment.getcustomasset) == "function",
+    canSynAsset = type(fontEnvironment.getsynasset) == "function",
+    mobile = state.isMobile == true,
+    desktop = state.isMobile ~= true,
+}
+
+-- The crisp-scale family: the same OFL Monocraft rasterised at 8 / 16 /
+-- 24 / 32 by tools/make_font_atlas.py. A fractional UIScale cannot get
+-- pixel-perfect glyphs out of one raster, so draw() picks the member
+-- whose size is closest to the final *physical* glyph and snaps every
+-- rect to integer device pixels. Layout metrics (advances, packing,
+-- measure) always come from the 16 px contract atlas, so which raster
+-- paints never moves a single caret. 16 is the mandatory member; the
+-- rest resolve lazily and are simply better pixels when present.
+state.bitmapText.family = {
+    [8] = {
+        ready = false, image = nil :: string?, size = 8, columns = 16,
+        cellWidth = 5, cellHeight = 9, advance = 5, ascent = 8, descent = 1,
+        asset = "bitmapFontAtlas8",
+    },
+    [16] = state.bitmapText.atlas,
+    [24] = {
+        ready = false, image = nil :: string?, size = 24, columns = 16,
+        cellWidth = 16, cellHeight = 25, advance = 16, ascent = 22, descent = 3,
+        asset = "bitmapFontAtlas24",
+    },
+    [32] = {
+        ready = false, image = nil :: string?, size = 32, columns = 16,
+        cellWidth = 21, cellHeight = 33, advance = 21, ascent = 29, descent = 4,
+        asset = "bitmapFontAtlas32",
+    },
+}
+
+-- The UIScale the popup layer runs at — the number that turns logical
+-- offsets into device pixels. Everything the renderer snaps, it snaps
+-- against this.
+state.bitmapText.layerScale = function(): number
+    local instance: any = PopupLayer:FindFirstChild("ClickGuiScale")
+    local value: number = instance and tonumber(instance.Scale) or 1
+    if value ~= value or value <= 0 then
+        value = 1
+    end
+    return value
+end
+
+-- The raster for a physical glyph height. The rule is downscale-only:
+-- the smallest ready member whose size covers the target, so glyphs
+-- keep full pixel detail and shrink at most a little; only a target
+-- the whole family undershoots takes the largest member. The 8 px
+-- atlas therefore serves only targets of 8 physical pixels or less —
+-- upscaling it is mush, and mush was exactly the dropdown bug. The
+-- 16 px member is the floor — it is the one the boot resolves first.
+state.bitmapText.pickAtlas = function(physicalSize: number): any
+    local contract: any = state.bitmapText
+    -- A loaded Minecraft pack owns the raster outright: mixing its 16 px
+    -- atlas with Monocraft's 8/24/32 variants would blend two fonts on
+    -- one screen. The family only competes while the fallback renders.
+    if contract.rasterFamilyEnabled == false then
+        return contract.atlas
+    end
+    local smallestCovering: any = nil
+    local largest: any = nil
+    for _, member: any in pairs(contract.family) do
+        if member.ready and member.image then
+            if member.size >= physicalSize
+                and (smallestCovering == nil
+                    or member.size < smallestCovering.size) then
+                smallestCovering = member
+            end
+            if largest == nil or member.size > largest.size then
+                largest = member
+            end
+        end
+    end
+    return smallestCovering or largest or contract.atlas
+end
+
+-- The baseline a mixed-size line aligns to, in logical pixels.
+state.bitmapText.baselineFor = function(textSize: number?): number
+    local contract: any = state.bitmapText
+    return contract.atlas.ascent * ((tonumber(textSize) or 16) / contract.atlas.size)
+end
+
+-- One codepoint at a time, UTF-8 when the text is valid UTF-8 and raw
+-- bytes when it is not — a fallback glyph per byte beats an error, and
+-- executors feed this strings from anywhere.
+state.bitmapText.eachCode = function(text: string, visit: (number) -> ()): ()
+    if utf8.len(text) ~= nil then
+        for _, code: number in utf8.codes(text) do
+            visit(code)
+        end
+    else
+        for position: number = 1, #text do
+            visit(string.byte(text, position) or 63)
+        end
+    end
+end
+
+local function contractAdvanceFor(atlas: any, code: number, scale: number): number
+    local advances: any = atlas.advances
+    local specific: any = advances and (advances[code] or advances[tostring(code)])
+    return (tonumber(specific) or atlas.advance) * scale
+end
+
+-- The width draw() will actually occupy: atlas advances when the atlas is
+-- live, the packing estimate until then. Newlines reset the caret; the
+-- widest line wins. Honours per-glyph advances when the atlas carries
+-- them — Minecraft's font is variable-width.
+state.bitmapText.measure = function(segments: {any}, textSize: number?): number
+    local contract: any = state.bitmapText
+    local atlas: any = contract.atlas
+    local scale: number = (tonumber(textSize) or 16) / contract.size
+    local widest: number = 0
+    local x: number = 0
+    for _, segment: any in ipairs(segments) do
+        contract.eachCode(tostring(segment.text or ""), function(code: number): ()
+            if code == 10 then
+                x = 0
+            else
+                if atlas.ready then
+                    x += contractAdvanceFor(atlas, code, scale)
+                else
+                    x += contract.advance * scale
+                end
+                widest = math.max(widest, x)
+            end
+        end)
+    end
+    return widest
+end
+
+-- Text on the Wurst contract. Segments carry their own colours (the
+-- HackList's muted bracket without RichText); options:
+--
+--   Name       replaces a previous draw of the same name in the parent
+--   TextSize   16 default (the 8-logical Minecraft size at GUI scale 2)
+--   ZIndex     base depth; shadow sits at +1, ink at +2
+--   align      "Left" | "Center" | "Right" — where the holder anchors
+--   shadow     Minecraft's drop shadow: same glyphs at +2,+2 in the text
+--              colour quartered, under the ink
+--   maxWidth   clip: glyphs past it are not drawn, the holder clips
+--
+-- Glyph ImageLabels are pooled per holder: a redraw reuses them in place,
+-- resizes the pool by the difference, and a draw whose signature has not
+-- changed does nothing at all. Nothing here recreates per frame.
+state.bitmapText.draw = function(
+    parent: Instance,
+    segments: {any},
+    options: any
+): Frame
+    local startedAt: number = os.clock()
+    local contract: any = state.bitmapText
+    local resolvedOptions: any = options or {}
+    local name: string = tostring(resolvedOptions.Name or "BitmapText")
+    local textSize: number = tonumber(resolvedOptions.TextSize) or 16
+    local zIndex: number = tonumber(resolvedOptions.ZIndex) or 20
+    local align: string = tostring(resolvedOptions.align or "Left")
+    local shadow: boolean = resolvedOptions.shadow == true
+    local maxWidth: number? = tonumber(resolvedOptions.maxWidth)
+    local transparency: number = tonumber(resolvedOptions.transparency) or 0
+    local atlas: any = contract.atlas
+
+    -- The signature is the draw: same text, colours, size, mode and
+    -- layout means the pixels are already right and the call costs a
+    -- string compare. The device scale and the raster choice are part
+    -- of it: a UIScale change or a sharper atlas arriving re-renders,
+    -- and nothing else does.
+    local deviceScale: number = contract.layerScale()
+    local raster: any = contract.pickAtlas(textSize * deviceScale)
+    local parts: {string} = {
+        tostring(textSize), align, tostring(shadow),
+        tostring(maxWidth), tostring(atlas.ready),
+        tostring(transparency),
+        string.format("%.4f", deviceScale),
+        tostring(raster and raster.size),
+        tostring(atlas.generation),
+    }
+    for _, segment: any in ipairs(segments) do
+        local color: Color3 = segment.color or Theme.text
+        table.insert(parts, tostring(segment.text or ""))
+        table.insert(parts, string.format(
+            "%02X%02X%02X",
+            math.floor(color.R * 255 + 0.5),
+            math.floor(color.G * 255 + 0.5),
+            math.floor(color.B * 255 + 0.5)
+        ))
+    end
+    local signature: string = table.concat(parts, "\1")
+
+    local holder: any = (parent :: any):FindFirstChild(name)
+    local record: any = holder and contract._live[holder]
+    if holder and not record then
+        -- Same name, not ours — an old TextLabel a migration replaced.
+        holder:Destroy()
+        holder = nil
+    end
+    if not holder then
+        holder = create("Frame", {
+            Parent = parent,
+            Name = name,
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+        })
+        record = {glyphs = {} :: {ImageLabel}, fallback = nil :: TextLabel?}
+        contract._live[holder] = record
+    end
+    record.request = {parent = parent, segments = segments, options = resolvedOptions}
+
+    holder.ZIndex = zIndex
+    if resolvedOptions.AnchorPoint or resolvedOptions.Position then
+        holder.AnchorPoint = resolvedOptions.AnchorPoint or Vector2.new(0, 0.5)
+        holder.Position = resolvedOptions.Position or UDim2.new(0, 0, 0.5, 0)
+    elseif align == "Right" then
+        holder.AnchorPoint = Vector2.new(1, 0.5)
+        holder.Position = UDim2.new(1, 0, 0.5, 0)
+    elseif align == "Center" then
+        holder.AnchorPoint = Vector2.new(0.5, 0.5)
+        holder.Position = UDim2.new(0.5, 0, 0.5, 0)
+    else
+        holder.AnchorPoint = Vector2.new(0, 0.5)
+        holder.Position = UDim2.new(0, 0, 0.5, 0)
+    end
+
+    if record.signature == signature then
+        contract.stats.skipped += 1
+        return holder :: Frame
+    end
+    record.signature = signature
+
+    local used: number = 0
+    local function nextGlyph(): ImageLabel
+        used += 1
+        local glyph: ImageLabel? = record.glyphs[used]
+        if glyph then
+            contract.stats.glyphsReused += 1
+        else
+            glyph = (create("ImageLabel", {
+                Parent = holder,
+                Name = "G",
+                BackgroundTransparency = 1,
+                BorderSizePixel = 0,
+            }) :: any) :: ImageLabel
+            -- Pixelated, when the engine offers it: a pixel font
+            -- bilinear-blurred is worse than no atlas at all.
+            pcall(function(): ()
+                (glyph :: any).ResampleMode = Enum.ResamplerMode.Pixelated
+            end)
+            record.glyphs[used] = glyph
+            contract.stats.glyphsCreated += 1
+        end
+        (glyph :: ImageLabel).Visible = true
+        return glyph :: ImageLabel
+    end
+
+    local width: number = 0
+    local height: number = 0
+    if atlas.ready and atlas.image then
+        if record.fallback then
+            (record.fallback :: TextLabel).Visible = false
+        end
+        -- Layout runs on the 16 px contract atlas — advances, packing and
+        -- measure never depend on which raster paints. The raster is the
+        -- family member nearest the physical glyph, and every rect it
+        -- draws is snapped to integer device pixels: a pixel font at a
+        -- fractional position is blur, and blur is worse than no atlas.
+        local scale: number = textSize / atlas.size
+        local function snapPx(value: number): number
+            return math.round(value * deviceScale) / deviceScale
+        end
+        local rasterScale: number = textSize / raster.size
+        local pixelStep: number = 1 / deviceScale
+        local glyphWidth: number = math.max(
+            pixelStep,
+            snapPx(raster.cellWidth * rasterScale)
+        )
+        local glyphHeight: number = math.max(
+            pixelStep,
+            snapPx(raster.cellHeight * rasterScale)
+        )
+        local lineAdvance: number = contract.lineHeight * scale
+        local shadowOffset: number = math.max(pixelStep, snapPx(2 * scale))
+        local x: number = 0
+        local y: number = 0
+        local lineCount: number = 1
+        local function blit(code: number, paint: Color3, dx: number, dy: number, z: number): ()
+            local index: number = code - atlas.first
+            local glyph: ImageLabel = nextGlyph()
+            glyph.Image = raster.image
+            glyph.ImageColor3 = paint
+            glyph.ImageTransparency = transparency
+            glyph.ImageRectOffset = Vector2.new(
+                (index % raster.columns) * raster.cellWidth,
+                (index // raster.columns) * raster.cellHeight
+            )
+            glyph.ImageRectSize = Vector2.new(raster.cellWidth, raster.cellHeight)
+            glyph.Position = UDim2.fromOffset(snapPx(dx), snapPx(dy))
+            glyph.Size = UDim2.fromOffset(glyphWidth, glyphHeight)
+            glyph.ZIndex = z
+        end
+        for _, segment: any in ipairs(segments) do
+            local color: Color3 = segment.color or Theme.text
+            -- Minecraft's shadow is the text colour quartered, one logical
+            -- pixel down-right — 2 px at the scale everything draws at.
+            local shade: Color3 = Color3.new(
+                color.R * 0.25, color.G * 0.25, color.B * 0.25
+            )
+            contract.eachCode(tostring(segment.text or ""), function(code: number): ()
+                if code == 10 then
+                    x = 0
+                    y += lineAdvance
+                    lineCount += 1
+                    return
+                end
+                local advance: number = contractAdvanceFor(atlas, code, scale)
+                if maxWidth ~= nil and x + advance > maxWidth then
+                    return
+                end
+                if code ~= 32 then
+                    local mapped: number = code
+                    if code < atlas.first or code > atlas.last then
+                        mapped = atlas.fallbackGlyph
+                    end
+                    if shadow then
+                        blit(mapped, shade, x + shadowOffset, y + shadowOffset, zIndex + 1)
+                    end
+                    blit(mapped, color, x, y, zIndex + 2)
+                end
+                x += advance
+                width = math.max(width, x)
+            end)
+        end
+        height = glyphHeight + (lineCount - 1) * lineAdvance
+    else
+        local composed: {string} = {}
+        local estimated: number = 0
+        for _, segment: any in ipairs(segments) do
+            local text: string = tostring(segment.text or "")
+                :gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;")
+            local color: Color3 = segment.color or Theme.text
+            table.insert(composed, string.format(
+                '<font color="#%02X%02X%02X">%s</font>',
+                math.floor(color.R * 255 + 0.5),
+                math.floor(color.G * 255 + 0.5),
+                math.floor(color.B * 255 + 0.5),
+                text
+            ))
+            estimated += #tostring(segment.text or "")
+        end
+        local fallback: TextLabel? = record.fallback
+        if not fallback then
+            fallback = contract.make({
+                Parent = holder,
+                Name = "Fallback",
+                BackgroundTransparency = 1,
+                RichText = true,
+                Size = UDim2.new(1, 0, 1, 0),
+                TextColor3 = Theme.text,
+            })
+            record.fallback = fallback
+            -- Inoculated against adoption: this label IS the renderer.
+            contract._adopted[fallback] = true
+        end
+        local label: TextLabel = fallback :: TextLabel
+        label.Visible = true
+        label.Text = table.concat(composed)
+        label.TextSize = textSize
+        label.TextTransparency = transparency
+        label.TextXAlignment = align == "Right" and Enum.TextXAlignment.Right
+            or align == "Center" and Enum.TextXAlignment.Center
+            or Enum.TextXAlignment.Left
+        label.ZIndex = zIndex + 1
+        width = estimated * math.floor(textSize * 0.75)
+        height = math.floor(textSize * 1.125)
+    end
+
+    for index: number = used + 1, #record.glyphs do
+        (record.glyphs[index] :: ImageLabel).Visible = false
+    end
+
+    if maxWidth ~= nil then
+        width = math.min(width, maxWidth)
+    end
+    holder.ClipsDescendants = maxWidth ~= nil
+    holder.Size = UDim2.fromOffset(width, height)
+    holder:SetAttribute("MeasuredWidth", width)
+    contract.stats.draws += 1
+    contract.stats.lastDrawMs = (os.clock() - startedAt) * 1000
+    return holder :: Frame
+end
+
+-- Explicit teardown for a surface that is done with its line: the pool
+-- dies with the holder, the weak registry lets go on its own.
+state.bitmapText.release = function(holder: Instance?): ()
+    if holder then
+        state.bitmapText._live[holder] = nil
+        holder:Destroy()
+    end
+end
+
+-- Adopt an existing TextLabel or TextButton: its vector text goes
+-- invisible and pooled glyphs draw inside it instead, following the
+-- label's own Text / TextColor3 / TextSize / TextXAlignment live. The
+-- instance keeps its name, its Text and its TextBounds, so everything
+-- that reads a label as metadata — width packing, the suites, the
+-- Show rules — keeps working while the pixels come from the atlas.
+-- ClipsDescendants stands in for TextTruncate. TextBoxes are refused:
+-- hiding typed text under a caret is not a migration, it is a bug.
+-- Idempotent per label; the glyphs, the registry entry and the signal
+-- connections all die with the label's own Destroy.
+state.bitmapText.adopt = function(label: any, options: any?): ()
+    local contract: any = state.bitmapText
+    if label == nil
+        or type(label.IsA) ~= "function"
+        or label:IsA("TextBox")
+        or not (label:IsA("TextLabel") or label:IsA("TextButton")) then
+        return
+    end
+    if label:GetAttribute("NoBitmap") == true then
+        return
+    end
+    if contract._adopted[label] then
+        return
+    end
+    -- Never adopt the renderer's own output: the fallback label inside a
+    -- draw holder would otherwise be adopted, hidden, and redrawn into
+    -- itself forever.
+    if label.Parent ~= nil and contract._live[label.Parent] ~= nil then
+        return
+    end
+    local resolvedOptions: any = options or {}
+    contract._adopted[label] = true
+    label.TextTransparency = 1
+    label.ClipsDescendants = true
+    local function paint(): ()
+        if label.Parent == nil then
+            return
+        end
+        local alignment: any = label.TextXAlignment
+        contract.draw(label, {
+            {text = label.Text, color = label.TextColor3},
+        }, {
+            Name = "Glyphs",
+            TextSize = label.TextSize,
+            ZIndex = (tonumber(label.ZIndex) or 1) + 1,
+            align = alignment == Enum.TextXAlignment.Right and "Right"
+                or alignment == Enum.TextXAlignment.Center and "Center"
+                or "Left",
+            shadow = resolvedOptions.shadow == true,
+        })
+    end
+    paint()
+    -- The signals belong to the label, so Destroy disconnects them; no
+    -- separate tracking needed, and no leak survives the surface. The
+    -- harness's mock instances may not carry every property signal —
+    -- adoption still paints once there.
+    pcall(function(): ()
+        label:GetPropertyChangedSignal("Text"):Connect(paint)
+        label:GetPropertyChangedSignal("TextColor3"):Connect(paint)
+        label:GetPropertyChangedSignal("TextSize"):Connect(paint)
+    end)
+end
+
+-- Adopt every current and future text object under a root — the one
+-- call that migrates a settings window whose rows are still being
+-- built. Returns a disconnectable so the caller can park it with the
+-- window's own cleanup; a stub when the environment lacks
+-- DescendantAdded, so callers never branch.
+state.bitmapText.adoptTree = function(root: Instance, options: any?): any
+    local contract: any = state.bitmapText
+    pcall(function(): ()
+        for _, descendant: Instance in ipairs(root:GetDescendants()) do
+            contract.adopt(descendant, options)
+        end
+    end)
+    local connected: boolean, connection: any = pcall(function(): any
+        return root.DescendantAdded:Connect(function(descendant: Instance): ()
+            contract.adopt(descendant, options)
+        end)
+    end)
+    if connected and connection then
+        return connection
+    end
+    return {
+        Connected = false,
+        Disconnect = function(): () end,
+    }
+end
+
+
+-- The atlas arrives like every other asset: downloaded, verified, turned
+-- into an id off the boot thread. Three honest states, told apart at
+-- runtime: "minecraft-exact" only when a locally generated 1.18.1 atlas
+-- is really loaded (never committed — tools/fetch_minecraft_font.py
+-- --update builds it from the verified official jar), the Monocraft
+-- fallback when only the committed OFL atlas resolves, "unavailable"
+-- when neither does and the vector stand-in keeps the menu readable.
+-- One line of warning each, never a spam loop. Every live draw
+-- re-renders itself the moment glyphs land — the signatures all carry
+-- atlas.ready, so the redraws do real work exactly once — and onReady
+-- still fires for surfaces that rebuild more than their glyphs.
+
+-- The plug for a locally generated exact atlas: image plus metrics in
+-- the same shape the Monocraft atlas ships. Nothing in the repo calls
+-- it with Mojang data; a user who ran the official downloader can.
+state.bitmapText.loadExactAtlas = function(image: string, metrics: any): ()
+    local atlas: any = state.bitmapText.atlas
+    if type(image) ~= "string" or type(metrics) ~= "table" then
+        return
+    end
+    for _, key: string in ipairs({
+        "size", "first", "last", "columns", "cellWidth", "cellHeight", "advance",
+    }) do
+        if tonumber(metrics[key]) then
+            atlas[key] = tonumber(metrics[key])
+        end
+    end
+    -- Per-codepoint advances, when the metrics carry them: Minecraft's
+    -- font is variable-width and the renderer honours that the moment
+    -- the numbers exist. A pack without them clears the previous set —
+    -- stale advances from another font are a layout lie.
+    if type(metrics.advances) == "table" then
+        atlas.advances = metrics.advances
+    else
+        atlas.advances = nil
+    end
+    atlas.image = image
+    atlas.ready = true
+    atlas.generation += 1
+    state.bitmapText.rasterFamilyEnabled = false
+    state.bitmapText.source = "minecraft-exact"
+    for holder: any, record: any in pairs(state.bitmapText._live) do
+        if holder.Parent ~= nil and record.request ~= nil then
+            pcall(function(): ()
+                state.bitmapText.draw(
+                    record.request.parent,
+                    record.request.segments,
+                    record.request.options
+                )
+            end)
+        end
+    end
+    for _, listener: () -> () in ipairs(state.bitmapText.onReady) do
+        pcall(listener)
+    end
+end
+
+-- The Monocraft snapshot: what the atlas contract looks like on the
+-- committed fallback, so a live pack switch can walk back to it whole —
+-- fields, advances cleared, family re-enabled.
+state.bitmapText._fallback = {
+    size = 16, first = 32, last = 126, columns = 16,
+    cellWidth = 11, cellHeight = 17, advance = 11, ascent = 15, descent = 2,
+}
+state.bitmapText.rasterFamilyEnabled = true
+
+state.bitmapText.restoreFallbackAtlas = function(): ()
+    local contract: any = state.bitmapText
+    local atlas: any = contract.atlas
+    for key: string, value: number in pairs(contract._fallback) do
+        atlas[key] = value
+    end
+    atlas.advances = nil
+    atlas.image = contract._fallbackImage
+    atlas.ready = contract._fallbackImage ~= nil
+    atlas.generation += 1
+    contract.rasterFamilyEnabled = true
+    contract.source = atlas.ready and "monocraft-fallback" or "unavailable"
+end
+
+-- The optional local packs, by their UI names. One folder per version,
+-- and the manifest's own version field must match — a 26.2 manifest in
+-- the 1.18.1 slot never loads. Providers of different versions never
+-- meet in one atlas.
+state.bitmapText.packs = {
+    ["Minecraft 1.18.1"] = {
+        folder = "MinecraftFont",
+        version = "1.18.1",
+        source = "minecraft-exact",
+    },
+    ["Minecraft 26.2"] = {
+        folder = "MinecraftFont-26.2",
+        version = "26.2",
+        source = "minecraft-26.2-local",
+    },
+}
+
+state.bitmapText.probePack = function(selection: string): boolean
+    local contract: any = state.bitmapText
+    local pack: any = contract.packs[selection]
+    if not pack then
+        return false
+    end
+    local loaded: boolean = false
+    pcall(function(): ()
+        if type(isfile) ~= "function" or type(readfile) ~= "function" then
+            return
+        end
+        local manifestPath: string = pack.folder .. "/manifest.json"
+        if not isfile(manifestPath) then
+            return
+        end
+        local manifest: any = HttpService:JSONDecode(readfile(manifestPath))
+        if type(manifest) ~= "table"
+            or manifest.format ~= "wurst-minecraft-font-v1"
+            or manifest.version ~= pack.version
+            or type(manifest.runtime) ~= "table" then
+            warn("[" .. PRODUCT.logPrefix .. ":Assets] " .. pack.folder
+                .. "/ is present but not a Minecraft " .. pack.version
+                .. " pack; ignoring")
+            return
+        end
+        local imagePath: string = pack.folder .. "/"
+            .. tostring(manifest.runtime.image or "runtime-ascii.png")
+        if not isfile(imagePath) then
+            return
+        end
+        local registerAsset: any = fontEnvironment.getcustomasset
+            or fontEnvironment.getsynasset
+        if type(registerAsset) ~= "function" then
+            return
+        end
+        local assetOk: boolean, assetId: any = pcall(registerAsset, imagePath)
+        if assetOk and type(assetId) == "string" and assetId ~= "" then
+            contract.loadExactAtlas(assetId, manifest.runtime)
+            contract.source = pack.source
+            loaded = true
+        end
+    end)
+    return loaded
+end
+
+-- Live switch, from the UI Settings "Font pack" row: restore the
+-- fallback whole, then load the selected pack if it is really there.
+-- A missing selection warns once per selection, never a loop, and the
+-- menu keeps rendering on Monocraft. Signatures carry the atlas
+-- generation, so the one walk repaints exactly what changed.
+state.bitmapText.applyFontPack = function(selection: string): ()
+    local contract: any = state.bitmapText
+    state.fontPack = selection
+    contract.restoreFallbackAtlas()
+    if selection ~= "Monocraft" and contract.packs[selection] then
+        if not contract.probePack(selection)
+            and contract._packWarned ~= selection then
+            contract._packWarned = selection
+            warn("[" .. PRODUCT.logPrefix .. ":Assets] font pack \""
+                .. selection
+                .. "\" is not installed; rendering the Monocraft fallback (OFL)")
+        end
+    end
+    for holder: any, record: any in pairs(contract._live) do
+        if holder.Parent ~= nil and record.request ~= nil then
+            pcall(function(): ()
+                contract.draw(
+                    record.request.parent,
+                    record.request.segments,
+                    record.request.options
+                )
+            end)
+        end
+    end
+    for _, listener: () -> () in ipairs(contract.onReady) do
+        pcall(listener)
+    end
+end
+
+task.spawn(function(): ()
+    if type(state.resolveAsset) ~= "function" then
+        state.bitmapText.source = "unavailable"
+        return
+    end
+    local contract: any = state.bitmapText
+    -- The selected pack first. Packs are local optional installs
+    -- (tools/install_minecraft_font.py — never downloaded here, never
+    -- committed); the probe verifies the manifest's format and version
+    -- before trusting a pixel, so a 26.2 pack never loads into the
+    -- 1.18.1 selection or the other way round. A missing selection
+    -- warns once and the fallback renders.
+    local packLoaded: boolean = false
+    if state.fontPack ~= "Monocraft" then
+        packLoaded = contract.probePack(state.fontPack)
+        if packLoaded then
+            print("[" .. PRODUCT.logPrefix .. ":Assets] font pack loaded: "
+                .. tostring(state.fontPack))
+        elseif contract._packWarned ~= state.fontPack then
+            contract._packWarned = state.fontPack
+            warn("[" .. PRODUCT.logPrefix .. ":Assets] font pack \""
+                .. tostring(state.fontPack)
+                .. "\" is not installed; rendering the Monocraft fallback (OFL)")
+        end
+    end
+    -- The Monocraft fallback always resolves: it is what a live switch
+    -- back to "Monocraft" restores, and what renders while no pack is
+    -- loaded. Only the no-pack path flips the visible atlas to it.
+    local assetId: string?, atlasError: string? =
+        state.resolveAsset("bitmapFontAtlas")
+    if assetId then
+        contract._fallbackImage = assetId
+        if not packLoaded then
+            contract.atlas.image = assetId
+            contract.atlas.ready = true
+            contract.atlas.generation += 1
+            contract.source = "monocraft-fallback"
+        end
+        -- The crisp-scale variants, silently: each family member that
+        -- resolves is simply better pixels at its physical size while
+        -- the fallback renders; a loaded pack owns the raster outright.
+        for _, member: any in pairs(contract.family) do
+            if member ~= contract.atlas and member.asset then
+                pcall(function(): ()
+                    local memberId: string? = (state.resolveAsset(member.asset))
+                    if memberId then
+                        member.image = memberId
+                        member.ready = true
+                    end
+                end)
+            end
+        end
+    elseif not packLoaded then
+        contract.source = "unavailable"
+        warn("[" .. PRODUCT.logPrefix .. ":Assets] no bitmap atlas ("
+            .. tostring(atlasError)
+            .. "); text renders on the vector stand-in")
+        return
+    end
+    for holder: any, record: any in pairs(contract._live) do
+        if holder.Parent ~= nil and record.request ~= nil then
+            pcall(function(): ()
+                contract.draw(
+                    record.request.parent,
+                    record.request.segments,
+                    record.request.options
+                )
+            end)
+        end
+    end
+    for _, listener: () -> () in ipairs(contract.onReady) do
+        pcall(listener)
+    end
+end)
+
+-- A viewport or Scale-slider change moves the device scale-- A viewport or Scale-slider change moves the device scale, which moves
+-- every snapped rect and possibly the raster choice. One walk over the
+-- live draws; the signatures carry the scale, so an unchanged surface
+-- costs a string compare and a changed one redraws in place — no stale
+-- glyphs from the previous scale survive, because the redraw reuses the
+-- same pooled labels.
+state.onLayout(function(): ()
+    for holder: any, record: any in pairs(state.bitmapText._live) do
+        if holder.Parent ~= nil and record.request ~= nil then
+            pcall(function(): ()
+                state.bitmapText.draw(
+                    record.request.parent,
+                    record.request.segments,
+                    record.request.options
+                )
+            end)
+        end
+    end
+end)
+
+-- Every label registers the *logical* size it was designed at; the text-scale
+-- slider multiplies that. `state.registeredTextIndex` lets the responsive
+-- layout change a label's logical size later without the slider snapping it
+-- back to the size it happened to be created with.
+state.registeredTextIndex = setmetatable({}, {__mode = "k"}) :: any
+
 local function registerText(
     object: TextLabel | TextButton | TextBox,
     normalSize: number
 ): TextLabel | TextButton | TextBox
-    table.insert(registeredText, {
+    local entry: any = {
         object = object,
         normalSize = normalSize,
-    })
+    }
+    table.insert(registeredText, entry)
+    state.registeredTextIndex[object] = entry
 
     object.TextSize = math.round(
         normalSize * TEXT_BASE_MULTIPLIER * state.textScale
@@ -1109,18 +2853,63 @@ local function registerText(
     return object
 end
 
+-- The box wins.
+--
+-- Every label the helpers build clips to its frame, because text that spills
+-- out of its box is the one failure this interface will not have. The cost is
+-- that a frame shorter than the font's line box shaves the bottom off the
+-- glyphs — the tail of the "g" in "Settings" was cut off in the page header,
+-- and it happens with any face taller than the one a height was tuned for.
+--
+-- So the requested size is capped by the room the object actually has. 1.2 is
+-- the tallest line box among the faces the typeface picker offers, and text
+-- that does not fit comes out a point or two smaller instead of shaved. A
+-- label sized in scale has no measurable height until it is laid out, so it
+-- keeps the requested size until the next refresh pass, when AbsoluteSize is
+-- real.
+local function fitTextSize(object: any, requested: number): number
+    local height: number = object.AbsoluteSize.Y
+    if height <= 0 then
+        local vertical: UDim = object.Size.Y
+        height = vertical.Scale == 0 and vertical.Offset or 0
+    end
+    if height <= 0 then
+        return requested
+    end
+    return math.max(7, math.min(requested, math.floor((height - 2) / 1.2)))
+end
+state.fitTextSize = fitTextSize
+
+-- Sets the logical size of an already-registered label and applies it with
+-- the current text scale.
+state.setTextMetric = function(object: any, normalSize: number): ()
+    local entry: any = state.registeredTextIndex[object]
+    if entry then
+        entry.normalSize = normalSize
+    end
+    object.TextSize = fitTextSize(
+        object,
+        math.round(normalSize * TEXT_BASE_MULTIPLIER * state.textScale)
+    )
+end
+
 local function makeTextLabel(
     parent: Instance,
     text: string,
     normalSize: number?
 ): TextLabel
+    -- Text is contained by default. A label that is fine in BuilderSans runs
+    -- straight out of its box in Code or Bangers, and the fix cannot be "pick
+    -- a shorter word": every label clips to its frame and ends in an ellipsis.
     return registerText(create("TextLabel", {
         Parent = parent,
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
+        ClipsDescendants = true,
         FontFace = THIN_FONT,
         Text = text,
-        TextColor3 = Theme.Text,
+        TextColor3 = Theme.text,
+        TextTruncate = Enum.TextTruncate.AtEnd,
         TextXAlignment = Enum.TextXAlignment.Left,
         TextYAlignment = Enum.TextYAlignment.Center,
     }), normalSize or 14) :: TextLabel
@@ -1135,15 +2924,17 @@ local function makeButton(
     local button = registerText(create("TextButton", {
         Parent = parent,
         AutoButtonColor = false,
+        ClipsDescendants = true,
+        TextTruncate = Enum.TextTruncate.AtEnd,
         BackgroundColor3 = isDefaultStyle
-            and Theme.DefaultButton
+            and Theme.button
             or DEFAULT_SURFACE_COLOR,
         BorderSizePixel = 0,
         FontFace = CONTROL_FONT,
         Text = text,
         TextColor3 = isDefaultStyle
-            and Theme.DefaultText
-            or Theme.Text,
+            and Theme.text
+            or Theme.text,
         TextXAlignment = Enum.TextXAlignment.Center,
         TextYAlignment = Enum.TextYAlignment.Center,
     }), normalSize or 14)
@@ -1151,15 +2942,15 @@ local function makeButton(
     addRoundedStyle(button, 9, 0.48)
     button:SetAttribute(
         "IdleColor",
-        isDefaultStyle and Theme.DefaultButton or DEFAULT_SURFACE_COLOR
+        isDefaultStyle and Theme.button or DEFAULT_SURFACE_COLOR
     )
     button:SetAttribute(
         "HoverColor",
-        isDefaultStyle and Theme.DefaultButtonHover or Theme.SurfaceHover
+        isDefaultStyle and Theme.buttonHover or Theme.surfaceHover
     )
     button:SetAttribute(
         "PressedColor",
-        isDefaultStyle and Theme.DefaultButtonPressed or Theme.SurfacePressed
+        isDefaultStyle and Theme.buttonPressed or Theme.surfacePressed
     )
     table.insert(state.styledButtons, button)
 
@@ -1170,10 +2961,10 @@ local function makeButton(
         local configuredHover: any = button:GetAttribute("HoverColor")
         local hoverColor: Color3 = typeof(configuredHover) == "Color3"
             and configuredHover
-            or Theme.SurfaceHover
+            or Theme.surfaceHover
         TweenService:Create(
             button,
-            TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+            TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
             {BackgroundColor3 = hoverColor}
         ):Play()
     end))
@@ -1185,14 +2976,14 @@ local function makeButton(
         local selectedColor: any = button:GetAttribute("SelectedColor")
         local configuredIdle: any = button:GetAttribute("IdleColor")
         local targetColor: Color3 = button:GetAttribute("Selected")
-            and (typeof(selectedColor) == "Color3" and selectedColor or Theme.AccentSoft)
+            and (typeof(selectedColor) == "Color3" and selectedColor or Theme.accentSoft)
             or (typeof(configuredIdle) == "Color3"
                 and configuredIdle
                 or DEFAULT_SURFACE_COLOR)
 
         TweenService:Create(
             button,
-            TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+            TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
             {BackgroundColor3 = targetColor}
         ):Play()
     end))
@@ -1205,7 +2996,7 @@ local function makeButton(
         local configuredPressed: any = button:GetAttribute("PressedColor")
         local pressedColor: Color3 = typeof(configuredPressed) == "Color3"
             and configuredPressed
-            or Theme.SurfacePressed
+            or Theme.surfacePressed
         TweenService:Create(
             button,
             TweenInfo.new(0.08, Enum.EasingStyle.Quad),
@@ -1221,13 +3012,13 @@ local function makeButton(
         local selectedColor: any = button:GetAttribute("SelectedColor")
         local configuredHover: any = button:GetAttribute("HoverColor")
         local targetColor: Color3 = button:GetAttribute("Selected")
-            and (typeof(selectedColor) == "Color3" and selectedColor or Theme.AccentSoft)
+            and (typeof(selectedColor) == "Color3" and selectedColor or Theme.accentSoft)
             or (typeof(configuredHover) == "Color3"
                 and configuredHover
-                or Theme.SurfaceHover)
+                or Theme.surfaceHover)
         TweenService:Create(
             button,
-            TweenInfo.new(0.12, Enum.EasingStyle.Quad),
+            TweenInfo.new(UI_MOTION.fast, Enum.EasingStyle.Quad),
             {BackgroundColor3 = targetColor}
         ):Play()
     end))
@@ -1237,100 +3028,154 @@ end
 
 local function setToggleSwitch(button: TextButton, enabled: boolean, animate: boolean?): ()
     button:SetAttribute("Checked", enabled)
-    local track: Frame? = button:FindFirstChild("SwitchTrack") :: Frame?
-    local knob: Frame? = track and track:FindFirstChild("Knob") :: Frame?
-    if not track or not knob then
+    local frame: Frame? = button:FindFirstChild("SwitchTrack") :: Frame?
+    local core: Frame? = frame and frame:FindFirstChild("Knob") :: Frame?
+    if not frame or not core then
         return
     end
-    local knobWidth: number = knob.Size.X.Offset
-    local targetColor: Color3 = enabled and Theme.DefaultAccent or Theme.SurfacePressed
-    local targetPosition: UDim2 = enabled
-        and UDim2.new(1, -knobWidth - 3, 0.5, 0)
-        or UDim2.new(0, 3, 0.5, 0)
-    local targetKnobColor: Color3 = enabled and Theme.DefaultText or Theme.DefaultTextMuted
+    local stroke: UIStroke? = frame:FindFirstChild("MarkStroke") :: UIStroke?
+    local targetSize: UDim2 = enabled
+        and UDim2.fromScale(0.62, 0.62)
+        or UDim2.fromScale(0, 0)
+    local targetTransparency: number = enabled and 0.05 or 1
     if animate and state.animationsEnabled then
-        TweenService:Create(track, TweenInfo.new(0.18, Enum.EasingStyle.Quart), {
-            BackgroundColor3 = targetColor,
-        }):Play()
-        TweenService:Create(knob, TweenInfo.new(0.18, Enum.EasingStyle.Quart), {
-            Position = targetPosition,
-            BackgroundColor3 = targetKnobColor,
+        TweenService:Create(core, TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quart), {
+            Size = targetSize,
+            BackgroundTransparency = targetTransparency,
         }):Play()
     else
-        track.BackgroundColor3 = targetColor
-        knob.Position = targetPosition
-        knob.BackgroundColor3 = targetKnobColor
+        core.Size = targetSize
+        core.BackgroundTransparency = targetTransparency
+    end
+    if stroke then
+        stroke.Transparency = enabled and 0.15 or 0.45
     end
 end
 
+-- State mark.
+--
+-- Not a switch. A sliding pill is a phone control: it is wide, it is loud, it
+-- repeats on every row, and at this size the knob is the only thing you can
+-- read. This is a square that is either empty or filled — the same shape the
+-- module cards use for their own state — drawn in the interface's own greys,
+-- with no colour of its own.
 local function createToggleSwitch(
     parent: Instance,
     enabled: boolean,
     width: number?
 ): TextButton
-    local switchWidth: number = width or (state.isMobile and 50 or 44)
-    local switchHeight: number = state.isMobile and 28 or 24
+    local markSize: number = math.clamp(width or 15, 12, 18)
     local button: TextButton = create("TextButton", {
+        TextTruncate = Enum.TextTruncate.AtEnd,
+        ClipsDescendants = true,
         Parent = parent,
         Active = true,
         AutoButtonColor = false,
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
-        Size = UDim2.fromOffset(switchWidth, math.max(32, switchHeight)),
+        -- The hit area stays finger-sized even though the mark is small.
+        Size = UDim2.fromOffset(math.max(markSize + 14, 28), 30),
         Text = "",
     }) :: TextButton
-    local track: Frame = create("Frame", {
+    local frame: Frame = create("Frame", {
         Parent = button,
         Name = "SwitchTrack",
         AnchorPoint = Vector2.new(0.5, 0.5),
-        BackgroundColor3 = Theme.SurfacePressed,
+        BackgroundColor3 = Theme.text,
+        BackgroundTransparency = 1,
         BorderSizePixel = 0,
         Position = UDim2.fromScale(0.5, 0.5),
-        Size = UDim2.fromOffset(switchWidth, switchHeight),
+        Size = UDim2.fromOffset(markSize, markSize),
         ZIndex = button.ZIndex + 1,
     }) :: Frame
-    create("UICorner", {Parent = track, CornerRadius = UDim.new(1, 0)})
     create("UIStroke", {
-        Parent = track,
-        Color = Theme.DefaultOutline,
-        Transparency = 0.58,
+        Parent = frame,
+        Name = "MarkStroke",
+        Color = Theme.outline,
+        Transparency = 0.45,
         Thickness = 1,
     })
-    local knobSize: number = switchHeight - 6
-    local knob: Frame = create("Frame", {
-        Parent = track,
+    -- The inner block is what fills; keeping it separate from the outline lets
+    -- the mark grow into place instead of blinking on.
+    local _core: Frame = create("Frame", {
+        Parent = frame,
         Name = "Knob",
-        AnchorPoint = Vector2.new(0, 0.5),
-        BackgroundColor3 = Theme.DefaultTextMuted,
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        BackgroundColor3 = Theme.text,
+        BackgroundTransparency = 1,
         BorderSizePixel = 0,
-        Position = UDim2.new(0, 3, 0.5, 0),
-        Size = UDim2.fromOffset(knobSize, knobSize),
-        ZIndex = track.ZIndex + 2,
+        Position = UDim2.fromScale(0.5, 0.5),
+        Size = UDim2.fromScale(0, 0),
+        ZIndex = frame.ZIndex + 1,
     }) :: Frame
-    create("UICorner", {Parent = knob, CornerRadius = UDim.new(1, 0)})
-    create("UIStroke", {
-        Parent = knob,
-        Color = Theme.DefaultOutline,
-        Transparency = 0.35,
-        Thickness = 1,
-    })
     setToggleSwitch(button, enabled, false)
     return button
 end
 
 local function applyKeySlotStyle(button: TextButton): ()
     button.ZIndex = math.max(2, button.ZIndex)
-    button.BackgroundColor3 = Theme.DefaultSurface
+    button.BackgroundColor3 = Theme.surface
     button.BackgroundTransparency = 0.54
-    button.TextColor3 = Theme.DefaultTextMuted
+    button.TextColor3 = Theme.textMuted
     button:SetAttribute("ThemeRole", "KeySlot")
-    button:SetAttribute("IdleColor", Theme.DefaultSurface)
-    button:SetAttribute("HoverColor", Theme.DefaultSurfaceHover)
-    button:SetAttribute("PressedColor", Theme.DefaultButtonPressed)
+    button:SetAttribute("IdleColor", Theme.surface)
+    button:SetAttribute("HoverColor", Theme.surfaceHover)
+    button:SetAttribute("PressedColor", Theme.buttonPressed)
     local buttonStroke: UIStroke? = button:FindFirstChildOfClass("UIStroke")
     if buttonStroke then
-        buttonStroke.Color = Theme.DefaultOutline
+        buttonStroke.Color = Theme.outline
         buttonStroke.Transparency = 0.78
+    end
+end
+
+-- The options handle: three stacked lines.
+--
+-- The reference interface marks "this module has settings" with a small
+-- hamburger, and that reads as a control at a glance; the three dots this menu
+-- used before read as "truncated text" and were mistaken for a cut-off label.
+-- Text glyphs are avoided on purpose — the interface typeface is swappable, so
+-- a literal "≡" would change shape with the font. Three frames do not.
+state.applyLinesGlyph = function(
+    button: TextButton,
+    dimmed: boolean,
+    active: boolean?
+): ()
+    button.Text = ""
+    local existing: Instance? = button:FindFirstChild("LinesGlyph")
+    local glyph: Frame
+    if existing and existing:IsA("Frame") then
+        glyph = existing :: Frame
+    else
+        glyph = create("Frame", {
+            Parent = button,
+            Name = "LinesGlyph",
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Position = UDim2.fromScale(0.5, 0.5),
+            Size = UDim2.fromOffset(12, 8),
+            ZIndex = button.ZIndex + 1,
+        }) :: Frame
+        for index: number = 1, 3 do
+            local _bar: Frame = create("Frame", {
+                Parent = glyph,
+                Name = "Line" .. tostring(index),
+                AnchorPoint = Vector2.new(0.5, 0.5),
+                BackgroundColor3 = Theme.text,
+                BorderSizePixel = 0,
+                Position = UDim2.new(0.5, 0, 0, (index - 1) * 3.5 + 0.5),
+                -- The middle line is shorter, which is what stops the mark
+                -- from reading as a solid block at 12px.
+                Size = UDim2.fromOffset(index == 2 and 9 or 12, 1),
+                ZIndex = button.ZIndex + 2,
+            }) :: Frame
+        end
+    end
+    local barTransparency: number = dimmed and 0.74 or (active and 0.02 or 0.3)
+    for _, bar: Instance in ipairs(glyph:GetChildren()) do
+        if bar:IsA("Frame") then
+            bar.BackgroundTransparency = barTransparency
+        end
     end
 end
 
@@ -1340,36 +3185,36 @@ state.restyleButtons = function(isDefault: boolean): ()
             local role: any = button:GetAttribute("ThemeRole")
             if role ~= "Navigation" and role ~= "Icon" then
                 local idleColor: Color3 = isDefault
-                    and Theme.DefaultButton
+                    and Theme.button
                     or DEFAULT_SURFACE_COLOR
                 button:SetAttribute("IdleColor", idleColor)
                 button:SetAttribute(
                     "HoverColor",
-                    isDefault and Theme.DefaultButtonHover or Theme.SurfaceHover
+                    isDefault and Theme.buttonHover or Theme.surfaceHover
                 )
                 button:SetAttribute(
                     "PressedColor",
-                    isDefault and Theme.DefaultButtonPressed or Theme.SurfacePressed
+                    isDefault and Theme.buttonPressed or Theme.surfacePressed
                 )
                 if button:GetAttribute("Selected") ~= true then
                     button.BackgroundColor3 = idleColor
                 end
-                button.TextColor3 = isDefault and Theme.DefaultText or Theme.Text
+                button.TextColor3 = isDefault and Theme.text or Theme.text
                 local stroke: UIStroke? =
                     button:FindFirstChild("StyleStroke") :: UIStroke?
                 if stroke then
                     stroke.Enabled = true
-                    stroke.Color = isDefault and Theme.DefaultOutline or Theme.Outline
+                    stroke.Color = isDefault and Theme.outline or Theme.outline
                     stroke.Transparency = isDefault and 0.32 or 0.48
                 end
                 if role == "KeySlot" then
-                    button.BackgroundColor3 = Theme.DefaultSurface
+                    button.BackgroundColor3 = Theme.surface
                     button.BackgroundTransparency = 0.54
-                    button.TextColor3 = Theme.DefaultTextMuted
+                    button.TextColor3 = Theme.textMuted
                     local keyStroke: UIStroke? =
                         button:FindFirstChild("StyleStroke") :: UIStroke?
                     if keyStroke then
-                        keyStroke.Color = Theme.DefaultOutline
+                        keyStroke.Color = Theme.outline
                         keyStroke.Transparency = 0.78
                     end
                 end
@@ -1382,20 +3227,20 @@ local function setKeySlotCapture(button: TextButton, active: boolean): ()
     local stroke: UIStroke? = button:FindFirstChild("StyleStroke") :: UIStroke?
     TweenService:Create(
         button,
-        TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+        TweenInfo.new(UI_MOTION.fast, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
         {
             BackgroundColor3 = active
-                and Theme.DefaultButtonPressed
-                or Theme.DefaultSurface,
+                and Theme.buttonPressed
+                or Theme.surface,
             TextColor3 = active
-                and Theme.DefaultText
-                or Theme.DefaultTextMuted,
+                and Theme.text
+                or Theme.textMuted,
         }
     ):Play()
     if stroke then
         TweenService:Create(
             stroke,
-            TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+            TweenInfo.new(UI_MOTION.fast, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
             {Transparency = active and 0.38 or 0.78}
         ):Play()
     end
@@ -1446,18 +3291,22 @@ local function makeTextBox(parent: Instance, defaultText: any): TextBox
     local textBox: TextBox = (registerText(create("TextBox", {
         Parent = parent,
         BackgroundColor3 = isDefaultStyle
-            and Theme.DefaultButtonPressed
-            or Theme.Surface,
+            and Theme.buttonPressed
+            or Theme.surface,
         BorderSizePixel = 0,
         ClearTextOnFocus = false,
+        -- A text box holds whatever is typed into it, which is unbounded by
+        -- definition, so it clips and truncates rather than spilling.
+        ClipsDescendants = true,
+        TextTruncate = Enum.TextTruncate.AtEnd,
         FontFace = THIN_FONT,
         PlaceholderColor3 = isDefaultStyle
-            and Theme.DefaultTextMuted
-            or Theme.TextMuted,
+            and Theme.textMuted
+            or Theme.textMuted,
         Text = tostring(defaultText),
         TextColor3 = isDefaultStyle
-            and Theme.DefaultText
-            or Theme.Text,
+            and Theme.text
+            or Theme.text,
         TextXAlignment = Enum.TextXAlignment.Center,
     }), 13) :: any) :: TextBox
     addRoundedStyle(textBox, 9, 0.5)
@@ -1465,19 +3314,19 @@ local function makeTextBox(parent: Instance, defaultText: any): TextBox
     trackUiConnection(textBox.Focused:Connect(function(): ()
         TweenService:Create(
             textBox,
-            TweenInfo.new(0.16, Enum.EasingStyle.Quad),
+            TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quad),
             {BackgroundColor3 = state.guiStyle == "Default"
-                and Theme.DefaultButtonHover
-                or Theme.SurfaceRaised}
+                and Theme.buttonHover
+                or Theme.surfaceRaised}
         ):Play()
     end))
     trackUiConnection(textBox.FocusLost:Connect(function(): ()
         TweenService:Create(
             textBox,
-            TweenInfo.new(0.16, Enum.EasingStyle.Quad),
+            TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quad),
             {BackgroundColor3 = state.guiStyle == "Default"
-                and Theme.DefaultButtonPressed
-                or Theme.Surface}
+                and Theme.buttonPressed
+                or Theme.surface}
         ):Play()
     end))
     return textBox
@@ -1487,16 +3336,16 @@ state.restyleTextBoxes = function(isDefault: boolean): ()
     for _, textBox: TextBox in ipairs(state.styledTextBoxes) do
         if textBox.Parent then
             textBox.BackgroundColor3 = isDefault
-                and Theme.DefaultButtonPressed
-                or Theme.Surface
-            textBox.TextColor3 = isDefault and Theme.DefaultText or Theme.Text
+                and Theme.buttonPressed
+                or Theme.surface
+            textBox.TextColor3 = isDefault and Theme.text or Theme.text
             textBox.PlaceholderColor3 = isDefault
-                and Theme.DefaultTextMuted
-                or Theme.TextMuted
+                and Theme.textMuted
+                or Theme.textMuted
             local stroke: UIStroke? =
                 textBox:FindFirstChild("StyleStroke") :: UIStroke?
             if stroke then
-                stroke.Color = isDefault and Theme.DefaultOutline or Theme.Outline
+                stroke.Color = isDefault and Theme.outline or Theme.outline
                 stroke.Transparency = isDefault and 0.3 or 0.5
             end
         end
@@ -1509,10 +3358,16 @@ local ToastContainer: Frame = (create("Frame", {
     AnchorPoint = Vector2.new(1, 1),
     BackgroundTransparency = 1,
     BorderSizePixel = 0,
-    Position = UDim2.new(1, -18, 1, -18),
-    Size = UDim2.fromOffset(340, 300),
+    Position = UDim2.new(1, -12, 1, -12),
+    Size = UDim2.fromOffset(state.layout.compact and 220 or 300, 300),
     ZIndex = 300,
 }) :: any) :: Frame
+
+-- Toasts are a screen-level element, so they follow the viewport rather than
+-- the shell: a 300px stack would cover most of a phone.
+state.onLayout(function(metrics: LayoutMetrics): ()
+    ToastContainer.Size = UDim2.fromOffset(metrics.compact and 220 or 300, 300)
+end)
 
 create("UIListLayout", {
     Parent = ToastContainer,
@@ -1527,48 +3382,44 @@ local toastSequence: number = 0
 
 local function notify(message: any): ()
     local text: string = tostring(message)
-    print("[Random Testing Menu] " .. text)
+    print("[" .. PRODUCT.name .. "] " .. text)
     toastSequence += 1
 
     local toast: CanvasGroup = Instance.new("CanvasGroup")
     toast.Name = "Toast"
     toast.AutomaticSize = Enum.AutomaticSize.Y
     toast.BackgroundColor3 = state.guiStyle == "Default"
-        and Theme.DefaultSurface
-        or Theme.SurfaceRaised
+        and Theme.surface
+        or Theme.surfaceRaised
     toast.BackgroundTransparency = state.guiStyle == "Default" and 0.12 or 0.04
     toast.BorderSizePixel = 0
     toast.GroupTransparency = 1
     toast.LayoutOrder = toastSequence
-    toast.Size = UDim2.new(1, 0, 0, 56)
+    toast.Size = UDim2.new(1, 0, 0, state.layout.compact and 46 or 50)
     toast.ZIndex = 301
     toast.Parent = ToastContainer
 
     create("UICorner", {
         Parent = toast,
-        CornerRadius = cornerRadius(9),
+        CornerRadius = cornerRadius(UI_RADIUS.panel),
     })
     create("UIStroke", {
         Parent = toast,
         Color = state.guiStyle == "Default"
-            and Theme.DefaultOutline
-            or Theme.Outline,
+            and Theme.outline
+            or Theme.outline,
         Transparency = state.guiStyle == "Default" and 0.42 or 0.22,
         Thickness = 1,
     })
-    local accent: Frame = (create("Frame", {
+    local _accent: Frame = (create("Frame", {
         Parent = toast,
         BackgroundColor3 = state.guiStyle == "Default"
-            and Theme.DefaultAccent
-            or Theme.Accent,
+            and Theme.accent
+            or Theme.accent,
         BorderSizePixel = 0,
         Size = UDim2.new(0, 4, 1, 0),
         ZIndex = 302,
     }) :: any) :: Frame
-    create("UICorner", {
-        Parent = accent,
-        CornerRadius = UDim.new(1, 0),
-    })
 
     local label: TextLabel = (makeTextLabel(toast, text, 12) :: any)
         :: TextLabel
@@ -1576,8 +3427,8 @@ local function notify(message: any): ()
     label.Position = UDim2.fromOffset(16, 10)
     label.Size = UDim2.new(1, -28, 0, 36)
     label.TextColor3 = state.guiStyle == "Default"
-        and Theme.DefaultText
-        or Theme.Text
+        and Theme.text
+        or Theme.text
     label.TextWrapped = true
     label.ZIndex = 303
 
@@ -1605,1599 +3456,91 @@ local function notify(message: any): ()
         end)
     end)
 end
-local initialCamera: Camera? = workspace.CurrentCamera
-local initialViewport: Vector2 = initialCamera
-    and initialCamera.ViewportSize
-    or Vector2.new(1280, 720)
 
-local function calculateWindowSize(viewport: Vector2): Vector2
-    if state.isMobile then
-        return Vector2.new(
-            math.max(280, math.min(viewport.X - 8, math.round(viewport.X * 0.96))),
-            math.max(320, math.min(viewport.Y - 8, math.round(viewport.Y * 0.88)))
-        )
-    end
-    local widthRatio: number = 0.6
-    local availableWidth: number = math.min(
-        1120,
-        viewport.X * widthRatio,
-        math.max(420, viewport.X - 36)
-    )
-    local availableHeight: number = math.min(
-        700,
-        viewport.Y * 0.82,
-        math.max(360, viewport.Y - 36)
-    )
-    local aspectRatio: number = viewport.X >= 1200 and 1.6 or 1.35
-    local width: number = math.min(availableWidth, availableHeight * aspectRatio)
-    local height: number = width / aspectRatio
-    return Vector2.new(math.round(width), math.round(height))
-end
 
--- Falling hail rendered over the blur.
---
--- The layer sits between the game and the menu window (ZIndex 0, below the
--- Main frame's default 1) and covers the whole screen, so stones fall from the
--- very top edge down past the bottom. It is driven entirely by the blur
--- controller through `state.registerBlurDecoration`, which means it can never
--- outlive the blur: closing the menu, disabling Blur mode or tearing the menu
--- down all stop it and hide it, exactly like the blur itself.
-do
-local HAIL_STONE_COUNT: number = state.isMobile and 34 or 54
-local HAIL_COLOR: Color3 = Color3.fromRGB(228, 231, 238)
 
-type HailStone = {
-    frame: Frame,
-    x: number,
-    y: number,
-    fallSpeed: number,
-    driftSpeed: number,
-    swayAmount: number,
-    swayRate: number,
-    swayPhase: number,
-    length: number,
-}
-
-local HailLayer: CanvasGroup = (create("CanvasGroup", {
+-- The ClickGUI has no central window. Cards are created in a hidden bin and
+-- immediately moved into their category window by ClickGui.place.
+local CardBin: Frame = (create("Frame", {
     Parent = ScreenGui,
-    Name = "BlurHail",
-    Active = false,
+    Name = "CardBin",
     BackgroundTransparency = 1,
     BorderSizePixel = 0,
-    ClipsDescendants = true,
-    GroupTransparency = 1,
-    Position = UDim2.fromScale(0, 0),
     Size = UDim2.fromScale(1, 1),
     Visible = false,
-    ZIndex = 0,
-}) :: any) :: CanvasGroup
-
-local hailRandom: Random = Random.new(os.clock() * 1000)
-local hailStones: {HailStone} = {}
-
-local function currentViewport(): Vector2
-    local camera: Camera? = workspace.CurrentCamera
-    local viewport: Vector2 = camera
-        and camera.ViewportSize
-        or Vector2.new(1280, 720)
-    return Vector2.new(
-        math.max(viewport.X, 320),
-        math.max(viewport.Y, 240)
-    )
-end
-
--- `fromTop` seeds a stone just above the screen (used while falling);
--- otherwise the stone is scattered anywhere down the screen, which is what
--- makes the very first frame after opening the menu look like the hail has
--- already been going rather than a single synchronised wave.
-local function respawnStone(
-    stone: HailStone,
-    viewport: Vector2,
-    fromTop: boolean
-): ()
-    local thickness: number = hailRandom:NextNumber(2, 3.4)
-    stone.length = hailRandom:NextNumber(7, 18)
-    stone.fallSpeed = hailRandom:NextNumber(320, 680)
-    stone.driftSpeed = hailRandom:NextNumber(-46, -12)
-    stone.swayAmount = hailRandom:NextNumber(2, 9)
-    stone.swayRate = hailRandom:NextNumber(0.7, 2.1)
-    stone.swayPhase = hailRandom:NextNumber(0, math.pi * 2)
-    stone.x = hailRandom:NextNumber(-40, viewport.X + 40)
-    stone.y = fromTop
-        and hailRandom:NextNumber(-viewport.Y * 0.4, -stone.length)
-        or hailRandom:NextNumber(-stone.length, viewport.Y)
-
-    stone.frame.Size = UDim2.fromOffset(
-        math.round(thickness),
-        math.round(stone.length)
-    )
-    -- Faster stones are drawn slightly brighter and leaning a touch further
-    -- into the wind, which reads as depth without needing more particles.
-    local depth: number = (stone.fallSpeed - 320) / 360
-    stone.frame.BackgroundTransparency = 0.62 - depth * 0.34
-    stone.frame.Rotation = -6 - depth * 5
-end
-
-for index: number = 1, HAIL_STONE_COUNT do
-    local frame: Frame = (create("Frame", {
-        Parent = HailLayer,
-        Name = "Stone" .. tostring(index),
-        AnchorPoint = Vector2.new(0.5, 1),
-        BackgroundColor3 = HAIL_COLOR,
-        BorderSizePixel = 0,
-        Size = UDim2.fromOffset(3, 12),
-        ZIndex = 1,
-    }) :: any) :: Frame
-    create("UICorner", {Parent = frame, CornerRadius = UDim.new(1, 0)})
-
-    local stone: HailStone = {
-        frame = frame,
-        x = 0,
-        y = 0,
-        fallSpeed = 0,
-        driftSpeed = 0,
-        swayAmount = 0,
-        swayRate = 1,
-        swayPhase = 0,
-        length = 12,
-    }
-    respawnStone(stone, currentViewport(), false)
-    hailStones[index] = stone
-end
-
-local hailConnection: RBXScriptConnection? = nil
-local hailFadeTween: Tween? = nil
-local hailRunning: boolean = false
-local hailRequested: boolean = false
-local hailElapsed: number = 0
-
-local function drawStone(stone: HailStone): ()
-    stone.frame.Position = UDim2.fromOffset(
-        math.round(
-            stone.x
-                + math.sin(hailElapsed * stone.swayRate + stone.swayPhase)
-                    * stone.swayAmount
-        ),
-        math.round(stone.y)
-    )
-end
-
-local function stepHail(deltaTime: number): ()
-    -- Guard against the huge delta a background//frozen client produces, which
-    -- would otherwise teleport every stone off screen at once.
-    local step: number = math.min(deltaTime, 1 / 20)
-    hailElapsed += step
-    local viewport: Vector2 = currentViewport()
-    for _, stone: HailStone in ipairs(hailStones) do
-        stone.y += stone.fallSpeed * step
-        stone.x += stone.driftSpeed * step
-        if stone.y - stone.length > viewport.Y
-            or stone.x < -80
-            or stone.x > viewport.X + 80 then
-            respawnStone(stone, viewport, true)
-        end
-        drawStone(stone)
-    end
-end
-
-local function disconnectHail(): ()
-    if hailConnection then
-        hailConnection:Disconnect()
-        hailConnection = nil
-    end
-end
-
-local function cancelHailFade(): ()
-    if hailFadeTween then
-        hailFadeTween:Cancel()
-        hailFadeTween = nil
-    end
-end
-
-local function applyHail(): ()
-    -- Hail is motion, so it follows the "Animations" setting as well as the
-    -- blur: with motion off the layer stays completely inert.
-    local shouldRun: boolean = hailRequested
-        and state.animationsEnabled ~= false
-    if shouldRun == hailRunning then
-        return
-    end
-    hailRunning = shouldRun
-    cancelHailFade()
-
-    if not HailLayer.Parent then
-        disconnectHail()
-        return
-    end
-
-    if shouldRun then
-        local viewport: Vector2 = currentViewport()
-        for _, stone: HailStone in ipairs(hailStones) do
-            respawnStone(stone, viewport, false)
-            drawStone(stone)
-        end
-        HailLayer.Visible = true
-        disconnectHail()
-        hailConnection = RunService.RenderStepped:Connect(stepHail)
-        local fadeIn: Tween = TweenService:Create(
-            HailLayer,
-            TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-            {GroupTransparency = 0}
-        )
-        hailFadeTween = fadeIn
-        fadeIn.Completed:Once(function(): ()
-            if hailFadeTween == fadeIn then
-                hailFadeTween = nil
-            end
-        end)
-        fadeIn:Play()
-        return
-    end
-
-    if state.animationsEnabled == false then
-        disconnectHail()
-        HailLayer.GroupTransparency = 1
-        HailLayer.Visible = false
-        return
-    end
-
-    local fadeOut: Tween = TweenService:Create(
-        HailLayer,
-        TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-        {GroupTransparency = 1}
-    )
-    hailFadeTween = fadeOut
-    fadeOut.Completed:Once(function(): ()
-        if hailFadeTween == fadeOut then
-            hailFadeTween = nil
-        end
-        -- A newer activation may have won the race while this faded out.
-        if hailRunning then
-            return
-        end
-        disconnectHail()
-        if HailLayer.Parent then
-            HailLayer.GroupTransparency = 1
-            HailLayer.Visible = false
-        end
-    end)
-    fadeOut:Play()
-end
-
-state.registerBlurDecoration(function(active: boolean): ()
-    hailRequested = active
-    applyHail()
-end)
-
--- Called by the Animations setting so toggling motion takes effect without
--- having to close and reopen the menu.
-state.refreshBlurDecoration = applyHail
-
--- Hard stop used during teardown: no tweens, no pending callbacks.
-state.destroyBlurDecoration = function(): ()
-    hailRequested = false
-    hailRunning = false
-    cancelHailFade()
-    disconnectHail()
-    if HailLayer.Parent then
-        HailLayer.Visible = false
-        HailLayer:Destroy()
-    end
-end
-end
-
-local initialWindowSize: Vector2 = calculateWindowSize(initialViewport)
-
-local Main: Frame = (create("Frame", {
-    Parent = ScreenGui,
-    Name = "Main",
-    Active = true,
-    BackgroundColor3 = Theme.DefaultBackground,
-    BorderSizePixel = 0,
-    ClipsDescendants = true,
-    Position = UDim2.fromOffset(0, 0),
-    Size = UDim2.fromOffset(initialWindowSize.X, initialWindowSize.Y),
 }) :: any) :: Frame
 
--- Publish the window so the shared visibility controller defined above can
--- drive it without depending on later initialization order.
-state.mainFrame = Main
-Main.Visible = state.visible
+-- Compatibility shims: old pages used one scrolling frame per game. The
+-- ClickGUI has no pages, so every card starts in CardBin and is moved into a
+-- category window. Game modules still name a parent, so these aliases keep
+-- them working until they are migrated to CreateModule.
+state.universalScroll = CardBin
+state.trsScroll = CardBin
+state.vdScroll = CardBin
+state.mvsdScroll = CardBin
+state.bedFightScroll = CardBin
+state.spoofScroll = CardBin
 
-do
--- The window carries no visible outline: the drag surface is a fully
--- transparent strip (see DefaultDragZone) and the only chrome is the rounded
--- shell itself. `MainStroke` is kept on `state` for restyle compatibility,
--- but always stays fully transparent so no grey border ever frames the menu.
-local _MainCorner: UICorner, MainStroke: UIStroke = addRoundedStyle(Main, 22, 1)
-MainStroke.Thickness = 1
-MainStroke.Color = Theme.DefaultOutline
-MainStroke.Transparency = 1
-state.mainStroke = MainStroke
-end
-
-local Content: Frame = nil :: any
-local DefaultDragZone: Frame = nil :: any
-
-local function centerMain(): ()
-    local camera: Camera? = workspace.CurrentCamera
-    local viewport: Vector2 = camera
-        and camera.ViewportSize
-        or Vector2.new(1280, 720)
-    local size: Vector2 = Main.AbsoluteSize
-
-    local savedPosition: any = configData.ui.windowPosition
-    if type(savedPosition) == "table" then
-        Main.Position = UDim2.fromOffset(
-            math.clamp(tonumber(savedPosition[1]) or 0, 0, math.max(0, viewport.X - size.X)),
-            math.clamp(tonumber(savedPosition[2]) or 0, 0, math.max(0, viewport.Y - size.Y))
-        )
-    else
-        Main.Position = UDim2.fromOffset(
-            math.floor((viewport.X - size.X) / 2),
-            math.floor((viewport.Y - size.Y) / 2)
-        )
-    end
-end
-
-task.defer(centerMain)
-
-do
-local sidebarWidth: number = state.isMobile and 112 or 172
-local DefaultShell: Frame = create("Frame", {
-    Parent = Main,
-    Name = "DefaultShell",
-    BackgroundColor3 = Theme.DefaultBackground,
-    BorderSizePixel = 0,
-    Size = UDim2.fromScale(1, 1),
-    Visible = true,
-    ZIndex = 2,
-}) :: Frame
-DefaultShell.ClipsDescendants = true
-create("UICorner", {
-    Parent = DefaultShell,
-    CornerRadius = cornerRadius(22),
-})
-
-local DefaultSidebar: Frame = create("Frame", {
-    Parent = DefaultShell,
-    Name = "DefaultSidebar",
-    Active = true,
-    BackgroundColor3 = Theme.DefaultSidebar,
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    Size = UDim2.new(0, sidebarWidth, 1, 0),
-    ZIndex = 10,
-}) :: Frame
-create("UICorner", {
-    Parent = DefaultSidebar,
-    CornerRadius = cornerRadius(22),
-})
-local SidebarAtmosphere: Frame = create("Frame", {
-    Parent = DefaultShell,
-    Name = "SidebarAtmosphere",
-    BackgroundColor3 = Theme.DefaultBackground,
-    BorderSizePixel = 0,
-    Size = UDim2.new(0, sidebarWidth + 72, 1, 0),
-    ZIndex = 5,
-}) :: Frame
-create("UIGradient", {
-    Parent = SidebarAtmosphere,
-    Rotation = 0,
-    Transparency = NumberSequence.new({
-        NumberSequenceKeypoint.new(0, 0.18),
-        NumberSequenceKeypoint.new(0.64, 0.36),
-        NumberSequenceKeypoint.new(1, 1),
-    }),
-})
-
-local DefaultTabs: Frame = create("Frame", {
-    Parent = DefaultSidebar,
-    Name = "DefaultNavigation",
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    Position = UDim2.fromOffset(0, 64),
-    Size = UDim2.new(1, 0, 1, -76),
-    ZIndex = 11,
-}) :: Frame
-create("UIListLayout", {
-    Parent = DefaultTabs,
-    FillDirection = Enum.FillDirection.Vertical,
-    HorizontalAlignment = Enum.HorizontalAlignment.Left,
-    Padding = UDim.new(0, 4),
-    SortOrder = Enum.SortOrder.LayoutOrder,
-})
-create("UIPadding", {
-    Parent = DefaultTabs,
-    PaddingLeft = UDim.new(0, 10),
-    PaddingRight = UDim.new(0, 10),
-    PaddingTop = UDim.new(0, 8),
-})
-
-local DefaultContentHost: Frame = create("Frame", {
-    Parent = DefaultShell,
-    Name = "DefaultContentHost",
-    BackgroundColor3 = Theme.DefaultBackground,
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    Position = UDim2.fromOffset(sidebarWidth, 0),
-    Size = UDim2.new(1, -sidebarWidth, 1, 0),
-    ZIndex = 20,
-}) :: Frame
-DefaultContentHost.ClipsDescendants = true
-create("UICorner", {
-    Parent = DefaultContentHost,
-    CornerRadius = cornerRadius(22),
-})
-create("Frame", {
-    Parent = DefaultShell,
-    Name = "DefaultReadabilityLayer",
-    BackgroundColor3 = Theme.DefaultBackground,
-    BackgroundTransparency = 0.58,
-    BorderSizePixel = 0,
-    Size = UDim2.fromScale(1, 1),
-    ZIndex = 2,
-})
-
-Content = create("Frame", {
-    Parent = DefaultContentHost,
-    Name = "SharedPageHost",
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    Size = UDim2.fromScale(1, 1),
-    ZIndex = 21,
-}) :: Frame
-Content.ClipsDescendants = true
-
--- The whole top edge is an invisible drag surface. It renders nothing (fully
--- transparent, no border, no stroke) so the menu can be moved without any
--- visible grey strip or corner handle; the rounded shell is the only chrome.
--- It sits above the search field so the first ~14px of the window always
--- grabs the window instead of a control underneath.
-DefaultDragZone = create("Frame", {
-    Parent = DefaultShell,
-    Name = "DefaultDragStrip",
-    Active = true,
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    Size = UDim2.new(1, 0, 0, 14),
-    ZIndex = 30,
-}) :: Frame
-
-state.shells = {
-    default = DefaultShell,
-    defaultTabs = DefaultTabs,
-    defaultContentHost = DefaultContentHost,
-    defaultSidebar = DefaultSidebar,
-}
-end
-
-local function setTab(tabName: string): ()
-    state.activeTab = tabName
-
-    for name, page in pairs(pages) do
-        local selectedPage: boolean = name == tabName
-        page.Visible = selectedPage
-    end
-
-    for name: string, button: TextButton in pairs(defaultTabButtons) do
-        local selected: boolean = name == tabName
-        button:SetAttribute("Selected", selected)
-        button.BackgroundColor3 = selected
-            and Theme.DefaultSurface
-            or Theme.DefaultSidebar
-        button.BackgroundTransparency = selected and 0.34 or 1
-        button.TextColor3 = selected and Theme.DefaultText or Theme.DefaultTextMuted
-        local tabStroke: UIStroke? = button:FindFirstChild("StyleStroke") :: UIStroke?
-        if tabStroke then
-            tabStroke.Color = Theme.DefaultOutline
-            tabStroke.Transparency = selected and 0.78 or 1
-        end
-    end
-end
-
-local function createTab(tabName: string, layoutOrder: number): Frame
-    local defaultLabel: string = tabName == "Config." and "Settings" or tabName
-    local defaultButton: TextButton = makeButton(
-        state.shells.defaultTabs,
-        defaultLabel,
-        state.isMobile and 11 or 13
-    )
-    defaultButton.Name = tabName .. "DefaultTab"
-    defaultButton.LayoutOrder = layoutOrder
-    defaultButton.Size = UDim2.new(1, 0, 0, state.isMobile and 38 or 42)
-    defaultButton.BackgroundColor3 = Theme.DefaultSidebar
-    defaultButton.BackgroundTransparency = 1
-    defaultButton.TextColor3 = Theme.DefaultTextMuted
-    defaultButton.TextXAlignment = Enum.TextXAlignment.Left
-    defaultButton.ZIndex = 12
-    defaultButton:SetAttribute("ThemeRole", "Navigation")
-    defaultButton:SetAttribute("SelectedColor", Theme.DefaultSurface)
-    defaultButton:SetAttribute("IdleColor", Theme.DefaultSidebar)
-    defaultButton:SetAttribute("HoverColor", Theme.DefaultSurfaceHover)
-    local defaultPadding: UIPadding = create("UIPadding", {
-        Parent = defaultButton,
-        PaddingLeft = UDim.new(0, 14),
-        PaddingRight = UDim.new(0, 10),
-    }) :: UIPadding
-    defaultPadding.Name = "DefaultTabPadding"
-    defaultTabButtons[tabName] = defaultButton
-
-    local page: Frame = create("Frame", {
-        Parent = Content,
-        Name = tabName .. "Page",
-        BackgroundColor3 = Theme.Background,
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        Size = UDim2.fromScale(1, 1),
-        Visible = false,
-        ZIndex = 22,
-    })
-    page.ClipsDescendants = true
-    create("UICorner", {
-        Parent = page,
-        CornerRadius = cornerRadius(22),
-    })
-    pages[tabName] = page
-
-    trackUiConnection(defaultButton.MouseButton1Click:Connect(function(): ()
-        setTab(tabName)
-    end))
-
-    return page
-end
-
-local UniversalPage = createTab("Universal", 1)
-local MovementPage = createTab("Movement", 2)
-local MM2Page = createTab("MM2", 3)
-createTab("TRS", 4)
-createTab("VD", 5)
-createTab("MVSD", 6)
-local SettingsPage = createTab("Config.", 7)
-local function configureGameTabs(): ()
-    defaultTabButtons.MM2.Visible = GAME_CHECK.MM2Active
-    defaultTabButtons.TRS.Visible = GAME_CHECK.TRSActive
-    defaultTabButtons.VD.Visible = GAME_CHECK.VDActive
-    defaultTabButtons.MVSD.Visible = GAME_CHECK.MVSDActive
-
-    for _, button: TextButton in pairs(defaultTabButtons) do
-        if button.Visible then
-            button.Size = UDim2.new(1, 0, 0, state.isMobile and 38 or 42)
-        end
-    end
-end
-
-configureGameTabs()
-
-do
-local DefaultSearchBox: TextBox = makeTextBox(state.shells.defaultSidebar, "")
-DefaultSearchBox.Name = "DefaultSearch"
-DefaultSearchBox.PlaceholderText = "Search"
-DefaultSearchBox.Position = UDim2.fromOffset(12, 16)
-DefaultSearchBox.Size = UDim2.new(1, -24, 0, 40)
-DefaultSearchBox.BackgroundColor3 = Theme.DefaultSurface
-DefaultSearchBox.BackgroundTransparency = 0.38
-DefaultSearchBox.TextColor3 = Theme.DefaultText
-DefaultSearchBox.PlaceholderColor3 = Theme.DefaultTextMuted:Lerp(
-    Theme.DefaultSurface,
-    0.42
-)
-DefaultSearchBox.TextXAlignment = Enum.TextXAlignment.Left
-DefaultSearchBox.TextYAlignment = Enum.TextYAlignment.Center
-DefaultSearchBox.ZIndex = 14
-create("UIPadding", {
-    Parent = DefaultSearchBox,
-    PaddingLeft = UDim.new(0, 14),
-    PaddingRight = UDim.new(0, 36),
-})
-local DefaultSearchCorner: UICorner? =
-    DefaultSearchBox:FindFirstChild("StyleCorner") :: UICorner?
-if DefaultSearchCorner then
-    DefaultSearchCorner.CornerRadius = cornerRadius(12)
-end
-local DefaultSearchStroke: UIStroke? =
-    DefaultSearchBox:FindFirstChild("StyleStroke") :: UIStroke?
-if DefaultSearchStroke then
-    DefaultSearchStroke.Color = Theme.DefaultOutline
-    DefaultSearchStroke.Transparency = 0.72
-end
-local SearchClear: TextButton = makeButton(DefaultSearchBox, "x", 9)
-SearchClear.Name = "ClearSearch"
-SearchClear.AnchorPoint = Vector2.new(1, 0.5)
-SearchClear.BackgroundTransparency = 1
-SearchClear.Position = UDim2.new(1, -6, 0.5, 0)
-SearchClear.Size = UDim2.fromOffset(28, 28)
-SearchClear.TextTransparency = 0.45
-SearchClear.Visible = false
-SearchClear.ZIndex = 16
-SearchClear:SetAttribute("ThemeRole", "Icon")
-local SearchClearStroke: UIStroke? =
-    SearchClear:FindFirstChild("StyleStroke") :: UIStroke?
-if SearchClearStroke then
-    SearchClearStroke.Enabled = false
-end
-trackUiConnection(SearchClear.MouseButton1Click:Connect(function(): ()
-    DefaultSearchBox.Text = ""
-    DefaultSearchBox:ReleaseFocus()
-end))
-trackUiConnection(DefaultSearchBox.Focused:Connect(function(): ()
-    if DefaultSearchStroke then
-        TweenService:Create(DefaultSearchStroke, TweenInfo.new(0.16), {
-            Transparency = 0.32,
-        }):Play()
-    end
-end))
-trackUiConnection(DefaultSearchBox.FocusLost:Connect(function(): ()
-    if DefaultSearchStroke then
-        TweenService:Create(DefaultSearchStroke, TweenInfo.new(0.16), {
-            Transparency = 0.72,
-        }):Play()
-    end
-end))
-state.shells.defaultSearchBox = DefaultSearchBox
-state.shells.searchClear = SearchClear
-state.searchQuery = ""
-end
-
-local UniversalScroll = create("ScrollingFrame", {
-    Parent = UniversalPage,
-    Name = "UniversalScroll",
-    Active = true,
-    AutomaticCanvasSize = Enum.AutomaticSize.Y,
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    CanvasSize = UDim2.fromOffset(0, 0),
-    ScrollBarImageColor3 = Theme.DefaultOutline,
-    ScrollBarThickness = 6,
-    ScrollingDirection = Enum.ScrollingDirection.Y,
-    Size = UDim2.fromScale(1, 1),
-})
-
-create("UIPadding", {
-    Parent = UniversalScroll,
-    PaddingBottom = UDim.new(0, 18),
-    PaddingLeft = UDim.new(0, 18),
-    PaddingRight = UDim.new(0, 18),
-    PaddingTop = UDim.new(0, 18),
-})
-
-create("UIListLayout", {
-    Parent = UniversalScroll,
-    FillDirection = Enum.FillDirection.Vertical,
-    HorizontalAlignment = Enum.HorizontalAlignment.Center,
-    Padding = UDim.new(0, 9),
-    SortOrder = Enum.SortOrder.LayoutOrder,
-})
-
-state.trsScroll = create("ScrollingFrame", {
-    Parent = pages.TRS,
-    Name = "TRSScroll",
-    Active = true,
-    AutomaticCanvasSize = Enum.AutomaticSize.Y,
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    CanvasSize = UDim2.fromOffset(0, 0),
-    ScrollBarImageColor3 = Theme.DefaultOutline,
-    ScrollBarThickness = 6,
-    ScrollingDirection = Enum.ScrollingDirection.Y,
-    Size = UDim2.fromScale(1, 1),
-})
-
-create("UIPadding", {
-    Parent = state.trsScroll,
-    PaddingBottom = UDim.new(0, 18),
-    PaddingLeft = UDim.new(0, 18),
-    PaddingRight = UDim.new(0, 18),
-    PaddingTop = UDim.new(0, 18),
-})
-
-create("UIListLayout", {
-    Parent = state.trsScroll,
-    FillDirection = Enum.FillDirection.Vertical,
-    HorizontalAlignment = Enum.HorizontalAlignment.Center,
-    Padding = UDim.new(0, 9),
-    SortOrder = Enum.SortOrder.LayoutOrder,
-})
-
-state.vdScroll = create("ScrollingFrame", {
-    Parent = pages.VD,
-    Name = "VDScroll",
-    Active = true,
-    AutomaticCanvasSize = Enum.AutomaticSize.Y,
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    CanvasSize = UDim2.fromOffset(0, 0),
-    ScrollBarImageColor3 = Theme.DefaultOutline,
-    ScrollBarThickness = 6,
-    ScrollingDirection = Enum.ScrollingDirection.Y,
-    Size = UDim2.fromScale(1, 1),
-})
-
-create("UIPadding", {
-    Parent = state.vdScroll,
-    PaddingBottom = UDim.new(0, 18),
-    PaddingLeft = UDim.new(0, 18),
-    PaddingRight = UDim.new(0, 18),
-    PaddingTop = UDim.new(0, 18),
-})
-
-create("UIListLayout", {
-    Parent = state.vdScroll,
-    FillDirection = Enum.FillDirection.Vertical,
-    HorizontalAlignment = Enum.HorizontalAlignment.Center,
-    Padding = UDim.new(0, 9),
-    SortOrder = Enum.SortOrder.LayoutOrder,
-})
-
-state.mvsdScroll = create("ScrollingFrame", {
-    Parent = pages.MVSD,
-    Name = "MVSDScroll",
-    Active = true,
-    AutomaticCanvasSize = Enum.AutomaticSize.Y,
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    CanvasSize = UDim2.fromOffset(0, 0),
-    ScrollBarImageColor3 = Theme.DefaultOutline,
-    ScrollBarThickness = 6,
-    ScrollingDirection = Enum.ScrollingDirection.Y,
-    Size = UDim2.fromScale(1, 1),
-})
-
-create("UIPadding", {
-    Parent = state.mvsdScroll,
-    PaddingBottom = UDim.new(0, 18),
-    PaddingLeft = UDim.new(0, 18),
-    PaddingRight = UDim.new(0, 18),
-    PaddingTop = UDim.new(0, 18),
-})
-
-create("UIListLayout", {
-    Parent = state.mvsdScroll,
-    FillDirection = Enum.FillDirection.Vertical,
-    HorizontalAlignment = Enum.HorizontalAlignment.Center,
-    Padding = UDim.new(0, 9),
-    SortOrder = Enum.SortOrder.LayoutOrder,
-})
-
-do
--- Loading intro.
---
--- The intro is a staged sequence rather than a spinner that vanishes the
--- moment the last module reports in:
---
---   1. the curtain fades up with a slow drifting backdrop glow,
---   2. the wordmark rises into place letter-block by letter-block,
---   3. a ring sweeps while the status line reports each loading stage,
---   4. the progress bar fills, "Ready" is held briefly so it can be read,
---   5. the whole curtain lifts away.
---
--- Steps 1-3 take roughly 1.1s of scripted animation before any narration, so
--- the intro always reads as an intro even when every module loads instantly.
--- A slow load simply keeps stage 3 on screen for longer; nothing here ever
--- delays a slow load further. `state.finishLoadingIntro` may be called at any
--- point, including before the sequence has finished: it records the request
--- and the sequence picks it up at the next stage boundary.
-local LoadingCurtain: CanvasGroup = (create("CanvasGroup", {
-    Parent = Main,
-    Name = "LoadingIntro",
-    Active = true,
-    BackgroundColor3 = state.guiStyle == "Default"
-        and Theme.DefaultBackground
-        or Color3.fromRGB(4, 4, 6),
-    BackgroundTransparency = state.guiStyle == "Default" and 0 or 0.02,
-    BorderSizePixel = 0,
-    -- Fully opaque from frame one: the half-built menu behind it must never
-    -- flash. The stage-1 "fade up" animates the contents, not the curtain.
-    GroupTransparency = 0,
-    Size = UDim2.fromScale(1, 1),
-    ZIndex = 500,
-}) :: any) :: CanvasGroup
-create("UICorner", {
-    Parent = LoadingCurtain,
-    CornerRadius = cornerRadius(10),
-})
-
--- Slow, oversized radial wash behind everything. It is a plain frame with a
--- gradient rather than an image so it costs nothing and needs no asset.
-local LoadingGlow: Frame = create("Frame", {
-    Parent = LoadingCurtain,
-    Name = "Glow",
-    AnchorPoint = Vector2.new(0.5, 0.5),
-    BackgroundColor3 = Color3.fromRGB(150, 150, 158),
-    BackgroundTransparency = 0.86,
-    BorderSizePixel = 0,
-    Position = UDim2.fromScale(0.5, 0.42),
-    Size = UDim2.fromScale(1.4, 0.9),
-    ZIndex = 501,
-}) :: Frame
-create("UIGradient", {
-    Parent = LoadingGlow,
-    Rotation = 12,
-    Transparency = NumberSequence.new({
-        NumberSequenceKeypoint.new(0, 1),
-        NumberSequenceKeypoint.new(0.5, 0.34),
-        NumberSequenceKeypoint.new(1, 1),
-    }),
-})
--- Breathing loop. Only the size pulses: transparency is owned by the stage-1
--- fade-in, and two tweens fighting over one property would stutter.
-local LoadingGlowTween: Tween = TweenService:Create(
-    LoadingGlow,
-    TweenInfo.new(
-        4.2,
-        Enum.EasingStyle.Sine,
-        Enum.EasingDirection.InOut,
-        -1,
-        true
-    ),
-    {Size = UDim2.fromScale(1.8, 1.15)}
-)
-LoadingGlowTween:Play()
-
-local LoadingSpinner: Frame = create("Frame", {
-    Parent = LoadingCurtain,
-    Name = "Spinner",
-    AnchorPoint = Vector2.new(0.5, 0.5),
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    Position = UDim2.fromScale(0.5, 0.33),
-    Size = UDim2.fromOffset(state.isMobile and 40 or 46, state.isMobile and 40 or 46),
-    ZIndex = 503,
-}) :: Frame
-create("UICorner", {Parent = LoadingSpinner, CornerRadius = UDim.new(1, 0)})
-create("UIStroke", {
-    Parent = LoadingSpinner,
-    Color = Theme.DefaultOutline,
-    Transparency = 0.55,
-    Thickness = 3,
-})
-local LoadingSpinnerHead: Frame = create("Frame", {
-    Parent = LoadingSpinner,
-    AnchorPoint = Vector2.new(0.5, 0),
-    BackgroundColor3 = state.guiStyle == "Default"
-        and Theme.DefaultAccent
-        or Color3.fromRGB(224, 224, 228),
-    BorderSizePixel = 0,
-    Position = UDim2.new(0.5, 0, 0, 2),
-    Size = UDim2.fromOffset(6, 6),
-    ZIndex = 504,
-}) :: Frame
-create("UICorner", {Parent = LoadingSpinnerHead, CornerRadius = UDim.new(1, 0)})
-
--- Second, slower counter-rotating ring. Two rings at different speeds read as
--- a deliberate loading animation instead of a default busy indicator.
-local LoadingSpinnerOuter: Frame = create("Frame", {
-    Parent = LoadingCurtain,
-    Name = "SpinnerOuter",
-    AnchorPoint = Vector2.new(0.5, 0.5),
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    Position = UDim2.fromScale(0.5, 0.33),
-    Size = UDim2.fromOffset(state.isMobile and 62 or 70, state.isMobile and 62 or 70),
-    ZIndex = 502,
-}) :: Frame
-create("UICorner", {Parent = LoadingSpinnerOuter, CornerRadius = UDim.new(1, 0)})
-create("UIStroke", {
-    Parent = LoadingSpinnerOuter,
-    Color = Theme.DefaultOutline,
-    Transparency = 0.84,
-    Thickness = 1,
-})
-local LoadingSpinnerOuterHead: Frame = create("Frame", {
-    Parent = LoadingSpinnerOuter,
-    AnchorPoint = Vector2.new(0.5, 0),
-    BackgroundColor3 = Color3.fromRGB(190, 190, 198),
-    BackgroundTransparency = 0.35,
-    BorderSizePixel = 0,
-    Position = UDim2.new(0.5, 0, 0, 1),
-    Size = UDim2.fromOffset(4, 4),
-    ZIndex = 503,
-}) :: Frame
-create("UICorner", {
-    Parent = LoadingSpinnerOuterHead,
-    CornerRadius = UDim.new(1, 0),
-})
-
-local LoadingSpinnerTween: Tween = TweenService:Create(
-    LoadingSpinner,
-    TweenInfo.new(
-        1.05,
-        Enum.EasingStyle.Linear,
-        Enum.EasingDirection.InOut,
-        -1
-    ),
-    {Rotation = 360}
-)
-LoadingSpinnerTween:Play()
-local LoadingSpinnerOuterTween: Tween = TweenService:Create(
-    LoadingSpinnerOuter,
-    TweenInfo.new(
-        2.6,
-        Enum.EasingStyle.Linear,
-        Enum.EasingDirection.InOut,
-        -1
-    ),
-    {Rotation = -360}
-)
-LoadingSpinnerOuterTween:Play()
-
-local LoadingTitle: TextLabel = makeTextLabel(
-    LoadingCurtain,
-    "A Random Menu",
-    state.isMobile and 28 or 34
-) :: TextLabel
-LoadingTitle.AnchorPoint = Vector2.new(0.5, 0.5)
-LoadingTitle.FontFace = DISPLAY_FONT
-LoadingTitle.Position = UDim2.fromScale(0.5, 0.55)
-LoadingTitle.Size = UDim2.new(0.8, 0, 0, 48)
-LoadingTitle.TextColor3 = state.guiStyle == "Default"
-    and Theme.DefaultText
-    or Theme.Text
-LoadingTitle.TextTransparency = 1
-LoadingTitle.TextXAlignment = Enum.TextXAlignment.Center
-LoadingTitle.ZIndex = 503
-
--- Hairline underline that draws itself out from the centre beneath the
--- wordmark once the wordmark itself has settled.
-local LoadingTitleRule: Frame = create("Frame", {
-    Parent = LoadingCurtain,
-    Name = "TitleRule",
-    AnchorPoint = Vector2.new(0.5, 0.5),
-    BackgroundColor3 = Color3.fromRGB(200, 200, 208),
-    BackgroundTransparency = 0.55,
-    BorderSizePixel = 0,
-    Position = UDim2.fromScale(0.5, 0.615),
-    Size = UDim2.fromOffset(0, 1),
-    ZIndex = 503,
-}) :: Frame
-
-local LoadingLabel: TextLabel = (makeTextLabel(
-    LoadingCurtain,
-    "Starting up",
-    12
-) :: any) :: TextLabel
-LoadingLabel.AnchorPoint = Vector2.new(0.5, 0)
-LoadingLabel.FontFace = THIN_FONT
-LoadingLabel.Position = UDim2.fromScale(0.5, 0.655)
-LoadingLabel.Size = UDim2.new(0.72, 0, 0, 28)
-LoadingLabel.TextColor3 = state.guiStyle == "Default"
-    and Theme.DefaultTextMuted
-    or Theme.TextMuted
-LoadingLabel.TextTransparency = 1
-LoadingLabel.TextXAlignment = Enum.TextXAlignment.Center
-LoadingLabel.ZIndex = 503
-state.loadingLabel = LoadingLabel
-bootstrapStatusLabel = LoadingLabel
-
-local LoadingTrack: Frame = create("Frame", {
-    Parent = LoadingCurtain,
-    Name = "ProgressTrack",
-    AnchorPoint = Vector2.new(0.5, 0),
-    BackgroundColor3 = state.guiStyle == "Default"
-        and Theme.DefaultSurface
-        or Color3.fromRGB(40, 40, 46),
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    Position = UDim2.fromScale(0.5, 0.725),
-    Size = UDim2.new(0.48, 0, 0, 3),
-    ZIndex = 503,
-}) :: Frame
-create("UICorner", {Parent = LoadingTrack, CornerRadius = UDim.new(1, 0)})
-local LoadingProgressFill: Frame = create("Frame", {
-    Parent = LoadingTrack,
-    Name = "Progress",
-    BackgroundColor3 = state.guiStyle == "Default"
-        and Theme.DefaultAccent
-        or Theme.Accent,
-    BorderSizePixel = 0,
-    Size = UDim2.fromScale(0, 1),
-    ZIndex = 504,
-}) :: Frame
-create("UICorner", {Parent = LoadingProgressFill, CornerRadius = UDim.new(1, 0)})
-state.loadingProgressFill = LoadingProgressFill
-
-local LoadingBuildLabel: TextLabel = (makeTextLabel(
-    LoadingCurtain,
-    RUNTIME_BUILD_LABEL,
-    10
-) :: any) :: TextLabel
-LoadingBuildLabel.Name = "BuildLabel"
-LoadingBuildLabel.AnchorPoint = Vector2.new(0.5, 1)
-LoadingBuildLabel.FontFace = THIN_FONT
-LoadingBuildLabel.Position = UDim2.new(0.5, 0, 1, -14)
-LoadingBuildLabel.Size = UDim2.new(0.6, 0, 0, 18)
-LoadingBuildLabel.TextColor3 = Theme.DefaultTextMuted
-LoadingBuildLabel.TextTransparency = 1
-LoadingBuildLabel.TextXAlignment = Enum.TextXAlignment.Center
-LoadingBuildLabel.ZIndex = 503
-
--- Sequencing state.
---
--- `introStageReached` is how far the scripted sequence has progressed;
--- `finishRequested` records that loading completed. The exit only runs once
--- both "the sequence reached its last stage" and "loading finished" hold.
-local loadingIntroFinished: boolean = false
-local finishRequested: boolean = false
-local finishFailureCount: number = 0
-local introSequenceDone: boolean = false
-local exitStarted: boolean = false
-
-local function fadeText(label: TextLabel, target: number, duration: number): ()
-    TweenService:Create(
-        label,
-        TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-        {TextTransparency = target}
-    ):Play()
-end
-
-local function runExit(): ()
-    if exitStarted or not LoadingCurtain.Parent then
-        return
-    end
-    exitStarted = true
-
-    if finishFailureCount > 0 then
-        LoadingLabel.Text = tostring(finishFailureCount)
-            .. " module(s) loaded with warnings"
-    else
-        LoadingLabel.Text = "Ready"
-    end
-    TweenService:Create(
-        LoadingProgressFill,
-        TweenInfo.new(0.24, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-        {Size = UDim2.fromScale(1, 1)}
-    ):Play()
-
-    -- Hold "Ready" long enough to actually be read, then lift the curtain
-    -- with a slight upward drift so it feels like a door opening.
-    task.delay(0.55, function(): ()
-        if not LoadingCurtain.Parent then
-            return
-        end
-        TweenService:Create(
-            LoadingCurtain,
-            TweenInfo.new(0.34, Enum.EasingStyle.Quart, Enum.EasingDirection.In),
-            {Position = UDim2.fromScale(0, -0.05)}
-        ):Play()
-        local exitTween: Tween = TweenService:Create(
-            LoadingCurtain,
-            TweenInfo.new(
-                0.42,
-                Enum.EasingStyle.Quart,
-                Enum.EasingDirection.Out
-            ),
-            {GroupTransparency = 1}
-        )
-        exitTween:Play()
-        exitTween.Completed:Once(function(): ()
-            LoadingSpinnerTween:Cancel()
-            LoadingSpinnerOuterTween:Cancel()
-            LoadingGlowTween:Cancel()
-            LoadingCurtain:Destroy()
-        end)
-    end)
-end
-
--- The scripted opening. Runs on its own thread so a slow module load never
--- blocks it and it never blocks a module load.
-task.spawn(function(): ()
-    -- 1. Backdrop settles. The curtain is already opaque; this is the glow
-    -- easing up from nothing so the screen does not start fully lit.
-    LoadingGlow.BackgroundTransparency = 1
-    TweenService:Create(
-        LoadingGlow,
-        TweenInfo.new(0.34, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-        {BackgroundTransparency = 0.86}
-    ):Play()
-    task.wait(0.3)
-    if not LoadingCurtain.Parent then
-        return
-    end
-
-    -- 2. Wordmark rises and fades in, then the rule draws out under it.
-    LoadingTitle.Position = UDim2.fromScale(0.5, 0.6)
-    TweenService:Create(
-        LoadingTitle,
-        TweenInfo.new(0.52, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-        {Position = UDim2.fromScale(0.5, 0.55), TextTransparency = 0}
-    ):Play()
-    task.wait(0.26)
-    if not LoadingCurtain.Parent then
-        return
-    end
-    TweenService:Create(
-        LoadingTitleRule,
-        TweenInfo.new(0.46, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-        {Size = UDim2.fromOffset(state.isMobile and 150 or 210, 1)}
-    ):Play()
-    fadeText(LoadingBuildLabel, 0.42, 0.4)
-    task.wait(0.24)
-    if not LoadingCurtain.Parent then
-        return
-    end
-
-    -- 3. Status line and progress bar arrive together.
-    fadeText(LoadingLabel, 0, 0.3)
-    TweenService:Create(
-        LoadingTrack,
-        TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-        {BackgroundTransparency = 0}
-    ):Play()
-
-    -- Narrate the boot until the module loader starts reporting real
-    -- progress. `state.loadingLabelLocked` is raised by SectionManager the
-    -- moment it has genuine "Loading modules x/y" counts to show; the
-    -- narration must not fight it, and a fast load must not be made to sit
-    -- through a script it has already outrun.
-    for _, message: string in ipairs({
-        "Preparing interface",
-        "Registering modules",
-        "Linking game profile",
-    }) do
-        if finishRequested
-            or bootstrapFailed
-            or state.loadingLabelLocked
-            or not LoadingCurtain.Parent then
-            break
-        end
-        LoadingLabel.Text = message
-        task.wait(0.32)
-    end
-
-    introSequenceDone = true
-    if finishRequested then
-        runExit()
-    end
-end)
-
--- Watchdog. `runExit` is normally driven by the sequence thread; if that
--- thread ever dies unexpectedly the curtain must still come down rather than
--- covering the menu forever.
-task.delay(12, function(): ()
-    -- A failed bootstrap leaves its error on this very curtain, so the
-    -- watchdog must leave it up in that case.
-    if LoadingCurtain.Parent and not exitStarted and not bootstrapFailed then
-        warn("[Random Testing Menu] Loading intro watchdog fired")
-        introSequenceDone = true
-        runExit()
-    end
-end)
-
-state.finishLoadingIntro = function(failureCount: number): ()
-    if loadingIntroFinished or not LoadingCurtain.Parent then
-        return
-    end
-    loadingIntroFinished = true
-    finishRequested = true
-    finishFailureCount = failureCount
-    -- If the opening sequence is still playing, let it reach its last stage
-    -- and call `runExit` itself; otherwise exit now.
-    if introSequenceDone then
-        runExit()
-    end
-end
-end
-
--- Make the shell usable before any optional feature/module initialization runs.
--- A later runtime error must never leave every page hidden.
-UniversalScroll.Visible = true
-UniversalScroll.CanvasSize = UDim2.fromOffset(0, 0)
-setTab("Universal")
-print("[RTM:Bootstrap] GUI base visible; construyendo funciones universales")
+print("[" .. PRODUCT.logPrefix .. ":Bootstrap] GUI base visible; construyendo funciones universales")
 
 local universalFeatures = {}
 local movementFeatures = {}
+-- Published for the features that used to be written inside this file: a card
+-- files itself under the same registry it always did.
+state.movementFeatures = movementFeatures
 local mm2Features = {}
 state.trsFeatures = {}
+-- Spoof modules keep their own registry and their own page.
+state.spoofFeatures = {}
 state.vdFeatures = {}
+state.bedFightFeatures = {}
 state.mvsdFeatures = {}
-local allFeatures = {}
+local allFeatures: {any} = {}
 local featureConnections = {}
+
+-- Compatibility wrapper only: the dock and anything else that wants a
+-- search goes through D's registry, state.moduleSearch.Execute. This
+-- boolean form survives for older callers and does exactly nothing more.
+state.invokeModuleSearch = function(query: string): boolean
+    local search: any = state.moduleSearch
+    if type(search) ~= "table" or type(search.Execute) ~= "function" then
+        return false
+    end
+    local result: any = search.Execute(query)
+    return type(result) == "table" and result.status == "success"
+end
+
+-- Every module card re-applies the responsive metrics through its own
+-- `applyLayout` hook when the viewport mode changes. Registering the listener
+-- once here (instead of once per card) keeps the listener list short and means
+-- a card created later is still covered: the pass walks the live registry.
+state.onLayout(function(): ()
+    for _, feature: any in ipairs(allFeatures) do
+        if type(feature.applyLayout) == "function" then
+            local ok: boolean, failure: any = pcall(feature.applyLayout)
+            if not ok then
+                warn("[" .. PRODUCT.name .. "] card layout: " .. tostring(failure))
+            end
+        end
+    end
+end)
 state.tooltipConnections = {} :: {RBXScriptConnection}
-state.bindFeatureTooltip = nil :: ((any, string) -> ())?
-
-type MobileActionRecord = {
-    id: string,
-    label: string,
-    button: TextButton,
-    callback: () -> (),
-    activeInput: InputObject?,
-    startPointer: Vector2,
-    startPosition: Vector2,
-    moved: boolean,
-    holdToken: number,
-    connections: {RBXScriptConnection},
-}
-
-type PendingMobilePlacement = {
-    id: string,
-    label: string,
-    callback: () -> (),
-    restoreMenu: boolean,
-}
-
-do
-local mobileActions: {[string]: MobileActionRecord} = {}
-local pendingMobilePlacement: PendingMobilePlacement? = nil
-
-local MobilePlacementOverlay: Frame = (create("Frame", {
-    Parent = PopupLayer,
-    Name = "MobilePlacementOverlay",
-    Active = true,
-    BackgroundColor3 = Theme.DefaultBackground,
-    BackgroundTransparency = 0.2,
-    BorderSizePixel = 0,
-    Size = UDim2.fromScale(1, 1),
-    Visible = false,
-    ZIndex = 200,
-}) :: any) :: Frame
-local MobilePlacementLabel = makeTextLabel(
-    MobilePlacementOverlay,
-    "TOUCH WHERE THE ACTION BUTTON SHOULD GO",
-    16
-)
-MobilePlacementLabel.FontFace = CONTROL_FONT
-MobilePlacementLabel.TextXAlignment = Enum.TextXAlignment.Center
-MobilePlacementLabel.Position = UDim2.new(0.08, 0, 0.08, 0)
-MobilePlacementLabel.Size = UDim2.new(0.84, 0, 0, 54)
-MobilePlacementLabel.ZIndex = 201
-
-local function ensureMobileConfig(): {[string]: any}
-    if type(configData.ui.mobileActions) ~= "table" then
-        configData.ui.mobileActions = {}
-    end
-    return configData.ui.mobileActions
-end
-
-local function clampMobileButtonPosition(
-    position: Vector2,
-    size: number
-): Vector2
-    local camera: Camera? = workspace.CurrentCamera
-    local viewport: Vector2 = camera
-        and camera.ViewportSize
-        or Vector2.new(1280, 720)
-    local radius: number = size / 2
-    return Vector2.new(
-        math.clamp(position.X, radius + 6, math.max(radius + 6, viewport.X - radius - 6)),
-        math.clamp(position.Y, radius + 6, math.max(radius + 6, viewport.Y - radius - 6))
-    )
-end
-
-local function saveMobileActionPosition(record: MobileActionRecord): ()
-    local mobileConfig: {[string]: any} = ensureMobileConfig()
-    mobileConfig[record.id] = {
-        record.button.Position.X.Offset,
-        record.button.Position.Y.Offset,
-    }
-    queueConfigSave()
-end
-
-local function removeMobileAction(id: string): ()
-    local record: MobileActionRecord? = mobileActions[id]
-    if not record then
-        return
-    end
-    mobileActions[id] = nil
-    ensureMobileConfig()[id] = nil
-    for _, connection: RBXScriptConnection in ipairs(record.connections) do
-        connection:Disconnect()
-    end
-    table.clear(record.connections)
-    if record.button.Parent then
-        record.button:Destroy()
-    end
-    queueConfigSave()
-    notify(record.label .. " mobile button removed.")
-end
-
-local function setMobileActionVisibility(menuVisible: boolean): ()
-    for _, record: MobileActionRecord in pairs(mobileActions) do
-        record.button.Visible = state.isMobile and not menuVisible
-    end
-end
-state.setMobileActionVisibility = setMobileActionVisibility
-
-local function createMobileAction(
-    id: string,
-    label: string,
-    callback: () -> (),
-    requestedPosition: Vector2?
-): MobileActionRecord?
-    if not state.isMobile then
-        return nil
-    end
-
-    local existing: MobileActionRecord? = mobileActions[id]
-    if existing then
-        existing.callback = callback
-        existing.label = label
-        return existing
-    end
-
-    local size: number = state.mobileButtonSize
-    local stored: any = ensureMobileConfig()[id]
-    local actionCount: number = 0
-    for _ in pairs(mobileActions) do
-        actionCount += 1
-    end
-    local defaultPosition: Vector2 = Vector2.new(
-        74 + (actionCount * (size + 10)),
-        math.max(size, initialViewport.Y - size - 70)
-    )
-    local selectedPosition: Vector2 = requestedPosition or (
-        type(stored) == "table"
-            and Vector2.new(
-                tonumber(stored[1]) or defaultPosition.X,
-                tonumber(stored[2]) or defaultPosition.Y
-            )
-            or defaultPosition
-    )
-    selectedPosition = clampMobileButtonPosition(selectedPosition, size)
-
-    local button = create("TextButton", {
-        Parent = ScreenGui,
-        Name = "MobileAction_" .. id:gsub("%W", ""),
-        Active = true,
-        AutoButtonColor = false,
-        BackgroundColor3 = Theme.SurfaceRaised,
-        BackgroundTransparency = 0.08,
-        BorderSizePixel = 0,
-        FontFace = CONTROL_FONT,
-        Position = UDim2.fromOffset(selectedPosition.X, selectedPosition.Y),
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        Size = UDim2.fromOffset(size, size),
-        Text = label,
-        TextColor3 = Theme.Text,
-        TextScaled = true,
-        Visible = not state.visible,
-        ZIndex = 180,
-    }) :: TextButton
-    create("UICorner", {
-        Parent = button,
-        CornerRadius = cornerRadius(12),
-    })
-    create("UIStroke", {
-        Parent = button,
-        Color = Theme.DefaultOutline,
-        Transparency = 0.55,
-        Thickness = 1,
-    })
-    create("UITextSizeConstraint", {
-        Parent = button,
-        MaxTextSize = 13,
-        MinTextSize = 8,
-    })
-
-    local record: MobileActionRecord = {
-        id = id,
-        label = label,
-        button = button,
-        callback = callback,
-        activeInput = nil,
-        startPointer = Vector2.zero,
-        startPosition = selectedPosition,
-        moved = false,
-        holdToken = 0,
-        connections = {},
-    }
-    mobileActions[id] = record
-    saveMobileActionPosition(record)
-
-    table.insert(record.connections, trackUiConnection(
-        button.InputBegan:Connect(function(input: InputObject): ()
-        if input.UserInputType ~= Enum.UserInputType.Touch then
-            return
-        end
-        record.activeInput = input
-        record.startPointer = Vector2.new(input.Position.X, input.Position.Y)
-        record.startPosition = Vector2.new(
-            button.Position.X.Offset,
-            button.Position.Y.Offset
-        )
-        record.moved = false
-        record.holdToken += 1
-        local token: number = record.holdToken
-        task.delay(0.85, function(): ()
-            if mobileActions[id] == record
-                and record.activeInput == input
-                and not record.moved
-                and record.holdToken == token then
-                record.activeInput = nil
-                removeMobileAction(id)
-            end
-        end)
-    end)))
-
-    table.insert(record.connections, trackUiConnection(
-        UserInputService.InputEnded:Connect(function(
-        input: InputObject
-    ): ()
-        if input.UserInputType ~= Enum.UserInputType.Touch
-            or record.activeInput ~= input then
-            return
-        end
-        record.activeInput = nil
-        record.holdToken += 1
-        if record.moved then
-            saveMobileActionPosition(record)
-        else
-            TweenService:Create(
-                button,
-                TweenInfo.new(0.08, Enum.EasingStyle.Quad),
-                {BackgroundTransparency = 0.03}
-            ):Play()
-            task.delay(0.09, function(): ()
-                if button.Parent then
-                    TweenService:Create(
-                        button,
-                        TweenInfo.new(0.12, Enum.EasingStyle.Quad),
-                        {BackgroundTransparency = 0.18}
-                    ):Play()
-                end
-            end)
-            task.spawn(record.callback)
-        end
-    end)))
-
-    return record
-end
-
-trackUiConnection(UserInputService.InputChanged:Connect(function(
-    input: InputObject
-): ()
-    if input.UserInputType ~= Enum.UserInputType.Touch then
-        return
-    end
-    for _, record: MobileActionRecord in pairs(mobileActions) do
-        if record.activeInput == input then
-            local pointer: Vector2 = Vector2.new(
-                input.Position.X,
-                input.Position.Y
-            )
-            local delta: Vector2 = pointer - record.startPointer
-            if delta.Magnitude >= 7 then
-                record.moved = true
-            end
-            if record.moved then
-                local position: Vector2 = clampMobileButtonPosition(
-                    record.startPosition + delta,
-                    record.button.AbsoluteSize.X
-                )
-                record.button.Position = UDim2.fromOffset(
-                    position.X,
-                    position.Y
-                )
-            end
-        end
-    end
-end))
-
-local function beginMobileActionPlacement(
-    id: string,
-    label: string,
-    callback: () -> ()
-): ()
-    if not state.isMobile then
-        return
-    end
-    if mobileActions[id] then
-        removeMobileAction(id)
-        return
-    end
-
-    pendingMobilePlacement = {
-        id = id,
-        label = label,
-        callback = callback,
-        restoreMenu = state.visible,
-    }
-    MobilePlacementLabel.Text = "TOUCH TO PLACE " .. string.upper(label)
-        .. "\nHOLD THE CIRCLE LATER TO REMOVE IT"
-    MobilePlacementOverlay.Visible = true
-    Main.Visible = false
-    -- The menu is hidden for placement, so drop the blur rather than leaving
-    -- the screen dimmed behind the overlay.
-    state.suspendBlur()
-
-    local placement: PendingMobilePlacement =
-        pendingMobilePlacement :: PendingMobilePlacement
-    task.delay(8, function(): ()
-        if pendingMobilePlacement == placement then
-            pendingMobilePlacement = nil
-            MobilePlacementOverlay.Visible = false
-            if placement.restoreMenu then
-                state.setMenuVisible(true)
-            end
-            notify("Mobile button placement cancelled.")
-        end
-    end)
-end
-
-trackUiConnection(MobilePlacementOverlay.InputBegan:Connect(function(
-    input: InputObject
-): ()
-    local placement: PendingMobilePlacement? = pendingMobilePlacement
-    if not placement
-        or input.UserInputType ~= Enum.UserInputType.Touch then
-        return
-    end
-    pendingMobilePlacement = nil
-    MobilePlacementOverlay.Visible = false
-    createMobileAction(
-        placement.id,
-        placement.label,
-        placement.callback,
-        Vector2.new(input.Position.X, input.Position.Y)
-    )
-    if placement.restoreMenu then
-        state.setMenuVisible(true)
-    end
-    notify(placement.label .. " mobile button placed.")
-end))
-
-local function bindMobileActionPlacement(
-    source: TextButton,
-    id: string,
-    label: string,
-    callback: () -> ()
-): ()
-    if not state.isMobile then
-        return
-    end
-    source.Text = "ADD"
-    local activeInput: InputObject? = nil
-    local startPosition: Vector2 = Vector2.zero
-    local holdToken: number = 0
-
-    trackUiConnection(source.InputBegan:Connect(function(input: InputObject): ()
-        if input.UserInputType ~= Enum.UserInputType.Touch then
-            return
-        end
-        activeInput = input
-        startPosition = Vector2.new(input.Position.X, input.Position.Y)
-        holdToken += 1
-        local token: number = holdToken
-        task.delay(0.62, function(): ()
-            if activeInput == input and holdToken == token then
-                local current: Vector2 = Vector2.new(
-                    input.Position.X,
-                    input.Position.Y
-                )
-                if (current - startPosition).Magnitude < 10 then
-                    activeInput = nil
-                    beginMobileActionPlacement(id, label, callback)
-                end
-            end
-        end)
-    end))
-    trackUiConnection(source.InputEnded:Connect(function(input: InputObject): ()
-        if activeInput == input then
-            activeInput = nil
-            holdToken += 1
-        end
-    end))
-
-    if ensureMobileConfig()[id] ~= nil then
-        createMobileAction(id, label, callback, nil)
-    end
-end
-state.bindMobileActionPlacement = bindMobileActionPlacement
-
 local MobileMenuButton = create("TextButton", {
+    TextTruncate = Enum.TextTruncate.AtEnd,
+    ClipsDescendants = true,
     Parent = ScreenGui,
     Name = "MobileMenuButton",
     AutoButtonColor = false,
-    BackgroundColor3 = Theme.DefaultSurface,
+    BackgroundColor3 = Theme.surface,
     BackgroundTransparency = 0.12,
     BorderSizePixel = 0,
     FontFace = CONTROL_FONT,
     Position = UDim2.new(1, -18, 0, 18),
     AnchorPoint = Vector2.new(1, 0),
     Size = UDim2.fromOffset(52, 52),
-    Text = "RTM",
-    TextColor3 = Theme.Text,
-    TextSize = 11,
+    Text = "≡",
+    TextColor3 = Theme.text,
+    TextSize = 20,
     Visible = state.isMobile,
     ZIndex = 190,
 }) :: TextButton
@@ -3207,39 +3550,178 @@ create("UICorner", {
 })
 create("UIStroke", {
     Parent = MobileMenuButton,
-    Color = Theme.DefaultOutline,
+    Color = Theme.outline,
     Transparency = 0.55,
     Thickness = 1,
 })
+-- No brand image on the launcher any more: menu-logo.jpg was the previous
+-- product's art, and this circle only exists as the fallback way in when the
+-- pill failed to arrive. The glyph matches the pill's own button.
 
--- The RTM text remains visible as the button label.
-trackUiConnection(MobileMenuButton.MouseButton1Click:Connect(function(): ()
-    state.setMenuVisible(not state.visible)
-end))
+-- The launcher can be moved.
+--
+-- It lives over the game, which means it can sit exactly where a game put its
+-- own button. Press and drag moves it; a press that does not travel is still a
+-- press, so tapping it opens the menu as before. Where it ends up is saved.
+do
+    local dragInput: InputObject? = nil
+    local dragStart: Vector2 = Vector2.zero
+    local startPosition: UDim2 = MobileMenuButton.Position
+    local travelled: number = 0
 
-local function resetMobileActions(): ()
-    local ids: {string} = {}
-    for id: string in pairs(mobileActions) do
-        table.insert(ids, id)
+    local storedX: number? = tonumber(configData.ui.launcherX)
+    local storedY: number? = tonumber(configData.ui.launcherY)
+    if storedX and storedY then
+        MobileMenuButton.Position = UDim2.fromOffset(storedX, storedY)
+        MobileMenuButton.AnchorPoint = Vector2.new(0, 0)
     end
-    for _, id: string in ipairs(ids) do
-        removeMobileAction(id)
+
+    -- The launcher answers a finger.
+    --
+    -- A button that floats over the game and never reacts to being touched
+    -- reads as part of the game's own HUD. It dips under the press and springs
+    -- back on release, which is the one place in this interface where a bit of
+    -- bounce belongs: it is a physical-looking object sitting on the screen.
+    local launcherScale: UIScale = create("UIScale", {
+        Parent = MobileMenuButton,
+        Name = "LauncherScale",
+        Scale = 1,
+    }) :: UIScale
+
+    local function pressLauncher(pressed: boolean): ()
+        if not state.animationsEnabled then
+            launcherScale.Scale = 1
+            return
+        end
+        TweenService:Create(
+            launcherScale,
+            TweenInfo.new(
+                pressed and UI_MOTION.fast or 0.34,
+                pressed and Enum.EasingStyle.Quart or Enum.EasingStyle.Back,
+                Enum.EasingDirection.Out
+            ),
+            {Scale = pressed and 0.9 or 1}
+        ):Play()
     end
-    configData.ui.mobileActions = {}
-    queueConfigSave()
+
+    trackUiConnection(MobileMenuButton.InputBegan:Connect(function(
+        input: InputObject
+    ): ()
+        if input.UserInputType ~= Enum.UserInputType.MouseButton1
+            and input.UserInputType ~= Enum.UserInputType.Touch then
+            return
+        end
+        dragInput = input
+        dragStart = Vector2.new(input.Position.X, input.Position.Y)
+        startPosition = MobileMenuButton.Position
+        travelled = 0
+        pressLauncher(true)
+    end))
+
+    trackUiConnection(UserInputService.InputChanged:Connect(function(
+        input: InputObject
+    ): ()
+        if not dragInput then
+            return
+        end
+        if input.UserInputType ~= Enum.UserInputType.MouseMovement
+            and input.UserInputType ~= Enum.UserInputType.Touch then
+            return
+        end
+        local pointer: Vector2 = Vector2.new(input.Position.X, input.Position.Y)
+        local delta: Vector2 = pointer - dragStart
+        travelled = math.max(travelled, delta.Magnitude)
+        if travelled < 6 then
+            -- Below the threshold this is still a tap, not a drag.
+            return
+        end
+        -- Anchored top-left while dragging so the maths is in one space.
+        MobileMenuButton.AnchorPoint = Vector2.new(0, 0)
+        local viewport: Vector2 = ScreenGui.AbsoluteSize
+        local size: Vector2 = MobileMenuButton.AbsoluteSize
+        local baseX: number = startPosition.X.Scale * viewport.X + startPosition.X.Offset
+        local baseY: number = startPosition.Y.Scale * viewport.Y + startPosition.Y.Offset
+        MobileMenuButton.Position = UDim2.fromOffset(
+            math.clamp(math.round(baseX + delta.X), 0, math.max(viewport.X - size.X, 0)),
+            math.clamp(math.round(baseY + delta.Y), 0, math.max(viewport.Y - size.Y, 0))
+        )
+    end))
+
+    trackUiConnection(UserInputService.InputEnded:Connect(function(
+        input: InputObject
+    ): ()
+        if input ~= dragInput then
+            return
+        end
+        dragInput = nil
+        pressLauncher(false)
+        if travelled >= 6 then
+            -- Dropped, so it settles against the nearer side rather than
+            -- floating in the middle of the view, where it covers the game and
+            -- is easy to hit by accident. The overshoot is what makes it read
+            -- as "it went home" instead of "it teleported".
+            local viewport: Vector2 = ScreenGui.AbsoluteSize
+            local size: Vector2 = MobileMenuButton.AbsoluteSize
+            local currentX: number = MobileMenuButton.Position.X.Offset
+            local currentY: number = MobileMenuButton.Position.Y.Offset
+            local margin: number = 14
+            local nearestX: number = currentX + size.X * 0.5 < viewport.X * 0.5
+                and margin
+                or math.max(margin, viewport.X - size.X - margin)
+            local restingY: number = math.clamp(
+                currentY,
+                margin,
+                math.max(margin, viewport.Y - size.Y - margin)
+            )
+            local resting: UDim2 = UDim2.fromOffset(
+                math.round(nearestX),
+                math.round(restingY)
+            )
+            if state.animationsEnabled then
+                TweenService:Create(
+                    MobileMenuButton,
+                    TweenInfo.new(0.42, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+                    {Position = resting}
+                ):Play()
+            else
+                MobileMenuButton.Position = resting
+            end
+            configData.ui.launcherX = resting.X.Offset
+            configData.ui.launcherY = resting.Y.Offset
+            queueConfigSave()
+        end
+    end))
+
+    trackUiConnection(MobileMenuButton.MouseButton1Click:Connect(function(): ()
+        -- A drag ends with a click too; only an untravelled press opens.
+        if travelled >= 6 then
+            return
+        end
+        state.openMenuSurface()
+    end))
 end
-state.resetMobileActions = resetMobileActions
-state.mobileUi = {
-    actions = mobileActions,
-    setActionVisibility = setMobileActionVisibility,
-    resetActions = resetMobileActions,
-    clampButtonPosition = clampMobileButtonPosition,
-    saveActionPosition = saveMobileActionPosition,
-}
--- Placed mobile shortcuts are the inverse of the menu, and this is wired up as
--- soon as the mobile layer exists rather than waiting for the Settings tab.
-state.addMenuVisibilityListener(setMobileActionVisibility)
+
+-- The launcher is the way back in, so it only exists while the menu is out of
+-- sight. It used to sit on top of the open window, which made it look like a
+-- second, broken close button.
+local function refreshLauncherVisibility(): ()
+    -- Touch devices only.
+    --
+    -- A phone has no key to press, so the button floating over the game is the
+    -- only way back in — and its presence is also how you know the menu
+    -- finished loading, since there is no intro any more. A machine with a
+    -- keyboard has the menu key for both jobs, and there the button is nothing
+    -- but a permanent circle sitting on top of the game, so it is never shown.
+    MobileMenuButton.Visible = state.isMobile and not state.visible
 end
+-- Published so the pill can re-run it once it takes over as the launcher: the
+-- fallback circle has to disappear the moment something better exists, and come
+-- back if it does not.
+state.refreshLauncher = refreshLauncherVisibility
+refreshLauncherVisibility()
+state.addMenuVisibilityListener(function(): ()
+    refreshLauncherVisibility()
+end)
 
 type TaskHandle = {
     Connected: boolean,
@@ -3252,15 +3734,30 @@ type ScheduledTask = {
     failures: number,
 }
 
+-- Two buckets, not one.
+--
+-- Heartbeat fires *after* the frame has been drawn, so anything that draws an
+-- overlay from the camera's position is always one frame behind the world and
+-- visibly swims when the player turns. Work that reads or writes the game
+-- belongs on Heartbeat; work that draws belongs on RenderStepped, which runs
+-- before the frame it is drawing into.
 local TaskManager = {
     tasks = {} :: {[number]: ScheduledTask},
+    renderTasks = {} :: {[number]: ScheduledTask},
     nextId = 0,
     connection = nil :: RBXScriptConnection?,
+    renderConnection = nil :: RBXScriptConnection?,
 }
 
-function TaskManager:Connect(callback: (...any) -> ()): TaskHandle
+function TaskManager:Connect(
+    callback: (...any) -> (),
+    phase: string?
+): TaskHandle
     self.nextId += 1
     local taskId: number = self.nextId
+    local bucket: {[number]: ScheduledTask} = phase == "render"
+        and self.renderTasks
+        or self.tasks
     local handle: TaskHandle
     handle = {
         Connected = true,
@@ -3269,10 +3766,10 @@ function TaskManager:Connect(callback: (...any) -> ()): TaskHandle
                 return
             end
             selfHandle.Connected = false
-            TaskManager.tasks[taskId] = nil
+            bucket[taskId] = nil
         end,
     }
-    self.tasks[taskId] = {
+    bucket[taskId] = {
         callback = callback,
         handle = handle,
         failures = 0,
@@ -3281,20 +3778,29 @@ function TaskManager:Connect(callback: (...any) -> ()): TaskHandle
 end
 
 function TaskManager:Destroy(): ()
-    for taskId: number, scheduled: ScheduledTask in pairs(self.tasks) do
-        scheduled.handle.Connected = false
-        self.tasks[taskId] = nil
+    for _, bucket: {[number]: ScheduledTask} in
+        ipairs({self.tasks, self.renderTasks})
+    do
+        for taskId: number, scheduled: ScheduledTask in pairs(bucket) do
+            scheduled.handle.Connected = false
+            bucket[taskId] = nil
+        end
     end
     if self.connection then
         self.connection:Disconnect()
         self.connection = nil
     end
+    if self.renderConnection then
+        self.renderConnection:Disconnect()
+        self.renderConnection = nil
+    end
 end
 
-TaskManager.connection = RunService.Heartbeat:Connect(function(
+local function runBucket(
+    bucket: {[number]: ScheduledTask},
     deltaTime: number
 ): ()
-    for taskId: number, scheduled: ScheduledTask in pairs(TaskManager.tasks) do
+    for taskId: number, scheduled: ScheduledTask in pairs(bucket) do
         if scheduled.handle.Connected then
             local success: boolean, message: any = pcall(
                 scheduled.callback,
@@ -3305,714 +3811,34 @@ TaskManager.connection = RunService.Heartbeat:Connect(function(
             else
                 scheduled.failures += 1
                 warn(
-                    "[Random Testing Menu] scheduled task "
+                    "[" .. PRODUCT.name .. "] scheduled task "
                         .. tostring(taskId)
                         .. " failed: "
                         .. tostring(message)
                 )
+                -- Three throws in a row is a task that is never going to
+                -- work; leaving it connected turns one broken module into a
+                -- warning every frame for the rest of the session.
                 if scheduled.failures >= 3 then
                     scheduled.handle:Disconnect()
                 end
             end
         end
     end
+end
+
+TaskManager.connection = RunService.Heartbeat:Connect(function(
+    deltaTime: number
+): ()
+    runBucket(TaskManager.tasks, deltaTime)
 end)
 
-state.taskManager = TaskManager
+TaskManager.renderConnection = RunService.RenderStepped:Connect(function(
+    deltaTime: number
+): ()
+    runBucket(TaskManager.renderTasks, deltaTime)
+end)
 
--- Generic, automatic projectile telemetry. This dataset is intentionally isolated
--- from every game-specific predictor; MM2 never reads or merges these values.
-state.universalProjectileCalibration = (function(): any
-    type PendingActivation = {
-        tool: Tool,
-        activatedAt: number,
-        origin: Vector3?,
-        aim: Vector3?,
-        pingMs: number,
-    }
-    type ProjectileSample = {
-        t: number,
-        position: {number},
-        velocity: {number},
-        speed: number,
-    }
-    type ProjectileTrack = {
-        instance: BasePart,
-        toolName: string,
-        projectileName: string,
-        startedAt: number,
-        launchDelayMs: number,
-        pingMs: number,
-        origin: Vector3,
-        previousAt: number?,
-        previousPosition: Vector3?,
-        speeds: {number},
-        accelerations: {number},
-        verticalAccelerations: {number},
-        samples: {ProjectileSample},
-        distance: number,
-        destroyConnection: RBXScriptConnection?,
-    }
-    type BucketRecord = {
-        count: number,
-        speedSum: number,
-        speedSquaredSum: number,
-        delaySum: number,
-    }
-    type Controller = {
-        setEnabled: (self: Controller, enabled: boolean) -> (),
-        save: (self: Controller, reason: string?) -> boolean,
-        delete: (self: Controller) -> boolean,
-        status: (self: Controller) -> string,
-        destroy: (self: Controller) -> (),
-        settings: {[string]: number},
-    }
-
-    -- Live-tuning knobs for the analyser. The option panel mutates these
-    -- while the tracker keeps running, so a calibration session can be
-    -- refined without restarting it.
-    local settings: {[string]: number} = {
-        bucketWidthMs = 5,
-        maxBucketMs = 250,
-        sampleWindowSeconds = 2.5,
-        maxSamplesPerTrack = 150,
-        minProjectileSpeed = 10,
-        matchDistanceStuds = 40,
-        maxPendingActivations = 10,
-        candidateLifetimeSeconds = 1.1,
-    }
-
-    local executorEnvironment: {[string]: any} = getfenv() :: any
-    local mouse: Mouse = LocalPlayer:GetMouse()
-    local outputRoot: string = "RandomTestingMenu0001"
-    local outputTelemetry: string = outputRoot .. "/Telemetry"
-    local outputFolder: string = outputTelemetry .. "/Universal"
-    local outputPath: string = outputFolder
-        .. "/Place_"
-        .. tostring(game.PlaceId)
-        .. "_Projectile_Calibration.json"
-    local runtime: any = {
-        enabled = false,
-        dirty = false,
-        startedAt = os.clock(),
-        pending = {} :: {PendingActivation},
-        tracks = {} :: {[BasePart]: ProjectileTrack},
-        events = {} :: {{[string]: any}},
-        buckets = {} :: {[string]: BucketRecord},
-        connections = {} :: {RBXScriptConnection},
-        observedTools = setmetatable({}, {__mode = "k"}) :: {[Tool]: boolean},
-        observedCandidates = setmetatable({}, {__mode = "k"}) :: {[BasePart]: boolean},
-        sampler = nil :: any,
-        totalActivations = 0,
-        totalProjectiles = 0,
-        rejectedCandidates = 0,
-    }
-    local controller: Controller
-    local saveSnapshot: (reason: string) -> boolean
-    local finishTrack: (part: BasePart, reason: string) -> ()
-
-    local function finite(value: number): boolean
-        return value == value and value > -math.huge and value < math.huge
-    end
-
-    local function vectorArray(value: Vector3): {number}
-        return {value.X, value.Y, value.Z}
-    end
-
-    local function median(values: {number}): number?
-        if #values == 0 then
-            return nil
-        end
-        local sorted: {number} = table.clone(values)
-        table.sort(sorted)
-        local middle: number = math.floor((#sorted + 1) / 2)
-        if #sorted % 2 == 1 then
-            return sorted[middle]
-        end
-        return (sorted[middle] + sorted[middle + 1]) * 0.5
-    end
-
-    local function pingBucketKey(pingMs: number): string
-        local width: number = math.max(1, settings.bucketWidthMs)
-        local ceiling: number = math.max(width, settings.maxBucketMs)
-        if pingMs > ceiling then
-            return tostring(ceiling) .. "+"
-        end
-        local lower: number = math.clamp(
-            math.floor(pingMs / width) * width,
-            0,
-            math.max(0, ceiling - width)
-        )
-        local upper: number = lower + width
-        return string.format("%03d-%03d", lower, upper)
-    end
-
-    local function ensureBucket(key: string): BucketRecord
-        local existing: BucketRecord? = runtime.buckets[key]
-        if existing then
-            return existing
-        end
-        local created: BucketRecord = {
-            count = 0,
-            speedSum = 0,
-            speedSquaredSum = 0,
-            delaySum = 0,
-        }
-        runtime.buckets[key] = created
-        return created
-    end
-
-    local function bucketPayload(): {[string]: any}
-        local payload: {[string]: any} = {}
-        for key: string, bucket: BucketRecord in pairs(runtime.buckets) do
-            local meanSpeed: number = bucket.count > 0
-                    and bucket.speedSum / bucket.count
-                or 0
-            local variance: number = bucket.count > 1
-                    and math.max(
-                        0,
-                        bucket.speedSquaredSum / bucket.count
-                            - meanSpeed * meanSpeed
-                    )
-                or 0
-            payload[key] = {
-                count = bucket.count,
-                meanSpeed = meanSpeed,
-                speedStdDev = math.sqrt(variance),
-                meanLaunchDelayMs = bucket.count > 0
-                        and bucket.delaySum / bucket.count
-                    or 0,
-            }
-        end
-        return payload
-    end
-
-    local function getPingMilliseconds(): number
-        local pingMs: number = 0
-        pcall(function(): ()
-            local network: Instance? = Stats:FindFirstChild("Network")
-            local serverItems: Instance? = network
-                and network:FindFirstChild("ServerStatsItem")
-            local pingItem: any = serverItems
-                and serverItems:FindFirstChild("Data Ping")
-            if pingItem and type(pingItem.GetValue) == "function" then
-                pingMs = tonumber(pingItem:GetValue()) or 0
-            end
-        end)
-        return math.max(0, pingMs)
-    end
-
-    local function appendEvent(event: {[string]: any}): ()
-        if #runtime.events >= 180 then
-            table.remove(runtime.events, 1)
-        end
-        table.insert(runtime.events, event)
-        runtime.dirty = true
-    end
-
-    saveSnapshot = function(reason: string): boolean
-        if type(executorEnvironment.writefile) ~= "function" then
-            warn("[RTM:UniversalTrajectory] writefile no está disponible.")
-            return false
-        end
-        local payload: {[string]: any} = {
-            schema = 1,
-            kind = "universal-projectile-analytics",
-            placeId = game.PlaceId,
-            gameId = game.GameId,
-            savedAt = DateTime.now():ToIsoDate(),
-            reason = reason,
-            bucketSpec = {
-                metric = "Data Ping",
-                widthMs = settings.bucketWidthMs,
-                minimumMs = 0,
-                maximumMs = settings.maxBucketMs,
-                overflow = tostring(settings.maxBucketMs) .. "+",
-            },
-            summary = {
-                activations = runtime.totalActivations,
-                projectiles = runtime.totalProjectiles,
-                rejectedCandidates = runtime.rejectedCandidates,
-                elapsedSeconds = os.clock() - runtime.startedAt,
-            },
-            pingBuckets = bucketPayload(),
-            projectiles = runtime.events,
-        }
-        local encodedOk: boolean, encoded: any = pcall(
-            HttpService.JSONEncode,
-            HttpService,
-            payload
-        )
-        if not encodedOk or type(encoded) ~= "string" then
-            warn("[RTM:UniversalTrajectory] JSONEncode falló: " .. tostring(encoded))
-            return false
-        end
-        if type(executorEnvironment.makefolder) == "function" then
-            pcall(executorEnvironment.makefolder, outputRoot)
-            pcall(executorEnvironment.makefolder, outputTelemetry)
-            pcall(executorEnvironment.makefolder, outputFolder)
-        end
-        local writeOk: boolean, writeError: any = pcall(
-            executorEnvironment.writefile,
-            outputPath,
-            encoded
-        )
-        if not writeOk then
-            warn("[RTM:UniversalTrajectory] writefile falló: " .. tostring(writeError))
-            return false
-        end
-        runtime.dirty = false
-        print(
-            "[RTM:UniversalTrajectory] Guardado "
-                .. outputPath
-                .. " ("
-                .. tostring(#encoded)
-                .. " bytes)"
-        )
-        return true
-    end
-
-    local function disconnectAll(): ()
-        if runtime.sampler then
-            runtime.sampler:Disconnect()
-            runtime.sampler = nil
-        end
-        for _, connection: RBXScriptConnection in ipairs(runtime.connections) do
-            connection:Disconnect()
-        end
-        table.clear(runtime.connections)
-        for part: BasePart, track: ProjectileTrack in pairs(runtime.tracks) do
-            if track.destroyConnection then
-                track.destroyConnection:Disconnect()
-            end
-            runtime.tracks[part] = nil
-        end
-        table.clear(runtime.pending)
-        runtime.observedTools = setmetatable({}, {__mode = "k"})
-        runtime.observedCandidates = setmetatable({}, {__mode = "k"})
-    end
-
-    local function compactPending(now: number): ()
-        while #runtime.pending > 0
-            and now - runtime.pending[1].activatedAt
-                > settings.candidateLifetimeSeconds do
-            table.remove(runtime.pending, 1)
-        end
-        while #runtime.pending > settings.maxPendingActivations do
-            table.remove(runtime.pending, 1)
-        end
-    end
-
-    local function isCharacterPart(part: BasePart): boolean
-        local model: Model? = part:FindFirstAncestorOfClass("Model")
-        return model ~= nil and model:FindFirstChildOfClass("Humanoid") ~= nil
-    end
-
-    local function hasProjectileHint(part: BasePart): boolean
-        local name: string = string.lower(part.Name)
-        local parentName: string = part.Parent and string.lower(part.Parent.Name) or ""
-        local combined: string = name .. " " .. parentName
-        return string.find(combined, "projectile", 1, true) ~= nil
-            or string.find(combined, "bullet", 1, true) ~= nil
-            or string.find(combined, "arrow", 1, true) ~= nil
-            or string.find(combined, "rocket", 1, true) ~= nil
-            or string.find(combined, "missile", 1, true) ~= nil
-            or string.find(combined, "knife", 1, true) ~= nil
-            or string.find(combined, "grenade", 1, true) ~= nil
-            or string.find(combined, "shell", 1, true) ~= nil
-            or string.find(combined, "bolt", 1, true) ~= nil
-            or string.find(combined, "orb", 1, true) ~= nil
-            or part:GetAttribute("Projectile") == true
-            or part:GetAttribute("ProjectileSpeed") ~= nil
-            or part:GetAttribute("ThrowSpeed") ~= nil
-    end
-
-    local function resolveCandidate(instance: Instance): BasePart?
-        if not instance:IsA("BasePart") then
-            return nil
-        end
-        local part: BasePart = instance
-        if part.Anchored
-            or isCharacterPart(part)
-            or (LocalPlayer.Character and part:IsDescendantOf(LocalPlayer.Character)) then
-            return nil
-        end
-        local root: BasePart = part.AssemblyRootPart or part
-        if runtime.observedCandidates[root] or isCharacterPart(root) then
-            return nil
-        end
-        return root
-    end
-
-    local function ensureSampler(): ()
-        if runtime.sampler then
-            return
-        end
-        runtime.sampler = TaskManager:Connect(function(_deltaTime: number): ()
-            local now: number = os.clock()
-            local completed: {BasePart} = {}
-            for part: BasePart, track: ProjectileTrack in pairs(runtime.tracks) do
-                if not part.Parent
-                    or now - track.startedAt >= settings.sampleWindowSeconds then
-                    table.insert(completed, part)
-                    continue
-                end
-                local position: Vector3 = part.Position
-                local velocity: Vector3 = part.AssemblyLinearVelocity
-                local speed: number = velocity.Magnitude
-                if track.previousPosition and track.previousAt then
-                    local deltaTime: number = now - track.previousAt
-                    if deltaTime >= 1 / 240 then
-                        local measuredVelocity: Vector3 =
-                            (position - track.previousPosition) / deltaTime
-                        local measuredSpeed: number = measuredVelocity.Magnitude
-                        if measuredSpeed >= 1 and measuredSpeed <= 5000 then
-                            table.insert(track.speeds, measuredSpeed)
-                            if #track.samples > 0 then
-                                local previousSample: ProjectileSample =
-                                    track.samples[#track.samples]
-                                local previousVelocity: Vector3 = Vector3.new(
-                                    previousSample.velocity[1],
-                                    previousSample.velocity[2],
-                                    previousSample.velocity[3]
-                                )
-                                local acceleration: Vector3 =
-                                    (measuredVelocity - previousVelocity) / deltaTime
-                                if acceleration.Magnitude <= 10000 then
-                                    table.insert(track.accelerations, acceleration.Magnitude)
-                                    table.insert(track.verticalAccelerations, acceleration.Y)
-                                end
-                            end
-                        end
-                        track.distance += (position - track.previousPosition).Magnitude
-                    end
-                end
-                if #track.samples < settings.maxSamplesPerTrack then
-                    table.insert(track.samples, {
-                        t = now - track.startedAt,
-                        position = vectorArray(position),
-                        velocity = vectorArray(velocity),
-                        speed = speed,
-                    })
-                end
-                track.previousPosition = position
-                track.previousAt = now
-            end
-            for _, part: BasePart in ipairs(completed) do
-                finishTrack(part, "sample-window-complete")
-            end
-            if next(runtime.tracks) == nil and runtime.sampler then
-                runtime.sampler:Disconnect()
-                runtime.sampler = nil
-            end
-        end)
-    end
-
-    finishTrack = function(part: BasePart, reason: string): ()
-        local track: ProjectileTrack? = runtime.tracks[part]
-        if not track then
-            return
-        end
-        runtime.tracks[part] = nil
-        if track.destroyConnection then
-            track.destroyConnection:Disconnect()
-            track.destroyConnection = nil
-        end
-        local speed: number? = median(track.speeds)
-        if not speed or not finite(speed) or speed < 1 then
-            runtime.rejectedCandidates += 1
-            return
-        end
-        local acceleration: number? = median(track.accelerations)
-        local verticalAcceleration: number? = median(track.verticalAccelerations)
-        local bucketKey: string = pingBucketKey(track.pingMs)
-        local bucket: BucketRecord = ensureBucket(bucketKey)
-        bucket.count += 1
-        bucket.speedSum += speed
-        bucket.speedSquaredSum += speed * speed
-        bucket.delaySum += track.launchDelayMs
-        runtime.totalProjectiles += 1
-        appendEvent({
-            tool = track.toolName,
-            projectile = track.projectileName,
-            pingMs = track.pingMs,
-            pingBucket = bucketKey,
-            launchDelayMs = track.launchDelayMs,
-            medianSpeed = speed,
-            medianAcceleration = acceleration,
-            medianVerticalAcceleration = verticalAcceleration,
-            distanceStuds = track.distance,
-            durationSeconds = os.clock() - track.startedAt,
-            reason = reason,
-            samples = track.samples,
-        })
-    end
-
-    local function considerCandidate(instance: Instance): ()
-        if not runtime.enabled or #runtime.pending == 0 then
-            return
-        end
-        local part: BasePart? = resolveCandidate(instance)
-        if not part then
-            return
-        end
-        local now: number = os.clock()
-        compactPending(now)
-        if #runtime.pending == 0 then
-            return
-        end
-        local hinted: boolean = hasProjectileHint(part)
-        local speed: number = part.AssemblyLinearVelocity.Magnitude
-        if not hinted and speed < settings.minProjectileSpeed then
-            return
-        end
-        local selectedIndex: number? = nil
-        local selectedScore: number = math.huge
-        for index: number = #runtime.pending, 1, -1 do
-            local pending: PendingActivation = runtime.pending[index]
-            if not part:IsDescendantOf(pending.tool) and pending.origin then
-                local offset: Vector3 = part.Position - pending.origin
-                local distance: number = offset.Magnitude
-                if distance <= 40 then
-                    local alignmentPenalty: number = 0
-                    if pending.aim and distance > 0.01 then
-                        local desired: Vector3 = pending.aim - pending.origin
-                        if desired.Magnitude > 0.01 then
-                            local alignment: number = offset.Unit:Dot(desired.Unit)
-                            if alignment < 0.35 and not hinted then
-                                continue
-                            end
-                            alignmentPenalty = (1 - alignment) * 0.25
-                        end
-                    end
-                    local score: number = now - pending.activatedAt
-                        + distance * 0.01
-                        + alignmentPenalty
-                        + (hinted and 0 or 0.2)
-                    if score < selectedScore then
-                        selectedScore = score
-                        selectedIndex = index
-                    end
-                end
-            end
-        end
-        if not selectedIndex then
-            runtime.rejectedCandidates += 1
-            return
-        end
-        local pending: PendingActivation = table.remove(runtime.pending, selectedIndex)
-        runtime.observedCandidates[part] = true
-        local track: ProjectileTrack = {
-            instance = part,
-            toolName = pending.tool.Name,
-            projectileName = part:GetFullName(),
-            startedAt = now,
-            launchDelayMs = math.max(0, (now - pending.activatedAt) * 1000),
-            pingMs = pending.pingMs,
-            origin = pending.origin :: Vector3,
-            previousAt = now,
-            previousPosition = part.Position,
-            speeds = {},
-            accelerations = {},
-            verticalAccelerations = {},
-            samples = {},
-            distance = 0,
-            destroyConnection = nil,
-        }
-        runtime.tracks[part] = track
-        track.destroyConnection = part.Destroying:Connect(function(): ()
-            finishTrack(part, "destroyed")
-        end)
-        ensureSampler()
-    end
-
-    local function observeTool(tool: Tool): ()
-        if runtime.observedTools[tool] then
-            return
-        end
-        runtime.observedTools[tool] = true
-        table.insert(runtime.connections, tool.Activated:Connect(function(): ()
-            if not runtime.enabled then
-                return
-            end
-            local originPart: BasePart? = tool:FindFirstChild("Handle") :: BasePart?
-            local characterRoot: BasePart? = LocalPlayer.Character
-                and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-                :: BasePart?
-            local origin: Vector3? = originPart and originPart:IsA("BasePart")
-                    and originPart.Position
-                or characterRoot and characterRoot.Position
-                or nil
-            if not origin then
-                return
-            end
-            local aim: Vector3? = nil
-            pcall(function(): ()
-                aim = mouse.Hit.Position
-            end)
-            runtime.totalActivations += 1
-            table.insert(runtime.pending, {
-                tool = tool,
-                activatedAt = os.clock(),
-                origin = origin,
-                aim = aim,
-                pingMs = getPingMilliseconds(),
-            })
-            compactPending(os.clock())
-        end))
-    end
-
-    local function observeContainer(container: Instance?): ()
-        if not container then
-            return
-        end
-        for _, child: Instance in ipairs(container:GetChildren()) do
-            if child:IsA("Tool") then
-                observeTool(child)
-            end
-        end
-        table.insert(runtime.connections, container.ChildAdded:Connect(function(
-            child: Instance
-        ): ()
-            if child:IsA("Tool") then
-                observeTool(child)
-            end
-        end))
-    end
-
-    controller = {} :: Controller
-    controller.settings = settings
-
-    function controller:setEnabled(enabled: boolean): ()
-        if runtime.enabled == enabled then
-            return
-        end
-        if not enabled then
-            runtime.enabled = false
-            disconnectAll()
-            print("[RTM:UniversalTrajectory] Calibración detenida.")
-            return
-        end
-        runtime.enabled = true
-        runtime.startedAt = os.clock()
-        observeContainer(LocalPlayer:FindFirstChildOfClass("Backpack"))
-        observeContainer(LocalPlayer.Character)
-        table.insert(runtime.connections, LocalPlayer.CharacterAdded:Connect(function(
-            character: Model
-        ): ()
-            observeContainer(character)
-        end))
-        table.insert(runtime.connections, workspace.DescendantAdded:Connect(
-            considerCandidate
-        ))
-        print(
-            "[RTM:UniversalTrajectory] Activa · buckets "
-                .. tostring(settings.bucketWidthMs)
-                .. " ms · salida "
-                .. outputPath
-        )
-    end
-
-    function controller:save(reason: string?): boolean
-        return saveSnapshot(reason or "manual")
-    end
-
-    function controller:delete(): boolean
-        local deleteFile: any = executorEnvironment.delfile
-        local isFile: any = executorEnvironment.isfile
-        if type(deleteFile) ~= "function" then
-            warn("[RTM:UniversalTrajectory] delfile no está disponible.")
-            return false
-        end
-        local exists: boolean = true
-        if type(isFile) == "function" then
-            local checked: boolean, result: any = pcall(isFile, outputPath)
-            exists = checked and result == true
-        end
-        if exists then
-            local deleted: boolean, deleteError: any = pcall(deleteFile, outputPath)
-            if not deleted then
-                warn(
-                    "[RTM:UniversalTrajectory] delfile falló: "
-                        .. tostring(deleteError)
-                )
-                return false
-            end
-        end
-        runtime.events = {}
-        runtime.buckets = {}
-        runtime.totalActivations = 0
-        runtime.totalProjectiles = 0
-        runtime.rejectedCandidates = 0
-        runtime.dirty = false
-        print("[RTM:UniversalTrajectory] Dataset de esta sesión eliminado.")
-        return true
-    end
-
-    function controller:status(): string
-        return string.format(
-            "Universal · activaciones %d · proyectiles %d · buckets %d",
-            runtime.totalActivations,
-            runtime.totalProjectiles,
-            (function(): number
-                local count: number = 0
-                for _key: string in pairs(runtime.buckets) do
-                    count += 1
-                end
-                return count
-            end)()
-        )
-    end
-
-    function controller:destroy(): ()
-        self:setEnabled(false)
-    end
-
-    return controller
-end)()
-state.universalProjectileCalibration:setEnabled(true)
-do
-local function applyGuiStyle(_: string, animate: boolean): ()
-    local activeShell: Frame = state.shells.default
-    state.guiStyle = "Default"
-    Content.Parent = state.shells.defaultContentHost
-    Content.Position = UDim2.fromScale(0, 0)
-    Content.Size = UDim2.fromScale(1, 1)
-    activeShell.Visible = true
-
-    Main.BackgroundColor3 = Theme.DefaultBackground
-    state.mainStroke.Color = Theme.DefaultOutline
-    state.mainStroke.Transparency = 1
-    for _, page: Frame in pairs(pages) do
-        page.BackgroundColor3 = Theme.DefaultBackground
-        page.BackgroundTransparency = 1
-        for _, descendant: Instance in ipairs(page:GetDescendants()) do
-            if descendant:IsA("ScrollingFrame") then
-                descendant.ScrollBarImageColor3 = Theme.DefaultOutline
-            end
-        end
-    end
-    if state.restyleButtons then
-        state.restyleButtons(true)
-    end
-    if state.restyleTextBoxes then
-        state.restyleTextBoxes(true)
-    end
-    if state.restyleAllFeatures then
-        state.restyleAllFeatures(true)
-    end
-    if state.restyleSettings then
-        state.restyleSettings(true)
-    end
-    if state.refreshCardGrids then
-        state.refreshCardGrids()
-    end
-    setTab(state.activeTab)
-end
-state.applyGuiStyle = applyGuiStyle
-
-applyGuiStyle(state.guiStyle, false)
-end
 
 local function disconnectFeatureConnection(name)
     local connection = featureConnections[name]
@@ -4033,1925 +3859,187 @@ local function getCharacterParts()
         character:FindFirstChild("HumanoidRootPart")
 end
 
-type CardGridRecord = {
-    container: ScrollingFrame,
-    root: Frame,
-    columns: {Frame},
-    layouts: {UIListLayout},
-    counts: {number},
-}
-
-local cardGrids: {[ScrollingFrame]: CardGridRecord} =
-    setmetatable({}, {__mode = "k"}) :: any
-
-local function updateCardGrid(record: CardGridRecord): ()
-    local firstHeight: number = record.layouts[1].AbsoluteContentSize.Y
-    local secondHeight: number = record.layouts[2].AbsoluteContentSize.Y
-    local singleColumn: boolean = state.isMobile
-        or state.guiStyle == "Default"
-        or record.container.AbsoluteSize.X < 690
-    local contentHeight: number
-
-    if singleColumn then
-        record.columns[1].Position = UDim2.fromOffset(0, 0)
-        record.columns[1].Size = UDim2.new(1, 0, 0, firstHeight)
-        record.columns[2].Position = UDim2.fromOffset(0, firstHeight + 10)
-        record.columns[2].Size = UDim2.new(1, 0, 0, secondHeight)
-        contentHeight = firstHeight + secondHeight + 10
-    else
-        record.columns[1].Position = UDim2.fromOffset(0, 0)
-        record.columns[1].Size = UDim2.new(0.5, -5, 0, firstHeight)
-        record.columns[2].Position = UDim2.new(0.5, 5, 0, 0)
-        record.columns[2].Size = UDim2.new(0.5, -5, 0, secondHeight)
-        contentHeight = math.max(firstHeight, secondHeight)
-    end
-    record.root.Size = UDim2.new(1, -36, 0, contentHeight)
-    record.container.CanvasSize = UDim2.fromOffset(0, contentHeight + 54)
-end
-
-local function redistributeCardGrid(record: CardGridRecord): ()
-    local cards: {GuiObject} = {}
-    local hasCategoryHeader: boolean = false
-    for _, column: Frame in ipairs(record.columns) do
-        for _, child: Instance in ipairs(column:GetChildren()) do
-            if child:IsA("GuiObject") then
-                if type(child:GetAttribute("CategoryHeader")) == "string" then
-                    hasCategoryHeader = true
-                end
-                table.insert(cards, child)
-            end
-        end
-    end
-    table.sort(cards, function(left: GuiObject, right: GuiObject): boolean
-        if left.LayoutOrder == right.LayoutOrder then
-            return left.Name < right.Name
-        end
-        return left.LayoutOrder < right.LayoutOrder
-    end)
-    record.counts[1] = 0
-    record.counts[2] = 0
-    -- A category header labels everything that follows it, so it only makes
-    -- sense in a single flow. Any page that has headers stays single-column.
-    local oneColumn: boolean = state.isMobile
-        or state.guiStyle == "Default"
-        or hasCategoryHeader
-    for index: number, card: GuiObject in ipairs(cards) do
-        local columnIndex: number = oneColumn and 1 or ((index - 1) % 2) + 1
-        card.Parent = record.columns[columnIndex]
-        record.counts[columnIndex] += 1
-    end
-end
-
--- Category headers.
+-- ---------------------------------------------------------------------------
+-- Device-independent input
+-- ---------------------------------------------------------------------------
 --
--- Wrapped in a `do` block so its helpers do not consume top-level local
--- registers in `bootstrap()`, which sits near Luau's 200-register ceiling.
--- Everything the rest of the file needs is published on `state`.
+-- Modules must never read WASD, Space or a mouse position directly: a phone
+-- has none of them, which is exactly why Fly, Infinite Jump and CTRL+Click
+-- Teleport did nothing on touch. These three helpers answer the questions a
+-- module actually has — "where is the player steering", "is jump held", "what
+-- is being aimed at" — using whatever input the device provides.
 do
--- Feature cards carry a "FeatureCategory" attribute (and "FeatureSortName",
--- the lowercased display name). This pass groups the cards of a page by
--- category, orders the categories alphabetically -- with the catch-all last --
--- orders the cards alphabetically inside each category, and materialises one
--- lightweight header strip per category. LayoutOrder is written explicitly for
--- both headers and cards so the UIListLayout never has to break a tie.
---
--- Cards without the attribute (the Settings page rows) manage their own
--- LayoutOrder and are left completely untouched.
-local function refreshCategoryLayout(record: CardGridRecord): ()
-    local grouped: {[string]: {GuiObject}} = {}
-    local headers: {[string]: Frame} = {}
-    local categories: {string} = {}
-    local categorised: number = 0
+-- Roblox's own control module is the single source of movement input: it
+-- already merges keyboard, thumbstick, gamepad and click-to-move. Reading it
+-- also keeps working while `PlatformStand` is on, which is when
+-- `Humanoid.MoveDirection` goes silent (and why flying on a phone left the
+-- character stuck).
+local cachedControls: any = nil
+local controlsFetchedAt: number = -math.huge
 
-    for _, column: Frame in ipairs(record.columns) do
-        for _, child: Instance in ipairs(column:GetChildren()) do
-            if not child:IsA("GuiObject") then
-                continue
-            end
-            local headerFor: any = child:GetAttribute("CategoryHeader")
-            if type(headerFor) == "string" then
-                headers[headerFor] = child :: Frame
-                continue
-            end
-            local category: any = child:GetAttribute("FeatureCategory")
-            if type(category) ~= "string" then
-                continue
-            end
-            local bucket: {GuiObject}? = grouped[category]
-            if not bucket then
-                bucket = {}
-                grouped[category] = bucket
-                table.insert(categories, category)
-            end
-            table.insert(bucket :: {GuiObject}, child)
-            categorised += 1
-        end
+local function getControls(): any
+    if cachedControls ~= nil or os.clock() - controlsFetchedAt < 2 then
+        return cachedControls
     end
-
-    if categorised == 0 then
-        -- Nothing categorised on this page (e.g. Settings): drop any stale
-        -- header and leave every LayoutOrder alone.
-        for _, header: Frame in pairs(headers) do
-            header:Destroy()
+    controlsFetchedAt = os.clock()
+    local ok: boolean, controls: any = pcall(function(): any
+        local scripts: Instance? = LocalPlayer:FindFirstChildOfClass("PlayerScripts")
+        local playerModule: Instance? = scripts and scripts:FindFirstChild("PlayerModule")
+        if not playerModule then
+            return nil
         end
-        return
-    end
-
-    table.sort(categories, function(left: string, right: string): boolean
-        return featureCategoryRank(left) < featureCategoryRank(right)
+        return (state.requireModule(playerModule) :: any):GetControls()
     end)
-
-    local showHeaders: boolean = #categories > 1
-    for index: number, category: string in ipairs(categories) do
-        local base: number = index * 1000
-        local header: Frame? = headers[category]
-        if showHeaders then
-            if not header then
-                header = (create("Frame", {
-                    Parent = record.columns[1],
-                    Name = "CategoryHeader_" .. category:gsub("%W", ""),
-                    BackgroundTransparency = 1,
-                    BorderSizePixel = 0,
-                    Size = UDim2.new(1, 0, 0, 30),
-                }) :: any) :: Frame
-                local headerFrame: Frame = header :: Frame
-                headerFrame:SetAttribute("CategoryHeader", category)
-
-                local headerLabel: TextLabel = (makeTextLabel(
-                    headerFrame,
-                    string.upper(category),
-                    10
-                ) :: any) :: TextLabel
-                headerLabel.Name = "CategoryTitle"
-                headerLabel.FontFace = CONTROL_FONT
-                headerLabel.Position = UDim2.fromOffset(4, 0)
-                headerLabel.Size = UDim2.new(0, 150, 1, 0)
-                headerLabel.TextColor3 = Theme.DefaultTextMuted
-                headerLabel.TextTransparency = 0.18
-
-                local headerRule: Frame = create("Frame", {
-                    Parent = headerFrame,
-                    Name = "CategoryRule",
-                    AnchorPoint = Vector2.new(1, 0.5),
-                    BackgroundColor3 = Theme.DefaultOutline,
-                    BackgroundTransparency = 0.62,
-                    BorderSizePixel = 0,
-                    Position = UDim2.new(1, -4, 0.5, 0),
-                    Size = UDim2.new(1, -164, 0, 1),
-                }) :: Frame
-                create("UIGradient", {
-                    Parent = headerRule,
-                    Transparency = NumberSequence.new({
-                        NumberSequenceKeypoint.new(0, 1),
-                        NumberSequenceKeypoint.new(1, 0.25),
-                    }),
-                })
-                headers[category] = headerFrame
-            end
-            local resolvedHeader: Frame = headers[category]
-            resolvedHeader.LayoutOrder = base
-            resolvedHeader.Parent = record.columns[1]
-        elseif header then
-            header:Destroy()
-            headers[category] = nil
-        end
-
-        local cards: {GuiObject} = grouped[category]
-        table.sort(cards, function(left: GuiObject, right: GuiObject): boolean
-            local leftName: any = left:GetAttribute("FeatureSortName")
-            local rightName: any = right:GetAttribute("FeatureSortName")
-            return tostring(leftName or left.Name)
-                < tostring(rightName or right.Name)
-        end)
-        for cardIndex: number, card: GuiObject in ipairs(cards) do
-            card.LayoutOrder = base + cardIndex
-        end
+    if ok and type(controls) == "table" then
+        cachedControls = controls
     end
-
-    -- Headers whose category no longer has any card left.
-    for category: string, header: Frame in pairs(headers) do
-        if not grouped[category] then
-            header:Destroy()
-        end
-    end
+    return cachedControls
 end
 
--- Hide a category header when the active search filtered away every card
--- underneath it, so the page never shows a dangling title.
-local function refreshCategoryVisibility(record: CardGridRecord): ()
-    local visibleByCategory: {[string]: boolean} = {}
-    local headers: {Frame} = {}
-    for _, column: Frame in ipairs(record.columns) do
-        for _, child: Instance in ipairs(column:GetChildren()) do
-            if not child:IsA("GuiObject") then
-                continue
-            end
-            if type(child:GetAttribute("CategoryHeader")) == "string" then
-                table.insert(headers, child :: Frame)
-                continue
-            end
-            local category: any = child:GetAttribute("FeatureCategory")
-            if type(category) == "string" and child.Visible then
-                visibleByCategory[category] = true
+-- Returns the steering intent in camera space: +1 forward, +1 right.
+state.getMoveInput = function(): (number, number)
+    local controls: any = getControls()
+    if controls then
+        local ok: boolean, move: any = pcall(controls.GetMoveVector, controls)
+        if ok and typeof(move) == "Vector3" and move.Magnitude > 0.001 then
+            -- GetMoveVector is camera-relative with -Z forward.
+            return -move.Z, move.X
+        end
+    end
+
+    -- Fallbacks: the humanoid's own direction (world space, resolved against
+    -- the camera by the caller) and finally the desktop keys.
+    local _, humanoid: Humanoid? = getCharacterParts()
+    if humanoid and humanoid.MoveDirection.Magnitude > 0.001 then
+        local camera: Camera? = workspace.CurrentCamera
+        if camera then
+            local forward: Vector3 = camera.CFrame.LookVector
+            local right: Vector3 = camera.CFrame.RightVector
+            local flatForward: Vector3 = Vector3.new(forward.X, 0, forward.Z)
+            local flatRight: Vector3 = Vector3.new(right.X, 0, right.Z)
+            if flatForward.Magnitude > 0.001 and flatRight.Magnitude > 0.001 then
+                local direction: Vector3 = humanoid.MoveDirection
+                return direction:Dot(flatForward.Unit), direction:Dot(flatRight.Unit)
             end
         end
     end
-    for _, header: Frame in ipairs(headers) do
-        local category: string =
-            tostring(header:GetAttribute("CategoryHeader"))
-        header.Visible = visibleByCategory[category] == true
-    end
-end
 
-state.refreshCategoryVisibility = function(): ()
-    for _, record: CardGridRecord in pairs(cardGrids) do
-        refreshCategoryVisibility(record)
-        updateCardGrid(record)
-    end
-end
-
-state.refreshCardGrids = function(): ()
-    for _, record: CardGridRecord in pairs(cardGrids) do
-        refreshCategoryLayout(record)
-        redistributeCardGrid(record)
-        refreshCategoryVisibility(record)
-        updateCardGrid(record)
-    end
-end
-
--- Re-sorting on every single card creation would be O(n^2) during bootstrap,
--- so creations only mark the layout dirty and one pass runs on the next frame.
-local categoryLayoutDirty: boolean = false
-local function invalidateCategoryLayout(): ()
-    if categoryLayoutDirty then
-        return
-    end
-    categoryLayoutDirty = true
-    task.defer(function(): ()
-        categoryLayoutDirty = false
-        state.refreshCardGrids()
-    end)
-end
-state.invalidateCategoryLayout = invalidateCategoryLayout
-end
-
-local function getFeatureCardParent(container: Instance): Instance
-    if not container:IsA("ScrollingFrame") then
-        return container
-    end
-
-    local record: CardGridRecord? = cardGrids[container]
-    if not record then
-        container.AutomaticCanvasSize = Enum.AutomaticSize.None
-        local oldLayout: UIListLayout? =
-            container:FindFirstChildOfClass("UIListLayout")
-        if oldLayout then
-            oldLayout:Destroy()
+    local forwardScalar: number = 0
+    local rightScalar: number = 0
+    if UserInputService.KeyboardEnabled then
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then
+            forwardScalar += 1
         end
-
-        local root: Frame = Instance.new("Frame")
-        root.Name = "ResponsiveCardGrid"
-        root.BackgroundTransparency = 1
-        root.BorderSizePixel = 0
-        root.Position = UDim2.fromOffset(18, 18)
-        root.Size = UDim2.new(1, -36, 0, 0)
-        root.Parent = container
-
-        local columns: {Frame} = {}
-        local layouts: {UIListLayout} = {}
-        for columnIndex: number = 1, 2 do
-            local column: Frame = Instance.new("Frame")
-            column.Name = "Column" .. tostring(columnIndex)
-            column.BackgroundTransparency = 1
-            column.BorderSizePixel = 0
-            column.Size = UDim2.new(0.5, -5, 0, 0)
-            column.Parent = root
-            columns[columnIndex] = column
-
-            local layout: UIListLayout = Instance.new("UIListLayout")
-            layout.FillDirection = Enum.FillDirection.Vertical
-            layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-            layout.Padding = UDim.new(0, 7)
-            layout.SortOrder = Enum.SortOrder.LayoutOrder
-            layout.Parent = column
-            layouts[columnIndex] = layout
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then
+            forwardScalar -= 1
         end
-
-        record = {
-            container = container,
-            root = root,
-            columns = columns,
-            layouts = layouts,
-            counts = {0, 0},
-        }
-        cardGrids[container] = record
-        for _, layout: UIListLayout in ipairs(layouts) do
-            trackUiConnection(
-                layout:GetPropertyChangedSignal("AbsoluteContentSize")
-                    :Connect(function(): ()
-                        updateCardGrid(record :: CardGridRecord)
-                    end)
-            )
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then
+            rightScalar += 1
         end
-        trackUiConnection(
-            container:GetPropertyChangedSignal("AbsoluteSize"):Connect(
-                function(): ()
-                    updateCardGrid(record :: CardGridRecord)
-                end
-            )
-        )
-        updateCardGrid(record)
-    end
-
-    local selectedColumn: number
-    if state.isMobile or state.guiStyle == "Default" then
-        selectedColumn = 1
-    else
-        selectedColumn = record.counts[1] <= record.counts[2] and 1 or 2
-    end
-    record.counts[selectedColumn] += 1
-    return record.columns[selectedColumn]
-end
-
-local function setCheckVisual(
-    button: TextButton,
-    mark: TextLabel,
-    enabled: boolean,
-    animate: boolean?
-): ()
-    mark.Text = ""
-    mark.Visible = false
-    setToggleSwitch(button, enabled, animate)
-end
-
-local function createCheckControl(
-    parent: Instance,
-    enabled: boolean
-): (TextButton, TextLabel)
-    local button: TextButton = createToggleSwitch(parent, enabled, nil)
-    local mark: TextLabel = makeTextLabel(button, "", state.isMobile and 16 or 15)
-    mark.Name = "CheckMark"
-    mark.AnchorPoint = Vector2.new(0.5, 0.5)
-    mark.Position = UDim2.fromScale(0.5, 0.5)
-    mark.Size = UDim2.fromScale(1, 1)
-    mark.TextXAlignment = Enum.TextXAlignment.Center
-    mark.ZIndex = button.ZIndex + 1
-    setCheckVisual(button, mark, enabled, false)
-    return button, mark
-end
-
-do
-type FloatingWindowRecord = {
-    id: string,
-    root: Frame,
-    body: Frame,
-    closeButton: TextButton,
-}
-
-local FloatingUi: any = {
-    favorites = {},
-    favoriteRows = {},
-    overlays = {},
-    featureRows = {},
-    windows = {},
-}
-state.floatingUi = FloatingUi
-
-if type(configData.ui.favorites) ~= "table" then
-    configData.ui.favorites = {}
-end
-if type(configData.ui.overlays) ~= "table" then
-    configData.ui.overlays = {}
-end
-if type(configData.ui.floatingPositions) ~= "table" then
-    configData.ui.floatingPositions = {}
-end
-if type(configData.ui.overlaySettings) ~= "table" then
-    configData.ui.overlaySettings = {}
-end
-local overlaySettings: any = configData.ui.overlaySettings
-overlaySettings.TextGUI = type(overlaySettings.TextGUI) == "table"
-    and overlaySettings.TextGUI
-    or {}
-overlaySettings.SessionInfo = type(overlaySettings.SessionInfo) == "table"
-    and overlaySettings.SessionInfo
-    or {}
-overlaySettings.TargetInfo = type(overlaySettings.TargetInfo) == "table"
-    and overlaySettings.TargetInfo
-    or {}
-overlaySettings.Radar = type(overlaySettings.Radar) == "table"
-    and overlaySettings.Radar
-    or {}
-local textGuiSettings: any = overlaySettings.TextGUI
-textGuiSettings.sort = textGuiSettings.sort or "Alphabetical"
-textGuiSettings.font = textGuiSettings.font or "Builder Sans"
-textGuiSettings.colorMode = textGuiSettings.colorMode or "Match GUI"
-textGuiSettings.scale = math.clamp(tonumber(textGuiSettings.scale) or 1, 0.75, 2)
-textGuiSettings.shadow = textGuiSettings.shadow ~= false
-textGuiSettings.gradient = textGuiSettings.gradient == true
-textGuiSettings.v4Gradient = textGuiSettings.v4Gradient == true
-textGuiSettings.animations = textGuiSettings.animations ~= false
-textGuiSettings.watermark = textGuiSettings.watermark == true
-textGuiSettings.background = textGuiSettings.background == true
-textGuiSettings.hideModules = textGuiSettings.hideModules == true
-textGuiSettings.hideRender = textGuiSettings.hideRender == true
-textGuiSettings.customText = tostring(textGuiSettings.customText or "")
-local sessionSettings: any = overlaySettings.SessionInfo
-sessionSettings.showPerformance = sessionSettings.showPerformance ~= false
-sessionSettings.showServer = sessionSettings.showServer ~= false
-sessionSettings.showRole = sessionSettings.showRole ~= false
-sessionSettings.showDeaths = sessionSettings.showDeaths ~= false
-sessionSettings.showWins = sessionSettings.showWins ~= false
-local targetSettings: any = overlaySettings.TargetInfo
-targetSettings.mode = targetSettings.mode or "Smart Priority"
-targetSettings.showAvatar = targetSettings.showAvatar ~= false
-targetSettings.showHealth = targetSettings.showHealth ~= false
-targetSettings.showDistance = targetSettings.showDistance ~= false
-local radarSettings: any = overlaySettings.Radar
-radarSettings.range = math.clamp(tonumber(radarSettings.range) or 250, 25, 2000)
-radarSettings.size = math.clamp(tonumber(radarSettings.size) or 190, 140, 280)
-radarSettings.rotation = radarSettings.rotation or "Camera"
-radarSettings.colorMode = radarSettings.colorMode or "Smart"
-radarSettings.outOfRange = radarSettings.outOfRange or "Clamp"
-radarSettings.showNames = radarSettings.showNames == true
-radarSettings.showDistance = radarSettings.showDistance == true
-radarSettings.showTeam = radarSettings.showTeam ~= false
-radarSettings.aliveOnly = radarSettings.aliveOnly ~= false
-radarSettings.grid = radarSettings.grid ~= false
-radarSettings.rings = radarSettings.rings ~= false
-
-local function getFloatingViewport(): Vector2
-    local camera: Camera? = workspace.CurrentCamera
-    return camera and camera.ViewportSize or Vector2.new(1280, 720)
-end
-
-local function clampFloatingPosition(
-    position: Vector2,
-    size: Vector2
-): Vector2
-    local viewport: Vector2 = getFloatingViewport()
-    return Vector2.new(
-        math.clamp(position.X, 6, math.max(6, viewport.X - size.X - 6)),
-        math.clamp(position.Y, 6, math.max(6, viewport.Y - size.Y - 6))
-    )
-end
-
-local function bringFloatingToFront(record: FloatingWindowRecord): ()
-    for index: number = #FloatingUi.windows, 1, -1 do
-        if FloatingUi.windows[index] == record then
-            table.remove(FloatingUi.windows, index)
-            break
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then
+            rightScalar -= 1
         end
     end
-    table.insert(FloatingUi.windows, record)
-    for index: number, window: FloatingWindowRecord in ipairs(FloatingUi.windows) do
-        local baseZ: number = 108 + index * 4
-        window.root.ZIndex = baseZ
-        for _, descendant: Instance in ipairs(window.root:GetDescendants()) do
-            if descendant:IsA("GuiObject") then
-                local relative: number =
-                    tonumber(descendant:GetAttribute("FloatingDepth")) or 1
-                descendant.ZIndex = baseZ + relative
-            end
-        end
-    end
+    return forwardScalar, rightScalar
 end
 
-local function createFloatingWindow(
-    id: string,
-    titleText: string,
-    size: Vector2,
-    defaultPosition: Vector2,
-    onClose: (() -> ())?
-): FloatingWindowRecord
-    local saved: any = configData.ui.floatingPositions[id]
-    local position: Vector2 = type(saved) == "table"
-        and Vector2.new(
-            tonumber(saved[1]) or defaultPosition.X,
-            tonumber(saved[2]) or defaultPosition.Y
-        )
-        or defaultPosition
-    position = clampFloatingPosition(position, size)
+-- Jump, from a key, a gamepad button or the touch jump button. `JumpRequest`
+-- covers all three, and repeats while the input is held, so a short grace
+-- window turns it into a reliable "is jump held" signal.
+local lastJumpRequestAt: number = -math.huge
+trackUiConnection(UserInputService.JumpRequest:Connect(function(): ()
+    lastJumpRequestAt = os.clock()
+end))
 
-    local root: Frame = create("Frame", {
-        Parent = PopupLayer,
-        Name = "Floating_" .. id,
-        Active = true,
-        BackgroundColor3 = Theme.DefaultBackground,
-        BackgroundTransparency = 0.08,
-        BorderSizePixel = 0,
-        ClipsDescendants = true,
-        Position = UDim2.fromOffset(position.X, position.Y),
-        Size = UDim2.fromOffset(size.X, size.Y),
-        Visible = false,
-        ZIndex = 150,
-    }) :: Frame
-    create("UICorner", {
-        Parent = root,
-        CornerRadius = cornerRadius(10),
-    })
-    -- Hairline only: the floating windows share the borderless look of the
-    -- main shell, so no grey frame draws attention at their corners either.
-    local stroke: UIStroke = create("UIStroke", {
-        Parent = root,
-        Color = Theme.DefaultOutline,
-        Transparency = 0.78,
-        Thickness = 1,
-    }) :: UIStroke
-
-    local shade: Frame = create("Frame", {
-        Parent = root,
-        Name = "Readability",
-        BackgroundColor3 = Theme.DefaultBackground,
-        BackgroundTransparency = 0.28,
-        BorderSizePixel = 0,
-        Size = UDim2.fromScale(1, 1),
-    }) :: Frame
-    shade:SetAttribute("FloatingDepth", 2)
-
-    local header: Frame = create("Frame", {
-        Parent = root,
-        Name = "Header",
-        Active = true,
-        BackgroundColor3 = Theme.DefaultSurface,
-        BackgroundTransparency = 0.24,
-        BorderSizePixel = 0,
-        Size = UDim2.new(1, 0, 0, 36),
-    }) :: Frame
-    header:SetAttribute("FloatingDepth", 3)
-    local accent: Frame = create("Frame", {
-        Parent = header,
-        BackgroundColor3 = Theme.DefaultOutline,
-        BackgroundTransparency = 0.55,
-        BorderSizePixel = 0,
-        Position = UDim2.fromOffset(0, 35),
-        Size = UDim2.new(1, 0, 0, 1),
-    }) :: Frame
-    accent:SetAttribute("FloatingDepth", 1)
-    local title: TextLabel = makeTextLabel(header, titleText, 11)
-    title.FontFace = CONTROL_FONT
-    title.Position = UDim2.fromOffset(12, 0)
-    title.Size = UDim2.new(1, -48, 1, 0)
-    title.TextColor3 = Theme.DefaultText
-    title:SetAttribute("FloatingDepth", 2)
-
-    local closeButton: TextButton = makeButton(header, "x", 10)
-    closeButton.Name = "Close"
-    closeButton.AnchorPoint = Vector2.new(1, 0.5)
-    closeButton.BackgroundTransparency = 1
-    closeButton.Position = UDim2.new(1, -7, 0.5, 0)
-    closeButton.Size = UDim2.fromOffset(28, 28)
-    closeButton.TextColor3 = Theme.DefaultTextMuted
-    closeButton:SetAttribute("ThemeRole", "Icon")
-    closeButton:SetAttribute("FloatingDepth", 3)
-    local closeStroke: UIStroke? = closeButton:FindFirstChild("StyleStroke") :: UIStroke?
-    if closeStroke then
-        closeStroke.Enabled = false
-    end
-
-    local body: Frame = create("Frame", {
-        Parent = root,
-        Name = "Body",
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        Position = UDim2.fromOffset(0, 36),
-        Size = UDim2.new(1, 0, 1, -36),
-    }) :: Frame
-    body:SetAttribute("FloatingDepth", 4)
-
-    local record: FloatingWindowRecord = {
-        id = id,
-        root = root,
-        body = body,
-        closeButton = closeButton,
-    }
-    local dragging: boolean = false
-    local dragInput: InputObject? = nil
-    local dragStart: Vector2 = Vector2.zero
-    local startPosition: Vector2 = position
-
-    trackUiConnection(root.InputBegan:Connect(function(): ()
-        bringFloatingToFront(record)
-    end))
-    trackUiConnection(header.InputBegan:Connect(function(input: InputObject): ()
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-            or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = true
-            dragInput = input
-            dragStart = Vector2.new(input.Position.X, input.Position.Y)
-            startPosition = Vector2.new(root.Position.X.Offset, root.Position.Y.Offset)
-            bringFloatingToFront(record)
-        end
-    end))
-    trackUiConnection(UserInputService.InputChanged:Connect(function(input: InputObject): ()
-        if not dragging then
+state.onJumpRequest = function(callback: () -> ()): RBXScriptConnection
+    return UserInputService.JumpRequest:Connect(function(): ()
+        if state.keyCaptureCallback
+            or state.waitingForKey
+            or UserInputService:GetFocusedTextBox() then
             return
         end
-        if input == dragInput
-            or (dragInput
-                and dragInput.UserInputType == Enum.UserInputType.MouseButton1
-                and input.UserInputType == Enum.UserInputType.MouseMovement) then
-            local pointer: Vector2 = Vector2.new(input.Position.X, input.Position.Y)
-            local nextPosition: Vector2 = clampFloatingPosition(
-                startPosition + pointer - dragStart,
-                root.AbsoluteSize
-            )
-            root.Position = UDim2.fromOffset(nextPosition.X, nextPosition.Y)
-        end
-    end))
-    trackUiConnection(UserInputService.InputEnded:Connect(function(input: InputObject): ()
-        if dragging
-            and (input == dragInput
-                or input.UserInputType == Enum.UserInputType.MouseButton1) then
-            dragging = false
-            dragInput = nil
-            configData.ui.floatingPositions[id] = {
-                root.Position.X.Offset,
-                root.Position.Y.Offset,
-            }
-            queueConfigSave()
-        end
-    end))
-    trackUiConnection(closeButton.MouseButton1Click:Connect(function(): ()
-        root.Visible = false
-        if onClose then
-            onClose()
-        end
-    end))
-    bringFloatingToFront(record)
-    return record
-end
-
-function FloatingUi.reclamp(): ()
-    for _, record: FloatingWindowRecord in ipairs(FloatingUi.windows) do
-        local position: Vector2 = clampFloatingPosition(
-            Vector2.new(record.root.Position.X.Offset, record.root.Position.Y.Offset),
-            record.root.AbsoluteSize
-        )
-        record.root.Position = UDim2.fromOffset(position.X, position.Y)
-    end
-end
-
-local FavoritesWindow: FloatingWindowRecord = createFloatingWindow(
-    "Favorites",
-    "Favorites",
-    Vector2.new(state.isMobile and 260 or 285, 250),
-    Vector2.new(40, 90),
-    function(): ()
-        configData.ui.favoritesWindowOpen = false
-        queueConfigSave()
-    end
-)
-local FavoritesList: ScrollingFrame = create("ScrollingFrame", {
-    Parent = FavoritesWindow.body,
-    Name = "FavoriteModules",
-    Active = true,
-    AutomaticCanvasSize = Enum.AutomaticSize.Y,
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    CanvasSize = UDim2.fromOffset(0, 0),
-    Position = UDim2.fromOffset(8, 8),
-    ScrollBarImageColor3 = Theme.DefaultOutline,
-    ScrollBarThickness = 3,
-    Size = UDim2.new(1, -16, 1, -16),
-}) :: ScrollingFrame
-FavoritesList:SetAttribute("FloatingDepth", 2)
-create("UIListLayout", {
-    Parent = FavoritesList,
-    Padding = UDim.new(0, 5),
-    SortOrder = Enum.SortOrder.LayoutOrder,
-})
-
-local function syncFavoriteButton(feature: any): ()
-    if not feature.favoriteButton then
-        return
-    end
-    local selected: boolean = configData.ui.favorites[feature.configKey] == true
-    feature.favoriteButton.Text = selected and "★" or "☆"
-    feature.favoriteButton.TextColor3 = selected
-        and Theme.DefaultAccent
-        or Theme.DefaultTextMuted
-    feature.favoriteButton.TextTransparency = selected and 0 or 0.34
-end
-
-local function refreshFavorites(): ()
-    for _, row: GuiObject in ipairs(FloatingUi.favoriteRows) do
-        row:Destroy()
-    end
-    table.clear(FloatingUi.favoriteRows)
-    local order: number = 0
-    for _, feature: any in ipairs(allFeatures) do
-        if configData.ui.favorites[feature.configKey] == true then
-            order += 1
-            local row: TextButton = create("TextButton", {
-                Parent = FavoritesList,
-                Name = feature.configKey:gsub("%W", ""),
-                AutoButtonColor = false,
-                BackgroundColor3 = Theme.DefaultSurface,
-                BackgroundTransparency = 0.38,
-                BorderSizePixel = 0,
-                FontFace = THIN_FONT,
-                LayoutOrder = order,
-                Size = UDim2.new(1, -4, 0, 36),
-                Text = feature.name,
-                TextColor3 = feature.enabled
-                    and Theme.DefaultAccent
-                    or Theme.DefaultText,
-                TextSize = 13,
-                TextXAlignment = Enum.TextXAlignment.Left,
-            }) :: TextButton
-            create("UICorner", {
-                Parent = row,
-                CornerRadius = cornerRadius(8),
-            })
-            row:SetAttribute("FloatingDepth", 3)
-            create("UIPadding", {
-                Parent = row,
-                PaddingLeft = UDim.new(0, 12),
-                PaddingRight = UDim.new(0, 38),
-            })
-            local status: Frame = create("Frame", {
-                Parent = row,
-                Name = "Status",
-                AnchorPoint = Vector2.new(1, 0.5),
-                BackgroundColor3 = feature.enabled
-                    and Theme.AccentCyan
-                    or Theme.DefaultTextMuted,
-                BackgroundTransparency = feature.enabled and 0 or 0.58,
-                BorderSizePixel = 0,
-                Position = UDim2.new(1, -14, 0.5, 0),
-                Size = UDim2.fromOffset(feature.enabled and 9 or 7, feature.enabled and 9 or 7),
-            }) :: Frame
-            create("UICorner", {Parent = status, CornerRadius = UDim.new(1, 0)})
-            status:SetAttribute("FloatingDepth", 2)
-            row.MouseButton1Click:Connect(function(): ()
-                if feature.isCategory then
-                    state.setMenuVisible(true)
-                    setTab(feature.sectionName)
-                end
-                feature.activate()
-            end)
-            table.insert(FloatingUi.favoriteRows, row)
-        end
-    end
-    if order == 0 then
-        local empty: TextLabel = create("TextLabel", {
-            Parent = FavoritesList,
-            BackgroundTransparency = 1,
-            FontFace = THIN_FONT,
-            LayoutOrder = 1,
-            Size = UDim2.new(1, -4, 0, 52),
-            Text = "Star a module to keep it here",
-            TextColor3 = Theme.DefaultTextMuted,
-            TextSize = 13,
-            TextTransparency = 0.28,
-            TextXAlignment = Enum.TextXAlignment.Center,
-        }) :: TextLabel
-        empty:SetAttribute("FloatingDepth", 3)
-        table.insert(FloatingUi.favoriteRows, empty)
-    end
-end
-
-function FloatingUi.toggleFavorite(feature: any): ()
-    local nextValue: boolean = configData.ui.favorites[feature.configKey] ~= true
-    configData.ui.favorites[feature.configKey] = nextValue and true or nil
-    syncFavoriteButton(feature)
-    refreshFavorites()
-    queueConfigSave()
-end
-
-function FloatingUi.registerFeature(feature: any): ()
-    FloatingUi.favorites[feature.configKey] = feature
-    syncFavoriteButton(feature)
-    if configData.ui.favorites[feature.configKey] == true then
-        refreshFavorites()
-    end
-end
-
-function FloatingUi.unregisterFeature(feature: any): ()
-    FloatingUi.favorites[feature.configKey] = nil
-    if configData.ui.favorites[feature.configKey] == true then
-        refreshFavorites()
-    end
-end
-
-function FloatingUi.refreshFeature(feature: any): ()
-    if configData.ui.favorites[feature.configKey] == true then
-        refreshFavorites()
-    end
-end
-
-local OverlayMenu: FloatingWindowRecord = createFloatingWindow(
-    "OverlayMenu",
-    "Overlays",
-    Vector2.new(state.isMobile and 250 or 270, 232),
-    Vector2.new(340, 90),
-    function(): ()
-        configData.ui.overlayMenuOpen = false
-        queueConfigSave()
-    end
-)
-local OverlayList: Frame = create("Frame", {
-    Parent = OverlayMenu.body,
-    BackgroundTransparency = 1,
-    Position = UDim2.fromOffset(8, 8),
-    Size = UDim2.new(1, -16, 1, -16),
-}) :: Frame
-OverlayList:SetAttribute("FloatingDepth", 2)
-create("UIListLayout", {
-    Parent = OverlayList,
-    Padding = UDim.new(0, 5),
-    SortOrder = Enum.SortOrder.LayoutOrder,
-})
-
-local overlayDefinitions: {any} = {
-    {id = "SessionInfo", title = "Session Info", size = Vector2.new(270, 210), position = Vector2.new(40, 330)},
-    {id = "TextGUI", title = "Text GUI", size = Vector2.new(300, 260), position = Vector2.new(325, 330)},
-    {id = "TargetInfo", title = "Target Info", size = Vector2.new(330, 180), position = Vector2.new(640, 330)},
-    {id = "Radar", title = "Radar", size = Vector2.new(240, 285), position = Vector2.new(985, 300)},
-}
-
-local function setOverlayEnabled(id: string, enabled: boolean): ()
-    local overlay: any = FloatingUi.overlays[id]
-    if not overlay then
-        return
-    end
-    overlay.enabled = enabled
-    overlay.window.root.Visible = enabled
-    setToggleSwitch(overlay.toggle, enabled, true)
-    configData.ui.overlays[id] = enabled
-    queueConfigSave()
-    if enabled then
-        bringFloatingToFront(overlay.window)
-    end
-end
-
-FloatingUi.settingsWindows = {}
-FloatingUi.openSettings = function(id: string): ()
-    local window: FloatingWindowRecord? = FloatingUi.settingsWindows[id]
-    if window then
-        window.root.Visible = not window.root.Visible
-        if window.root.Visible then
-            bringFloatingToFront(window)
-        end
-    end
-end
-
-for index: number, definition: any in ipairs(overlayDefinitions) do
-    local overlayId: string = definition.id
-    local overlayWindow: FloatingWindowRecord
-    overlayWindow = createFloatingWindow(
-        overlayId,
-        definition.title,
-        definition.size,
-        definition.position,
-        function(): ()
-            setOverlayEnabled(overlayId, false)
-        end
-    )
-    local managerRow: Frame = create("Frame", {
-        Parent = OverlayList,
-        BackgroundColor3 = Theme.DefaultSurface,
-        BackgroundTransparency = 0.48,
-        BorderSizePixel = 0,
-        LayoutOrder = index,
-        Size = UDim2.new(1, 0, 0, 40),
-    }) :: Frame
-    managerRow:SetAttribute("FloatingDepth", 3)
-    create("UICorner", {
-        Parent = managerRow,
-        CornerRadius = cornerRadius(8),
-    })
-    local managerLabel: TextLabel = makeTextLabel(managerRow, definition.title, 10)
-    managerLabel.Position = UDim2.fromOffset(10, 0)
-    managerLabel.Size = UDim2.new(1, -112, 1, 0)
-    managerLabel.TextColor3 = Theme.DefaultTextMuted
-    managerLabel:SetAttribute("FloatingDepth", 1)
-    local settingsButton: TextButton = makeButton(managerRow, "...", 9)
-    settingsButton.Name = "Settings"
-    settingsButton.AnchorPoint = Vector2.new(1, 0.5)
-    settingsButton.BackgroundTransparency = 1
-    settingsButton.Position = UDim2.new(1, -58, 0.5, 0)
-    settingsButton.Size = UDim2.fromOffset(28, 28)
-    settingsButton:SetAttribute("FloatingDepth", 2)
-    local settingsStroke: UIStroke? =
-        settingsButton:FindFirstChild("StyleStroke") :: UIStroke?
-    if settingsStroke then
-        settingsStroke.Enabled = false
-    end
-    local toggle: TextButton = createToggleSwitch(managerRow, false, 42)
-    toggle.AnchorPoint = Vector2.new(1, 0.5)
-    toggle.Position = UDim2.new(1, -7, 0.5, 0)
-    toggle:SetAttribute("FloatingDepth", 2)
-    FloatingUi.overlays[overlayId] = {
-        window = overlayWindow,
-        toggle = toggle,
-        enabled = false,
-    }
-    trackUiConnection(toggle.MouseButton1Click:Connect(function(): ()
-        setOverlayEnabled(overlayId, not FloatingUi.overlays[overlayId].enabled)
-    end))
-    trackUiConnection(settingsButton.MouseButton1Click:Connect(function(): ()
-        FloatingUi.openSettings(overlayId)
-    end))
-end
-
-local function createOverlaySettingsWindow(
-    id: string,
-    title: string,
-    height: number,
-    position: Vector2
-): (FloatingWindowRecord, ScrollingFrame)
-    local window: FloatingWindowRecord = createFloatingWindow(
-        id .. "Settings",
-        title,
-        Vector2.new(state.isMobile and 286 or 310, height),
-        position,
-        nil
-    )
-    local scroll: ScrollingFrame = create("ScrollingFrame", {
-        Parent = window.body,
-        Active = true,
-        AutomaticCanvasSize = Enum.AutomaticSize.Y,
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        CanvasSize = UDim2.fromOffset(0, 0),
-        Position = UDim2.fromOffset(8, 8),
-        ScrollBarImageColor3 = Theme.AccentViolet,
-        ScrollBarThickness = 3,
-        Size = UDim2.new(1, -16, 1, -16),
-    }) :: ScrollingFrame
-    scroll:SetAttribute("FloatingDepth", 2)
-    create("UIListLayout", {
-        Parent = scroll,
-        Padding = UDim.new(0, 5),
-        SortOrder = Enum.SortOrder.LayoutOrder,
-    })
-    FloatingUi.settingsWindows[id] = window
-    return window, scroll
-end
-
-local function createCompactSettingRow(parent: Instance, labelText: string): Frame
-    local row: Frame = create("Frame", {
-        Parent = parent,
-        BackgroundColor3 = Theme.DefaultSurface,
-        BackgroundTransparency = 0.44,
-        BorderSizePixel = 0,
-        Size = UDim2.new(1, -4, 0, 38),
-    }) :: Frame
-    create("UICorner", {Parent = row, CornerRadius = cornerRadius(8)})
-    local label: TextLabel = makeTextLabel(row, labelText, 9)
-    label.Position = UDim2.fromOffset(10, 0)
-    label.Size = UDim2.new(0.48, -10, 1, 0)
-    label.TextColor3 = Theme.DefaultTextMuted
-    return row
-end
-
-local function addCompactCycle(
-    parent: Instance,
-    labelText: string,
-    values: {string},
-    currentValue: string,
-    callback: (string) -> ()
-): ()
-    local row: Frame = createCompactSettingRow(parent, labelText)
-    local index: number = table.find(values, currentValue) or 1
-    local button: TextButton = makeButton(row, values[index], 8)
-    button.Position = UDim2.new(0.48, 4, 0, 4)
-    button.Size = UDim2.new(0.52, -8, 1, -8)
-    trackUiConnection(button.MouseButton1Click:Connect(function(): ()
-        index = index % #values + 1
-        button.Text = values[index]
-        callback(values[index])
-        queueConfigSave()
-    end))
-end
-
-local function addCompactToggle(
-    parent: Instance,
-    labelText: string,
-    initial: boolean,
-    callback: (boolean) -> ()
-): ()
-    local row: Frame = createCompactSettingRow(parent, labelText)
-    local enabled: boolean = initial
-    local toggle: TextButton = createToggleSwitch(row, enabled, 42)
-    toggle.AnchorPoint = Vector2.new(1, 0.5)
-    toggle.Position = UDim2.new(1, -8, 0.5, 0)
-    trackUiConnection(toggle.MouseButton1Click:Connect(function(): ()
-        enabled = not enabled
-        setToggleSwitch(toggle, enabled, true)
-        callback(enabled)
-        queueConfigSave()
-    end))
-end
-
-local function addCompactText(
-    parent: Instance,
-    labelText: string,
-    initial: string,
-    callback: (string) -> ()
-): ()
-    local row: Frame = createCompactSettingRow(parent, labelText)
-    local box: TextBox = makeTextBox(row, initial)
-    box.Position = UDim2.new(0.48, 4, 0, 4)
-    box.Size = UDim2.new(0.52, -8, 1, -8)
-    box.PlaceholderText = "Custom text"
-    box.TextXAlignment = Enum.TextXAlignment.Left
-    trackUiConnection(box.FocusLost:Connect(function(): ()
-        callback(string.sub(box.Text, 1, 80))
-        queueConfigSave()
-    end))
-end
-
-local textSettingsWindow: FloatingWindowRecord = nil :: any
-local radarSettingsWindow: FloatingWindowRecord = nil :: any
-local sessionSettingsWindow: FloatingWindowRecord = nil :: any
-local targetSettingsWindow: FloatingWindowRecord = nil :: any
-
-do
-    local textSettingsScroll: ScrollingFrame
-    textSettingsWindow, textSettingsScroll = createOverlaySettingsWindow(
-        "TextGUI",
-        "Text GUI Studio",
-        state.isMobile and 520 or 560,
-        Vector2.new(300, 70)
-    )
-    addCompactCycle(textSettingsScroll, "Sort", {"Alphabetical", "Length", "Enabled order", "Section"}, textGuiSettings.sort, function(value: string): () textGuiSettings.sort = value end)
-    addCompactCycle(textSettingsScroll, "Font", {"Builder Sans", "Source Sans", "Gotham", "Code", "Valve"}, textGuiSettings.font, function(value: string): () textGuiSettings.font = value end)
-    addCompactCycle(textSettingsScroll, "Color mode", {"Match GUI", "Solid white", "Greyscale", "Rainbow", "By section"}, textGuiSettings.colorMode, function(value: string): () textGuiSettings.colorMode = value end)
-    addCompactCycle(textSettingsScroll, "Scale", {"0.75", "1", "1.25", "1.5", "2"}, tostring(textGuiSettings.scale), function(value: string): () textGuiSettings.scale = tonumber(value) or 1 end)
-    addCompactToggle(textSettingsScroll, "Shadow", textGuiSettings.shadow, function(value: boolean): () textGuiSettings.shadow = value end)
-    addCompactToggle(textSettingsScroll, "Gradient", textGuiSettings.gradient, function(value: boolean): () textGuiSettings.gradient = value end)
-    addCompactToggle(textSettingsScroll, "V4 gradient", textGuiSettings.v4Gradient, function(value: boolean): () textGuiSettings.v4Gradient = value end)
-    addCompactToggle(textSettingsScroll, "Animations", textGuiSettings.animations, function(value: boolean): () textGuiSettings.animations = value end)
-    addCompactToggle(textSettingsScroll, "Watermark", textGuiSettings.watermark, function(value: boolean): () textGuiSettings.watermark = value end)
-    addCompactToggle(textSettingsScroll, "Render background", textGuiSettings.background, function(value: boolean): () textGuiSettings.background = value end)
-    addCompactToggle(textSettingsScroll, "Hide modules", textGuiSettings.hideModules, function(value: boolean): () textGuiSettings.hideModules = value end)
-    addCompactToggle(textSettingsScroll, "Hide render", textGuiSettings.hideRender, function(value: boolean): () textGuiSettings.hideRender = value end)
-    addCompactText(textSettingsScroll, "Custom text", textGuiSettings.customText, function(value: string): () textGuiSettings.customText = value end)
-end
-
-do
-    local radarSettingsScroll: ScrollingFrame
-    radarSettingsWindow, radarSettingsScroll = createOverlaySettingsWindow(
-        "Radar",
-        "Radar Studio",
-        500,
-        Vector2.new(630, 70)
-    )
-    addCompactCycle(radarSettingsScroll, "Range", {"75", "150", "250", "500", "1000", "2000"}, tostring(radarSettings.range), function(value: string): () radarSettings.range = tonumber(value) or 250 end)
-    addCompactCycle(radarSettingsScroll, "Radar size", {"160", "190", "220", "250", "280"}, tostring(radarSettings.size), function(value: string): () radarSettings.size = tonumber(value) or 190 end)
-    addCompactCycle(radarSettingsScroll, "Rotation", {"Camera", "Player", "North"}, radarSettings.rotation, function(value: string): () radarSettings.rotation = value end)
-    addCompactCycle(radarSettingsScroll, "Color mode", {"Smart", "Team", "Health", "MM2 role", "Spectrum"}, radarSettings.colorMode, function(value: string): () radarSettings.colorMode = value end)
-    addCompactCycle(radarSettingsScroll, "Out of range", {"Clamp", "Hide"}, radarSettings.outOfRange, function(value: string): () radarSettings.outOfRange = value end)
-    addCompactToggle(radarSettingsScroll, "Alive only", radarSettings.aliveOnly, function(value: boolean): () radarSettings.aliveOnly = value end)
-    addCompactToggle(radarSettingsScroll, "Show team", radarSettings.showTeam, function(value: boolean): () radarSettings.showTeam = value end)
-    addCompactToggle(radarSettingsScroll, "Show names", radarSettings.showNames, function(value: boolean): () radarSettings.showNames = value end)
-    addCompactToggle(radarSettingsScroll, "Show distance", radarSettings.showDistance, function(value: boolean): () radarSettings.showDistance = value end)
-    addCompactToggle(radarSettingsScroll, "Grid", radarSettings.grid, function(value: boolean): () radarSettings.grid = value end)
-    addCompactToggle(radarSettingsScroll, "Range rings", radarSettings.rings, function(value: boolean): () radarSettings.rings = value end)
-end
-
-do
-    local sessionSettingsScroll: ScrollingFrame
-    sessionSettingsWindow, sessionSettingsScroll = createOverlaySettingsWindow(
-        "SessionInfo",
-        "Session Metrics",
-        310,
-        Vector2.new(960, 70)
-    )
-    addCompactToggle(sessionSettingsScroll, "Performance", sessionSettings.showPerformance, function(value: boolean): () sessionSettings.showPerformance = value end)
-    addCompactToggle(sessionSettingsScroll, "Server data", sessionSettings.showServer, function(value: boolean): () sessionSettings.showServer = value end)
-    addCompactToggle(sessionSettingsScroll, "Role and team", sessionSettings.showRole, function(value: boolean): () sessionSettings.showRole = value end)
-    addCompactToggle(sessionSettingsScroll, "Deaths", sessionSettings.showDeaths, function(value: boolean): () sessionSettings.showDeaths = value end)
-    addCompactToggle(sessionSettingsScroll, "Wins / rounds", sessionSettings.showWins, function(value: boolean): () sessionSettings.showWins = value end)
-end
-
-do
-    local targetSettingsScroll: ScrollingFrame
-    targetSettingsWindow, targetSettingsScroll = createOverlaySettingsWindow(
-        "TargetInfo",
-        "Target Priority",
-        280,
-        Vector2.new(960, 395)
-    )
-    addCompactCycle(targetSettingsScroll, "Selection", {"Smart Priority", "Nearest cursor", "Nearest distance"}, targetSettings.mode, function(value: string): () targetSettings.mode = value end)
-    addCompactToggle(targetSettingsScroll, "Avatar portrait", targetSettings.showAvatar, function(value: boolean): () targetSettings.showAvatar = value end)
-    addCompactToggle(targetSettingsScroll, "Health bar", targetSettings.showHealth, function(value: boolean): () targetSettings.showHealth = value end)
-    addCompactToggle(targetSettingsScroll, "Distance", targetSettings.showDistance, function(value: boolean): () targetSettings.showDistance = value end)
-end
-
-local SessionText: TextLabel = makeTextLabel(
-    FloatingUi.overlays.SessionInfo.window.body,
-    "Session initializing...",
-    9
-)
-SessionText.Position = UDim2.fromOffset(12, 8)
-SessionText.Size = UDim2.new(1, -24, 1, -16)
-SessionText.TextColor3 = Theme.DefaultText
-SessionText.TextYAlignment = Enum.TextYAlignment.Top
-SessionText:SetAttribute("FloatingDepth", 2)
-
-local TextGuiBody: Frame = FloatingUi.overlays.TextGUI.window.body
-local TextGuiShadow: TextLabel = makeTextLabel(
-    TextGuiBody,
-    "No active modules",
-    10
-)
-TextGuiShadow.Position = UDim2.fromOffset(14, 10)
-TextGuiShadow.Size = UDim2.new(1, -24, 1, -16)
-TextGuiShadow.TextColor3 = Color3.fromRGB(0, 0, 0)
-TextGuiShadow.TextTransparency = 0.16
-TextGuiShadow.TextWrapped = true
-TextGuiShadow.TextYAlignment = Enum.TextYAlignment.Top
-TextGuiShadow:SetAttribute("FloatingDepth", 1)
-local TextGuiLabel: TextLabel = makeTextLabel(
-    FloatingUi.overlays.TextGUI.window.body,
-    "No active modules",
-    10
-)
-TextGuiLabel.Position = UDim2.fromOffset(12, 8)
-TextGuiLabel.Size = UDim2.new(1, -24, 1, -16)
-TextGuiLabel.TextColor3 = Theme.AccentCyan
-TextGuiLabel.TextWrapped = true
-TextGuiLabel.TextYAlignment = Enum.TextYAlignment.Top
-TextGuiLabel:SetAttribute("FloatingDepth", 2)
-local TextGuiGradient: UIGradient = create("UIGradient", {
-    Parent = TextGuiLabel,
-    Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Theme.DefaultAccent),
-        ColorSequenceKeypoint.new(0.5, Theme.AccentViolet),
-        ColorSequenceKeypoint.new(1, Theme.AccentPink),
-    }),
-    Rotation = 90,
-    Enabled = false,
-}) :: UIGradient
-
-local TargetBody: Frame = FloatingUi.overlays.TargetInfo.window.body
-local TargetPortraitFrame: Frame = create("Frame", {
-    Parent = TargetBody,
-    BackgroundColor3 = Theme.DefaultSurface,
-    BackgroundTransparency = 0.18,
-    BorderSizePixel = 0,
-    Position = UDim2.fromOffset(12, 12),
-    Size = UDim2.fromOffset(66, 66),
-}) :: Frame
-TargetPortraitFrame:SetAttribute("FloatingDepth", 2)
-create("UICorner", {Parent = TargetPortraitFrame, CornerRadius = cornerRadius(12)})
-create("UIStroke", {
-    Parent = TargetPortraitFrame,
-    Color = Theme.DefaultOutline,
-    Transparency = 0.55,
-    Thickness = 1,
-})
-local TargetPortrait: ImageLabel = create("ImageLabel", {
-    Parent = TargetPortraitFrame,
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    Image = "",
-    Position = UDim2.fromOffset(4, 4),
-    ScaleType = Enum.ScaleType.Crop,
-    Size = UDim2.new(1, -8, 1, -8),
-    ZIndex = 3,
-}) :: ImageLabel
-TargetPortrait:SetAttribute("FloatingDepth", 3)
-create("UICorner", {Parent = TargetPortrait, CornerRadius = cornerRadius(10)})
-local TargetName: TextLabel = makeTextLabel(
-    TargetBody,
-    "No target",
-    11
-)
-TargetName.FontFace = CONTROL_FONT
-TargetName.Position = UDim2.fromOffset(88, 8)
-TargetName.Size = UDim2.new(1, -100, 0, 28)
-TargetName:SetAttribute("FloatingDepth", 2)
-local TargetRole: TextLabel = makeTextLabel(TargetBody, "No priority target", 8)
-TargetRole.Position = UDim2.fromOffset(88, 34)
-TargetRole.Size = UDim2.new(1, -100, 0, 22)
-TargetRole.TextColor3 = Theme.AccentViolet
-TargetRole:SetAttribute("FloatingDepth", 2)
-local TargetHealthTrack: Frame = create("Frame", {
-    Parent = TargetBody,
-    BackgroundColor3 = Theme.Background,
-    BackgroundTransparency = 0.18,
-    BorderSizePixel = 0,
-    Position = UDim2.fromOffset(88, 62),
-    Size = UDim2.new(1, -100, 0, 10),
-}) :: Frame
-TargetHealthTrack:SetAttribute("FloatingDepth", 2)
-create("UICorner", {Parent = TargetHealthTrack, CornerRadius = UDim.new(1, 0)})
-local TargetHealthFill: Frame = create("Frame", {
-    Parent = TargetHealthTrack,
-    BackgroundColor3 = Theme.AccentCyan,
-    BorderSizePixel = 0,
-    Size = UDim2.fromScale(0, 1),
-}) :: Frame
-TargetHealthFill:SetAttribute("FloatingDepth", 1)
-create("UICorner", {Parent = TargetHealthFill, CornerRadius = UDim.new(1, 0)})
-local TargetDetails: TextLabel = makeTextLabel(
-    TargetBody,
-    "Waiting for a nearby player",
-    9
-)
-TargetDetails.Position = UDim2.fromOffset(12, 88)
-TargetDetails.Size = UDim2.new(1, -24, 0, 38)
-TargetDetails.TextColor3 = Theme.DefaultTextMuted
-TargetDetails:SetAttribute("FloatingDepth", 2)
-
-local RadarSurface: Frame = create("Frame", {
-    Parent = FloatingUi.overlays.Radar.window.body,
-    Name = "Surface",
-    AnchorPoint = Vector2.new(0.5, 0.5),
-    BackgroundColor3 = Theme.DefaultSurface,
-    BackgroundTransparency = 0.34,
-    BorderSizePixel = 0,
-    Position = UDim2.fromScale(0.5, 0.5),
-    Size = UDim2.fromOffset(radarSettings.size, radarSettings.size),
-}) :: Frame
-RadarSurface:SetAttribute("FloatingDepth", 2)
-create("UICorner", {Parent = RadarSurface, CornerRadius = UDim.new(1, 0)})
-create("UIStroke", {
-    Parent = RadarSurface,
-    Color = Theme.DefaultOutline,
-    Transparency = 0.55,
-})
-local radarAxes: {Frame} = {}
-for _, rotation: number in ipairs({0, 90}) do
-    local axis: Frame = create("Frame", {
-        Parent = RadarSurface,
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        BackgroundColor3 = Theme.DefaultOutline,
-        BackgroundTransparency = 0.72,
-        BorderSizePixel = 0,
-        Position = UDim2.fromScale(0.5, 0.5),
-        Rotation = rotation,
-        Size = UDim2.new(1, -16, 0, 1),
-    }) :: Frame
-    axis:SetAttribute("FloatingDepth", 1)
-    table.insert(radarAxes, axis)
-end
-local radarRings: {Frame} = {}
-for _, scale: number in ipairs({0.34, 0.67}) do
-    local ring: Frame = create("Frame", {
-        Parent = RadarSurface,
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        BackgroundTransparency = 1,
-        Position = UDim2.fromScale(0.5, 0.5),
-        Size = UDim2.fromScale(scale, scale),
-    }) :: Frame
-    ring:SetAttribute("FloatingDepth", 1)
-    create("UICorner", {Parent = ring, CornerRadius = UDim.new(1, 0)})
-    create("UIStroke", {
-        Parent = ring,
-        Color = Theme.DefaultOutline,
-        Transparency = 0.7,
-        Thickness = 1,
-    })
-    table.insert(radarRings, ring)
-end
-local RadarNorth: TextLabel = makeTextLabel(RadarSurface, "N", 8)
-RadarNorth.AnchorPoint = Vector2.new(0.5, 0)
-RadarNorth.Position = UDim2.new(0.5, 0, 0, 5)
-RadarNorth.Size = UDim2.fromOffset(20, 18)
-RadarNorth.TextColor3 = Theme.AccentCyan
-RadarNorth.TextXAlignment = Enum.TextXAlignment.Center
-RadarNorth:SetAttribute("FloatingDepth", 3)
-local RadarCenter: Frame = create("Frame", {
-    Parent = RadarSurface,
-    AnchorPoint = Vector2.new(0.5, 0.5),
-    BackgroundColor3 = Theme.AccentCyan,
-    BorderSizePixel = 0,
-    Position = UDim2.fromScale(0.5, 0.5),
-    Size = UDim2.fromOffset(7, 7),
-}) :: Frame
-RadarCenter:SetAttribute("FloatingDepth", 3)
-create("UICorner", {Parent = RadarCenter, CornerRadius = UDim.new(1, 0)})
-local radarBlips: {[Player]: any} = {}
-local sessionStartedAt: number = os.clock()
-local overlayElapsed: number = 1
-local sessionFps: number = 60
-local sessionStats: any = {
-    deaths = 0,
-    wins = 0,
-    rounds = 0,
-    winsAvailable = false,
-    roundsAvailable = false,
-    role = nil,
-}
-state.sessionInfo = {
-    setRole = function(role: string?): () sessionStats.role = role end,
-    addWin = function(): ()
-        sessionStats.winsAvailable = true
-        sessionStats.wins += 1
-    end,
-    addRound = function(): ()
-        sessionStats.roundsAvailable = true
-        sessionStats.rounds += 1
-    end,
-}
-local deathConnection: RBXScriptConnection? = nil
-local sessionBindGeneration: number = 0
-local sessionTrackingActive: boolean = true
-local function bindSessionCharacter(character: Model): ()
-    sessionBindGeneration += 1
-    local generation: number = sessionBindGeneration
-    if deathConnection then
-        deathConnection:Disconnect()
-        deathConnection = nil
-    end
-    local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
-        or character:WaitForChild("Humanoid", 8) :: Humanoid?
-    if humanoid
-        and sessionTrackingActive
-        and generation == sessionBindGeneration
-        and character == LocalPlayer.Character then
-        deathConnection = humanoid.Died:Connect(function(): ()
-            sessionStats.deaths += 1
-        end)
-    end
-end
-if LocalPlayer.Character then
-    task.defer(bindSessionCharacter, LocalPlayer.Character)
-end
-trackUiConnection(LocalPlayer.CharacterAdded:Connect(bindSessionCharacter))
-local thumbnailCache: {[number]: string} = {}
-local thumbnailGeneration: number = 0
-local displayedTargetUserId: number = 0
-local currentOverlayTarget: Player? = nil
-state.getOverlayTarget = function(): Player? return currentOverlayTarget end
-
-local function requestTargetThumbnail(player: Player?): ()
-    local userId: number = player and player.UserId or 0
-    if userId == displayedTargetUserId then
-        return
-    end
-    displayedTargetUserId = userId
-    thumbnailGeneration += 1
-    local generation: number = thumbnailGeneration
-    TargetPortrait.Image = userId > 0 and (thumbnailCache[userId] or "") or ""
-    if userId <= 0 or thumbnailCache[userId] then
-        return
-    end
-    task.spawn(function(): ()
-        local success: boolean, image: any, ready: any = pcall(
-            Players.GetUserThumbnailAsync,
-            Players,
-            userId,
-            Enum.ThumbnailType.HeadShot,
-            Enum.ThumbnailSize.Size180x180
-        )
-        if success and ready == true and type(image) == "string" and image ~= "" then
-            thumbnailCache[userId] = image
-            if generation == thumbnailGeneration and TargetPortrait.Parent then
-                TargetPortrait.Image = image
-            end
-        elseif generation == thumbnailGeneration then
-            task.delay(1, function(): ()
-                if generation == thumbnailGeneration then
-                    displayedTargetUserId = 0
-                end
-            end)
-        end
+        callback()
     end)
 end
 
-local function getTextGuiFont(): Font
-    if textGuiSettings.font == "Source Sans" then
-        return Font.fromEnum(Enum.Font.SourceSans)
-    elseif textGuiSettings.font == "Gotham" then
-        return Font.fromEnum(Enum.Font.Gotham)
-    elseif textGuiSettings.font == "Code" then
-        return Font.fromEnum(Enum.Font.Code)
-    elseif textGuiSettings.font == "Valve" then
-        return VALVE_FONT
+state.isJumpHeld = function(): boolean
+    if UserInputService:GetFocusedTextBox() then
+        return false
     end
-    return CONTROL_FONT
+    if UserInputService.KeyboardEnabled
+        and UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+        return true
+    end
+    if UserInputService.GamepadEnabled
+        and UserInputService:IsKeyDown(Enum.KeyCode.ButtonA) then
+        return true
+    end
+    local _, humanoid: Humanoid? = getCharacterParts()
+    if humanoid and humanoid.Jump then
+        return true
+    end
+    -- Touch: the jump button re-fires while it is held down.
+    return os.clock() - lastJumpRequestAt < 0.2
 end
 
-local function getSessionPing(): number?
-    local success: boolean, value: any = pcall(function(): number
-        local network: any = Stats:FindFirstChild("Network")
-        local serverStats: any = network and network:FindFirstChild("ServerStatsItem")
-        local ping: any = serverStats and serverStats:FindFirstChild("Data Ping")
-        return ping and ping:GetValue() or 0
-    end)
-    return success and tonumber(value) or nil
-end
-
-local lastTextGuiText: string = ""
-TaskManager:Connect(function(deltaTime: number): ()
-    sessionFps += ((1 / math.max(deltaTime, 1 / 240)) - sessionFps) * 0.12
-    overlayElapsed += deltaTime
-    if overlayElapsed < 0.12 then
-        return
-    end
-    overlayElapsed = 0
-    local now: number = os.clock()
-    local elapsed: number = math.max(0, math.floor(now - sessionStartedAt))
-
-    if FloatingUi.overlays.SessionInfo.enabled then
-        local role: string? = sessionStats.role
-        if state.gameRoleProvider then
-            local success: boolean, resolved: any = pcall(
-                state.gameRoleProvider,
-                LocalPlayer
-            )
-            if success and type(resolved) == "string" then
-                role = resolved
-            end
-        end
-        local lines: {string} = {
-            string.format(
-                "Injected  %02d:%02d:%02d",
-                math.floor(elapsed / 3600),
-                math.floor(elapsed / 60) % 60,
-                elapsed % 60
-            ),
-        }
-        if sessionSettings.showDeaths then
-            table.insert(lines, "Deaths    " .. tostring(sessionStats.deaths))
-        end
-        if sessionSettings.showWins then
-            table.insert(lines, "Wins      " .. (sessionStats.winsAvailable and tostring(sessionStats.wins) or "N/A"))
-            table.insert(lines, "Rounds    " .. (sessionStats.roundsAvailable and tostring(sessionStats.rounds) or "N/A"))
-        end
-        if sessionSettings.showRole then
-            table.insert(lines, "Role      " .. tostring(role or "N/A"))
-            table.insert(lines, "Team      " .. tostring(LocalPlayer.Team and LocalPlayer.Team.Name or "None"))
-        end
-        if sessionSettings.showPerformance then
-            local ping: number? = getSessionPing()
-            table.insert(lines, string.format("FPS       %.0f", math.clamp(sessionFps, 0, 999)))
-            table.insert(lines, "Ping      " .. (ping and string.format("%.0f ms", ping) or "N/A"))
-        end
-        if sessionSettings.showServer then
-            table.insert(lines, string.format("Players   %d/%d", #Players:GetPlayers(), Players.MaxPlayers))
-            table.insert(lines, "Game      " .. tostring(ACTIVE_GAME_MODULE or "Universal"))
-        end
-        SessionText.Text = table.concat(lines, "\n")
-    end
-
-    if FloatingUi.overlays.TextGUI.enabled then
-        local enabledFeatures: {any} = {}
-        if not textGuiSettings.hideModules then
-            for _, feature: any in ipairs(allFeatures) do
-                local lowerName: string = string.lower(feature.name)
-                local renderLike: boolean = string.find(lowerName, "esp", 1, true) ~= nil
-                    or string.find(lowerName, "visual", 1, true) ~= nil
-                    or string.find(lowerName, "x-ray", 1, true) ~= nil
-                    or string.find(lowerName, "fov", 1, true) ~= nil
-                    or string.find(lowerName, "fullbright", 1, true) ~= nil
-                if feature.enabled
-                    and not feature.isCategory
-                    and not feature.isAction
-                    and (not textGuiSettings.hideRender or not renderLike) then
-                    table.insert(enabledFeatures, feature)
-                end
-            end
-        end
-        table.sort(enabledFeatures, function(left: any, right: any): boolean
-            if textGuiSettings.sort == "Length" then
-                return #left.name > #right.name
-            elseif textGuiSettings.sort == "Enabled order" then
-                return (left.enabledAt or 0) < (right.enabledAt or 0)
-            elseif textGuiSettings.sort == "Section" then
-                local leftKey: string = left.sectionName .. left.name
-                local rightKey: string = right.sectionName .. right.name
-                return leftKey < rightKey
-            end
-            return string.lower(left.name) < string.lower(right.name)
-        end)
-        local textLines: {string} = {}
-        if textGuiSettings.watermark then
-            table.insert(textLines, "A Random Menu")
-        end
-        if textGuiSettings.customText ~= "" then
-            table.insert(textLines, textGuiSettings.customText)
-        end
-        for _, feature: any in ipairs(enabledFeatures) do
-            table.insert(textLines, feature.name)
-        end
-        if #textLines == 0 then
-            table.insert(textLines, "No active modules")
-        end
-        local nextText: string = table.concat(textLines, "\n")
-        if nextText ~= lastTextGuiText then
-            lastTextGuiText = nextText
-            TextGuiLabel.Text = nextText
-            TextGuiShadow.Text = nextText
-            if textGuiSettings.animations then
-                TextGuiLabel.TextTransparency = 0.5
-                TweenService:Create(TextGuiLabel, TweenInfo.new(0.2), {
-                    TextTransparency = 0,
-                }):Play()
-            end
-        end
-        TextGuiLabel.FontFace = getTextGuiFont()
-        TextGuiShadow.FontFace = TextGuiLabel.FontFace
-        TextGuiLabel.TextSize = math.round(14 * textGuiSettings.scale)
-        TextGuiShadow.TextSize = TextGuiLabel.TextSize
-        TextGuiShadow.Visible = textGuiSettings.shadow
-        TextGuiBody.BackgroundColor3 = Theme.DefaultBackground
-        TextGuiBody.BackgroundTransparency = textGuiSettings.background and 0.42 or 1
-        local textWindowRoot: Frame = FloatingUi.overlays.TextGUI.window.root
-        local textHeader: Frame? = textWindowRoot:FindFirstChild("Header") :: Frame?
-        local textShade: Frame? = textWindowRoot:FindFirstChild("Readability") :: Frame?
-        local textStroke: UIStroke? = textWindowRoot:FindFirstChildOfClass("UIStroke")
-        if textHeader then textHeader.Visible = state.visible end
-        if textShade then textShade.Visible = state.visible or textGuiSettings.background end
-        if textStroke then textStroke.Transparency = state.visible and 0.38 or 1 end
-        textWindowRoot.Active = state.visible
-        textWindowRoot.BackgroundTransparency = state.visible and 0.08 or 1
-        TextGuiBody.Position = state.visible and UDim2.fromOffset(0, 36)
-            or UDim2.fromOffset(0, 0)
-        TextGuiBody.Size = state.visible and UDim2.new(1, 0, 1, -36)
-            or UDim2.fromScale(1, 1)
-        local gradientEnabled: boolean = textGuiSettings.gradient
-            or textGuiSettings.v4Gradient
-            or textGuiSettings.colorMode == "Greyscale"
-            or textGuiSettings.colorMode == "Rainbow"
-        TextGuiGradient.Enabled = gradientEnabled
-        if textGuiSettings.v4Gradient then
-            TextGuiGradient.Color = ColorSequence.new({
-                ColorSequenceKeypoint.new(0, Theme.DefaultAccent),
-                ColorSequenceKeypoint.new(0.34, Theme.AccentViolet),
-                ColorSequenceKeypoint.new(0.68, Theme.AccentPink),
-                ColorSequenceKeypoint.new(1, Theme.DefaultAccent),
-            })
-            TextGuiGradient.Rotation = (now * 45) % 360
-        elseif textGuiSettings.colorMode == "Rainbow" then
-            local hue: number = (now * 0.12) % 1
-            TextGuiLabel.TextColor3 = Color3.fromHSV(hue, 0.72, 1)
-            TextGuiGradient.Enabled = false
-        elseif textGuiSettings.colorMode == "Greyscale" then
-            local pulse: number = 0.72 + 0.28 * math.sin(now * 1.6)
-            TextGuiLabel.TextColor3 = Color3.fromHSV(0, 0, pulse)
-            TextGuiGradient.Enabled = false
-        elseif textGuiSettings.colorMode == "Solid white" then
-            TextGuiLabel.TextColor3 = Theme.AccentCyan
-        elseif textGuiSettings.colorMode == "By section" then
-            TextGuiLabel.TextColor3 = Theme.AccentViolet
-        else
-            TextGuiLabel.TextColor3 = Theme.DefaultAccent
-            TextGuiGradient.Rotation = 90
-        end
-    end
-
-    local targetInfoEnabled: boolean = FloatingUi.overlays.TargetInfo.enabled
-    local localCharacter: Model? = LocalPlayer.Character
-    local localRoot: BasePart? = localCharacter
-        and localCharacter:FindFirstChild("HumanoidRootPart") :: BasePart?
+-- Where the player is aiming: the mouse on a desktop, the middle of the
+-- screen on touch (a finger is not a cursor).
+state.getAimRay = function(): Ray?
     local camera: Camera? = workspace.CurrentCamera
-    local selectedTarget: Player? = nil
-    local targetRole: string? = nil
-    local targetSource: string = "Nearest player"
-    local targetAccent: Color3 = Theme.AccentViolet
-    if targetInfoEnabled
-        and targetSettings.mode == "Smart Priority"
-        and state.gameTargetProvider then
-        local success: boolean, snapshot: any = pcall(state.gameTargetProvider)
-        if success then
-            if typeof(snapshot) == "Instance" and snapshot:IsA("Player") then
-                selectedTarget = snapshot
-            elseif type(snapshot) == "table"
-                and typeof(snapshot.player) == "Instance"
-                and snapshot.player:IsA("Player") then
-                selectedTarget = snapshot.player
-                targetRole = snapshot.role
-                targetSource = tostring(snapshot.source or "Game priority")
-                if typeof(snapshot.accent) == "Color3" then
-                    targetAccent = snapshot.accent
-                end
-            end
-        end
+    if not camera then
+        return nil
     end
-    if targetInfoEnabled and not selectedTarget and localRoot then
-        local bestScore: number = math.huge
-        local pointer: Vector2 = state.isMobile and getFloatingViewport() / 2
-            or UserInputService:GetMouseLocation()
-        for _, player: Player in ipairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer then
-                local character: Model? = player.Character
-                local humanoid: Humanoid? = character
-                    and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
-                local root: BasePart? = character
-                    and character:FindFirstChild("HumanoidRootPart") :: BasePart?
-                if humanoid and humanoid.Health > 0 and root then
-                    local distance: number = (root.Position - localRoot.Position).Magnitude
-                    local score: number = distance
-                    if targetSettings.mode ~= "Nearest distance" and camera then
-                        local screenPoint: Vector3, visible: boolean =
-                            camera:WorldToViewportPoint(root.Position)
-                        score = visible and (Vector2.new(screenPoint.X, screenPoint.Y) - pointer).Magnitude
-                            or math.huge
-                    end
-                    if score < bestScore then
-                        bestScore = score
-                        selectedTarget = player
-                    end
-                end
-            end
-        end
-        targetSource = targetSettings.mode
+    local pointer: Vector2
+    if UserInputService.MouseEnabled then
+        pointer = UserInputService:GetMouseLocation()
+    else
+        pointer = camera.ViewportSize / 2
     end
-    currentOverlayTarget = targetInfoEnabled and selectedTarget or nil
-    if selectedTarget and state.gameRoleProvider and not targetRole then
-        local success: boolean, role: any = pcall(state.gameRoleProvider, selectedTarget)
-        targetRole = success and type(role) == "string" and role or nil
-    end
-    if targetRole then
-        targetAccent = targetRole == "Murderer" and Theme.Danger
-            or ((targetRole == "Sheriff" or targetRole == "Hero")
-                and Theme.AccentCyan
-                or Theme.Success)
-    end
-    if targetInfoEnabled then
-        local targetCharacter: Model? = selectedTarget and selectedTarget.Character
-        local targetHumanoid: Humanoid? = targetCharacter
-            and targetCharacter:FindFirstChildOfClass("Humanoid") :: Humanoid?
-        local targetRoot: BasePart? = targetCharacter
-            and targetCharacter:FindFirstChild("HumanoidRootPart") :: BasePart?
-        if selectedTarget and targetHumanoid then
-            local ratio: number = math.clamp(
-                targetHumanoid.Health / math.max(1, targetHumanoid.MaxHealth),
-                0,
-                1
-            )
-            local distance: number? = localRoot and targetRoot
-                and (targetRoot.Position - localRoot.Position).Magnitude
-                or nil
-            TargetName.Text = selectedTarget.DisplayName .. "  @" .. selectedTarget.Name
-            TargetRole.Text = tostring(targetRole or "Player") .. "  ·  " .. targetSource
-            TargetRole.TextColor3 = targetAccent
-            TargetDetails.Text = string.format(
-                "Health %.0f / %.0f%s",
-                targetHumanoid.Health,
-                targetHumanoid.MaxHealth,
-                targetSettings.showDistance and distance
-                    and string.format("  ·  %.0f studs", distance)
-                    or ""
-            )
-            TargetHealthTrack.Visible = targetSettings.showHealth
-            TargetHealthFill.Size = UDim2.fromScale(ratio, 1)
-            TargetHealthFill.BackgroundColor3 = ratio > 0.5
-                and Theme.AccentCyan
-                or (ratio > 0.25 and Theme.AccentViolet or Theme.AccentPink)
-            TargetPortraitFrame.Visible = targetSettings.showAvatar
-            requestTargetThumbnail(selectedTarget)
-        else
-            TargetName.Text = "No target"
-            TargetRole.Text = "No priority target"
-            TargetDetails.Text = "Waiting for a valid player"
-            TargetHealthFill.Size = UDim2.fromScale(0, 1)
-            TargetHealthTrack.Visible = targetSettings.showHealth
-            TargetPortraitFrame.Visible = targetSettings.showAvatar
-            requestTargetThumbnail(nil)
-        end
-    end
-
-    if FloatingUi.overlays.Radar.enabled then
-        local radarSize: number = radarSettings.size
-        RadarSurface.Size = UDim2.fromOffset(radarSize, radarSize)
-        local radarWindow: FloatingWindowRecord = FloatingUi.overlays.Radar.window
-        local nextRadarSize: UDim2 = UDim2.fromOffset(radarSize + 32, radarSize + 76)
-        if radarWindow.root.Size ~= nextRadarSize then
-            radarWindow.root.Size = nextRadarSize
-            FloatingUi.reclamp()
-        end
-        for _, axis: Frame in ipairs(radarAxes) do axis.Visible = radarSettings.grid end
-        for _, ring: Frame in ipairs(radarRings) do ring.Visible = radarSettings.rings end
-        RadarNorth.Visible = radarSettings.rotation == "North"
-        local activePlayers: {[Player]: boolean} = {}
-        local basis: CFrame? = localRoot and localRoot.CFrame or nil
-        if localRoot and radarSettings.rotation == "Camera" and camera then
-            local look: Vector3 = Vector3.new(camera.CFrame.LookVector.X, 0, camera.CFrame.LookVector.Z)
-            if look.Magnitude > 0.01 then
-                basis = CFrame.lookAt(localRoot.Position, localRoot.Position + look.Unit)
-            end
-        elseif localRoot and radarSettings.rotation == "North" then
-            basis = CFrame.new(localRoot.Position)
-        end
-        for _, player: Player in ipairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer and localRoot and basis then
-                local character: Model? = player.Character
-                local humanoid: Humanoid? = character
-                    and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
-                local targetRoot: BasePart? = character
-                    and character:FindFirstChild("HumanoidRootPart") :: BasePart?
-                local sameTeam: boolean = LocalPlayer.Team ~= nil and player.Team == LocalPlayer.Team
-                local allowed: boolean = targetRoot ~= nil
-                    and (not radarSettings.aliveOnly or (humanoid ~= nil and humanoid.Health > 0))
-                    and (radarSettings.showTeam or not sameTeam)
-                if allowed and targetRoot then
-                    local relative: Vector3 = (basis :: CFrame):PointToObjectSpace(targetRoot.Position)
-                    local distance: number = Vector2.new(relative.X, relative.Z).Magnitude
-                    if distance <= radarSettings.range or radarSettings.outOfRange == "Clamp" then
-                        activePlayers[player] = true
-                        local record: any = radarBlips[player]
-                        if not record then
-                            local blip: Frame = create("Frame", {
-                                Parent = RadarSurface,
-                                AnchorPoint = Vector2.new(0.5, 0.5),
-                                BackgroundColor3 = Theme.AccentPink,
-                                BorderSizePixel = 0,
-                                Size = UDim2.fromOffset(7, 7),
-                            }) :: Frame
-                            blip:SetAttribute("FloatingDepth", 4)
-                            create("UICorner", {Parent = blip, CornerRadius = UDim.new(1, 0)})
-                            local targetRing: UIStroke = create("UIStroke", {
-                                Parent = blip,
-                                Color = Theme.AccentCyan,
-                                Transparency = 1,
-                                Thickness = 2,
-                            }) :: UIStroke
-                            local label: TextLabel = makeTextLabel(blip, "", 7)
-                            label.AnchorPoint = Vector2.new(0.5, 0)
-                            label.Position = UDim2.new(0.5, 0, 1, 3)
-                            label.Size = UDim2.fromOffset(100, 18)
-                            label.TextColor3 = Theme.DefaultText
-                            label.TextXAlignment = Enum.TextXAlignment.Center
-                            record = {blip = blip, label = label, ring = targetRing}
-                            radarBlips[player] = record
-                        end
-                        local radius: number = radarSize / 2 - 12
-                        local offset: Vector2 = Vector2.new(relative.X, relative.Z)
-                            * (radius / radarSettings.range)
-                        if offset.Magnitude > radius then offset = offset.Unit * radius end
-                        record.blip.Position = UDim2.fromOffset(
-                            radarSize / 2 + offset.X,
-                            radarSize / 2 + offset.Y
-                        )
-                        local role: string? = nil
-                        if state.gameRoleProvider then
-                            local roleOk: boolean, roleValue: any = pcall(state.gameRoleProvider, player)
-                            role = roleOk and type(roleValue) == "string" and roleValue or nil
-                        end
-                        local color: Color3 = Theme.AccentPink
-                        if radarSettings.colorMode == "Health" and humanoid then
-                            local healthRatio: number = humanoid.Health / math.max(1, humanoid.MaxHealth)
-                            color = Color3.fromHSV(healthRatio * 0.34, 0.8, 1)
-                        elseif radarSettings.colorMode == "Team" or radarSettings.colorMode == "Smart" then
-                            color = sameTeam and Theme.Success or Theme.Danger
-                        end
-                        if (radarSettings.colorMode == "MM2 role" or radarSettings.colorMode == "Smart") and role then
-                            color = role == "Murderer" and Theme.Danger
-                                or ((role == "Sheriff" or role == "Hero") and Theme.AccentCyan
-                                    or Theme.Success)
-                        elseif radarSettings.colorMode == "Spectrum" then
-                            color = Color3.fromHSV((now * 0.1 + player.UserId % 10 / 10) % 1, 0.7, 1)
-                        end
-                        record.blip.BackgroundColor3 = color
-                        record.ring.Transparency = player == currentOverlayTarget and 0 or 1
-                        record.blip.Size = UDim2.fromOffset(
-                            player == currentOverlayTarget and 10 or 7,
-                            player == currentOverlayTarget and 10 or 7
-                        )
-                        record.label.Visible = radarSettings.showNames or radarSettings.showDistance
-                        record.label.Text = (radarSettings.showNames and player.DisplayName or "")
-                            .. (radarSettings.showDistance and string.format(" %.0f", distance) or "")
-                    end
-                end
-            end
-        end
-        for player: Player, record: any in pairs(radarBlips) do
-            if not activePlayers[player] then
-                record.blip:Destroy()
-                radarBlips[player] = nil
-            end
-        end
-    end
-end)
-
-local FloatingButtons: Frame = create("Frame", {
-    Parent = state.shells.defaultSidebar,
-    Name = "FloatingWindowButtons",
-    AnchorPoint = Vector2.new(0, 1),
-    BackgroundColor3 = Theme.DefaultSurface,
-    BackgroundTransparency = 0.42,
-    BorderSizePixel = 0,
-    Position = UDim2.new(0, 12, 1, -12),
-    Size = UDim2.fromOffset(76, 34),
-    ZIndex = 24,
-}) :: Frame
-create("UICorner", {Parent = FloatingButtons, CornerRadius = cornerRadius(9)})
-create("UIStroke", {
-    Parent = FloatingButtons,
-    Color = Theme.DefaultOutline,
-    Transparency = 0.55,
-})
-create("UIListLayout", {
-    Parent = FloatingButtons,
-    FillDirection = Enum.FillDirection.Horizontal,
-    HorizontalAlignment = Enum.HorizontalAlignment.Center,
-    VerticalAlignment = Enum.VerticalAlignment.Center,
-    Padding = UDim.new(0, 4),
-})
-
-local function createFloatingLauncher(
-    name: string,
-    fallbackText: string,
-    callback: () -> ()
-): TextButton
-    local button: TextButton = makeButton(FloatingButtons, fallbackText, 9)
-    button.Name = name
-    button.BackgroundTransparency = 1
-    button.Size = UDim2.fromOffset(32, 28)
-    button.ZIndex = 25
-    button:SetAttribute("ThemeRole", "Icon")
-    local stroke: UIStroke? = button:FindFirstChild("StyleStroke") :: UIStroke?
-    if stroke then
-        stroke.Enabled = false
-    end
-    trackUiConnection(button.MouseButton1Click:Connect(callback))
-    return button
+    return camera:ViewportPointToRay(pointer.X, pointer.Y)
+end
 end
 
-createFloatingLauncher("Favorites", "FAV", function(): ()
-    FavoritesWindow.root.Visible = not FavoritesWindow.root.Visible
-    configData.ui.favoritesWindowOpen = FavoritesWindow.root.Visible
-    if FavoritesWindow.root.Visible then
-        refreshFavorites()
-        bringFloatingToFront(FavoritesWindow)
-    end
-    queueConfigSave()
-end)
-createFloatingLauncher("Overlays", "OVR", function(): ()
-    OverlayMenu.root.Visible = not OverlayMenu.root.Visible
-    configData.ui.overlayMenuOpen = OverlayMenu.root.Visible
-    if OverlayMenu.root.Visible then
-        bringFloatingToFront(OverlayMenu)
-    end
-    queueConfigSave()
-end)
 
-FavoritesWindow.root.Visible = configData.ui.favoritesWindowOpen == true
-OverlayMenu.root.Visible = configData.ui.overlayMenuOpen == true
-for overlayId: string, overlay: any in pairs(FloatingUi.overlays) do
-    setOverlayEnabled(overlayId, configData.ui.overlays[overlayId] == true)
+-- Cards are created in a hidden bin and moved into ClickGUI windows. The old
+-- responsive grid that balanced two columns inside a scrolling page is gone.
+local function getFeatureCardParent(_container: Instance): Instance
+    return CardBin
 end
-refreshFavorites()
-end
+
+-- (The old check-control factory lived here. Nothing uses a check widget any
+-- more: settings toggles are click-to-toggle rows and module options use the
+-- switch factory directly, so it was removed rather than left dangling.)
+
 
 local function applyFeaturePresentation(feature: any, isDefault: boolean): ()
-    local enabled: boolean = feature.enabled == true
-    if feature.row then
-        feature.row.BackgroundColor3 = isDefault
-            and (enabled and Theme.DefaultSurfaceHover or Theme.DefaultSurface)
-            or (enabled and Color3.fromRGB(31, 31, 35) or Theme.Background)
-        feature.row.BackgroundTransparency = isDefault
-            and (enabled and 0.5 or 0.82)
-            or (enabled and 0.08 or 1)
+    -- One skin, one place. A restyle used to repaint the card with its own
+    -- copy of the rules, which is how the stripe ended up pink on action cards
+    -- and violet on headings while the card code said otherwise.
+    if feature.kind == "hold" then
+        feature.enabled = feature.active == true
     end
-    if feature.stroke then
-        feature.stroke.Color = isDefault
-            and Theme.DefaultOutline
-            or (enabled and Color3.fromRGB(225, 225, 230) or Theme.Outline)
-        feature.stroke.Transparency = isDefault
-            and (enabled and 0.68 or 1)
-            or (enabled and 0.18 or 1)
-    end
-    if feature.activeStripe then
-        feature.activeStripe.BackgroundColor3 = feature.isAction
-            and Theme.AccentPink
-            or (feature.isCategory and Theme.AccentViolet or Theme.DefaultAccent)
-
-        feature.activeStripe.BackgroundTransparency = enabled
-            and 0
-            or ((feature.isAction or feature.isCategory) and 0.42 or 1)
-    end
-    if feature.activeStripeGradient then
-        feature.activeStripeGradient.Enabled = not isDefault
-    end
-    if feature.title then
-        feature.title.TextColor3 = isDefault
-            and (enabled and Theme.DefaultAccent or Theme.DefaultText)
-            or Theme.Text
-    end
-    if feature.subtitle then
-        feature.subtitle.TextColor3 = isDefault
-            and Theme.DefaultTextMuted
-            or Theme.TextMuted
+    if state.applyCardSkin then
+        state.applyCardSkin(feature, false)
     end
     if feature.options then
-        feature.options.BackgroundColor3 = isDefault
-            and Theme.DefaultBackground
-            or Theme.Background
-        feature.options.BackgroundTransparency = isDefault and 0.62 or 0.66
+        feature.options.BackgroundTransparency = 1
     end
-    if feature.arrow then
-        feature.arrow.TextColor3 = isDefault
-            and Theme.DefaultTextMuted
-            or Theme.TextMuted
-    end
+    -- The settings arrow keeps its own token binding (`enabled`, the colour
+    -- Wurst draws its triangles in); nothing here may overwrite it.
     if feature.shortcutButton then
         feature.shortcutButton.BackgroundColor3 = isDefault
-            and Theme.DefaultSurface
-            or Theme.SurfaceRaised
-        feature.shortcutButton.BackgroundTransparency = isDefault and 0.54 or 1
+            and Theme.surface
+            or Theme.surfaceRaised
+        -- A container's slot is inert, so it stays a faint placeholder
+        -- instead of being repainted as an interactive key slot.
+        local inertSlot: boolean = feature.kind == "group"
+        feature.shortcutButton.BackgroundTransparency = inertSlot
+            and 0.86
+            or (isDefault and 0.54 or 1)
+        feature.shortcutButton.TextTransparency = inertSlot and 1 or 0
         feature.shortcutButton.TextColor3 = isDefault
-            and Theme.DefaultText
-            or Theme.Text
+            and Theme.text
+            or Theme.text
     end
 end
 state.restyleAllFeatures = function(isDefault: boolean): ()
@@ -5960,62 +4048,99 @@ state.restyleAllFeatures = function(isDefault: boolean): ()
     end
 end
 
-local function refreshFeatureToggle(feature: any): ()
-    if feature.isCategory or feature.isAction then
+-- Card skin.
+--
+-- The card *is* the control. Nothing is bolted onto it — no switch, no chip,
+-- no marker under the name — because a list of forty modules only stays
+-- readable if each row is one shape whose surface, weight and edge already say
+-- what it is and what it is doing:
+--
+--   toggle  a row that lifts. Off it is a hairline-separated line of muted
+--           text on near-black; on, the surface rises a step, the name goes
+--           white and a two-pixel edge lights the left side.
+--   action  a slab. It carries a whisper of an outline on all four sides and
+--           its name is always white, because a button has no "off"; pressing
+--           it flashes the surface once.
+--   hold    the same slab, seated one step darker, which rises to the toggle's
+--           lit state for exactly as long as the key is down.
+--   group   not a control at all: no surface, no outline, no hover — a heading
+--           with a rule under it and its options below.
+--
+-- An enabled module fills its whole row with the `enabled` token, the way
+-- Wurst does, rather than lighting a two-pixel stripe down its left edge. With
+-- thirty-eight modules the question "what is on" has to be answerable from
+-- across the room, and a stripe is not an answer — it was legible only once you
+-- were already reading the row you were asking about.
+--
+-- `enabled` is a separate token from `accent` for the same reason Wurst keeps
+-- "Enabled hacks" separate from "Accent": the accent already paints every title
+-- bar, and filling forty rows with it would leave nothing to look at.
+state.applyCardSkin = function(feature: any, hovered: boolean?): ()
+    local row: Frame? = feature.row
+    if not row then
         return
     end
-    if feature.activeStripe then
-        TweenService:Create(
-            feature.activeStripe,
-            TweenInfo.new(0.18, Enum.EasingStyle.Quad),
-            {BackgroundTransparency = feature.enabled and 0 or 1}
-        ):Play()
+    local resolvedRow: Frame = row :: Frame
+    local isHovered: boolean = hovered == true
+    local isOn: boolean = feature.enabled == true
+
+    local surface: number
+    local titleTransparency: number = 0
+    local titleColor: Color3 = Theme.text
+    -- Which token the row is painted with, as opposed to how transparent it is.
+    local fill: Color3 = Theme.surface
+
+    if feature.isCategory then
+        -- A heading, not a button: flat text on the window body.
+        surface = 1
+        titleColor = Theme.text
+        titleTransparency = 0.3
+    elseif feature.isAction then
+        surface = isHovered and 0.3 or 0.5
+    elseif feature.isHoldAction then
+        -- A hold card is lit for exactly as long as the key is down, so it uses
+        -- the same fill as a toggle: while it is on it *is* on.
+        fill = isOn and Theme.enabled or Theme.surface
+        surface = isOn and 0 or (isHovered and 0.3 or 0.5)
+        titleColor = isOn and Theme.enabledText or Theme.text
+    else
+        fill = isOn and Theme.enabled or Theme.surface
+        surface = isOn and 0 or (isHovered and 0.3 or 0.5)
+        titleColor = isOn and Theme.enabledText or Theme.text
     end
-    if feature.row then
-        TweenService:Create(
-            feature.row,
-            TweenInfo.new(0.18, Enum.EasingStyle.Quad),
-            {
-                BackgroundColor3 = feature.enabled
-                    and (state.guiStyle == "Default"
-                        and Theme.DefaultSurfaceHover
-                        or Color3.fromRGB(31, 31, 35))
-                    or (state.guiStyle == "Default"
-                        and Theme.DefaultSurface
-                        or Theme.Background),
-                BackgroundTransparency = state.guiStyle == "Default"
-                    and (feature.enabled and 0.5 or 0.82)
-                    or (feature.enabled and 0.08 or 1),
-            }
-        ):Play()
+
+    -- Instant, on purpose. Wurst repaints a row the frame it changes; the
+    -- wipe this used to tween was the old menu's motion, not Wurst's.
+    resolvedRow.BackgroundColor3 = fill
+    resolvedRow.BackgroundTransparency = surface
+
+    if feature.drawTitle then
+        -- The bitmap-contract row: recolouring is a pooled redraw, not a
+        -- property write. Same frame, same instances, new tint.
+        feature.drawTitle(titleColor, titleTransparency)
+    elseif feature.title then
+        local titleLabel: TextLabel = feature.title :: TextLabel
+        titleLabel.TextColor3 = titleColor
+        titleLabel.TextTransparency = titleTransparency
     end
-    if feature.title then
-        TweenService:Create(
-            feature.title,
-            TweenInfo.new(0.18, Enum.EasingStyle.Quad),
-            {TextColor3 = state.guiStyle == "Default"
-                and (feature.enabled and Theme.DefaultAccent or Theme.DefaultText)
-                or (feature.enabled and Color3.fromRGB(255, 255, 255) or Theme.Text)}
-        ):Play()
+end
+
+local function refreshFeatureToggle(feature: any): ()
+    if feature.isCategory or feature.isAction then
+        -- Neither has an on/off state, but both still need their skin applied
+        -- once so a restyle does not leave them looking like a dead toggle.
+        state.applyCardSkin(feature, false)
+        if state.floatingUi then
+            state.floatingUi.refreshFeature(feature)
+        end
+        return
     end
-    if feature.stroke then
-        TweenService:Create(
-            feature.stroke,
-            TweenInfo.new(0.18, Enum.EasingStyle.Quad),
-            {
-                Color = feature.enabled
-                    and (state.guiStyle == "Default"
-                        and Theme.DefaultOutline
-                        or Color3.fromRGB(225, 225, 230))
-                    or (state.guiStyle == "Default"
-                        and Theme.DefaultOutline
-                        or Theme.Outline),
-                Transparency = state.guiStyle == "Default"
-                    and (feature.enabled and 0.68 or 1)
-                    or (feature.enabled and 0.18 or 1),
-            }
-        ):Play()
+    -- A hold module has no enabled state: what it shows is whether its key is
+    -- being held right now.
+    if feature.isHoldAction then
+        feature.enabled = feature.active == true
     end
+    state.applyCardSkin(feature, false)
     if state.floatingUi then
         state.floatingUi.refreshFeature(feature)
     end
@@ -6036,8 +4161,8 @@ local function runActionButton(
     button.Active = false
     button.Text = "Running…"
     button.BackgroundColor3 = state.guiStyle == "Default"
-        and Theme.DefaultButtonHover
-        or Theme.AccentSoft
+        and Theme.buttonHover
+        or Theme.accentSoft
 
     task.spawn(function(): ()
         local running: boolean = true
@@ -6055,7 +4180,7 @@ local function runActionButton(
         running = false
         if button.Parent then
             button.Text = success and "Done" or "Failed"
-            button.BackgroundColor3 = success and Theme.AccentSoft or Theme.Danger
+            button.BackgroundColor3 = success and Theme.accentSoft or Theme.negative
         end
         if success then
             notify(successMessage)
@@ -6070,1811 +4195,362 @@ local function runActionButton(
             button:SetAttribute("Disabled", false)
             button:SetAttribute("Running", false)
             button.BackgroundColor3 = idleText == "RUN"
-                and Theme.AccentSoft
-                or Theme.Surface
+                and Theme.accentSoft
+                or Theme.surface
         end
     end)
 end
 
+-- Label for a placed mobile button.
+--
+-- It used to be squeezed into six characters, so "Infinite Jump" arrived as
+-- "INFINI" and several modules became indistinguishable. The full name is kept
+-- and the button wraps it over two lines at a smaller size; only genuinely
+-- long names are trimmed, on a word boundary.
 local function compactShortcutLabel(label: string): string
-    local compact: string = string.upper(label:gsub("[^%w]", ""))
-    if compact == "" then
-        return "ACT"
+    local trimmed: string = string.upper(
+        (string.gsub(string.gsub(label, "%s+", " "), "^%s*(.-)%s*$", "%1"))
+    )
+    if trimmed == "" then
+        return "ACTION"
     end
-    return string.sub(compact, 1, 6)
+    if #trimmed <= 18 then
+        return trimmed
+    end
+    local cut: string = string.sub(trimmed, 1, 18)
+    local lastSpace: number? = string.find(string.reverse(cut), " ")
+    if lastSpace and lastSpace < 8 then
+        cut = string.sub(cut, 1, 18 - lastSpace)
+    end
+    return cut
+end
+
+-- ---------------------------------------------------------------------------
+-- Keybinds
+-- ---------------------------------------------------------------------------
+--
+-- Every module card carries one key slot in its header, and that slot is the
+-- only place an activation key ever lives — modules no longer bury their key
+-- inside the options panel.
+--
+-- The slot supports two shapes:
+--   * tap    — press the key, the module toggles or the action runs.
+--   * hold   — the module is active only while the key is held (Sprint).
+--
+-- On touch devices the same slot is the mobile-button factory: a tap opens
+-- placement mode, the button is dropped anywhere on screen, and it drives the
+-- same press/release pair, so hold-style features work with a finger too.
+--
+-- Bindings live in one registry with one global input handler instead of a
+-- connection per module, which is what makes hold state reliable: releasing a
+-- key always reaches the module that claimed it.
+state.shortcutBindings = {} :: {[string]: any}
+
+local function shortcutSlotText(binding: any): string
+    -- Blank when unbound. The empty slot is the affordance; a "KEY" caption
+    -- only added noise and made no sense on a phone.
+    if binding.key == Enum.KeyCode.Unknown then
+        return ""
+    end
+    return binding.key.Name
+end
+
+local function setShortcutPressed(binding: any, pressed: boolean): ()
+    if binding.pressed == pressed then
+        return
+    end
+    binding.pressed = pressed
+    if pressed then
+        if binding.onPress then
+            task.spawn(binding.onPress)
+        end
+    elseif binding.onRelease then
+        task.spawn(binding.onRelease)
+    end
 end
 
 local function bindActionShortcut(
-    button: TextButton,
+    button: TextButton?,
     shortcutId: string,
     label: string,
-    callback: () -> ()
+    callback: () -> (),
+    options: any?
 ): ()
+    local configuration: any = options or {}
     local optionKey: string = "Shortcut." .. shortcutId:gsub("%W", "")
-    local shortcutKey: Enum.KeyCode = Enum.KeyCode.Unknown
+    local binding: any = {
+        id = shortcutId,
+        button = button,
+        hold = configuration.hold == true,
+        key = Enum.KeyCode.Unknown,
+        pressed = false,
+        onPress = configuration.onPress or callback,
+        onRelease = configuration.onRelease,
+    }
     local savedName: any = configData.values[optionKey]
     if type(savedName) == "string" and savedName ~= "" then
-        local savedKey: Enum.KeyCode? = Enum.KeyCode[savedName]
-        if savedKey then
-            shortcutKey = savedKey
+        -- pcall, not trust: indexing Enum.KeyCode with a corrupt stored
+        -- name throws, and a broken store must fall back to unbound.
+        local resolved: boolean, savedKey: any = pcall(function(): any
+            return (Enum.KeyCode :: any)[savedName]
+        end)
+        if resolved and savedKey then
+            binding.key = savedKey
         end
     end
+    state.shortcutBindings[shortcutId] = binding
 
+    -- Desktop rows no longer carry a key slot — Wurst rows are a name and at
+    -- most the settings arrow, and keys are managed in the Keybinds window —
+    -- so the button is optional and everything that painted it is guarded.
     local function refreshButtonText(): ()
-        if state.isMobile then
-            button.Text = "ADD"
-        else
-            button.Text = shortcutKey == Enum.KeyCode.Unknown
-                and "KEY"
-                or shortcutKey.Name
+        if not button then
+            return
         end
-        button:SetAttribute("CaptureIdleText", button.Text)
+        (button :: TextButton).Text = shortcutSlotText(binding);
+        (button :: TextButton):SetAttribute("CaptureIdleText", (button :: TextButton).Text)
+    end
+    binding.refresh = refreshButtonText
+    refreshButtonText()
+
+    -- One place that takes a key.
+    --
+    -- A key is only ever taken after the slot has been *clicked*: the slot
+    -- shows "..." and the next key press lands here. Hovering used to be
+    -- enough, and that was a bug — the pointer resting over a slot turned
+    -- every keystroke into a rebind. Pressing the key that is already bound
+    -- clears the binding, so the slot never needs a second control.
+    binding.assign = function(keyCode: Enum.KeyCode): boolean
+        local cleared: boolean = keyCode == binding.key
+        binding.key = cleared and Enum.KeyCode.Unknown or keyCode
+        setShortcutPressed(binding, false)
+        configData.values[optionKey] = binding.key.Name
+        queueConfigSave()
+        refreshButtonText()
+        return not cleared
     end
 
-    refreshButtonText()
     if state.isMobile then
-        if state.bindMobileActionPlacement then
+        -- Touch: the slot is the placement trigger. A tap is enough — the
+        -- previous 0.6s hold was undiscoverable on a blank button.
+        --
+        -- The placed button calls through the binding rather than capturing
+        -- the callbacks: a module that re-points its key later (Shoot swaps
+        -- "toggle the module" for "fire now") must change what the on-screen
+        -- button does too.
+        if button and state.bindMobileActionPlacement then
             state.bindMobileActionPlacement(
                 button,
                 "Shortcut" .. shortcutId:gsub("%W", ""),
                 compactShortcutLabel(label),
-                callback
+                function(): ()
+                    if not binding.hold and binding.onPress then
+                        binding.onPress()
+                    end
+                end,
+                {
+                    isActive = function(): boolean
+                        return binding.hold == true
+                    end,
+                    onPress = function(): ()
+                        if binding.hold and binding.onPress then
+                            binding.onPress()
+                        end
+                    end,
+                    onRelease = function(): ()
+                        if binding.hold and binding.onRelease then
+                            binding.onRelease()
+                        end
+                    end,
+                }
             )
         end
         return
     end
 
-    trackUiConnection(button.MouseButton1Click:Connect(function(): ()
-        beginKeyCapture(button, function(keyCode: Enum.KeyCode): ()
-            shortcutKey = keyCode == shortcutKey
-                and Enum.KeyCode.Unknown
-                or keyCode
-            configData.values[optionKey] = shortcutKey.Name
-            queueConfigSave()
-            refreshButtonText()
-        end)
-    end))
-    trackUiConnection(UserInputService.InputBegan:Connect(function(
-        input: InputObject,
-        gameProcessed: boolean
-    ): ()
-        if gameProcessed
-            or shortcutKey == Enum.KeyCode.Unknown
-            or state.keyCaptureCallback
-            or state.waitingForKey
-            or UserInputService:GetFocusedTextBox() then
-            return
-        end
-        if input.UserInputType == Enum.UserInputType.Keyboard
-            and input.KeyCode == shortcutKey then
-            task.spawn(callback)
-        end
-    end))
-end
-
--- Forward declaration for the automatic "Toggle key" row every universal
--- module without an explicit key option receives. It cannot be a plain local
--- function here because it is implemented after `createOptionRow` (which sits
--- below `createUniversalFeature`); `createUniversalFeature` only schedules it
--- with `task.defer`, so by the time it runs the implementation is assigned.
-local addToggleKeyOption: (feature: any) -> () = nil :: any
-
-local function createUniversalFeature(
-    name: string,
-    description: string,
-    layoutOrder: number,
-    onToggle: any,
-    configuration: any?
-): any
-    configuration = configuration or {}
-    local registry: any = configuration.registry or universalFeatures
-    local sectionName: string = configuration.section
-        or (registry == mm2Features and "MM2")
-        or (registry == state.trsFeatures and "TRS")
-        or (registry == state.vdFeatures and "VD")
-        or (registry == state.mvsdFeatures and "MVSD")
-        or (registry == movementFeatures and "Movement")
-        or "Universal"
-    local configKey: string = configuration.configKey
-        or (sectionName .. "." .. name:gsub("%W", ""))
-    -- A module may declare its own category; otherwise the shared taxonomy
-    -- decides, and anything unknown lands in the catch-all bucket.
-    local categoryName: string = type(configuration.categoryName) == "string"
-        and configuration.categoryName
-        or FEATURE_CATEGORIES[name]
-        or DEFAULT_FEATURE_CATEGORY
-
-    local feature: any = {
-        name = name,
-        description = description,
-        categoryName = categoryName,
-        enabled = false,
-        expanded = false,
-        isAction = configuration.action == true,
-        isCategory = configuration.category == true,
-        optionCount = 0,
-        optionRows = {},
-        collapsedHeight = 56,
-        onToggle = onToggle,
-        configKey = configKey,
-        registry = registry,
-        sectionName = sectionName,
-        searchText = string.lower(
-            name
-                .. " "
-                .. description
-                .. " "
-                .. sectionName
-                .. " "
-                .. categoryName
-        ),
-        tooltipText = description,
-        tooltipBound = false,
-    }
-
-    local requestedParent: Instance =
-        configuration.parent or UniversalScroll
-    local row: Frame = (create("Frame", {
-        Parent = getFeatureCardParent(requestedParent),
-        Name = name:gsub("%W", "") .. "Feature",
-        Active = true,
-        BackgroundColor3 = state.guiStyle == "Default"
-            and Theme.DefaultSurface
-            or Theme.Background,
-        BackgroundTransparency = state.guiStyle == "Default" and 0.82 or 1,
-        BorderSizePixel = 0,
-        ClipsDescendants = true,
-        LayoutOrder = layoutOrder,
-        Size = UDim2.new(1, 0, 0, feature.collapsedHeight),
-    }) :: any) :: Frame
-    feature.row = row
-    -- Ordering metadata read back by the card grid. `layoutOrder` above is
-    -- only the pre-sort value; the category pass overwrites it on the next
-    -- frame with "category block + alphabetical position".
-    row:SetAttribute("FeatureCategory", categoryName)
-    row:SetAttribute("FeatureSortName", string.lower(name))
-    if state.invalidateCategoryLayout then
-        state.invalidateCategoryLayout()
-    end
-    create("UICorner", {
-        Parent = row,
-        CornerRadius = cornerRadius(10),
-    })
-    local cardStroke: UIStroke = (create("UIStroke", {
-        Parent = row,
-        Color = state.guiStyle == "Default"
-            and Theme.DefaultOutline
-            or Theme.Outline,
-        Transparency = 1,
-        Thickness = 1,
-    }) :: any) :: UIStroke
-    feature.stroke = cardStroke
-    local activeStripe: Frame = create("Frame", {
-        Parent = row,
-        Name = "ActiveStripe",
-        AnchorPoint = Vector2.new(0, 0.5),
-        BackgroundColor3 = Theme.DefaultAccent,
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        Position = UDim2.new(0, 0, 0.5, 0),
-        Size = UDim2.new(0, 3, 1, -16),
-        ZIndex = 8,
-    }) :: Frame
-    create("UICorner", {Parent = activeStripe, CornerRadius = UDim.new(1, 0)})
-    feature.activeStripeGradient = create("UIGradient", {
-        Parent = activeStripe,
-        Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Theme.DefaultAccent),
-            ColorSequenceKeypoint.new(0.5, Theme.AccentViolet),
-            ColorSequenceKeypoint.new(1, Theme.AccentPink),
-        }),
-        Rotation = 90,
-    })
-    feature.activeStripe = activeStripe
-
-    local title: TextLabel = (makeTextLabel(row, name, 13) :: any) :: TextLabel
-    title.FontFace = CONTROL_FONT
-    title.Position = UDim2.fromOffset(18, 0)
-    title.Size = UDim2.new(1, state.isMobile and -116 or -164, 0, feature.collapsedHeight)
-    title.TextTruncate = Enum.TextTruncate.AtEnd
-    title.TextColor3 = state.guiStyle == "Default"
-        and Theme.DefaultText
-        or Theme.Text
-    feature.title = title
-
-    local subtitle: TextLabel =
-        (makeTextLabel(row, description, 11) :: any) :: TextLabel
-    subtitle.Name = "Description"
-    subtitle.Position = UDim2.fromOffset(16, 34)
-    subtitle.Size = UDim2.new(1, state.isMobile and -116 or -164, 0, 30)
-    subtitle.TextColor3 = state.guiStyle == "Default"
-        and Theme.DefaultTextMuted
-        or Theme.TextMuted
-    subtitle.TextTruncate = Enum.TextTruncate.AtEnd
-    subtitle.TextWrapped = true
-    subtitle.Visible = false
-    feature.subtitle = subtitle
-
-    local headerControls: Frame = create("Frame", {
-        Parent = row,
-        Name = "HeaderControls",
-        AnchorPoint = Vector2.new(1, 0.5),
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        Position = UDim2.new(1, -10, 0, feature.collapsedHeight / 2),
-        Size = UDim2.fromOffset(state.isMobile and 88 or 124, state.isMobile and 34 or 30),
-        ZIndex = 9,
-    }) :: Frame
-    create("UIListLayout", {
-        Parent = headerControls,
-        FillDirection = Enum.FillDirection.Horizontal,
-        HorizontalAlignment = Enum.HorizontalAlignment.Right,
-        VerticalAlignment = Enum.VerticalAlignment.Center,
-        Padding = UDim.new(0, state.isMobile and 4 or 8),
-        SortOrder = Enum.SortOrder.LayoutOrder,
-    })
-    local arrow: TextButton =
-        (makeButton(headerControls, "...", 10) :: any) :: TextButton
-    arrow.Name = "Expand"
-    arrow.LayoutOrder = 3
-    arrow:SetAttribute("ThemeRole", "Icon")
-    arrow:SetAttribute("NoPressEffect", true)
-    arrow.BackgroundTransparency = 1
-    arrow.Size = UDim2.fromOffset(state.isMobile and 24 or 28, state.isMobile and 24 or 28)
-    arrow.TextColor3 = state.guiStyle == "Default"
-        and Theme.DefaultTextMuted
-        or Theme.TextMuted
-    arrow.Active = configuration.noOptions ~= true
-    arrow.TextTransparency = 0.35
-    arrow.ZIndex = 9
-    local arrowStroke: UIStroke? = arrow:FindFirstChild("StyleStroke") :: UIStroke?
-    if arrowStroke then
-        arrowStroke.Enabled = false
-    end
-    if configuration.noOptions == true then
-        arrow.Text = ""
-    end
-    feature.arrow = arrow
-
-    local activationTarget: TextButton = create("TextButton", {
-        Parent = row,
-        Name = "ActivationTarget",
-        Active = true,
-        AutoButtonColor = false,
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        Position = UDim2.fromOffset(0, 0),
-        Size = UDim2.new(1, 0, 0, feature.collapsedHeight),
-        Text = "",
-        ZIndex = 6,
-    }) :: TextButton
-    feature.activationTarget = activationTarget
-    title.ZIndex = 7
-
-    trackUiConnection(row.MouseEnter:Connect(function(): ()
-        if feature.enabled then
-            return
-        end
-        TweenService:Create(
-            row,
-            TweenInfo.new(0.16, Enum.EasingStyle.Quad),
-            {
-                BackgroundColor3 = state.guiStyle == "Default"
-                    and Theme.DefaultSurfaceHover
-                    or Theme.SurfaceHover,
-                BackgroundTransparency = state.guiStyle == "Default" and 0.66 or 0.78,
-            }
-        ):Play()
-    end))
-    trackUiConnection(row.MouseLeave:Connect(function(): ()
-        TweenService:Create(
-            row,
-            TweenInfo.new(0.16, Enum.EasingStyle.Quad),
-            {
-                BackgroundColor3 = feature.enabled
-                    and (state.guiStyle == "Default"
-                        and Theme.DefaultSurfaceHover
-                        or Color3.fromRGB(31, 31, 35))
-                    or (state.guiStyle == "Default"
-                        and Theme.DefaultSurface
-                        or Theme.Background),
-                BackgroundTransparency = state.guiStyle == "Default"
-                    and (feature.enabled and 0.5 or 0.82)
-                    or (feature.enabled and 0.08 or 1),
-            }
-        ):Play()
-    end))
-
-    local options: Frame = (create("Frame", {
-        Parent = row,
-        Name = "Options",
-        Active = true,
-        BackgroundColor3 = state.guiStyle == "Default"
-            and Theme.DefaultBackground
-            or Theme.Background,
-        BackgroundTransparency = state.guiStyle == "Default" and 0.62 or 0.66,
-        BorderSizePixel = 0,
-        Position = UDim2.fromOffset(10, feature.collapsedHeight),
-        Size = UDim2.new(1, -20, 0, 0),
-        Visible = false,
-        ZIndex = row.ZIndex + 10,
-    }) :: any) :: Frame
-    feature.options = options
-    create("UICorner", {
-        Parent = options,
-        CornerRadius = cornerRadius(8),
-    })
-    -- Outline the whole panel so an expanded module is visibly one enclosed
-    -- surface rather than loose controls spilling out of the card.
-    create("UIStroke", {
-        Parent = options,
-        Name = "OptionsStroke",
-        ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-        Color = Theme.DefaultOutline,
-        Thickness = 1,
-        Transparency = 0.74,
-    })
-    create("UIPadding", {
-        Parent = options,
-        PaddingBottom = UDim.new(0, 9),
-        PaddingLeft = UDim.new(0, 9),
-        PaddingRight = UDim.new(0, 9),
-        PaddingTop = UDim.new(0, 9),
-    })
-    local optionsLayout: UIListLayout = (create("UIListLayout", {
-        Parent = options,
-        FillDirection = Enum.FillDirection.Vertical,
-        HorizontalAlignment = Enum.HorizontalAlignment.Center,
-        Padding = UDim.new(0, 6),
-        SortOrder = Enum.SortOrder.LayoutOrder,
-    }) :: any) :: UIListLayout
-
-    local function updateExpandedSize(animate: boolean?): ()
-        -- Rows are no longer a uniform height (hint rows are taller, section
-        -- headings shorter), so the fallback used before the layout has
-        -- measured anything sums the declared heights instead of assuming 38.
-        local visibleOptions: number = 0
-        local declaredHeight: number = 0
-        for _, optionRow: GuiObject in ipairs(feature.optionRows) do
-            if optionRow.Visible then
-                visibleOptions += 1
-                declaredHeight += optionRow.Size.Y.Offset
-            end
-        end
-        local measuredHeight: number = optionsLayout.AbsoluteContentSize.Y
-        if visibleOptions > 0 and measuredHeight <= 0 then
-            measuredHeight = declaredHeight
-                + math.max(0, visibleOptions - 1) * 6
-        end
-        -- +18 = the panel's 9px top and bottom UIPadding.
-        local optionsHeight: number = measuredHeight + 18
-        local targetOptionsSize: UDim2 = UDim2.new(1, -20, 0, optionsHeight)
-        local targetRowSize: UDim2 = UDim2.new(
-            1,
-            0,
-            0,
-            feature.expanded
-                and feature.collapsedHeight + optionsHeight + 10
-                or feature.collapsedHeight
-        )
-        if feature.expanded then
-            options.Visible = true
-        end
-        if animate and state.animationsEnabled then
-            TweenService:Create(
-                options,
-                TweenInfo.new(0.2, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-                {Size = targetOptionsSize}
-            ):Play()
-            TweenService:Create(
-                row,
-                TweenInfo.new(0.2, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-                {Size = targetRowSize}
-            ):Play()
-            arrow.TextColor3 = state.guiStyle == "Default"
-                and (feature.expanded and Theme.DefaultText or Theme.DefaultTextMuted)
-                or (feature.expanded and Theme.Text or Theme.TextMuted)
-            if not feature.expanded then
-                task.delay(0.21, function(): ()
-                    if not feature.expanded and options.Parent then
-                        options.Visible = false
-                    end
-                end)
-            end
-        else
-            options.Size = targetOptionsSize
-            row.Size = targetRowSize
-            arrow.TextColor3 = state.guiStyle == "Default"
-                and (feature.expanded and Theme.DefaultText or Theme.DefaultTextMuted)
-                or (feature.expanded and Theme.Text or Theme.TextMuted)
-            options.Visible = feature.expanded
-        end
-    end
-    feature.updateExpandedSize = updateExpandedSize
-    trackUiConnection(
-        optionsLayout:GetPropertyChangedSignal("AbsoluteContentSize")
-            :Connect(function(): ()
-                updateExpandedSize(false)
+    if button then
+        trackUiConnection((button :: TextButton).MouseButton1Click:Connect(function(): ()
+            beginKeyCapture(button, function(keyCode: Enum.KeyCode): ()
+                binding.assign(keyCode)
             end)
-    )
-
-    trackUiConnection(arrow.MouseButton1Click:Connect(function(): ()
-        feature.expanded = not feature.expanded
-        updateExpandedSize(true)
-    end))
-
-    local function activateFeature(): ()
-        if feature.isCategory then
-            feature.expanded = not feature.expanded
-            updateExpandedSize(true)
-            return
-        end
-        if feature.isAction then
-            if feature.actionRunning then
-                return
-            end
-            feature.actionRunning = true
-            task.spawn(function(): ()
-                local success: boolean, errorMessage: any = pcall(feature.onToggle)
-                feature.actionRunning = false
-                if success then
-                    notify(name .. " ejecutado")
-                else
-                    warn("[Random Testing Menu] " .. name .. ": " .. tostring(errorMessage))
-                    notify("Could not run " .. name)
-                end
-            end)
-            return
-        end
-
-        local requestedState: boolean = not feature.enabled
-        local success: boolean, errorMessage: any = pcall(
-            feature.onToggle,
-            requestedState
-        )
-        if success then
-            feature.enabled = requestedState
-            if requestedState then
-                feature.enabledAt = os.clock()
-            end
-            configData.states[feature.configKey] = requestedState
-            queueConfigSave()
-            notify(name .. (requestedState and " activado" or " desactivado"))
-        else
-            warn("[Random Testing Menu] " .. name .. ": " .. tostring(errorMessage))
-            feature.enabled = false
-            pcall(feature.onToggle, false)
-            notify("Could not toggle " .. name)
-        end
-        refreshFeatureToggle(feature)
-    end
-    feature.activate = activateFeature
-
-    trackUiConnection(activationTarget.MouseButton1Click:Connect(activateFeature))
-    do
-        local favoriteButton: TextButton =
-            (makeButton(headerControls, "☆", 11) :: any) :: TextButton
-        favoriteButton.Name = "Favorite"
-        favoriteButton.LayoutOrder = 1
-        favoriteButton:SetAttribute("ThemeRole", "Icon")
-        favoriteButton:SetAttribute("NoPressEffect", true)
-        favoriteButton.BackgroundTransparency = 1
-        favoriteButton.Size = UDim2.fromOffset(state.isMobile and 24 or 28, state.isMobile and 24 or 28)
-        favoriteButton.ZIndex = 9
-        local favoriteStroke: UIStroke? =
-            favoriteButton:FindFirstChild("StyleStroke") :: UIStroke?
-        if favoriteStroke then
-            favoriteStroke.Enabled = false
-        end
-        feature.favoriteButton = favoriteButton
-        trackUiConnection(favoriteButton.MouseButton1Click:Connect(function(): ()
-            state.floatingUi.toggleFavorite(feature)
         end))
     end
-    -- Every card header carries the same three controls — favourite, key
-    -- slot, expand — so the whole list reads as one symmetric grid no matter
-    -- whether the module is a toggle, an action or a category. The key slot
-    -- toggles regular modules, runs actions, and expands/collapses category
-    -- headers (the same path `activateFeature` already provides).
-    local shortcutButton: TextButton =
-        (makeButton(headerControls, "KEY", 9) :: any) :: TextButton
-    shortcutButton.Name = "Shortcut"
-    shortcutButton.LayoutOrder = 2
-    shortcutButton.BackgroundColor3 = state.guiStyle == "Default"
-        and Theme.DefaultSurface
-        or Theme.SurfaceRaised
-    shortcutButton.Size = UDim2.fromOffset(state.isMobile and 32 or 52, state.isMobile and 28 or 28)
-    shortcutButton.ZIndex = 9
-    applyKeySlotStyle(shortcutButton)
-    shortcutButton.TextScaled = true
-    create("UITextSizeConstraint", {
-        Parent = shortcutButton,
-        MaxTextSize = 11,
-        MinTextSize = 7,
-    })
-    feature.shortcutButton = shortcutButton
-    bindActionShortcut(
-        shortcutButton,
-        feature.configKey,
-        name,
-        activateFeature
-    )
-
-    registry[name] = feature
-    table.insert(allFeatures, feature)
-    state.floatingUi.registerFeature(feature)
-    applyFeaturePresentation(feature, state.guiStyle == "Default")
-
-    -- Symmetry pass: every interactive universal/movement module that does
-    -- not already expose a key option gets a standard "Toggle key" row, so no
-    -- panel is ever the odd one out. Deferred so the row lands after all the
-    -- module's own options, at the bottom of its panel. Game modules declare
-    -- their own layouts and opt out through their registry.
-    if configuration.autoToggleKey ~= false
-        and configuration.noOptions ~= true
-        and not feature.isAction
-        and not feature.isCategory
-        and registry ~= mm2Features
-        and registry ~= state.trsFeatures
-        and registry ~= state.vdFeatures
-        and registry ~= state.mvsdFeatures then
-        task.defer(function(): ()
-            if type(addToggleKeyOption) == "function" then
-                addToggleKeyOption(feature)
-            end
-        end)
-    end
-
-    if not feature.isAction
-        and not feature.isCategory
-        and configuration.restore ~= false
-        and configData.states[feature.configKey] == true then
-        task.defer(function(): ()
-            local success: boolean, errorMessage: any = pcall(
-                feature.onToggle,
-                true
-            )
-            if success then
-                feature.enabled = true
-                feature.enabledAt = os.clock()
-                refreshFeatureToggle(feature)
-            else
-                configData.states[feature.configKey] = false
-                queueConfigSave()
-                warn(
-                    "[Random Testing Menu] Could not restore "
-                        .. name
-                        .. ": "
-                        .. tostring(errorMessage)
-                )
-            end
-        end)
-    end
-    return feature
 end
 
--- Places a control on the right-hand side of an option row.
---
--- Rows are no longer all the same height, so the vertical band a control may
--- occupy is published by `createOptionRow` as attributes rather than being
--- assumed. Every add*Option goes through this so sliders, cycle buttons, key
--- slots and text boxes all line up on the exact same edge: every row, in
--- every module, ends with a control band that starts at 50% of the row width
--- and finishes 10px from the right edge. That shared geometry is what keeps
--- panels with keybinds, sliders, toggles or actions visually symmetric.
---
--- Published on `state` instead of held in a local: `bootstrap()` is a single
--- function scope and is at Luau's 200 local-register ceiling.
-state.layoutOptionControl = function(
-    option: Frame,
-    control: GuiObject,
-    widthScale: number?
+-- Modules whose "activation key" used to be an option row call this instead:
+-- the key lives in the card's header slot, is seeded with the module's own
+-- default the first time, and drives the module directly. On touch the same
+-- slot places a mobile button for it.
+state.bindFeatureActivationKey = function(
+    feature: any,
+    defaultKey: Enum.KeyCode?,
+    onPress: () -> (),
+    onRelease: (() -> ())?
 ): ()
-    local top: number = tonumber(option:GetAttribute("ControlTop")) or 0
-    local height: number = tonumber(option:GetAttribute("ControlHeight"))
-        or option.Size.Y.Offset
-    -- The canonical control band. 0.5 is the default so every row type shares
-    -- the same rectangle; rows that stack several controls (action pairs)
-    -- subdivide this same band instead of drawing outside it.
-    local scale: number = widthScale or 0.5
-    control.AnchorPoint = Vector2.new(1, 0)
-    control.Position = UDim2.new(1, -10, 0, top)
-    control.Size = UDim2.new(scale, -10, 0, height)
-    control.ZIndex = math.max(control.ZIndex, option.ZIndex + 2)
-end
-
--- A single customisation row inside a module's panel.
---
--- Each row is now a self-contained card: its own soft fill, rounded corners,
--- a hairline border and a hover highlight, instead of a bare strip separated
--- by a one-pixel divider. That makes it obvious where one setting stops and
--- the next begins, which matters for panels with a lot of controls (Fly).
---
--- `hintText` is optional. When present the row grows and renders a second,
--- smaller line under the label explaining what the setting actually does, so
--- the panel can be read without hovering the card for a tooltip.
-local function createOptionRow(
-    feature: any,
-    labelText: string,
-    hintText: string?
-): Frame
-    feature.optionCount += 1
-    feature.searchText ..= " " .. string.lower(labelText)
-    -- 42px for a plain row, 62px when a hint line has to fit underneath.
-    -- Literals rather than named constants: `bootstrap()` is one huge function
-    -- scope sitting near Luau's 200 local-register limit.
-    local hasHint: boolean = type(hintText) == "string" and hintText ~= ""
-    local rowHeight: number = hasHint and 62 or 42
-    local option: Frame = (create("Frame", {
-        Parent = feature.options,
-        Name = "Option_" .. labelText:gsub("%W", ""),
-        BackgroundColor3 = Theme.DefaultSurface,
-        BackgroundTransparency = 0.76,
-        BorderSizePixel = 0,
-        LayoutOrder = feature.optionCount,
-        Size = UDim2.new(1, 0, 0, rowHeight),
-        ZIndex = feature.options.ZIndex + 1,
-    }) :: any) :: Frame
-    create("UICorner", {
-        Parent = option,
-        CornerRadius = cornerRadius(7),
-    })
-    local optionStroke: UIStroke = (create("UIStroke", {
-        Parent = option,
-        Name = "OptionStroke",
-        ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-        Color = Theme.DefaultOutline,
-        Thickness = 1,
-        Transparency = 0.82,
-    }) :: any) :: UIStroke
-    table.insert(feature.optionRows, option)
-
-    trackUiConnection(option.MouseEnter:Connect(function(): ()
-        TweenService:Create(
-            option,
-            TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-            {BackgroundTransparency = 0.62}
-        ):Play()
-        TweenService:Create(
-            optionStroke,
-            TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-            {Transparency = 0.62}
-        ):Play()
-    end))
-    trackUiConnection(option.MouseLeave:Connect(function(): ()
-        TweenService:Create(
-            option,
-            TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-            {BackgroundTransparency = 0.76}
-        ):Play()
-        TweenService:Create(
-            optionStroke,
-            TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-            {Transparency = 0.82}
-        ):Play()
-    end))
-
-    local label: TextLabel =
-        (makeTextLabel(option, labelText, 11) :: any) :: TextLabel
-    label.Name = "OptionLabel"
-    label.TextColor3 = Theme.DefaultText
-    label.TextTruncate = Enum.TextTruncate.AtEnd
-    label.ZIndex = option.ZIndex + 1
-    if hasHint then
-        -- Label and hint stack on the left; the control keeps the top band so
-        -- it stays aligned with the rows above and below that have no hint.
-        label.Position = UDim2.fromOffset(12, 4)
-        label.Size = UDim2.new(0.48, -12, 0, 20)
-
-        local hint: TextLabel = (makeTextLabel(
-            option,
-            hintText :: string,
-            10
-        ) :: any) :: TextLabel
-        hint.Name = "OptionHint"
-        hint.Position = UDim2.fromOffset(12, 26)
-        hint.Size = UDim2.new(1, -24, 0, 32)
-        hint.TextColor3 = Theme.DefaultTextMuted
-        hint.TextTransparency = 0.16
-        hint.TextWrapped = true
-        hint.TextYAlignment = Enum.TextYAlignment.Top
-        hint.ZIndex = option.ZIndex + 1
-
-        option:SetAttribute("ControlTop", 5)
-        option:SetAttribute("ControlHeight", 30)
-    else
-        -- The label column always ends at 48% of the row; the control band
-        -- starts at 50%, so no label ever collides with any control type and
-        -- the left edge of every control is the same in every module.
-        label.Position = UDim2.fromOffset(12, 0)
-        label.Size = UDim2.new(0.48, -12, 1, 0)
-
-        option:SetAttribute("ControlTop", 6)
-        option:SetAttribute("ControlHeight", rowHeight - 12)
-    end
-
-    feature.updateExpandedSize()
-    return option
-end
-
--- A non-interactive heading used to break a long customisation panel into
--- labelled groups ("Flight", "Advanced", ...). It behaves like any other
--- option row for layout and visibility purposes, so `setOptionVisible` can
--- hide a whole group's heading along with its controls.
---
--- On `state` for the same local-register reason as `layoutOptionControl`.
-state.addSectionOption = function(feature: any, titleText: string): Frame
-    feature.optionCount += 1
-    local section: Frame = (create("Frame", {
-        Parent = feature.options,
-        Name = "Section_" .. titleText:gsub("%W", ""),
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        LayoutOrder = feature.optionCount,
-        Size = UDim2.new(1, 0, 0, 22),
-        ZIndex = feature.options.ZIndex + 1,
-    }) :: any) :: Frame
-    table.insert(feature.optionRows, section)
-
-    local title: TextLabel = (makeTextLabel(
-        section,
-        string.upper(titleText),
-        9
-    ) :: any) :: TextLabel
-    title.Name = "SectionTitle"
-    title.FontFace = CONTROL_FONT
-    title.Position = UDim2.fromOffset(4, 0)
-    title.Size = UDim2.new(0, 130, 1, 0)
-    title.TextColor3 = Theme.DefaultTextMuted
-    title.TextTransparency = 0.22
-    title.ZIndex = section.ZIndex + 1
-
-    local rule: Frame = create("Frame", {
-        Parent = section,
-        Name = "SectionRule",
-        AnchorPoint = Vector2.new(1, 0.5),
-        BackgroundColor3 = Theme.DefaultOutline,
-        BackgroundTransparency = 0.72,
-        BorderSizePixel = 0,
-        Position = UDim2.new(1, -4, 0.5, 0),
-        Size = UDim2.new(1, -142, 0, 1),
-        ZIndex = section.ZIndex + 1,
-    }) :: Frame
-    create("UIGradient", {
-        Parent = rule,
-        Transparency = NumberSequence.new({
-            NumberSequenceKeypoint.new(0, 1),
-            NumberSequenceKeypoint.new(1, 0.3),
-        }),
-    })
-
-    feature.updateExpandedSize()
-    return section
-end
-
-local function setOptionVisible(
-    feature: any,
-    option: GuiObject,
-    visible: boolean
-): ()
-    option.Visible = visible
-    feature.updateExpandedSize()
-end
-
-local function addToggleOption(
-    feature: any,
-    labelText: string,
-    defaultValue: boolean,
-    callback: (boolean) -> (),
-    hintText: string?
-): TextButton
-    local optionKey: string =
-        feature.configKey .. "." .. labelText:gsub("%W", "")
-    local enabled: boolean? = configData.states[optionKey]
-    if enabled == nil then
-        enabled = defaultValue == true
-    end
-
-    local option: Frame = createOptionRow(feature, labelText, hintText)
-    local button: TextButton = create("TextButton", {
-        Parent = option,
-        Name = "OptionClickTarget",
-        Active = true,
-        AutoButtonColor = false,
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        Size = UDim2.fromScale(1, 1),
-        Text = "",
-        ZIndex = option.ZIndex + 2,
-    }) :: TextButton
-    local switch: TextButton = createToggleSwitch(option, enabled :: boolean, nil)
-    switch.Name = "OptionSwitch"
-    -- The switch keeps its intrinsic size, so it is pinned to the right edge
-    -- of the control band rather than stretched across it. Its right edge
-    -- lands on exactly the same x as every other control type, which keeps
-    -- toggle-only modules visually aligned with keybind and slider modules.
-    switch.AnchorPoint = Vector2.new(1, 0.5)
-    switch.Position = UDim2.new(
-        1,
-        -10,
-        0,
-        (tonumber(option:GetAttribute("ControlTop")) or 6)
-            + (tonumber(option:GetAttribute("ControlHeight")) or 30) / 2
-    )
-    switch.ZIndex = option.ZIndex + 3
-    for _, descendant: Instance in ipairs(switch:GetDescendants()) do
-        if descendant:IsA("GuiObject") then
-            descendant.ZIndex += option.ZIndex + 2
-        end
-    end
-    local optionLabel: TextLabel? =
-        option:FindFirstChild("OptionLabel") :: TextLabel?
-
-    local function refreshOptionState(): ()
-        setToggleSwitch(switch, enabled :: boolean, true)
-        if optionLabel then
-            optionLabel.TextColor3 = (enabled :: boolean)
-                and Theme.DefaultText
-                or Theme.DefaultTextMuted
-        end
-    end
-
-    local function toggleOption(): ()
-        enabled = not enabled
-        refreshOptionState()
-        configData.states[optionKey] = enabled
-        callback(enabled :: boolean)
-        queueConfigSave()
-        notify(labelText .. ((enabled :: boolean) and " activado" or " desactivado"))
-    end
-    trackUiConnection(button.MouseButton1Click:Connect(toggleOption))
-    trackUiConnection(switch.MouseButton1Click:Connect(toggleOption))
-
-    refreshOptionState()
-    callback(enabled :: boolean)
-    return button
-end
-local function addActionOption(
-    feature: any,
-    labelText: string,
-    callback: () -> (),
-    hintText: string?
-): TextButton
-    local option = createOptionRow(feature, labelText, hintText)
-    local button = makeButton(option, "RUN", 11)
-    button.BackgroundColor3 = state.guiStyle == "Default"
-        and Theme.DefaultButtonHover
-        or Theme.AccentSoft
-    -- The action pair subdivides the same control band every other row uses:
-    -- RUN hugs the band's right edge and KEY fills the band's left half, so
-    -- action rows share the exact same outer rectangle as toggles, sliders,
-    -- cycle buttons and key slots.
-    state.layoutOptionControl(option, button, 0.26)
-    local function executeAction(): ()
-        runActionButton(
-            button,
-            "RUN",
-            callback,
-            labelText .. " completado",
-            "[Random Testing Menu] " .. labelText
-        )
-    end
-    trackUiConnection(button.MouseButton1Click:Connect(executeAction))
-    local shortcutButton: TextButton =
-        (makeButton(option, "KEY", 9) :: any) :: TextButton
-    shortcutButton.BackgroundColor3 = state.guiStyle == "Default"
-        and Theme.DefaultButton
-        or Theme.SurfaceRaised
-    -- Sits immediately left of the RUN button inside the same band, positioned
-    -- with the pair's combined scale rather than off RUN's AbsoluteSize, which
-    -- is still zero on the frame the row is built. 0.24 width + 0.26 width
-    -- with a 6px gap reproduces the 0.5-wide band of every other row type, so
-    -- the pair never breaks the shared left/right edges.
-    state.layoutOptionControl(option, shortcutButton, 0.24)
-    shortcutButton.Position = UDim2.new(
-        0.74,
-        -16,
-        shortcutButton.Position.Y.Scale,
-        shortcutButton.Position.Y.Offset
-    )
-    applyKeySlotStyle(shortcutButton)
-    shortcutButton.TextScaled = true
-    create("UITextSizeConstraint", {
-        Parent = shortcutButton,
-        MaxTextSize = 11,
-        MinTextSize = 7,
-    })
-    bindActionShortcut(
-        shortcutButton,
-        feature.configKey .. labelText,
-        labelText,
-        executeAction
-    )
-    return button :: TextButton
-end
-
-type ActiveSlider = {
-    update: (number) -> (),
-    finish: () -> (),
-}
-
-local activeSlider: ActiveSlider? = nil
-
-trackUiConnection(UserInputService.InputChanged:Connect(function(
-    input: InputObject
-): ()
-    if activeSlider
-        and (input.UserInputType == Enum.UserInputType.MouseMovement
-            or input.UserInputType == Enum.UserInputType.Touch) then
-        activeSlider.update(input.Position.X)
-    end
-end))
-
-trackUiConnection(UserInputService.InputEnded:Connect(function(
-    input: InputObject
-): ()
-    if activeSlider
-        and (input.UserInputType == Enum.UserInputType.MouseButton1
-            or input.UserInputType == Enum.UserInputType.Touch) then
-        local slider: ActiveSlider = activeSlider
-        activeSlider = nil
-        slider.finish()
-    end
-end))
-
-local function isFiniteNumber(value: any): boolean
-    return type(value) == "number"
-        and value == value
-        and value ~= math.huge
-        and value ~= -math.huge
-end
-
-local function formatCompactNumber(value: number): string
-    local magnitude: number = math.abs(value)
-    if magnitude >= 1e9 or (magnitude > 0 and magnitude < 1e-4) then
-        return string.format("%.3e", value)
-    end
-    return string.format("%.7g", value)
-end
-
-local function addNumberOption(
-    feature: any,
-    labelText: string,
-    defaultValue: number,
-    minimum: number,
-    maximum: number,
-    callback: (number) -> (),
-    hintText: string?
-): Frame
-    local optionKey: string =
-        feature.configKey .. "." .. labelText:gsub("%W", "")
-    local storedValue: number? = tonumber(configData.values[optionKey])
-    local value: number = isFiniteNumber(storedValue)
-        and (storedValue :: number)
-        or defaultValue
-    local integerOnly: boolean = defaultValue % 1 == 0
-        and minimum % 1 == 0
-        and maximum % 1 == 0
-
-    local option: Frame = createOptionRow(feature, labelText, hintText)
-    local slider: TextButton = (create("TextButton", {
-        Parent = option,
-        Name = "Slider",
-        Active = true,
-        AutoButtonColor = false,
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        Text = "",
-    }) :: any) :: TextButton
-    state.layoutOptionControl(option, slider, 0.5)
-
-    local track: Frame = (create("Frame", {
-        Parent = slider,
-        Name = "Track",
-        AnchorPoint = Vector2.new(0, 0.5),
-        BackgroundColor3 = Theme.Outline,
-        BorderSizePixel = 0,
-        Position = UDim2.new(0, 0, 0.5, 0),
-        Size = UDim2.new(1, -80, 0, state.isMobile and 7 or 5),
-        ZIndex = slider.ZIndex + 1,
-    }) :: any) :: Frame
-    create("UICorner", {
-        Parent = track,
-        CornerRadius = UDim.new(1, 0),
-    })
-
-    local fill: Frame = (create("Frame", {
-        Parent = track,
-        Name = "Fill",
-        BackgroundColor3 = Theme.Accent,
-        BorderSizePixel = 0,
-        Size = UDim2.fromScale(0, 1),
-    }) :: any) :: Frame
-    create("UICorner", {
-        Parent = fill,
-        CornerRadius = UDim.new(1, 0),
-    })
-    create("UIGradient", {
-        Parent = fill,
-        Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Theme.DefaultAccent),
-            ColorSequenceKeypoint.new(0.52, Theme.AccentViolet),
-            ColorSequenceKeypoint.new(1, Theme.AccentPink),
-        }),
-    })
-
-    local knobSize: number = state.isMobile and 18 or 14
-    local knob: Frame = (create("Frame", {
-        Parent = track,
-        Name = "Knob",
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        BackgroundColor3 = Theme.Text,
-        BorderSizePixel = 0,
-        Position = UDim2.fromScale(0, 0.5),
-        Size = UDim2.fromOffset(knobSize, knobSize),
-    }) :: any) :: Frame
-    create("UICorner", {
-        Parent = knob,
-        CornerRadius = UDim.new(1, 0),
-    })
-
-    local valueInput: TextBox = (makeTextBox(slider, "") :: any) :: TextBox
-    valueInput.Name = "NumericValue"
-    valueInput.AnchorPoint = Vector2.new(1, 0.5)
-    valueInput.Position = UDim2.new(1, 0, 0.5, 0)
-    valueInput.Size = UDim2.fromOffset(72, math.min(30, slider.Size.Y.Offset))
-    valueInput.TextColor3 = Theme.Text
-    valueInput.TextXAlignment = Enum.TextXAlignment.Center
-    valueInput.TextTruncate = Enum.TextTruncate.AtEnd
-    valueInput.ZIndex = slider.ZIndex + 1
-    -- Spell out the accepted interval so a reader knows what the slider spans
-    -- without having to drag it to both ends first.
-    valueInput.PlaceholderText = formatCompactNumber(minimum)
-        .. " – "
-        .. formatCompactNumber(maximum)
-
-    local editing: boolean = false
-    local function setValue(
-        nextValue: number,
-        persist: boolean,
-        fromSlider: boolean
-    ): ()
-        if not isFiniteNumber(nextValue) then
-            return
-        end
-        value = nextValue
-        if fromSlider then
-            value = math.clamp(value, minimum, maximum)
-            if integerOnly then
-                value = math.round(value)
-            end
-        end
-        local alpha: number = maximum == minimum
-            and 0
-            or math.clamp((value - minimum) / (maximum - minimum), 0, 1)
-        fill.Size = UDim2.fromScale(alpha, 1)
-        knob.Position = UDim2.fromScale(alpha, 0.5)
-        if not editing then
-            valueInput.Text = formatCompactNumber(value)
-        end
-        callback(value)
-        if persist then
-            configData.values[optionKey] = value
-            queueConfigSave()
-        end
-    end
-
-    local function updateFromScreenX(screenX: number): ()
-        local width: number = math.max(track.AbsoluteSize.X, 1)
-        local alpha: number = math.clamp(
-            (screenX - track.AbsolutePosition.X) / width,
-            0,
-            1
-        )
-        setValue(minimum + (maximum - minimum) * alpha, true, true)
-    end
-
-    trackUiConnection(slider.InputBegan:Connect(function(
-        input: InputObject
-    ): ()
-        if input.UserInputType ~= Enum.UserInputType.MouseButton1
-            and input.UserInputType ~= Enum.UserInputType.Touch then
-            return
-        end
-        if input.Position.X > track.AbsolutePosition.X + track.AbsoluteSize.X then
-            return
-        end
-        updateFromScreenX(input.Position.X)
-        activeSlider = {
-            update = updateFromScreenX,
-            finish = function(): ()
-                notify(
-                    labelText
-                        .. ": "
-                        .. formatCompactNumber(value)
-                )
-            end,
-        }
-    end))
-
-    trackUiConnection(valueInput.Focused:Connect(function(): ()
-        editing = true
-        valueInput.Text = tostring(value)
-        valueInput.CursorPosition = #valueInput.Text + 1
-    end))
-
-    trackUiConnection(valueInput.FocusLost:Connect(function(): ()
-        local parsed: number? = tonumber(valueInput.Text)
-        editing = false
-        if not isFiniteNumber(parsed) then
-            valueInput.Text = formatCompactNumber(value)
-            notify(labelText .. ": invalid numeric value")
-            return
-        end
-        setValue(parsed :: number, true, false)
-        notify(labelText .. ": " .. formatCompactNumber(value))
-    end))
-
-    task.defer(function(): ()
-        if option.Parent then
-            setValue(value, false, false)
-        end
-    end)
-    return option
-end
-local function addCycleOption(
-    feature: any,
-    labelText: string,
-    values: {string},
-    initialIndex: number?,
-    callback: (string) -> (),
-    hintText: string?
-): TextButton
-    local optionKey = feature.configKey .. "." .. labelText:gsub("%W", "")
-    local storedValue = configData.values[optionKey]
-    local option = createOptionRow(feature, labelText, hintText)
-    local index = initialIndex or 1
-    if storedValue ~= nil then
-        for valueIndex, value in ipairs(values) do
-            if value == storedValue then
-                index = valueIndex
-                break
-            end
-        end
-    end
-    local button = makeButton(option, values[index], 11)
-    state.layoutOptionControl(option, button, 0.5)
-
-    -- A cycle button gives no clue that clicking it changes the value, and no
-    -- clue how many values there are. A trailing "1/3" counter fixes both.
-    local counter: TextLabel = (makeTextLabel(
-        button,
-        "",
-        9
-    ) :: any) :: TextLabel
-    counter.Name = "CycleCounter"
-    counter.AnchorPoint = Vector2.new(1, 0.5)
-    counter.Position = UDim2.new(1, -9, 0.5, 0)
-    counter.Size = UDim2.fromOffset(34, 16)
-    counter.TextColor3 = Theme.DefaultTextMuted
-    counter.TextTransparency = 0.3
-    counter.TextXAlignment = Enum.TextXAlignment.Right
-    counter.ZIndex = button.ZIndex + 1
-
-    local function refreshCycleVisual(): ()
-        button.Text = values[index]
-        counter.Text = tostring(index) .. "/" .. tostring(#values)
-    end
-    refreshCycleVisual()
-
-    button.MouseButton1Click:Connect(function()
-        index = index % #values + 1
-        refreshCycleVisual()
-        callback(values[index])
-        configData.values[optionKey] = values[index]
-        queueConfigSave()
-    end)
-
-    callback(values[index])
-    return button :: TextButton
-end
-
-local function addKeyOption(
-    feature: any,
-    labelText: string,
-    defaultKey: Enum.KeyCode,
-    callback: (Enum.KeyCode) -> (),
-    hintText: string?
-): TextButton
-    -- Flag used by the symmetry pass: modules that already expose an explicit
-    -- key row are not given the automatic "Toggle key" row.
-    feature.hasKeyOption = true
-    local optionKey = feature.configKey .. "." .. labelText:gsub("%W", "")
-    local savedKey = nil
-    local savedName = configData.values[optionKey]
-    if type(savedName) == "string" and savedName ~= "" then
-        pcall(function()
-            savedKey = Enum.KeyCode[savedName]
-        end)
-    end
-    local initialKey = savedKey or defaultKey
-    local currentKey: Enum.KeyCode = initialKey
-    local option = createOptionRow(feature, labelText, hintText)
-    local button = makeButton(
-        option,
-        currentKey == Enum.KeyCode.Unknown and "NONE" or currentKey.Name,
-        11
-    )
-    state.layoutOptionControl(option, button, 0.5)
-    applyKeySlotStyle(button)
-    button:SetAttribute("CaptureIdleText", button.Text)
-
-    button.MouseButton1Click:Connect(function()
-        if state.isMobile then
-            return
-        end
-        beginKeyCapture(button, function(keyCode: Enum.KeyCode): ()
-            currentKey = keyCode == currentKey
-                and Enum.KeyCode.Unknown
-                or keyCode
-            button.Text = currentKey == Enum.KeyCode.Unknown
-                and "NONE"
-                or currentKey.Name
-            button:SetAttribute("CaptureIdleText", button.Text)
-            callback(currentKey)
-            configData.values[optionKey] = currentKey.Name
-            queueConfigSave()
-        end)
-    end)
-
-    callback(currentKey)
-    return button :: TextButton
-end
-
--- The automatic "Toggle key" row. Modules that declare their own key options
--- never receive it; every other interactive universal/movement module gets
--- one, appended as its final row, so a panel with sliders or toggles alone
--- still ends with the same key slot a keybind-heavy panel has. Pressing the
--- bound key runs `feature.activate()` — the identical path the header key
--- slot uses — so the menu never has to be open for the key to work.
-addToggleKeyOption = function(feature: any): ()
-    if state.isMobile
-        or feature.isAction
-        or feature.isCategory
-        or feature.hasKeyOption
-        or feature.optionRows == nil
-        or feature.options == nil
-        or not feature.options.Parent then
+    local binding: any = state.shortcutBindings[feature.configKey]
+    if not binding then
         return
     end
-    local optionKey: string = feature.configKey .. ".ToggleKey"
-    local currentKey: Enum.KeyCode = Enum.KeyCode.Unknown
-    local savedName: any = configData.values[optionKey]
-    if type(savedName) == "string" and savedName ~= "" then
-        local saved: Enum.KeyCode? = Enum.KeyCode[savedName]
-        if saved then
-            currentKey = saved
-        end
+    binding.onPress = onPress
+    binding.onRelease = onRelease
+    binding.hold = onRelease ~= nil
+    if binding.key == Enum.KeyCode.Unknown
+        and defaultKey ~= nil
+        and defaultKey ~= Enum.KeyCode.Unknown then
+        binding.key = defaultKey
     end
-    local option = createOptionRow(feature, "Toggle key")
-    local button = makeButton(
-        option,
-        currentKey == Enum.KeyCode.Unknown and "NONE" or currentKey.Name,
-        11
-    )
-    state.layoutOptionControl(option, button, 0.5)
-    applyKeySlotStyle(button)
-    button:SetAttribute("CaptureIdleText", button.Text)
+    if binding.refresh then
+        binding.refresh()
+    end
+end
 
-    button.MouseButton1Click:Connect(function(): ()
-        if state.isMobile then
+-- One handler for every binding. `gameProcessed` is respected so typing in a
+-- chat box never fires a module.
+do
+local function shortcutInputAllowed(gameProcessed: boolean): boolean
+    return not gameProcessed
+        and not state.keyCaptureCallback
+        and not state.waitingForKey
+        and UserInputService:GetFocusedTextBox() == nil
+end
+
+state.globalShortcutBeganConnection = UserInputService.InputBegan:Connect(
+    function(input: InputObject, gameProcessed: boolean): ()
+        if input.UserInputType ~= Enum.UserInputType.Keyboard
+            or not shortcutInputAllowed(gameProcessed) then
             return
         end
-        beginKeyCapture(button, function(keyCode: Enum.KeyCode): ()
-            currentKey = keyCode == currentKey
-                and Enum.KeyCode.Unknown
-                or keyCode
-            button.Text = currentKey == Enum.KeyCode.Unknown
-                and "NONE"
-                or currentKey.Name
-            button:SetAttribute("CaptureIdleText", button.Text)
-            configData.values[optionKey] = currentKey.Name
-            queueConfigSave()
-        end)
-    end)
-
-    trackUiConnection(UserInputService.InputBegan:Connect(function(
-        input: InputObject,
-        gameProcessed: boolean
-    ): ()
-        if gameProcessed
-            or currentKey == Enum.KeyCode.Unknown
-            or state.keyCaptureCallback
-            or state.waitingForKey
-            or UserInputService:GetFocusedTextBox() then
+        -- `Unknown` is what an unbound slot holds *and* what some keyboard
+        -- events report, so it is never treated as a match: otherwise one
+        -- odd keypress would fire every module that has no key assigned.
+        if input.KeyCode == Enum.KeyCode.Unknown then
             return
         end
-        if input.UserInputType == Enum.UserInputType.Keyboard
-            and input.KeyCode == currentKey then
-            task.spawn(function(): ()
-                if type(feature.activate) == "function" then
-                    feature.activate()
+        for _, binding: any in pairs(state.shortcutBindings) do
+            if binding.key == input.KeyCode then
+                if binding.hold then
+                    setShortcutPressed(binding, true)
+                elseif binding.onPress then
+                    task.spawn(binding.onPress)
                 end
-            end)
+            end
         end
-    end))
-end
-
-local function addTextOption(
-    feature: any,
-    labelText: string,
-    defaultText: string,
-    callback: (string) -> (),
-    persist: boolean?,
-    hintText: string?
-): TextBox
-    local optionKey = feature.configKey .. "." .. labelText:gsub("%W", "")
-    local shouldPersist = persist ~= false
-    local initialText = shouldPersist and configData.values[optionKey] or nil
-    if initialText == nil then
-        initialText = defaultText or ""
     end
-    local option = createOptionRow(feature, labelText, hintText)
-    local box = makeTextBox(option, initialText)
-    box.PlaceholderText = "Enter value"
-    box.TextXAlignment = Enum.TextXAlignment.Left
-    state.layoutOptionControl(option, box, 0.5)
+)
 
-    box.FocusLost:Connect(function(enterPressed)
-        if enterPressed then
-            callback(box.Text)
+-- Releases are never filtered by `gameProcessed`: a hold that started must
+-- always be able to stop, even if the release lands on a game UI element.
+state.globalShortcutEndedConnection = UserInputService.InputEnded:Connect(
+    function(input: InputObject): ()
+        if input.UserInputType ~= Enum.UserInputType.Keyboard
+            or input.KeyCode == Enum.KeyCode.Unknown then
+            return
         end
-    end)
-
-    box:GetPropertyChangedSignal("Text"):Connect(function()
-        callback(box.Text)
-        if shouldPersist then
-            configData.values[optionKey] = box.Text
-            queueConfigSave()
+        for _, binding: any in pairs(state.shortcutBindings) do
+            if binding.hold and binding.key == input.KeyCode then
+                setShortcutPressed(binding, false)
+            end
         end
-    end)
-
-    if not shouldPersist and configData.values[optionKey] ~= nil then
-        configData.values[optionKey] = nil
-        queueConfigSave()
     end
-    callback(initialText)
-    return box :: TextBox
-end
+)
 
-local colorPicker = {}
-
-colorPicker.open = function(initialColor, onApply)
-    if not colorPicker.panel then
-        local panel = create("Frame", {
-            Parent = PopupLayer,
-            Name = "ColorPicker",
-            Active = true,
-            BackgroundColor3 = Theme.DefaultSurface,
-            BorderColor3 = Theme.DefaultOutline,
-            BorderSizePixel = 1,
-            Position = UDim2.new(0.5, -170, 0.5, -135),
-            Size = UDim2.fromOffset(340, 270),
-            Visible = false,
-            ZIndex = 80,
-        })
-        create("UICorner", {
-            Parent = panel,
-            CornerRadius = cornerRadius(8),
-        })
-
-        local title = makeTextLabel(panel, "COLOR", 14)
-        title.FontFace = CONTROL_FONT
-        title.Position = UDim2.fromOffset(15, 8)
-        title.Size = UDim2.new(1, -60, 0, 28)
-        title.ZIndex = 81
-
-        local close = makeButton(panel, "X", 12)
-        close.AutoButtonColor = false
-        close.Position = UDim2.new(1, -42, 0, 8)
-        close.Size = UDim2.fromOffset(28, 28)
-        close.ZIndex = 82
-
-        local sv = makeButton(panel, "", 10)
-        sv.AutoButtonColor = false
-        sv:SetAttribute("NoHover", true)
-        sv.Position = UDim2.fromOffset(15, 44)
-        sv.Size = UDim2.fromOffset(205, 165)
-        sv.ZIndex = 81
-        local saturationGradient = create("UIGradient", {
-            Parent = sv,
-            Color = ColorSequence.new(
-                Color3.fromRGB(255, 255, 255),
-                Color3.fromRGB(255, 0, 0)
-            ),
-        })
-        local shade = create("Frame", {
-            Parent = sv,
-            BackgroundColor3 = Theme.DefaultBackground,
-            BorderSizePixel = 0,
-            Size = UDim2.fromScale(1, 1),
-            ZIndex = 82,
-        })
-        create("UIGradient", {
-            Parent = shade,
-            Rotation = 90,
-            Transparency = NumberSequence.new({
-                NumberSequenceKeypoint.new(0, 1),
-                NumberSequenceKeypoint.new(1, 0),
-            }),
-        })
-        local svCursor = create("Frame", {
-            Parent = sv,
-            AnchorPoint = Vector2.new(0.5, 0.5),
-            BackgroundColor3 = Color3.fromRGB(255, 255, 255),
-            BorderColor3 = Theme.DefaultSurface,
-            BorderSizePixel = 2,
-            Size = UDim2.fromOffset(12, 12),
-            ZIndex = 83,
-        })
-        create("UICorner", {
-            Parent = svCursor,
-            CornerRadius = UDim.new(1, 0),
-        })
-
-        local hue = makeButton(panel, "", 10)
-        hue.AutoButtonColor = false
-        hue:SetAttribute("NoHover", true)
-        hue.Position = UDim2.fromOffset(232, 44)
-        hue.Size = UDim2.fromOffset(22, 165)
-        hue.ZIndex = 81
-        create("UIGradient", {
-            Parent = hue,
-            Rotation = 90,
-            Color = ColorSequence.new({
-                ColorSequenceKeypoint.new(0, Color3.fromHSV(0, 1, 1)),
-                ColorSequenceKeypoint.new(0.17, Color3.fromHSV(0.17, 1, 1)),
-                ColorSequenceKeypoint.new(0.33, Color3.fromHSV(0.33, 1, 1)),
-                ColorSequenceKeypoint.new(0.5, Color3.fromHSV(0.5, 1, 1)),
-                ColorSequenceKeypoint.new(0.67, Color3.fromHSV(0.67, 1, 1)),
-                ColorSequenceKeypoint.new(0.83, Color3.fromHSV(0.83, 1, 1)),
-                ColorSequenceKeypoint.new(1, Color3.fromHSV(1, 1, 1)),
-            }),
-        })
-        local hueCursor = create("Frame", {
-            Parent = hue,
-            AnchorPoint = Vector2.new(0.5, 0.5),
-            BackgroundColor3 = Color3.fromRGB(245, 245, 245),
-            BorderColor3 = Theme.DefaultSurface,
-            BorderSizePixel = 1,
-            Position = UDim2.new(0.5, 0, 0, 0),
-            Size = UDim2.new(1, 6, 0, 5),
-            ZIndex = 83,
-        })
-
-        local preview = create("Frame", {
-            Parent = panel,
-            BackgroundColor3 = Color3.fromRGB(255, 255, 255),
-            BorderColor3 = Color3.fromRGB(85, 85, 85),
-            BorderSizePixel = 1,
-            Position = UDim2.fromOffset(273, 45),
-            Size = UDim2.fromOffset(48, 48),
-            ZIndex = 81,
-        })
-        create("UICorner", {
-            Parent = preview,
-            CornerRadius = UDim.new(1, 0),
-        })
-
-        local hex = makeTextBox(panel, "#ffffff")
-        hex.Position = UDim2.fromOffset(268, 105)
-        hex.Size = UDim2.fromOffset(58, 30)
-        hex.TextXAlignment = Enum.TextXAlignment.Center
-        hex.ZIndex = 81
-
-        local apply = makeButton(panel, "APPLY", 11)
-        apply.AutoButtonColor = false
-        apply.Position = UDim2.fromOffset(268, 148)
-        apply.Size = UDim2.fromOffset(58, 34)
-        apply.ZIndex = 81
-
-        local hint = makeTextLabel(
-            panel,
-            "Saturation / brightness        Hue",
-            10
-        )
-        hint.TextColor3 = Color3.fromRGB(145, 145, 145)
-        hint.Position = UDim2.fromOffset(15, 216)
-        hint.Size = UDim2.new(1, -30, 0, 22)
-        hint.ZIndex = 81
-
-        colorPicker.panel = panel
-        colorPicker.sv = sv
-        colorPicker.saturationGradient = saturationGradient
-        colorPicker.svCursor = svCursor
-        colorPicker.hue = hue
-        colorPicker.hueCursor = hueCursor
-        colorPicker.preview = preview
-        colorPicker.hex = hex
-        colorPicker.apply = apply
-        colorPicker.drag = nil
-
-        local function updateColor()
-            local color = Color3.fromHSV(
-                colorPicker.h,
-                colorPicker.s,
-                colorPicker.v
-            )
-            colorPicker.current = color
-            colorPicker.preview.BackgroundColor3 = color
-            colorPicker.saturationGradient.Color = ColorSequence.new(
-                Color3.fromRGB(255, 255, 255),
-                Color3.fromHSV(colorPicker.h, 1, 1)
-            )
-            colorPicker.svCursor.Position = UDim2.fromScale(
-                colorPicker.s,
-                1 - colorPicker.v
-            )
-            colorPicker.hueCursor.Position = UDim2.new(
-                0.5,
-                0,
-                colorPicker.h,
-                0
-            )
-            local rgb = colorToConfig(color)
-            colorPicker.hex.Text = string.format(
-                "#%02x%02x%02x",
-                rgb[1],
-                rgb[2],
-                rgb[3]
-            )
+-- Losing focus (alt-tab, menu opening) must not leave a hold latched on.
+trackUiConnection(UserInputService.WindowFocusReleased:Connect(function(): ()
+    for _, binding: any in pairs(state.shortcutBindings) do
+        if binding.hold then
+            setShortcutPressed(binding, false)
         end
-        colorPicker.update = updateColor
-
-        local function updateFromPointer(kind, position)
-            local object = kind == "hue" and hue or sv
-            local relative = Vector2.new(position.X, position.Y)
-                - object.AbsolutePosition
-            if kind == "hue" then
-                colorPicker.h = math.clamp(
-                    relative.Y / object.AbsoluteSize.Y,
-                    0,
-                    1
-                )
-            else
-                colorPicker.s = math.clamp(
-                    relative.X / object.AbsoluteSize.X,
-                    0,
-                    1
-                )
-                colorPicker.v = 1 - math.clamp(
-                    relative.Y / object.AbsoluteSize.Y,
-                    0,
-                    1
-                )
-            end
-            updateColor()
-        end
-
-        sv.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1
-                or input.UserInputType == Enum.UserInputType.Touch then
-                colorPicker.drag = "sv"
-                updateFromPointer("sv", input.Position)
-            end
-        end)
-        hue.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1
-                or input.UserInputType == Enum.UserInputType.Touch then
-                colorPicker.drag = "hue"
-                updateFromPointer("hue", input.Position)
-            end
-        end)
-        colorPicker.inputChanged = UserInputService.InputChanged:Connect(function(input)
-            if colorPicker.panel.Visible
-                and colorPicker.drag
-                and (input.UserInputType == Enum.UserInputType.MouseMovement
-                    or input.UserInputType == Enum.UserInputType.Touch) then
-                updateFromPointer(colorPicker.drag, input.Position)
-            end
-        end)
-        colorPicker.inputEnded = UserInputService.InputEnded:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1
-                or input.UserInputType == Enum.UserInputType.Touch then
-                colorPicker.drag = nil
-            end
-        end)
-
-        hex.FocusLost:Connect(function()
-            local value = string.match(hex.Text, "^#?(%x%x%x%x%x%x)$")
-            if value then
-                local r = tonumber(string.sub(value, 1, 2), 16)
-                local g = tonumber(string.sub(value, 3, 4), 16)
-                local b = tonumber(string.sub(value, 5, 6), 16)
-                colorPicker.h, colorPicker.s, colorPicker.v =
-                    Color3.fromRGB(r, g, b):ToHSV()
-                updateColor()
-            end
-        end)
-        close.MouseButton1Click:Connect(function()
-            panel.Visible = false
-        end)
-        apply.MouseButton1Click:Connect(function()
-            if colorPicker.callback then
-                colorPicker.callback(colorPicker.current)
-            end
-            panel.Visible = false
-        end)
     end
-
-    colorPicker.h, colorPicker.s, colorPicker.v = initialColor:ToHSV()
-    colorPicker.callback = onApply
-    colorPicker.panel.Visible = true
-    colorPicker.update()
+end))
 end
 
-local function addColorOption(feature, labelText, defaultColor, callback, hintText)
-    local optionKey = feature.configKey .. "." .. labelText:gsub("%W", "")
-    local color = colorFromConfig(configData.values[optionKey], defaultColor)
-    local option = createOptionRow(feature, labelText, hintText)
-    local swatch = makeButton(option, "", 10)
-    swatch.AutoButtonColor = false
-    swatch:SetAttribute("NoHover", true)
-    swatch.AnchorPoint = Vector2.new(1, 0)
-    swatch.Position = UDim2.new(
-        1,
-        -10,
-        0,
-        (tonumber(option:GetAttribute("ControlTop")) or 6) + 1
-    )
-    swatch.Size = UDim2.fromOffset(28, 28)
-    swatch.ZIndex = option.ZIndex + 2
-    swatch.BackgroundColor3 = color
-    create("UICorner", {
-        Parent = swatch,
-        CornerRadius = UDim.new(1, 0),
-    })
 
-    swatch.MouseButton1Click:Connect(function()
-        colorPicker.open(color, function(newColor)
-            color = newColor
-            swatch.BackgroundColor3 = color
-            configData.values[optionKey] = colorToConfig(color)
-            callback(color)
-            queueConfigSave()
-        end)
-    end)
-
-    callback(color)
-    return swatch
-end
-
-local function addInformationOption(feature: any, text: string): ()
-    local current: string = feature.tooltipText or feature.description or ""
-    local combined: string = current ~= "" and (current .. "\n" .. text) or text
-    feature.tooltipText = combined
-    feature.description = combined
-end
-
-type OptionDefinition = {
-    kind: string,
-    label: string,
-    default: any?,
-    minimum: number?,
-    maximum: number?,
-    values: {string}?,
-    callback: any,
-    persist: boolean?,
+-- ---------------------------------------------------------------------------
+-- Game bridge
+-- ---------------------------------------------------------------------------
+--
+-- What a game module contributes to a universal module, instead of building a
+-- second one of its own.
+--
+-- MM2 is the worked example. It used to ship a whole "Player ESP" card —
+-- boxes, chams, per-role colours, coins, traps — living on the MM2 page next
+-- to the universal Player ESP, which did all the same drawing and knew none of
+-- the roles. Two implementations of one idea, and only one of them had the
+-- corner boxes, the skeleton, the tracers and the name plates.
+--
+-- Now a game module registers what only *it* can know:
+--
+--   * a role provider — the list of roles in this game, a colour for each and
+--     a function that answers "what is this player". Every drawing path in the
+--     universal ESP asks it for the colour, so roles work with corner boxes,
+--     full boxes, chams, tracers, health bars and name tags at once;
+--   * ESP extras — the objects only this game has (MM2's coins and traps, its
+--     dropped gun). Each one becomes a toggle and a colour row inside the
+--     universal ESP card, and the game module keeps its own implementation.
+--
+-- Everything here is optional: an unsupported game registers nothing and the
+-- universal ESP looks exactly as it always did.
+state.gameBridge = {
+    roleProvider = nil :: any,
+    extras = {} :: {any},
+    listeners = {} :: {(string, any) -> ()},
 }
 
-type FeatureDefinition = {
-    name: string,
-    description: string,
-    order: number,
-    onToggle: any,
-    configuration: any?,
-    options: {OptionDefinition}?,
-}
-
-local function addConfiguredOptions(
-    feature: any,
-    definitions: {OptionDefinition}
-): ()
-    for _, definition: OptionDefinition in ipairs(definitions) do
-        if definition.kind == "toggle" then
-            addToggleOption(
-                feature,
-                definition.label,
-                definition.default == true,
-                definition.callback
-            )
-        elseif definition.kind == "slider" then
-            addNumberOption(
-                feature,
-                definition.label,
-                tonumber(definition.default) or 0,
-                definition.minimum or 0,
-                definition.maximum or 100,
-                definition.callback
-            )
-        elseif definition.kind == "color" then
-            addColorOption(
-                feature,
-                definition.label,
-                definition.default :: Color3,
-                definition.callback
-            )
-        elseif definition.kind == "cycle" then
-            addCycleOption(
-                feature,
-                definition.label,
-                definition.values or {},
-                tonumber(definition.default) or 1,
-                definition.callback
-            )
-        elseif definition.kind == "keybind" then
-            addKeyOption(
-                feature,
-                definition.label,
-                definition.default :: Enum.KeyCode,
-                definition.callback
-            )
-        elseif definition.kind == "text" then
-            addTextOption(
-                feature,
-                definition.label,
-                tostring(definition.default or ""),
-                definition.callback,
-                definition.persist
-            )
-        elseif definition.kind == "action" then
-            addActionOption(feature, definition.label, definition.callback)
-        elseif definition.kind == "info" then
-            addInformationOption(feature, definition.label)
-        end
+state.onGameBridge = function(listener: (string, any) -> ()): ()
+    table.insert(state.gameBridge.listeners, listener)
+    -- Replay what is already registered: a game module can be loaded before or
+    -- after the module that consumes it, and neither may care.
+    if state.gameBridge.roleProvider then
+        pcall(listener, "roles", state.gameBridge.roleProvider)
+    end
+    for _, extra: any in ipairs(state.gameBridge.extras) do
+        pcall(listener, "extra", extra)
     end
 end
 
-local function createFeatureFromDefinition(
-    definition: FeatureDefinition
-): any
-    local feature: any = createUniversalFeature(
-        definition.name,
-        definition.description,
-        definition.order,
-        definition.onToggle,
-        definition.configuration
-    )
-    if definition.options then
-        addConfiguredOptions(feature, definition.options)
+state.registerRoleProvider = function(provider: any): ()
+    if type(provider) ~= "table" or type(provider.Get) ~= "function" then
+        return
     end
-    return feature
+    state.gameBridge.roleProvider = provider
+    for _, listener: (string, any) -> () in ipairs(state.gameBridge.listeners) do
+        pcall(listener, "roles", provider)
+    end
 end
 
-local function createFeaturesFromDefinitions(
-    definitions: {FeatureDefinition}
-): {any}
-    local createdFeatures: {any} = {}
-    for _, definition: FeatureDefinition in ipairs(definitions) do
-        table.insert(
-            createdFeatures,
-            createFeatureFromDefinition(definition)
-        )
+state.registerEspExtra = function(extra: any): ()
+    if type(extra) ~= "table" or type(extra.Name) ~= "string" then
+        return
     end
-    return createdFeatures
+    table.insert(state.gameBridge.extras, extra)
+    for _, listener: (string, any) -> () in ipairs(state.gameBridge.listeners) do
+        pcall(listener, "extra", extra)
+    end
 end
 
-state.components = {
-    createFeature = createFeatureFromDefinition,
-    createFeatures = createFeaturesFromDefinitions,
-    addOptions = addConfiguredOptions,
-}
+-- Asked by anything that wants to colour a player by role (the ESP, and the
+-- target readouts that follow it). Returns nil in a game with no roles.
+state.playerRole = function(player: Player): string?
+    local provider: any = state.gameBridge.roleProvider
+    if not provider then
+        return nil
+    end
+    local ok: boolean, role: any = pcall(provider.Get, player)
+    if ok and type(role) == "string" and role ~= "" then
+        return role
+    end
+    return nil
+end
+
+
 state.featureTooltip = create("TextLabel", {
+    TextTruncate = Enum.TextTruncate.AtEnd,
+    ClipsDescendants = true,
     Parent = PopupLayer,
     Name = "FeatureTooltip",
     Active = false,
     AutomaticSize = Enum.AutomaticSize.None,
-    BackgroundColor3 = Theme.DefaultSurface,
+    BackgroundColor3 = Theme.surface,
     BackgroundTransparency = 0.04,
     BorderColor3 = Color3.fromRGB(58, 58, 58),
     BorderSizePixel = 1,
@@ -7888,11 +4564,6 @@ state.featureTooltip = create("TextLabel", {
     ZIndex = 250,
 }) :: TextLabel
 
-create("UICorner", {
-    Parent = state.featureTooltip,
-    CornerRadius = cornerRadius(4),
-})
-
 create("UIPadding", {
     Parent = state.featureTooltip,
     PaddingBottom = UDim.new(0, 5),
@@ -7903,22 +4574,71 @@ create("UIPadding", {
 
 state.tooltipToken = 0
 
+-- Wurst's tooltip is the same bitmap font as everything else. The
+-- TextLabel stays as the box and the metadata carrier — the Tooltip
+-- opacity slider writes its BackgroundTransparency, and its Text is
+-- still the truth — but the visible glyphs come from the contract,
+-- word-wrapped by real advances. The anchor arrives in screen pixels
+-- (AbsolutePosition) while the layer positions in logical offsets
+-- under the ClickGUI's UIScale; the manager's converters keep the two
+-- apart instead of mixing them like the 5.5-px-per-char guess did.
 local function showFeatureTooltip(row: Frame, text: string, pointer: Vector2?): ()
     state.tooltipToken = state.tooltipToken + 1
     state.featureTooltip.Text = text
+    state.featureTooltip.TextTransparency = 1
 
-    local width: number = math.clamp(#text * 5.5 + 24, 210, 520)
-    local lineCount: number = math.max(1, math.ceil((#text * 5.5) / (width - 20)))
-    local height: number = math.max(30, lineCount * 15 + 12)
+    local bitmap: any = state.bitmapText
+    local innerLimit: number = 488
+    -- Word wrap by measured width: words accumulate while they fit,
+    -- and a single over-long word breaks rather than overflowing.
+    local lines: {string} = {}
+    local current: string = ""
+    for word: string in string.gmatch(tostring(text), "%S+") do
+        local candidate: string = current == "" and word or (current .. " " .. word)
+        if bitmap.measure({{text = candidate}}, 16) <= innerLimit or current == "" then
+            current = candidate
+        else
+            table.insert(lines, current)
+            current = word
+        end
+    end
+    if current ~= "" then
+        table.insert(lines, current)
+    end
+    if #lines == 0 then
+        lines = {""}
+    end
+    local wrapped: string = table.concat(lines, "\n")
+    local measured: number = bitmap.measure({{text = wrapped}}, 16)
+    local width: number = math.clamp(measured + 24, 210, 520)
+    local height: number = math.max(30, #lines * bitmap.lineHeight + 12)
     state.featureTooltip.Size = UDim2.fromOffset(width, height)
+    bitmap.draw(state.featureTooltip, {
+        {text = wrapped, color = Color3.fromRGB(205, 205, 205)},
+    }, {
+        Name = "Glyphs",
+        TextSize = 16,
+        ZIndex = 251,
+        AnchorPoint = Vector2.new(0, 0.5),
+        Position = UDim2.new(0, 0, 0.5, 0),
+    })
 
-    local camera: Camera? = workspace.CurrentCamera
-    local viewport: Vector2 = camera and camera.ViewportSize or Vector2.new(1280, 720)
+    local manager: any = state.windows
+    local viewport: Vector2
+    if manager and type(manager.LogicalViewport) == "function" then
+        viewport = manager.LogicalViewport()
+    else
+        local camera: Camera? = workspace.CurrentCamera
+        viewport = camera and camera.ViewportSize or Vector2.new(1280, 720)
+    end
     local anchor: Vector2 = pointer
         or Vector2.new(
             row.AbsolutePosition.X + 16,
             row.AbsolutePosition.Y + row.AbsoluteSize.Y * 0.5
         )
+    if manager and type(manager.ScreenToLogical) == "function" then
+        anchor = manager.ScreenToLogical(anchor)
+    end
     local x: number = math.clamp(anchor.X + 12, 8, math.max(8, viewport.X - width - 8))
     local y: number = math.clamp(
         anchor.Y - height - 8,
@@ -7996,18 +4716,16 @@ local function addFeatureTooltip(feature: any, text: string): ()
     end))
 end
 
-state.bindFeatureTooltip = addFeatureTooltip
 
-type FlySettings = {
-    preset: string,
-    speed: number,
-    verticalSpeed: number,
-    response: number,
-    wallCheck: boolean,
-    platformStand: boolean,
-    faceCamera: boolean,
-    upKey: Enum.KeyCode,
-    downKey: Enum.KeyCode,
+
+-- Everything the flight engines mutate between frames lives here rather than
+-- as separate upvalues: the engines swap at runtime and each one has to be
+-- able to tear down whatever the previous one left behind.
+type FlyRuntime = {
+    yLevel: number?,
+    burstAt: number,
+    platform: BasePart?,
+    walkSpeed: number?,
 }
 
 local findPlayerByText: (string) -> Player? = function(_text: string): Player?
@@ -8015,3250 +4733,18 @@ local findPlayerByText: (string) -> Player? = function(_text: string): Player?
 end
 local performFling: (Player) -> () = function(_target: Player): () end
 
-do
-local flySettings: FlySettings = {
-    preset = "Balanced",
-    speed = 70,
-    verticalSpeed = 56,
-    response = 1,
-    wallCheck = true,
-    platformStand = true,
-    faceCamera = true,
-    upKey = Enum.KeyCode.Space,
-    downKey = Enum.KeyCode.LeftControl,
-}
-local flySmoothedVelocity: Vector3 = Vector3.zero
-state.platformStandController = {
-    owners = {},
-    baselines = setmetatable({}, {__mode = "k"}),
-    sequence = 0,
-}
-state.platformStandController.set = function(ownerId: string, value: boolean?): ()
-    local controller: any = state.platformStandController
-    if value == nil then
-        controller.owners[ownerId] = nil
-        if next(controller.owners) == nil then
-            for humanoid: Humanoid, baseline: boolean in pairs(controller.baselines) do
-                if humanoid.Parent then
-                    humanoid.PlatformStand = baseline
-                end
-            end
-            controller.baselines = setmetatable({}, {__mode = "k"})
-        end
-        return
-    end
-    local owner: any = controller.owners[ownerId]
-    if not owner then
-        controller.sequence += 1
-        owner = {sequence = controller.sequence, value = value}
-        controller.owners[ownerId] = owner
-    else
-        owner.value = value
-    end
-end
-state.platformStandController.apply = function(humanoid: Humanoid): ()
-    local controller: any = state.platformStandController
-    if controller.baselines[humanoid] == nil then
-        controller.baselines[humanoid] = humanoid.PlatformStand
-    end
-    local selected: any = nil
-    for _, owner: any in pairs(controller.owners) do
-        if not selected or owner.sequence > selected.sequence then
-            selected = owner
-        end
-    end
-    if selected then
-        humanoid.PlatformStand = selected.value
-    end
-end
-local flyObjects: {[Instance]: boolean} =
-    setmetatable({}, {__mode = "k"}) :: any
-local flyTouchVertical: number = 0
 
-local function removeFlyObjects(): ()
-    state.platformStandController.set("Fly", nil)
-
-    for object: Instance in pairs(flyObjects) do
-        if object.Parent then
-            object:Destroy()
-        end
-    end
-    flyObjects = setmetatable({}, {__mode = "k"}) :: any
-end
-
-local function ensureFlyConstraints(root: BasePart): (LinearVelocity, AlignOrientation)
-    local attachment: Attachment? = root:FindFirstChild("RTM_FlyAttachment") :: Attachment?
-    if not attachment then
-        local newAttachment: Attachment = Instance.new("Attachment")
-        newAttachment.Name = "RTM_FlyAttachment"
-        newAttachment.Parent = root
-        attachment = newAttachment
-    end
-    local resolvedAttachment: Attachment = attachment :: Attachment
-    flyObjects[resolvedAttachment] = true
-
-    local velocity: LinearVelocity? = root:FindFirstChild("RTM_FlyVelocity") :: LinearVelocity?
-    if not velocity then
-        local newVelocity: LinearVelocity = Instance.new("LinearVelocity")
-        newVelocity.Name = "RTM_FlyVelocity"
-        newVelocity.Attachment0 = resolvedAttachment
-        newVelocity.MaxForce = math.huge
-        newVelocity.RelativeTo = Enum.ActuatorRelativeTo.World
-        newVelocity.VelocityConstraintMode = Enum.VelocityConstraintMode.Vector
-        newVelocity.Parent = root
-        velocity = newVelocity
-    end
-    flyObjects[velocity :: LinearVelocity] = true
-
-    local orientation: AlignOrientation? =
-        root:FindFirstChild("RTM_FlyOrientation") :: AlignOrientation?
-    if not orientation then
-        local newOrientation: AlignOrientation = Instance.new("AlignOrientation")
-        newOrientation.Name = "RTM_FlyOrientation"
-        newOrientation.Attachment0 = resolvedAttachment
-        newOrientation.MaxTorque = math.huge
-        newOrientation.Mode = Enum.OrientationAlignmentMode.OneAttachment
-        newOrientation.Responsiveness = 28
-        newOrientation.RigidityEnabled = false
-        newOrientation.Parent = root
-        orientation = newOrientation
-    end
-    flyObjects[orientation :: AlignOrientation] = true
-
-    return velocity :: LinearVelocity, orientation :: AlignOrientation
-end
-
-local function getFlyDirection(
-    humanoid: Humanoid,
-    camera: Camera
-): (Vector3, Vector3)
-    local cameraForward: Vector3 = Vector3.new(
-        camera.CFrame.LookVector.X,
-        0,
-        camera.CFrame.LookVector.Z
-    )
-    local cameraRight: Vector3 = Vector3.new(
-        camera.CFrame.RightVector.X,
-        0,
-        camera.CFrame.RightVector.Z
-    )
-    cameraForward = cameraForward.Magnitude > 0.001
-        and cameraForward.Unit
-        or Vector3.new(0, 0, -1)
-    cameraRight = cameraRight.Magnitude > 0.001
-        and cameraRight.Unit
-        or Vector3.new(1, 0, 0)
-
-    local horizontal: Vector3 = humanoid.MoveDirection
-    if horizontal.Magnitude <= 0.001 then
-        if UserInputService:IsKeyDown(Enum.KeyCode.W) then
-            horizontal = horizontal + cameraForward
-        end
-        if UserInputService:IsKeyDown(Enum.KeyCode.S) then
-            horizontal = horizontal - cameraForward
-        end
-        if UserInputService:IsKeyDown(Enum.KeyCode.D) then
-            horizontal = horizontal + cameraRight
-        end
-        if UserInputService:IsKeyDown(Enum.KeyCode.A) then
-            horizontal = horizontal - cameraRight
-        end
-    end
-
-    if horizontal.Magnitude > 1 then
-        horizontal = horizontal.Unit
-    end
-
-    local vertical: number = 0
-    if UserInputService:IsKeyDown(flySettings.upKey)
-        or flyTouchVertical > 0 then
-        vertical = vertical + 1
-    end
-    if UserInputService:IsKeyDown(flySettings.downKey)
-        or flyTouchVertical < 0 then
-        vertical = vertical - 1
-    end
-
-    local targetVelocity: Vector3 = horizontal * flySettings.speed
-        + Vector3.new(0, vertical * flySettings.verticalSpeed, 0)
-    return targetVelocity, cameraForward
-end
-
-local function toggleFly(enabled: boolean): ()
-    disconnectFeatureConnection("Fly")
-    removeFlyObjects()
-    flySmoothedVelocity = Vector3.zero
-    flyTouchVertical = 0
-
-    if not enabled then
-        return
-    end
-
-    featureConnections.Fly = TaskManager:Connect(function(deltaTime: number): ()
-        local _, humanoid, root = getCharacterParts()
-        local camera: Camera? = workspace.CurrentCamera
-        if not humanoid or not root or not camera then
-            return
-        end
-
-        state.platformStandController.set("Fly", flySettings.platformStand)
-        state.platformStandController.apply(humanoid)
-
-        local velocity, orientation = ensureFlyConstraints(root)
-        local targetVelocity, cameraForward = getFlyDirection(humanoid, camera)
-        if flySettings.wallCheck then
-            local horizontalVelocity: Vector3 = Vector3.new(
-                targetVelocity.X,
-                0,
-                targetVelocity.Z
-            )
-            if horizontalVelocity.Magnitude > 0.001 then
-                local raycastParams: RaycastParams = RaycastParams.new()
-                raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-                raycastParams.FilterDescendantsInstances = {root.Parent :: Instance}
-                local wallHit: RaycastResult? = workspace:Raycast(
-                    root.Position,
-                    horizontalVelocity.Unit * 2.75,
-                    raycastParams
-                )
-                if wallHit then
-                    targetVelocity = Vector3.new(0, targetVelocity.Y, 0)
-                end
-            end
-        end
-        local presetResponse: number = flySettings.preset == "Direct" and 28
-            or flySettings.preset == "Precise" and 7
-            or 12
-        local alpha: number = 1 - math.exp(
-            -presetResponse * flySettings.response * deltaTime
-        )
-        flySmoothedVelocity = flySmoothedVelocity:Lerp(targetVelocity, alpha)
-
-        velocity.Enabled = true
-        velocity.VectorVelocity = flySmoothedVelocity
-
-        orientation.Enabled = flySettings.faceCamera
-        orientation.CFrame = CFrame.lookAt(Vector3.zero, cameraForward)
-
-    end)
-end
-
--- Hitbox engine rewrite.
---
--- The old implementation had one fixed behaviour (scale visible parts, head
--- pinned to 8 studs, everything forced transparent, collision and mass always
--- stripped) and re-scanned every character on a hard-coded 0.1 s timer. The
--- rewrite makes the whole pipeline configurable while keeping a single,
--- cheap, idempotent sweep:
---
---   * Mode: "Visible" scales the visible body (the classic expanded look),
---     "Root" scales only the invisible HumanoidRootPart (the classic
---     phantom hitbox) and "Hybrid" does both.
---   * Original states are recorded once per part and restored exactly when
---     the feature is disabled or when the mode stops targeting that part,
---     so switching Visible → Root never leaves stale stretched limbs.
---   * Characters are tracked in a weak set and only alive characters are
---     swept; dead/respawned characters drop out automatically instead of
---     being re-applied forever.
---   * Transparency, collision, mass, accessories and the refresh interval
---     are all independent options instead of hard-coded side effects.
-
-type HitboxSettings = {
-    mode: string,
-    bodyScale: number,
-    headSize: number,
-    rootSize: number,
-    visibleTransparency: number,
-    forceVisible: boolean,
-    noCollision: boolean,
-    massless: boolean,
-    excludeAccessories: boolean,
-    updateInterval: number,
-}
-
-type OriginalHitboxState = {
-    size: Vector3,
-    transparency: number,
-    canCollide: boolean,
-    massless: boolean,
-}
-
-local hitboxSettings: HitboxSettings = {
-    mode = "Visible",
-    bodyScale = 2.25,
-    headSize = 8,
-    rootSize = 12,
-    visibleTransparency = 30,
-    forceVisible = true,
-    noCollision = true,
-    massless = true,
-    excludeAccessories = true,
-    updateInterval = 0.1,
-}
-local originalHitboxes: {[BasePart]: OriginalHitboxState} =
-    setmetatable({}, {__mode = "k"}) :: any
-local hitboxCharacters: {[Model]: boolean} =
-    setmetatable({}, {__mode = "k"}) :: any
-
-local function restoreHitboxes(): ()
-    for part: BasePart, original: OriginalHitboxState in pairs(originalHitboxes) do
-        if part.Parent then
-            part.Size = original.size
-            part.Transparency = original.transparency
-            part.CanCollide = original.canCollide
-            part.Massless = original.massless
-        end
-    end
-    originalHitboxes = setmetatable({}, {__mode = "k"}) :: any
-    hitboxCharacters = setmetatable({}, {__mode = "k"}) :: any
-end
-
-local function isScaledBodyPart(part: BasePart): boolean
-    if part.Name == "HumanoidRootPart" then
-        return false
-    end
-    if part:FindFirstAncestorOfClass("Tool") then
-        return false
-    end
-    if hitboxSettings.excludeAccessories
-        and part:FindFirstAncestorOfClass("Accessory") then
-        return false
-    end
-    return true
-end
-
-local function applyHitboxToPart(part: BasePart): ()
-    local original: OriginalHitboxState? = originalHitboxes[part]
-    if not original then
-        original = {
-            size = part.Size,
-            transparency = part.Transparency,
-            canCollide = part.CanCollide,
-            massless = part.Massless,
-        }
-        originalHitboxes[part] = original
-    end
-    local resolvedOriginal: OriginalHitboxState = original :: OriginalHitboxState
-
-    if part.Name == "HumanoidRootPart" then
-        part.Size = Vector3.new(
-            hitboxSettings.rootSize,
-            hitboxSettings.rootSize,
-            hitboxSettings.rootSize
-        )
-        part.Transparency = 1
-    else
-        if part.Name == "Head" then
-            part.Size = Vector3.new(
-                hitboxSettings.headSize,
-                hitboxSettings.headSize,
-                hitboxSettings.headSize
-            )
-        else
-            part.Size = resolvedOriginal.size * hitboxSettings.bodyScale
-        end
-        if hitboxSettings.forceVisible then
-            part.Transparency = math.min(
-                resolvedOriginal.transparency,
-                hitboxSettings.visibleTransparency / 100
-            )
-        end
-    end
-
-    part.CanCollide = hitboxSettings.noCollision
-        and false
-        or resolvedOriginal.canCollide
-    part.Massless = hitboxSettings.massless
-end
-
--- Restores every part the current mode no longer targets. Keeps the world
--- clean when the user flips the mode slider mid-flight: switching to "Root"
--- unwinds all stretched visible parts and vice versa.
-local function refreshHitboxMode(): ()
-    for part: BasePart, original: OriginalHitboxState in pairs(originalHitboxes) do
-        if not part.Parent then
-            continue
-        end
-        local isRoot: boolean = part.Name == "HumanoidRootPart"
-        local stillTargeted: boolean = isRoot
-            and hitboxSettings.mode ~= "Visible"
-            or (not isRoot and hitboxSettings.mode ~= "Root")
-        if not stillTargeted then
-            part.Size = original.size
-            part.Transparency = original.transparency
-            part.CanCollide = original.canCollide
-            part.Massless = original.massless
-            originalHitboxes[part] = nil
-        end
-    end
-end
-
-local function sweepHitboxes(): ()
-    -- Track every alive enemy character; respawns are picked up on the next
-    -- sweep and dead characters drop out of the weak set.
-    for _, player: Player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer and player.Character then
-            local character: Model = player.Character
-            local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
-            if humanoid and humanoid.Health > 0 and character.Parent then
-                hitboxCharacters[character] = true
-            end
-        end
-    end
-
-    for character: Model in pairs(hitboxCharacters) do
-        local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
-        if character.Parent == nil or not humanoid or humanoid.Health <= 0 then
-            hitboxCharacters[character] = nil
-            continue
-        end
-        for _, part: Instance in ipairs(character:GetChildren()) do
-            if not part:IsA("BasePart") then
-                continue
-            end
-            local isRoot: boolean = part.Name == "HumanoidRootPart"
-            if isRoot then
-                if hitboxSettings.mode ~= "Visible" then
-                    applyHitboxToPart(part)
-                end
-            elseif hitboxSettings.mode ~= "Root" and isScaledBodyPart(part) then
-                applyHitboxToPart(part)
-            end
-        end
-    end
-end
-
-local function toggleHitboxes(enabled: boolean): ()
-    disconnectFeatureConnection("Hitboxes")
-    restoreHitboxes()
-
-    if not enabled then
-        return
-    end
-
-    local elapsed: number = 0
-    featureConnections.Hitboxes = TaskManager:Connect(function(deltaTime: number): ()
-        elapsed = elapsed + deltaTime
-        if elapsed < hitboxSettings.updateInterval then
-            return
-        end
-        elapsed = 0
-        sweepHitboxes()
-    end)
-end
-
-local antiVoidPlatform: Part? = nil
-local antiVoidLastGroundY: number? = nil
-local antiVoidFreefallSeconds: number = 0
-local antiVoidPlatformToken: number = 0
-
-local function removeAntiVoidPlatform(): ()
-    antiVoidPlatformToken = antiVoidPlatformToken + 1
-    if antiVoidPlatform then
-        antiVoidPlatform:Destroy()
-        antiVoidPlatform = nil
-    end
-end
-
-local function createAntiVoidPlatform(root: BasePart, humanoid: Humanoid): ()
-    removeAntiVoidPlatform()
-
-    local platform: Part = Instance.new("Part")
-    platform.Name = "RTM_AntiVoidPlatform"
-    platform.Anchored = true
-    platform.CanCollide = true
-    platform.CanQuery = false
-    platform.CanTouch = false
-    platform.CastShadow = false
-    platform.Size = Vector3.new(42, 1, 42)
-    platform.Transparency = 1
-    platform.CFrame = CFrame.new(root.Position - Vector3.new(0, 4.25, 0))
-    platform.Parent = workspace
-    antiVoidPlatform = platform
-
-    local velocity: Vector3 = root.AssemblyLinearVelocity
-    root.AssemblyLinearVelocity = Vector3.new(velocity.X * 0.25, 0, velocity.Z * 0.25)
-    root.AssemblyAngularVelocity = Vector3.zero
-    humanoid:ChangeState(Enum.HumanoidStateType.Landed)
-
-    local token: number = antiVoidPlatformToken
-    task.delay(3, function(): ()
-        if antiVoidPlatformToken == token then
-            removeAntiVoidPlatform()
-        end
-    end)
-end
-
-local function toggleAntiVoid(enabled: boolean): ()
-    disconnectFeatureConnection("AntiVoid")
-    removeAntiVoidPlatform()
-    antiVoidLastGroundY = nil
-    antiVoidFreefallSeconds = 0
-
-    if not enabled then
-        return
-    end
-
-    featureConnections.AntiVoid = TaskManager:Connect(function(deltaTime: number): ()
-        local _, humanoid, root = getCharacterParts()
-        if not humanoid or not root then
-            return
-        end
-
-        if humanoid.FloorMaterial ~= Enum.Material.Air then
-            antiVoidLastGroundY = root.Position.Y
-            antiVoidFreefallSeconds = 0
-            return
-        end
-
-        antiVoidFreefallSeconds = antiVoidFreefallSeconds + deltaTime
-        local destroyHeight: number = workspace.FallenPartsDestroyHeight
-        if destroyHeight ~= destroyHeight then
-            destroyHeight = -500
-        end
-
-        local nearDestroyLayer: boolean = root.Position.Y <= destroyHeight + 45
-        local fellFarFromGround: boolean = antiVoidLastGroundY ~= nil
-            and root.Position.Y <= (antiVoidLastGroundY :: number) - 120
-            and antiVoidFreefallSeconds >= 1.1
-            and root.AssemblyLinearVelocity.Y < -45
-
-        if nearDestroyLayer or fellFarFromGround then
-            createAntiVoidPlatform(root, humanoid)
-            antiVoidFreefallSeconds = 0
-        end
-    end)
-end
-
-local gravitySettings = {value = 196.2}
-local originalGravity = workspace.Gravity
-
-local function toggleGravity(enabled)
-    disconnectFeatureConnection("Gravity")
-
-    if not enabled then
-        workspace.Gravity = originalGravity
-        return
-    end
-
-    originalGravity = workspace.Gravity
-    featureConnections.Gravity = TaskManager:Connect(function()
-        workspace.Gravity = gravitySettings.value
-    end)
-end
-
-local jumpPowerSettings = {value = 80}
-local originalJumpPower = setmetatable({}, {__mode = "k"})
-
-local function restoreJumpPower()
-    for humanoid, original in pairs(originalJumpPower) do
-        if humanoid and humanoid.Parent then
-            humanoid.JumpPower = original.jumpPower
-            humanoid.UseJumpPower = original.useJumpPower
-        end
-    end
-    originalJumpPower = setmetatable({}, {__mode = "k"})
-end
-
-local function toggleJumpPower(enabled)
-    disconnectFeatureConnection("JumpPower")
-    restoreJumpPower()
-
-    if not enabled then
-        return
-    end
-
-    featureConnections.JumpPower = TaskManager:Connect(function()
-        local _, humanoid = getCharacterParts()
-        if not humanoid then
-            return
-        end
-
-        if not originalJumpPower[humanoid] then
-            originalJumpPower[humanoid] = {
-                jumpPower = humanoid.JumpPower,
-                useJumpPower = humanoid.UseJumpPower,
-            }
-        end
-
-        humanoid.UseJumpPower = true
-        humanoid.JumpPower = jumpPowerSettings.value
-    end)
-end
-
-local infiniteJumpSettings = {
-    mode = "Rise",
-    strength = 50,
-    riseSpeed = 75,
-}
-
-local function toggleInfiniteJump(enabled)
-    disconnectFeatureConnection("InfiniteJump")
-    disconnectFeatureConnection("InfiniteJumpRise")
-
-    if not enabled then
-        return
-    end
-
-    featureConnections.InfiniteJump = UserInputService.InputBegan:Connect(function(
-        input,
-        processed
-    )
-        if processed
-            or state.keyCaptureCallback
-            or state.waitingForKey
-            or input.KeyCode ~= Enum.KeyCode.Space
-            or UserInputService:GetFocusedTextBox()
-            or infiniteJumpSettings.mode == "Rise" then
-            return
-        end
-
-        local _, humanoid, root = getCharacterParts()
-        if not humanoid or not root then
-            return
-        end
-
-        humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-        local currentVelocity = root.AssemblyLinearVelocity
-
-        local nextVerticalVelocity
-        if infiniteJumpSettings.mode == "Normal" then
-            -- The regular soon.lua-style jump: each press adds another
-            -- configurable amount of upward velocity.
-            nextVerticalVelocity = currentVelocity.Y + infiniteJumpSettings.strength
-        else
-            -- Fall mode mirrors the abrupt velocity replacement from Inf Jump.lua.
-            nextVerticalVelocity = infiniteJumpSettings.strength
-        end
-
-        root.AssemblyLinearVelocity = Vector3.new(
-            currentVelocity.X,
-            nextVerticalVelocity,
-            currentVelocity.Z
-        )
-    end)
-
-    featureConnections.InfiniteJumpRise = TaskManager:Connect(function()
-        if infiniteJumpSettings.mode ~= "Rise"
-            or not UserInputService:IsKeyDown(Enum.KeyCode.Space)
-            or UserInputService:GetFocusedTextBox() then
-            return
-        end
-
-        local _, humanoid, root = getCharacterParts()
-        if not humanoid or not root then
-            return
-        end
-
-        humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
-        local velocity = root.AssemblyLinearVelocity
-        root.AssemblyLinearVelocity = Vector3.new(
-            velocity.X,
-            infiniteJumpSettings.riseSpeed,
-            velocity.Z
-        )
-    end)
-end
-
-local walkSpeedSettings = {value = 32}
-local originalWalkSpeed = setmetatable({}, {__mode = "k"})
-
-local function restoreWalkSpeed()
-    for humanoid, value in pairs(originalWalkSpeed) do
-        if humanoid and humanoid.Parent then
-            humanoid.WalkSpeed = value
-        end
-    end
-    originalWalkSpeed = setmetatable({}, {__mode = "k"})
-end
-
-local function toggleWalkSpeed(enabled)
-    disconnectFeatureConnection("WalkSpeed")
-    restoreWalkSpeed()
-
-    if not enabled then
-        return
-    end
-
-    featureConnections.WalkSpeed = TaskManager:Connect(function()
-        local _, humanoid = getCharacterParts()
-        if humanoid then
-            if not originalWalkSpeed[humanoid] then
-                originalWalkSpeed[humanoid] = humanoid.WalkSpeed
-            end
-            humanoid.WalkSpeed = walkSpeedSettings.value
-        end
-    end)
-end
-
-type PhysicsSpeedSettings = {
-    mode: string,
-    speed: number,
-    verticalSpeed: number,
-    platformStand: boolean,
-    customProperties: boolean,
-    motorTorque: number,
-    wallCheck: boolean,
-    autoJump: boolean,
-    jumpVelocity: number,
-    acceleration: number,
-    airControl: number,
-    sprintMultiplier: number,
-    sprintKey: Enum.KeyCode,
-    preserveMomentum: boolean,
-}
-
-type VehicleSeatState = {
-    maxSpeed: number,
-    torque: number,
-    turnSpeed: number,
-}
-
-type HingeState = {
-    angularVelocity: number,
-    motorMaxTorque: number,
-}
-
-local physicsSpeedSettings: PhysicsSpeedSettings = {
-    mode = "Smooth",
-    speed = 50,
-    verticalSpeed = 50,
-    platformStand = false,
-    customProperties = true,
-    motorTorque = 50000,
-    wallCheck = true,
-    autoJump = false,
-    jumpVelocity = 45,
-    acceleration = 14,
-    airControl = 0.72,
-    sprintMultiplier = 1.65,
-    sprintKey = Enum.KeyCode.LeftShift,
-    preserveMomentum = false,
-}
-local physicsSpeedTeleportClock: number = 0
-local originalVehicleSeats: {[VehicleSeat]: VehicleSeatState} =
-    setmetatable({}, {__mode = "k"}) :: any
-local originalMotorHinges: {[HingeConstraint]: HingeState} =
-    setmetatable({}, {__mode = "k"}) :: any
-
-local function restorePhysicsMotors(): ()
-    for seat: VehicleSeat, original: VehicleSeatState in pairs(originalVehicleSeats) do
-        if seat.Parent then
-            seat.MaxSpeed = original.maxSpeed
-            seat.Torque = original.torque
-            seat.TurnSpeed = original.turnSpeed
-        end
-    end
-    originalVehicleSeats = setmetatable({}, {__mode = "k"}) :: any
-
-    for hinge: HingeConstraint, original: HingeState in pairs(originalMotorHinges) do
-        if hinge.Parent then
-            hinge.AngularVelocity = original.angularVelocity
-            hinge.MotorMaxTorque = original.motorMaxTorque
-        end
-    end
-    originalMotorHinges = setmetatable({}, {__mode = "k"}) :: any
-end
-
-local function getPhysicsSpeedTarget(): (BasePart?, Humanoid?, VehicleSeat?)
-    local _, humanoid, root = getCharacterParts()
-    if not humanoid or not root then
-        return nil, humanoid, nil
-    end
-
-    local seatPart: BasePart? = humanoid.SeatPart
-    if seatPart and seatPart:IsA("VehicleSeat") then
-        return seatPart.AssemblyRootPart or seatPart, humanoid, seatPart
-    end
-    if seatPart then
-        return seatPart.AssemblyRootPart or seatPart, humanoid, nil
-    end
-
-    return root.AssemblyRootPart or root, humanoid, nil
-end
-
-local function tunePhysicsMotors(seat: VehicleSeat): ()
-    local model: Model? = seat:FindFirstAncestorOfClass("Model")
-    if not model then
-        return
-    end
-
-    for _, descendant: Instance in ipairs(model:GetDescendants()) do
-        if descendant:IsA("VehicleSeat") then
-            local original: VehicleSeatState? = originalVehicleSeats[descendant]
-            if not original then
-                original = {
-                    maxSpeed = descendant.MaxSpeed,
-                    torque = descendant.Torque,
-                    turnSpeed = descendant.TurnSpeed,
-                }
-                originalVehicleSeats[descendant] = original
-            end
-            local resolvedOriginal: VehicleSeatState = original :: VehicleSeatState
-            descendant.MaxSpeed = physicsSpeedSettings.speed
-            descendant.Torque = math.max(
-                resolvedOriginal.torque,
-                physicsSpeedSettings.motorTorque
-            )
-            descendant.TurnSpeed = math.max(
-                resolvedOriginal.turnSpeed,
-                physicsSpeedSettings.speed * 0.35
-            )
-        elseif descendant:IsA("HingeConstraint")
-            and descendant.ActuatorType == Enum.ActuatorType.Motor then
-            local original: HingeState? = originalMotorHinges[descendant]
-            if not original then
-                original = {
-                    angularVelocity = descendant.AngularVelocity,
-                    motorMaxTorque = descendant.MotorMaxTorque,
-                }
-                originalMotorHinges[descendant] = original
-            end
-            local resolvedOriginal: HingeState = original :: HingeState
-
-            local sign: number = resolvedOriginal.angularVelocity < 0 and -1 or 1
-            descendant.AngularVelocity = sign
-                * math.max(
-                    math.abs(resolvedOriginal.angularVelocity),
-                    physicsSpeedSettings.speed / 3
-                )
-            descendant.MotorMaxTorque = math.max(
-                resolvedOriginal.motorMaxTorque,
-                physicsSpeedSettings.motorTorque
-            )
-        end
-    end
-end
-
-local function togglePhysicsSpeed(enabled: boolean): ()
-    disconnectFeatureConnection("PhysicsSpeed")
-    restorePhysicsMotors()
-    physicsSpeedTeleportClock = 0
-
-    state.platformStandController.set("PhysicsSpeed", nil)
-
-    if not enabled then
-        return
-    end
-
-    featureConnections.PhysicsSpeed =
-        TaskManager:Connect(function(deltaTime: number): ()
-            local assembly, currentHumanoid, vehicleSeat = getPhysicsSpeedTarget()
-            if not assembly or not currentHumanoid then
-                return
-            end
-
-            state.platformStandController.set(
-                "PhysicsSpeed",
-                physicsSpeedSettings.platformStand
-            )
-            state.platformStandController.apply(currentHumanoid)
-
-            if vehicleSeat and physicsSpeedSettings.customProperties then
-                tunePhysicsMotors(vehicleSeat)
-            end
-
-            local direction: Vector3 = currentHumanoid.MoveDirection
-            if vehicleSeat then
-                direction = vehicleSeat.CFrame.LookVector * vehicleSeat.ThrottleFloat
-            end
-            direction = Vector3.new(direction.X, 0, direction.Z)
-            if direction.Magnitude > 1 then
-                direction = direction.Unit
-            end
-
-            local wallBlocked: boolean = false
-            if physicsSpeedSettings.wallCheck
-                and direction.Magnitude > 0.001 then
-                local raycastParams: RaycastParams = RaycastParams.new()
-                raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-                raycastParams.FilterDescendantsInstances = {
-                    currentHumanoid.Parent :: Instance,
-                }
-                local wallHit: RaycastResult? = workspace:Raycast(
-                    assembly.Position,
-                    direction.Unit * 2.75,
-                    raycastParams
-                )
-                if wallHit then
-                    direction = Vector3.zero
-                    wallBlocked = true
-                end
-            end
-
-            if not vehicleSeat
-                and physicsSpeedSettings.autoJump
-                and direction.Magnitude > 0.001
-                and currentHumanoid.FloorMaterial ~= Enum.Material.Air then
-                currentHumanoid.Jump = true
-                local jumpVelocity: Vector3 = assembly.AssemblyLinearVelocity
-                assembly.AssemblyLinearVelocity = Vector3.new(
-                    jumpVelocity.X,
-                    math.max(jumpVelocity.Y, physicsSpeedSettings.jumpVelocity),
-                    jumpVelocity.Z
-                )
-            end
-
-            local currentVelocity: Vector3 = assembly.AssemblyLinearVelocity
-            local grounded: boolean = currentHumanoid.FloorMaterial ~= Enum.Material.Air
-            local sprinting: boolean = not state.isMobile
-                and UserInputService:IsKeyDown(physicsSpeedSettings.sprintKey)
-            local resolvedSpeed: number = physicsSpeedSettings.speed
-                * (sprinting and physicsSpeedSettings.sprintMultiplier or 1)
-            if physicsSpeedSettings.mode == "Adaptive" and not grounded then
-                resolvedSpeed *= physicsSpeedSettings.airControl
-            end
-            local vertical: number = math.clamp(
-                currentVelocity.Y,
-                -physicsSpeedSettings.verticalSpeed,
-                physicsSpeedSettings.verticalSpeed
-            )
-            local currentHorizontal: Vector3 = Vector3.new(
-                currentVelocity.X,
-                0,
-                currentVelocity.Z
-            )
-            local keepMomentum: boolean = physicsSpeedSettings.preserveMomentum
-                or physicsSpeedSettings.mode == "Adaptive"
-            local targetHorizontal: Vector3 = not wallBlocked
-                    and direction.Magnitude > 0.001
-                    and direction * resolvedSpeed
-                or not wallBlocked and keepMomentum and currentHorizontal
-                or Vector3.zero
-            local targetVelocity: Vector3 = targetHorizontal
-                + Vector3.new(0, vertical, 0)
-
-            if physicsSpeedSettings.mode == "Smooth"
-                or physicsSpeedSettings.mode == "Adaptive" then
-                local alpha: number = 1 - math.exp(
-                    -physicsSpeedSettings.acceleration * deltaTime
-                )
-                local smoothedHorizontal: Vector3 = currentHorizontal:Lerp(
-                    targetHorizontal,
-                    alpha
-                )
-                assembly.AssemblyLinearVelocity = smoothedHorizontal
-                    + Vector3.new(0, vertical, 0)
-            elseif physicsSpeedSettings.mode == "Boost" then
-                local correction: Vector3 = targetVelocity - currentVelocity
-                assembly:ApplyImpulse(
-                    correction
-                        * assembly.AssemblyMass
-                        * math.clamp(deltaTime * 9, 0, 1)
-                )
-            elseif physicsSpeedSettings.mode == "Teleport" then
-                physicsSpeedTeleportClock = physicsSpeedTeleportClock + deltaTime
-                if physicsSpeedTeleportClock >= 0.14 then
-                    assembly.CFrame = assembly.CFrame
-                        + direction
-                            * resolvedSpeed
-                            * physicsSpeedTeleportClock
-                    physicsSpeedTeleportClock = 0
-                end
-            end
-        end)
-end
-
-local fovSettings = {value = 90}
-state.fovController = state.fovController or {
-    owners = {},
-    baselines = setmetatable({}, {__mode = "k"}),
-    sequence = 0,
-}
-state.fovController.set = function(ownerId: string, value: number?): ()
-    local controller: any = state.fovController
-    if value == nil then
-        controller.owners[ownerId] = nil
-        if next(controller.owners) == nil then
-            for camera: Camera, baseline: number in pairs(controller.baselines) do
-                if camera.Parent then
-                    camera.FieldOfView = baseline
-                end
-            end
-            controller.baselines = setmetatable({}, {__mode = "k"})
-        end
-        return
-    end
-    local owner: any = controller.owners[ownerId]
-    if not owner then
-        controller.sequence += 1
-        owner = {sequence = controller.sequence, value = value}
-        controller.owners[ownerId] = owner
-    else
-        owner.value = value
-    end
-end
-state.fovController.apply = function(camera: Camera?): ()
-    if not camera then
-        return
-    end
-    local controller: any = state.fovController
-    if controller.baselines[camera] == nil then
-        controller.baselines[camera] = camera.FieldOfView
-    end
-    local selected: any = nil
-    for _, owner: any in pairs(controller.owners) do
-        if not selected or owner.sequence > selected.sequence then
-            selected = owner
-        end
-    end
-    if selected then
-        camera.FieldOfView = selected.value
-    end
-end
-
-local function toggleFov(enabled)
-    disconnectFeatureConnection("FOV")
-    state.fovController.set("Universal", enabled and fovSettings.value or nil)
-    if not enabled then
-        return
-    end
-
-    featureConnections.FOV = TaskManager:Connect(function()
-        state.fovController.set("Universal", fovSettings.value)
-        state.fovController.apply(workspace.CurrentCamera)
-    end)
-end
-
-local originalCollision = setmetatable({}, {__mode = "k"})
-
-local function restoreCollision()
-    for part, canCollide in pairs(originalCollision) do
-        if part and part.Parent then
-            part.CanCollide = canCollide
-        end
-    end
-    originalCollision = setmetatable({}, {__mode = "k"})
-end
-
-local function toggleNoclip(enabled)
-    disconnectFeatureConnection("Noclip")
-    restoreCollision()
-
-    if not enabled then
-        return
-    end
-
-    featureConnections.Noclip = TaskManager:Connect(function()
-        local character = LocalPlayer.Character
-        if not character then
-            return
-        end
-
-        for _, descendant in ipairs(character:GetDescendants()) do
-            if descendant:IsA("BasePart") then
-                if originalCollision[descendant] == nil then
-                    originalCollision[descendant] = descendant.CanCollide
-                end
-                descendant.CanCollide = false
-            end
-        end
-    end)
-end
-
-local function toggleCtrlClickTeleport(enabled)
-    disconnectFeatureConnection("CtrlClickTeleport")
-
-    if not enabled then
-        return
-    end
-
-    featureConnections.CtrlClickTeleport = UserInputService.InputBegan:Connect(
-        function(input, processed)
-            if processed
-                or state.keyCaptureCallback
-                or state.waitingForKey
-                or input.UserInputType ~= Enum.UserInputType.MouseButton1
-                or not UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
-                return
-            end
-
-            local _, _, root = getCharacterParts()
-            local mouse = LocalPlayer:GetMouse()
-            if root and mouse and mouse.Hit then
-                root.CFrame = CFrame.new(mouse.Hit.Position + Vector3.new(0, 3, 0))
-            end
-        end
-    )
-end
-
-local function toggleAntiAfk(enabled)
-    disconnectFeatureConnection("AntiAFK")
-
-    if not enabled then
-        return
-    end
-
-    featureConnections.AntiAFK = LocalPlayer.Idled:Connect(function()
-        local virtualUserOk, virtualUser = pcall(function()
-            return game:GetService("VirtualUser")
-        end)
-        if virtualUserOk and virtualUser then
-            virtualUser:CaptureController()
-            virtualUser:ClickButton2(Vector2.new(0, 0))
-        end
-    end)
-end
-
-local flingRunning = false
+-- Overwritten by the Friend List module the moment it loads; this is the
+-- answer for the seconds before that, and for a client where the module fails
+-- to download.
 state.isProtectedTarget = function(_targetPlayer: Player): boolean
     return false
 end
-local antiFlingSettings = {velocityLimit = 120}
-local antiFlingSafeCFrame = nil
 
-local function toggleAntiFling(enabled)
-    disconnectFeatureConnection("AntiFling")
-    antiFlingSafeCFrame = nil
 
-    if not enabled then
-        return
-    end
-
-    featureConnections.AntiFling = TaskManager:Connect(function()
-        if flingRunning then
-            return
-        end
-
-        local _, humanoid, root = getCharacterParts()
-        if not humanoid or not root then
-            return
-        end
-
-        local linearSpeed = root.AssemblyLinearVelocity.Magnitude
-        local angularSpeed = root.AssemblyAngularVelocity.Magnitude
-
-        if linearSpeed > antiFlingSettings.velocityLimit
-            or angularSpeed > antiFlingSettings.velocityLimit then
-            root.AssemblyLinearVelocity = Vector3.zero
-            root.AssemblyAngularVelocity = Vector3.zero
-            if antiFlingSafeCFrame then
-                root.CFrame = antiFlingSafeCFrame
-            end
-        elseif humanoid.FloorMaterial ~= Enum.Material.Air
-            and linearSpeed < antiFlingSettings.velocityLimit * 0.45 then
-            antiFlingSafeCFrame = root.CFrame
-        end
-    end)
-end
-
-local lagSwitchSettings = {incomingLag = 999}
-local originalIncomingLag = 0
-
-local function setIncomingReplicationLag(value)
-    local success = pcall(function()
-        settings():GetService("NetworkSettings").IncomingReplicationLag = value
-    end)
-    return success
-end
-
-local function toggleLagSwitch(enabled)
-    disconnectFeatureConnection("LagSwitch")
-
-    if not enabled then
-        setIncomingReplicationLag(originalIncomingLag)
-        return
-    end
-
-    pcall(function()
-        originalIncomingLag = settings():GetService(
-            "NetworkSettings"
-        ).IncomingReplicationLag
-    end)
-
-    if not setIncomingReplicationLag(lagSwitchSettings.incomingLag) then
-        error("NetworkSettings is not available in this client.")
-    end
-
-    featureConnections.LagSwitch = TaskManager:Connect(function()
-        setIncomingReplicationLag(lagSwitchSettings.incomingLag)
-    end)
-end
-
-type UniversalFlingSettings = {
-    target: string,
-}
-
-local universalFlingSettings: UniversalFlingSettings = {
-    target = "",
-}
-local MAX_FLING_SECONDS: number = 5
-
-findPlayerByText = function(text: string): Player?
-    local query: string = string.lower(text)
-    if query == "" then
-        local _, _, localRoot = getCharacterParts()
-        local nearest: Player? = nil
-        local nearestDistance: number = math.huge
-
-        if localRoot then
-            for _, player: Player in ipairs(Players:GetPlayers()) do
-                local root: BasePart? = player.Character
-                    and player.Character:FindFirstChild("HumanoidRootPart")
-                    :: BasePart?
-                if player ~= LocalPlayer and root then
-                    local distance: number = (root.Position - localRoot.Position).Magnitude
-                    if distance < nearestDistance then
-                        nearest = player
-                        nearestDistance = distance
-                    end
-                end
-            end
-        end
-        return nearest
-    end
-
-    for _, player: Player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer then
-            local username: string = string.lower(player.Name)
-            local displayName: string = string.lower(player.DisplayName)
-            if string.sub(username, 1, #query) == query
-                or string.sub(displayName, 1, #query) == query then
-                return player
-            end
-        end
-    end
-
-    return nil
-end
-
-performFling = function(targetPlayer: Player): ()
-    if state.isProtectedTarget(targetPlayer) then
-        notify("That player is protected by FriendList.")
-        return
-    end
-    if flingRunning then
-        notify("A fling is already running.")
-        return
-    end
-
-    flingRunning = true
-    task.spawn(function()
-        local character, humanoid, root = getCharacterParts()
-        local targetCharacter: Model? = targetPlayer.Character
-        local targetRoot: BasePart? = targetCharacter
-            and targetCharacter:FindFirstChild("HumanoidRootPart")
-            :: BasePart?
-        local targetHumanoid: Humanoid? = targetCharacter
-            and targetCharacter:FindFirstChildOfClass("Humanoid")
-            :: Humanoid?
-
-        if not character or not humanoid or not root or not targetRoot then
-            flingRunning = false
-            notify("The selected target is not available.")
-            return
-        end
-
-        local savedCFrame: CFrame = root.CFrame
-        local savedCameraSubject: (Humanoid | BasePart)? = workspace.CurrentCamera
-            and workspace.CurrentCamera.CameraSubject
-            :: (Humanoid | BasePart)?
-        local mover: LinearVelocity? = nil
-        local spinner: AngularVelocity? = nil
-        local moverAttachment: Attachment? = nil
-        local targetReachedVoid: boolean = false
-
-        local success: boolean, errorMessage: any = pcall(function(): ()
-            local newAttachment: Attachment = Instance.new("Attachment")
-            newAttachment.Name = "RTM_FlingAttachment"
-            newAttachment.Parent = root
-            moverAttachment = newAttachment
-
-            local newMover: LinearVelocity = Instance.new("LinearVelocity")
-            newMover.Name = "RTM_FlingVelocity"
-            newMover.Attachment0 = newAttachment
-            newMover.MaxForce = math.huge
-            newMover.RelativeTo = Enum.ActuatorRelativeTo.World
-            newMover.VectorVelocity = Vector3.new(9e5, 9e5, 9e5)
-            newMover.Parent = root
-            mover = newMover
-
-            local newSpinner: AngularVelocity = Instance.new("AngularVelocity")
-            newSpinner.Name = "RTM_FlingAngular"
-            newSpinner.Attachment0 = newAttachment
-            newSpinner.MaxTorque = math.huge
-            newSpinner.RelativeTo = Enum.ActuatorRelativeTo.World
-            newSpinner.AngularVelocity = Vector3.new(9e5, 9e5, 9e5)
-            newSpinner.Parent = root
-            spinner = newSpinner
-
-            local startedAt: number = os.clock()
-            local step: number = 0
-            local destroyHeight: number = workspace.FallenPartsDestroyHeight
-            if destroyHeight ~= destroyHeight then
-                destroyHeight = -500
-            end
-            local voidThreshold: number = destroyHeight + 35
-
-            while os.clock() - startedAt < MAX_FLING_SECONDS
-                and targetPlayer.Parent == Players
-                and targetRoot.Parent do
-                if targetRoot.Position.Y <= voidThreshold
-                    or (targetHumanoid and targetHumanoid.Health <= 0) then
-                    targetReachedVoid = true
-                    break
-                end
-
-                step = step + 1
-                local phase: number = (step % 8) / 8 * math.pi * 2
-                local offset: CFrame = CFrame.new(
-                    math.cos(phase) * 1.35,
-                    (step % 2 == 0) and 0.75 or -0.75,
-                    math.sin(phase) * 1.35
-                )
-                root.CFrame = targetRoot.CFrame * offset
-                root.AssemblyLinearVelocity = Vector3.new(
-                    step % 2 == 0 and 9e5 or -9e5,
-                    9e5,
-                    step % 2 == 0 and -9e5 or 9e5
-                )
-                root.AssemblyAngularVelocity = Vector3.new(9e5, 9e5, 9e5)
-                RunService.Heartbeat:Wait()
-            end
-        end)
-
-        if mover then
-            mover:Destroy()
-        end
-        if spinner then
-            spinner:Destroy()
-        end
-        if moverAttachment then
-            moverAttachment:Destroy()
-        end
-        if root and root.Parent then
-            root.AssemblyLinearVelocity = Vector3.zero
-            root.AssemblyAngularVelocity = Vector3.zero
-            root.CFrame = savedCFrame + Vector3.new(0, 2, 0)
-        end
-        if workspace.CurrentCamera then
-            workspace.CurrentCamera.CameraSubject = savedCameraSubject or humanoid
-        end
-
-        flingRunning = false
-        if success and targetReachedVoid then
-            notify("Fling completed: " .. targetPlayer.Name .. " reached the void.")
-        elseif success then
-            notify("Fling stopped after the 5 second safety limit.")
-        else
-            notify("Fling failed: " .. tostring(errorMessage))
-        end
-    end)
-end
-
-state.fullbrightSettings = {
-    brightness = 3,
-    clockTime = 14,
-}
-state.originalLighting = nil
-
-state.toggleFullbright = function(enabled)
-    disconnectFeatureConnection("Fullbright")
-
-    if not enabled then
-        if state.originalLighting then
-            Lighting.Brightness = state.originalLighting.brightness
-            Lighting.ClockTime = state.originalLighting.clockTime
-            Lighting.GlobalShadows = state.originalLighting.globalShadows
-            Lighting.FogEnd = state.originalLighting.fogEnd
-            Lighting.Ambient = state.originalLighting.ambient
-            Lighting.OutdoorAmbient = state.originalLighting.outdoorAmbient
-        end
-        return
-    end
-
-    state.originalLighting = {
-        brightness = Lighting.Brightness,
-        clockTime = Lighting.ClockTime,
-        globalShadows = Lighting.GlobalShadows,
-        fogEnd = Lighting.FogEnd,
-        ambient = Lighting.Ambient,
-        outdoorAmbient = Lighting.OutdoorAmbient,
-    }
-
-    featureConnections.Fullbright = TaskManager:Connect(function()
-        Lighting.Brightness = state.fullbrightSettings.brightness
-        Lighting.ClockTime = state.fullbrightSettings.clockTime
-        Lighting.GlobalShadows = false
-        Lighting.FogEnd = 100000
-        Lighting.Ambient = Color3.fromRGB(178, 178, 178)
-        Lighting.OutdoorAmbient = Color3.fromRGB(178, 178, 178)
-    end)
-end
-
-state.universalToolkit = (function(): any
-type EspSettings = {
-    includeTeam: boolean,
-    fillTransparency: number,
-}
-
-local espSettings: EspSettings = {
-    includeTeam = false,
-    fillTransparency = 0.72,
-}
-local espClock: number = 0
-
-local function clearPlayerEsp(): ()
-    for _, player: Player in ipairs(Players:GetPlayers()) do
-        local character: Model? = player.Character
-        local highlight: Instance? = character and character:FindFirstChild("RTM_PlayerESP")
-        if highlight then
-            highlight:Destroy()
-        end
-    end
-end
-
-local function togglePlayerEsp(enabled: boolean): ()
-    disconnectFeatureConnection("PlayerESP")
-    clearPlayerEsp()
-    espClock = 0
-    if not enabled then
-        return
-    end
-
-    featureConnections.PlayerESP = TaskManager:Connect(function(deltaTime: number): ()
-        espClock += deltaTime
-        if espClock < 0.35 then
-            return
-        end
-        espClock = 0
-        for _, player: Player in ipairs(Players:GetPlayers()) do
-            local character: Model? = player.Character
-            local shouldShow: boolean = player ~= LocalPlayer
-                and character ~= nil
-                and (espSettings.includeTeam or player.Team ~= LocalPlayer.Team)
-            local existing: Highlight? = character
-                and character:FindFirstChild("RTM_PlayerESP") :: Highlight?
-            if shouldShow and character then
-                local highlight: Highlight = existing or Instance.new("Highlight")
-                highlight.Name = "RTM_PlayerESP"
-                highlight.Adornee = character
-                highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-                highlight.FillColor = Theme.AccentCyan
-                highlight.FillTransparency = espSettings.fillTransparency
-                highlight.OutlineColor = Color3.fromRGB(244, 249, 255)
-                highlight.OutlineTransparency = 0.08
-                highlight.Parent = character
-            elseif existing then
-                existing:Destroy()
-            end
-        end
-    end)
-end
-
-local originalXrayTransparency: {[BasePart]: number} =
-    setmetatable({}, {__mode = "k"}) :: any
-local xrayEnabled: boolean = false
-
-local function restoreXray(): ()
-    for part: BasePart, transparency: number in pairs(originalXrayTransparency) do
-        if part.Parent then
-            part.LocalTransparencyModifier = transparency
-        end
-    end
-    originalXrayTransparency = setmetatable({}, {__mode = "k"}) :: any
-end
-
-local function toggleXray(enabled: boolean): ()
-    disconnectFeatureConnection("Xray")
-    xrayEnabled = false
-    restoreXray()
-    if not enabled then
-        return
-    end
-
-    xrayEnabled = true
-    local function applyToInstance(descendant: Instance): ()
-        if not xrayEnabled or not descendant:IsA("BasePart") then
-            return
-        end
-        local localCharacter: Model? = LocalPlayer.Character
-        local ancestorModel: Model? = descendant:FindFirstAncestorOfClass("Model")
-        if (localCharacter and descendant:IsDescendantOf(localCharacter))
-            or descendant:FindFirstAncestorOfClass("Tool")
-            or (ancestorModel and ancestorModel:FindFirstChildOfClass("Humanoid")) then
-            return
-        end
-        if originalXrayTransparency[descendant] == nil then
-            originalXrayTransparency[descendant] = descendant.LocalTransparencyModifier
-        end
-        descendant.LocalTransparencyModifier = math.max(
-            descendant.LocalTransparencyModifier,
-            0.72
-        )
-    end
-
-    featureConnections.Xray = workspace.DescendantAdded:Connect(applyToInstance)
-    task.spawn(function(): ()
-        for index: number, descendant: Instance in ipairs(workspace:GetDescendants()) do
-            if not xrayEnabled then
-                return
-            end
-            applyToInstance(descendant)
-            if index % 240 == 0 then
-                task.wait()
-            end
-        end
-    end)
-end
-
-local highJumpSettings: {velocity: number} = {velocity = 72}
-local function toggleHighJump(enabled: boolean): ()
-    disconnectFeatureConnection("HighJump")
-    if not enabled then
-        return
-    end
-    featureConnections.HighJump = UserInputService.JumpRequest:Connect(function(): ()
-        if state.keyCaptureCallback or state.waitingForKey then
-            return
-        end
-        local _, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
-        if humanoid and root and humanoid.FloorMaterial ~= Enum.Material.Air then
-            local current: Vector3 = root.AssemblyLinearVelocity
-            root.AssemblyLinearVelocity = Vector3.new(
-                current.X,
-                highJumpSettings.velocity,
-                current.Z
-            )
-        end
-    end)
-end
-
-local spiderSettings: {climbSpeed: number} = {climbSpeed = 38}
-local function toggleSpider(enabled: boolean): ()
-    disconnectFeatureConnection("Spider")
-    if not enabled then
-        return
-    end
-    featureConnections.Spider = TaskManager:Connect(function(): ()
-        local character: Model?, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
-        if not character or not humanoid or not root or humanoid.MoveDirection.Magnitude < 0.05 then
-            return
-        end
-        local raycastParams: RaycastParams = RaycastParams.new()
-        raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-        raycastParams.FilterDescendantsInstances = {character}
-        local wall: RaycastResult? = workspace:Raycast(
-            root.Position,
-            humanoid.MoveDirection.Unit * 2.6,
-            raycastParams
-        )
-        if wall and math.abs(wall.Normal.Y) < 0.35 then
-            local velocity: Vector3 = root.AssemblyLinearVelocity
-            root.AssemblyLinearVelocity = Vector3.new(
-                velocity.X,
-                spiderSettings.climbSpeed,
-                velocity.Z
-            )
-        end
-    end)
-end
-
-local safeWalkSettings: {lookAhead: number} = {lookAhead = 2.8}
-local function toggleSafeWalk(enabled: boolean): ()
-    disconnectFeatureConnection("SafeWalk")
-    if not enabled then
-        return
-    end
-    featureConnections.SafeWalk = TaskManager:Connect(function(): ()
-        local character: Model?, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
-        if not character or not humanoid or not root
-            or humanoid.MoveDirection.Magnitude < 0.05
-            or humanoid.FloorMaterial == Enum.Material.Air then
-            return
-        end
-        local params: RaycastParams = RaycastParams.new()
-        params.FilterType = Enum.RaycastFilterType.Exclude
-        params.FilterDescendantsInstances = {character}
-        local probeOrigin: Vector3 = root.Position
-            + humanoid.MoveDirection.Unit * safeWalkSettings.lookAhead
-        local ground: RaycastResult? = workspace:Raycast(
-            probeOrigin,
-            Vector3.new(0, -5.2, 0),
-            params
-        )
-        if not ground then
-            local velocity: Vector3 = root.AssemblyLinearVelocity
-            root.AssemblyLinearVelocity = Vector3.new(0, velocity.Y, 0)
-        end
-    end)
-end
-
-local function rejoinCurrentServer(): ()
-    local teleportService: TeleportService = cloneReference(
-        game:GetService("TeleportService")
-    )
-    teleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
-end
-
-return {
-    espSettings = espSettings,
-    togglePlayerEsp = togglePlayerEsp,
-    toggleXray = toggleXray,
-    highJumpSettings = highJumpSettings,
-    toggleHighJump = toggleHighJump,
-    spiderSettings = spiderSettings,
-    toggleSpider = toggleSpider,
-    safeWalkSettings = safeWalkSettings,
-    toggleSafeWalk = toggleSafeWalk,
-    rejoinCurrentServer = rejoinCurrentServer,
-}
-end)()
-
-do
-(function(): ()
-type ZoomSettings = {
-    minDistance: number,
-    maxDistance: number,
-    unlockFirstPerson: boolean,
-}
-type ZoomState = {
-    minDistance: number,
-    maxDistance: number,
-    cameraMode: Enum.CameraMode,
-}
-local zoomSettings: ZoomSettings = {
-    minDistance = 0.5,
-    maxDistance = 400,
-    unlockFirstPerson = true,
-}
-local originalZoomState: ZoomState? = nil
-
-local function toggleZoomUnlocker(enabled: boolean): ()
-    disconnectFeatureConnection("ZoomUnlocker")
-    if originalZoomState then
-        LocalPlayer.CameraMinZoomDistance = originalZoomState.minDistance
-        LocalPlayer.CameraMaxZoomDistance = originalZoomState.maxDistance
-        LocalPlayer.CameraMode = originalZoomState.cameraMode
-        originalZoomState = nil
-    end
-    if not enabled then
-        return
-    end
-    originalZoomState = {
-        minDistance = LocalPlayer.CameraMinZoomDistance,
-        maxDistance = LocalPlayer.CameraMaxZoomDistance,
-        cameraMode = LocalPlayer.CameraMode,
-    }
-    featureConnections.ZoomUnlocker = TaskManager:Connect(function(): ()
-        LocalPlayer.CameraMinZoomDistance = math.min(
-            zoomSettings.minDistance,
-            zoomSettings.maxDistance
-        )
-        LocalPlayer.CameraMaxZoomDistance = math.max(
-            zoomSettings.minDistance,
-            zoomSettings.maxDistance
-        )
-        if zoomSettings.unlockFirstPerson then
-            LocalPlayer.CameraMode = Enum.CameraMode.Classic
-        elseif originalZoomState then
-            LocalPlayer.CameraMode = originalZoomState.cameraMode
-        end
-    end)
-end
-
-state.universalToolkit.zoomSettings = zoomSettings
-state.universalToolkit.toggleZoomUnlocker = toggleZoomUnlocker
-end)()
-end
-
-do
-(function(): ()
-type InteractionSettings = {
-    distance: number,
-    instantPrompts: boolean,
-    proximityPrompts: boolean,
-    clickDetectors: boolean,
-}
-type PromptState = {distance: number, holdDuration: number}
-local interactionSettings: InteractionSettings = {
-    distance = 32,
-    instantPrompts = false,
-    proximityPrompts = true,
-    clickDetectors = true,
-}
-local originalPrompts: {[ProximityPrompt]: PromptState} =
-    setmetatable({}, {__mode = "k"}) :: any
-local originalClickDetectors: {[ClickDetector]: number} =
-    setmetatable({}, {__mode = "k"}) :: any
-local interactionExtenderEnabled: boolean = false
-local interactionRefreshClock: number = 0
-
-local function refreshInteractionExtender(): ()
-    for prompt: ProximityPrompt, original: PromptState in pairs(originalPrompts) do
-        if prompt.Parent then
-            prompt.MaxActivationDistance = interactionExtenderEnabled
-                    and interactionSettings.proximityPrompts
-                    and interactionSettings.distance
-                or original.distance
-            prompt.HoldDuration = interactionExtenderEnabled
-                    and interactionSettings.proximityPrompts
-                    and interactionSettings.instantPrompts
-                    and 0
-                or original.holdDuration
-        end
-    end
-    for detector: ClickDetector, originalDistance: number in pairs(originalClickDetectors) do
-        if detector.Parent then
-            detector.MaxActivationDistance = interactionExtenderEnabled
-                    and interactionSettings.clickDetectors
-                    and interactionSettings.distance
-                or originalDistance
-        end
-    end
-end
-
-local function applyInteractionExtension(instance: Instance): ()
-    if not interactionExtenderEnabled then
-        return
-    end
-    if instance:IsA("ProximityPrompt") then
-        if originalPrompts[instance] == nil then
-            originalPrompts[instance] = {
-                distance = instance.MaxActivationDistance,
-                holdDuration = instance.HoldDuration,
-            }
-        end
-        local original: PromptState = originalPrompts[instance]
-        instance.MaxActivationDistance = interactionSettings.proximityPrompts
-                and interactionSettings.distance
-            or original.distance
-        instance.HoldDuration = interactionSettings.proximityPrompts
-                and interactionSettings.instantPrompts
-                and 0
-            or original.holdDuration
-    elseif instance:IsA("ClickDetector") then
-        if originalClickDetectors[instance] == nil then
-            originalClickDetectors[instance] = instance.MaxActivationDistance
-        end
-        instance.MaxActivationDistance = interactionSettings.clickDetectors
-                and interactionSettings.distance
-            or originalClickDetectors[instance]
-    end
-end
-
-local function restoreInteractionExtender(): ()
-    interactionExtenderEnabled = false
-    refreshInteractionExtender()
-    originalPrompts = setmetatable({}, {__mode = "k"}) :: any
-    originalClickDetectors = setmetatable({}, {__mode = "k"}) :: any
-end
-
-local function toggleInteractionExtender(enabled: boolean): ()
-    disconnectFeatureConnection("InteractExtender")
-    disconnectFeatureConnection("InteractExtenderRefresh")
-    restoreInteractionExtender()
-    interactionRefreshClock = 0
-    if not enabled then
-        return
-    end
-    interactionExtenderEnabled = true
-    featureConnections.InteractExtender = workspace.DescendantAdded:Connect(
-        applyInteractionExtension
-    )
-    featureConnections.InteractExtenderRefresh = TaskManager:Connect(
-        function(deltaTime: number): ()
-            interactionRefreshClock += deltaTime
-            if interactionRefreshClock >= 0.5 then
-                interactionRefreshClock = 0
-                refreshInteractionExtender()
-            end
-        end
-    )
-    task.spawn(function(): ()
-        for index: number, instance: Instance in ipairs(workspace:GetDescendants()) do
-            if not interactionExtenderEnabled then
-                return
-            end
-            applyInteractionExtension(instance)
-            if index % 240 == 0 then
-                task.wait()
-            end
-        end
-    end)
-end
-
-state.universalToolkit.interactionSettings = interactionSettings
-state.universalToolkit.refreshInteractionExtender = refreshInteractionExtender
-state.universalToolkit.toggleInteractionExtender = toggleInteractionExtender
-end)()
-end
-
-do
-(function(): ()
-type PhaseDashSettings = {
-    mode: string,
-    distance: number,
-    cooldown: number,
-    exitSpeed: number,
-    slideSpeed: number,
-    collisionPadding: number,
-    flashDuration: number,
-    preserveVelocity: boolean,
-    key: Enum.KeyCode,
-}
-local phaseDashSettings: PhaseDashSettings = {
-    mode = "Blink",
-    distance = 20,
-    cooldown = 0.8,
-    exitSpeed = 42,
-    slideSpeed = 60,
-    collisionPadding = 2.25,
-    flashDuration = 0.28,
-    preserveVelocity = true,
-    key = Enum.KeyCode.Q,
-}
-local lastPhaseDash: number = -math.huge
-local phaseDashEnabled: boolean = false
-
-local function createPhaseFlash(character: Model): ()
-    local oldFlash: Instance? = character:FindFirstChild("RTM_PhaseDashFlash")
-    if oldFlash then
-        oldFlash:Destroy()
-    end
-    local flash: Highlight = Instance.new("Highlight")
-    flash.Name = "RTM_PhaseDashFlash"
-    flash.Adornee = character
-    flash.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-    flash.FillColor = Theme.AccentViolet
-    flash.FillTransparency = 0.42
-    flash.OutlineColor = Theme.AccentCyan
-    flash.OutlineTransparency = 0.05
-    flash.Parent = character
-    local fade: Tween = TweenService:Create(
-        flash,
-        TweenInfo.new(
-            math.clamp(phaseDashSettings.flashDuration, 0.05, 1.2),
-            Enum.EasingStyle.Quad,
-            Enum.EasingDirection.Out
-        ),
-        {FillTransparency = 1, OutlineTransparency = 1}
-    )
-    fade:Play()
-    fade.Completed:Once(function(): ()
-        if flash.Parent then
-            flash:Destroy()
-        end
-    end)
-end
-
-local function performPhaseDash(): ()
-    if not phaseDashEnabled then
-        return
-    end
-    local now: number = os.clock()
-    if now - lastPhaseDash < phaseDashSettings.cooldown then
-        return
-    end
-    local character: Model?, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
-    local camera: Camera? = workspace.CurrentCamera
-    if not character or not humanoid or not root or not camera then
-        return
-    end
-    local direction: Vector3 = humanoid.MoveDirection
-    if direction.Magnitude < 0.05 then
-        direction = Vector3.new(
-            camera.CFrame.LookVector.X,
-            0,
-            camera.CFrame.LookVector.Z
-        )
-    end
-    if direction.Magnitude < 0.05 then
-        return
-    end
-    direction = direction.Unit
-    lastPhaseDash = now
-    local previousVelocity: Vector3 = root.AssemblyLinearVelocity
-    local padding: number = math.clamp(
-        phaseDashSettings.collisionPadding,
-        0,
-        8
-    )
-    if phaseDashSettings.mode == "Slide" then
-        -- Slide: a velocity burst instead of a teleport. No raycast, no wall
-        -- stop — the dash pushes the character and the game physics handles
-        -- the rest, which keeps the dash usable on uneven terrain.
-        root.AssemblyLinearVelocity = direction * phaseDashSettings.slideSpeed
-            + Vector3.new(0, previousVelocity.Y, 0)
-        createPhaseFlash(character)
-        return
-    end
-    -- Blink: collision-aware teleport along the dash line.
-    local params: RaycastParams = RaycastParams.new()
-    params.FilterType = Enum.RaycastFilterType.Exclude
-    params.FilterDescendantsInstances = {character}
-    local collision: RaycastResult? = workspace:Raycast(
-        root.Position,
-        direction * phaseDashSettings.distance,
-        params
-    )
-    local safeDistance: number = collision
-            and math.max(0, collision.Distance - padding)
-        or phaseDashSettings.distance
-    if safeDistance <= 0.1 then
-        return
-    end
-    root.CFrame = root.CFrame + direction * safeDistance
-    if not phaseDashSettings.preserveVelocity then
-        root.AssemblyLinearVelocity = direction * phaseDashSettings.exitSpeed
-            + Vector3.new(0, previousVelocity.Y, 0)
-    end
-    createPhaseFlash(character)
-end
-
-local function togglePhaseDash(enabled: boolean): ()
-    disconnectFeatureConnection("PhaseDash")
-    phaseDashEnabled = enabled
-    if not enabled then
-        return
-    end
-    featureConnections.PhaseDash = UserInputService.InputBegan:Connect(function(
-        input: InputObject,
-        gameProcessed: boolean
-    ): ()
-        if gameProcessed
-            or state.keyCaptureCallback
-            or state.waitingForKey
-            or UserInputService:GetFocusedTextBox() then
-            return
-        end
-        if input.UserInputType == Enum.UserInputType.Keyboard
-            and input.KeyCode == phaseDashSettings.key then
-            performPhaseDash()
-        end
-    end)
-end
-
-type SoftLandingSettings = {
-    mode: string,
-    triggerSpeed: number,
-    scanDistance: number,
-    landingSpeed: number,
-    glideSpeed: number,
-    preserveMomentum: boolean,
-}
-local softLandingSettings: SoftLandingSettings = {
-    mode = "Landing",
-    triggerSpeed = 62,
-    scanDistance = 16,
-    landingSpeed = 11,
-    glideSpeed = 16,
-    preserveMomentum = true,
-}
-
-local function toggleSoftLanding(enabled: boolean): ()
-    disconnectFeatureConnection("SoftLanding")
-    if not enabled then
-        return
-    end
-    featureConnections.SoftLanding = TaskManager:Connect(function(): ()
-        local character: Model?, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
-        if not character or not humanoid or not root or humanoid.SeatPart then
-            return
-        end
-        local velocity: Vector3 = root.AssemblyLinearVelocity
-        if velocity.Y > -softLandingSettings.triggerSpeed then
-            return
-        end
-        local damped: boolean = false
-        -- Feather / Auto: cap the fall speed outright, no ground required.
-        if softLandingSettings.mode == "Feather"
-            or softLandingSettings.mode == "Auto" then
-            if velocity.Y < -softLandingSettings.glideSpeed then
-                velocity = Vector3.new(
-                    velocity.X,
-                    -softLandingSettings.glideSpeed,
-                    velocity.Z
-                )
-                damped = true
-            end
-        end
-        -- Landing / Auto: only dampen when ground is actually close.
-        if softLandingSettings.mode == "Landing"
-            or softLandingSettings.mode == "Auto" then
-            local params: RaycastParams = RaycastParams.new()
-            params.FilterType = Enum.RaycastFilterType.Exclude
-            params.FilterDescendantsInstances = {character}
-            local probeDistance: number = math.max(
-                softLandingSettings.scanDistance,
-                math.abs(velocity.Y) * 0.18
-            )
-            local ground: RaycastResult? = workspace:Raycast(
-                root.Position,
-                Vector3.new(0, -probeDistance, 0),
-                params
-            )
-            if ground then
-                velocity = Vector3.new(
-                    velocity.X,
-                    -softLandingSettings.landingSpeed,
-                    velocity.Z
-                )
-                damped = true
-            end
-        end
-        if damped then
-            if not softLandingSettings.preserveMomentum then
-                velocity = Vector3.new(
-                    velocity.X * 0.3,
-                    velocity.Y,
-                    velocity.Z * 0.3
-                )
-            end
-            root.AssemblyLinearVelocity = velocity
-        end
-    end)
-end
-
-state.universalToolkit.phaseDashSettings = phaseDashSettings
-state.universalToolkit.togglePhaseDash = togglePhaseDash
-state.universalToolkit.performPhaseDash = performPhaseDash
-state.universalToolkit.softLandingSettings = softLandingSettings
-state.universalToolkit.toggleSoftLanding = toggleSoftLanding
-end)()
-end
-
-do
-(function(): ()
-local FlyFeature = createUniversalFeature(
-    "Fly",
-    "Preset-based flight with independent vertical control",
-    1,
-    toggleFly
-)
--- Fly is the reference layout for a module customisation panel: grouped under
--- headings, every control carrying a one-line explanation of what it does, and
--- the rarely-touched controls folded away behind a single switch.
-local FlyFlightSection: Frame = state.addSectionOption(FlyFeature, "Flight")
-local FlyPresetButton: TextButton = addCycleOption(
-    FlyFeature,
-    "Preset",
-    {"Balanced", "Direct", "Precise"},
-    1,
-    function(value: string): ()
-        flySettings.preset = value
-    end,
-    "Balanced glides, Direct stops instantly, Precise moves slowly."
-)
-local FlySpeedRow: Frame = addNumberOption(
-    FlyFeature,
-    "Horizontal speed",
-    flySettings.speed,
-    10,
-    500,
-    function(value: number): ()
-        flySettings.speed = value
-    end,
-    "Studs per second while holding WASD."
-)
-local FlyVerticalRow: Frame = addNumberOption(
-    FlyFeature,
-    "Vertical speed",
-    flySettings.verticalSpeed,
-    10,
-    350,
-    function(value: number): ()
-        flySettings.verticalSpeed = value
-    end,
-    "Studs per second while rising or descending."
-)
-local FlyAdvancedButton: TextButton
-local FlyAdvancedSection: Frame = state.addSectionOption(FlyFeature, "Advanced")
-local FlyResponseRow: Frame = addNumberOption(
-    FlyFeature,
-    "Response multiplier",
-    flySettings.response,
-    0.5,
-    2,
-    function(value: number): ()
-        flySettings.response = value
-    end,
-    "How sharply the flight reacts to input. Higher is twitchier."
-)
-local FlyWallButton: TextButton = addToggleOption(
-    FlyFeature,
-    "Wall check",
-    flySettings.wallCheck,
-    function(value: boolean): ()
-        flySettings.wallCheck = value
-    end,
-    "Stop against solid geometry instead of flying through it."
-)
-local FlyPlatformButton: TextButton = addToggleOption(
-    FlyFeature,
-    "PlatformStand",
-    flySettings.platformStand,
-    function(value: boolean): ()
-        flySettings.platformStand = value
-    end,
-    "Ragdoll the character while flying. Smoother, but no animations."
-)
-local FlyFaceButton: TextButton = addToggleOption(
-    FlyFeature,
-    "Face camera",
-    flySettings.faceCamera,
-    function(value: boolean): ()
-        flySettings.faceCamera = value
-    end,
-    "Rotate the character to follow wherever the camera looks."
-)
-local FlyUpKeyButton: TextButton = addKeyOption(
-    FlyFeature,
-    "Up key",
-    flySettings.upKey,
-    function(value: Enum.KeyCode): ()
-        flySettings.upKey = value
-    end,
-    "Hold to gain altitude."
-)
-local FlyDownKeyButton: TextButton = addKeyOption(
-    FlyFeature,
-    "Down key",
-    flySettings.downKey,
-    function(value: Enum.KeyCode): ()
-        flySettings.downKey = value
-    end,
-    "Hold to lose altitude."
-)
-FlyAdvancedButton = addToggleOption(
-    FlyFeature,
-    "Advanced settings",
-    false,
-    function(value: boolean): ()
-        -- The heading folds away with the controls it labels.
-        setOptionVisible(FlyFeature, FlyAdvancedSection, value)
-        setOptionVisible(FlyFeature, FlyResponseRow, value)
-        setOptionVisible(FlyFeature, FlyWallButton.Parent :: GuiObject, value)
-        setOptionVisible(FlyFeature, FlyPlatformButton.Parent :: GuiObject, value)
-        setOptionVisible(FlyFeature, FlyFaceButton.Parent :: GuiObject, value)
-        setOptionVisible(FlyFeature, FlyUpKeyButton.Parent :: GuiObject, value)
-        setOptionVisible(FlyFeature, FlyDownKeyButton.Parent :: GuiObject, value)
-    end,
-    "Reveal response tuning, collision behaviour and key bindings."
-)
-local FlyPresetRow: GuiObject = FlyPresetButton.Parent :: GuiObject
-local FlyAdvancedRow: GuiObject = FlyAdvancedButton.Parent :: GuiObject
--- Explicit order: heading, the three everyday controls, the reveal switch,
--- then the advanced heading and its controls (which addToggleOption has
--- already hidden by running its callback with the stored/default `false`).
-FlyFlightSection.LayoutOrder = 1
-FlyPresetRow.LayoutOrder = 2
-FlySpeedRow.LayoutOrder = 3
-FlyVerticalRow.LayoutOrder = 4
-FlyAdvancedRow.LayoutOrder = 5
-FlyAdvancedSection.LayoutOrder = 6
-FlyResponseRow.LayoutOrder = 7
-;(FlyWallButton.Parent :: GuiObject).LayoutOrder = 8
-;(FlyPlatformButton.Parent :: GuiObject).LayoutOrder = 9
-;(FlyFaceButton.Parent :: GuiObject).LayoutOrder = 10
-;(FlyUpKeyButton.Parent :: GuiObject).LayoutOrder = 11
-;(FlyDownKeyButton.Parent :: GuiObject).LayoutOrder = 12
-if state.bindMobileActionPlacement then
-    state.bindMobileActionPlacement(
-        FlyUpKeyButton,
-        "UniversalFlyUp",
-        "UP",
-        function(): ()
-            flyTouchVertical = flyTouchVertical == 1 and 0 or 1
-        end
-    )
-    state.bindMobileActionPlacement(
-        FlyDownKeyButton,
-        "UniversalFlyDown",
-        "DOWN",
-        function(): ()
-            flyTouchVertical = flyTouchVertical == -1 and 0 or -1
-        end
-    )
-end
-addFeatureTooltip(
-    FlyFeature,
-    "Use WASD to move, Space to rise and LeftControl to descend. "
-        .. "The safe velocity preset handles orientation and acceleration automatically."
-)
-end)()
-end
-
-do
-local FlingFeature = createUniversalFeature(
-    "Fling",
-    "Fling a player, or the nearest player when blank",
-    2,
-    function()
-        local target = findPlayerByText(universalFlingSettings.target)
-        if target then
-            performFling(target)
-        else
-            notify("No matching player was found.")
-        end
-    end,
-    {action = true}
-)
-addTextOption(FlingFeature, "Target player", universalFlingSettings.target, function(value)
-    universalFlingSettings.target = value
-end, false)
-addFeatureTooltip(
-    FlingFeature,
-    "Runs until the target reaches the void or five seconds pass. Duration is automatic."
-)
-end
-
-do
-local HitboxFeature = createUniversalFeature(
-    "Hitboxes",
-    "Scalable visible and phantom hitboxes for enemy characters",
-    3,
-    toggleHitboxes
-)
-addCycleOption(
-    HitboxFeature,
-    "Mode",
-    {"Visible", "Root", "Hybrid"},
-    1,
-    function(value: string)
-        hitboxSettings.mode = value
-        refreshHitboxMode()
-    end
-)
-addNumberOption(
-    HitboxFeature,
-    "Body scale",
-    hitboxSettings.bodyScale,
-    1,
-    5,
-    function(value)
-        hitboxSettings.bodyScale = value
-    end
-)
-addNumberOption(
-    HitboxFeature,
-    "Head size",
-    hitboxSettings.headSize,
-    2,
-    12,
-    function(value)
-        hitboxSettings.headSize = value
-    end
-)
-addNumberOption(
-    HitboxFeature,
-    "Root size",
-    hitboxSettings.rootSize,
-    3,
-    24,
-    function(value)
-        hitboxSettings.rootSize = value
-    end
-)
-addNumberOption(
-    HitboxFeature,
-    "Visible transparency %",
-    hitboxSettings.visibleTransparency,
-    0,
-    60,
-    function(value)
-        hitboxSettings.visibleTransparency = value
-    end
-)
-addToggleOption(
-    HitboxFeature,
-    "Reveal parts",
-    hitboxSettings.forceVisible,
-    function(value)
-        hitboxSettings.forceVisible = value
-    end
-)
-addToggleOption(
-    HitboxFeature,
-    "No collision",
-    hitboxSettings.noCollision,
-    function(value)
-        hitboxSettings.noCollision = value
-    end
-)
-addToggleOption(
-    HitboxFeature,
-    "Massless",
-    hitboxSettings.massless,
-    function(value)
-        hitboxSettings.massless = value
-    end
-)
-addToggleOption(
-    HitboxFeature,
-    "Exclude accessories",
-    hitboxSettings.excludeAccessories,
-    function(value)
-        hitboxSettings.excludeAccessories = value
-    end
-)
-addNumberOption(
-    HitboxFeature,
-    "Update interval (s)",
-    hitboxSettings.updateInterval,
-    0.03,
-    0.5,
-    function(value)
-        hitboxSettings.updateInterval = value
-    end
-)
-addFeatureTooltip(
-    HitboxFeature,
-    "Visible scales the body and pins the head; Root expands only the invisible "
-        .. "HumanoidRootPart; Hybrid does both. Originals are restored exactly on disable."
-)
-end
-
-do
-local AntiVoidFeature = createUniversalFeature(
-    "Anti-Void",
-    "Create an invisible rescue platform only when death is imminent",
-    4,
-    toggleAntiVoid,
-    {noOptions = true}
-)
-addFeatureTooltip(
-    AntiVoidFeature,
-    "Detects a deep lethal fall and creates a temporary invisible platform beneath you."
-)
-end
-
-do
-local GravityFeature = createUniversalFeature(
-    "Gravity",
-    "Keep workspace gravity at a custom value",
-    5,
-    toggleGravity
-)
-addNumberOption(GravityFeature, "Gravity value", gravitySettings.value, 0, 500, function(value)
-    gravitySettings.value = value
-end)
-end
-
-do
-local JumpPowerFeature = createUniversalFeature(
-    "Jump Power",
-    "Keep character jump power at a custom value",
-    6,
-    toggleJumpPower
-)
-addNumberOption(JumpPowerFeature, "Power", jumpPowerSettings.value, 0, 500, function(value)
-    jumpPowerSettings.value = value
-end)
-end
-
-do
-local InfiniteJumpFeature = createUniversalFeature(
-    "Infinite Jump",
-    "Choose continuous, accumulated, or fall-style jumping",
-    7,
-    toggleInfiniteJump
-)
-addCycleOption(
-    InfiniteJumpFeature,
-    "Mode",
-    {"Rise", "Normal", "Fall"},
-    1,
-    function(value)
-        infiniteJumpSettings.mode = value
-    end
-)
-addNumberOption(
-    InfiniteJumpFeature,
-    "Normal / Fall power",
-    infiniteJumpSettings.strength,
-    10,
-    250,
-    function(value)
-        infiniteJumpSettings.strength = value
-    end
-)
-addNumberOption(
-    InfiniteJumpFeature,
-    "Rise speed",
-    infiniteJumpSettings.riseSpeed,
-    10,
-    350,
-    function(value)
-        infiniteJumpSettings.riseSpeed = value
-    end
-)
-end
-
-do
-local WalkSpeedFeature = createUniversalFeature(
-    "Walk Speed",
-    "Keep character movement speed fixed",
-    8,
-    toggleWalkSpeed
-)
-addNumberOption(WalkSpeedFeature, "Speed", walkSpeedSettings.value, 0, 300, function(value)
-    walkSpeedSettings.value = value
-end)
-end
-
-do
-(function(): ()
-local PhysicsSpeedFeature = createUniversalFeature(
-    "Speed",
-    "Fast movement for characters and occupied vehicles",
-    9,
-    togglePhysicsSpeed
-)
-local SpeedModeButton: TextButton = addCycleOption(
-    PhysicsSpeedFeature,
-    "Mode",
-    {"Adaptive", "Smooth", "Boost", "Teleport"},
-    1,
-    function(value: string): ()
-        physicsSpeedSettings.mode = value
-    end
-)
-local SpeedValueRow: Frame = addNumberOption(
-    PhysicsSpeedFeature,
-    "Speed",
-    physicsSpeedSettings.speed,
-    5,
-    500,
-    function(value: number): ()
-        physicsSpeedSettings.speed = value
-    end
-)
-local SpeedVerticalRow: Frame = addNumberOption(
-    PhysicsSpeedFeature,
-    "Vertical speed",
-    physicsSpeedSettings.verticalSpeed,
-    0,
-    300,
-    function(value: number): ()
-        physicsSpeedSettings.verticalSpeed = value
-    end
-)
-local SpeedPlatformButton: TextButton = addToggleOption(
-    PhysicsSpeedFeature,
-    "PlatformStand",
-    physicsSpeedSettings.platformStand,
-    function(value: boolean): ()
-        physicsSpeedSettings.platformStand = value
-    end
-)
-local SpeedMotorRow: Frame = addNumberOption(
-    PhysicsSpeedFeature,
-    "Motor torque",
-    physicsSpeedSettings.motorTorque,
-    1000,
-    250000,
-    function(value: number): ()
-        physicsSpeedSettings.motorTorque = value
-    end
-)
-local speedAdvancedVisible: boolean = false
-local SpeedCustomButton: TextButton = addToggleOption(
-    PhysicsSpeedFeature,
-    "Custom properties",
-    physicsSpeedSettings.customProperties,
-    function(value: boolean): ()
-        physicsSpeedSettings.customProperties = value
-        setOptionVisible(
-            PhysicsSpeedFeature,
-            SpeedMotorRow,
-            speedAdvancedVisible and value
-        )
-        if not value then
-            restorePhysicsMotors()
-        end
-    end
-)
-local SpeedWallButton: TextButton = addToggleOption(
-    PhysicsSpeedFeature,
-    "Wall check",
-    physicsSpeedSettings.wallCheck,
-    function(value: boolean): ()
-        physicsSpeedSettings.wallCheck = value
-    end
-)
-local SpeedDynamics: any = {}
-SpeedDynamics.acceleration = addNumberOption(
-    PhysicsSpeedFeature,
-    "Acceleration",
-    physicsSpeedSettings.acceleration,
-    1,
-    40,
-    function(value: number): ()
-        physicsSpeedSettings.acceleration = value
-    end
-)
-SpeedDynamics.airControl = addNumberOption(
-    PhysicsSpeedFeature,
-    "Air control %",
-    physicsSpeedSettings.airControl * 100,
-    10,
-    150,
-    function(value: number): ()
-        physicsSpeedSettings.airControl = value / 100
-    end
-)
-SpeedDynamics.sprintMultiplier = addNumberOption(
-    PhysicsSpeedFeature,
-    "Sprint multiplier",
-    physicsSpeedSettings.sprintMultiplier,
-    1,
-    4,
-    function(value: number): ()
-        physicsSpeedSettings.sprintMultiplier = value
-    end
-)
-SpeedDynamics.sprintKey = addKeyOption(
-    PhysicsSpeedFeature,
-    "Sprint key",
-    physicsSpeedSettings.sprintKey,
-    function(value: Enum.KeyCode): ()
-        physicsSpeedSettings.sprintKey = value
-    end
-)
-SpeedDynamics.preserveMomentum = addToggleOption(
-    PhysicsSpeedFeature,
-    "Preserve momentum",
-    physicsSpeedSettings.preserveMomentum,
-    function(value: boolean): ()
-        physicsSpeedSettings.preserveMomentum = value
-    end
-)
-local SpeedJumpRow: Frame = addNumberOption(
-    PhysicsSpeedFeature,
-    "Auto-jump velocity",
-    physicsSpeedSettings.jumpVelocity,
-    20,
-    120,
-    function(value: number): ()
-        physicsSpeedSettings.jumpVelocity = value
-    end
-)
-local SpeedAutoJumpButton: TextButton = addToggleOption(
-    PhysicsSpeedFeature,
-    "Auto jump",
-    physicsSpeedSettings.autoJump,
-    function(value: boolean): ()
-        physicsSpeedSettings.autoJump = value
-        setOptionVisible(
-            PhysicsSpeedFeature,
-            SpeedJumpRow,
-            speedAdvancedVisible and value
-        )
-    end
-)
-local SpeedAdvancedButton: TextButton = addToggleOption(
-    PhysicsSpeedFeature,
-    "Advanced settings",
-    false,
-    function(value: boolean): ()
-        speedAdvancedVisible = value
-        setOptionVisible(PhysicsSpeedFeature, SpeedVerticalRow, value)
-        setOptionVisible(PhysicsSpeedFeature, SpeedPlatformButton.Parent :: GuiObject, value)
-        setOptionVisible(PhysicsSpeedFeature, SpeedCustomButton.Parent :: GuiObject, value)
-        setOptionVisible(PhysicsSpeedFeature, SpeedMotorRow, value and physicsSpeedSettings.customProperties)
-        setOptionVisible(PhysicsSpeedFeature, SpeedWallButton.Parent :: GuiObject, value)
-        setOptionVisible(PhysicsSpeedFeature, SpeedDynamics.acceleration, value)
-        setOptionVisible(PhysicsSpeedFeature, SpeedDynamics.airControl, value)
-        setOptionVisible(PhysicsSpeedFeature, SpeedDynamics.sprintMultiplier, value)
-        setOptionVisible(PhysicsSpeedFeature, SpeedDynamics.sprintKey.Parent :: GuiObject, value)
-        setOptionVisible(PhysicsSpeedFeature, SpeedDynamics.preserveMomentum.Parent :: GuiObject, value)
-        setOptionVisible(PhysicsSpeedFeature, SpeedAutoJumpButton.Parent :: GuiObject, value)
-        setOptionVisible(PhysicsSpeedFeature, SpeedJumpRow, value and physicsSpeedSettings.autoJump)
-    end
-)
-local SpeedModeRow: GuiObject = SpeedModeButton.Parent :: GuiObject
-local SpeedAdvancedRow: GuiObject = SpeedAdvancedButton.Parent :: GuiObject
-SpeedModeRow.LayoutOrder = 1
-SpeedValueRow.LayoutOrder = 2
-SpeedAdvancedRow.LayoutOrder = 3
-addFeatureTooltip(
-    PhysicsSpeedFeature,
-    "Adaptive changes air authority and retains flow. Smooth accelerates predictably, Boost "
-        .. "uses physical impulse, and Teleport advances in short steps. Sprint, momentum, "
-        .. "wall safety, auto-jump, and vehicle tuning are independently configurable."
-)
-end)()
-end
-
-do
-local FovFeature = createUniversalFeature(
-    "FOV",
-    "Keep the camera field of view fixed",
-    10,
-    toggleFov
-)
-addNumberOption(FovFeature, "Field of view", fovSettings.value, 20, 120, function(value)
-    fovSettings.value = value
-end)
-end
-
-do
-local NoclipFeature = createUniversalFeature(
-    "Noclip",
-    "Disable character collisions",
-    11,
-    toggleNoclip,
-    {noOptions = true}
-)
-addFeatureTooltip(NoclipFeature, "Disables collisions for every local character part. "
-    .. "Original collision states are restored when turned off.")
-end
-
-do
-local CtrlClickFeature = createUniversalFeature(
-    "CTRL + Click Teleport",
-    "Teleport to the position under the cursor",
-    12,
-    toggleCtrlClickTeleport,
-    {noOptions = true}
-)
-addFeatureTooltip(CtrlClickFeature, "Hold LeftControl and click a reachable world position.")
-end
-
-do
-local AntiAfkFeature = createUniversalFeature(
-    "Anti-AFK",
-    "Prevent the local idle event from disconnecting",
-    13,
-    toggleAntiAfk,
-    {noOptions = true}
-)
-addFeatureTooltip(AntiAfkFeature, "Responds only to Roblox's local idle event and "
-    .. "disconnects immediately when disabled.")
-end
-
-do
-local AntiFlingFeature = createUniversalFeature(
-    "Anti-Fling",
-    "Stop extreme local velocity and return to safety",
-    14,
-    toggleAntiFling
-)
-addNumberOption(
-    AntiFlingFeature,
-    "Velocity limit",
-    antiFlingSettings.velocityLimit,
-    40,
-    1000,
-    function(value)
-        antiFlingSettings.velocityLimit = value
-    end
-)
-end
-
-do
-local FullbrightFeature = createUniversalFeature(
-    "Fullbright",
-    "Keep the scene bright and remove global shadows",
-    15,
-    state.toggleFullbright
-)
-addNumberOption(
-    FullbrightFeature,
-    "Brightness",
-    state.fullbrightSettings.brightness,
-    0,
-    10,
-    function(value)
-        state.fullbrightSettings.brightness = value
-    end
-)
-addNumberOption(
-    FullbrightFeature,
-    "Clock time",
-    state.fullbrightSettings.clockTime,
-    0,
-    24,
-    function(value)
-        state.fullbrightSettings.clockTime = value
-    end
-)
-end
-
-do
-local LagSwitchFeature = createUniversalFeature(
-    "Lag Switch",
-    "Simulate extreme incoming replication delay",
-    16,
-    toggleLagSwitch
-)
-addNumberOption(
-    LagSwitchFeature,
-    "Incoming lag",
-    lagSwitchSettings.incomingLag,
-    1,
-    999,
-    function(value)
-        lagSwitchSettings.incomingLag = value
-    end
-)
-end
-
-do
-local PlayerEspFeature = createUniversalFeature(
-    "Player ESP",
-    "Technical outline for visible and hidden players",
-    17,
-    state.universalToolkit.togglePlayerEsp
-)
-addToggleOption(
-    PlayerEspFeature,
-    "Include team",
-    state.universalToolkit.espSettings.includeTeam,
-    function(value: boolean): ()
-        state.universalToolkit.espSettings.includeTeam = value
-    end
-)
-addNumberOption(
-    PlayerEspFeature,
-    "Fill transparency %",
-    state.universalToolkit.espSettings.fillTransparency * 100,
-    0,
-    100,
-    function(value: number): ()
-        state.universalToolkit.espSettings.fillTransparency = value / 100
-    end
-)
-end
-
-do
-createUniversalFeature(
-    "X-Ray",
-    "Fade map geometry locally while keeping your character clear",
-    18,
-    state.universalToolkit.toggleXray,
-    {noOptions = true}
-)
-end
-
-do
-local HighJumpFeature = createUniversalFeature(
-    "High Jump",
-    "Apply a stronger grounded jump without changing global gravity",
-    19,
-    state.universalToolkit.toggleHighJump
-)
-addNumberOption(
-    HighJumpFeature,
-    "Jump velocity",
-    state.universalToolkit.highJumpSettings.velocity,
-    25,
-    220,
-    function(value: number): ()
-        state.universalToolkit.highJumpSettings.velocity = value
-    end
-)
-end
-
-do
-local SpiderFeature = createUniversalFeature(
-    "Spider",
-    "Climb a wall automatically while moving into it",
-    20,
-    state.universalToolkit.toggleSpider
-)
-addNumberOption(
-    SpiderFeature,
-    "Climb speed",
-    state.universalToolkit.spiderSettings.climbSpeed,
-    10,
-    120,
-    function(value: number): ()
-        state.universalToolkit.spiderSettings.climbSpeed = value
-    end
-)
-end
-
-do
-local SafeWalkFeature = createUniversalFeature(
-    "Safe Walk",
-    "Stop horizontal movement before walking over an edge",
-    21,
-    state.universalToolkit.toggleSafeWalk
-)
-addNumberOption(
-    SafeWalkFeature,
-    "Edge look-ahead",
-    state.universalToolkit.safeWalkSettings.lookAhead,
-    1.5,
-    6,
-    function(value: number): ()
-        state.universalToolkit.safeWalkSettings.lookAhead = value
-    end
-)
-end
-
-do
-createUniversalFeature(
-    "Rejoin Server",
-    "Reconnect to the current server instance",
-    22,
-    state.universalToolkit.rejoinCurrentServer,
-    {action = true, noOptions = true}
-)
-end
-
-do
-local ZoomFeature = createUniversalFeature(
-    "Zoom Unlocker",
-    "Extend camera zoom and optionally leave forced first person",
-    23,
-    state.universalToolkit.toggleZoomUnlocker
-)
-addNumberOption(
-    ZoomFeature,
-    "Maximum distance",
-    state.universalToolkit.zoomSettings.maxDistance,
-    25,
-    2000,
-    function(value: number): ()
-        state.universalToolkit.zoomSettings.maxDistance = value
-    end
-)
-addNumberOption(
-    ZoomFeature,
-    "Minimum distance",
-    state.universalToolkit.zoomSettings.minDistance,
-    0.5,
-    50,
-    function(value: number): ()
-        state.universalToolkit.zoomSettings.minDistance = value
-    end
-)
-addToggleOption(
-    ZoomFeature,
-    "Unlock forced first person",
-    state.universalToolkit.zoomSettings.unlockFirstPerson,
-    function(value: boolean): ()
-        state.universalToolkit.zoomSettings.unlockFirstPerson = value
-    end
-)
-end
-
-do
-local InteractFeature = createUniversalFeature(
-    "Interact Extender",
-    "Extend prompt and click interaction range without auto-firing",
-    24,
-    state.universalToolkit.toggleInteractionExtender
-)
-addNumberOption(
-    InteractFeature,
-    "Interaction distance",
-    state.universalToolkit.interactionSettings.distance,
-    8,
-    250,
-    function(value: number): ()
-        state.universalToolkit.interactionSettings.distance = value
-        state.universalToolkit.refreshInteractionExtender()
-    end
-)
-addToggleOption(
-    InteractFeature,
-    "Instant prompts",
-    state.universalToolkit.interactionSettings.instantPrompts,
-    function(value: boolean): ()
-        state.universalToolkit.interactionSettings.instantPrompts = value
-        state.universalToolkit.refreshInteractionExtender()
-    end
-)
-addToggleOption(
-    InteractFeature,
-    "Proximity prompts",
-    state.universalToolkit.interactionSettings.proximityPrompts,
-    function(value: boolean): ()
-        state.universalToolkit.interactionSettings.proximityPrompts = value
-        state.universalToolkit.refreshInteractionExtender()
-    end
-)
-addToggleOption(
-    InteractFeature,
-    "Click detectors",
-    state.universalToolkit.interactionSettings.clickDetectors,
-    function(value: boolean): ()
-        state.universalToolkit.interactionSettings.clickDetectors = value
-        state.universalToolkit.refreshInteractionExtender()
-    end
-)
-end
-
-do
-local PhaseDashFeature = createUniversalFeature(
-    "Phase Dash",
-    "Directional dash: collision-aware blink or a velocity slide",
-    25,
-    state.universalToolkit.togglePhaseDash
-)
-addCycleOption(
-    PhaseDashFeature,
-    "Mode",
-    {"Blink", "Slide"},
-    1,
-    function(value: string): ()
-        state.universalToolkit.phaseDashSettings.mode = value
-    end
-)
-addNumberOption(
-    PhaseDashFeature,
-    "Dash distance",
-    state.universalToolkit.phaseDashSettings.distance,
-    4,
-    80,
-    function(value: number): ()
-        state.universalToolkit.phaseDashSettings.distance = value
-    end
-)
-addNumberOption(
-    PhaseDashFeature,
-    "Cooldown",
-    state.universalToolkit.phaseDashSettings.cooldown,
-    0.1,
-    5,
-    function(value: number): ()
-        state.universalToolkit.phaseDashSettings.cooldown = value
-    end
-)
-addNumberOption(
-    PhaseDashFeature,
-    "Exit speed",
-    state.universalToolkit.phaseDashSettings.exitSpeed,
-    0,
-    180,
-    function(value: number): ()
-        state.universalToolkit.phaseDashSettings.exitSpeed = value
-    end
-)
-addNumberOption(
-    PhaseDashFeature,
-    "Slide speed",
-    state.universalToolkit.phaseDashSettings.slideSpeed,
-    20,
-    250,
-    function(value: number): ()
-        state.universalToolkit.phaseDashSettings.slideSpeed = value
-    end
-)
-addNumberOption(
-    PhaseDashFeature,
-    "Collision padding",
-    state.universalToolkit.phaseDashSettings.collisionPadding,
-    0,
-    8,
-    function(value: number): ()
-        state.universalToolkit.phaseDashSettings.collisionPadding = value
-    end
-)
-addNumberOption(
-    PhaseDashFeature,
-    "Flash duration (s)",
-    state.universalToolkit.phaseDashSettings.flashDuration,
-    0.05,
-    1.2,
-    function(value: number): ()
-        state.universalToolkit.phaseDashSettings.flashDuration = value
-    end
-)
-addToggleOption(
-    PhaseDashFeature,
-    "Preserve velocity",
-    state.universalToolkit.phaseDashSettings.preserveVelocity,
-    function(value: boolean): ()
-        state.universalToolkit.phaseDashSettings.preserveVelocity = value
-    end
-)
-state.phaseDashKeyButton = addKeyOption(
-    PhaseDashFeature,
-    "Dash key",
-    state.universalToolkit.phaseDashSettings.key,
-    function(value: Enum.KeyCode): ()
-        state.universalToolkit.phaseDashSettings.key = value
-    end
-)
-if state.bindMobileActionPlacement then
-    state.bindMobileActionPlacement(
-        state.phaseDashKeyButton,
-        "UniversalPhaseDash",
-        "DASH",
-        state.universalToolkit.performPhaseDash
-    )
-end
-end
-
-do
-local SoftLandingFeature = createUniversalFeature(
-    "Soft Landing",
-    "Dampen dangerous falls near ground or glide the whole descent",
-    26,
-    state.universalToolkit.toggleSoftLanding
-)
-addCycleOption(
-    SoftLandingFeature,
-    "Mode",
-    {"Landing", "Feather", "Auto"},
-    1,
-    function(value: string): ()
-        state.universalToolkit.softLandingSettings.mode = value
-    end
-)
-addNumberOption(
-    SoftLandingFeature,
-    "Trigger fall speed",
-    state.universalToolkit.softLandingSettings.triggerSpeed,
-    25,
-    180,
-    function(value: number): ()
-        state.universalToolkit.softLandingSettings.triggerSpeed = value
-    end
-)
-addNumberOption(
-    SoftLandingFeature,
-    "Ground scan distance",
-    state.universalToolkit.softLandingSettings.scanDistance,
-    5,
-    50,
-    function(value: number): ()
-        state.universalToolkit.softLandingSettings.scanDistance = value
-    end
-)
-addNumberOption(
-    SoftLandingFeature,
-    "Landing speed",
-    state.universalToolkit.softLandingSettings.landingSpeed,
-    2,
-    35,
-    function(value: number): ()
-        state.universalToolkit.softLandingSettings.landingSpeed = value
-    end
-)
-addNumberOption(
-    SoftLandingFeature,
-    "Glide speed",
-    state.universalToolkit.softLandingSettings.glideSpeed,
-    8,
-    40,
-    function(value: number): ()
-        state.universalToolkit.softLandingSettings.glideSpeed = value
-    end
-)
-addToggleOption(
-    SoftLandingFeature,
-    "Preserve momentum",
-    state.universalToolkit.softLandingSettings.preserveMomentum,
-    function(value: boolean): ()
-        state.universalToolkit.softLandingSettings.preserveMomentum = value
-    end
-)
-end
-
-do
-local ProjectileCalibrationFeature: any = createUniversalFeature(
-    "Projectile Calibration",
-    "Automatic per-game projectile analytics with tunable ping buckets",
-    17,
-    function(_enabled: boolean): () end,
-    {category = true}
-)
-state.projectileSettings =
-    state.universalProjectileCalibration.settings
-addNumberOption(
-    ProjectileCalibrationFeature,
-    "Bucket width (ms)",
-    state.projectileSettings.bucketWidthMs,
-    1,
-    25,
-    function(value: number): ()
-        state.projectileSettings.bucketWidthMs = math.round(value)
-    end
-)
-addNumberOption(
-    ProjectileCalibrationFeature,
-    "Bucket ceiling (ms)",
-    state.projectileSettings.maxBucketMs,
-    25,
-    500,
-    function(value: number): ()
-        state.projectileSettings.maxBucketMs = math.round(value)
-    end
-)
-addNumberOption(
-    ProjectileCalibrationFeature,
-    "Sample window (s)",
-    state.projectileSettings.sampleWindowSeconds,
-    1,
-    6,
-    function(value: number): ()
-        state.projectileSettings.sampleWindowSeconds = value
-    end
-)
-addNumberOption(
-    ProjectileCalibrationFeature,
-    "Max samples / track",
-    state.projectileSettings.maxSamplesPerTrack,
-    30,
-    600,
-    function(value: number): ()
-        state.projectileSettings.maxSamplesPerTrack = math.round(value)
-    end
-)
-addNumberOption(
-    ProjectileCalibrationFeature,
-    "Match radius (studs)",
-    state.projectileSettings.matchDistanceStuds,
-    10,
-    120,
-    function(value: number): ()
-        state.projectileSettings.matchDistanceStuds = math.round(value)
-    end
-)
-addNumberOption(
-    ProjectileCalibrationFeature,
-    "Min projectile speed",
-    state.projectileSettings.minProjectileSpeed,
-    1,
-    100,
-    function(value: number): ()
-        state.projectileSettings.minProjectileSpeed = math.round(value)
-    end
-)
-addActionOption(ProjectileCalibrationFeature, "Show status", function(): ()
-    notify(state.universalProjectileCalibration:status())
-end)
-addActionOption(ProjectileCalibrationFeature, "Save analytics", function(): ()
-    if state.universalProjectileCalibration:save("manual") then
-        notify("Universal projectile analytics saved in the executor workspace.")
-    else
-        notify("Universal projectile analytics could not be saved; check F9.")
-    end
-end)
-addActionOption(ProjectileCalibrationFeature, "Delete analytics", function(): ()
-    if state.universalProjectileCalibration:delete() then
-        notify("Universal projectile analytics deleted for this PlaceId.")
-    else
-        notify("Universal projectile analytics could not be deleted; check F9.")
-    end
-end)
-addInformationOption(
-    ProjectileCalibrationFeature,
-    "Runs automatically. Save writes the current session; Delete clears it. MM2 prediction never consumes this dataset."
-)
-end
-
-end
-
-local function createPageScroll(page, name)
-    local scroll = create("ScrollingFrame", {
-        Parent = page,
-        Name = name,
-        Active = true,
-        AutomaticCanvasSize = Enum.AutomaticSize.Y,
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        CanvasSize = UDim2.fromOffset(0, 0),
-        ScrollBarImageColor3 = Theme.DefaultOutline,
-        ScrollBarThickness = 6,
-        ScrollingDirection = Enum.ScrollingDirection.Y,
-        Size = UDim2.fromScale(1, 1),
-    })
-
-    create("UIPadding", {
-        Parent = scroll,
-        PaddingBottom = UDim.new(0, 18),
-        PaddingLeft = UDim.new(0, 18),
-        PaddingRight = UDim.new(0, 18),
-        PaddingTop = UDim.new(0, 18),
-    })
-
-    create("UIListLayout", {
-        Parent = scroll,
-        FillDirection = Enum.FillDirection.Vertical,
-        HorizontalAlignment = Enum.HorizontalAlignment.Center,
-        Padding = UDim.new(0, 9),
-        SortOrder = Enum.SortOrder.LayoutOrder,
-    })
-
-    return scroll
-end
-
-local MovementScroll = createPageScroll(MovementPage, "MovementScroll")
-local MM2Scroll = createPageScroll(MM2Page, "MM2Scroll")
-
-local freezeSettings = {mode = "Anchor"}
-local originalFreezeState = setmetatable({}, {__mode = "k"})
-
-local function restoreFreezeMovements()
-    for humanoid, original in pairs(originalFreezeState) do
-        if humanoid and humanoid.Parent then
-            humanoid.WalkSpeed = original.walkSpeed
-            humanoid.JumpPower = original.jumpPower
-            humanoid.AutoRotate = original.autoRotate
-            if original.root and original.root.Parent then
-                original.root.Anchored = original.rootAnchored
-            end
-        end
-    end
-    originalFreezeState = setmetatable({}, {__mode = "k"})
-end
-
-local function toggleFreezeMovements(enabled)
-    disconnectFeatureConnection("FreezeMovements")
-    restoreFreezeMovements()
-
-    if not enabled then
-        return
-    end
-
-    featureConnections.FreezeMovements = TaskManager:Connect(function()
-        local _, humanoid, root = getCharacterParts()
-        if not humanoid or not root then
-            return
-        end
-
-        if not originalFreezeState[humanoid] then
-            originalFreezeState[humanoid] = {
-                walkSpeed = humanoid.WalkSpeed,
-                jumpPower = humanoid.JumpPower,
-                autoRotate = humanoid.AutoRotate,
-                root = root,
-                rootAnchored = root.Anchored,
-            }
-        end
-
-        local original = originalFreezeState[humanoid]
-        humanoid.WalkSpeed = 0
-        humanoid.JumpPower = 0
-        humanoid.AutoRotate = false
-        root.AssemblyLinearVelocity = Vector3.zero
-        root.AssemblyAngularVelocity = Vector3.zero
-        root.Anchored = freezeSettings.mode == "Anchor"
-            and true
-            or original.rootAnchored
-    end)
-end
-
-local FreezeFeature = createUniversalFeature(
-    "Freeze Movements",
-    "Prevent the local character from moving",
-    1,
-    toggleFreezeMovements,
-    {
-        parent = MovementScroll,
-        registry = movementFeatures,
-    }
-)
-addCycleOption(
-    FreezeFeature,
-    "Freeze mode",
-    {"Anchor", "Humanoid"},
-    1,
-    function(value)
-        freezeSettings.mode = value
-    end
-)
-addInformationOption(
-    FreezeFeature,
-    "Anchor stops all physics; Humanoid only blocks character controls."
-)
+-- The one shared board. The name stays because every downloaded game module
+-- still asks for `MM2Scroll`. It is now an alias to CardBin.
+local MM2Scroll: Frame = CardBin
 
 local cleanupMM2Runtime = function() end
 
@@ -11277,12 +4763,24 @@ type ModuleDiagnostics = {
 }
 
 state.logBootstrap = function(message: string): ()
-    print("[RTM:Bootstrap] " .. message)
+    print("[" .. PRODUCT.logPrefix .. ":Bootstrap] " .. message)
 end
 
+-- The build used to be printed on the intro; the intro carries no words now,
+-- so it goes to the console where a bug report can still quote it.
+print("[" .. PRODUCT.logPrefix .. "] build loader-v3")
+
 state.logBootstrapError = function(message: string): ()
-    warn("[RTM:Bootstrap] " .. message)
+    warn("[" .. PRODUCT.logPrefix .. ":Bootstrap] " .. message)
 end
+
+-- The option builders, once src/library/Widgets.luau has been downloaded.
+--
+-- Nil until then, which is why the widget library is the very first thing the
+-- loader fetches: a module that builds its panel against a half-filled
+-- environment fails in the middle of drawing it, and a card with no controls
+-- is worse than no card.
+local widgetBuilders: any = nil
 
 local function createGameModuleEnvironment(
     diagnostics: ModuleDiagnostics
@@ -11308,7 +4806,22 @@ local function createGameModuleEnvironment(
         LocalPlayer = LocalPlayer,
         PlayerGui = PlayerGui,
         ScreenGui = ScreenGui,
+        -- The product's identity, so nothing downstream retypes a name
+        -- or a folder that the shell already owns.
+        PRODUCT = PRODUCT,
         Theme = Theme,
+        -- The engine, so a library can bind an instance to a token instead of
+        -- copying a colour into it once and going stale at the next preset.
+        ThemeEngine = ThemeEngine,
+        -- Game modules ask this whether they are running on the real place or
+        -- on a recognised clone, instead of comparing PlaceIds themselves.
+        GAME_CHECK = GAME_CHECK,
+        -- Game modules style their in-world ESP with the menu's own fonts, so
+        -- billboards and labels match the interface instead of inventing a
+        -- second look.
+        CONTROL_FONT = CONTROL_FONT,
+        TITLE_FONT = TITLE_FONT,
+        THIN_FONT = THIN_FONT,
         DEFAULT_HEADER_COLOR = DEFAULT_HEADER_COLOR,
         DEFAULT_SURFACE_COLOR = DEFAULT_SURFACE_COLOR,
         DEFAULT_BORDER_COLOR = DEFAULT_BORDER_COLOR,
@@ -11324,26 +4837,99 @@ local function createGameModuleEnvironment(
         featureConnections = featureConnections,
         disconnectFeatureConnection = disconnectFeatureConnection,
         getCharacterParts = getCharacterParts,
-        createUniversalFeature = recordBinding(createUniversalFeature),
-        addToggleOption = recordBinding(addToggleOption),
-        addActionOption = recordBinding(addActionOption),
-        addNumberOption = recordBinding(addNumberOption),
-        addCycleOption = recordBinding(addCycleOption),
-        addKeyOption = recordBinding(addKeyOption),
-        addTextOption = recordBinding(addTextOption),
-        addColorOption = recordBinding(addColorOption),
-        addInformationOption = addInformationOption,
-        addSectionOption = state.addSectionOption,
-        setOptionVisible = setOptionVisible,
+        -- Both of these existed in the shell from the start and neither was
+        -- ever published here. Five modules called `addFeatureTooltip` while
+        -- building their card, got nil, and died mid-init — five cards that
+        -- simply were not in the menu, on every client, for a week. Rejoin
+        -- Server calls `cloneReference` only when its button is pressed, so it
+        -- loaded fine and broke on the click instead.
+        addFeatureTooltip = addFeatureTooltip,
+        cloneReference = cloneReference,
+
+        -- The primitives the widget library builds its controls out of. They
+        -- are shell-owned — one `create`, one set of design tokens, one config
+        -- store — and a game module drawing its own interface uses the same
+        -- ones, which is why they are published rather than passed.
+        PopupLayer = PopupLayer,
+        UI_RADIUS = UI_RADIUS,
+        UI_MOTION = UI_MOTION,
+        cornerRadius = cornerRadius,
+        setKeySlotCapture = setKeySlotCapture,
+        -- The Config. page frame and the helper that files a row into the
+        -- right column of a card grid: the settings page fills a layout the
+        -- shell owns rather than laying itself out.
+        SettingsPage = CardBin,
+        getFeatureCardParent = getFeatureCardParent,
+        -- Where this runtime came from, for the page that shows it and
+        -- re-injects it.
+        REPOSITORY_RAW_BASE = REPOSITORY_RAW_BASE,
+        RUNTIME_SAFETY_SOURCE_URL = RUNTIME_SAFETY_SOURCE_URL,
+        RUNTIME_COMPATIBILITY_MARKER = RUNTIME_COMPATIBILITY_MARKER,
+        SOURCE_STAMP = SOURCE_STAMP,
+        -- Text scale bounds, so a slider cannot offer a size the rest of the
+        -- interface refuses to render.
+        TEXT_BASE_MULTIPLIER = TEXT_BASE_MULTIPLIER,
+        TEXT_SCALE_MINIMUM = TEXT_SCALE_MINIMUM,
+        TEXT_SCALE_MAXIMUM = TEXT_SCALE_MAXIMUM,
+        registeredText = registeredText,
+        -- The window frame and the viewport the shell measured at start: the
+        -- mobile layer hides the window while a shortcut is being placed and
+        -- keeps a placed button inside the screen.
+        initialViewport = initialViewport,
+        -- Used by the floating overlays: the profile card's fixed height, the
+        -- readout typeface, and the tab switcher a favourite jumps through.
+        -- What the card factory builds a card out of: the taxonomy that files
+        -- it under a section, the default board, and the registries it joins.
+        FEATURE_CATEGORIES = FEATURE_CATEGORIES,
+        DEFAULT_FEATURE_CATEGORY = DEFAULT_FEATURE_CATEGORY,
+        -- The shared category contract: the eight official windows and the
+        -- resolver every surface files a card through. A module may still
+        -- say "Visuals"; the resolver decides which official window that is
+        -- until D refiles it properly.
+        OFFICIAL_CATEGORIES = OFFICIAL_CATEGORIES,
+        normalizeFeatureCategory = normalizeFeatureCategory,
+        universalFeatures = universalFeatures,
+        movementFeatures = movementFeatures,
+        applyFeaturePresentation = applyFeaturePresentation,
+        refreshFeatureToggle = refreshFeatureToggle,
+        VALVE_FONT = VALVE_FONT,
+        trackUiConnection = trackUiConnection,
+        createToggleSwitch = createToggleSwitch,
+        setToggleSwitch = setToggleSwitch,
+        applyKeySlotStyle = applyKeySlotStyle,
+        beginKeyCapture = beginKeyCapture,
+        bindActionShortcut = bindActionShortcut,
+        runActionButton = runActionButton,
+        colorFromConfig = colorFromConfig,
+        colorToConfig = colorToConfig,
+        -- The game bridge: how a game module teaches the universal modules
+        -- about its roles and its own objects.
+        registerRoleProvider = state.registerRoleProvider,
+        registerEspExtra = state.registerEspExtra,
+        onGameBridge = state.onGameBridge,
+        playerRole = state.playerRole,
         findPlayerByText = findPlayerByText,
         performFling = performFling,
         MM2Scroll = MM2Scroll,
         mm2Features = mm2Features,
         vdFeatures = state.vdFeatures,
+        bedFightFeatures = state.bedFightFeatures,
         mvsdFeatures = state.mvsdFeatures,
         allFeatures = allFeatures,
         cleanupMM2Runtime = cleanupMM2Runtime,
     }
+    -- Every option builder, under the exact name a module calls it with. They
+    -- arrive from the widget library rather than from this file, so the loop
+    -- is what keeps the environment and the library from drifting apart: a
+    -- builder added there needs no line here.
+    --
+    -- A builder missing from this table takes the rest of a module's panel
+    -- down with it — that is how Kill Aura once rendered a "Weapon" heading
+    -- and nothing under it, back when multi-select lists were listed by hand
+    -- and one name was forgotten.
+    for builderName: string, builder: any in pairs(widgetBuilders or {}) do
+        environment[builderName] = recordBinding(builder)
+    end
     return setmetatable(environment, {
         __index = baseEnvironment,
     })
@@ -11362,23 +4948,37 @@ local function loadGameModule(
         return nil, nil, diagnostics, "El ejecutor no admite loadstring/setfenv"
     end
 
-    local moduleName: string = GAME_MODULES[placeId] or tostring(placeId)
+    local moduleName: string = GAME_MODULES[placeId]
+        or ACTIVE_GAME_MODULE
+        or tostring(placeId)
     local moduleUrl: string = REPOSITORY_RAW_BASE
         .. "src/games/"
         .. moduleName
-        .. ".luau?nocache="
-        .. HttpService:GenerateGUID(false)
+        .. ".luau?v="
+        .. SOURCE_STAMP
     state.logBootstrap("Descargando módulo: " .. moduleUrl)
-    local downloadSuccess: boolean, source: any = pcall(function(): string
-        return (game :: any):HttpGet(moduleUrl, true)
-    end)
+    local downloadSuccess: boolean, source: any = false, nil
+    if type(state.fetchRepositorySource) == "function" then
+        local fetched: string?, fetchError: string? =
+            state.fetchRepositorySource("src/games/" .. moduleName .. ".luau")
+        if fetched then
+            source = fetched
+            downloadSuccess = true
+        else
+            source = fetchError
+        end
+    else
+        downloadSuccess, source = pcall(function(): string
+            return (game :: any):HttpGet(moduleUrl, true)
+        end)
+    end
     if downloadSuccess and type(source) == "string" then
         local candidate: string = string.lower(source)
         if #source < 64
             or string.find(candidate, "404: not found", 1, true)
             or string.find(candidate, "<!doctype html", 1, true)
             or string.find(candidate, "<html", 1, true) then
-            warn("[RTM:Bootstrap] Respuesta remota inválida para " .. moduleName)
+            warn("[" .. PRODUCT.logPrefix .. ":Bootstrap] Respuesta remota inválida para " .. moduleName)
             downloadSuccess = false
         end
     end
@@ -11392,7 +4992,7 @@ local function loadGameModule(
             if localSuccess and type(localSource) == "string" then
                 source = localSource
                 downloadSuccess = true
-                warn("[RTM:Bootstrap] HTTP falló; usando fallback local " .. localPath)
+                warn("[" .. PRODUCT.logPrefix .. ":Bootstrap] HTTP falló; usando fallback local " .. localPath)
             end
         end
     end
@@ -11437,11 +5037,20 @@ local function registerPlaceModule(
     tabName: string,
     placeId: number
 ): ()
-    if game.PlaceId ~= placeId then
+    -- A clone has its own PlaceId, so registration follows the module that
+    -- was resolved for this server (by PlaceId, or by fingerprint).
+    if game.PlaceId ~= placeId
+        and ACTIVE_GAME_MODULE ~= GAME_MODULES[placeId] then
         return
     end
 
-    state.logBootstrap("PlaceId detectado: " .. tostring(game.PlaceId))
+    state.logBootstrap(
+        "PlaceId detectado: "
+            .. tostring(game.PlaceId)
+            .. " · módulo "
+            .. tostring(ACTIVE_GAME_MODULE)
+            .. " (" .. ACTIVE_GAME_SOURCE .. ")"
+    )
     SectionManager.register(tabName, function(): ()
         local loadedModule: GameModule?, _moduleEnvironment: any,
             diagnostics: ModuleDiagnostics, loadError: string? =
@@ -11460,9 +5069,9 @@ local function registerPlaceModule(
         end
         local runtime: any = {
             Menu = {
-                Root = Main,
+                Root = CardBin,
                 ScreenGui = ScreenGui,
-                Pages = pages,
+                Pages = {},
                 Components = state.components,
                 Notify = notify,
             },
@@ -11505,6 +5114,15 @@ local function registerPlaceModule(
                 if feature.row and feature.row.Parent then
                     feature.row:Destroy()
                 end
+                -- A popped-out settings window belongs to its feature; a
+                -- feature that goes takes the window, or the window leaks
+                -- with the option rows still parented inside it.
+                if feature.settingsWindow then
+                    pcall(function(): ()
+                        feature.settingsWindow:Destroy()
+                    end)
+                    feature.settingsWindow = nil
+                end
                 table.remove(allFeatures, index)
                 if state.floatingUi and state.floatingUi.unregisterFeature then
                     state.floatingUi.unregisterFeature(feature)
@@ -11540,6 +5158,8 @@ local function registerPlaceModule(
             state.cleanupVDRuntime = destroyModule
         elseif tabName == "MVSD" then
             state.cleanupMVSDRuntime = destroyModule
+        elseif tabName == "BedFight" then
+            state.cleanupBedFightRuntime = destroyModule
         end
     end)
 end
@@ -11555,733 +5175,644 @@ registerPlaceModule("MM2", GAME_CHECK.MM2)
 registerPlaceModule("TRS", GAME_CHECK.TRS)
 registerPlaceModule("VD", GAME_CHECK.VD)
 registerPlaceModule("MVSD", GAME_CHECK.MVSD)
+registerPlaceModule("BedFight", GAME_CHECK.BedFight)
 
-local noResultsLabels: {[string]: TextLabel} = {}
-for sectionName: string, page: GuiObject in pairs(pages) do
-    local label: TextLabel = (makeTextLabel(
-        page,
-        "No modules match your search",
-        13
-    ) :: any) :: TextLabel
-    label.Name = "NoSearchResults"
-    label.AnchorPoint = Vector2.new(0.5, 0.5)
-    label.Position = UDim2.fromScale(0.5, 0.5)
-    label.Size = UDim2.new(1, -50, 0, 40)
-    label.TextColor3 = Theme.TextMuted
-    label.TextXAlignment = Enum.TextXAlignment.Center
-    label.Visible = false
-    label.ZIndex = 90
-    noResultsLabels[sectionName] = label
+if PENDING_FINGERPRINT then
+    task.spawn(function(): ()
+        local attempts: number = 0
+        while attempts < 6 do
+            attempts += 1
+            task.wait(0.5)
+            local detected: string?, score: number = detectGameModuleByStructure()
+            if detected then
+                ACTIVE_GAME_MODULE = detected
+                ACTIVE_GAME_SOURCE = "fingerprint " .. tostring(score) .. " markers"
+                state.activeGameName = detected
+                GAME_CHECK.MM2Active = detected == "MM2"
+                GAME_CHECK.TRSActive = detected == "TRS"
+                GAME_CHECK.VDActive = detected == "VD"
+                GAME_CHECK.MVSDActive = detected == "MVSD"
+                GAME_CHECK.BedFightActive = detected == "BedFight"
+                GAME_CHECK.source = ACTIVE_GAME_SOURCE
+                PENDING_FINGERPRINT = false
+                registerPlaceModule(detected, GAME_CHECK[detected] or 0)
+                SectionManager.initialize(detected)
+                break
+            end
+        end
+    end)
 end
 
-local function refreshSearch(): ()
-    local query: string = string.lower(tostring(state.searchQuery or ""))
-    query = string.match(query, "^%s*(.-)%s*$") or ""
-    local sectionMatches: {[string]: number} = {}
-    local sectionTotals: {[string]: number} = {}
-    for _, feature: any in ipairs(allFeatures) do
-        local sectionName: string = feature.sectionName or "Universal"
-        sectionTotals[sectionName] = (sectionTotals[sectionName] or 0) + 1
-        local searchable: string = feature.searchText
-        local matches: boolean = query == ""
-            or string.find(searchable, query, 1, true) ~= nil
-        feature.row.Visible = matches
-        if matches then
-            sectionMatches[sectionName] = (sectionMatches[sectionName] or 0) + 1
+-- ---------------------------------------------------------------------------
+-- Module architecture
+-- ---------------------------------------------------------------------------
+--
+-- Everything above this line is the shell: the window, the cards, the option
+-- rows, the keybind registry. Everything below is loaded as separate files —
+-- a kernel (`src/core/Framework.luau`), shared libraries (`src/library/*`) and
+-- one file per module under `src/modules/<Category>/`.
+--
+-- Splitting it this way is what makes a module a self-contained declaration
+-- instead of another thousand lines in a file that is already at Luau's
+-- 200-local ceiling: a module file asks the framework for a card, declares its
+-- options, and registers its loops through `Module:Loop`, which are torn down
+-- automatically when it is switched off.
+--
+-- The manifest is downloaded first so the file list lives in the repository
+-- rather than in this file; if that download fails the embedded copy below is
+-- used, and the validation workflow keeps the two in sync.
+--
+-- Delivery: prefer one stamped bundle (shell + bundle = two requests). The
+-- gate refuses a bundle whose stamp does not match the sources. If the bundle
+-- is missing or stale, fall back to a bounded parallel download of the same
+-- files, then loadstring+init in manifest order so behaviour is identical.
+state.boot = {
+    stamp = SOURCE_STAMP,
+    bundle = nil :: {[string]: string}?,
+    sources = {} :: {[string]: string},
+    timing = {} :: {[string]: number},
+    started = BOOT_STARTED_AT,
+}
+-- Everything before the loader: the window, the rail, the boards, the mobile
+-- layer. It is measured as one block because it is one straight line of work.
+state.boot.timing.gui = os.clock() - BOOT_STARTED_AT
+
+state.markBoot = function(phase: string, startedAt: number): ()
+    state.boot.timing[phase] = os.clock() - startedAt
+end
+
+state.summarizeBoot = function(): ()
+    local timing: any = state.boot.timing
+    local total: number = os.clock() - (state.boot.started or os.clock())
+    print(string.format(
+        "[" .. PRODUCT.logPrefix .. ":Timing] fingerprint %.2fs · gui %.2fs · bundle %.2fs · manifest %.2fs · widgets %.2fs · framework %.2fs · libraries %.2fs · modules %.2fs (%d/%d) · game module %.2fs · total %.2fs",
+        BOOT_FINGERPRINT_SECONDS,
+        tonumber(timing.gui) or 0,
+        tonumber(timing.bundle) or 0,
+        tonumber(timing.manifest) or 0,
+        tonumber(timing.widgets) or 0,
+        tonumber(timing.framework) or 0,
+        tonumber(timing.libraries) or 0,
+        tonumber(timing.modules) or 0,
+        tonumber(timing.moduleCount) or 0,
+        tonumber(timing.moduleTotal) or 0,
+        tonumber(timing.game) or 0,
+        total
+    ))
+end
+
+-- Reject a response that is technically a 200 but is not a source file:
+-- GitHub answers a bad path with a plain-text "404: Not Found" and a captive
+-- portal answers everything with HTML.
+--
+-- Only the head of the response is examined. Lowercasing and scanning the
+-- whole thing meant half a megabyte of copying to answer a question about the
+-- first line, and it made any file that merely *mentions* `<html` anywhere in
+-- its own source unloadable — a trap with no warning attached.
+state.sourceLooksValid = function(source: any, minimum: number): boolean
+    if type(source) ~= "string" or #source < minimum then
+        return false
+    end
+    local head: string = string.lower(string.sub(source, 1, 512))
+    return string.find(head, "404: not found", 1, true) == nil
+        and string.find(head, "<!doctype html", 1, true) == nil
+        and string.find(head, "<html", 1, true) == nil
+end
+
+state.httpGetPath = function(path: string): (string?, string?)
+    local url: string = REPOSITORY_RAW_BASE .. path .. "?v=" .. SOURCE_STAMP
+    local ok: boolean, body: any = pcall(function(): string
+        return (game :: any):HttpGet(url, true)
+    end)
+    if ok and state.sourceLooksValid(body, 32) then
+        return body :: string, nil
+    end
+    return nil, tostring(body)
+end
+
+state.ensureSourceFolders = function(path: string): ()
+    local environment: any = getfenv()
+    if type(environment.makefolder) ~= "function" then
+        return
+    end
+    pcall(environment.makefolder, "ARandomMenu")
+    local cursor: string = "ARandomMenu"
+    for segment: string in string.gmatch(path, "([^/]+)/") do
+        cursor = cursor .. "/" .. segment
+        pcall(environment.makefolder, cursor)
+    end
+end
+
+state.readCachedSource = function(path: string): string?
+    local environment: any = getfenv()
+    local readFile: any = environment.readfile
+    local isFile: any = environment.isfile
+    if type(readFile) ~= "function" then
+        return nil
+    end
+    local stampFile: string = "ARandomMenu/.stamp"
+    if type(isFile) == "function" then
+        local stampOk: boolean, stampExists: any = pcall(isFile, stampFile)
+        if not stampOk or not stampExists then
+            return nil
         end
-        if feature.title then
-            if query ~= "" and matches and not feature.enabled then
-                feature.title.TextColor3 = Theme.AccentCyan
-            else
-                applyFeaturePresentation(feature, state.guiStyle == "Default")
+    end
+    local stampOk: boolean, stampBody: any = pcall(readFile, stampFile)
+    if not stampOk or stampBody ~= SOURCE_STAMP then
+        return nil
+    end
+    local localPath: string = "ARandomMenu/" .. path
+    if type(isFile) == "function" then
+        local fileOk: boolean, exists: any = pcall(isFile, localPath)
+        if not fileOk or not exists then
+            return nil
+        end
+    end
+    local readOk: boolean, source: any = pcall(readFile, localPath)
+    if readOk and state.sourceLooksValid(source, 32) then
+        return source :: string
+    end
+    return nil
+end
+
+state.writeCachedSource = function(path: string, source: string): ()
+    local environment: any = getfenv()
+    local writeFile: any = environment.writefile
+    if type(writeFile) ~= "function" then
+        return
+    end
+    state.ensureSourceFolders(path)
+    pcall(writeFile, "ARandomMenu/" .. path, source)
+    pcall(writeFile, "ARandomMenu/.stamp", SOURCE_STAMP)
+end
+
+state.fetchRepositorySource = function(path: string): (string?, string?)
+    local bundled: any = state.boot.bundle and state.boot.bundle[path]
+    if type(bundled) == "string" then
+        state.boot.sources[path] = bundled
+        return bundled, nil
+    end
+    local remembered: string? = state.boot.sources[path]
+    if remembered then
+        return remembered, nil
+    end
+    local cached: string? = state.readCachedSource(path)
+    if cached then
+        state.boot.sources[path] = cached
+        return cached, nil
+    end
+    local downloaded: string?, downloadError: string? = state.httpGetPath(path)
+    if downloaded then
+        state.boot.sources[path] = downloaded
+        state.writeCachedSource(path, downloaded)
+        return downloaded, nil
+    end
+    local environment: any = getfenv()
+    local readFile: any = environment.readfile
+    local isFile: any = environment.isfile
+    local localPath: string = "ARandomMenu/" .. path
+    if type(readFile) == "function"
+        and (type(isFile) ~= "function" or isFile(localPath)) then
+        local readOk: boolean, localSource: any = pcall(readFile, localPath)
+        if readOk and state.sourceLooksValid(localSource, 32) then
+            state.boot.sources[path] = localSource
+            return localSource :: string, nil
+        end
+    end
+    return nil, downloadError or ("Descarga fallida: " .. path)
+end
+
+state.compileRepositorySource = function(path: string, source: string): (any, string?)
+    local environment: any = getfenv()
+    if type(environment.loadstring) ~= "function" then
+        return nil, "El ejecutor no admite loadstring"
+    end
+    local chunk: any, compileError: any = environment.loadstring(source, "@" .. path)
+    if type(chunk) ~= "function" then
+        return nil, "Compilación fallida (" .. path .. "): " .. tostring(compileError)
+    end
+    if type(environment.setfenv) == "function" and state.frameworkEnvironment then
+        environment.setfenv(chunk, state.frameworkEnvironment)
+    end
+    local ran: boolean, result: any = pcall(chunk)
+    if not ran then
+        return nil, "Ejecución fallida (" .. path .. "): " .. tostring(result)
+    end
+    return result, nil
+end
+
+state.fetchRepositoryChunk = function(path: string): (any, string?)
+    local source: string?, sourceError: string? = state.fetchRepositorySource(path)
+    if not source then
+        return nil, sourceError
+    end
+    return state.compileRepositorySource(path, source :: string)
+end
+
+state.downloadSourcesParallel = function(paths: {string}): ()
+    local pending: number = #paths
+    if pending == 0 then
+        return
+    end
+    local index: number = 0
+    local workers: number = math.min(8, pending)
+    local timedOut: boolean = false
+    for _ = 1, workers do
+        task.spawn(function(): ()
+            while not timedOut do
+                index += 1
+                local current: number = index
+                if current > #paths then
+                    return
+                end
+                local path: string = paths[current]
+                if not state.boot.sources[path] then
+                    -- pcall'd, and the counter moves either way. A throw in
+                    -- one file used to kill its worker with the count still
+                    -- owing, which stalled the whole load for the full twelve
+                    -- seconds before the recovery below even started.
+                    local ok: boolean, source: any = pcall(
+                        state.fetchRepositorySource,
+                        path
+                    )
+                    if ok and type(source) == "string" then
+                        state.boot.sources[path] = source
+                    end
+                end
+                pending -= 1
+            end
+        end)
+    end
+    local deadline: number = os.clock() + 12
+    while pending > 0 and os.clock() < deadline do
+        task.wait(0.03)
+    end
+    if pending > 0 then
+        timedOut = true
+        -- Finish the job on this thread. The result has to be *kept*: this
+        -- used to call the fetch and drop what it returned, so every file the
+        -- workers had not reached was downloaded here, thrown away, and then
+        -- downloaded a third time by the loader.
+        for _, path: string in ipairs(paths) do
+            if not state.boot.sources[path] then
+                local source: string? = state.fetchRepositorySource(path)
+                if source then
+                    state.boot.sources[path] = source
+                end
             end
         end
     end
-
-    for sectionName: string, label: TextLabel in pairs(noResultsLabels) do
-        label.Visible = query ~= ""
-            and (sectionTotals[sectionName] or 0) > 0
-            and (sectionMatches[sectionName] or 0) == 0
-    end
-
-    -- Drop the headers of categories the query emptied out.
-    if state.refreshCategoryVisibility then
-        state.refreshCategoryVisibility()
-    end
 end
-state.refreshSearch = refreshSearch
-local searchRefreshToken: number = 0
-trackUiConnection(
-    state.shells.defaultSearchBox:GetPropertyChangedSignal("Text"):Connect(
-        function(): ()
-            state.searchQuery = state.shells.defaultSearchBox.Text
-            state.shells.searchClear.Visible = state.searchQuery ~= ""
-            searchRefreshToken += 1
-            local token: number = searchRefreshToken
-            task.delay(0.06, function(): ()
-                if token == searchRefreshToken then
-                    refreshSearch()
-                end
-            end)
-        end
+
+do
+(function(): ()
+local diagnostics: ModuleDiagnostics = {uiBindings = 0, taskBindings = 0}
+state.frameworkEnvironment = createGameModuleEnvironment(diagnostics)
+
+-- Kept in step with src/core/Manifest.luau by the validation workflow.
+local fallbackManifest: any = {
+    version = 1,
+    widgets = "src/library/Widgets.luau",
+    core = {"src/core/Framework.luau"},
+    libraries = {
+        "src/library/Entity.luau",
+        "src/library/Weapons.luau",
+        "src/library/Render.luau",
+        "src/library/Cards.luau",
+        "src/library/WindowManager.luau",
+        "src/library/ClickGui.luau",
+        "src/library/FloatingWindows.luau",
+        "src/library/SettingsPage.luau",
+        "src/library/MobileActions.luau",
+        "src/library/Furniture.luau",
+    },
+    modules = {
+        {path = "src/modules/Utility/FriendList.luau", name = "Friend List", category = "Other"},
+        {path = "src/modules/Visuals/ItemRender.luau", name = "ItemESP", category = "Render"},
+        {path = "src/modules/Visuals/PlayerESP.luau", name = "PlayerESP", category = "Render"},
+        {path = "src/modules/Combat/KillAura.luau", name = "Killaura", category = "Combat"},
+        {path = "src/modules/Utility/RemoteLogger.luau", name = "Remote Logger", category = "Other"},
+        {path = "src/modules/Movement/ClickTeleport.luau", name = "Click Teleport", category = "Movement"},
+        {path = "src/modules/Combat/AutoClicker.luau", name = "Auto Clicker", category = "Combat"},
+        {path = "src/modules/Combat/TriggerBot.luau", name = "TriggerBot", category = "Combat"},
+        {path = "src/modules/Visuals/XRay.luau", name = "X-Ray", category = "Render"},
+        {path = "src/modules/Movement/HighJump.luau", name = "HighJump", category = "Movement"},
+        {path = "src/modules/Movement/Spider.luau", name = "Spider", category = "Movement"},
+        {path = "src/modules/Protection/SafeWalk.luau", name = "SafeWalk", category = "Movement"},
+        {path = "src/modules/Utility/RejoinServer.luau", name = "Rejoin Server", category = "Other"},
+        {path = "src/modules/Visuals/ZoomUnlocker.luau", name = "Zoom", category = "Render"},
+        {path = "src/modules/Utility/InteractExtender.luau", name = "Interact Extender", category = "Other"},
+        {path = "src/modules/Movement/PhaseDash.luau", name = "Phase Dash", category = "Movement"},
+        {path = "src/modules/Protection/NoFall.luau", name = "NoFall", category = "Movement"},
+        {path = "src/modules/Movement/Fly.luau", name = "Flight", category = "Movement"},
+        {path = "src/modules/Movement/VehicleSpeed.luau", name = "Vehicle Speed", category = "Movement"},
+        {path = "src/modules/Protection/AntiVoid.luau", name = "Anti-Void", category = "Movement"},
+        {path = "src/modules/Utility/Gravity.luau", name = "Gravity", category = "Movement"},
+        {path = "src/modules/Movement/JumpPower.luau", name = "Jump Power", category = "Movement"},
+        {path = "src/modules/Movement/InfiniteJump.luau", name = "Infinite Jump", category = "Movement"},
+        {path = "src/modules/Visuals/FieldOfView.luau", name = "FOV", category = "Render"},
+        {path = "src/modules/Movement/Noclip.luau", name = "Noclip", category = "Movement"},
+        {path = "src/modules/Utility/AntiAfk.luau", name = "AntiAFK", category = "Other"},
+        {path = "src/modules/Protection/AntiFling.luau", name = "Anti-Fling", category = "Combat"},
+        {path = "src/modules/Utility/LagSwitch.luau", name = "Lag Switch", category = "Movement"},
+        {path = "src/modules/Utility/Fling.luau", name = "Fling", category = "Combat"},
+        {path = "src/modules/Utility/ImproveFps.luau", name = "Improve FPS", category = "Other"},
+        {path = "src/modules/Visuals/Fullbright.luau", name = "Fullbright", category = "Render"},
+        {path = "src/modules/Movement/FreezeMovements.luau", name = "Freeze Movements", category = "Movement"},
+        {path = "src/modules/Movement/Speed.luau", name = "SpeedHack", category = "Movement"},
+        {path = "src/modules/Combat/Hitboxes.luau", name = "Hitboxes", category = "Combat"},
+        {path = "src/modules/Combat/ProjectileCalibration.luau", name = "Projectile Calibration", category = "Render"},
+        {path = "src/modules/Spoof/Disguise.luau", name = "Disguise", category = "Fun"},
+        {path = "src/modules/Spoof/AnimationChanger.luau", name = "Animation Changer", category = "Fun"},
+        {path = "src/modules/Spoof/EmotePlayer.luau", name = "Emote Player", category = "Fun"},
+    },
+}
+
+local bundleAt: number = os.clock()
+local packed: any, packedError: string? = state.fetchRepositoryChunk("runtime/bundle.luau")
+if type(packed) == "table"
+    and packed.stamp == SOURCE_STAMP
+    and type(packed.files) == "table" then
+    state.boot.bundle = packed.files
+    state.logBootstrap("Bundle aceptado · stamp=" .. SOURCE_STAMP)
+else
+    if packedError then
+        state.logBootstrapError("Bundle: " .. packedError)
+    elseif type(packed) == "table" then
+        state.logBootstrapError(
+            "Bundle stamp mismatch: got "
+                .. tostring(packed.stamp)
+                .. " expected "
+                .. SOURCE_STAMP
+        )
+    end
+    state.boot.bundle = nil
+end
+state.markBoot("bundle", bundleAt)
+
+local manifestAt: number = os.clock()
+local manifest: any, manifestError: string? =
+    state.fetchRepositoryChunk("src/core/Manifest.luau")
+if type(manifest) ~= "table" or type(manifest.modules) ~= "table" then
+    if manifestError then
+        state.logBootstrapError("Manifest: " .. manifestError)
+    end
+    manifest = fallbackManifest
+end
+state.markBoot("manifest", manifestAt)
+
+local loadList: {string} = {}
+table.insert(loadList, manifest.widgets or "src/library/Widgets.luau")
+for _, path: string in ipairs(manifest.core or {}) do
+    table.insert(loadList, path)
+end
+for _, path: string in ipairs(manifest.libraries or {}) do
+    table.insert(loadList, path)
+end
+for _, entry: any in ipairs(manifest.modules or {}) do
+    table.insert(loadList, type(entry) == "table" and entry.path or tostring(entry))
+end
+if not state.boot.bundle then
+    state.downloadSourcesParallel(loadList)
+end
+
+local loaded: {any} = {}
+local function loadPiece(path: string): any?
+    local piece: any, failure: string? = state.fetchRepositoryChunk(path)
+    if type(piece) ~= "table" or type(piece.init) ~= "function" then
+        state.logBootstrapError(
+            "Módulo inválido: " .. path .. " · " .. tostring(failure)
+        )
+        return nil
+    end
+    return piece
+end
+
+local widgetsAt: number = os.clock()
+local widgetPath: string = manifest.widgets or "src/library/Widgets.luau"
+local widgetPiece: any? = loadPiece(widgetPath)
+if widgetPiece then
+    local widgetOk: boolean, builders: any = pcall(
+        widgetPiece.init,
+        state.frameworkEnvironment
     )
-)
-
-local function buildSettings()
-state.settingRows = {} :: {Frame}
-local SettingsScroll = create("ScrollingFrame", {
-    Parent = SettingsPage,
-    Name = "SettingsScroll",
-    Active = true,
-    AutomaticCanvasSize = Enum.AutomaticSize.Y,
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    CanvasSize = UDim2.fromOffset(0, 0),
-    ScrollBarImageColor3 = Theme.DefaultOutline,
-    ScrollBarThickness = 6,
-    ScrollingDirection = Enum.ScrollingDirection.Y,
-    Size = UDim2.fromScale(1, 1),
-})
-
-create("UIPadding", {
-    Parent = SettingsScroll,
-    PaddingBottom = UDim.new(0, 18),
-    PaddingLeft = UDim.new(0, 18),
-    PaddingRight = UDim.new(0, 18),
-    PaddingTop = UDim.new(0, 18),
-})
-
-local _SettingsLayout = create("UIListLayout", {
-    Parent = SettingsScroll,
-    FillDirection = Enum.FillDirection.Vertical,
-    HorizontalAlignment = Enum.HorizontalAlignment.Center,
-    Padding = UDim.new(0, 10),
-    SortOrder = Enum.SortOrder.LayoutOrder,
-})
-
-local function createSettingRow(
-    titleText: string,
-    descriptionText: string,
-    height: number?
-): (Frame, Frame)
-    local row = create("Frame", {
-        Parent = getFeatureCardParent(SettingsScroll),
-        BackgroundColor3 = state.guiStyle == "Default"
-            and Theme.DefaultSurface
-            or Theme.Surface,
-        BackgroundTransparency = state.guiStyle == "Default" and 0.58 or 0,
-        BorderSizePixel = 0,
-        Size = UDim2.new(1, -4, 0, height or 62),
-    })
-
-    local title = makeTextLabel(row, titleText, 15)
-    title.FontFace = CONTROL_FONT
-    title.Position = UDim2.fromOffset(14, 7)
-    title.Size = UDim2.new(0.46, -14, 0, 24)
-
-    local description = makeTextLabel(row, descriptionText, 12)
-    description.TextColor3 = Color3.fromRGB(176, 176, 182)
-    description.Position = UDim2.fromOffset(14, 30)
-    description.Size = UDim2.new(0.48, -14, 0, 22)
-
-    local control = create("Frame", {
-        Parent = row,
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        Position = UDim2.new(0.5, 8, 0, 8),
-        Size = UDim2.new(0.5, -22, 1, -16),
-    })
-
-    create("UICorner", {
-        Parent = row,
-        CornerRadius = cornerRadius(10),
-    })
-    create("UIStroke", {
-        Parent = row,
-        Name = "SettingStroke",
-        Color = state.guiStyle == "Default"
-            and Theme.DefaultOutline
-            or Theme.Outline,
-        Transparency = state.guiStyle == "Default" and 0.82 or 0.28,
-        Thickness = 1,
-    })
-    table.insert(state.settingRows, row)
-    return (row :: any) :: Frame, (control :: any) :: Frame
-end
-
-state.restyleSettings = function(isDefault: boolean): ()
-    SettingsScroll.ScrollBarImageColor3 = isDefault
-        and Theme.DefaultOutline
-        or Color3.fromRGB(100, 100, 100)
-    for _, row: Frame in ipairs(state.settingRows) do
-        row.BackgroundColor3 = isDefault and Theme.DefaultSurface or Theme.Surface
-        row.BackgroundTransparency = isDefault and 0.58 or 0
-        local rowStroke: UIStroke? = row:FindFirstChild("SettingStroke") :: UIStroke?
-        if rowStroke then
-            rowStroke.Color = isDefault and Theme.DefaultOutline or Theme.Outline
-            rowStroke.Transparency = isDefault and 0.82 or 0.28
+    if widgetOk and type(builders) == "table" then
+        table.insert(loaded, widgetPiece)
+        widgetBuilders = builders
+        for builderName: string, builder: any in pairs(builders) do
+            state.frameworkEnvironment[builderName] = function(...: any): any
+                diagnostics.uiBindings += 1
+                return builder(...)
+            end
         end
+    else
+        state.logBootstrapError("Widgets init falló: " .. tostring(builders))
     end
 end
-
-local textRow, textControl = createSettingRow(
-    "Text size",
-    "Drag the linear control to scale every label"
-)
-textRow.LayoutOrder = 1
-local textScaleRatio: number = (state.textScale - TEXT_SCALE_MINIMUM)
-    / (TEXT_SCALE_MAXIMUM - TEXT_SCALE_MINIMUM)
-local TextSizeTrack: TextButton = create("TextButton", {
-    Parent = textControl,
-    Name = "TextSizeTrack",
-    Active = true,
-    AutoButtonColor = false,
-    AnchorPoint = Vector2.new(0, 0.5),
-    BackgroundColor3 = state.guiStyle == "Default"
-        and Theme.DefaultButtonPressed
-        or Color3.fromRGB(45, 45, 49),
-    BorderSizePixel = 0,
-    Position = UDim2.new(0, 0, 0.5, 0),
-    Size = UDim2.new(1, -58, 0, 4),
-    Text = "",
-}) :: TextButton
-create("UICorner", {
-    Parent = TextSizeTrack,
-    CornerRadius = UDim.new(1, 0),
-})
-local TextSizeFill: Frame = create("Frame", {
-    Parent = TextSizeTrack,
-    Name = "Fill",
-    BackgroundColor3 = state.guiStyle == "Default"
-        and Theme.DefaultButtonHover
-        or Color3.fromRGB(238, 238, 242),
-    BorderSizePixel = 0,
-    Size = UDim2.fromScale(textScaleRatio, 1),
-}) :: Frame
-create("UICorner", {
-    Parent = TextSizeFill,
-    CornerRadius = UDim.new(1, 0),
-})
-local TextSizeKnob: Frame = create("Frame", {
-    Parent = TextSizeTrack,
-    Name = "Knob",
-    AnchorPoint = Vector2.new(0.5, 0.5),
-    BackgroundColor3 = state.guiStyle == "Default"
-        and Theme.DefaultText
-        or Color3.fromRGB(250, 250, 252),
-    BorderSizePixel = 0,
-    Position = UDim2.fromScale(textScaleRatio, 0.5),
-    Size = UDim2.fromOffset(14, 14),
-    ZIndex = TextSizeTrack.ZIndex + 2,
-}) :: Frame
-create("UICorner", {
-    Parent = TextSizeKnob,
-    CornerRadius = UDim.new(1, 0),
-})
-create("UIStroke", {
-    Parent = TextSizeKnob,
-    Color = Theme.DefaultOutline,
-    Transparency = 0.55,
-    Thickness = 1,
-})
-local baseRestyleSettings: (boolean) -> () = state.restyleSettings
-state.restyleSettings = function(isDefault: boolean): ()
-    baseRestyleSettings(isDefault)
-    TextSizeTrack.BackgroundColor3 = isDefault
-        and Theme.DefaultButtonPressed
-        or Color3.fromRGB(45, 45, 49)
-    TextSizeFill.BackgroundColor3 = isDefault
-        and Theme.DefaultButtonHover
-        or Color3.fromRGB(238, 238, 242)
-    TextSizeKnob.BackgroundColor3 = isDefault
-        and Theme.DefaultText
-        or Color3.fromRGB(250, 250, 252)
+state.markBoot("widgets", widgetsAt)
+if not widgetBuilders then
+    state.logBootstrapError(
+        "Sin librería de controles; los módulos no pueden construir sus paneles"
+    )
+    notify("No se pudo cargar la librería de controles")
+    state.summarizeBoot()
+    return
 end
-local TextSizeValue: TextLabel = makeTextLabel(
-    textControl,
-    tostring(math.round(state.textScale * 100)) .. "%",
-    11
-) :: TextLabel
-TextSizeValue.AnchorPoint = Vector2.new(1, 0.5)
-TextSizeValue.Position = UDim2.new(1, 0, 0.5, 0)
-TextSizeValue.Size = UDim2.fromOffset(48, 22)
-TextSizeValue.TextXAlignment = Enum.TextXAlignment.Right
 
-local blurRow, blurControl = createSettingRow(
-    "Blur mode",
-    "Blur the game while the menu is visible"
+local frameworkAt: number = os.clock()
+local frameworkPiece: any? = loadPiece(manifest.core[1] or "src/core/Framework.luau")
+if not frameworkPiece then
+    state.logBootstrapError("Framework no disponible; módulos externos omitidos")
+    state.summarizeBoot()
+    return
+end
+local frameworkOk: boolean, framework: any = pcall(
+    frameworkPiece.init,
+    state.frameworkEnvironment
 )
-blurRow.LayoutOrder = 2
+if not frameworkOk or type(framework) ~= "table" then
+    state.logBootstrapError("Framework init falló: " .. tostring(framework))
+    state.summarizeBoot()
+    return
+end
+table.insert(loaded, frameworkPiece)
+state.framework = framework
+state.markBoot("framework", frameworkAt)
 
-local BlurButton: TextButton, BlurMark: TextLabel =
-    createCheckControl(blurControl, state.blurEnabled)
-BlurButton.AnchorPoint = Vector2.new(1, 0.5)
-BlurButton.Position = UDim2.new(1, 0, 0.5, 0)
-
-local motionRow, motionControl = createSettingRow(
-    "Interface motion",
-    "Smooth transitions for cards, tabs, and menu controls"
-)
-motionRow.LayoutOrder = 3
-local MotionButton: TextButton, MotionMark: TextLabel =
-    createCheckControl(motionControl, state.animationsEnabled)
-MotionButton.AnchorPoint = Vector2.new(1, 0.5)
-MotionButton.Position = UDim2.new(1, 0, 0.5, 0)
-
-local keyRow, keyControl = createSettingRow(
-    "Menu key",
-    "Choose the key used to show or hide"
-)
-keyRow.LayoutOrder = 4
-
-local KeybindButton = makeButton(keyControl, state.toggleKey.Name, 13)
-KeybindButton.Size = UDim2.fromScale(1, 1)
-applyKeySlotStyle(KeybindButton)
-state.keybindButton = KeybindButton
-
-local reinjectRow, reinjectControl = createSettingRow(
-    "Reinject latest",
-    "Download and restart the newest main build"
-)
-reinjectRow.LayoutOrder = 5
-local ReinjectButton: TextButton = makeButton(
-    reinjectControl,
-    "REINJECT LATEST",
-    12
-)
-ReinjectButton.Size = UDim2.fromScale(1, 1)
-
-local destructRow, destructControl = createSettingRow(
-    "Destruct",
-    "Disable every function and completely remove the menu from this client"
-)
-destructRow.LayoutOrder = 6
-local DestructButton: TextButton = makeButton(
-    destructControl,
-    "DESTRUCT",
-    12
-)
-DestructButton.Size = UDim2.fromScale(1, 1)
-
-local gameRow, gameControl = createSettingRow(
-    "Game check",
-    "Only the matching game-specific module is loaded"
-)
-gameRow.LayoutOrder = 7
-local gameStatus = makeTextLabel(
-    gameControl,
-    GAME_CHECK.MM2Active and "MM2 · 142823291"
-        or GAME_CHECK.TRSActive and "TRS · 14315258385"
-        or GAME_CHECK.VDActive and "VD · 93978595733734"
-        or GAME_CHECK.MVSDActive and "MVSD · 135856908115931"
-        or "Universal only",
-    12
-)
-gameStatus.TextXAlignment = Enum.TextXAlignment.Center
-gameStatus.Size = UDim2.fromScale(1, 1)
-
-local mobileIconRow, mobileIconControl = createSettingRow(
-    "Mobile menu icon",
-    "Dog shortcut stays available so the menu cannot become unreachable"
-)
-mobileIconRow.LayoutOrder = 8
-mobileIconRow.Visible = UserInputService.TouchEnabled
-local MobileIconButton = makeButton(
-    mobileIconControl,
-    "ON - REQUIRED",
-    13
-)
-MobileIconButton.Size = UDim2.fromScale(1, 1)
-MobileIconButton:SetAttribute(
-    "Selected",
-    UserInputService.TouchEnabled and state.mobileMenuButtonVisible
-)
-MobileIconButton.BackgroundColor3 = UserInputService.TouchEnabled
-        and state.mobileMenuButtonVisible
-        and state.headerColor
-    or DEFAULT_SURFACE_COLOR
-
-local mobileSizeRow, mobileSizeControl = createSettingRow(
-    "Mobile action size",
-    "Size for placed mobile shortcuts"
-)
-mobileSizeRow.LayoutOrder = 9
-mobileSizeRow.Visible = UserInputService.TouchEnabled
-local MobileSizeButton = makeButton(
-    mobileSizeControl,
-    tostring(state.mobileButtonSize) .. " PX",
-    13
-)
-MobileSizeButton.Size = UDim2.fromScale(1, 1)
-
-local mobileResetRow, mobileResetControl = createSettingRow(
-    "Mobile action buttons",
-    "Hold ADD to place; hold a shortcut to remove it"
-)
-mobileResetRow.LayoutOrder = 10
-mobileResetRow.Visible = UserInputService.TouchEnabled
-local MobileResetButton = makeButton(
-    mobileResetControl,
-    "RESET PLACED",
-    13
-)
-MobileResetButton.Size = UDim2.fromScale(1, 1)
-
-local setBlurVisible = state.setBlurVisible
-
--- Contribute the Settings/overlay-specific side effects to the shared
--- visibility controller instead of replacing it. `state.setMenuVisible` stays
--- the single entry point and always updates the blur, even if this builder
--- never runs.
-state.addMenuVisibilityListener(function(visible: boolean): ()
-    FloatingUi.overlays.TextGUI.window.root.Active = visible
-    if not visible then
-        for _, settingsWindow: FloatingWindowRecord in ipairs({
-            textSettingsWindow,
-            radarSettingsWindow,
-            sessionSettingsWindow,
-            targetSettingsWindow,
-        }) do
-            settingsWindow.root.Visible = false
-        end
+local librariesAt: number = os.clock()
+local libraries: any = {}
+for _, path: string in ipairs(manifest.libraries or {}) do
+    local piece: any? = loadPiece(path)
+    if not piece then
+        continue
     end
-end)
+    local startedOk: boolean, library: any = pcall(
+        piece.init,
+        state.frameworkEnvironment
+    )
+    if not startedOk or type(library) ~= "table" then
+        state.logBootstrapError(
+            "Librería falló (" .. path .. "): " .. tostring(library)
+        )
+        continue
+    end
+    table.insert(loaded, piece)
+    local key: string = string.lower(
+        string.match(path, "([^/]+)%.luau$") or path
+    )
+    libraries[key] = library
+end
+-- The card factory is a library too, and it arrives after the environment was
+-- built. Folding it into the same table the option builders use means the one
+-- install path covers both, here and in every environment a game module gets
+-- later.
+local cardLibrary: any = libraries.cards
+if cardLibrary and type(cardLibrary.createUniversalFeature) == "function" then
+    widgetBuilders.createUniversalFeature = cardLibrary.createUniversalFeature
+    state.frameworkEnvironment.createUniversalFeature = function(...: any): any
+        diagnostics.uiBindings += 1
+        return cardLibrary.createUniversalFeature(...)
+    end
+else
+    state.logBootstrapError("Sin fábrica de tarjetas; ningún módulo puede crear su tarjeta")
+    notify("No se pudo cargar la fábrica de tarjetas")
+    return
+end
 
-local function updateTextSizes(): ()
-    for _, item in ipairs(registeredText) do
-        if item.object and item.object.Parent then
-            item.object.TextSize = math.round(
-                item.normalSize * TEXT_BASE_MULTIPLIER * state.textScale
+local entityLibrary: any = libraries.entity
+state.weaponLibrary = libraries.weapons
+state.renderLibrary = libraries.render
+state.markBoot("libraries", librariesAt)
+
+local context: any = {
+    framework = framework,
+    entity = entityLibrary,
+    weapons = libraries.weapons,
+    render = libraries.render,
+    libraries = libraries,
+    host = state.frameworkEnvironment,
+}
+local modulesAt: number = os.clock()
+local moduleCount: number = 0
+for _, entry: any in ipairs(manifest.modules) do
+    local path: string = type(entry) == "table" and entry.path or tostring(entry)
+    local piece: any? = loadPiece(path)
+    if piece then
+        local started: boolean, failure: any = pcall(piece.init, context)
+        if started then
+            table.insert(loaded, piece)
+            moduleCount += 1
+            state.logBootstrap("Módulo cargado: " .. path)
+        else
+            state.logBootstrapError(
+                "Módulo falló (" .. path .. "): " .. tostring(failure)
             )
         end
     end
 end
+state.boot.timing.moduleCount = moduleCount
+state.boot.timing.moduleTotal = #manifest.modules
+state.markBoot("modules", modulesAt)
 
-local textSizeDragInput: InputObject? = nil
-local function setTextScaleFromX(pointerX: number): ()
-    local width: number = math.max(1, TextSizeTrack.AbsoluteSize.X)
-    local ratio: number = math.clamp(
-        (pointerX - TextSizeTrack.AbsolutePosition.X) / width,
-        0,
-        1
+-- A module that fails to start is a card that is simply not there, and the
+-- only trace was one `warn` among the loading chatter. Five of thirty-eight
+-- went missing on a real client for a week before anyone counted them.
+if moduleCount < #manifest.modules then
+    local missing: number = #manifest.modules - moduleCount
+    state.logBootstrapError(
+        tostring(missing)
+            .. " de "
+            .. tostring(#manifest.modules)
+            .. " módulos no arrancaron; busca \"Módulo falló\" más arriba"
     )
-    state.textScale = math.round((
-        TEXT_SCALE_MINIMUM
-            + ratio * (TEXT_SCALE_MAXIMUM - TEXT_SCALE_MINIMUM)
-    ) * 100) / 100
-    TextSizeFill.Size = UDim2.fromScale(ratio, 1)
-    TextSizeKnob.Position = UDim2.fromScale(ratio, 0.5)
-    TextSizeValue.Text = tostring(math.round(state.textScale * 100)) .. "%"
-    updateTextSizes()
-    configData.ui.largeText = nil
-    configData.ui.textScale = state.textScale
-    configData.ui.textScaleCalibrationVersion = 2
-    queueConfigSave()
-end
-trackUiConnection(TextSizeTrack.InputBegan:Connect(function(input: InputObject): ()
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-        or input.UserInputType == Enum.UserInputType.Touch then
-        textSizeDragInput = input
-        setTextScaleFromX(input.Position.X)
-    end
-end))
-trackUiConnection(UserInputService.InputChanged:Connect(function(input: InputObject): ()
-    if textSizeDragInput == nil then
-        return
-    end
-    if input == textSizeDragInput
-        or input.UserInputType == Enum.UserInputType.MouseMovement then
-        setTextScaleFromX(input.Position.X)
-    end
-end))
-trackUiConnection(UserInputService.InputEnded:Connect(function(input: InputObject): ()
-    if input == textSizeDragInput
-        or input.UserInputType == Enum.UserInputType.MouseButton1 then
-        textSizeDragInput = nil
-    end
-end))
-
-trackUiConnection(BlurButton.MouseButton1Click:Connect(function(): ()
-    state.blurEnabled = not state.blurEnabled
-    setCheckVisual(BlurButton, BlurMark, state.blurEnabled, true)
-    setBlurVisible(true)
-    configData.ui.blurEnabled = state.blurEnabled
-    queueConfigSave()
-    notify(state.blurEnabled and "Blur mode enabled" or "Blur mode disabled")
-end))
-
-trackUiConnection(MotionButton.MouseButton1Click:Connect(function(): ()
-    state.animationsEnabled = not state.animationsEnabled
-    setCheckVisual(MotionButton, MotionMark, state.animationsEnabled, true)
-    configData.ui.animationsEnabled = state.animationsEnabled
-    -- The hail is motion too, so it must follow this switch immediately.
-    if state.refreshBlurDecoration then
-        pcall(state.refreshBlurDecoration)
-    end
-    queueConfigSave()
-end))
-
-local reinjectBusy: boolean = false
-trackUiConnection(ReinjectButton.MouseButton1Click:Connect(function(): ()
-    if reinjectBusy then
-        return
-    end
-    local compiler: any = executorGlobals.loadstring
-    if type(compiler) ~= "function" then
-        notify("Reinject unavailable: this executor has no loadstring")
-        return
-    end
-    reinjectBusy = true
-    ReinjectButton:SetAttribute("Disabled", true)
-    ReinjectButton.Text = "DOWNLOADING…"
-    local sourceUrls: {string} = {
-        REPOSITORY_RAW_BASE .. "ARandomMenu.luau",
-        RUNTIME_SAFETY_SOURCE_URL,
-    }
-    local sourceOrError: any = nil
-    local downloaded: boolean = false
-    local downloadFailures: {string} = {}
-    for _, candidateUrl: string in ipairs(sourceUrls) do
-        local requestUrl: string = candidateUrl
-            .. "?reinject=v3&nocache="
-            .. HttpService:GenerateGUID(false)
-        local requestOk: boolean, bodyOrError: any = pcall(function(): string
-            return (game :: any):HttpGet(requestUrl, true)
-        end)
-        local current: boolean = requestOk
-            and type(bodyOrError) == "string"
-            and #bodyOrError >= 1024
-            and bodyOrError:find(RUNTIME_COMPATIBILITY_MARKER, 1, true) ~= nil
-        if current then
-            downloaded = true
-            sourceOrError = bodyOrError
-            break
-        end
-        table.insert(downloadFailures, tostring(bodyOrError))
-    end
-    if not downloaded then
-        reinjectBusy = false
-        ReinjectButton:SetAttribute("Disabled", false)
-        ReinjectButton.Text = "REINJECT LATEST"
-        notify("Could not download the latest build")
-        warn("[Random Testing Menu] Reinject download: "
-            .. table.concat(downloadFailures, " | "))
-        return
-    end
-    local compiled: any = nil
-    local compileError: any = nil
-    local compiledOk: boolean, compileResult: any, returnedError: any = pcall(
-        compiler,
-        sourceOrError,
-        "@ARandomMenu.luau"
-    )
-    if compiledOk then
-        compiled = compileResult
-        compileError = returnedError
-    else
-        compileError = compileResult
-    end
-    if type(compiled) ~= "function" then
-        reinjectBusy = false
-        ReinjectButton:SetAttribute("Disabled", false)
-        ReinjectButton.Text = "REINJECT LATEST"
-        notify("The downloaded build could not be compiled")
-        warn("[Random Testing Menu] Reinject compile: " .. tostring(compileError))
-        return
-    end
-    ReinjectButton.Text = "RESTARTING…"
-    task.defer(function(): ()
-        local executed: boolean, executionError: any = xpcall(
-            compiled,
-            debug.traceback
-        )
-        if not executed then
-            reinjectBusy = false
-            if ReinjectButton.Parent then
-                ReinjectButton:SetAttribute("Disabled", false)
-                ReinjectButton.Text = "REINJECT LATEST"
-            end
-            warn("[Random Testing Menu] Reinject runtime: " .. tostring(executionError))
-        end
-    end)
-end))
-
-trackUiConnection(DestructButton.MouseButton1Click:Connect(function(): ()
-    DestructButton:SetAttribute("Disabled", true)
-    DestructButton.Text = "REMOVING…"
-    task.defer(function(): ()
-        if state.destruct then
-            state.destruct()
-        end
-    end)
-end))
-
-trackUiConnection(MobileIconButton.MouseButton1Click:Connect(function(): ()
-    if not UserInputService.TouchEnabled then
-        return
-    end
-    notify("The mobile menu icon remains enabled so the menu is always reachable.")
-end))
-
-trackUiConnection(MobileSizeButton.MouseButton1Click:Connect(function(): ()
-    if not UserInputService.TouchEnabled then
-        return
-    end
-    local sizes: {number} = {42, 52, 62, 72}
-    local nextSize: number = sizes[1]
-    for index: number, size: number in ipairs(sizes) do
-        if state.mobileButtonSize == size then
-            nextSize = sizes[(index % #sizes) + 1]
-            break
-        end
-    end
-    state.mobileButtonSize = nextSize
-    configData.ui.mobileButtonSize = nextSize
-    MobileSizeButton.Text = tostring(nextSize) .. " PX"
-    for _, record: MobileActionRecord in pairs(state.mobileUi.actions) do
-        record.button.Size = UDim2.fromOffset(nextSize, nextSize)
-        local clamped: Vector2 = state.mobileUi.clampButtonPosition(
-            Vector2.new(
-                record.button.Position.X.Offset,
-                record.button.Position.Y.Offset
-            ),
-            nextSize
-        )
-        record.button.Position = UDim2.fromOffset(clamped.X, clamped.Y)
-        state.mobileUi.saveActionPosition(record)
-    end
-    queueConfigSave()
-end))
-
-trackUiConnection(MobileResetButton.MouseButton1Click:Connect(function(): ()
-    if not UserInputService.TouchEnabled then
-        return
-    end
-    state.mobileUi.resetActions()
-end))
-
-trackUiConnection(KeybindButton.MouseButton1Click:Connect(function(): ()
-    if state.keyCaptureCancel then
-        state.keyCaptureCancel()
-    end
-    state.waitingForKey = true
-    KeybindButton.Text = "PRESS A KEY…"
-    setKeySlotCapture(KeybindButton, true)
-end))
-
+    notify(tostring(missing) .. " módulos no cargaron — revisa la consola")
 end
 
-SectionManager.register("Config.", buildSettings)
+state.cleanupFrameworkRuntime = function(): ()
+    for index: number = #loaded, 1, -1 do
+        local piece: any = loaded[index]
+        if type(piece.destroy) == "function" then
+            pcall(piece.destroy)
+        end
+    end
+    table.clear(loaded)
+    state.framework = nil
+    state.renderLibrary = nil
+end
+state.summarizeBoot()
+end)()
+end
+
+-- Config. tab was old UI; UI Settings is a window (phase 4), not a tab
+
+
+-- Restore the saved typeface once the interface exists — and when nothing is
+-- saved, default to Monocraft. Wurst ships no TTF at all: every label in the
+-- real client is Minecraft's bitmap font, and Monocraft is the closest face
+-- this repository vendors. applyInterfaceFont only swaps once the download
+-- has resolved, so an executor without getcustomasset simply keeps
+-- BuilderSans — the safe fallback, never a blank label.
+do
+    local savedFont: string = tostring(configData.values.interfaceFont or "")
+    if savedFont == "" or savedFont == "Menu default" then
+        savedFont = "Minecraft (Monocraft)"
+    end
+    task.spawn(function(): ()
+        state.applyInterfaceFont(savedFont, false)
+    end)
+end
 
 do
 local function initializeWindowInput(): ()
-local dragging: boolean = false
-local dragInput: InputObject? = nil
-local dragStart: Vector2 = Vector2.zero
-local dragStartPosition: Vector2 = Vector2.zero
+-- The shell is fixed.
+--
+-- There is no drag surface, no pointer bookkeeping and no persisted window
+-- geometry any more: `centerMain()` owns the one position the shell can have.
+-- Only the free-floating windows (favourites, overlays, per-overlay settings)
+-- are still movable, and they carry their own drag handlers.
+--
+-- A viewport change recomputes the responsive metrics, which re-centres the
+-- shell, re-flows the rail/header/cards through the layout listeners and
+-- pulls every floating window back inside the new screen bounds.
+local function reflowForViewport(force: boolean?): ()
+    task.defer(function(): ()
+        if not ScreenGui.Parent then
+            return
+        end
+        state.refreshLayout(force)
+        if state.floatingUi and state.floatingUi.reclamp then
+            state.floatingUi.reclamp()
+        end
+    end)
+end
 
-local function getPointerPosition(input: InputObject?): Vector2
-    if input and input.UserInputType == Enum.UserInputType.Touch then
-        return Vector2.new(input.Position.X, input.Position.Y)
+local viewportConnection: RBXScriptConnection? = nil
+local function bindViewport(): ()
+    if viewportConnection then
+        viewportConnection:Disconnect()
+        viewportConnection = nil
     end
-    return UserInputService:GetMouseLocation()
-end
-
-local function viewportSize(): Vector2
     local camera: Camera? = workspace.CurrentCamera
-    return camera and camera.ViewportSize or Vector2.new(1280, 720)
-end
-
-local function clampMainPosition(position: Vector2): Vector2
-    local screenSize: Vector2 = viewportSize()
-    local mainSize: Vector2 = Main.AbsoluteSize
-    return Vector2.new(
-        math.clamp(position.X, 0, math.max(0, screenSize.X - mainSize.X)),
-        math.clamp(position.Y, 0, math.max(0, screenSize.Y - mainSize.Y))
+    if not camera then
+        return
+    end
+    viewportConnection = trackUiConnection(
+        camera:GetPropertyChangedSignal("ViewportSize"):Connect(function(): ()
+            reflowForViewport(false)
+        end)
     )
 end
 
-local function saveWindowGeometry(): ()
-    configData.ui.windowPosition = {
-        Main.Position.X.Offset,
-        Main.Position.Y.Offset,
-    }
-    configData.ui.windowSize = nil
-    queueConfigSave()
-end
-
-local function bindDragHandle(handle: GuiObject): ()
-    trackUiConnection(handle.InputBegan:Connect(function(input: InputObject): ()
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-            or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = true
-            dragInput = input.UserInputType == Enum.UserInputType.Touch
-                and input
-                or dragInput
-            dragStart = getPointerPosition(input)
-            dragStartPosition = Vector2.new(
-                Main.Position.X.Offset,
-                Main.Position.Y.Offset
-            )
-        end
-    end))
-
-    trackUiConnection(handle.InputChanged:Connect(function(input: InputObject): ()
-        if input.UserInputType == Enum.UserInputType.MouseMovement
-            or input.UserInputType == Enum.UserInputType.Touch then
-            dragInput = input
-        end
-    end))
-end
-
-bindDragHandle(DefaultDragZone)
-
-state.globalInputChangedConnection = UserInputService.InputChanged:Connect(function(
-    input: InputObject
-): ()
-    if dragging and input == dragInput then
-        local delta: Vector2 = getPointerPosition(input) - dragStart
-        local nextPosition: Vector2 = clampMainPosition(
-            dragStartPosition + delta
-        )
-        Main.Position = UDim2.fromOffset(nextPosition.X, nextPosition.Y)
+bindViewport()
+-- The camera can be replaced (respawns, cutscenes, some anti-cheats), which
+-- would otherwise leave the menu listening to a dead camera and stuck in the
+-- mode it started in.
+trackUiConnection(workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(
+    function(): ()
+        bindViewport()
+        reflowForViewport(true)
     end
-end)
-
-state.globalInputEndedConnection = UserInputService.InputEnded:Connect(function(
-    input: InputObject
-): ()
-    if dragging
-        and (input.UserInputType == Enum.UserInputType.MouseButton1
-            or input.UserInputType == Enum.UserInputType.Touch) then
-        dragging = false
-        dragInput = nil
-        saveWindowGeometry()
-    end
-end)
-
-local camera: Camera? = workspace.CurrentCamera
-if camera then
-    trackUiConnection(camera:GetPropertyChangedSignal("ViewportSize"):Connect(
-        function(): ()
-            task.defer(function(): ()
-                if not Main.Parent then
-                    return
-                end
-                local resized: Vector2 = calculateWindowSize(viewportSize())
-                Main.Size = UDim2.fromOffset(resized.X, resized.Y)
-                local clamped: Vector2 = clampMainPosition(Vector2.new(
-                    Main.Position.X.Offset,
-                    Main.Position.Y.Offset
-                ))
-                Main.Position = UDim2.fromOffset(clamped.X, clamped.Y)
-                if state.floatingUi and state.floatingUi.reclamp then
-                    state.floatingUi.reclamp()
-                end
-            end)
-        end
-    ))
-end
+))
 
 state.globalInputBeganConnection = UserInputService.InputBegan:Connect(function(input)
     if state.keyCaptureCallback then
@@ -12338,92 +5869,166 @@ state.globalInputBeganConnection = UserInputService.InputBegan:Connect(function(
 
     if input.UserInputType == Enum.UserInputType.Keyboard
         and input.KeyCode == state.toggleKey then
-        state.setMenuVisible(not state.visible)
+        state.openMenuSurface()
     end
 end)
 end
 initializeWindowInput()
+
+-- One forced pass once the whole shell exists, so every listener (rail,
+-- header, cards, grids, floating windows) has applied the same metrics table
+-- before the intro curtain lifts.
+task.defer(function(): ()
+    state.refreshLayout(true)
+end)
 end
 
 local runtimeCleaned: boolean = false
+-- Teardown.
+--
+-- Every step runs inside its own `pcall`. The previous version was one long
+-- unprotected block, so a single failing step (a module cleanup, a stale
+-- connection, a toolkit that never finished initializing) aborted the rest of
+-- the teardown *and* the `ScreenGui:Destroy()` that follows it — which is
+-- exactly how Destruct could leave the menu on screen stuck on "REMOVING…".
+-- Now a failure is logged and the teardown carries on.
+local function cleanupStep(label: string, step: () -> ()): ()
+    local ok: boolean, failure: any = pcall(step)
+    if not ok then
+        warn("[" .. PRODUCT.name .. "] destruct/" .. label .. ": " .. tostring(failure))
+    end
+end
+
 local function cleanupRuntime(): ()
     if runtimeCleaned then
         return
     end
     runtimeCleaned = true
-        sessionTrackingActive = false
-        sessionBindGeneration += 1
-        if deathConnection then
-            deathConnection:Disconnect()
-            deathConnection = nil
+
+    cleanupStep("session", function(): ()
+        if type(state.destroySessionTracking) == "function" then
+            state.destroySessionTracking()
         end
         state.sessionInfo = nil
-        state.getOverlayTarget = nil
-        for _, feature in ipairs(allFeatures) do
-            if feature.enabled then
-                pcall(function()
-                    feature.onToggle(false)
-                end)
-                feature.enabled = false
+    end)
+
+    -- Disabling the features is what actually removes the effects from the
+    -- game (flight, ESP, lighting, hitboxes...), so each module is isolated:
+    -- one module that throws while switching off cannot keep the others on.
+    for _, feature in ipairs(allFeatures) do
+        if feature.enabled then
+            cleanupStep("feature " .. tostring(feature.name), function(): ()
+                feature.onToggle(false)
+            end)
+            feature.enabled = false
+        end
+    end
+
+    cleanupStep("held keybinds", function(): ()
+        for _, binding: any in pairs(state.shortcutBindings) do
+            if binding.hold and binding.pressed and binding.onRelease then
+                binding.pressed = false
+                binding.onRelease()
             end
         end
-
+        table.clear(state.shortcutBindings)
+    end)
+    cleanupStep("feature connections", function(): ()
         for name in pairs(featureConnections) do
             disconnectFeatureConnection(name)
         end
+    end)
+    cleanupStep("tooltips", function(): ()
         for _, connection: RBXScriptConnection in ipairs(state.tooltipConnections) do
             connection:Disconnect()
         end
         table.clear(state.tooltipConnections)
+    end)
+    cleanupStep("ui connections", function(): ()
         for _, connection: RBXScriptConnection in ipairs(state.uiConnections) do
             connection:Disconnect()
         end
         table.clear(state.uiConnections)
-
-        state.universalProjectileCalibration:destroy()
+    end)
+    cleanupStep("projectile calibration", function(): ()
+        local calibration: any = state.universalProjectileCalibration
+        if calibration and type(calibration.destroy) == "function" then
+            calibration:destroy()
+        end
+    end)
+    cleanupStep("task manager", function(): ()
         TaskManager:Destroy()
-        if state.globalInputChangedConnection then
-            state.globalInputChangedConnection:Disconnect()
+    end)
+    cleanupStep("global input", function(): ()
+        for _, key: string in ipairs({
+            "globalInputChangedConnection",
+            "globalInputEndedConnection",
+            "globalInputBeganConnection",
+            "globalShortcutBeganConnection",
+            "globalShortcutEndedConnection",
+        }) do
+            local connection: any = state[key]
+            if connection then
+                connection:Disconnect()
+                state[key] = nil
+            end
         end
-        if state.globalInputEndedConnection then
-            state.globalInputEndedConnection:Disconnect()
+    end)
+    cleanupStep("colour picker", function(): ()
+        -- Two connections the picker keeps alive between openings, so the drag
+        -- keeps tracking once the pointer leaves the saturation square. The
+        -- picker belongs to the widget library, which may never have loaded.
+        local picker: any = state.colorPicker
+        if not picker then
+            return
         end
-        if state.globalInputBeganConnection then
-            state.globalInputBeganConnection:Disconnect()
+        if picker.inputChanged then
+            picker.inputChanged:Disconnect()
         end
-        if colorPicker.inputChanged then
-            colorPicker.inputChanged:Disconnect()
+        if picker.inputEnded then
+            picker.inputEnded:Disconnect()
         end
-        if colorPicker.inputEnded then
-            colorPicker.inputEnded:Disconnect()
+    end)
+    cleanupStep("MM2 runtime", cleanupMM2Runtime)
+    for _, key: string in ipairs({
+        "cleanupFrameworkRuntime",
+        "cleanupTRSRuntime",
+        "cleanupVDRuntime",
+        "cleanupMVSDRuntime",
+        "cleanupBedFightRuntime",
+    }) do
+        local cleanup: any = state[key]
+        if type(cleanup) == "function" then
+            cleanupStep(key, cleanup)
         end
-        cleanupMM2Runtime()
-        if state.cleanupTRSRuntime then
-            state.cleanupTRSRuntime()
-        end
-        if state.cleanupVDRuntime then
-            state.cleanupVDRuntime()
-        end
-        if state.cleanupMVSDRuntime then
-            state.cleanupMVSDRuntime()
-        end
-        saveConfigNow()
+    end
+    cleanupStep("config", saveConfigNow)
 
-        -- Always release the blur, even if it was mid-tween.
-        suspendBlur()
-        if state.destroyBlurDecoration then
-            pcall(state.destroyBlurDecoration)
-        end
-        if Blur.Parent then
-            Blur:Destroy()
-        end
 end
 
+-- The GUI is destroyed even when a cleanup step failed: an interface the user
+-- asked to remove must always disappear.
 state.destruct = function(): ()
-    cleanupRuntime()
-    if ScreenGui.Parent then
-        ScreenGui:Destroy()
-    end
+    cleanupStep("runtime", cleanupRuntime)
+    cleanupStep("screen gui", function(): ()
+        if ScreenGui.Parent then
+            ScreenGui:Destroy()
+        end
+    end)
+    -- Belt and braces: anything the runtime parented straight into PlayerGui
+    -- under the shared name (an older injection, a re-parented shell) goes too.
+    cleanupStep("leftovers", function(): ()
+        for _, child: Instance in ipairs(PlayerGui:GetChildren()) do
+            if child.Name == GUI_NAME then
+                child:Destroy()
+            end
+        end
+        local lighting: Instance? = Lighting:FindFirstChild(BLUR_NAME)
+        if lighting then
+            lighting:Destroy()
+        end
+    end)
+    print("[" .. PRODUCT.name .. "] Destruct complete.")
 end
 
 ScreenGui.AncestryChanged:Connect(function(_: Instance, parent: Instance?): ()
@@ -12433,31 +6038,32 @@ ScreenGui.AncestryChanged:Connect(function(_: Instance, parent: Instance?): ()
 end)
 
 SectionManager.initializeAllAsync()
-setTab("Universal")
--- Sync the blur with the initial menu state (the argument is "animate", not
--- the target state) so it matches state.visible instead of being forced off.
-state.setBlurVisible(false)
 task.defer(saveConfigNow)
 
 print(
-    "A Random Menu | Toggle key: "
+    PRODUCT.name
+        .. " v"
+        .. PRODUCT.version
+        .. " | Toggle key: "
         .. state.toggleKey.Name
 )
+-- On a keyboard the launcher is not drawn, so this toast is the only thing
+-- that says the menu is loaded and which key opens it.
+if not state.isMobile then
+    notify("Menu ready — press " .. state.toggleKey.Name)
+end
 end
 
 local initialized: boolean, bootstrapError: any = xpcall(bootstrap, function(message: any): string
     local text: string = tostring(message)
     if debug and type(debug.traceback) == "function" then
-        return debug.traceback("[RTM:Bootstrap] " .. text, 2)
+        return debug.traceback("[" .. PRODUCT.logPrefix .. ":Bootstrap] " .. text, 2)
     end
-    return "[RTM:Bootstrap] " .. text
+    return "[" .. PRODUCT.logPrefix .. ":Bootstrap] " .. text
 end)
 
 if not initialized then
-    bootstrapFailed = true
-    if bootstrapStatusLabel and bootstrapStatusLabel.Parent then
-        bootstrapStatusLabel.Text = "Initialization error — check executor console"
-        bootstrapStatusLabel.TextColor3 = Color3.fromRGB(230, 105, 105)
-    end
-    warn("[RTM:Bootstrap] Inicialización detenida:\n" .. tostring(bootstrapError))
+    -- Nowhere on screen to say it any more: the intro that used to carry the
+    -- message is gone, so the console is the report.
+    warn("[" .. PRODUCT.logPrefix .. ":Bootstrap] Inicialización detenida:\n" .. tostring(bootstrapError))
 end

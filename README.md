@@ -1,9 +1,31 @@
 # ARandomMenu
 
+**Unofficial port.** This client is an unofficial Roblox port of the
+[Wurst Client](https://github.com/Wurst-Imperium/Wurst7). It is not
+affiliated with, endorsed by, or supported by Wurst-Imperium. Wurst7 is
+Copyright (c) 2014-2026 Wurst-Imperium and contributors, licensed under
+the GNU General Public License v3.0. This port is released under the same
+licence; see `LICENSE` and `NOTICE.md`.
+
 Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
 
 ## Runtime architecture
 
+- **Which branch runs in game.** The loader and the bootstrap both point at
+  `main`, and the bootstrap downloads its per-game modules from `main` too, so
+  an injected menu always runs main's code — work reviewed on a branch looks
+  unchanged in game until it is merged. Set `ARANDOMMENU_BRANCH` before loading
+  to point the whole runtime (loader, bootstrap and game modules) at a branch:
+
+  ```lua
+  getgenv().ARANDOMMENU_BRANCH = "arena/01a01c6e-arandommenu"
+  loadstring(game:HttpGet(
+      "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/"
+          .. getgenv().ARANDOMMENU_BRANCH .. "/ARandomMenu.luau"))()
+  ```
+
+  It defaults to `main`, and the loader still falls back to main and then to
+  the known-good snapshot if the branch fails to download.
 - `loadstring` downloads the current `ARandomMenu.luau` bootstrap.
 - Loader v3 rejects the stale `0/0` runtime, retries a known-good immutable
   snapshot when GitHub's branch CDN has not propagated, and never runs an
@@ -23,47 +45,112 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
 - Registered sections initialize asynchronously after the GUI shell appears;
   a staged loading curtain reports progress until they are ready, and opening a
   tab is never used as the condition for constructing content.
-- The loading intro is a scripted sequence rather than a spinner that vanishes
-  on the last callback: a drifting backdrop glow, the wordmark rising into
-  place, a hairline rule drawing out beneath it, then counter-rotating rings
-  over a narrated status line and progress bar, and finally a held "Ready"
-  before the curtain lifts. Roughly 1.1 s of animation runs before any
-  narration, so the intro reads as an intro even when every module loads
-  instantly, and a slow load simply keeps the status stage on screen for
-  longer — nothing here ever delays a slow load further. The narration yields
-  the moment the loader has real `x/y` counts to display, a watchdog lifts the
-  curtain if the sequence thread ever dies, and a failed bootstrap keeps the
-  curtain up so its error message stays readable.
-- The fixed-size headerless shell owns sidebar search, navigation,
-  translucent cards, notifications and an invisible drag surface. The window
-  is fully borderless: there is no stroke, frame or grip handle anywhere —
-  the first 14 px of the shell are a completely transparent drag zone, so the
-  menu moves by grabbing its rounded top edge without any visible grey strip
-  or corner border. It is the only visual theme, so every injection opens the
-  same coherent interface.
+- There is no loading intro. The shell builds itself hidden, and on touch the
+  launcher button appearing is the signal that it is ready; on a keyboard a
+  single toast names the menu key. A failed bootstrap still reports itself in
+  the console with the `[RTM:Bootstrap]` prefix.
+- **The shell is fixed.** It is anchored at its own centre
+  (`AnchorPoint = (0.5, 0.5)`, `Position = fromScale(0.5, 0.5)`) and can never
+  be moved: there is no drag strip, no pointer bookkeeping and no persisted
+  window geometry. Any `ui.windowPosition` written by an older build is
+  dropped when the configuration loads, and a viewport change simply
+  re-centres and re-sizes the shell. What *is* movable are the floating tool
+  windows (favourites, the overlay manager, the per-overlay settings) and the
+  HUD overlays, which keep their own drag handlers and their own saved
+  positions in `ui.floatingPositions`.
+- **The card grid is measured, never scaled.** Inside a `ScrollingFrame` a
+  child sized `UDim2.new(1, 0, ...)` resolves against the canvas, and
+  `UIPadding` shifts that canvas without shrinking it — so the board was one
+  whole gutter wider than the window it lived in, the right-hand column ran
+  under the scroll bar, and the options handle of every card on that side was
+  cut off by the shell's edge. The grid root is now sized in pixels from the
+  scrolling frame's own `AbsoluteWindowSize`, re-measured whenever that
+  changes (viewport, rail collapse, the scroll bar appearing), so nothing can
+  ever spill past the window on any device.
+- The shell itself is a compact, borderless, dark-glass surface: a navigation
+  rail, a page header (page name + search) and a scrolling card board. It is
+  the only visual theme, so every injection opens the same coherent interface.
+- **One window, not a stack of rectangles.** `Main` *is* the shell: the second
+  full-size rounded frame that used to sit inside it (painted the same colour,
+  with its own radius to keep in sync) and the readability wash that painted
+  the background colour over the background are both gone. The navigation rail
+  is rounded on the window side and squared off on the content side, because
+  `ClipsDescendants` clips to the window's rectangle and not to its rounded
+  corner — a square rail filled those corners and read as a block sticking out
+  behind the ARM chip. Inside a card, the options panel is a transparent
+  container instead of a third surface: an expanded module shows the card and
+  its rows, with nothing drawn in between.
+- **No faked shadow.** An ambient shadow used to be approximated with stacked
+  rounded frames behind the window. `cornerRadius()` caps every radius at
+  30 px, so a frame 44 px wider than the shell kept square-ish corners around
+  a tightly rounded window and rendered as four grey blocks poking out of the
+  corners — the menu looked chipped. A convincing soft shadow needs a 9-slice
+  image asset and this runtime downloads none, so the shell has no shadow at
+  all. Every full-size surface inside the window (shell, readability layer)
+  now also carries the window radius, because `ClipsDescendants` clips to the
+  rectangle and not to the rounded corner.
 - The interface is deliberately neutral: a single monochrome palette built from
   near-black surfaces, grey outlines and one off-white accent, defined once in
   the `Theme` table. There is no decorative background art, mascot or branded
   watermark, and status colours are reserved for gameplay data (roles, health,
   failures) rather than menu chrome.
-- Every square-ish surface rounds its corners through one `cornerRadius()`
-  helper instead of hard-coding `UDim.new(0, n)`, so the shell, the overlay
-  windows and every card share a single silhouette. The main window and its
-  shell round generously (≈29 px) so the whole menu reads as one smooth,
-  circular-cornered surface; small controls stay restrained. Genuine pills
-  and circles (switch tracks, knobs, progress bars, radar, blips) keep using
+- **Design tokens.** `UI_RADIUS` and `UI_MOTION` sit at file scope and are the
+  only place radii and animation durations (~0.16 s) are declared. Every square-ish surface still rounds its corners
+  through the one `cornerRadius()` helper, so the shell, the tool windows and
+  every card share a single, deliberately tight silhouette. Genuine pills and
+  circles (switch tracks, knobs, progress bars, radar, blips) keep using
   `UDim.new(1, 0)` and are untouched by the helper.
-- Modules are filed under categories (Player, Combat, Visuals, Protection,
-  Utility, and a `General` catch-all that always sorts last) and sorted
+- **Responsive metrics.** `computeLayoutMetrics(viewport, touch)` returns one
+  table — sidebar width, row and control heights, corner radius, card columns,
+  touch target size, font sizes, paddings — and `state.layout` is the single
+  source of truth for every size in the interface. Three real modes rather
+  than one scale factor:
+  - *Mobile* (`width < 620` or `height < 430`, so a phone in landscape
+    counts): near-fullscreen shell, rail collapsed to monogram chips, finger
+    sized controls.
+  - *Tablet* (`width < 1100`): reduced rail, one column unless the content
+    area is wide.
+  - *Desktop*: full rail with labels, two columns whenever the content area
+    reaches 560 px, more air between controls.
+  Anything that has to react registers through `state.onLayout(listener)`;
+  `state.refreshLayout()` recomputes on every viewport change and re-flows the
+  rail, header, search, cards, columns, floating windows and the centred
+  shell. Game modules never touch it — the shared card and option factories
+  size themselves from the table, so a module written once renders correctly
+  on every device. `tools/layout-preview.html` renders the same formulas in a
+  browser for 360×800, 800×360, 768×1024, 1280×720 and 1920×1080.
+- **HUD overlays are chrome-less.** Radar, Target Info, Session Info and the
+  Text GUI render their content and nothing else: no panel, no header, no
+  close button, so the radar is exactly the circle and the read-outs are bare
+  text with their own shadow. They remain movable — the content is the drag
+  handle — but they only become an input surface while the menu is open, so a
+  transparent overlay can never swallow a click meant for the game, and a
+  faint outline appears around them while the menu is open to show they can be
+  grabbed. The framed tool windows (favourites, overlay manager, overlay
+  settings) keep their compact header and close button.
+- Modules are filed under categories (Movement, Combat, Visuals, Protection,
+  Utility, and a `General` catch-all that always sorts last). "Player" used to
+  hold everything that moved the character, which made it a second General; it
+  is **Movement** now. Combat holds only what helps you fight, so **Fling** —
+  which does not help you fight, it throws another player around — sits with
+  the other one-shot tools in Utility. Every shipped module is filed: nothing
+  falls through to `General` and sorted
   alphabetically inside each one. A card publishes its category and sort name
-  as attributes; the card grid materialises one header strip per category,
-  writes every `LayoutOrder` explicitly so the layout never has to break a tie,
-  and hides a header whose cards the active search filtered away. Pages with
-  headers stay single-column, since a header labels everything that follows it.
+  as attributes; the card grid materialises one **section** per category —
+  a header strip plus one or two columns — writes every `LayoutOrder`
+  explicitly so the layout never has to break a tie, and hides a section whose
+  cards the active search filtered away. Cards are balanced across the columns
+  by measured height, so one expanded card cannot leave a column half empty,
+  and a category header always spans the full width of its own section, which
+  is what lets headers and two-column boards coexist. New cards land in an
+  intake column and are redistributed on the next frame, so bootstrap stays
+  O(n) instead of re-sorting on every creation.
 - Module customisation panels are made of self-contained rows: each setting is
-  its own rounded card with a hairline border and a hover highlight, an
-  optional second line explaining what it does, and a control aligned to a
-  shared right-hand band. Every row in every module shares the same geometry —
+  its own rounded card with a hairline border, a hover highlight and a control
+  aligned to a shared right-hand band. Rows are one line — the explanatory
+  sentence modules used to pass ("Balanced glides, Direct stops instantly…")
+  is ignored by `createOptionRow`, which fixes Fly, Fling, Speed, Hitboxes and
+  every game-module panel at once without touching a single call site. Every row in every module shares the same geometry —
   labels end at 48% of the row, controls occupy the exact same 50%→edge
   rectangle whether they are switches, sliders, key slots, text boxes or
   action pairs — so panels with and without keybinds look symmetric. Cycle
@@ -71,21 +158,125 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
   interval as placeholder text, and long panels can be broken up with section
   headings that fold away together with the controls they label. Fly is the
   reference layout.
-- Every interactive Universal/Movement module without its own key option
-  automatically receives a standard **Toggle key** row as its final row, and
-  every card header carries the same favourite / key-slot / expand trio
-  (actions run and categories expand from their key slot too), so no module
-  ever looks like the odd one out in the list.
+- **Device-independent input.** Modules never read WASD, Space or a mouse
+  position directly — a phone has none of them, which is precisely why Fly,
+  Infinite Jump and CTRL+Click Teleport did nothing on touch. Three shared
+  helpers answer the questions a module actually has:
+  - `state.getMoveInput()` — steering, read from Roblox's own control module,
+    so keyboard, thumbstick and gamepad all work *and* it keeps answering while
+    `PlatformStand` is on (which is when `Humanoid.MoveDirection` goes silent
+    and flying on a phone froze the character).
+  - `state.isJumpHeld()` / `state.onJumpRequest()` — jump from a key, a gamepad
+    button or the touch jump button, via `JumpRequest`.
+  - `state.getAimRay()` — the mouse on desktop, the centre of the screen on
+    touch, because a finger is not a cursor.
+  Fly steers through the first, Infinite Jump (including Rise) through the
+  second, and **Click Teleport** — renamed, since CTRL+click is only the
+  desktop half — through the third: its key slot teleports to whatever is being
+  aimed at on any device, and on touch that slot places the button that
+  triggers it.
+- **Module kinds.** A card's behaviour comes from one declared kind instead of
+  a pile of independent booleans, so a new module cannot accidentally inherit
+  the wrong keybind semantics:
+  - `toggle` (default) — enable/disable state; a click or the key flips it and
+    it announces the change.
+  - `action` — a button (High Jump, Rejoin, the Fling actions). A click or the
+    key runs it once; there is no state to get out of sync. `silentAction`
+    suppresses the toast for keys meant to be spammed.
+  - `hold` — an always-on system whose effect only applies while its key (or
+    its placed mobile button) is held, like a dead-man switch. It can never be
+    switched off, never toasts, and clicking the card does nothing so a stray
+    click cannot latch the effect. Sprint is the reference implementation:
+    `kind = "hold"` plus an `onHold(active)` callback.
+  - `group` — an always-on container of options (Knife, FriendList, Teleport…).
+    The card expands, and its key slot is deliberately inert: there is nothing
+    to activate, so it never captures a key, never places a mobile button and
+    does nothing when pressed.
+  The legacy `action` / `category` / `holdAction` flags still map onto these
+  kinds, and always-on kinds start their runtime once at creation instead of
+  waiting for a click that can never come.
+- **One keybind per module, always in the card header.** Activation keys are
+  no longer buried in the options panel (Phase Dash's "Dash key", MM2's
+  "Manual key"…): the header key slot *is* the binding, it starts blank
+  instead of reading "KEY", and one shared registry with a single input
+  handler dispatches every binding — which is what makes releases reliable.
+  Slots come in two shapes:
+  - *tap* — the module toggles or the action runs.
+  - *hold* — the module is live only while the key is down (Sprint, Fly up and
+    down, Speed's sprint), and losing window focus always releases it.
+- **Touch parity.** On a phone the same slot is the mobile-button factory: one
+  tap opens placement mode (it used to need an undocumented 0.6 s hold), the
+  button is dropped anywhere on screen, and it drives the same press/release
+  pair — so hold features work with a finger, not just with a keyboard. The
+  placed button reads the binding live, so a module that re-points its key
+  later re-points the on-screen button too. The three-dot expander is drawn
+  on *every* card, including modules with nothing to configure (Anti-AFK,
+  Anti-Void, X-Ray): those simply never open — the dots are dimmed and the
+  click is ignored, checked at click time because options can be added after a
+  card is built.
+- **Fling** was rewritten. It reported "stopped after the 5 second safety
+  limit" the instant it was triggered: the loop guarded on
+  `targetPlayer.Parent == Players`, but `Players` is a `cloneref` handle that
+  never compares equal to the service `Parent` returns, so the body never ran.
+  It now tests for an actual parent, re-reads the local character every
+  iteration (a respawn cannot strand it), alternates `Stepped`/`Heartbeat` so
+  the velocity replicates, always restores position, camera and `AutoRotate`,
+  and exposes **Duration**, **Power** and **Return to start** instead of
+  hiding the timeout in a constant. The same `cloneref` comparison was fixed in
+  MM2's shot-confirmation check, where it confirmed every hit including misses.
+- **Improve FPS** is a Universal module: stripping textures, particles,
+  shadows and materials has nothing to do with Murder Mystery 2 and every game
+  benefits. Each change is cached and restored exactly when it is switched off.
+- **High Jump** is a one-shot action rather than a state: holding it "enabled"
+  made no sense for a feature whose whole job is "press this and jump high".
+  It fires from the card, from its key slot or from a placed mobile shortcut,
+  and opts out of the per-activation toast so a hotkey can be spammed.
 - The reusable `gui.lua` owns its image catalog, executor-safe asset cache,
   settings, draggable shell, tabs and `createModule()` component API. Game
   modules only provide their controls and callbacks.
 - Its asset cache verifies PNG/JPEG signatures, interface assets use the real
   files under `Assets`, and text scaling updates a creation-time registry
   instead of walking the complete GUI during every slider movement.
+- The Settings page carries only rows that do something. "Menu key" is built
+  for keyboards only; the "Mobile menu icon" row (which always read
+  ON - REQUIRED and could not be changed) and the "Mobile action buttons"
+  reset row are gone, and **Mobile action size** is an exact pixel value —
+  type it or drag it — instead of a four-step preset cycle.
+- Placed mobile buttons now actually fire their module. Every key slot handed
+  the mobile layer a hold descriptor, so *every* placed button was treated as a
+  hold button: it engaged on touch-down, and on release took the "stop holding"
+  path that never runs the tap callback. Hold state is asked for at press time
+  now, so taps tap and holds hold — and hold-to-remove is disabled for hold
+  features, because keeping a finger on Sprint is how you sprint, not how you
+  delete the button. Long names are kept in full and wrapped at a smaller size
+  rather than clipped to six characters ("Infinite Jump", not "INFINI").
 - Settings includes calibrated text scale, blur, interface motion,
   cache-busted **Reinject latest**, and an idempotent **Destruct** action
   that disables features and releases every tracked runtime connection. The
   key/action controls blend into the dark glass surface without image frames.
+- Every settings row is a single line: its name, vertically centred, and its
+  control. The explanatory second line each row used to carry is gone — it
+  doubled the height of the page and the names already say what they do.
+  `createSettingRow` still accepts the description argument so existing call
+  sites keep working; it is simply never rendered.
+- **Blur mode** and **Interface motion** have no switch and no ON/OFF caption:
+  like a module card, the whole row is the button and the accent stripe plus
+  the lit surface are the state.
+- The search field keeps its clear button on the leading edge, so the text and
+  the control never trade places as the query changes.
+- Two scope bugs the teardown depended on were fixed along the way: the
+  session-tracking flags and the `Died` connection were block locals that
+  `cleanupRuntime` could not see (assigning them created globals and left the
+  connection alive), and the per-overlay settings windows were listed by name
+  from a scope where those names were `nil`, so they never closed with the
+  menu. Both now go through the live registries on `state`.
+- **Destruct** tears the runtime down step by step, each step inside its own
+  `pcall`. It used to be one unprotected block, so a single failing step (a
+  module cleanup, a stale connection, a toolkit that never finished
+  initializing) aborted the rest of the teardown *and* the `ScreenGui:Destroy()`
+  that followed it, leaving the menu on screen stuck on "REMOVING…". Failures
+  are now logged and the teardown continues; the interface is always removed,
+  including any leftover shell or blur left behind in `PlayerGui`/`Lighting`.
 - **Blur mode** dims the game only while the menu is on screen. A single
   controller owns the `BlurEffect` and is defined next to the shared state, so
   every path that shows or hides the menu (toggle key, mobile button, mobile
@@ -100,34 +291,71 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
   layer. It also follows the Animations setting, since it is motion, and the
   per-frame step clamps its delta so a backgrounded client does not teleport
   every stone off screen at once.
-- Desktop shells use integer-pixel, aspect-fitted dimensions capped near 60% of
-  wide displays instead of scaling the complete canvas, which keeps text and
-  strokes crisp while preserving drag boundaries on viewport changes.
+- Shell dimensions are integer pixels taken from the responsive metrics rather
+  than a scaled canvas, which keeps text and strokes crisp; the shell is then
+  re-centred (never clamped) whenever the viewport changes.
 - Runtime controls use native Builder Sans through `FontFace` for crisp text at
   small sizes. The cached Candy Fruits font is reserved for the large loading
   title, where a decorative OTF can render cleanly without softening controls.
 - The permanent shell and tab pages are ordinary `Frame` instances rather than
   nested `CanvasGroup` textures, preventing Roblox from rasterizing interface
   text at a reduced intermediate resolution.
-- Universal Fly provides Balanced, Direct and Precise response presets,
-  independent horizontal/vertical speed and progressive advanced controls, each
-  annotated with a one-line explanation and grouped under Flight / Advanced
-  headings.
-  Speed provides Adaptive, Smooth, Boost and Teleport modes plus acceleration,
-  air control, sprint, momentum retention, wall safety, auto-jump and vehicle
-  tuning. Player ESP, X-Ray, High Jump, Spider, Safe Walk, Zoom Unlocker,
+- Universal **Fly** splits flight into two independent engines instead of a
+  preset that only changed a smoothing constant. *Method* decides how you move
+  sideways — Velocity (direct velocity writes), Constraint (a LinearVelocity
+  that survives games resetting velocity every step, and which also drives the
+  vertical axis), Impulse (force-based, keeps collisions), CFrame (position
+  writes, nothing for a speed cap to clamp), Blink (one hop per interval),
+  Pulse (burst and coast) and WalkSpeed (the game's own movement). *Float*
+  decides what holds you up — Velocity, Impulse, Hover (an altitude held with
+  CFrame writes), Jump (the humanoid's own jump whenever it drops below that
+  altitude), Bounce and Floor (an invisible anchored part kept under your
+  feet). Horizontal/vertical speed, response, burst interval, wall check,
+  PlatformStand, face-camera and the up/down keys stay configurable, grouped
+  under Flight / Advanced headings.
+  **Speed** provides Adaptive, Smooth, Boost, CFrame, Pulse and Teleport modes
+  plus acceleration, burst interval, air control, sprint, momentum retention,
+  wall safety, auto-jump and vehicle tuning; its steering reads the shared
+  input helper, so it also works while its own PlatformStand option is on and
+  on touch clients.
+- **Infinite Jump** has Normal (a fixed height every jump), Impulse (the same
+  height applied as a force), Stack (each jump adds to the climb, capped),
+  Rise (hold jump to climb steadily) and Fall (a mid-air jump cancels the fall
+  instead of launching you). A jump-interval floor — raised further on touch,
+  where the on-screen button repeats while a finger rests on it — keeps the
+  character controllable, and an explicit enabled flag stops queued jump
+  events from firing after the module is switched off.
+- **Click Teleport** is a hold-then-tap gesture: hold the module's key or its
+  placed mobile button, then touch the point you want to reach and the
+  character moves to whatever the ray under *that touch* hits. CTRL + click
+  still works on desktop. Player ESP, X-Ray, High Jump, Spider, Safe Walk, Zoom Unlocker,
   Interact Extender, a Rejoin action and a rewritten Hitboxes engine extend
   the universal toolkit.
-- **Hitboxes** were rewritten around a mode system — Visible (scaled body,
-  pinned head), Root (phantom HumanoidRootPart block) and Hybrid — with
-  independent head/root sizes, reveal/transparency, collision, mass,
-  accessory handling and a tunable refresh interval. Original part states are
-  recorded once and restored exactly, and switching modes unwinds the parts
-  the new mode no longer targets.
+- **Hitboxes** expand the target part by a number of studs, the way the
+  reference client does it, instead of multiplying the body by a scale factor
+  nobody can picture: pick *Root*, *Head* or *Both*, pick how many studs, and
+  that is the whole model. Teammates are skipped, NPCs are opt-in, the
+  expanded part can be revealed at a chosen transparency, collision is dropped
+  (an inflated part that still collides shoves its owner around the map in
+  front of everyone), and every part is restored exactly the moment it stops
+  being a target — respawn, team swap or mode change, not just on disable.
 - **Phase Dash** now offers Blink (collision-aware teleport) and Slide
   (velocity burst) modes plus collision padding, flash duration and a
-  separate slide speed. **Soft Landing** gained Landing / Feather / Auto
-  modes, a glide speed and momentum preservation. **Projectile Calibration**
+  separate slide speed. Its dash key is the card's own key slot and starts
+  blank, like every other module, instead of arriving bound to Q.
+  **No Fall** (formerly Soft Landing) is aimed at games that wrote their own
+  fall damage — Roblox has none. There are only two ways to write it, so there
+  are two ways out: *Impact* brakes the fall a few studs above the floor with a
+  downward raycast, which is what a game reading your landing speed sees, and
+  *State* closes the humanoid's own fall measurement early (plus an optional
+  reset every third of a second while airborne, so a game measuring the drop
+  between Freefall and Landed never sees more than a short one). *Both* is the
+  default. Nothing blocks a remote: a damage remote that never arrives is the
+  one version of this that reads as an exploit in a server log.
+  **Spider** gained the reference client's three application modes — Velocity,
+  Impulse and CFrame — a climb-state toggle, other players excluded from the
+  wall probe, and a climb that stops with the wall instead of firing you off
+  the roof. **Projectile Calibration**
   exposes live-tunable analysis knobs — ping bucket width and ceiling,
   sample window, per-track sample cap, match radius, minimum projectile
   speed — alongside Save / Delete / Show-status actions.
@@ -138,15 +366,1093 @@ Initialization logs use the `[RTM:Bootstrap]` prefix and include detected
 PlaceId, raw download status, downloaded byte count, UI callback count,
 TaskManager callback count and errors captured by `pcall`.
 
+## One menu, no game windows
+
+A game used to get a tab of its own. That decided where a module lived by *who
+wrote it* rather than by what it does: MM2's role ESP sat on the MM2 page while
+the universal Player ESP sat on another, four of the seven rail entries were
+hidden in any given server, and the same idea was implemented twice — once with
+corner boxes, skeletons, tracers and name plates, once with roles.
+
+The rail is three entries:
+
+```
+Universal   every module the client has, grouped by a header per category
+Spoof       cosmetic identity: disguise, animation packs, emotes
+Config.     settings
+```
+
+* **Cards live on one board.** A card is one instance and can only have one
+  parent, so pages per game — or per category — were always a filter over the
+  same list pretending to be somewhere else. The grid draws a header per
+  category (Combat, Movement, Visuals, Protection, Utility, General), which is
+  the grouping that was doing the work all along, and the search box looks
+  through all of it.
+* **The board wears the game's name.** "Universal" is what it is called when
+  nothing recognised this place; in a supported game the rail row and the page
+  header say MM2, VD, BedFight — because there the board *is* that game plus
+  everything else.
+* **A game module adds modules, not a window.** It registers cards exactly the
+  way the menu's own modules do, and the category on the card decides which
+  header it sits under: BedFight's *Server Aura* is Combat, its *Scaffold* is
+  Movement, MM2's *Sprint* is Movement. The taxonomy names every one of them in
+  `FEATURE_CATEGORIES`, in one table, instead of five game files describing
+  themselves.
+* **An unsupported game contributes nothing**, so the board holds the universal
+  set and nothing looks broken or empty.
+
+### The Spoof page
+
+Three modules, none of them an advantage — the page exists so that the things
+that change *how the game looks to you* do not sit in the same list as the
+things that change what you can do.
+
+* **Disguise** — paste a user id or a username and wear that avatar: body,
+  packages, accessories, face, the animation set that came with their bundle
+  and the emotes they have equipped, which are handed straight to the emote
+  player. `ApplyDescription` runs on this client, so the server and every other
+  screen still show you; the original description is kept and put back when the
+  module is switched off, and the disguise is re-applied after a respawn. The
+  fetch runs off the toggle thread, because a card must never wait on the
+  network before it can light up.
+* **Animation Changer** — swaps the eight animations a humanoid plays for
+  itself (idle, walk, run, jump, fall, climb, swim, mood) for the ones in a
+  Roblox animation bundle. The packs are **not** a hard-coded id list: those go
+  stale and a wrong id is a module that silently does nothing, so
+  `AvatarEditorService:SearchCatalog` is asked with the bundle type set to
+  animations and the creator pinned to Roblox — which is exactly the filter
+  that keeps UGC out — and each bundle is resolved to its assets through
+  `GetItemDetails`, with every asset matched to the slot its own name names.
+  Two application paths, because games disagree about which survives: the
+  HumanoidDescription (supported) and the client-side `Animate` script (works
+  where the game re-applies its own description). Both, by default, and a
+  Bundle ID box for anything the search misses.
+* **Emote Player** — plays any emote by asset id, Roblox's or UGC's; they load
+  through the same path. The list is what the disguise read off the avatar plus
+  whatever the catalog search returned (with a *Roblox only* switch), and an id
+  can always be pasted straight in. Speed and looping are adjustable. This one
+  is not local-only: an emote is a real animation on your character, so it
+  replicates — it is still cosmetic.
+
+Everything that touches the catalog is wrapped and degrades: the service throws
+on restricted places and its shapes differ across client versions, so a failed
+search says "the catalog refused the search" and leaves the manual id box,
+which needs nothing.
+
+### The ESP, fixed
+
+Three things were wrong with it, and the third explains the other two.
+
+* **Name tags came out several times the size the ESP asked for.** The labels
+  were built through the menu's text helper, which registers them with the
+  interface's text-scale system: that multiplies every size by 1.35, re-applies
+  it on every layout pass and re-fits it to its box, all behind the module's
+  back. The overlay owns plain instances now — nothing else touches them.
+* **The plate behind a name was three times the width of the box**, because it
+  was sized from the box. It is sized from the text now (`AutomaticSize` on X
+  plus five pixels of padding), so the tag is exactly as wide as the name in
+  it.
+* **Boxes went to pieces at the edges.** A target off the side of the screen,
+  or standing inside the camera — where eight projected corners spread across a
+  box the size of a city — left the previous frame's drawings on screen. Both
+  cases hide the drawing set instead, rather than releasing it, so nothing is
+  rebuilt when the target comes back.
+
+The colour model follows the reference client: **one colour**, not three.
+"Enemy", "friendly" and "hidden" were three rows answering one question, and
+two of them were unreachable in half the games this runs in. A target behind
+geometry is the same colour darkened; a team game or a game with roles
+overrides it per player. The picker takes a hue strip, a saturation/brightness
+square, **and** both text formats — `#rrggbb` or `r, g, b` — side by side under
+the gradients.
+
+*Filled box* and *Display name* come straight from Vape's ESP, which is also
+where the one-colour model comes from.
+
+### The game bridge
+
+What a game module knows and a universal module cannot is published through the
+bridge rather than reimplemented:
+
+```lua
+registerRoleProvider({
+    Name = "MM2",
+    Roles = {"Murderer", "Sheriff", "Hero", "Innocent"},
+    Colors = {Murderer = Color3.fromRGB(145, 25, 25), ...},
+    Get = function(player) return getPlayerRole(player) end,
+    SetColor = function(roleName, colour) ... end,
+})
+
+registerEspExtra({
+    Name = "Coins",
+    Color = mm2Settings.coinColor,
+    Toggle = function(enabled) toggleCoinChams(enabled) end,
+    SetColor = function(colour) ... end,
+})
+```
+
+* **Roles** replace the generic rows they make redundant. A game that names
+  its roles has already answered the questions *Team check*, *Visibility
+  check*, *Team colours* and the base *Colour* were asking — in MM2 there are
+  no teams, the murderer is not "an enemy" and nobody is "friendly" — so those
+  four rows are folded away the moment a provider registers, and the roles take
+  their place.
+* **Roles** become a colour row each inside the universal **Player ESP**, plus
+  a *Role colours* switch and a *Show role* switch. Because the colour is
+  resolved in one place, a murderer is red in the corner box, in the full box,
+  in the chams, on the tracer, on the health bar and on the name tag at the
+  same time — every filter and style option in that card applies to it. MM2's
+  own role ESP (a Highlight per player, its own round gate, its own rebuild
+  loop) is gone; VD publishes Killer/Survivor the same way.
+* **ESP extras** are the objects only that game has. Each becomes a toggle (and
+  a colour, and whatever sliders it had) in the ESP card's *World* section, and
+  the game module keeps its own implementation, because nothing universal can
+  know what a coin or a bed looks like. They exist only in the game that
+  registered them. Shipping today: MM2's **coins**, **traps** and **sheriff
+  gun**, BedFight's **beds** and **generators**, VD's **generators**.
+* **The duplicate player ESPs are gone.** MM2's role ESP, VD's *Players ESP*
+  and MVSD's *ESP* each drew boxes, names, health and distance over players —
+  the universal Player ESP, minus its corner boxes, skeletons, chams, tracers
+  and name plates. All three are deleted; MM2 and VD publish roles, MVSD
+  publishes its team split, and the one ESP draws all of it.
+
+## Conditional rows
+
+A control is on screen only while it can change what the module does. Click
+Teleport is the worked example: *Player* exists while the destination is a
+named player, *Item* while it is an item, *Save waypoint* and *Go back* with
+their own destinations, *Arm window* only for Tap point, *Skip friends* only
+for Nearest player, *Glide step* only while the movement is Glide. Twelve rows
+became four or five at any moment, without losing a setting.
+
+Modules declare that; they do not wire it:
+
+```lua
+teleport:CreateTextBox({
+    Name = "Player",
+    Show = {Option = "Destination", Values = {"Named player"}},
+})
+```
+
+`Show` takes one rule or a list of rules that all have to hold — Kill Aura's
+hold key needs both the advanced block open *and* the activation set to Hold
+key. Omitting `Values` means "while that option is on", which is how one toggle
+gates a whole block: every advanced row in Kill Aura carries
+`Show = {Option = "Show advanced"}` instead of the switch keeping a list of
+rows, a callback to walk it and an initial pass to get it right.
+
+`docs/WRITING-MODULES.md` is the checklist a new module is held to — what to
+answer before writing one, how to decide whether an option deserves a row, and
+where to look before redrawing anything.
+
+## Motion
+
+Four animations, all of them under a fifth of a second, all of them off when
+*Interface motion* is off in Config. The rule they follow is the one the other
+menus in this account get right: motion is there to say where something came
+from, never to make you wait for it.
+
+* **The window scales in from 96%** with a slight overshoot when it opens, and
+  shrinks a little faster on the way out — the frame is only hidden once that
+  tween has run, so the close is actually visible instead of the window
+  vanishing mid-gesture.
+* **A page rises the last ten pixels** when you switch to it. Switching to the
+  page you are already on does nothing.
+* **The rail's selection tick grows into place** instead of blinking on, which
+  makes the rail read as one control rather than three lamps.
+* **The launcher answers a finger**: it dips to 90% under the press, springs
+  back on release, and after a drag it settles against the nearer edge with an
+  overshoot, so it never ends up floating in the middle of the view where it
+  covers the game.
+
+## The module checklist
+
+`docs/WRITING-MODULES.md` is the short version of how this repository decides
+what a module is allowed to be. It exists because the menu is easy to add to,
+and that is the danger: a menu grows into a list of switches nobody
+understands one plausible-looking option at a time.
+
+Before writing: what is this in one sentence, is there a reference to read
+(Vape's build is vendored, so is the BedFight dump and the captured remote
+traffic), and if there is neither a reference nor certainty that it can work —
+say so and ask for what is missing, rather than shipping a module whose failure
+mode is indistinguishable from a broken game.
+
+While designing: does this option help in a way the defaults do not, would two
+options be one option with a better name, and can it be on screen only when it
+matters. Take the boring technically-correct answer; creativity belongs in what
+the module does, not in how many ways it can be configured.
+
+## Draw once: `src/library/Render.luau`
+
+Four modules were each drawing the same things their own way — the player ESP,
+Item Render, BedFight's bed and generator marks, VD's objective marks. Every
+one projected world points, pooled frames per target, rotated 1px frames into
+lines, sized a label and made a Highlight, and every one got some detail wrong
+on its own.
+
+That work happens once now. A module asks the library for a **layer**, asks for
+a **drawing set** per target, and says what to draw:
+
+```lua
+local rect = render:ModelRect(camera, entity.Character)   -- nil if a corner is behind the lens
+local set  = render:Set(layer, player)
+set:Box(rect, "Corner", 1, colour)
+set:Label("NameTag", name, Vector2.new(rect.centreX, rect.top - 3), 1, 13, colour, true)
+set:Bar(Vector2.new(rect.left - 4, rect.top), rect.height, health)
+set:Highlight(character, colour, 0.55, "Overlay")
+```
+
+Two rules the library holds to, both of them bugs this repository has already
+paid for: a set is **hidden, never destroyed**, while its target is alive but
+not drawable (releasing rebuilds every instance the moment the target comes
+back, which is the difference between an ESP that flickers and one that does
+not), and **nothing is created per frame** — lines and labels are pooled by
+index and named for what they draw, so a frame costs property writes.
+
+Player ESP is the first module on it: **947 lines down to 619**, with the
+projection, the pooling, the line rotation, the plate sizing and the chams
+lifecycle all gone from it. Item Render and the game marks are next.
+
+## Getting the shell out of the way
+
+`ARandomMenu.luau` is the window, the widgets and the loader — and it had
+grown into the place where features were written too, because that is where
+the first one was written. Everything below the shell belongs in
+`src/modules/**`, where the kernel, the contracts and the tests already live.
+
+Moved so far, whole:
+
+| Batch | Modules |
+|---|---|
+| Engines | Projectile Calibration (740 lines of telemetry that was never interface), Hitboxes |
+| Universal toolkit | X-Ray, High Jump, Spider, Safe Walk, Rejoin Server, Zoom Unlocker, Interact Extender, Phase Dash, No Fall |
+| The two big ones | Fly (six movement engines, five float engines, its whole panel), Physics Speed |
+| The last dozen | Fling, Anti-Void, Gravity, Jump Power, Infinite Jump, FOV, Noclip, Anti-AFK, Anti-Fling, Fullbright, Lag Switch, Freeze Movements |
+
+**Walk Speed was not moved — it was replaced.** It did one thing,
+`humanoid.WalkSpeed = value` on a loop, which is the single method every game
+that cares about speed clamps first. The new **Speed** module is an engine with
+five: *WalkSpeed* (quietest, first to be clamped), *Velocity* (rewrites the
+horizontal assembly velocity, leaves gravity alone), *Impulse* (the same target
+as a force, for games that overwrite velocity every frame), *CFrame* (steps the
+root directly — nothing to clamp, and it walks through walls unless the wall
+check stops it) and *Teleport* (CFrame in bursts: fastest, and the one a
+spectator notices). Direction comes from the shared input helper, so it is the
+same on a keyboard, a thumbstick and a phone, and it keeps working under
+PlatformStand where `MoveDirection` reads zero. Wall check and burst delay only
+appear for the modes that use them.
+
+`state.universalToolkit` — the grab-bag table nine features hung themselves off
+— is gone entirely. Each of them is an ordinary module now: a file, a manifest
+line, `init`/`destroy`, its own card, and nothing in the shell that knows it
+exists.
+
+The shell is **16,688 → 6,833 lines**, and **no feature card is left in it**.
+
+One thing the move taught, worth writing down: the remaining features lived
+inside a single enormous `do ... end` that existed only to hand registers back
+to `bootstrap()`. A cut that swallows its opening `do` leaves the file
+unbalanced in a way the compiler reports three hundred lines later, so each
+piece was taken from *inside* the block and the block was left standing. It
+disappeared on its own once the last feature was out.
+
+### The widget library
+
+The other half of that number is `src/library/Widgets.luau`. Every control a
+panel is made of — the option row itself, the toggle, the action button, the
+slider, the two-handle range, the cycle, the single- and multi-select lists,
+the key slot, the text field, the colour swatch and the colour picker behind
+it — used to be declared in the same function scope as the window, the rail and
+the loader. Two thousand lines of it, which is how `bootstrap()` ended up three
+locals away from Luau's 200-register ceiling. It has more than thirty spare
+now.
+
+The shell hands the library its primitives (`create`, `makeButton`, the design
+tokens, the config store) and gets back the builders, which it copies into the
+environment every downloaded file runs in. A module calls `addToggleOption(...)`
+exactly as before and cannot tell where the function came from.
+
+The library loads **before** the kernel, because a module that starts drawing
+against a half-filled environment dies in the middle of its own panel and
+leaves a card with a title and nothing under it. If it cannot be downloaded the
+loader says so and stops rather than opening a menu full of empty cards.
+
+Two build contracts hold the seam together: the builder contract now counts the
+names the library returns as well as the ones the shell writes by hand, and a
+new host contract fails the build when any file under `src/library/` or
+`src/core/` reads a `host.` field the shell never publishes — which is how the
+library asking for `PopupLayer` before the shell exported it was caught.
+
+The library is also the first interface code in this repository that is
+actually executed by the test suite. `tools/test/run.luau` loads it against the
+mock Roblox and drives it: a toggle flips and writes its value, a slider is
+typed into and dragged and clamps, a key slot is armed and bound and cleared, a
+text field persists what is typed, the colour picker opens and applies, a range
+with a reversed stored pair is put back in order, a list summarises its
+selection, and every control type in a mixed panel ends on the same pixel. That
+last one is the shared control band the comments have always claimed exists;
+now something checks it.
+
+### The settings page
+
+The Config. tab was another eight hundred lines of `ARandomMenu.luau`: interface
+scale and typeface, blur, animations, the toggle key, re-inject, destruct, the
+detected game and the mobile action size. None of it is shell logic — it is a
+page of controls exactly like a module's panel — and it is
+`src/library/SettingsPage.luau` now, built the first time the tab is opened
+rather than at startup.
+
+Moving it surfaced a class of bug worth a check of its own. Every file under
+`src/` runs with its environment set to the table the shell builds, so a bare
+name that is not a local is read from that table and is **nil** when the shell
+does not publish it. Nothing complains: the file compiles, loads, and dies the
+first time it reaches that line. The settings page carried two of them out of
+the shell (`registeredText` and `executorGlobals`, bootstrap locals it used to
+sit beside), and once the check existed it found three more that had been in
+the tree for weeks:
+
+- **Anti-Fling** read `flingRunning`, a local of the shell it once lived in. As
+  a global it is nil, so the module never stood down during a fling of your own
+  — it fought the feature it was written to make room for.
+- **MM2's Role Fling** did `repeat task.wait(0.05) until not flingRunning` for
+  the same reason. `not nil` is true, so the wait fell straight through and
+  every target was flung on top of the last.
+- **MVSD's teardown** called `destroyAllEsp()`, a function that stopped
+  existing when MVSD's marks were folded into the universal ESP. It threw, and
+  the two lines of cleanup after it never ran.
+
+The check reads what the executor provides from `env.d.luau` and what the shell
+provides from the environment table itself, so there is no hand-kept list to go
+stale.
+
+### The mobile action layer
+
+Placed shortcuts — the buttons a phone player drops on top of the game so a
+feature can be fired without opening the menu — are
+`src/library/MobileActions.luau`: placement mode, dragging, snapping back
+inside the screen, hold bindings that behave like a held key, and remembering
+all of it between sessions.
+
+The launcher, the one button that opens the menu, deliberately did **not** go
+with them. On a phone it is the only way in, so it cannot depend on a download
+arriving: if the library never loads the player loses their shortcuts, not
+their menu. Every call site already asked `if state.bindMobileActionPlacement
+then`, because the layer only ever existed on touch devices, so nothing needed
+a guard added for the new ordering.
+
+### The floating layer
+
+Everything the menu draws *outside* its own window — the favourites list, the
+overlay menu, and the four overlays with their compact settings windows — is
+`src/library/FloatingWindows.luau`. Eighteen hundred lines, and most of the
+reason the shell was still five figures long. It always reached the rest of
+the menu through one table, `state.floatingUi`, which is why the move is a
+relocation and not a rewrite.
+
+Two things the move exposed, both caught by checks rather than by reading:
+
+- The shell published `state.activeGameModule` (the loaded game module) and the
+  overlay wanted the game's *name*, which is a different thing and can change
+  seconds later when the fingerprint resolves. The name is `state.activeGameName`
+  now, written at both points where detection lands, and the first attempt to
+  publish it wrote to a **global** named `state` — the shell's own table is
+  declared three hundred lines further down. The `GlobalUsedAsLocal` lint
+  caught that before it ran anywhere.
+- The layer owns two per-frame loops: the overlay redraw and the profile card's
+  clock. In the shell they simply ran for the life of the menu and were swept up
+  when the task manager was destroyed. A library is started and stopped on its
+  own, so it has to hand them back — and it did not. The harness's teardown
+  check failed the moment the library existed, which is what that check is for.
+
+### The card factory
+
+`createUniversalFeature` — the six hundred lines that build the row a module
+gets on a board: title, description, the switch or button its kind calls for,
+the favourite star, the key slot, the expand arrow, the panel its option rows
+are filed into — is `src/library/Cards.luau`.
+
+It is a library like any other, which means it lands *after* the environment
+every module runs in was built. The loader folds it into the same table the
+option builders use, so one install path covers both, here and in every
+environment a game module gets later. The widget library stopped capturing
+`createUniversalFeature` at init and reads it at call time instead, because it
+can no longer assume the factory exists when it loads.
+
+The build contract followed: the list of names a downloaded file may read is
+now the environment table, plus what the widget library returns, plus anything
+the loader folds in afterwards — so adding another such library needs no edit
+to the checker.
+
+The queue: `state` into typed tables. The shell's four remaining blocks
+(`createTab`, `centerMain`, `validateAssetBytes`, the loading intro) are under
+450 lines each and are genuinely shell work.
+
+## Module architecture
+
+Modules are files, not another thousand lines of `ARandomMenu.luau`. The main
+file is the shell — window, cards, option rows, keybind registry — and
+everything below the shell is downloaded from the repository at runtime:
+
+```
+src/
+  core/
+    Manifest.luau        ordered list of everything the runtime downloads
+    Framework.luau       kernel: categories, modules, options, cleanup
+  library/
+    Widgets.luau         every control an option row is built from
+    SettingsPage.luau    the Config. tab, built the first time it is opened
+    MobileActions.luau   placed phone shortcuts: placement, dragging, holds
+    FloatingWindows.luau favourites, the overlay menu and the four overlays
+    Cards.luau           the card factory every module calls once
+    Entity.luau          player/character cache, team checks, ray queries
+    Render.luau          projection, pooled boxes/lines/labels, highlights
+  modules/
+    Combat/TriggerBot.luau
+    Visuals/PlayerESP.luau
+tools/
+  test/                  headless Roblox stand-in and the module test suite
+```
+
+**The kernel.** `Framework.luau` gives a module file a card and a set of option
+builders, and — the part that matters — a cleanup list. Anything a module
+allocates through `Module:Loop`, `Module:Event` or `Module:Clean` is disposed of
+the moment the module is switched off, so no module carries teardown code and
+none of them can leak a connection:
+
+```lua
+local ESP
+ESP = framework.Categories.Visuals:CreateModule({
+    Name = "Player ESP",
+    Function = function(enabled: boolean): ()
+        if not enabled then
+            return
+        end
+        ESP:Loop(function(deltaTime: number): ()
+            -- redrawn every frame; disconnected automatically on disable
+        end)
+    end,
+})
+local Boxes = ESP:CreateDropdown({Name = "Boxes", List = {"Corner", "Full", "Off"}})
+```
+
+Fly's float engine gained **Bypass**: it holds the altitude but drops you to
+the ground for a fraction of a second every few seconds, so a server that
+checks whether you ever land sees that you do.
+
+Builders available to a module: `CreateToggle`, `CreateSlider`,
+`CreateDropdown`, `CreateList` (a multi-select: same popup, one state mark per
+row, stays open while you tick), `CreateBind`, `CreateTextBox`, `CreateColor`,
+`CreateButton`, `CreateSection` and `CreateNote`. Each returns an option whose `.Value` stays
+current, so a loop reads `Boxes.Value` instead of the module mirroring every
+setting into a table of its own.
+
+**The weapon library.** `src/library/Weapons.luau` answers "what can I swing
+here", which is not the same question as "what Tool am I holding". The BedFight
+dump in `reference/` has no `Tool` instances anywhere: its swords are view
+models under `workspace.CurrentCamera.ViewModel`, its inventory is a hotbar of
+GuiButtons, and on touch the swing comes from a button the game built at
+`PlayerGui.MobileGui.ButtonsFrame.Sword`. The library collects all four shapes —
+tools, view models, inventory slots, on-screen buttons — labels each with its
+kind, and activates each the right way: a tool is equipped and activated, a
+button is pressed by firing the signals a real press raises, in the order the
+engine raises them.
+
+A blocklist keeps the picker honest: a hotbar is full of wool, planks, emotes,
+capes and kit buttons sitting next to the sword, so anything whose name says
+cosmetic, block or emote is dropped, and unnamed buttons are only considered
+when they live in the game's touch controls.
+
+**The entity library.** `Entity.luau` answers the three questions every visual
+and combat module asks — who is alive, where are their parts, which one is under
+the crosshair — in one place, with one team check and one visibility raycast.
+`Refresh`, `Get`, `ForEach`, `Rig` (R6 and R15 bone pairs), `VisibleFrom`,
+`ClosestToRay` and `ClosestToCursor`.
+
+**The manifest.** `src/core/Manifest.luau` is the file list. Adding a module is
+one line there and one file under `src/modules/<Category>/`; nothing in
+`ARandomMenu.luau` changes. The runtime keeps an embedded copy as a fallback for
+a failed manifest download, and the validation workflow fails if the two drift
+apart. Every piece exports the same `init` / `destroy` pair the per-game modules
+use, and `destroy` runs from the menu's own teardown step.
+
+### Module kinds
+
+Three kinds of card, and they look like three kinds of card. The marker under
+the title is a shape rather than a caption — a word like "TOGGLE" on every card
+is noise once you have read it twice, and it eats the width the module name
+needs — and the accent stripe carries the matching colour:
+
+Scrolling boards keep a right-hand gutter the width of the scroll bar plus the
+content padding, so a card sized to the full width no longer sits underneath
+the bar and the board stops looking clipped on that edge.
+
+The card *is* the control. Nothing is bolted onto it — no switch, no chip, no
+marker under the name — because a list of forty modules only stays readable if
+each row is one shape whose surface, weight and edge already say what it is and
+what it is doing:
+
+| Kind | The card |
+| --- | --- |
+| toggle | A row that lifts. Off: muted text on near-black, separated by a hairline. On: the surface rises a step, the name goes white and a two-pixel edge lights the left side. |
+| action | A slab. A whisper of an outline on all four sides and a name that is always white, because a button has no "off"; the surface flashes once under the press. |
+| hold | The same slab, seated a step darker, rising to the lit state for exactly as long as the key is down. |
+| group | Not a control at all: no surface, no outline, no hover — a heading with a rule under it and its options below. |
+
+All of it is near-black through grey; the only "colour" in the interface is how
+light a grey is. One function, `state.applyCardSkin`, owns every one of those
+states, so a restyle, a hover and a toggle cannot disagree about how a card
+should look.
+
+Option rows use a **state mark** rather than a switch: a small square that is
+empty when off and filled when on. A sliding pill is a phone control — wide,
+loud, repeated on every row, and at this size the knob is the only part you can
+actually read.
+
+### Choosing between values
+
+Multiple-choice rows open a list under the control instead of cycling one value
+per click: pick the value you want directly, in one press, with the current one
+marked. The list opens upwards when there is no room below, scrolls past six
+entries, and closes on any press outside it or when the menu is hidden.
+
+### Defaults
+
+Nothing is switched on when the menu loads, and every safety rail starts off:
+wall checks, team checks, visibility checks, require-tool and friend-skipping
+are all opt-in. A module you enable does the blatant thing first and gets
+polite only when you ask it to.
+
+Rates and reaches are the exception, because they are what gets accounts
+collected rather than what makes a module work. Anything that talks to a server
+ships inside the band the game itself produces and says so on the card: Server
+Aura at 20 studs with the slider capped at 40 and a note that nothing past 28
+could have been a real swing, Server Miner at 24 studs and 8 mines a second,
+Bed Nuker at 18 studs, Kill Aura at 8 swings a second (a fast human is 8-12),
+and the Auto Clicker's ceiling lowered from 40 CPS to 28.
+
+### Shipped modules
+
+- **Player ESP** (`Visuals`): corner or full boxes with adjustable thickness,
+  R6/R15 skeletons, name tags, a health bar with exact hit points, distance,
+  the target's equipped tool, tracers from the bottom, the centre or the cursor,
+  and chams as an overlay or an outline. Filters for team, maximum distance and
+  visibility, separate colours for enemies, friendlies and targets behind
+  geometry, plus text size and a redraw interval. Drawn with ordinary
+  GuiObjects rather than the executor `Drawing` API, which several executors
+  implement only partially.
+- **Kill Aura** (`Combat`): swings the equipped weapon at everyone in reach.
+  Swing range and a separate attack range (the distance at which contact
+  damage is fired), swings per second with a per-swing random jitter, max
+  targets, Multi or Single, target priority by distance, health or threat, a
+  field-of-view cone, wall and team checks, rotation off / silent (turned for
+  the swing only, then put back) / face, auto-equip, require-tool and target
+  **Hits per swing** for games that count each press, **Hit through walls** as
+  a decision separate from the wall check (reach and line of sight are not the
+  same question),
+  a **Show target** readout in the corner — the current target's avatar, name,
+  health bar and distance, the way Vape shows it — and highlighting in two
+  colours — one for "in swing range", one for "actually
+  being hit". Damage is delivered through `Tool:Activate()` **and**
+  `firetouchinterest` on the parts inside the target's box, which is what
+  melee weapons with limb-only hitboxes need, and **Swing only** turns the
+  second half off so the module does nothing a hand could not.
+
+  If nothing is ticked and there is no Tool in your hands, the aura asks the
+  weapon library for the best candidate and presses that — without that step it
+  found its target, outlined it and then swung nothing at all in every game
+  that has no `Tool` instances. Weapon detection does not guess, and it is not
+  limited to tools. Everything
+  the weapon library finds is listed in a **Weapons** multi-select — tick the
+  ones the aura may use, in a game that hands you nine swords, a pickaxe and a
+  mobile attack button — and ticked entries are swung through the library, so
+  the module works in games with no `Tool` instances at all. With nothing
+  ticked it falls back to the tool logic: `FindFirstChildOfClass("Tool")` fails the
+  moment a game hands you two tools or names the sword something unexpected, so
+  the module *learns*: it watches `Tool.Activated`, and whatever you swing by
+  hand becomes the weapon it uses. There is also a *Bind held tool* button and
+  a **Weapon name** box (partial match, highest priority), and auto-equip pulls
+  that same weapon back out of the backpack after a respawn. Everything past
+  the five basic controls is folded away behind one switch.
+- **Friend List** (`Utility`, always-on): the one list nothing in the menu
+  touches — comma-separated names, Roblox friends, optionally team-mates, an
+  "add nearest player" button and a clear button. It used to live inside the
+  MM2 module, so the protection disappeared in every other game; MM2 now
+  forwards its `isProtectedTarget` question here, and Kill Aura, TriggerBot and
+  ESP ask the same list.
+- **Click Teleport** (`Movement`, a button card): pick a destination in the
+  panel and press the card. Destinations are **Tap point** (arms the module;
+  the next tap on the world is where you go), **Nearest player** (friends
+  excluded), **Named player** (partial name or display name), **Item** (nearest
+  part or model in the workspace whose name contains what you typed, so
+  "chest" finds "GoldChest"), **Waypoint** and **Last position** — plus *Save
+  waypoint* and *Go back* buttons. Travel is Instant or Glide, with height
+  offset, an offset that stops you short of a player instead of inside them,
+  search range and an optional keep-momentum. The old version raycast with
+  `Camera:ViewportPointToRay(input.Position)` — input positions include the
+  36-pixel top bar and viewport points do not, so every teleport landed above
+  the finger and on touch it usually hit nothing at all; it uses
+  `ScreenPointToRay` now.
+- **Auto Clicker** (`Combat`): it never clicks on its own. Turning it on arms
+  it; your finger fires it — *Hold click* follows the real attack button (the
+  mouse on a desktop, any finger on the screen on touch) and *Hold key* runs
+  while a key of your own is down, which is the SpeedAutoClicker shape. The
+  rate is one two-handle **CPS** slider, not a pair of "minimum"/"maximum"
+  rows, and every gap is drawn between its ends. A click means one of four
+  things: `Tool` (`Tool:Activate()`, which works on a phone, and falls through
+  to the weapon library for games with no `Tool` instances at all), `Left
+  click`, `Right click`, or **`Screen button`** — games that build their own
+  on-screen attack button put a GuiButton in your PlayerGui, and the clicker
+  presses it exactly as a finger does, by firing the signals a tap raises.
+  Press *Learn button*, tap the game's button once, and it is bound; the name
+  is remembered so a HUD rebuilt between rounds is found again. The menu's own
+  buttons are never eligible, the executor-level click paths stand down while
+  the menu is open, and *Weapons only* keeps it from swinging a pickaxe.
+- **TriggerBot** lost the two rows nobody should have to think about: the
+  reaction delay always carries a random third of itself (a reaction time
+  without variation is a signature), and "require tool" was a question with one
+  answer. It fires through the press/release pair when the executor has one,
+  because a weapon that arms on the press and fires on the release ignores a
+  click helper that does both in the same instant.
+- **Player ESP** boxes are the projected corners of the character's own
+  bounding box, not a height guess with a fixed width ratio. The old box took
+  two points and made the width 52% of the height, so an angled camera, a rig
+  with its arms out or a target near the screen edge all produced the wrong
+  shape — and a corner behind the lens projects to a huge negative coordinate,
+  which is where the sudden stretching came from. Targets with any corner
+  behind the camera are skipped outright.
+- **Player ESP** draws in **team colours** by default, reading each player's
+  own `Team.TeamColor`, and puts the name on a dark plate so it stays readable
+  over snow or a bright sky. The two-grey scheme is still there for teamless
+  games.
+- **Kill Aura's weapon list is melee only.** It used to offer everything the
+  client owned — the bow, the blocks, the first-person rig ("RightUpperArm"),
+  animation tracks, the emote wheel — because a view model contains the whole
+  rig and a hotbar contains the whole inventory. The weapon library answers one
+  question now (is this a blade, a haft or a fist), and only those are listed,
+  found by `Best` or swung by the fallback path.
+- **Item Render** (`Visuals`): object ESP — the name of every listed object,
+  drawn above it with its distance, and its silhouette outlined through walls.
+  The objects are a **multi-select list**, not a comma string: each one can be
+  ticked and unticked on its own. **Touch part** hides the menu, waits for one
+  tap on the world, takes the name of whatever was under it (the model's name,
+  not the plank's) and adds it to the list already ticked — and from then on
+  *every* object with that name is rendered, so one tap on one iron ore lights
+  up all of them. Names can also be typed in, and the sweep interval, distance,
+  colour, text size and outline are all adjustable.
+- **Remote Logger** (`Utility`): records what the game sends to its own
+  remotes — the live-only half of reverse engineering, the part no decompiler
+  can give you, because it is the *values* a specific action produces. Full
+  instance path, method, the type and value of every argument, the call count
+  and a ready-to-paste snippet, written as a readable `.txt` and a `.json` to
+  `ARandomMenu/RemoteLogs/<place>-<time>`.
+
+  It is built not to interfere. The hook does three things — check a boolean,
+  read the namecall method, push references onto a queue — and returns; a normal
+  loop drains that queue a frame later and does the describing there. The
+  earlier version built the instance path inside the hook, and `GetFullName` is
+  itself a namecall, so the logger re-entered itself on every call: enough
+  delay on a shop button firing three remotes to make the purchase fail. Now
+  nothing inside the hook calls an Instance method or allocates a string,
+  `checkcaller` drops the menu's own traffic, and each remote's arguments are
+  sampled a few times rather than on every one of sixty calls a second.
+- **TriggerBot** (`Combat`): always-on or hold-to-arm, single or automatic,
+  reaction delay with a per-acquisition random jitter, minimum time between
+  shots, target-part filter (any, head, torso), an aim radius in pixels that
+  switches the search from an exact raycast to a screen-space query, maximum
+  distance, team check, wall check and a require-tool switch. Firing goes
+  through `Tool:Activate()` and `mouse1click()` so a game that ignores one
+  still receives the other.
+
+### Performance
+
+Frame time was being spent in four places, and all four are now paid once
+instead of repeatedly:
+
+- **The entity list** is built once per frame. ESP, Kill Aura and TriggerBot all
+  ask on the same frame; `Refresh` coalesces calls inside a 15 ms window and
+  reuses one table per player instead of allocating a fresh one for each,
+  which keeps the collector out of the frame budget.
+- **Rig bones** are resolved once per character and cached. Fourteen
+  `FindFirstChild` pairs per player per frame bought nothing: a rig does not
+  change shape between frames.
+- **The ESP's visibility raycast** — one ray per player per frame in a full
+  server — is cached for a tenth of a second, the redraw interval defaults to
+  30 ms rather than every frame, and distance rejection happens before any
+  projection or lookup.
+- **Item Render** keeps an index of matching objects, built once and maintained
+  from `DescendantAdded`/`DescendantRemoving`, instead of walking
+  `workspace:GetDescendants()` five times a second — on a real map that is tens
+  of thousands of instances per sweep. BedFight's bed and generator sweeps are
+  cached the same way, and the weapon scan (which walks the whole PlayerGui) is
+  cached for a second, so an aura swinging nine times a second scans once.
+
+The test suite asserts each of these: three refreshes in one frame do one
+sweep, a later frame sweeps again, rig tables are identical between calls, and
+three weapon scans walk the interface once.
+
+### The workflow
+
+`.github/workflows/validate.yml` should be one step: `bash tools/validate.sh`.
+The intended file is checked in at **`tools/workflow-validate.yml`** — copy it
+over the workflow yourself, because a GitHub App cannot push to
+`.github/workflows/`.
+
+The hand-written steps in the current workflow walk every `.lua` file in the
+repository, which used to fail on `reference/vape-v4-universal.lua`: that is
+third-party source whose first line is its own cache watermark, not
+`--!strict`. Rather than edit somebody else's file, the dump now carries a
+`.txt` suffix — it is kept for reading, not compiled — so both the old workflow
+and `tools/validate.sh` (which prunes `reference/` anyway) are happy.
+
+### Contracts the build enforces
+
+`tools/validate.sh` runs every check the repository holds itself to, and three
+of them exist because the compiler cannot see the bug:
+
+* **Option contract** — a module that reads `Options["Delay"]` after the row
+  was renamed to `"Reaction"` fails the build. The read would return nil and
+  take the module down mid-frame, in game, silently.
+* **State contract** — a module that reads `state.something` nothing in the
+  repository ever assigns fails the build. This is what caught the projectile
+  calibration reading `.settings` after the field became `.tuning`.
+* **Builder contract** — a game module that calls a builder missing from
+  `createGameModuleEnvironment` fails the build. A missing builder kills the
+  module halfway through its panel, which is how Kill Aura once rendered a
+  "Weapon" heading with nothing under it.
+* **Connection contract** — `featureConnections.X` with no matching
+  `disconnectFeatureConnection("X")` fails the build: that is a callback that
+  outlives the module being switched off.
+* **Card-name contract** — a game module cannot register a card whose name the
+  universal set already uses, because on one board that is two identical rows.
+* **Dead-option contract** — an option that is neither read
+  (`Options["Name"]`) nor given a `Function` fails the build. A menu grows into
+  a wall of switches one plausible-looking option at a time, and this is the
+  one class of slop a script can recognise.
+* **Text-fits contract** — a label shorter than its own line box fails the
+  build. Every label clips to its frame and `TextSize` is
+  `normalSize x 1.35 x textScale`, so a 13-point title renders at 18px and
+  needs about 23 pixels of room: the page header had 20 and the tail of the "g"
+  in "Settings" was shaved off. At runtime the font size is also capped to the
+  box it is in, so a face taller than the one a height was tuned for comes out
+  a point smaller instead of cut.
+
+Plus the lints that have each cost this repository a real bug —
+`GlobalUsedAsLocal` (a closure naming a local declared further down reads a
+global, nil at runtime), `LocalShadow`, `LocalUnused`, `DuplicateLocal`,
+`DuplicateFunction`, `UnreachableCode` — are errors, not warnings, across every
+file.
+
+### Tests
+
+`luau tools/test/run.luau` loads the framework, the entity library and every
+module file against a stand-in Roblox (`tools/test/Roblox.luau`) and a stand-in
+menu host (`tools/test/Host.luau`), switches each module on, drives it for a few
+frames and switches it off again. It asserts that options exist with usable
+defaults, that loops run, that a delay is actually waited out, that a team-mate
+under the crosshair is never shot, and that nothing survives teardown.
+
+`bash tools/validate.sh` is the whole gate in one command: JSON manifests,
+source layout, module contracts, manifest/runtime-fallback agreement, strict
+headers, the loader guards, compilation at both optimisation levels, the
+200-local register headroom probe and the module tests. It picks up
+`luau-compile` and `luau` from `LUAU_DIR`, from `PATH` or from `/tmp/luau`:
+
+```bash
+LUAU_DIR=/path/to/luau bash tools/validate.sh
+```
+
+On a runner (`CI=true`, which GitHub sets, or `REQUIRE_LUAU=1`) a missing
+toolchain fails the job instead of skipping the compile and the tests — a
+skipped check that reports success is worse than no check. Locally it just says
+so and stops.
+
+The GitHub workflow should point a step at this script so the two cannot drift:
+
+```yaml
+      - name: Run repository checks
+        run: bash tools/validate.sh
+```
+
+`LUAU_DIR` is optional there: the script already looks in `PATH` and in
+`/tmp/luau`, which is where the workflow's existing compile step unpacks the
+Luau release.
+
+## BedFight module
+
+`src/games/BedFight.luau` loads for place `71480482338212` and is built from the
+saved place in `reference/`, not from guesswork:
+
+- **Bed ESP** — `Workspace.BedsContainer` and the map's own `Beds` folder, each
+  bed labelled with its distance.
+- **Generator ESP** — the Diamond and Emerald generator parts, labelled with
+  the countdown the game itself renders in `ProgressGui.TimerLabel`, so the
+  number on screen is the game's number rather than a second-hand guess.
+- **Round Info** — `Status`, `GameMode` and `AllBedsBroken` read live from
+  `ReplicatedStorage.GameInfo`, with the number of beds still standing.
+- **Auto Swing** — presses the game's own sword button on a timer, because this
+  game has no `Tool` to activate.
+- **Scaffold** — places the game's own blocks, not a local platform: it equips
+  a block from the hotbar, aims down at the gap and presses the game's build
+  control, only while there is nothing under your feet. Log `PlaceBlock` with
+  the Remote Logger and the button press can become the call itself.
+- **Anti Void** — the kill height comes from `GameInfo.DeathBarrierInfo`, so
+  the margin is measured against the game's own plane: it remembers where the
+  ground last held you, and when you cross the margin with nothing below it
+  stops the fall and puts you back there.
+- **Bed Nuker** — hits the nearest bed in range with the game's own controls:
+  the swing button plus contact events against the bed's hitbox, at a rate you
+  set.
+
+### Captured remotes
+
+The Remote Logger did its job: the logs in `reference/remote-logs/` contain the
+real argument shapes, so these are called with what the game itself sends
+rather than with a guess.
+
+| Remote | Arguments as the client sends them |
+| --- | --- |
+| `ItemsRemotes.EquipTool` | `("Wooden Sword")` |
+| `ItemsRemotes.PlaceBlock` | `("Green Wool", 5, Vector3(-237, 60, 6))` |
+| `ItemsRemotes.SwordHit` | `(«Model PlayersContainer.someone», "Wooden Sword")` |
+| `PurchaseItemShopItem` | `(«Part …ItemShopPrompts.ItemShopPrompt», "Blocks", "Wool")` |
+| `WearArmor` | `("", "Pants")` |
+| `ItemsRemotes.MineBlock` | `("Wooden Pickaxe", «Part …PlayersBlocksContainer.Wool.Blue Wool», Vector3(30, 69, 288), Vector3(30.93, 75.36, 287.98), Vector3(-0.13, -0.98, -0.12))` |
+| `ItemsRemotes.DropItem` | `("Blue Wool", "All")` |
+
+`SwordHit` is the one that matters: the client names the victim and the weapon,
+and the server takes its word for it. Damage does not depend on where you are
+standing, which is what the features below are built on — and why they are
+rate-limited and range-limited rather than fired at everyone on the server
+every frame.
+
+- **Server Aura** — reports hits directly. No swing, no reach, no line of
+  sight: range, hits per second, maximum targets, optional team check, and the
+  Friend List is respected. The weapon name is read from the view model you are
+  actually holding unless you type one.
+- **Server Scaffold** — places real blocks with `PlaceBlock`, snapped to a grid,
+  under you and up to five tiles ahead along the way you are moving, only over
+  a gap. The second argument (the constant `5` the client always sends) is
+  exposed as *Variant* in case it turns out to mean something.
+- **Auto Buy** — buys through `PurchaseItemShopItem` on a timer, passing the
+  nearest shop prompt on the map. Observed categories: Blocks, Swords,
+  Pickaxes, Armor.
+- **Server Miner** — `MineBlock` names the tool, the block, its grid position,
+  where the swing came from and which way it went, all chosen by the client:
+  so it mines every block in range without a pickaxe equipped, without standing
+  next to it and without pointing at it. Range, rate, blocks per tick and a
+  name filter.
+- **Quick Actions** — one-shot `EquipTool`, `WearArmor` and `DropItem` calls
+  with editable arguments.
+- **Bed Nuker** gains an optional *Server hit* through `SwordHit` and an
+  optional *Mine remote* through `MineBlock`, both aimed at the bed's own part.
+  Beds did not break by hand in testing, so which of the two the server accepts
+  for a bed is still an open question — both are off by default.
+
+**Nothing has to be in your hands.** Every one of these remotes takes the
+*name* of a tool, not the tool itself: `MineBlock("Wooden Pickaxe", …)`,
+`SwordHit(model, "Wooden Sword")`, `PlaceBlock("Blue Wool", …)`. So Server
+Aura, Server Miner and Server Scaffold all work empty-handed, and the universal
+Kill Aura's *Auto equip* is off by default — nothing in this menu decides what
+you are holding unless you ask it to.
+
+`PlaceBlock`'s second argument turned out not to be constant (5 in one session,
+3 in another — most likely the hotbar slot), so it is exposed as *Variant*
+rather than baked in. `DestroyBlock` is still uncaptured.
+
+## MM2 module
+
+- **Clones are recognised.** MM2 is copied constantly ("MMV" and friends): same
+  game, different PlaceId, so a PlaceId table alone left every copy with no
+  game tab. When the PlaceId is unknown the runtime fingerprints the place
+  instead — the `Remotes.Gameplay` round pipeline, `ClientServices.WeaponService`
+  with its `GunFired` event, the `MainGUI.Game.Timer` HUD, the `Murderer`
+  collision group and the map's coin container. Four of those five must match,
+  each is something the game genuinely needs to work, and the check is retried
+  briefly while the client is still replicating. `GAME_CHECK.matches()` answers
+  for the game a clone is a copy of, so game modules keep working there without
+  comparing PlaceIds themselves, and the Settings page reports how the game was
+  recognised (`MM2 · fingerprint 5 markers`).
+
+- **Player ESP** was fifteen flat rows (a toggle, a colour and a transparency
+  slider per role, plus coins and traps). It is now grouped under Roles /
+  Appearance / World headings, each role is a toggle plus its colour, and the
+  five per-role sliders collapse into one shared **Player fill**.
+- The ESP also *works* now. It used to be gated behind `hasActiveRoundRoles()`,
+  which needs the round table to name a Murderer/Sheriff or a player to be
+  holding the weapon — but other players' Backpacks never replicate, so at the
+  start of a round nothing qualified and the module drew nothing at all. It now
+  runs whenever it is on (with an opt-in **Only during rounds** toggle) and
+  maintains one Highlight per player instead of destroying and rebuilding every
+  highlight twice a second, which also fixes the flicker and the highlights
+  lost on respawn.
+- **Gun Visuals** is **Gun ESP**, and the in-world markers follow the menu:
+  a dark glass plate with a grey hairline and off-white text, with the role
+  colour reduced to a slim accent bar instead of a coloured border.
+- **Always Show Timer** draws nothing of its own. MM2's HUD decides who sees
+  its countdown in exactly one place: the client handler for the `RoundStart`
+  remote shows `MainGUI.Game.Timer` for every role except Innocent, and its
+  update loop only refreshes that label while your role is not Innocent. The
+  module therefore *replays that client event locally* with the local player
+  marked as a non-Innocent role, and the game brings up and drives its own
+  timer — the display is the game's, not the menu's. The place has exactly one
+  listener on that remote, so nothing else reacts to the replay; switching the
+  module off replays the real round data to put the HUD back. Executors that
+  cannot replay a client event fall back to revealing the label and writing the
+  countdown in the game's own `1m 7s` format.
+- **Player ESP is instant**: the pass runs every frame (it only walks the
+  player list and writes three properties on an existing Highlight) and
+  rebuilds immediately on joins, respawns and role changes, so a murderer who
+  swaps weapons or dies is recoloured on the next frame.
+- **Shoot** and **Knife** are device-independent. Aim is solved locally with
+  CFrame maths and a raycast, then the gun's own `Shoot` remote is fired with
+  `(origin, aim)`: no mouse, no `hookfunction`, no touch-specific weapon API.
+  Redirect mode is gone. It needed to replace a WeaponService aim accessor by
+  name and nothing ever captured what those are called, so the code hooked
+  seven guessed ones; when none matched — the common case, and always on an
+  executor without `hookfunction` — it fell through to the same
+  `Shoot:FireServer(origin, aim)` that Manual already fires. It was a second
+  switch for one behaviour. `WeaponService.GunFired` stayed: it is one of the
+  five place fingerprints, and it now connects as a plain observer for the
+  miss feedback instead of riding along on a hook installer.
+- **Sprint** is the reference `hold` module. The hard-coded LeftControl watch
+  is gone entirely: the module is always running, its key slot starts unbound,
+  and the key the player picks is the only thing that makes it run — held means
+  sprint, released means stop. It never enables or disables anything and never
+  toasts. The speed is re-applied every frame because the game resets
+  `WalkSpeed` on respawn, on round start and when a tool is equipped.
+- **Improve FPS** moved out of this module into Universal.
+- Two lookups were verified against a dump of the live place and fixed:
+  `findMM2Map()` required a `CoinContainer` child, but current maps ship
+  `CoinAreas` (a live map reads `ResearchFacility > CoinAreas / Interactive /
+  Base / Spawns`), so it always returned `nil` and silently disabled Teleport
+  to Map, Loop All Interact and the map-scoped sweeps; and the dropped-gun
+  search now also accepts the plain `Gun` tool lying in the workspace,
+  returning its handle so the pivot and highlight paths keep working.
+- The timer work is likewise built on the real hierarchy: `MainGUI.Game.Timer`
+  with its `XPText` label, which the game's HUD only refreshes while your role
+  is not Innocent — hence the menu writing the countdown itself, in the game's
+  own `1m 7s` format, when it would otherwise be frozen.
+
 ## Source layout
 
-- `src/games/Universal.luau`: universal and movement module contract.
+- `tools/layout-preview.html`: development harness that mirrors
+  `computeLayoutMetrics` so the Mobile/Tablet/Desktop shells, the collapsed
+  rail, the card columns and the chrome-less overlays can be reviewed in a
+  browser at the reference viewports. It is never downloaded by the runtime.
+- `src/core/Manifest.luau`: the ordered list of framework, library and module
+  files the runtime downloads.
+- `src/core/Framework.luau`: the module kernel (categories, options, cleanup).
+- `src/library/Entity.luau`: shared player/character queries.
+- `src/modules/<Category>/*.luau`: one file per module.
+- `tools/test/*.luau`: headless Roblox stand-in and the module test suite.
+- `tools/validate.sh`: every repository check in one command.
+- `reference/`: third-party sources kept for reading; never loaded or validated.
+- `src/gui/Current/Assets/Brand/`: the menu logo and the player-card backdrop.
+
+Artwork that no code referenced (112 files: the blossom animation frames, the
+arrow set, the manga-era decorations, particles and frames) and the 24 MB MM2
+place dump used while reverse-engineering that game have been removed, along
+with their now-dangling entries in the asset catalogue. What remains under
+`src/gui/Current/Assets` is either loaded at runtime or pinned by the
+validation workflow.
+- `src/games/Universal.luau`: the universal/movement module contract only — a
+  manifest of feature ids, names and ordering. Every universal implementation
+  (Fly, Speed, Infinite Jump, Click Teleport, Noclip …) lives in
+  `ARandomMenu.luau`.
 - `src/games/MM2.luau`: complete MM2 implementation.
 - `src/games/TRS.luau`: complete TRS implementation.
 - `src/games/VD.luau`: Violence District survivor, killer and visibility tools.
 - `src/gui/Current/gui.lua`: reusable presentation-only GUI controller.
 - `src/gui/Current/Images`: optional normal image assets.
 - `src/Profile`: compatibility data retained for older loaders.
+
+## Typeface
+
+`Config. → Interface font` lists every face the client ships (read from
+`Enum.Font` at runtime rather than hard-coded, so a newer client offers more and
+an older one does not lie), plus the three the repository carries:
+**Candy Fruits**, **Valve** and **Minecraft (Monocraft)** — a Minecraft-shaped
+face under the SIL Open Font License, vendored from
+[IdreesInc/Monocraft](https://github.com/IdreesInc/Monocraft) together with its
+licence at `src/gui/Current/Assets/Typography/Monocraft-OFL.txt`. That is a
+little over fifty options.
+
+Lists longer than eight entries — the typeface picker among them — open with a
+filter field at the top, so fifty faces are one search away rather than a long
+scroll.
+
+Monocraft is verified as a real OTF: `OTTO`/CFF outlines, 13 tables with every
+required one present, 1,698 glyphs, all 95 printable ASCII characters mapped,
+family "Monocraft", monospaced, and a single weight (Regular 400). That last
+point matters — a Roblox font *family* is a JSON manifest with one file per
+weight, while a single-file face has exactly one. Asking such a file for Bold
+returns a synthetic smear or nothing, so the picker uses single-file faces at
+the one weight they have and lets size carry the hierarchy; only real families
+get the bold/semibold/regular treatment.
+
+Choosing one rebuilds the menu's three weights — bold for titles, semibold for
+controls, regular for body — from the chosen family and repaints every label
+already on screen, each keeping the weight it was designed with, so headings
+stay heavier than body text whatever the family. Repository fonts are
+downloaded, cached and turned into an asset id through the same path the
+decorative fonts already use, off the input thread; the choice is stored in the
+config and restored on the next injection.
+
+## Brand, icons and player card
+
+- **There is no intro at all.** No curtain, no wordmark, no ring, no progress
+  bar, no "Ready" held on screen. The menu builds itself hidden and the
+  launcher button appearing *is* the signal that it is ready — press it and the
+  window is already complete, which is how Vape loads. The build stamp and any
+  initialisation failure go to the console.
+- **The launcher is a touch-device control.** A phone has no key to press, so
+  the button floating over the game is both the way back in and the sign that
+  the menu finished loading. A machine with a keyboard has the menu key for
+  both jobs, so the button is not drawn there at all — it would only be a
+  circle sitting on top of the game — and a single toast at startup names the
+  key instead.
+- **The launcher can be dragged.** It sits over the game, so it can land
+  exactly where a game put a button of its own; press and drag moves it,
+  a press that does not travel still opens the menu, and where it ends up is
+  saved with the rest of the interface state.
+- **Click the key slot, then press a key.** The slot shows `...` while it is
+  waiting and takes the next key; pressing the key it already holds clears it.
+  Binding on hover was tried and removed: the pointer resting over a slot
+  turned every keystroke into a rebind, which is unusable. A click is the
+  gesture that says "I meant this one".
+- **Three lines, not three dots.** Every card's settings handle is a drawn
+  hamburger — three frames, dimmed when the module has nothing to configure —
+  instead of a "..." that read as truncated text. It is drawn rather than typed
+  because the interface typeface is swappable and a glyph would change shape
+  with it.
+- The drawn icons are solid white glyphs on full transparency, in the same
+  language as the rest of the interface: a running figure for Movement, a
+  chunky six-tooth gear for Config., a filled star for Favourites and two
+  stacked panels for Overlays.
+- The menu's logo (`src/gui/Current/Assets/Brand/menu-logo.jpg`) is drawn on
+  both places the menu identifies itself: the floating launcher button and the
+  brand mark at the top of the navigation rail. Both keep their lettering as a
+  fallback, so an executor without `getcustomasset` loses nothing. The launcher
+  only exists while the menu is hidden — it used to sit on top of the open
+  window, where it read as a second, broken close button.
+- Navigation tabs carry icons instead of two-letter monograms. Game tabs
+  (Universal, MM2, TRS, VD, MVSD) show the game's own icon, fetched by asset id
+  through `MarketplaceService:GetProductInfo` — `rbxthumb://type=GameIcon` only
+  resolves for the place the client is connected to, which is why every tab but
+  Universal used to come up blank. Movement gets a walking figure and Config. a
+  gear (`src/gui/Current/Assets/Icons/nav-*.png`), and the two floating-window
+  launchers get a star and a stacked-windows glyph (`window-*.png`). Monograms
+  remain the fallback.
+- The brand mark above the tab list closes the menu, and the launcher button —
+  now shown on desktop as well, and only while the menu is hidden — opens it
+  again.
+- The foot of the rail carries a **player card**: the account's avatar
+  (`rbxthumb://`, resolved by the engine itself — no download), display name,
+  handle, and a line with the date this account first ran the menu, how many
+  sessions it has had and how long the current one has been going. The date and
+  the counter live in the config file; the session clock restarts with the
+  injection. Collapsed rails show the avatar alone.
 
 ## Images
 

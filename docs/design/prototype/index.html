@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<!--
+  ClickGUI prototype.
+
+  This is not the menu. It is the specification for the menu, written in the one
+  language that cannot be vague about a 1px border or a 20px row: a browser.
+  Every number in here — row height, title bar height, gaps, the exact way a
+  slider draws — is the number the Luau widgets will be built with, and the
+  UI Settings window is the real customisation surface, live, so the shape of
+  the theme token table can be argued with before a line of Luau exists.
+
+  Deliberately dependency-free and single-file: it has to survive being opened
+  from disk a year from now.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ARandomMenu — ClickGUI prototype</title>
+<style>
+:root{
+  /* Colour tokens. Everything the menu draws comes from these seven. */
+  --bg:#0a0a0c;
+  --accent:#6f4cff;
+  --enabled:#6f4cff;
+  --text:#f0f0f2;
+  --muted:#8a8a93;
+  --border:#2a2a30;
+  --arrow:#6f4cff;
+  --pin:#6f4cff;
+  --accent-text:#ffffff;
+  --enabled-text:#ffffff;
+
+  /* Shape tokens. */
+  --opacity:.86;
+  --tip-opacity:.95;
+  --radius:0px;
+  --row-h:22px;
+  --title-h:26px;
+  --max-h:340px;
+  --scale:1;
+  --border-w:1px;
+  --font:'Inter','Segoe UI',system-ui,-apple-system,sans-serif;
+  --gap:2px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  font-family:var(--font);
+  background:#101014 url('bg.jpg') center/cover no-repeat;
+  overflow:hidden;
+  user-select:none;
+  -webkit-font-smoothing:antialiased;
+}
+#scaler{position:absolute;inset:0;transform:scale(var(--scale));transform-origin:top left}
+
+/* ---------------------------------------------------------------- wordmark */
+#brand{position:absolute;left:14px;top:10px;pointer-events:none}
+#brand .word{font-size:26px;font-weight:800;letter-spacing:-.02em;color:#fff;
+  text-shadow:0 2px 10px rgba(0,0,0,.6);line-height:1}
+#brand .word span{color:var(--accent)}
+#brand .ver{font-size:10px;color:var(--muted);margin-left:6px;font-weight:600;letter-spacing:.04em}
+#stats{margin-top:8px;font:11px/1.5 ui-monospace,'SF Mono',Menlo,monospace;color:var(--text);
+  text-shadow:0 1px 4px rgba(0,0,0,.8);opacity:.85}
+#stats b{color:var(--accent);font-weight:600}
+
+/* -------------------------------------------------------------------- pill */
+#pill{position:absolute;left:50%;top:12px;transform:translateX(-50%);
+  display:flex;align-items:center;gap:2px;padding:5px 7px;border-radius:999px;
+  background:rgba(16,18,28,.72);backdrop-filter:blur(14px);
+  border:1px solid rgba(255,255,255,.09);box-shadow:0 6px 22px rgba(0,0,0,.45)}
+#pill button{width:32px;height:32px;border:0;border-radius:999px;background:transparent;
+  color:#e8e8ee;cursor:pointer;display:grid;place-items:center;transition:background .12s}
+#pill button:hover{background:rgba(255,255,255,.1)}
+#pill button.on{background:var(--accent);color:var(--accent-text)}
+#pill .sep{width:1px;height:18px;background:rgba(255,255,255,.14);margin:0 4px}
+#pill svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.9;
+  stroke-linecap:round;stroke-linejoin:round}
+
+/* ---------------------------------------------------------------- hud list */
+#hud{position:absolute;right:12px;top:56px;text-align:right;pointer-events:none;
+  display:flex;flex-direction:column;gap:1px}
+#hud div{font-size:13px;font-weight:600;color:var(--accent);
+  text-shadow:0 1px 4px rgba(0,0,0,.9);animation:slidein .15s ease-out}
+#hud div i{color:var(--muted);font-style:normal;font-weight:500}
+@keyframes slidein{from{transform:translateX(14px);opacity:0}to{transform:none;opacity:1}}
+
+/* ----------------------------------------------------------------- windows */
+.win{position:absolute;width:200px;border:var(--border-w) solid var(--border);
+  border-radius:var(--radius);overflow:hidden;box-shadow:0 8px 26px rgba(0,0,0,.42)}
+.win.pinned{box-shadow:0 0 0 1px var(--pin),0 8px 26px rgba(0,0,0,.42)}
+.tbar{height:var(--title-h);background:var(--accent);color:var(--accent-text);
+  display:flex;align-items:center;padding:0 3px 0 7px;cursor:grab;
+  font-size:16px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+.tbar.drag{cursor:grabbing}
+.tbar .sp{flex:1}
+.tbar button{width:15px;height:15px;margin-left:2px;border:0;border-radius:2px;
+  background:rgba(0,0,0,.22);color:var(--accent-text);cursor:pointer;font-size:9px;
+  display:grid;place-items:center;line-height:1;opacity:.85}
+.tbar button:hover{opacity:1;background:rgba(0,0,0,.4)}
+.tbar button.act{background:var(--pin);color:#000}
+.body{background:rgba(0,0,0,0);max-height:var(--max-h);overflow-y:auto;overflow-x:hidden;
+  padding:var(--gap);display:flex;flex-direction:column;gap:var(--gap)}
+.win.col .body{display:none}
+.body::-webkit-scrollbar{width:4px}
+.body::-webkit-scrollbar-thumb{background:var(--border)}
+
+/* --------------------------------------------------------------------- row */
+.row{height:var(--row-h);display:flex;align-items:center;padding:0 4px 0 6px;
+  font-size:12px;color:var(--text);cursor:pointer;position:relative;
+  background:rgba(0,0,0,.5);border-radius:calc(var(--radius) - 2px);
+  transition:background .1s}
+.row:hover{background:rgba(255,255,255,.09)}
+.row.on{background:var(--enabled);color:var(--enabled-text);font-weight:600}
+.row.on:hover{filter:brightness(1.12)}
+.row .nm{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .key{font-size:9.5px;font-weight:700;letter-spacing:.04em;padding:1px 4px;
+  border:1px solid currentColor;border-radius:2px;opacity:.75;margin-left:4px}
+.row .fav{margin-left:4px;opacity:0;font-size:11px}
+.row:hover .fav{opacity:.55}
+.row .fav.on{opacity:1;color:#ffc65c}
+.row .arw{margin-left:5px;font-size:8px;color:var(--arrow);transition:transform .14s}
+.row.on .arw{color:currentColor}
+.row.open .arw{transform:rotate(90deg)}
+
+/* ---------------------------------------------------------------- settings */
+.kids{background:rgba(0,0,0,.42);border-left:2px solid var(--accent);
+  margin:0 0 0 4px;padding:3px 5px;display:flex;flex-direction:column;gap:3px;
+  overflow:hidden}
+.sec{font-size:9.5px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--muted);margin:3px 0 1px}
+.line{display:flex;align-items:center;font-size:16px;color:var(--text);gap:6px;
+  min-height:15px}
+.line .lb{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.line .vl{color:var(--muted);font-variant-numeric:tabular-nums;font-size:11px}
+.bar{height:6px;background:rgba(255,255,255,.1);position:relative;cursor:pointer;
+  border-radius:1px;margin-bottom:1px}
+.bar .fill{position:absolute;inset:0 auto 0 0;background:var(--accent);border-radius:1px}
+.bar .knob{position:absolute;top:-5px;width:16px;height:16px;background:var(--text);
+  border-radius:1px;transform:translateX(-8px)}
+.cb{width:22px;height:22px;border:1px solid var(--border);background:rgba(0,0,0,.5);
+  display:grid;place-items:center;font-size:9px;color:var(--enabled);flex:none;border-radius:2px}
+.cb.on{background:var(--enabled);color:var(--enabled-text);border-color:var(--enabled)}
+.dd{background:rgba(0,0,0,.5);border:1px solid var(--border);border-radius:2px;
+  padding:1px 5px;font-size:11px;color:var(--text);cursor:pointer}
+.swatch{height:6px;border-radius:1px;margin-bottom:1px;border:1px solid rgba(0,0,0,.5)}
+.note{font-size:10.5px;line-height:1.35;color:var(--muted);padding:2px 0}
+.btn{background:rgba(0,0,0,.5);border:1px solid var(--border);border-radius:2px;
+  color:var(--text);font-size:11px;padding:3px 6px;cursor:pointer;text-align:left}
+.btn:hover{background:var(--accent);color:var(--accent-text);border-color:var(--accent)}
+
+/* ----------------------------------------------------------------- tooltip */
+#tip{position:fixed;z-index:9999;pointer-events:none;max-width:230px;display:none;
+  background:rgba(6,6,9,var(--tip-opacity));border:1px solid var(--border);
+  border-radius:var(--radius);padding:5px 7px;font-size:11px;line-height:1.4;color:var(--text);
+  box-shadow:0 6px 18px rgba(0,0,0,.5)}
+
+/* ------------------------------------------------------------ status strip */
+#status{position:absolute;left:14px;bottom:10px;font-size:10.5px;color:var(--muted);
+  text-shadow:0 1px 4px rgba(0,0,0,.9)}
+#status b{color:var(--text);font-weight:600}
+#toasts{position:absolute;right:12px;bottom:12px;display:flex;flex-direction:column;
+  gap:6px;align-items:flex-end}
+.toast{background:rgba(8,8,11,.92);border:1px solid var(--border);border-left:2px solid var(--accent);
+  border-radius:var(--radius);padding:6px 10px;font-size:11.5px;color:var(--text);
+  animation:tin .18s ease-out;box-shadow:0 6px 18px rgba(0,0,0,.5)}
+.toast small{display:block;color:var(--muted);font-size:10px;margin-top:1px}
+@keyframes tin{from{transform:translateY(10px);opacity:0}to{transform:none;opacity:1}}
+body.nomo *{animation:none!important;transition:none!important}
+</style>
+</head>
+<body>
+<div id="scaler">
+  <div id="brand">
+    <div class="word">ARANDOM<span>MENU</span><span class="ver">v2.1</span></div>
+    <div id="stats"></div>
+  </div>
+
+  <div id="pill"></div>
+  <div id="hud"></div>
+  <div id="status">Ready · <b>Default</b> profile · build 21.08</div>
+  <div id="toasts"></div>
+</div>
+<div id="tip"></div>
+
+<script>
+"use strict";
+
+/* The real menu's categories and cards. Option lists are trimmed to what a
+   window needs to look honest — the point of the prototype is the chrome. */
+const DATA = {
+  Combat: [
+    {n:"Kill Aura", k:"R", t:"Swing at everything in range, on whichever of four triggers this game answers.", o:[
+      {s:"Targeting"},{d:"Mode",v:"Closest",l:["Closest","Lowest health","Crosshair"]},
+      {r:"Range",v:14,min:4,max:40},{r:"Delay",v:.25,min:.05,max:1,f:2},
+      {c:"Team check",v:false},{c:"Wall check",v:true},{s:"Swing"},
+      {d:"Animation",v:"Tool",l:["Tool","None","Packet"]}]},
+    {n:"Aim Assist", k:"V", t:"Pull the camera toward the nearest valid target.", o:[
+      {r:"Strength",v:.45,min:0,max:1,f:2},{r:"Field of view",v:90,min:10,max:180},
+      {c:"Visible only",v:true},{d:"Bone",v:"Head",l:["Head","Torso","Nearest"]}]},
+    {n:"Trigger Bot", t:"Fire the moment a target crosses the crosshair.", o:[
+      {r:"Delay",v:.08,min:0,max:.5,f:2},{c:"Team check",v:true}]},
+    {n:"Auto Clicker", t:"Click at a fixed rate while the button is held.", o:[
+      {d:"Button",v:"Left",l:["Left","Right"]},{r:"Clicks per second",v:12,min:1,max:30}]},
+    {n:"Hitboxes", t:"Grow the part the game tests hits against.", o:[
+      {d:"Part",v:"HumanoidRootPart",l:["HumanoidRootPart","Head","Torso"]},
+      {r:"Size",v:6,min:1,max:30},{c:"Transparent",v:true}]},
+  ],
+  Movement: [
+    {n:"Speed", k:"F", t:"Move faster, by whichever of five methods this game lets through.",
+     status:"CFrame ×2", o:[
+      {d:"Mode",v:"CFrame",l:["WalkSpeed","Velocity","Impulse","CFrame","Teleport"]},
+      {r:"Speed",v:32,min:16,max:200},{c:"Wall check",v:true},
+      {r:"Burst delay",v:.2,min:.05,max:1,f:2},{c:"Auto jump",v:false},
+      {note:"If nothing happens the game is clamping that method — try the next one down."}]},
+    {n:"Fly", k:"G", t:"Leave the ground. Four flight models.", o:[
+      {s:"Flight"},{d:"Mode",v:"Velocity",l:["Velocity","CFrame","BodyGyro","Noclip"]},
+      {r:"Speed",v:60,min:10,max:300},{r:"Vertical speed",v:40,min:10,max:200},
+      {s:"Behaviour"},{c:"Keep momentum",v:false},{c:"Auto hover",v:true}]},
+    {n:"Noclip", t:"Walk through geometry."},
+    {n:"Infinite Jump", k:"J", t:"Jump again in mid-air, for as long as you keep asking.", o:[
+      {d:"Mode",v:"State",l:["State","Impulse"]},{r:"Boost",v:1,min:.5,max:3,f:1}]},
+    {n:"Phase Dash", t:"A short burst through whatever is in front of you.", o:[
+      {r:"Distance",v:18,min:4,max:60},{r:"Cooldown",v:1.2,min:.2,max:5,f:1}]},
+    {n:"Physics Speed", t:"Rewrite the world's own step rate.", o:[
+      {r:"Multiplier",v:1.5,min:.5,max:4,f:2},{c:"Restore on death",v:true}]},
+    {n:"Spider", t:"Climb any wall you walk into."},
+    {n:"High Jump", t:"Raise the humanoid's jump power."},
+    {n:"Click Teleport", k:"T", t:"Teleport to wherever you click."},
+  ],
+  Visuals: [
+    {n:"Player ESP", k:"X", t:"Boxes, skeletons, name tags, health, tracers and chams.",
+     status:"12 targets", o:[
+      {s:"Display"},{d:"Boxes",v:"Corner",l:["Corner","Full","Off"]},
+      {r:"Box thickness",v:1,min:1,max:5},{c:"Filled box",v:false},
+      {c:"Skeleton",v:false},{c:"Name tags",v:true},{c:"Health bar",v:true},
+      {c:"Distance",v:true},{d:"Tracers",v:"Off",l:["Off","Bottom","Centre","Cursor"]},
+      {d:"Chams",v:"Off",l:["Off","Overlay","Outline"]},
+      {s:"Filters"},{c:"Team check",v:false},{r:"Max distance",v:2000,min:50,max:5000},
+      {s:"Style"},{col:"Colour",v:"#ececf0"},{c:"Team colours",v:true},
+      {r:"Text size",v:13,min:8,max:24},{r:"Refresh interval",v:0,min:0,max:.2,f:2}]},
+    {n:"Item Render", t:"Draw dropped items and world objects.", o:[
+      {r:"Max distance",v:400,min:50,max:2000},{col:"Colour",v:"#7ec48a"},{c:"Name",v:true}]},
+    {n:"Fullbright", t:"Remove the lighting the map is hiding behind."},
+    {n:"X-Ray", t:"Fade everything that is not worth looking at.", o:[
+      {r:"Transparency",v:.85,min:0,max:1,f:2},{c:"Keep players solid",v:true}]},
+    {n:"Field of View", t:"Widen the camera.", o:[{r:"FOV",v:90,min:40,max:120}]},
+    {n:"Zoom Unlocker", t:"Remove the game's zoom limits."},
+  ],
+  Protection: [
+    {n:"Anti-Fling", t:"Stand down anything trying to throw you across the map.", o:[
+      {r:"Threshold",v:180,min:50,max:600},{c:"Ignore own fling",v:true}]},
+    {n:"Anti-Void", t:"Catch the character before it leaves the world."},
+    {n:"No Fall", t:"Arrive from any height intact.", o:[
+      {d:"Mode",v:"State",l:["State","Velocity","Ground"]},{r:"Trigger height",v:40,min:10,max:200}]},
+    {n:"Safe Walk", t:"Refuse to step off an edge."},
+  ],
+  Utility: [
+    {n:"Anti-AFK", t:"Stay connected without touching anything."},
+    {n:"Fling", k:"H", t:"Throw a target.", o:[
+      {r:"Power",v:400,min:50,max:1500},{r:"Duration",v:1,min:.2,max:4,f:1},
+      {c:"Return to start",v:true}]},
+    {n:"Gravity", t:"Rewrite workspace gravity.", o:[{r:"Gravity",v:196,min:0,max:400}]},
+    {n:"Improve FPS", t:"Strip the map down to what you need to see."},
+    {n:"Lag Switch", t:"Hold packets, then let them all go at once."},
+    {n:"Remote Logger", t:"Watch every remote the game fires.", o:[
+      {r:"History",v:200,min:50,max:1000},{c:"Ignore heartbeat spam",v:true}]},
+    {n:"Rejoin Server", t:"Back into the same place, or a different one."},
+    {n:"Friend List", t:"Never target the people on it."},
+    {n:"Interact Extender", t:"Reach every prompt from further away."},
+  ],
+  Spoof: [
+    {n:"Disguise", t:"Wear somebody else's name and avatar."},
+    {n:"Animation Changer", t:"Replace the character's animation set."},
+    {n:"Emote Player", t:"Play any emote by id."},
+  ],
+  Favourites: [],
+};
+
+const PRESETS = {
+  Monochrome:{bg:"#0a0a0c",accent:"#ececf0",enabled:"#ececf0",text:"#f0f0f2",muted:"#8a8a93",
+    border:"#2a2a30",arrow:"#8a8a93",pin:"#ececf0","accent-text":"#0a0a0c","enabled-text":"#0a0a0c",radius:"4px"},
+  Wurst:{bg:"#150612",accent:"#cc0066",enabled:"#38e038",text:"#ffb3e0",muted:"#a8709a",
+    border:"#3d1030",arrow:"#38e038",pin:"#38e038","accent-text":"#ffffff","enabled-text":"#06210a",radius:"0px"},
+  Cev:{bg:"#0d1620",accent:"#344354",enabled:"#10d7d7",text:"#f0f0f0",muted:"#7c8b9a",
+    border:"#233042",arrow:"#006666",pin:"#00cccc","accent-text":"#f0f0f0","enabled-text":"#04262b",radius:"2px"},
+  Matcha:{bg:"#0d0a0e",accent:"#ff4fa3",enabled:"#ff4fa3",text:"#f4eef2",muted:"#8d8090",
+    border:"#2c2130",arrow:"#ff4fa3",pin:"#ff4fa3","accent-text":"#12060d","enabled-text":"#12060d",radius:"6px"},
+  Violet:{bg:"#0a0a0c",accent:"#6f4cff",enabled:"#6f4cff",text:"#f0f0f2",muted:"#8a8a93",
+    border:"#2a2a30",arrow:"#6f4cff",pin:"#6f4cff","accent-text":"#ffffff","enabled-text":"#ffffff",radius:"4px"},
+  Mint:{bg:"#07100e",accent:"#12d2a0",enabled:"#12d2a0",text:"#eafaf5",muted:"#79968d",
+    border:"#1b2f29",arrow:"#12d2a0",pin:"#12d2a0","accent-text":"#04211a","enabled-text":"#04211a",radius:"4px"},
+  Ember:{bg:"#110c07",accent:"#ff9d2e",enabled:"#ff9d2e",text:"#f7ece0",muted:"#9b8672",
+    border:"#31241a",arrow:"#ff9d2e",pin:"#ff9d2e","accent-text":"#1a1005","enabled-text":"#1a1005",radius:"4px"},
+};
+
+const UI = {opacity:.86,tip:.95,radius:4,row:22,maxh:340,scale:1,border:1,
+  anim:true,tips:true,isolate:false,hudOn:true,gap:2};
+
+const root = document.documentElement, S = document.getElementById("scaler");
+const el = (t,c,x)=>{const e=document.createElement(t); if(c)e.className=c; if(x!=null)e.textContent=x; return e;};
+const state = {z:20, wins:{}, enabled:new Set(), fav:new Set(["Speed","Player ESP","Fly","Anti-Fling"])};
+
+/* ------------------------------------------------------------------ tooltip */
+const tip = document.getElementById("tip");
+let tipTimer = null;
+function bindTip(node, text){
+  if(!text) return;
+  node.addEventListener("mouseenter", e=>{
+    if(!UI.tips) return;
+    tipTimer = setTimeout(()=>{ tip.textContent = text; tip.style.display="block"; place(e); }, 400);
+  });
+  node.addEventListener("mousemove", place);
+  node.addEventListener("mouseleave", ()=>{ clearTimeout(tipTimer); tip.style.display="none"; });
+  function place(e){
+    tip.style.left = Math.min(e.clientX+14, innerWidth-244)+"px";
+    tip.style.top  = Math.min(e.clientY+16, innerHeight-70)+"px";
+  }
+}
+
+/* -------------------------------------------------------------------- toast */
+function toast(title, sub){
+  const t = el("div","toast"); t.appendChild(document.createTextNode(title));
+  if(sub){ const s=el("small",null,sub); t.appendChild(s); }
+  document.getElementById("toasts").appendChild(t);
+  setTimeout(()=>{ t.style.transition="opacity .2s"; t.style.opacity=0;
+    setTimeout(()=>t.remove(),220); }, 2600);
+}
+
+/* ------------------------------------------------------------------ hudlist */
+function hud(){
+  const h = document.getElementById("hud"); h.innerHTML="";
+  if(!UI.hudOn) return;
+  const items=[...state.enabled].map(n=>{
+    const m = findCard(n); return {n, s:m&&m.status};
+  });
+  items.sort((a,b)=> (b.n.length+(b.s?b.s.length:0)) - (a.n.length+(a.s?a.s.length:0)));
+  for(const it of items){
+    const d = el("div"); d.appendChild(document.createTextNode(it.n));
+    if(it.s){ const i=el("i",null," ["+it.s+"]"); d.appendChild(i); }
+    h.appendChild(d);
+  }
+}
+function findCard(name){
+  for(const c in DATA) for(const m of DATA[c]) if(m.n===name) return m;
+  return null;
+}
+
+/* --------------------------------------------------------------- setting UI */
+function slider(o, onChange){
+  const wrap = el("div");
+  const head = el("div","line");
+  head.appendChild(el("span","lb",o.r));
+  const val = el("span","vl", fmt(o.v,o.f)); head.appendChild(val);
+  const bar = el("div","bar"), fill = el("div","fill"), knob = el("div","knob");
+  bar.append(fill,knob); wrap.append(head,bar);
+  const put = v=>{ o.v=v; val.textContent=fmt(v,o.f);
+    const p=(v-o.min)/(o.max-o.min); fill.style.right=(100-p*100)+"%"; knob.style.left=(p*100)+"%"; };
+  put(o.v);
+  let dragging=false;
+  const set = e=>{ const r=bar.getBoundingClientRect();
+    let p=(e.clientX-r.left)/r.width; p=Math.max(0,Math.min(1,p));
+    let v=o.min+p*(o.max-o.min); if(!o.f) v=Math.round(v); else v=+v.toFixed(o.f);
+    put(v); if(onChange) onChange(v); };
+  bar.addEventListener("mousedown",e=>{dragging=true;set(e);e.stopPropagation();});
+  addEventListener("mousemove",e=>{if(dragging)set(e);});
+  addEventListener("mouseup",()=>dragging=false);
+  return wrap;
+}
+const fmt=(v,f)=> f? v.toFixed(f) : String(v);
+
+function checkbox(o){
+  const l = el("div","line"); l.style.cursor="pointer";
+  const b = el("div","cb", o.v?"✓":""); if(o.v) b.classList.add("on");
+  l.append(b, el("span","lb",o.c));
+  l.onclick = e=>{ e.stopPropagation(); o.v=!o.v; b.textContent=o.v?"✓":""; b.classList.toggle("on",o.v); };
+  return l;
+}
+function dropdown(o){
+  const l = el("div","line");
+  l.appendChild(el("span","lb",o.d));
+  const b = el("span","dd", o.v+"  ▾");
+  b.onclick = e=>{ e.stopPropagation();
+    const i=(o.l.indexOf(o.v)+1)%o.l.length; o.v=o.l[i]; b.textContent=o.v+"  ▾"; };
+  l.appendChild(b); return l;
+}
+function colour(o){
+  const wrap = el("div");
+  const head = el("div","line");
+  head.append(el("span","lb",o.col), el("span","vl",o.v.toUpperCase()));
+  const sw = el("div","swatch"); sw.style.background=o.v;
+  const inp = document.createElement("input"); inp.type="color"; inp.value=o.v;
+  inp.style.cssText="position:absolute;opacity:0;width:0;height:0";
+  sw.onclick = e=>{ e.stopPropagation(); inp.click(); };
+  inp.oninput = ()=>{ o.v=inp.value; sw.style.background=o.v;
+    head.lastChild.textContent=o.v.toUpperCase(); };
+  wrap.append(head,sw,inp); return wrap;
+}
+function buildOption(o){
+  if(o.s!=null)    return el("div","sec",o.s);
+  if(o.note!=null) return el("div","note",o.note);
+  if(o.r!=null)    return slider(o);
+  if(o.c!=null)    return checkbox(o);
+  if(o.d!=null)    return dropdown(o);
+  if(o.col!=null)  return colour(o);
+  return el("div");
+}
+
+/* ---------------------------------------------------------------------- row */
+function buildRow(card){
+  const r = el("div","row");
+  const nm = el("span","nm",card.n); r.appendChild(nm);
+  if(card.k) r.appendChild(el("span","key",card.k));
+  const fav = el("span","fav", state.fav.has(card.n)?"★":"☆");
+  if(state.fav.has(card.n)) fav.classList.add("on");
+  fav.onclick = e=>{ e.stopPropagation();
+    if(state.fav.has(card.n)) state.fav.delete(card.n); else state.fav.add(card.n);
+    rebuildFavourites(); render(); };
+  r.appendChild(fav);
+
+  let kids = null;
+  if(card.o && card.o.length){
+    const arw = el("span","arw","▶"); r.appendChild(arw);
+    arw.onclick = e=>{
+      e.stopPropagation();
+      if(kids){ kids.remove(); kids=null; r.classList.remove("open"); return; }
+      kids = el("div","kids");
+      card.o.forEach(o=>kids.appendChild(buildOption(o)));
+      r.after(kids); r.classList.add("open");
+    };
+  }
+  if(state.enabled.has(card.n)) r.classList.add("on");
+  r.onclick = ()=>{
+    const on = !state.enabled.has(card.n);
+    if(on) state.enabled.add(card.n); else state.enabled.delete(card.n);
+    document.querySelectorAll(".row").forEach(x=>{
+      if(x.querySelector(".nm").textContent===card.n) x.classList.toggle("on",on); });
+    hud(); toast((on?"Enabled":"Disabled")+" "+card.n, card.k?("Keybind "+card.k):null);
+  };
+  bindTip(r, card.t);
+  return r;
+}
+function rebuildFavourites(){
+  DATA.Favourites = [...state.fav].map(findCard).filter(Boolean);
+}
+
+/* ------------------------------------------------------------------- window */
+function makeWindow(id, title, x, y, builder, w){
+  const win = el("div","win"); win.style.left=x+"px"; win.style.top=y+"px";
+  if(w) win.style.width=w+"px";
+  const bar = el("div","tbar"); bar.appendChild(el("span",null,title));
+  bar.appendChild(el("span","sp"));
+  const mini = el("button",null,"—"), pin = el("button",null,"⚲");
+  bar.append(mini,pin);
+  const body = el("div","body");
+  win.append(bar,body);
+  win.style.background = `rgba(${hexRgb(getComputedStyle(root).getPropertyValue("--bg").trim())},${UI.opacity})`;
+  S.appendChild(win);
+  state.wins[id] = {win, body, builder, bar};
+
+  mini.onclick = e=>{ e.stopPropagation(); win.classList.toggle("col"); };
+  pin.onclick  = e=>{ e.stopPropagation(); win.classList.toggle("pinned");
+    pin.classList.toggle("act"); };
+
+  let ox=0, oy=0, moving=false;
+  bar.addEventListener("mousedown", e=>{
+    if(e.target.tagName==="BUTTON") return;
+    moving=true; bar.classList.add("drag");
+    ox = e.clientX - win.offsetLeft; oy = e.clientY - win.offsetTop;
+    win.style.zIndex = ++state.z;
+  });
+  addEventListener("mousemove", e=>{
+    if(!moving) return;
+    let nx = e.clientX-ox, ny = e.clientY-oy;
+    const S8=8, W=innerWidth/UI.scale, H=innerHeight/UI.scale;
+    if(Math.abs(nx)<S8) nx=0;
+    if(Math.abs(nx+win.offsetWidth-W)<S8) nx=W-win.offsetWidth;
+    if(Math.abs(ny)<S8) ny=0;
+    if(Math.abs(ny+win.offsetHeight-H)<S8) ny=H-win.offsetHeight;
+    win.style.left=Math.max(0,Math.min(nx,W-40))+"px";
+    win.style.top =Math.max(0,Math.min(ny,H-24))+"px";
+  });
+  addEventListener("mouseup", ()=>{ moving=false; bar.classList.remove("drag"); });
+  win.addEventListener("mousedown", ()=>{ win.style.zIndex = ++state.z; });
+  return state.wins[id];
+}
+function hexRgb(h){
+  h=h.replace("#",""); if(h.length===3) h=h.split("").map(c=>c+c).join("");
+  return [0,2,4].map(i=>parseInt(h.slice(i,i+2),16)).join(",");
+}
+
+/* Two separate passes, because they used to be one and dragging the opacity
+   slider rebuilt the window the slider was inside — the control vanished from
+   under the cursor mid-drag. `repaint` never touches the tree. */
+function repaint(){
+  const rgb = hexRgb(getComputedStyle(root).getPropertyValue("--bg").trim());
+  for(const id in state.wins)
+    state.wins[id].win.style.background = `rgba(${rgb},${UI.opacity})`;
+}
+function render(){
+  for(const id in state.wins){
+    const w = state.wins[id];
+    if(!w.builder || w.builder === uiSettingsBody) continue;
+    w.body.innerHTML=""; w.builder(w.body);
+  }
+  repaint(); hud();
+}
+
+/* ------------------------------------------------------------- UI  settings */
+function uiSettingsBody(body){
+  const line=(label,node)=>{ const l=el("div","line");
+    l.appendChild(el("span","lb",label)); if(node) l.appendChild(node); body.appendChild(l); return l; };
+
+  body.appendChild(el("div","sec","Presets"));
+  const grid = el("div"); grid.style.cssText="display:grid;grid-template-columns:1fr 1fr;gap:2px";
+  Object.keys(PRESETS).forEach(name=>{
+    const b = el("button","btn",name);
+    b.onclick = ()=>{ applyPreset(name); toast("Theme: "+name); };
+    grid.appendChild(b);
+  });
+  body.appendChild(grid);
+
+  body.appendChild(el("div","sec","Colours"));
+  [["Background","--bg"],["Accent","--accent"],["Enabled","--enabled"],
+   ["Text","--text"],["Muted","--muted"],["Border","--border"],
+   ["Dropdown arrow","--arrow"],["Pin button","--pin"]].forEach(([label,varName])=>{
+    const cur = getComputedStyle(root).getPropertyValue(varName).trim();
+    const o = {col:label, v:cur};
+    const node = colour(o);
+    node.querySelector("input").addEventListener("input", ()=>{
+      root.style.setProperty(varName,o.v); repaint(); });
+    body.appendChild(node);
+  });
+
+  body.appendChild(el("div","sec","Shape"));
+  numeric(body,"Opacity",UI.opacity,0,1,2,v=>{UI.opacity=v;repaint();});
+  numeric(body,"Tooltip opacity",UI.tip,0,1,2,v=>{UI.tip=v;root.style.setProperty("--tip-opacity",v);});
+  numeric(body,"Corner radius",UI.radius,0,12,0,v=>{UI.radius=v;root.style.setProperty("--radius",v+"px");});
+  numeric(body,"Row height",UI.row,16,32,0,v=>{UI.row=v;root.style.setProperty("--row-h",v+"px");
+    root.style.setProperty("--title-h",v+"px");});
+  numeric(body,"Gap",UI.gap,0,6,0,v=>{UI.gap=v;root.style.setProperty("--gap",v+"px");});
+  numeric(body,"Border",UI.border,0,3,0,v=>{UI.border=v;root.style.setProperty("--border-w",v+"px");});
+  numeric(body,"Max height",UI.maxh,120,700,0,v=>{UI.maxh=v;root.style.setProperty("--max-h",v+"px");});
+  numeric(body,"Scale",UI.scale,.7,1.6,2,v=>{UI.scale=v;root.style.setProperty("--scale",v);});
+
+  body.appendChild(el("div","sec","Behaviour"));
+  toggleLine(body,"Animations",UI.anim,v=>{UI.anim=v;document.body.classList.toggle("nomo",!v);});
+  toggleLine(body,"Tooltips",UI.tips,v=>UI.tips=v);
+  toggleLine(body,"HUD list",UI.hudOn,v=>{UI.hudOn=v;hud();});
+  toggleLine(body,"Isolate windows",UI.isolate,v=>UI.isolate=v);
+
+  body.appendChild(el("div","sec","Export"));
+  const b = el("button","btn","Copy theme string");
+  b.onclick = ()=>{ const t={}; ["--bg","--accent","--enabled","--text","--muted","--border"]
+      .forEach(k=>t[k]=getComputedStyle(root).getPropertyValue(k).trim());
+    navigator.clipboard && navigator.clipboard.writeText(btoa(JSON.stringify(t)));
+    toast("Theme copied","Paste it to a friend"); };
+  body.appendChild(b);
+}
+function numeric(body,label,val,min,max,f,cb){
+  body.appendChild(slider({r:label,v:val,min,max,f}, cb));
+}
+function toggleLine(body,label,val,cb){
+  const o={c:label,v:val}; const l=checkbox(o);
+  l.addEventListener("click",()=>cb(o.v)); body.appendChild(l);
+}
+function applyPreset(name){
+  const p = PRESETS[name];
+  for(const k in p){
+    if(k==="radius"){ root.style.setProperty("--radius",p[k]); UI.radius=parseInt(p[k]); }
+    else root.style.setProperty("--"+k, p[k]);
+  }
+  const ui = state.wins.ui;
+  if(ui){ ui.body.innerHTML=""; uiSettingsBody(ui.body); }
+  repaint();
+}
+
+/* ---------------------------------------------------------------------- pill */
+const ICONS = {
+  menu:'<line x1="3" y1="6" x2="17" y2="6"/><line x1="3" y1="10" x2="17" y2="10"/><line x1="3" y1="14" x2="17" y2="14"/>',
+  search:'<circle cx="9" cy="9" r="5.5"/><line x1="13" y1="13" x2="17" y2="17"/>',
+  cfg:'<rect x="3" y="4" width="14" height="12" rx="2"/><line x1="3" y1="8" x2="17" y2="8"/>',
+  key:'<circle cx="7" cy="10" r="3.2"/><line x1="10" y1="10" x2="17" y2="10"/><line x1="15" y1="10" x2="15" y2="13"/>',
+  gear:'<circle cx="10" cy="10" r="3"/><path d="M10 2v2M10 16v2M2 10h2M16 10h2M4.5 4.5l1.5 1.5M14 14l1.5 1.5M15.5 4.5L14 6M6 14l-1.5 1.5"/>',
+  power:'<path d="M10 3v7"/><path d="M5.5 5.5a6 6 0 1 0 9 0"/>',
+  star:'<path d="M10 3l2.2 4.5 5 .7-3.6 3.5.9 5-4.5-2.4-4.5 2.4.9-5L2.8 8.2l5-.7z"/>',
+};
+function buildPill(){
+  const p = document.getElementById("pill");
+  const add=(icon,label,fn,on)=>{
+    const b=document.createElement("button");
+    b.innerHTML='<svg viewBox="0 0 20 20">'+ICONS[icon]+'</svg>';
+    if(on) b.classList.add("on"); b.onclick=()=>{ fn(b); };
+    bindTip(b,label); p.appendChild(b); return b;
+  };
+  add("menu","Show or hide every window",b=>{
+    b.classList.toggle("on");
+    const hide = !b.classList.contains("on");
+    Object.values(state.wins).forEach(w=>{
+      if(hide && !w.win.classList.contains("pinned")) w.win.style.display="none";
+      else w.win.style.display="";
+    });
+  },true);
+  add("search","Search every module and option",()=>toast("Search","Fuzzy over 38 modules and ~400 options"));
+  add("star","Favourites window",()=>flash("fav"));
+  p.appendChild(el("div","sep"));
+  add("cfg","Configs and profiles",()=>toast("Configs","Save, load, autoload per game"));
+  add("key","Keybinds",()=>toast("Keybinds","Every bound key, rebindable"));
+  add("gear","UI settings",()=>flash("ui"));
+  p.appendChild(el("div","sep"));
+  add("power","Panic — disable everything",()=>{
+    state.enabled.clear();
+    document.querySelectorAll(".row.on").forEach(r=>r.classList.remove("on"));
+    hud(); toast("Panic","Every module disabled");
+  });
+}
+function flash(id){
+  const w = state.wins[id]; if(!w) return;
+  w.win.style.display=""; w.win.style.zIndex=++state.z;
+  w.win.animate([{outline:"2px solid var(--accent)"},{outline:"2px solid transparent"}],
+    {duration:600});
+}
+
+/* ---------------------------------------------------------------------- boot */
+function categoryBody(cat){
+  return body => {
+    if(!DATA[cat].length){ body.appendChild(el("div","note","Star a module to keep it here.")); return; }
+    DATA[cat].forEach(card=> body.appendChild(buildRow(card)));
+  };
+}
+const LAYOUT = [
+  ["Combat",     14, 118],
+  ["Movement",  212, 118],
+  ["Visuals",   410, 118],
+  ["Protection", 14, 300],
+  ["Utility",   212, 372],
+  ["Spoof",      14, 424],
+];
+rebuildFavourites();
+LAYOUT.forEach(([cat,x,y])=> makeWindow(cat.toLowerCase(), cat, x, y, categoryBody(cat)));
+makeWindow("fav","Favourites",410,470,categoryBody("Favourites"));
+makeWindow("ui","UI Settings",innerWidth-232,118,uiSettingsBody,214);
+buildPill();
+render();
+
+/* Stats block. Real FPS, invented ping — the point is the shape. */
+let frames=0, last=performance.now(), fps=0, t0=Date.now();
+(function loop(){ frames++; const now=performance.now();
+  if(now-last>=500){ fps=Math.round(frames*1000/(now-last)); frames=0; last=now;
+    const s=Math.floor((Date.now()-t0)/1000);
+    document.getElementById("stats").innerHTML =
+      `FPS   <b>${fps}</b><br>PING  <b>28</b><br>TIME  <b>${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}</b><br>PLACE <b>MM2</b>`;
+  }
+  requestAnimationFrame(loop); })();
+
+state.enabled.add("Speed"); state.enabled.add("Player ESP"); state.enabled.add("Anti-Fling");
+render();
+setTimeout(()=>toast("Game module loaded","Murder Mystery 2 · 34 cards"),600);
+</script>
+</body>
+</html>

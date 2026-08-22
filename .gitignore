@@ -6,3 +6,12 @@ runtime-config/
 local-profiles/
 /compile-*.txt
 /register-stats.json
+__pycache__/
+*.pyc
+
+# Official Minecraft font extracts and derived atlases are local build inputs.
+# Mojang assets are downloaded explicitly and never vendored.
+/cache/
+/assets/font/minecraft-atlas.png
+/assets/font/minecraft-atlas.json
+/build/
