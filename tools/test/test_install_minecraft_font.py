@@ -105,6 +105,12 @@ def main() -> int:
         if incomplete_z.returncode == 0:
             failures.append("incomplete zip must be rejected")
 
+        huge = os.path.join(tmp, "huge.bin")
+        open(huge, "wb").write(b"\x00" * (32 * 1024 * 1024 + 1))
+        oversized = run("--install", huge)
+        if oversized.returncode == 0:
+            failures.append("oversized pack must be rejected")
+
         complete = os.path.join(tmp, "complete")
         write_complete_pack(complete)
         installed = run("--install", complete)

@@ -720,6 +720,8 @@ REQUIRED_RAW_FILES = (
     "assets/minecraft/textures/font/nonlatin_european.png",
 )
 PINNED_CLIENT_SHA1 = "7e46fb47609401970e2818989fa584fd467cd036"
+# A transferred pack or zip larger than this is not a font extract.
+MAX_PACK_BYTES = 32 * 1024 * 1024
 
 
 def raw_root(path: str) -> str | None:
@@ -806,9 +808,25 @@ def show_status(output: str, version: str = "1.18.1") -> int:
     return 0
 
 
+def pack_size(path: str) -> int:
+    if os.path.isfile(path):
+        return os.path.getsize(path)
+    total = 0
+    for dirpath, _dirnames, filenames in os.walk(path):
+        for name in filenames:
+            total += os.path.getsize(os.path.join(dirpath, name))
+    return total
+
+
 def install_raw(path: str, output: str, version: str = "1.18.1") -> int:
     if not path or not os.path.exists(path):
         print(f"pack not found: {path}", file=sys.stderr)
+        return 1
+    if pack_size(path) > MAX_PACK_BYTES:
+        print(
+            f"pack exceeds {MAX_PACK_BYTES} bytes; refusing to install",
+            file=sys.stderr,
+        )
         return 1
     work = tempfile.mkdtemp(prefix="mc-font-")
     try:

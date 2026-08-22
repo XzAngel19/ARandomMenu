@@ -3,8 +3,9 @@
 -- Headless tests: a ClickGUI row is a FeatureButton.
 --
 -- Official Wurst draws a name and, when the feature has settings, an
--- 11-logical-px arrow. No star, no hamburger, no key slot. A landed that
--- shape; a leftover coming back fails.
+-- 11-logical-px arrow. No star, no hamburger. The keybind square is an
+-- approved Roblox adaptation (user-requested) and replaces the old ban
+-- on desktop key slots. The leftover KEY pill is still forbidden.
 
 return function(ctx: any): ()
     local Mock: any = ctx.Mock

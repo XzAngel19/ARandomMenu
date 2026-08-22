@@ -30,6 +30,7 @@ GUI-scale-1. Prototype `titleHeight` 26 is 13 × 2, not a 1080p invention.
 | Max height default 200 | exact | Stored 1000 from the old default must migrate. |
 | Navigator as its own screen + keys | exact | RightCtrl = ClickGUI, RightShift = Navigator. |
 | No TabGUI (default Disabled) | exact | Shipping none matches Disabled. |
+| Keybind square on bindable rows | adaptación Roblox pedida | User-requested. Official Wurst binds only in the Keybind Manager. The 22 px square is the capture target on toggle / action / hold rows; group cards have none. It replaces the old gate that banned desktop key slots. Not a KEY pill. |
 | Pill as one-button Roblox launcher | adaptación Roblox aprobable | The 5% Roblox. |
 | Monocraft atlas (`monocraft-16.png`) | adaptación Roblox aprobable | OFL fallback. 7.54.1 does not change the 1.18.1 font baseline. |
 | One ClickGui UIScale, user Scale 0.7–1.6 | exact | No 1080 / 1.35 formula. |
