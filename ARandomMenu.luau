@@ -363,7 +363,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "3f348d7a9293e1fc"
+local SOURCE_STAMP: string = "26e2d564cea0555c"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -980,7 +980,13 @@ PopupLayer.Size = UDim2.fromScale(1, 1)
 PopupLayer.ZIndex = 150
 PopupLayer.Parent = ScreenGui
 
-local savedToggleKey = Enum.KeyCode.RightShift
+-- Wurst's own default binds: right-ctrl opens the ClickGUI, right-shift opens
+-- Navigator. The menu key used to default to RightShift here; a stored key
+-- still wins, so nobody's muscle memory changes under them — only a fresh
+-- install gets Wurst's pair. The `or` is for the test harness, whose Enum
+-- stand-in does not carry RightControl yet (noted in docs/requests/A.md).
+local savedToggleKey = (Enum.KeyCode :: any).RightControl
+    or Enum.KeyCode.RightShift
 if type(configData.ui.toggleKey) == "string" then
     pcall(function()
         savedToggleKey = Enum.KeyCode[configData.ui.toggleKey]
