@@ -26,8 +26,8 @@ return function(ctx: any): ()
         string.find(source, "ResamplerMode.Pixelated", 1, true) ~= nil
     )
     check(
-        "glyph blit uses fromOffset (pixel snapping)",
-        string.find(source, "UDim2.fromOffset(dx, dy)", 1, true) ~= nil
+        "glyph blit uses snapped fromOffset coordinates",
+        string.find(source, "UDim2.fromOffset(snapPx(dx), snapPx(dy))", 1, true) ~= nil
             and string.find(source, "UDim2.fromOffset(glyphWidth, glyphHeight)", 1, true) ~= nil
     )
     check(
@@ -75,6 +75,9 @@ return function(ctx: any): ()
     check("atlas size selection is 16 px", bitmap.atlas.size == 16 or bitmap.size == 16)
     check("baseline ascent is published", type(bitmap.ascent) == "number" and bitmap.ascent > 0)
 
+    -- Pin the layer to one logical pixel per physical pixel before asserting
+    -- integer offsets. The normal boot calibrates 1280×720 to 0.8.
+    Inspect.pinClickGuiScale(env.PopupLayer, 1)
     Inspect.armAtlas(bitmap)
     local parent: any = Mock.newInstance("Frame")
     parent.Name = "FallbackProbe"

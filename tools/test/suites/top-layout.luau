@@ -154,13 +154,13 @@ return function(ctx: any): ()
         end
     end
 
-    -- Schema 2 already dropped old geometry; a leftover schema 1 flag
-    -- must not come back.
+    -- Schema 3 introduces the top-aligned categories and bottom dock; older
+    -- saved geometry must not override that first rebuilt layout.
     check(
-        "layout schema is the Wurst rebuild (2)",
+        "layout schema is the top-row Wurst rebuild (3)",
         env.configData == nil
             or env.configData.ui == nil
-            or env.configData.ui.wurstSchema == 2
+            or env.configData.ui.wurstSchema == 3
             or env.configData.ui.wurstSchema == nil
     )
 

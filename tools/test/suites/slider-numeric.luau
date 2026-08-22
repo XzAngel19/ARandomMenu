@@ -148,14 +148,19 @@ return function(ctx: any): ()
         #lows > 0 and lows[#lows] <= highs[#highs],
         tostring(lows[#lows]) .. ".." .. tostring(highs[#highs])
     )
-    local readout: any = rangePanel.optionRows[1]
-        and rangePanel.optionRows[1]:FindFirstChild("RangeValue")
-    check("the range shows a low–high readout", readout ~= nil)
-    if readout ~= nil then
+    local rangeRow: any = rangePanel.optionRows[1]
+    local lowValue: any = rangeRow and rangeRow:FindFirstChild("LowValue")
+    local highValue: any = rangeRow and rangeRow:FindFirstChild("HighValue")
+    local dash: any = rangeRow and rangeRow:FindFirstChild("RangeDash")
+    check(
+        "the range exposes editable low and high values",
+        lowValue ~= nil and highValue ~= nil and dash ~= nil
+    )
+    if lowValue ~= nil and highValue ~= nil then
         check(
-            "the range readout is editable metadata, not a second slider pair",
-            type(readout.Text) == "string" and string.find(readout.Text, "–", 1, true) ~= nil,
-            tostring(readout.Text)
+            "the editable range starts at its configured defaults",
+            tonumber(lowValue.Text) == 8 and tonumber(highValue.Text) == 12,
+            tostring(lowValue.Text) .. "–" .. tostring(highValue.Text)
         )
     end
 
