@@ -295,39 +295,41 @@ return function(ctx: any): ()
     )
 
     if state.hudList ~= nil then
-        -- Default is Left, under the logo. Compact phones may still flip.
         check("the HackList default Position is Left", true)
     end
 
-    local navigator: any = state.navigator or state.tabGui
-    if navigator == nil then
-        check("Navigator / TabGUI is not under the logo yet; HUD tests wait", true)
-    else
-        check("Navigator is published", navigator ~= nil)
+    local logo: any = state.wurstLogo
+    check("WurstLogo is published", type(logo) == "table")
+    if type(logo) == "table" then
+        check("WurstLogo.Background is live", type(logo.SetBackground) == "function")
+        check("WurstLogo.Text is live", type(logo.SetTextColor) == "function")
+        check("WurstLogo.Visibility is live", type(logo.SetVisibility) == "function")
+        local chip: any = logo.root and logo.root:FindFirstChild("VersionChip")
+        if chip ~= nil then
+            check(
+                "the version chip is not an opaque slab",
+                (chip.BackgroundTransparency or 0) > 0,
+                "BackgroundTransparency=" .. tostring(chip.BackgroundTransparency)
+            )
+        end
     end
+
+    check("Navigator is published", type(state.navigator) == "table")
 
     local pillRoot: any = state.pill and (state.pill.root or state.pill)
     if pillRoot ~= nil and type(pillRoot.GetDescendants) == "function" then
         local leftover: string? = nil
         for _, node: any in ipairs(pillRoot:GetDescendants()) do
             local text: string = tostring(node.Text or "")
-            if text == "OFF" or text == "🛡" or string.find(text, "cart", 1, true) then
+            if text == "OFF" or string.find(text, "cart", 1, true) then
                 leftover = text
             end
         end
-        if leftover ~= nil then
-            check("the launcher still carries leftover chrome (" .. leftover .. ")", true)
-        else
-            check("the launcher has no inherited OFF / shield / cart", leftover == nil)
-        end
-    end
-
-    local builder: boolean = string.find(bundleSource, "BuilderSans", 1, true) ~= nil
-        or string.find(bundleSource, "RobotoMono", 1, true) ~= nil
-    if builder then
-        check("ClickGUI surfaces still name BuilderSans/RobotoMono; font is owed", true)
-    else
-        check("ClickGUI surfaces do not scatter BuilderSans/RobotoMono", true)
+        check(
+            "the launcher has no inherited OFF / cart",
+            leftover == nil,
+            leftover
+        )
     end
 
     -- Wurst puts nothing between the player and the game except its

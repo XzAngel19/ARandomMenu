@@ -214,6 +214,34 @@ if offenders:
 print("ok")
 PYTHON
 
+step "Rows stay FeatureButtons"
+# A dropped the star, the hamburger and the desktop key slot. A comment
+# that remembers them is fine; a Name = "Favorite" or applyLinesGlyph
+# coming back is the old card.
+python3 - <<'PYTHON'
+import os
+
+needles = ('applyLinesGlyph', 'Name = "Favorite"', "Name = 'Favorite'")
+paths = (
+    "src/library/Cards.luau",
+    "src/library/ClickGui.luau",
+    "src/library/Furniture.luau",
+)
+offenders = []
+for path in paths:
+    if not os.path.exists(path):
+        continue
+    text = open(path, encoding="utf-8", errors="replace").read()
+    for needle in needles:
+        if needle in text:
+            offenders.append(f"{path}: {needle}")
+if offenders:
+    raise SystemExit(
+        "card leftovers reintroduced:\n  " + "\n  ".join(offenders)
+    )
+print("ok")
+PYTHON
+
 step "Product name"
 # Display names of the previous product must not be hard-coded in tools/ or
 # docs/. The filename ARandomMenu.luau stays: it is the loader entry point.
