@@ -56,37 +56,30 @@ return function(ctx: any): ()
             )
     end
 
-    -- Ours, already tiled.
+    -- The shared contract: official Wurst 7's eight windows, all present
+    -- from boot, and none of the port's old names left as a visible window.
     for _, name: string in ipairs({
         "Combat",
-        "Movement",
-        "Visuals",
-        "Protection",
-        "Utility",
-    }) do
-        check("port category window " .. name, hasWindow(name))
-    end
-
-    -- Official Wurst. Missing ones are a taxonomy difference, recorded
-    -- in docs/wurst-categories.md, not a red gate.
-    for _, name: string in ipairs({
         "Render",
         "Blocks",
+        "Movement",
         "Chat",
         "Fun",
         "Items",
         "Other",
     }) do
-        if hasWindow(name) then
-            check("official Wurst category window " .. name, true)
-        else
-            check(
-                "official Wurst category "
-                    .. name
-                    .. " is not a window; see docs/wurst-categories.md",
-                true
-            )
-        end
+        check("official category window " .. name, hasWindow(name))
+    end
+    for _, name: string in ipairs({
+        "Visuals",
+        "Protection",
+        "Utility",
+        "Spoof",
+    }) do
+        check(
+            "the old port window " .. name .. " no longer exists",
+            not hasWindow(name)
+        )
     end
 
     local combat: any = windows and (

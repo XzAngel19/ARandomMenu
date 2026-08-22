@@ -91,15 +91,17 @@ return function(ctx: any): ()
             or windows.Get(string.lower(id)) ~= nil
     end
 
-    -- The taxonomy the framework already files cards under. Spoof, Favourites
-    -- and UI Settings are extra windows the prototype draws; they are not
-    -- required for an empty boot of the five boards.
+    -- The shared category contract: one stable window per official Wurst
+    -- category, present even when the category is empty at boot.
     for _, category: string in ipairs({
         "Combat",
+        "Render",
+        "Blocks",
         "Movement",
-        "Visuals",
-        "Protection",
-        "Utility",
+        "Chat",
+        "Fun",
+        "Items",
+        "Other",
     }) do
         check("one window for " .. category, hasWindow(category))
     end

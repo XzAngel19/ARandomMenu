@@ -60,22 +60,20 @@ local WINDOW_GAP: number = 2
 -- everything is drawn at.
 local GRID_GAP: number = 10
 local TITLE_HEIGHT: number = 26
--- Wurst wraps its first-run grid only at the screen edge, but on a wide
--- monitor seven 200 px windows make one strip across the whole top — which
--- is what the user rejected. Four per row keeps the reference screenshot's
--- density; deliberate adaptation, recorded here.
-local GRID_COLUMNS: number = 4
 
--- The order Wurst lists its categories in, as far as ours line up with it.
--- Anything a game module invents later lands after these, in the order it
--- arrives.
+-- Official Wurst 7's windows, in the exact order ClickGui.init() builds them
+-- at the pinned commit: Combat, Render, Blocks, Movement, Chat, Fun, Items,
+-- Other. All eight exist from boot — an empty category is a stable window a
+-- module can land in later, not a window that pops into existence mid-session.
 local CATEGORY_ORDER: {string} = {
     "Combat",
+    "Render",
+    "Blocks",
     "Movement",
-    "Visuals",
-    "Protection",
-    "Utility",
-    "Spoof",
+    "Chat",
+    "Fun",
+    "Items",
+    "Other",
 }
 
 function Module.init(context: any): any
@@ -83,6 +81,7 @@ function Module.init(context: any): any
     local state: any = host.state
     local create: any = host.create
     local allFeatures: {any} = host.allFeatures
+    local normalizeFeatureCategory: any = host.normalizeFeatureCategory
 
     -- One UIScale over the whole layer, driven by the theme's own shape token,
     -- so the Scale row in UI Settings moves the entire interface and nothing
@@ -109,29 +108,26 @@ function Module.init(context: any): any
         connections = {} :: {RBXScriptConnection},
     }
 
-    -- Left to right until the row is full, then down. 64 clears the wordmark
-    -- and the pill instead of leaving a band of dead game between them and
-    -- the grid.
+    -- Left to right until the next window would pass the available edge,
+    -- then down — Wurst's own first-run rule. With eight category windows
+    -- plus UI Settings the row wraps wherever the viewport says, not at a
+    -- column count somebody picked.
     local nextX: number = GRID_MARGIN
     local nextY: number = 64
     local rowHeight: number = 0
-    local placedInRow: number = 0
 
     local function nextSlot(height: number): Vector2
         local viewport: Vector2 = workspace.CurrentCamera
             and (workspace.CurrentCamera :: Camera).ViewportSize
             or Vector2.new(1280, 720)
-        if placedInRow >= GRID_COLUMNS
-            or nextX + WINDOW_WIDTH > viewport.X - GRID_MARGIN then
+        if nextX + WINDOW_WIDTH > viewport.X - GRID_MARGIN then
             nextX = GRID_MARGIN
             nextY += rowHeight + GRID_GAP
             rowHeight = 0
-            placedInRow = 0
         end
         local slot: Vector2 = Vector2.new(nextX, nextY)
         nextX += WINDOW_WIDTH + GRID_GAP
         rowHeight = math.max(rowHeight, height)
-        placedInRow += 1
         return slot
     end
 
@@ -215,9 +211,14 @@ function Module.init(context: any): any
         if not row then
             return
         end
-        local name: string = tostring(
-            (row :: Frame):GetAttribute("FeatureCategory") or "General"
-        )
+        -- Whatever the card's attribute says — an official window, one of the
+        -- port's old names, nothing — the contract resolves it to one of the
+        -- eight windows above. A card built before D refiles it must not open
+        -- a ninth window with an unofficial name.
+        local raw: any = (row :: Frame):GetAttribute("FeatureCategory")
+        local name: string = type(normalizeFeatureCategory) == "function"
+            and normalizeFeatureCategory(raw)
+            or tostring(raw or "Other")
         local record: CategoryWindow = categoryWindow(name)
         record.count += 1;
         (row :: Frame).Parent = record.window.body;

@@ -39,3 +39,21 @@ the gate will force a Left default that contradicts the prototype.
   (search + 3-column grid, preference-ordered, Enter fires the top hit),
   the 22 px settings arrow that only exists when a module has options,
   and the logo at 144×36.
+
+## For C and D, after the category contract (2026-08-22)
+
+- **D:** the eight official windows exist and the aliases hold your
+  modules where they are (Visuals→Render, Protection→Movement,
+  Utility→Other, Spoof→Fun). `docs/wurst-categories.md` is the per-card
+  map; refile each `framework.Categories.X` / `categoryName` at your own
+  pace — nothing falls into General any more (General itself now
+  resolves to Other). `feature.hasSettings` is live metadata derived
+  from real option rows, if you need it.
+- **C:** the Enum stand-in carries no RightControl, Backspace, Tab,
+  Return or arrow keys; the shell falls back to RightShift for the menu
+  default under the mock, and Navigator's key handling compares against
+  nil harmlessly. Adding those KeyCodes would let a suite drive the
+  Navigator keyboard for real. The Navigator screen itself is
+  state.navigator (root/Open/Close/refresh) — worth a suite: search
+  filters, preference order, Enter activates, Space expands, Escape
+  closes.

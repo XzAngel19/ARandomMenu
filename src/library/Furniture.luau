@@ -109,7 +109,24 @@ function Module.init(context: any): any
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
         Position = UDim2.fromOffset(FURNITURE_MARGIN_X, FURNITURE_MARGIN_Y),
-        Size = UDim2.fromOffset(LOGO_WIDTH + 46, LOGO_HEIGHT + 8),
+        Size = UDim2.fromOffset(LOGO_WIDTH + 130, LOGO_HEIGHT + 8),
+        ZIndex = 20,
+    }) :: any) :: Frame
+
+    -- Wurst's WurstLogo background: a half-alpha band behind rows 6..17 of
+    -- the 18-logical-tall logo — 12..34 at the GUI scale 2 everything is
+    -- drawn at — spanning the mark and the version string. The default is
+    -- the Java's own: #FFFFFF at getColorI(128), i.e. 50% alpha. It is a
+    -- stripe, never an opaque box; the WurstLogo Settings window recolours
+    -- it live.
+    local logoStripe: Frame = (create("Frame", {
+        Parent = chip,
+        Name = "BackgroundStripe",
+        BackgroundColor3 = WURSTLOGO_BACKGROUND,
+        BackgroundTransparency = 0.5,
+        BorderSizePixel = 0,
+        Position = UDim2.fromOffset(0, 12),
+        Size = UDim2.new(1, 0, 0, 22),
         ZIndex = 20,
     }) :: any) :: Frame
 
@@ -141,15 +158,12 @@ function Module.init(context: any): any
         ZIndex = 21,
     }) :: any) :: TextLabel
 
-    -- The version string sits on the game, not on a slab — ref-wurst-719
-    -- shows "v7.19 MC1.18.1" as bare coloured text beside the sausage. The
-    -- frame exists only so the WurstLogo Background setting has something to
-    -- paint the day a player switches one on; by default it is invisible.
+    -- The version string rides the background stripe, so it uses Wurst's own
+    -- default text colour (#000000) — readable now that the band exists.
     local versionText: string = tostring(PRODUCT.version)
     local versionChip: Frame = (create("Frame", {
         Parent = chip,
         Name = "VersionChip",
-        BackgroundColor3 = WURSTLOGO_BACKGROUND,
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
         Position = UDim2.fromOffset(LOGO_WIDTH + 10, 8),
@@ -166,11 +180,7 @@ function Module.init(context: any): any
         Position = UDim2.fromOffset(0, 0),
         Size = UDim2.fromScale(1, 1),
         Text = versionText,
-        -- Wurst prints the version in the interface's own accent, which is why
-        -- it is magenta in one reference shot and cyan in the other. Its
-        -- default text colour is black, which on no background over a dark game
-        -- is invisible.
-        TextColor3 = Theme.accent,
+        TextColor3 = WURSTLOGO_TEXT,
         TextSize = 16,
         TextXAlignment = Enum.TextXAlignment.Left,
         ZIndex = 21,
@@ -194,11 +204,7 @@ function Module.init(context: any): any
         chip.Visible = logoAlways and state.visible == true
     end
     local function setLogoBackground(color: Color3): ()
-        versionChip.BackgroundColor3 = color
-        -- Only a value somebody stored paints the chip; the default stays
-        -- bare text, the way every reference screenshot draws the version.
-        versionChip.BackgroundTransparency =
-            configData.values["WurstLogo.Background"] ~= nil and 0.45 or 1
+        logoStripe.BackgroundColor3 = color
     end
     local function setLogoTextColor(color: Color3): ()
         versionLabel.TextColor3 = color
@@ -556,50 +562,62 @@ function Module.init(context: any): any
     }
 
     -- ------------------------------------------------------------ Navigator
-    -- Wurst's Navigator: a search field and a flat three-column grid of every
-    -- feature, ordered by how often the player has activated each one, with
-    -- an empty query restoring the preference order and Enter firing the top
-    -- hit. Two deliberate adaptations, recorded here: Wurst gives Navigator
-    -- its own screen, ours lives under the logo on the ClickGUI screen (the
-    -- brief's instruction); and the field is not auto-focused, because over a
-    -- live game a stolen keyboard walks the character into a wall.
-    local NAV_WIDTH: number = 302
-    local NAV_CELL_WIDTH: number = 98
+    -- Wurst's Navigator, as its own GUI rather than furniture on the ClickGUI
+    -- screen: a dimmed layer over the game, the search focused on open, a
+    -- flat three-column grid ordered by how often the player has activated
+    -- each feature (persisted per game), Enter firing the selection, Space
+    -- opening its settings, arrows and Tab moving the selection, Escape and
+    -- Backspace-on-an-empty-query closing. Two platform notes: Roblox
+    -- exposes no fourth mouse button, so Wurst's Mouse4-to-close cannot
+    -- exist here, and Backspace only closes when the query is empty because
+    -- it is also how the query is edited.
+    local NAV_COLUMNS: number = 3
+    local NAV_CELL_WIDTH: number = 150
     local NAV_CELL_HEIGHT: number = 22
-    local NAV_LIMIT: number = 24
+    local NAV_LIMIT: number = 36
+    local NAV_WIDTH: number = NAV_COLUMNS * NAV_CELL_WIDTH
+        + (NAV_COLUMNS - 1) * 3
 
-    local navFrame: Frame = (create("Frame", {
+    local navScreen: Frame = (create("Frame", {
         Parent = PopupLayer,
         Name = "Navigator",
         Active = true,
+        BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+        BackgroundTransparency = 0.45,
+        BorderSizePixel = 0,
+        Size = UDim2.fromScale(1, 1),
+        Visible = false,
+        ZIndex = 246,
+    }) :: any) :: Frame
+
+    local navColumn: Frame = (create("Frame", {
+        Parent = navScreen,
+        Name = "Column",
+        AnchorPoint = Vector2.new(0.5, 0),
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
-        Position = UDim2.fromOffset(
-            FURNITURE_MARGIN_X,
-            FURNITURE_MARGIN_Y + LOGO_HEIGHT + 8
-        ),
+        Position = UDim2.new(0.5, 0, 0, 90),
         Size = UDim2.fromOffset(NAV_WIDTH, 26),
-        Visible = false,
-        ZIndex = 20,
+        ZIndex = 247,
     }) :: any) :: Frame
 
     local navSearch: TextBox = (create("TextBox", {
         TextTruncate = Enum.TextTruncate.AtEnd,
-        Parent = navFrame,
+        Parent = navColumn,
         Name = "Search",
         BackgroundColor3 = Color3.fromRGB(0, 0, 0),
-        BackgroundTransparency = 0.5,
+        BackgroundTransparency = 0.35,
         BorderSizePixel = 0,
         ClearTextOnFocus = false,
         FontFace = CONTROL_FONT,
         PlaceholderText = "Search…",
         Position = UDim2.fromOffset(0, 0),
-        Size = UDim2.new(1, 0, 0, 22),
+        Size = UDim2.new(1, 0, 0, 24),
         Text = "",
         TextColor3 = Theme.text,
-        TextSize = 12,
+        TextSize = 13,
         TextXAlignment = Enum.TextXAlignment.Left,
-        ZIndex = 21,
+        ZIndex = 248,
     }) :: any) :: TextBox
     create("UIPadding", {
         Parent = navSearch,
@@ -608,17 +626,17 @@ function Module.init(context: any): any
     })
 
     local navResults: Frame = (create("Frame", {
-        Parent = navFrame,
+        Parent = navColumn,
         Name = "Results",
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
-        Position = UDim2.fromOffset(0, 26),
+        Position = UDim2.fromOffset(0, 30),
         Size = UDim2.new(1, 0, 0, 0),
-        ZIndex = 21,
+        ZIndex = 247,
     }) :: any) :: Frame
     create("UIGridLayout", {
         Parent = navResults,
-        CellPadding = UDim2.fromOffset(2, 2),
+        CellPadding = UDim2.fromOffset(3, 3),
         CellSize = UDim2.fromOffset(NAV_CELL_WIDTH, NAV_CELL_HEIGHT),
         SortOrder = Enum.SortOrder.LayoutOrder,
     })
@@ -630,15 +648,69 @@ function Module.init(context: any): any
         return configData.values.NavigatorPrefs
     end
 
-    local navHeight: number = 26
     local navOrdered: {any} = {}
+    local navEntries: {TextButton} = {}
+    local navSelected: number = 1
     local rebuildNavigator: () -> () = function(): () end
 
-    local function paintNavEntry(button: TextButton, feature: any): ()
+    local function paintNavEntry(index: number): ()
+        local entry: TextButton? = navEntries[index]
+        local feature: any = navOrdered[index]
+        if not entry or not feature then
+            return
+        end
         local on: boolean = feature.enabled == true
-        button.BackgroundColor3 = on and Theme.enabled or Color3.fromRGB(0, 0, 0)
-        button.BackgroundTransparency = on and 0 or 0.5
-        button.TextColor3 = on and Theme.enabledText or Theme.text
+        (entry :: TextButton).BackgroundColor3 =
+            on and Theme.enabled or Color3.fromRGB(0, 0, 0);
+        (entry :: TextButton).BackgroundTransparency = on and 0 or 0.35;
+        (entry :: TextButton).TextColor3 = on and Theme.enabledText or Theme.text
+        local ring: UIStroke? =
+            (entry :: TextButton):FindFirstChild("SelectionRing") :: UIStroke?
+        if ring then
+            (ring :: UIStroke).Transparency =
+                index == navSelected and 0 or 1
+        end
+    end
+
+    local function paintNavSelection(): ()
+        for index: number in ipairs(navEntries) do
+            paintNavEntry(index)
+        end
+    end
+
+    local function navActivate(index: number): ()
+        local feature: any = navOrdered[index]
+        if not feature then
+            return
+        end
+        if type(feature.activate) == "function" then
+            feature.activate()
+        end
+        navPrefs()[tostring(feature.name)] =
+            (tonumber(navPrefs()[tostring(feature.name)]) or 0) + 1
+        queueConfigSave()
+        paintNavEntry(index)
+        refreshHudList()
+    end
+
+    local closeNavigator: () -> () = function(): () end
+
+    -- Space: the selection's settings, the way Navigator's arrow does it —
+    -- the feature's card expands inside its category window, with the GUI
+    -- open so the window is actually on screen.
+    local function navOpenSettings(index: number): ()
+        local feature: any = navOrdered[index]
+        if not feature or type(feature.hasOptions) ~= "function"
+            or not feature.hasOptions() then
+            return
+        end
+        closeNavigator()
+        if state.visible ~= true then
+            state.setMenuVisible(true)
+        end
+        if not feature.expanded and type(feature.toggleExpansion) == "function" then
+            feature.toggleExpansion()
+        end
     end
 
     rebuildNavigator = function(): ()
@@ -665,6 +737,7 @@ function Module.init(context: any): any
             return tostring(left.name) < tostring(right.name)
         end)
         navOrdered = {}
+        navEntries = {}
         for index: number, feature: any in ipairs(matches) do
             if index > NAV_LIMIT then
                 break
@@ -680,59 +753,133 @@ function Module.init(context: any): any
                 FontFace = CONTROL_FONT,
                 LayoutOrder = index,
                 Text = tostring(feature.name),
-                TextSize = 11,
-                ZIndex = 22,
+                TextSize = 12,
+                ZIndex = 248,
             }) :: any) :: TextButton
-            paintNavEntry(entry, feature)
+            create("UIStroke", {
+                Parent = entry,
+                Name = "SelectionRing",
+                Color = Theme.enabled,
+                Thickness = 1,
+                Transparency = 1,
+            })
+            navEntries[index] = entry
             table.insert(Furniture.connections, entry.MouseButton1Click:Connect(function(): ()
-                if type(feature.activate) == "function" then
-                    feature.activate()
-                end
-                prefs[tostring(feature.name)] =
-                    (tonumber(prefs[tostring(feature.name)]) or 0) + 1
-                queueConfigSave()
-                paintNavEntry(entry, feature)
-                refreshHudList()
+                navSelected = index
+                navActivate(index)
+                paintNavSelection()
             end))
         end
-        local rows: number = math.ceil(#navOrdered / 3)
-        navHeight = 26 + (rows > 0 and rows * (NAV_CELL_HEIGHT + 2) + 2 or 0)
-        navFrame.Size = UDim2.fromOffset(NAV_WIDTH, navHeight)
-        navResults.Size = UDim2.new(1, 0, 0, navHeight - 26)
-        placeHudList()
+        navSelected = math.clamp(navSelected, 1, math.max(#navOrdered, 1))
+        local rows: number = math.ceil(#navOrdered / NAV_COLUMNS)
+        navColumn.Size = UDim2.fromOffset(
+            NAV_WIDTH,
+            30 + rows * (NAV_CELL_HEIGHT + 3)
+        )
+        navResults.Size = UDim2.new(1, 0, 0, rows * (NAV_CELL_HEIGHT + 3))
+        paintNavSelection()
     end
 
-    navigatorBottom = function(): number
-        if navFrame.Visible then
-            return FURNITURE_MARGIN_Y + LOGO_HEIGHT + 8 + navHeight + 8
-        end
-        return FURNITURE_MARGIN_Y + LOGO_HEIGHT + 8
+    local function openNavigator(): ()
+        navScreen.Visible = true
+        navSelected = 1
+        rebuildNavigator()
+        -- Focused on open, as the Java focuses its search field. This is a
+        -- deliberate screen the player asked for; stealing the keyboard is
+        -- the point.
+        navSearch:CaptureFocus()
+    end
+
+    closeNavigator = function(): ()
+        navScreen.Visible = false
+        navSearch:ReleaseFocus()
+        navSearch.Text = ""
     end
 
     table.insert(
         Furniture.connections,
-        navSearch:GetPropertyChangedSignal("Text"):Connect(rebuildNavigator)
+        navSearch:GetPropertyChangedSignal("Text"):Connect(function(): ()
+            if navScreen.Visible then
+                rebuildNavigator()
+            end
+        end)
     )
     table.insert(Furniture.connections, navSearch.FocusLost:Connect(function(
         enterPressed: boolean
     ): ()
-        -- Enter fires the top hit, as Navigator's primary action does.
-        if enterPressed and navOrdered[1] ~= nil then
-            local top: any = navOrdered[1]
-            if type(top.activate) == "function" then
-                top.activate()
+        if enterPressed and navScreen.Visible then
+            navActivate(navSelected)
+            -- Wurst keeps Navigator up after a toggle; so does this, with
+            -- the field ready for the next query.
+            navSearch:CaptureFocus()
+        end
+    end))
+
+    -- The keyboard, while the screen is up. Arrows and Tab move the
+    -- selection even while the search box owns the caret.
+    table.insert(Furniture.connections, UserInputService.InputBegan:Connect(function(
+        input: InputObject,
+        _gameProcessed: boolean
+    ): ()
+        if not navScreen.Visible then
+            return
+        end
+        local key: Enum.KeyCode = input.KeyCode
+        local step: number = 0
+        if key == Enum.KeyCode.Escape then
+            closeNavigator()
+            return
+        elseif key == Enum.KeyCode.Backspace then
+            if navSearch.Text == "" then
+                closeNavigator()
             end
-            navPrefs()[tostring(top.name)] =
-                (tonumber(navPrefs()[tostring(top.name)]) or 0) + 1
-            queueConfigSave()
-            rebuildNavigator()
-            refreshHudList()
+            return
+        elseif key == Enum.KeyCode.Down then
+            step = NAV_COLUMNS
+        elseif key == Enum.KeyCode.Up then
+            step = -NAV_COLUMNS
+        elseif key == Enum.KeyCode.Right
+            or key == Enum.KeyCode.Tab then
+            step = 1
+        elseif key == Enum.KeyCode.Left then
+            step = -1
+        elseif key == Enum.KeyCode.Space then
+            navOpenSettings(navSelected)
+            return
+        else
+            return
+        end
+        if #navOrdered > 0 then
+            navSelected = ((navSelected - 1 + step) % #navOrdered) + 1
+            paintNavSelection()
+        end
+    end))
+
+    -- RightShift opens Navigator, Wurst's own default bind — unless the
+    -- player's stored menu key is still RightShift from an older build, in
+    -- which case the menu keeps its key and Navigator waits for a rebind.
+    table.insert(Furniture.connections, UserInputService.InputBegan:Connect(function(
+        input: InputObject,
+        gameProcessed: boolean
+    ): ()
+        if gameProcessed or input.KeyCode ~= Enum.KeyCode.RightShift then
+            return
+        end
+        if state.toggleKey == Enum.KeyCode.RightShift then
+            return
+        end
+        if navScreen.Visible then
+            closeNavigator()
+        else
+            openNavigator()
         end
     end))
 
     state.navigator = {
-        root = navFrame,
+        root = navScreen,
         refresh = rebuildNavigator,
+        Open = openNavigator,
+        Close = closeNavigator,
     }
 
     -- ----------------------------------------------------------------- pill
@@ -875,18 +1022,13 @@ function Module.init(context: any): any
         menuButton.TextColor3 = open and Theme.accentText or PILL_IDLE_TEXT
     end
     restyleMenuButton()
-    state.addMenuVisibilityListener(function(visible: boolean): ()
+    state.addMenuVisibilityListener(function(_visible: boolean): ()
         restyleMenuButton()
-        -- The wordmark and the Navigator belong to the ClickGUI screen; the
-        -- HackList stays (it is the in-game HUD) but re-seats itself under
-        -- whichever of the two currently ends that corner.
+        -- The wordmark belongs to the ClickGUI screen; the HackList stays —
+        -- it is the in-game HUD. Navigator is its own screen now and ignores
+        -- the ClickGUI entirely.
         refreshLogoVisibility()
-        navFrame.Visible = visible == true
-        if visible then
-            rebuildNavigator()
-        else
-            placeHudList()
-        end
+        placeHudList()
     end)
     refreshLogoVisibility()
     ThemeEngine.OnChange(function(): ()
@@ -921,7 +1063,7 @@ function Module.init(context: any): any
         Furniture.connections = {}
         chip:Destroy()
         hudFrame:Destroy()
-        navFrame:Destroy()
+        navScreen:Destroy()
         pillFrame:Destroy()
         state.hudList = nil
         state.wurstLogo = nil
