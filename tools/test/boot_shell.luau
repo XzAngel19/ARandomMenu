@@ -16,6 +16,11 @@ return function(ctx: any): any
     end
 
     local world: any = Mock.install()
+    -- Optional hook: seed world.files / folders / JSONDecode before the
+    -- chunk runs. Cache sweeps and loadConfig fire during bootstrap.
+    if type(ctx.prepareWorld) == "function" then
+        ctx.prepareWorld(world)
+    end
     local playerGui: any = Mock.newInstance("PlayerGui")
     playerGui.Name = "PlayerGui"
     playerGui.Parent = world.localPlayer
