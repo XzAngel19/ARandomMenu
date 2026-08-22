@@ -257,6 +257,19 @@ return function(ctx: any): ()
     check("module search contains exactly the 38-module inventory",
         search ~= nil and #search.entries == 38,
         search and tostring(#search.entries) or "missing")
+    for _, entry: any in ipairs(search.entries or {}) do
+        check("module search keybind metadata: " .. tostring(entry.displayName),
+            type(entry.actionId) == "string"
+                and entry.actionId == entry.configKey
+                and type(entry.displayName) == "string"
+                and type(entry.currentKey) == "function"
+                and type(entry.conflict) == "function"
+                and type(entry.capture) == "function"
+                and type(entry.remove) == "function"
+                and type(entry.invoke) == "function")
+        check("fresh module binding is Unknown: " .. tostring(entry.displayName),
+            entry.currentKey() == world.globals.Enum.KeyCode.Unknown)
+    end
     for query: string, expected: string in pairs({
         ESP = "PlayerESP",
         PlayerESP = "PlayerESP",
@@ -273,6 +286,21 @@ return function(ctx: any): ()
             result ~= nil and result.status == "success"
                 and result.entry.displayName == expected,
             result and result.status or "missing")
+    end
+    local flightBinding: any = search.Resolve("Flight").entry
+    local speedBinding: any = search.Resolve("SpeedHack").entry
+    local captureKey: any = world.globals.Enum.KeyCode.Q or world.globals.Enum.KeyCode.Unknown
+    if captureKey ~= world.globals.Enum.KeyCode.Unknown then
+        check("module binding can be captured", flightBinding.capture(captureKey))
+        check("captured key is current", flightBinding.currentKey() == captureKey)
+        speedBinding.capture(captureKey)
+        check("duplicate keys report conflicts",
+            flightBinding.conflict() and speedBinding.conflict())
+        flightBinding.remove()
+        speedBinding.remove()
+        check("remove returns bindings to Unknown",
+            flightBinding.currentKey() == world.globals.Enum.KeyCode.Unknown
+                and speedBinding.currentKey() == world.globals.Enum.KeyCode.Unknown)
     end
     check("module search normalizes spaces, hyphens and underscores",
         search.Resolve("PLAYER_ E-S-P").status == "success")

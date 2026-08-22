@@ -209,16 +209,44 @@ function Module.init(context: any): Framework
             return
         end
         local normalized: string = normalizeSearchName(feature.name)
+        local binding: any = host.state.shortcutBindings
+            and host.state.shortcutBindings[feature.configKey]
         local entry: any = {
             normalized = normalized,
             displayName = feature.name,
             configKey = feature.configKey,
+            actionId = feature.configKey,
             aliases = {},
             kind = feature.kind,
             searchable = feature.searchable ~= false,
             feature = feature,
             activate = feature.activate,
+            invoke = feature.activate,
         }
+        function entry.currentKey(): any
+            return binding and binding.key or Enum.KeyCode.Unknown
+        end
+        function entry.conflict(): boolean
+            local key: any = entry.currentKey()
+            if key == nil or key == Enum.KeyCode.Unknown then
+                return false
+            end
+            local uses: number = 0
+            for _, candidate: any in pairs(host.state.shortcutBindings or {}) do
+                if candidate.key == key then
+                    uses += 1
+                end
+            end
+            return uses > 1
+        end
+        function entry.capture(key: Enum.KeyCode): boolean
+            return binding ~= nil and binding.assign(key) == true
+        end
+        function entry.remove(): ()
+            if binding and binding.key ~= Enum.KeyCode.Unknown then
+                binding.assign(binding.key)
+            end
+        end
         for alias: string, target: string in pairs(moduleSearch.aliases) do
             if target == normalized then
                 table.insert(entry.aliases, alias)
