@@ -83,8 +83,8 @@ return function(ctx: any): ()
     check("the checkbox is a square, not a switch", checkbox ~= nil)
     if checkbox ~= nil then
         check(
-            "the checkbox is Wurst's 11 px box",
-            checkbox.Size.X.Offset == 11 and checkbox.Size.Y.Offset == 11,
+            "the checkbox is Wurst's 11 logical px box at GUI scale 2",
+            checkbox.Size.X.Offset == 22 and checkbox.Size.Y.Offset == 22,
             tostring(checkbox.Size.X.Offset) .. "x" .. tostring(checkbox.Size.Y.Offset)
         )
         check(
