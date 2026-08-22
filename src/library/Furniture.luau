@@ -672,10 +672,12 @@ function Module.init(context: any): any
             forceHudRefresh()
         end,
         SetColor = function(color: Color3): ()
+            -- Overlay rows are bitmap holders (`row.holder`), not vector
+            -- labels. Writing `.label` threw the moment HackList settings
+            -- opened and the Color option replayed. Recolor the live
+            -- contract colour and rebuild the list through draw().
             hudColor = color
-            for _, row: any in pairs(hudRows) do
-                row.label.TextColor3 = color
-            end
+            forceHudRefresh()
         end,
         SetSortBy = function(value: string): ()
             hudSortBy = value

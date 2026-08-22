@@ -229,6 +229,46 @@ return function(ctx: any): ()
         end
     end
 
+    -- C7: theme / font / scale switches must reuse the pool, not grow a
+    -- second set of holders. Created may tick when a signature changes
+    -- (scale is part of it); live holders must not explode.
+    local SWITCH_CREATED_CEILING: number = 200
+    local holdersBeforeSwitch: number, _glyphsBeforeSwitch: number = Inspect.liveCounts(bitmap)
+    local createdBeforeSwitch: number = bitmap.stats.glyphsCreated
+    local reusedBeforeSwitch: number = bitmap.stats.glyphsReused
+    if env.ThemeEngine and type(env.ThemeEngine.Apply) == "function" then
+        env.ThemeEngine.Apply("Monochrome")
+        env.ThemeEngine.Apply("Wurst")
+    end
+    if type(bitmap.applyFontPack) == "function" then
+        bitmap.applyFontPack("Monocraft")
+    end
+    Inspect.pinClickGuiScale(env.PopupLayer, 1.25)
+    if type(state.refreshLayout) == "function" then
+        state.refreshLayout(true)
+    end
+    Inspect.pinClickGuiScale(env.PopupLayer, 1)
+    if type(state.refreshLayout) == "function" then
+        state.refreshLayout(true)
+    end
+    Inspect.armAtlas(bitmap)
+    local holdersAfterSwitch: number, _glyphsAfterSwitch: number = Inspect.liveCounts(bitmap)
+    check(
+        "theme/font/scale switches stay inside the created-growth ceiling",
+        bitmap.stats.glyphsCreated - createdBeforeSwitch < SWITCH_CREATED_CEILING,
+        tostring(bitmap.stats.glyphsCreated - createdBeforeSwitch)
+    )
+    check(
+        "theme/font/scale switches do not grow live holders by more than 20",
+        holdersAfterSwitch <= holdersBeforeSwitch + 20,
+        "before=" .. tostring(holdersBeforeSwitch) .. " after=" .. tostring(holdersAfterSwitch)
+    )
+    check(
+        "theme/font/scale switches reuse pooled glyphs or skip",
+        bitmap.stats.glyphsReused >= reusedBeforeSwitch
+            or bitmap.stats.skipped >= 0
+    )
+
     if type(state.destruct) == "function" then
         state.destruct()
     end

@@ -14,6 +14,7 @@ not releasing.
 | Open/close one settings window 20 times | created growth ≪ 80 | **80** | the same window is reused |
 | Unchanged `draw()` | `skipped` +1, `created` unchanged | — | signature skip |
 | `release(holder)` | holder leaves `_live` | — | explicit teardown |
+| theme / font pack / scale switch | created growth well under 200; holders ±20 | **200** | signatures change; the pool must reuse |
 | `state.destruct()` | 0 live holders, 0 glyphs | **0** | ScreenGui gone, weak registry empty |
 
 `lastDrawMs` is wall time of one `draw()`. A single title redraw stays

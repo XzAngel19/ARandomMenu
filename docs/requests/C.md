@@ -3,6 +3,21 @@
 The integrator owns `ARandomMenu.luau`. Agent D owns `src/modules/**` and
 `src/games/**`. C cannot edit those.
 
+## Visual RC (C1 classification)
+
+Integrator note: the three A→D P1s are consumed. Verified blocking, not
+re-listed as debt. See `docs/visual/VISUAL-RC.md`.
+
+| Item | Status |
+|---|---|
+| A P1 Retile clamp | **resuelto + test bloqueante** |
+| A P1 keybind tooltip measure | **resuelto + test bloqueante** |
+| A P1 dock tooltip measure | **resuelto + test bloqueante** |
+| A P2 widgets disabled API | **deuda demostrada** — no blocking test |
+| Capturas reales Roblox | **deuda demostrada** — headless no rasteriza |
+| SetColor crash (`row.label`) | **defecto pequeño** — `hudColor` + `forceHudRefresh()` |
+| `closeInvalidPopups` unpublished | **deuda demostrada** — menu-hide blocking; owner/scroll wait |
+
 ## Landed — do not regress
 
 - Eight official names stay in `KNOWN_CATEGORIES`. Occupied windows
@@ -99,18 +114,15 @@ The integrator owns `ARandomMenu.luau`. Agent D owns `src/modules/**` and
 
 ### Keybind square
 
-Cards still hide the desktop bind target. Publish a 22 px square on
-bindable rows only (toggle / action / hold; never group). No pill,
-no corner, no KEY caption. Click captures; Escape and click-outside
-cancel; Backspace / Delete clear. The square must not activate the
-module or flip `enabled`. Hide it on a keyboard-less phone. The
-suite flips the moment `bindSquare` / `BindSquare` exists.
+Landed on Cards as `BindSquare`. The suite is blocking. Do not regress
+the 12 px square, the symmetric title clearance, or the capture path.
 
 ### APPLY-4 owner-window + scroll-clip
 
 Menu-hide is blocking. Publish `state.closeInvalidPopups` and
 `state.closePopupsOutsideArea` (7.54.1 names). C8 flips those two
-checks the moment the functions exist.
+checks the moment the functions exist. Do **not** add those functions
+from C.
 
 ### ClickGui.order follows module-load, not CATEGORY_ORDER
 
@@ -122,49 +134,31 @@ Re-run the CATEGORY_ORDER pass after modules exist (or rebuild
 
 ### Bottom command dock
 
-The pill is the dock (`state.pill`). Search left, ≡ right, no
-results list, FocusLost(true) / mobile ReleaseFocus submit. The
-dock still calls `state.invokeModuleSearch`, which is a substring
-matcher: `ESP` is ambiguous and `AutoClicker` misses `Auto Clicker`.
-Route the box through `state.moduleSearch.Execute` so one submit is
-one Execute and the aliases work. Wire Return and KeypadEnter the
-same way. `state.commandDock` as a name is optional.
+Landed. The pill submits through `state.moduleSearch.Execute`
+(FocusLost + on-screen Return). Do not regress aliases.
 
 ### Menu style cycle does not switch surfaces
 
-`addCycleOption("Menu style")` writes `state.menuStyle` and
-`UI.MenuStyle` and stops. Publish `state.SetMenuStyle(style, open)`
-as the one state machine (A's 567f0ee). The suite becomes blocking
-the moment that function exists. RightShift currently can leave
-both up — close the other surface.
+Landed as `state.SetMenuStyle(style, openImmediately)`. The suite
+is blocking. Never leave both surfaces up.
 
 ### Navigator back row
 
-Escape closes. There is no dedicated back-to-Wurst control on the
-Navigator screen; the dock ≡ is the return path. A Back button
-(or equivalent) that restores Wurst without trapping the user is
-still owed.
+Landed as `WurstDoor` (`< Wurst ClickGUI`). Escape still closes.
 
 ### Show dock (desktop only)
 
-No desktop visibility setting. Desktop: setting visible, false
-hides the pill, RightControl still opens the menu, true restores.
-Mobile: setting absent/hidden, dock forced visible, a stored
-desktop false ignored.
+Landed as `state.dock.SetVisible`. Mobile still forces the dock.
 
 ### HackList settings crash on SetColor
 
-`Furniture.SetColor` writes `row.label.TextColor3`. Overlay rows are
-bitmap holders now (`row.holder`), so opening HackList settings
-(the Color option's init callback) throws. Recolor through the
-bitmap contract. C does not open that window until this is fixed.
+Fixed in Furniture: `SetColor` writes `hudColor` and calls
+`forceHudRefresh()`. Opening HackList settings is blocking.
 
 ### pickAtlas ceiling
 
-`pickAtlas` is still nearest, larger on a tie. That upscales the
-8 px atlas at physical 11. Ceiling: target 11 → atlas >= 16,
-target 16 → 16, target 18 → atlas >= 24. The suite flips the
-moment the function prefers the next-larger ready member.
+Landed. Downscale-only: ≤8→8, 9..16→16, 17..24→24, 25..32→32,
+else the largest ready member.
 
 ### RUN / textbox / list still rounded via the shell helper
 
@@ -187,9 +181,8 @@ Taco stays off. Do not fail until the names exist.
 
 ### Furniture pill tooltip
 
-The official tooltip path (`showFeatureTooltip`) draws on the bitmap
-contract. The pill's own tip still writes `state.featureTooltip.Text`
-without hiding the vector ink. That is Furniture, not a C4 fail.
+Landed. `showPillTip` uses `bitmap.measure` / `wrap` / `draw` with
+`ellipsis=true`. The `#text * 8` path is only the no-contract fallback.
 
 ## Product name leftovers
 

@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "74f13dd6d73f0e57",
+    stamp = "2ef830f6de196e7a",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -12626,10 +12626,12 @@ function Module.init(context: any): any
             forceHudRefresh()
         end,
         SetColor = function(color: Color3): ()
+            -- Overlay rows are bitmap holders (`row.holder`), not vector
+            -- labels. Writing `.label` threw the moment HackList settings
+            -- opened and the Color option replayed. Recolor the live
+            -- contract colour and rebuild the list through draw().
             hudColor = color
-            for _, row: any in pairs(hudRows) do
-                row.label.TextColor3 = color
-            end
+            forceHudRefresh()
         end,
         SetSortBy = function(value: string): ()
             hudSortBy = value
