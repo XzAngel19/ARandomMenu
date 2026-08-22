@@ -178,6 +178,11 @@ if offenders:
 print("ok")
 PYTHON
 
+step "Font authority is Minecraft 1.18.1"
+# Offline. Pins, OFL fallback, no Mojang pixels in git. The network
+# path is tools/fetch_minecraft_font.py --update and is not this step.
+python3 tools/check_font_authority.py --check
+
 step "WurstLogo band is packed"
 # The band used to be LOGO_WIDTH + 130, which ran on toward the HUD.
 # Furniture packs to logo + gap + the real version string. A leftover

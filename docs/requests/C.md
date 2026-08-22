@@ -34,6 +34,10 @@ The integrator owns `ARandomMenu.luau`. Agent D owns `src/modules/**` and
   Popup roots set `AutoLocalize = false`.
 - ClickGui calibration viewport is 1600×900 (`CALIBRATION_WIDTH/HEIGHT`).
   The spec holds those two names to the screenshot.
+- Font authority is Minecraft 1.18.1 (`docs/minecraft-1.18.1-font.md`).
+  `tools/check_font_authority.py` holds the pin, refuses Mojang pixels
+  in git, and refuses to label `monocraft-16.png` as Minecraft exact.
+  Normal validate is offline. `--update` is the only network path.
 
 ## Still owed — do not fail until these land
 
