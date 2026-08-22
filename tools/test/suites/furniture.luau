@@ -312,6 +312,32 @@ return function(ctx: any): ()
                 "BackgroundTransparency=" .. tostring(chip.BackgroundTransparency)
             )
         end
+        -- Official fill is y=6..17 logical (12..34 at GUI scale 2), half
+        -- alpha. The seed colour is still #000000 (owed); the band itself
+        -- has to stay a stripe.
+        local stripe: any = logo.root and logo.root:FindFirstChild("BackgroundStripe")
+        check("WurstLogo paints the y=6..17 band", stripe ~= nil)
+        if stripe ~= nil then
+            check(
+                "the band is half alpha",
+                stripe.BackgroundTransparency == 0.5,
+                tostring(stripe.BackgroundTransparency)
+            )
+            check(
+                "the band starts at scale-2 y=12 (logical 6)",
+                stripe.Position.Y.Offset == 12,
+                tostring(stripe.Position.Y.Offset)
+            )
+            check(
+                "the band is 22 px (logical 11, y=6..17)",
+                stripe.Size.Y.Offset == 22,
+                tostring(stripe.Size.Y.Offset)
+            )
+            check(
+                "the band is never an opaque slab",
+                stripe.BackgroundTransparency > 0
+            )
+        end
     end
 
     check("Navigator is published", type(state.navigator) == "table")

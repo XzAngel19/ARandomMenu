@@ -214,6 +214,56 @@ if offenders:
 print("ok")
 PYTHON
 
+step "Settings widgets stay Wurst"
+# Official Wurst checkboxes are squares, colour rows are two lines with
+# a right-aligned hex, and setting rows do not invent +, –, ▪ icons.
+# A comment that remembers a switch is fine; constructing one in the
+# widget library is the old menu coming back.
+python3 - <<'PYTHON'
+import os
+import re
+
+paths = (
+    "src/library/Widgets.luau",
+    "src/library/SettingsPage.luau",
+    "src/library/Cards.luau",
+    "src/library/ClickGui.luau",
+)
+needles = (
+    "createToggleSwitch",
+    "setToggleSwitch",
+    'Name = "OptionSwitch"',
+    "Name = 'OptionSwitch'",
+    'Text = "+"',
+    "Text = '+'",
+    'Text = "–"',
+    'Text = "▪"',
+    'Text = "•"',
+)
+offenders = []
+for path in paths:
+    if not os.path.exists(path):
+        continue
+    text = open(path, encoding="utf-8", errors="replace").read()
+    for needle in needles:
+        if needle in text:
+            offenders.append(f"{path}: {needle}")
+    # A UICorner on the checkbox itself is a pill coming back.
+    if path.endswith("Widgets.luau"):
+        block = re.search(
+            r'Name = "OptionCheckbox".{0,400}',
+            text,
+            re.S,
+        )
+        if block and "UICorner" in block.group(0):
+            offenders.append(f"{path}: OptionCheckbox has UICorner")
+if offenders:
+    raise SystemExit(
+        "settings widget leftovers:\\n  " + "\\n  ".join(offenders)
+    )
+print("ok")
+PYTHON
+
 step "Rows stay FeatureButtons"
 # A dropped the star, the hamburger and the desktop key slot. A comment
 # that remembers them is fine; a Name = "Favorite" or applyLinesGlyph

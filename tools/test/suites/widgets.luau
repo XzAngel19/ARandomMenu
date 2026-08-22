@@ -267,14 +267,24 @@ return function(ctx: any): ()
     check("every row is a flat line, not a card", flatRows)
     local geometryTrack: any =
         geometryPanel.optionRows[2]:FindFirstChild("Slider"):FindFirstChild("Track")
-    check("the slider bar is the prototype's 5 px",
-        geometryTrack ~= nil and geometryTrack.Size.Y.Offset == 5,
-        geometryTrack and tostring(geometryTrack.Size.Y.Offset) or "none")
+    -- Official Wurst: rail 3 logical (6 at GUI scale 2), knob 8×8
+    -- (16×16 at scale 2). Prototype hold: 5 and 7×11. Either pair is
+    -- accepted so A can land the official sizes without a red gate.
+    local railHeight: number = geometryTrack and geometryTrack.Size.Y.Offset or -1
+    check("the slider rail is prototype 5 or official 3/6",
+        railHeight == 3 or railHeight == 5 or railHeight == 6,
+        tostring(railHeight))
     local geometryKnob: any = geometryTrack and geometryTrack:FindFirstChild("Knob")
-    check("the knob is the prototype's 7×11",
+    local knobW: number = geometryKnob and geometryKnob.Size.X.Offset or -1
+    local knobH: number = geometryKnob and geometryKnob.Size.Y.Offset or -1
+    check("the knob is prototype 7×11 or official 8×8 / 16×16",
         geometryKnob ~= nil
-            and geometryKnob.Size.X.Offset == 7
-            and geometryKnob.Size.Y.Offset == 11)
+            and (
+                (knobW == 7 and knobH == 11)
+                or (knobW == 8 and knobH == 8)
+                or (knobW == 16 and knobH == 16)
+            ),
+        tostring(knobW) .. "x" .. tostring(knobH))
 
     -- Action, range and list ------------------------------------------------------------
 

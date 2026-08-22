@@ -241,10 +241,15 @@ return function(ctx: any): ()
     )
 
     local inputService: any = world.services.UserInputService
+    -- Official Wurst: RightCtrl opens ClickGUI, RightShift opens Navigator.
+    -- The mock used to omit RightControl, so the shell fell back to
+    -- RightShift. Drive whatever key it actually published.
+    local toggleKey: any = shellState and shellState.toggleKey
+        or world.globals.Enum.KeyCode.RightControl
     local function pressToggle(): ()
         inputService.InputBegan:Fire({
             UserInputType = world.globals.Enum.UserInputType.Keyboard,
-            KeyCode = world.globals.Enum.KeyCode.RightShift,
+            KeyCode = toggleKey,
         }, false)
     end
 
