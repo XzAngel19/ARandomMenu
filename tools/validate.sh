@@ -178,6 +178,10 @@ if offenders:
 print("ok")
 PYTHON
 
+step "Universal inventory stays 38 modules"
+# 7.54.1 GUI APPLY must not grow or rename Manifest.modules.
+python3 tools/check_inventory.py
+
 step "Font authority is Minecraft 1.18.1"
 # Offline. Pins, OFL fallback, no Mojang pixels in git. The network
 # path is tools/fetch_minecraft_font.py --update and is not this step.
