@@ -233,6 +233,10 @@ function Module.init(context: any): any
             if limit <= 0 then
                 limit = math.huge
             end
+            -- A short viewport caps harder than the slider: a category
+            -- taller than the screen cannot be clamped into it, so the
+            -- body scrolls instead.
+            limit = math.min(limit, logicalViewport().Y - 12)
             local wanted: number = math.min(
                 TITLE_HEIGHT + layout.AbsoluteContentSize.Y + 4,
                 limit

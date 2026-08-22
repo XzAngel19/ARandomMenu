@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "15b6d76fccdd6f30",
+    stamp = "033cd91c0e77b133",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -779,8 +779,11 @@ function Module.init(context: any): WidgetLibrary
         local optionKey: string =
             feature.configKey .. "." .. labelText:gsub("%W", "")
         local storedValue: number? = tonumber(configData.values[optionKey])
+        -- A stored value is clamped into the row's own range on load: a
+        -- config written by an older build (Max height 1000) or edited by
+        -- hand must not smuggle an out-of-range number past the slider.
         local value: number = isFiniteNumber(storedValue)
-            and (storedValue :: number)
+            and math.clamp(storedValue :: number, minimum, maximum)
             or defaultValue
         local integerOnly: boolean = defaultValue % 1 == 0
             and minimum % 1 == 0
@@ -1208,6 +1211,14 @@ function Module.init(context: any): WidgetLibrary
             Transparency = 0.4,
             Thickness = 1,
         })
+        -- Every entry the list is about to hold draws on the bitmap
+        -- contract; the sweep's connection dies with the list.
+        do
+            local bitmap: any = state.bitmapText
+            if bitmap and type(bitmap.adoptTree) == "function" then
+                bitmap.adoptTree(list)
+            end
+        end
 
         local filterBox: TextBox? = nil
         if searchable then
@@ -1902,6 +1913,14 @@ function Module.init(context: any): WidgetLibrary
                 Visible = false,
                 ZIndex = 460,
             })
+            -- The picker's labels and buttons render on the bitmap
+            -- contract too; the panel is persistent, so the sweep is.
+            do
+                local bitmap: any = state.bitmapText
+                if bitmap and type(bitmap.adoptTree) == "function" then
+                    bitmap.adoptTree(panel)
+                end
+            end
 
             local title = makeTextLabel(panel, "COLOR", 14)
             title.FontFace = CONTROL_FONT
@@ -5878,15 +5897,22 @@ function Module.init(context: any): any
         end
 
         if type(saved) == "table" and saved.x and saved.y then
-            local landed: Vector2 = clamp(
-                Vector2.new(saved.x, saved.y),
-                Vector2.new(root.Size.X.Offset, root.Size.Y.Offset)
-            )
-            root.Position = UDim2.fromOffset(landed.X, landed.Y)
-            -- A stored position is one the user chose. Placement and reflow
-            -- must never move it; only the clamp above may, and only to keep
-            -- the window on a screen that shrank since it was saved.
-            window.userMoved = true
+            -- tonumber, not trust: a corrupt store must clamp to a sane
+            -- spot, never throw while restoring a window.
+            local savedX: number? = tonumber(saved.x)
+            local savedY: number? = tonumber(saved.y)
+            if savedX and savedY then
+                local landed: Vector2 = clamp(
+                    Vector2.new(savedX, savedY),
+                    Vector2.new(root.Size.X.Offset, root.Size.Y.Offset)
+                )
+                root.Position = UDim2.fromOffset(landed.X, landed.Y)
+                -- A stored position is one the user chose. Placement and
+                -- reflow must never move it; only the clamp above may, and
+                -- only to keep the window on a screen that shrank since it
+                -- was saved.
+                window.userMoved = true
+            end
         end
 
         function window:SetVisible(visible: boolean): ()
@@ -6522,6 +6548,12 @@ function Module.init(context: any): any
         local existing: any = manager.byId[id]
         if existing then
             existing.root.Visible = true
+            -- Reset layout ran while this window was closed: its stored
+            -- spot is stale, so reopening re-runs placement once.
+            if existing.stalePlacement then
+                existing.stalePlacement = nil
+                manager.PlaceWindow(existing, {force = true})
+            end
             feature.expanded = true
             if feature.syncArrow then
                 feature.syncArrow()
@@ -6563,6 +6595,12 @@ function Module.init(context: any): any
             size = Vector2.new(width, TITLE_HEIGHT + 40),
             position = slot,
             closable = true,
+            -- The Java: SettingsWindow calls setClosable(true) and
+            -- setMinimizable(false) — a feature's settings window has a
+            -- close button and no collapse chevron, in 7.19 and unchanged
+            -- through 7.54.1 (same file at both tags). SetCollapsed stays
+            -- functional on the window object; only the chrome is absent.
+            collapsible = false,
             onClose = function(): ()
                 feature.expanded = false
                 if feature.syncArrow then
@@ -6576,13 +6614,23 @@ function Module.init(context: any): any
 
         -- The card's option rows move home: they were built into the card's
         -- hidden panel and live in this window from now on. The category
-        -- window keeps exactly its height and rows.
+        -- window keeps exactly its height and rows. Every text object in
+        -- the tree — labels, values, RUN buttons, rows added later — is
+        -- adopted onto the bitmap contract; the sweep's connection dies
+        -- with the window.
         local options: any = feature.options
         if options then
             options.Visible = true
             options.Position = UDim2.fromOffset(0, 0)
             options.Size = UDim2.new(1, 0, 0, feature.optionsHeight or 40)
             options.Parent = window.body
+            local bitmapText: any = state.bitmapText
+            if bitmapText and type(bitmapText.adoptTree) == "function" then
+                table.insert(
+                    window.connections,
+                    bitmapText.adoptTree(options)
+                )
+            end
         end
 
         local function resizeToOptions(): ()
@@ -6592,6 +6640,10 @@ function Module.init(context: any): any
                 limit = math.huge
             end
             wanted = math.min(wanted, limit)
+            -- A short viewport caps harder than the slider: a window
+            -- taller than the screen cannot be clamped into it, so the
+            -- body scrolls instead.
+            wanted = math.min(wanted, logicalViewport().Y - MARGIN * 2)
             window.fullHeight = wanted
             if not window.collapsed then
                 window.root.Size = UDim2.fromOffset(width, wanted)
@@ -6606,29 +6658,48 @@ function Module.init(context: any): any
         window.resizeToOptions = resizeToOptions
         resizeToOptions()
 
-        -- The width above was packed from character counts, which is an
-        -- estimate. Once the labels have really rendered, their TextBounds
-        -- are the truth; one deferred re-pack replaces the estimate and
-        -- re-clamps. Harness labels never render, so zero bounds are left
-        -- alone.
-        task.defer(function(): ()
+        -- Dynamic packing. The width was estimated from character counts;
+        -- the truth is the bitmap contract's measured advances (or, on the
+        -- harness stand-in, rendered TextBounds). Re-run whenever the text
+        -- underneath could have changed: the deferred first pass, the atlas
+        -- resolving, and any caller that edits labels. Only a real change
+        -- moves anything, and the reflow after it respects a hand-placed
+        -- window.
+        local function repackWidth(): ()
             if not window.root.Parent then
                 return
             end
+            local bitmapText: any = state.bitmapText
             local widest: number = 0
             for _, optionRow: any in ipairs(feature.optionRows or {}) do
                 local label: any = optionRow:FindFirstChild("OptionLabel")
-                local bounds: any = label and label.TextBounds
-                local measured: number = bounds and tonumber(bounds.X) or 0
-                if measured > 0 then
-                    widest = math.max(widest, 8 + measured + 24 + 72)
+                if label then
+                    local measured: number = 0
+                    if bitmapText and type(bitmapText.measure) == "function" then
+                        measured = tonumber(bitmapText.measure(
+                            {{text = label.Text}},
+                            tonumber(label.TextSize) or 16
+                        )) or 0
+                    end
+                    if measured <= 0 then
+                        local bounds: any = label.TextBounds
+                        measured = bounds and tonumber(bounds.X) or 0
+                    end
+                    if measured > 0 then
+                        widest = math.max(widest, 8 + measured + 24 + 72)
+                    end
                 end
             end
             if widest > 0 then
-                width = math.clamp(widest, 160, 420)
-                resizeToOptions()
+                local packed: number = math.clamp(widest, 160, 420)
+                if packed ~= width then
+                    width = packed
+                    resizeToOptions()
+                end
             end
-        end)
+        end
+        window.repackWidth = repackWidth
+        task.defer(repackWidth)
 
         feature.expanded = true
         if feature.syncArrow then
@@ -6645,6 +6716,44 @@ function Module.init(context: any): any
     function manager.BringToFront(window: any): ()
         if window then
             raise(window)
+        end
+    end
+
+    -- Removable diagnostic, never drawn: the logical rectangle of every
+    -- window plus the scale and viewport the manager is reasoning with.
+    -- For reading placement bugs off a live session; nothing renders it.
+    function manager.DebugRects(): any
+        local rects: {any} = {}
+        for _, window: any in ipairs(manager.list) do
+            local x: number, y: number, w: number, h: number = windowRect(window)
+            table.insert(rects, {
+                id = window.id,
+                x = x, y = y, width = w, height = h,
+                visible = window.root.Visible == true,
+                userMoved = window.userMoved == true,
+                collapsed = window.collapsed == true,
+            })
+        end
+        return {
+            scale = layerScale(),
+            viewport = logicalViewport(),
+            windows = rects,
+        }
+    end
+
+    -- Dynamic packing, atlas edition: when the glyphs land, every packed
+    -- settings window re-measures against real advances instead of the
+    -- estimate it was born with.
+    do
+        local bitmapText: any = state.bitmapText
+        if bitmapText and type(bitmapText.onReady) == "table" then
+            table.insert(bitmapText.onReady, function(): ()
+                for _, window: any in ipairs(manager.list) do
+                    if window.featureSettings and window.repackWidth then
+                        window.repackWidth()
+                    end
+                end
+            end)
         end
     end
 
@@ -6956,6 +7065,10 @@ function Module.init(context: any): any
             if limit <= 0 then
                 limit = math.huge
             end
+            -- A short viewport caps harder than the slider: a category
+            -- taller than the screen cannot be clamped into it, so the
+            -- body scrolls instead.
+            limit = math.min(limit, logicalViewport().Y - 12)
             local wanted: number = math.min(
                 TITLE_HEIGHT + layout.AbsoluteContentSize.Y + 4,
                 limit
@@ -8772,6 +8885,7 @@ function Module.init(context: any): any
     local trackUiConnection: any = host.trackUiConnection
     local beginKeyCapture: any = host.beginKeyCapture
     local setKeySlotCapture: any = host.setKeySlotCapture
+    local bindActionShortcut: any = host.bindActionShortcut
     local GAME_CHECK: any = host.GAME_CHECK
     local ScreenGui: any = host.ScreenGui
     local allFeatures: {any} = host.allFeatures or {}
@@ -8828,11 +8942,20 @@ function Module.init(context: any): any
     -- One window of setting lines. `settingsSized` windows follow the "Max
     -- settings height" slider; the UI Settings window follows "Max height".
     -- Wurst packs a settings window to its content — no window is 200 px
-    -- because 200 was convenient. Monocraft advances ~12 px per glyph at the
-    -- 16 px bitmap size, so a row's natural width is estimable without
-    -- TextService, which the environment does not publish: label + gap +
-    -- value + whatever the row appends (an arrow box, a checkbox).
+    -- because 200 was convenient. The width comes from the bitmap
+    -- contract's measured advances when the contract is up (the estimate
+    -- 12 px per glyph stands in on the harness): label + gap + value +
+    -- whatever the row appends (an arrow box, a checkbox).
     local function textWidth(text: any): number
+        local bitmapText: any = state.bitmapText
+        if bitmapText and type(bitmapText.measure) == "function" then
+            local measured: number = tonumber(bitmapText.measure(
+                {{text = tostring(text)}}, 16
+            )) or 0
+            if measured > 0 then
+                return measured
+            end
+        end
         return #tostring(text) * 12
     end
     local function packedWidth(rows: {{any}}): number
@@ -8851,7 +8974,13 @@ function Module.init(context: any): any
         title: string,
         definition: any
     ): any
-        local width: number = tonumber(definition.width) or WINDOW_WIDTH
+        -- The pack rows are kept on the record so the window can repack
+        -- when the truth changes — the atlas resolving, a keybind list
+        -- rebuilding, a profile renamed. `width` alone is the legacy path.
+        local packRows: {{any}}? = definition.packRows
+        local width: number = packRows and packedWidth(packRows)
+            or tonumber(definition.width)
+            or WINDOW_WIDTH
         local window: any = windows.Create({
             id = id,
             title = title,
@@ -8866,6 +8995,18 @@ function Module.init(context: any): any
         window.managementWindow = true
         if definition.anchor ~= nil then
             window.placementAnchor = definition.anchor
+        end
+        -- Every label, value and action row this window will ever hold
+        -- renders on the bitmap contract; the sweep follows rows built
+        -- later and its connection dies with the window.
+        do
+            local bitmapText: any = state.bitmapText
+            if bitmapText and type(bitmapText.adoptTree) == "function" then
+                table.insert(
+                    window.connections,
+                    bitmapText.adoptTree(window.body)
+                )
+            end
         end
         local layout: UIListLayout = (create("UIListLayout", {
             Parent = window.body,
@@ -8885,6 +9026,7 @@ function Module.init(context: any): any
             layout = layout,
             open = false,
             width = width,
+            packRows = packRows,
         }
         local function resize(): ()
             local limit: number
@@ -8896,13 +9038,19 @@ function Module.init(context: any): any
             if limit <= 0 then
                 limit = math.huge
             end
+            -- A short viewport caps harder than either slider: a window
+            -- taller than the screen cannot be clamped into it, so the
+            -- body scrolls instead.
+            if type(windows.LogicalViewport) == "function" then
+                limit = math.min(limit, windows.LogicalViewport().Y - 12)
+            end
             local wanted: number = math.min(
                 TITLE_HEIGHT + layout.AbsoluteContentSize.Y + WINDOW_GAP * 2,
                 limit
             )
             window.fullHeight = wanted
             if not window.collapsed then
-                window.root.Size = UDim2.fromOffset(width, wanted)
+                window.root.Size = UDim2.fromOffset(record.width, wanted)
             end
             -- The second placement, not a bare clamp: a window that chose
             -- its spot at birth height and grew must move to a free
@@ -8915,6 +9063,22 @@ function Module.init(context: any): any
             end
         end
         record.resize = resize
+        -- Dynamic packing: re-derive the width from the current pack rows
+        -- (optionally replaced — the keybind list is rebuilt wholesale)
+        -- and only touch the window when the number really moved.
+        record.repack = function(rowsOverride: {{any}}?): ()
+            if rowsOverride ~= nil then
+                record.packRows = rowsOverride
+            end
+            if record.packRows == nil then
+                return
+            end
+            local packed: number = packedWidth(record.packRows)
+            if packed ~= record.width then
+                record.width = packed
+                resize()
+            end
+        end
         table.insert(
             Settings.connections,
             layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(resize)
@@ -9009,8 +9173,10 @@ function Module.init(context: any): any
         -- now, so the window is measured at its real size, anchored to the
         -- window it opened from, and lands on a rectangle that overlaps
         -- nothing. A saved manual position wins inside PlaceWindow itself.
-        if not record.placed then
+        -- Reset layout marks closed windows stale; those re-place here too.
+        if not record.placed or record.window.stalePlacement then
             record.placed = true
+            record.window.stalePlacement = nil
             if windows.PlaceWindow then
                 windows.PlaceWindow(record.window)
             end
@@ -9035,11 +9201,11 @@ function Module.init(context: any): any
             settingsSized = true,
             -- Packed to its own content, as Wurst sizes it: the combo's
             -- longest value plus its arrow decides the width.
-            width = packedWidth({
+            packRows = {
                 {"Background", "#FFFFFF"},
                 {"Text", "#000000"},
                 {"Visibility", "Only when outdated", 26},
-            }),
+            },
         })
         local panel: any = panelFor(logoRecord, "WurstLogo")
         addColorOption(panel, "Background", WURSTLOGO_BACKGROUND, function(color: Color3): ()
@@ -9079,14 +9245,14 @@ function Module.init(context: any): any
             position = Vector2.new(screen.X - WINDOW_WIDTH * 2 - 32, 180),
             anchor = uiRecord and uiRecord.window,
             settingsSized = true,
-            width = packedWidth({
+            packRows = {
                 {"Mode", "Hidden", 26},
                 {"Position", "Right", 26},
                 {"Color", "#FFFFFF"},
                 {"Sort by", "Width", 26},
                 {"Reverse sorting", nil, 30},
                 {"Animations", nil, 30},
-            }),
+            },
         })
         local panel: any = panelFor(hackListRecord, "HackList")
         local modes: {string} = {"Auto", "Count", "Hidden"}
@@ -9210,7 +9376,13 @@ function Module.init(context: any): any
         -- keybind list is two columns of words. The text itself is the
         -- rebind target, wide enough that RightControl never truncates,
         -- and a conflicted key is painted in the warning colour.
-        local function keybindRow(labelText: string, slotText: string, conflicted: boolean, onSlot: (TextButton) -> ()): ()
+        local function keybindRow(
+            labelText: string,
+            slotText: string,
+            conflicted: boolean,
+            onSlot: (TextButton) -> (),
+            onRemove: (() -> ())?
+        ): ()
             order += 1
             local row: Frame = (create("Frame", {
                 Parent = container,
@@ -9257,6 +9429,17 @@ function Module.init(context: any): any
             trackUiConnection(slot.MouseButton1Click:Connect(function(): ()
                 onSlot(slot)
             end))
+            -- Right-click removes the binding — the mock's InputBegan
+            -- route, because it has no MouseButton2Click.
+            if onRemove then
+                trackUiConnection(slot.InputBegan:Connect(function(
+                    input: InputObject
+                ): ()
+                    if input.UserInputType == Enum.UserInputType.MouseButton2 then
+                        (onRemove :: () -> ())()
+                    end
+                end))
+            end
         end
 
         -- The menu key first: it is the one bind that can lock a player out,
@@ -9299,10 +9482,39 @@ function Module.init(context: any): any
                     end
                     rebuildKeybinds()
                 end)
+            end, function(): ()
+                -- Right-click: the binding is gone, the module is not.
+                binding.key = Enum.KeyCode.Unknown
+                persistBindingKey(binding)
+                if binding.refresh then
+                    binding.refresh()
+                end
+                rebuildKeybinds()
+                notify(featureLabel(tostring(binding.id)) .. " unbound")
             end)
         end
 
         if keybindsRecord then
+            -- Dynamic packing: the list is the content, so a longer module
+            -- name or a wider key re-derives the window's width from the
+            -- rows that exist right now.
+            local rows: {{any}} = {
+                {"Open menu", "RightControl", 12},
+                {"Reset keybinds", nil, 26},
+                {"Add", nil, 26},
+                {"Profiles…", nil, 26},
+            }
+            for _, binding: any in ipairs(sortedBindings()) do
+                if binding.key and binding.key ~= Enum.KeyCode.Unknown then
+                    table.insert(
+                        rows,
+                        {featureLabel(tostring(binding.id)), binding.key.Name, 12}
+                    )
+                end
+            end
+            if keybindsRecord.repack then
+                keybindsRecord.repack(rows)
+            end
             keybindsRecord.resize()
         end
     end
@@ -9423,9 +9635,16 @@ function Module.init(context: any): any
                     end
                     for _, binding: any in pairs(state.shortcutBindings) do
                         local savedName: any = snapshot[tostring(binding.id)]
-                        local savedKey: Enum.KeyCode? = nil
+                        local savedKey: any = nil
                         if type(savedName) == "string" and savedName ~= "" then
-                            savedKey = (Enum.KeyCode :: any)[savedName]
+                            -- pcall, not trust: a profile edited by hand can
+                            -- carry a key name Enum.KeyCode throws on.
+                            local resolved: boolean, candidate: any = pcall(function(): any
+                                return (Enum.KeyCode :: any)[savedName]
+                            end)
+                            if resolved then
+                                savedKey = candidate
+                            end
                         end
                         binding.key = savedKey or Enum.KeyCode.Unknown
                         persistBindingKey(binding)
@@ -9438,6 +9657,15 @@ function Module.init(context: any): any
                 end))
             end
             if profilesRecord then
+                -- Dynamic packing: a long profile name widens the window
+                -- the moment it exists.
+                if profilesRecord.repack then
+                    local rows: {{any}} = {{"New profile name", nil, 60}}
+                    for _, name: string in ipairs(names) do
+                        table.insert(rows, {name, nil, 66})
+                    end
+                    profilesRecord.repack(rows)
+                end
                 profilesRecord.resize()
             end
         end
@@ -9465,6 +9693,232 @@ function Module.init(context: any): any
         raiseOpen(profilesRecord)
     end
 
+    -- ------------------------------------------------------- Add keybind
+    -- Wurst's Add dialog: the missing desktop path to a NEW bind. The
+    -- chooser lists every bindable action — the existing modules'
+    -- bindings and the registered actions, nothing invented — without
+    -- parking unbound modules permanently in the Keybinds window. Click
+    -- an action, press a key; Escape cancels the capture; a key that
+    -- already binds something else asks Replace / Keep both / Cancel.
+    local addRecord: any = nil
+    local addList: Frame? = nil
+    local pendingConflict: any = nil
+    local rebuildAddList: () -> () = function(): () end
+
+    local function applyBinding(
+        binding: any,
+        keyCode: Enum.KeyCode,
+        clearOther: any
+    ): ()
+        binding.key = keyCode
+        persistBindingKey(binding)
+        if binding.refresh then
+            binding.refresh()
+        end
+        if clearOther then
+            clearOther.key = Enum.KeyCode.Unknown
+            persistBindingKey(clearOther)
+            if clearOther.refresh then
+                clearOther.refresh()
+            end
+        end
+        pendingConflict = nil
+        rebuildKeybinds()
+        rebuildAddList()
+        notify(featureLabel(tostring(binding.id)) .. " bound to " .. keyCode.Name)
+    end
+
+    rebuildAddList = function(): ()
+        local container: Frame? = addList
+        if not container then
+            return
+        end
+        for _, child: Instance in ipairs((container :: Frame):GetChildren()) do
+            if child:IsA("GuiObject") then
+                child:Destroy()
+            end
+        end
+        local order: number = 0
+        local function addRow(
+            labelText: string,
+            valueText: string,
+            warning: boolean,
+            onClick: ((TextButton) -> ())?
+        ): ()
+            order += 1
+            local row: TextButton = (create("TextButton", {
+                TextTruncate = Enum.TextTruncate.AtEnd,
+                Parent = container,
+                Name = "Add_" .. labelText:gsub("%W", ""),
+                Active = onClick ~= nil,
+                AutoButtonColor = false,
+                BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+                BackgroundTransparency = onClick ~= nil and 0.5 or 1,
+                BorderSizePixel = 0,
+                FontFace = CONTROL_FONT,
+                LayoutOrder = order,
+                Size = UDim2.new(1, 0, 0, ROW_HEIGHT),
+                Text = "",
+                ZIndex = (container :: Frame).ZIndex + 1,
+            }) :: any) :: TextButton
+            create("TextLabel", {
+                TextTruncate = Enum.TextTruncate.AtEnd,
+                Parent = row,
+                Name = "Label",
+                BackgroundTransparency = 1,
+                FontFace = CONTROL_FONT,
+                Position = UDim2.fromOffset(6, 0),
+                Size = UDim2.new(1, -120, 1, 0),
+                Text = labelText,
+                TextColor3 = warning and Theme.negative or Theme.text,
+                TextSize = 16,
+                TextXAlignment = Enum.TextXAlignment.Left,
+                ZIndex = row.ZIndex + 1,
+            })
+            local slot: TextButton = (create("TextButton", {
+                TextTruncate = Enum.TextTruncate.AtEnd,
+                Parent = row,
+                Name = "Key",
+                Active = onClick ~= nil,
+                AnchorPoint = Vector2.new(1, 0),
+                AutoButtonColor = false,
+                BackgroundTransparency = 1,
+                BorderSizePixel = 0,
+                FontFace = CONTROL_FONT,
+                Position = UDim2.new(1, -6, 0, 0),
+                Size = UDim2.fromOffset(110, ROW_HEIGHT),
+                Text = valueText,
+                TextColor3 = Theme.textMuted,
+                TextSize = 16,
+                TextXAlignment = Enum.TextXAlignment.Right,
+                ZIndex = row.ZIndex + 1,
+            }) :: any) :: TextButton
+            slot:SetAttribute("CaptureIdleText", valueText)
+            if onClick then
+                trackUiConnection(row.MouseButton1Click:Connect(function(): ()
+                    (onClick :: (TextButton) -> ())(slot)
+                end))
+                trackUiConnection(slot.MouseButton1Click:Connect(function(): ()
+                    (onClick :: (TextButton) -> ())(slot)
+                end))
+                trackUiConnection(row.MouseEnter:Connect(function(): ()
+                    row.BackgroundTransparency = 0.3
+                end))
+                trackUiConnection(row.MouseLeave:Connect(function(): ()
+                    row.BackgroundTransparency = 0.5
+                end))
+            end
+        end
+
+        if pendingConflict then
+            -- The conflict question, as rows: Wurst asks before stealing
+            -- a key, and Cancel walks away with nothing changed.
+            local conflict: any = pendingConflict
+            addRow(
+                conflict.key.Name .. " already binds "
+                    .. featureLabel(tostring(conflict.other.id)),
+                "",
+                true,
+                nil
+            )
+            addRow("Replace it", "", false, function(_slot: TextButton): ()
+                applyBinding(conflict.binding, conflict.key, conflict.other)
+            end)
+            addRow("Keep both", "", false, function(_slot: TextButton): ()
+                applyBinding(conflict.binding, conflict.key, nil)
+            end)
+            addRow("Cancel", "", false, function(_slot: TextButton): ()
+                pendingConflict = nil
+                rebuildAddList()
+            end)
+        else
+            addRow("Click an action, then press a key", "", false, nil)
+            for _, binding: any in ipairs(sortedBindings()) do
+                local bound: boolean = binding.key ~= nil
+                    and binding.key ~= Enum.KeyCode.Unknown
+                addRow(
+                    featureLabel(tostring(binding.id)),
+                    bound and binding.key.Name or "—",
+                    false,
+                    function(slot: TextButton): ()
+                        beginKeyCapture(slot, function(keyCode: Enum.KeyCode): ()
+                            local other: any = nil
+                            for _, candidate: any in pairs(state.shortcutBindings) do
+                                if candidate ~= binding
+                                    and candidate.key == keyCode then
+                                    other = candidate
+                                    break
+                                end
+                            end
+                            if other then
+                                pendingConflict = {
+                                    binding = binding,
+                                    key = keyCode,
+                                    other = other,
+                                }
+                                rebuildAddList()
+                            else
+                                applyBinding(binding, keyCode, nil)
+                            end
+                        end)
+                    end
+                )
+            end
+        end
+
+        if addRecord then
+            if addRecord.repack then
+                local rows: {{any}} = {
+                    {"Click an action, then press a key", nil, 12},
+                }
+                for _, binding: any in ipairs(sortedBindings()) do
+                    table.insert(rows, {
+                        featureLabel(tostring(binding.id)),
+                        binding.key and binding.key ~= Enum.KeyCode.Unknown
+                            and binding.key.Name
+                            or "—",
+                        12,
+                    })
+                end
+                addRecord.repack(rows)
+            end
+            addRecord.resize()
+        end
+    end
+
+    local function openAddKeybind(): ()
+        pendingConflict = nil
+        if addRecord then
+            rebuildAddList()
+            raiseOpen(addRecord)
+            return
+        end
+        local screen: Vector2 = viewport()
+        addRecord = configWindow("KeybindAdd", "Add Keybind", {
+            position = Vector2.new(screen.X - WINDOW_WIDTH * 2 - 32, 200),
+            anchor = keybindsRecord and keybindsRecord.window,
+            settingsSized = true,
+            packRows = {{"Click an action, then press a key", nil, 12}},
+        })
+        addList = (create("Frame", {
+            Parent = addRecord.window.body,
+            Name = "AddList",
+            AutomaticSize = Enum.AutomaticSize.Y,
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            LayoutOrder = 1,
+            Size = UDim2.new(1, 0, 0, 0),
+            ZIndex = addRecord.window.body.ZIndex + 1,
+        }) :: any) :: Frame
+        create("UIListLayout", {
+            Parent = addList,
+            Padding = UDim.new(0, WINDOW_GAP),
+            SortOrder = Enum.SortOrder.LayoutOrder,
+        })
+        rebuildAddList()
+        raiseOpen(addRecord)
+    end
+
     local function openKeybinds(): ()
         if keybindsRecord then
             raiseOpen(keybindsRecord)
@@ -9488,7 +9942,7 @@ function Module.init(context: any): any
             position = Vector2.new(screen.X - WINDOW_WIDTH * 2 - 32, 140),
             anchor = uiRecord and uiRecord.window,
             settingsSized = true,
-            width = packedWidth(keybindRows),
+            packRows = keybindRows,
         })
         keybindsList = (create("Frame", {
             Parent = keybindsRecord.window.body,
@@ -9505,6 +9959,7 @@ function Module.init(context: any): any
             Padding = UDim.new(0, WINDOW_GAP),
             SortOrder = Enum.SortOrder.LayoutOrder,
         })
+        actionRow(keybindsRecord, 99, "Add", openAddKeybind)
         actionRow(keybindsRecord, 100, "Reset keybinds", function(): ()
             for _, binding: any in pairs(state.shortcutBindings) do
                 binding.key = Enum.KeyCode.Unknown
@@ -9526,6 +9981,334 @@ function Module.init(context: any): any
     -- page lands here because it is management, not decoration: the reinject
     -- and destruct actions and the game check readout.
     local optionsRecord: any = nil
+    -- ------------------------------------------------- Wurst Options actions
+    -- The action API, published as state.wurstOptions. Every row in the
+    -- Wurst Options window comes from one registry: deterministic order
+    -- (registration sequence — the built-ins register first, so they keep
+    -- Wurst's own sequence and later registrations land after them), no
+    -- duplicate ids (re-registering updates in place), live enabled /
+    -- visible / label state, invoke with the failure warned rather than
+    -- swallowed, and an optional shortcut that makes the action bindable
+    -- through the keybind manager's Add dialog. No module, no category,
+    -- no hack — a labelled callback and nothing more.
+    local actionEntries: {any} = {}
+    local actionIndex: {[string]: any} = {}
+    local actionSequence: number = 0
+    local refreshActionRows: () -> () = function(): () end
+
+    state.wurstOptions = {
+        RegisterAction = function(id: any, label: any, callback: any, options: any?): any
+            local key: string = tostring(id)
+            local configuration: any = options or {}
+            local entry: any = actionIndex[key]
+            if entry == nil then
+                actionSequence += 1
+                entry = {id = key, order = actionSequence}
+                actionIndex[key] = entry
+                table.insert(actionEntries, entry)
+            end
+            entry.label = tostring(label)
+            entry.callback = callback
+            entry.enabled = configuration.enabled ~= false
+            entry.visible = configuration.visible ~= false
+            entry.static = configuration.static == true
+            if entry.handle == nil then
+                local handle: any = {}
+                function handle.SetLabel(text: any): ()
+                    entry.label = tostring(text)
+                    if entry.rowLabel and entry.rowLabel.Parent then
+                        entry.rowLabel.Text = entry.label
+                    end
+                end
+                function handle.SetEnabled(value: boolean): ()
+                    entry.enabled = value == true
+                    refreshActionRows()
+                end
+                function handle.SetVisible(value: boolean): ()
+                    entry.visible = value == true
+                    refreshActionRows()
+                end
+                function handle.Unregister(): ()
+                    state.wurstOptions.UnregisterAction(entry.id)
+                end
+                entry.handle = handle
+            end
+            if configuration.shortcut == true
+                and entry.shortcutBound ~= true
+                and type(bindActionShortcut) == "function" then
+                entry.shortcutBound = true
+                bindActionShortcut(nil, "Action " .. key, entry.label, function(): ()
+                    state.wurstOptions.InvokeAction(key)
+                end)
+            end
+            refreshActionRows()
+            return entry.handle
+        end,
+        UnregisterAction = function(id: any): boolean
+            local key: string = tostring(id)
+            local entry: any = actionIndex[key]
+            if entry == nil then
+                return false
+            end
+            actionIndex[key] = nil
+            local at: number? = table.find(actionEntries, entry)
+            if at then
+                table.remove(actionEntries, at)
+            end
+            refreshActionRows()
+            return true
+        end,
+        InvokeAction = function(id: any): boolean
+            local entry: any = actionIndex[tostring(id)]
+            if entry == nil
+                or entry.enabled ~= true
+                or entry.visible ~= true
+                or type(entry.callback) ~= "function" then
+                return false
+            end
+            local ok: boolean, failure: any = pcall(entry.callback)
+            if not ok then
+                warn("[Wurst] Action " .. tostring(id) .. ": " .. tostring(failure))
+            end
+            return ok
+        end,
+        List = function(): {string}
+            local ids: {string} = {}
+            for _, entry: any in ipairs(actionEntries) do
+                table.insert(ids, entry.id)
+            end
+            return ids
+        end,
+    }
+
+    refreshActionRows = function(): ()
+        if not optionsRecord then
+            return
+        end
+        local body: any = optionsRecord.window.body
+        for _, child: Instance in ipairs(body:GetChildren()) do
+            if child:IsA("GuiObject")
+                and child:GetAttribute("RegisteredAction") == true then
+                child:Destroy()
+            end
+        end
+        local packRows: {{any}} = {}
+        for _, entry: any in ipairs(actionEntries) do
+            if entry.visible then
+                table.insert(packRows, {entry.label, nil, 26})
+                if entry.static then
+                    -- A readout, not a button: the game check line.
+                    local label: TextLabel = (create("TextLabel", {
+                        TextTruncate = Enum.TextTruncate.AtEnd,
+                        Parent = body,
+                        Name = "Static_" .. entry.id:gsub("%W", ""),
+                        BackgroundTransparency = 1,
+                        FontFace = CONTROL_FONT,
+                        LayoutOrder = entry.order,
+                        Size = UDim2.new(1, 0, 0, ROW_HEIGHT),
+                        Text = "  " .. entry.label,
+                        TextColor3 = Theme.textMuted,
+                        TextSize = 11,
+                        TextXAlignment = Enum.TextXAlignment.Left,
+                        ZIndex = body.ZIndex + 1,
+                    }) :: any) :: TextLabel
+                    label:SetAttribute("RegisteredAction", true)
+                    entry.rowLabel = label
+                else
+                    local row: TextButton = actionRow(
+                        optionsRecord,
+                        entry.order,
+                        entry.label,
+                        function(): ()
+                            state.wurstOptions.InvokeAction(entry.id)
+                        end
+                    )
+                    row:SetAttribute("RegisteredAction", true)
+                    local rowLabel: any = row:FindFirstChild("Label")
+                    entry.rowLabel = rowLabel
+                    if not entry.enabled then
+                        row.Active = false
+                        if rowLabel then
+                            rowLabel.TextColor3 = Theme.textMuted
+                        end
+                    end
+                end
+            end
+        end
+        if optionsRecord.repack then
+            optionsRecord.repack(packRows)
+        end
+        optionsRecord.resize()
+    end
+
+    -- The built-ins, through the same API. Their registration order is
+    -- Wurst Options' own row order; anything registered later — D's
+    -- Rejoin Server, say — lands after them, deterministically.
+    local reinjectBusy: boolean = false
+    local reinjectHandle: any = nil
+    local function runReinject(): ()
+        local function setReinjectLabel(text: string): ()
+            if reinjectHandle then
+                reinjectHandle.SetLabel(text)
+            end
+        end
+        if reinjectBusy then
+            return
+        end
+        local compiler: any = (getfenv() :: any).loadstring
+        if type(compiler) ~= "function" then
+            notify("Reinject unavailable: this executor has no loadstring")
+            return
+        end
+        reinjectBusy = true
+        setReinjectLabel("Downloading…")
+        local sourceUrls: {string} = {
+            REPOSITORY_RAW_BASE .. "ARandomMenu.luau",
+            RUNTIME_SAFETY_SOURCE_URL,
+        }
+        local sourceOrError: any = nil
+        local downloaded: boolean = false
+        local downloadFailures: {string} = {}
+        for _, candidateUrl: string in ipairs(sourceUrls) do
+            local requestUrl: string = candidateUrl
+                .. "?reinject=v3&v="
+                .. SOURCE_STAMP
+            local requestOk: boolean, bodyOrError: any = pcall(function(): string
+                return (game :: any):HttpGet(requestUrl, true)
+            end)
+            local current: boolean = requestOk
+                and type(bodyOrError) == "string"
+                and #bodyOrError >= 1024
+                and bodyOrError:find(RUNTIME_COMPATIBILITY_MARKER, 1, true) ~= nil
+            if current then
+                downloaded = true
+                sourceOrError = bodyOrError
+                break
+            end
+            table.insert(downloadFailures, tostring(bodyOrError))
+        end
+        if not downloaded then
+            reinjectBusy = false
+            setReinjectLabel("Reinject latest")
+            notify("Could not download the latest build")
+            warn("[Wurst] Reinject download: "
+                .. table.concat(downloadFailures, " | "))
+            return
+        end
+        local compiled: any = nil
+        local compileError: any = nil
+        local compiledOk: boolean, compileResult: any, returnedError: any = pcall(
+            compiler,
+            sourceOrError,
+            "@ARandomMenu.luau"
+        )
+        if compiledOk then
+            compiled = compileResult
+            compileError = returnedError
+        else
+            compileError = compileResult
+        end
+        if type(compiled) ~= "function" then
+            reinjectBusy = false
+            setReinjectLabel("Reinject latest")
+            notify("The downloaded build could not be compiled")
+            warn("[Wurst] Reinject compile: " .. tostring(compileError))
+            return
+        end
+        setReinjectLabel("Restarting…")
+        task.defer(function(): ()
+            local executed: boolean, executionError: any = xpcall(
+                compiled,
+                debug.traceback
+            )
+            if not executed then
+                reinjectBusy = false
+                setReinjectLabel("Reinject latest")
+                warn("[Wurst] Reinject runtime: " .. tostring(executionError))
+            end
+        end)
+    end
+
+    local destructHandle: any = nil
+    local function runDestruct(): ()
+        if destructHandle then
+            destructHandle.SetLabel("Removing…")
+        end
+        task.defer(function(): ()
+            local destruct: any = state.destruct
+            if type(destruct) ~= "function" then
+                -- The teardown routine is defined at the very end of
+                -- bootstrap; if it is somehow missing, remove the
+                -- interface anyway instead of a label stuck mid-word.
+                pcall(function(): ()
+                    ScreenGui:Destroy()
+                end)
+                return
+            end
+            local ok: boolean, failure: any = pcall(destruct)
+            if not ok then
+                warn("[Wurst] Destruct: " .. tostring(failure))
+                pcall(function(): ()
+                    ScreenGui:Destroy()
+                end)
+            end
+        end)
+    end
+
+    local function runResetLayout(): ()
+        -- Saved geometry gone, category grid re-tiled now. Every window
+        -- also forgets it was ever hand-moved — that is what "reset"
+        -- promises — and the settings and management windows still on
+        -- screen re-run placement immediately instead of waiting for a
+        -- reopen while standing on the freshly tiled grid. Hidden ones
+        -- are marked stale and re-place on their next open, so they do
+        -- not pile onto each other while invisible.
+        configData.ui.windows = {}
+        queueConfigSave()
+        for _, window: any in ipairs(windows.list or {}) do
+            window.userMoved = nil
+        end
+        if state.clickGui and state.clickGui.Retile then
+            state.clickGui.Retile()
+        end
+        for _, window: any in ipairs(windows.list or {}) do
+            if window.featureSettings or window.managementWindow then
+                if window.root.Visible and windows.PlaceWindow then
+                    windows.PlaceWindow(window, {force = true})
+                else
+                    window.stalePlacement = true
+                end
+            end
+        end
+        for _, record: any in ipairs(Settings.records) do
+            if not record.window.root.Visible then
+                record.placed = false
+            end
+        end
+        notify("Layout reset")
+    end
+
+    -- The game check readout: *how* the game was recognised, which is
+    -- what tells you a clone was matched by structure, not PlaceId.
+    local recognised: string = GAME_CHECK.MM2Active and "MM2"
+        or GAME_CHECK.TRSActive and "TRS"
+        or GAME_CHECK.VDActive and "VD"
+        or GAME_CHECK.BedFightActive and "BedFight"
+        or GAME_CHECK.MVSDActive and "MVSD"
+        or "Universal only"
+
+    state.wurstOptions.RegisterAction("Keybinds", "Keybinds", openKeybinds)
+    reinjectHandle = state.wurstOptions.RegisterAction(
+        "Reinject", "Reinject latest", runReinject
+    )
+    destructHandle = state.wurstOptions.RegisterAction(
+        "Destruct", "Destruct", runDestruct
+    )
+    state.wurstOptions.RegisterAction("ResetLayout", "Reset layout", runResetLayout)
+    state.wurstOptions.RegisterAction(
+        "GameCheck", "Game check: " .. recognised, nil, {static = true}
+    )
+
     local function openWurstOptions(): ()
         if optionsRecord then
             raiseOpen(optionsRecord)
@@ -9536,173 +10319,9 @@ function Module.init(context: any): any
             position = Vector2.new(screen.X - WINDOW_WIDTH * 2 - 32, 220),
             anchor = uiRecord and uiRecord.window,
             settingsSized = true,
-            width = packedWidth({
-                {"Keybinds", nil, 26},
-                {"Reinject latest", nil, 26},
-                {"Destruct", nil, 26},
-                {"Reset layout", nil, 26},
-                {"Game check: Universal only"},
-            }),
+            packRows = {{"Reinject latest", nil, 26}},
         })
-
-        actionRow(optionsRecord, 1, "Keybinds", openKeybinds)
-
-        local reinjectBusy: boolean = false
-        local reinjectRow: TextButton = actionRow(optionsRecord, 2, "Reinject latest", function(): () end)
-        local reinjectLabel: TextLabel = reinjectRow:FindFirstChild("Label") :: TextLabel
-        trackUiConnection(reinjectRow.MouseButton1Click:Connect(function(): ()
-            if reinjectBusy then
-                return
-            end
-            local compiler: any = (getfenv() :: any).loadstring
-            if type(compiler) ~= "function" then
-                notify("Reinject unavailable: this executor has no loadstring")
-                return
-            end
-            reinjectBusy = true
-            reinjectLabel.Text = "Downloading…"
-            local sourceUrls: {string} = {
-                REPOSITORY_RAW_BASE .. "ARandomMenu.luau",
-                RUNTIME_SAFETY_SOURCE_URL,
-            }
-            local sourceOrError: any = nil
-            local downloaded: boolean = false
-            local downloadFailures: {string} = {}
-            for _, candidateUrl: string in ipairs(sourceUrls) do
-                local requestUrl: string = candidateUrl
-                    .. "?reinject=v3&v="
-                    .. SOURCE_STAMP
-                local requestOk: boolean, bodyOrError: any = pcall(function(): string
-                    return (game :: any):HttpGet(requestUrl, true)
-                end)
-                local current: boolean = requestOk
-                    and type(bodyOrError) == "string"
-                    and #bodyOrError >= 1024
-                    and bodyOrError:find(RUNTIME_COMPATIBILITY_MARKER, 1, true) ~= nil
-                if current then
-                    downloaded = true
-                    sourceOrError = bodyOrError
-                    break
-                end
-                table.insert(downloadFailures, tostring(bodyOrError))
-            end
-            if not downloaded then
-                reinjectBusy = false
-                reinjectLabel.Text = "Reinject latest"
-                notify("Could not download the latest build")
-                warn("[Wurst] Reinject download: "
-                    .. table.concat(downloadFailures, " | "))
-                return
-            end
-            local compiled: any = nil
-            local compileError: any = nil
-            local compiledOk: boolean, compileResult: any, returnedError: any = pcall(
-                compiler,
-                sourceOrError,
-                "@ARandomMenu.luau"
-            )
-            if compiledOk then
-                compiled = compileResult
-                compileError = returnedError
-            else
-                compileError = compileResult
-            end
-            if type(compiled) ~= "function" then
-                reinjectBusy = false
-                reinjectLabel.Text = "Reinject latest"
-                notify("The downloaded build could not be compiled")
-                warn("[Wurst] Reinject compile: " .. tostring(compileError))
-                return
-            end
-            reinjectLabel.Text = "Restarting…"
-            task.defer(function(): ()
-                local executed: boolean, executionError: any = xpcall(
-                    compiled,
-                    debug.traceback
-                )
-                if not executed then
-                    reinjectBusy = false
-                    if reinjectLabel.Parent then
-                        reinjectLabel.Text = "Reinject latest"
-                    end
-                    warn("[Wurst] Reinject runtime: " .. tostring(executionError))
-                end
-            end)
-        end))
-
-        local destructRow: TextButton = actionRow(optionsRecord, 3, "Destruct", function(): () end)
-        local destructLabel: TextLabel = destructRow:FindFirstChild("Label") :: TextLabel
-        trackUiConnection(destructRow.MouseButton1Click:Connect(function(): ()
-            destructLabel.Text = "Removing…"
-            task.defer(function(): ()
-                local destruct: any = state.destruct
-                if type(destruct) ~= "function" then
-                    -- The teardown routine is defined at the very end of
-                    -- bootstrap; if it is somehow missing, remove the
-                    -- interface anyway instead of a label stuck mid-word.
-                    pcall(function(): ()
-                        ScreenGui:Destroy()
-                    end)
-                    return
-                end
-                local ok: boolean, failure: any = pcall(destruct)
-                if not ok then
-                    warn("[Wurst] Destruct: " .. tostring(failure))
-                    pcall(function(): ()
-                        ScreenGui:Destroy()
-                    end)
-                end
-            end)
-        end))
-
-        actionRow(optionsRecord, 4, "Reset layout", function(): ()
-            -- Saved geometry gone, category grid re-tiled now. Every window
-            -- also forgets it was ever hand-moved — that is what "reset"
-            -- promises — and the settings and management windows still on
-            -- screen re-run placement immediately instead of waiting for a
-            -- reopen while standing on the freshly tiled grid.
-            configData.ui.windows = {}
-            queueConfigSave()
-            for _, window: any in ipairs(windows.list or {}) do
-                window.userMoved = nil
-            end
-            if state.clickGui and state.clickGui.Retile then
-                state.clickGui.Retile()
-            end
-            if windows.PlaceWindow then
-                for _, window: any in ipairs(windows.list or {}) do
-                    if (window.featureSettings or window.managementWindow)
-                        and window.root.Visible then
-                        windows.PlaceWindow(window, {force = true})
-                    end
-                end
-            end
-            notify("Layout reset")
-        end)
-
-        -- The game check readout: *how* the game was recognised, which is
-        -- what tells you a clone was matched by structure, not PlaceId.
-        local recognised: string = GAME_CHECK.MM2Active and "MM2"
-            or GAME_CHECK.TRSActive and "TRS"
-            or GAME_CHECK.VDActive and "VD"
-            or GAME_CHECK.BedFightActive and "BedFight"
-            or GAME_CHECK.MVSDActive and "MVSD"
-            or "Universal only"
-        create("TextLabel", {
-            TextTruncate = Enum.TextTruncate.AtEnd,
-            Parent = optionsRecord.window.body,
-            Name = "GameCheck",
-            BackgroundTransparency = 1,
-            FontFace = CONTROL_FONT,
-            LayoutOrder = 5,
-            Size = UDim2.new(1, 0, 0, ROW_HEIGHT),
-            Text = "  Game check: " .. recognised,
-            TextColor3 = Theme.textMuted,
-            TextSize = 11,
-            TextXAlignment = Enum.TextXAlignment.Left,
-            ZIndex = optionsRecord.window.body.ZIndex + 1,
-        })
-        optionsRecord.resize()
+        refreshActionRows()
         raiseOpen(optionsRecord)
     end
 
@@ -9715,7 +10334,7 @@ function Module.init(context: any): any
         position = Vector2.new(screen.X - WINDOW_WIDTH - 12, 64),
         closable = false,
         settingsSized = false,
-        width = packedWidth({
+        packRows = {
             {"WurstLogo", nil, 26},
             {"HackList", nil, 26},
             {"Keybinds", nil, 26},
@@ -9727,7 +10346,7 @@ function Module.init(context: any): any
             {"Tooltip opacity", "0.75"},
             {"Max height", "1000"},
             {"Max settings height", "1000"},
-        }),
+        },
     })
     uiRecord.open = true
 
@@ -9810,6 +10429,19 @@ function Module.init(context: any): any
         windows.ReflowWindow(uiRecord.window)
     end
 
+    -- Dynamic packing, atlas edition: when the glyphs land, every packed
+    -- management window re-derives its width from real advances instead
+    -- of the estimate it was born with.
+    if state.bitmapText and type(state.bitmapText.onReady) == "table" then
+        table.insert(state.bitmapText.onReady, function(): ()
+            for _, record: any in ipairs(Settings.records) do
+                if record.repack then
+                    record.repack()
+                end
+            end
+        end)
+    end
+
     -- The configuration windows follow the GUI the way category windows do,
     -- except the pinned ones, which is the whole point of pinning.
     state.addMenuVisibilityListener(function(visible: boolean): ()
@@ -9850,6 +10482,7 @@ function Module.init(context: any): any
         end
         Settings.connections = {}
         state.uiSettings = nil
+        state.wurstOptions = nil
     end
     Module.Initialized = true
     return Settings
@@ -11089,6 +11722,15 @@ function Module.init(context: any): any
         Visible = false,
         ZIndex = 246,
     }) :: any) :: Frame
+    -- Navigator cells are rebuilt on every query; the sweep adopts each
+    -- generation onto the bitmap contract as it appears. The search box
+    -- is a TextBox and stays native — a caret over hidden text is a bug.
+    do
+        local bitmap: any = state.bitmapText
+        if bitmap and type(bitmap.adoptTree) == "function" then
+            table.insert(Furniture.connections, bitmap.adoptTree(navScreen))
+        end
+    end
 
     local navColumn: Frame = (create("Frame", {
         Parent = navScreen,
@@ -11522,13 +12164,35 @@ function Module.init(context: any): any
         menuButton.TextColor3 = open and Theme.accentText or PILL_IDLE_TEXT
     end
     restyleMenuButton()
-    state.addMenuVisibilityListener(function(_visible: boolean): ()
+    state.addMenuVisibilityListener(function(visible: boolean): ()
         restyleMenuButton()
         -- The wordmark belongs to the ClickGUI screen; the HackList stays —
         -- it is the in-game HUD. Navigator is its own screen now and ignores
         -- the ClickGUI entirely.
         refreshLogoVisibility()
         placeHudList()
+        -- Boot placement runs while the GUI is closed, when every window is
+        -- hidden and therefore invisible to the free-rectangle search. The
+        -- moment the GUI really shows, any auto-placed settings or
+        -- management window standing on a neighbour reflows to a free
+        -- rectangle. Registered here, in the last library, so every other
+        -- visibility listener has already restored what should be showing;
+        -- hand-moved windows are never touched.
+        if visible then
+            task.defer(function(): ()
+                local manager: any = state.windows
+                if not manager or type(manager.ReflowWindow) ~= "function" then
+                    return
+                end
+                for _, window: any in ipairs(manager.list or {}) do
+                    if (window.featureSettings or window.managementWindow)
+                        and window.root.Visible
+                        and not window.userMoved then
+                        manager.ReflowWindow(window)
+                    end
+                end
+            end)
+        end
     end)
     refreshLogoVisibility()
     ThemeEngine.OnChange(function(): ()

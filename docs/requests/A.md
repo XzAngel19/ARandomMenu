@@ -144,3 +144,26 @@ the gate will force a Left default that contradicts the prototype.
   pass (pre-existing); the A2 downloader cannot run inside the sandbox
   (TLS to piston-meta blocked) — exercised on real machines, lock
   hashes pinned from the official manifest.
+
+## 7.19 closure + bounded 7.54.1 inspection (2026-08-22, second pass)
+
+- `docs/wurst-7.19-to-7.54.1-gui-delta.md` does not exist yet, so no
+  APPLY rows were available and none were invented. One bounded
+  inspection with evidence: `clickgui/SettingsWindow.java` is byte-for-
+  byte identical at the pinned 4a22e53 (7.19) and at
+  `v7.54.1-MC26.2` — zero delta there. It did expose a 7.19 baseline
+  gap of ours, now fixed: official settings windows are
+  `setMinimizable(false)` (close button, no collapse chevron); ours
+  were collapsible. Applied to `OpenFeatureSettings`.
+- Two deliberate deviations recorded, not bugs: official
+  `setInitialPosition` aligns the settings window to the row that
+  opened it (`parent.y + 12 + buttonY + scroll`) and tolerates
+  overlapping other windows; our placement is the user-mandated AABB
+  free-rectangle search (right → left → below → scan), which cannot
+  overlap by construction. Official clamps to `0..guiScaledWidth`
+  (partial off-screen allowed); we clamp the whole window inside
+  MARGIN, also by mandate.
+- REJECT (not applied, out of scope by the absolute rule): every
+  7.54.1 hack, module, category, hack option, `Manifest.modules`
+  change, and any GUI change not demonstrated by direct source
+  comparison. Zero new modules were added in this pass.

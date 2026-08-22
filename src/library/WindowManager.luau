@@ -368,15 +368,22 @@ function Module.init(context: any): any
         end
 
         if type(saved) == "table" and saved.x and saved.y then
-            local landed: Vector2 = clamp(
-                Vector2.new(saved.x, saved.y),
-                Vector2.new(root.Size.X.Offset, root.Size.Y.Offset)
-            )
-            root.Position = UDim2.fromOffset(landed.X, landed.Y)
-            -- A stored position is one the user chose. Placement and reflow
-            -- must never move it; only the clamp above may, and only to keep
-            -- the window on a screen that shrank since it was saved.
-            window.userMoved = true
+            -- tonumber, not trust: a corrupt store must clamp to a sane
+            -- spot, never throw while restoring a window.
+            local savedX: number? = tonumber(saved.x)
+            local savedY: number? = tonumber(saved.y)
+            if savedX and savedY then
+                local landed: Vector2 = clamp(
+                    Vector2.new(savedX, savedY),
+                    Vector2.new(root.Size.X.Offset, root.Size.Y.Offset)
+                )
+                root.Position = UDim2.fromOffset(landed.X, landed.Y)
+                -- A stored position is one the user chose. Placement and
+                -- reflow must never move it; only the clamp above may, and
+                -- only to keep the window on a screen that shrank since it
+                -- was saved.
+                window.userMoved = true
+            end
         end
 
         function window:SetVisible(visible: boolean): ()
@@ -1012,6 +1019,12 @@ function Module.init(context: any): any
         local existing: any = manager.byId[id]
         if existing then
             existing.root.Visible = true
+            -- Reset layout ran while this window was closed: its stored
+            -- spot is stale, so reopening re-runs placement once.
+            if existing.stalePlacement then
+                existing.stalePlacement = nil
+                manager.PlaceWindow(existing, {force = true})
+            end
             feature.expanded = true
             if feature.syncArrow then
                 feature.syncArrow()
@@ -1053,6 +1066,12 @@ function Module.init(context: any): any
             size = Vector2.new(width, TITLE_HEIGHT + 40),
             position = slot,
             closable = true,
+            -- The Java: SettingsWindow calls setClosable(true) and
+            -- setMinimizable(false) — a feature's settings window has a
+            -- close button and no collapse chevron, in 7.19 and unchanged
+            -- through 7.54.1 (same file at both tags). SetCollapsed stays
+            -- functional on the window object; only the chrome is absent.
+            collapsible = false,
             onClose = function(): ()
                 feature.expanded = false
                 if feature.syncArrow then
@@ -1066,13 +1085,23 @@ function Module.init(context: any): any
 
         -- The card's option rows move home: they were built into the card's
         -- hidden panel and live in this window from now on. The category
-        -- window keeps exactly its height and rows.
+        -- window keeps exactly its height and rows. Every text object in
+        -- the tree — labels, values, RUN buttons, rows added later — is
+        -- adopted onto the bitmap contract; the sweep's connection dies
+        -- with the window.
         local options: any = feature.options
         if options then
             options.Visible = true
             options.Position = UDim2.fromOffset(0, 0)
             options.Size = UDim2.new(1, 0, 0, feature.optionsHeight or 40)
             options.Parent = window.body
+            local bitmapText: any = state.bitmapText
+            if bitmapText and type(bitmapText.adoptTree) == "function" then
+                table.insert(
+                    window.connections,
+                    bitmapText.adoptTree(options)
+                )
+            end
         end
 
         local function resizeToOptions(): ()
@@ -1082,6 +1111,10 @@ function Module.init(context: any): any
                 limit = math.huge
             end
             wanted = math.min(wanted, limit)
+            -- A short viewport caps harder than the slider: a window
+            -- taller than the screen cannot be clamped into it, so the
+            -- body scrolls instead.
+            wanted = math.min(wanted, logicalViewport().Y - MARGIN * 2)
             window.fullHeight = wanted
             if not window.collapsed then
                 window.root.Size = UDim2.fromOffset(width, wanted)
@@ -1096,29 +1129,48 @@ function Module.init(context: any): any
         window.resizeToOptions = resizeToOptions
         resizeToOptions()
 
-        -- The width above was packed from character counts, which is an
-        -- estimate. Once the labels have really rendered, their TextBounds
-        -- are the truth; one deferred re-pack replaces the estimate and
-        -- re-clamps. Harness labels never render, so zero bounds are left
-        -- alone.
-        task.defer(function(): ()
+        -- Dynamic packing. The width was estimated from character counts;
+        -- the truth is the bitmap contract's measured advances (or, on the
+        -- harness stand-in, rendered TextBounds). Re-run whenever the text
+        -- underneath could have changed: the deferred first pass, the atlas
+        -- resolving, and any caller that edits labels. Only a real change
+        -- moves anything, and the reflow after it respects a hand-placed
+        -- window.
+        local function repackWidth(): ()
             if not window.root.Parent then
                 return
             end
+            local bitmapText: any = state.bitmapText
             local widest: number = 0
             for _, optionRow: any in ipairs(feature.optionRows or {}) do
                 local label: any = optionRow:FindFirstChild("OptionLabel")
-                local bounds: any = label and label.TextBounds
-                local measured: number = bounds and tonumber(bounds.X) or 0
-                if measured > 0 then
-                    widest = math.max(widest, 8 + measured + 24 + 72)
+                if label then
+                    local measured: number = 0
+                    if bitmapText and type(bitmapText.measure) == "function" then
+                        measured = tonumber(bitmapText.measure(
+                            {{text = label.Text}},
+                            tonumber(label.TextSize) or 16
+                        )) or 0
+                    end
+                    if measured <= 0 then
+                        local bounds: any = label.TextBounds
+                        measured = bounds and tonumber(bounds.X) or 0
+                    end
+                    if measured > 0 then
+                        widest = math.max(widest, 8 + measured + 24 + 72)
+                    end
                 end
             end
             if widest > 0 then
-                width = math.clamp(widest, 160, 420)
-                resizeToOptions()
+                local packed: number = math.clamp(widest, 160, 420)
+                if packed ~= width then
+                    width = packed
+                    resizeToOptions()
+                end
             end
-        end)
+        end
+        window.repackWidth = repackWidth
+        task.defer(repackWidth)
 
         feature.expanded = true
         if feature.syncArrow then
@@ -1135,6 +1187,44 @@ function Module.init(context: any): any
     function manager.BringToFront(window: any): ()
         if window then
             raise(window)
+        end
+    end
+
+    -- Removable diagnostic, never drawn: the logical rectangle of every
+    -- window plus the scale and viewport the manager is reasoning with.
+    -- For reading placement bugs off a live session; nothing renders it.
+    function manager.DebugRects(): any
+        local rects: {any} = {}
+        for _, window: any in ipairs(manager.list) do
+            local x: number, y: number, w: number, h: number = windowRect(window)
+            table.insert(rects, {
+                id = window.id,
+                x = x, y = y, width = w, height = h,
+                visible = window.root.Visible == true,
+                userMoved = window.userMoved == true,
+                collapsed = window.collapsed == true,
+            })
+        end
+        return {
+            scale = layerScale(),
+            viewport = logicalViewport(),
+            windows = rects,
+        }
+    end
+
+    -- Dynamic packing, atlas edition: when the glyphs land, every packed
+    -- settings window re-measures against real advances instead of the
+    -- estimate it was born with.
+    do
+        local bitmapText: any = state.bitmapText
+        if bitmapText and type(bitmapText.onReady) == "table" then
+            table.insert(bitmapText.onReady, function(): ()
+                for _, window: any in ipairs(manager.list) do
+                    if window.featureSettings and window.repackWidth then
+                        window.repackWidth()
+                    end
+                end
+            end)
         end
     end
 

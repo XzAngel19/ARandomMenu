@@ -687,6 +687,15 @@ function Module.init(context: any): any
         Visible = false,
         ZIndex = 246,
     }) :: any) :: Frame
+    -- Navigator cells are rebuilt on every query; the sweep adopts each
+    -- generation onto the bitmap contract as it appears. The search box
+    -- is a TextBox and stays native — a caret over hidden text is a bug.
+    do
+        local bitmap: any = state.bitmapText
+        if bitmap and type(bitmap.adoptTree) == "function" then
+            table.insert(Furniture.connections, bitmap.adoptTree(navScreen))
+        end
+    end
 
     local navColumn: Frame = (create("Frame", {
         Parent = navScreen,
@@ -1120,13 +1129,35 @@ function Module.init(context: any): any
         menuButton.TextColor3 = open and Theme.accentText or PILL_IDLE_TEXT
     end
     restyleMenuButton()
-    state.addMenuVisibilityListener(function(_visible: boolean): ()
+    state.addMenuVisibilityListener(function(visible: boolean): ()
         restyleMenuButton()
         -- The wordmark belongs to the ClickGUI screen; the HackList stays —
         -- it is the in-game HUD. Navigator is its own screen now and ignores
         -- the ClickGUI entirely.
         refreshLogoVisibility()
         placeHudList()
+        -- Boot placement runs while the GUI is closed, when every window is
+        -- hidden and therefore invisible to the free-rectangle search. The
+        -- moment the GUI really shows, any auto-placed settings or
+        -- management window standing on a neighbour reflows to a free
+        -- rectangle. Registered here, in the last library, so every other
+        -- visibility listener has already restored what should be showing;
+        -- hand-moved windows are never touched.
+        if visible then
+            task.defer(function(): ()
+                local manager: any = state.windows
+                if not manager or type(manager.ReflowWindow) ~= "function" then
+                    return
+                end
+                for _, window: any in ipairs(manager.list or {}) do
+                    if (window.featureSettings or window.managementWindow)
+                        and window.root.Visible
+                        and not window.userMoved then
+                        manager.ReflowWindow(window)
+                    end
+                end
+            end)
+        end
     end)
     refreshLogoVisibility()
     ThemeEngine.OnChange(function(): ()
