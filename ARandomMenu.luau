@@ -363,7 +363,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "4714db6c645dd3d2"
+local SOURCE_STAMP: string = "ed4ac5dc0a81a46f"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -1061,16 +1061,24 @@ configData.ui.guiStyle = nil
 -- height sliders stored before the official 200 default existed, and the
 -- WurstLogo colours from the ghost-chip era. One flag, one sweep;
 -- everything falls back to Wurst's own defaults and persists fresh.
-if configData.ui.wurstSchema ~= 2 then
-    configData.ui.wurstSchema = 2
+if configData.ui.wurstSchema ~= 3 then
+    if configData.ui.wurstSchema ~= 2 then
+        -- The pre-Wurst store: drop everything the old shell wrote.
+        configData.values["ClickGUI.Maxheight"] = nil
+        configData.values["ClickGUI.Maxsettingsheight"] = nil
+        configData.values["ClickGUI.Opacity"] = nil
+        configData.values["ClickGUI.Tooltipopacity"] = nil
+        configData.values["WurstLogo.Background"] = nil
+        configData.values["WurstLogo.Text"] = nil
+        configData.values["WurstLogo.Visibility"] = nil
+    end
+    -- Schema 3: the default layout moved to the top row beside the
+    -- wordmark. Saved window geometry from the old 64-px grid is dropped
+    -- once so the new disposition applies; every position moved by hand
+    -- *after* this migration persists exactly as before. Binds and
+    -- module configKeys are untouched.
+    configData.ui.wurstSchema = 3
     configData.ui.windows = {}
-    configData.values["ClickGUI.Maxheight"] = nil
-    configData.values["ClickGUI.Maxsettingsheight"] = nil
-    configData.values["ClickGUI.Opacity"] = nil
-    configData.values["ClickGUI.Tooltipopacity"] = nil
-    configData.values["WurstLogo.Background"] = nil
-    configData.values["WurstLogo.Text"] = nil
-    configData.values["WurstLogo.Visibility"] = nil
     queueConfigSave()
 end
 configData.ui.textScaleCalibrationVersion = 2

@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "4714db6c645dd3d2",
+    stamp = "ed4ac5dc0a81a46f",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -7318,12 +7318,26 @@ function Module.init(context: any): any
     }
 
     -- Left to right until the next window would pass the available edge,
-    -- then down — Wurst's own first-run rule. With eight category windows
-    -- plus UI Settings the row wraps wherever the viewport says, not at a
-    -- column count somebody picked.
-    local nextX: number = GRID_MARGIN
-    local nextY: number = 64
-    local rowHeight: number = 0
+    -- then down — Wurst's own first-run rule. The default top row is
+    -- [WURST 0.1 Beta][Combat][Render][Movement][Fun][Other]: the first
+    -- category starts after the wordmark's real packed width, on the
+    -- wordmark's own top edge (Furniture parks the chip at 14,10), and
+    -- wrapped rows fall back to the left margin below the logo's height.
+    -- The chip width is the same formula Furniture packs with —
+    -- LOGO_WIDTH 142 + 10 + (8 + #version × 12) + 4; the atlas re-fit
+    -- narrows the chip a few pixels later, which only widens the gap.
+    -- On a viewport too short for even one window beside the logo, the
+    -- first slot wraps immediately and the row starts under the chip.
+    local productVersion: string = tostring(
+        (host.PRODUCT and host.PRODUCT.version) or "0.1 Beta"
+    )
+    local LOGO_CHIP_WIDTH: number = 142 + 10 + (8 + #productVersion * 12) + 4
+    local LOGO_CHIP_HEIGHT: number = 44
+    local TOP_ROW_X: number = 14 + LOGO_CHIP_WIDTH + GRID_GAP
+    local TOP_ROW_Y: number = 10
+    local nextX: number = TOP_ROW_X
+    local nextY: number = TOP_ROW_Y
+    local rowHeight: number = LOGO_CHIP_HEIGHT
 
     local function nextSlot(height: number): Vector2
         local viewport: Vector2 = logicalViewport()
@@ -7448,9 +7462,12 @@ function Module.init(context: any): any
     -- the official order, with every saved position already forgotten by
     -- the caller. Settings windows re-cascade the next time they open.
     function ClickGui.Retile(): ()
-        nextX = GRID_MARGIN
-        nextY = 64
-        rowHeight = 0
+        -- Reset layout lands on the same default disposition first-run
+        -- uses: wordmark first, categories after its real width, wrap
+        -- below the chip.
+        nextX = TOP_ROW_X
+        nextY = TOP_ROW_Y
+        rowHeight = LOGO_CHIP_HEIGHT
         for _, name: string in ipairs(ClickGui.order) do
             local record: CategoryWindow = ClickGui.categories[name]
             if record then
