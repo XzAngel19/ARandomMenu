@@ -81,13 +81,20 @@ of 1000 (the old default) must not survive as a Wurst default. Code
 defaults stay 200 / 200. Migration must not touch binds or module
 `configKeys`.
 
-### Font
+### Font — see `docs/minecraft-1.18.1-font.md`
+
+C1 is published. 1.18.1 is a four-provider stack, not `ascii.png` /
+advance 6. Official client SHA1
+`7e46fb47609401970e2818989fa584fd467cd036`. Do not vendor Mojang
+pixels. Strategy: official downloader on explicit update, generate
+locally (gitignored), Monocraft fallback in CI. Do not label
+`monocraft-16.png` as Minecraft exact.
 
 Libraries already take `CONTROL_FONT`. Do not hard-code BuilderSans or
-RobotoMono in Cards / Widgets / SettingsPage / WindowManager /
-Furniture / ClickGui. The face is still Monocraft `FontFace` — a
-vector stand-in, not MC.font bitmap. The Minecraft bitmap atlas itself
-is not rasterised. Do not claim "font exacta".
+RobotoMono. A's Monocraft atlas is the legal fallback behind
+`state.bitmapText`. Migrating titles / rows / settings / Navigator
+to `draw` waits on A, one surface at a time; C4 will flip each
+surface only after it lands.
 
 ### Keybinds "Add" dialog
 

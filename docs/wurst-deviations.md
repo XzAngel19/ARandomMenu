@@ -28,5 +28,5 @@ GUI-scale-1. Prototype `titleHeight` 26 is 13 × 2, not a 1080p invention.
 | Navigator as its own screen + keys | exact | RightCtrl = ClickGUI, RightShift = Navigator. |
 | No TabGUI (default Disabled) | exact | Shipping none matches Disabled. |
 | Pill as one-button Roblox launcher | adaptación Roblox aprobable | The 5% Roblox. |
-| Monocraft FontFace | adaptación Roblox aprobable | Not MC.font bitmap. Do not claim font exacta. |
+| Monocraft atlas (`monocraft-16.png`) | adaptación Roblox aprobable | OFL fallback, not 1.18.1 `default.json`. Do not claim font exacta. Authority: `docs/minecraft-1.18.1-font.md`. |
 | One ClickGui UIScale, user Scale 0.7–1.6 | exact | No 1080 / 1.35 formula. |
