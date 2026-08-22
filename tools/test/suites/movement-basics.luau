@@ -77,6 +77,19 @@ return function(ctx: any): ()
     }) do
         check("option: " .. name, speed.Options[name] ~= nil)
     end
+    local speedMetadata: any = speed.Options["Speed"].Metadata
+    check("Speed is one numeric value, never a random range",
+        type(speed.Options["Speed"].Value) == "number"
+            and speedMetadata.type == "slider"
+            and speedMetadata.default == 32
+            and speedMetadata.current == 32
+            and speedMetadata.min == 16
+            and speedMetadata.max == 200
+            and speedMetadata.step == 1
+            and type(speedMetadata.callback) == "function")
+    ctx.setOption(speed, "Speed", 48)
+    check("editing Speed updates its live metadata",
+        speed.Options["Speed"].Value == 48 and speedMetadata.current == 48)
 
     local function hidden(name: string): boolean
         return host.state.hiddenOptionRows
@@ -94,7 +107,7 @@ return function(ctx: any): ()
         humanoid.WalkSpeed == speed.Options["Speed"].Value,
         "walkspeed is " .. tostring(humanoid.WalkSpeed))
     check("the HUD status names the live engine and speed",
-        speed.Status == "WalkSpeed 32", tostring(speed.Status))
+        speed.Status == "WalkSpeed 48", tostring(speed.Status))
     speed.Feature.activate()
     check("the HUD status clears with the module", speed.Status == nil)
     check("and puts the character's own speed back",

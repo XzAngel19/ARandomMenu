@@ -273,7 +273,9 @@ return function(ctx: any): ()
             if option.type == "slider" or option.type == "range" then
                 check(displayName .. " metadata range " .. option.label,
                     type(option.min) == "number" and type(option.max) == "number"
-                        and option.min <= option.max)
+                        and option.min <= option.max
+                        and type(option.step) == "number"
+                        and option.step >= 0)
             elseif option.type == "dropdown" then
                 check(displayName .. " metadata values " .. option.label,
                     type(option.values) == "table" and #option.values > 0)
