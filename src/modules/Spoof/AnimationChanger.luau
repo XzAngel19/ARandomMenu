@@ -184,7 +184,7 @@ function Module.init(context: Runtime): any
             end
             return labels
         end,
-        EmptyText = "none found",
+        EmptyText = "none yet — Find packs",
         Tooltip = "Animation bundles published by Roblox. UGC is filtered out "
             .. "by the search itself.",
         Function = function(_selected: any, names: {string}): ()
@@ -214,28 +214,11 @@ function Module.init(context: Runtime): any
             end
         end,
     })
-    animations:CreateButton({
-        Name = "Find packs",
-        Tooltip = "Ask the catalog for every animation bundle Roblox itself "
-            .. "published.",
-        Function = function(): ()
-            task.spawn(function(): ()
-                Module.search(context, animations, runtime)
-            end)
-        end,
-    })
     animations:CreateTextBox({
-        Name = "Bundle ID",
+        Name = "Custom ID",
         Default = "",
-        Tooltip = "Applied instead of the list when it is filled in. Useful "
-            .. "for a pack the search does not return.",
-    })
-    animations:CreateDropdown({
-        Name = "Apply through",
-        List = {"Both", "Description", "Animate script"},
-        Index = 1,
-        Tooltip = "Description is the supported path; the Animate script "
-            .. "survives games that re-apply their own description.",
+        Tooltip = "Optional: a bundle id, worn instead of the pick above "
+            .. "when filled in. Useful for a pack the search misses.",
     })
     animations:CreateButton({
         Name = "Apply",
@@ -253,6 +236,16 @@ function Module.init(context: Runtime): any
             task.spawn(function(): ()
                 Module.restore(context, runtime)
                 animations:Notify("animations restored")
+            end)
+        end,
+    })
+    animations:CreateButton({
+        Name = "Find packs",
+        Tooltip = "Ask the catalog for every animation bundle Roblox itself "
+            .. "published; results land in the Pack list.",
+        Function = function(): ()
+            task.spawn(function(): ()
+                Module.search(context, animations, runtime)
             end)
         end,
     })
@@ -489,7 +482,7 @@ function Module.apply(
         return
     end
 
-    local typed: number? = tonumber(animations.Options["Bundle ID"].Value)
+    local typed: number? = tonumber(animations.Options["Custom ID"].Value)
     local bundleId: number = typed or 0
     if bundleId <= 0 then
         local pack: any = runtime.selected and runtime.byLabel[runtime.selected]
@@ -510,7 +503,12 @@ function Module.apply(
         return
     end
 
-    local through: string = animations.Options["Apply through"].Value
+    -- Both paths, always: the description is the supported route and the
+    -- Animate script is the fallback that survives games re-applying their
+    -- own description. The old "Apply through" dropdown made the player
+    -- choose between halves of one job, which is exactly the kind of
+    -- setting Wurst would never ask about.
+    local through: string = "Both"
     local applied: boolean = false
 
     if through ~= "Animate script" then

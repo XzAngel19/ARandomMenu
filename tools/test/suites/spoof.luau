@@ -65,7 +65,7 @@ return function(ctx: any): ()
     Mock.inject(world, AnimationFile.init)
     local animations: any = AnimationFile.init(espContext)
     check("animation changer is registered", animations.Name == "Animation Changer")
-    for _, name: string in ipairs({"Pack", "Bundle ID", "Apply through", "Apply"}) do
+    for _, name: string in ipairs({"Pack", "Custom ID", "Apply", "Reset"}) do
         check("animation option: " .. name, animations.Options[name] ~= nil)
     end
 
@@ -125,12 +125,12 @@ return function(ctx: any): ()
     Mock.inject(world, EmoteFile.init)
     local emotePlayer: any = EmoteFile.init(espContext)
     check("emote player is registered", emotePlayer.Name == "Emote Player")
-    for _, name: string in ipairs({"Emote", "Emote ID", "Speed", "Loop", "Play", "Stop"}) do
+    for _, name: string in ipairs({"Emote", "Custom ID", "Speed", "Loop", "Play", "Stop"}) do
         check("emote option: " .. name, emotePlayer.Options[name] ~= nil)
     end
 
     emotePlayer:Toggle()
-    emotePlayer.Options["Emote ID"].Value = "507770239"
+    emotePlayer.Options["Custom ID"].Value = "507770239"
     emotePlayer.Feature.options["Play"].run()
     local animatorInstance: any = localHumanoid:FindFirstChildOfClass("Animator")
     check("the emote is loaded and playing",

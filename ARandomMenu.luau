@@ -363,7 +363,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "912528616eca7e07"
+local SOURCE_STAMP: string = "a6249dd714981d8f"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -1132,6 +1132,111 @@ end
 -- pack name a config still carries must not resurrect the bitmap path.
 -- applyFontPack stays callable for the suites and local experiments.
 state.fontPack = "Code"
+
+-- ---------------------------------------------------------------------------
+-- Teleport persistence
+-- ---------------------------------------------------------------------------
+-- The menu follows the player across servers: Rejoin Server, a game-hop,
+-- any teleport re-runs the loader on the other side through the
+-- executor's queue_on_teleport. Three rules keep it sane:
+--   * the queued snippet re-queues itself simply by booting the shell,
+--     so the chain survives any number of hops;
+--   * Destruct — and the UI Settings toggle — flip one genv flag the
+--     snippet checks before doing anything, so "remove the menu" also
+--     means "stop following me";
+--   * arming happens once per session, guarded in genv, so a reinject
+--     never stacks a second copy of the snippet.
+local persistenceEnvironment: any = getfenv()
+
+local function persistenceGenv(): any
+    local getGenv: any = persistenceEnvironment.getgenv
+    if type(getGenv) == "function" then
+        local ok: boolean, genv: any = pcall(getGenv)
+        if ok and type(genv) == "table" then
+            return genv
+        end
+    end
+    return nil
+end
+
+local function resolveTeleportQueue(): any
+    local direct: any = persistenceEnvironment.queue_on_teleport
+    if type(direct) == "function" then
+        return direct
+    end
+    for _, providerName: string in ipairs({"syn", "fluxus"}) do
+        local provider: any = persistenceEnvironment[providerName]
+        if type(provider) == "table"
+            and type(provider.queue_on_teleport) == "function" then
+            local queue: any = provider.queue_on_teleport
+            return function(source: string): ()
+                queue(source)
+            end
+        end
+    end
+    return nil
+end
+
+local function buildTeleportSnippet(): string
+    -- Plain Lua, no shell locals: this string runs in a fresh environment
+    -- on the far side of a teleport, before anything of ours exists.
+    return table.concat({
+        "local genv = (type(getgenv) == \"function\" and getgenv()) or {}",
+        "genv.ARANDOMMENU_TP_QUEUED = false",
+        "if genv.ARANDOMMENU_STOPPED == true then return end",
+        "genv.ARANDOMMENU_BRANCH = \"" .. RUNTIME_BRANCH .. "\"",
+        "local ok, err = pcall(function()",
+        "    loadstring(game:HttpGet(",
+        "        \"" .. RUNTIME_RAW_BASE
+            .. "ARandomMenu.luau?t=\" .. tostring(os.time())",
+        "    ))()",
+        "end)",
+        "if not ok then",
+        "    warn(\"[Wurst] teleport reinject failed: \" .. tostring(err))",
+        "end",
+    }, "\n")
+end
+
+state.teleportPersist = {
+    supported = resolveTeleportQueue() ~= nil,
+    -- The widget persists the toggle under ClickGUI.Keepafterteleport;
+    -- reading it here lets the queue arm at boot, before UI Settings
+    -- replays its rows. Default on: following the player is the point.
+    enabled = configData.states["ClickGUI.Keepafterteleport"] ~= false,
+}
+
+state.teleportPersist.Sync = function(): ()
+    local contract: any = state.teleportPersist
+    local genv: any = persistenceGenv()
+    if genv then
+        -- The queued snippet reads this first. false = follow; true =
+        -- the player said stop (toggle off or Destruct).
+        genv.ARANDOMMENU_STOPPED = contract.enabled ~= true
+    end
+    if contract.enabled ~= true then
+        return
+    end
+    local queue: any = resolveTeleportQueue()
+    if type(queue) ~= "function" then
+        return
+    end
+    if genv and genv.ARANDOMMENU_TP_QUEUED == true then
+        -- Already armed this session (the snippet clears the flag when it
+        -- runs on the far side). A reinject must not stack a second copy.
+        return
+    end
+    local armed: boolean = pcall(queue, buildTeleportSnippet())
+    if armed and genv then
+        genv.ARANDOMMENU_TP_QUEUED = true
+    end
+end
+
+state.teleportPersist.SetEnabled = function(enabled: boolean): ()
+    state.teleportPersist.enabled = enabled == true
+    state.teleportPersist.Sync()
+end
+
+state.teleportPersist.Sync()
 
 -- The one menu-style state machine. Everything that changes the style —
 -- the UI Settings row, the Navigator's "Wurst ClickGUI" door, the dock —
@@ -6153,6 +6258,22 @@ local function cleanupRuntime(): ()
     end
     runtimeCleaned = true
 
+    cleanupStep("teleport persistence", function(): ()
+        -- Destruct means "stop following me": the queued teleport snippet
+        -- checks this flag first and aborts. The snippet itself cannot be
+        -- unqueued on most executors, so the flag IS the off switch.
+        if state.teleportPersist then
+            state.teleportPersist.enabled = false
+        end
+        local environment: any = getfenv()
+        local getGenv: any = environment.getgenv
+        if type(getGenv) == "function" then
+            local ok: boolean, genv: any = pcall(getGenv)
+            if ok and type(genv) == "table" then
+                genv.ARANDOMMENU_STOPPED = true
+            end
+        end
+    end)
     cleanupStep("blur", function(): ()
         if MenuBlur then
             MenuBlur:Destroy()

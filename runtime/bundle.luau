@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "912528616eca7e07",
+    stamp = "a6249dd714981d8f",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -11316,6 +11316,21 @@ function Module.init(context: any): any
         state.uiShowHackList = value
         if state.hudList and type(state.hudList.SetVisible) == "function" then
             state.hudList.SetVisible(value)
+        end
+    end)
+    -- The menu follows the player across teleports (Rejoin Server, game
+    -- hops) through the executor's queue_on_teleport. The shell owns the
+    -- machinery; this row is only the switch. On an executor without the
+    -- capability the row still exists and says so once when turned on.
+    addToggleOption(uiPanel, "Keep after teleport", true, function(value: boolean): ()
+        uiSettingsValues["Keep after teleport"] = value
+        local persist: any = state.teleportPersist
+        if persist and type(persist.SetEnabled) == "function" then
+            persist.SetEnabled(value)
+            if value and persist.supported ~= true then
+                notify("This executor has no queue_on_teleport — "
+                    .. "the menu cannot follow teleports here")
+            end
         end
     end)
     -- Use the shell's device classification. Mobile executors frequently
@@ -23710,7 +23725,7 @@ function Module.init(context: Runtime): any
             end
             return labels
         end,
-        EmptyText = "none found",
+        EmptyText = "none yet — Find packs",
         Tooltip = "Animation bundles published by Roblox. UGC is filtered out "
             .. "by the search itself.",
         Function = function(_selected: any, names: {string}): ()
@@ -23740,28 +23755,11 @@ function Module.init(context: Runtime): any
             end
         end,
     })
-    animations:CreateButton({
-        Name = "Find packs",
-        Tooltip = "Ask the catalog for every animation bundle Roblox itself "
-            .. "published.",
-        Function = function(): ()
-            task.spawn(function(): ()
-                Module.search(context, animations, runtime)
-            end)
-        end,
-    })
     animations:CreateTextBox({
-        Name = "Bundle ID",
+        Name = "Custom ID",
         Default = "",
-        Tooltip = "Applied instead of the list when it is filled in. Useful "
-            .. "for a pack the search does not return.",
-    })
-    animations:CreateDropdown({
-        Name = "Apply through",
-        List = {"Both", "Description", "Animate script"},
-        Index = 1,
-        Tooltip = "Description is the supported path; the Animate script "
-            .. "survives games that re-apply their own description.",
+        Tooltip = "Optional: a bundle id, worn instead of the pick above "
+            .. "when filled in. Useful for a pack the search misses.",
     })
     animations:CreateButton({
         Name = "Apply",
@@ -23779,6 +23777,16 @@ function Module.init(context: Runtime): any
             task.spawn(function(): ()
                 Module.restore(context, runtime)
                 animations:Notify("animations restored")
+            end)
+        end,
+    })
+    animations:CreateButton({
+        Name = "Find packs",
+        Tooltip = "Ask the catalog for every animation bundle Roblox itself "
+            .. "published; results land in the Pack list.",
+        Function = function(): ()
+            task.spawn(function(): ()
+                Module.search(context, animations, runtime)
             end)
         end,
     })
@@ -24015,7 +24023,7 @@ function Module.apply(
         return
     end
 
-    local typed: number? = tonumber(animations.Options["Bundle ID"].Value)
+    local typed: number? = tonumber(animations.Options["Custom ID"].Value)
     local bundleId: number = typed or 0
     if bundleId <= 0 then
         local pack: any = runtime.selected and runtime.byLabel[runtime.selected]
@@ -24036,7 +24044,12 @@ function Module.apply(
         return
     end
 
-    local through: string = animations.Options["Apply through"].Value
+    -- Both paths, always: the description is the supported route and the
+    -- Animate script is the fallback that survives games re-applying their
+    -- own description. The old "Apply through" dropdown made the player
+    -- choose between halves of one job, which is exactly the kind of
+    -- setting Wurst would never ask about.
+    local through: string = "Both"
     local applied: boolean = false
 
     if through ~= "Animate script" then
@@ -24263,9 +24276,9 @@ function Module.init(context: Runtime): any
     emotes:CreateList({
         Name = "Emote",
         Items = labels,
-        EmptyText = "paste an id",
-        Tooltip = "Emotes from the avatar you are wearing, plus whatever the "
-            .. "last search returned.",
+        EmptyText = "none yet — use Search",
+        Tooltip = "Pick what to play: emotes from the avatar you are "
+            .. "wearing, plus whatever the last search returned.",
         Function = function(_selected: any, names: {string}): ()
             if runtime.settingSelection then
                 return
@@ -24294,30 +24307,10 @@ function Module.init(context: Runtime): any
         end,
     })
     emotes:CreateTextBox({
-        Name = "Emote ID",
+        Name = "Custom ID",
         Default = "",
-        Tooltip = "Played instead of the list when it is filled in. Any emote "
-            .. "animation id, Roblox or UGC.",
-    })
-    emotes:CreateTextBox({
-        Name = "Search",
-        Default = "",
-        Tooltip = "A name to look for in the catalog. Leave the module's "
-            .. "Roblox-only switch off to include UGC emotes.",
-    })
-    emotes:CreateToggle({
-        Name = "Roblox only",
-        Default = false,
-        Tooltip = "Restrict the search to emotes Roblox published itself.",
-    })
-    emotes:CreateButton({
-        Name = "Find emotes",
-        Tooltip = "Search the catalog for the name above.",
-        Function = function(): ()
-            task.spawn(function(): ()
-                Module.search(context, emotes, runtime)
-            end)
-        end,
+        Tooltip = "Optional: overrides the pick above when filled in. Any "
+            .. "emote animation id, Roblox or UGC.",
     })
     emotes:CreateSlider({
         Name = "Speed",
@@ -24333,7 +24326,7 @@ function Module.init(context: Runtime): any
     })
     emotes:CreateButton({
         Name = "Play",
-        Tooltip = "Play the ticked emote, or the id in the box.",
+        Tooltip = "Play the picked emote, or the custom id.",
         Function = function(): ()
             task.spawn(function(): ()
                 Module.play(context, emotes, runtime, animator, stop, destroyTrack)
@@ -24345,6 +24338,27 @@ function Module.init(context: Runtime): any
         Tooltip = "Stop whatever is playing.",
         Function = function(): ()
             stop()
+        end,
+    })
+    emotes:CreateTextBox({
+        Name = "Search",
+        Default = "",
+        Tooltip = "A name to look for in the catalog. Leave Roblox only off "
+            .. "to include UGC emotes.",
+    })
+    emotes:CreateToggle({
+        Name = "Roblox only",
+        Default = false,
+        Tooltip = "Restrict the search to emotes Roblox published itself.",
+    })
+    emotes:CreateButton({
+        Name = "Find emotes",
+        Tooltip = "Search the catalog for the name above; results land in "
+            .. "the Emote list.",
+        Function = function(): ()
+            task.spawn(function(): ()
+                Module.search(context, emotes, runtime)
+            end)
         end,
     })
     emotes:CreateNote(
@@ -24427,14 +24441,14 @@ function Module.play(
     destroyTrack: (AnimationTrack, boolean) -> ()
 ): ()
     local typed: number? = tonumber(
-        trimmed(tostring(emotes.Options["Emote ID"].Value or ""))
+        trimmed(tostring(emotes.Options["Custom ID"].Value or ""))
     )
     local assetId: number = typed or 0
     if assetId <= 0 and runtime.selected then
         assetId = runtime.byLabel[runtime.selected] or 0
     end
     if assetId <= 0 then
-        emotes:Notify("tick an emote or paste an id")
+        emotes:Notify("pick an emote or fill in Custom ID")
         return
     end
 

@@ -151,9 +151,9 @@ function Module.init(context: Runtime): any
     emotes:CreateList({
         Name = "Emote",
         Items = labels,
-        EmptyText = "paste an id",
-        Tooltip = "Emotes from the avatar you are wearing, plus whatever the "
-            .. "last search returned.",
+        EmptyText = "none yet — use Search",
+        Tooltip = "Pick what to play: emotes from the avatar you are "
+            .. "wearing, plus whatever the last search returned.",
         Function = function(_selected: any, names: {string}): ()
             if runtime.settingSelection then
                 return
@@ -182,30 +182,10 @@ function Module.init(context: Runtime): any
         end,
     })
     emotes:CreateTextBox({
-        Name = "Emote ID",
+        Name = "Custom ID",
         Default = "",
-        Tooltip = "Played instead of the list when it is filled in. Any emote "
-            .. "animation id, Roblox or UGC.",
-    })
-    emotes:CreateTextBox({
-        Name = "Search",
-        Default = "",
-        Tooltip = "A name to look for in the catalog. Leave the module's "
-            .. "Roblox-only switch off to include UGC emotes.",
-    })
-    emotes:CreateToggle({
-        Name = "Roblox only",
-        Default = false,
-        Tooltip = "Restrict the search to emotes Roblox published itself.",
-    })
-    emotes:CreateButton({
-        Name = "Find emotes",
-        Tooltip = "Search the catalog for the name above.",
-        Function = function(): ()
-            task.spawn(function(): ()
-                Module.search(context, emotes, runtime)
-            end)
-        end,
+        Tooltip = "Optional: overrides the pick above when filled in. Any "
+            .. "emote animation id, Roblox or UGC.",
     })
     emotes:CreateSlider({
         Name = "Speed",
@@ -221,7 +201,7 @@ function Module.init(context: Runtime): any
     })
     emotes:CreateButton({
         Name = "Play",
-        Tooltip = "Play the ticked emote, or the id in the box.",
+        Tooltip = "Play the picked emote, or the custom id.",
         Function = function(): ()
             task.spawn(function(): ()
                 Module.play(context, emotes, runtime, animator, stop, destroyTrack)
@@ -233,6 +213,27 @@ function Module.init(context: Runtime): any
         Tooltip = "Stop whatever is playing.",
         Function = function(): ()
             stop()
+        end,
+    })
+    emotes:CreateTextBox({
+        Name = "Search",
+        Default = "",
+        Tooltip = "A name to look for in the catalog. Leave Roblox only off "
+            .. "to include UGC emotes.",
+    })
+    emotes:CreateToggle({
+        Name = "Roblox only",
+        Default = false,
+        Tooltip = "Restrict the search to emotes Roblox published itself.",
+    })
+    emotes:CreateButton({
+        Name = "Find emotes",
+        Tooltip = "Search the catalog for the name above; results land in "
+            .. "the Emote list.",
+        Function = function(): ()
+            task.spawn(function(): ()
+                Module.search(context, emotes, runtime)
+            end)
         end,
     })
     emotes:CreateNote(
@@ -315,14 +316,14 @@ function Module.play(
     destroyTrack: (AnimationTrack, boolean) -> ()
 ): ()
     local typed: number? = tonumber(
-        trimmed(tostring(emotes.Options["Emote ID"].Value or ""))
+        trimmed(tostring(emotes.Options["Custom ID"].Value or ""))
     )
     local assetId: number = typed or 0
     if assetId <= 0 and runtime.selected then
         assetId = runtime.byLabel[runtime.selected] or 0
     end
     if assetId <= 0 then
-        emotes:Notify("tick an emote or paste an id")
+        emotes:Notify("pick an emote or fill in Custom ID")
         return
     end
 

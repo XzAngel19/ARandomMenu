@@ -1696,6 +1696,21 @@ function Module.init(context: any): any
             state.hudList.SetVisible(value)
         end
     end)
+    -- The menu follows the player across teleports (Rejoin Server, game
+    -- hops) through the executor's queue_on_teleport. The shell owns the
+    -- machinery; this row is only the switch. On an executor without the
+    -- capability the row still exists and says so once when turned on.
+    addToggleOption(uiPanel, "Keep after teleport", true, function(value: boolean): ()
+        uiSettingsValues["Keep after teleport"] = value
+        local persist: any = state.teleportPersist
+        if persist and type(persist.SetEnabled) == "function" then
+            persist.SetEnabled(value)
+            if value and persist.supported ~= true then
+                notify("This executor has no queue_on_teleport — "
+                    .. "the menu cannot follow teleports here")
+            end
+        end
+    end)
     -- Use the shell's device classification. Mobile executors frequently
     -- emulate MouseEnabled, but the dock must remain mandatory on a phone.
     local touchPrimary: boolean = state.isMobile == true

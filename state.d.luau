@@ -151,6 +151,7 @@ export type MenuState = {
     uiMaxSettingsHeight: number,                    -- Wurst's "Max settings height", capping every popped-out feature settings window
     uiSettings: any,                                -- The UI Settings window's current values, readable without walking its rows
     wurstOptions: any,                              -- The Wurst Options action API: RegisterAction/UnregisterAction/InvokeAction/List over one ordered registry
+    teleportPersist: any,                           -- Teleport persistence: {supported, enabled, Sync, SetEnabled}; genv flags ARANDOMMENU_STOPPED / ARANDOMMENU_TP_QUEUED
     pill: any,                                      -- The floating pill toolbar: the launcher, and the one chrome that outlives closing the GUI
     refreshLauncher: () -> (),                      -- Re-evaluate the fallback mobile circle; the pill supersedes it while it exists
     windows: any,                                   -- The window manager: drag, collapse, pin, snap, persistence
