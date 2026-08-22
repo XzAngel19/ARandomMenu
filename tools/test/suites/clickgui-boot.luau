@@ -164,6 +164,59 @@ return function(ctx: any): ()
             cardsByName[feature.name] = feature
         end
     end
+    -- Machine-readable inventory. It is intentionally exactly 38 entries:
+    -- modern Wurst may inform generic configuration infrastructure, never add
+    -- a thirty-ninth hack to this port.
+    local matrix: {[string]: any} = {
+        ["Friend List"] = {kind = "roblox-only"},
+        ItemESP = {kind = "adapted", counterpart = "ItemESP"},
+        PlayerESP = {kind = "adapted", counterpart = "PlayerESP"},
+        Killaura = {kind = "adapted", counterpart = "Killaura"},
+        ["Remote Logger"] = {kind = "roblox-only"},
+        ["Click Teleport"] = {kind = "roblox-only"},
+        ["Auto Clicker"] = {kind = "roblox-only"},
+        TriggerBot = {kind = "exact", counterpart = "TriggerBot"},
+        ["X-Ray"] = {kind = "adapted", counterpart = "X-Ray"},
+        HighJump = {kind = "exact", counterpart = "HighJump"},
+        Spider = {kind = "exact", counterpart = "Spider"},
+        SafeWalk = {kind = "adapted", counterpart = "SafeWalk"},
+        ["Rejoin Server"] = {kind = "adapted", counterpart = "AutoReconnect"},
+        Zoom = {kind = "adapted", counterpart = "Zoom"},
+        ["Interact Extender"] = {kind = "adapted", counterpart = "Reach"},
+        ["Phase Dash"] = {kind = "roblox-only"},
+        NoFall = {kind = "adapted", counterpart = "NoFall"},
+        Flight = {kind = "exact", counterpart = "Flight"},
+        ["Vehicle Speed"] = {kind = "adapted", counterpart = "BoatFly"},
+        ["Anti-Void"] = {kind = "roblox-only"},
+        Gravity = {kind = "roblox-only"},
+        ["Jump Power"] = {kind = "adapted", counterpart = "HighJump"},
+        ["Infinite Jump"] = {kind = "roblox-only"},
+        FOV = {kind = "roblox-only"},
+        Noclip = {kind = "exact", counterpart = "Noclip"},
+        AntiAFK = {kind = "adapted", counterpart = "AntiAFK"},
+        ["Anti-Fling"] = {
+            kind = "adapted", counterpart = "AntiKnockback/AntiEntityPush",
+        },
+        ["Lag Switch"] = {kind = "adapted", counterpart = "Blink"},
+        Fling = {kind = "roblox-only"},
+        ["Improve FPS"] = {kind = "roblox-only"},
+        Fullbright = {kind = "exact", counterpart = "Fullbright"},
+        ["Freeze Movements"] = {kind = "adapted", counterpart = "Blink"},
+        SpeedHack = {kind = "adapted", counterpart = "SpeedHack"},
+        Hitboxes = {kind = "roblox-only"},
+        ["Projectile Calibration"] = {
+            kind = "adapted", counterpart = "Trajectories",
+        },
+        Disguise = {kind = "roblox-only"},
+        ["Animation Changer"] = {kind = "roblox-only"},
+        ["Emote Player"] = {kind = "roblox-only"},
+    }
+    local matrixCount: number = 0
+    for _name: string in pairs(matrix) do
+        matrixCount += 1
+    end
+    check("module matrix is exactly 38", matrixCount == 38, tostring(matrixCount))
+
     local framework: any = host.state.framework
     local modulesByFeature: {[any]: any} = {}
     local openedSettings: {any} = {}
@@ -176,6 +229,15 @@ return function(ctx: any): ()
     for _, entry: any in ipairs(Manifest.modules or {}) do
         local displayName: string = entry.name
         local feature: any = cardsByName[displayName]
+        local matrixEntry: any = matrix[displayName]
+        check("module appears in parity matrix: " .. displayName,
+            matrixEntry ~= nil, displayName)
+        if matrixEntry then
+            check("module parity kind is valid: " .. displayName,
+                table.find({"exact", "adapted", "roblox-only"}, matrixEntry.kind) ~= nil)
+            check("Roblox-only has no fake counterpart: " .. displayName,
+                matrixEntry.kind ~= "roblox-only" or matrixEntry.counterpart == nil)
+        end
         check("module card loaded: " .. displayName, feature ~= nil, displayName)
         if not feature then
             continue
@@ -197,6 +259,35 @@ return function(ctx: any): ()
         check("module hasSettings is derived: " .. displayName,
             feature.hasSettings == realSettings,
             tostring(feature.hasSettings) .. " ~= " .. tostring(realSettings))
+        local metadata: {any} = feature.optionMetadata or {}
+        check("module metadata follows settings rows: " .. displayName,
+            #metadata == #feature.optionRows,
+            tostring(#metadata) .. " ~= " .. tostring(#feature.optionRows))
+        for index: number, option: any in ipairs(metadata) do
+            check(displayName .. " metadata identity " .. tostring(index),
+                type(option.id) == "string" and option.id ~= ""
+                    and type(option.configKey) == "string"
+                    and option.configKey ~= ""
+                    and type(option.label) == "string"
+                    and type(option.type) == "string")
+            if option.type == "slider" or option.type == "range" then
+                check(displayName .. " metadata range " .. option.label,
+                    type(option.min) == "number" and type(option.max) == "number"
+                        and option.min <= option.max)
+            elseif option.type == "dropdown" then
+                check(displayName .. " metadata values " .. option.label,
+                    type(option.values) == "table" and #option.values > 0)
+            elseif option.type == "action" then
+                check(displayName .. " metadata action " .. option.label,
+                    option.action == true and type(option.callback) == "function")
+            elseif option.type == "bind" then
+                check(displayName .. " metadata bind " .. option.label,
+                    option.bind == true)
+            elseif option.type == "color" then
+                check(displayName .. " metadata color " .. option.label,
+                    option.color == true)
+            end
+        end
 
         if realSettings then
             local module: any = modulesByFeature[feature]
