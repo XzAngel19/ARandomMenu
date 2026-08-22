@@ -576,21 +576,40 @@ function Module.init(context: any): any
             }) :: Frame
             bind(bar, "BackgroundColor3", "accent")
 
-            local title: TextLabel = (create("TextLabel", {
-                TextTruncate = Enum.TextTruncate.AtEnd,
-                Parent = bar,
-                Name = "Title",
-                BackgroundTransparency = 1,
-                FontFace = CONTROL_FONT,
-                Text = definition.title or id,
-                TextSize = TITLE_FONT_SIZE,
-            }) :: any) :: TextLabel
-            title.AnchorPoint = Vector2.new(0, 0.5)
-            title.Position = UDim2.new(0, 8, 0.5, 0)
-            title.Size = UDim2.new(1, -60, 1, 0)
-            title.TextXAlignment = Enum.TextXAlignment.Left
-            title.ZIndex = 3
-            bind(title, "TextColor3", "accentText")
+            -- The title on the bitmap contract. The TextLabel branch is the
+            -- harness stand-in: the shell always publishes state.bitmapText,
+            -- so at runtime only the glyph path runs — a migrated surface
+            -- draws no second label. Wurst paints titles plain (no shadow);
+            -- 68 = the chrome buttons' span plus the 8 px inset.
+            local bitmapText: any = state.bitmapText
+            if bitmapText and type(bitmapText.draw) == "function" then
+                bitmapText.draw(bar, {
+                    {text = definition.title or id, color = Theme.accentText},
+                }, {
+                    Name = "Title",
+                    TextSize = TITLE_FONT_SIZE,
+                    ZIndex = 3,
+                    AnchorPoint = Vector2.new(0, 0.5),
+                    Position = UDim2.new(0, 8, 0.5, 0),
+                    maxWidth = math.max(40, definition.size.X - 68),
+                })
+            else
+                local title: TextLabel = (create("TextLabel", {
+                    TextTruncate = Enum.TextTruncate.AtEnd,
+                    Parent = bar,
+                    Name = "Title",
+                    BackgroundTransparency = 1,
+                    FontFace = CONTROL_FONT,
+                    Text = definition.title or id,
+                    TextSize = TITLE_FONT_SIZE,
+                }) :: any) :: TextLabel
+                title.AnchorPoint = Vector2.new(0, 0.5)
+                title.Position = UDim2.new(0, 8, 0.5, 0)
+                title.Size = UDim2.new(1, -60, 1, 0)
+                title.TextXAlignment = Enum.TextXAlignment.Left
+                title.ZIndex = 3
+                bind(title, "TextColor3", "accentText")
+            end
 
             local buttonX: number = -5
             -- Wurst's chrome controls are small squares sitting in the title
