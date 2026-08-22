@@ -363,7 +363,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "1bf36048acb1ea12"
+local SOURCE_STAMP: string = "65644dda7e647563"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -1252,6 +1252,33 @@ local AssetManager: any = {
             version = 1,
             assetType = "image/png",
         },
+        -- The crisp-scale variants of the same OFL fallback: fractional
+        -- UIScales cannot get pixel-perfect glyphs out of one raster, so
+        -- the renderer picks the size closest to the final physical glyph
+        -- and snaps to device pixels. Metrics for these are fixed at
+        -- build time by tools/make_font_atlas.py and mirrored in the
+        -- contract's atlas family below.
+        bitmapFontAtlas8 = {
+            url = REPOSITORY_RAW_BASE .. "assets/font/monocraft-8.png",
+            fileName = "monocraft-8-v1.png",
+            fallback = "",
+            version = 1,
+            assetType = "image/png",
+        },
+        bitmapFontAtlas24 = {
+            url = REPOSITORY_RAW_BASE .. "assets/font/monocraft-24.png",
+            fileName = "monocraft-24-v1.png",
+            fallback = "",
+            version = 1,
+            assetType = "image/png",
+        },
+        bitmapFontAtlas32 = {
+            url = REPOSITORY_RAW_BASE .. "assets/font/monocraft-32.png",
+            fileName = "monocraft-32-v1.png",
+            fallback = "",
+            version = 1,
+            assetType = "image/png",
+        },
         -- The old menu's artwork — brand logo, nav icons, banners — is gone
         -- from this registry. Nothing draws it any more, and a registry entry
         -- for an image nobody shows is a download waiting to be wrong.
@@ -1891,6 +1918,8 @@ state.bitmapText = {
         cellWidth = 11,
         cellHeight = 17,
         advance = 11,
+        ascent = 15,
+        descent = 2,
         -- Codepoints outside the grid render as this cell ("?"), the way
         -- Minecraft substitutes its missing glyph instead of collapsing
         -- the advance and shifting everything after it.
@@ -1931,6 +1960,73 @@ state.bitmapText = {
         return (create("TextLabel", resolved) :: any) :: TextLabel
     end,
 }
+
+-- The crisp-scale family: the same OFL Monocraft rasterised at 8 / 16 /
+-- 24 / 32 by tools/make_font_atlas.py. A fractional UIScale cannot get
+-- pixel-perfect glyphs out of one raster, so draw() picks the member
+-- whose size is closest to the final *physical* glyph and snaps every
+-- rect to integer device pixels. Layout metrics (advances, packing,
+-- measure) always come from the 16 px contract atlas, so which raster
+-- paints never moves a single caret. 16 is the mandatory member; the
+-- rest resolve lazily and are simply better pixels when present.
+state.bitmapText.family = {
+    [8] = {
+        ready = false, image = nil :: string?, size = 8, columns = 16,
+        cellWidth = 5, cellHeight = 9, advance = 5, ascent = 8, descent = 1,
+        asset = "bitmapFontAtlas8",
+    },
+    [16] = state.bitmapText.atlas,
+    [24] = {
+        ready = false, image = nil :: string?, size = 24, columns = 16,
+        cellWidth = 16, cellHeight = 25, advance = 16, ascent = 22, descent = 3,
+        asset = "bitmapFontAtlas24",
+    },
+    [32] = {
+        ready = false, image = nil :: string?, size = 32, columns = 16,
+        cellWidth = 21, cellHeight = 33, advance = 21, ascent = 29, descent = 4,
+        asset = "bitmapFontAtlas32",
+    },
+}
+
+-- The UIScale the popup layer runs at — the number that turns logical
+-- offsets into device pixels. Everything the renderer snaps, it snaps
+-- against this.
+state.bitmapText.layerScale = function(): number
+    local instance: any = PopupLayer:FindFirstChild("ClickGuiScale")
+    local value: number = instance and tonumber(instance.Scale) or 1
+    if value ~= value or value <= 0 then
+        value = 1
+    end
+    return value
+end
+
+-- The raster for a physical glyph height: the ready family member with
+-- the closest size, larger on a tie (downscaling a pixel font blurs
+-- less than upscaling it). The 16 px member is the floor — it is the
+-- one the boot resolves first.
+state.bitmapText.pickAtlas = function(physicalSize: number): any
+    local contract: any = state.bitmapText
+    local best: any = nil
+    local bestDistance: number = math.huge
+    for _, member: any in pairs(contract.family) do
+        if member.ready and member.image then
+            local distance: number = math.abs(member.size - physicalSize)
+            if distance < bestDistance
+                or (distance == bestDistance and best ~= nil
+                    and member.size > best.size) then
+                best = member
+                bestDistance = distance
+            end
+        end
+    end
+    return best or contract.atlas
+end
+
+-- The baseline a mixed-size line aligns to, in logical pixels.
+state.bitmapText.baselineFor = function(textSize: number?): number
+    local contract: any = state.bitmapText
+    return contract.atlas.ascent * ((tonumber(textSize) or 16) / contract.atlas.size)
+end
 
 -- One codepoint at a time, UTF-8 when the text is valid UTF-8 and raw
 -- bytes when it is not — a fallback glyph per byte beats an error, and
@@ -2013,11 +2109,17 @@ state.bitmapText.draw = function(
 
     -- The signature is the draw: same text, colours, size, mode and
     -- layout means the pixels are already right and the call costs a
-    -- string compare.
+    -- string compare. The device scale and the raster choice are part
+    -- of it: a UIScale change or a sharper atlas arriving re-renders,
+    -- and nothing else does.
+    local deviceScale: number = contract.layerScale()
+    local raster: any = contract.pickAtlas(textSize * deviceScale)
     local parts: {string} = {
         tostring(textSize), align, tostring(shadow),
         tostring(maxWidth), tostring(atlas.ready),
         tostring(transparency),
+        string.format("%.4f", deviceScale),
+        tostring(raster and raster.size),
     }
     for _, segment: any in ipairs(segments) do
         local color: Color3 = segment.color or Theme.text
@@ -2102,26 +2204,42 @@ state.bitmapText.draw = function(
         if record.fallback then
             (record.fallback :: TextLabel).Visible = false
         end
+        -- Layout runs on the 16 px contract atlas — advances, packing and
+        -- measure never depend on which raster paints. The raster is the
+        -- family member nearest the physical glyph, and every rect it
+        -- draws is snapped to integer device pixels: a pixel font at a
+        -- fractional position is blur, and blur is worse than no atlas.
         local scale: number = textSize / atlas.size
-        local glyphWidth: number = atlas.cellWidth * scale
-        local glyphHeight: number = atlas.cellHeight * scale
-        local lineAdvance: number = contract.lineHeight * (textSize / contract.size)
-        local shadowOffset: number = 2 * scale
+        local function snapPx(value: number): number
+            return math.round(value * deviceScale) / deviceScale
+        end
+        local rasterScale: number = textSize / raster.size
+        local pixelStep: number = 1 / deviceScale
+        local glyphWidth: number = math.max(
+            pixelStep,
+            snapPx(raster.cellWidth * rasterScale)
+        )
+        local glyphHeight: number = math.max(
+            pixelStep,
+            snapPx(raster.cellHeight * rasterScale)
+        )
+        local lineAdvance: number = contract.lineHeight * scale
+        local shadowOffset: number = math.max(pixelStep, snapPx(2 * scale))
         local x: number = 0
         local y: number = 0
         local lineCount: number = 1
         local function blit(code: number, paint: Color3, dx: number, dy: number, z: number): ()
             local index: number = code - atlas.first
             local glyph: ImageLabel = nextGlyph()
-            glyph.Image = atlas.image
+            glyph.Image = raster.image
             glyph.ImageColor3 = paint
             glyph.ImageTransparency = transparency
             glyph.ImageRectOffset = Vector2.new(
-                (index % atlas.columns) * atlas.cellWidth,
-                (index // atlas.columns) * atlas.cellHeight
+                (index % raster.columns) * raster.cellWidth,
+                (index // raster.columns) * raster.cellHeight
             )
-            glyph.ImageRectSize = Vector2.new(atlas.cellWidth, atlas.cellHeight)
-            glyph.Position = UDim2.fromOffset(dx, dy)
+            glyph.ImageRectSize = Vector2.new(raster.cellWidth, raster.cellHeight)
+            glyph.Position = UDim2.fromOffset(snapPx(dx), snapPx(dy))
             glyph.Size = UDim2.fromOffset(glyphWidth, glyphHeight)
             glyph.ZIndex = z
         end
@@ -2399,6 +2517,21 @@ task.spawn(function(): ()
         print("[" .. PRODUCT.logPrefix
             .. ":Assets] Minecraft-exact atlas not present; rendering with "
             .. "the Monocraft fallback (OFL)")
+        -- The crisp-scale variants, silently: each family member that
+        -- resolves is simply better pixels at its physical size, and the
+        -- signatures carry the raster choice so only surfaces whose
+        -- choice changes redo any work.
+        for _, member: any in pairs(state.bitmapText.family) do
+            if member ~= state.bitmapText.atlas and member.asset then
+                pcall(function(): ()
+                    local memberId: string? = (state.resolveAsset(member.asset))
+                    if memberId then
+                        member.image = memberId
+                        member.ready = true
+                    end
+                end)
+            end
+        end
     end
     for holder: any, record: any in pairs(state.bitmapText._live) do
         if holder.Parent ~= nil and record.request ~= nil then
@@ -2413,6 +2546,26 @@ task.spawn(function(): ()
     end
     for _, listener: () -> () in ipairs(state.bitmapText.onReady) do
         pcall(listener)
+    end
+end)
+
+-- A viewport or Scale-slider change moves the device scale, which moves
+-- every snapped rect and possibly the raster choice. One walk over the
+-- live draws; the signatures carry the scale, so an unchanged surface
+-- costs a string compare and a changed one redraws in place — no stale
+-- glyphs from the previous scale survive, because the redraw reuses the
+-- same pooled labels.
+state.onLayout(function(): ()
+    for holder: any, record: any in pairs(state.bitmapText._live) do
+        if holder.Parent ~= nil and record.request ~= nil then
+            pcall(function(): ()
+                state.bitmapText.draw(
+                    record.request.parent,
+                    record.request.segments,
+                    record.request.options
+                )
+            end)
+        end
     end
 end)
 

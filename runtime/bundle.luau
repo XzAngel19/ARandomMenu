@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "1bf36048acb1ea12",
+    stamp = "65644dda7e647563",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -6156,6 +6156,12 @@ function Module.init(context: any): any
                     if root.Parent == nil then
                         return
                     end
+                    -- The clip is read from the window's width *now*, not
+                    -- the width it was born with: repack narrows feature
+                    -- settings after the real measure, and a stale clip is
+                    -- exactly the ghost title running over the chrome
+                    -- buttons the capture showed. 68 = the chrome span
+                    -- plus the 8 px inset.
                     bitmapText.draw(bar, {
                         {text = definition.title or id, color = Theme.accentText},
                     }, {
@@ -6164,13 +6170,22 @@ function Module.init(context: any): any
                         ZIndex = 3,
                         AnchorPoint = Vector2.new(0, 0.5),
                         Position = UDim2.new(0, 8, 0.5, 0),
-                        maxWidth = math.max(40, definition.size.X - 68),
+                        maxWidth = math.max(40, root.Size.X.Offset - 68),
                     })
                 end
                 paintTitle()
                 if ThemeEngine and type(ThemeEngine.OnChange) == "function" then
                     ThemeEngine.OnChange(paintTitle)
                 end
+                -- Any resize re-clips the title in the same frame — the
+                -- draw's signature makes an unchanged repaint a string
+                -- compare, so this costs nothing while the width holds.
+                pcall(function(): ()
+                    table.insert(
+                        chromeConnections,
+                        root:GetPropertyChangedSignal("Size"):Connect(paintTitle)
+                    )
+                end)
             else
                 local title: TextLabel = (create("TextLabel", {
                     TextTruncate = Enum.TextTruncate.AtEnd,
