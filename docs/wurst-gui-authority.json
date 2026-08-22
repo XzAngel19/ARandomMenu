@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "guiDeltaReady": true,
+  "identity": {
+    "product": "Wurst",
+    "portVersion": "0.1 Beta",
+    "universalModules": 38,
+    "wurstRelease": "7.19",
+    "tag": "v7.19",
+    "commit": "dbc25e930434adf20039de32c30e397c17983928",
+    "minecraft": "1.18.1",
+    "minecraftClientSha1": "7e46fb47609401970e2818989fa584fd467cd036"
+  },
+  "guiImprovementsOnly": {
+    "wurstRelease": "7.54.1",
+    "tag": "v7.54.1-MC1.21.11",
+    "commit": "5da852422a558255518a1caa978eae75fd53837f",
+    "scope": "ClickGUI / Window / SettingsWindow / widgets / persistence / Navigator / Keybinds / WurstLogo / HackList. Not hacks."
+  },
+  "noticePinIsNotIdentity": "4a22e53d774b9a28e395874834f099e779685998",
+  "apply": [
+    "APPLY-1 live max height sliders (already)",
+    "APPLY-2 persist position + display clamp (already, keep MARGIN 6)",
+    "APPLY-3 settings beside category via FindFreeRect (already)",
+    "APPLY-4 close popups when owner gone (partial)",
+    "APPLY-5 pixel title-bar icons (already)"
+  ],
+  "forbid": [
+    "new hacks",
+    "new modules",
+    "new categories",
+    "replace the 38",
+    "rebrand 7.54.1",
+    "change 0.1 Beta",
+    "7.54.1 font as baseline"
+  ]
+}
