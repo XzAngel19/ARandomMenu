@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "b51c1cf475c05584",
+    stamp = "3f348d7a9293e1fc",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -2479,18 +2479,46 @@ local Module = {
 -- The categories a module can be filed under. They mirror the page taxonomy
 -- the card grid already sorts by, so a module declaring `Category = "Combat"`
 -- lands in the Combat block with no further wiring.
+-- The shared category contract: official Wurst 7's eight windows, matching
+-- the shell's OFFICIAL_CATEGORIES and ClickGui's CATEGORY_ORDER. Pre-created
+-- so module files can index straight into `framework.Categories.Combat`
+-- without a nil check.
 local KNOWN_CATEGORIES: {string} = {
-    "Movement",
     "Combat",
-    "Visuals",
-    "Protection",
-    "Utility",
+    "Render",
+    "Blocks",
+    "Movement",
+    "Chat",
+    "Fun",
+    "Items",
+    "Other",
 }
 
 local activeFramework: Framework? = nil
 
 local function isKnownCategory(name: string): boolean
     return table.find(KNOWN_CATEGORIES, name) ~= nil
+end
+
+-- The port's old names, answering with the official category until D refiles
+-- each module (docs/wurst-categories.md is the per-card map). This table must
+-- agree with the shell's CATEGORY_ALIASES — it is the same contract, copied
+-- because a downloaded core file cannot reach the shell's locals at require
+-- time.
+local CATEGORY_ALIASES: {[string]: string} = {
+    ["Visuals"] = "Render",
+    ["Protection"] = "Movement",
+    ["Utility"] = "Other",
+    ["Spoof"] = "Fun",
+    ["General"] = "Other",
+    ["Player"] = "Movement",
+}
+
+local function canonicalCategory(name: string): string
+    if isKnownCategory(name) then
+        return name
+    end
+    return CATEGORY_ALIASES[name] or "Other"
 end
 
 -- Cleanup accepts whatever a module happens to be holding: a signal
@@ -3019,14 +3047,25 @@ function Module.init(context: any): Framework
         if existing then
             return existing
         end
-        local category: any = {
-            Name = isKnownCategory(name) and name or "Utility",
-            Modules = {},
-        }
-        function category:CreateModule(definition: any): Module
-            return createModule(category, definition)
+        -- One category object per official window. Asking for an old port
+        -- name ("Visuals") answers with the official category it maps to, so
+        -- a module that has not been refiled yet lands in one of Wurst's
+        -- eight windows instead of dying on a nil index.
+        local canonical: string = canonicalCategory(name)
+        local category: any = framework.Categories[canonical]
+        if not category then
+            category = {
+                Name = canonical,
+                Modules = {},
+            }
+            function category:CreateModule(definition: any): Module
+                return createModule(category, definition)
+            end
+            framework.Categories[canonical] = category
         end
-        framework.Categories[name] = category
+        if name ~= canonical then
+            framework.Categories[name] = category
+        end
         return (category :: any) :: Category
     end
 
@@ -3061,9 +3100,13 @@ function Module.init(context: any): Framework
     end
 
     -- Pre-create the taxonomy so module files can index straight into
-    -- `framework.Categories.Combat` without a nil check.
+    -- `framework.Categories.Combat` without a nil check — including the old
+    -- port names, which answer with the official category they map to.
     for _, name: string in ipairs(KNOWN_CATEGORIES) do
         framework:GetCategory(name)
+    end
+    for oldName: string in pairs(CATEGORY_ALIASES) do
+        framework:GetCategory(oldName)
     end
 
     activeFramework = (framework :: any) :: Framework
@@ -4761,6 +4804,7 @@ function Module.init(context: any): any
     -- a name nobody classified ends up.
     local FEATURE_CATEGORIES: any = host.FEATURE_CATEGORIES
     local DEFAULT_FEATURE_CATEGORY: any = host.DEFAULT_FEATURE_CATEGORY
+    local normalizeFeatureCategory: any = host.normalizeFeatureCategory
     -- The registries a card files itself into. The old board (UniversalScroll)
     -- is gone; cards start in CardBin and are moved into ClickGUI windows.
     local universalFeatures: any = host.universalFeatures
@@ -4792,11 +4836,16 @@ function Module.init(context: any): any
         local configKey: string = configuration.configKey
             or (sectionName .. "." .. name:gsub("%W", ""))
         -- A module may declare its own category; otherwise the shared taxonomy
-        -- decides, and anything unknown lands in the catch-all bucket.
-        local categoryName: string = type(configuration.categoryName) == "string"
+        -- decides. Every answer is resolved through the category contract, so
+        -- whatever a module says — an official window, an old port name, or
+        -- nothing — it lands in one of Wurst's eight windows, never in limbo.
+        local rawCategory: any = type(configuration.categoryName) == "string"
             and configuration.categoryName
             or FEATURE_CATEGORIES[name]
             or DEFAULT_FEATURE_CATEGORY
+        local categoryName: string = type(normalizeFeatureCategory) == "function"
+            and normalizeFeatureCategory(rawCategory)
+            or tostring(rawCategory)
 
         local feature: any = {
             name = name,
@@ -6105,22 +6154,20 @@ local WINDOW_GAP: number = 2
 -- everything is drawn at.
 local GRID_GAP: number = 10
 local TITLE_HEIGHT: number = 26
--- Wurst wraps its first-run grid only at the screen edge, but on a wide
--- monitor seven 200 px windows make one strip across the whole top — which
--- is what the user rejected. Four per row keeps the reference screenshot's
--- density; deliberate adaptation, recorded here.
-local GRID_COLUMNS: number = 4
 
--- The order Wurst lists its categories in, as far as ours line up with it.
--- Anything a game module invents later lands after these, in the order it
--- arrives.
+-- Official Wurst 7's windows, in the exact order ClickGui.init() builds them
+-- at the pinned commit: Combat, Render, Blocks, Movement, Chat, Fun, Items,
+-- Other. All eight exist from boot — an empty category is a stable window a
+-- module can land in later, not a window that pops into existence mid-session.
 local CATEGORY_ORDER: {string} = {
     "Combat",
+    "Render",
+    "Blocks",
     "Movement",
-    "Visuals",
-    "Protection",
-    "Utility",
-    "Spoof",
+    "Chat",
+    "Fun",
+    "Items",
+    "Other",
 }
 
 function Module.init(context: any): any
@@ -6128,6 +6175,7 @@ function Module.init(context: any): any
     local state: any = host.state
     local create: any = host.create
     local allFeatures: {any} = host.allFeatures
+    local normalizeFeatureCategory: any = host.normalizeFeatureCategory
 
     -- One UIScale over the whole layer, driven by the theme's own shape token,
     -- so the Scale row in UI Settings moves the entire interface and nothing
@@ -6154,29 +6202,26 @@ function Module.init(context: any): any
         connections = {} :: {RBXScriptConnection},
     }
 
-    -- Left to right until the row is full, then down. 64 clears the wordmark
-    -- and the pill instead of leaving a band of dead game between them and
-    -- the grid.
+    -- Left to right until the next window would pass the available edge,
+    -- then down — Wurst's own first-run rule. With eight category windows
+    -- plus UI Settings the row wraps wherever the viewport says, not at a
+    -- column count somebody picked.
     local nextX: number = GRID_MARGIN
     local nextY: number = 64
     local rowHeight: number = 0
-    local placedInRow: number = 0
 
     local function nextSlot(height: number): Vector2
         local viewport: Vector2 = workspace.CurrentCamera
             and (workspace.CurrentCamera :: Camera).ViewportSize
             or Vector2.new(1280, 720)
-        if placedInRow >= GRID_COLUMNS
-            or nextX + WINDOW_WIDTH > viewport.X - GRID_MARGIN then
+        if nextX + WINDOW_WIDTH > viewport.X - GRID_MARGIN then
             nextX = GRID_MARGIN
             nextY += rowHeight + GRID_GAP
             rowHeight = 0
-            placedInRow = 0
         end
         local slot: Vector2 = Vector2.new(nextX, nextY)
         nextX += WINDOW_WIDTH + GRID_GAP
         rowHeight = math.max(rowHeight, height)
-        placedInRow += 1
         return slot
     end
 
@@ -6260,9 +6305,14 @@ function Module.init(context: any): any
         if not row then
             return
         end
-        local name: string = tostring(
-            (row :: Frame):GetAttribute("FeatureCategory") or "General"
-        )
+        -- Whatever the card's attribute says — an official window, one of the
+        -- port's old names, nothing — the contract resolves it to one of the
+        -- eight windows above. A card built before D refiles it must not open
+        -- a ninth window with an unofficial name.
+        local raw: any = (row :: Frame):GetAttribute("FeatureCategory")
+        local name: string = type(normalizeFeatureCategory) == "function"
+            and normalizeFeatureCategory(raw)
+            or tostring(raw or "Other")
         local record: CategoryWindow = categoryWindow(name)
         record.count += 1;
         (row :: Frame).Parent = record.window.body;

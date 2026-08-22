@@ -21,8 +21,16 @@ return function(ctx: any): ()
     local framework: any = FrameworkFile.init(host)
 
     check("categories exist", framework.Categories.Combat ~= nil
-        and framework.Categories.Visuals ~= nil
-        and framework.Categories.Movement ~= nil)
+        and framework.Categories.Render ~= nil
+        and framework.Categories.Movement ~= nil
+        and framework.Categories.Other ~= nil)
+    -- The old port names keep answering — with the official category they
+    -- map to — so modules D has not refiled yet cannot die on a nil index.
+    check("an old port name answers with its official category",
+        framework.Categories.Visuals ~= nil
+            and framework.Categories.Visuals.Name == "Render"
+            and framework.Categories.Utility ~= nil
+            and framework.Categories.Utility.Name == "Other")
 
     local loopRuns: number = 0
     local disposed: boolean = false

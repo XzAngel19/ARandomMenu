@@ -44,6 +44,7 @@ function Module.init(context: any): any
     -- a name nobody classified ends up.
     local FEATURE_CATEGORIES: any = host.FEATURE_CATEGORIES
     local DEFAULT_FEATURE_CATEGORY: any = host.DEFAULT_FEATURE_CATEGORY
+    local normalizeFeatureCategory: any = host.normalizeFeatureCategory
     -- The registries a card files itself into. The old board (UniversalScroll)
     -- is gone; cards start in CardBin and are moved into ClickGUI windows.
     local universalFeatures: any = host.universalFeatures
@@ -75,11 +76,16 @@ function Module.init(context: any): any
         local configKey: string = configuration.configKey
             or (sectionName .. "." .. name:gsub("%W", ""))
         -- A module may declare its own category; otherwise the shared taxonomy
-        -- decides, and anything unknown lands in the catch-all bucket.
-        local categoryName: string = type(configuration.categoryName) == "string"
+        -- decides. Every answer is resolved through the category contract, so
+        -- whatever a module says — an official window, an old port name, or
+        -- nothing — it lands in one of Wurst's eight windows, never in limbo.
+        local rawCategory: any = type(configuration.categoryName) == "string"
             and configuration.categoryName
             or FEATURE_CATEGORIES[name]
             or DEFAULT_FEATURE_CATEGORY
+        local categoryName: string = type(normalizeFeatureCategory) == "function"
+            and normalizeFeatureCategory(rawCategory)
+            or tostring(rawCategory)
 
         local feature: any = {
             name = name,

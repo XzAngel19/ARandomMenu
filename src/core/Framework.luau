@@ -95,18 +95,46 @@ local Module = {
 -- The categories a module can be filed under. They mirror the page taxonomy
 -- the card grid already sorts by, so a module declaring `Category = "Combat"`
 -- lands in the Combat block with no further wiring.
+-- The shared category contract: official Wurst 7's eight windows, matching
+-- the shell's OFFICIAL_CATEGORIES and ClickGui's CATEGORY_ORDER. Pre-created
+-- so module files can index straight into `framework.Categories.Combat`
+-- without a nil check.
 local KNOWN_CATEGORIES: {string} = {
-    "Movement",
     "Combat",
-    "Visuals",
-    "Protection",
-    "Utility",
+    "Render",
+    "Blocks",
+    "Movement",
+    "Chat",
+    "Fun",
+    "Items",
+    "Other",
 }
 
 local activeFramework: Framework? = nil
 
 local function isKnownCategory(name: string): boolean
     return table.find(KNOWN_CATEGORIES, name) ~= nil
+end
+
+-- The port's old names, answering with the official category until D refiles
+-- each module (docs/wurst-categories.md is the per-card map). This table must
+-- agree with the shell's CATEGORY_ALIASES — it is the same contract, copied
+-- because a downloaded core file cannot reach the shell's locals at require
+-- time.
+local CATEGORY_ALIASES: {[string]: string} = {
+    ["Visuals"] = "Render",
+    ["Protection"] = "Movement",
+    ["Utility"] = "Other",
+    ["Spoof"] = "Fun",
+    ["General"] = "Other",
+    ["Player"] = "Movement",
+}
+
+local function canonicalCategory(name: string): string
+    if isKnownCategory(name) then
+        return name
+    end
+    return CATEGORY_ALIASES[name] or "Other"
 end
 
 -- Cleanup accepts whatever a module happens to be holding: a signal
@@ -635,14 +663,25 @@ function Module.init(context: any): Framework
         if existing then
             return existing
         end
-        local category: any = {
-            Name = isKnownCategory(name) and name or "Utility",
-            Modules = {},
-        }
-        function category:CreateModule(definition: any): Module
-            return createModule(category, definition)
+        -- One category object per official window. Asking for an old port
+        -- name ("Visuals") answers with the official category it maps to, so
+        -- a module that has not been refiled yet lands in one of Wurst's
+        -- eight windows instead of dying on a nil index.
+        local canonical: string = canonicalCategory(name)
+        local category: any = framework.Categories[canonical]
+        if not category then
+            category = {
+                Name = canonical,
+                Modules = {},
+            }
+            function category:CreateModule(definition: any): Module
+                return createModule(category, definition)
+            end
+            framework.Categories[canonical] = category
         end
-        framework.Categories[name] = category
+        if name ~= canonical then
+            framework.Categories[name] = category
+        end
         return (category :: any) :: Category
     end
 
@@ -677,9 +716,13 @@ function Module.init(context: any): Framework
     end
 
     -- Pre-create the taxonomy so module files can index straight into
-    -- `framework.Categories.Combat` without a nil check.
+    -- `framework.Categories.Combat` without a nil check — including the old
+    -- port names, which answer with the official category they map to.
     for _, name: string in ipairs(KNOWN_CATEGORIES) do
         framework:GetCategory(name)
+    end
+    for oldName: string in pairs(CATEGORY_ALIASES) do
+        framework:GetCategory(oldName)
     end
 
     activeFramework = (framework :: any) :: Framework

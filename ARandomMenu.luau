@@ -31,7 +31,52 @@ local RUNTIME_SAFETY_SOURCE_URL: string =
 --
 -- These live at file scope on purpose: `bootstrap()` is one enormous function
 -- and is close to Luau's 200 local-register ceiling.
-local DEFAULT_FEATURE_CATEGORY: string = "General"
+--
+-- Wurst has no "General": an uncategorised feature belongs to Other, which is
+-- a real window with a real name at the pinned commit.
+local DEFAULT_FEATURE_CATEGORY: string = "Other"
+
+-- The shared category contract: official Wurst 7 windows, in the exact order
+-- ClickGui.init() builds them at 4a22e53d. Every surface that names a
+-- category — the framework's taxonomy, the ClickGUI grid, the card factory —
+-- resolves against this list and nothing else.
+local OFFICIAL_CATEGORIES: {string} = {
+    "Combat",
+    "Render",
+    "Blocks",
+    "Movement",
+    "Chat",
+    "Fun",
+    "Items",
+    "Other",
+}
+
+-- The port's old names, funnelled into official windows until D refiles each
+-- card (docs/wurst-categories.md carries the per-card mapping). An alias is a
+-- bridge, not a home: it exists so no module ever lands in a window that is
+-- not one of Wurst's eight while the per-module moves happen in D's lane.
+--   Visuals    → Render    (ESP, lighting, camera — Wurst's Render)
+--   Protection → Movement  (NoFall, SafeWalk map there in the Java; the rest
+--                           D moves individually)
+--   Utility    → Other     (AntiAFK, Reach, AutoReconnect live in Other)
+--   Spoof      → Fun       (no Wurst window; Fun is where Wurst keeps the
+--                           appearance toys)
+local CATEGORY_ALIASES: {[string]: string} = {
+    ["Visuals"] = "Render",
+    ["Protection"] = "Movement",
+    ["Utility"] = "Other",
+    ["Spoof"] = "Fun",
+    ["General"] = "Other",
+    ["Player"] = "Movement",
+}
+
+local function normalizeFeatureCategory(name: any): string
+    local resolved: string = tostring(name or DEFAULT_FEATURE_CATEGORY)
+    if table.find(OFFICIAL_CATEGORIES, resolved) ~= nil then
+        return resolved
+    end
+    return CATEGORY_ALIASES[resolved] or DEFAULT_FEATURE_CATEGORY
+end
 
 -- The taxonomy, sorted the way it reads on screen:
 --
@@ -318,7 +363,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "b51c1cf475c05584"
+local SOURCE_STAMP: string = "3f348d7a9293e1fc"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -3730,6 +3775,12 @@ local function createGameModuleEnvironment(
         -- it under a section, the default board, and the registries it joins.
         FEATURE_CATEGORIES = FEATURE_CATEGORIES,
         DEFAULT_FEATURE_CATEGORY = DEFAULT_FEATURE_CATEGORY,
+        -- The shared category contract: the eight official windows and the
+        -- resolver every surface files a card through. A module may still
+        -- say "Visuals"; the resolver decides which official window that is
+        -- until D refiles it properly.
+        OFFICIAL_CATEGORIES = OFFICIAL_CATEGORIES,
+        normalizeFeatureCategory = normalizeFeatureCategory,
         universalFeatures = universalFeatures,
         movementFeatures = movementFeatures,
         applyFeaturePresentation = applyFeaturePresentation,
