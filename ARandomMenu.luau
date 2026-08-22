@@ -363,7 +363,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "d1ae670b6e86a143"
+local SOURCE_STAMP: string = "55233cecb8bb7f05"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -1996,6 +1996,7 @@ state.bitmapText.draw = function(
     local align: string = tostring(resolvedOptions.align or "Left")
     local shadow: boolean = resolvedOptions.shadow == true
     local maxWidth: number? = tonumber(resolvedOptions.maxWidth)
+    local transparency: number = tonumber(resolvedOptions.transparency) or 0
     local atlas: any = contract.atlas
 
     -- The signature is the draw: same text, colours, size, mode and
@@ -2004,6 +2005,7 @@ state.bitmapText.draw = function(
     local parts: {string} = {
         tostring(textSize), align, tostring(shadow),
         tostring(maxWidth), tostring(atlas.ready),
+        tostring(transparency),
     }
     for _, segment: any in ipairs(segments) do
         local color: Color3 = segment.color or Theme.text
@@ -2102,6 +2104,7 @@ state.bitmapText.draw = function(
             local glyph: ImageLabel = nextGlyph()
             glyph.Image = atlas.image
             glyph.ImageColor3 = paint
+            glyph.ImageTransparency = transparency
             glyph.ImageRectOffset = Vector2.new(
                 (index % atlas.columns) * atlas.cellWidth,
                 (index // atlas.columns) * atlas.cellHeight
@@ -2175,6 +2178,7 @@ state.bitmapText.draw = function(
         label.Visible = true
         label.Text = table.concat(composed)
         label.TextSize = textSize
+        label.TextTransparency = transparency
         label.TextXAlignment = align == "Right" and Enum.TextXAlignment.Right
             or align == "Center" and Enum.TextXAlignment.Center
             or Enum.TextXAlignment.Left
@@ -3513,7 +3517,11 @@ state.applyCardSkin = function(feature: any, hovered: boolean?): ()
     resolvedRow.BackgroundColor3 = fill
     resolvedRow.BackgroundTransparency = surface
 
-    if feature.title then
+    if feature.drawTitle then
+        -- The bitmap-contract row: recolouring is a pooled redraw, not a
+        -- property write. Same frame, same instances, new tint.
+        feature.drawTitle(titleColor, titleTransparency)
+    elseif feature.title then
         local titleLabel: TextLabel = feature.title :: TextLabel
         titleLabel.TextColor3 = titleColor
         titleLabel.TextTransparency = titleTransparency

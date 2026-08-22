@@ -185,20 +185,53 @@ function Module.init(context: any): any
         -- separator — the previous card dressing made forty rows read as a
         -- tray of lozenges, and none of it is in ref-wurst-719.
 
-        local title: TextLabel =
-            (makeTextLabel(row, name, state.layout.titleFontSize) :: any) :: TextLabel
-        title.FontFace = CONTROL_FONT
-        -- Wurst centres the hack's name on the whole row — ref-wurst-719 —
-        -- and the settings arrow floats over the right end without moving
-        -- that centre, so the label always spans the full row.
-        title.Position = UDim2.fromOffset(0, 0)
-        title.Size = UDim2.new(1, 0, 0, feature.collapsedHeight)
-        title.TextXAlignment = Enum.TextXAlignment.Center
-        title.TextTruncate = Enum.TextTruncate.AtEnd
-        title.TextColor3 = state.guiStyle == "Default"
-            and Theme.text
-            or Theme.text
-        feature.title = title
+        -- The hack's name on the bitmap contract, centred on the whole row —
+        -- ref-wurst-719 — with the settings arrow floating over the right
+        -- end without moving that centre. The TextLabel branch is the
+        -- harness stand-in: the shell always publishes state.bitmapText, so
+        -- at runtime only the glyph path draws, and no second label exists.
+        -- applyCardSkin repaints through drawTitle, which the pool makes an
+        -- in-place recolour rather than a rebuild.
+        local bitmapText: any = state.bitmapText
+        local title: TextLabel? = nil
+        if bitmapText and type(bitmapText.draw) == "function" then
+            feature.drawTitle = function(color: Color3?, transparency: number?): ()
+                if color ~= nil then
+                    feature.titleColor = color
+                end
+                if transparency ~= nil then
+                    feature.titleTransparency = transparency
+                end
+                bitmapText.draw(row, {
+                    {
+                        text = name,
+                        color = feature.titleColor or Theme.text,
+                    },
+                }, {
+                    Name = "Title",
+                    TextSize = state.layout.titleFontSize,
+                    ZIndex = 7,
+                    align = "Center",
+                    transparency = feature.titleTransparency or 0,
+                })
+            end
+            feature.drawTitle(Theme.text, 0)
+        else
+            title = (makeTextLabel(row, name, state.layout.titleFontSize) :: any) :: TextLabel
+            local label: TextLabel = title :: TextLabel
+            label.FontFace = CONTROL_FONT
+            -- Wurst centres the hack's name on the whole row — ref-wurst-719 —
+            -- and the settings arrow floats over the right end without moving
+            -- that centre, so the label always spans the full row.
+            label.Position = UDim2.fromOffset(0, 0)
+            label.Size = UDim2.new(1, 0, 0, feature.collapsedHeight)
+            label.TextXAlignment = Enum.TextXAlignment.Center
+            label.TextTruncate = Enum.TextTruncate.AtEnd
+            label.TextColor3 = state.guiStyle == "Default"
+                and Theme.text
+                or Theme.text
+            feature.title = label
+        end
 
         -- Wurst's settings arrow: an 11-logical-px box on the right end of
         -- the row (22 here, everything is drawn at GUI scale 2), holding a
@@ -284,7 +317,9 @@ function Module.init(context: any): any
             ZIndex = 6,
         }) :: TextButton
         feature.activationTarget = activationTarget
-        title.ZIndex = 7
+        if title then
+            (title :: TextLabel).ZIndex = 7
+        end
 
         trackUiConnection(row.MouseEnter:Connect(function(): ()
             state.applyCardSkin(feature, true)
@@ -562,7 +597,12 @@ function Module.init(context: any): any
         feature.applyLayout = function(): ()
             local metrics: LayoutMetrics = state.layout
             feature.collapsedHeight = metrics.cardHeight
-            state.setTextMetric(title, metrics.titleFontSize)
+            if title then
+                state.setTextMetric(title, metrics.titleFontSize)
+            elseif feature.drawTitle then
+                -- The bitmap title re-reads the layout size on every draw.
+                feature.drawTitle(nil, nil)
+            end
             if arrow then
                 (arrow :: TextButton).Size =
                     UDim2.fromOffset(22, metrics.cardHeight)
