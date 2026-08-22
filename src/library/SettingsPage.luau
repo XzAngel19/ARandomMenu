@@ -747,9 +747,9 @@ function Module.init(context: any): any
         nameBox.PlaceholderText = "New profile name"
         nameBox.Position = UDim2.fromOffset(0, 0)
         nameBox.Size = UDim2.new(1, -54, 1, 0)
-        nameBox.TextSize = 11
+        nameBox.TextSize = 14
         nameBox.ZIndex = entryRow.ZIndex + 1
-        local saveButton: TextButton = (makeButton(entryRow, "SAVE", 9) :: any) :: TextButton
+        local saveButton: TextButton = (makeButton(entryRow, "SAVE", 10) :: any) :: TextButton
         saveButton.AnchorPoint = Vector2.new(1, 0.5)
         saveButton.Position = UDim2.new(1, 0, 0.5, 0)
         saveButton.Size = UDim2.fromOffset(48, 18)
@@ -806,14 +806,14 @@ function Module.init(context: any): any
                     Size = UDim2.new(1, -60, 1, 0),
                     Text = name,
                     TextColor3 = Theme.text,
-                    TextSize = 11.5,
+                    TextSize = 14,
                     TextXAlignment = Enum.TextXAlignment.Left,
                     ZIndex = row.ZIndex + 1,
                 })
-                local loadButton: TextButton = (makeButton(row, "LOAD", 9) :: any) :: TextButton
+                local loadButton: TextButton = (makeButton(row, "LOAD", 10) :: any) :: TextButton
                 loadButton.AnchorPoint = Vector2.new(1, 0.5)
                 loadButton.Position = UDim2.new(1, -6, 0.5, 0)
-                loadButton.Size = UDim2.fromOffset(48, 16)
+                loadButton.Size = UDim2.fromOffset(48, 18)
                 loadButton.ZIndex = row.ZIndex + 1
                 trackUiConnection(loadButton.MouseButton1Click:Connect(function(): ()
                     local snapshot: any = profileStore()[name]
@@ -1295,7 +1295,7 @@ function Module.init(context: any): any
                         Size = UDim2.new(1, 0, 0, ROW_HEIGHT),
                         Text = "  " .. entry.label,
                         TextColor3 = Theme.textMuted,
-                        TextSize = 11,
+                        TextSize = 14,
                         TextXAlignment = Enum.TextXAlignment.Left,
                         ZIndex = body.ZIndex + 1,
                     }) :: any) :: TextLabel
@@ -1496,9 +1496,10 @@ function Module.init(context: any): any
         "GameCheck", "Game check: " .. recognised, nil, {static = true}
     )
 
-    -- Font status, honestly: which of the three sources is really
-    -- rendering. Clicking the row prints the install instructions for the
-    -- exact pack — the runtime never downloads Mojang assets itself.
+    -- Font status, honestly: which source is really rendering. Code is
+    -- the only face the interface offers now, so the row is a statement,
+    -- not a menu; the other names can only appear if a suite or a local
+    -- experiment drives the atlas machinery directly.
     local function fontStatusLabel(): string
         local sourceName: string = tostring(
             (state.bitmapText and state.bitmapText.source) or "unavailable"
@@ -1520,11 +1521,8 @@ function Module.init(context: any): any
     local fontHandle: any = state.wurstOptions.RegisterAction(
         "FontStatus",
         fontStatusLabel(),
-        function(): ()
-            notify("Exact font: run tools/install_minecraft_font.py --update "
-                .. "on your PC, then copy MinecraftFont/ into the executor "
-                .. "workspace and reinject")
-        end
+        nil,
+        {static = true}
     )
     if state.bitmapText and type(state.bitmapText.onReady) == "table" then
         table.insert(state.bitmapText.onReady, function(): ()
@@ -1678,30 +1676,12 @@ function Module.init(context: any): any
     )
     uiSettingsValues["Menu style"] = tostring(state.menuStyle)
 
-    -- Which font pack renders. The visual authority stays Minecraft
-    -- 1.18.1; 26.2 is an optional local pack; Monocraft is the committed
-    -- fallback. Selecting a pack that is not installed keeps rendering
-    -- Monocraft and warns exactly once — the switch itself is live.
-    -- Code first and default: the engine's vector monospace is the
-    -- quality bar the real captures set. The bitmap options survive as
-    -- opt-in for whoever wants the pixel look.
-    local fontPacks: {string} = {"Code", "Monocraft", "Minecraft 1.18.1", "Minecraft 26.2"}
-    addCycleOption(
-        uiPanel,
-        "Font pack",
-        fontPacks,
-        table.find(fontPacks, tostring(state.fontPack)) or 1,
-        function(value: string): ()
-            uiSettingsValues["Font pack"] = value
-            configData.values["UI.FontPack"] = value
-            queueConfigSave()
-            if state.bitmapText
-                and type(state.bitmapText.applyFontPack) == "function" then
-                state.bitmapText.applyFontPack(value)
-            end
-        end
-    )
-    uiSettingsValues["Font pack"] = tostring(state.fontPack)
+    -- No Font pack row any more. The user's verdict was final: the menu's
+    -- face is Code, the engine's own vector monospace, for every player on
+    -- every executor — the bitmap Minecraft/Monocraft options are gone
+    -- from the interface. The renderer contract (applyFontPack and the
+    -- atlas machinery) survives underneath for the suites and for local
+    -- experiments, but nothing in the UI selects it.
 
     -- The two HUD visibility rows. Show HackList hides the overlay only —
     -- module state and statuses are untouched. Show dock exists on

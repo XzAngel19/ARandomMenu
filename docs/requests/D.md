@@ -1,58 +1,66 @@
 # Requests for agent D
 
-## Vehicle Speed is now yours, and it already exists
+Work order from A (integrator). Base your branch on the current tip of
+`arena/01a0262f-arandommenu` and hand back a hash; A merges into the
+integration branch. Never open PRs, never push to main, never force-push.
 
-`PhysicsSpeed.luau` is renamed to `VehicleSpeed.luau`, and everything outside
-your lane that had to move with it has moved: the manifest, the shell's embedded
-fallback list, and the suite that requires it. The gate is green at 680 with the
-new name in place, so you can start on the file itself without touching anything
-you do not own.
+## Context you must not fight
 
-You were right and I was wrong. My brief said Speed "never knew vehicles exist",
-and that is true of `Speed.luau` — but the vehicle work was already written, in
-a module whose name described what it touched instead of what it was for. Nobody
-looking for vehicle handling found it, including me.
+The user reviewed real captures against real Wurst 7.19
+(https://github.com/Wurst-Imperium/Wurst7). Standing verdicts, already
+implemented on the integration branch — do not revert any of them:
 
-What is left inside the file is yours:
+- The interface face is **Code** (engine vector), permanently. The Font pack
+  row is gone; the bitmap machinery survives only for the suites.
+- The type contract is **16 px** for module names, window titles and option
+  labels (the Wurst 8-logical size at GUI scale 2), 14 px for secondary text
+  (dropdown entries, search boxes, end labels). `layout.titleFontSize` /
+  `bodyFontSize` are 16 now.
+- Blur behind the open menu is mandatory.
+- Toasts live on the unscaled shell, bottom-right.
+- Inventory frozen at 38 modules; identity frozen (Wurst / 0.1 Beta /
+  RandomTestingMenu0001); no new hacks, no new categories.
 
-- **Strip the character-side duplication.** Four sites read `WalkSpeed` or the
-  shared move input and re-implement what `Speed.luau` already does. This module
-  moves whatever the character is sitting in; it should not also move the
-  character.
-- **Re-examine the six modes** — Adaptive, Smooth, Boost, CFrame, Pulse,
-  Teleport. Some of those are character-movement modes wearing a vehicle name.
-  A mode that only makes sense for a walking player belongs in Speed or nowhere.
-- **Keep the restore tables.** `originalVehicleSeats` and `originalMotorHinges`
-  record every seat's `MaxSpeed`/`Torque` and every hinge's `MotorMaxTorque` per
-  instance and put them back. That is the hard-won part of the file and the
-  reason it was not worth rewriting from scratch. A seat left at ten times its
-  torque stays broken for everyone who sits in it afterwards.
-- **Your multiplier, done the way you described.** Separating the vehicle's own
-  base speed from the excess the module adds is right; multiplying an
-  already-multiplied velocity every frame compounds and is how a car ends up in
-  orbit.
+## D1 — Options audit against Wurst 7.19 (the big one)
 
-## The MM2 folder literal
+The user asked for the module options to be "simpler and more ordered, like
+Wurst has them" and doubts the earlier options rework. For every module that
+mirrors a real Wurst hack, open the 7.19 source and compare:
 
-`src/games/MM2.luau` hard-codes the storage folder. `getfenv().PRODUCT` is the
-right way to reach it — the shell publishes `PRODUCT` into the game module
-environment. The harness does not yet, so that one-line change fails the gate
-until agent C adds it to `injectGame`. It is requested; park it until then
-rather than adding a fallback to the old literal.
+- **Names**: our setting label vs Wurst's setting name. Port Wurst's wording
+  where the module is a genuine counterpart (e.g. Speed, Fullbright, X-Ray,
+  AntiAFK…). Keep ours where the module is Roblox-specific.
+- **Order**: Wurst lists settings in declaration order. Ours should read the
+  same way: primary toggle behaviour first, numbers after, cosmetic last.
+- **Noise**: any option that duplicates another, does nothing observable, or
+  exists "just in case" gets removed from the row list (the module keeps its
+  config key so old configs do not error).
+- Do NOT add options. Simplify only.
 
-## The ESP, in two steps rather than one
+Deliverable: per-module table in `docs/visual/D-options-audit.md`
+(module → kept / renamed / removed / reordered, with the Wurst source file
+you compared against), plus the actual row changes in your lane files.
 
-Removing `Refresh interval` outright breaks a suite in agent C's lane, and
-neither of you can land both halves in one green commit.
+## D2 — 16 px QA pass on your surfaces
 
-So do the part that fixes what the user actually reported: move `PlayerESP` and
-`ItemRender` from `:Loop` to `:Render`, and set the option's default to 0.
-That alone makes the overlay track the camera. Deleting the option is cosmetic
-and can wait for C to drop the suite's dependency on it.
+The type contract moved from 11.5 to 16 and the gate only catches hard
+clipping. Walk Furniture, SettingsPage, ClickGui and Cards for soft damage:
+labels that now truncate too early, rows whose height reads cramped,
+buttons whose text crowds the border. Fix heights/insets in your lane;
+if a fix needs a Widgets or shell change, file it in
+`docs/requests/D-to-A-visual.md` instead of touching A's files.
 
-## On not having tested in a real game
+## D3 — Window order debt
 
-You are right not to claim a technique works where it was not run, and saying so
-is worth more than a confident guess. Nobody in this project can run Roblox; the
-user is the only one who plays it. Write down which technique you expect to win
-in which kind of game and why, and the user will bring back the answer.
+C's audit flagged that after modules load, the ClickGUI window order can
+drift from CATEGORY_ORDER (Combat, Render, Blocks, Movement, Chat, Fun,
+Items, Other). Prove it or fix it; the eight windows must always read in
+Wurst's order on first run and after Reset Layout.
+
+## Rules
+
+- `bash tools/preflight.sh <your-branch>` before each commit;
+  `python3 tools/bundle.py` + `LUAU_DIR=... bash tools/validate.sh` after
+  source changes — "All checks passed." or it does not ship.
+- Suites that pin your surfaces get updated in the same commit.
+- Report format: hash, branch, validate counts, what changed, honest debt.

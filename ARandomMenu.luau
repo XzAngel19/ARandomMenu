@@ -326,9 +326,9 @@ local function computeLayoutMetrics(
         iconButton = 16,
         keySlotWidth = 34,
         touchTarget = touchEnabled and 32 or 24,
-        titleFontSize = 11.5,
-        bodyFontSize = 11.5,
-        captionFontSize = 9,
+        titleFontSize = 16,
+        bodyFontSize = 16,
+        captionFontSize = 12,
         scrollBar = 3,
     }
 end
@@ -363,7 +363,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "669e80c75c522a71"
+local SOURCE_STAMP: string = "912528616eca7e07"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -1124,22 +1124,14 @@ if configData.values["UI.CodeFaceMigration"] ~= 1 then
     queueConfigSave()
 end
 
--- Which font pack the player asked for. UI.FontPack stores the name;
--- the default is Code, the engine's vector face. Bitmap packs are
--- optional local installs (tools/install_minecraft_font.py); when the
--- selected one is missing, the committed Monocraft fallback renders
--- and says so exactly once.
-state.fontPack = (function(): string
-    local stored: any = configData.values["UI.FontPack"]
-    if stored == "Minecraft 26.2" or stored == "Monocraft"
-        or stored == "Minecraft 1.18.1" then
-        return stored
-    end
-    -- Default: Code, the vector face. No atlas resolves, no pack is
-    -- probed, no warning fires — text renders on the engine's own
-    -- rasteriser, which is the quality bar the captures set.
-    return "Code"
-end)()
+-- Which font pack the player asked for, historically. The row is gone;
+-- the migration above still cleans old configs once.
+-- The font pack contract is Code, permanently: the engine's vector face
+-- for every player on every executor. The stored UI.FontPack value is
+-- ignored on purpose — the selection row is gone from UI Settings, so a
+-- pack name a config still carries must not resurrect the bitmap path.
+-- applyFontPack stays callable for the suites and local experiments.
+state.fontPack = "Code"
 
 -- The one menu-style state machine. Everything that changes the style —
 -- the UI Settings row, the Navigator's "Wurst ClickGUI" door, the dock —
@@ -1339,14 +1331,11 @@ local AssetManager: any = {
     -- other entry pointed at themed artwork that the neutral interface no
     -- longer renders.
     manifest = {
-        candyFont = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Typography/CandyFruits.otf",
-            fileName = "candy-fruits-v1.otf",
-            fallback = "",
-            version = 1,
-            assetType = "font/otf",
-        },
+        -- Valve's face is still consumed by the Text GUI floating window,
+        -- so it stays. Candy Fruits and the Monocraft OTF left with the
+        -- bitmap era: nothing offers them any more, and a registry entry
+        -- for a font nobody can pick is a download waiting to be wrong —
+        -- the cache sweep below reclaims their old files.
         valveFont = {
             url = REPOSITORY_RAW_BASE
                 .. "src/gui/Current/Assets/Typography/ValveBD.otf",
@@ -1358,16 +1347,6 @@ local AssetManager: any = {
         -- Brand artwork. Both are resolved lazily and every consumer keeps a
         -- text fallback, so an executor without getcustomasset simply keeps
         -- the lettering it had.
-        -- Monocraft: a Minecraft-shaped OFL font, kept in the repository so
-        -- the picker has one pixel face that is not a Roblox built-in.
-        minecraftFont = {
-            url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Typography/Monocraft.otf",
-            fileName = "monocraft-v1.otf",
-            fallback = "",
-            version = 1,
-            assetType = "font/otf",
-        },
         -- Wurst's own wordmark, vendored from Wurst-Imperium/Wurst7 at the
         -- pinned commit and checksummed by the gate. The transparent 505x128
         -- sausage, not icon.png — that one is the same mark on an opaque black
@@ -1501,6 +1480,39 @@ function AssetManager.ensureCacheFolder(): (boolean, string?)
         return false, "carpeta Assets: " .. tostring(cacheError)
     end
     return true, nil
+end
+
+-- Nothing an update stopped shipping may keep living on the player's
+-- disk. The Assets cache used to only ever grow: every renamed version
+-- and every image a rework dropped stayed behind as a stale file
+-- forever. This deletes whatever the current manifest does not name —
+-- and only inside the Assets folder the manager owns. Configs, profiles
+-- and telemetry are not caches and are never touched.
+function AssetManager.sweepStaleCache(): number
+    local listFiles: any = getEnvironmentValue("listfiles")
+    local deleteFile: any = getEnvironmentValue("delfile")
+    if type(listFiles) ~= "function" or type(deleteFile) ~= "function" then
+        return 0
+    end
+    local expected: {[string]: boolean} = {}
+    for _, definition: any in pairs(AssetManager.manifest) do
+        expected[tostring(definition.fileName)] = true
+    end
+    local listed: boolean, entries: any = pcall(listFiles, AssetManager.cacheFolder)
+    if not listed or type(entries) ~= "table" then
+        return 0
+    end
+    local removed: number = 0
+    for _, path: any in ipairs(entries) do
+        local entry: string = tostring(path)
+        local fileName: string = entry:gsub("\\", "/"):match("([^/]+)$") or entry
+        if not expected[fileName] then
+            if pcall(deleteFile, entry) then
+                removed += 1
+            end
+        end
+    end
+    return removed
 end
 
 function AssetManager.readVerifiedCache(
@@ -1710,8 +1722,10 @@ end
 -- are built from one family, so choosing a font here re-skins the whole
 -- interface without touching a single call site.
 state.customFontAssets = {
-    ["Minecraft (Monocraft)"] = "minecraftFont",
-    ["Candy Fruits"] = "candyFont",
+    -- Valve only: it still resolves through the same cache path because
+    -- the Text GUI offers it. The Monocraft OTF and Candy Fruits are gone
+    -- with the bitmap era — Code is the face, and the picker offers the
+    -- engine's own families.
     ["Valve"] = "valveFont",
 }
 
@@ -1836,6 +1850,13 @@ end
 -- font atlas wants the asset id itself.
 state.resolveAsset = function(logicalName: string): (string?, string?)
     return AssetManager.resolve(logicalName)
+end
+
+-- The sweep, reachable from the bundle-accept site: that code runs in a
+-- scope where the manager's local is long closed, and reaching for a
+-- bare global there is exactly the nil the linter refuses.
+state.sweepStaleAssets = function(): number
+    return AssetManager.sweepStaleCache()
 end
 
 state.applyAssetImage = function(
@@ -3511,7 +3532,12 @@ state.restyleTextBoxes = function(isDefault: boolean): ()
 end
 
 local ToastContainer: Frame = (create("Frame", {
-    Parent = PopupLayer,
+    -- On the shell, NOT on the popup layer: the popup layer carries the
+    -- ClickGUI's UIScale, and a frame anchored to the bottom-right of a
+    -- scaled canvas lands past the physical screen — the half-visible
+    -- toasts the captures showed. The shell is unscaled, so (1,-12) here
+    -- is the real corner on every device.
+    Parent = ScreenGui,
     Name = "ToastContainer",
     AnchorPoint = Vector2.new(1, 1),
     BackgroundTransparency = 1,
@@ -3579,7 +3605,7 @@ local function notify(message: any): ()
         ZIndex = 302,
     }) :: any) :: Frame
 
-    local label: TextLabel = (makeTextLabel(toast, text, 12) :: any)
+    local label: TextLabel = (makeTextLabel(toast, text, 14) :: any)
         :: TextLabel
     label.AutomaticSize = Enum.AutomaticSize.Y
     label.Position = UDim2.fromOffset(16, 10)
@@ -5503,6 +5529,53 @@ state.writeCachedSource = function(path: string, source: string): ()
     pcall(writeFile, "ARandomMenu/.stamp", SOURCE_STAMP)
 end
 
+-- The other half of the cache contract: a source file this update no
+-- longer ships is deleted, not abandoned. Runs only when a real bundle
+-- is in hand — with no bundle the cache is the offline lifeline and
+-- nothing may touch it — and spares .stamp, which is the cache's own
+-- validity marker.
+state.sweepStaleSources = function(): number
+    local environment: any = getfenv()
+    local listFiles: any = environment.listfiles
+    local deleteFile: any = environment.delfile
+    local isFolder: any = environment.isfolder
+    if type(listFiles) ~= "function" or type(deleteFile) ~= "function" then
+        return 0
+    end
+    local bundle: any = state.boot.bundle
+    if type(bundle) ~= "table" or next(bundle) == nil then
+        return 0
+    end
+    local removed: number = 0
+    local function sweep(folder: string): ()
+        local listed: boolean, entries: any = pcall(listFiles, folder)
+        if not listed or type(entries) ~= "table" then
+            return
+        end
+        for _, path: any in ipairs(entries) do
+            local entry: string = tostring(path)
+            local isDirectory: boolean = false
+            if type(isFolder) == "function" then
+                local checked: boolean, verdict: any = pcall(isFolder, entry)
+                isDirectory = checked and verdict == true
+            end
+            if isDirectory then
+                sweep(entry)
+            else
+                local relative: string = entry:gsub("\\", "/")
+                    :gsub("^.-ARandomMenu/", "")
+                if relative ~= ".stamp" and bundle[relative] == nil then
+                    if pcall(deleteFile, entry) then
+                        removed += 1
+                    end
+                end
+            end
+        end
+    end
+    sweep("ARandomMenu")
+    return removed
+end
+
 state.fetchRepositorySource = function(path: string): (string?, string?)
     local bundled: any = state.boot.bundle and state.boot.bundle[path]
     if type(bundled) == "string" then
@@ -5692,6 +5765,19 @@ if type(packed) == "table"
     and type(packed.files) == "table" then
     state.boot.bundle = packed.files
     state.logBootstrap("Bundle aceptado · stamp=" .. SOURCE_STAMP)
+    -- With the real bundle in hand the disk caches have a truth to be
+    -- compared against: whatever this update stopped shipping — an old
+    -- module source, a renamed asset version, an image a rework dropped —
+    -- is deleted from the executor workspace right now, not left to rot.
+    task.spawn(function(): ()
+        local staleSources: number = state.sweepStaleSources()
+        local staleAssets: number = state.sweepStaleAssets()
+        if staleSources + staleAssets > 0 then
+            print("[" .. PRODUCT.logPrefix .. ":Cache] swept "
+                .. tostring(staleSources) .. " stale source(s), "
+                .. tostring(staleAssets) .. " stale asset(s)")
+        end
+    end)
 else
     if packedError then
         state.logBootstrapError("Bundle: " .. packedError)
@@ -5912,7 +5998,11 @@ end
 -- row for whoever wants them.
 do
     local savedFont: string = tostring(configData.values.interfaceFont or "")
-    if savedFont == "" or savedFont == "Menu default" then
+    if savedFont == "" or savedFont == "Menu default"
+        -- Faces the picker no longer offers resolve to the face that
+        -- replaced them, instead of a dead name that falls back at random.
+        or savedFont == "Minecraft (Monocraft)"
+        or savedFont == "Candy Fruits" then
         savedFont = "Code"
     end
     task.spawn(function(): ()

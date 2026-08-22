@@ -454,8 +454,8 @@ function Module.init(context: any): WidgetLibrary
         shortcutButton.TextScaled = true
         create("UITextSizeConstraint", {
             Parent = shortcutButton,
-            MaxTextSize = 11,
-            MinTextSize = 7,
+            MaxTextSize = 14,
+            MinTextSize = 8,
         })
         bindActionShortcut(
             shortcutButton,
@@ -577,14 +577,14 @@ function Module.init(context: any): WidgetLibrary
         local minText: string = formatCompactNumber(minimum)
         local maxText: string = formatCompactNumber(maximum)
         -- Measured through the contract when it is up (A2: nobody
-        -- multiplies a constant past measure), the 9-px estimate only for
-        -- the harness host. TextSize 12 is what the labels render at.
+        -- multiplies a constant past measure), the 11-px estimate only for
+        -- the harness host. TextSize 14 is what the labels render at.
         local bitmapContract: any = state.bitmapText
         local function endLabelWidth(endText: string): number
             if bitmapContract and type(bitmapContract.measure) == "function" then
-                return bitmapContract.measure({{text = endText}}, 12) + 4
+                return bitmapContract.measure({{text = endText}}, 14) + 4
             end
-            return #endText * 9 + 4
+            return #endText * 11 + 4
         end
         local minWidth: number = endLabelWidth(minText)
         local maxWidth: number = endLabelWidth(maxText)
@@ -598,7 +598,7 @@ function Module.init(context: any): WidgetLibrary
             Size = UDim2.new(0, minWidth, 1, 0),
             Text = minText,
             TextColor3 = Theme.textMuted,
-            TextSize = 12,
+            TextSize = 14,
             TextXAlignment = Enum.TextXAlignment.Left,
             ZIndex = option.ZIndex + 1,
         })
@@ -613,7 +613,7 @@ function Module.init(context: any): WidgetLibrary
             Size = UDim2.new(0, maxWidth, 1, 0),
             Text = maxText,
             TextColor3 = Theme.textMuted,
-            TextSize = 12,
+            TextSize = 14,
             TextXAlignment = Enum.TextXAlignment.Right,
             ZIndex = option.ZIndex + 1,
         })
@@ -1237,7 +1237,7 @@ function Module.init(context: any): WidgetLibrary
             box.Position = UDim2.fromOffset(8, 0)
             box.Size = UDim2.new(1, -12, 1, 0)
             box.TextXAlignment = Enum.TextXAlignment.Left
-            box.TextSize = 11
+            box.TextSize = 14
             box.ZIndex = 403
             local boxCorner: UICorner? =
                 box:FindFirstChild("StyleCorner") :: UICorner?
@@ -1316,7 +1316,7 @@ function Module.init(context: any): WidgetLibrary
                 TextColor3 = itemIndex == currentIndex
                     and Theme.text
                     or Theme.textMuted,
-                TextSize = 11,
+                TextSize = 14,
                 ZIndex = 402,
             }) :: any) :: TextButton
             create("UIPadding", {
@@ -1502,7 +1502,7 @@ function Module.init(context: any): WidgetLibrary
                 Size = UDim2.new(1, 0, 0, rowHeight - 1),
                 Text = text,
                 TextColor3 = Theme.textMuted,
-                TextSize = 11,
+                TextSize = 14,
                 ZIndex = 402,
             }) :: any) :: TextButton
             create("UIPadding", {

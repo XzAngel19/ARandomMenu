@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "669e80c75c522a71",
+    stamp = "912528616eca7e07",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -723,8 +723,8 @@ function Module.init(context: any): WidgetLibrary
         shortcutButton.TextScaled = true
         create("UITextSizeConstraint", {
             Parent = shortcutButton,
-            MaxTextSize = 11,
-            MinTextSize = 7,
+            MaxTextSize = 14,
+            MinTextSize = 8,
         })
         bindActionShortcut(
             shortcutButton,
@@ -846,14 +846,14 @@ function Module.init(context: any): WidgetLibrary
         local minText: string = formatCompactNumber(minimum)
         local maxText: string = formatCompactNumber(maximum)
         -- Measured through the contract when it is up (A2: nobody
-        -- multiplies a constant past measure), the 9-px estimate only for
-        -- the harness host. TextSize 12 is what the labels render at.
+        -- multiplies a constant past measure), the 11-px estimate only for
+        -- the harness host. TextSize 14 is what the labels render at.
         local bitmapContract: any = state.bitmapText
         local function endLabelWidth(endText: string): number
             if bitmapContract and type(bitmapContract.measure) == "function" then
-                return bitmapContract.measure({{text = endText}}, 12) + 4
+                return bitmapContract.measure({{text = endText}}, 14) + 4
             end
-            return #endText * 9 + 4
+            return #endText * 11 + 4
         end
         local minWidth: number = endLabelWidth(minText)
         local maxWidth: number = endLabelWidth(maxText)
@@ -867,7 +867,7 @@ function Module.init(context: any): WidgetLibrary
             Size = UDim2.new(0, minWidth, 1, 0),
             Text = minText,
             TextColor3 = Theme.textMuted,
-            TextSize = 12,
+            TextSize = 14,
             TextXAlignment = Enum.TextXAlignment.Left,
             ZIndex = option.ZIndex + 1,
         })
@@ -882,7 +882,7 @@ function Module.init(context: any): WidgetLibrary
             Size = UDim2.new(0, maxWidth, 1, 0),
             Text = maxText,
             TextColor3 = Theme.textMuted,
-            TextSize = 12,
+            TextSize = 14,
             TextXAlignment = Enum.TextXAlignment.Right,
             ZIndex = option.ZIndex + 1,
         })
@@ -1506,7 +1506,7 @@ function Module.init(context: any): WidgetLibrary
             box.Position = UDim2.fromOffset(8, 0)
             box.Size = UDim2.new(1, -12, 1, 0)
             box.TextXAlignment = Enum.TextXAlignment.Left
-            box.TextSize = 11
+            box.TextSize = 14
             box.ZIndex = 403
             local boxCorner: UICorner? =
                 box:FindFirstChild("StyleCorner") :: UICorner?
@@ -1585,7 +1585,7 @@ function Module.init(context: any): WidgetLibrary
                 TextColor3 = itemIndex == currentIndex
                     and Theme.text
                     or Theme.textMuted,
-                TextSize = 11,
+                TextSize = 14,
                 ZIndex = 402,
             }) :: any) :: TextButton
             create("UIPadding", {
@@ -1771,7 +1771,7 @@ function Module.init(context: any): WidgetLibrary
                 Size = UDim2.new(1, 0, 0, rowHeight - 1),
                 Text = text,
                 TextColor3 = Theme.textMuted,
-                TextSize = 11,
+                TextSize = 14,
                 ZIndex = 402,
             }) :: any) :: TextButton
             create("UIPadding", {
@@ -10369,9 +10369,9 @@ function Module.init(context: any): any
         nameBox.PlaceholderText = "New profile name"
         nameBox.Position = UDim2.fromOffset(0, 0)
         nameBox.Size = UDim2.new(1, -54, 1, 0)
-        nameBox.TextSize = 11
+        nameBox.TextSize = 14
         nameBox.ZIndex = entryRow.ZIndex + 1
-        local saveButton: TextButton = (makeButton(entryRow, "SAVE", 9) :: any) :: TextButton
+        local saveButton: TextButton = (makeButton(entryRow, "SAVE", 10) :: any) :: TextButton
         saveButton.AnchorPoint = Vector2.new(1, 0.5)
         saveButton.Position = UDim2.new(1, 0, 0.5, 0)
         saveButton.Size = UDim2.fromOffset(48, 18)
@@ -10428,14 +10428,14 @@ function Module.init(context: any): any
                     Size = UDim2.new(1, -60, 1, 0),
                     Text = name,
                     TextColor3 = Theme.text,
-                    TextSize = 11.5,
+                    TextSize = 14,
                     TextXAlignment = Enum.TextXAlignment.Left,
                     ZIndex = row.ZIndex + 1,
                 })
-                local loadButton: TextButton = (makeButton(row, "LOAD", 9) :: any) :: TextButton
+                local loadButton: TextButton = (makeButton(row, "LOAD", 10) :: any) :: TextButton
                 loadButton.AnchorPoint = Vector2.new(1, 0.5)
                 loadButton.Position = UDim2.new(1, -6, 0.5, 0)
-                loadButton.Size = UDim2.fromOffset(48, 16)
+                loadButton.Size = UDim2.fromOffset(48, 18)
                 loadButton.ZIndex = row.ZIndex + 1
                 trackUiConnection(loadButton.MouseButton1Click:Connect(function(): ()
                     local snapshot: any = profileStore()[name]
@@ -10917,7 +10917,7 @@ function Module.init(context: any): any
                         Size = UDim2.new(1, 0, 0, ROW_HEIGHT),
                         Text = "  " .. entry.label,
                         TextColor3 = Theme.textMuted,
-                        TextSize = 11,
+                        TextSize = 14,
                         TextXAlignment = Enum.TextXAlignment.Left,
                         ZIndex = body.ZIndex + 1,
                     }) :: any) :: TextLabel
@@ -11118,9 +11118,10 @@ function Module.init(context: any): any
         "GameCheck", "Game check: " .. recognised, nil, {static = true}
     )
 
-    -- Font status, honestly: which of the three sources is really
-    -- rendering. Clicking the row prints the install instructions for the
-    -- exact pack — the runtime never downloads Mojang assets itself.
+    -- Font status, honestly: which source is really rendering. Code is
+    -- the only face the interface offers now, so the row is a statement,
+    -- not a menu; the other names can only appear if a suite or a local
+    -- experiment drives the atlas machinery directly.
     local function fontStatusLabel(): string
         local sourceName: string = tostring(
             (state.bitmapText and state.bitmapText.source) or "unavailable"
@@ -11142,11 +11143,8 @@ function Module.init(context: any): any
     local fontHandle: any = state.wurstOptions.RegisterAction(
         "FontStatus",
         fontStatusLabel(),
-        function(): ()
-            notify("Exact font: run tools/install_minecraft_font.py --update "
-                .. "on your PC, then copy MinecraftFont/ into the executor "
-                .. "workspace and reinject")
-        end
+        nil,
+        {static = true}
     )
     if state.bitmapText and type(state.bitmapText.onReady) == "table" then
         table.insert(state.bitmapText.onReady, function(): ()
@@ -11300,30 +11298,12 @@ function Module.init(context: any): any
     )
     uiSettingsValues["Menu style"] = tostring(state.menuStyle)
 
-    -- Which font pack renders. The visual authority stays Minecraft
-    -- 1.18.1; 26.2 is an optional local pack; Monocraft is the committed
-    -- fallback. Selecting a pack that is not installed keeps rendering
-    -- Monocraft and warns exactly once — the switch itself is live.
-    -- Code first and default: the engine's vector monospace is the
-    -- quality bar the real captures set. The bitmap options survive as
-    -- opt-in for whoever wants the pixel look.
-    local fontPacks: {string} = {"Code", "Monocraft", "Minecraft 1.18.1", "Minecraft 26.2"}
-    addCycleOption(
-        uiPanel,
-        "Font pack",
-        fontPacks,
-        table.find(fontPacks, tostring(state.fontPack)) or 1,
-        function(value: string): ()
-            uiSettingsValues["Font pack"] = value
-            configData.values["UI.FontPack"] = value
-            queueConfigSave()
-            if state.bitmapText
-                and type(state.bitmapText.applyFontPack) == "function" then
-                state.bitmapText.applyFontPack(value)
-            end
-        end
-    )
-    uiSettingsValues["Font pack"] = tostring(state.fontPack)
+    -- No Font pack row any more. The user's verdict was final: the menu's
+    -- face is Code, the engine's own vector monospace, for every player on
+    -- every executor — the bitmap Minecraft/Monocraft options are gone
+    -- from the interface. The renderer contract (applyFontPack and the
+    -- atlas machinery) survives underneath for the suites and for local
+    -- experiments, but nothing in the UI selects it.
 
     -- The two HUD visibility rows. Show HackList hides the overlay only —
     -- module state and statuses are untouched. Show dock exists on
@@ -12754,7 +12734,7 @@ function Module.init(context: any): any
         Size = UDim2.new(1, 0, 0, 24),
         Text = "",
         TextColor3 = Theme.text,
-        TextSize = 13,
+        TextSize = 14,
         TextXAlignment = Enum.TextXAlignment.Left,
         ZIndex = 248,
     }) :: any) :: TextBox
@@ -12892,7 +12872,7 @@ function Module.init(context: any): any
                 FontFace = CONTROL_FONT,
                 LayoutOrder = index,
                 Text = tostring(feature.name),
-                TextSize = 12,
+                TextSize = 14,
                 ZIndex = 248,
             }) :: any) :: TextButton
             create("UIStroke", {
@@ -13223,7 +13203,7 @@ function Module.init(context: any): any
         searchBox.Position = UDim2.fromOffset(12, 0)
         searchBox.Size = UDim2.new(1, -18, 1, 0)
         searchBox.TextColor3 = PILL_IDLE_TEXT
-        searchBox.TextSize = 13
+        searchBox.TextSize = 14
         searchBox.TextXAlignment = Enum.TextXAlignment.Left
         searchBox.ZIndex = 242
         local boxCorner: UICorner? = searchBox:FindFirstChild("StyleCorner") :: UICorner?

@@ -788,7 +788,7 @@ function Module.init(context: any): any
         Size = UDim2.new(1, 0, 0, 24),
         Text = "",
         TextColor3 = Theme.text,
-        TextSize = 13,
+        TextSize = 14,
         TextXAlignment = Enum.TextXAlignment.Left,
         ZIndex = 248,
     }) :: any) :: TextBox
@@ -926,7 +926,7 @@ function Module.init(context: any): any
                 FontFace = CONTROL_FONT,
                 LayoutOrder = index,
                 Text = tostring(feature.name),
-                TextSize = 12,
+                TextSize = 14,
                 ZIndex = 248,
             }) :: any) :: TextButton
             create("UIStroke", {
@@ -1257,7 +1257,7 @@ function Module.init(context: any): any
         searchBox.Position = UDim2.fromOffset(12, 0)
         searchBox.Size = UDim2.new(1, -18, 1, 0)
         searchBox.TextColor3 = PILL_IDLE_TEXT
-        searchBox.TextSize = 13
+        searchBox.TextSize = 14
         searchBox.TextXAlignment = Enum.TextXAlignment.Left
         searchBox.ZIndex = 242
         local boxCorner: UICorner? = searchBox:FindFirstChild("StyleCorner") :: UICorner?

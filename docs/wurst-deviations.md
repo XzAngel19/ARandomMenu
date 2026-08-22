@@ -39,3 +39,15 @@ GUI-scale-1. Prototype `titleHeight` 26 is 13 × 2, not a 1080p invention.
   BlurEffect under `PRODUCT.blurName`, enabled exactly while the GUI is
   open, destroyed at destruct. Reversed from the earlier ban at the
   user's explicit order after real captures.
+
+## Code face and 16 px type (user order, 2026-08-22)
+
+The interface face is the engine's `Code` vector font, permanently: the
+Font pack row and the Monocraft/Minecraft picker entries are removed, and
+the bitmap pipeline survives only as a suite-tested internal. Type sits on
+the 16 px contract (Wurst's 8-logical at GUI scale 2) with 14 px secondary
+text. Toasts moved off the scaled popup layer onto the shell so they land
+inside the physical bottom-right corner. Boot sweeps both disk caches
+against the shipped truth (bundle + asset manifest) so removed files never
+outlive an update. All of it is the user's explicit order from real
+captures, overriding bitmap-font purity.

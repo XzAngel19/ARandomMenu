@@ -27,7 +27,7 @@ export type MenuState = {
     menuStyle: string,                              -- "Wurst" (ClickGUI windows) or "Navigator" (Navigator as the main surface); stored as UI.MenuStyle
     SetMenuStyle: (string, boolean?) -> (),         -- The one style state machine: persist, close the open surface, optionally open the new one, notify listeners
     menuStyleListeners: {(string) -> ()},           -- Called with the new style after SetMenuStyle lands it
-    fontPack: string,                               -- "Minecraft 1.18.1" (authority) / "Minecraft 26.2" (optional local pack) / "Monocraft"; stored as UI.FontPack
+    fontPack: string,                               -- Always "Code" now: the UI row is gone; applyFontPack stays for suites
     openMenuSurface: () -> (),                      -- Open/close whichever surface menuStyle selects; the toggle key and the dock come through here
     invokeModuleSearch: (string) -> boolean,        -- The dock's search resolver: exact/unique match toggles a module, ambiguous/none notify; replaceable by D's registry
     addMenuVisibilityListener: ((boolean) -> ()) -> (), -- Be told when it opens or closes
@@ -121,6 +121,8 @@ export type MenuState = {
     downloadSourcesParallel: ({string}) -> (),      -- The fallback when the bundle is missing
     readCachedSource: (string) -> string?,          -- The on-disk copy, if its stamp matches
     writeCachedSource: (string, string) -> (),      -- Keep one for next time
+    sweepStaleSources: () -> number,                -- Delete cached sources the current bundle no longer ships
+    sweepStaleAssets: () -> number,                 -- Delete cached assets the current manifest no longer names
     ensureSourceFolders: (string) -> (),            -- Create the folders that copy needs
     frameworkEnvironment: any,                      -- The table every downloaded file runs inside
     framework: any,                                 -- The kernel, once started
