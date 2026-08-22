@@ -91,6 +91,7 @@ function Module.init(context: any): any
     local colorFromConfig: any = host.colorFromConfig
     local ScreenGui: any = host.ScreenGui
     local makeTextBox: any = host.makeTextBox
+    local notify: any = host.notify or function(_message: any): () end
 
     local Furniture: any = {
         handles = {} :: {any},
@@ -357,8 +358,6 @@ function Module.init(context: any): any
         Size = UDim2.new(0, 260, 1, -(HACKLIST_TOP + 12)),
         ZIndex = 20,
     }) :: any) :: Frame
-    local hudVisible: boolean = configData.values["UI.ShowHackList"] ~= false
-    hudFrame.Visible = hudVisible
 
     local hudLayout: UIListLayout = (create("UIListLayout", {
         Parent = hudFrame,
@@ -514,7 +513,16 @@ function Module.init(context: any): any
     local hudSignature: string = ""
     local hudElapsed: number = 0
 
+    -- Show HackList: the overlay only. Hidden means the frame is not
+    -- Visible and the poll skips its rebuild; module state and statuses
+    -- are untouched — the list simply is not drawn. Seeded by the UI
+    -- Settings replay, which runs before this library.
+    local hudVisible: boolean = state.uiShowHackList ~= false
+
     local function refreshHudList(): ()
+        if not hudVisible then
+            return
+        end
         local entries: {any} = {}
         for _, feature: any in ipairs(allFeatures) do
             if feature.enabled == true and not feature.isCategory then
@@ -638,19 +646,20 @@ function Module.init(context: any): any
         table.insert(state.bitmapText.onReady, forceHudRefresh)
     end
 
+    hudFrame.Visible = hudVisible
+    local function setHackListVisible(value: boolean): ()
+        hudVisible = value ~= false
+        hudFrame.Visible = hudVisible
+        if hudVisible then
+            forceHudRefresh()
+        end
+    end
+    Furniture.SetHackListVisible = setHackListVisible
+
     state.hudList = {
         frame = hudFrame,
         refresh = refreshHudList,
-        SetVisible = function(visible: boolean): ()
-            hudVisible = visible
-            hudFrame.Visible = visible
-            if visible then
-                forceHudRefresh()
-            end
-        end,
-        IsVisible = function(): boolean
-            return hudVisible
-        end,
+        SetVisible = setHackListVisible,
         -- The HackList settings window drives these; persistence belongs to
         -- its rows, which write the same keys this file read at boot.
         SetMode = function(value: string): ()
@@ -719,6 +728,39 @@ function Module.init(context: any): any
         end
     end
 
+    -- The visible door back to the ClickGUI, top-left of the Navigator:
+    -- one click switches the style, closes this screen and opens Wurst's
+    -- windows through the state machine. Escape still closes; the dock
+    -- button is the same exit. Nobody gets trapped in a full screen.
+    local wurstDoor: TextButton = (create("TextButton", {
+        TextTruncate = Enum.TextTruncate.AtEnd,
+        Parent = navScreen,
+        Name = "WurstDoor",
+        Active = true,
+        AutoButtonColor = false,
+        BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+        BackgroundTransparency = 0.4,
+        BorderSizePixel = 0,
+        FontFace = CONTROL_FONT,
+        Position = UDim2.fromOffset(14, 14),
+        Size = UDim2.fromOffset(170, 26),
+        Text = "< Wurst ClickGUI",
+        TextColor3 = Color3.fromRGB(232, 232, 238),
+        TextSize = 14,
+        ZIndex = 248,
+    }) :: any) :: TextButton
+    table.insert(Furniture.connections, wurstDoor.MouseEnter:Connect(function(): ()
+        wurstDoor.BackgroundTransparency = 0.2
+    end))
+    table.insert(Furniture.connections, wurstDoor.MouseLeave:Connect(function(): ()
+        wurstDoor.BackgroundTransparency = 0.4
+    end))
+    table.insert(Furniture.connections, wurstDoor.MouseButton1Click:Connect(function(): ()
+        if type(state.SetMenuStyle) == "function" then
+            state.SetMenuStyle("Wurst", true)
+        end
+    end))
+
     local navColumn: Frame = (create("Frame", {
         Parent = navScreen,
         Name = "Column",
@@ -753,28 +795,6 @@ function Module.init(context: any): any
         PaddingLeft = UDim.new(0, 6),
         PaddingRight = UDim.new(0, 6),
     })
-    navSearch.Size = UDim2.new(1, -126, 0, 24)
-    local wurstClickGui: TextButton = (create("TextButton", {
-        TextTruncate = Enum.TextTruncate.AtEnd,
-        Parent = navColumn,
-        Name = "WurstClickGUI",
-        Active = true,
-        AutoButtonColor = false,
-        BackgroundColor3 = Theme.background,
-        BackgroundTransparency = 0.15,
-        BorderSizePixel = 0,
-        Position = UDim2.new(1, -120, 0, 0),
-        Size = UDim2.fromOffset(120, 24),
-        Text = "Wurst ClickGUI",
-        TextColor3 = Theme.text,
-        TextSize = 12,
-        ZIndex = 248,
-    }) :: any) :: TextButton
-    table.insert(Furniture.connections, wurstClickGui.MouseButton1Click:Connect(function(): ()
-        if type(state.SetMenuStyle) == "function" then
-            state.SetMenuStyle("Wurst", true)
-        end
-    end))
 
     local navResults: Frame = (create("Frame", {
         Parent = navColumn,
@@ -1031,12 +1051,6 @@ function Module.init(context: any): any
         refresh = rebuildNavigator,
         Open = openNavigator,
         Close = closeNavigator,
-        OpenWurst = function(): ()
-            if type(state.SetMenuStyle) == "function" then
-                state.SetMenuStyle("Wurst", true)
-            end
-        end,
-        wurstButton = wurstClickGui,
     }
 
     -- ----------------------------------------------------------------- dock
@@ -1056,8 +1070,6 @@ function Module.init(context: any): any
         + PILL_GAP
         + PILL_BUTTON
 
-    local dockVisible: boolean = state.isMobile
-        or configData.values["UI.ShowDock"] ~= false
     local pillFrame: Frame = (create("Frame", {
         Parent = ScreenGui or PopupLayer,
         Name = "Pill",
@@ -1068,7 +1080,11 @@ function Module.init(context: any): any
         BorderSizePixel = 0,
         Position = UDim2.new(0.5, 0, 1, -DOCK_BOTTOM_MARGIN),
         Size = UDim2.fromOffset(pillWidth, PILL_BUTTON + PILL_PADDING_Y * 2),
-        Visible = dockVisible,
+        -- Above the Navigator's dim (246) either way: as a ScreenGui
+        -- sibling the dock already outranks the whole popup layer, and
+        -- on the PopupLayer fallback this keeps it over the dim and the
+        -- grid, under the toasts (300). The dock is the way out of every
+        -- surface; nothing may bury it.
         ZIndex = 249,
     }) :: any) :: Frame
     create("UICorner", {
@@ -1137,7 +1153,7 @@ function Module.init(context: any): any
             Text = glyph,
             TextColor3 = PILL_IDLE_TEXT,
             TextSize = textSize,
-            ZIndex = 249,
+            ZIndex = 241,
         }) :: any) :: TextButton
         create("UICorner", {
             Parent = button,
@@ -1172,6 +1188,14 @@ function Module.init(context: any): any
         16,
         "Show or hide the menu",
         function(): ()
+            -- With the Navigator open, the dock button is the way back to
+            -- Wurst: switch the style, close the Navigator, open the
+            -- ClickGUI, persist — the state machine does all four. The
+            -- user is never trapped in a surface.
+            if navScreen.Visible and type(state.SetMenuStyle) == "function" then
+                state.SetMenuStyle("Wurst", true)
+                return
+            end
             if type(state.openMenuSurface) == "function" then
                 state.openMenuSurface()
             else
@@ -1192,46 +1216,24 @@ function Module.init(context: any): any
         BorderSizePixel = 0,
         Position = UDim2.fromOffset(PILL_PADDING_X, PILL_PADDING_Y),
         Size = UDim2.fromOffset(DOCK_SEARCH_WIDTH, PILL_BUTTON),
-        ZIndex = 249,
+        ZIndex = 241,
     }) :: any) :: Frame
     create("UICorner", {
         Parent = searchShell,
         CornerRadius = UDim.new(1, 0),
     })
-    local submitLocked: boolean = false
-    local function submitSearch(query: string): any
-        if submitLocked or query:gsub("%s", "") == "" then
-            return nil
-        end
-        submitLocked = true
-        task.defer(function(): ()
-            submitLocked = false
-        end)
-        local search: any = state.moduleSearch
-        if search and type(search.Execute) == "function" then
-            local result: any = search.Execute(query)
-            if result.status == "success" then
-                return result.entry
-            end
-        end
-        return nil
-    end
-
-    local dockSearchBox: TextBox? = nil
-    local dockSubmitButton: TextButton? = nil
     if type(makeTextBox) == "function" then
         local searchBox: TextBox = (makeTextBox(searchShell, "") :: any) :: TextBox
-        dockSearchBox = searchBox
         searchBox.Name = "DockSearchBox"
         searchBox.BackgroundTransparency = 1
         searchBox.ClearTextOnFocus = false
         searchBox.PlaceholderText = "Search module..."
         searchBox.Position = UDim2.fromOffset(12, 0)
-        searchBox.Size = UDim2.new(1, -42, 1, 0)
+        searchBox.Size = UDim2.new(1, -18, 1, 0)
         searchBox.TextColor3 = PILL_IDLE_TEXT
         searchBox.TextSize = 13
         searchBox.TextXAlignment = Enum.TextXAlignment.Left
-        searchBox.ZIndex = 249
+        searchBox.ZIndex = 242
         local boxCorner: UICorner? = searchBox:FindFirstChild("StyleCorner") :: UICorner?
         if boxCorner then
             boxCorner:Destroy()
@@ -1240,44 +1242,91 @@ function Module.init(context: any): any
         if boxStroke then
             boxStroke:Destroy()
         end
-        local submitButton: TextButton = (create("TextButton", {
-            TextTruncate = Enum.TextTruncate.AtEnd,
-            Parent = searchShell,
-            Name = "Submit",
-            Active = true,
-            AnchorPoint = Vector2.new(1, 0),
-            AutoButtonColor = false,
-            BackgroundTransparency = 1,
-            BorderSizePixel = 0,
-            Position = UDim2.new(1, -4, 0, 0),
-            Size = UDim2.fromOffset(28, PILL_BUTTON),
-            Text = ">",
-            TextColor3 = PILL_IDLE_TEXT,
-            TextSize = 13,
-            ZIndex = 249,
-        }) :: any) :: TextButton
-        dockSubmitButton = submitButton
-        local function submitBox(): ()
+        -- The dock talks to exactly one resolver: D's registry,
+        -- state.moduleSearch.Execute. Every submit consumes and clears the
+        -- query before invoking it. If FocusLost and the mobile-keyboard
+        -- signal both fire for the same Enter, the second event sees an empty
+        -- box; a later deliberate submit is never rejected by a wall-clock
+        -- debounce. Nothing runs while typing and no results list exists.
+        local function submitSearch(): ()
             local query: string = tostring(searchBox.Text or "")
+            if query:gsub("%s", "") == "" then
+                return
+            end
             searchBox.Text = ""
-            submitSearch(query)
+            local search: any = state.moduleSearch
+            if type(search) ~= "table" or type(search.Execute) ~= "function" then
+                notify("Module search is not available")
+                return
+            end
+            local result: any = search.Execute(query)
+            local status: string = tostring(result and result.status)
+            if status == "success" then
+                searchBox.Text = ""
+                local entryName: string = tostring(
+                    result.entry and result.entry.displayName or query
+                )
+                notify(entryName .. ": "
+                    .. (result.enabled and "enabled" or "disabled"))
+            elseif status == "ambiguous" then
+                local names: {string} = {}
+                for index: number, match: any in ipairs(result.matches or {}) do
+                    if index > 4 then
+                        table.insert(names, "…")
+                        break
+                    end
+                    table.insert(names, tostring(match.displayName))
+                end
+                notify("Ambiguous: " .. table.concat(names, ", "))
+            elseif status == "not_toggleable" then
+                notify(tostring(
+                    result.entry and result.entry.displayName or query
+                ) .. " has nothing to toggle")
+            else
+                notify("No module matches \"" .. query .. "\"")
+            end
         end
-        table.insert(Furniture.connections,
-            submitButton.MouseButton1Click:Connect(submitBox))
-        table.insert(Furniture.connections,
+        table.insert(
+            Furniture.connections,
             searchBox.FocusLost:Connect(function(enterPressed: boolean): ()
                 if enterPressed == true then
-                    submitBox()
+                    submitSearch()
                 end
-            end))
-        table.insert(Furniture.connections,
-            searchBox.InputBegan:Connect(function(input: InputObject): ()
-                if input.KeyCode == Enum.KeyCode.Return
-                    or input.KeyCode == Enum.KeyCode.KeypadEnter then
-                    submitBox()
-                end
-            end))
+            end)
+        )
+        -- The on-screen keyboard's submit, where the platform offers it.
+        pcall(function(): ()
+            table.insert(
+                Furniture.connections,
+                (searchBox :: any).ReturnPressedFromOnScreenKeyboard:Connect(
+                    submitSearch
+                )
+            )
+        end)
     end
+
+    -- Show dock. Desktop can hide the launcher (RightControl still
+    -- opens the menu — the key handler never lived in the dock); the
+    -- preference persists but never reaches a touch-primary device,
+    -- where the dock is the only door and stays visible regardless of
+    -- any stored desktop value. Hiding never destroys: Visible only.
+    -- Executors on phones often emulate a mouse. The shell's device decision
+    -- is authoritative: a phone can never lose its only launcher because an
+    -- emulated MouseEnabled flag made it look like desktop.
+    local touchPrimary: boolean = state.isMobile == true
+    local function setDockVisible(value: boolean): ()
+        if touchPrimary then
+            pillFrame.Visible = true
+            return
+        end
+        pillFrame.Visible = value ~= false
+    end
+    setDockVisible(state.uiShowDock ~= false)
+    Furniture.SetDockVisible = setDockVisible
+    state.dock = {
+        root = pillFrame,
+        SetVisible = setDockVisible,
+    }
 
     -- The menu button fills with the accent while the GUI is open, exactly
     -- like the prototype's `.on` state. Repainted on both the things that
@@ -1331,23 +1380,9 @@ function Module.init(context: any): any
     -- window, a drawing set — names its top instance that way, and the suite
     -- that checks the pill stays on screen with the GUI closed was reading
     -- `root` and finding nil.
-    state.commandDock = {
-        root = pillFrame,
-        search = dockSearchBox,
-        submit = dockSubmitButton,
-        Submit = submitSearch,
-        SetVisible = function(visible: boolean): ()
-            dockVisible = state.isMobile or visible
-            pillFrame.Visible = dockVisible
-        end,
-        IsVisible = function(): boolean
-            return pillFrame.Visible
-        end,
-    }
     state.pill = {
         root = pillFrame,
         restyle = restyleMenuButton,
-        SetVisible = state.commandDock.SetVisible,
     }
     -- The shell's fallback circle stands down now that the pill exists.
     if type(state.refreshLauncher) == "function" then
@@ -1374,7 +1409,6 @@ function Module.init(context: any): any
         state.hudList = nil
         state.wurstLogo = nil
         state.navigator = nil
-        state.commandDock = nil
         state.pill = nil
         -- The fallback launcher becomes the way in again.
         if type(state.refreshLauncher) == "function" then

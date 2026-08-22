@@ -684,7 +684,16 @@ function Host.create(world: any): HostStub
     -- test can deliver the key press without an input device.
     host.beginKeyCapture = function(button: any, callback: any): ()
         button.Text = "..."
+        host.state.waitingForKey = true
+        host.state.keyCaptureCallback = callback
         world.keyCapture = {button = button, callback = callback}
+        host.state.keyCaptureCancel = function(): ()
+            host.state.waitingForKey = false
+            host.state.keyCaptureCallback = nil
+            world.keyCapture = nil
+            button.Text = tostring(button:GetAttribute("CaptureIdleText") or "")
+            host.state.keyCaptureCancel = nil
+        end
     end
     host.bindActionShortcut = function(
         button: any,
@@ -694,7 +703,25 @@ function Host.create(world: any): HostStub
         _options: any?
     ): ()
         world.shortcuts = world.shortcuts or {}
-        world.shortcuts[shortcutId] = {button = button, label = label, run = callback}
+        host.state.shortcutBindings = host.state.shortcutBindings or {}
+        local binding: any = {
+            id = shortcutId,
+            button = button,
+            key = world.globals.Enum.KeyCode.Unknown,
+            run = callback,
+        }
+        function binding.assign(key: any): boolean
+            local cleared: boolean = key == binding.key
+            binding.key = cleared and world.globals.Enum.KeyCode.Unknown or key
+            return not cleared
+        end
+        host.state.shortcutBindings[shortcutId] = binding
+        world.shortcuts[shortcutId] = {
+            button = button,
+            label = label,
+            run = callback,
+            binding = binding,
+        }
     end
     host.runActionButton = function(
         button: any,

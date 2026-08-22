@@ -9,9 +9,11 @@ The integrator owns `ARandomMenu.luau`. Agent D owns `src/modules/**` and
   (Combat, Render, Movement, Fun, Other) exist. Visuals / Protection /
   Utility / Spoof are not windows. Empty Blocks / Chat / Items stay in
   the contract and draw no window until a module lands in them.
-- Feature rows: no star, no hamburger, no empty keybind box. `hasSettings`
-  is derived. The triangle exists only when there are options. Titles are
-  centred on the full row; the arrow does not move the centre.
+- Feature rows: no star, no hamburger. The keybind square is an approved
+  user-requested adaptation and replaces the old ban on desktop key
+  slots. `hasSettings` is derived. The triangle exists only when there
+  are options. Titles are centred on the full row; the arrow does not
+  move the centre. The leftover KEY pill stays forbidden.
 - Navigator is its own screen. TabGUI default Disabled.
 - WurstLogo stripe at scale-2 y=12 height 22, half alpha, seed `#FFFFFF`.
   Version `0.1 Beta`. Chip packs to
@@ -69,11 +71,40 @@ The integrator owns `ARandomMenu.luau`. Agent D owns `src/modules/**` and
   invalid / NaN / inf rejected, drag clamps. Speed is a single value.
   CPS is an ordered low/high range.
 - Menu style: default Wurst, RightControl selected, RightShift is
-  Navigator only. Theme switch does not toggle modules.
+  Navigator only. Theme switch does not toggle modules. The open
+  gesture (`state.openMenuSurface`) follows the stored style and
+  never leaves both surfaces up. The cycle callback itself still
+  only writes `UI.MenuStyle`.
 - Categories sit at the logo height, do not overlap it, wrap, and
   keep manual positions across reflow. Reset layout clears `userMoved`.
+- The bottom dock is the pill (`state.pill`): search left, ≡ right,
+  FocusLost(true) submits. `state.moduleSearch.Execute` is the
+  38-module registry (Killaura / ESP / AutoClicker aliases).
+- HackList `SetMode("Hidden")` clears the overlay and leaves modules
+  and statuses intact; `SetMode("Auto")` rebuilds the list.
+- Escape closes Navigator. The dock sits above the Navigator layer.
+  UI Settings is recoverable after leaving Navigator.
+- Bitmap glyphs snap to integer physical pixels at scales
+  0.7 / 1 / 1.25 / 1.6. The Mode combo stays a ComboValue.
+
+- Capability matrix: full executor, getsynasset-only, no filesystem,
+  no HTTP assets, mobile full, mobile limited. Each boot falls back
+  and tears down. Never labelled minecraft-exact without a pack.
+- Private font URLs: HTTPS only, hash required, 32 MiB pack cap,
+  corrupt rollback, no loadstring of remote bytes, cache outside
+  `assets/`, no Mojang pixels in git
+  (`tools/check_private_font.py`).
 
 ## Still owed — do not fail until these land
+
+### Keybind square
+
+Cards still hide the desktop bind target. Publish a 22 px square on
+bindable rows only (toggle / action / hold; never group). No pill,
+no corner, no KEY caption. Click captures; Escape and click-outside
+cancel; Backspace / Delete clear. The square must not activate the
+module or flip `enabled`. Hide it on a keyboard-less phone. The
+suite flips the moment `bindSquare` / `BindSquare` exists.
 
 ### APPLY-4 owner-window + scroll-clip
 
@@ -91,10 +122,49 @@ Re-run the CATEGORY_ORDER pass after modules exist (or rebuild
 
 ### Bottom command dock
 
-`state.commandDock` is not published. Search left, submit right, no
-results list, module aliases only, no Wurst Options actions, no
-fuzzy activation. The suite holds the negative contract (no old
-palette) until the dock lands.
+The pill is the dock (`state.pill`). Search left, ≡ right, no
+results list, FocusLost(true) / mobile ReleaseFocus submit. The
+dock still calls `state.invokeModuleSearch`, which is a substring
+matcher: `ESP` is ambiguous and `AutoClicker` misses `Auto Clicker`.
+Route the box through `state.moduleSearch.Execute` so one submit is
+one Execute and the aliases work. Wire Return and KeypadEnter the
+same way. `state.commandDock` as a name is optional.
+
+### Menu style cycle does not switch surfaces
+
+`addCycleOption("Menu style")` writes `state.menuStyle` and
+`UI.MenuStyle` and stops. Publish `state.SetMenuStyle(style, open)`
+as the one state machine (A's 567f0ee). The suite becomes blocking
+the moment that function exists. RightShift currently can leave
+both up — close the other surface.
+
+### Navigator back row
+
+Escape closes. There is no dedicated back-to-Wurst control on the
+Navigator screen; the dock ≡ is the return path. A Back button
+(or equivalent) that restores Wurst without trapping the user is
+still owed.
+
+### Show dock (desktop only)
+
+No desktop visibility setting. Desktop: setting visible, false
+hides the pill, RightControl still opens the menu, true restores.
+Mobile: setting absent/hidden, dock forced visible, a stored
+desktop false ignored.
+
+### HackList settings crash on SetColor
+
+`Furniture.SetColor` writes `row.label.TextColor3`. Overlay rows are
+bitmap holders now (`row.holder`), so opening HackList settings
+(the Color option's init callback) throws. Recolor through the
+bitmap contract. C does not open that window until this is fixed.
+
+### pickAtlas ceiling
+
+`pickAtlas` is still nearest, larger on a tie. That upscales the
+8 px atlas at physical 11. Ceiling: target 11 → atlas >= 16,
+target 16 → 16, target 18 → atlas >= 24. The suite flips the
+moment the function prefers the next-larger ready member.
 
 ### RUN / textbox / list still rounded via the shell helper
 

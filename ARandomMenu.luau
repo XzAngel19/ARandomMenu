@@ -363,7 +363,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "5eddcf9e6fc97e23"
+local SOURCE_STAMP: string = "ffc543f4c9408f31"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -1092,31 +1092,57 @@ state.menuStyle = configData.values["UI.MenuStyle"] == "Navigator"
     and "Navigator"
     or "Wurst"
 
-state.SetMenuStyle = function(style: string, openImmediately: boolean?): boolean
+-- Which font pack the player asked for. UI.FontPack stores the name;
+-- the default is the visual authority, Minecraft 1.18.1. Packs are
+-- optional local installs (tools/install_minecraft_font.py); when the
+-- selected one is missing, the committed Monocraft fallback renders
+-- and says so exactly once.
+state.fontPack = (function(): string
+    local stored: any = configData.values["UI.FontPack"]
+    if stored == "Minecraft 26.2" or stored == "Monocraft" then
+        return stored
+    end
+    return "Minecraft 1.18.1"
+end)()
+
+-- The one menu-style state machine. Everything that changes the style —
+-- the UI Settings row, the Navigator's "Wurst ClickGUI" door, the dock —
+-- comes through here: persist, close whatever surface is open so the
+-- two never stack, open the new one when asked, tell the listeners.
+-- It touches nothing else: no enabled state, no settings, no window
+-- positions, no binds.
+state.menuStyleListeners = {} :: {(string) -> ()}
+
+state.SetMenuStyle = function(style: string, openImmediately: boolean?): ()
     if style ~= "Wurst" and style ~= "Navigator" then
-        return false
-    end
-    local navigator: any = state.navigator
-    if navigator and navigator.root and navigator.root.Visible
-        and type(navigator.Close) == "function" then
-        navigator.Close()
-    end
-    if state.visible then
-        state.setMenuVisible(false)
+        return
     end
     state.menuStyle = style
     configData.values["UI.MenuStyle"] = style
     queueConfigSave()
-    if openImmediately == true then
-        if style == "Navigator" then
-            if navigator and type(navigator.Open) == "function" then
-                navigator.Open()
-            end
-        else
+    local navigator: any = state.navigator
+    local navigatorOpen: boolean = navigator ~= nil
+        and navigator.root ~= nil
+        and navigator.root.Visible == true
+    if style == "Wurst" then
+        if navigatorOpen and type(navigator.Close) == "function" then
+            navigator.Close()
+        end
+        if openImmediately and not state.visible then
             state.setMenuVisible(true)
         end
+    else
+        if state.visible then
+            state.setMenuVisible(false)
+        end
+        if openImmediately and navigator
+            and type(navigator.Open) == "function" then
+            navigator.Open()
+        end
     end
-    return true
+    for _, listener: (string) -> () in ipairs(state.menuStyleListeners) do
+        pcall(listener, style)
+    end
 end
 
 state.openMenuSurface = function(): ()
@@ -1126,8 +1152,22 @@ state.openMenuSurface = function(): ()
             navigator.Close()
             return
         end
-        state.SetMenuStyle("Navigator", true)
-        return
+        -- Navigator is the main surface in this style: the category
+        -- windows stay closed behind it instead of peeking through.
+        if state.visible then
+            state.setMenuVisible(false)
+        end
+        if navigator and type(navigator.Open) == "function" then
+            navigator.Open()
+            return
+        end
+    end
+    -- Wurst style: the Navigator must never linger behind the ClickGUI —
+    -- RightShift can have opened it regardless of the saved style.
+    local navigator: any = state.navigator
+    if navigator and navigator.root and navigator.root.Visible
+        and type(navigator.Close) == "function" then
+        navigator.Close()
     end
     state.setMenuVisible(not state.visible)
 end
@@ -1977,6 +2017,10 @@ state.bitmapText = {
         advance = 11,
         ascent = 15,
         descent = 2,
+        -- Bumped whenever the atlas *content* changes (a pack loads, the
+        -- fallback returns): the draw signatures carry it, so a live font
+        -- switch repaints every surface exactly once.
+        generation = 0,
         -- Codepoints outside the grid render as this cell ("?"), the way
         -- Minecraft substitutes its missing glyph instead of collapsing
         -- the advance and shifting everything after it.
@@ -2018,6 +2062,20 @@ state.bitmapText = {
     end,
 }
 
+-- Capability report only: it decides which honest fallback is possible and
+-- is exposed to diagnostics/tests. It never promises exact pixels on an
+-- executor that cannot read files or register a local image.
+local fontEnvironment: any = getfenv()
+state.bitmapText.capabilities = {
+    canHttp = type((game :: any).HttpGet) == "function",
+    canRead = type(fontEnvironment.readfile) == "function",
+    canWrite = type(fontEnvironment.writefile) == "function",
+    canCustomAsset = type(fontEnvironment.getcustomasset) == "function",
+    canSynAsset = type(fontEnvironment.getsynasset) == "function",
+    mobile = state.isMobile == true,
+    desktop = state.isMobile ~= true,
+}
+
 -- The crisp-scale family: the same OFL Monocraft rasterised at 8 / 16 /
 -- 24 / 32 by tools/make_font_atlas.py. A fractional UIScale cannot get
 -- pixel-perfect glyphs out of one raster, so draw() picks the member
@@ -2057,25 +2115,36 @@ state.bitmapText.layerScale = function(): number
     return value
 end
 
--- Pick the smallest ready raster that is at least the physical target. Pixel
--- fonts may be downscaled, never enlarged: target 11/16 uses 16, 18 uses 24,
--- 25 uses 32. If no member is large enough, the largest ready raster wins.
+-- The raster for a physical glyph height. The rule is downscale-only:
+-- the smallest ready member whose size covers the target, so glyphs
+-- keep full pixel detail and shrink at most a little; only a target
+-- the whole family undershoots takes the largest member. The 8 px
+-- atlas therefore serves only targets of 8 physical pixels or less —
+-- upscaling it is mush, and mush was exactly the dropdown bug. The
+-- 16 px member is the floor — it is the one the boot resolves first.
 state.bitmapText.pickAtlas = function(physicalSize: number): any
     local contract: any = state.bitmapText
-    local above: any = nil
+    -- A loaded Minecraft pack owns the raster outright: mixing its 16 px
+    -- atlas with Monocraft's 8/24/32 variants would blend two fonts on
+    -- one screen. The family only competes while the fallback renders.
+    if contract.rasterFamilyEnabled == false then
+        return contract.atlas
+    end
+    local smallestCovering: any = nil
     local largest: any = nil
     for _, member: any in pairs(contract.family) do
         if member.ready and member.image then
-            if not largest or member.size > largest.size then
-                largest = member
-            end
             if member.size >= physicalSize
-                and (not above or member.size < above.size) then
-                above = member
+                and (smallestCovering == nil
+                    or member.size < smallestCovering.size) then
+                smallestCovering = member
+            end
+            if largest == nil or member.size > largest.size then
+                largest = member
             end
         end
     end
-    return above or largest or contract.atlas
+    return smallestCovering or largest or contract.atlas
 end
 
 -- The baseline a mixed-size line aligns to, in logical pixels.
@@ -2176,6 +2245,7 @@ state.bitmapText.draw = function(
         tostring(transparency),
         string.format("%.4f", deviceScale),
         tostring(raster and raster.size),
+        tostring(atlas.generation),
     }
     for _, segment: any in ipairs(segments) do
         local color: Color3 = segment.color or Theme.text
@@ -2518,12 +2588,17 @@ state.bitmapText.loadExactAtlas = function(image: string, metrics: any): ()
     end
     -- Per-codepoint advances, when the metrics carry them: Minecraft's
     -- font is variable-width and the renderer honours that the moment
-    -- the numbers exist.
+    -- the numbers exist. A pack without them clears the previous set —
+    -- stale advances from another font are a layout lie.
     if type(metrics.advances) == "table" then
         atlas.advances = metrics.advances
+    else
+        atlas.advances = nil
     end
     atlas.image = image
     atlas.ready = true
+    atlas.generation += 1
+    state.bitmapText.rasterFamilyEnabled = false
     state.bitmapText.source = "minecraft-exact"
     for holder: any, record: any in pairs(state.bitmapText._live) do
         if holder.Parent ~= nil and record.request ~= nil then
@@ -2541,123 +2616,168 @@ state.bitmapText.loadExactAtlas = function(image: string, metrics: any): ()
     end
 end
 
-local fontEnvironment: any = getfenv()
-state.bitmapText.capabilities = {
-    canHttp = type((game :: any).HttpGet) == "function",
-    canRead = type(fontEnvironment.readfile) == "function",
-    canWrite = type(fontEnvironment.writefile) == "function",
-    canCustomAsset = type(fontEnvironment.getcustomasset) == "function",
-    canSynAsset = type(fontEnvironment.getsynasset) == "function",
-    mobile = state.isMobile == true,
-    desktop = state.isMobile ~= true,
+-- The Monocraft snapshot: what the atlas contract looks like on the
+-- committed fallback, so a live pack switch can walk back to it whole —
+-- fields, advances cleared, family re-enabled.
+state.bitmapText._fallback = {
+    size = 16, first = 32, last = 126, columns = 16,
+    cellWidth = 11, cellHeight = 17, advance = 11, ascent = 15, descent = 2,
 }
-local configuredFontMode: string = tostring(
-    configData.values["UI.FontMode"] or "Auto"
-)
-if configuredFontMode ~= "Auto"
-    and configuredFontMode ~= "Monocraft"
-    and configuredFontMode ~= "Minecraft local" then
-    configuredFontMode = "Auto"
-end
-state.bitmapText.fontMode = configuredFontMode
-state.bitmapText.manifestUrl = tostring(
-    configData.values["UI.FontManifestURL"] or ""
-)
+state.bitmapText.rasterFamilyEnabled = true
 
--- Font selection is capability-driven and honest: an exact local pack first,
--- then the executor's exact cached asset, then Monocraft, then vector. A private
--- manifest URL is recorded for installers that can verify and cache it; this
--- runtime never executes remote code or treats a ZIP as a font.
-task.spawn(function(): ()
-    if type(state.resolveAsset) ~= "function" then
-        state.bitmapText.source = "unavailable"
-        return
+state.bitmapText.restoreFallbackAtlas = function(): ()
+    local contract: any = state.bitmapText
+    local atlas: any = contract.atlas
+    for key: string, value: number in pairs(contract._fallback) do
+        atlas[key] = value
     end
-    -- A locally installed Minecraft 1.18.1 pack first. It is never
-    -- downloaded here and never committed: tools/install_minecraft_font.py
-    -- builds MinecraftFont/ from the official client on the user's own
-    -- machine, hash-verified against the pinned manifest, and the user
-    -- drops the folder into the executor workspace. The runtime checks the
-    -- manifest before trusting a pixel; when it holds, the renderer flips
-    -- to minecraft-exact through the same loadExactAtlas plug.
-    if configuredFontMode ~= "Monocraft" then
+    atlas.advances = nil
+    atlas.image = contract._fallbackImage
+    atlas.ready = contract._fallbackImage ~= nil
+    atlas.generation += 1
+    contract.rasterFamilyEnabled = true
+    contract.source = atlas.ready and "monocraft-fallback" or "unavailable"
+end
+
+-- The optional local packs, by their UI names. One folder per version,
+-- and the manifest's own version field must match — a 26.2 manifest in
+-- the 1.18.1 slot never loads. Providers of different versions never
+-- meet in one atlas.
+state.bitmapText.packs = {
+    ["Minecraft 1.18.1"] = {
+        folder = "MinecraftFont",
+        version = "1.18.1",
+        source = "minecraft-exact",
+    },
+    ["Minecraft 26.2"] = {
+        folder = "MinecraftFont-26.2",
+        version = "26.2",
+        source = "minecraft-26.2-local",
+    },
+}
+
+state.bitmapText.probePack = function(selection: string): boolean
+    local contract: any = state.bitmapText
+    local pack: any = contract.packs[selection]
+    if not pack then
+        return false
+    end
+    local loaded: boolean = false
     pcall(function(): ()
         if type(isfile) ~= "function" or type(readfile) ~= "function" then
             return
         end
-        local manifestPath: string = "MinecraftFont/manifest.json"
+        local manifestPath: string = pack.folder .. "/manifest.json"
         if not isfile(manifestPath) then
             return
         end
         local manifest: any = HttpService:JSONDecode(readfile(manifestPath))
         if type(manifest) ~= "table"
             or manifest.format ~= "wurst-minecraft-font-v1"
-            or manifest.version ~= "1.18.1"
+            or manifest.version ~= pack.version
             or type(manifest.runtime) ~= "table" then
-            warn("[" .. PRODUCT.logPrefix
-                .. ":Assets] MinecraftFont/ present but not the 1.18.1 pack; ignoring")
+            warn("[" .. PRODUCT.logPrefix .. ":Assets] " .. pack.folder
+                .. "/ is present but not a Minecraft " .. pack.version
+                .. " pack; ignoring")
             return
         end
-        local imagePath: string = "MinecraftFont/"
+        local imagePath: string = pack.folder .. "/"
             .. tostring(manifest.runtime.image or "runtime-ascii.png")
         if not isfile(imagePath) then
-            warn("[" .. PRODUCT.logPrefix
-                .. ":Assets] MinecraftFont/ manifest names a missing atlas; ignoring")
             return
         end
-        -- Bare, like loadConfig reads isfile/readfile: the environment
-        -- helper lives inside the asset manager's own block. getsynasset
-        -- executors are reached through the manager's registry path; the
-        -- local pack needs only the declared getcustomasset.
-        if type(getcustomasset) ~= "function" then
+        local registerAsset: any = fontEnvironment.getcustomasset
+            or fontEnvironment.getsynasset
+        if type(registerAsset) ~= "function" then
             return
         end
-        local assetOk: boolean, assetId: any = pcall(getcustomasset, imagePath)
+        local assetOk: boolean, assetId: any = pcall(registerAsset, imagePath)
         if assetOk and type(assetId) == "string" and assetId ~= "" then
-            state.bitmapText.loadExactAtlas(assetId, manifest.runtime)
-            print("[" .. PRODUCT.logPrefix
-                .. ":Assets] Minecraft 1.18.1 exact font loaded from MinecraftFont/")
+            contract.loadExactAtlas(assetId, manifest.runtime)
+            contract.source = pack.source
+            loaded = true
         end
     end)
+    return loaded
+end
+
+-- Live switch, from the UI Settings "Font pack" row: restore the
+-- fallback whole, then load the selected pack if it is really there.
+-- A missing selection warns once per selection, never a loop, and the
+-- menu keeps rendering on Monocraft. Signatures carry the atlas
+-- generation, so the one walk repaints exactly what changed.
+state.bitmapText.applyFontPack = function(selection: string): ()
+    local contract: any = state.bitmapText
+    state.fontPack = selection
+    contract.restoreFallbackAtlas()
+    if selection ~= "Monocraft" and contract.packs[selection] then
+        if not contract.probePack(selection)
+            and contract._packWarned ~= selection then
+            contract._packWarned = selection
+            warn("[" .. PRODUCT.logPrefix .. ":Assets] font pack \""
+                .. selection
+                .. "\" is not installed; rendering the Monocraft fallback (OFL)")
+        end
     end
-    if state.bitmapText.source == "minecraft-exact" then
+    for holder: any, record: any in pairs(contract._live) do
+        if holder.Parent ~= nil and record.request ~= nil then
+            pcall(function(): ()
+                contract.draw(
+                    record.request.parent,
+                    record.request.segments,
+                    record.request.options
+                )
+            end)
+        end
+    end
+    for _, listener: () -> () in ipairs(contract.onReady) do
+        pcall(listener)
+    end
+end
+
+task.spawn(function(): ()
+    if type(state.resolveAsset) ~= "function" then
+        state.bitmapText.source = "unavailable"
         return
     end
-    -- An exact atlas, if a local build registered one. Unknown keys are
-    -- an error path in the asset manager, so the probe is pcall'd and
-    -- silent — absence is the normal case, not a warning.
-    local exactId: string? = nil
-    if configuredFontMode ~= "Monocraft" then
-        pcall(function(): ()
-            exactId = (state.resolveAsset("minecraftFontAtlas"))
-        end)
-    end
-    if exactId then
-        state.bitmapText.atlas.image = exactId
-        state.bitmapText.atlas.ready = true
-        state.bitmapText.source = "minecraft-exact"
-    else
-        local assetId: string?, atlasError: string? =
-            state.resolveAsset("bitmapFontAtlas")
-        if not assetId then
-            state.bitmapText.source = "unavailable"
-            warn("[" .. PRODUCT.logPrefix .. ":Assets] no bitmap atlas ("
-                .. tostring(atlasError)
-                .. "); text renders on the vector stand-in")
-            return
+    local contract: any = state.bitmapText
+    -- The selected pack first. Packs are local optional installs
+    -- (tools/install_minecraft_font.py — never downloaded here, never
+    -- committed); the probe verifies the manifest's format and version
+    -- before trusting a pixel, so a 26.2 pack never loads into the
+    -- 1.18.1 selection or the other way round. A missing selection
+    -- warns once and the fallback renders.
+    local packLoaded: boolean = false
+    if state.fontPack ~= "Monocraft" then
+        packLoaded = contract.probePack(state.fontPack)
+        if packLoaded then
+            print("[" .. PRODUCT.logPrefix .. ":Assets] font pack loaded: "
+                .. tostring(state.fontPack))
+        elseif contract._packWarned ~= state.fontPack then
+            contract._packWarned = state.fontPack
+            warn("[" .. PRODUCT.logPrefix .. ":Assets] font pack \""
+                .. tostring(state.fontPack)
+                .. "\" is not installed; rendering the Monocraft fallback (OFL)")
         end
-        state.bitmapText.atlas.image = assetId
-        state.bitmapText.atlas.ready = true
-        state.bitmapText.source = "monocraft-fallback"
-        print("[" .. PRODUCT.logPrefix
-            .. ":Assets] Minecraft-exact atlas not present; rendering with "
-            .. "the Monocraft fallback (OFL)")
+    end
+    -- The Monocraft fallback always resolves: it is what a live switch
+    -- back to "Monocraft" restores, and what renders while no pack is
+    -- loaded. Only the no-pack path flips the visible atlas to it.
+    local assetId: string?, atlasError: string? =
+        state.resolveAsset("bitmapFontAtlas")
+    if assetId then
+        contract._fallbackImage = assetId
+        if not packLoaded then
+            contract.atlas.image = assetId
+            contract.atlas.ready = true
+            contract.atlas.generation += 1
+            contract.source = "monocraft-fallback"
+        end
         -- The crisp-scale variants, silently: each family member that
-        -- resolves is simply better pixels at its physical size, and the
-        -- signatures carry the raster choice so only surfaces whose
-        -- choice changes redo any work.
-        for _, member: any in pairs(state.bitmapText.family) do
-            if member ~= state.bitmapText.atlas and member.asset then
+        -- resolves is simply better pixels at its physical size while
+        -- the fallback renders; a loaded pack owns the raster outright.
+        for _, member: any in pairs(contract.family) do
+            if member ~= contract.atlas and member.asset then
                 pcall(function(): ()
                     local memberId: string? = (state.resolveAsset(member.asset))
                     if memberId then
@@ -2667,11 +2787,17 @@ task.spawn(function(): ()
                 end)
             end
         end
+    elseif not packLoaded then
+        contract.source = "unavailable"
+        warn("[" .. PRODUCT.logPrefix .. ":Assets] no bitmap atlas ("
+            .. tostring(atlasError)
+            .. "); text renders on the vector stand-in")
+        return
     end
-    for holder: any, record: any in pairs(state.bitmapText._live) do
+    for holder: any, record: any in pairs(contract._live) do
         if holder.Parent ~= nil and record.request ~= nil then
             pcall(function(): ()
-                state.bitmapText.draw(
+                contract.draw(
                     record.request.parent,
                     record.request.segments,
                     record.request.options
@@ -2679,12 +2805,12 @@ task.spawn(function(): ()
             end)
         end
     end
-    for _, listener: () -> () in ipairs(state.bitmapText.onReady) do
+    for _, listener: () -> () in ipairs(contract.onReady) do
         pcall(listener)
     end
 end)
 
--- A viewport or Scale-slider change moves the device scale, which moves
+-- A viewport or Scale-slider change moves the device scale-- A viewport or Scale-slider change moves the device scale, which moves
 -- every snapped rect and possibly the raster choice. One walk over the
 -- live draws; the signatures carry the scale, so an unchanged surface
 -- costs a string compare and a changed one redraws in place — no stale
@@ -3372,33 +3498,16 @@ state.mvsdFeatures = {}
 local allFeatures: {any} = {}
 local featureConnections = {}
 
--- Compatibility wrapper for the dock. Resolution and execution live only in
--- state.moduleSearch: exact normalized names and explicit aliases, never fuzzy
--- partials and never administrative Wurst Options actions.
+-- Compatibility wrapper only: the dock and anything else that wants a
+-- search goes through D's registry, state.moduleSearch.Execute. This
+-- boolean form survives for older callers and does exactly nothing more.
 state.invokeModuleSearch = function(query: string): boolean
     local search: any = state.moduleSearch
-    if not search or type(search.Execute) ~= "function" then
+    if type(search) ~= "table" or type(search.Execute) ~= "function" then
         return false
     end
     local result: any = search.Execute(query)
-    if result.status == "success" then
-        local entry: any = result.entry
-        notify(tostring(entry.displayName) .. ": "
-            .. (entry.enabled() and "enabled" or "disabled"))
-        return true
-    end
-    if result.status == "ambiguous" then
-        local names: {string} = {}
-        for _, entry: any in ipairs(result.matches or {}) do
-            table.insert(names, tostring(entry.displayName))
-        end
-        notify("Ambiguous: " .. table.concat(names, ", "))
-    elseif result.status == "not_toggleable" then
-        notify(tostring(result.entry.displayName) .. " has nothing to toggle")
-    elseif tostring(query or ""):gsub("%s", "") ~= "" then
-        notify("No module matches \"" .. tostring(query) .. "\"")
-    end
-    return false
+    return type(result) == "table" and result.status == "success"
 end
 
 -- Every module card re-applies the responsive metrics through its own
