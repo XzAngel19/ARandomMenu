@@ -1,85 +1,65 @@
 # Requests from agent C
 
 The integrator owns `ARandomMenu.luau`. Agent D owns `src/modules/**` and
-`src/games/**`. C cannot edit those. The category remap below has to land
-before the category gate can fail — turning it on today is a permanent
-red: `CATEGORY_ORDER` is still Combat / Movement / Visuals / Protection /
-Utility / Spoof.
+`src/games/**`. C cannot edit those.
 
-## Remap category windows to official Wurst
+## Landed — do not regress
 
-Require exactly this order, in `ClickGui.CATEGORY_ORDER`,
-`Framework.KNOWN_CATEGORIES`, `FEATURE_CATEGORIES` values, the manifest
-fallback and the bundle:
+- Eight official windows, in order: Combat, Render, Blocks, Movement,
+  Chat, Fun, Items, Other. Visuals / Protection / Utility / Spoof are
+  aliases, not windows. The gate fails if they come back as titles.
+- Feature rows: no star, no hamburger, no empty keybind box. `hasSettings`
+  is derived. The triangle exists only when there are options.
+- Navigator is its own screen: search, three columns, preference sort,
+  Enter, Space, arrows, Escape / Backspace, TabGUI default Disabled.
+- WurstLogo stripe at scale-2 y=12 height 22 (logical y=6..17), half
+  alpha, live `SetBackground`. Version `0.1 Beta`. Never an opaque slab.
+- UI Settings order: WurstLogo, HackList, Keybinds, WurstOptions, then
+  Background, Accent, Text, Opacity, Tooltip opacity, Max height, Max
+  settings height. Shortcuts open windows; they do not toggle.
 
-1. Combat
-2. Render
-3. Blocks
-4. Movement
-5. Chat
-6. Fun
-7. Items
-8. Other
+## Still owed
 
-Delete the windows named Visuals, Protection, Utility, Spoof. Do not
-leave empty official windows: move every card with the map in
-`docs/wurst-categories.md`.
+### WurstLogo seed colour
 
-Suggested landing:
+Furniture still names `WURSTLOGO_BACKGROUND = #000000`. Official default
+is `#FFFFFF` at half alpha (`WurstLogo.java`). The stripe draw is right;
+switch the constant to white in the same commit. Extract prints the
+black seed as ungrounded and will fail the moment the name stays and
+the value is still wrong after you change the comment to claim white.
 
-| Current | Official |
-|---|---|
-| Visuals | Render |
-| Protection | Movement (NoFall, SafeWalk) or Other |
-| Utility | Other |
-| Spoof | Fun |
-| Combat | Combat |
-| Movement | Movement |
+### Slider rail and knob
 
-Blocks and Chat may start empty only if a later module actually belongs
-there. Prefer filing existing cards into Other over opening a blank
-Blocks window.
+Java `SliderComponent` (GUI-scale-1): height 22, rail y=15..18 (3 px,
+exclusive max), inset 2, knob 8×8. At the port's GUI scale 2 that is
+rail 6, knob 16×16. Widgets still ships the prototype 5 / 7×11.
 
-The moment this lands, C will fail the gate if Visuals / Protection /
-Utility / Spoof reappear as window titles, and if the official eight are
-missing or out of order. Until then the contract lives here, not in a
-red step.
+The gate accepts prototype **or** official so you can land the Java
+numbers without a red step. A third pair fails. Extract prints the
+prototype pair as ungrounded until you switch.
 
-## WurstLogo chip
+### Checkbox glyph and shortcut chevron
 
-`WURSTLOGO_BACKGROUND` is still `#000000` and the chip stays
-`BackgroundTransparency = 1` until a player stores a colour. Official
-Wurst always fills `y=6..17` with the setting, default `#FFFFFF` at
-half alpha (`WurstLogo.java`). Restore:
+Official checkbox is a filled square, no mark. Official FeatureButtons
+have no `›`. Please drop `Text = "✓"` from `OptionCheckbox` and `Text =
+"›"` from the UI Settings shortcuts. The gate already fails `+`, `–`,
+`▪` as icons; it will fail those two the moment they are gone from the
+product, so remove them rather than replacing them with another glyph.
 
-- constant default `#FFFFFF`
-- drawn alpha 0.5
-- stripe at logical y=6..17 (12..34 at GUI scale 2)
-- live `SetBackground` already exists
-- never `BackgroundTransparency = 0`
+### Packed window width
 
-The gate already prints the `#000000` seed as ungrounded. It will fail
-the moment the constant is named and still wrong after you switch it
-back to white — so switch the constant and the draw together.
+Official windows pack to `max(font.width(name)+15, title+4)`. The port
+uses 200 (category) and 214 (settings). Recorded as a Roblox adaptation
+until you pack. Do not invent a 1080p width.
 
-## Navigator keys
+### TabGUI / Taco constants
 
-Landed: search, three-column grid, preference sort, Enter activates,
-shows with ClickGUI, hides with it. Still owed if we claim Navigator
-parity:
-
-- Space opens the selected feature's settings
-- arrows move the selection
-- Escape / Backspace close Navigator (today they do nothing extra;
-  closing ClickGUI hides it)
-
-RightShift opening ClickGUI (and therefore Navigator) is a recorded
-Roblox adaptation. Do not steal the menu key for a second surface
-unless the brief changes.
+`TABGUI_STATUS` and `TACO_ENABLED` are still owed names. Shipping no
+TabGUI matches the official Disabled default.
 
 ## Product name leftovers
 
 Do **not** change `guiName`, `blurName` or `storageFolder`.
 
-MM2 and ProjectileCalibration still hard-code `RandomTestingMenu0001`.
-That is D.
+MM2 and ProjectileCalibration still hard-code `RandomTestingMenu0001`
+and `[RTM:…]`. That is D.

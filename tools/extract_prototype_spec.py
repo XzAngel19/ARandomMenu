@@ -376,6 +376,14 @@ def check_luau(spec: dict) -> list[str]:
     pending = {}
     pending.update(spec.get("chrome") or {})
     pending.update(spec.get("components") or {})
+    # Official Wurst slider (logical, or × GUI scale 2). Accepted next
+    # to the prototype numbers so A can land SliderComponent's 3 / 8×8
+    # without the gate going permanently red.
+    official_alts = {
+        "SLIDER_BAR_HEIGHT": (3, 6),
+        "SLIDER_KNOB_WIDTH": (8, 16),
+        "SLIDER_KNOB_HEIGHT": (8, 16),
+    }
     for spec_name, wanted in pending.items():
         constant = WIDGET_CONSTANTS[spec_name]
         got = constants.get(constant)
@@ -384,10 +392,14 @@ def check_luau(spec: dict) -> list[str]:
             # edit Widgets.luau or WindowManager.luau. Once the name
             # appears, a wrong value fails and names both sides.
             continue
-        if not numbers_close(got, wanted):
-            failures.append(
-                f"{constant}: {got} != prototype spec.{spec_name} {wanted}"
-            )
+        if numbers_close(got, wanted):
+            continue
+        alts = official_alts.get(constant)
+        if alts and any(numbers_close(got, alt) for alt in alts):
+            continue
+        failures.append(
+            f"{constant}: {got} != prototype spec.{spec_name} {wanted}"
+        )
 
     failures.extend(check_wurst_settings(spec, shell, constants))
     return failures
@@ -538,6 +550,33 @@ def main() -> int:
                 f"WURSTLOGO_BACKGROUND={logo_bg} "
                 "(Wurst paints the chip #FFFFFF at half alpha; "
                 "Java WurstLogo.fill y=6..17)"
+            )
+        official_slider = (spec.get("wurst") or {}).get("widgets") or {}
+        rail = constants.get("SLIDER_BAR_HEIGHT")
+        want_rail = official_slider.get("sliderRailHeight")
+        if rail is not None and want_rail is not None and rail not in (
+            want_rail,
+            want_rail * 2,
+        ):
+            ungrounded.append(
+                f"SLIDER_BAR_HEIGHT={rail} "
+                f"(Wurst rail is {want_rail} logical, "
+                f"{want_rail * 2} at GUI scale 2; "
+                "Java SliderComponent y=15..18)"
+            )
+        knob_w = constants.get("SLIDER_KNOB_WIDTH")
+        knob_h = constants.get("SLIDER_KNOB_HEIGHT")
+        want_knob = official_slider.get("sliderKnobWidth")
+        if (
+            knob_w is not None
+            and knob_h is not None
+            and want_knob is not None
+            and (knob_w, knob_h)
+            not in ((want_knob, want_knob), (want_knob * 2, want_knob * 2))
+        ):
+            ungrounded.append(
+                f"SLIDER_KNOB={knob_w}x{knob_h} "
+                f"(Wurst knob is {want_knob}x{want_knob} logical)"
             )
         if ungrounded:
             print("ungrounded · " + " · ".join(ungrounded))

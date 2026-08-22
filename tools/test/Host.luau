@@ -537,6 +537,37 @@ function Host.create(world: any): HostStub
         end,
     })
     world.globals.Theme = host.Theme
+    -- Live writes, the same contract ThemeEngine.Set has in the shell.
+    -- The capture palette (ref-wurst-settings.jpg) is applied here
+    -- without touching SettingsPage's default constants.
+    local themeListeners: {any} = {}
+    host.ThemeEngine = {
+        shape = {
+            scale = 1,
+            opacity = 0.5,
+            tooltipOpacity = 0.75,
+            radius = 0,
+            rowHeight = 22,
+            borderThickness = 1,
+            maxHeight = 200,
+        },
+        Set = function(token: string, color: any): ()
+            themeTokens[token] = color
+            for _, listener: any in ipairs(themeListeners) do
+                listener(token, color)
+            end
+        end,
+        Bind = function(instance: any, property: string, token: string): any
+            local value: any = themeTokens[token]
+            if value then
+                instance[property] = value
+            end
+            return instance
+        end,
+        OnChange = function(listener: any): ()
+            table.insert(themeListeners, listener)
+        end,
+    }
     host.CONTROL_FONT = "Control"
     host.THIN_FONT = "Thin"
     host.TITLE_FONT = "Title"

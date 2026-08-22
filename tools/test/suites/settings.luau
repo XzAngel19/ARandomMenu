@@ -51,9 +51,35 @@ return function(ctx: any): ()
         }
     end
 
+    -- Drive SettingsPage through the real widget library so order / type
+    -- assertions see ColorBar, HexValue and OptionCheckbox, not the host
+    -- stubs. widgets.luau already inited it; reuse that return value.
+    local widgets: any = host._widgets
+    if type(widgets) ~= "table" then
+        local WidgetFile: any = require("../../../src/library/Widgets")
+        Mock.inject(world, WidgetFile.init)
+        widgets = WidgetFile.init(host)
+        host._widgets = widgets
+    end
+    local previousBuilders: {[string]: any} = {
+        addToggleOption = host.addToggleOption,
+        addNumberOption = host.addNumberOption,
+        addCycleOption = host.addCycleOption,
+        addColorOption = host.addColorOption,
+    }
+    host.addToggleOption = widgets.addToggleOption
+    host.addNumberOption = widgets.addNumberOption
+    host.addCycleOption = widgets.addCycleOption
+    host.addColorOption = widgets.addColorOption
+
     local SettingsFile: any = require("../../../src/library/SettingsPage")
     Mock.inject(world, SettingsFile.init)
     local settings: any = SettingsFile.init(host)
+    -- SettingsPage captured the real builders as locals. Put the stubs
+    -- back so later module suites keep the recording host.
+    for name: string, builder: any in pairs(previousBuilders) do
+        host[name] = builder
+    end
     check("the library returns its surface", type(settings) == "table")
 
     local windows: any = host.state.windows
