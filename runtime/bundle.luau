@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "c1343f2e027e0269",
+    stamp = "d5368ebf8f34ddfb",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -5541,6 +5541,10 @@ local SNAP_DISTANCE: number = 8
 -- tooltips, which have to be able to appear over anything.
 local BASE_Z: number = 150
 local MARGIN: number = 6
+-- Minimum clearance between two placed windows, and the offset an anchored
+-- placement leaves beside its category. 10 is ClickGui's GRID_GAP — Wurst's
+-- 5-logical first-run gap at the GUI scale 2 everything is drawn at.
+local PLACEMENT_GAP: number = 10
 -- The prototype's title bar. Named rather than inline because the parity gate
 -- reads this constant and holds it to spec.json. 26 is Wurst's own 13 logical
 -- pixels at the GUI scale 2 everything here is drawn at — C read it out of
@@ -5834,6 +5838,10 @@ function Module.init(context: any): any
                 Vector2.new(root.Size.X.Offset, root.Size.Y.Offset)
             )
             root.Position = UDim2.fromOffset(landed.X, landed.Y)
+            -- A stored position is one the user chose. Placement and reflow
+            -- must never move it; only the clamp above may, and only to keep
+            -- the window on a screen that shrank since it was saved.
+            window.userMoved = true
         end
 
         function window:SetVisible(visible: boolean): ()
@@ -5947,6 +5955,9 @@ function Module.init(context: any): any
                     or input.UserInputType == Enum.UserInputType.MouseButton1) then
                 dragging = false
                 dragInput = nil
+                -- From here on this is the user's position: reflow keeps its
+                -- hands off it, and only the viewport clamp may move it.
+                window.userMoved = true
                 persist(window)
             end
         end))
@@ -6195,19 +6206,14 @@ function Module.init(context: any): any
         end
     end
 
-    -- ------------------------------------------------------ feature settings
-    -- Wurst pops a hack's settings into a window of its own — nothing ever
-    -- expands inside a category window. One lazy window per feature, reused
-    -- on every open, cascaded on first placement so no two are born on top
-    -- of each other, packed to its widest option label, capped by Wurst's
-    -- "Max settings height", and following the GUI like every other window
-    -- unless pinned. This is the one contract: the row's triangle, the
-    -- right-click and the Navigator all come through here.
-    -- First placement by rectangle intersection: candidate slots walk a
-    -- coarse grid and the first one whose rectangle overlaps no visible
-    -- window wins. Only when the whole screen is occupied does it fall back
-    -- to stacking from the top-left — a diagonal cascade guessed blind and
-    -- still landed on whatever the guess did not know about.
+    -- ------------------------------------------------------ placement contract
+    -- Placement belongs to the manager, and every window comes through the
+    -- same four verbs: MeasureWindow reads the real footprint, FindFreeRect
+    -- picks a spot whose rectangle overlaps nothing, PlaceWindow applies one
+    -- to a window that has never been moved by hand, and ReflowWindow re-runs
+    -- the search after content has really been measured — the second
+    -- placement, because a window that chose a slot at its birth height and
+    -- then grew is standing on whatever the guess did not know about.
     local function intersects(
         ax: number, ay: number, aw: number, ah: number,
         bx: number, by: number, bw: number, bh: number
@@ -6215,8 +6221,112 @@ function Module.init(context: any): any
         return ax < bx + bw and bx < ax + aw and ay < by + bh and by < ay + ah
     end
 
-    local function freeSlot(width: number, height: number): Vector2
+    -- Every visible window's logical rectangle at its full measured size,
+    -- excluding at most the window being placed. Collapsed windows cost a
+    -- title bar; growing ones reserve the height they are about to reach.
+    local function obstacleRects(excludeWindow: any): {{number}}
+        local rects: {{number}} = {}
+        for _, other: any in ipairs(manager.list) do
+            local root: any = other.root
+            if other ~= excludeWindow and root and root.Visible ~= false then
+                local size: Vector2 = manager.MeasureWindow(other)
+                table.insert(rects, {
+                    root.Position.X.Offset,
+                    root.Position.Y.Offset,
+                    size.X,
+                    size.Y,
+                })
+            end
+        end
+        return rects
+    end
+
+    -- A candidate rectangle is free when it sits whole inside the viewport
+    -- margins and clears every obstacle by the placement gap. The obstacles
+    -- are inflated rather than the candidate, and the test is strict, so a
+    -- window parked exactly one gap from a neighbour still counts as free —
+    -- flush-plus-gap is the arrangement the anchors below aim for.
+    local function rectIsFree(
+        x: number, y: number, width: number, height: number,
+        obstacles: {{number}}
+    ): boolean
         local screen: Vector2 = logicalViewport()
+        if x < MARGIN or y < MARGIN
+            or x + width > screen.X - MARGIN
+            or y + height > screen.Y - MARGIN then
+            return false
+        end
+        for _, rect: {number} in ipairs(obstacles) do
+            if intersects(
+                x, y, width, height,
+                rect[1] - PLACEMENT_GAP, rect[2] - PLACEMENT_GAP,
+                rect[3] + PLACEMENT_GAP * 2, rect[4] + PLACEMENT_GAP * 2
+            ) then
+                return false
+            end
+        end
+        return true
+    end
+
+    -- The preferred anchor is a window or a {x, y, width, height} table.
+    local function anchorRect(preferredAnchor: any): {number}?
+        if type(preferredAnchor) ~= "table" then
+            return nil
+        end
+        local root: any = preferredAnchor.root
+        if root then
+            if root.Parent == nil then
+                return nil
+            end
+            local size: Vector2 = manager.MeasureWindow(preferredAnchor)
+            return {root.Position.X.Offset, root.Position.Y.Offset, size.X, size.Y}
+        end
+        local x: number? = tonumber(preferredAnchor.x)
+        local y: number? = tonumber(preferredAnchor.y)
+        if x and y then
+            return {
+                x, y,
+                tonumber(preferredAnchor.width) or 0,
+                tonumber(preferredAnchor.height) or 0,
+            }
+        end
+        return nil
+    end
+
+    -- Wurst parks a hack's settings beside the hack: right of its category
+    -- first, then left, then below, and only then anywhere free — the grid
+    -- scan. The fallback returns the clamped top-left corner and is reached
+    -- only when no free rectangle exists at all.
+    function manager.FindFreeRect(
+        desiredSize: Vector2,
+        preferredAnchor: any?,
+        excludeWindow: any?
+    ): Vector2
+        local width: number = desiredSize.X
+        local height: number = desiredSize.Y
+        local obstacles: {{number}} = obstacleRects(excludeWindow)
+        local screen: Vector2 = logicalViewport()
+        -- A side candidate keeps its x and slides up just enough to fit the
+        -- viewport, so "right of the category" survives a window taller than
+        -- the room left below the anchor's own y.
+        local function fitY(y: number): number
+            return math.max(MARGIN, math.min(y, screen.Y - height - MARGIN))
+        end
+
+        local anchor: {number}? = anchorRect(preferredAnchor)
+        if anchor then
+            local candidates: {{number}} = {
+                {anchor[1] + anchor[3] + PLACEMENT_GAP, fitY(anchor[2])},
+                {anchor[1] - width - PLACEMENT_GAP, fitY(anchor[2])},
+                {anchor[1], anchor[2] + anchor[4] + PLACEMENT_GAP},
+            }
+            for _, candidate: {number} in ipairs(candidates) do
+                if rectIsFree(candidate[1], candidate[2], width, height, obstacles) then
+                    return Vector2.new(candidate[1], candidate[2])
+                end
+            end
+        end
+
         local step: number = 40
         local yLimit: number = math.max(64, screen.Y - height - MARGIN)
         local xLimit: number = math.max(MARGIN, screen.X - width - MARGIN)
@@ -6224,28 +6334,107 @@ function Module.init(context: any): any
         while y <= yLimit do
             local x: number = MARGIN
             while x <= xLimit do
-                local collides: boolean = false
-                for _, other: any in ipairs(manager.list) do
-                    local root: any = other.root
-                    if root and root.Visible ~= false then
-                        if intersects(
-                            x, y, width, height,
-                            root.Position.X.Offset, root.Position.Y.Offset,
-                            root.Size.X.Offset, root.Size.Y.Offset
-                        ) then
-                            collides = true
-                            break
-                        end
-                    end
-                end
-                if not collides then
+                if rectIsFree(x, y, width, height, obstacles) then
                     return Vector2.new(x, y)
                 end
                 x += step
             end
             y += step
         end
-        return Vector2.new(MARGIN, 64)
+        return clamp(Vector2.new(MARGIN, 64), desiredSize)
+    end
+
+    -- First placement for a window the user has never dragged. A manual
+    -- position always wins; `force` exists for Reset layout, which has just
+    -- forgotten every manual position on purpose.
+    function manager.PlaceWindow(window: any, options: any?): ()
+        if not window or not window.root then
+            return
+        end
+        local opts: any = options or {}
+        if opts.anchor ~= nil then
+            window.placementAnchor = opts.anchor
+        end
+        if window.userMoved and opts.force ~= true then
+            manager.ClampWindow(window)
+            return
+        end
+        local size: Vector2 = manager.MeasureWindow(window)
+        local landed: Vector2 = manager.FindFreeRect(
+            size,
+            window.placementAnchor,
+            window
+        )
+        window.root.Position = UDim2.fromOffset(landed.X, landed.Y)
+        manager.ClampWindow(window)
+    end
+
+    -- The second placement. Called after content has really been measured:
+    -- a hand-placed window is only clamped back on screen, a placed one
+    -- stays put while its grown rectangle still fits where it is, and moves
+    -- to a fresh free rectangle — same anchor preference — when it no longer
+    -- does. Growth near a neighbour relocates instead of overlapping.
+    function manager.ReflowWindow(window: any): ()
+        if not window or not window.root then
+            return
+        end
+        if window.userMoved then
+            manager.ClampWindow(window)
+            return
+        end
+        local size: Vector2 = manager.MeasureWindow(window)
+        local x: number = window.root.Position.X.Offset
+        local y: number = window.root.Position.Y.Offset
+        if rectIsFree(x, y, size.X, size.Y, obstacleRects(window)) then
+            return
+        end
+        local landed: Vector2 = manager.FindFreeRect(
+            size,
+            window.placementAnchor,
+            window
+        )
+        window.root.Position = UDim2.fromOffset(landed.X, landed.Y)
+        manager.ClampWindow(window)
+    end
+
+    -- ------------------------------------------------------ feature settings
+    -- Wurst pops a hack's settings into a window of its own — nothing ever
+    -- expands inside a category window. One lazy window per feature, reused
+    -- on every open, packed to its widest option label, capped by Wurst's
+    -- "Max settings height", and following the GUI like every other window
+    -- unless pinned. This is the one contract: the row's triangle, the
+    -- right-click and the Navigator all come through here. Placement goes
+    -- through FindFreeRect with the feature's category window as the
+    -- preferred anchor — right of the category, like official Wurst.
+
+    -- The window the feature's row lives in, for the anchor. The row's
+    -- parent is a window body and the body's parent its root; before
+    -- ClickGui has adopted the row, the category window is still findable
+    -- through the published categories table.
+    local function categoryAnchor(feature: any): any
+        local row: any = feature and feature.row
+        local rowRoot: any = row and row.Parent and (row.Parent :: any).Parent
+        if rowRoot then
+            for _, entry: any in ipairs(manager.list) do
+                if entry.root == rowRoot then
+                    return entry
+                end
+            end
+        end
+        local gui: any = state.clickGui
+        if row and gui and type(gui.categories) == "table"
+            and type(row.GetAttribute) == "function" then
+            local raw: any = row:GetAttribute("FeatureCategory")
+            local name: any = raw
+            if type(host.normalizeFeatureCategory) == "function" then
+                name = host.normalizeFeatureCategory(raw)
+            end
+            local record: any = name and gui.categories[name]
+            if record and record.window then
+                return record.window
+            end
+        end
+        return nil
     end
 
     function manager.OpenFeatureSettings(feature: any): any
@@ -6286,7 +6475,11 @@ function Module.init(context: any): any
             TITLE_HEIGHT + (feature.optionsHeight or 40),
             expectedLimit
         )
-        local slot: Vector2 = freeSlot(width, expectedHeight)
+        local anchor: any = categoryAnchor(feature)
+        local slot: Vector2 = manager.FindFreeRect(
+            Vector2.new(width, expectedHeight),
+            anchor
+        )
 
         local window: any = manager.Create({
             id = id,
@@ -6302,6 +6495,7 @@ function Module.init(context: any): any
             end,
         })
         window.featureSettings = true
+        window.placementAnchor = anchor
         feature.settingsWindow = window
 
         -- The card's option rows move home: they were built into the card's
@@ -6326,8 +6520,12 @@ function Module.init(context: any): any
             if not window.collapsed then
                 window.root.Size = UDim2.fromOffset(width, wanted)
             end
-            -- Growing near an edge must never push the window off screen.
-            manager.ClampWindow(window)
+            -- The second placement: the slot was chosen at the birth-guess
+            -- height, and the real measure may no longer fit there. Reflow
+            -- keeps a hand-moved window where the user put it and moves a
+            -- placed one to a fresh free rectangle instead of letting it
+            -- grow over a neighbour; both end clamped on screen.
+            manager.ReflowWindow(window)
         end
         window.resizeToOptions = resizeToOptions
         resizeToOptions()
