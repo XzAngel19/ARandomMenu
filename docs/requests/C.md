@@ -1,74 +1,85 @@
 # Requests from agent C
 
 The integrator owns `ARandomMenu.luau`. Agent D owns `src/modules/**` and
-`src/games/**`. These cannot be done from `tools/` or `docs/`.
+`src/games/**`. C cannot edit those. The category remap below has to land
+before the category gate can fail — turning it on today is a permanent
+red: `CATEGORY_ORDER` is still Combat / Movement / Visuals / Protection /
+Utility / Spoof.
 
-## Rows are FeatureButtons, not cards
+## Remap category windows to official Wurst
 
-Wurst's row is a name and, when the feature has settings, an 11 px
-arrow. Cards.luau still draws a favourite star, a hamburger on every
-row, and a keybind box even when the key is empty. Drop the leftovers.
-A no-options row must not reserve space for an arrow.
+Require exactly this order, in `ClickGui.CATEGORY_ORDER`,
+`Framework.KNOWN_CATEGORIES`, `FEATURE_CATEGORIES` values, the manifest
+fallback and the bundle:
 
-The triangle that remains has to open that feature's settings window
-(already the panel today). Enabled rows paint `Theme.enabled`, not the
-accent. No `UICorner` on a row.
+1. Combat
+2. Render
+3. Blocks
+4. Movement
+5. Chat
+6. Fun
+7. Items
+8. Other
 
-## Title bar
+Delete the windows named Visuals, Protection, Utility, Spoof. Do not
+leave empty official windows: move every card with the map in
+`docs/wurst-categories.md`.
 
-Category windows: collapse + pin, no close. Settings windows add close.
-Each button is 11 GUI-scale-1 px of a 13 px bar. Prototype layout stays
-`TITLE_HEIGHT` 22 until A chooses to switch the layout spec to Wurst's
-13 — do not invent a 26/22-at-1080 rule.
+Suggested landing:
 
-## WurstLogo background
+| Current | Official |
+|---|---|
+| Visuals | Render |
+| Protection | Movement (NoFall, SafeWalk) or Other |
+| Utility | Other |
+| Spoof | Fun |
+| Combat | Combat |
+| Movement | Movement |
 
-`WURSTLOGO_BACKGROUND` is seeded `#000000`. Official Wurst always fills
-the chip (`WurstLogo.java` `fill(0, 6, width, 17)`) with the setting,
-default `#FFFFFF` at half alpha. The magenta/cyan in the screenshots is
-a user palette, not a reason to hide the chip. Restore the constant to
-`#FFFFFF` and draw it at 50% alpha. The gate prints the mismatch as
-ungrounded and does not fail.
+Blocks and Chat may start empty only if a later module actually belongs
+there. Prefer filing existing cards into Other over opening a blank
+Blocks window.
 
-## Launcher
+The moment this lands, C will fail the gate if Visuals / Protection /
+Utility / Spoof reappear as window titles, and if the official eight are
+missing or out of order. Until then the contract lives here, not in a
+red step.
 
-The pill still has an `OFF` panic glyph. Wurst's HUD has no such
-control. Panic belongs on a keybind, not on the Roblox launcher.
+## WurstLogo chip
 
-## Font
+`WURSTLOGO_BACKGROUND` is still `#000000` and the chip stays
+`BackgroundTransparency = 1` until a player stores a colour. Official
+Wurst always fills `y=6..17` with the setting, default `#FFFFFF` at
+half alpha (`WurstLogo.java`). Restore:
 
-ClickGUI, settings, tooltips, HackList and KeybindList still resolve
-through `TITLE_FONT` / `CONTROL_FONT` (BuilderSans) and RobotoMono on
-the leftover stats label. Point those surfaces at `minecraftFont`
-(Monocraft) or one central fallback. Do not scatter BuilderSans.
+- constant default `#FFFFFF`
+- drawn alpha 0.5
+- stripe at logical y=6..17 (12..34 at GUI scale 2)
+- live `SetBackground` already exists
+- never `BackgroundTransparency = 0`
 
-## Official category windows
+The gate already prints the `#000000` seed as ungrounded. It will fail
+the moment the constant is named and still wrong after you switch it
+back to white — so switch the constant and the draw together.
 
-Combat / Render / Blocks / Movement / Chat / Fun / Items / Other.
-We open Combat / Movement / Visuals / Protection / Utility / Spoof.
-The map is `docs/wurst-categories.md`. Do not open empty Wurst windows.
+## Navigator keys
 
-## Navigator
+Landed: search, three-column grid, preference sort, Enter activates,
+shows with ClickGUI, hides with it. Still owed if we claim Navigator
+parity:
 
-Not a window under the logo. Navigator is a full-screen GUI. TabGUI is
-the left-edge HUD, default Disabled. The version string (`0.1 Beta`)
-sits next to the sausage.
+- Space opens the selected feature's settings
+- arrows move the selection
+- Escape / Backspace close Navigator (today they do nothing extra;
+  closing ClickGUI hides it)
+
+RightShift opening ClickGUI (and therefore Navigator) is a recorded
+Roblox adaptation. Do not steal the menu key for a second surface
+unless the brief changes.
 
 ## Product name leftovers
 
 Do **not** change `guiName`, `blurName` or `storageFolder`.
 
-- mobile launcher fallback `Text = "RTM"`
-- `print("[RTM] build loader-v3")`
-- previous display names in Cards / FloatingWindows / SettingsPage / Widgets
-- MM2 and ProjectileCalibration still hard-code `RandomTestingMenu0001`
-
-## Wordmark
-
-Landed: `wurstLogo` → `assets/wurst/wurst_128.png`. Do not point it at
-`menu-logo.jpg` or `brandLogo`. The phone circle may keep `brandLogo`
-until that circle goes away.
-
-Logo blit is **72×18**. Furniture draws 87×22 (or 118×30 after A's
-later pass — check the constant). Wurst numbers stay in
-`spec.json` `wurst.chrome`.
+MM2 and ProjectileCalibration still hard-code `RandomTestingMenu0001`.
+That is D.
