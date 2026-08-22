@@ -132,6 +132,7 @@ export type MenuState = {
     animationsEnabled: boolean,                     -- Whether the interface animates
     mobileButtonSize: number,                       -- Pixel size of placed phone shortcuts
     clickGui: any,                                  -- Wurst's layout: one window per category, cards placed into them
+    moduleSearch: any,                              -- GUI-independent exact module registry: Resolve/Execute over the fixed 38-card inventory
     hudList: any,                                   -- Wurst's HackList: the on-screen list of enabled modules and their card.status brackets
     navigator: any,                                 -- Wurst's Navigator adaptation: the search and preference-ordered grid under the logo
     wurstLogo: any,                                 -- The logo chip's live setters, driven by the WurstLogo settings window
