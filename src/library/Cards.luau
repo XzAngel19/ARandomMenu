@@ -36,6 +36,8 @@ function Module.init(context: any): any
     local Theme: any = host.Theme
     local CONTROL_FONT: any = host.CONTROL_FONT
     local trackUiConnection: any = host.trackUiConnection
+    local beginKeyCapture: any = host.beginKeyCapture
+    local UserInputService: any = host.UserInputService
     local applyKeySlotStyle: any = host.applyKeySlotStyle
     local bindActionShortcut: any = host.bindActionShortcut
     local getFeatureCardParent: any = host.getFeatureCardParent
@@ -217,6 +219,11 @@ function Module.init(context: any): any
                     ZIndex = 7,
                     align = "Center",
                     transparency = feature.titleTransparency or 0,
+                    -- The row is 196 inside the category window's padding;
+                    -- 28 px of symmetric clearance keeps the bind square
+                    -- (left) and the settings arrow (right) out of the
+                    -- name without moving its centre a pixel.
+                    maxWidth = 140,
                 })
             end
             feature.drawTitle(Theme.text, 0)
@@ -227,8 +234,12 @@ function Module.init(context: any): any
             -- Wurst centres the hack's name on the whole row — ref-wurst-719 —
             -- and the settings arrow floats over the right end without moving
             -- that centre, so the label always spans the full row.
-            label.Position = UDim2.fromOffset(0, 0)
-            label.Size = UDim2.new(1, 0, 0, feature.collapsedHeight)
+            -- Symmetric 28 px insets: the bind square floats on the left
+            -- and the arrow on the right, and neither may invade the name
+            -- — nor may the name's centre move, so the clearance is the
+            -- same on both sides.
+            label.Position = UDim2.fromOffset(28, 0)
+            label.Size = UDim2.new(1, -56, 0, feature.collapsedHeight)
             label.TextXAlignment = Enum.TextXAlignment.Center
             label.TextTruncate = Enum.TextTruncate.AtEnd
             label.TextColor3 = state.guiStyle == "Default"
@@ -589,6 +600,247 @@ function Module.init(context: any): any
         end
 
 
+
+        -- ------------------------------------------------- keybind square
+        -- A small permanent square on the row's left end, for bindable
+        -- modules only: toggles and holds. Never groups, never action
+        -- cards (Rejoin runs once; it is not a binding surface), never a
+        -- feature without a registered binding. A user-approved addition
+        -- drawn in Wurst's grammar: flat rectangle, thin stroke, no
+        -- corner, no glyph, no "Press a key" — the capturing tint is the
+        -- canonical setKeySlotCapture recolour, which finds the stroke by
+        -- its StyleStroke name. Capture and assignment go through the one
+        -- keybind machine (beginKeyCapture + binding.assign): Escape
+        -- cancels globally, a press off the square cancels, clicking the
+        -- square again cancels, Backspace/Delete clears, and nothing in
+        -- any path reads or writes feature.enabled or calls activate.
+        -- Hidden while no physical keyboard exists; one arriving shows it.
+        if (feature.kind == "toggle" or feature.kind == "hold")
+            and not state.isMobile
+            and type(beginKeyCapture) == "function"
+            and type(state.shortcutBindings) == "table"
+            and state.shortcutBindings[feature.configKey] ~= nil then
+            local binding: any = state.shortcutBindings[feature.configKey]
+            local UNBOUND_BG: Color3 = Color3.fromRGB(0, 0, 0)
+            local BOUND_BG: Color3 = Color3.fromRGB(0, 80, 0)
+            local CONFLICT_BG: Color3 = Color3.fromRGB(80, 0, 0)
+            local BOUND_EDGE: Color3 = Color3.fromRGB(0, 204, 0)
+            local CONFLICT_EDGE: Color3 = Color3.fromRGB(204, 0, 0)
+            local square: TextButton = (create("TextButton", {
+                TextTruncate = Enum.TextTruncate.AtEnd,
+                Parent = row,
+                Name = "BindSquare",
+                Active = true,
+                AnchorPoint = Vector2.new(0, 0.5),
+                AutoButtonColor = false,
+                BackgroundColor3 = UNBOUND_BG,
+                BackgroundTransparency = 0.55,
+                BorderSizePixel = 0,
+                FontFace = CONTROL_FONT,
+                Position = UDim2.new(0, 4, 0.5, 0),
+                Size = UDim2.fromOffset(12, 12),
+                Text = "",
+                -- The canonical capturer writes "..." into its button; the
+                -- square never shows text, so its ink stays invisible and
+                -- the state reads from colour alone.
+                TextTransparency = 1,
+                TextSize = 8,
+                ZIndex = 8,
+            }) :: any) :: TextButton
+            square:SetAttribute("CaptureIdleText", "")
+            local edge: UIStroke = (create("UIStroke", {
+                Parent = square,
+                Name = "StyleStroke",
+                Color = Theme.outline,
+                Thickness = 1,
+                Transparency = 0.6,
+            }) :: any) :: UIStroke
+
+            local capturing: boolean = false
+            local function conflictWith(): any
+                if binding.key == nil or binding.key == Enum.KeyCode.Unknown then
+                    return nil
+                end
+                for _, other: any in pairs(state.shortcutBindings) do
+                    if other ~= binding and other.key == binding.key then
+                        return other
+                    end
+                end
+                return nil
+            end
+            local function syncSquare(): ()
+                if capturing then
+                    return
+                end
+                local bound: boolean = binding.key ~= nil
+                    and binding.key ~= Enum.KeyCode.Unknown
+                local conflict: any = bound and conflictWith() or nil
+                if conflict then
+                    square.BackgroundColor3 = CONFLICT_BG
+                    square.BackgroundTransparency = 0.35
+                    edge.Color = CONFLICT_EDGE
+                    edge.Transparency = 0.15
+                elseif bound then
+                    square.BackgroundColor3 = BOUND_BG
+                    square.BackgroundTransparency = 0.35
+                    edge.Color = BOUND_EDGE
+                    edge.Transparency = 0.25
+                else
+                    square.BackgroundColor3 = UNBOUND_BG
+                    square.BackgroundTransparency = 0.55
+                    edge.Color = Theme.outline
+                    edge.Transparency = 0.6
+                end
+            end
+            feature.bindSquare = square
+            feature.syncBindSquare = syncSquare
+            syncSquare()
+
+            -- No physical keyboard, no square; one arriving shows it.
+            local function syncKeyboard(): ()
+                square.Visible = UserInputService == nil
+                    or UserInputService.KeyboardEnabled ~= false
+            end
+            syncKeyboard()
+            pcall(function(): ()
+                trackUiConnection(
+                    UserInputService:GetPropertyChangedSignal("KeyboardEnabled")
+                        :Connect(syncKeyboard)
+                )
+            end)
+
+            -- Tooltip after the same 400 ms every card surface waits: the
+            -- key when bound, the conflict by name when conflicted.
+            local function tipText(): string
+                local bound: boolean = binding.key ~= nil
+                    and binding.key ~= Enum.KeyCode.Unknown
+                if not bound then
+                    return "Bind: click, then press a key"
+                end
+                local conflict: any = conflictWith()
+                if conflict then
+                    return binding.key.Name .. " — also bound to "
+                        .. tostring(conflict.id)
+                end
+                return "Bound: " .. binding.key.Name
+            end
+            trackUiConnection(square.MouseEnter:Connect(function(): ()
+                local tooltip: any = state.featureTooltip
+                if not tooltip then
+                    return
+                end
+                state.tooltipToken = (state.tooltipToken or 0) + 1
+                local token: number = state.tooltipToken
+                task.delay(0.4, function(): ()
+                    if state.tooltipToken ~= token or not square.Parent then
+                        return
+                    end
+                    tooltip.Text = tipText()
+                    tooltip.TextTransparency = 1
+                    tooltip.Size = UDim2.fromOffset(
+                        math.clamp(#tooltip.Text * 8 + 24, 140, 360), 30
+                    )
+                    tooltip.Position = UDim2.fromOffset(
+                        square.AbsolutePosition.X,
+                        square.AbsolutePosition.Y + square.AbsoluteSize.Y + 8
+                    )
+                    if state.bitmapText and type(state.bitmapText.draw) == "function" then
+                        state.bitmapText.draw(tooltip, {
+                            {text = tooltip.Text},
+                        }, {
+                            Name = "Glyphs",
+                            TextSize = 16,
+                            ZIndex = 251,
+                        })
+                    end
+                    tooltip.Visible = true
+                end)
+            end))
+            trackUiConnection(square.MouseLeave:Connect(function(): ()
+                state.tooltipToken = (state.tooltipToken or 0) + 1
+                if state.featureTooltip then
+                    state.featureTooltip.Visible = false
+                end
+            end))
+
+            local outsideConnection: RBXScriptConnection? = nil
+            local function cleanupCapture(): ()
+                capturing = false
+                if outsideConnection then
+                    pcall(function(): ()
+                        (outsideConnection :: RBXScriptConnection):Disconnect()
+                    end)
+                    outsideConnection = nil
+                end
+                syncSquare()
+                -- The canonical machine tweens the button back to the
+                -- neutral slot colours as it releases; one more sync after
+                -- that motion lands keeps the square's own state colours.
+                task.delay(0.2, function(): ()
+                    if square.Parent and not capturing then
+                        syncSquare()
+                    end
+                end)
+            end
+            trackUiConnection(square.MouseButton1Click:Connect(function(): ()
+                if capturing then
+                    -- Clicking the square again cancels the capture.
+                    if state.keyCaptureCancel then
+                        state.keyCaptureCancel()
+                    else
+                        cleanupCapture()
+                    end
+                    return
+                end
+                capturing = true
+                beginKeyCapture(square, function(keyCode: Enum.KeyCode): ()
+                    -- Backspace / Delete clear; the canonical clear is
+                    -- assigning the key that is already bound. Nothing
+                    -- here touches enabled or activate.
+                    local backspaceKey: any = (Enum.KeyCode :: any).Backspace
+                    local deleteKey: any = (Enum.KeyCode :: any).Delete
+                    if keyCode == backspaceKey or keyCode == deleteKey then
+                        if binding.key ~= Enum.KeyCode.Unknown
+                            and type(binding.assign) == "function" then
+                            binding.assign(binding.key)
+                        end
+                    elseif type(binding.assign) == "function" then
+                        binding.assign(keyCode)
+                    end
+                    cleanupCapture()
+                end)
+                -- Chain the canonical cancel so Escape — or another capture
+                -- stealing the machine — restores the square's own colours.
+                local baseCancel: any = state.keyCaptureCancel
+                state.keyCaptureCancel = function(): ()
+                    if baseCancel then
+                        baseCancel()
+                    end
+                    cleanupCapture()
+                end
+                -- A press anywhere off the square cancels the capture.
+                pcall(function(): ()
+                    outsideConnection = UserInputService.InputBegan:Connect(function(
+                        input: InputObject
+                    ): ()
+                        if input.UserInputType ~= Enum.UserInputType.MouseButton1
+                            and input.UserInputType ~= Enum.UserInputType.Touch then
+                            return
+                        end
+                        local px: number = input.Position.X
+                        local py: number = input.Position.Y
+                        local ax: number = square.AbsolutePosition.X
+                        local ay: number = square.AbsolutePosition.Y
+                        if px < ax or px > ax + square.AbsoluteSize.X
+                            or py < ay or py > ay + square.AbsoluteSize.Y then
+                            if state.keyCaptureCancel then
+                                state.keyCaptureCancel()
+                            end
+                        end
+                    end)
+                end)
+            end))
+        end
 
         -- Point at the card, press a key, the card owns that key — the same
         -- gesture the reference interface uses instead of a capture dialog.
