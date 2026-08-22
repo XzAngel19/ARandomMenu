@@ -939,6 +939,14 @@ function Module.init(context: any): WidgetLibrary
             Transparency = 0.4,
             Thickness = 1,
         })
+        -- Every entry the list is about to hold draws on the bitmap
+        -- contract; the sweep's connection dies with the list.
+        do
+            local bitmap: any = state.bitmapText
+            if bitmap and type(bitmap.adoptTree) == "function" then
+                bitmap.adoptTree(list)
+            end
+        end
 
         local filterBox: TextBox? = nil
         if searchable then
@@ -1633,6 +1641,14 @@ function Module.init(context: any): WidgetLibrary
                 Visible = false,
                 ZIndex = 460,
             })
+            -- The picker's labels and buttons render on the bitmap
+            -- contract too; the panel is persistent, so the sweep is.
+            do
+                local bitmap: any = state.bitmapText
+                if bitmap and type(bitmap.adoptTree) == "function" then
+                    bitmap.adoptTree(panel)
+                end
+            end
 
             local title = makeTextLabel(panel, "COLOR", 14)
             title.FontFace = CONTROL_FONT

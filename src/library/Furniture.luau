@@ -687,6 +687,15 @@ function Module.init(context: any): any
         Visible = false,
         ZIndex = 246,
     }) :: any) :: Frame
+    -- Navigator cells are rebuilt on every query; the sweep adopts each
+    -- generation onto the bitmap contract as it appears. The search box
+    -- is a TextBox and stays native — a caret over hidden text is a bug.
+    do
+        local bitmap: any = state.bitmapText
+        if bitmap and type(bitmap.adoptTree) == "function" then
+            table.insert(Furniture.connections, bitmap.adoptTree(navScreen))
+        end
+    end
 
     local navColumn: Frame = (create("Frame", {
         Parent = navScreen,

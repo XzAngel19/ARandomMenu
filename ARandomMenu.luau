@@ -363,7 +363,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "15b6d76fccdd6f30"
+local SOURCE_STAMP: string = "d7eb21ccb8e5ec7c"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -2185,6 +2185,8 @@ state.bitmapText.draw = function(
                 TextColor3 = Theme.text,
             })
             record.fallback = fallback
+            -- Inoculated against adoption: this label IS the renderer.
+            contract._adopted[fallback] = true
         end
         local label: TextLabel = fallback :: TextLabel
         label.Visible = true
@@ -2247,6 +2249,12 @@ state.bitmapText.adopt = function(label: any, options: any?): ()
     if contract._adopted[label] then
         return
     end
+    -- Never adopt the renderer's own output: the fallback label inside a
+    -- draw holder would otherwise be adopted, hidden, and redrawn into
+    -- itself forever.
+    if label.Parent ~= nil and contract._live[label.Parent] ~= nil then
+        return
+    end
     local resolvedOptions: any = options or {}
     contract._adopted[label] = true
     label.TextTransparency = 1
@@ -2270,24 +2278,40 @@ state.bitmapText.adopt = function(label: any, options: any?): ()
     end
     paint()
     -- The signals belong to the label, so Destroy disconnects them; no
-    -- separate tracking needed, and no leak survives the surface.
-    label:GetPropertyChangedSignal("Text"):Connect(paint)
-    label:GetPropertyChangedSignal("TextColor3"):Connect(paint)
-    label:GetPropertyChangedSignal("TextSize"):Connect(paint)
+    -- separate tracking needed, and no leak survives the surface. The
+    -- harness's mock instances may not carry every property signal —
+    -- adoption still paints once there.
+    pcall(function(): ()
+        label:GetPropertyChangedSignal("Text"):Connect(paint)
+        label:GetPropertyChangedSignal("TextColor3"):Connect(paint)
+        label:GetPropertyChangedSignal("TextSize"):Connect(paint)
+    end)
 end
 
 -- Adopt every current and future text object under a root — the one
 -- call that migrates a settings window whose rows are still being
--- built. Returns the connection so the caller can park it with the
--- window's own cleanup.
-state.bitmapText.adoptTree = function(root: Instance, options: any?): RBXScriptConnection
+-- built. Returns a disconnectable so the caller can park it with the
+-- window's own cleanup; a stub when the environment lacks
+-- DescendantAdded, so callers never branch.
+state.bitmapText.adoptTree = function(root: Instance, options: any?): any
     local contract: any = state.bitmapText
-    for _, descendant: Instance in ipairs(root:GetDescendants()) do
-        contract.adopt(descendant, options)
-    end
-    return root.DescendantAdded:Connect(function(descendant: Instance): ()
-        contract.adopt(descendant, options)
+    pcall(function(): ()
+        for _, descendant: Instance in ipairs(root:GetDescendants()) do
+            contract.adopt(descendant, options)
+        end
     end)
+    local connected: boolean, connection: any = pcall(function(): any
+        return root.DescendantAdded:Connect(function(descendant: Instance): ()
+            contract.adopt(descendant, options)
+        end)
+    end)
+    if connected and connection then
+        return connection
+    end
+    return {
+        Connected = false,
+        Disconnect = function(): () end,
+    }
 end
 
 

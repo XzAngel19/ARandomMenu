@@ -1066,13 +1066,23 @@ function Module.init(context: any): any
 
         -- The card's option rows move home: they were built into the card's
         -- hidden panel and live in this window from now on. The category
-        -- window keeps exactly its height and rows.
+        -- window keeps exactly its height and rows. Every text object in
+        -- the tree — labels, values, RUN buttons, rows added later — is
+        -- adopted onto the bitmap contract; the sweep's connection dies
+        -- with the window.
         local options: any = feature.options
         if options then
             options.Visible = true
             options.Position = UDim2.fromOffset(0, 0)
             options.Size = UDim2.new(1, 0, 0, feature.optionsHeight or 40)
             options.Parent = window.body
+            local bitmapText: any = state.bitmapText
+            if bitmapText and type(bitmapText.adoptTree) == "function" then
+                table.insert(
+                    window.connections,
+                    bitmapText.adoptTree(options)
+                )
+            end
         end
 
         local function resizeToOptions(): ()

@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "15b6d76fccdd6f30",
+    stamp = "d7eb21ccb8e5ec7c",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -1208,6 +1208,14 @@ function Module.init(context: any): WidgetLibrary
             Transparency = 0.4,
             Thickness = 1,
         })
+        -- Every entry the list is about to hold draws on the bitmap
+        -- contract; the sweep's connection dies with the list.
+        do
+            local bitmap: any = state.bitmapText
+            if bitmap and type(bitmap.adoptTree) == "function" then
+                bitmap.adoptTree(list)
+            end
+        end
 
         local filterBox: TextBox? = nil
         if searchable then
@@ -1902,6 +1910,14 @@ function Module.init(context: any): WidgetLibrary
                 Visible = false,
                 ZIndex = 460,
             })
+            -- The picker's labels and buttons render on the bitmap
+            -- contract too; the panel is persistent, so the sweep is.
+            do
+                local bitmap: any = state.bitmapText
+                if bitmap and type(bitmap.adoptTree) == "function" then
+                    bitmap.adoptTree(panel)
+                end
+            end
 
             local title = makeTextLabel(panel, "COLOR", 14)
             title.FontFace = CONTROL_FONT
@@ -6576,13 +6592,23 @@ function Module.init(context: any): any
 
         -- The card's option rows move home: they were built into the card's
         -- hidden panel and live in this window from now on. The category
-        -- window keeps exactly its height and rows.
+        -- window keeps exactly its height and rows. Every text object in
+        -- the tree — labels, values, RUN buttons, rows added later — is
+        -- adopted onto the bitmap contract; the sweep's connection dies
+        -- with the window.
         local options: any = feature.options
         if options then
             options.Visible = true
             options.Position = UDim2.fromOffset(0, 0)
             options.Size = UDim2.new(1, 0, 0, feature.optionsHeight or 40)
             options.Parent = window.body
+            local bitmapText: any = state.bitmapText
+            if bitmapText and type(bitmapText.adoptTree) == "function" then
+                table.insert(
+                    window.connections,
+                    bitmapText.adoptTree(options)
+                )
+            end
         end
 
         local function resizeToOptions(): ()
@@ -8867,6 +8893,18 @@ function Module.init(context: any): any
         if definition.anchor ~= nil then
             window.placementAnchor = definition.anchor
         end
+        -- Every label, value and action row this window will ever hold
+        -- renders on the bitmap contract; the sweep follows rows built
+        -- later and its connection dies with the window.
+        do
+            local bitmapText: any = state.bitmapText
+            if bitmapText and type(bitmapText.adoptTree) == "function" then
+                table.insert(
+                    window.connections,
+                    bitmapText.adoptTree(window.body)
+                )
+            end
+        end
         local layout: UIListLayout = (create("UIListLayout", {
             Parent = window.body,
             Padding = UDim.new(0, WINDOW_GAP),
@@ -11089,6 +11127,15 @@ function Module.init(context: any): any
         Visible = false,
         ZIndex = 246,
     }) :: any) :: Frame
+    -- Navigator cells are rebuilt on every query; the sweep adopts each
+    -- generation onto the bitmap contract as it appears. The search box
+    -- is a TextBox and stays native — a caret over hidden text is a bug.
+    do
+        local bitmap: any = state.bitmapText
+        if bitmap and type(bitmap.adoptTree) == "function" then
+            table.insert(Furniture.connections, bitmap.adoptTree(navScreen))
+        end
+    end
 
     local navColumn: Frame = (create("Frame", {
         Parent = navScreen,

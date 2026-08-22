@@ -167,6 +167,18 @@ function Module.init(context: any): any
         if definition.anchor ~= nil then
             window.placementAnchor = definition.anchor
         end
+        -- Every label, value and action row this window will ever hold
+        -- renders on the bitmap contract; the sweep follows rows built
+        -- later and its connection dies with the window.
+        do
+            local bitmapText: any = state.bitmapText
+            if bitmapText and type(bitmapText.adoptTree) == "function" then
+                table.insert(
+                    window.connections,
+                    bitmapText.adoptTree(window.body)
+                )
+            end
+        end
         local layout: UIListLayout = (create("UIListLayout", {
             Parent = window.body,
             Padding = UDim.new(0, WINDOW_GAP),
