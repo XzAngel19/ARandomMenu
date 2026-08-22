@@ -16,6 +16,14 @@ return function(ctx: any): ()
 
     section("Cards")
 
+    -- The settings-window contract lives on the window manager; the factory
+    -- opens option panels through it, so the suite needs the real manager.
+    if host.state.windows == nil then
+        local WindowFile: any = require("../../../src/library/WindowManager")
+        Mock.inject(world, WindowFile.init)
+        WindowFile.init(host)
+    end
+
     host.FEATURE_CATEGORIES = {
         Fly = "Movement",
         ["Kill Aura"] = "Combat",
@@ -130,9 +138,21 @@ return function(ctx: any): ()
     expandable.updateExpandedSize(false)
     check("an option row publishes hasSettings", expandable.hasSettings == true)
     check("the options panel starts closed", expandable.options.Visible == false)
+    local rowHeightBefore: number = expandable.row.Size.Y.Offset
     expandable.arrow.MouseButton1Click:Fire()
-    check("expanding a card with options shows the panel",
-        expandable.expanded == true and expandable.options.Visible == true)
+    check("the triangle opens a settings window of its own",
+        expandable.expanded == true
+            and expandable.settingsWindow ~= nil
+            and expandable.options.Visible == true)
+    check("the options moved into that window",
+        expandable.options.Parent == expandable.settingsWindow.body)
+    check("the category row keeps exactly its height",
+        expandable.row.Size.Y.Offset == rowHeightBefore,
+        tostring(expandable.row.Size.Y.Offset))
+    local firstWindow: any = expandable.settingsWindow
+    expandable.arrow.MouseButton1Click:Fire()
+    check("reopening reuses the window, never duplicates",
+        expandable.settingsWindow == firstWindow)
 
     local bare: any = createCard("Anti-AFK", "Nothing to configure", 6, function(): () end, {
         noOptions = true,

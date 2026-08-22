@@ -91,19 +91,43 @@ return function(ctx: any): ()
             or windows.Get(string.lower(id)) ~= nil
     end
 
-    -- The shared category contract: one stable window per official Wurst
-    -- category, present even when the category is empty at boot.
-    for _, category: string in ipairs({
-        "Combat",
-        "Render",
-        "Blocks",
-        "Movement",
-        "Chat",
-        "Fun",
-        "Items",
-        "Other",
-    }) do
-        check("one window for " .. category, hasWindow(category))
+    -- The shared category contract: one window per official Wurst category
+    -- that holds a module; an empty category keeps its place in the
+    -- contract and draws nothing.
+    local bootAliases: {[string]: string} = {
+        Visuals = "Render", Protection = "Movement", Utility = "Other",
+        Spoof = "Fun", General = "Other", Player = "Movement",
+    }
+    local bootOfficial: {string} = {
+        "Combat", "Render", "Blocks", "Movement",
+        "Chat", "Fun", "Items", "Other",
+    }
+    local bootPopulated: {[string]: boolean} = {}
+    for _, feature: any in ipairs(host.allFeatures or {}) do
+        -- Only carded features count: place() files a card by its row's
+        -- attribute and skips a feature that has no row at all, so a
+        -- rowless stub must not make the suite demand a window.
+        local raw: any = feature.row
+            and feature.row.GetAttribute
+            and feature.row:GetAttribute("FeatureCategory")
+        if raw == nil then
+            continue
+        end
+        local name: string = tostring(raw)
+        if table.find(bootOfficial, name) == nil then
+            name = bootAliases[name] or "Other"
+        end
+        bootPopulated[name] = true
+    end
+    for _, category: string in ipairs(bootOfficial) do
+        if bootPopulated[category] then
+            check("one window for " .. category, hasWindow(category))
+        else
+            check(
+                "empty category " .. category .. " draws no window",
+                not hasWindow(category)
+            )
+        end
     end
     for _, inherited: string in ipairs({
         "Visuals", "Protection", "Utility", "Spoof", "General",

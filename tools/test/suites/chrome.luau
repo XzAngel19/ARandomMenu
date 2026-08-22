@@ -56,19 +56,44 @@ return function(ctx: any): ()
             )
     end
 
-    -- The shared contract: official Wurst 7's eight windows, all present
-    -- from boot, and none of the port's old names left as a visible window.
-    for _, name: string in ipairs({
-        "Combat",
-        "Render",
-        "Blocks",
-        "Movement",
-        "Chat",
-        "Fun",
-        "Items",
-        "Other",
-    }) do
-        check("official category window " .. name, hasWindow(name))
+    -- The shared contract: a window exists exactly when its official
+    -- category holds a module. Blocks, Items and Chat stay in the contract
+    -- but draw nothing while they are empty; the old port names never
+    -- appear as windows.
+    local aliases: {[string]: string} = {
+        Visuals = "Render", Protection = "Movement", Utility = "Other",
+        Spoof = "Fun", General = "Other", Player = "Movement",
+    }
+    local official: {string} = {
+        "Combat", "Render", "Blocks", "Movement",
+        "Chat", "Fun", "Items", "Other",
+    }
+    local populated: {[string]: boolean} = {}
+    for _, feature: any in ipairs(host.allFeatures or {}) do
+        -- Only carded features count: place() files a card by its row's
+        -- attribute and skips a feature that has no row at all, so a
+        -- rowless stub must not make the suite demand a window.
+        local raw: any = feature.row
+            and feature.row.GetAttribute
+            and feature.row:GetAttribute("FeatureCategory")
+        if raw == nil then
+            continue
+        end
+        local name: string = tostring(raw)
+        if table.find(official, name) == nil then
+            name = aliases[name] or "Other"
+        end
+        populated[name] = true
+    end
+    for _, name: string in ipairs(official) do
+        if populated[name] then
+            check("official category window " .. name, hasWindow(name))
+        else
+            check(
+                "empty category " .. name .. " draws no window",
+                not hasWindow(name)
+            )
+        end
     end
     for _, name: string in ipairs({
         "Visuals",

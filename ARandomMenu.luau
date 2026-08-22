@@ -363,7 +363,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "0a46e3f41ff7c831"
+local SOURCE_STAMP: string = "863c7ec581d6f7b5"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -4012,6 +4012,15 @@ local function registerPlaceModule(
                 end
                 if feature.row and feature.row.Parent then
                     feature.row:Destroy()
+                end
+                -- A popped-out settings window belongs to its feature; a
+                -- feature that goes takes the window, or the window leaks
+                -- with the option rows still parented inside it.
+                if feature.settingsWindow then
+                    pcall(function(): ()
+                        feature.settingsWindow:Destroy()
+                    end)
+                    feature.settingsWindow = nil
                 end
                 table.remove(allFeatures, index)
                 if state.floatingUi and state.floatingUi.unregisterFeature then

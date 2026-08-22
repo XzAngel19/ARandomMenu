@@ -136,6 +136,7 @@ export type MenuState = {
     navigator: any,                                 -- Wurst's Navigator adaptation: the search and preference-ordered grid under the logo
     wurstLogo: any,                                 -- The logo chip's live setters, driven by the WurstLogo settings window
     uiMaxHeight: number,                            -- Wurst's ClickGUI "Max height" in pixels; 0 means no limit, read by every category window
+    uiMaxSettingsHeight: number,                    -- Wurst's "Max settings height", capping every popped-out feature settings window
     uiSettings: any,                                -- The UI Settings window's current values, readable without walking its rows
     pill: any,                                      -- The floating pill toolbar: the launcher, and the one chrome that outlives closing the GUI
     refreshLauncher: () -> (),                      -- Re-evaluate the fallback mobile circle; the pill supersedes it while it exists

@@ -76,6 +76,27 @@ local CATEGORY_ORDER: {string} = {
     "Other",
 }
 
+-- The same aliases the shell and the Framework carry — the contract is one,
+-- copied because a downloaded file cannot reach the shell's locals at
+-- require time, and because the harness boots this file against a host that
+-- predates the contract.
+local CATEGORY_ALIASES: {[string]: string} = {
+    ["Visuals"] = "Render",
+    ["Protection"] = "Movement",
+    ["Utility"] = "Other",
+    ["Spoof"] = "Fun",
+    ["General"] = "Other",
+    ["Player"] = "Movement",
+}
+
+local function fallbackNormalize(raw: any): string
+    local name: string = tostring(raw or "Other")
+    if table.find(CATEGORY_ORDER, name) ~= nil then
+        return name
+    end
+    return CATEGORY_ALIASES[name] or "Other"
+end
+
 function Module.init(context: any): any
     local host: any = context
     local state: any = host.state
@@ -218,7 +239,7 @@ function Module.init(context: any): any
         local raw: any = (row :: Frame):GetAttribute("FeatureCategory")
         local name: string = type(normalizeFeatureCategory) == "function"
             and normalizeFeatureCategory(raw)
-            or tostring(raw or "Other")
+            or fallbackNormalize(raw)
         local record: CategoryWindow = categoryWindow(name)
         record.count += 1;
         (row :: Frame).Parent = record.window.body;
@@ -253,11 +274,27 @@ function Module.init(context: any): any
         end
     end
 
-    -- Categories that exist before a single card does, so the grid comes out in
-    -- Wurst's order rather than in whichever order the modules happened to
-    -- finish loading.
+    -- One window per category that actually holds a module, tiled in the
+    -- official order with the empty ones omitted — Blocks, Items and Chat
+    -- stay in the contract but draw nothing while nothing lives in them.
+    -- The first pass walks the official order so the grid comes out in
+    -- Wurst's sequence rather than module-load order; a category that gains
+    -- its first module later gets its window then, at the next free slot.
+    local function resolvedCategory(feature: any): string
+        local row: any = feature and feature.row
+        local raw: any = row and row:GetAttribute("FeatureCategory")
+        if type(normalizeFeatureCategory) == "function" then
+            return normalizeFeatureCategory(raw)
+        end
+        return fallbackNormalize(raw)
+    end
     for _, name: string in ipairs(CATEGORY_ORDER) do
-        categoryWindow(name)
+        for _, feature: any in ipairs(allFeatures) do
+            if resolvedCategory(feature) == name then
+                categoryWindow(name)
+                break
+            end
+        end
     end
 
     -- Cards built before this library started — which is all of them, since the

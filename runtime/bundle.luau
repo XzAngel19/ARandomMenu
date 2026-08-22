@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "0a46e3f41ff7c831",
+    stamp = "863c7ec581d6f7b5",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -4851,8 +4851,6 @@ function Module.init(context: any): any
     local notify: any = host.notify
     local Theme: any = host.Theme
     local CONTROL_FONT: any = host.CONTROL_FONT
-    local TweenService: any = host.TweenService
-    local UI_MOTION: any = host.UI_MOTION
     local trackUiConnection: any = host.trackUiConnection
     local applyKeySlotStyle: any = host.applyKeySlotStyle
     local bindActionShortcut: any = host.bindActionShortcut
@@ -5152,10 +5150,11 @@ function Module.init(context: any): any
             SortOrder = Enum.SortOrder.LayoutOrder,
         }) :: any) :: UIListLayout
 
-        local function updateExpandedSize(animate: boolean?): ()
-            -- Rows are no longer a uniform height (hint rows are taller, section
-            -- headings shorter), so the fallback used before the layout has
-            -- measured anything sums the declared heights instead of assuming 38.
+        local function updateExpandedSize(_animate: boolean?): ()
+            -- Options never expand inside the category window any more —
+            -- Wurst pops them into a settings window of their own. This
+            -- remeasure keeps the panel's height current for that window
+            -- and re-decides the arrow; the row's own height never moves.
             local visibleOptions: number = 0
             local declaredHeight: number = 0
             for _, optionRow: GuiObject in ipairs(feature.optionRows) do
@@ -5171,42 +5170,12 @@ function Module.init(context: any): any
             end
             -- +8 = the panel's 4px top and 4px bottom UIPadding.
             local optionsHeight: number = measuredHeight + 8
-            local targetOptionsSize: UDim2 = UDim2.new(1, -8, 0, optionsHeight)
-            local targetRowSize: UDim2 = UDim2.new(
-                1,
-                0,
-                0,
-                feature.expanded
-                    and feature.collapsedHeight + optionsHeight + 6
-                    or feature.collapsedHeight
-            )
-            if feature.expanded then
-                options.Visible = true
-            end
-            if animate and state.animationsEnabled then
-                TweenService:Create(
-                    options,
-                    TweenInfo.new(UI_MOTION.slow, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-                    {Size = targetOptionsSize}
-                ):Play()
-                TweenService:Create(
-                    row,
-                    TweenInfo.new(UI_MOTION.slow, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-                    {Size = targetRowSize}
-                ):Play()
-                syncArrow()
-                if not feature.expanded then
-                    task.delay(UI_MOTION.slow + 0.02, function(): ()
-                        if not feature.expanded and options.Parent then
-                            options.Visible = false
-                        end
-                    end)
-                end
-            else
-                options.Size = targetOptionsSize
-                row.Size = targetRowSize
-                syncArrow()
-                options.Visible = feature.expanded
+            feature.optionsHeight = optionsHeight
+            options.Size = UDim2.new(1, 0, 0, optionsHeight)
+            syncArrow()
+            local settingsWindow: any = feature.settingsWindow
+            if settingsWindow and settingsWindow.resizeToOptions then
+                settingsWindow.resizeToOptions()
             end
         end
         feature.updateExpandedSize = updateExpandedSize
@@ -5219,13 +5188,17 @@ function Module.init(context: any): any
 
         toggleExpansion = function(): ()
             if not feature.hasOptions() then
-                -- Nothing to show: keep the panel shut instead of opening an
-                -- empty box under the card.
+                -- Nothing to show: no window for an empty panel.
                 syncArrow()
                 return
             end
-            feature.expanded = not feature.expanded
-            updateExpandedSize(true)
+            -- The triangle, the right-click and the Navigator all open the
+            -- same window through the one contract. A second call raises
+            -- the existing window rather than duplicating it.
+            local windows: any = state.windows
+            if windows and type(windows.OpenFeatureSettings) == "function" then
+                windows.OpenFeatureSettings(feature)
+            end
         end
         feature.toggleExpansion = toggleExpansion
 
@@ -6144,6 +6117,137 @@ function Module.init(context: any): any
         end
     end
 
+    -- ------------------------------------------------------ feature settings
+    -- Wurst pops a hack's settings into a window of its own — nothing ever
+    -- expands inside a category window. One lazy window per feature, reused
+    -- on every open, cascaded on first placement so no two are born on top
+    -- of each other, packed to its widest option label, capped by Wurst's
+    -- "Max settings height", and following the GUI like every other window
+    -- unless pinned. This is the one contract: the row's triangle, the
+    -- right-click and the Navigator all come through here.
+    local settingsCascade: number = 0
+    function manager.OpenFeatureSettings(feature: any): any
+        if type(feature) ~= "table" or feature.row == nil then
+            return nil
+        end
+        local id: string = "FeatureSettings_"
+            .. tostring(feature.configKey or feature.name):gsub("%W", "")
+        local existing: any = manager.byId[id]
+        if existing then
+            existing.root.Visible = true
+            feature.expanded = true
+            if feature.syncArrow then
+                feature.syncArrow()
+            end
+            raise(existing)
+            return existing
+        end
+
+        -- Packed to content: the widest option label decides, the way Wurst
+        -- sizes a settings window. 12 px is the bitmap advance at the 16 px
+        -- line; 72 covers the widest value column.
+        local width: number = 200
+        for _, optionRow: any in ipairs(feature.optionRows or {}) do
+            local label: any = optionRow:FindFirstChild("OptionLabel")
+            local text: string = label and tostring(label.Text) or ""
+            width = math.max(width, 8 + #text * 12 + 24 + 72)
+        end
+        width = math.min(width, 420)
+
+        local viewport: Vector2 = workspace.CurrentCamera
+            and (workspace.CurrentCamera :: Camera).ViewportSize
+            or Vector2.new(1280, 720)
+        local step: number = settingsCascade % 6
+        local slot: Vector2 = Vector2.new(
+            math.max(
+                20,
+                math.min(
+                    viewport.X * 0.45 + step * 28,
+                    viewport.X - width - 20
+                )
+            ),
+            110 + step * 30 + (settingsCascade // 6) * 14
+        )
+        settingsCascade += 1
+
+        local window: any = manager.Create({
+            id = id,
+            title = tostring(feature.name) .. " Settings",
+            size = Vector2.new(width, TITLE_HEIGHT + 40),
+            position = slot,
+            closable = true,
+            onClose = function(): ()
+                feature.expanded = false
+                if feature.syncArrow then
+                    feature.syncArrow()
+                end
+            end,
+        })
+        window.featureSettings = true
+        feature.settingsWindow = window
+
+        -- The card's option rows move home: they were built into the card's
+        -- hidden panel and live in this window from now on. The category
+        -- window keeps exactly its height and rows.
+        local options: any = feature.options
+        if options then
+            options.Visible = true
+            options.Position = UDim2.fromOffset(0, 0)
+            options.Size = UDim2.new(1, 0, 0, feature.optionsHeight or 40)
+            options.Parent = window.body
+        end
+
+        local function resizeToOptions(): ()
+            local wanted: number = TITLE_HEIGHT + (feature.optionsHeight or 40)
+            local limit: number = tonumber(state.uiMaxSettingsHeight) or 200
+            if limit <= 0 then
+                limit = math.huge
+            end
+            wanted = math.min(wanted, limit)
+            window.fullHeight = wanted
+            if not window.collapsed then
+                window.root.Size = UDim2.fromOffset(width, wanted)
+            end
+        end
+        window.resizeToOptions = resizeToOptions
+        resizeToOptions()
+
+        feature.expanded = true
+        if feature.syncArrow then
+            feature.syncArrow()
+        end
+        window.root.Visible = true
+        raise(window)
+        return window
+    end
+
+    -- Whole-window bring-to-front, published: raising re-stacks every root
+    -- (the ScreenGui is Sibling-ordered, so the root's ZIndex carries the
+    -- entire window above the rest).
+    function manager.BringToFront(window: any): ()
+        if window then
+            raise(window)
+        end
+    end
+
+    -- Feature settings windows follow the GUI the way category windows do,
+    -- pinned ones excepted — pinning is how a settings window becomes HUD.
+    state.addMenuVisibilityListener(function(visible: boolean): ()
+        for _, window: any in ipairs(manager.list) do
+            if window.featureSettings then
+                if not visible and window.pinned then
+                    continue
+                end
+                if visible then
+                    window.root.Visible = window.wasOpenWithMenu == true
+                else
+                    window.wasOpenWithMenu = window.root.Visible
+                    window.root.Visible = false
+                end
+            end
+        end
+    end)
+
     -- Wurst's ClickGUI Opacity setting: the body of every window at one
     -- alpha. The title bar stays opaque — Wurst fades only the background.
     -- Remembered on the manager so a window created after the slider moved
@@ -6281,6 +6385,27 @@ local CATEGORY_ORDER: {string} = {
     "Items",
     "Other",
 }
+
+-- The same aliases the shell and the Framework carry — the contract is one,
+-- copied because a downloaded file cannot reach the shell's locals at
+-- require time, and because the harness boots this file against a host that
+-- predates the contract.
+local CATEGORY_ALIASES: {[string]: string} = {
+    ["Visuals"] = "Render",
+    ["Protection"] = "Movement",
+    ["Utility"] = "Other",
+    ["Spoof"] = "Fun",
+    ["General"] = "Other",
+    ["Player"] = "Movement",
+}
+
+local function fallbackNormalize(raw: any): string
+    local name: string = tostring(raw or "Other")
+    if table.find(CATEGORY_ORDER, name) ~= nil then
+        return name
+    end
+    return CATEGORY_ALIASES[name] or "Other"
+end
 
 function Module.init(context: any): any
     local host: any = context
@@ -6424,7 +6549,7 @@ function Module.init(context: any): any
         local raw: any = (row :: Frame):GetAttribute("FeatureCategory")
         local name: string = type(normalizeFeatureCategory) == "function"
             and normalizeFeatureCategory(raw)
-            or tostring(raw or "Other")
+            or fallbackNormalize(raw)
         local record: CategoryWindow = categoryWindow(name)
         record.count += 1;
         (row :: Frame).Parent = record.window.body;
@@ -6459,11 +6584,27 @@ function Module.init(context: any): any
         end
     end
 
-    -- Categories that exist before a single card does, so the grid comes out in
-    -- Wurst's order rather than in whichever order the modules happened to
-    -- finish loading.
+    -- One window per category that actually holds a module, tiled in the
+    -- official order with the empty ones omitted — Blocks, Items and Chat
+    -- stay in the contract but draw nothing while nothing lives in them.
+    -- The first pass walks the official order so the grid comes out in
+    -- Wurst's sequence rather than module-load order; a category that gains
+    -- its first module later gets its window then, at the next free slot.
+    local function resolvedCategory(feature: any): string
+        local row: any = feature and feature.row
+        local raw: any = row and row:GetAttribute("FeatureCategory")
+        if type(normalizeFeatureCategory) == "function" then
+            return normalizeFeatureCategory(raw)
+        end
+        return fallbackNormalize(raw)
+    end
     for _, name: string in ipairs(CATEGORY_ORDER) do
-        categoryWindow(name)
+        for _, feature: any in ipairs(allFeatures) do
+            if resolvedCategory(feature) == name then
+                categoryWindow(name)
+                break
+            end
+        end
     end
 
     -- Cards built before this library started — which is all of them, since the
@@ -9095,6 +9236,14 @@ function Module.init(context: any): any
     addNumberOption(uiPanel, "Max settings height", MAX_SETTINGS_HEIGHT, 0, 1000, function(value: number): ()
         uiSettingsValues["Max settings height"] = value
         maxSettingsHeight = value
+        -- Published: the window manager caps every popped-out feature
+        -- settings window with the same slider.
+        state.uiMaxSettingsHeight = value
+        for _, window: any in ipairs((state.windows and state.windows.list) or {}) do
+            if window.featureSettings and window.resizeToOptions then
+                window.resizeToOptions()
+            end
+        end
         for _, record: any in ipairs(Settings.records) do
             record.resize()
         end

@@ -999,6 +999,14 @@ function Module.init(context: any): any
     addNumberOption(uiPanel, "Max settings height", MAX_SETTINGS_HEIGHT, 0, 1000, function(value: number): ()
         uiSettingsValues["Max settings height"] = value
         maxSettingsHeight = value
+        -- Published: the window manager caps every popped-out feature
+        -- settings window with the same slider.
+        state.uiMaxSettingsHeight = value
+        for _, window: any in ipairs((state.windows and state.windows.list) or {}) do
+            if window.featureSettings and window.resizeToOptions then
+                window.resizeToOptions()
+            end
+        end
         for _, record: any in ipairs(Settings.records) do
             record.resize()
         end
