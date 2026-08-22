@@ -29,9 +29,9 @@ import sys
 try:
     from PIL import Image, ImageDraw, ImageFont
 except ImportError:  # pragma: no cover
-    raise SystemExit(
-        "Pillow is required: pip3 install --break-system-packages pillow"
-    )
+    Image = None  # type: ignore[misc, assignment]
+    ImageDraw = None  # type: ignore[misc, assignment]
+    ImageFont = None  # type: ignore[misc, assignment]
 
 FONT = "src/gui/Current/Assets/Typography/Monocraft.otf"
 OUT_PNG = "assets/font/monocraft-16.png"
@@ -78,19 +78,53 @@ def main() -> int:
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
 
-    image, metrics = build()
-    rendered_json = json.dumps(metrics, indent=2) + "\n"
-
     if args.check:
         if not (os.path.exists(OUT_PNG) and os.path.exists(OUT_JSON)):
             print("atlas missing; run tools/make_font_atlas.py")
             return 1
-        if open(OUT_JSON).read() != rendered_json:
+        committed = json.load(open(OUT_JSON, encoding="utf-8"))
+        # Structural contract first, so a machine without Pillow can
+        # still refuse a relabelled or cropped atlas. The rebuild
+        # below is what catches a stale raster when Pillow is present.
+        if committed.get("font", "").find("Monocraft") < 0:
+            print("atlas metrics must name Monocraft, not Minecraft")
+            return 1
+        lowered = json.dumps(committed).lower()
+        for banned in ("minecraft exact", "mc.font", "mojangles"):
+            if banned in lowered:
+                print(f"atlas metrics claim {banned!r}; that is the OFL fallback")
+                return 1
+        if (
+            committed.get("first") != FIRST
+            or committed.get("last") != LAST
+            or committed.get("columns") != COLUMNS
+            or committed.get("size") != SIZE
+        ):
+            print("atlas coverage drifted from ASCII 32..126 @ 16 px / 16 cols")
+            return 1
+        if Image is None:
+            print(
+                "atlas ok · "
+                + hashlib.sha256(open(OUT_PNG, "rb").read()).hexdigest()[:16]
+                + " · rebuild skipped (no Pillow)"
+            )
+            return 0
+        image, metrics = build()
+        rendered_json = json.dumps(metrics, indent=2) + "\n"
+        if open(OUT_JSON, encoding="utf-8").read() != rendered_json:
             print("atlas metrics stale; run tools/make_font_atlas.py")
             return 1
-        print("atlas ok · " + hashlib.sha256(open(OUT_PNG, "rb").read()).hexdigest()[:16])
+        print(
+            "atlas ok · "
+            + hashlib.sha256(open(OUT_PNG, "rb").read()).hexdigest()[:16]
+        )
         return 0
 
+    if Image is None:
+        print("Pillow is required to write the atlas: pip3 install pillow")
+        return 1
+    image, metrics = build()
+    rendered_json = json.dumps(metrics, indent=2) + "\n"
     os.makedirs(os.path.dirname(OUT_PNG), exist_ok=True)
     image.save(OUT_PNG)
     with open(OUT_JSON, "w") as handle:

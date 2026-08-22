@@ -392,13 +392,26 @@
       }
     },
     "font": {
-      "source": "Minecraft default bitmap (MC.font)",
+      "source": "Minecraft 1.18.1 default.json provider stack (MC.font)",
+      "versionId": "1.18.1",
       "file": null,
       "glyphHeight": 8,
       "lineHeight": 9,
-      "typicalAdvance": 6,
-      "closestVendored": "minecraftFont / Monocraft.otf",
-      "portToday": "BuilderSans / RobotoMono"
+      "typicalAdvance": null,
+      "advance": "per-glyph last opaque column + 1",
+      "shadowOffset": [
+        1,
+        1
+      ],
+      "providers": [
+        "bitmap nonlatin_european.png h=8 a=7",
+        "bitmap accented.png h=12 a=10",
+        "bitmap ascii.png h=8 a=7",
+        "legacy_unicode glyph_sizes.bin unicode_page_%s.png"
+      ],
+      "closestVendored": "minecraftFont / Monocraft.otf (OFL)",
+      "portToday": "Monocraft atlas assets/font/monocraft-16.png \u2014 not Minecraft exact",
+      "authority": "docs/minecraft-1.18.1-font.md"
     },
     "scale": {
       "unit": "gui-scale-1",

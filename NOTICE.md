@@ -33,3 +33,17 @@ Wurst-Imperium and contributors.
 | `assets/wurst/dancingtaco3.png` | `src/main/resources/assets/wurst/dancingtaco3.png` |
 | `assets/wurst/dancingtaco4.png` | `src/main/resources/assets/wurst/dancingtaco4.png` |
 | `assets/wurst/translations/en_us.json` | `src/main/resources/assets/wurst/translations/en_us.json` |
+
+## Font fallback (not Minecraft)
+
+`src/gui/Current/Assets/Typography/Monocraft.otf` and the raster
+`assets/font/monocraft-16.png` are **Monocraft**, © 2022 Idrees Hassan,
+SIL Open Font License 1.1. The OFL text is
+`src/gui/Current/Assets/Typography/Monocraft-OFL.txt`. They are the
+CI / no-network stand-in behind `state.bitmapText`. They are not
+Mojangles, not `ascii.png`, and not an official Minecraft asset.
+
+Minecraft 1.18.1 font sheets (`ascii.png`, `accented.png`,
+`unicode_page_*.png`, `glyph_sizes.bin`, `client.jar`) are Mojang /
+Microsoft and must not be added to this tree. Pins and the
+redistribution reading live in `docs/minecraft-1.18.1-font.md`.

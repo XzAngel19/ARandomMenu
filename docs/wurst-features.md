@@ -377,17 +377,27 @@ GlobalToggle, Presets) and is not a source for chrome.
 ### The font
 
 Wurst does not ship a font. Every label is drawn with
-`WurstClient.MC.font` — Minecraft's default **bitmap** renderer
+`WurstClient.MC.font` — Minecraft **1.18.1**'s default font
 (`net.minecraft.client.gui.Font`). There is no TTF or OTF in the Wurst7
-tree. Glyphs come from vanilla's bitmap providers (historically
-`assets/minecraft/textures/font/ascii.png`, 8 px tall in a 16×16 grid).
-`Font.lineHeight` is 9, which is why the HackList advances 9. Typical
-Latin advance is 5–6 px plus one of spacing.
+tree.
 
-The closest face this repository already vendors is Monocraft
-(`minecraftFont`), an OTF that imitates that bitmap. Furniture today
-still paints the chip fallback with `TITLE_FONT` (BuilderSans) and the
-stats with RobotoMono. Those numbers are in `spec.json` `wurst.font`.
+1.18.1 `assets/minecraft/font/default.json` is a **four-provider**
+stack, first match wins: `nonlatin_european.png` (h=8, a=7),
+`accented.png` (h=12, a=10), `ascii.png` (h=8, a=7, 16×16 cells,
+rows 2–7 = `U+0020`–`U+007E`), then `legacy_unicode`
+(`glyph_sizes.bin` + `unicode_page_%s.png`). There is no `space`,
+`ttf`, `unihex` or `include` provider. Advance is the last opaque
+column + 1, **not** a constant 6. `Font.lineHeight` is 9. Shadow is
+`+1,+1` at quarter RGB.
+
+The authority, official URLs/SHA1s, and the redistribution reading
+are `docs/minecraft-1.18.1-font.md`. The pin is
+`assets/font/minecraft-1.18.1.manifest.json`.
+
+The closest face this repository vendors is Monocraft (OFL), rasterised
+to `assets/font/monocraft-16.png`. That is the CI fallback. It is
+**not** Minecraft exact (cell 11×17 / advance 11 vs 8-tall scanned
+widths). Do not vendor Mojang sheets.
 
 ---
 

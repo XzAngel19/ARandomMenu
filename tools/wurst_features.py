@@ -339,24 +339,30 @@ SCREENSHOT: dict = {
     },
 }
 
-# Wurst draws every label with WurstClient.MC.font — Minecraft's
-# default bitmap renderer, not a font Wurst ships. There is no
-# TTF/OTF in the Wurst7 tree. Glyphs come from vanilla's bitmap
-# providers (historically ascii.png, 8 px tall in a 16x16 grid);
-# Font.lineHeight is 9, which is why the HackList advances 9.
-# Typical Latin advance is 5–6 px plus one of spacing. The closest
-# face this repository already vendors is Monocraft (minecraftFont),
-# an OTF that imitates that bitmap. Furniture today still paints
-# the chip fallback with TITLE_FONT (BuilderSans) and the stats
-# with RobotoMono.
+# Wurst draws every label with WurstClient.MC.font — Minecraft
+# 1.18.1's default font, not a face Wurst ships. The stack is
+# four providers in default.json (nonlatin_european, accented,
+# ascii, legacy_unicode). Advance is scanned per glyph, not 6.
+# docs/minecraft-1.18.1-font.md is the authority. Monocraft is
+# the OFL fallback; it is not Minecraft exact.
 FONT: dict = {
-    "source": "Minecraft default bitmap (MC.font)",
+    "source": "Minecraft 1.18.1 default.json provider stack (MC.font)",
+    "versionId": "1.18.1",
     "file": None,
     "glyphHeight": 8,
     "lineHeight": 9,
-    "typicalAdvance": 6,
-    "closestVendored": "minecraftFont / Monocraft.otf",
-    "portToday": "BuilderSans / RobotoMono",
+    "typicalAdvance": None,
+    "advance": "per-glyph last opaque column + 1",
+    "shadowOffset": [1, 1],
+    "providers": [
+        "bitmap nonlatin_european.png h=8 a=7",
+        "bitmap accented.png h=12 a=10",
+        "bitmap ascii.png h=8 a=7",
+        "legacy_unicode glyph_sizes.bin unicode_page_%s.png",
+    ],
+    "closestVendored": "minecraftFont / Monocraft.otf (OFL)",
+    "portToday": "Monocraft atlas assets/font/monocraft-16.png — not Minecraft exact",
+    "authority": "docs/minecraft-1.18.1-font.md",
 }
 
 
