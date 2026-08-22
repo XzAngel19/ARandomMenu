@@ -1105,8 +1105,27 @@ state.menuStyle = configData.values["UI.MenuStyle"] == "Navigator"
     and "Navigator"
     or "Wurst"
 
+-- One-time migration to the Code face. The Code-by-default verdict has
+-- to reach configs saved before it existed: a player who ever cycled
+-- the font row has "Minecraft (Monocraft)" or a pack name persisted,
+-- and a new default can never override a saved value. Runs once, is
+-- marked in the config, and after that fonts follow the saved values
+-- exactly as before — anyone who re-selects a bitmap pack keeps it.
+if configData.values["UI.CodeFaceMigration"] ~= 1 then
+    configData.values["UI.CodeFaceMigration"] = 1
+    if configData.values.interfaceFont ~= nil
+        and configData.values.interfaceFont ~= "Code" then
+        configData.values.interfaceFont = "Code"
+    end
+    if configData.values["UI.FontPack"] ~= nil
+        and configData.values["UI.FontPack"] ~= "Code" then
+        configData.values["UI.FontPack"] = "Code"
+    end
+    queueConfigSave()
+end
+
 -- Which font pack the player asked for. UI.FontPack stores the name;
--- the default is the visual authority, Minecraft 1.18.1. Packs are
+-- the default is Code, the engine's vector face. Bitmap packs are
 -- optional local installs (tools/install_minecraft_font.py); when the
 -- selected one is missing, the committed Monocraft fallback renders
 -- and says so exactly once.
@@ -4906,7 +4925,7 @@ end
 
 -- The build used to be printed on the intro; the intro carries no words now,
 -- so it goes to the console where a bug report can still quote it.
-print("[" .. PRODUCT.logPrefix .. "] build loader-v3")
+print("[" .. PRODUCT.logPrefix .. "] build loader-v3 · " .. SOURCE_STAMP)
 
 state.logBootstrapError = function(message: string): ()
     warn("[" .. PRODUCT.logPrefix .. ":Bootstrap] " .. message)
