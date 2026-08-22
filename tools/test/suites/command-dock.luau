@@ -53,6 +53,32 @@ return function(ctx: any): ()
     if root == nil then
         return
     end
+    check("dock stays above Navigator",
+        state.navigator ~= nil
+            and root.ZIndex > state.navigator.root.ZIndex)
+    check("dock visibility is live", type(dock.SetVisible) == "function")
+    dock.SetVisible(false)
+    check("desktop dock can be hidden", root.Visible == false)
+    dock.SetVisible(true)
+    check("desktop dock can be restored", root.Visible == true)
+
+    local list: any = state.hudList
+    check("HackList visibility is live",
+        list ~= nil and type(list.SetVisible) == "function")
+    if list and type(list.SetVisible) == "function" then
+        local flight: any = state.moduleSearch.Resolve("Flight").entry
+        if not flight.enabled() then
+            flight.invoke()
+        end
+        local statusBefore: any = flight.feature.status
+        list.SetVisible(false)
+        check("hiding HackList does not disable modules or clear status",
+            list.frame.Visible == false and flight.enabled()
+                and flight.feature.status == statusBefore)
+        list.SetVisible(true)
+        check("showing HackList restores the HUD surface", list.frame.Visible == true)
+        flight.invoke()
+    end
 
     local vp: any = state.windows and state.windows.LogicalViewport
         and state.windows.LogicalViewport()
@@ -64,8 +90,10 @@ return function(ctx: any): ()
         tostring(root.Position.Y.Offset)
     )
 
-    local search: any = root:FindFirstChild("Search") or root:FindFirstChild("Query")
-    local submit: any = root:FindFirstChild("Submit") or root:FindFirstChild("Go")
+    local search: any = dock.search
+        or root:FindFirstChild("Search") or root:FindFirstChild("Query")
+    local submit: any = dock.submit
+        or root:FindFirstChild("Submit") or root:FindFirstChild("Go")
     check("search is on the left", search ~= nil and search.Position.X.Offset <= 20)
     check("the button is on the right", submit ~= nil)
     check(
@@ -75,15 +103,20 @@ return function(ctx: any): ()
     )
 
     if type(dock.Submit) == "function" then
-        local opened: any = dock.Submit("nofall")
-        check("an alias submits a module", opened ~= nil)
+        for _, query: string in ipairs({
+            "Killaura", "ESP", "ItemESP", "AutoClicker",
+            "Flight", "Speed", "NoFall",
+        }) do
+            local before: any = state.moduleSearch.Resolve(query)
+            local enabledBefore: boolean = before.entry.enabled()
+            local opened: any = dock.Submit(query)
+            check("exact command alias submits " .. query,
+                opened ~= nil and before.entry.enabled() ~= enabledBefore)
+            state.moduleSearch.Execute(query)
+        end
+        check("partial Fl never fuzzy-activates", dock.Submit("Fl") == nil)
         local missing: any = dock.Submit("this-is-not-a-module-xx")
         check("not found stays put", missing == nil)
-        local ambig: any = dock.Submit("a")
-        check(
-            "an ambiguous token does not fuzzy-activate",
-            ambig == nil or type(ambig) == "table"
-        )
         local options: any = dock.Submit("Reset layout")
         check("Wurst Options actions are not commands", options == nil)
     else

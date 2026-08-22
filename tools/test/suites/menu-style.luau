@@ -95,6 +95,32 @@ return function(ctx: any): ()
     end
     check("changing style does not toggle modules", flipped == nil, flipped)
 
+    check("SetMenuStyle is the central style state machine",
+        type(state.SetMenuStyle) == "function")
+    state.SetMenuStyle("Navigator", true)
+    check("Navigator style opens immediately and closes ClickGUI",
+        state.menuStyle == "Navigator"
+            and state.navigator.root.Visible == true
+            and state.visible == false)
+    check("Navigator style persists",
+        env.configData.values["UI.MenuStyle"] == "Navigator")
+    state.SetMenuStyle("Wurst", true)
+    check("Wurst style closes Navigator and opens ClickGUI immediately",
+        state.menuStyle == "Wurst"
+            and state.navigator.root.Visible == false
+            and state.visible == true)
+    check("only one menu surface is ever visible",
+        not (state.visible and state.navigator.root.Visible))
+    check("Navigator publishes a Wurst ClickGUI escape action",
+        type(state.navigator.OpenWurst) == "function"
+            and state.navigator.wurstButton ~= nil)
+    state.navigator.Open()
+    state.navigator.OpenWurst()
+    check("Navigator escape action saves Wurst and opens it",
+        state.menuStyle == "Wurst"
+            and state.visible == true
+            and state.navigator.root.Visible == false)
+
     -- Wurst exclusive: no second ClickGUI skin lives as a window.
     if state.windows and type(state.windows.Get) == "function" then
         check(

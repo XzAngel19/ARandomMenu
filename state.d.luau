@@ -25,6 +25,7 @@ export type MenuState = {
     refreshLayout: (boolean?) -> (),                -- Re-measure now; the flag forces it even if the mode has not changed
     setMenuVisible: (boolean) -> (),                -- Open or close the window, animations included
     menuStyle: string,                              -- "Wurst" (ClickGUI windows) or "Navigator" (Navigator as the main surface); stored as UI.MenuStyle
+    SetMenuStyle: (string, boolean?) -> boolean,    -- Persist, close the previous surface and optionally open the selected one immediately
     openMenuSurface: () -> (),                      -- Open/close whichever surface menuStyle selects; the toggle key and the dock come through here
     invokeModuleSearch: (string) -> boolean,        -- The dock's search resolver: exact/unique match toggles a module, ambiguous/none notify; replaceable by D's registry
     addMenuVisibilityListener: ((boolean) -> ()) -> (), -- Be told when it opens or closes
@@ -143,6 +144,7 @@ export type MenuState = {
     uiMaxSettingsHeight: number,                    -- Wurst's "Max settings height", capping every popped-out feature settings window
     uiSettings: any,                                -- The UI Settings window's current values, readable without walking its rows
     wurstOptions: any,                              -- The Wurst Options action API: RegisterAction/UnregisterAction/InvokeAction/List over one ordered registry
+    commandDock: any,                               -- Bottom search/launcher dock: Submit and live visibility without owning search semantics
     pill: any,                                      -- The floating pill toolbar: the launcher, and the one chrome that outlives closing the GUI
     refreshLauncher: () -> (),                      -- Re-evaluate the fallback mobile circle; the pill supersedes it while it exists
     windows: any,                                   -- The window manager: drag, collapse, pin, snap, persistence

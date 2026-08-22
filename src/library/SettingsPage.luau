@@ -1642,7 +1642,29 @@ function Module.init(context: any): any
     -- switching touches nothing else — no enabled state, no settings, no
     -- window positions, no binds. RightShift keeps its direct Navigator
     -- door either way.
+    local fontModes: {string} = {"Auto", "Monocraft", "Minecraft local"}
+    addCycleOption(
+        uiPanel,
+        "Font mode",
+        fontModes,
+        table.find(fontModes, tostring(
+            state.bitmapText and state.bitmapText.fontMode or "Auto"
+        )) or 1,
+        function(value: string): ()
+            uiSettingsValues["Font mode"] = value
+            configData.values["UI.FontMode"] = value
+            queueConfigSave()
+            if state.bitmapText then
+                state.bitmapText.fontMode = value
+            end
+        end
+    )
+    uiSettingsValues["Font mode"] = tostring(
+        state.bitmapText and state.bitmapText.fontMode or "Auto"
+    )
+
     local menuStyles: {string} = {"Wurst", "Navigator"}
+    local menuStyleInitial: boolean = true
     addCycleOption(
         uiPanel,
         "Menu style",
@@ -1650,12 +1672,43 @@ function Module.init(context: any): any
         table.find(menuStyles, tostring(state.menuStyle)) or 1,
         function(value: string): ()
             uiSettingsValues["Menu style"] = value
-            state.menuStyle = value
-            configData.values["UI.MenuStyle"] = value
-            queueConfigSave()
+            if type(state.SetMenuStyle) == "function" then
+                state.SetMenuStyle(value, not menuStyleInitial)
+            end
+            menuStyleInitial = false
         end
     )
     uiSettingsValues["Menu style"] = tostring(state.menuStyle)
+
+    local showHackList: boolean = configData.values["UI.ShowHackList"] ~= false
+    addToggleOption(uiPanel, "Show HackList", showHackList, function(value: boolean): ()
+        uiSettingsValues["Show HackList"] = value
+        configData.values["UI.ShowHackList"] = value
+        queueConfigSave()
+        if state.hudList and type(state.hudList.SetVisible) == "function" then
+            state.hudList.SetVisible(value)
+        end
+    end)
+    uiSettingsValues["Show HackList"] = showHackList
+
+    if not state.isMobile then
+        local showDock: boolean = configData.values["UI.ShowDock"] ~= false
+        addToggleOption(uiPanel, "Show dock", showDock, function(value: boolean): ()
+            uiSettingsValues["Show dock"] = value
+            configData.values["UI.ShowDock"] = value
+            queueConfigSave()
+            if state.commandDock and type(state.commandDock.SetVisible) == "function" then
+                state.commandDock.SetVisible(value)
+            end
+        end)
+        uiSettingsValues["Show dock"] = showDock
+    else
+        -- A desktop preference must never remove the only touch launcher.
+        uiSettingsValues["Show dock"] = true
+        if state.commandDock and type(state.commandDock.SetVisible) == "function" then
+            state.commandDock.SetVisible(true)
+        end
+    end
 
     -- UI Settings is eager and its rows are all in place now: one reflow at
     -- the real measured size keeps its top-right default when that spot is

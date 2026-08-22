@@ -59,6 +59,17 @@ return function(ctx: any): ()
     if type(bitmap) ~= "table" then
         return
     end
+    local capabilities: any = bitmap.capabilities
+    check("font capability layer is published",
+        type(capabilities) == "table"
+            and type(capabilities.canHttp) == "boolean"
+            and type(capabilities.canRead) == "boolean"
+            and type(capabilities.canWrite) == "boolean"
+            and type(capabilities.canCustomAsset) == "boolean"
+            and type(capabilities.canSynAsset) == "boolean"
+            and capabilities.mobile ~= capabilities.desktop)
+    check("font mode publishes the selected fallback policy",
+        table.find({"Auto", "Monocraft", "Minecraft local"}, bitmap.fontMode) ~= nil)
 
     check(
         "boot source is not labelled Minecraft exact without a pack",
@@ -74,6 +85,15 @@ return function(ctx: any): ()
     check("atlas coverage is ASCII 32..126", bitmap.atlas.first == 32 and bitmap.atlas.last == 126)
     check("atlas size selection is 16 px", bitmap.atlas.size == 16 or bitmap.size == 16)
     check("baseline ascent is published", type(bitmap.ascent) == "number" and bitmap.ascent > 0)
+    for _, member: any in pairs(bitmap.family or {}) do
+        member.ready = true
+        member.image = "mock://atlas-" .. tostring(member.size)
+    end
+    check("target 11 never enlarges atlas 8", bitmap.pickAtlas(11).size == 16)
+    check("target 16 uses atlas 16", bitmap.pickAtlas(16).size == 16)
+    check("target 18 uses atlas 24", bitmap.pickAtlas(18).size == 24)
+    check("target 25 uses atlas 32", bitmap.pickAtlas(25).size == 32)
+    check("target beyond the family uses the largest atlas", bitmap.pickAtlas(99).size == 32)
 
     -- Pin the layer to one logical pixel per physical pixel before asserting
     -- integer offsets. The normal boot calibrates 1280×720 to 0.8.

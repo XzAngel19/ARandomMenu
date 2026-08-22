@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "bf6f5c1960573fdb",
+    stamp = "5eddcf9e6fc97e23",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -10956,7 +10956,29 @@ function Module.init(context: any): any
     -- switching touches nothing else — no enabled state, no settings, no
     -- window positions, no binds. RightShift keeps its direct Navigator
     -- door either way.
+    local fontModes: {string} = {"Auto", "Monocraft", "Minecraft local"}
+    addCycleOption(
+        uiPanel,
+        "Font mode",
+        fontModes,
+        table.find(fontModes, tostring(
+            state.bitmapText and state.bitmapText.fontMode or "Auto"
+        )) or 1,
+        function(value: string): ()
+            uiSettingsValues["Font mode"] = value
+            configData.values["UI.FontMode"] = value
+            queueConfigSave()
+            if state.bitmapText then
+                state.bitmapText.fontMode = value
+            end
+        end
+    )
+    uiSettingsValues["Font mode"] = tostring(
+        state.bitmapText and state.bitmapText.fontMode or "Auto"
+    )
+
     local menuStyles: {string} = {"Wurst", "Navigator"}
+    local menuStyleInitial: boolean = true
     addCycleOption(
         uiPanel,
         "Menu style",
@@ -10964,12 +10986,43 @@ function Module.init(context: any): any
         table.find(menuStyles, tostring(state.menuStyle)) or 1,
         function(value: string): ()
             uiSettingsValues["Menu style"] = value
-            state.menuStyle = value
-            configData.values["UI.MenuStyle"] = value
-            queueConfigSave()
+            if type(state.SetMenuStyle) == "function" then
+                state.SetMenuStyle(value, not menuStyleInitial)
+            end
+            menuStyleInitial = false
         end
     )
     uiSettingsValues["Menu style"] = tostring(state.menuStyle)
+
+    local showHackList: boolean = configData.values["UI.ShowHackList"] ~= false
+    addToggleOption(uiPanel, "Show HackList", showHackList, function(value: boolean): ()
+        uiSettingsValues["Show HackList"] = value
+        configData.values["UI.ShowHackList"] = value
+        queueConfigSave()
+        if state.hudList and type(state.hudList.SetVisible) == "function" then
+            state.hudList.SetVisible(value)
+        end
+    end)
+    uiSettingsValues["Show HackList"] = showHackList
+
+    if not state.isMobile then
+        local showDock: boolean = configData.values["UI.ShowDock"] ~= false
+        addToggleOption(uiPanel, "Show dock", showDock, function(value: boolean): ()
+            uiSettingsValues["Show dock"] = value
+            configData.values["UI.ShowDock"] = value
+            queueConfigSave()
+            if state.commandDock and type(state.commandDock.SetVisible) == "function" then
+                state.commandDock.SetVisible(value)
+            end
+        end)
+        uiSettingsValues["Show dock"] = showDock
+    else
+        -- A desktop preference must never remove the only touch launcher.
+        uiSettingsValues["Show dock"] = true
+        if state.commandDock and type(state.commandDock.SetVisible) == "function" then
+            state.commandDock.SetVisible(true)
+        end
+    end
 
     -- UI Settings is eager and its rows are all in place now: one reflow at
     -- the real measured size keeps its top-right default when that spot is
@@ -11943,6 +11996,8 @@ function Module.init(context: any): any
         Size = UDim2.new(0, 260, 1, -(HACKLIST_TOP + 12)),
         ZIndex = 20,
     }) :: any) :: Frame
+    local hudVisible: boolean = configData.values["UI.ShowHackList"] ~= false
+    hudFrame.Visible = hudVisible
 
     local hudLayout: UIListLayout = (create("UIListLayout", {
         Parent = hudFrame,
@@ -12225,6 +12280,16 @@ function Module.init(context: any): any
     state.hudList = {
         frame = hudFrame,
         refresh = refreshHudList,
+        SetVisible = function(visible: boolean): ()
+            hudVisible = visible
+            hudFrame.Visible = visible
+            if visible then
+                forceHudRefresh()
+            end
+        end,
+        IsVisible = function(): boolean
+            return hudVisible
+        end,
         -- The HackList settings window drives these; persistence belongs to
         -- its rows, which write the same keys this file read at boot.
         SetMode = function(value: string): ()
@@ -12327,6 +12392,28 @@ function Module.init(context: any): any
         PaddingLeft = UDim.new(0, 6),
         PaddingRight = UDim.new(0, 6),
     })
+    navSearch.Size = UDim2.new(1, -126, 0, 24)
+    local wurstClickGui: TextButton = (create("TextButton", {
+        TextTruncate = Enum.TextTruncate.AtEnd,
+        Parent = navColumn,
+        Name = "WurstClickGUI",
+        Active = true,
+        AutoButtonColor = false,
+        BackgroundColor3 = Theme.background,
+        BackgroundTransparency = 0.15,
+        BorderSizePixel = 0,
+        Position = UDim2.new(1, -120, 0, 0),
+        Size = UDim2.fromOffset(120, 24),
+        Text = "Wurst ClickGUI",
+        TextColor3 = Theme.text,
+        TextSize = 12,
+        ZIndex = 248,
+    }) :: any) :: TextButton
+    table.insert(Furniture.connections, wurstClickGui.MouseButton1Click:Connect(function(): ()
+        if type(state.SetMenuStyle) == "function" then
+            state.SetMenuStyle("Wurst", true)
+        end
+    end))
 
     local navResults: Frame = (create("Frame", {
         Parent = navColumn,
@@ -12583,6 +12670,12 @@ function Module.init(context: any): any
         refresh = rebuildNavigator,
         Open = openNavigator,
         Close = closeNavigator,
+        OpenWurst = function(): ()
+            if type(state.SetMenuStyle) == "function" then
+                state.SetMenuStyle("Wurst", true)
+            end
+        end,
+        wurstButton = wurstClickGui,
     }
 
     -- ----------------------------------------------------------------- dock
@@ -12602,6 +12695,8 @@ function Module.init(context: any): any
         + PILL_GAP
         + PILL_BUTTON
 
+    local dockVisible: boolean = state.isMobile
+        or configData.values["UI.ShowDock"] ~= false
     local pillFrame: Frame = (create("Frame", {
         Parent = ScreenGui or PopupLayer,
         Name = "Pill",
@@ -12612,7 +12707,8 @@ function Module.init(context: any): any
         BorderSizePixel = 0,
         Position = UDim2.new(0.5, 0, 1, -DOCK_BOTTOM_MARGIN),
         Size = UDim2.fromOffset(pillWidth, PILL_BUTTON + PILL_PADDING_Y * 2),
-        ZIndex = 240,
+        Visible = dockVisible,
+        ZIndex = 249,
     }) :: any) :: Frame
     create("UICorner", {
         Parent = pillFrame,
@@ -12680,7 +12776,7 @@ function Module.init(context: any): any
             Text = glyph,
             TextColor3 = PILL_IDLE_TEXT,
             TextSize = textSize,
-            ZIndex = 241,
+            ZIndex = 249,
         }) :: any) :: TextButton
         create("UICorner", {
             Parent = button,
@@ -12735,24 +12831,46 @@ function Module.init(context: any): any
         BorderSizePixel = 0,
         Position = UDim2.fromOffset(PILL_PADDING_X, PILL_PADDING_Y),
         Size = UDim2.fromOffset(DOCK_SEARCH_WIDTH, PILL_BUTTON),
-        ZIndex = 241,
+        ZIndex = 249,
     }) :: any) :: Frame
     create("UICorner", {
         Parent = searchShell,
         CornerRadius = UDim.new(1, 0),
     })
+    local submitLocked: boolean = false
+    local function submitSearch(query: string): any
+        if submitLocked or query:gsub("%s", "") == "" then
+            return nil
+        end
+        submitLocked = true
+        task.defer(function(): ()
+            submitLocked = false
+        end)
+        local search: any = state.moduleSearch
+        if search and type(search.Execute) == "function" then
+            local result: any = search.Execute(query)
+            if result.status == "success" then
+                return result.entry
+            end
+        end
+        return nil
+    end
+
+    local dockSearchBox: TextBox? = nil
+    local dockSubmitButton: TextButton? = nil
     if type(makeTextBox) == "function" then
         local searchBox: TextBox = (makeTextBox(searchShell, "") :: any) :: TextBox
+        dockSearchBox = searchBox
         searchBox.Name = "DockSearchBox"
         searchBox.BackgroundTransparency = 1
         searchBox.ClearTextOnFocus = false
         searchBox.PlaceholderText = "Search module..."
         searchBox.Position = UDim2.fromOffset(12, 0)
-        searchBox.Size = UDim2.new(1, -18, 1, 0)
+        searchBox.Size = UDim2.new(1, -42, 1, 0)
         searchBox.TextColor3 = PILL_IDLE_TEXT
         searchBox.TextSize = 13
         searchBox.TextXAlignment = Enum.TextXAlignment.Left
-        searchBox.ZIndex = 242
+        searchBox.ZIndex = 249
         local boxCorner: UICorner? = searchBox:FindFirstChild("StyleCorner") :: UICorner?
         if boxCorner then
             boxCorner:Destroy()
@@ -12761,22 +12879,43 @@ function Module.init(context: any): any
         if boxStroke then
             boxStroke:Destroy()
         end
-        table.insert(
-            Furniture.connections,
+        local submitButton: TextButton = (create("TextButton", {
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            Parent = searchShell,
+            Name = "Submit",
+            Active = true,
+            AnchorPoint = Vector2.new(1, 0),
+            AutoButtonColor = false,
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Position = UDim2.new(1, -4, 0, 0),
+            Size = UDim2.fromOffset(28, PILL_BUTTON),
+            Text = ">",
+            TextColor3 = PILL_IDLE_TEXT,
+            TextSize = 13,
+            ZIndex = 249,
+        }) :: any) :: TextButton
+        dockSubmitButton = submitButton
+        local function submitBox(): ()
+            local query: string = tostring(searchBox.Text or "")
+            searchBox.Text = ""
+            submitSearch(query)
+        end
+        table.insert(Furniture.connections,
+            submitButton.MouseButton1Click:Connect(submitBox))
+        table.insert(Furniture.connections,
             searchBox.FocusLost:Connect(function(enterPressed: boolean): ()
-                if enterPressed ~= true then
-                    return
+                if enterPressed == true then
+                    submitBox()
                 end
-                local query: string = tostring(searchBox.Text or "")
-                searchBox.Text = ""
-                if query:gsub("%s", "") == "" then
-                    return
+            end))
+        table.insert(Furniture.connections,
+            searchBox.InputBegan:Connect(function(input: InputObject): ()
+                if input.KeyCode == Enum.KeyCode.Return
+                    or input.KeyCode == Enum.KeyCode.KeypadEnter then
+                    submitBox()
                 end
-                if type(state.invokeModuleSearch) == "function" then
-                    state.invokeModuleSearch(query)
-                end
-            end)
-        )
+            end))
     end
 
     -- The menu button fills with the accent while the GUI is open, exactly
@@ -12831,9 +12970,23 @@ function Module.init(context: any): any
     -- window, a drawing set — names its top instance that way, and the suite
     -- that checks the pill stays on screen with the GUI closed was reading
     -- `root` and finding nil.
+    state.commandDock = {
+        root = pillFrame,
+        search = dockSearchBox,
+        submit = dockSubmitButton,
+        Submit = submitSearch,
+        SetVisible = function(visible: boolean): ()
+            dockVisible = state.isMobile or visible
+            pillFrame.Visible = dockVisible
+        end,
+        IsVisible = function(): boolean
+            return pillFrame.Visible
+        end,
+    }
     state.pill = {
         root = pillFrame,
         restyle = restyleMenuButton,
+        SetVisible = state.commandDock.SetVisible,
     }
     -- The shell's fallback circle stands down now that the pill exists.
     if type(state.refreshLauncher) == "function" then
@@ -12860,6 +13013,7 @@ function Module.init(context: any): any
         state.hudList = nil
         state.wurstLogo = nil
         state.navigator = nil
+        state.commandDock = nil
         state.pill = nil
         -- The fallback launcher becomes the way in again.
         if type(state.refreshLauncher) == "function" then

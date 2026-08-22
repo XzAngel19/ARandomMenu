@@ -363,7 +363,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "bf6f5c1960573fdb"
+local SOURCE_STAMP: string = "5eddcf9e6fc97e23"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -1092,6 +1092,33 @@ state.menuStyle = configData.values["UI.MenuStyle"] == "Navigator"
     and "Navigator"
     or "Wurst"
 
+state.SetMenuStyle = function(style: string, openImmediately: boolean?): boolean
+    if style ~= "Wurst" and style ~= "Navigator" then
+        return false
+    end
+    local navigator: any = state.navigator
+    if navigator and navigator.root and navigator.root.Visible
+        and type(navigator.Close) == "function" then
+        navigator.Close()
+    end
+    if state.visible then
+        state.setMenuVisible(false)
+    end
+    state.menuStyle = style
+    configData.values["UI.MenuStyle"] = style
+    queueConfigSave()
+    if openImmediately == true then
+        if style == "Navigator" then
+            if navigator and type(navigator.Open) == "function" then
+                navigator.Open()
+            end
+        else
+            state.setMenuVisible(true)
+        end
+    end
+    return true
+end
+
 state.openMenuSurface = function(): ()
     if state.menuStyle == "Navigator" then
         local navigator: any = state.navigator
@@ -1099,15 +1126,8 @@ state.openMenuSurface = function(): ()
             navigator.Close()
             return
         end
-        -- Navigator is the main surface in this style: the category
-        -- windows stay closed behind it instead of peeking through.
-        if state.visible then
-            state.setMenuVisible(false)
-        end
-        if navigator and type(navigator.Open) == "function" then
-            navigator.Open()
-            return
-        end
+        state.SetMenuStyle("Navigator", true)
+        return
     end
     state.setMenuVisible(not state.visible)
 end
@@ -2037,26 +2057,25 @@ state.bitmapText.layerScale = function(): number
     return value
 end
 
--- The raster for a physical glyph height: the ready family member with
--- the closest size, larger on a tie (downscaling a pixel font blurs
--- less than upscaling it). The 16 px member is the floor — it is the
--- one the boot resolves first.
+-- Pick the smallest ready raster that is at least the physical target. Pixel
+-- fonts may be downscaled, never enlarged: target 11/16 uses 16, 18 uses 24,
+-- 25 uses 32. If no member is large enough, the largest ready raster wins.
 state.bitmapText.pickAtlas = function(physicalSize: number): any
     local contract: any = state.bitmapText
-    local best: any = nil
-    local bestDistance: number = math.huge
+    local above: any = nil
+    local largest: any = nil
     for _, member: any in pairs(contract.family) do
         if member.ready and member.image then
-            local distance: number = math.abs(member.size - physicalSize)
-            if distance < bestDistance
-                or (distance == bestDistance and best ~= nil
-                    and member.size > best.size) then
-                best = member
-                bestDistance = distance
+            if not largest or member.size > largest.size then
+                largest = member
+            end
+            if member.size >= physicalSize
+                and (not above or member.size < above.size) then
+                above = member
             end
         end
     end
-    return best or contract.atlas
+    return above or largest or contract.atlas
 end
 
 -- The baseline a mixed-size line aligns to, in logical pixels.
@@ -2522,6 +2541,33 @@ state.bitmapText.loadExactAtlas = function(image: string, metrics: any): ()
     end
 end
 
+local fontEnvironment: any = getfenv()
+state.bitmapText.capabilities = {
+    canHttp = type((game :: any).HttpGet) == "function",
+    canRead = type(fontEnvironment.readfile) == "function",
+    canWrite = type(fontEnvironment.writefile) == "function",
+    canCustomAsset = type(fontEnvironment.getcustomasset) == "function",
+    canSynAsset = type(fontEnvironment.getsynasset) == "function",
+    mobile = state.isMobile == true,
+    desktop = state.isMobile ~= true,
+}
+local configuredFontMode: string = tostring(
+    configData.values["UI.FontMode"] or "Auto"
+)
+if configuredFontMode ~= "Auto"
+    and configuredFontMode ~= "Monocraft"
+    and configuredFontMode ~= "Minecraft local" then
+    configuredFontMode = "Auto"
+end
+state.bitmapText.fontMode = configuredFontMode
+state.bitmapText.manifestUrl = tostring(
+    configData.values["UI.FontManifestURL"] or ""
+)
+
+-- Font selection is capability-driven and honest: an exact local pack first,
+-- then the executor's exact cached asset, then Monocraft, then vector. A private
+-- manifest URL is recorded for installers that can verify and cache it; this
+-- runtime never executes remote code or treats a ZIP as a font.
 task.spawn(function(): ()
     if type(state.resolveAsset) ~= "function" then
         state.bitmapText.source = "unavailable"
@@ -2534,6 +2580,7 @@ task.spawn(function(): ()
     -- drops the folder into the executor workspace. The runtime checks the
     -- manifest before trusting a pixel; when it holds, the renderer flips
     -- to minecraft-exact through the same loadExactAtlas plug.
+    if configuredFontMode ~= "Monocraft" then
     pcall(function(): ()
         if type(isfile) ~= "function" or type(readfile) ~= "function" then
             return
@@ -2572,6 +2619,7 @@ task.spawn(function(): ()
                 .. ":Assets] Minecraft 1.18.1 exact font loaded from MinecraftFont/")
         end
     end)
+    end
     if state.bitmapText.source == "minecraft-exact" then
         return
     end
@@ -2579,9 +2627,11 @@ task.spawn(function(): ()
     -- an error path in the asset manager, so the probe is pcall'd and
     -- silent — absence is the normal case, not a warning.
     local exactId: string? = nil
-    pcall(function(): ()
-        exactId = (state.resolveAsset("minecraftFontAtlas"))
-    end)
+    if configuredFontMode ~= "Monocraft" then
+        pcall(function(): ()
+            exactId = (state.resolveAsset("minecraftFontAtlas"))
+        end)
+    end
     if exactId then
         state.bitmapText.atlas.image = exactId
         state.bitmapText.atlas.ready = true
@@ -3322,60 +3372,32 @@ state.mvsdFeatures = {}
 local allFeatures: {any} = {}
 local featureConnections = {}
 
--- The dock's search resolver. One query, one honest answer: an exact
--- name match toggles that module; a unique substring match toggles it
--- too; several candidates is "ambiguous" with the names spelled out;
--- none is "not found". Only real module toggles — action rows and
--- category headings are administrative surface and never run from a
--- search box. D's registry can replace this wholesale by reassigning
--- the field; the dock calls whatever is published here.
+-- Compatibility wrapper for the dock. Resolution and execution live only in
+-- state.moduleSearch: exact normalized names and explicit aliases, never fuzzy
+-- partials and never administrative Wurst Options actions.
 state.invokeModuleSearch = function(query: string): boolean
-    local wanted: string = string.lower(tostring(query or ""):gsub("^%s+", ""):gsub("%s+$", ""))
-    if wanted == "" then
+    local search: any = state.moduleSearch
+    if not search or type(search.Execute) ~= "function" then
         return false
     end
-    local exact: any = nil
-    local partial: {any} = {}
-    for _, feature: any in ipairs(allFeatures) do
-        if not feature.isAction and not feature.isCategory and feature.name then
-            local name: string = string.lower(tostring(feature.name))
-            if name == wanted then
-                exact = feature
-                break
-            end
-            if string.find(name, wanted, 1, true) ~= nil then
-                table.insert(partial, feature)
-            end
-        end
+    local result: any = search.Execute(query)
+    if result.status == "success" then
+        local entry: any = result.entry
+        notify(tostring(entry.displayName) .. ": "
+            .. (entry.enabled() and "enabled" or "disabled"))
+        return true
     end
-    local target: any = exact or (#partial == 1 and partial[1] or nil)
-    if target then
-        if type(target.activate) == "function" then
-            local ok: boolean, failure: any = pcall(target.activate)
-            if ok then
-                notify(tostring(target.name) .. ": "
-                    .. (target.enabled and "enabled" or "disabled"))
-                return true
-            end
-            warn("[" .. PRODUCT.logPrefix .. "] search toggle: " .. tostring(failure))
-            return false
-        end
-        notify(tostring(target.name) .. " has nothing to toggle")
-        return false
-    end
-    if #partial > 1 then
+    if result.status == "ambiguous" then
         local names: {string} = {}
-        for index: number, feature: any in ipairs(partial) do
-            if index > 4 then
-                table.insert(names, "…")
-                break
-            end
-            table.insert(names, tostring(feature.name))
+        for _, entry: any in ipairs(result.matches or {}) do
+            table.insert(names, tostring(entry.displayName))
         end
         notify("Ambiguous: " .. table.concat(names, ", "))
-        return false
+    elseif result.status == "not_toggleable" then
+        notify(tostring(result.entry.displayName) .. " has nothing to toggle")
+    elseif tostring(query or ""):gsub("%s", "") ~= "" then
+        notify("No module matches \"" .. tostring(query) .. "\"")
     end
-    notify("No module matches \"" .. tostring(query) .. "\"")
     return false
 end
 
