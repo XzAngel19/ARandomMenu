@@ -2101,10 +2101,13 @@ state.bitmapText.layerScale = function(): number
     return value
 end
 
--- The raster for a physical glyph height: the ready family member with
--- the closest size, larger on a tie (downscaling a pixel font blurs
--- less than upscaling it). The 16 px member is the floor — it is the
--- one the boot resolves first.
+-- The raster for a physical glyph height. The rule is downscale-only:
+-- the smallest ready member whose size covers the target, so glyphs
+-- keep full pixel detail and shrink at most a little; only a target
+-- the whole family undershoots takes the largest member. The 8 px
+-- atlas therefore serves only targets of 8 physical pixels or less —
+-- upscaling it is mush, and mush was exactly the dropdown bug. The
+-- 16 px member is the floor — it is the one the boot resolves first.
 state.bitmapText.pickAtlas = function(physicalSize: number): any
     local contract: any = state.bitmapText
     -- A loaded Minecraft pack owns the raster outright: mixing its 16 px
@@ -2113,20 +2116,21 @@ state.bitmapText.pickAtlas = function(physicalSize: number): any
     if contract.rasterFamilyEnabled == false then
         return contract.atlas
     end
-    local best: any = nil
-    local bestDistance: number = math.huge
+    local smallestCovering: any = nil
+    local largest: any = nil
     for _, member: any in pairs(contract.family) do
         if member.ready and member.image then
-            local distance: number = math.abs(member.size - physicalSize)
-            if distance < bestDistance
-                or (distance == bestDistance and best ~= nil
-                    and member.size > best.size) then
-                best = member
-                bestDistance = distance
+            if member.size >= physicalSize
+                and (smallestCovering == nil
+                    or member.size < smallestCovering.size) then
+                smallestCovering = member
+            end
+            if largest == nil or member.size > largest.size then
+                largest = member
             end
         end
     end
-    return best or contract.atlas
+    return smallestCovering or largest or contract.atlas
 end
 
 -- The baseline a mixed-size line aligns to, in logical pixels.

@@ -217,3 +217,31 @@ the gate will force a Left default that contradicts the prototype.
   `/cache/` gitignore now covers everything (a synthetic test fixture
   briefly landed in dea7201 and was swept in 8766c50 — no Mojang
   bytes, but cache is never Git's).
+
+## Bug pass: style machine, Navigator exit, dock submit, HUD toggles, raster rule (2026-08-22, fifth)
+
+- `state.SetMenuStyle(style, openImmediately)` is the one style path
+  (persist, close the open surface, open on demand, notify
+  `state.menuStyleListeners`; touches nothing else). UI Settings calls
+  it with openImmediately only on a real change (the widget replays at
+  boot). openMenuSurface also closes a RightShift-opened Navigator
+  before showing Wurst — the two surfaces can never coexist.
+- Navigator exits: dock at Z 249 (above the 246 dim even on the
+  PopupLayer fallback), the ≡ button returns to Wurst while the
+  Navigator is open, and a "< Wurst ClickGUI" door sits inside the
+  screen. Escape unchanged.
+- The dock submits exclusively through `state.moduleSearch.Execute`
+  (D's registry) with a 0.2 s token so FocusLost(true) and the
+  on-screen-keyboard signal cannot double-fire; all four statuses
+  notify. `state.invokeModuleSearch` is now a three-line wrapper over
+  the same Execute.
+- Show HackList / Show dock in UI Settings (defaults true, live,
+  persisted; `Furniture.SetHackListVisible` + `state.hudList.SetVisible`
+  + `state.dock.SetVisible`). Touch-primary devices keep the dock
+  always visible and never see the Show dock row; hidden means
+  Visible=false, never destruction; RightControl is independent.
+- `pickAtlas` is downscale-only: smallest ready raster covering the
+  physical target, largest only when everything undershoots, 8 px only
+  for targets <= 8. Verified headless at 0.7/1/1.25/1.4/1.6 and a
+  short viewport: NoFall title clipped inside the chrome, integer
+  physical rects, dropdown glyphs never from an upscaled 8.
