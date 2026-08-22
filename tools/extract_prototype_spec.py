@@ -402,6 +402,37 @@ def check_luau(spec: dict) -> list[str]:
         )
 
     failures.extend(check_wurst_settings(spec, shell, constants))
+    failures.extend(check_calibration(spec, constants))
+    return failures
+
+
+def check_calibration(spec: dict, constants: dict) -> list[str]:
+    """Hold ClickGui's calibration viewport to the blessed 1600×900.
+
+    That pair is the user-mandated fit reference (ref-wurst-719.jpg),
+    not a 1080p scale formula. Naming the constants without matching
+    the screenshot would make a drifted viewport official.
+    """
+    failures = []
+    shot = (spec.get("wurst") or {}).get("screenshot") or {}
+    wanted_w = shot.get("calibrationWidth")
+    wanted_h = shot.get("calibrationHeight")
+    got_w = constants.get("CALIBRATION_WIDTH")
+    got_h = constants.get("CALIBRATION_HEIGHT")
+    if wanted_w is not None and got_w is not None and not numbers_close(
+        got_w, wanted_w
+    ):
+        failures.append(
+            f"CALIBRATION_WIDTH: {got_w} != "
+            f"spec.wurst.screenshot.calibrationWidth {wanted_w}"
+        )
+    if wanted_h is not None and got_h is not None and not numbers_close(
+        got_h, wanted_h
+    ):
+        failures.append(
+            f"CALIBRATION_HEIGHT: {got_h} != "
+            f"spec.wurst.screenshot.calibrationHeight {wanted_h}"
+        )
     return failures
 
 

@@ -319,6 +319,12 @@ SCREENSHOT: dict = {
     "pixelsPerGui": 1.6667,
     "logoBlit": [124, 27],
     "hackListLine": 17,
+    # ClickGui.CALIBRATION_WIDTH/HEIGHT. The port is drawn at GUI
+    # scale 2 against this viewport (the same 1600×900 as the
+    # screenshot). Blessing the names here is what stops extract
+    # from treating them as an ungrounded 1080p invention.
+    "calibrationWidth": 1600,
+    "calibrationHeight": 900,
     # AbsoluteSize at the port's GUI scale 2, which is how 1600×900
     # (1920×1080 @ scale 2 × 5/6) measures. These are not 1080p
     # inventions: they are 13/11/72×18/9 logical × 2.

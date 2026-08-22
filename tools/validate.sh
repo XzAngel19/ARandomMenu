@@ -178,6 +178,30 @@ if offenders:
 print("ok")
 PYTHON
 
+step "WurstLogo band is packed"
+# The band used to be LOGO_WIDTH + 130, which ran on toward the HUD.
+# Furniture packs to logo + gap + the real version string. A leftover
+# +130 in Furniture or the bundle is the old slab coming back.
+python3 - <<'PYTHON'
+paths = (
+    "src/library/Furniture.luau",
+    "runtime/bundle.luau",
+)
+needle = "LOGO_WIDTH + 130"
+offenders = []
+for path in paths:
+    text = open(path, encoding="utf-8", errors="replace").read()
+    if needle in text:
+        line = text.count("\n", 0, text.index(needle)) + 1
+        offenders.append(f"{path}:{line}")
+if offenders:
+    raise SystemExit(
+        "WurstLogo band still uses LOGO_WIDTH + 130:\n  "
+        + "\n  ".join(offenders)
+    )
+print("ok")
+PYTHON
+
 step "Old brand assets stay out of the ClickGUI"
 # menu-logo.jpg and the Brand/Nav/Window artwork belong to the previous
 # product. ClickGui, Furniture, Cards, Widgets and the bundle must not

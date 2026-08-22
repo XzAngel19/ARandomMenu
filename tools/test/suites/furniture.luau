@@ -313,8 +313,8 @@ return function(ctx: any): ()
             )
         end
         -- Official fill is y=6..17 logical (12..34 at GUI scale 2), half
-        -- alpha. The seed colour is still #000000 (owed); the band itself
-        -- has to stay a stripe.
+        -- alpha. The seed is Wurst's own #FFFFFF; the band itself has to
+        -- stay a stripe, packed to the version string.
         local stripe: any = logo.root and logo.root:FindFirstChild("BackgroundStripe")
         check("WurstLogo paints the y=6..17 band", stripe ~= nil)
         if stripe ~= nil then
@@ -337,8 +337,57 @@ return function(ctx: any): ()
                 "the band is never an opaque slab",
                 stripe.BackgroundTransparency > 0
             )
+            local seed: any = stripe.BackgroundColor3
+            check(
+                "the band seed is #FFFFFF, not the ghost-era black",
+                type(seed) == "table"
+                    and math.abs((seed.R or 0) - 1) < 1e-6
+                    and math.abs((seed.G or 0) - 1) < 1e-6
+                    and math.abs((seed.B or 0) - 1) < 1e-6,
+                seed and string.format(
+                    "#%02X%02X%02X",
+                    math.floor((seed.R or 0) * 255 + 0.5),
+                    math.floor((seed.G or 0) * 255 + 0.5),
+                    math.floor((seed.B or 0) * 255 + 0.5)
+                ) or "nil"
+            )
+        end
+
+        -- chipWidth = LOGO_WIDTH + 10 + (8 + #version * 12) + 4.
+        -- LOGO_WIDTH + 130 was the slab that ran on toward the HUD.
+        local logoWidth: number = 142
+        local packedChip: number = logoWidth + 10 + (8 + #versionText * 12) + 4
+        local chipFrame: any = logo.root
+        check(
+            "the WurstLogo chip packs to logo + gap + version, not +130",
+            chipFrame ~= nil and chipFrame.Size.X.Offset == packedChip,
+            chipFrame and (tostring(chipFrame.Size.X.Offset)
+                .. " expected "
+                .. tostring(packedChip)) or "nil"
+        )
+        if stripe ~= nil then
+            check(
+                "the stripe matches the packed chip width",
+                stripe.Size.X.Offset == packedChip,
+                tostring(stripe.Size.X.Offset)
+            )
+        end
+        local versionChip: any = logo.root and logo.root:FindFirstChild("VersionChip")
+        if versionChip ~= nil and chipFrame ~= nil then
+            local versionRight: number = versionChip.Position.X.Offset
+                + versionChip.Size.X.Offset
+            check(
+                "the version chip ends inside the packed band",
+                versionRight <= chipFrame.Size.X.Offset,
+                tostring(versionRight) .. " vs chip " .. tostring(chipFrame.Size.X.Offset)
+            )
         end
     end
+
+    check(
+        "Furniture never hard-codes LOGO_WIDTH + 130",
+        string.find(bundleSource, "LOGO_WIDTH + 130", 1, true) == nil
+    )
 
     check("Navigator is published", type(state.navigator) == "table")
 

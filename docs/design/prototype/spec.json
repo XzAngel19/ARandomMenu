@@ -379,6 +379,8 @@
         27
       ],
       "hackListLine": 17,
+      "calibrationWidth": 1600,
+      "calibrationHeight": 900,
       "absoluteAtScale2": {
         "titleHeight": 26,
         "rowHeight": 22,
