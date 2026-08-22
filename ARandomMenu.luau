@@ -363,7 +363,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "15b6d76fccdd6f30"
+local SOURCE_STAMP: string = "d36b898904f8a3e7"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -1912,6 +1912,9 @@ state.bitmapText = {
     -- atlas resolving re-renders every surface without any of them
     -- registering by hand.
     _live = setmetatable({}, {__mode = "k"}) :: any,
+    -- Labels already adopted, weak-keyed: adopt is idempotent and a
+    -- sweep may visit the same instance twice.
+    _adopted = setmetatable({}, {__mode = "k"}) :: any,
     width = function(text: any): number
         return #tostring(text) * 12
     end,
@@ -1944,15 +1947,20 @@ state.bitmapText.eachCode = function(text: string, visit: (number) -> ()): ()
     end
 end
 
+local function contractAdvanceFor(atlas: any, code: number, scale: number): number
+    local advances: any = atlas.advances
+    local specific: any = advances and (advances[code] or advances[tostring(code)])
+    return (tonumber(specific) or atlas.advance) * scale
+end
+
 -- The width draw() will actually occupy: atlas advances when the atlas is
 -- live, the packing estimate until then. Newlines reset the caret; the
--- widest line wins.
+-- widest line wins. Honours per-glyph advances when the atlas carries
+-- them — Minecraft's font is variable-width.
 state.bitmapText.measure = function(segments: {any}, textSize: number?): number
     local contract: any = state.bitmapText
+    local atlas: any = contract.atlas
     local scale: number = (tonumber(textSize) or 16) / contract.size
-    local advance: number = (contract.atlas.ready
-        and contract.atlas.advance
-        or contract.advance) * scale
     local widest: number = 0
     local x: number = 0
     for _, segment: any in ipairs(segments) do
@@ -1960,7 +1968,11 @@ state.bitmapText.measure = function(segments: {any}, textSize: number?): number
             if code == 10 then
                 x = 0
             else
-                x += advance
+                if atlas.ready then
+                    x += contractAdvanceFor(atlas, code, scale)
+                else
+                    x += contract.advance * scale
+                end
                 widest = math.max(widest, x)
             end
         end)
@@ -2091,7 +2103,6 @@ state.bitmapText.draw = function(
             (record.fallback :: TextLabel).Visible = false
         end
         local scale: number = textSize / atlas.size
-        local advance: number = atlas.advance * scale
         local glyphWidth: number = atlas.cellWidth * scale
         local glyphHeight: number = atlas.cellHeight * scale
         local lineAdvance: number = contract.lineHeight * (textSize / contract.size)
@@ -2128,6 +2139,7 @@ state.bitmapText.draw = function(
                     lineCount += 1
                     return
                 end
+                local advance: number = contractAdvanceFor(atlas, code, scale)
                 if maxWidth ~= nil and x + advance > maxWidth then
                     return
                 end
@@ -2173,6 +2185,8 @@ state.bitmapText.draw = function(
                 TextColor3 = Theme.text,
             })
             record.fallback = fallback
+            -- Inoculated against adoption: this label IS the renderer.
+            contract._adopted[fallback] = true
         end
         local label: TextLabel = fallback :: TextLabel
         label.Visible = true
@@ -2211,24 +2225,181 @@ state.bitmapText.release = function(holder: Instance?): ()
     end
 end
 
+-- Adopt an existing TextLabel or TextButton: its vector text goes
+-- invisible and pooled glyphs draw inside it instead, following the
+-- label's own Text / TextColor3 / TextSize / TextXAlignment live. The
+-- instance keeps its name, its Text and its TextBounds, so everything
+-- that reads a label as metadata — width packing, the suites, the
+-- Show rules — keeps working while the pixels come from the atlas.
+-- ClipsDescendants stands in for TextTruncate. TextBoxes are refused:
+-- hiding typed text under a caret is not a migration, it is a bug.
+-- Idempotent per label; the glyphs, the registry entry and the signal
+-- connections all die with the label's own Destroy.
+state.bitmapText.adopt = function(label: any, options: any?): ()
+    local contract: any = state.bitmapText
+    if label == nil
+        or type(label.IsA) ~= "function"
+        or label:IsA("TextBox")
+        or not (label:IsA("TextLabel") or label:IsA("TextButton")) then
+        return
+    end
+    if label:GetAttribute("NoBitmap") == true then
+        return
+    end
+    if contract._adopted[label] then
+        return
+    end
+    -- Never adopt the renderer's own output: the fallback label inside a
+    -- draw holder would otherwise be adopted, hidden, and redrawn into
+    -- itself forever.
+    if label.Parent ~= nil and contract._live[label.Parent] ~= nil then
+        return
+    end
+    local resolvedOptions: any = options or {}
+    contract._adopted[label] = true
+    label.TextTransparency = 1
+    label.ClipsDescendants = true
+    local function paint(): ()
+        if label.Parent == nil then
+            return
+        end
+        local alignment: any = label.TextXAlignment
+        contract.draw(label, {
+            {text = label.Text, color = label.TextColor3},
+        }, {
+            Name = "Glyphs",
+            TextSize = label.TextSize,
+            ZIndex = (tonumber(label.ZIndex) or 1) + 1,
+            align = alignment == Enum.TextXAlignment.Right and "Right"
+                or alignment == Enum.TextXAlignment.Center and "Center"
+                or "Left",
+            shadow = resolvedOptions.shadow == true,
+        })
+    end
+    paint()
+    -- The signals belong to the label, so Destroy disconnects them; no
+    -- separate tracking needed, and no leak survives the surface. The
+    -- harness's mock instances may not carry every property signal —
+    -- adoption still paints once there.
+    pcall(function(): ()
+        label:GetPropertyChangedSignal("Text"):Connect(paint)
+        label:GetPropertyChangedSignal("TextColor3"):Connect(paint)
+        label:GetPropertyChangedSignal("TextSize"):Connect(paint)
+    end)
+end
+
+-- Adopt every current and future text object under a root — the one
+-- call that migrates a settings window whose rows are still being
+-- built. Returns a disconnectable so the caller can park it with the
+-- window's own cleanup; a stub when the environment lacks
+-- DescendantAdded, so callers never branch.
+state.bitmapText.adoptTree = function(root: Instance, options: any?): any
+    local contract: any = state.bitmapText
+    pcall(function(): ()
+        for _, descendant: Instance in ipairs(root:GetDescendants()) do
+            contract.adopt(descendant, options)
+        end
+    end)
+    local connected: boolean, connection: any = pcall(function(): any
+        return root.DescendantAdded:Connect(function(descendant: Instance): ()
+            contract.adopt(descendant, options)
+        end)
+    end)
+    if connected and connection then
+        return connection
+    end
+    return {
+        Connected = false,
+        Disconnect = function(): () end,
+    }
+end
+
+
 -- The atlas arrives like every other asset: downloaded, verified, turned
--- into an id off the boot thread. Every live draw re-renders itself the
--- moment it lands — the signatures all carry atlas.ready, so the redraws
--- do real work exactly once — and onReady still fires for surfaces that
--- rebuild more than their glyphs.
+-- into an id off the boot thread. Three honest states, told apart at
+-- runtime: "minecraft-exact" only when a locally generated 1.18.1 atlas
+-- is really loaded (never committed — tools/fetch_minecraft_font.py
+-- --update builds it from the verified official jar), the Monocraft
+-- fallback when only the committed OFL atlas resolves, "unavailable"
+-- when neither does and the vector stand-in keeps the menu readable.
+-- One line of warning each, never a spam loop. Every live draw
+-- re-renders itself the moment glyphs land — the signatures all carry
+-- atlas.ready, so the redraws do real work exactly once — and onReady
+-- still fires for surfaces that rebuild more than their glyphs.
+
+-- The plug for a locally generated exact atlas: image plus metrics in
+-- the same shape the Monocraft atlas ships. Nothing in the repo calls
+-- it with Mojang data; a user who ran the official downloader can.
+state.bitmapText.loadExactAtlas = function(image: string, metrics: any): ()
+    local atlas: any = state.bitmapText.atlas
+    if type(image) ~= "string" or type(metrics) ~= "table" then
+        return
+    end
+    for _, key: string in ipairs({
+        "size", "first", "last", "columns", "cellWidth", "cellHeight", "advance",
+    }) do
+        if tonumber(metrics[key]) then
+            atlas[key] = tonumber(metrics[key])
+        end
+    end
+    -- Per-codepoint advances, when the metrics carry them: Minecraft's
+    -- font is variable-width and the renderer honours that the moment
+    -- the numbers exist.
+    if type(metrics.advances) == "table" then
+        atlas.advances = metrics.advances
+    end
+    atlas.image = image
+    atlas.ready = true
+    state.bitmapText.source = "minecraft-exact"
+    for holder: any, record: any in pairs(state.bitmapText._live) do
+        if holder.Parent ~= nil and record.request ~= nil then
+            pcall(function(): ()
+                state.bitmapText.draw(
+                    record.request.parent,
+                    record.request.segments,
+                    record.request.options
+                )
+            end)
+        end
+    end
+    for _, listener: () -> () in ipairs(state.bitmapText.onReady) do
+        pcall(listener)
+    end
+end
+
 task.spawn(function(): ()
     if type(state.resolveAsset) ~= "function" then
+        state.bitmapText.source = "unavailable"
         return
     end
-    local assetId: string?, atlasError: string? =
-        state.resolveAsset("bitmapFontAtlas")
-    if not assetId then
-        print("[" .. PRODUCT.logPrefix .. ":Assets] atlas fallback: "
-            .. tostring(atlasError))
-        return
+    -- An exact atlas, if a local build registered one. Unknown keys are
+    -- an error path in the asset manager, so the probe is pcall'd and
+    -- silent — absence is the normal case, not a warning.
+    local exactId: string? = nil
+    pcall(function(): ()
+        exactId = (state.resolveAsset("minecraftFontAtlas"))
+    end)
+    if exactId then
+        state.bitmapText.atlas.image = exactId
+        state.bitmapText.atlas.ready = true
+        state.bitmapText.source = "minecraft-exact"
+    else
+        local assetId: string?, atlasError: string? =
+            state.resolveAsset("bitmapFontAtlas")
+        if not assetId then
+            state.bitmapText.source = "unavailable"
+            warn("[" .. PRODUCT.logPrefix .. ":Assets] no bitmap atlas ("
+                .. tostring(atlasError)
+                .. "); text renders on the vector stand-in")
+            return
+        end
+        state.bitmapText.atlas.image = assetId
+        state.bitmapText.atlas.ready = true
+        state.bitmapText.source = "monocraft-fallback"
+        print("[" .. PRODUCT.logPrefix
+            .. ":Assets] Minecraft-exact atlas not present; rendering with "
+            .. "the Monocraft fallback (OFL)")
     end
-    state.bitmapText.atlas.image = assetId
-    state.bitmapText.atlas.ready = true
     for holder: any, record: any in pairs(state.bitmapText._live) do
         if holder.Parent ~= nil and record.request ~= nil then
             pcall(function(): ()
@@ -3692,8 +3863,12 @@ local function bindActionShortcut(
     }
     local savedName: any = configData.values[optionKey]
     if type(savedName) == "string" and savedName ~= "" then
-        local savedKey: Enum.KeyCode? = Enum.KeyCode[savedName]
-        if savedKey then
+        -- pcall, not trust: indexing Enum.KeyCode with a corrupt stored
+        -- name throws, and a broken store must fall back to unbound.
+        local resolved: boolean, savedKey: any = pcall(function(): any
+            return (Enum.KeyCode :: any)[savedName]
+        end)
+        if resolved and savedKey then
             binding.key = savedKey
         end
     end
@@ -3973,22 +4148,71 @@ create("UIPadding", {
 
 state.tooltipToken = 0
 
+-- Wurst's tooltip is the same bitmap font as everything else. The
+-- TextLabel stays as the box and the metadata carrier — the Tooltip
+-- opacity slider writes its BackgroundTransparency, and its Text is
+-- still the truth — but the visible glyphs come from the contract,
+-- word-wrapped by real advances. The anchor arrives in screen pixels
+-- (AbsolutePosition) while the layer positions in logical offsets
+-- under the ClickGUI's UIScale; the manager's converters keep the two
+-- apart instead of mixing them like the 5.5-px-per-char guess did.
 local function showFeatureTooltip(row: Frame, text: string, pointer: Vector2?): ()
     state.tooltipToken = state.tooltipToken + 1
     state.featureTooltip.Text = text
+    state.featureTooltip.TextTransparency = 1
 
-    local width: number = math.clamp(#text * 5.5 + 24, 210, 520)
-    local lineCount: number = math.max(1, math.ceil((#text * 5.5) / (width - 20)))
-    local height: number = math.max(30, lineCount * 15 + 12)
+    local bitmap: any = state.bitmapText
+    local innerLimit: number = 488
+    -- Word wrap by measured width: words accumulate while they fit,
+    -- and a single over-long word breaks rather than overflowing.
+    local lines: {string} = {}
+    local current: string = ""
+    for word: string in string.gmatch(tostring(text), "%S+") do
+        local candidate: string = current == "" and word or (current .. " " .. word)
+        if bitmap.measure({{text = candidate}}, 16) <= innerLimit or current == "" then
+            current = candidate
+        else
+            table.insert(lines, current)
+            current = word
+        end
+    end
+    if current ~= "" then
+        table.insert(lines, current)
+    end
+    if #lines == 0 then
+        lines = {""}
+    end
+    local wrapped: string = table.concat(lines, "\n")
+    local measured: number = bitmap.measure({{text = wrapped}}, 16)
+    local width: number = math.clamp(measured + 24, 210, 520)
+    local height: number = math.max(30, #lines * bitmap.lineHeight + 12)
     state.featureTooltip.Size = UDim2.fromOffset(width, height)
+    bitmap.draw(state.featureTooltip, {
+        {text = wrapped, color = Color3.fromRGB(205, 205, 205)},
+    }, {
+        Name = "Glyphs",
+        TextSize = 16,
+        ZIndex = 251,
+        AnchorPoint = Vector2.new(0, 0.5),
+        Position = UDim2.new(0, 0, 0.5, 0),
+    })
 
-    local camera: Camera? = workspace.CurrentCamera
-    local viewport: Vector2 = camera and camera.ViewportSize or Vector2.new(1280, 720)
+    local manager: any = state.windows
+    local viewport: Vector2
+    if manager and type(manager.LogicalViewport) == "function" then
+        viewport = manager.LogicalViewport()
+    else
+        local camera: Camera? = workspace.CurrentCamera
+        viewport = camera and camera.ViewportSize or Vector2.new(1280, 720)
+    end
     local anchor: Vector2 = pointer
         or Vector2.new(
             row.AbsolutePosition.X + 16,
             row.AbsolutePosition.Y + row.AbsoluteSize.Y * 0.5
         )
+    if manager and type(manager.ScreenToLogical) == "function" then
+        anchor = manager.ScreenToLogical(anchor)
+    end
     local x: number = math.clamp(anchor.X + 12, 8, math.max(8, viewport.X - width - 8))
     local y: number = math.clamp(
         anchor.Y - height - 8,

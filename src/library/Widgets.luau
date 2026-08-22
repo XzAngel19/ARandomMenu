@@ -510,8 +510,11 @@ function Module.init(context: any): WidgetLibrary
         local optionKey: string =
             feature.configKey .. "." .. labelText:gsub("%W", "")
         local storedValue: number? = tonumber(configData.values[optionKey])
+        -- A stored value is clamped into the row's own range on load: a
+        -- config written by an older build (Max height 1000) or edited by
+        -- hand must not smuggle an out-of-range number past the slider.
         local value: number = isFiniteNumber(storedValue)
-            and (storedValue :: number)
+            and math.clamp(storedValue :: number, minimum, maximum)
             or defaultValue
         local integerOnly: boolean = defaultValue % 1 == 0
             and minimum % 1 == 0
@@ -939,6 +942,14 @@ function Module.init(context: any): WidgetLibrary
             Transparency = 0.4,
             Thickness = 1,
         })
+        -- Every entry the list is about to hold draws on the bitmap
+        -- contract; the sweep's connection dies with the list.
+        do
+            local bitmap: any = state.bitmapText
+            if bitmap and type(bitmap.adoptTree) == "function" then
+                bitmap.adoptTree(list)
+            end
+        end
 
         local filterBox: TextBox? = nil
         if searchable then
@@ -1633,6 +1644,14 @@ function Module.init(context: any): WidgetLibrary
                 Visible = false,
                 ZIndex = 460,
             })
+            -- The picker's labels and buttons render on the bitmap
+            -- contract too; the panel is persistent, so the sweep is.
+            do
+                local bitmap: any = state.bitmapText
+                if bitmap and type(bitmap.adoptTree) == "function" then
+                    bitmap.adoptTree(panel)
+                end
+            end
 
             local title = makeTextLabel(panel, "COLOR", 14)
             title.FontFace = CONTROL_FONT
