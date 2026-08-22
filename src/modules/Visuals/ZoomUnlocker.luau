@@ -85,13 +85,13 @@ function Module.init(context: Runtime): any
 
 
     ZoomFeature = createUniversalFeature(
-        "CameraDistance",
+        "Zoom",
         "Extend camera zoom and optionally leave forced first person",
         23,
         toggleZoomUnlocker,
         {
             configKey = "Universal.ZoomUnlocker",
-            categoryName = "Visuals",
+            categoryName = "Render",
         }
     )
     addNumberOption(

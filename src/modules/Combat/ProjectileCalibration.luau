@@ -707,7 +707,7 @@ function Module.init(context: Runtime): any
         "Automatic per-game projectile analytics with tunable ping buckets",
         17,
         function(_enabled: boolean): () end,
-        {category = true}
+        {category = true, categoryName = "Render"}
     )
     tuning =
         calibration.tuning

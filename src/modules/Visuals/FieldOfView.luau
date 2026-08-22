@@ -98,7 +98,8 @@ function Module.init(context: Runtime): any
         "FOV",
         "Keep the camera field of view fixed",
         10,
-        toggleFov
+        toggleFov,
+        {categoryName = "Render"}
     )
     addNumberOption(FovFeature, "Field of view", fovSettings.value, 20, 120, function(value)
         fovSettings.value = value

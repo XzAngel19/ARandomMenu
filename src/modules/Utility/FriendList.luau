@@ -109,7 +109,7 @@ function Module.init(context: Runtime): any
     local friends: any
     friends = framework.Categories.Utility:CreateModule({
         Name = "Friend List",
-        Category = "Utility",
+        Category = "Other",
         Order = 1,
         Kind = "group",
         Tooltip = "Players listed here are never targeted by Kill Aura, "

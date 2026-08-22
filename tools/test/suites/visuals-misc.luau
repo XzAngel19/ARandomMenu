@@ -2,7 +2,7 @@
 --
 -- Headless tests: the visuals cards no suite had loaded.
 --
--- Field of View, Fullbright, X-Ray and CameraDistance. Each one borrows a
+-- Field of View, Fullbright, X-Ray and Zoom. Each one borrows a
 -- piece of the client — the camera, the lighting, the map's transparency, the
 -- player's zoom bounds — and the third question is the whole suite: every
 -- piece goes back to exactly what it was.
@@ -104,7 +104,7 @@ return function(ctx: any): ()
     check("and the map's own transparency returns exactly",
         mapPart.LocalTransparencyModifier == 0.1)
 
-    section("CameraDistance")
+    section("Zoom")
 
     local localPlayer: any = world.localPlayer
     localPlayer.CameraMinZoomDistance = 2
@@ -115,7 +115,7 @@ return function(ctx: any): ()
     Mock.inject(world, ZoomFile.init)
     local zoom: any = ZoomFile.init(context)
 
-    check("card is registered", zoom.name == "CameraDistance")
+    check("card is registered", zoom.name == "Zoom")
     for _, name: string in ipairs({
         "Maximum distance",
         "Minimum distance",

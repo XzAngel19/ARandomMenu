@@ -126,10 +126,9 @@ function Module.init(context: Runtime): any
     local emotes: any
     emotes = framework.Categories.Utility:CreateModule({
         Name = "Emote Player",
-        Category = "Spoof",
+        Category = "Fun",
         Order = 3,
-        Parent = state.spoofScroll,
-        Registry = state.spoofFeatures,
+        ConfigKey = "Universal.EmotePlayer",
         Tooltip = "Play any emote by id — Roblox's own or UGC.",
         Function = function(enabled: boolean): ()
             if not enabled then

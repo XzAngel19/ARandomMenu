@@ -65,7 +65,7 @@ function Module.init(context: Runtime): any
     local noFall: any
     noFall = framework.Categories.Protection:CreateModule({
         Name = "NoFall",
-        Category = "Protection",
+        Category = "Movement",
         ConfigKey = "Universal.NoFall",
         Tooltip = "Fall damage is written by the game, on this client: this "
             .. "hands its formula a landing it considers safe instead of "

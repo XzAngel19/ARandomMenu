@@ -84,9 +84,9 @@ return function(ctx: any): ()
         fly.enabled == false and toggled[#toggled] == false)
 
     local gizmo: any = createCard("Gizmo", "Unclassified", 2, function(): () end)
-    check("an unclassified card falls through to General",
-        gizmo.categoryName == "General"
-            and gizmo.row:GetAttribute("FeatureCategory") == "General")
+    check("an unclassified card falls through to Wurst Other",
+        gizmo.categoryName == "Other"
+            and gizmo.row:GetAttribute("FeatureCategory") == "Other")
 
     local ran: number = 0
     local jump: any = createCard("High Jump", "Jump once", 3, function(): ()

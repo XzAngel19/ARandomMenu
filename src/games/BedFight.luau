@@ -572,7 +572,7 @@ function Module.init(runtime: any): any
                         .. tostring(#collectBeds())
                 end)
         end,
-        {parent = scroll, registry = registry, categoryName = "Utility"}
+        {parent = scroll, registry = registry, categoryName = "Other"}
     )
     addInformationOption(
         InfoFeature,
@@ -1037,7 +1037,7 @@ function Module.init(runtime: any): any
                     end
                 end)
         end,
-        {parent = scroll, registry = registry, categoryName = "Protection"}
+        {parent = scroll, registry = registry, categoryName = "Movement"}
     )
     addNumberOption(
         VoidFeature,
@@ -1473,7 +1473,7 @@ function Module.init(runtime: any): any
                     )
                 end)
         end,
-        {parent = scroll, registry = registry, categoryName = "Utility"}
+        {parent = scroll, registry = registry, categoryName = "Other"}
     )
     addTextOption(BuyFeature, "Category", buySettings.category, function(value: string): ()
         buySettings.category = value
@@ -1500,7 +1500,7 @@ function Module.init(runtime: any): any
         {
             parent = scroll,
             registry = registry,
-            categoryName = "Utility",
+            categoryName = "Other",
             category = true,
         }
     )

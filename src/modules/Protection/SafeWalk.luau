@@ -66,7 +66,7 @@ function Module.init(context: Runtime): any
         toggleSafeWalk,
         {
             configKey = "Universal.SafeWalk",
-            categoryName = "Protection",
+            categoryName = "Movement",
         }
     )
     addNumberOption(

@@ -76,12 +76,27 @@ function Host.create(world: any): HostStub
     local function optionRow(feature: any, label: string): any
         local row: any = create("Frame", {Parent = screenGui, Name = label})
         table.insert(feature.optionRows, row)
+        if type(feature.hasOptions) == "function" then
+            feature.hasOptions()
+        end
         return row
     end
 
     local host: any = {}
     -- Created first: the option builders publish list controls onto it.
     host.state = {}
+    local categoryAliases: {[string]: string} = {
+        Visuals = "Render",
+        Protection = "Movement",
+        Utility = "Other",
+        Spoof = "Fun",
+        General = "Other",
+        Player = "Movement",
+    }
+    host.normalizeFeatureCategory = function(name: any): string
+        local resolved: string = tostring(name or "Other")
+        return categoryAliases[resolved] or resolved
+    end
 
     -- The shell's one connection registry, keyed by name so a module can drop
     -- its own listener without holding the handle. Modules that predate the
@@ -114,7 +129,13 @@ function Host.create(world: any): HostStub
             onToggle = onToggle,
             optionRows = {},
             options = {},
+            hasSettings = false,
         }
+        function feature.hasOptions(): boolean
+            local result: boolean = #feature.optionRows > 0
+            feature.hasSettings = result
+            return result
+        end
         -- The real factory gives every feature its row. Cards that hide
         -- themselves (VD's killer-only proximity widget) read `.row`.
         feature.row = create("Frame", {Name = name .. "Row"})

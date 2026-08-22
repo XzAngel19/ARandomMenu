@@ -76,7 +76,8 @@ function Module.init(context: Runtime): any
         "Fullbright",
         "Keep the scene bright and remove global shadows",
         15,
-        state.toggleFullbright
+        state.toggleFullbright,
+        {categoryName = "Render"}
     )
     addNumberOption(
         FullbrightFeature,

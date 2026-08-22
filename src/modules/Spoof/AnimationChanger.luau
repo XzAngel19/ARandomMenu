@@ -84,7 +84,6 @@ function Module.init(context: Runtime): any
     local host: any = context.host
     local framework: any = context.framework
     local localPlayer: Player = host.LocalPlayer
-    local state: any = host.state
 
     local runtime: any = {
         packs = {} :: {any},
@@ -139,10 +138,9 @@ function Module.init(context: Runtime): any
     local animations: any
     animations = framework.Categories.Utility:CreateModule({
         Name = "Animation Changer",
-        Category = "Spoof",
+        Category = "Fun",
         Order = 2,
-        Parent = state.spoofScroll,
-        Registry = state.spoofFeatures,
+        ConfigKey = "Universal.AnimationChanger",
         Tooltip = "Wear a Roblox animation pack: idle, walk, run, jump, fall, "
             .. "climb and swim.",
         Function = function(enabled: boolean): ()

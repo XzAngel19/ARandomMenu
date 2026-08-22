@@ -38,7 +38,7 @@ function Module.init(context: Runtime): any
         "Reconnect to the current server instance",
         22,
         rejoinCurrentServer,
-        {action = true, noOptions = true}
+        {action = true, noOptions = true, categoryName = "Other"}
     )
 
     activeCleanup = function(): ()

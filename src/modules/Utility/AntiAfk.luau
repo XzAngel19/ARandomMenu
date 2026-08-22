@@ -53,7 +53,7 @@ function Module.init(context: Runtime): any
         {
             noOptions = true,
             configKey = "Universal.AntiAFK",
-            categoryName = "Utility",
+            categoryName = "Other",
         }
     )
     addFeatureTooltip(AntiAfkFeature, "Responds only to Roblox's local idle event and "

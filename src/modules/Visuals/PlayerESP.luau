@@ -45,7 +45,7 @@ function Module.init(context: Runtime): any
     local esp: any
     esp = framework.Categories.Visuals:CreateModule({
         Name = "PlayerESP",
-        Category = "Visuals",
+        Category = "Render",
         ConfigKey = "Universal.PlayerESP",
         Order = 1,
         Tooltip = "Boxes, skeletons, name tags, health, tracers and chams, "

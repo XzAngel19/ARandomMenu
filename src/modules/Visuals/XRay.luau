@@ -93,7 +93,7 @@ function Module.init(context: Runtime): any
         "Fade map geometry locally while keeping your character clear",
         18,
         toggleXray,
-        {noOptions = true}
+        {noOptions = true, categoryName = "Render"}
     )
 
     activeCleanup = function(): ()

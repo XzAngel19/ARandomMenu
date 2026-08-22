@@ -93,7 +93,8 @@ function Module.init(context: Runtime): any
         "Jump Power",
         "Keep character jump power at a custom value",
         6,
-        toggleJumpPower
+        toggleJumpPower,
+        {categoryName = "Movement"}
     )
     addNumberOption(JumpPowerFeature, "Power", jumpPowerSettings.value, 0, 500, function(value)
         jumpPowerSettings.value = value

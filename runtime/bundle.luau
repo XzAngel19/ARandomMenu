@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "a69c5ec5f68a9f02",
+    stamp = "b6cc9a7f20fc7fd2",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -74,27 +74,27 @@ local Manifest: Manifest = {
         {
             path = "src/modules/Utility/FriendList.luau",
             name = "Friend List",
-            category = "Utility",
+            category = "Other",
         },
         {
             path = "src/modules/Visuals/ItemRender.luau",
-            name = "Item Render",
-            category = "Visuals",
+            name = "ItemESP",
+            category = "Render",
         },
         {
             path = "src/modules/Visuals/PlayerESP.luau",
-            name = "Player ESP",
-            category = "Visuals",
+            name = "PlayerESP",
+            category = "Render",
         },
         {
             path = "src/modules/Combat/KillAura.luau",
-            name = "Kill Aura",
+            name = "Killaura",
             category = "Combat",
         },
         {
             path = "src/modules/Utility/RemoteLogger.luau",
             name = "Remote Logger",
-            category = "Utility",
+            category = "Other",
         },
         {
             path = "src/modules/Movement/ClickTeleport.luau",
@@ -115,11 +115,11 @@ local Manifest: Manifest = {
         {
             path = "src/modules/Visuals/XRay.luau",
             name = "X-Ray",
-            category = "Visuals",
+            category = "Render",
         },
         {
             path = "src/modules/Movement/HighJump.luau",
-            name = "High Jump",
+            name = "HighJump",
             category = "Movement",
         },
         {
@@ -129,23 +129,23 @@ local Manifest: Manifest = {
         },
         {
             path = "src/modules/Protection/SafeWalk.luau",
-            name = "Safe Walk",
-            category = "Protection",
+            name = "SafeWalk",
+            category = "Movement",
         },
         {
             path = "src/modules/Utility/RejoinServer.luau",
             name = "Rejoin Server",
-            category = "Utility",
+            category = "Other",
         },
         {
             path = "src/modules/Visuals/ZoomUnlocker.luau",
-            name = "Zoom Unlocker",
-            category = "Visuals",
+            name = "Zoom",
+            category = "Render",
         },
         {
             path = "src/modules/Utility/InteractExtender.luau",
             name = "Interact Extender",
-            category = "Utility",
+            category = "Other",
         },
         {
             path = "src/modules/Movement/PhaseDash.luau",
@@ -154,12 +154,12 @@ local Manifest: Manifest = {
         },
         {
             path = "src/modules/Protection/NoFall.luau",
-            name = "No Fall",
-            category = "Protection",
+            name = "NoFall",
+            category = "Movement",
         },
         {
             path = "src/modules/Movement/Fly.luau",
-            name = "Fly",
+            name = "Flight",
             category = "Movement",
         },
         {
@@ -170,12 +170,12 @@ local Manifest: Manifest = {
         {
             path = "src/modules/Protection/AntiVoid.luau",
             name = "Anti-Void",
-            category = "Protection",
+            category = "Movement",
         },
         {
             path = "src/modules/Utility/Gravity.luau",
             name = "Gravity",
-            category = "Utility",
+            category = "Movement",
         },
         {
             path = "src/modules/Movement/JumpPower.luau",
@@ -190,7 +190,7 @@ local Manifest: Manifest = {
         {
             path = "src/modules/Visuals/FieldOfView.luau",
             name = "FOV",
-            category = "Visuals",
+            category = "Render",
         },
         {
             path = "src/modules/Movement/Noclip.luau",
@@ -199,33 +199,33 @@ local Manifest: Manifest = {
         },
         {
             path = "src/modules/Utility/AntiAfk.luau",
-            name = "Anti-AFK",
-            category = "Utility",
+            name = "AntiAFK",
+            category = "Other",
         },
         {
             path = "src/modules/Protection/AntiFling.luau",
             name = "Anti-Fling",
-            category = "Protection",
+            category = "Combat",
         },
         {
             path = "src/modules/Utility/LagSwitch.luau",
             name = "Lag Switch",
-            category = "Utility",
+            category = "Movement",
         },
         {
             path = "src/modules/Utility/Fling.luau",
             name = "Fling",
-            category = "Utility",
+            category = "Combat",
         },
         {
             path = "src/modules/Utility/ImproveFps.luau",
             name = "Improve FPS",
-            category = "Utility",
+            category = "Other",
         },
         {
             path = "src/modules/Visuals/Fullbright.luau",
             name = "Fullbright",
-            category = "Visuals",
+            category = "Render",
         },
         {
             path = "src/modules/Movement/FreezeMovements.luau",
@@ -234,7 +234,7 @@ local Manifest: Manifest = {
         },
         {
             path = "src/modules/Movement/Speed.luau",
-            name = "Speed",
+            name = "SpeedHack",
             category = "Movement",
         },
         {
@@ -245,22 +245,22 @@ local Manifest: Manifest = {
         {
             path = "src/modules/Combat/ProjectileCalibration.luau",
             name = "Projectile Calibration",
-            category = "Combat",
+            category = "Render",
         },
         {
             path = "src/modules/Spoof/Disguise.luau",
             name = "Disguise",
-            category = "Spoof",
+            category = "Fun",
         },
         {
             path = "src/modules/Spoof/AnimationChanger.luau",
             name = "Animation Changer",
-            category = "Spoof",
+            category = "Fun",
         },
         {
             path = "src/modules/Spoof/EmotePlayer.luau",
             name = "Emote Player",
-            category = "Spoof",
+            category = "Fun",
         },
     },
 }
@@ -10713,7 +10713,7 @@ function Module.init(context: Runtime): any
     local friends: any
     friends = framework.Categories.Utility:CreateModule({
         Name = "Friend List",
-        Category = "Utility",
+        Category = "Other",
         Order = 1,
         Kind = "group",
         Tooltip = "Players listed here are never targeted by Kill Aura, "
@@ -10975,7 +10975,7 @@ function Module.init(context: Runtime): any
     local render: any
     render = framework.Categories.Visuals:CreateModule({
         Name = "ItemESP",
-        Category = "Visuals",
+        Category = "Render",
         ConfigKey = "Universal.ItemRender",
         Order = 2,
         Tooltip = "Names and outlines every object on the list, wherever it is.",
@@ -11369,7 +11369,7 @@ function Module.init(context: Runtime): any
     local esp: any
     esp = framework.Categories.Visuals:CreateModule({
         Name = "PlayerESP",
-        Category = "Visuals",
+        Category = "Render",
         ConfigKey = "Universal.PlayerESP",
         Order = 1,
         Tooltip = "Boxes, skeletons, name tags, health, tracers and chams, "
@@ -13143,7 +13143,7 @@ function Module.init(context: Runtime): any
 
     logger = framework.Categories.Utility:CreateModule({
         Name = "Remote Logger",
-        Category = "Utility",
+        Category = "Other",
         Order = 2,
         Tooltip = "Records the arguments the game sends to its own remotes and "
             .. "writes them to disk.",
@@ -14577,7 +14577,7 @@ function Module.init(context: Runtime): any
         "Fade map geometry locally while keeping your character clear",
         18,
         toggleXray,
-        {noOptions = true}
+        {noOptions = true, categoryName = "Render"}
     )
 
     activeCleanup = function(): ()
@@ -14834,7 +14834,8 @@ function Module.init(context: Runtime): any
         "Spider",
         "Climb a wall automatically while moving into it",
         20,
-        toggleSpider
+        toggleSpider,
+        {categoryName = "Movement"}
     )
     addCycleOption(
         SpiderFeature,
@@ -14962,7 +14963,7 @@ function Module.init(context: Runtime): any
         toggleSafeWalk,
         {
             configKey = "Universal.SafeWalk",
-            categoryName = "Protection",
+            categoryName = "Movement",
         }
     )
     addNumberOption(
@@ -15033,7 +15034,7 @@ function Module.init(context: Runtime): any
         "Reconnect to the current server instance",
         22,
         rejoinCurrentServer,
-        {action = true, noOptions = true}
+        {action = true, noOptions = true, categoryName = "Other"}
     )
 
     activeCleanup = function(): ()
@@ -15140,13 +15141,13 @@ function Module.init(context: Runtime): any
 
 
     ZoomFeature = createUniversalFeature(
-        "CameraDistance",
+        "Zoom",
         "Extend camera zoom and optionally leave forced first person",
         23,
         toggleZoomUnlocker,
         {
             configKey = "Universal.ZoomUnlocker",
-            categoryName = "Visuals",
+            categoryName = "Render",
         }
     )
     addNumberOption(
@@ -15352,7 +15353,8 @@ function Module.init(context: Runtime): any
         "Interact Extender",
         "Extend prompt and click interaction range without auto-firing",
         24,
-        toggleInteractionExtender
+        toggleInteractionExtender,
+        {categoryName = "Other"}
     )
     addNumberOption(
         InteractFeature,
@@ -15753,7 +15755,7 @@ function Module.init(context: Runtime): any
     local noFall: any
     noFall = framework.Categories.Protection:CreateModule({
         Name = "NoFall",
-        Category = "Protection",
+        Category = "Movement",
         ConfigKey = "Universal.NoFall",
         Tooltip = "Fall damage is written by the game, on this client: this "
             .. "hands its formula a landing it considers safe instead of "
@@ -17102,7 +17104,7 @@ function Module.init(context: Runtime): any
         "Create an invisible rescue platform only when death is imminent",
         4,
         toggleAntiVoid,
-        {noOptions = true}
+        {noOptions = true, categoryName = "Movement"}
     )
     addFeatureTooltip(
         AntiVoidFeature,
@@ -17183,7 +17185,8 @@ function Module.init(context: Runtime): any
         "Gravity",
         "Keep workspace gravity at a custom value",
         5,
-        toggleGravity
+        toggleGravity,
+        {categoryName = "Movement"}
     )
     addNumberOption(GravityFeature, "Gravity value", gravitySettings.value, 0, 500, function(value)
         gravitySettings.value = value
@@ -17309,7 +17312,8 @@ function Module.init(context: Runtime): any
         "Jump Power",
         "Keep character jump power at a custom value",
         6,
-        toggleJumpPower
+        toggleJumpPower,
+        {categoryName = "Movement"}
     )
     addNumberOption(JumpPowerFeature, "Power", jumpPowerSettings.value, 0, 500, function(value)
         jumpPowerSettings.value = value
@@ -17655,7 +17659,8 @@ function Module.init(context: Runtime): any
         "FOV",
         "Keep the camera field of view fixed",
         10,
-        toggleFov
+        toggleFov,
+        {categoryName = "Render"}
     )
     addNumberOption(FovFeature, "Field of view", fovSettings.value, 20, 120, function(value)
         fovSettings.value = value
@@ -17756,7 +17761,7 @@ function Module.init(context: Runtime): any
         "Disable character collisions",
         11,
         toggleNoclip,
-        {noOptions = true}
+        {noOptions = true, categoryName = "Movement"}
     )
     addFeatureTooltip(NoclipFeature, "Disables collisions for every local character part. "
         .. "Original collision states are restored when turned off.")
@@ -17836,7 +17841,7 @@ function Module.init(context: Runtime): any
         {
             noOptions = true,
             configKey = "Universal.AntiAFK",
-            categoryName = "Utility",
+            categoryName = "Other",
         }
     )
     addFeatureTooltip(AntiAfkFeature, "Responds only to Roblox's local idle event and "
@@ -17955,7 +17960,8 @@ function Module.init(context: Runtime): any
         "Anti-Fling",
         "Stop extreme local velocity and return to safety",
         14,
-        toggleAntiFling
+        toggleAntiFling,
+        {categoryName = "Combat"}
     )
     addNumberOption(
         AntiFlingFeature,
@@ -18055,7 +18061,8 @@ function Module.init(context: Runtime): any
         "Lag Switch",
         "Simulate extreme incoming replication delay",
         16,
-        toggleLagSwitch
+        toggleLagSwitch,
+        {categoryName = "Movement"}
     )
     addNumberOption(
         LagSwitchFeature,
@@ -18386,7 +18393,7 @@ function Module.init(context: Runtime): any
                 notify("No matching player was found.")
             end
         end,
-        {action = true}
+        {action = true, categoryName = "Combat"}
     )
     addTextOption(FlingFeature, "Target player", universalFlingSettings.target, function(value)
         universalFlingSettings.target = value
@@ -18599,7 +18606,8 @@ function Module.init(context: Runtime): any
         "Improve FPS",
         "Apply only the selected reversible optimizations",
         26,
-        toggleImproveFps
+        toggleImproveFps,
+        {categoryName = "Other"}
     )
     addToggleOption(ImproveFpsFeature, "Remove textures", true, function(value: boolean): ()
         fpsSettings.textures = value
@@ -18713,7 +18721,8 @@ function Module.init(context: Runtime): any
         "Fullbright",
         "Keep the scene bright and remove global shadows",
         15,
-        state.toggleFullbright
+        state.toggleFullbright,
+        {categoryName = "Render"}
     )
     addNumberOption(
         FullbrightFeature,
@@ -18785,8 +18794,6 @@ function Module.init(context: Runtime): any
     local createUniversalFeature: any = host.createUniversalFeature
     local addCycleOption: any = host.addCycleOption
     local addInformationOption: any = host.addInformationOption
-    local movementFeatures: any = host.state.movementFeatures
-    local MovementScroll: any = host.state.universalScroll
     local freezeSettings = {mode = "Anchor"}
     local FreezeFeature: any = nil
     local originalFreezeState = setmetatable({}, {__mode = "k"})
@@ -18851,8 +18858,8 @@ function Module.init(context: Runtime): any
         1,
         toggleFreezeMovements,
         {
-            parent = MovementScroll,
-            registry = movementFeatures,
+            categoryName = "Movement",
+            configKey = "Movement.FreezeMovements",
         }
     )
     addCycleOption(
@@ -20260,7 +20267,7 @@ function Module.init(context: Runtime): any
         "Automatic per-game projectile analytics with tunable ping buckets",
         17,
         function(_enabled: boolean): () end,
-        {category = true}
+        {category = true, categoryName = "Render"}
     )
     tuning =
         calibration.tuning
@@ -20480,10 +20487,9 @@ function Module.init(context: Runtime): any
     local disguise: any
     disguise = framework.Categories.Utility:CreateModule({
         Name = "Disguise",
-        Category = "Spoof",
+        Category = "Fun",
         Order = 1,
-        Parent = state.spoofScroll,
-        Registry = state.spoofFeatures,
+        ConfigKey = "Universal.Disguise",
         Tooltip = "Wear another player's avatar, animations and emotes. "
             .. "Local only: the server and everyone else still see you.",
         Function = function(enabled: boolean): ()
@@ -20775,7 +20781,6 @@ function Module.init(context: Runtime): any
     local host: any = context.host
     local framework: any = context.framework
     local localPlayer: Player = host.LocalPlayer
-    local state: any = host.state
 
     local runtime: any = {
         packs = {} :: {any},
@@ -20830,10 +20835,9 @@ function Module.init(context: Runtime): any
     local animations: any
     animations = framework.Categories.Utility:CreateModule({
         Name = "Animation Changer",
-        Category = "Spoof",
+        Category = "Fun",
         Order = 2,
-        Parent = state.spoofScroll,
-        Registry = state.spoofFeatures,
+        ConfigKey = "Universal.AnimationChanger",
         Tooltip = "Wear a Roblox animation pack: idle, walk, run, jump, fall, "
             .. "climb and swim.",
         Function = function(enabled: boolean): ()
@@ -21405,10 +21409,9 @@ function Module.init(context: Runtime): any
     local emotes: any
     emotes = framework.Categories.Utility:CreateModule({
         Name = "Emote Player",
-        Category = "Spoof",
+        Category = "Fun",
         Order = 3,
-        Parent = state.spoofScroll,
-        Registry = state.spoofFeatures,
+        ConfigKey = "Universal.EmotePlayer",
         Tooltip = "Play any emote by id — Roblox's own or UGC.",
         Function = function(enabled: boolean): ()
             if not enabled then

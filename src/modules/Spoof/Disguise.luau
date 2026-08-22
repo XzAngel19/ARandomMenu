@@ -115,10 +115,9 @@ function Module.init(context: Runtime): any
     local disguise: any
     disguise = framework.Categories.Utility:CreateModule({
         Name = "Disguise",
-        Category = "Spoof",
+        Category = "Fun",
         Order = 1,
-        Parent = state.spoofScroll,
-        Registry = state.spoofFeatures,
+        ConfigKey = "Universal.Disguise",
         Tooltip = "Wear another player's avatar, animations and emotes. "
             .. "Local only: the server and everyone else still see you.",
         Function = function(enabled: boolean): ()

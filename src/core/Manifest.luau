@@ -67,27 +67,27 @@ local Manifest: Manifest = {
         {
             path = "src/modules/Utility/FriendList.luau",
             name = "Friend List",
-            category = "Utility",
+            category = "Other",
         },
         {
             path = "src/modules/Visuals/ItemRender.luau",
-            name = "Item Render",
-            category = "Visuals",
+            name = "ItemESP",
+            category = "Render",
         },
         {
             path = "src/modules/Visuals/PlayerESP.luau",
-            name = "Player ESP",
-            category = "Visuals",
+            name = "PlayerESP",
+            category = "Render",
         },
         {
             path = "src/modules/Combat/KillAura.luau",
-            name = "Kill Aura",
+            name = "Killaura",
             category = "Combat",
         },
         {
             path = "src/modules/Utility/RemoteLogger.luau",
             name = "Remote Logger",
-            category = "Utility",
+            category = "Other",
         },
         {
             path = "src/modules/Movement/ClickTeleport.luau",
@@ -108,11 +108,11 @@ local Manifest: Manifest = {
         {
             path = "src/modules/Visuals/XRay.luau",
             name = "X-Ray",
-            category = "Visuals",
+            category = "Render",
         },
         {
             path = "src/modules/Movement/HighJump.luau",
-            name = "High Jump",
+            name = "HighJump",
             category = "Movement",
         },
         {
@@ -122,23 +122,23 @@ local Manifest: Manifest = {
         },
         {
             path = "src/modules/Protection/SafeWalk.luau",
-            name = "Safe Walk",
-            category = "Protection",
+            name = "SafeWalk",
+            category = "Movement",
         },
         {
             path = "src/modules/Utility/RejoinServer.luau",
             name = "Rejoin Server",
-            category = "Utility",
+            category = "Other",
         },
         {
             path = "src/modules/Visuals/ZoomUnlocker.luau",
-            name = "Zoom Unlocker",
-            category = "Visuals",
+            name = "Zoom",
+            category = "Render",
         },
         {
             path = "src/modules/Utility/InteractExtender.luau",
             name = "Interact Extender",
-            category = "Utility",
+            category = "Other",
         },
         {
             path = "src/modules/Movement/PhaseDash.luau",
@@ -147,12 +147,12 @@ local Manifest: Manifest = {
         },
         {
             path = "src/modules/Protection/NoFall.luau",
-            name = "No Fall",
-            category = "Protection",
+            name = "NoFall",
+            category = "Movement",
         },
         {
             path = "src/modules/Movement/Fly.luau",
-            name = "Fly",
+            name = "Flight",
             category = "Movement",
         },
         {
@@ -163,12 +163,12 @@ local Manifest: Manifest = {
         {
             path = "src/modules/Protection/AntiVoid.luau",
             name = "Anti-Void",
-            category = "Protection",
+            category = "Movement",
         },
         {
             path = "src/modules/Utility/Gravity.luau",
             name = "Gravity",
-            category = "Utility",
+            category = "Movement",
         },
         {
             path = "src/modules/Movement/JumpPower.luau",
@@ -183,7 +183,7 @@ local Manifest: Manifest = {
         {
             path = "src/modules/Visuals/FieldOfView.luau",
             name = "FOV",
-            category = "Visuals",
+            category = "Render",
         },
         {
             path = "src/modules/Movement/Noclip.luau",
@@ -192,33 +192,33 @@ local Manifest: Manifest = {
         },
         {
             path = "src/modules/Utility/AntiAfk.luau",
-            name = "Anti-AFK",
-            category = "Utility",
+            name = "AntiAFK",
+            category = "Other",
         },
         {
             path = "src/modules/Protection/AntiFling.luau",
             name = "Anti-Fling",
-            category = "Protection",
+            category = "Combat",
         },
         {
             path = "src/modules/Utility/LagSwitch.luau",
             name = "Lag Switch",
-            category = "Utility",
+            category = "Movement",
         },
         {
             path = "src/modules/Utility/Fling.luau",
             name = "Fling",
-            category = "Utility",
+            category = "Combat",
         },
         {
             path = "src/modules/Utility/ImproveFps.luau",
             name = "Improve FPS",
-            category = "Utility",
+            category = "Other",
         },
         {
             path = "src/modules/Visuals/Fullbright.luau",
             name = "Fullbright",
-            category = "Visuals",
+            category = "Render",
         },
         {
             path = "src/modules/Movement/FreezeMovements.luau",
@@ -227,7 +227,7 @@ local Manifest: Manifest = {
         },
         {
             path = "src/modules/Movement/Speed.luau",
-            name = "Speed",
+            name = "SpeedHack",
             category = "Movement",
         },
         {
@@ -238,22 +238,22 @@ local Manifest: Manifest = {
         {
             path = "src/modules/Combat/ProjectileCalibration.luau",
             name = "Projectile Calibration",
-            category = "Combat",
+            category = "Render",
         },
         {
             path = "src/modules/Spoof/Disguise.luau",
             name = "Disguise",
-            category = "Spoof",
+            category = "Fun",
         },
         {
             path = "src/modules/Spoof/AnimationChanger.luau",
             name = "Animation Changer",
-            category = "Spoof",
+            category = "Fun",
         },
         {
             path = "src/modules/Spoof/EmotePlayer.luau",
             name = "Emote Player",
-            category = "Spoof",
+            category = "Fun",
         },
     },
 }

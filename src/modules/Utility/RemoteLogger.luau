@@ -355,7 +355,7 @@ function Module.init(context: Runtime): any
 
     logger = framework.Categories.Utility:CreateModule({
         Name = "Remote Logger",
-        Category = "Utility",
+        Category = "Other",
         Order = 2,
         Tooltip = "Records the arguments the game sends to its own remotes and "
             .. "writes them to disk.",

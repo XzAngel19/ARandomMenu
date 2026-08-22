@@ -152,7 +152,8 @@ function Module.init(context: Runtime): any
         "Interact Extender",
         "Extend prompt and click interaction range without auto-firing",
         24,
-        toggleInteractionExtender
+        toggleInteractionExtender,
+        {categoryName = "Other"}
     )
     addNumberOption(
         InteractFeature,

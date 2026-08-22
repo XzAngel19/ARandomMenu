@@ -128,7 +128,7 @@ function Module.init(context: Runtime): any
     local render: any
     render = framework.Categories.Visuals:CreateModule({
         Name = "ItemESP",
-        Category = "Visuals",
+        Category = "Render",
         ConfigKey = "Universal.ItemRender",
         Order = 2,
         Tooltip = "Names and outlines every object on the list, wherever it is.",

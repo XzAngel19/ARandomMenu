@@ -295,7 +295,7 @@ function Module.init(context: Runtime): any
                 notify("No matching player was found.")
             end
         end,
-        {action = true}
+        {action = true, categoryName = "Combat"}
     )
     addTextOption(FlingFeature, "Target player", universalFlingSettings.target, function(value)
         universalFlingSettings.target = value

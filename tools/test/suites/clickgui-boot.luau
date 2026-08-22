@@ -105,6 +105,12 @@ return function(ctx: any): ()
     }) do
         check("one window for " .. category, hasWindow(category))
     end
+    for _, inherited: string in ipairs({
+        "Visuals", "Protection", "Utility", "Spoof", "General",
+    }) do
+        check("no inherited category window: " .. inherited,
+            gui == nil or gui.categories == nil or gui.categories[inherited] == nil)
+    end
 
     local seenRows: {[any]: boolean} = {}
     local cards: {any} = host.allFeatures or {}
@@ -134,18 +140,6 @@ return function(ctx: any): ()
             cardsByName[feature.name] = feature
         end
     end
-    local renamed: {[string]: string} = {
-        ["Item Render"] = "ItemESP",
-        ["Player ESP"] = "PlayerESP",
-        ["Kill Aura"] = "Killaura",
-        ["High Jump"] = "HighJump",
-        ["Safe Walk"] = "SafeWalk",
-        ["Zoom Unlocker"] = "CameraDistance",
-        ["No Fall"] = "NoFall",
-        Fly = "Flight",
-        ["Anti-AFK"] = "AntiAFK",
-        Speed = "SpeedHack",
-    }
     local framework: any = host.state.framework
     local modulesByFeature: {[any]: any} = {}
     if framework then
@@ -155,14 +149,31 @@ return function(ctx: any): ()
     end
 
     for _, entry: any in ipairs(Manifest.modules or {}) do
-        local displayName: string = renamed[entry.name] or entry.name
+        local displayName: string = entry.name
         local feature: any = cardsByName[displayName]
         check("module card loaded: " .. displayName, feature ~= nil, displayName)
         if not feature then
             continue
         end
 
-        if type(feature.hasOptions) == "function" and feature.hasOptions()
+        local officialCategory: boolean = table.find({
+            "Combat", "Render", "Blocks", "Movement",
+            "Chat", "Fun", "Items", "Other",
+        }, entry.category) ~= nil
+        check("module manifest category is official: " .. displayName,
+            officialCategory, tostring(entry.category))
+        check("module card category matches manifest: " .. displayName,
+            feature.categoryName == entry.category,
+            tostring(feature.categoryName) .. " ~= " .. tostring(entry.category))
+        check("module never falls into General: " .. displayName,
+            feature.categoryName ~= "General")
+        local realSettings: boolean = type(feature.hasOptions) == "function"
+            and feature.hasOptions()
+        check("module hasSettings is derived: " .. displayName,
+            feature.hasSettings == realSettings,
+            tostring(feature.hasSettings) .. " ~= " .. tostring(realSettings))
+
+        if realSettings
             and feature.arrow then
             feature.arrow.MouseButton1Click:Fire()
             check("module options expand: " .. feature.name,

@@ -154,7 +154,8 @@ function Module.init(context: Runtime): any
         "Improve FPS",
         "Apply only the selected reversible optimizations",
         26,
-        toggleImproveFps
+        toggleImproveFps,
+        {categoryName = "Other"}
     )
     addToggleOption(ImproveFpsFeature, "Remove textures", true, function(value: boolean): ()
         fpsSettings.textures = value

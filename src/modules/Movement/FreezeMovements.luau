@@ -30,8 +30,6 @@ function Module.init(context: Runtime): any
     local createUniversalFeature: any = host.createUniversalFeature
     local addCycleOption: any = host.addCycleOption
     local addInformationOption: any = host.addInformationOption
-    local movementFeatures: any = host.state.movementFeatures
-    local MovementScroll: any = host.state.universalScroll
     local freezeSettings = {mode = "Anchor"}
     local FreezeFeature: any = nil
     local originalFreezeState = setmetatable({}, {__mode = "k"})
@@ -96,8 +94,8 @@ function Module.init(context: Runtime): any
         1,
         toggleFreezeMovements,
         {
-            parent = MovementScroll,
-            registry = movementFeatures,
+            categoryName = "Movement",
+            configKey = "Movement.FreezeMovements",
         }
     )
     addCycleOption(

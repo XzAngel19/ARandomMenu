@@ -90,7 +90,8 @@ function Module.init(context: Runtime): any
         "Anti-Fling",
         "Stop extreme local velocity and return to safety",
         14,
-        toggleAntiFling
+        toggleAntiFling,
+        {categoryName = "Combat"}
     )
     addNumberOption(
         AntiFlingFeature,
