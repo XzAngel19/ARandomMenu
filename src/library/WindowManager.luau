@@ -116,7 +116,15 @@ function Module.init(context: any): any
         byId = {} :: {[string]: any},
     }
 
-    local function viewport(): Vector2
+    -- ------------------------------------------------------ coordinate space
+    -- Two spaces exist and only two: "screen" is the camera's device pixels,
+    -- and "logical" is the space window offsets live in, which is screen
+    -- divided by the one UIScale the ClickGUI puts over the popup layer.
+    -- Everything the manager stores, compares or persists is logical. The
+    -- old code mixed them — Position offsets (logical) against ViewportSize
+    -- (screen), AbsoluteSize (screen) against Size offsets (logical) — and
+    -- every mix was invisible at scale 1 and a layout bug at any other.
+    local function screenViewport(): Vector2
         local camera: Camera? = workspace.CurrentCamera
         if camera then
             return (camera :: Camera).ViewportSize
@@ -124,8 +132,46 @@ function Module.init(context: any): any
         return Vector2.new(1280, 720)
     end
 
+    -- ClickGui parents one UIScale named ClickGuiScale to the popup layer.
+    -- Before it exists (boot order) or without it (harness) the two spaces
+    -- coincide.
+    local function layerScale(): number
+        local instance: any = PopupLayer
+            and (PopupLayer :: Instance):FindFirstChild("ClickGuiScale")
+        local value: number = instance and tonumber(instance.Scale) or 1
+        if value ~= value or value <= 0 then
+            value = 1
+        end
+        return value
+    end
+
+    local function logicalViewport(): Vector2
+        local screen: Vector2 = screenViewport()
+        local factor: number = layerScale()
+        return Vector2.new(screen.X / factor, screen.Y / factor)
+    end
+
+    local function screenToLogical(point: Vector2): Vector2
+        local factor: number = layerScale()
+        return Vector2.new(point.X / factor, point.Y / factor)
+    end
+
+    local function logicalToScreen(point: Vector2): Vector2
+        local factor: number = layerScale()
+        return Vector2.new(point.X * factor, point.Y * factor)
+    end
+
+    -- A window's logical rectangle. Size offsets are the truth — under a
+    -- UIScale, AbsoluteSize is these numbers multiplied back into screen
+    -- pixels, and the mock harness does not keep the two in step anyway.
+    local function windowRect(window: any): (number, number, number, number)
+        local root: any = window.root
+        return root.Position.X.Offset, root.Position.Y.Offset,
+            root.Size.X.Offset, root.Size.Y.Offset
+    end
+
     local function clamp(position: Vector2, size: Vector2): Vector2
-        local screen: Vector2 = viewport()
+        local screen: Vector2 = logicalViewport()
         return Vector2.new(
             math.clamp(position.X, MARGIN, math.max(MARGIN, screen.X - size.X - MARGIN)),
             math.clamp(position.Y, MARGIN, math.max(MARGIN, screen.Y - size.Y - MARGIN))
@@ -146,6 +192,41 @@ function Module.init(context: any): any
         )
         root.Position = UDim2.fromOffset(landed.X, landed.Y)
     end
+
+    -- The window's real logical footprint: what it occupies once its content
+    -- has grown, not the guess it was born with. Collapsed windows cost their
+    -- title bar; open ones cost the larger of their current size and the full
+    -- height their resize recorded, because a window that is about to grow to
+    -- fullHeight must reserve that space before it does.
+    function manager.MeasureWindow(window: any): Vector2
+        local root: any = window and window.root
+        if not root then
+            return Vector2.zero
+        end
+        local width: number = root.Size.X.Offset
+        local height: number
+        if window.collapsed then
+            height = window.headerHeight or root.Size.Y.Offset
+        else
+            height = math.max(root.Size.Y.Offset, tonumber(window.fullHeight) or 0)
+        end
+        return Vector2.new(width, height)
+    end
+
+    -- The same rectangle in screen pixels, for anything that must compare a
+    -- window against raw input coordinates or the camera.
+    function manager.AbsoluteRect(window: any): (number, number, number, number)
+        local x: number, y: number, w: number, h: number = windowRect(window)
+        local origin: Vector2 = logicalToScreen(Vector2.new(x, y))
+        local extent: Vector2 = logicalToScreen(Vector2.new(w, h))
+        return origin.X, origin.Y, extent.X, extent.Y
+    end
+
+    -- Published so every library placing near windows shares this one
+    -- coordinate space instead of re-deriving its own against the camera.
+    manager.LogicalViewport = logicalViewport
+    manager.ScreenToLogical = screenToLogical
+    manager.LogicalToScreen = logicalToScreen
 
     local function bind(instance: Instance, property: string, token: string): ()
         if ThemeEngine and type(ThemeEngine.Bind) == "function" then
@@ -170,22 +251,19 @@ function Module.init(context: any): any
     -- screen would tile windows against the walls and never against each other,
     -- which is the arrangement players actually build.
     local function snap(window: any, position: Vector2, size: Vector2): Vector2
-        local screen: Vector2 = viewport()
+        local screen: Vector2 = logicalViewport()
         local xLines: {number} = {MARGIN, screen.X - size.X - MARGIN}
         local yLines: {number} = {MARGIN, screen.Y - size.Y - MARGIN}
         for _, other: any in ipairs(manager.list) do
             if other ~= window and other.root.Visible then
-                local otherPosition: Vector2 = Vector2.new(
-                    other.root.Position.X.Offset,
-                    other.root.Position.Y.Offset
-                )
-                local otherSize: Vector2 = other.root.AbsoluteSize
-                table.insert(xLines, otherPosition.X)
-                table.insert(xLines, otherPosition.X + otherSize.X)
-                table.insert(xLines, otherPosition.X - size.X)
-                table.insert(yLines, otherPosition.Y)
-                table.insert(yLines, otherPosition.Y + otherSize.Y)
-                table.insert(yLines, otherPosition.Y - size.Y)
+                local otherX: number, otherY: number, otherW: number, otherH: number =
+                    windowRect(other)
+                table.insert(xLines, otherX)
+                table.insert(xLines, otherX + otherW)
+                table.insert(xLines, otherX - size.X)
+                table.insert(yLines, otherY)
+                table.insert(yLines, otherY + otherH)
+                table.insert(yLines, otherY - size.Y)
             end
         end
         local x: number, y: number = position.X, position.Y
@@ -300,9 +378,12 @@ function Module.init(context: any): any
             if window.body then
                 (window.body :: any).Visible = not collapsed
             end
+            -- Width in logical offsets, never AbsoluteSize: under a UIScale
+            -- the absolute width is scaled, and writing it back as an offset
+            -- widened the window a little on every collapse.
             root.Size = collapsed
-                and UDim2.fromOffset(root.AbsoluteSize.X, window.headerHeight)
-                or UDim2.fromOffset(root.AbsoluteSize.X, window.fullHeight)
+                and UDim2.fromOffset(root.Size.X.Offset, window.headerHeight)
+                or UDim2.fromOffset(root.Size.X.Offset, window.fullHeight)
             persist(window)
         end
 
@@ -373,9 +454,17 @@ function Module.init(context: any): any
                 or (dragInput
                     and dragInput.UserInputType == Enum.UserInputType.MouseButton1
                     and input.UserInputType == Enum.UserInputType.MouseMovement) then
+                -- The pointer moves in screen pixels; the window in logical
+                -- offsets. Dividing the delta by the layer scale keeps the
+                -- window under the cursor at every scale instead of lagging
+                -- it below 1 and overshooting it above.
                 local pointer: Vector2 = Vector2.new(input.Position.X, input.Position.Y)
-                local size: Vector2 = root.AbsoluteSize
-                local wanted: Vector2 = startPosition + pointer - dragStart
+                local delta: Vector2 = screenToLogical(pointer - dragStart)
+                local size: Vector2 = Vector2.new(
+                    root.Size.X.Offset,
+                    root.Size.Y.Offset
+                )
+                local wanted: Vector2 = startPosition + delta
                 local landed: Vector2 = snap(window, clamp(wanted, size), size)
                 root.Position = UDim2.fromOffset(landed.X, landed.Y)
             end
@@ -657,7 +746,7 @@ function Module.init(context: any): any
     end
 
     local function freeSlot(width: number, height: number): Vector2
-        local screen: Vector2 = viewport()
+        local screen: Vector2 = logicalViewport()
         local step: number = 40
         local yLimit: number = math.max(64, screen.Y - height - MARGIN)
         local xLimit: number = math.max(MARGIN, screen.X - width - MARGIN)
@@ -851,13 +940,8 @@ function Module.init(context: any): any
     -- stranded outside the viewport.
     function manager.Reclamp(): ()
         for _, window: any in ipairs(manager.list) do
-            local landed: Vector2 = clamp(
-                Vector2.new(
-                    window.root.Position.X.Offset,
-                    window.root.Position.Y.Offset
-                ),
-                window.root.AbsoluteSize
-            )
+            local x: number, y: number, w: number, h: number = windowRect(window)
+            local landed: Vector2 = clamp(Vector2.new(x, y), Vector2.new(w, h))
             window.root.Position = UDim2.fromOffset(landed.X, landed.Y)
         end
     end

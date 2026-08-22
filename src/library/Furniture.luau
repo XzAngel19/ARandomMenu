@@ -497,10 +497,20 @@ function Module.init(context: any): any
         if hudMode == "Hidden" then
             entries = {}
         elseif #entries > 0 then
-            local camera: Camera? = workspace.CurrentCamera
-            local screenHeight: number = camera
-                and (camera :: Camera).ViewportSize.Y
-                or 720
+            -- Fit is judged in the HackList's own space: the list draws in
+            -- logical pixels under the ClickGUI's UIScale, so the screen
+            -- height must come through the same conversion or Auto flips to
+            -- the count at the wrong number of rows.
+            local screenHeight: number
+            local manager: any = state.windows
+            if manager and type(manager.LogicalViewport) == "function" then
+                screenHeight = manager.LogicalViewport().Y
+            else
+                local camera: Camera? = workspace.CurrentCamera
+                screenHeight = camera
+                    and (camera :: Camera).ViewportSize.Y
+                    or 720
+            end
             local available: number = screenHeight - HACKLIST_TOP - 12
             local overflows: boolean =
                 #entries * (HACKLIST_LINE_HEIGHT + 1) > available

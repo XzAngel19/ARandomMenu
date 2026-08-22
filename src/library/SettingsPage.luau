@@ -110,6 +110,12 @@ function Module.init(context: any): any
     }
 
     local function viewport(): Vector2
+        -- The manager's logical space — window offsets under the ClickGUI's
+        -- UIScale — not the camera's raw pixels, which differ at any scale
+        -- other than 1 and put "top right" off the visible screen.
+        if type(windows.LogicalViewport) == "function" then
+            return windows.LogicalViewport()
+        end
         local camera: Camera? = workspace.CurrentCamera
         return camera and (camera :: Camera).ViewportSize or Vector2.new(1280, 720)
     end
