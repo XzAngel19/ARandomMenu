@@ -147,6 +147,7 @@ export type MenuState = {
     mobileUi: any,                                  -- Placed shortcuts: the registry and its helpers
     bindMobileActionPlacement: (...any) -> (),      -- Let a control be dropped onto the screen as a button
     applyAssetImage: (string, Instance, (() -> ())?) -> (), -- Put a downloaded image on an object when it arrives
+    resolveAsset: (string) -> (string?, string?),   -- The raw asset id for consumers that are not ImageLabels (the font atlas)
     bitmapText: any,                                -- The bitmap text contract: metrics and the one maker every ClickGUI label will go through
 
     -- Published by a module, read by another

@@ -363,7 +363,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "8904e348955324fa"
+local SOURCE_STAMP: string = "0faa6f0858ea7e48"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -1242,6 +1242,16 @@ local AssetManager: any = {
             version = 1,
             assetType = "image/png",
         },
+        -- The bitmap font atlas the text contract renders through: Monocraft
+        -- rasterised into a fixed-cell grid by tools/make_font_atlas.py.
+        -- OFL; the licence ships beside the OTF it was rendered from.
+        bitmapFontAtlas = {
+            url = REPOSITORY_RAW_BASE .. "assets/font/monocraft-16.png",
+            fileName = "monocraft-16-v1.png",
+            fallback = "",
+            version = 1,
+            assetType = "image/png",
+        },
         -- The old menu's artwork — brand logo, nav icons, banners — is gone
         -- from this registry. Nothing draws it any more, and a registry entry
         -- for an image nobody shows is a download waiting to be wrong.
@@ -1657,6 +1667,12 @@ state.applyInterfaceFont = function(name: string, persist: boolean?): ()
     end
 end
 
+-- The raw resolve, for consumers that are not ImageLabels — the bitmap
+-- font atlas wants the asset id itself.
+state.resolveAsset = function(logicalName: string): (string?, string?)
+    return AssetManager.resolve(logicalName)
+end
+
 state.applyAssetImage = function(
     logicalName: string,
     image: ImageLabel,
@@ -1849,7 +1865,25 @@ end
 state.bitmapText = {
     size = 16,
     lineHeight = 18,
+    -- The packing estimate the content-sized windows use. The atlas's real
+    -- advance is 11 (Monocraft's, below); packing keeps the rounder 12 so a
+    -- window is never a pixel too narrow for the estimate that sized it.
     advance = 12,
+    -- The rasterised truth: Monocraft baked into a fixed-cell grid by
+    -- tools/make_font_atlas.py. These numbers are that tool's output and
+    -- change only when the atlas is regenerated.
+    atlas = {
+        ready = false,
+        image = nil :: string?,
+        size = 16,
+        first = 32,
+        last = 126,
+        columns = 16,
+        cellWidth = 11,
+        cellHeight = 17,
+        advance = 11,
+    },
+    onReady = {} :: {() -> ()},
     width = function(text: any): number
         return #tostring(text) * 12
     end,
@@ -1866,6 +1900,143 @@ state.bitmapText = {
         return (create("TextLabel", resolved) :: any) :: TextLabel
     end,
 }
+
+-- One line of glyphs, drawn from the atlas when it has resolved and as a
+-- Monocraft TextLabel until then (or forever, on an executor without
+-- getcustomasset — the fallback is the same text, never a blank). Segments
+-- carry their own colours, which is how the HackList keeps its muted
+-- bracket without RichText. Returns the holder frame; drawing again into
+-- the same parent under the same name replaces the previous line.
+state.bitmapText.draw = function(
+    parent: Instance,
+    segments: {any},
+    options: any
+): Frame
+    local resolvedOptions: any = options or {}
+    local name: string = tostring(resolvedOptions.Name or "BitmapText")
+    local previous: Instance? = (parent :: any):FindFirstChild(name)
+    if previous then
+        previous:Destroy()
+    end
+    local textSize: number = tonumber(resolvedOptions.TextSize) or 16
+    local zIndex: number = tonumber(resolvedOptions.ZIndex) or 20
+    local alignRight: boolean = resolvedOptions.align == "Right"
+    local atlas: any = state.bitmapText.atlas
+
+    local holder: Frame = (create("Frame", {
+        Parent = parent,
+        Name = name,
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        AnchorPoint = alignRight and Vector2.new(1, 0.5) or Vector2.new(0, 0.5),
+        Position = alignRight
+            and UDim2.new(1, 0, 0.5, 0)
+            or UDim2.new(0, 0, 0.5, 0),
+        ZIndex = zIndex,
+    }) :: any) :: Frame
+
+    if atlas.ready and atlas.image then
+        local scale: number = textSize / atlas.size
+        local advance: number = atlas.advance * scale
+        local glyphWidth: number = atlas.cellWidth * scale
+        local glyphHeight: number = atlas.cellHeight * scale
+        local x: number = 0
+        for _, segment: any in ipairs(segments) do
+            local text: string = tostring(segment.text or "")
+            for position: number = 1, #text do
+                local code: number = string.byte(text, position)
+                if code >= atlas.first and code <= atlas.last then
+                    local index: number = code - atlas.first
+                    local glyph: ImageLabel = (create("ImageLabel", {
+                        Parent = holder,
+                        Name = "G",
+                        BackgroundTransparency = 1,
+                        BorderSizePixel = 0,
+                        Image = atlas.image,
+                        ImageColor3 = segment.color or Theme.text,
+                        ImageRectOffset = Vector2.new(
+                            (index % atlas.columns) * atlas.cellWidth,
+                            (index // atlas.columns) * atlas.cellHeight
+                        ),
+                        ImageRectSize = Vector2.new(
+                            atlas.cellWidth,
+                            atlas.cellHeight
+                        ),
+                        Position = UDim2.fromOffset(x, 0),
+                        Size = UDim2.fromOffset(glyphWidth, glyphHeight),
+                        ZIndex = zIndex + 1,
+                    }) :: any) :: ImageLabel
+                    -- Pixelated, when the engine offers it: a pixel font
+                    -- bilinear-blurred is worse than no atlas at all. The
+                    -- stand-in Roblox has no ResamplerMode; real Roblox does.
+                    pcall(function(): ()
+                        (glyph :: any).ResampleMode = Enum.ResamplerMode.Pixelated
+                    end)
+                end
+                x += advance
+            end
+        end
+        holder.Size = UDim2.fromOffset(x, glyphHeight)
+    else
+        local composed: {string} = {}
+        for _, segment: any in ipairs(segments) do
+            local text: string = tostring(segment.text or "")
+                :gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;")
+            local color: Color3 = segment.color or Theme.text
+            table.insert(composed, string.format(
+                '<font color="#%02X%02X%02X">%s</font>',
+                math.floor(color.R * 255 + 0.5),
+                math.floor(color.G * 255 + 0.5),
+                math.floor(color.B * 255 + 0.5),
+                text
+            ))
+        end
+        local estimated: number = 0
+        for _, segment: any in ipairs(segments) do
+            estimated += #tostring(segment.text or "")
+        end
+        state.bitmapText.make({
+            Parent = holder,
+            Name = "Fallback",
+            BackgroundTransparency = 1,
+            RichText = true,
+            Size = UDim2.new(1, 0, 1, 0),
+            Text = table.concat(composed),
+            TextColor3 = Theme.text,
+            TextSize = textSize,
+            TextXAlignment = alignRight
+                and Enum.TextXAlignment.Right
+                or Enum.TextXAlignment.Left,
+            ZIndex = zIndex + 1,
+        })
+        holder.Size = UDim2.fromOffset(
+            estimated * math.floor(textSize * 0.75),
+            math.floor(textSize * 1.125)
+        )
+    end
+    return holder
+end
+
+-- The atlas arrives like every other asset: downloaded, verified, turned
+-- into an id off the boot thread. Surfaces that want to re-render the
+-- moment it lands register in onReady.
+task.spawn(function(): ()
+    if type(state.resolveAsset) ~= "function" then
+        return
+    end
+    local assetId: string?, atlasError: string? =
+        state.resolveAsset("bitmapFontAtlas")
+    if not assetId then
+        print("[" .. PRODUCT.logPrefix .. ":Assets] atlas fallback: "
+            .. tostring(atlasError))
+        return
+    end
+    state.bitmapText.atlas.image = assetId
+    state.bitmapText.atlas.ready = true
+    for _, listener: () -> () in ipairs(state.bitmapText.onReady) do
+        pcall(listener)
+    end
+end)
 
 -- Every label registers the *logical* size it was designed at; the text-scale
 -- slider multiplies that. `state.registeredTextIndex` lets the responsive

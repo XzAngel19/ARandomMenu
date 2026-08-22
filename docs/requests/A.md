@@ -76,3 +76,20 @@ the gate will force a Left default that contradicts the prototype.
   (3) settings windows pack their width at first open and do not repack
   if labels change later; (4) the colour picker keeps its circular SV
   cursor (a position marker, not chrome).
+
+## Atlas increment (2026-08-22, late)
+
+- `tools/make_font_atlas.py` rasterises Monocraft (OFL) into
+  `assets/font/monocraft-16.png` + metrics JSON (fixed 11×17 cells,
+  advance 11, 16 columns, ASCII 32..126). `--check` verifies both are
+  current — C may want it in the gate.
+- Runtime: `state.bitmapText.atlas` (metrics + ready flag),
+  `state.bitmapText.draw(parent, segments, opts)` renders glyph
+  ImageLabels from the atlas once `state.resolveAsset("bitmapFontAtlas")`
+  lands, TextLabel/Monocraft until then, `onReady` for surfaces that
+  re-render. The HackList draws through it end to end.
+- Debt: every other surface (titles, rows, settings labels, keybinds,
+  navigator, tooltips, version) still renders TextLabels through the
+  contract's `make`; migrating them to `draw` is mechanical but not done.
+  ImageLabel cost is ~1 per glyph — fine for the HackList's ~300, worth
+  measuring before the 38-row category windows move over.

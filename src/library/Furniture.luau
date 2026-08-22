@@ -284,19 +284,6 @@ function Module.init(context: any): any
     -- The old menu's FPS/PING/TIME/PLACE readout is gone entirely — Wurst
     -- draws the sausage and the version in that corner and nothing else.
 
-    local function colorHex(color: Color3): string
-        return string.format(
-            "#%02X%02X%02X",
-            math.floor(color.R * 255 + 0.5),
-            math.floor(color.G * 255 + 0.5),
-            math.floor(color.B * 255 + 0.5)
-        )
-    end
-
-    local function escapeRich(text: string): string
-        return (text:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"))
-    end
-
     -- ------------------------------------------------------------- HackList
     -- Wurst's list of what is on, one line per enabled module, newest state
     -- at most a quarter of a second old. Every card already publishes its
@@ -386,27 +373,30 @@ function Module.init(context: any): any
     -- fighting the layout for its position.
     local hudRows: {[string]: any} = {}
 
-    local function hudAlignment(): Enum.TextXAlignment
-        return hudOnLeft()
-            and Enum.TextXAlignment.Left
-            or Enum.TextXAlignment.Right
-    end
-
-    local function composeHudText(name: string, status: string?): string
-        local text: string = escapeRich(name)
-        if status and status ~= "" then
-            text = text
-                .. ' <font color="'
-                .. colorHex(Theme.textMuted)
-                .. '">['
-                .. escapeRich(status)
-                .. "]</font>"
-        end
-        return text
-    end
-
     local function animationsOn(): boolean
         return hudAnimations and state.animationsEnabled ~= false
+    end
+
+    -- One container per entry; the glyph line inside it is drawn through
+    -- the bitmap text contract, so these entries rasterise from the atlas
+    -- the moment it resolves and fall back to Monocraft text until then.
+    local function drawHudEntry(row: any, name: string, status: string?): ()
+        local segments: {any} = {{text = name, color = hudColor}}
+        if status and status ~= "" then
+            table.insert(segments, {
+                text = " [" .. tostring(status) .. "]",
+                color = Theme.textMuted,
+            })
+        end
+        local bitmapText: any = state.bitmapText
+        if bitmapText and type(bitmapText.draw) == "function" then
+            row.holder = bitmapText.draw(row.container, segments, {
+                Name = "Entry",
+                TextSize = HACKLIST_FONT_SIZE,
+                ZIndex = 20,
+                align = hudOnLeft() and "Left" or "Right",
+            })
+        end
     end
 
     local function newHudRow(name: string): any
@@ -418,66 +408,43 @@ function Module.init(context: any): any
             Size = UDim2.new(1, 0, 0, HACKLIST_LINE_HEIGHT),
             ZIndex = 20,
         }) :: any) :: Frame
-        -- Through the bitmap text contract: the HackList is the first full
-        -- surface on it, so the day the atlas renderer lands, these entries
-        -- change rasteriser without this file moving.
-        local bitmapText: any = state.bitmapText
-        local label: TextLabel
-        if bitmapText and type(bitmapText.make) == "function" then
-            label = bitmapText.make({
-                Parent = container,
-                Name = "Entry",
-                BackgroundTransparency = 1,
-                Position = UDim2.fromOffset(0, 0),
-                RichText = true,
-                Size = UDim2.new(1, 0, 1, 0),
-                Text = "",
-                TextColor3 = hudColor,
-                TextSize = HACKLIST_FONT_SIZE,
-                TextXAlignment = hudAlignment(),
-                ZIndex = 20,
-            })
-        else
-            label = (create("TextLabel", {
-                TextTruncate = Enum.TextTruncate.AtEnd,
-                Parent = container,
-                Name = "Entry",
-                BackgroundTransparency = 1,
-                FontFace = CONTROL_FONT,
-                Position = UDim2.fromOffset(0, 0),
-                RichText = true,
-                Size = UDim2.new(1, 0, 1, 0),
-                Text = "",
-                TextColor3 = hudColor,
-                TextSize = HACKLIST_FONT_SIZE,
-                TextXAlignment = hudAlignment(),
-                ZIndex = 20,
-            }) :: any) :: TextLabel
+        return {container = container}
+    end
+
+    local function slideHudRow(row: any): ()
+        if not animationsOn() or not row.holder then
+            return
         end
-        if animationsOn() then
-            label.Position = UDim2.fromOffset(HACKLIST_SLIDE, 0)
-            label.TextTransparency = 1
-            TweenService:Create(
-                label,
-                TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-                {
-                    Position = UDim2.fromOffset(0, 0),
-                    TextTransparency = 0,
-                }
-            ):Play()
-        end
-        return {container = container, label = label}
+        local holder: Frame = row.holder :: Frame
+        local resting: UDim2 = holder.Position
+        -- Spelled out instead of UDim2 addition: the harness's UDim2
+        -- stand-in has no arithmetic.
+        holder.Position = UDim2.new(
+            resting.X.Scale,
+            resting.X.Offset + HACKLIST_SLIDE,
+            resting.Y.Scale,
+            resting.Y.Offset
+        )
+        TweenService:Create(
+            holder,
+            TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+            {Position = resting}
+        ):Play()
     end
 
     local function dropHudRow(row: any): ()
-        if animationsOn() then
+        if animationsOn() and row.holder then
+            local holder: Frame = row.holder :: Frame
+            local slid: UDim2 = UDim2.new(
+                holder.Position.X.Scale,
+                holder.Position.X.Offset + HACKLIST_SLIDE,
+                holder.Position.Y.Scale,
+                holder.Position.Y.Offset
+            )
             local tween: Tween = TweenService:Create(
-                row.label,
+                holder,
                 TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-                {
-                    Position = UDim2.fromOffset(HACKLIST_SLIDE, 0),
-                    TextTransparency = 1,
-                }
+                {Position = slid}
             )
             tween.Completed:Connect(function(): ()
                 row.container:Destroy()
@@ -563,13 +530,16 @@ function Module.init(context: any): any
         for order: number, entry: any in ipairs(entries) do
             wanted[entry.name] = true
             local row: any = hudRows[entry.name]
+            local isNew: boolean = row == nil
             if not row then
                 row = newHudRow(entry.name)
                 hudRows[entry.name] = row
             end
             row.container.LayoutOrder = order
-            row.label.Text = composeHudText(entry.name, entry.status)
-            row.label.TextXAlignment = hudAlignment()
+            drawHudEntry(row, entry.name, entry.status)
+            if isNew then
+                slideHudRow(row)
+            end
         end
         for name: string, row: any in pairs(hudRows) do
             if not wanted[name] then
@@ -594,6 +564,12 @@ function Module.init(context: any): any
     local function forceHudRefresh(): ()
         hudSignature = "\0stale"
         refreshHudList()
+    end
+
+    -- The atlas resolves off-thread; the moment it lands, the list redraws
+    -- through it instead of waiting for the next enable/disable.
+    if state.bitmapText and type(state.bitmapText.onReady) == "table" then
+        table.insert(state.bitmapText.onReady, forceHudRefresh)
     end
 
     state.hudList = {
