@@ -670,11 +670,14 @@ return function(ctx: any): ()
         local booted: number = tonumber(
             state.boot and state.boot.timing and state.boot.timing.moduleCount
         ) or 0
-        -- Manifest still ships 38. Rejoin Server is a Wurst Options action
-        -- when that API exists, so the card list can be 37.
+        -- Rejoin Server is a Wurst Options action when that API exists, so
+        -- the card list can be one short of the snapshot.
+        local inventoryCount: number = ctx.inventory.count
         check(
-            "C9: universal inventory is 43",
-            booted == 43 and counted >= 42 and counted <= 43,
+            "C9: universal inventory matches the snapshot",
+            booted == inventoryCount
+                and counted >= inventoryCount - 1
+                and counted <= inventoryCount,
             "cards=" .. tostring(counted) .. " booted=" .. tostring(booted)
         )
         check(

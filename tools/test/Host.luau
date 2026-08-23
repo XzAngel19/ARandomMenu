@@ -220,18 +220,24 @@ function Host.create(world: any): HostStub
         minimum: number,
         maximum: number,
         callback: any,
-        _hint: string?
+        _hint: string?,
+        stepValue: number?
     ): any
         assert(
             default >= minimum and default <= maximum,
             label .. ": default " .. tostring(default) .. " is outside its range"
         )
         feature.options[label] = {kind = "number", value = default}
-        local step: number = default % 1 == 0
-                and minimum % 1 == 0
-                and maximum % 1 == 0
-            and 1
-            or 0
+        local requestedStep: number? = tonumber(stepValue)
+        if requestedStep ~= nil and requestedStep <= 0 then
+            requestedStep = nil
+        end
+        local integerOnly: boolean = default % 1 == 0
+            and minimum % 1 == 0
+            and maximum % 1 == 0
+        -- Same contract Widgets uses: Framework forwards Step, integers stay
+        -- integral, and an open decimal range defaults to hundredths.
+        local step: number = requestedStep or (integerOnly and 1 or 0.01)
         recordOptionMetadata(feature, label, "slider", default, callback, {
             min = minimum,
             max = maximum,

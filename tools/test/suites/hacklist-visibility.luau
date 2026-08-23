@@ -120,6 +120,10 @@ return function(ctx: any): ()
             Position = world.vector3(80, 90, 0),
         }
         frame.InputBegan:Fire(touch)
+        check(
+            "Custom HackList claims exclusive surface ownership",
+            state.surfaceDragOwner == frame
+        )
         touch.Position = world.vector3(140, 150, 0)
         world.services.UserInputService.InputChanged:Fire(touch)
         world.services.UserInputService.InputEnded:Fire(touch)
@@ -127,6 +131,10 @@ return function(ctx: any): ()
             "custom HackList drag persists logical coordinates",
             type(env.configData.values["HackList.CustomX"]) == "number"
                 and type(env.configData.values["HackList.CustomY"]) == "number"
+        )
+        check(
+            "Custom HackList release clears surface ownership",
+            state.surfaceDragOwner == nil
         )
         list.SetPosition("Left")
     end
@@ -211,7 +219,22 @@ return function(ctx: any): ()
     if type(sample.activate) == "function" and sample.enabled == true then
         sample.activate()
     end
+    if type(list.SetPosition) == "function" and frame ~= nil then
+        if type(state.setMenuVisible) == "function" then
+            state.setMenuVisible(true)
+        end
+        list.SetPosition("Custom")
+        frame.InputBegan:Fire({
+            UserInputType = world.globals.Enum.UserInputType.MouseButton1,
+            Position = world.vector3(80, 90, 0),
+        })
+        check(
+            "Custom HackList still owns the pointer before teardown",
+            state.surfaceDragOwner == frame
+        )
+    end
     if type(state.destruct) == "function" then
         state.destruct()
     end
+    check("HackList destruct clears surface ownership", state.surfaceDragOwner == nil)
 end

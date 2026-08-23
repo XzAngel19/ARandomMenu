@@ -159,6 +159,27 @@ return function(ctx: any): ()
     )
     host.state.surfaceDragOwner = nil
 
+    local ownedX: number = combat.root.Position.X.Offset
+    local combatHandle: any = combat.header or combat.root
+    combatHandle.AbsolutePosition = vec2(ownedX, 120)
+    combatHandle.AbsoluteSize = vec2(186, combat.headerHeight or 26)
+    combatHandle.InputBegan:Fire({
+        UserInputType = mouse,
+        Position = vec2(ownedX, 120),
+    })
+    check(
+        "window drag claims exclusive surface ownership",
+        host.state.surfaceDragOwner == combat.root
+    )
+    host.UserInputService.InputEnded:Fire({
+        UserInputType = mouse,
+        Position = vec2(ownedX + 10, 120),
+    })
+    check(
+        "window drag release clears surface ownership",
+        host.state.surfaceDragOwner == nil
+    )
+
     -- Snap: within eight pixels of another window's edge the drag lands
     -- flush; at nine it does not. Combat is at x=100, width=186, so its
     -- right edge is 286. Visuals is dragged so its left edge approaches.

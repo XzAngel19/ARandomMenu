@@ -68,7 +68,8 @@ step() {
 source_files() {
     find . -path ./.git -prune -o -path ./reference -prune -o -type f \
         \( -name "*.lua" -o -name "*.luau" \) ! -name "*.d.luau" \
-        ! -name "_shell_source.luau" ! -name "_bundle_source.luau" -print
+        ! -name "_shell_source.luau" ! -name "_bundle_source.luau" \
+        ! -name "_inventory_snapshot.luau" -print
 }
 
 step "Licence and attribution"
@@ -829,26 +830,9 @@ step "Headless module tests"
 # modules that return ARandomMenu.luau and runtime/bundle.luau as strings.
 # Emitted here, not kept in git: a committed copy would drift the moment
 # either file changed.
-python3 - <<'PYTHON'
-from pathlib import Path
-
-def emit(src: str, dest: str) -> None:
-    source = Path(src).read_text()
-    level = 0
-    while ("]" + "=" * level + "]") in source:
-        level += 1
-    eq = "=" * level
-    Path(dest).write_text(
-        "--!strict\n"
-        "-- Emitted for the headless tests; the CLI has no file API.\n"
-        f"return [{eq}[\n{source}\n]{eq}]\n"
-    )
-
-emit("ARandomMenu.luau", "tools/test/_shell_source.luau")
-emit("runtime/bundle.luau", "tools/test/_bundle_source.luau")
-PYTHON
+python3 tools/emit_test_sources.py
 "$luau_run" tools/test/run.luau
-rm -f tools/test/_shell_source.luau tools/test/_bundle_source.luau
+rm -f tools/test/_shell_source.luau tools/test/_bundle_source.luau tools/test/_inventory_snapshot.luau
 
 echo
 echo "All checks passed."

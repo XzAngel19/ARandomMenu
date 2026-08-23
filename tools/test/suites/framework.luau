@@ -117,6 +117,64 @@ return function(ctx: any): ()
     check("textbox Set updates value and canonical control",
         sampleText.Value == "updated" and sampleText.Object.Text == "updated")
 
+    local forwarded: {any} = {}
+    local originalAddNumber: any = host.addNumberOption
+    host.addNumberOption = function(
+        feature: any,
+        name: any,
+        default: any,
+        minimum: any,
+        maximum: any,
+        callback: any,
+        hint: any,
+        step: any,
+        ...: any
+    ): any
+        table.insert(forwarded, {name = name, step = step})
+        return originalAddNumber(feature, name, default, minimum, maximum, callback, hint, step, ...)
+    end
+    local integerSlider: any = sample:CreateSlider({
+        Name = "IntegerOnly",
+        Min = 0,
+        Max = 10,
+        Default = 2,
+    })
+    local decimalSlider: any = sample:CreateSlider({
+        Name = "DecimalOpen",
+        Min = 0,
+        Max = 1,
+        Default = 0.5,
+    })
+    local explicitSlider: any = sample:CreateSlider({
+        Name = "ExplicitStep",
+        Min = 0,
+        Max = 1,
+        Step = 0.05,
+        Default = 0.5,
+    })
+    host.addNumberOption = originalAddNumber
+    check(
+        "Framework forwards an explicit Step to addNumberOption",
+        forwarded[3] ~= nil and forwarded[3].name == "ExplicitStep" and forwarded[3].step == 0.05
+    )
+    check(
+        "Framework still calls addNumberOption when Step is omitted",
+        forwarded[1] ~= nil and forwarded[1].name == "IntegerOnly" and forwarded[1].step == nil
+            and forwarded[2] ~= nil and forwarded[2].name == "DecimalOpen"
+    )
+    check(
+        "integer slider metadata stays integral",
+        integerSlider.Metadata.step == 1
+    )
+    check(
+        "decimal slider without Step leaves hundredths to the widget",
+        decimalSlider.Metadata.step == 0
+    )
+    check(
+        "explicit slider metadata keeps the requested Step",
+        explicitSlider.Metadata.step == 0.05
+    )
+
     sample:Toggle()
     check("module enables", sample.Enabled == true)
     local tasksWhileOn: number = stub.taskCount()

@@ -171,6 +171,60 @@ return function(ctx: any): ()
         steppedBox.FocusLost:Fire()
     end
     check("explicit slider steps are respected", steppedValue == 1.75, tostring(steppedValue))
+    check(
+        "decimal config stores the quantized value, not pointer noise",
+        host.configData.values["Slider.Decimal.Opacity"] == 1.73,
+        tostring(host.configData.values["Slider.Decimal.Opacity"])
+    )
+    check(
+        "explicit step config stores the snapped value",
+        host.configData.values["Slider.Stepped.Scale"] == 1.75,
+        tostring(host.configData.values["Slider.Stepped.Scale"])
+    )
+
+    local integerValue: number = 0
+    local integerPanel: any = newPanel("Slider.Integer")
+    widgets.addNumberOption(
+        integerPanel,
+        "Count",
+        32,
+        16,
+        200,
+        function(value: number): () integerValue = value end
+    )
+    local integerRow: any = integerPanel.optionRows[1]
+    local integerSlider: any = integerRow and integerRow:FindFirstChild("Slider")
+    local integerBox: any = integerSlider and integerSlider:FindFirstChild("NumericValue")
+    if integerBox then
+        integerBox.Text = "32.7"
+        integerBox.FocusLost:Fire()
+    end
+    check(
+        "integer sliders stay integral after typed noise",
+        integerValue == 33 and integerValue % 1 == 0,
+        tostring(integerValue)
+    )
+    check(
+        "integer config never keeps a fractional leftover",
+        host.configData.values["Slider.Integer.Count"] == 33,
+        tostring(host.configData.values["Slider.Integer.Count"])
+    )
+    if integerSlider then
+        local track: any = integerSlider:FindFirstChild("Track")
+        if track then
+            track.AbsolutePosition = world.globals.Vector2.new(0, 0)
+            track.AbsoluteSize = world.globals.Vector2.new(100, 6)
+        end
+        integerSlider.InputBegan:Fire({
+            UserInputType = world.globals.Enum.UserInputType.MouseButton1,
+            Position = world.globals.Vector2.new(37, 0),
+        })
+    end
+    check(
+        "integer slider drags stay integral",
+        integerValue % 1 == 0,
+        tostring(integerValue)
+    )
 
     -- Range: low / high stay ordered.
     local lows: {number} = {}

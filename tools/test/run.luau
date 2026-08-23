@@ -15,6 +15,7 @@
 
 local Mock = require("./Roblox")
 local Host = require("./Host")
+local Inventory = require("./inventory")
 
 local world: any = Mock.install()
 local stub: any = Host.create(world)
@@ -45,6 +46,7 @@ local ctx: any = {
     host = host,
     check = check,
     section = section,
+    inventory = Inventory,
 }
 
 -- Emitted by tools/validate.sh next to this file. Required here rather than
@@ -131,6 +133,7 @@ require("./suites/protection-rescue")(ctx)
 require("./suites/utility-misc")(ctx)
 require("./suites/visuals-misc")(ctx)
 require("./suites/new-modules")(ctx)
+require("./suites/expansion-behavior")(ctx)
 require("./suites/combat-analytics")(ctx)
 require("./suites/games")(ctx)
 require("./suites/bundle")(ctx)

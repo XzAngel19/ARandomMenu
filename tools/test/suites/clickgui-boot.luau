@@ -173,9 +173,8 @@ return function(ctx: any): ()
             cardsByName[feature.name] = feature
         end
     end
-    -- Machine-readable inventory. It is intentionally exactly 43 entries:
-    -- modern Wurst may inform generic configuration infrastructure, never add
-    -- a thirty-ninth hack to this port.
+    -- Machine-readable inventory. Count comes from the snapshot so the next
+    -- deliberate addition does not retouch this suite.
     local matrix: {[string]: any} = {
         ["Friend List"] = {kind = "roblox-only"},
         ItemESP = {kind = "adapted", counterpart = "ItemESP"},
@@ -229,7 +228,11 @@ return function(ctx: any): ()
     for _name: string in pairs(matrix) do
         matrixCount += 1
     end
-    check("module matrix is exactly 43", matrixCount == 43, tostring(matrixCount))
+    check(
+        "module matrix matches the inventory snapshot",
+        matrixCount == ctx.inventory.count,
+        tostring(matrixCount)
+    )
 
     local framework: any = host.state.framework
     local modulesByFeature: {[any]: any} = {}
