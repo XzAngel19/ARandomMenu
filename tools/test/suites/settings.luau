@@ -89,9 +89,9 @@ return function(ctx: any): ()
     check("a category-style window: no close button",
         uiWindow ~= nil and uiWindow.closeButton == nil)
 
-    -- Wurst's order: the four feature shortcuts first.
+    -- Wurst's order: the three feature shortcuts first (WurstLogo's
+    -- window is gone by user order — the logo is not configurable).
     for _, name: string in ipairs({
-        "Row_WurstLogo",
         "Row_HackList",
         "Row_Keybinds",
         "Row_WurstOptions",
@@ -120,9 +120,10 @@ return function(ctx: any): ()
             and host.state.uiSettings["Opacity"] == 0.5
             and host.state.uiSettings["Max height"] == 200)
 
-    -- The four shortcuts open real windows.
-    settings.openWurstLogo()
-    check("WurstLogo opens its settings window", windows.Get("WurstLogo") ~= nil)
+    -- The shortcuts open real windows. WurstLogo is gone by user order:
+    -- the logo is not configurable, so there is no window and no opener.
+    check("WurstLogo has no opener any more",
+        settings.openWurstLogo == nil)
     settings.openHackList()
     check("HackList opens its settings window", windows.Get("HackList") ~= nil)
     settings.openWurstOptions()
@@ -212,11 +213,11 @@ return function(ctx: any): ()
 
     -- First-run settings windows must not share a pixel. The capture
     -- stacked them; SettingsPage offsets Y (120 / 180 / 140 / 220).
-    local logoWin: any = windows.Get("WurstLogo")
+    local logoWin: any = windows.Get("KeybindProfiles")
     local hackWin: any = windows.Get("HackList")
     if logoWin ~= nil and hackWin ~= nil then
         check(
-            "WurstLogo and HackList are not born superimposed",
+            "Profiles and HackList are not born superimposed",
             logoWin.root.Position.X.Offset ~= hackWin.root.Position.X.Offset
                 or logoWin.root.Position.Y.Offset ~= hackWin.root.Position.Y.Offset
         )

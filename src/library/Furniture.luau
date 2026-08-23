@@ -131,10 +131,11 @@ function Module.init(context: any): any
     -- put the transparent logo on a white slab, which is not how Wurst looks
     -- anywhere.
     -- The chip ends immediately after the version string — the band must
-    -- never run on toward the HD icon or any other UI. 12 px is the bitmap
-    -- advance at the 16 px line.
+    -- never run on toward the HD icon or any other UI. 15 px is the
+    -- estimated advance at the 20 px line the version now draws at — the
+    -- user asked for this text bigger, and it is the product's face.
     local versionText: string = tostring(PRODUCT.version)
-    local versionWidth: number = 8 + #versionText * 12
+    local versionWidth: number = 8 + #versionText * 15
     local chipWidth: number = LOGO_WIDTH + 10 + versionWidth + 4
     local chip: Frame = (create("Frame", {
         Parent = PopupLayer,
@@ -221,7 +222,7 @@ function Module.init(context: any): any
                 {text = versionText, color = versionColor},
             }, {
                 Name = "Version",
-                TextSize = 16,
+                TextSize = 20,
                 ZIndex = 21,
                 align = "Left",
             })
@@ -240,7 +241,7 @@ function Module.init(context: any): any
             Size = UDim2.fromScale(1, 1),
             Text = versionText,
             TextColor3 = WURSTLOGO_TEXT,
-            TextSize = 16,
+            TextSize = 20,
             TextXAlignment = Enum.TextXAlignment.Left,
         }) :: any) :: TextLabel
     end
@@ -253,8 +254,9 @@ function Module.init(context: any): any
     local function fitLogoBand(): ()
         local measured: number = 0
         if drawsVersion and type(bitmapText.measure) == "function" then
+            -- Measured at the 20 px line the version actually draws at.
             measured = tonumber(bitmapText.measure(
-                {{text = versionText}}, 16
+                {{text = versionText}}, 20
             )) or 0
         elseif versionLabel then
             local bounds: any = (versionLabel :: any).TextBounds
@@ -390,6 +392,18 @@ function Module.init(context: any): any
     if configData.states["HackList.Animations"] ~= nil then
         hudAnimations = configData.states["HackList.Animations"] == true
     end
+    local hudSize: string = type(configData.values["HackList.Size"]) == "string"
+        and configData.values["HackList.Size"]
+        or "Normal"
+    local hudRainbow: boolean = configData.states["HackList.Rainbow"] == true
+    local HUD_SIZES: {[string]: {font: number, line: number}} = {
+        Small = {font = 12, line = 14},
+        Normal = {font = HACKLIST_FONT_SIZE, line = HACKLIST_LINE_HEIGHT},
+        Large = {font = 20, line = 23},
+    }
+    local function hudMetrics(): {font: number, line: number}
+        return HUD_SIZES[hudSize] or HUD_SIZES.Normal
+    end
 
     local function hudOnLeft(): boolean
         -- A phone always keeps the list on the left, where a thumb does not
@@ -415,8 +429,25 @@ function Module.init(context: any): any
             )
             hudLayout.HorizontalAlignment = Enum.HorizontalAlignment.Left
         else
+            -- The popup layer carries the ClickGUI's UIScale, so scale-1
+            -- coordinates land past the physical screen edge — "Position:
+            -- Right" flew off-screen exactly like the toasts did. The
+            -- window manager already maps physical to logical; its right
+            -- edge is the real one.
+            local windows: any = state.windows
+            local logicalWidth: number? = nil
+            if windows and type(windows.LogicalViewport) == "function" then
+                local ok: boolean, logical: any = pcall(windows.LogicalViewport)
+                if ok and logical then
+                    logicalWidth = logical.X
+                end
+            end
             hudFrame.AnchorPoint = Vector2.new(1, 0)
-            hudFrame.Position = UDim2.new(1, -12, 0, HACKLIST_TOP)
+            if logicalWidth then
+                hudFrame.Position = UDim2.new(0, logicalWidth - 12, 0, HACKLIST_TOP)
+            else
+                hudFrame.Position = UDim2.new(1, -12, 0, HACKLIST_TOP)
+            end
             hudLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
         end
     end
@@ -435,8 +466,20 @@ function Module.init(context: any): any
     -- One container per entry; the glyph line inside it is drawn through
     -- the bitmap text contract, so these entries rasterise from the atlas
     -- the moment it resolves and fall back to Monocraft text until then.
+    local hudRainbowClock: number = 0
+    local function hudEntryColor(order: number?): Color3
+        if not hudRainbow then
+            return hudColor
+        end
+        -- Vape-style wave: the base hue rides the clock and each row sits
+        -- a step behind the one above it.
+        local hue: number = (hudRainbowClock * 0.4 + (order or 0) * 0.045) % 1
+        return Color3.fromHSV(hue, 0.8, 1)
+    end
     local function drawHudEntry(row: any, name: string, status: string?): ()
-        local segments: {any} = {{text = name, color = hudColor}}
+        row.name = name
+        row.status = status
+        local segments: {any} = {{text = name, color = hudEntryColor(row.order)}}
         if status and status ~= "" then
             table.insert(segments, {
                 text = " [" .. tostring(status) .. "]",
@@ -447,7 +490,7 @@ function Module.init(context: any): any
         if bitmapText and type(bitmapText.draw) == "function" then
             row.holder = bitmapText.draw(row.container, segments, {
                 Name = "Entry",
-                TextSize = HACKLIST_FONT_SIZE,
+                TextSize = hudMetrics().font,
                 ZIndex = 20,
                 align = hudOnLeft() and "Left" or "Right",
             })
@@ -460,7 +503,7 @@ function Module.init(context: any): any
             Name = name,
             BackgroundTransparency = 1,
             BorderSizePixel = 0,
-            Size = UDim2.new(1, 0, 0, HACKLIST_LINE_HEIGHT),
+            Size = UDim2.new(1, 0, 0, hudMetrics().line),
             ZIndex = 20,
         }) :: any) :: Frame
         return {container = container}
@@ -577,7 +620,7 @@ function Module.init(context: any): any
             end
             local available: number = screenHeight - HACKLIST_TOP - 12
             local overflows: boolean =
-                #entries * (HACKLIST_LINE_HEIGHT + 1) > available
+                #entries * (hudMetrics().line + 1) > available
             if hudMode == "Count" or (hudMode == "Auto" and overflows) then
                 entries = {{
                     name = tostring(#entries) .. " hacks active",
@@ -610,6 +653,7 @@ function Module.init(context: any): any
                 hudRows[entry.name] = row
             end
             row.container.LayoutOrder = order
+            row.order = order
             drawHudEntry(row, entry.name, entry.status)
             if isNew then
                 slideHudRow(row)
@@ -623,9 +667,25 @@ function Module.init(context: any): any
         end
     end
 
+    local hudRainbowSince: number = 0
     table.insert(Furniture.handles, TaskManager:Connect(function(
         deltaTime: number
     ): ()
+        -- The rainbow rides every frame the list is visible, throttled to
+        -- ~30 repaints a second; the pooled draw makes each one a recolour
+        -- of a handful of rows, not a rebuild.
+        if hudRainbow and hudVisible then
+            hudRainbowClock += deltaTime
+            hudRainbowSince += deltaTime
+            if hudRainbowSince >= 0.033 then
+                hudRainbowSince = 0
+                for _, row: any in pairs(hudRows) do
+                    if row.name then
+                        drawHudEntry(row, row.name, row.status)
+                    end
+                end
+            end
+        end
         hudElapsed += deltaTime
         if hudElapsed < 0.25 then
             return
@@ -689,6 +749,19 @@ function Module.init(context: any): any
         end,
         SetAnimations = function(value: boolean): ()
             hudAnimations = value
+        end,
+        SetSize = function(value: string): ()
+            hudSize = value
+            for _, row: any in pairs(hudRows) do
+                row.container.Size = UDim2.new(1, 0, 0, hudMetrics().line)
+            end
+            forceHudRefresh()
+        end,
+        SetRainbow = function(value: boolean): ()
+            hudRainbow = value == true
+            if not hudRainbow then
+                forceHudRefresh()
+            end
         end,
     }
 
@@ -1028,25 +1101,9 @@ function Module.init(context: any): any
         end
     end))
 
-    -- RightShift opens Navigator, Wurst's own default bind — unless the
-    -- player's stored menu key is still RightShift from an older build, in
-    -- which case the menu keeps its key and Navigator waits for a rebind.
-    table.insert(Furniture.connections, UserInputService.InputBegan:Connect(function(
-        input: InputObject,
-        gameProcessed: boolean
-    ): ()
-        if gameProcessed or input.KeyCode ~= Enum.KeyCode.RightShift then
-            return
-        end
-        if state.toggleKey == Enum.KeyCode.RightShift then
-            return
-        end
-        if navScreen.Visible then
-            closeNavigator()
-        else
-            openNavigator()
-        end
-    end))
+    -- The Navigator has no keybind any more — user order. RightShift is
+    -- the menu key; the Navigator opens from the dock's magnifier button
+    -- and nowhere else.
 
     state.navigator = {
         root = navScreen,
@@ -1069,6 +1126,8 @@ function Module.init(context: any): any
     local DOCK_BOTTOM_MARGIN: number = 70
     local pillWidth: number = PILL_PADDING_X * 2
         + DOCK_SEARCH_WIDTH
+        + PILL_GAP
+        + PILL_BUTTON
         + PILL_GAP
         + PILL_BUTTON
 
@@ -1229,6 +1288,64 @@ function Module.init(context: any): any
             end
         end
     )
+
+    -- The magnifier: the one and only door into the Navigator. Drawn as
+    -- an icon (ring plus handle) rather than a glyph, because no font in
+    -- the stack promises a magnifier codepoint.
+    local navButton: TextButton = pillButton(
+        2,
+        PILL_PADDING_X + DOCK_SEARCH_WIDTH + PILL_GAP * 2 + PILL_BUTTON,
+        "",
+        16,
+        "Navigator",
+        function(): ()
+            local navigator: any = state.navigator
+            if not navigator then
+                return
+            end
+            if navigator.root and navigator.root.Visible then
+                if type(navigator.Close) == "function" then
+                    navigator.Close()
+                end
+            elseif type(navigator.Open) == "function" then
+                navigator.Open()
+            end
+        end
+    )
+    do
+        local ring: Frame = (create("Frame", {
+            Parent = navButton,
+            Name = "LupaRing",
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Position = UDim2.new(0.5, -2, 0.5, -2),
+            Size = UDim2.fromOffset(11, 11),
+            ZIndex = navButton.ZIndex + 1,
+        }) :: any) :: Frame
+        create("UICorner", {
+            Parent = ring,
+            CornerRadius = UDim.new(1, 0),
+        })
+        create("UIStroke", {
+            Parent = ring,
+            Color = PILL_IDLE_TEXT,
+            Thickness = 1.6,
+            Transparency = 0.1,
+        })
+        local handle: Frame = (create("Frame", {
+            Parent = navButton,
+            Name = "LupaHandle",
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            BackgroundColor3 = PILL_IDLE_TEXT,
+            BorderSizePixel = 0,
+            Position = UDim2.new(0.5, 5, 0.5, 5),
+            Rotation = 45,
+            Size = UDim2.fromOffset(2, 7),
+            ZIndex = navButton.ZIndex + 1,
+        }) :: any) :: Frame
+        local _ = handle
+    end
 
     -- The search half of the dock. A TextBox stays vector for its caret;
     -- Enter submits, the box clears, and the resolver notifies success,

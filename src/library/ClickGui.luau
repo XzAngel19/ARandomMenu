@@ -172,7 +172,7 @@ function Module.init(context: any): any
     local productVersion: string = tostring(
         (host.PRODUCT and host.PRODUCT.version) or "0.1 Beta"
     )
-    local LOGO_CHIP_WIDTH: number = 142 + 10 + (8 + #productVersion * 12) + 4
+    local LOGO_CHIP_WIDTH: number = 142 + 10 + (8 + #productVersion * 15) + 4
     local LOGO_CHIP_HEIGHT: number = 44
     local TOP_ROW_X: number = 14 + LOGO_CHIP_WIDTH + GRID_GAP
     local TOP_ROW_Y: number = 10

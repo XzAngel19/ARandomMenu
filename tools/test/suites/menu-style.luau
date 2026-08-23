@@ -2,10 +2,10 @@
 --
 -- Headless tests: Menu style is live, exclusive, and persisted.
 --
--- Selecting Navigator while Wurst is open must close Wurst and open
--- Navigator in the same callback. The reverse too. Never both. Module
--- enabled state, settings and window positions stay put. RightControl
--- is the selected menu key. RightShift still opens Navigator directly.
+-- SetMenuStyle stays the one exclusive state machine (never both
+-- surfaces), but the Navigator is no longer a main surface: there is no
+-- Menu style row and no Navigator keybind. RightShift toggles the menu;
+-- the Navigator opens from the dock's magnifier (state.navigator.Open).
 
 return function(ctx: any): ()
     local check: (string, boolean, string?) -> () = ctx.check
@@ -23,14 +23,13 @@ return function(ctx: any): ()
     end
 
     check(
-        "the default toggle key is RightControl",
-        string.find(source, "RightControl", 1, true) ~= nil
-            and string.find(source, "savedToggleKey", 1, true) ~= nil
+        "the default toggle key is RightShift",
+        string.find(source, "savedToggleKey = Enum.KeyCode.RightShift", 1, true) ~= nil
     )
     check(
-        "RightShift is reserved for Navigator",
-        string.find(bundle or "", "RightShift opens Navigator", 1, true) ~= nil
-            or string.find(bundle or "", "Enum.KeyCode.RightShift", 1, true) ~= nil
+        "the Navigator has no keybind",
+        string.find(bundle or "", "The Navigator has no keybind any more", 1, true) ~= nil
+            and string.find(bundle or "", "RightShift opens Navigator", 1, true) == nil
     )
     check(
         "the old guiStyle picker is not a live setting",
@@ -57,9 +56,9 @@ return function(ctx: any): ()
         env.Theme and math.round(env.Theme.surface.R * 255) == 64
     )
     check(
-        "RightControl is the selected menu key",
+        "RightShift is the selected menu key",
         state.toggleKey ~= nil
-            and state.toggleKey.Name == "RightControl",
+            and state.toggleKey.Name == "RightShift",
         state.toggleKey and tostring(state.toggleKey.Name)
     )
     check("Navigator is its own screen", type(state.navigator) == "table")
@@ -169,141 +168,70 @@ return function(ctx: any): ()
         sameSnapshot(beforeMachine, "SetMenuStyle Wurst")
     end
 
+    -- No Menu style row any more: the style is not a player setting. The
+    -- published value always reads Wurst and no cycle option exists.
     local ui: any = state.windows and state.windows.Get and state.windows.Get("UISettings")
-    check("UI Settings is reachable for Menu style", ui ~= nil)
-    local pickedNavigator: boolean = false
-    if ui ~= nil then
-        pickedNavigator = Inspect.pickChoice(env.ScreenGui or ui.root, "Option_Menustyle", "Navigator")
-        if pickedNavigator == false then
-            pickedNavigator = Inspect.pickChoice(ui.root, "Option_Menustyle", "Navigator")
-        end
-    end
+    check("UI Settings still exists", ui ~= nil)
     check(
-        "Menu style exposes Wurst and Navigator",
-        pickedNavigator == true or state.uiSettings == nil
+        "the published Menu style is always Wurst",
+        state.uiSettings == nil
             or tostring(state.uiSettings["Menu style"]) == "Wurst"
-            or tostring(state.uiSettings["Menu style"]) == "Navigator"
     )
-
-    -- The cycle callback is the live switch the owner asked for. Until A
-    -- applies the surfaces there, openMenuSurface still follows the stored
-    -- style and the suite waits rather than going permanently red.
-    local cycleSwitched: boolean = Inspect.navigatorVisible(state) == true
-        and Inspect.wurstVisible(state) == false
-    if cycleSwitched then
-        check(
-            "selecting Navigator closes Wurst and opens Navigator in the same callback",
-            true
-        )
-        check(
-            "never both surfaces after selecting Navigator",
-            true
-        )
-    else
-        check(
-            "Menu style cycle live switch waits on A applying surfaces in the callback",
-            true
-        )
-        if type(state.setMenuVisible) == "function" then
-            state.setMenuVisible(false)
-        end
-        if state.navigator and type(state.navigator.Open) == "function" then
-            state.navigator.Open()
-        end
-        check(
-            "openMenuSurface/Open follows Navigator without leaving Wurst up",
-            Inspect.navigatorVisible(state) == true
-                and Inspect.wurstVisible(state) == false
-        )
-    end
-    check(
-        "Navigator is the live surface after the style is Navigator",
-        Inspect.navigatorVisible(state) == true,
-        "nav=" .. tostring(Inspect.navigatorVisible(state))
-            .. " wurst=" .. tostring(Inspect.wurstVisible(state))
-    )
-    check(
-        "Wurst is closed after the style is Navigator",
-        Inspect.wurstVisible(state) == false
-    )
-    sameSnapshot(beforeStyle, "selecting Navigator")
-    check(
-        "Menu style persists as Navigator",
-        state.menuStyle == "Navigator"
-            and (
-                env.configData == nil
-                or env.configData.values == nil
-                or env.configData.values["UI.MenuStyle"] == "Navigator"
-            ),
-        tostring(state.menuStyle)
-    )
-
-    local beforeBack: any = snapshot()
-    if ui ~= nil then
-        local pickedWurst: boolean = Inspect.pickChoice(
-            env.ScreenGui or ui.root,
-            "Option_Menustyle",
-            "Wurst"
-        )
-        if pickedWurst == false then
-            Inspect.pickChoice(ui.root, "Option_Menustyle", "Wurst")
+    local styleRow: any = nil
+    if ui ~= nil and ui.root ~= nil then
+        for _, descendant: any in ipairs(ui.root:GetDescendants()) do
+            if tostring(descendant.Name) == "Option_Menustyle" then
+                styleRow = descendant
+            end
         end
     end
-    local backSwitched: boolean = Inspect.wurstVisible(state) == true
-        and Inspect.navigatorVisible(state) == false
-    if backSwitched then
-        check(
-            "selecting Wurst closes Navigator and opens Wurst in the same callback",
-            true
-        )
-        check("never both surfaces after selecting Wurst", true)
-        check("Navigator is closed after selecting Wurst", true)
-    else
-        check(
-            "Menu style cycle back to Wurst waits on A applying surfaces in the callback",
-            true
-        )
-        if state.navigator and type(state.navigator.Close) == "function" then
-            state.navigator.Close()
-        end
-        if type(state.setMenuVisible) == "function" then
-            state.setMenuVisible(true)
-        end
-        check(
-            "closing Navigator then opening Wurst never leaves both up",
-            Inspect.wurstVisible(state) == true
-                and Inspect.navigatorVisible(state) == false
-        )
-    end
-    check("Wurst is the live surface again", Inspect.wurstVisible(state) == true)
-    sameSnapshot(beforeBack, "selecting Wurst")
+    check("no Menu style row is built", styleRow == nil)
     check(
-        "Menu style persists as Wurst",
+        "the style stays Wurst after the machine round-trip",
         state.menuStyle == "Wurst",
         tostring(state.menuStyle)
     )
 
-    -- RightShift is a direct Navigator door either way. Start from a
-    -- closed Navigator so the key opens rather than toggles shut.
+    -- RightShift toggles the menu now. Start closed so the key opens it.
     if state.navigator and type(state.navigator.Close) == "function" then
         state.navigator.Close()
+    end
+    if type(state.setMenuVisible) == "function" then
+        state.setMenuVisible(false)
     end
     local input: any = world.services.UserInputService
     input.InputBegan:Fire({
         UserInputType = world.globals.Enum.UserInputType.Keyboard,
         KeyCode = world.globals.Enum.KeyCode.RightShift,
     }, false)
-    check("RightShift opens Navigator directly", Inspect.navigatorVisible(state) == true)
-    if Inspect.wurstVisible(state) and Inspect.navigatorVisible(state) then
+    check("RightShift opens the Wurst menu", Inspect.wurstVisible(state) == true)
+    check(
+        "RightShift never opens the Navigator",
+        Inspect.navigatorVisible(state) == false
+    )
+
+    -- The magnifier is the Navigator's only door: the dock carries it and
+    -- it drives state.navigator.Open/Close.
+    local lupa: any = nil
+    if state.pill ~= nil or env.ScreenGui ~= nil then
+        local roots: {any} = {}
+        if env.ScreenGui then
+            table.insert(roots, env.ScreenGui)
+        end
+        for _, root: any in ipairs(roots) do
+            for _, descendant: any in ipairs(root:GetDescendants()) do
+                if tostring(descendant.Name) == "LupaRing" then
+                    lupa = descendant
+                end
+            end
+        end
+    end
+    check("the dock carries the magnifier icon", lupa ~= nil)
+    if state.navigator and type(state.navigator.Open) == "function" then
+        state.navigator.Open()
         check(
-            "RightShift exclusivity waits on A closing Wurst when Navigator opens",
-            true
-        )
-    else
-        check(
-            "RightShift never leaves both surfaces up",
+            "the magnifier path opens the Navigator",
             Inspect.navigatorVisible(state) == true
-                and Inspect.wurstVisible(state) == false
         )
     end
 

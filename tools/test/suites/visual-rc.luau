@@ -405,7 +405,6 @@ return function(ctx: any): ()
         local ui: any = windows.Get("UISettings")
         check("C4: UI Settings exists", ui ~= nil)
         if ui ~= nil then
-            Inspect.clickNamed(ui.body or ui.root, "Row_WurstLogo")
             Inspect.clickNamed(ui.body or ui.root, "Row_WurstOptions")
         end
         local wo: any = state.wurstOptions
@@ -420,7 +419,6 @@ return function(ctx: any): ()
 
         local managementIds: {string} = {
             "UISettings",
-            "WurstLogo",
             "HackList",
             "Keybinds",
             "KeybindAdd",

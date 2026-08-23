@@ -53,9 +53,8 @@ function Module.init(context: any): any
     local HACKLIST_SORT_BY: string = "Name"
     local HACKLIST_REVERSE: boolean = false
     local HACKLIST_ANIMATIONS: boolean = true
-    local WURSTLOGO_BACKGROUND: Color3 = Color3.fromRGB(255, 255, 255)
-    local WURSTLOGO_TEXT: Color3 = Color3.fromRGB(0, 0, 0)
-    local WURSTLOGO_VISIBILITY: string = "Always"
+    local HACKLIST_SIZE: string = "Normal"
+    local HACKLIST_RAINBOW: boolean = false
 
     local host: any = context
     local state: any = host.state
@@ -371,54 +370,11 @@ function Module.init(context: any): any
         record.window:SetVisible(true)
     end
 
-    -- ------------------------------------------------------------ WurstLogo
     -- Forward-declared: the lazy windows anchor their placement to the UI
     -- Settings window they open from, which is built below them.
+    -- The WurstLogo window is gone by user order: the logo is not
+    -- configurable any more — it simply renders.
     local uiRecord: any = nil
-    local logoRecord: any = nil
-    local function openWurstLogo(): ()
-        if logoRecord then
-            raiseOpen(logoRecord)
-            return
-        end
-        local screen: Vector2 = viewport()
-        logoRecord = configWindow("WurstLogo", "WurstLogo", {
-            position = Vector2.new(screen.X - WINDOW_WIDTH * 2 - 32, 120),
-            anchor = uiRecord and uiRecord.window,
-            settingsSized = true,
-            -- Packed to its own content, as Wurst sizes it: the combo's
-            -- longest value plus its arrow decides the width.
-            packRows = {
-                {"Background", "#FFFFFF"},
-                {"Text", "#000000"},
-                {"Visibility", "Only when outdated", 26},
-            },
-        })
-        local panel: any = panelFor(logoRecord, "WurstLogo")
-        addColorOption(panel, "Background", WURSTLOGO_BACKGROUND, function(color: Color3): ()
-            if state.wurstLogo then
-                state.wurstLogo.SetBackground(color)
-            end
-        end)
-        addColorOption(panel, "Text", WURSTLOGO_TEXT, function(color: Color3): ()
-            if state.wurstLogo then
-                state.wurstLogo.SetTextColor(color)
-            end
-        end)
-        local visibilityValues: {string} = {"Always", "Only when outdated"}
-        addCycleOption(
-            panel,
-            "Visibility",
-            visibilityValues,
-            table.find(visibilityValues, WURSTLOGO_VISIBILITY) or 1,
-            function(value: string): ()
-                if state.wurstLogo then
-                    state.wurstLogo.SetVisibility(value)
-                end
-            end
-        )
-        raiseOpen(logoRecord)
-    end
 
     -- ------------------------------------------------------------- HackList
     local hackListRecord: any = nil
@@ -439,6 +395,8 @@ function Module.init(context: any): any
                 {"Sort by", "Width", 26},
                 {"Reverse sorting", nil, 30},
                 {"Animations", nil, 30},
+                {"Size", "Normal", 26},
+                {"Rainbow", nil, 30},
             },
         })
         local panel: any = panelFor(hackListRecord, "HackList")
@@ -493,6 +451,23 @@ function Module.init(context: any): any
                 state.hudList.SetAnimations(value)
             end
         end)
+        local sizes: {string} = {"Small", "Normal", "Large"}
+        addCycleOption(
+            panel,
+            "Size",
+            sizes,
+            table.find(sizes, HACKLIST_SIZE) or 2,
+            function(value: string): ()
+                if state.hudList and type(state.hudList.SetSize) == "function" then
+                    state.hudList.SetSize(value)
+                end
+            end
+        )
+        addToggleOption(panel, "Rainbow", HACKLIST_RAINBOW, function(value: boolean): ()
+            if state.hudList and type(state.hudList.SetRainbow) == "function" then
+                state.hudList.SetRainbow(value)
+            end
+        end)
         raiseOpen(hackListRecord)
     end
 
@@ -512,6 +487,13 @@ function Module.init(context: any): any
             end
         end
         return bindingId
+    end
+
+    local function keyLabel(name: any): string
+        if type(state.keyDisplayName) == "function" then
+            return state.keyDisplayName(name)
+        end
+        return tostring(name or "")
     end
 
     local function persistBindingKey(binding: any): ()
@@ -633,7 +615,7 @@ function Module.init(context: any): any
         -- which is exactly why Wurst's own description of WurstOptions
         -- mentions restoring keybinds.
         if not UserInputService.TouchEnabled then
-            keybindRow("Open menu", state.toggleKey.Name, false, function(slot: TextButton): ()
+            keybindRow("Open menu", keyLabel(state.toggleKey.Name), false, function(slot: TextButton): ()
                 if state.keyCaptureCancel then
                     state.keyCaptureCancel()
                 end
@@ -654,7 +636,7 @@ function Module.init(context: any): any
             if not bound then
                 continue
             end
-            local slotText: string = binding.key.Name
+            local slotText: string = keyLabel(binding.key.Name)
             local conflicted: boolean = (keyUses[binding.key.Name] or 0) > 1
             keybindRow(featureLabel(tostring(binding.id)), slotText, conflicted, function(slot: TextButton): ()
                 beginKeyCapture(slot, function(keyCode: Enum.KeyCode): ()
@@ -686,7 +668,7 @@ function Module.init(context: any): any
             -- name or a wider key re-derives the window's width from the
             -- rows that exist right now.
             local rows: {{any}} = {
-                {"Open menu", "RightControl", 12},
+                {"Open menu", "RShift", 12},
                 {"Reset keybinds", nil, 26},
                 {"Add", nil, 26},
                 {"Profiles…", nil, 26},
@@ -695,7 +677,7 @@ function Module.init(context: any): any
                 if binding.key and binding.key ~= Enum.KeyCode.Unknown then
                     table.insert(
                         rows,
-                        {featureLabel(tostring(binding.id)), binding.key.Name, 12}
+                        {featureLabel(tostring(binding.id)), keyLabel(binding.key.Name), 12}
                     )
                 end
             end
@@ -1025,7 +1007,7 @@ function Module.init(context: any): any
                     and binding.key ~= Enum.KeyCode.Unknown
                 addRow(
                     featureLabel(tostring(binding.id)),
-                    bound and binding.key.Name or "—",
+                    bound and keyLabel(binding.key.Name) or "—",
                     false,
                     function(slot: TextButton): ()
                         beginKeyCapture(slot, function(keyCode: Enum.KeyCode): ()
@@ -1492,43 +1474,12 @@ function Module.init(context: any): any
         "Destruct", "Destruct", runDestruct
     )
     state.wurstOptions.RegisterAction("ResetLayout", "Reset layout", runResetLayout)
-    state.wurstOptions.RegisterAction(
-        "GameCheck", "Game check: " .. recognised, nil, {static = true}
-    )
+    -- No Game check row: the recognised-game readout was inspector
+    -- chrome, not a Wurst option. (`recognised` stays computed for logs.)
+    local _ = recognised
 
-    -- Font status, honestly: which source is really rendering. Code is
-    -- the only face the interface offers now, so the row is a statement,
-    -- not a menu; the other names can only appear if a suite or a local
-    -- experiment drives the atlas machinery directly.
-    local function fontStatusLabel(): string
-        local sourceName: string = tostring(
-            (state.bitmapText and state.bitmapText.source) or "unavailable"
-        )
-        if sourceName == "code-vector" then
-            return "Font: Code (vector, engine-rendered)"
-        end
-        if sourceName == "minecraft-exact" then
-            return "Font: Minecraft 1.18.1 (exact, local pack)"
-        end
-        if sourceName == "minecraft-26.2-local" then
-            return "Font: Minecraft 26.2 (optional local pack)"
-        end
-        if sourceName == "monocraft-fallback" then
-            return "Font: Monocraft fallback (OFL)"
-        end
-        return "Font: vector stand-in (no atlas)"
-    end
-    local fontHandle: any = state.wurstOptions.RegisterAction(
-        "FontStatus",
-        fontStatusLabel(),
-        nil,
-        {static = true}
-    )
-    if state.bitmapText and type(state.bitmapText.onReady) == "table" then
-        table.insert(state.bitmapText.onReady, function(): ()
-            fontHandle.SetLabel(fontStatusLabel())
-        end)
-    end
+    -- No Font status row either: Code is the one face, so a row that
+    -- says so is furniture, not information.
 
     local function openWurstOptions(): ()
         if optionsRecord then
@@ -1556,7 +1507,6 @@ function Module.init(context: any): any
         closable = false,
         settingsSized = false,
         packRows = {
-            {"WurstLogo", nil, 26},
             {"HackList", nil, 26},
             {"Keybinds", nil, 26},
             {"WurstOptions", nil, 26},
@@ -1571,15 +1521,14 @@ function Module.init(context: any): any
     })
     uiRecord.open = true
 
-    actionRow(uiRecord, 1, "WurstLogo", openWurstLogo)
-    actionRow(uiRecord, 2, "HackList", openHackList)
-    actionRow(uiRecord, 3, "Keybinds", openKeybinds)
-    actionRow(uiRecord, 4, "WurstOptions", openWurstOptions)
+    actionRow(uiRecord, 1, "HackList", openHackList)
+    actionRow(uiRecord, 2, "Keybinds", openKeybinds)
+    actionRow(uiRecord, 3, "WurstOptions", openWurstOptions)
 
     local uiPanel: any = panelFor(uiRecord, "ClickGUI")
-    -- The four shortcuts above hold LayoutOrder 1–4; starting the option
+    -- The three shortcuts above hold LayoutOrder 1–3; starting the option
     -- counter past them keeps Wurst's order (buttons first, then settings).
-    uiPanel.optionCount = 4
+    uiPanel.optionCount = 3
 
     -- The window's current values, published so anything that wants to read
     -- the defaults does not have to walk rows — the parity suite does.
@@ -1612,6 +1561,44 @@ function Module.init(context: any): any
             end
         end)
     end
+
+    -- Rainbow, for fun — the user asked for it by name. While on, the
+    -- Accent and Enabled tokens ride the hue wheel; switching it off puts
+    -- the stored row colours back. Heartbeat-driven and throttled: the
+    -- mock's Heartbeat never fires on its own, so suites stay untouched.
+    local rainbowConnection: any = nil
+    local rainbowElapsed: number = 0
+    local rainbowSince: number = 0
+    addToggleOption(uiPanel, "Rainbow", false, function(value: boolean): ()
+        uiSettingsValues["Rainbow"] = value
+        if rainbowConnection then
+            rainbowConnection:Disconnect()
+            rainbowConnection = nil
+        end
+        if not ThemeEngine or type(ThemeEngine.Set) ~= "function" then
+            return
+        end
+        if not value then
+            local accent: any = uiSettingsValues["Accent"] or CLICKGUI_ACCENT
+            local enabledColor: any = uiSettingsValues["Enabled"] or CLICKGUI_ENABLED
+            ThemeEngine.Set("accent", accent)
+            ThemeEngine.Set("outline", accent)
+            ThemeEngine.Set("enabled", enabledColor)
+            return
+        end
+        rainbowConnection = trackUiConnection(RunService.Heartbeat:Connect(function(step: number): ()
+            rainbowElapsed += step
+            rainbowSince += step
+            if rainbowSince < 0.05 then
+                return
+            end
+            rainbowSince = 0
+            local color: Color3 = Color3.fromHSV(rainbowElapsed * 0.25 % 1, 0.85, 1)
+            ThemeEngine.Set("accent", color)
+            ThemeEngine.Set("outline", color)
+            ThemeEngine.Set("enabled", color)
+        end))
+    end)
 
     addNumberOption(uiPanel, "Opacity", OPACITY, 0.15, 0.85, function(value: number): ()
         uiSettingsValues["Opacity"] = value
@@ -1647,34 +1634,11 @@ function Module.init(context: any): any
         end
     end)
 
-    -- Which surface the open gesture shows: Wurst's ClickGUI windows, or
-    -- the Navigator alone as the main screen. Stored under UI.MenuStyle;
-    -- switching touches nothing else — no enabled state, no settings, no
-    -- window positions, no binds. RightShift keeps its direct Navigator
-    -- door either way.
-    local menuStyles: {string} = {"Wurst", "Navigator"}
-    addCycleOption(
-        uiPanel,
-        "Menu style",
-        menuStyles,
-        table.find(menuStyles, tostring(state.menuStyle)) or 1,
-        function(value: string): ()
-            uiSettingsValues["Menu style"] = value
-            -- The one state machine: persists, closes whatever surface is
-            -- open, opens the selected one immediately, tells listeners.
-            -- The widget replays the stored value once at boot; only a
-            -- real change opens a surface — a menu must never open itself.
-            local changed: boolean = value ~= tostring(state.menuStyle)
-            if type(state.SetMenuStyle) == "function" then
-                state.SetMenuStyle(value, changed)
-            else
-                state.menuStyle = value
-                configData.values["UI.MenuStyle"] = value
-                queueConfigSave()
-            end
-        end
-    )
-    uiSettingsValues["Menu style"] = tostring(state.menuStyle)
+    -- No Menu style row: the Navigator is not a main surface any more.
+    -- It opens from the dock's magnifier only; the open gesture always
+    -- shows Wurst's ClickGUI. SetMenuStyle survives underneath for the
+    -- suites and the dock door.
+    uiSettingsValues["Menu style"] = "Wurst"
 
     -- No Font pack row any more. The user's verdict was final: the menu's
     -- face is Code, the engine's own vector monospace, for every player on
@@ -1768,7 +1732,6 @@ function Module.init(context: any): any
     Settings.ui = uiRecord
     Settings.openKeybinds = openKeybinds
     Settings.openProfiles = openProfiles
-    Settings.openWurstLogo = openWurstLogo
     Settings.openHackList = openHackList
     Settings.openWurstOptions = openWurstOptions
 

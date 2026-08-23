@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "d62eb6aa8502794b",
+    stamp = "f44a5ee17e7506a8",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -2101,10 +2101,16 @@ function Module.init(context: any): WidgetLibrary
         end
         local initialKey = savedKey or defaultKey
         local currentKey: Enum.KeyCode = initialKey
+        local function keyLabel(name: any): string
+            if type(state.keyDisplayName) == "function" then
+                return state.keyDisplayName(name)
+            end
+            return tostring(name or "")
+        end
         local option = createOptionRow(feature, labelText, hintText)
         local button = makeButton(
             option,
-            currentKey == Enum.KeyCode.Unknown and "" or currentKey.Name,
+            currentKey == Enum.KeyCode.Unknown and "" or keyLabel(currentKey.Name),
             11
         )
         state.layoutOptionControl(option, button, 0.5)
@@ -2118,7 +2124,7 @@ function Module.init(context: any): WidgetLibrary
             currentKey = cleared and Enum.KeyCode.Unknown or keyCode
             button.Text = currentKey == Enum.KeyCode.Unknown
                 and ""
-                or currentKey.Name
+                or keyLabel(currentKey.Name)
             button:SetAttribute("CaptureIdleText", button.Text)
             callback(currentKey)
             configData.values[optionKey] = currentKey.Name
@@ -2155,7 +2161,7 @@ function Module.init(context: any): WidgetLibrary
         end
         local option = createOptionRow(feature, labelText, hintText)
         local box = flatTextBox(option, initialText)
-        box.PlaceholderText = "Enter value"
+        box.PlaceholderText = "Enter"
         -- Centred: the placeholder and the value sit in the middle of the field
         -- instead of hugging its left edge.
         box.TextXAlignment = Enum.TextXAlignment.Center
@@ -7793,7 +7799,7 @@ function Module.init(context: any): any
     local productVersion: string = tostring(
         (host.PRODUCT and host.PRODUCT.version) or "0.1 Beta"
     )
-    local LOGO_CHIP_WIDTH: number = 142 + 10 + (8 + #productVersion * 12) + 4
+    local LOGO_CHIP_WIDTH: number = 142 + 10 + (8 + #productVersion * 15) + 4
     local LOGO_CHIP_HEIGHT: number = 44
     local TOP_ROW_X: number = 14 + LOGO_CHIP_WIDTH + GRID_GAP
     local TOP_ROW_Y: number = 10
@@ -9694,9 +9700,8 @@ function Module.init(context: any): any
     local HACKLIST_SORT_BY: string = "Name"
     local HACKLIST_REVERSE: boolean = false
     local HACKLIST_ANIMATIONS: boolean = true
-    local WURSTLOGO_BACKGROUND: Color3 = Color3.fromRGB(255, 255, 255)
-    local WURSTLOGO_TEXT: Color3 = Color3.fromRGB(0, 0, 0)
-    local WURSTLOGO_VISIBILITY: string = "Always"
+    local HACKLIST_SIZE: string = "Normal"
+    local HACKLIST_RAINBOW: boolean = false
 
     local host: any = context
     local state: any = host.state
@@ -10012,54 +10017,11 @@ function Module.init(context: any): any
         record.window:SetVisible(true)
     end
 
-    -- ------------------------------------------------------------ WurstLogo
     -- Forward-declared: the lazy windows anchor their placement to the UI
     -- Settings window they open from, which is built below them.
+    -- The WurstLogo window is gone by user order: the logo is not
+    -- configurable any more — it simply renders.
     local uiRecord: any = nil
-    local logoRecord: any = nil
-    local function openWurstLogo(): ()
-        if logoRecord then
-            raiseOpen(logoRecord)
-            return
-        end
-        local screen: Vector2 = viewport()
-        logoRecord = configWindow("WurstLogo", "WurstLogo", {
-            position = Vector2.new(screen.X - WINDOW_WIDTH * 2 - 32, 120),
-            anchor = uiRecord and uiRecord.window,
-            settingsSized = true,
-            -- Packed to its own content, as Wurst sizes it: the combo's
-            -- longest value plus its arrow decides the width.
-            packRows = {
-                {"Background", "#FFFFFF"},
-                {"Text", "#000000"},
-                {"Visibility", "Only when outdated", 26},
-            },
-        })
-        local panel: any = panelFor(logoRecord, "WurstLogo")
-        addColorOption(panel, "Background", WURSTLOGO_BACKGROUND, function(color: Color3): ()
-            if state.wurstLogo then
-                state.wurstLogo.SetBackground(color)
-            end
-        end)
-        addColorOption(panel, "Text", WURSTLOGO_TEXT, function(color: Color3): ()
-            if state.wurstLogo then
-                state.wurstLogo.SetTextColor(color)
-            end
-        end)
-        local visibilityValues: {string} = {"Always", "Only when outdated"}
-        addCycleOption(
-            panel,
-            "Visibility",
-            visibilityValues,
-            table.find(visibilityValues, WURSTLOGO_VISIBILITY) or 1,
-            function(value: string): ()
-                if state.wurstLogo then
-                    state.wurstLogo.SetVisibility(value)
-                end
-            end
-        )
-        raiseOpen(logoRecord)
-    end
 
     -- ------------------------------------------------------------- HackList
     local hackListRecord: any = nil
@@ -10080,6 +10042,8 @@ function Module.init(context: any): any
                 {"Sort by", "Width", 26},
                 {"Reverse sorting", nil, 30},
                 {"Animations", nil, 30},
+                {"Size", "Normal", 26},
+                {"Rainbow", nil, 30},
             },
         })
         local panel: any = panelFor(hackListRecord, "HackList")
@@ -10134,6 +10098,23 @@ function Module.init(context: any): any
                 state.hudList.SetAnimations(value)
             end
         end)
+        local sizes: {string} = {"Small", "Normal", "Large"}
+        addCycleOption(
+            panel,
+            "Size",
+            sizes,
+            table.find(sizes, HACKLIST_SIZE) or 2,
+            function(value: string): ()
+                if state.hudList and type(state.hudList.SetSize) == "function" then
+                    state.hudList.SetSize(value)
+                end
+            end
+        )
+        addToggleOption(panel, "Rainbow", HACKLIST_RAINBOW, function(value: boolean): ()
+            if state.hudList and type(state.hudList.SetRainbow) == "function" then
+                state.hudList.SetRainbow(value)
+            end
+        end)
         raiseOpen(hackListRecord)
     end
 
@@ -10153,6 +10134,13 @@ function Module.init(context: any): any
             end
         end
         return bindingId
+    end
+
+    local function keyLabel(name: any): string
+        if type(state.keyDisplayName) == "function" then
+            return state.keyDisplayName(name)
+        end
+        return tostring(name or "")
     end
 
     local function persistBindingKey(binding: any): ()
@@ -10274,7 +10262,7 @@ function Module.init(context: any): any
         -- which is exactly why Wurst's own description of WurstOptions
         -- mentions restoring keybinds.
         if not UserInputService.TouchEnabled then
-            keybindRow("Open menu", state.toggleKey.Name, false, function(slot: TextButton): ()
+            keybindRow("Open menu", keyLabel(state.toggleKey.Name), false, function(slot: TextButton): ()
                 if state.keyCaptureCancel then
                     state.keyCaptureCancel()
                 end
@@ -10295,7 +10283,7 @@ function Module.init(context: any): any
             if not bound then
                 continue
             end
-            local slotText: string = binding.key.Name
+            local slotText: string = keyLabel(binding.key.Name)
             local conflicted: boolean = (keyUses[binding.key.Name] or 0) > 1
             keybindRow(featureLabel(tostring(binding.id)), slotText, conflicted, function(slot: TextButton): ()
                 beginKeyCapture(slot, function(keyCode: Enum.KeyCode): ()
@@ -10327,7 +10315,7 @@ function Module.init(context: any): any
             -- name or a wider key re-derives the window's width from the
             -- rows that exist right now.
             local rows: {{any}} = {
-                {"Open menu", "RightControl", 12},
+                {"Open menu", "RShift", 12},
                 {"Reset keybinds", nil, 26},
                 {"Add", nil, 26},
                 {"Profiles…", nil, 26},
@@ -10336,7 +10324,7 @@ function Module.init(context: any): any
                 if binding.key and binding.key ~= Enum.KeyCode.Unknown then
                     table.insert(
                         rows,
-                        {featureLabel(tostring(binding.id)), binding.key.Name, 12}
+                        {featureLabel(tostring(binding.id)), keyLabel(binding.key.Name), 12}
                     )
                 end
             end
@@ -10666,7 +10654,7 @@ function Module.init(context: any): any
                     and binding.key ~= Enum.KeyCode.Unknown
                 addRow(
                     featureLabel(tostring(binding.id)),
-                    bound and binding.key.Name or "—",
+                    bound and keyLabel(binding.key.Name) or "—",
                     false,
                     function(slot: TextButton): ()
                         beginKeyCapture(slot, function(keyCode: Enum.KeyCode): ()
@@ -11133,43 +11121,12 @@ function Module.init(context: any): any
         "Destruct", "Destruct", runDestruct
     )
     state.wurstOptions.RegisterAction("ResetLayout", "Reset layout", runResetLayout)
-    state.wurstOptions.RegisterAction(
-        "GameCheck", "Game check: " .. recognised, nil, {static = true}
-    )
+    -- No Game check row: the recognised-game readout was inspector
+    -- chrome, not a Wurst option. (`recognised` stays computed for logs.)
+    local _ = recognised
 
-    -- Font status, honestly: which source is really rendering. Code is
-    -- the only face the interface offers now, so the row is a statement,
-    -- not a menu; the other names can only appear if a suite or a local
-    -- experiment drives the atlas machinery directly.
-    local function fontStatusLabel(): string
-        local sourceName: string = tostring(
-            (state.bitmapText and state.bitmapText.source) or "unavailable"
-        )
-        if sourceName == "code-vector" then
-            return "Font: Code (vector, engine-rendered)"
-        end
-        if sourceName == "minecraft-exact" then
-            return "Font: Minecraft 1.18.1 (exact, local pack)"
-        end
-        if sourceName == "minecraft-26.2-local" then
-            return "Font: Minecraft 26.2 (optional local pack)"
-        end
-        if sourceName == "monocraft-fallback" then
-            return "Font: Monocraft fallback (OFL)"
-        end
-        return "Font: vector stand-in (no atlas)"
-    end
-    local fontHandle: any = state.wurstOptions.RegisterAction(
-        "FontStatus",
-        fontStatusLabel(),
-        nil,
-        {static = true}
-    )
-    if state.bitmapText and type(state.bitmapText.onReady) == "table" then
-        table.insert(state.bitmapText.onReady, function(): ()
-            fontHandle.SetLabel(fontStatusLabel())
-        end)
-    end
+    -- No Font status row either: Code is the one face, so a row that
+    -- says so is furniture, not information.
 
     local function openWurstOptions(): ()
         if optionsRecord then
@@ -11197,7 +11154,6 @@ function Module.init(context: any): any
         closable = false,
         settingsSized = false,
         packRows = {
-            {"WurstLogo", nil, 26},
             {"HackList", nil, 26},
             {"Keybinds", nil, 26},
             {"WurstOptions", nil, 26},
@@ -11212,15 +11168,14 @@ function Module.init(context: any): any
     })
     uiRecord.open = true
 
-    actionRow(uiRecord, 1, "WurstLogo", openWurstLogo)
-    actionRow(uiRecord, 2, "HackList", openHackList)
-    actionRow(uiRecord, 3, "Keybinds", openKeybinds)
-    actionRow(uiRecord, 4, "WurstOptions", openWurstOptions)
+    actionRow(uiRecord, 1, "HackList", openHackList)
+    actionRow(uiRecord, 2, "Keybinds", openKeybinds)
+    actionRow(uiRecord, 3, "WurstOptions", openWurstOptions)
 
     local uiPanel: any = panelFor(uiRecord, "ClickGUI")
-    -- The four shortcuts above hold LayoutOrder 1–4; starting the option
+    -- The three shortcuts above hold LayoutOrder 1–3; starting the option
     -- counter past them keeps Wurst's order (buttons first, then settings).
-    uiPanel.optionCount = 4
+    uiPanel.optionCount = 3
 
     -- The window's current values, published so anything that wants to read
     -- the defaults does not have to walk rows — the parity suite does.
@@ -11253,6 +11208,44 @@ function Module.init(context: any): any
             end
         end)
     end
+
+    -- Rainbow, for fun — the user asked for it by name. While on, the
+    -- Accent and Enabled tokens ride the hue wheel; switching it off puts
+    -- the stored row colours back. Heartbeat-driven and throttled: the
+    -- mock's Heartbeat never fires on its own, so suites stay untouched.
+    local rainbowConnection: any = nil
+    local rainbowElapsed: number = 0
+    local rainbowSince: number = 0
+    addToggleOption(uiPanel, "Rainbow", false, function(value: boolean): ()
+        uiSettingsValues["Rainbow"] = value
+        if rainbowConnection then
+            rainbowConnection:Disconnect()
+            rainbowConnection = nil
+        end
+        if not ThemeEngine or type(ThemeEngine.Set) ~= "function" then
+            return
+        end
+        if not value then
+            local accent: any = uiSettingsValues["Accent"] or CLICKGUI_ACCENT
+            local enabledColor: any = uiSettingsValues["Enabled"] or CLICKGUI_ENABLED
+            ThemeEngine.Set("accent", accent)
+            ThemeEngine.Set("outline", accent)
+            ThemeEngine.Set("enabled", enabledColor)
+            return
+        end
+        rainbowConnection = trackUiConnection(RunService.Heartbeat:Connect(function(step: number): ()
+            rainbowElapsed += step
+            rainbowSince += step
+            if rainbowSince < 0.05 then
+                return
+            end
+            rainbowSince = 0
+            local color: Color3 = Color3.fromHSV(rainbowElapsed * 0.25 % 1, 0.85, 1)
+            ThemeEngine.Set("accent", color)
+            ThemeEngine.Set("outline", color)
+            ThemeEngine.Set("enabled", color)
+        end))
+    end)
 
     addNumberOption(uiPanel, "Opacity", OPACITY, 0.15, 0.85, function(value: number): ()
         uiSettingsValues["Opacity"] = value
@@ -11288,34 +11281,11 @@ function Module.init(context: any): any
         end
     end)
 
-    -- Which surface the open gesture shows: Wurst's ClickGUI windows, or
-    -- the Navigator alone as the main screen. Stored under UI.MenuStyle;
-    -- switching touches nothing else — no enabled state, no settings, no
-    -- window positions, no binds. RightShift keeps its direct Navigator
-    -- door either way.
-    local menuStyles: {string} = {"Wurst", "Navigator"}
-    addCycleOption(
-        uiPanel,
-        "Menu style",
-        menuStyles,
-        table.find(menuStyles, tostring(state.menuStyle)) or 1,
-        function(value: string): ()
-            uiSettingsValues["Menu style"] = value
-            -- The one state machine: persists, closes whatever surface is
-            -- open, opens the selected one immediately, tells listeners.
-            -- The widget replays the stored value once at boot; only a
-            -- real change opens a surface — a menu must never open itself.
-            local changed: boolean = value ~= tostring(state.menuStyle)
-            if type(state.SetMenuStyle) == "function" then
-                state.SetMenuStyle(value, changed)
-            else
-                state.menuStyle = value
-                configData.values["UI.MenuStyle"] = value
-                queueConfigSave()
-            end
-        end
-    )
-    uiSettingsValues["Menu style"] = tostring(state.menuStyle)
+    -- No Menu style row: the Navigator is not a main surface any more.
+    -- It opens from the dock's magnifier only; the open gesture always
+    -- shows Wurst's ClickGUI. SetMenuStyle survives underneath for the
+    -- suites and the dock door.
+    uiSettingsValues["Menu style"] = "Wurst"
 
     -- No Font pack row any more. The user's verdict was final: the menu's
     -- face is Code, the engine's own vector monospace, for every player on
@@ -11409,7 +11379,6 @@ function Module.init(context: any): any
     Settings.ui = uiRecord
     Settings.openKeybinds = openKeybinds
     Settings.openProfiles = openProfiles
-    Settings.openWurstLogo = openWurstLogo
     Settings.openHackList = openHackList
     Settings.openWurstOptions = openWurstOptions
 
@@ -12111,10 +12080,11 @@ function Module.init(context: any): any
     -- put the transparent logo on a white slab, which is not how Wurst looks
     -- anywhere.
     -- The chip ends immediately after the version string — the band must
-    -- never run on toward the HD icon or any other UI. 12 px is the bitmap
-    -- advance at the 16 px line.
+    -- never run on toward the HD icon or any other UI. 15 px is the
+    -- estimated advance at the 20 px line the version now draws at — the
+    -- user asked for this text bigger, and it is the product's face.
     local versionText: string = tostring(PRODUCT.version)
-    local versionWidth: number = 8 + #versionText * 12
+    local versionWidth: number = 8 + #versionText * 15
     local chipWidth: number = LOGO_WIDTH + 10 + versionWidth + 4
     local chip: Frame = (create("Frame", {
         Parent = PopupLayer,
@@ -12201,7 +12171,7 @@ function Module.init(context: any): any
                 {text = versionText, color = versionColor},
             }, {
                 Name = "Version",
-                TextSize = 16,
+                TextSize = 20,
                 ZIndex = 21,
                 align = "Left",
             })
@@ -12220,7 +12190,7 @@ function Module.init(context: any): any
             Size = UDim2.fromScale(1, 1),
             Text = versionText,
             TextColor3 = WURSTLOGO_TEXT,
-            TextSize = 16,
+            TextSize = 20,
             TextXAlignment = Enum.TextXAlignment.Left,
         }) :: any) :: TextLabel
     end
@@ -12233,8 +12203,9 @@ function Module.init(context: any): any
     local function fitLogoBand(): ()
         local measured: number = 0
         if drawsVersion and type(bitmapText.measure) == "function" then
+            -- Measured at the 20 px line the version actually draws at.
             measured = tonumber(bitmapText.measure(
-                {{text = versionText}}, 16
+                {{text = versionText}}, 20
             )) or 0
         elseif versionLabel then
             local bounds: any = (versionLabel :: any).TextBounds
@@ -12370,6 +12341,18 @@ function Module.init(context: any): any
     if configData.states["HackList.Animations"] ~= nil then
         hudAnimations = configData.states["HackList.Animations"] == true
     end
+    local hudSize: string = type(configData.values["HackList.Size"]) == "string"
+        and configData.values["HackList.Size"]
+        or "Normal"
+    local hudRainbow: boolean = configData.states["HackList.Rainbow"] == true
+    local HUD_SIZES: {[string]: {font: number, line: number}} = {
+        Small = {font = 12, line = 14},
+        Normal = {font = HACKLIST_FONT_SIZE, line = HACKLIST_LINE_HEIGHT},
+        Large = {font = 20, line = 23},
+    }
+    local function hudMetrics(): {font: number, line: number}
+        return HUD_SIZES[hudSize] or HUD_SIZES.Normal
+    end
 
     local function hudOnLeft(): boolean
         -- A phone always keeps the list on the left, where a thumb does not
@@ -12395,8 +12378,25 @@ function Module.init(context: any): any
             )
             hudLayout.HorizontalAlignment = Enum.HorizontalAlignment.Left
         else
+            -- The popup layer carries the ClickGUI's UIScale, so scale-1
+            -- coordinates land past the physical screen edge — "Position:
+            -- Right" flew off-screen exactly like the toasts did. The
+            -- window manager already maps physical to logical; its right
+            -- edge is the real one.
+            local windows: any = state.windows
+            local logicalWidth: number? = nil
+            if windows and type(windows.LogicalViewport) == "function" then
+                local ok: boolean, logical: any = pcall(windows.LogicalViewport)
+                if ok and logical then
+                    logicalWidth = logical.X
+                end
+            end
             hudFrame.AnchorPoint = Vector2.new(1, 0)
-            hudFrame.Position = UDim2.new(1, -12, 0, HACKLIST_TOP)
+            if logicalWidth then
+                hudFrame.Position = UDim2.new(0, logicalWidth - 12, 0, HACKLIST_TOP)
+            else
+                hudFrame.Position = UDim2.new(1, -12, 0, HACKLIST_TOP)
+            end
             hudLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
         end
     end
@@ -12415,8 +12415,20 @@ function Module.init(context: any): any
     -- One container per entry; the glyph line inside it is drawn through
     -- the bitmap text contract, so these entries rasterise from the atlas
     -- the moment it resolves and fall back to Monocraft text until then.
+    local hudRainbowClock: number = 0
+    local function hudEntryColor(order: number?): Color3
+        if not hudRainbow then
+            return hudColor
+        end
+        -- Vape-style wave: the base hue rides the clock and each row sits
+        -- a step behind the one above it.
+        local hue: number = (hudRainbowClock * 0.4 + (order or 0) * 0.045) % 1
+        return Color3.fromHSV(hue, 0.8, 1)
+    end
     local function drawHudEntry(row: any, name: string, status: string?): ()
-        local segments: {any} = {{text = name, color = hudColor}}
+        row.name = name
+        row.status = status
+        local segments: {any} = {{text = name, color = hudEntryColor(row.order)}}
         if status and status ~= "" then
             table.insert(segments, {
                 text = " [" .. tostring(status) .. "]",
@@ -12427,7 +12439,7 @@ function Module.init(context: any): any
         if bitmapText and type(bitmapText.draw) == "function" then
             row.holder = bitmapText.draw(row.container, segments, {
                 Name = "Entry",
-                TextSize = HACKLIST_FONT_SIZE,
+                TextSize = hudMetrics().font,
                 ZIndex = 20,
                 align = hudOnLeft() and "Left" or "Right",
             })
@@ -12440,7 +12452,7 @@ function Module.init(context: any): any
             Name = name,
             BackgroundTransparency = 1,
             BorderSizePixel = 0,
-            Size = UDim2.new(1, 0, 0, HACKLIST_LINE_HEIGHT),
+            Size = UDim2.new(1, 0, 0, hudMetrics().line),
             ZIndex = 20,
         }) :: any) :: Frame
         return {container = container}
@@ -12557,7 +12569,7 @@ function Module.init(context: any): any
             end
             local available: number = screenHeight - HACKLIST_TOP - 12
             local overflows: boolean =
-                #entries * (HACKLIST_LINE_HEIGHT + 1) > available
+                #entries * (hudMetrics().line + 1) > available
             if hudMode == "Count" or (hudMode == "Auto" and overflows) then
                 entries = {{
                     name = tostring(#entries) .. " hacks active",
@@ -12590,6 +12602,7 @@ function Module.init(context: any): any
                 hudRows[entry.name] = row
             end
             row.container.LayoutOrder = order
+            row.order = order
             drawHudEntry(row, entry.name, entry.status)
             if isNew then
                 slideHudRow(row)
@@ -12603,9 +12616,25 @@ function Module.init(context: any): any
         end
     end
 
+    local hudRainbowSince: number = 0
     table.insert(Furniture.handles, TaskManager:Connect(function(
         deltaTime: number
     ): ()
+        -- The rainbow rides every frame the list is visible, throttled to
+        -- ~30 repaints a second; the pooled draw makes each one a recolour
+        -- of a handful of rows, not a rebuild.
+        if hudRainbow and hudVisible then
+            hudRainbowClock += deltaTime
+            hudRainbowSince += deltaTime
+            if hudRainbowSince >= 0.033 then
+                hudRainbowSince = 0
+                for _, row: any in pairs(hudRows) do
+                    if row.name then
+                        drawHudEntry(row, row.name, row.status)
+                    end
+                end
+            end
+        end
         hudElapsed += deltaTime
         if hudElapsed < 0.25 then
             return
@@ -12669,6 +12698,19 @@ function Module.init(context: any): any
         end,
         SetAnimations = function(value: boolean): ()
             hudAnimations = value
+        end,
+        SetSize = function(value: string): ()
+            hudSize = value
+            for _, row: any in pairs(hudRows) do
+                row.container.Size = UDim2.new(1, 0, 0, hudMetrics().line)
+            end
+            forceHudRefresh()
+        end,
+        SetRainbow = function(value: boolean): ()
+            hudRainbow = value == true
+            if not hudRainbow then
+                forceHudRefresh()
+            end
         end,
     }
 
@@ -13008,25 +13050,9 @@ function Module.init(context: any): any
         end
     end))
 
-    -- RightShift opens Navigator, Wurst's own default bind — unless the
-    -- player's stored menu key is still RightShift from an older build, in
-    -- which case the menu keeps its key and Navigator waits for a rebind.
-    table.insert(Furniture.connections, UserInputService.InputBegan:Connect(function(
-        input: InputObject,
-        gameProcessed: boolean
-    ): ()
-        if gameProcessed or input.KeyCode ~= Enum.KeyCode.RightShift then
-            return
-        end
-        if state.toggleKey == Enum.KeyCode.RightShift then
-            return
-        end
-        if navScreen.Visible then
-            closeNavigator()
-        else
-            openNavigator()
-        end
-    end))
+    -- The Navigator has no keybind any more — user order. RightShift is
+    -- the menu key; the Navigator opens from the dock's magnifier button
+    -- and nowhere else.
 
     state.navigator = {
         root = navScreen,
@@ -13049,6 +13075,8 @@ function Module.init(context: any): any
     local DOCK_BOTTOM_MARGIN: number = 70
     local pillWidth: number = PILL_PADDING_X * 2
         + DOCK_SEARCH_WIDTH
+        + PILL_GAP
+        + PILL_BUTTON
         + PILL_GAP
         + PILL_BUTTON
 
@@ -13209,6 +13237,64 @@ function Module.init(context: any): any
             end
         end
     )
+
+    -- The magnifier: the one and only door into the Navigator. Drawn as
+    -- an icon (ring plus handle) rather than a glyph, because no font in
+    -- the stack promises a magnifier codepoint.
+    local navButton: TextButton = pillButton(
+        2,
+        PILL_PADDING_X + DOCK_SEARCH_WIDTH + PILL_GAP * 2 + PILL_BUTTON,
+        "",
+        16,
+        "Navigator",
+        function(): ()
+            local navigator: any = state.navigator
+            if not navigator then
+                return
+            end
+            if navigator.root and navigator.root.Visible then
+                if type(navigator.Close) == "function" then
+                    navigator.Close()
+                end
+            elseif type(navigator.Open) == "function" then
+                navigator.Open()
+            end
+        end
+    )
+    do
+        local ring: Frame = (create("Frame", {
+            Parent = navButton,
+            Name = "LupaRing",
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Position = UDim2.new(0.5, -2, 0.5, -2),
+            Size = UDim2.fromOffset(11, 11),
+            ZIndex = navButton.ZIndex + 1,
+        }) :: any) :: Frame
+        create("UICorner", {
+            Parent = ring,
+            CornerRadius = UDim.new(1, 0),
+        })
+        create("UIStroke", {
+            Parent = ring,
+            Color = PILL_IDLE_TEXT,
+            Thickness = 1.6,
+            Transparency = 0.1,
+        })
+        local handle: Frame = (create("Frame", {
+            Parent = navButton,
+            Name = "LupaHandle",
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            BackgroundColor3 = PILL_IDLE_TEXT,
+            BorderSizePixel = 0,
+            Position = UDim2.new(0.5, 5, 0.5, 5),
+            Rotation = 45,
+            Size = UDim2.fromOffset(2, 7),
+            ZIndex = navButton.ZIndex + 1,
+        }) :: any) :: Frame
+        local _ = handle
+    end
 
     -- The search half of the dock. A TextBox stays vector for its caret;
     -- Enter submits, the box clears, and the resolver notifies success,
@@ -15382,7 +15468,9 @@ function Module.init(context: Runtime): any
             end
             return weapons:Labels({All = true, Melee = true})
         end,
-        EmptyText = "auto",
+        -- Blank on purpose — the user read "auto" as a stuck value. The
+        -- tooltip still explains that empty means whatever you hold.
+        EmptyText = "",
         Tooltip = "Melee weapons this module may swing: tools, view models, "
             .. "inventory slots and the game's own attack button. Empty means "
             .. "whatever you are holding.",
@@ -17816,7 +17904,27 @@ function Module.init(context: Runtime): any
         local teleportService: TeleportService = cloneReference(
             game:GetService("TeleportService")
         )
-        teleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
+        local placeId: number = game.PlaceId
+        local jobId: string = tostring(game.JobId or "")
+        -- Same instance when the id exists, any instance otherwise. The
+        -- old call errored silently whenever JobId was empty (solo
+        -- servers, some private ones) — "Rejoin does nothing" reported
+        -- from the field. A refused same-instance teleport also falls
+        -- back to a plain rejoin of the place.
+        local rejoined: boolean = false
+        if jobId ~= "" then
+            rejoined = pcall(function(): ()
+                teleportService:TeleportToPlaceInstance(placeId, jobId, LocalPlayer)
+            end)
+        end
+        if not rejoined then
+            local ok: boolean, teleportError: any = pcall(function(): ()
+                teleportService:Teleport(placeId, LocalPlayer)
+            end)
+            if not ok then
+                warn("[Wurst] Rejoin failed: " .. tostring(teleportError))
+            end
+        end
     end
     local actionId: string = "RejoinServer"
     local wurstOptions: any = host.state

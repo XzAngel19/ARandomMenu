@@ -353,10 +353,11 @@ return function(ctx: any): ()
             )
         end
 
-        -- chipWidth = LOGO_WIDTH + 10 + (8 + #version * 12) + 4.
-        -- LOGO_WIDTH + 130 was the slab that ran on toward the HUD.
+        -- chipWidth = LOGO_WIDTH + 10 + (8 + #version * 15) + 4 — the
+        -- version draws at the 20 px line now (user order: bigger), and
+        -- 15 is the estimated advance at that size.
         local logoWidth: number = 142
-        local packedChip: number = logoWidth + 10 + (8 + #versionText * 12) + 4
+        local packedChip: number = logoWidth + 10 + (8 + #versionText * 15) + 4
         local chipFrame: any = logo.root
         check(
             "the WurstLogo chip packs to logo + gap + version, not +130",

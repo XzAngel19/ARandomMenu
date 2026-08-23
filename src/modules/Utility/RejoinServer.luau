@@ -29,7 +29,27 @@ function Module.init(context: Runtime): any
         local teleportService: TeleportService = cloneReference(
             game:GetService("TeleportService")
         )
-        teleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
+        local placeId: number = game.PlaceId
+        local jobId: string = tostring(game.JobId or "")
+        -- Same instance when the id exists, any instance otherwise. The
+        -- old call errored silently whenever JobId was empty (solo
+        -- servers, some private ones) — "Rejoin does nothing" reported
+        -- from the field. A refused same-instance teleport also falls
+        -- back to a plain rejoin of the place.
+        local rejoined: boolean = false
+        if jobId ~= "" then
+            rejoined = pcall(function(): ()
+                teleportService:TeleportToPlaceInstance(placeId, jobId, LocalPlayer)
+            end)
+        end
+        if not rejoined then
+            local ok: boolean, teleportError: any = pcall(function(): ()
+                teleportService:Teleport(placeId, LocalPlayer)
+            end)
+            if not ok then
+                warn("[Wurst] Rejoin failed: " .. tostring(teleportError))
+            end
+        end
     end
     local actionId: string = "RejoinServer"
     local wurstOptions: any = host.state

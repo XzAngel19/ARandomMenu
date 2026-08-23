@@ -363,7 +363,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "d62eb6aa8502794b"
+local SOURCE_STAMP: string = "f44a5ee17e7506a8"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -1002,13 +1002,11 @@ PopupLayer.Size = UDim2.fromScale(1, 1)
 PopupLayer.ZIndex = 150
 PopupLayer.Parent = ScreenGui
 
--- Wurst's own default binds: right-ctrl opens the ClickGUI, right-shift opens
--- Navigator. The menu key used to default to RightShift here; a stored key
--- still wins, so nobody's muscle memory changes under them — only a fresh
--- install gets Wurst's pair. The `or` is for the test harness, whose Enum
--- stand-in does not carry RightControl yet (noted in docs/requests/A.md).
-local savedToggleKey = (Enum.KeyCode :: any).RightControl
-    or Enum.KeyCode.RightShift
+-- The menu opens on RightShift — the user's order, replacing the old
+-- RightControl-opens-menu / RightShift-opens-Navigator pair. The
+-- Navigator has no key at all now; it lives behind the dock's magnifier.
+-- A stored key still wins, so a player who rebound the menu keeps theirs.
+local savedToggleKey = Enum.KeyCode.RightShift
 if type(configData.ui.toggleKey) == "string" then
     pcall(function()
         savedToggleKey = Enum.KeyCode[configData.ui.toggleKey]
@@ -1096,14 +1094,12 @@ if configData.ui.wurstSchema ~= 3 then
 end
 configData.ui.textScaleCalibrationVersion = 2
 
--- Wurst or Navigator as the main surface. `UI.MenuStyle` is the stored
--- name; RightControl and the dock open whichever is selected, RightShift
--- keeps opening the Navigator directly, and switching styles touches no
--- module state, no window position and no bind — it only changes what
--- the open gesture shows.
-state.menuStyle = configData.values["UI.MenuStyle"] == "Navigator"
-    and "Navigator"
-    or "Wurst"
+-- The main surface is Wurst's ClickGUI, always.
+state.menuStyle = "Wurst"
+-- Forced, not defaulted: Navigator stopped being a main surface by user
+-- order. A config that stored "Navigator" boots into Wurst; the Navigator
+-- itself still exists behind the dock's magnifier button, and
+-- SetMenuStyle survives for the suites and that door.
 
 -- One-time migration to the Code face. The Code-by-default verdict has
 -- to reach configs saved before it existed: a player who ever cycled
@@ -1218,6 +1214,12 @@ state.teleportPersist.Sync = function(): ()
     end
     local queue: any = resolveTeleportQueue()
     if type(queue) ~= "function" then
+        if not contract._unsupportedSaid then
+            contract._unsupportedSaid = true
+            warn("[" .. PRODUCT.logPrefix .. "] queue_on_teleport is not "
+                .. "available on this executor; the menu cannot follow "
+                .. "teleports here")
+        end
         return
     end
     if genv and genv.ARANDOMMENU_TP_QUEUED == true then
@@ -1228,6 +1230,10 @@ state.teleportPersist.Sync = function(): ()
     local armed: boolean = pcall(queue, buildTeleportSnippet())
     if armed and genv then
         genv.ARANDOMMENU_TP_QUEUED = true
+    end
+    if armed then
+        print("[" .. PRODUCT.logPrefix .. "] Teleport persistence armed — "
+            .. "the menu follows the next teleport")
     end
 end
 
@@ -3507,6 +3513,25 @@ state.restyleButtons = function(isDefault: boolean): ()
     end
 end
 
+-- Key names as the slots draw them. "RightShift" at the 16 px type ran
+-- out of its slot and truncated to dots — the letter disappeared behind
+-- an ellipsis. Config and Enum keep the full name; only the pixels
+-- shorten, the way Wurst and every client menu abbreviate.
+local KEY_DISPLAY_NAMES: {[string]: string} = {
+    RightShift = "RShift", LeftShift = "LShift",
+    RightControl = "RCtrl", LeftControl = "LCtrl",
+    RightAlt = "RAlt", LeftAlt = "LAlt",
+    Backspace = "Back", CapsLock = "Caps",
+    Return = "Enter", Escape = "Esc",
+    PageUp = "PgUp", PageDown = "PgDn",
+    Insert = "Ins", Delete = "Del",
+    RightMeta = "RMeta", LeftMeta = "LMeta",
+}
+state.keyDisplayName = function(name: any): string
+    local resolved: string = tostring(name or "")
+    return KEY_DISPLAY_NAMES[resolved] or resolved
+end
+
 local function setKeySlotCapture(button: TextButton, active: boolean): ()
     local stroke: UIStroke? = button:FindFirstChild("StyleStroke") :: UIStroke?
     TweenService:Create(
@@ -3537,7 +3562,7 @@ local function beginKeyCapture(
     if state.waitingForKey then
         state.waitingForKey = false
         if state.keybindButton then
-            state.keybindButton.Text = state.toggleKey.Name
+            state.keybindButton.Text = state.keyDisplayName(state.toggleKey.Name)
             setKeySlotCapture(state.keybindButton, false)
         end
     end
@@ -4380,13 +4405,13 @@ state.applyCardSkin = function(feature: any, hovered: boolean?): ()
     local fill: Color3 = Theme.surface
 
     if feature.isCategory then
-        -- A heading, not a button — but the pointer still deserves an
-        -- answer: the captures showed Friend List and Projectile
-        -- Calibration reading as dead rows. A soft wash on hover, never
-        -- the toggle fill.
-        surface = isHovered and 0.7 or 1
+        -- A group renders exactly like every other hack button — Wurst
+        -- paints no special heading, and the washed-out look read as
+        -- "disabled" in the captures. Only the enabled fill never applies:
+        -- a group has no on state.
+        surface = isHovered and 0.3 or 0.5
         titleColor = Theme.text
-        titleTransparency = isHovered and 0.1 or 0.3
+        titleTransparency = 0
     elseif feature.isAction then
         surface = isHovered and 0.3 or 0.5
     elseif feature.isHoldAction then
@@ -6194,14 +6219,14 @@ state.globalInputBeganConnection = UserInputService.InputBegan:Connect(function(
             if input.KeyCode == Enum.KeyCode.Escape then
                 state.waitingForKey = false
                 if state.keybindButton then
-                    state.keybindButton.Text = state.toggleKey.Name
+                    state.keybindButton.Text = state.keyDisplayName(state.toggleKey.Name)
                     setKeySlotCapture(state.keybindButton, false)
                 end
                 return
             end
             state.toggleKey = input.KeyCode
             if state.keybindButton then
-                state.keybindButton.Text = input.KeyCode.Name
+                state.keybindButton.Text = state.keyDisplayName(input.KeyCode.Name)
                 setKeySlotCapture(state.keybindButton, false)
             end
             configData.ui.toggleKey = input.KeyCode.Name

@@ -1832,10 +1832,16 @@ function Module.init(context: any): WidgetLibrary
         end
         local initialKey = savedKey or defaultKey
         local currentKey: Enum.KeyCode = initialKey
+        local function keyLabel(name: any): string
+            if type(state.keyDisplayName) == "function" then
+                return state.keyDisplayName(name)
+            end
+            return tostring(name or "")
+        end
         local option = createOptionRow(feature, labelText, hintText)
         local button = makeButton(
             option,
-            currentKey == Enum.KeyCode.Unknown and "" or currentKey.Name,
+            currentKey == Enum.KeyCode.Unknown and "" or keyLabel(currentKey.Name),
             11
         )
         state.layoutOptionControl(option, button, 0.5)
@@ -1849,7 +1855,7 @@ function Module.init(context: any): WidgetLibrary
             currentKey = cleared and Enum.KeyCode.Unknown or keyCode
             button.Text = currentKey == Enum.KeyCode.Unknown
                 and ""
-                or currentKey.Name
+                or keyLabel(currentKey.Name)
             button:SetAttribute("CaptureIdleText", button.Text)
             callback(currentKey)
             configData.values[optionKey] = currentKey.Name
@@ -1886,7 +1892,7 @@ function Module.init(context: any): WidgetLibrary
         end
         local option = createOptionRow(feature, labelText, hintText)
         local box = flatTextBox(option, initialText)
-        box.PlaceholderText = "Enter value"
+        box.PlaceholderText = "Enter"
         -- Centred: the placeholder and the value sit in the middle of the field
         -- instead of hugging its left edge.
         box.TextXAlignment = Enum.TextXAlignment.Center

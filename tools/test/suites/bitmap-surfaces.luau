@@ -225,7 +225,6 @@ return function(ctx: any): ()
 
     local ui: any = windows and windows.Get("UISettings")
     if ui ~= nil then
-        Inspect.clickNamed(ui.body, "Row_WurstLogo")
         Inspect.clickNamed(ui.body, "Row_HackList")
         Inspect.clickNamed(ui.body, "Row_WurstOptions")
     end
@@ -237,7 +236,6 @@ return function(ctx: any): ()
 
     for _, id: string in ipairs({
         "UISettings",
-        "WurstLogo",
         "HackList",
         "Keybinds",
         "KeybindAdd",

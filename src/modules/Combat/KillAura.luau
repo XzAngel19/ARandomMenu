@@ -614,7 +614,9 @@ function Module.init(context: Runtime): any
             end
             return weapons:Labels({All = true, Melee = true})
         end,
-        EmptyText = "auto",
+        -- Blank on purpose — the user read "auto" as a stuck value. The
+        -- tooltip still explains that empty means whatever you hold.
+        EmptyText = "",
         Tooltip = "Melee weapons this module may swing: tools, view models, "
             .. "inventory slots and the game's own attack button. Empty means "
             .. "whatever you are holding.",
