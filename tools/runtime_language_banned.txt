@@ -1,0 +1,67 @@
+# Concrete Spanish runtime phrases the integrator removed (afe8223).
+# One phrase per line. Matching is case-sensitive and only inside
+# quoted Luau string literals in ARandomMenu.luau, loadstring,
+# src/library/**, src/modules/** and src/games/**.
+#
+# Add a line here when a player-visible Spanish string is deleted.
+# Do not add identifiers, comments, or third-party reference text.
+# Do not add a naive Spanish dictionary — "Init" is not "Inicializando".
+
+firma OpenType/TrueType inválida
+firma PNG inválida
+makefolder no está disponible
+isfile/readfile no están disponibles
+descarga agotó tres intentos
+getcustomasset/getsynasset no está disponible
+writefile no está disponible
+caché no reutilizable
+verificación posterior
+fuente fallback para
+fuente cargada
+Inicializando sección
+construyendo funciones universales
+Descargando módulo
+Respuesta remota inválida
+usando fallback local
+Respuesta vacía, HTML o 404
+Descarga correcta
+Error de compilación
+El módulo no exporta init/destroy
+No se pudo cargar el módulo
+rollback falló
+init falló
+destroy falló
+Inicializando PlaceId
+Descarga fallida
+Compilación fallida
+Ejecución fallida
+Bundle aceptado
+Módulo inválido
+Widgets init falló
+Sin librería de controles
+No se pudo cargar la librería de controles
+Framework no disponible
+Framework init falló
+Librería falló
+Sin fábrica de tarjetas
+No se pudo cargar la fábrica de tarjetas
+Módulo cargado
+Módulo falló
+módulos no arrancaron
+módulos no cargaron
+Inicialización detenida
+GitHub devolvió 404
+el servidor devolvió HTML
+el servidor devolvió un error JSON
+Runtime válido
+readfile no está disponible
+readfile falló
+Compilación correcta
+Error durante la ejecución
+Ejecución completada
+Audio ID inválido
+JSONEncode falló
+WeaponService no apareció
+Calibración pasiva
+Calibración detenida
+Caché schema
