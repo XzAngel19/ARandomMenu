@@ -68,7 +68,7 @@ return function(ctx: any): ()
         -- The dock ≡ button is the return control until A draws a dedicated
         -- back row. It must stay clickable over Navigator.
         check(
-            "Navigator back-button row waits on A; the dock is the return control",
+            "the dock is Navigator's return control",
             pill ~= nil
         )
         local menuButton: any = pill and Inspect.findNamed(pill, "PillButton1")

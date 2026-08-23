@@ -67,30 +67,13 @@ return function(ctx: any): ()
         )
     end
 
-    -- Empty official names may be absent from the visible set. If they
-    -- are present with zero modules, that is the capture defect — recorded,
-    -- not failed, until A stops pre-creating them.
     local empty: {string} = { "Blocks", "Chat", "Items" }
-    local stillShowingEmpty: boolean = false
     for _, name: string in ipairs(empty) do
         local record: any = gui and gui.categories and gui.categories[name]
-        if record ~= nil and (record.count or 0) == 0 then
-            stillShowingEmpty = true
-        end
-    end
-    if stillShowingEmpty then
         check(
-            "empty Blocks/Chat/Items windows still pre-created; hide waits on A",
-            true
+            "empty " .. name .. " is not a visible window",
+            record == nil or (record.count or 0) > 0
         )
-    else
-        for _, name: string in ipairs(empty) do
-            local record: any = gui and gui.categories and gui.categories[name]
-            check(
-                "empty " .. name .. " is not a visible window",
-                record == nil or (record.count or 0) > 0
-            )
-        end
     end
 
     -- A synthetic Chat card must open Chat in official order.

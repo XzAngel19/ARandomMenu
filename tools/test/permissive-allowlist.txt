@@ -1,0 +1,4 @@
+# C7 allowlist. One `suite:phrase` per line. Comments start with #.
+# Only real staged dependencies belong here. An empty body means the
+# tree has no remaining "waits on A" greens — add a line only when a
+# runtime lane still owes a surface and CI must stay green until it lands.

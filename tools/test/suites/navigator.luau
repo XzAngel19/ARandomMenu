@@ -164,7 +164,7 @@ return function(ctx: any): ()
             captured.configData.values = {}
             prefs = captured.configData.values
         end
-        prefs.NavigatorPrefs = {["Kill Aura"] = 9, ["Fly"] = 0}
+        prefs.NavigatorPrefs = {["Killaura"] = 9, ["Flight"] = 0}
         nav.refresh()
         if results ~= nil then
             local first: any = nil
@@ -175,6 +175,7 @@ return function(ctx: any): ()
                     end
                 end
             end
+            check("preference sorting has a populated grid", first ~= nil)
             if first ~= nil then
                 check(
                     "preference sorting puts the most-used card first",
@@ -182,8 +183,6 @@ return function(ctx: any): ()
                         or first.LayoutOrder == 1,
                     tostring(first.Text)
                 )
-            else
-                check("preference sorting waits on a populated grid", true)
             end
         end
     end

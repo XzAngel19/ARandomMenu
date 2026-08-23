@@ -5,8 +5,8 @@
 -- visual-widgets.luau (no extra boot). Bitmap budgets stay in
 -- bitmap-budget.luau.
 --
--- Headless geometry and contracts only. Engine raster output is a
--- demonstrated debt — see docs/visual/VISUAL-RC.md.
+-- Headless geometry and contracts only. Engine raster output is outside
+-- this suite — see docs/visual/VISUAL-RC.md.
 
 return function(ctx: any): ()
     local Mock: any = ctx.Mock
@@ -52,7 +52,7 @@ return function(ctx: any): ()
             or string.find(bundle, "bitmap.measure({{text = text}}", 1, true) ~= nil
     )
     check(
-        "C1: P2 widgets disabled API stays unpublished (demonstrated debt)",
+        "C1: widgets have no setOptionDisabled / addDisabledOption API",
         string.find(bundle, "function setOptionDisabled", 1, true) == nil
             and string.find(bundle, "addDisabledOption", 1, true) == nil
     )
@@ -543,9 +543,10 @@ return function(ctx: any): ()
                 end
             end
         end
-        if type(state.closeInvalidPopups) ~= "function" then
-            check("C4: APPLY-4 owner/scroll stays demonstrated debt (unpublished closer)", true)
-        end
+        check(
+            "C4: APPLY-4 owner lifetime is watchPopupOwner",
+            string.find(bundle, "watchPopupOwner", 1, true) ~= nil
+        )
 
         -- Titles must not overflow their chrome.
         if ui ~= nil and ui.header ~= nil then

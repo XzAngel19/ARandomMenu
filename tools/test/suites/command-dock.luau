@@ -38,7 +38,6 @@ return function(ctx: any): ()
     local dock: any = state.commandDock or state.commandBar or state.bottomDock or state.pill
     check("the dock is published", type(dock) == "table" or dock ~= nil)
     if dock == nil then
-        check("command dock is not published yet; full search waits on A", true)
         if type(state.destruct) == "function" then
             state.destruct()
         end
@@ -146,16 +145,11 @@ return function(ctx: any): ()
     fireSubmit("Killaura", "focus")
     local auraToggled: boolean = featureOn("Killaura") ~= beforeAura
     check("Killaura works from FocusLost(true)", auraToggled == true)
-    if executeCount == beforeExecutes + 1 then
-        check("one FocusLost submit is one Execute", true)
-    elseif auraToggled then
-        check(
-            "dock FocusLost still uses invokeModuleSearch; Execute wiring waits on A",
-            true
-        )
-    else
-        check("one submit = one Execute", false, "executes=" .. tostring(executeCount))
-    end
+    check(
+        "one FocusLost submit is one Execute",
+        auraToggled == true and executeCount == beforeExecutes + 1,
+        "executes=" .. tostring(executeCount)
+    )
     resetFeature("Killaura")
 
     local function assertAlias(query: string, displayName: string, how: string): ()
@@ -164,27 +158,13 @@ return function(ctx: any): ()
         local countBefore: number = executeCount
         fireSubmit(query, how)
         local toggled: boolean = featureOn(displayName) ~= before
+        check(query .. " via " .. how .. " toggles " .. displayName, toggled == true)
         if toggled then
-            check(query .. " via " .. how .. " toggles " .. displayName, true)
-            if executeCount == countBefore + 1 then
-                check(query .. " via " .. how .. " is one Execute", true)
-            end
-        elseif type(searchApi) == "table" and type(searchApi.Execute) == "function" then
-            local direct: any = searchApi.Execute(query)
             check(
-                query .. " is a registered alias",
-                direct ~= nil and direct.status == "success",
-                direct and direct.status or "missing"
+                query .. " via " .. how .. " is one Execute",
+                executeCount == countBefore + 1,
+                tostring(executeCount)
             )
-            check(
-                "dock " .. how .. " path for " .. query .. " waits on A calling Execute",
-                true
-            )
-            if direct ~= nil and direct.status == "success" then
-                resetFeature(displayName)
-            end
-        else
-            check(query .. " via " .. how .. " toggles " .. displayName, false)
         end
         resetFeature(displayName)
     end
@@ -192,27 +172,15 @@ return function(ctx: any): ()
     assertAlias("ESP", "PlayerESP", "focus")
     assertAlias("AutoClicker", "Auto Clicker", "focus")
 
-    -- Return / KeypadEnter / mobile. Flip to blocking the moment the dock
-    -- listens; until then FocusLost is the landed submit.
+    -- Dock Enter is the TextBox's own FocusLost(true), not a global
+    -- InputBegan listener for Return / KeypadEnter.
     resetFeature("Killaura")
     local beforeReturn: boolean = featureOn("Killaura")
-    local countReturn: number = executeCount
-    fireSubmit("Killaura", "return")
-    if featureOn("Killaura") ~= beforeReturn then
-        check("Return submits the dock", true)
-        check("Return is one Execute", executeCount == countReturn + 1 or executeCount > countReturn)
-    else
-        check("Return submit waits on A wiring KeyCode.Return on the dock", true)
-    end
-    resetFeature("Killaura")
-
-    local beforePad: boolean = featureOn("Killaura")
-    fireSubmit("Killaura", "keypad")
-    if featureOn("Killaura") ~= beforePad then
-        check("KeypadEnter submits the dock", true)
-    else
-        check("KeypadEnter submit waits on A wiring KeyCode.KeypadEnter on the dock", true)
-    end
+    fireSubmit("Killaura", "focus")
+    check(
+        "dock Enter submit is FocusLost(true)",
+        featureOn("Killaura") ~= beforeReturn
+    )
     resetFeature("Killaura")
 
     local beforeMobile: boolean = featureOn("Killaura")

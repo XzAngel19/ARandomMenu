@@ -20,8 +20,8 @@ return function(ctx: any): ()
     local loaded: boolean, ClickFile: any = pcall(function(): any
         return require("../../../src/library/ClickGui")
     end)
+    check("ClickGui is on disk", loaded == true, tostring(ClickFile))
     if not loaded then
-        check("ClickGui is not on disk yet; chrome tests wait on it", true)
         return
     end
 
@@ -110,9 +110,7 @@ return function(ctx: any): ()
     local combat: any = windows and (
         windows.Get("ClickGui_Combat") or windows.Get("Combat")
     )
-    if combat == nil then
-        check("Combat window missing; title tests wait on it", true)
-    else
+    if combat ~= nil then
         local title: string = tostring(combat.title or combat.root and combat.root.Name or "")
         check(
             "a category title is not truncated",
@@ -120,22 +118,12 @@ return function(ctx: any): ()
                 and string.find(title, "...", 1, true) == nil,
             title
         )
-        -- Category windows: collapse + pin, no close. Wurst's own rule.
-        if combat.closable == false or combat.closeButton == nil then
-            check("a category window has no close button", true)
-        else
-            check("a category window is still closable; Wurst's are not", true)
-        end
-        if type(combat.SetPinned) == "function" then
-            check("a category window can be pinned", true)
-        else
-            check("pin is not on the category window yet", true)
-        end
-        if type(combat.SetCollapsed) == "function" then
-            check("a category window can collapse", true)
-        else
-            check("collapse is not on the category window yet", true)
-        end
+        check(
+            "a category window has no close button",
+            combat.closable == false or combat.closeButton == nil
+        )
+        check("a category window can be pinned", type(combat.SetPinned) == "function")
+        check("a category window can collapse", type(combat.SetCollapsed) == "function")
     end
 
     -- Prototype width 200 vs Wurst packed-to-content. The layout spec
@@ -157,18 +145,16 @@ return function(ctx: any): ()
         )
     end
 
-    -- Silence unused locals if the ClickFile path had no debug.info.
     if clickOk then
         clickSource = tostring(clickBody)
     end
-    if clickSource == "" then
-        check("chrome suite has no leftover debug path", true)
-    end
+    local _ = clickSource
 
     if type(ClickFile.destroy) == "function" then
         ClickFile.destroy()
     end
-    if stub and type(stub.taskCount) == "function" then
-        check("chrome suite left the host standing", true)
-    end
+    check(
+        "chrome suite left the host standing",
+        stub == nil or type(stub.taskCount) == "function"
+    )
 end

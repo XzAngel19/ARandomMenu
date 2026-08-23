@@ -165,11 +165,6 @@ return function(ctx: any): ()
     end
 
     -- Booted modules: Speed is a single value, CPS is a range.
-    local framework: any = host.state.framework
-    if framework == nil then
-        check("framework not on the host yet; Speed/CPS module checks wait on boot", true)
-    end
-
     local bootShell: any = require("../boot_shell")
     local boot: any = bootShell(ctx)
     check("slider boot runs", boot.ok == true, boot.error)
