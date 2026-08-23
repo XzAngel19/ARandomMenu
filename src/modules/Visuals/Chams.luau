@@ -1,8 +1,8 @@
 --!strict
 --
 -- Chams.
--- Highlights live players through geometry. Inspired by Vape's Highlight mode,
--- but built on Roblox Highlight instances and this menu's module lifecycle.
+-- The standalone card owns every player Highlight. PlayerESP no longer creates
+-- a second Highlight for the same character.
 
 export type Runtime = {
     framework: any,
@@ -24,8 +24,28 @@ function Module.init(context: Runtime): any
     local framework: any = context.framework
     local entity: any = context.entity
     local host: any = context.host
+    local protectedTargets: any = context.services.protectedTargets
     local currentWorkspace: Workspace = host.workspace or workspace
     local highlights: {[Player]: Highlight} = {}
+
+    -- PlayerESP shipped Chams first. Migrate that one saved decision only when
+    -- the standalone card has never been configured; keep the old key so an
+    -- older build can still read the same profile.
+    local store: any = host.configData
+    if store and store.values and store.states then
+        local oldMode: any = store.values["Universal.PlayerESP.Chams"]
+        if store.states["Universal.Chams"] == nil
+            and (oldMode == "Overlay" or oldMode == "Outline") then
+            store.states["Universal.Chams"] = true
+            local fillKey: string = "Universal.Chams.Filltransparency"
+            if store.values[fillKey] == nil then
+                store.values[fillKey] = oldMode == "Outline" and 1 or 0.55
+            end
+            if type(host.queueConfigSave) == "function" then
+                host.queueConfigSave()
+            end
+        end
+    end
 
     local card: any
     local function clear(): ()
@@ -53,24 +73,29 @@ function Module.init(context: Runtime): any
                 local count: number = 0
                 for _, target: any in ipairs(entity:Refresh()) do
                     local player: Player = target.Player
-                    local allowed: boolean = card.Options["Teammates"].Value
+                    local allowedTeam: boolean = card.Options["Teammates"].Value
                         or not target.IsFriendly
-                    if allowed and target.Character and target.Humanoid.Health > 0 then
+                    local protected: boolean = protectedTargets.isProtected(player)
+                    if allowedTeam and not protected
+                        and target.Character
+                        and target.Humanoid
+                        and target.Humanoid.Health > 0 then
                         seen[player] = true
                         count += 1
                         local highlight: Highlight? = highlights[player]
-                        if not highlight then
+                        if not highlight or not highlight.Parent then
                             highlight = Instance.new("Highlight")
-                            highlight.Name = "ARandomMenu_Chams"
+                            highlight.Name = "Wurst_Chams"
                             highlight.Parent = currentWorkspace
                             highlights[player] = highlight
                         end
-                        highlight.Adornee = target.Character
-                        highlight.FillColor = card.Options["Fill colour"].Value
-                        highlight.OutlineColor = card.Options["Outline colour"].Value
-                        highlight.FillTransparency = card.Options["Fill transparency"].Value
-                        highlight.OutlineTransparency = card.Options["Outline transparency"].Value
-                        highlight.DepthMode = card.Options["Through walls"].Value
+                        local resolved: Highlight = highlight :: Highlight
+                        resolved.Adornee = target.Character
+                        resolved.FillColor = card.Options["Fill colour"].Value
+                        resolved.OutlineColor = card.Options["Outline colour"].Value
+                        resolved.FillTransparency = card.Options["Fill transparency"].Value
+                        resolved.OutlineTransparency = card.Options["Outline transparency"].Value
+                        resolved.DepthMode = card.Options["Through walls"].Value
                                 and Enum.HighlightDepthMode.AlwaysOnTop
                             or Enum.HighlightDepthMode.Occluded
                     end

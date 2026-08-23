@@ -41,7 +41,7 @@ return function(ctx: any): ()
     check("box mode option exists", esp.Options["Boxes"] ~= nil)
     check("skeleton option exists", esp.Options["Skeleton"] ~= nil)
     check("name tag option exists", esp.Options["Name tags"] ~= nil)
-    check("chams option exists", esp.Options["Chams"] ~= nil)
+    check("PlayerESP leaves Chams to the standalone card", esp.Options["Chams"] == nil)
     check("health bar option exists", esp.Options["Health bar"] ~= nil)
     check("tracer option exists", esp.Options["Tracers"] ~= nil)
     check("filters exist", esp.Options["Team check"] ~= nil
@@ -62,7 +62,6 @@ return function(ctx: any): ()
     esp.Options["Team check"].Value = true
     esp.Options["Skeleton"].Value = true
     esp.Options["Boxes"].Value = "Full"
-    esp.Options["Chams"].Value = "Overlay"
     stub.step(0.05)
 
     local layer: any = nil
@@ -102,8 +101,8 @@ return function(ctx: any): ()
     stub.step(0.05)
     check("skeleton bones are drawn",
         drawings ~= nil and drawings:FindFirstChild("Bone1").Visible == true)
-    check("chams highlight is parented to the character",
-        enemy.Character:FindFirstChildOfClass("Highlight") ~= nil)
+    check("PlayerESP creates no Highlight",
+        enemy.Character:FindFirstChildOfClass("Highlight") == nil)
 
     esp.Options["Team check"].Value = false
     stub.step(0.05)

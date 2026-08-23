@@ -29,25 +29,39 @@ function Module.init(context: Runtime): any
     local getCharacterParts: any = host.getCharacterParts
     local layer: Frame = render:Layer("NpcEspLayer")
     local candidates: {[Model]: Humanoid} = {}
-    local nextScanAt: number = 0
 
-    local function scan(): ()
-        local found: {[Model]: Humanoid} = {}
-        for _, descendant: Instance in ipairs(currentWorkspace:GetDescendants()) do
-            if descendant:IsA("Humanoid") then
-                local model: Model? = descendant.Parent :: Model?
-                if model and model:IsA("Model")
-                    and players:GetPlayerFromCharacter(model) == nil then
-                    found[model] = descendant :: Humanoid
-                end
-            end
+    local function classify(instance: Instance): ()
+        if not instance:IsA("Humanoid") then
+            return
         end
-        for model: Model in pairs(candidates) do
-            if not found[model] then
+        local humanoid: Humanoid = instance :: Humanoid
+        local model: Model? = humanoid.Parent :: Model?
+        if not model or not model:IsA("Model")
+            or not model:IsDescendantOf(currentWorkspace)
+            or players:GetPlayerFromCharacter(model) ~= nil
+            or model == host.LocalPlayer.Character then
+            return
+        end
+        candidates[model] = humanoid
+    end
+
+    local function forget(instance: Instance): ()
+        if instance:IsA("Humanoid") then
+            local model: Model? = instance.Parent :: Model?
+            if model and candidates[model] == instance then
+                candidates[model] = nil
                 render:Release(layer, model)
             end
+        elseif instance:IsA("Model") and candidates[instance :: Model] then
+            candidates[instance :: Model] = nil
+            render:Release(layer, instance)
         end
-        candidates = found
+    end
+
+    local function scan(): ()
+        for _, descendant: Instance in ipairs(currentWorkspace:GetDescendants()) do
+            classify(descendant)
+        end
     end
 
     local card: any
@@ -70,13 +84,10 @@ function Module.init(context: Runtime): any
                 card:SetStatus(nil)
                 return
             end
-            nextScanAt = 0
+            scan()
+            card:Event(currentWorkspace.DescendantAdded, classify)
+            card:Event(currentWorkspace.DescendantRemoving, forget)
             card:Render(function(): ()
-                local now: number = os.clock()
-                if now >= nextScanAt then
-                    nextScanAt = now + 0.75
-                    scan()
-                end
                 local camera: Camera? = currentWorkspace.CurrentCamera
                 local _character: Model?, _humanoid: Humanoid?, localRoot: BasePart? =
                     getCharacterParts()
@@ -85,6 +96,13 @@ function Module.init(context: Runtime): any
                 end
                 local visibleCount: number = 0
                 for model: Model, humanoid: Humanoid in pairs(candidates) do
+                    if not model:IsDescendantOf(currentWorkspace)
+                        or players:GetPlayerFromCharacter(model) ~= nil
+                        or model == host.LocalPlayer.Character then
+                        candidates[model] = nil
+                        render:Release(layer, model)
+                        continue
+                    end
                     local root: BasePart? = model:FindFirstChild("HumanoidRootPart") :: BasePart?
                         or model.PrimaryPart
                         or model:FindFirstChildWhichIsA("BasePart") :: BasePart?
