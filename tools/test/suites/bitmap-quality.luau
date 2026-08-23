@@ -66,44 +66,14 @@ return function(ctx: any): ()
         return tonumber(member and member.size) or 0
     end
 
-    if usesCeiling then
-        check("target 8 stays on atlas 8", pickedSize(8) == 8 or pickedSize(8) == 0, tostring(pickedSize(8)))
-        check("target 11 picks atlas >= 16", pickedSize(11) >= 16, tostring(pickedSize(11)))
-        check("the 8 px atlas is never upscaled for a normal 11 px target", pickedSize(11) ~= 8)
-        check("target 16 picks atlas 16", pickedSize(16) == 16, tostring(pickedSize(16)))
-        check("target 18 picks atlas >= 24", pickedSize(18) >= 24, tostring(pickedSize(18)))
-        check("target 24 picks atlas 24", pickedSize(24) == 24 or pickedSize(24) >= 24)
-        check("target 32 picks atlas 32", pickedSize(32) == 32 or pickedSize(32) >= 24)
-    else
-        -- Current pickAtlas is nearest, larger on a tie: 11 still lands on 8.
-        -- Hold the contract the moment A switches to ceiling.
-        local eleven: number = pickedSize(11)
-        if eleven >= 16 then
-            check("target 11 picks atlas >= 16", true)
-        else
-            check(
-                "pickAtlas ceiling (target 11 → atlas >= 16) waits on A",
-                true,
-                "picked " .. tostring(eleven)
-            )
-        end
-        local sixteen: number = pickedSize(16)
-        check(
-            "target 16 picks atlas 16",
-            sixteen == 16 or sixteen == 0,
-            tostring(sixteen)
-        )
-        local eighteen: number = pickedSize(18)
-        if eighteen >= 24 then
-            check("target 18 picks atlas >= 24", true)
-        else
-            check(
-                "pickAtlas ceiling (target 18 → atlas >= 24) waits on A",
-                true,
-                "picked " .. tostring(eighteen)
-            )
-        end
-    end
+    check("pickAtlas uses a covering-size rule", usesCeiling == true)
+    check("target 8 stays on atlas 8", pickedSize(8) == 8 or pickedSize(8) == 0, tostring(pickedSize(8)))
+    check("target 11 picks atlas >= 16", pickedSize(11) >= 16, tostring(pickedSize(11)))
+    check("the 8 px atlas is never upscaled for a normal 11 px target", pickedSize(11) ~= 8)
+    check("target 16 picks atlas 16", pickedSize(16) == 16, tostring(pickedSize(16)))
+    check("target 18 picks atlas >= 24", pickedSize(18) >= 24, tostring(pickedSize(18)))
+    check("target 24 picks atlas 24", pickedSize(24) == 24 or pickedSize(24) >= 24)
+    check("target 32 picks atlas 32", pickedSize(32) == 32 or pickedSize(32) >= 24)
 
     local function assertIntegerPhysical(holder: any, scale: number, label: string): ()
         if holder == nil or type(holder.GetDescendants) ~= "function" then

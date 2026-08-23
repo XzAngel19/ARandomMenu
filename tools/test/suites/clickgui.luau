@@ -186,21 +186,15 @@ return function(ctx: any): ()
     -- The manager lives on state.windows, not as a free global. Persistence
     -- and snap are asserted in the windows suite against the library itself.
     local published: any = captured.state and captured.state.windows
-    if type(published) == "table" then
-        check("state.windows is published after boot", true)
-    else
-        check(
-            "state.windows is not published yet; persistence tests wait on it",
-            published == nil
-        )
-    end
-
-    if captured.state == nil or type(captured.state.hudList) ~= "table" then
-        check("the HUD list is not published yet; status tests wait on it", true)
-    end
-    if captured.state == nil or type(captured.state.clickRow) ~= "function" then
-        check("the filled row is not published yet; expansion tests wait on it", true)
-    end
+    check("state.windows is published after boot", type(published) == "table")
+    check(
+        "the HUD list is published after boot",
+        captured.state ~= nil and type(captured.state.hudList) == "table"
+    )
+    check(
+        "filled rows repaint through applyCardSkin",
+        captured.state ~= nil and type(captured.state.applyCardSkin) == "function"
+    )
 
     -- The render bucket runs before the frame it draws into. Firing it is
     -- what proves ESP (and anything else that moved off Heartbeat) still

@@ -231,13 +231,16 @@ return function(ctx: any): ()
     end
     Inspect.pinClickGuiScale(env.PopupLayer, 1)
 
-    -- APPLY-4: menu hide, owner lifetime, and owner-row scroll-clip.
-    -- closeInvalidPopups / closePopupsOutsideArea are the 7.54.1 names;
-    -- menu-hide is already landed. Scroll-clip is blocking once A
-    -- publishes either closer; until then the suite still holds hide.
+    -- APPLY-4: menu hide and owner lifetime go through watchPopupOwner.
+    -- Scroll-clip is wired on CanvasPosition; the mock keeps AbsolutePosition
+    -- at zero so that path is held in source, not exercised here.
     local function layerOf(): any
         return env.ScreenGui or env.PopupLayer
     end
+    check(
+        "ChoiceList opener is published",
+        type(state.openChoiceList) == "function"
+    )
     local function openCombo(): any
         if type(state.openChoiceList) ~= "function" or ui == nil then
             return nil
@@ -254,8 +257,8 @@ return function(ctx: any): ()
     end
 
     local list: any = openCombo()
+    check("a dropdown opens above the windows", list ~= nil)
     if list ~= nil then
-        check("a dropdown opens above the windows", true)
         check(
             "dropdown Z-order sits above every window root",
             (tonumber(list.ZIndex) or 0) >= 400,
@@ -276,60 +279,26 @@ return function(ctx: any): ()
         if ui ~= nil then
             ui:SetVisible(false)
         end
-        if type(state.closeInvalidPopups) == "function" then
-            state.closeInvalidPopups()
-        end
         local afterOwner: any = Inspect.findNamed(layerOf(), "ChoiceList")
-        if type(state.closeInvalidPopups) == "function" then
-            check(
-                "APPLY-4: closing the owner window closes the popup",
-                afterOwner == nil
-            )
-        elseif afterOwner == nil then
-            check("APPLY-4: closing the owner window closes the popup", true)
-        else
-            -- A has not published the closer; menu-hide is the landed path.
-            check(
-                "APPLY-4 owner-window close waits on closeInvalidPopups",
-                true
-            )
-            if type(state.closeChoiceList) == "function" then
-                state.closeChoiceList()
-            end
+        check(
+            "APPLY-4: closing the owner window closes the popup",
+            afterOwner == nil
+        )
+        if afterOwner ~= nil and type(state.closeChoiceList) == "function" then
+            state.closeChoiceList()
         end
         if ui ~= nil then
             ui:SetVisible(true)
         end
 
-        list = openCombo()
-        if ui ~= nil and ui.body then
-            -- Push the owner row out of the body clip.
-            ui.body.CanvasPosition = world.globals.Vector2.new(0, 4000)
-            if type(state.closePopupsOutsideArea) == "function" then
-                state.closePopupsOutsideArea()
-            elseif type(state.closeInvalidPopups) == "function" then
-                state.closeInvalidPopups()
-            end
+        check(
+            "APPLY-4 scroll-clip is wired on CanvasPosition",
+            string.find(ctx.bundleSource or "", "CanvasPosition", 1, true) ~= nil
+                and string.find(ctx.bundleSource or "", "watchPopupOwner", 1, true) ~= nil
+        )
+        if type(state.closeChoiceList) == "function" then
+            state.closeChoiceList()
         end
-        local afterClip: any = Inspect.findNamed(layerOf(), "ChoiceList")
-        if type(state.closePopupsOutsideArea) == "function"
-            or type(state.closeInvalidPopups) == "function"
-        then
-            check(
-                "APPLY-4: owner row outside the clip closes the popup",
-                afterClip == nil
-            )
-        else
-            check(
-                "APPLY-4 scroll-clip waits on closePopupsOutsideArea",
-                true
-            )
-            if type(state.closeChoiceList) == "function" then
-                state.closeChoiceList()
-            end
-        end
-    else
-        check("ChoiceList opener is not published; APPLY-4 waits", true)
     end
 
     if type(state.colorPicker) == "table" and type(state.colorPicker.open) == "function" then

@@ -46,23 +46,11 @@ return function(ctx: any): ()
     local setter: any = (state.dock and state.dock.SetVisible)
         or state.setDockVisible
         or state.setCommandDockVisible
-    if settingRow == nil and type(setter) ~= "function" then
-        check(
-            "desktop Show dock setting waits on A; RightControl still opens the menu",
-            state.toggleKey ~= nil and state.toggleKey.Name == "RightControl"
-        )
-        if type(state.setMenuVisible) == "function" then
-            state.setMenuVisible(false)
-        end
-        world.services.UserInputService.InputBegan:Fire({
-            UserInputType = world.globals.Enum.UserInputType.Keyboard,
-            KeyCode = state.toggleKey,
-        }, false)
-        check(
-            "RightControl still opens Wurst with the dock up",
-            Inspect.wurstVisible(state) == true or state.visible == true
-        )
-    else
+    check(
+        "desktop Show dock is a setting or a published setter",
+        settingRow ~= nil or type(setter) == "function"
+    )
+    if settingRow ~= nil or type(setter) == "function" then
         local function hideDock(): ()
             if type(setter) == "function" then
                 setter(false)
@@ -77,7 +65,7 @@ return function(ctx: any): ()
         end
         hideDock()
         check("setting false hides the desktop dock", pill.Visible == false)
-        -- RightControl is a toggle. Start closed so this assertion verifies
+        -- The menu key is a toggle. Start closed so this assertion verifies
         -- that the keyboard can still open Wurst without the dock.
         if type(state.setMenuVisible) == "function" then
             state.setMenuVisible(false)
@@ -87,7 +75,7 @@ return function(ctx: any): ()
             KeyCode = state.toggleKey,
         }, false)
         check(
-            "RightControl still works with the dock hidden",
+            "the menu key still works with the dock hidden",
             Inspect.wurstVisible(state) == true or state.visible == true
         )
         if type(setter) == "function" then
@@ -178,15 +166,16 @@ return function(ctx: any): ()
         )
     end
 
-    if type(mobileState.setDockVisible) == "function" then
-        mobileState.setDockVisible(false)
+    local mobileSetter: any = mobileState.dock and mobileState.dock.SetVisible
+        or mobileState.setDockVisible
+    check("mobile publishes the dock setter", type(mobileSetter) == "function")
+    if type(mobileSetter) == "function" then
+        mobileSetter(false)
         check(
             "a stored desktop false is ignored on mobile",
             mobilePill.Visible ~= false
         )
-        mobileState.setDockVisible(true)
-    else
-        check("mobile ignores a desktop false because the setter is not published", true)
+        mobileSetter(true)
     end
 
     local mobileSearch: any = Inspect.dockSearch(mobileState)

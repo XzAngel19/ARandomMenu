@@ -628,6 +628,11 @@ if grep -n 'if not host.optionCallbacks' tools/test/suites/*.luau; then
 fi
 echo "ok"
 
+step "Suites do not convert missing behaviour into a green check"
+# C7. A label that says "waits on A" / "not published yet" is a passing
+# number that measures nothing. Allowlist only real staged gaps.
+python3 tools/check_permissive_tests.py
+
 step "Bundle stamp matches the sources"
 # A stale runtime/bundle.luau serving old code while the repo says otherwise is
 # the class of silent rot the stamp exists to prevent.

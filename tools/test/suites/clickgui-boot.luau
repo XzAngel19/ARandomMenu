@@ -20,13 +20,8 @@ return function(ctx: any): ()
     local loaded: boolean, ClickFile: any = pcall(function(): any
         return require("../../../src/library/ClickGui")
     end)
+    check("ClickGui is on disk", loaded == true, tostring(ClickFile))
     if not loaded then
-        loaded, ClickFile = pcall(function(): any
-            return require("../../../src/library/ClickGUI")
-        end)
-    end
-    if not loaded then
-        check("ClickGui is not on disk yet; empty-boot tests wait on it", true)
         return
     end
 

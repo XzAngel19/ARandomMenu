@@ -5,7 +5,7 @@
 -- The wordmark is Wurst's logo (wurst_128.png, never menu-logo.jpg), the
 -- HackList is exactly the enabled cards with a status in brackets, the
 -- pill stays up when the windows go away, a tooltip waits 400 ms, and
--- nothing is drawn over the blur. Gaps the shell still owes stay green.
+-- nothing is drawn over the blur. Host-stub gaps are not green checks.
 
 return function(ctx: any): ()
     local Mock: any = ctx.Mock
@@ -45,143 +45,6 @@ return function(ctx: any): ()
     )
     sample:SetStatus(nil)
     check("SetStatus(nil) clears the card", sample.status == nil)
-
-    local list: any = host.state and host.state.hudList
-    if type(list) ~= "table" then
-        check("the HackList is not published yet; list tests wait on it", true)
-    else
-        local other: any = host.createUniversalFeature(
-            "Furniture Other",
-            "Stays off.",
-            2,
-            function(_on: boolean): () end,
-            {categoryName = "Utility"}
-        )
-        sample.enabled = true
-        other.enabled = false
-        sample:SetStatus("live")
-        other:SetStatus("should not appear")
-
-        local labels: {string} = {}
-        if type(list.labels) == "table" then
-            labels = list.labels
-        elseif type(list.entries) == "table" then
-            for _, entry: any in ipairs(list.entries) do
-                if type(entry) == "string" then
-                    table.insert(labels, entry)
-                elseif type(entry) == "table" then
-                    table.insert(labels, hudLabel(entry.name, entry.status))
-                end
-            end
-        else
-            for _, entry: any in ipairs(list) do
-                if type(entry) == "string" then
-                    table.insert(labels, entry)
-                elseif type(entry) == "table" then
-                    table.insert(labels, hudLabel(entry.name, entry.status))
-                end
-            end
-        end
-
-        local joined: string = table.concat(labels, " | ")
-        local hasSample: boolean = false
-        local hasOther: boolean = false
-        local sampleLabel: string? = nil
-        for _, label: string in ipairs(labels) do
-            if string.find(label, "Furniture Sample", 1, true) then
-                hasSample = true
-                sampleLabel = label
-            end
-            if string.find(label, "Furniture Other", 1, true) then
-                hasOther = true
-            end
-        end
-        check("the HackList contains an enabled card", hasSample, joined)
-        check("the HackList omits a disabled card", hasOther == false, joined)
-        check(
-            "an enabled card with a status prints brackets",
-            sampleLabel == "Furniture Sample [live]",
-            tostring(sampleLabel)
-        )
-        sample:SetStatus(nil)
-        -- A live list has to refresh when the status is cleared. If it is a
-        -- snapshot taken above, the next read is what we assert.
-        local refreshed: any = host.state.hudList
-        local bare: string? = nil
-        local refreshedLabels: {any} = refreshed.labels or refreshed.entries or refreshed
-        if type(refreshedLabels) == "table" then
-            for _, entry: any in ipairs(refreshedLabels) do
-                local label: string = type(entry) == "string" and entry
-                    or hudLabel(entry.name, entry.status)
-                if string.find(label, "Furniture Sample", 1, true) then
-                    bare = label
-                end
-            end
-        end
-        check(
-            "a nil status prints the bare name",
-            bare == "Furniture Sample",
-            tostring(bare)
-        )
-    end
-
-    local wordmark: any = host.state and (host.state.wordmark or host.state.wurstLogo)
-    if wordmark == nil then
-        check("the wordmark is not published yet; asset tests wait on it", true)
-    else
-        local image: any = wordmark.image or wordmark.ImageLabel or wordmark
-        local text: any = wordmark.text or wordmark.TextLabel
-        local hasCustomAsset: boolean = type((getfenv() :: any).getcustomasset) == "function"
-            or type((getfenv() :: any).getsynasset) == "function"
-        if hasCustomAsset then
-            local applied: string = tostring(image and (image.Image or image.image) or "")
-            check(
-                "the wordmark resolves through getcustomasset",
-                applied ~= "",
-                applied
-            )
-        else
-            local fallback: string = tostring(
-                (text and (text.Text or text.text))
-                    or (wordmark.Text)
-                    or ""
-            )
-            check(
-                "without getcustomasset the wordmark falls back to text",
-                fallback ~= "",
-                fallback
-            )
-        end
-    end
-
-    local pill: any = host.state and host.state.pill
-    if pill == nil then
-        check("the pill is not published yet; visibility tests wait on it", true)
-    else
-        local root: any = pill.root or pill
-        if type(host.state.setMenuVisible) == "function" then
-            host.state.setMenuVisible(false)
-        end
-        check(
-            "the pill stays visible with the GUI closed",
-            root.Visible == true,
-            "Visible=" .. tostring(root.Visible)
-        )
-    end
-
-    local tooltip: any = host.state and host.state.featureTooltip
-    local delayMs: any = host.state and host.state.tooltipDelayMs
-    if tooltip == nil or type(host.addFeatureTooltip) ~= "function" then
-        check("tooltips are not bound yet; delay tests wait on them", true)
-    elseif type(delayMs) == "number" then
-        check(
-            "the tooltip delay is the prototype's 400 ms",
-            delayMs == 400,
-            tostring(delayMs)
-        )
-    else
-        check("the tooltip delay is not published yet; 400 ms tests wait on it", true)
-    end
 
     -- A second boot of the real shell, the same way the ClickGUI suite does,
     -- so furniture that only exists after the libraries start can be seen.
@@ -294,8 +157,50 @@ return function(ctx: any): ()
         stats and ("parented Visible=" .. tostring(stats.Visible)) or "absent"
     )
 
-    if state.hudList ~= nil then
-        check("the HackList default Position is Left", true)
+    check(
+        "the HackList default Position is Left",
+        string.find(bundleSource, 'HACKLIST_POSITION: string = "Left"', 1, true) ~= nil
+    )
+    check(
+        "the tooltip delay is Furniture's 400 ms",
+        string.find(bundleSource, "TOOLTIP_DELAY_MS: number = 400", 1, true) ~= nil
+    )
+    if type(state.hudList) == "table" and type(state.hudList.refresh) == "function" then
+        local live: any = nil
+        for _, feature: any in ipairs(captured.allFeatures or {}) do
+            if feature.isCategory ~= true then
+                live = feature
+                break
+            end
+        end
+        check("a live card exists for the HackList", live ~= nil)
+        if live ~= nil then
+            local wasEnabled: boolean = live.enabled == true
+            if type(state.hudList.SetAnimations) == "function" then
+                -- The mock applies tween goals but never fires Completed,
+                -- so a sliding drop would leave the row parented forever.
+                state.hudList.SetAnimations(false)
+            end
+            live.enabled = true
+            live:SetStatus("live")
+            state.hudList.refresh()
+            local frame: any = state.hudList.frame
+            check(
+                "the HackList draws an enabled card",
+                frame ~= nil and frame:FindFirstChild(tostring(live.name)) ~= nil,
+                tostring(live.name)
+            )
+            live.enabled = false
+            state.hudList.refresh()
+            check(
+                "the HackList omits a disabled card",
+                frame == nil or frame:FindFirstChild(tostring(live.name)) == nil,
+                tostring(live.name)
+            )
+            live.enabled = wasEnabled
+            live:SetStatus(nil)
+            state.hudList.refresh()
+        end
     end
 
     local logo: any = state.wurstLogo

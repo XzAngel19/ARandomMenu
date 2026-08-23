@@ -31,15 +31,6 @@ return function(ctx: any): ()
         1,
         true
     ) ~= nil or string.find(bundle, "AutoLocalize = false", 1, true) ~= nil
-
-    if not helpersSetFalse then
-        check(
-            "makeTextLabel/makeButton do not yet disable AutoLocalize; waits on A",
-            true
-        )
-        return
-    end
-
     check("helpers disable AutoLocalize", helpersSetFalse)
 
     -- After A lands the flag, a boot must keep the English tokens the

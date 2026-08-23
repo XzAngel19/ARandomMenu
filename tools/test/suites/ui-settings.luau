@@ -1,6 +1,6 @@
 --!strict
 --
--- Headless tests: the UI Settings window, written before the window exists.
+-- Headless tests: the UI Settings window after a real boot.
 --
 -- Official Wurst builds this window in ClickGui.init() as four feature
 -- buttons (WurstLogo, HackList, Keybinds, WurstOptions) and then every
@@ -8,18 +8,23 @@
 -- A window that ships Background as anything but #404040, or that invents
 -- GlobalToggle / Isolate windows, has to fail here the day it appears.
 --
--- Until the window is published the suite records the gap and stays green.
-
 return function(ctx: any): ()
     local check: (string, boolean, string?) -> () = ctx.check
     local section: (string) -> () = ctx.section
-    local host: any = ctx.host
     local Inspect: any = require("../inspect")
+    local bootShell: any = require("../boot_shell")
 
     section("UI Settings")
 
-    local windows: any = host.state and host.state.windows
-    local published: any = host.state and host.state.uiSettings
+    local boot: any = bootShell(ctx)
+    check("ui-settings boot runs", boot.ok == true, boot.error)
+    if not boot.ok then
+        return
+    end
+
+    local state: any = boot.state
+    local windows: any = state.windows
+    local published: any = state.uiSettings
 
     local function findWindow(): any
         if type(windows) ~= "table" or type(windows.Get) ~= "function" then
@@ -40,6 +45,7 @@ return function(ctx: any): ()
     end
 
     local window: any = findWindow()
+    check("UI Settings is reachable", published ~= nil or window ~= nil)
     if window ~= nil then
         check(
             "the impossible 0-1000 Max height row is not user-facing",
@@ -47,12 +53,6 @@ return function(ctx: any): ()
                 and Inspect.findNamed(window.root, "Option_MaxHeight") == nil
         )
     end
-    if published == nil and window == nil then
-        check("UI Settings is not published yet; default tests wait on it", true)
-        return
-    end
-
-    check("UI Settings is reachable", published ~= nil or window ~= nil)
 
     local settings: any = published
     if type(settings) ~= "table" then
@@ -60,6 +60,9 @@ return function(ctx: any): ()
     end
     if type(settings) ~= "table" then
         check("UI Settings exposes a settings table", false)
+        if type(state.destruct) == "function" then
+            state.destruct()
+        end
         return
     end
 

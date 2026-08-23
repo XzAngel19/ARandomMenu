@@ -80,17 +80,11 @@ return function(ctx: any): ()
     local holdSquare: any = Inspect.findBindSquare(hold)
     local groupSquare: any = Inspect.findBindSquare(group)
 
-    if toggleSquare == nil and actionSquare == nil and holdSquare == nil then
-        check(
-            "keybind square waits on A; the leftover KEY pill stays banned",
-            isPill(toggle.shortcutButton) == false
-        )
-        check("group cards still have nothing to bind", groupSquare == nil)
+    check("a toggle row carries the square", toggleSquare ~= nil)
+    if toggleSquare == nil then
         CardFile.destroy()
         return
     end
-
-    check("a toggle row carries the square", toggleSquare ~= nil)
     check("an action row carries the square", actionSquare ~= nil)
     check("a hold row carries the square", holdSquare ~= nil)
     check("a group row has no square", groupSquare == nil or groupSquare.Visible == false)
@@ -262,11 +256,9 @@ return function(ctx: any): ()
     local sample: any = Inspect.featureNamed(boot.env, "Killaura")
         or Inspect.featureNamed(boot.env, "Flight")
     local bootSquare: any = Inspect.findBindSquare(sample)
+    check("a live bindable module carries the square", bootSquare ~= nil)
     if bootSquare ~= nil then
-        check("a live bindable module carries the square", true)
         check("the live square is not a KEY pill", isPill(bootSquare) == false)
-    else
-        check("live keybind square waits on A landing it on Cards", true)
     end
     if type(boot.state.destruct) == "function" then
         boot.state.destruct()
