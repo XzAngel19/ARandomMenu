@@ -802,14 +802,14 @@ function Module.init(context: any): any
     -- exist here, and Backspace only closes when the query is empty because
     -- it is also how the query is edited.
     local NAV_COLUMNS: number = 3
-    local NAV_CELL_WIDTH: number = 150
-    local NAV_CELL_HEIGHT: number = 22
+    local NAV_CELL_HEIGHT: number = state.isMobile and 34 or 26
+    local NAV_CELL_GAP: number = 4
     local NAV_LIMIT: number = 36
-    local NAV_WIDTH: number = NAV_COLUMNS * NAV_CELL_WIDTH
-        + (NAV_COLUMNS - 1) * 3
 
     local navScreen: Frame = (create("Frame", {
-        Parent = PopupLayer,
+        -- Raw ScreenGui space: PopupLayer carries ClickGUI scale, which made
+        -- this supposedly full-screen surface cover only part of a phone.
+        Parent = ScreenGui or PopupLayer,
         Name = "Navigator",
         Active = true,
         BackgroundColor3 = Color3.fromRGB(0, 0, 0),
@@ -829,38 +829,9 @@ function Module.init(context: any): any
         end
     end
 
-    -- The visible door back to the ClickGUI, top-left of the Navigator:
-    -- one click switches the style, closes this screen and opens Wurst's
-    -- windows through the state machine. Escape still closes; the dock
-    -- button is the same exit. Nobody gets trapped in a full screen.
-    local wurstDoor: TextButton = (create("TextButton", {
-        TextTruncate = Enum.TextTruncate.AtEnd,
-        Parent = navScreen,
-        Name = "WurstDoor",
-        Active = true,
-        AutoButtonColor = false,
-        BackgroundColor3 = Color3.fromRGB(0, 0, 0),
-        BackgroundTransparency = 0.4,
-        BorderSizePixel = 0,
-        FontFace = CONTROL_FONT,
-        Position = UDim2.fromOffset(14, 14),
-        Size = UDim2.fromOffset(170, 26),
-        Text = "< Wurst ClickGUI",
-        TextColor3 = Color3.fromRGB(232, 232, 238),
-        TextSize = 14,
-        ZIndex = 248,
-    }) :: any) :: TextButton
-    table.insert(Furniture.connections, wurstDoor.MouseEnter:Connect(function(): ()
-        wurstDoor.BackgroundTransparency = 0.2
-    end))
-    table.insert(Furniture.connections, wurstDoor.MouseLeave:Connect(function(): ()
-        wurstDoor.BackgroundTransparency = 0.4
-    end))
-    table.insert(Furniture.connections, wurstDoor.MouseButton1Click:Connect(function(): ()
-        if type(state.SetMenuStyle) == "function" then
-            state.SetMenuStyle("Wurst", true)
-        end
-    end))
+    -- The dock remains the one door between Navigator and ClickGUI. A second
+    -- top-left "Wurst ClickGUI" bar duplicated it and made the full-screen
+    -- surface look like another layout layered over the game.
 
     local navColumn: Frame = (create("Frame", {
         Parent = navScreen,
@@ -868,10 +839,15 @@ function Module.init(context: any): any
         AnchorPoint = Vector2.new(0.5, 0),
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
-        Position = UDim2.new(0.5, 0, 0, 90),
-        Size = UDim2.fromOffset(NAV_WIDTH, 26),
+        Position = UDim2.new(0.5, 0, 0, 18),
+        Size = UDim2.new(0.92, 0, 1, -36),
         ZIndex = 247,
     }) :: any) :: Frame
+    create("UISizeConstraint", {
+        Parent = navColumn,
+        MaxSize = Vector2.new(960, 10000),
+        MinSize = Vector2.new(280, 0),
+    })
 
     local navSearch: TextBox = (create("TextBox", {
         TextTruncate = Enum.TextTruncate.AtEnd,
@@ -884,7 +860,7 @@ function Module.init(context: any): any
         FontFace = CONTROL_FONT,
         PlaceholderText = "Search…",
         Position = UDim2.fromOffset(0, 0),
-        Size = UDim2.new(1, 0, 0, 24),
+        Size = UDim2.new(1, 0, 0, 32),
         Text = "",
         TextColor3 = Theme.text,
         TextSize = 14,
@@ -902,14 +878,19 @@ function Module.init(context: any): any
         Name = "Results",
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
-        Position = UDim2.fromOffset(0, 30),
-        Size = UDim2.new(1, 0, 0, 0),
+        Position = UDim2.fromOffset(0, 38),
+        Size = UDim2.new(1, 0, 1, -38),
         ZIndex = 247,
     }) :: any) :: Frame
     create("UIGridLayout", {
         Parent = navResults,
-        CellPadding = UDim2.fromOffset(3, 3),
-        CellSize = UDim2.fromOffset(NAV_CELL_WIDTH, NAV_CELL_HEIGHT),
+        CellPadding = UDim2.fromOffset(NAV_CELL_GAP, NAV_CELL_GAP),
+        CellSize = UDim2.new(
+            1 / NAV_COLUMNS,
+            -math.ceil(NAV_CELL_GAP * (NAV_COLUMNS - 1) / NAV_COLUMNS),
+            0,
+            NAV_CELL_HEIGHT
+        ),
         SortOrder = Enum.SortOrder.LayoutOrder,
     })
 
@@ -1044,11 +1025,12 @@ function Module.init(context: any): any
         end
         navSelected = math.clamp(navSelected, 1, math.max(#navOrdered, 1))
         local rows: number = math.ceil(#navOrdered / NAV_COLUMNS)
-        navColumn.Size = UDim2.fromOffset(
-            NAV_WIDTH,
-            30 + rows * (NAV_CELL_HEIGHT + 3)
+        navResults.Size = UDim2.new(
+            1,
+            0,
+            0,
+            rows * (NAV_CELL_HEIGHT + NAV_CELL_GAP)
         )
-        navResults.Size = UDim2.new(1, 0, 0, rows * (NAV_CELL_HEIGHT + 3))
         paintNavSelection()
     end
 
@@ -1561,6 +1543,18 @@ function Module.init(context: any): any
     refreshLogoVisibility()
     ThemeEngine.OnChange(function(): ()
         restyleMenuButton()
+        -- Navigator is a raw full-screen surface, outside the ClickGUI's
+        -- token-bound tree. Repaint it on every theme tick so UI Rainbow and
+        -- manual colour changes stay synchronized instead of freezing at the
+        -- colour that happened to be active when it opened.
+        navSearch.TextColor3 = Theme.text
+        for _, entry: TextButton in ipairs(navEntries) do
+            local ring: UIStroke? = entry:FindFirstChild("SelectionRing") :: UIStroke?
+            if ring then
+                ring.Color = Theme.enabled
+            end
+        end
+        paintNavSelection()
     end)
 
     -- `root`, not `frame`: every other surface the menu publishes — a managed

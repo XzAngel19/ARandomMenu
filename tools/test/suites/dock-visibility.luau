@@ -154,6 +154,12 @@ return function(ctx: any): ()
     check("mobile boot marks the device as a phone", mobileState.isMobile == true)
     local mobilePill: any = mobileState.pill and (mobileState.pill.root or mobileState.pill)
     check("the dock is forced visible on mobile", mobilePill ~= nil and mobilePill.Visible ~= false)
+    local fallbackLauncher: any = captured.ScreenGui
+        and Inspect.findNamed(captured.ScreenGui, "MobileMenuButton")
+    check(
+        "the fallback launcher stands down once the dock exists",
+        fallbackLauncher == nil or fallbackLauncher.Visible == false
+    )
 
     local mobileUi: any = mobileState.windows
         and mobileState.windows.Get
@@ -194,6 +200,19 @@ return function(ctx: any): ()
         and mobileState.navigator.root
         and Inspect.findNamed(mobileState.navigator.root, "Search")
     check("Navigator remains the mobile search path", navigatorSearch ~= nil)
+
+    local mobileEditor: any = mobileState.mobileUi and mobileState.mobileUi.editor
+    check("mobile actions publish one shared long-press editor", mobileEditor ~= nil)
+    if mobileEditor then
+        for _, control: string in ipairs({
+            "SizeDown", "SizeUp", "OpacityDown", "OpacityUp", "Remove", "Done",
+        }) do
+            check(
+                "mobile editor control: " .. control,
+                Inspect.findNamed(mobileEditor, control) ~= nil
+            )
+        end
+    end
 
     if type(mobileState.destruct) == "function" then
         mobileState.destruct()

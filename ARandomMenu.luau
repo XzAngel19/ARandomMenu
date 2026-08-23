@@ -363,7 +363,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "d81720b3266480af"
+local SOURCE_STAMP: string = "ccc2563de3420885"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -4082,7 +4082,9 @@ local function refreshLauncherVisibility(): ()
     -- finished loading, since there is no intro any more. A machine with a
     -- keyboard has the menu key for both jobs, and there the button is nothing
     -- but a permanent circle sitting on top of the game, so it is never shown.
-    MobileMenuButton.Visible = state.isMobile and not state.visible
+    MobileMenuButton.Visible = state.isMobile
+        and state.pill == nil
+        and not state.visible
 end
 -- Published so the pill can re-run it once it takes over as the launcher: the
 -- fallback circle has to disappear the moment something better exists, and come

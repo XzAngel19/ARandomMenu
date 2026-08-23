@@ -70,6 +70,15 @@ Base on the current tip of `arena/01a02c8a-arandommenu`; do not re-land D1–D3.
    moved out of the default inventory. Do not change the frozen count without
    integrator approval.
 
+## D5 — Capture follow-up: mobile action finish
+
+Review the shared `MobileActionEditor` against the YARHM references already
+listed in the authoring guide. Keep one panel, not one settings window per
+button. Audit touch spacing, labels, press feedback and the 36–120 px range on
+a real phone capture. Do not add decorative controls: Size, Opacity, Remove and
+Done are the complete surface. Report any visual issue rather than inventing
+another global mobile-settings page.
+
 ## Rules
 
 Suites that pin your surfaces update in the same commit. Report: hash,

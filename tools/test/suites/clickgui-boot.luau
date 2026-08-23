@@ -129,6 +129,20 @@ return function(ctx: any): ()
             )
         end
     end
+    if gui and gui.categories then
+        for categoryName: string, category: any in pairs(gui.categories) do
+            local count: number = tonumber(category.count) or 0
+            local required: number = 26 + count * 22
+                + math.max(count - 1, 0) * 2 + 4
+            if required <= 200 then
+                check(
+                    "short category shows every row: " .. categoryName,
+                    tonumber(category.window.fullHeight) >= required,
+                    tostring(category.window.fullHeight) .. " < " .. tostring(required)
+                )
+            end
+        end
+    end
     for _, inherited: string in ipairs({
         "Visuals", "Protection", "Utility", "Spoof", "General",
     }) do

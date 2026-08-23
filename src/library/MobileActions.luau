@@ -34,6 +34,8 @@ export type MobileActionRecord = {
     startPosition: Vector2,
     moved: boolean,
     holdToken: number,
+    size: number,
+    opacity: number,
     connections: {RBXScriptConnection},
 }
 
@@ -87,6 +89,8 @@ function Module.init(context: any): any
         startPosition: Vector2,
         moved: boolean,
         holdToken: number,
+        size: number,
+        opacity: number,
         connections: {RBXScriptConnection},
     }
 
@@ -150,6 +154,8 @@ function Module.init(context: any): any
         mobileConfig[record.id] = {
             record.button.Position.X.Offset,
             record.button.Position.Y.Offset,
+            record.size,
+            record.opacity,
         }
         queueConfigSave()
     end
@@ -172,7 +178,174 @@ function Module.init(context: any): any
         notify(record.label .. " mobile button removed.")
     end
 
+    -- One editor is shared by every placed shortcut. Long-pressing a button
+    -- opens it instead of silently deleting the button, which was impossible
+    -- to discover and offered no way to tune a large touch target.
+    local editingRecord: MobileActionRecord? = nil
+    local editorOverlay: Frame = (create("Frame", {
+        Parent = ScreenGui,
+        Name = "MobileActionEditor",
+        Active = true,
+        BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+        BackgroundTransparency = 0.45,
+        BorderSizePixel = 0,
+        Size = UDim2.fromScale(1, 1),
+        Visible = false,
+        ZIndex = 270,
+    }) :: any) :: Frame
+    local editorPanel: Frame = (create("Frame", {
+        Parent = editorOverlay,
+        Name = "Panel",
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        BackgroundColor3 = Theme.surfaceRaised,
+        BackgroundTransparency = 0.04,
+        BorderSizePixel = 0,
+        Position = UDim2.fromScale(0.5, 0.5),
+        Size = UDim2.fromOffset(280, 190),
+        ZIndex = 271,
+    }) :: any) :: Frame
+    create("UICorner", {
+        Parent = editorPanel,
+        CornerRadius = UDim.new(0, 12),
+    })
+    create("UIStroke", {
+        Parent = editorPanel,
+        Color = Theme.outline,
+        Thickness = 1,
+        Transparency = 0.25,
+    })
+    local editorTitle: TextLabel = (makeTextLabel(
+        editorPanel,
+        "Mobile button",
+        16
+    ) :: any) :: TextLabel
+    editorTitle.Position = UDim2.fromOffset(14, 8)
+    editorTitle.Size = UDim2.new(1, -28, 0, 28)
+    editorTitle.TextXAlignment = Enum.TextXAlignment.Left
+    editorTitle.ZIndex = 272
+
+    local function editorLabel(text: string, y: number): TextLabel
+        local label: TextLabel = (makeTextLabel(editorPanel, text, 14) :: any) :: TextLabel
+        label.Position = UDim2.fromOffset(14, y)
+        label.Size = UDim2.fromOffset(76, 36)
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.ZIndex = 272
+        return label
+    end
+    editorLabel("Size", 46)
+    editorLabel("Opacity", 88)
+
+    local function editorButton(
+        name: string,
+        text: string,
+        x: number,
+        y: number,
+        width: number
+    ): TextButton
+        local button: TextButton = (create("TextButton", {
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            Parent = editorPanel,
+            Name = name,
+            Active = true,
+            AutoButtonColor = false,
+            BackgroundColor3 = Theme.surface,
+            BackgroundTransparency = 0.08,
+            BorderSizePixel = 0,
+            FontFace = CONTROL_FONT,
+            Position = UDim2.fromOffset(x, y),
+            Size = UDim2.fromOffset(width, 34),
+            Text = text,
+            TextColor3 = Theme.text,
+            TextSize = 14,
+            ZIndex = 272,
+        }) :: any) :: TextButton
+        create("UICorner", {
+            Parent = button,
+            CornerRadius = UDim.new(0, 7),
+        })
+        return button
+    end
+
+    local sizeDown: TextButton = editorButton("SizeDown", "-", 92, 47, 40)
+    local sizeValue: TextButton = editorButton("SizeValue", "52 px", 138, 47, 72)
+    local sizeUp: TextButton = editorButton("SizeUp", "+", 216, 47, 40)
+    sizeValue.Active = false
+    local opacityDown: TextButton = editorButton("OpacityDown", "-", 92, 89, 40)
+    local opacityValue: TextButton = editorButton("OpacityValue", "92%", 138, 89, 72)
+    local opacityUp: TextButton = editorButton("OpacityUp", "+", 216, 89, 40)
+    opacityValue.Active = false
+    local removeButton: TextButton = editorButton("Remove", "Remove", 14, 140, 120)
+    removeButton.BackgroundColor3 = Color3.fromRGB(120, 28, 28)
+    local doneButton: TextButton = editorButton("Done", "Done", 146, 140, 120)
+    doneButton.BackgroundColor3 = Theme.enabled
+    doneButton.TextColor3 = Theme.enabledText
+
+    local function closeEditor(): ()
+        editingRecord = nil
+        editorOverlay.Visible = false
+    end
+
+    local function refreshEditor(): ()
+        local record: MobileActionRecord? = editingRecord
+        if not record then
+            return
+        end
+        editorTitle.Text = record.label
+        sizeValue.Text = tostring(math.round(record.size)) .. " px"
+        opacityValue.Text = tostring(math.round(record.opacity * 100)) .. "%"
+        record.button.Size = UDim2.fromOffset(record.size, record.size)
+        record.button.BackgroundTransparency = 1 - record.opacity
+        local clamped: Vector2 = clampMobileButtonPosition(
+            Vector2.new(record.button.Position.X.Offset, record.button.Position.Y.Offset),
+            record.size
+        )
+        record.button.Position = UDim2.fromOffset(clamped.X, clamped.Y)
+        saveMobileActionPosition(record)
+    end
+
+    local function openEditor(record: MobileActionRecord): ()
+        editingRecord = record
+        editorOverlay.Visible = true
+        refreshEditor()
+    end
+
+    trackUiConnection(sizeDown.MouseButton1Click:Connect(function(): ()
+        if editingRecord then
+            editingRecord.size = math.clamp(editingRecord.size - 8, 36, 120)
+            refreshEditor()
+        end
+    end))
+    trackUiConnection(sizeUp.MouseButton1Click:Connect(function(): ()
+        if editingRecord then
+            editingRecord.size = math.clamp(editingRecord.size + 8, 36, 120)
+            refreshEditor()
+        end
+    end))
+    trackUiConnection(opacityDown.MouseButton1Click:Connect(function(): ()
+        if editingRecord then
+            editingRecord.opacity = math.clamp(editingRecord.opacity - 0.1, 0.2, 1)
+            refreshEditor()
+        end
+    end))
+    trackUiConnection(opacityUp.MouseButton1Click:Connect(function(): ()
+        if editingRecord then
+            editingRecord.opacity = math.clamp(editingRecord.opacity + 0.1, 0.2, 1)
+            refreshEditor()
+        end
+    end))
+    trackUiConnection(removeButton.MouseButton1Click:Connect(function(): ()
+        local record: MobileActionRecord? = editingRecord
+        closeEditor()
+        if record then
+            removeMobileAction(record.id)
+        end
+    end))
+    trackUiConnection(doneButton.MouseButton1Click:Connect(closeEditor))
+
     local function setMobileActionVisibility(menuVisible: boolean): ()
+        if menuVisible then
+            closeEditor()
+        end
         for _, record: MobileActionRecord in pairs(mobileActions) do
             record.button.Visible = state.isMobile and not menuVisible
         end
@@ -197,8 +370,19 @@ function Module.init(context: any): any
             return existing
         end
 
-        local size: number = state.mobileButtonSize
         local stored: any = ensureMobileConfig()[id]
+        local size: number = math.clamp(
+            type(stored) == "table" and tonumber(stored[3])
+                or tonumber(state.mobileButtonSize)
+                or 52,
+            36,
+            120
+        )
+        local opacity: number = math.clamp(
+            type(stored) == "table" and tonumber(stored[4]) or 0.92,
+            0.2,
+            1
+        )
         local actionCount: number = 0
         for _ in pairs(mobileActions) do
             actionCount += 1
@@ -225,7 +409,7 @@ function Module.init(context: any): any
             Active = true,
             AutoButtonColor = false,
             BackgroundColor3 = Theme.surfaceRaised,
-            BackgroundTransparency = 0.08,
+            BackgroundTransparency = 1 - opacity,
             BorderSizePixel = 0,
             FontFace = CONTROL_FONT,
             Position = UDim2.fromOffset(selectedPosition.X, selectedPosition.Y),
@@ -275,6 +459,8 @@ function Module.init(context: any): any
             startPosition = selectedPosition,
             moved = false,
             holdToken = 0,
+            size = size,
+            opacity = opacity,
             connections = {},
         }
         mobileActions[id] = record
@@ -301,26 +487,29 @@ function Module.init(context: any): any
                 and (hold.isActive == nil or (hold.isActive :: () -> boolean)())
             if holdActive and not record.holding then
                 record.holding = true
-                button.BackgroundTransparency = 0.02
+                button.BackgroundTransparency = math.max(0, 1 - record.opacity - 0.1)
                 task.spawn((hold :: MobileHoldCallbacks).onPress :: () -> ())
             end
             record.holdToken += 1
             local token: number = record.holdToken
-            -- Hold-to-remove would fight a hold *feature*: keeping a finger on the
-            -- Sprint button is how you sprint, not how you delete it. Those are
-            -- removed from the menu instead, by tapping their key slot again.
-            if not holdActive then
-                task.delay(0.85, function(): ()
-                    if mobileActions[id] == record
-                        and record.activeInput == input
-                        and not record.moved
-                        and record.holdToken == token then
-                        record.activeInput = nil
-                        removeMobileAction(id)
-                        notify(record.label .. " button removed.")
+            task.delay(0.75, function(): ()
+                if mobileActions[id] ~= record
+                    or record.activeInput ~= input
+                    or record.moved
+                    or record.holdToken ~= token then
+                    return
+                end
+                record.activeInput = nil
+                record.holdToken += 1
+                if record.holding then
+                    record.holding = false
+                    if record.hold and record.hold.onRelease then
+                        task.spawn(record.hold.onRelease)
                     end
-                end)
-            end
+                end
+                button.BackgroundTransparency = 1 - record.opacity
+                openEditor(record)
+            end)
         end)))
 
         table.insert(record.connections, trackUiConnection(
@@ -335,7 +524,7 @@ function Module.init(context: any): any
             record.holdToken += 1
             if record.holding then
                 record.holding = false
-                button.BackgroundTransparency = 0.18
+                button.BackgroundTransparency = 1 - record.opacity
                 if record.hold and record.hold.onRelease then
                     task.spawn(record.hold.onRelease)
                 end
@@ -348,14 +537,14 @@ function Module.init(context: any): any
                 TweenService:Create(
                     button,
                     TweenInfo.new(0.08, Enum.EasingStyle.Quad),
-                    {BackgroundTransparency = 0.03}
+                    {BackgroundTransparency = math.max(0, 1 - record.opacity - 0.1)}
                 ):Play()
                 task.delay(0.09, function(): ()
                     if button.Parent then
                         TweenService:Create(
                             button,
                             TweenInfo.new(UI_MOTION.fast, Enum.EasingStyle.Quad),
-                            {BackgroundTransparency = 0.18}
+                            {BackgroundTransparency = 1 - record.opacity}
                         ):Play()
                     end
                 end)
@@ -384,7 +573,7 @@ function Module.init(context: any): any
                     if record.holding then
                         -- The finger is repositioning the button, not using it.
                         record.holding = false
-                        record.button.BackgroundTransparency = 0.18
+                        record.button.BackgroundTransparency = 1 - record.opacity
                         if record.hold and record.hold.onRelease then
                             task.spawn(record.hold.onRelease)
                         end
@@ -414,8 +603,7 @@ function Module.init(context: any): any
             return
         end
         if mobileActions[id] then
-            removeMobileAction(id)
-            notify(label .. " button removed.")
+            openEditor(mobileActions[id])
             return
         end
 
@@ -429,7 +617,7 @@ function Module.init(context: any): any
         MobilePlacementLabel.Text = "TOUCH TO PLACE " .. string.upper(label)
             .. (hold
                 and "\nHOLD THE BUTTON TO KEEP IT ACTIVE"
-                or "\nHOLD THE CIRCLE LATER TO REMOVE IT")
+                or "\nHOLD THE BUTTON LATER TO CUSTOMIZE IT")
         MobilePlacementOverlay.Visible = true
         -- Hide the menu so the player can see where the button is going. The old
         -- central Main frame is gone; visibility now drives ClickGUI windows.
@@ -474,9 +662,9 @@ function Module.init(context: any): any
 
     -- Touch key slots are the mobile-button factory.
     --
-    -- A single tap opens placement mode (a second tap on an already-placed button
-    -- removes it). It used to need a 0.6s hold, which nothing on screen hinted at
-    -- and which is impossible to guess now that an unbound slot is blank.
+    -- A single tap opens placement mode. Tapping the slot again for an existing
+    -- action opens the same size/opacity/remove editor as a long press on the
+    -- placed button.
     local function bindMobileActionPlacement(
         source: TextButton,
         id: string,
@@ -515,6 +703,9 @@ function Module.init(context: any): any
         resetActions = resetMobileActions,
         clampButtonPosition = clampMobileButtonPosition,
         saveActionPosition = saveMobileActionPosition,
+        editor = editorOverlay,
+        openEditor = openEditor,
+        closeEditor = closeEditor,
     }
     -- Placed mobile shortcuts are the inverse of the menu, and this is wired up as
     -- soon as the mobile layer exists rather than waiting for the Settings tab.

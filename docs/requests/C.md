@@ -64,6 +64,20 @@ Base on the current tip of `arena/01a02c8a-arandommenu`; do not re-land C1–C4.
 4. Add a test that changing/resetting a binding through Keybind Manager updates
    the visible per-row square, not only direct square capture.
 
+## C6 — Capture follow-up: mobile editor and Navigator
+
+1. Drive a placed mobile action through the mock: long press opens
+   `MobileActionEditor`, size stays within 36–120, opacity stays within 20–100%,
+   all four values persist as `{x, y, size, opacity}`, and Remove destroys both
+   the button and its config entry.
+2. Hold-style buttons must release their action before the editor opens.
+3. Hold Navigator in raw ScreenGui space at full scale, with a responsive
+   three-column grid and no ClickGUI UIScale ancestor.
+4. Change Theme.enabled twice while Navigator is open and assert active cells
+   and selection rings repaint both times.
+5. Keep the synchronous category-height floor: every category below the 200 cap
+   must expose all of its rows even when AbsoluteContentSize is one frame late.
+
 ## Rules
 
 Validate ends "All checks passed." with your new checks counted.

@@ -511,7 +511,7 @@ return function(ctx: any): ()
             state.navigator.Open()
             check("C4: Navigator opens", Inspect.navigatorVisible(state) == true)
             local door: any = Inspect.findNamed(state.navigator.root, "WurstDoor")
-            check("C4: WurstDoor exists on Navigator", door ~= nil)
+            check("C4: Navigator relies on the one dock door", door == nil)
             if type(state.navigator.Close) == "function" then
                 state.navigator.Close()
             end

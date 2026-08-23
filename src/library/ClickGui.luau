@@ -258,8 +258,25 @@ function Module.init(context: any): any
             -- category taller than the screen cannot be clamped into it, so the
             -- body scrolls instead.
             limit = math.min(limit, logicalViewport().Y - 12)
+            -- Roblox can defer AbsoluteContentSize by a frame after a late
+            -- module is parented. Count the live rows as a synchronous floor
+            -- so a short category never clips its last card (Fun exposed this
+            -- with Disguise as the third row).
+            local declaredHeight: number = 0
+            local visibleRows: number = 0
+            for _, child: Instance in ipairs(window.body:GetChildren()) do
+                if child:IsA("GuiObject") and (child :: GuiObject).Visible then
+                    visibleRows += 1
+                    declaredHeight += (child :: GuiObject).Size.Y.Offset
+                end
+            end
+            declaredHeight += math.max(visibleRows - 1, 0) * WINDOW_GAP
+            local contentHeight: number = math.max(
+                layout.AbsoluteContentSize.Y,
+                declaredHeight
+            )
             local wanted: number = math.min(
-                TITLE_HEIGHT + layout.AbsoluteContentSize.Y + 4,
+                TITLE_HEIGHT + contentHeight + 4,
                 limit
             )
             window.fullHeight = wanted

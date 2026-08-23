@@ -69,6 +69,12 @@ return function(ctx: any): ()
     if root ~= nil then
         check("the surface is named Navigator", root.Name == "Navigator", tostring(root.Name))
         check(
+            "Navigator uses raw screen space instead of scaled ClickGUI space",
+            root.Parent == captured.ScreenGui
+                and root.Size.X.Scale == 1
+                and root.Size.Y.Scale == 1
+        )
+        check(
             "Navigator is not a managed ClickGui window",
             state.windows == nil
                 or state.windows.Get == nil
@@ -95,6 +101,10 @@ return function(ctx: any): ()
         )
     end
 
+    check(
+        "Navigator does not duplicate the dock with a WurstDoor bar",
+        root == nil or root:FindFirstChild("WurstDoor") == nil
+    )
     local column: any = root and root:FindFirstChild("Column")
     local search: any = column and column:FindFirstChild("Search")
     check("Navigator has a search field", search ~= nil)
