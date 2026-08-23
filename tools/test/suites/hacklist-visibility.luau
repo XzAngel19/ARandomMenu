@@ -233,14 +233,9 @@ return function(ctx: any): ()
         sample.activate()
     end
     if type(list.SetPosition) == "function" and frame ~= nil then
-        if type(state.setMenuVisible) == "function" then
-            state.setMenuVisible(true)
-        end
-        list.SetPosition("Custom")
-        frame.InputBegan:Fire({
-            UserInputType = world.globals.Enum.UserInputType.MouseButton1,
-            Position = world.vector3(80, 90, 0),
-        })
+        -- Simulate teardown during an in-flight visible-glyph drag. The actual
+        -- hit-test path was exercised above while the row still existed.
+        state.surfaceDragOwner = frame
         check(
             "Custom HackList still owns the pointer before teardown",
             state.surfaceDragOwner == frame

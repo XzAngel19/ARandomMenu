@@ -263,83 +263,75 @@ return function(ctx: any): ()
         local card: any = file.init(context)
         card:Toggle(true)
         check("WallHop starts ready", card.Status == "ready", tostring(card.Status))
+        check("WallHop has no implementation-tuning options", next(card.Options) == nil)
 
         world.raycastResult = nil
         world.fireJumpRequest()
         check("WallHop ignores a jump with no wall", root.AssemblyLinearVelocity.Y == 0)
 
-        world.raycastResult = {
+        local floor: any = {
             Instance = Mock.newInstance("Part"),
-            Position = world.vector3(0, 0, -2),
+            Position = world.vector3(0, -2, 0),
             Normal = world.vector3(0, 1, 0),
         }
+        world.raycastResult = floor
         world.fireJumpRequest()
-        check(
-            "WallHop ignores a floor-like normal",
-            root.AssemblyLinearVelocity.Y == 0
-        )
+        check("WallHop ignores a floor-like normal", root.AssemblyLinearVelocity.Y == 0)
 
-        world.raycastResult = {
+        local wall: any = {
             Instance = Mock.newInstance("Part"),
-            Position = world.vector3(-2, 0, 0),
-            Normal = world.vector3(-1, 0, 0),
+            Position = world.vector3(0, 0, -2),
+            Normal = world.vector3(0, 0, 1),
         }
+        world.raycastResult = wall
+        world.fireJumpRequest()
+        check("WallHop rejects a fully covered wall", card.Status == "blocked")
+
+        local casts: number = 0
+        world.raycastResult = function(): any
+            casts += 1
+            if casts == 2 then return nil end -- open left edge
+            return wall
+        end
         local jumpStates: {any} = {}
         humanoid.ChangeState = function(_self: any, state: any): ()
             table.insert(jumpStates, state)
             humanoid.State = state
         end
         world.fireJumpRequest()
+        check("a usable edge starts the WallHop sequence", card.Status == "hop")
+        stub.step(0.02)
+        stub.step(0.04)
+        stub.step(0.04)
         check(
-            "WallHop applies height and push along the wall normal",
-            root.AssemblyLinearVelocity.Y == card.Options["Height"].Value
-                and root.AssemblyLinearVelocity.X
-                    == -card.Options["Push"].Value,
-            tostring(root.AssemblyLinearVelocity.X)
-                .. ","
-                .. tostring(root.AssemblyLinearVelocity.Y)
+            "WallHop finishes with fixed height and outward velocity",
+            root.AssemblyLinearVelocity.Y == 52
+                and root.AssemblyLinearVelocity.Z > 0
         )
         check(
-            "WallHop requests a jump state",
+            "WallHop requests a jump state after its offsets",
             jumpStates[1] == world.globals.Enum.HumanoidStateType.Jumping
         )
-        check(
-            "WallHop raycasts along look * reach",
-            world.lastRaycast ~= nil
-                and world.lastRaycast.Direction.Z
-                    == root.CFrame.LookVector.Z * card.Options["Reach"].Value
-        )
 
-        local afterHop: any = root.AssemblyLinearVelocity
+        casts = 0
         world.fireJumpRequest()
-        check(
-            "WallHop cooldown blocks a second hop",
-            root.AssemblyLinearVelocity.X == afterHop.X
-                and root.AssemblyLinearVelocity.Y == afterHop.Y
-        )
+        check("WallHop cooldown avoids even probing twice", casts == 0)
 
-        stub.step(card.Options["Cooldown"].Value + 0.05)
+        stub.step(0.23)
         root.AssemblyLinearVelocity = world.vector3(0, 0, 0)
+        casts = 0
         world.fireJumpRequest()
-        check(
-            "WallHop hops again after the cooldown",
-            root.AssemblyLinearVelocity.Y == card.Options["Height"].Value
-        )
+        stub.step(0.02)
+        stub.step(0.04)
+        stub.step(0.04)
+        check("WallHop can run again after cooldown", root.AssemblyLinearVelocity.Y == 52)
 
         card:Toggle(false)
         local jumpCount: number = #(world.jumpCallbacks or {})
-        world.raycastResult = {
-            Instance = Mock.newInstance("Part"),
-            Position = world.vector3(-2, 0, 0),
-            Normal = world.vector3(-1, 0, 0),
-        }
         root.AssemblyLinearVelocity = world.vector3(0, 0, 0)
         world.fireJumpRequest()
         check("WallHop disable drops the jump callback", jumpCount == 0)
-        check(
-            "WallHop disable does not keep hopping",
-            root.AssemblyLinearVelocity.Y == 0
-        )
+        check("WallHop disable does not keep hopping", root.AssemblyLinearVelocity.Y == 0)
         file.destroy()
         world.raycastResult = nil
     end

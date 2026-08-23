@@ -156,19 +156,28 @@ return function(ctx: any): ()
     local wallHop: any = WallHopFile.init(context)
     local root: any = world.localPlayer.Character:FindFirstChild("HumanoidRootPart")
     root.AssemblyLinearVelocity = world.vector3(2, -5, 3)
-    world.raycastResult = {
+    local wall: any = {
         Instance = Mock.newInstance("Part"),
         Position = root.Position + world.vector3(0, 0, -2),
         Normal = world.vector3(0, 0, 1),
     }
+    local casts: number = 0
+    world.raycastResult = function(): any
+        casts += 1
+        if casts == 2 then return nil end -- left edge is open
+        return wall
+    end
     local jumpBaseline: number = #world.jumpCallbacks
     wallHop:Toggle(true)
     check("WallHop owns one filtered jump callback",
         #world.jumpCallbacks == jumpBaseline + 1)
     world.jumpCallbacks[#world.jumpCallbacks]()
-    check("a vertical wall adds height and outward velocity",
-        root.AssemblyLinearVelocity.Y == wallHop.Options["Height"].Value
-            and root.AssemblyLinearVelocity.Z > 3)
+    stub.step(0.02)
+    stub.step(0.04)
+    stub.step(0.04)
+    check("a usable wall edge runs the fixed offset sequence",
+        root.AssemblyLinearVelocity.Y == 52 and root.AssemblyLinearVelocity.Z > 3)
+    check("WallHop exposes no implementation-tuning rows", next(wallHop.Options) == nil)
     wallHop:Toggle(false)
     check("disable disconnects the jump callback",
         #world.jumpCallbacks == jumpBaseline)

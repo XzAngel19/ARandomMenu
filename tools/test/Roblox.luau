@@ -1036,6 +1036,9 @@ function Mock.install(): MockWorld
             Direction = direction,
             Params = params,
         }
+        if type(world.raycastResult) == "function" then
+            return world.raycastResult(origin, direction, params)
+        end
         return world.raycastResult
     end
     function mockWorkspace:GetPartBoundsInBox(_pivot: any, _size: any, params: any): {any}
