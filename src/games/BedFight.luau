@@ -1104,8 +1104,8 @@ function Module.init(runtime: any): any
                             and player.Team == LocalPlayer.Team then
                             continue
                         end
-                        local friendList: any = state.friendList
-                        if friendList and friendList.isProtected(player) then
+                        local targets: any = runtime.Services.protectedTargets
+                        if targets.isProtected(player) then
                             continue
                         end
                         local character: Model? = characterOf(player)

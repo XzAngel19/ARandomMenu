@@ -22,6 +22,7 @@ export type Runtime = {
     framework: any,
     entity: any,
     host: any,
+    services: any,
 }
 
 local Module = {
@@ -43,7 +44,7 @@ function Module.init(context: Runtime): any
     local host: any = context.host
     local framework: any = context.framework
     local localPlayer: Player = host.LocalPlayer
-    local state: any = host.state
+    local spoofAvatar: any = context.services.spoofAvatar
 
     local runtime: any = {
         original = nil :: HumanoidDescription?,
@@ -56,8 +57,6 @@ function Module.init(context: Runtime): any
     -- Spoof modules: the emote player lists what this one found, and the
     -- animation changer edits the description this one applied instead of
     -- fighting it.
-    state.spoofEmotes = state.spoofEmotes or {}
-    state.spoofDescription = state.spoofDescription or nil
 
     local function currentHumanoid(): Humanoid?
         local character: Model? = localPlayer.Character
@@ -108,7 +107,7 @@ function Module.init(context: Runtime): any
         table.sort(collected, function(left: any, right: any): boolean
             return left.name < right.name
         end)
-        state.spoofEmotes = collected
+        spoofAvatar.setEmotes(collected)
         return #collected
     end
 
@@ -125,7 +124,7 @@ function Module.init(context: Runtime): any
                 disguise:SetStatus(nil)
                 local original: HumanoidDescription? = runtime.original
                 runtime.applied = nil
-                state.spoofDescription = nil
+                spoofAvatar.setDescription(nil)
                 if original then
                     applyDescription(original :: HumanoidDescription)
                 end
@@ -213,8 +212,8 @@ function Module.init(context: Runtime): any
         end
         runtime.original = nil
         runtime.applied = nil
-        state.spoofDescription = nil
-        state.spoofEmotes = {}
+        spoofAvatar.setDescription(nil)
+        spoofAvatar.setEmotes({})
     end
     Module.Initialized = true
     return disguise
@@ -234,7 +233,7 @@ function Module.wear(
     end
     local host: any = context.host
     local players: Players = host.Players
-    local state: any = host.state
+    local spoofAvatar: any = context.services.spoofAvatar
     local text: string = tostring(disguise.Options["User"].Value or "")
     if string.match(text, "^%s*$") then
         disguise:Notify("paste a user id or a name")
@@ -301,7 +300,7 @@ function Module.wear(
     end
     runtime.userId = userId
     runtime.applied = target
-    state.spoofDescription = target
+    spoofAvatar.setDescription(target)
 
     local emoteCount: number = 0
     if disguise.Options["Take emotes"].Value then

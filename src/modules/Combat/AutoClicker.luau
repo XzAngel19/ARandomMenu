@@ -204,7 +204,7 @@ function Module.init(context: Runtime): any
                 -- Dragging a slider in the menu is a held mouse button too:
                 -- the executor-level click paths would land in the game
                 -- behind the window, so they stand down while it is open.
-                if host.state.visible
+                if context.services.menu.isVisible()
                     and (mode == "Left click" or mode == "Right click") then
                     return
                 end

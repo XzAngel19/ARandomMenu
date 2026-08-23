@@ -29,7 +29,7 @@ return function(ctx: any): ()
         local EntityFile: any = require("../../../src/library/Entity")
         Mock.inject(world, EntityFile.init)
         local entity: any = EntityFile.init(host)
-        context = {framework = framework, entity = entity, weapons = nil, render = nil, host = host}
+        context = {framework = framework, entity = entity, weapons = nil, render = nil, host = host, services = host.services}
     end
     ctx.espContext = context
 

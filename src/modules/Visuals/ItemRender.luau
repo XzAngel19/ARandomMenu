@@ -35,7 +35,7 @@ function Module.init(context: Runtime): any
     local localPlayer: Player = host.LocalPlayer
     local userInput: UserInputService = host.UserInputService
     local currentWorkspace: Workspace = host.workspace or workspace
-    local state: any = host.state
+    local menu: any = context.services.menu
 
     local tracked: {[Instance]: boolean} = {}
     -- `workspace:GetDescendants()` on a real map is tens of thousands of
@@ -224,9 +224,7 @@ function Module.init(context: Runtime): any
             picking = true
             -- The menu is in the way of the thing you are trying to point at,
             -- so it gets out of the way and comes back on its own.
-            if state.setMenuVisible then
-                state.setMenuVisible(false)
-            end
+            menu.setVisible(false)
             render:Notify("tap the object you want rendered")
         end,
     })
@@ -313,9 +311,7 @@ function Module.init(context: Runtime): any
             local model: Instance? = hit:FindFirstAncestorOfClass("Model")
             local name: string = model and model.Name or hit.Name
             learn(name)
-            if state.setMenuVisible then
-                state.setMenuVisible(true)
-            end
+            menu.setVisible(true)
             render:Notify(name .. " added")
         end
     )

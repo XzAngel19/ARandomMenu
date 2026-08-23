@@ -52,9 +52,9 @@ return function(ctx: any): ()
         localHumanoid.AppliedDescription == targetAvatar,
         tostring(localHumanoid.AppliedDescription))
     check("their emotes reach the emote player",
-        #(host.state.spoofEmotes or {}) == 1
-            and host.state.spoofEmotes[1].id == 507770239,
-        tostring(#(host.state.spoofEmotes or {})))
+        #host.services.spoofAvatar.getEmotes() == 1
+            and host.services.spoofAvatar.getEmotes()[1].id == 507770239,
+        tostring(#host.services.spoofAvatar.getEmotes()))
 
     disguise:Toggle()
     check("disguise disables", disguise.Enabled == false)

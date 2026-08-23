@@ -6,7 +6,7 @@
 -- inside the MM2 module, which meant the protection vanished the moment you
 -- played anything else — so it is universal now, and every combat module
 -- (Kill Aura, TriggerBot, Fling, MM2's shoot helpers) asks the same question
--- here: `state.friendList.isProtected(player)`.
+-- through the shared protected-target service.
 --
 -- Always-on module: there is nothing to switch on. The list is either empty or
 -- it is not.
@@ -15,6 +15,7 @@ export type Runtime = {
     framework: any,
     entity: any,
     host: any,
+    services: any,
 }
 
 local Module = {
@@ -47,7 +48,7 @@ function Module.init(context: Runtime): any
     local framework: any = context.framework
     local players: Players = host.Players
     local localPlayer: Player = host.LocalPlayer
-    local state: any = host.state
+    local protectedTargets: any = context.services.protectedTargets
 
     local list: any = {
         names = {} :: {[string]: boolean},
@@ -102,9 +103,7 @@ function Module.init(context: Runtime): any
         end
     end
 
-    state.friendList = list
-    -- Kept for the game modules that already ask this question by name.
-    state.isProtectedTarget = list.isProtected
+    protectedTargets.setProvider(list.isProtected)
 
     local friends: any
     friends = framework.Categories.Utility:CreateModule({
@@ -219,9 +218,7 @@ function Module.init(context: Runtime): any
         pcall(function(): ()
             connection:Disconnect()
         end)
-        if state.friendList == list then
-            state.friendList = nil
-        end
+        protectedTargets.setProvider(nil)
     end
     Module.Initialized = true
     return friends

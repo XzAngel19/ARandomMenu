@@ -29,6 +29,53 @@
 
 export type CleanupItem = any
 
+export type MovementInputService = {
+    getVector: () -> (number, number),
+    isJumpHeld: () -> boolean,
+    onJumpRequest: ((() -> ())) -> RBXScriptConnection,
+}
+
+export type OwnershipService<T> = {
+    set: (ownerId: string, value: T?) -> (),
+    apply: (instance: Instance?) -> (),
+}
+
+export type ModuleServices = {
+    movementInput: MovementInputService,
+    aim: {getRay: () -> Ray?},
+    menu: {
+        isVisible: () -> boolean,
+        isCapturingInput: () -> boolean,
+        setVisible: (boolean) -> (),
+    },
+    mobileActions: {bindPlacement: (...any) -> any},
+    protectedTargets: {
+        isProtected: (Player?) -> boolean,
+        setProvider: (((Player?) -> boolean)?) -> (),
+    },
+    fovOwnership: OwnershipService<number>,
+    platformStandOwnership: OwnershipService<boolean>,
+    activity: {
+        set: (string, boolean) -> (),
+        isActive: (string) -> boolean,
+    },
+    spoofAvatar: any,
+    projectileCalibration: any,
+    gameBridge: any,
+    shortcuts: any,
+    registries: any,
+}
+
+export type ModuleContext = {
+    framework: Framework,
+    entity: any,
+    weapons: any,
+    render: any,
+    libraries: {[string]: any},
+    host: any,
+    services: ModuleServices,
+}
+
 export type Option = {
     Name: string,
     -- Live value, kept in sync by the option's own callback so a module can

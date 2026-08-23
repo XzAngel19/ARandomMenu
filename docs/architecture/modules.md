@@ -37,8 +37,9 @@ A universal module may use:
 
 - `context.framework.Categories.<OfficialCategory>:CreateModule(...)`;
 - `context.entity`, `context.weapons` and `context.render` through their published APIs;
-- `context.host` services (`Players`, `LocalPlayer`, `UserInputService`, `workspace`, `TaskManager`, `HttpService`, `PRODUCT`);
-- documented host helpers such as `getCharacterParts`, `notify`, `isMenuOwned` and target/friend predicates;
+- `context.host` engine services (`Players`, `LocalPlayer`, `UserInputService`, `workspace`, `TaskManager`, `HttpService`, `PRODUCT`);
+- documented host helpers such as `getCharacterParts`, `notify` and `isMenuOwned`;
+- the grouped `context.services` contracts below;
 - card lifecycle methods `Loop`, `Render`, `Event`, `Clean`, `Notify`, `SetStatus`;
 - option builders listed below.
 
@@ -47,11 +48,32 @@ A module must not use:
 - card internals (`row`, `title`, `arrow`, option labels, windows or pixel sizes);
 - `ScreenGui`, `PopupLayer`, page/scroll/tab hosts or WindowManager internals;
 - private button/pill/toggle/textbox construction for settings;
+- `host.state` or any other shell-state reach-in;
 - `configData` except a documented module-owned persistence key when no option can represent the data;
 - real `print`/`warn`; the injected shadows are silent and diagnostics belong in status/notify;
 - renderer or theme geometry.
 
 World instances created for gameplay are allowed. They must be owned by `Clean` or `destroy`.
+
+## Module context services
+
+`ModuleContext` and the service shapes are exported by `src/core/Framework.luau`.
+Services group a decision; they are not one wrapper per shell field.
+
+- `movementInput`: movement vector, held-jump state and filtered jump requests;
+- `aim`: the device-correct aim ray;
+- `menu`: visibility, input-capture state and explicit visibility changes;
+- `mobileActions`: placement of a module action on touch devices;
+- `protectedTargets`: one shared protection predicate and its Friend List provider;
+- `fovOwnership` / `platformStandOwnership`: last-owner arbitration and exact baseline restore;
+- `activity`: cross-module activity flags such as an intentional fling;
+- `spoofAvatar`: the avatar description and emote catalog shared by Spoof modules;
+- `projectileCalibration`: ownership of the calibration controller used during shell teardown;
+- `gameBridge`: game role and ESP bridge events;
+- `shortcuts`: module activation binding;
+- `registries`: Wurst Options and module-search registration.
+
+Module-local settings, caches, rate limits and captured baselines stay local. A module must not publish them through a service merely to make a test inspect them.
 
 ## Card
 
@@ -218,6 +240,5 @@ Proof lives in `tools/test/suites/clickgui-boot.luau`, the focused module suites
 ## Current audited exceptions
 
 - `AnimationChanger` and `EmotePlayer` use documented module-owned saved-ID keys in `host.configData` because the saved catalog is not one scalar option.
-- `AutoClicker` still receives `host.ScreenGui` only to reject this menu while hit-testing a game button. Replace it when the host publishes `isMenuGui(instance)`; see `docs/requests/D-to-A-visual.md`.
 
-No other universal module depends on row/window/pixel internals.
+Universal modules have no direct `host.state` access and no row/window/pixel dependency. `tools/check_module_conformance.py` blocks either reach-in.

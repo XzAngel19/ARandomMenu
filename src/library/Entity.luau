@@ -277,9 +277,9 @@ function Module.init(context: any): EntityLibrary
     -- The friend list is universal and may not be loaded yet, so the question
     -- is asked through `state` rather than captured at init.
     function library:IsProtected(player: Player): boolean
-        local friendList: any = host.state and host.state.friendList
-        if friendList and type(friendList.isProtected) == "function" then
-            return friendList.isProtected(player) == true
+        local targets: any = host.services and host.services.protectedTargets
+        if targets and type(targets.isProtected) == "function" then
+            return targets.isProtected(player) == true
         end
         return false
     end
@@ -396,7 +396,7 @@ function Module.init(context: any): EntityLibrary
         if not camera then
             return nil
         end
-        local ray: Ray? = host.state and host.state.getAimRay and host.state.getAimRay()
+        local ray: Ray? = host.services and host.services.aim.getRay()
         local origin: Vector3 = ray and ray.Origin or camera.CFrame.Position
         local direction: Vector3 = ray and ray.Direction or camera.CFrame.LookVector
         return library:ClosestToRay(origin, direction, query)

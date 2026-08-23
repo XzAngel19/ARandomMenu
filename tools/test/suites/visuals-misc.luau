@@ -28,7 +28,7 @@ return function(ctx: any): ()
         local FrameworkFile: any = require("../../../src/core/Framework")
         Mock.inject(world, FrameworkFile.init)
         local framework: any = FrameworkFile.init(host)
-        context = {framework = framework, entity = nil, weapons = nil, render = nil, host = host}
+        context = {framework = framework, entity = nil, weapons = nil, render = nil, host = host, services = host.services}
     end
     ctx.espContext = context
 

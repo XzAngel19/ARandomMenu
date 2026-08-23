@@ -583,6 +583,101 @@ function Host.create(world: any): HostStub
         host.state[key] = value
     end
 
+    local function ownership(property: string): any
+        local owners: {[string]: any} = {}
+        local baselines: any = setmetatable({}, {__mode = "k"})
+        local sequence: number = 0
+        return {
+            set = function(ownerId: string, value: any?): ()
+                if value == nil then
+                    owners[ownerId] = nil
+                    if next(owners) == nil then
+                        for instance: any, baseline: any in pairs(baselines) do
+                            instance[property] = baseline
+                        end
+                    end
+                    return
+                end
+                sequence += 1
+                owners[ownerId] = {value = value, sequence = sequence}
+            end,
+            apply = function(instance: any): ()
+                if not instance then return end
+                if baselines[instance] == nil then baselines[instance] = instance[property] end
+                local selected: any = nil
+                for _, owner: any in pairs(owners) do
+                    if not selected or owner.sequence > selected.sequence then selected = owner end
+                end
+                if selected then instance[property] = selected.value end
+            end,
+        }
+    end
+    local protectedProvider: any = host.state.isProtectedTarget
+    local activity: {[string]: boolean} = {}
+    local spoofEmotes: {any} = {}
+    local spoofDescription: any = nil
+    local calibration: any = nil
+    host.services = {
+        movementInput = {
+            getVector = function(): (number, number) return host.state.getMoveInput() end,
+            isJumpHeld = function(): boolean return host.state.isJumpHeld() end,
+            onJumpRequest = function(callback: any): any return host.state.onJumpRequest(callback) end,
+        },
+        aim = {getRay = function(): any return host.state.getAimRay() end},
+        menu = {
+            isVisible = function(): boolean return host.state.visible == true end,
+            isCapturingInput = function(): boolean
+                return host.state.keyCaptureCallback ~= nil or host.state.waitingForKey == true
+            end,
+            setVisible = function(visible: boolean): () host.state.setMenuVisible(visible) end,
+        },
+        mobileActions = {
+            bindPlacement = function(...: any): any
+                if host.state.bindMobileActionPlacement then
+                    return host.state.bindMobileActionPlacement(...)
+                end
+                return nil
+            end,
+        },
+        protectedTargets = {
+            isProtected = function(player: any): boolean return protectedProvider(player) end,
+            setProvider = function(provider: any): ()
+                protectedProvider = provider or function(player: any): boolean
+                    return player == nil or player == world.localPlayer
+                end
+            end,
+        },
+        fovOwnership = ownership("FieldOfView"),
+        platformStandOwnership = ownership("PlatformStand"),
+        activity = {
+            set = function(name: string, active: boolean): () activity[name] = active end,
+            isActive = function(name: string): boolean return activity[name] == true end,
+        },
+        spoofAvatar = {
+            getEmotes = function(): {any} return spoofEmotes end,
+            setEmotes = function(value: {any}): () spoofEmotes = value end,
+            getDescription = function(): any return spoofDescription end,
+            setDescription = function(value: any): () spoofDescription = value end,
+        },
+        projectileCalibration = {
+            set = function(value: any): () calibration = value end,
+            get = function(): any return calibration end,
+        },
+        gameBridge = {
+            onEvent = host.state.onGameBridge,
+            playerRole = host.state.playerRole,
+        },
+        shortcuts = {
+            bindActivation = function(...: any): any
+                return host.state.bindFeatureActivationKey(...)
+            end,
+        },
+        registries = {
+            wurstOptions = function(): any return host.state.wurstOptions end,
+            moduleSearch = function(): any return host.state.moduleSearch end,
+        },
+    }
+
     -- The shell primitives the widget library builds its controls out of.
     --
     -- The builders above are a test double: they record what a module asked

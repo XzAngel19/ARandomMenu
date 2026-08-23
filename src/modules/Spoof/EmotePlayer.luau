@@ -20,6 +20,7 @@ export type Runtime = {
     framework: any,
     entity: any,
     host: any,
+    services: any,
 }
 
 local Module = {
@@ -39,7 +40,7 @@ function Module.init(context: Runtime): any
     local host: any = context.host
     local framework: any = context.framework
     local localPlayer: Player = host.LocalPlayer
-    local state: any = host.state
+    local spoofAvatar: any = context.services.spoofAvatar
 
     local runtime: any = {
         track = nil :: AnimationTrack?,
@@ -51,7 +52,6 @@ function Module.init(context: Runtime): any
         selected = nil :: string?,
     }
 
-    state.spoofEmotes = state.spoofEmotes or {}
 
     local function animator(): Animator?
         local character: Model? = localPlayer.Character
@@ -82,7 +82,7 @@ function Module.init(context: Runtime): any
     local function labels(): {string}
         local rows: {string} = {}
         runtime.byLabel = {}
-        for _, emote: any in ipairs(state.spoofEmotes or {}) do
+        for _, emote: any in ipairs(spoofAvatar.getEmotes()) do
             if type(emote) == "table" and type(emote.id) == "number" then
                 local label: string = tostring(emote.name) .. "  ·  avatar"
                 runtime.byLabel[label] = emote.id

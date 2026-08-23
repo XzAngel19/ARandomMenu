@@ -48,6 +48,7 @@ return function(ctx: any): ()
             weapons = nil,
             render = nil,
             host = host,
+            services = host.services,
         }
     end
     ctx.espContext = context

@@ -121,17 +121,17 @@ return function(ctx: any): ()
     local friendList: any = FriendFile.init(espContext)
 
     check("card is always-on", friendList.Feature.kind == "group")
-    check("list is published on state", host.state.friendList ~= nil)
+    ctx.friendList = friendList
+    check("protection is published through the service", host.services.protectedTargets ~= nil)
     check("the local player is always protected",
-        host.state.friendList.isProtected(world.localPlayer) == true)
+        host.services.protectedTargets.isProtected(world.localPlayer) == true)
     check("an unlisted player is not protected",
-        host.state.friendList.isProtected(enemy) == false)
+        host.services.protectedTargets.isProtected(enemy) == false)
 
-    friendList.Options["Protected names"].Value = "Enemy"
-    host.state.friendList.names = {enemy = true}
+    ctx.setOption(friendList, "Protected names", "Enemy")
     check("a listed player is protected",
-        host.state.friendList.isProtected(enemy) == true)
-    host.state.friendList.names = {}
+        host.services.protectedTargets.isProtected(enemy) == true)
+    ctx.setOption(friendList, "Protected names", "")
 
     -- Kill Aura ------------------------------------------------------------------
 
@@ -211,7 +211,7 @@ return function(ctx: any): ()
         "activations: " .. tostring(sword.Activations))
 
     -- Friend protection has to win over an in-range target.
-    host.state.friendList.names = {enemy = true}
+    ctx.setOption(friendList, "Protected names", "Enemy")
     world.clock += 1
     local beforeFriend: number = sword.Activations or 0
     stub.step(0.016)
@@ -222,7 +222,7 @@ return function(ctx: any): ()
         enemy.Character:FindFirstChild("RTM_KillAuraTarget") == nil)
     check("the HUD count drops when no target remains",
         aura.Status == "0 in range", tostring(aura.Status))
-    host.state.friendList.names = {}
+    ctx.setOption(friendList, "Protected names", "")
 
     -- Out of range is out of range.
     enemy.Character:FindFirstChild("HumanoidRootPart").Position = world.vector3(0, 0, -400)
@@ -644,7 +644,7 @@ return function(ctx: any): ()
     -- frame rather than inside the game's own call.
     stub.step(0.016)
 
-    local entries: {any} = host.state.remoteLog.entries()
+    local entries: {any} = LoggerFile.entries()
     check("records the call", #entries == 1, "entries: " .. tostring(#entries))
     check("records the method", entries[1] ~= nil and entries[1].method == "FireServer")
     check("records the argument values",
@@ -679,10 +679,10 @@ return function(ctx: any): ()
     world.namecallHook(remote, "menu-call")
     world.callerIsMenu = false
     stub.step(0.016)
-    check("ignores the menu's own calls", #host.state.remoteLog.entries() == 1)
+    check("ignores the menu's own calls", #LoggerFile.entries() == 1)
 
     logger.Feature.options["Clear log"].run()
-    check("clears the log", #host.state.remoteLog.entries() == 0)
+    check("clears the log", #LoggerFile.entries() == 0)
     logger:Toggle()
 
     -- Improve FPS --------------------------------------------------------------------

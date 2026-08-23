@@ -100,7 +100,6 @@ function Module.init(context: Runtime): any
     local host: any = context.host
     local framework: any = context.framework
     local httpService: HttpService = host.HttpService
-    local state: any = host.state
     local product: any = host.PRODUCT
     local remoteLogFolder: string = product.storageFolder .. "/RemoteLogs"
 
@@ -447,19 +446,16 @@ function Module.init(context: Runtime): any
             .. "them. It watches; it never blocks, delays or alters a call."
     )
 
-    -- Exposed so other modules (and a future game module) can read what was
-    -- captured without going through the file.
-    state.remoteLog = {
-        entries = function(): {any}
-            local list: {any} = {}
-            for _, key: string in ipairs(order) do
-                table.insert(list, log[key])
-            end
-            return list
-        end,
-        report = buildReport,
-        save = saveReport,
-    }
+    -- Test and diagnostics access stays on this module, not on shell state.
+    Module.entries = function(): {any}
+        local list: {any} = {}
+        for _, key: string in ipairs(order) do
+            table.insert(list, log[key])
+        end
+        return list
+    end
+    Module.report = buildReport
+
 
     activeCleanup = function(): ()
         capturing = false
@@ -467,9 +463,8 @@ function Module.init(context: Runtime): any
             (restore :: () -> ())()
             restore = nil
         end
-        if state.remoteLog then
-            state.remoteLog = nil
-        end
+        Module.entries = nil
+        Module.report = nil
     end
     Module.Initialized = true
     return logger

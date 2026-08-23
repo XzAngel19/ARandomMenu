@@ -24,7 +24,6 @@ local activeCleanup: (() -> ())? = nil
 
 function Module.init(context: Runtime): any
     local host: any = context.host
-    local state: any = host.state
     local createUniversalFeature: any = host.createUniversalFeature
     local addNumberOption: any = host.addNumberOption
     local Lighting: any = host.Lighting
@@ -32,28 +31,28 @@ function Module.init(context: Runtime): any
     local featureConnections: any = host.featureConnections
     local TaskManager: any = host.TaskManager
 
-    state.fullbrightSettings = {
+    local fullbrightSettings = {
         brightness = 3,
         clockTime = 14,
     }
-    state.originalLighting = nil
+    local originalLighting: any = nil
 
-    state.toggleFullbright = function(enabled)
+    local function toggleFullbright(enabled: boolean): ()
         disconnectFeatureConnection("Fullbright")
 
         if not enabled then
-            if state.originalLighting then
-                Lighting.Brightness = state.originalLighting.brightness
-                Lighting.ClockTime = state.originalLighting.clockTime
-                Lighting.GlobalShadows = state.originalLighting.globalShadows
-                Lighting.FogEnd = state.originalLighting.fogEnd
-                Lighting.Ambient = state.originalLighting.ambient
-                Lighting.OutdoorAmbient = state.originalLighting.outdoorAmbient
+            if originalLighting then
+                Lighting.Brightness = originalLighting.brightness
+                Lighting.ClockTime = originalLighting.clockTime
+                Lighting.GlobalShadows = originalLighting.globalShadows
+                Lighting.FogEnd = originalLighting.fogEnd
+                Lighting.Ambient = originalLighting.ambient
+                Lighting.OutdoorAmbient = originalLighting.outdoorAmbient
             end
             return
         end
 
-        state.originalLighting = {
+        originalLighting = {
             brightness = Lighting.Brightness,
             clockTime = Lighting.ClockTime,
             globalShadows = Lighting.GlobalShadows,
@@ -63,8 +62,8 @@ function Module.init(context: Runtime): any
         }
 
         featureConnections.Fullbright = TaskManager:Connect(function()
-            Lighting.Brightness = state.fullbrightSettings.brightness
-            Lighting.ClockTime = state.fullbrightSettings.clockTime
+            Lighting.Brightness = fullbrightSettings.brightness
+            Lighting.ClockTime = fullbrightSettings.clockTime
             Lighting.GlobalShadows = false
             Lighting.FogEnd = 100000
             Lighting.Ambient = Color3.fromRGB(178, 178, 178)
@@ -76,32 +75,32 @@ function Module.init(context: Runtime): any
         "Fullbright",
         "Keep the scene bright and remove global shadows",
         15,
-        state.toggleFullbright,
+        toggleFullbright,
         {categoryName = "Render"}
     )
     addNumberOption(
         FullbrightFeature,
         "Brightness",
-        state.fullbrightSettings.brightness,
+        fullbrightSettings.brightness,
         0,
         10,
         function(value)
-            state.fullbrightSettings.brightness = value
+            fullbrightSettings.brightness = value
         end
     )
     addNumberOption(
         FullbrightFeature,
         "Clock time",
-        state.fullbrightSettings.clockTime,
+        fullbrightSettings.clockTime,
         0,
         24,
         function(value)
-            state.fullbrightSettings.clockTime = value
+            fullbrightSettings.clockTime = value
         end
     )
 
     activeCleanup = function(): ()
-        state.toggleFullbright(false)
+        toggleFullbright(false)
     end
     Module.Initialized = true
     return FullbrightFeature

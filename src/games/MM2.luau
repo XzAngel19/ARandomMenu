@@ -107,19 +107,11 @@ local mm2Settings = {
     autoPlayId = "",
 }
 
--- Friend protection is universal now: the list, the Roblox-friend lookup and
--- the UI all live in src/modules/Utility/FriendList.luau, so the protection
--- follows the player into every other game instead of existing only here.
--- MM2 keeps the question it always asked and forwards it.
-state.isProtectedTarget = function(player: Player?): boolean
-    if not player or player == LocalPlayer then
-        return true
-    end
-    local friendList: any = state.friendList
-    if friendList and type(friendList.isProtected) == "function" then
-        return friendList.isProtected(player) == true
-    end
-    return false
+-- Friend protection is universal and arrives through Runtime.Services.
+local function isProtectedTarget(player: Player?): boolean
+    local runtime: any = Module.Runtime
+    local targets: any = runtime and runtime.Services and runtime.Services.protectedTargets
+    return targets ~= nil and targets.isProtected(player) == true
 end
 
 local function clearEffects(folder)
@@ -1353,7 +1345,7 @@ local function setSprintActive(active: boolean): ()
 end
 
 -- Improve FPS moved to the Universal section: stripping textures, particles,
--- shadows and materials is not MM2-specific. `state.toggleImproveFps` is the
+-- shadows and materials are not MM2-specific. Improve FPS is the
 -- shared implementation; nothing here owns it any more.
 
 -- Round timer state. The remotes tell us when a round starts and ends; the
@@ -1936,7 +1928,7 @@ local function createTrajectoryCalibration(): any
             if player ~= LocalPlayer
                 and isPlayerAlive(player)
                 and getPlayerRole(player) ~= "Murderer"
-                and not state.isProtectedTarget(player) then
+                and not isProtectedTarget(player) then
                 local root: BasePart? = getTargetRoot(player)
                 if root then
                     local score: number = aimPosition
@@ -3204,7 +3196,7 @@ local function getSelectedShootTarget(): Player?
     if not target
         or target == LocalPlayer
         or not isPlayerAlive(target)
-        or state.isProtectedTarget(target) then
+        or isProtectedTarget(target) then
         return nil
     end
     if mm2Settings.shootMode ~= "Custom"
@@ -3633,7 +3625,7 @@ end
 
 local function isValidKnifeTarget(player: Player): boolean
     if player == LocalPlayer
-        or state.isProtectedTarget(player)
+        or isProtectedTarget(player)
         or not isPlayerAlive(player)
         or getPlayerRole(player) == "Murderer" then
         return false
@@ -3730,7 +3722,7 @@ local function mm2TargetProvider(): any
             for _, player: Player in ipairs(Players:GetPlayers()) do
                 if player ~= LocalPlayer
                     and isPlayerAlive(player)
-                    and not state.isProtectedTarget(player) then
+                    and not isProtectedTarget(player) then
                     target = player
                     break
                 end
@@ -4328,7 +4320,7 @@ addActionOption(FlingGroup, "Fling All Innocents", function()
                     -- so every target was flung on top of the last.
                     repeat
                         task.wait(0.05)
-                    until not state.flingRunning
+                    until not Module.Runtime.Services.activity.isActive("fling")
                 end
             end
         end

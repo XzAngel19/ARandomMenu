@@ -27,7 +27,6 @@ function Module.init(context: Runtime): any
     local host: any = context.host
     local featureConnections: any = host.featureConnections
     local disconnectFeatureConnection: any = host.disconnectFeatureConnection
-    local state: any = host.state
     local createUniversalFeature: any = host.createUniversalFeature
     local addToggleOption: any = host.addToggleOption
 
@@ -140,7 +139,6 @@ function Module.init(context: Runtime): any
             end
         )
     end
-    state.toggleImproveFps = toggleImproveFps
 
     -- Flipping an option while the feature is already on has to redo the sweep,
     -- otherwise the setting only takes effect the next time it is toggled.
