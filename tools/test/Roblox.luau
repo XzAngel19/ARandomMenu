@@ -917,6 +917,12 @@ function Mock.install(): MockWorld
     globals.setclipboard = function(contents: string): ()
         world.clipboard = contents
     end
+    -- Teleport persistence and the silence flag both live on getgenv.
+    -- A world without it cannot test either contract.
+    world.genv = {}
+    globals.getgenv = function(): any
+        return world.genv
+    end
 
     globals.OverlapParams = {
         new = function(): any
@@ -1264,6 +1270,19 @@ function Mock.install(): MockWorld
         wait = function(seconds: number?): number
             local delta: number = seconds or 0
             world.clock += delta
+            -- Publish a held LocalPlayer after N waits. Teleport
+            -- reinjection lands before the player exists; boot must
+            -- survive that window instead of indexing nil.
+            local remaining: any = world._localPlayerReleaseAfter
+            if type(remaining) == "number" then
+                world._localPlayerReleaseAfter = remaining - 1
+                if world._localPlayerReleaseAfter <= 0 then
+                    world._localPlayerReleaseAfter = nil
+                    if world._heldLocalPlayer ~= nil and world.players ~= nil then
+                        world.players.LocalPlayer = world._heldLocalPlayer
+                    end
+                end
+            end
             return delta
         end,
     }
@@ -1533,6 +1552,15 @@ function Mock.install(): MockWorld
 
     world.players = playersService
     world.localPlayer = localPlayer
+    -- Hold the already-built player off Players.LocalPlayer for N
+    -- task.wait ticks. The instance stays on world.localPlayer so
+    -- boot_shell can still parent PlayerGui before the chunk runs.
+    world.deferLocalPlayer = function(ticks: number): ()
+        local held: number = math.max(1, math.floor(ticks))
+        world._heldLocalPlayer = localPlayer
+        world._localPlayerReleaseAfter = held
+        playersService.LocalPlayer = nil
+    end
     world.camera = camera
     world.workspace = mockWorkspace
     world.vector3 = vector3

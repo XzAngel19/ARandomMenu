@@ -349,11 +349,26 @@ function Host.create(world: any): HostStub
         for _, name: string in ipairs(definition.default or {}) do
             selected[name] = true
         end
+        local function currentItems(): {string}
+            local source: any = definition.items
+            if type(source) == "function" then
+                local ok: boolean, result: any = pcall(source)
+                if ok and type(result) == "table" then
+                    return result
+                end
+                return {}
+            end
+            if type(source) == "table" then
+                return source
+            end
+            return {}
+        end
         local button: any = makeButton(optionRow(feature, label), "", 11)
         local entry: any = {
             kind = "list",
             selected = selected,
             items = definition.items,
+            itemsList = currentItems(),
             changed = definition.onChanged,
         }
         function entry.set(name: string, on: boolean): ()
@@ -369,6 +384,11 @@ function Host.create(world: any): HostStub
                 definition.onChanged(selected, names)
             end
         end
+        function entry.refresh(): ()
+            -- Re-read Items so a Save ID that just joined the store
+            -- shows up in the chooser, the way the real builder does.
+            entry.itemsList = currentItems()
+        end
         feature.options[label] = entry
         recordOptionMetadata(feature, label, "list", definition.default or {},
             definition.onChanged)
@@ -377,9 +397,7 @@ function Host.create(world: any): HostStub
         host.state.listControls = host.state.listControls or {}
         host.state.listControls[optionKey] = {
             set = entry.set,
-            refresh = function(): ()
-                entry.set("", false)
-            end,
+            refresh = entry.refresh,
             selected = selected,
         }
         if definition.onChanged then

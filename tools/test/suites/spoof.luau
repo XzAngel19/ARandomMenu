@@ -91,6 +91,51 @@ return function(ctx: any): ()
                 and names["Werewolf"] == true and names["Vampire"] == true)
     end
 
+    -- Save ID: the Custom ID joins the persisted CSV once, then the
+    -- Pack chooser after Refresh. A second click of the same id is a no-op.
+    do
+        local savedKey: string = "Universal.AnimationChanger.SavedIDs"
+        animations.Options["Custom ID"].Value = "619512767"
+        animations.Feature.options["Save ID"].run()
+        check(
+            "Save ID writes the CSV once",
+            host.configData.values[savedKey] == "619512767",
+            tostring(host.configData.values[savedKey])
+        )
+        check("Save ID queued a persist", host.saves >= 1)
+        local savesAfterFirst: number = host.saves
+        animations.Feature.options["Save ID"].run()
+        check(
+            "Save ID does not duplicate an id",
+            host.configData.values[savedKey] == "619512767",
+            tostring(host.configData.values[savedKey])
+        )
+        check("a duplicate Save ID does not persist again", host.saves == savesAfterFirst)
+        local listed: {string} = animations.Feature.options["Pack"].itemsList or {}
+        local hasSaved: boolean = false
+        for _, label: string in ipairs(listed) do
+            if label == "Saved 619512767" then
+                hasSaved = true
+            end
+        end
+        check("saved id appears in the Pack chooser after Refresh", hasSaved)
+        animations.Options["Custom ID"].Value = "1113742618"
+        animations.Feature.options["Save ID"].run()
+        check(
+            "a second Save ID appends",
+            host.configData.values[savedKey] == "619512767,1113742618",
+            tostring(host.configData.values[savedKey])
+        )
+        local listedTwo: {string} = animations.Feature.options["Pack"].itemsList or {}
+        local hasSecond: boolean = false
+        for _, label: string in ipairs(listedTwo) do
+            if label == "Saved 1113742618" then
+                hasSecond = true
+            end
+        end
+        check("the second saved id appears after Refresh", hasSecond)
+    end
+
     -- The Animate-script path, which is the one that works in a game that ships
     -- its own character scripts.
     local animate: any = Mock.newInstance("LocalScript")
@@ -124,9 +169,9 @@ return function(ctx: any): ()
         }
     end
     local loadedContainer: any = nil
+    local opened: {string} = {}
     world.globals.game.GetObjects = function(_self: any, asset: string): {any}
-        check("the bundle item is opened before use",
-            asset == "rbxassetid://619512767", asset)
+        table.insert(opened, asset)
         local container: any = Mock.newInstance("Folder")
         local clip: any = Mock.newInstance("Animation")
         clip.AnimationId = "rbxassetid://913376220"
@@ -137,6 +182,11 @@ return function(ctx: any): ()
     Mock.inject(world, AnimationFile.resolveClipId)
     Mock.inject(world, AnimationFile.resolveBundle)
     local resolvedBundle: any = AnimationFile.resolveBundle(12345)
+    check(
+        "the bundle item is opened before use",
+        opened[1] == "rbxassetid://619512767",
+        opened[1]
+    )
     check("a bundle container resolves to its playable clip",
         resolvedBundle.RunAnimation == 913376220,
         tostring(resolvedBundle.RunAnimation))
@@ -193,6 +243,38 @@ return function(ctx: any): ()
     end
     check("module teardown destroys every track it loaded",
         liveTracks == 0, "live tracks: " .. tostring(liveTracks))
+
+    -- EmotePlayer Save ID: same CSV-once / Refresh contract as Animation
+    -- Changer, on its own key, so a rejoin still has the id in the chooser.
+    do
+        local savedKey: string = "Universal.EmotePlayer.SavedIDs"
+        emotePlayer.Options["Custom ID"].Value = "507770239"
+        emotePlayer.Feature.options["Save ID"].run()
+        check(
+            "emote Save ID writes the CSV once",
+            host.configData.values[savedKey] == "507770239",
+            tostring(host.configData.values[savedKey])
+        )
+        local savesAfterFirst: number = host.saves
+        emotePlayer.Feature.options["Save ID"].run()
+        check(
+            "emote Save ID does not duplicate an id",
+            host.configData.values[savedKey] == "507770239",
+            tostring(host.configData.values[savedKey])
+        )
+        check(
+            "a duplicate emote Save ID does not persist again",
+            host.saves == savesAfterFirst
+        )
+        local listed: {string} = emotePlayer.Feature.options["Emote"].itemsList or {}
+        local hasSaved: boolean = false
+        for _, label: string in ipairs(listed) do
+            if label == "Saved 507770239" then
+                hasSaved = true
+            end
+        end
+        check("saved emote id appears in the chooser after Refresh", hasSaved)
+    end
 
     -- Teardown -------------------------------------------------------------------
 

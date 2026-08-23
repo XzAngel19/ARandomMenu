@@ -634,6 +634,19 @@ step "Bundle stamp matches the sources"
 python3 tools/bundle.py --check
 echo "ok"
 
+step "Silence gate"
+# print/warn are local shadows inside bootstrap(). A module or the bundle
+# reaching for realPrint/realWarn (or getfenv().print) is a leak past
+# getgenv().ARANDOMMENU_DEBUG. The shell file is the only allowed site.
+python3 tools/check_silence.py
+
+step "Module architecture conformance"
+# D's authoring contract, with teeth: no ScreenGui/PopupLayer reach-ins,
+# no configData keys outside Universal/UI/ClickGUI/Shortcut/WurstLogo,
+# no bare print/warn in src/modules. Report-only while the tree is dirty;
+# the script flips itself to hard-fail the moment the last finding dies.
+python3 tools/check_module_conformance.py
+
 step "Module contracts II: options, state, builders, text boxes, slop"
 # Three whole classes of bug that only ever showed up in-game, checked here
 # instead:
