@@ -5,6 +5,7 @@ Rejects, when armed:
   (a) ScreenGui / PopupLayer reach-ins
   (b) configData keys outside the documented namespaces
   (c) bare print / warn
+  (d) direct host.state access
 
 The gate is blocking. Modules use the shell-owned `isMenuOwned` predicate
 instead of reaching into GUI roots, and user-facing diagnostics go through
@@ -36,6 +37,7 @@ ALLOWED_KEY_PREFIXES = (
 
 SCREEN = re.compile(r"\b(?:ScreenGui|PopupLayer)\b")
 PRINT = re.compile(r"\b(?:print|warn)\s*\(")
+HOST_STATE = re.compile(r"\bhost\s*\.\s*state\b")
 SAVED_KEY = re.compile(r'(?:local\s+)?SAVED_KEY\s*:\s*string\s*=\s*"([^"]+)"')
 CONFIG_INDEX = re.compile(
     r'(?:configData|store)\s*\.\s*(?:values|states)\s*\[\s*"([^"]+)"\s*\]'
@@ -81,6 +83,13 @@ def scan(rel: str) -> list[str]:
         if not is_code(line):
             continue
         findings.append(f"{rel}:{line_no}: bare {match.group(0).strip()}")
+
+    for match in HOST_STATE.finditer(text):
+        line_no = text.count("\n", 0, match.start()) + 1
+        line = text.splitlines()[line_no - 1]
+        if not is_code(line):
+            continue
+        findings.append(f"{rel}:{line_no}: direct host.state access")
 
     keys: list[tuple[int, str]] = []
     for match in CONFIG_INDEX.finditer(text):

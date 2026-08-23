@@ -15,6 +15,7 @@ export type Runtime = {
     framework: any,
     entity: any,
     host: any,
+    services: any,
 }
 
 local Module = {
@@ -29,7 +30,9 @@ local activeCleanup: (() -> ())? = nil
 function Module.init(context: Runtime): any
     local host: any = context.host
     local framework: any = context.framework
-    local state: any = host.state
+    local movementInput: any = context.services.movementInput
+    local platformStand: any = context.services.platformStandOwnership
+    local mobileActions: any = context.services.mobileActions
     local getCharacterParts: any = host.getCharacterParts
     local UserInputService: any = host.UserInputService
     local currentWorkspace: Workspace = host.workspace or workspace
@@ -72,60 +75,13 @@ function Module.init(context: Runtime): any
         walkSpeed = nil :: number?,
     }
     local flySmoothedVelocity: Vector3 = Vector3.zero
-    -- PlatformStand is contested: Fly wants the character ragdolled while
-    -- VehicleSpeed may want it standing, and both can be on at once. The
-    -- controller arbitrates — the last owner to speak wins, and every baseline
-    -- goes back when the last owner leaves. It lives on `state` because the
-    -- two modules share it; it is not Fly's alone.
-    state.platformStandController = {
-        owners = {},
-        baselines = setmetatable({}, {__mode = "k"}),
-        sequence = 0,
-    }
-    state.platformStandController.set = function(ownerId: string, value: boolean?): ()
-        local controller: any = state.platformStandController
-        if value == nil then
-            controller.owners[ownerId] = nil
-            if next(controller.owners) == nil then
-                for humanoid: Humanoid, baseline: boolean in pairs(controller.baselines) do
-                    if humanoid.Parent then
-                        humanoid.PlatformStand = baseline
-                    end
-                end
-                controller.baselines = setmetatable({}, {__mode = "k"})
-            end
-            return
-        end
-        local owner: any = controller.owners[ownerId]
-        if not owner then
-            controller.sequence += 1
-            owner = {sequence = controller.sequence, value = value}
-            controller.owners[ownerId] = owner
-        else
-            owner.value = value
-        end
-    end
-    state.platformStandController.apply = function(humanoid: Humanoid): ()
-        local controller: any = state.platformStandController
-        if controller.baselines[humanoid] == nil then
-            controller.baselines[humanoid] = humanoid.PlatformStand
-        end
-        local selected: any = nil
-        for _, owner: any in pairs(controller.owners) do
-            if not selected or owner.sequence > selected.sequence then
-                selected = owner
-            end
-        end
-        if selected then
-            humanoid.PlatformStand = selected.value
-        end
-    end
+    -- Shared ownership prevents movement modules from fighting over PlatformStand.
     local flyObjects: {[Instance]: boolean} =
         setmetatable({}, {__mode = "k"}) :: any
     local flyTouchVertical: number = 0
 
     local function removeFlyObjects(): ()
-        state.platformStandController.set("Fly", nil)
+        platformStand.set("Fly", nil)
 
         for object: Instance in pairs(flyObjects) do
             if object.Parent then
@@ -207,7 +163,7 @@ function Module.init(context: Runtime): any
         -- control module: keyboard, thumbstick or gamepad, and it keeps answering
         -- while PlatformStand is on — the exact case where `MoveDirection` goes
         -- quiet and flying on a phone left the character frozen in place.
-        local forwardScalar: number, rightScalar: number = state.getMoveInput()
+        local forwardScalar: number, rightScalar: number = movementInput.getVector()
         local horizontal: Vector3 = cameraForward * forwardScalar
             + cameraRight * rightScalar
         if horizontal.Magnitude > 1 then
@@ -227,7 +183,7 @@ function Module.init(context: Runtime): any
         end
         -- On touch the jump button doubles as "up" so flying needs no placed
         -- button at all to get off the ground.
-        if vertical == 0 and not UserInputService.KeyboardEnabled and state.isJumpHeld() then
+        if vertical == 0 and not UserInputService.KeyboardEnabled and movementInput.isJumpHeld() then
             vertical = 1
         end
 
@@ -522,8 +478,8 @@ function Module.init(context: Runtime): any
                     (root :: BasePart).AssemblyLinearVelocity = Vector3.zero
                 end
                 if humanoid then
-                    state.platformStandController.set("Fly", false)
-                    state.platformStandController.apply(humanoid :: Humanoid)
+                    platformStand.set("Fly", false)
+                    platformStand.apply(humanoid :: Humanoid)
                 end
                 return
             end
@@ -547,11 +503,11 @@ function Module.init(context: Runtime): any
                 local canRagdoll: boolean = method ~= "WalkSpeed"
                     and floatMethod ~= "Floor"
                     and floatMethod ~= "Jump"
-                state.platformStandController.set(
+                platformStand.set(
                     "Fly",
                     canRagdoll and (flySettings.platformStand or method == "CFrame")
                 )
-                state.platformStandController.apply(humanoid)
+                platformStand.apply(humanoid)
 
                 local moveDirection, vertical, cameraForward = getFlyDirection(camera)
                 if flySettings.wallCheck and moveDirection.Magnitude > 0.001 then
@@ -715,8 +671,8 @@ function Module.init(context: Runtime): any
     -- Climbing and descending are holds on a keyboard, so they are holds on a
     -- phone too: keep a finger on UP to rise, lift it to level off. They used to
     -- latch on tap, which made hovering at a height nearly impossible.
-    if state.bindMobileActionPlacement then
-        state.bindMobileActionPlacement(
+    if mobileActions.bindPlacement then
+        mobileActions.bindPlacement(
             upKey.Object,
             "UniversalFlyUp",
             "UP",
@@ -732,7 +688,7 @@ function Module.init(context: Runtime): any
                 end,
             }
         )
-        state.bindMobileActionPlacement(
+        mobileActions.bindPlacement(
             downKey.Object,
             "UniversalFlyDown",
             "DOWN",

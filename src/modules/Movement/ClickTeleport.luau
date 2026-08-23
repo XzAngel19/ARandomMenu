@@ -23,6 +23,7 @@ export type Runtime = {
     framework: any,
     entity: any,
     host: any,
+    services: any,
 }
 
 local Module = {
@@ -48,7 +49,7 @@ function Module.init(context: Runtime): any
     local framework: any = context.framework
     local localPlayer: Player = host.LocalPlayer
     local userInput: UserInputService = host.UserInputService
-    local state: any = host.state
+    local menu: any = context.services.menu
 
     local runtime: any = {
         armedUntil = 0,
@@ -194,7 +195,7 @@ function Module.init(context: Runtime): any
             if processed or os.clock() >= runtime.armedUntil then
                 return
             end
-            if state.keyCaptureCallback or state.waitingForKey then
+            if menu.isCapturingInput() then
                 return
             end
             local touched: boolean = input.UserInputType == Enum.UserInputType.Touch

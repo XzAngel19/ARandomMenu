@@ -30,6 +30,7 @@ export type Runtime = {
     framework: any,
     entity: any,
     host: any,
+    services: any,
 }
 
 local Module = {
@@ -43,7 +44,7 @@ local activeCleanup: (() -> ())? = nil
 
 function Module.init(context: Runtime): any
     local host: any = context.host
-    local state: any = host.state
+    local movementInput: any = context.services.movementInput
     local framework: any = context.framework
     local LocalPlayer: Player = host.LocalPlayer
     local currentWorkspace: Workspace = host.workspace or workspace
@@ -79,8 +80,8 @@ function Module.init(context: Runtime): any
     local function moveDirection(): Vector3
         local camera: Camera? = currentWorkspace.CurrentCamera
         local forward: number, right: number = 0, 0
-        if state.getMoveInput then
-            forward, right = state.getMoveInput()
+        if movementInput.getVector then
+            forward, right = movementInput.getVector()
         end
         if forward == 0 and right == 0 then
             local _, humanoid: Humanoid? = characterParts()

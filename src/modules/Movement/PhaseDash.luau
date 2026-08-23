@@ -10,6 +10,7 @@ export type Runtime = {
     framework: any,
     entity: any,
     host: any,
+    services: any,
 }
 
 local Module = {
@@ -25,7 +26,7 @@ function Module.init(context: Runtime): any
     local host: any = context.host
     local framework: any = context.framework
     local getCharacterParts: any = host.getCharacterParts
-    local state: any = host.state
+    local shortcuts: any = context.services.shortcuts
     type PhaseDashSettings = {
         mode: string,
         distance: number,
@@ -252,7 +253,7 @@ function Module.init(context: Runtime): any
     -- like every other slot — the module used to arrive pre-bound to Q for no
     -- reason the player could see. On touch, tapping the slot places a DASH
     -- button.
-    state.bindFeatureActivationKey(phaseDash.Feature, nil, performPhaseDash)
+    shortcuts.bindActivation(phaseDash.Feature, nil, performPhaseDash)
 
     activeCleanup = function(): ()
         phaseDashEnabled = false

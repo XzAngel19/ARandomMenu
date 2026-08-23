@@ -120,22 +120,22 @@ return function(ctx: any): ()
 
     -- With the ally protected, the nearest *targetable* player is the enemy.
     resetLocal()
-    host.state.friendList.names = {ally = true}
+    ctx.setOption(ctx.friendList, "Protected names", "ally")
     clickTeleport.Feature.activate()
     check("skips players on the friend list",
         localRoot.CFrame.Position.Z == -100,
         "z: " .. tostring(localRoot.CFrame.Position.Z))
-    host.state.friendList.names = {}
+    ctx.setOption(ctx.friendList, "Protected names", "")
 
     -- The player offset stops you short of the target instead of inside it.
     resetLocal()
     clickTeleport.Options["Player offset"].Value = 4
-    host.state.friendList.names = {ally = true}
+    ctx.setOption(ctx.friendList, "Protected names", "ally")
     clickTeleport.Feature.activate()
     check("stops short of the target by the player offset",
         localRoot.CFrame.Position.Z == -96,
         "z: " .. tostring(localRoot.CFrame.Position.Z))
-    host.state.friendList.names = {}
+    ctx.setOption(ctx.friendList, "Protected names", "")
 
     -- Named player, matched on part of the name.
     resetLocal()

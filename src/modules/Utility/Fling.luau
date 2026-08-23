@@ -11,6 +11,7 @@ export type Runtime = {
     framework: any,
     entity: any,
     host: any,
+    services: any,
 }
 
 local Module = {
@@ -28,7 +29,8 @@ function Module.init(context: Runtime): any
     local LocalPlayer: any = host.LocalPlayer
     local getCharacterParts: any = host.getCharacterParts
     local notify: any = host.notify
-    local state: any = host.state
+    local activity: any = context.services.activity
+    local protectedTargets: any = context.services.protectedTargets
     local createUniversalFeature: any = host.createUniversalFeature
     local addToggleOption: any = host.addToggleOption
     local addNumberOption: any = host.addNumberOption
@@ -54,7 +56,7 @@ function Module.init(context: Runtime): any
     -- never stood down and fought the fling it was supposed to allow.
     local function setFlingRunning(running: boolean): ()
         flingRunning = running
-        state.flingRunning = running
+        activity.set("fling", running)
     end
     local findPlayerByText: (string) -> Player?
     local performFling: (Player) -> ()
@@ -126,7 +128,7 @@ function Module.init(context: Runtime): any
     -- a respawn cannot strand the routine, alternates Stepped/Heartbeat so the
     -- velocity actually replicates, and always restores the character.
     performFling = function(targetPlayer: Player): ()
-        if state.isProtectedTarget(targetPlayer) then
+        if protectedTargets.isProtected(targetPlayer) then
             notify("player protected")
             return
         end

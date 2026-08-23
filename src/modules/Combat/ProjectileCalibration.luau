@@ -19,6 +19,7 @@ export type Runtime = {
     framework: any,
     entity: any,
     host: any,
+    services: any,
 }
 
 local Module = {
@@ -29,10 +30,11 @@ local Module = {
 }
 
 local activeController: any = nil
+local activeRegistry: any = nil
 
 function Module.init(context: Runtime): any
     local host: any = context.host
-    local state: any = host.state
+    local calibrationService: any = context.services.projectileCalibration
     local product: any = host.PRODUCT
     local notify: any = host.notify
     local createUniversalFeature: any = host.createUniversalFeature
@@ -674,11 +676,11 @@ function Module.init(context: Runtime): any
 
 
     local calibration: any = controllerFactory
-    state.universalProjectileCalibration = calibration
+    calibrationService.set(calibration)
+    activeRegistry = calibrationService
     calibration:setEnabled(true)
 
     local tuning: any = calibration.tuning
-    state.projectileSettings = tuning
 
     local ProjectileCalibrationFeature: any = createUniversalFeature(
         "Projectile Calibration",
@@ -783,6 +785,10 @@ function Module.destroy(): ()
         end)
     end
     activeController = nil
+    if activeRegistry then
+        activeRegistry.set(nil)
+    end
+    activeRegistry = nil
     Module.Initialized = false
 end
 

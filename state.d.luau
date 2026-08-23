@@ -107,7 +107,6 @@ export type MenuState = {
     gameRoleProvider: any,                          -- What that provider is, for the panels that show it
     gameTargetProvider: any,                        -- and how it names the current target
     isProtectedTarget: (Player) -> boolean,         -- Answered by the friend list; false until it loads
-    friendList: any,                                -- The list itself
 
     -- Loading
     boot: any,                                      -- Timings, the bundle, and the sources already in hand
@@ -166,20 +165,6 @@ export type MenuState = {
     bitmapText: any,                                -- The bitmap text contract: metrics and the one maker every ClickGUI label will go through
 
     -- Published by a module, read by another
-    flingRunning: boolean,                          -- A fling of your own is in flight; Anti-Fling stands down
-    fovController: any,                             -- One owner for the camera's field of view
-    platformStandController: any,                   -- One owner for PlatformStand, so two engines cannot fight
-    infiniteJumpEnabled: boolean,                   -- Read by the movement engines that must not fight it
-    lastInfiniteJumpAt: number,
-    toggleFullbright: (boolean) -> (),              -- So a game module can force it
-    fullbrightSettings: any,                        -- and read what it is set to
-    originalLighting: any,                          -- Every Lighting value as it was found
-    toggleImproveFps: (boolean) -> (),              -- So a game module can force it
-    projectileSettings: any,                        -- Calibration a game module can pre-fill
-    universalProjectileCalibration: any,
-    spoofDescription: string,                       -- What the disguise is pretending to be
-    spoofEmotes: any,                               -- and which emotes it borrowed
-    remoteLog: any,                                 -- Captured remote traffic, read by the settings actions
     mm2KnifeRuntime: any,                           -- MM2 internals other MM2 cards share
     mm2ShotFeedback: any,
     mm2TrajectoryCalibration: any,

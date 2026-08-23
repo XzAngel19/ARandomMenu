@@ -29,7 +29,7 @@ return function(ctx: any): ()
         local FrameworkFile: any = require("../../../src/core/Framework")
         Mock.inject(world, FrameworkFile.init)
         local framework: any = FrameworkFile.init(host)
-        context = {framework = framework, entity = nil, weapons = nil, render = nil, host = host}
+        context = {framework = framework, entity = nil, weapons = nil, render = nil, host = host, services = host.services}
     end
     ctx.espContext = context
 
@@ -62,12 +62,12 @@ return function(ctx: any): ()
 
     -- Your own fling is deliberate; Anti-Fling used to read a global that was
     -- nil and never stood down for it. This is that regression.
-    host.state.flingRunning = true
+    host.services.activity.set("fling", true)
     root.AssemblyLinearVelocity = vector3(5000, 5000, 5000)
     stub.step(1 / 60)
     check("it stands down while a fling of your own is running",
         root.AssemblyLinearVelocity.Magnitude > 0)
-    host.state.flingRunning = nil
+    host.services.activity.set("fling", false)
 
     root.CFrame = world.globals.CFrame.new(vector3(0, 0, 0))
     root.AssemblyLinearVelocity = vector3(0, 0, 0)

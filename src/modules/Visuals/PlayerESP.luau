@@ -16,6 +16,7 @@ export type Runtime = {
     framework: any,
     entity: any,
     host: any,
+    services: any,
 }
 
 local Module = {
@@ -329,8 +330,9 @@ function Module.init(context: Runtime): any
         end
     end
 
-    if host.state and type(host.state.onGameBridge) == "function" then
-        host.state.onGameBridge(function(kind: string, payload: any): ()
+    local gameBridge: any = context.services.gameBridge
+    if type(gameBridge.onEvent) == "function" then
+        gameBridge.onEvent(function(kind: string, payload: any): ()
             if kind == "roles" then
                 addRoleRows(payload)
             elseif kind == "extra" then
@@ -358,6 +360,7 @@ function Module.render(
     local host: any = context.host
     local entityLibrary: any = context.entity
     local render: any = context.render
+    local gameBridge: any = context.services.gameBridge
     local currentWorkspace: Workspace = host.workspace or workspace
     local camera: Camera? = currentWorkspace.CurrentCamera
     if not camera then
@@ -410,8 +413,8 @@ function Module.render(
         -- A role beats a team: in a game with roles, "murderer" is the fact
         -- the colour is there to carry, and the team is usually meaningless.
         local role: string? = nil
-        if host.state and type(host.state.playerRole) == "function" then
-            role = host.state.playerRole(player)
+        if type(gameBridge.playerRole) == "function" then
+            role = gameBridge.playerRole(player)
         end
         local roleOption: any = role and options[role .. " colour"] or nil
         local useRoleColour: boolean = roleOption ~= nil

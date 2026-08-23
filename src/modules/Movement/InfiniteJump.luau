@@ -12,6 +12,7 @@ export type Runtime = {
     framework: any,
     entity: any,
     host: any,
+    services: any,
 }
 
 local Module = {
@@ -27,7 +28,7 @@ function Module.init(context: Runtime): any
     local host: any = context.host
     local framework: any = context.framework
     local getCharacterParts: any = host.getCharacterParts
-    local state: any = host.state
+    local movementInput: any = context.services.movementInput
     local UserInputService: any = host.UserInputService
     local infiniteJumpSettings = {
         mode = "Normal",
@@ -41,14 +42,14 @@ function Module.init(context: Runtime): any
     -- Both the enabled flag and the rate limiter live on `state` so the jump
     -- callback can keep checking them after the module's own teardown has
     -- started — a signal already dispatching still delivers one last event.
-    state.infiniteJumpEnabled = false
-    state.lastInfiniteJumpAt = -math.huge
+    local enabledNow: boolean = false
+    local lastJumpAt: number = -math.huge
 
     local function performInfiniteJump(): ()
         -- A disconnected signal can still deliver the event it was already
         -- dispatching, which on touch — where the jump button fires continuously —
         -- kept launching the character after the module had been switched off.
-        if not state.infiniteJumpEnabled then
+        if not enabledNow then
             return
         end
 
@@ -66,10 +67,10 @@ function Module.init(context: Runtime): any
         end
 
         local now: number = os.clock()
-        if now - state.lastInfiniteJumpAt < spacing then
+        if now - lastJumpAt < spacing then
             return
         end
-        state.lastInfiniteJumpAt = now
+        lastJumpAt = now
 
         local velocity: Vector3 = root.AssemblyLinearVelocity
         local vertical: number
@@ -110,17 +111,17 @@ function Module.init(context: Runtime): any
         Tooltip = "Jump again in mid-air, as a fixed height, a force, a "
             .. "climbing stack, a hold that rises, or a fall cancel.",
         Function = function(enabled: boolean): ()
-            state.infiniteJumpEnabled = false
-            state.lastInfiniteJumpAt = -math.huge
+            enabledNow = false
+            lastJumpAt = -math.huge
             if not enabled then
                 jump:SetStatus(nil)
                 return
             end
-            state.infiniteJumpEnabled = true
+            enabledNow = true
             jump:SetStatus(infiniteJumpSettings.mode)
 
             -- `JumpRequest` is the one jump signal every device raises.
-            jump:Clean(state.onJumpRequest(function(): ()
+            jump:Clean(movementInput.onJumpRequest(function(): ()
                 if infiniteJumpSettings.mode == "Rise" then
                     return
                 end
@@ -128,9 +129,9 @@ function Module.init(context: Runtime): any
             end))
 
             jump:Loop(function(): ()
-                if not state.infiniteJumpEnabled
+                if not enabledNow
                     or infiniteJumpSettings.mode ~= "Rise"
-                    or not state.isJumpHeld() then
+                    or not movementInput.isJumpHeld() then
                     return
                 end
 
@@ -200,8 +201,8 @@ function Module.init(context: Runtime): any
     jump:RefreshVisibility()
 
     activeCleanup = function(): ()
-        state.infiniteJumpEnabled = false
-        state.lastInfiniteJumpAt = -math.huge
+        enabledNow = false
+        lastJumpAt = -math.huge
     end
     Module.Initialized = true
     return jump

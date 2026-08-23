@@ -9,6 +9,7 @@ export type Runtime = {
     framework: any,
     entity: any,
     host: any,
+    services: any,
 }
 
 local Module = {
@@ -53,8 +54,8 @@ function Module.init(context: Runtime): any
         end
     end
     local actionId: string = "RejoinServer"
-    local wurstOptions: any = host.state
-        and rawget(host.state, "wurstOptions")
+    local registries: any = context.services.registries
+    local wurstOptions: any = registries.wurstOptions()
     if wurstOptions and type(wurstOptions.RegisterAction) == "function" then
         local registered: boolean, registration: any = pcall(
             wurstOptions.RegisterAction,
@@ -69,7 +70,7 @@ function Module.init(context: Runtime): any
         if not registered then
             error("Wurst Options refused Rejoin Server: " .. tostring(registration))
         end
-        local search: any = rawget(host.state, "moduleSearch")
+        local search: any = registries.moduleSearch()
         local searchFeature: any = {
             name = "Rejoin Server",
             configKey = "Universal.RejoinServer",

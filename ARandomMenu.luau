@@ -363,7 +363,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "0e12ed0f32e1fca6"
+local SOURCE_STAMP: string = "9018948617faaa77"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -5226,6 +5226,8 @@ local function createGameModuleEnvironment(
         DEFAULT_SURFACE_COLOR = DEFAULT_SURFACE_COLOR,
         DEFAULT_BORDER_COLOR = DEFAULT_BORDER_COLOR,
         state = state,
+        -- Filled with the typed module-service table before libraries/modules load.
+        services = nil,
         configData = configData,
         queueConfigSave = queueConfigSave,
         create = create,
@@ -5482,6 +5484,7 @@ local function registerPlaceModule(
                 Notify = notify,
             },
             State = state,
+            Services = state.frameworkEnvironment.services,
             TaskManager = TaskManager,
             Diagnostics = diagnostics,
         }
@@ -5922,6 +5925,137 @@ do
 local diagnostics: ModuleDiagnostics = {uiBindings = 0, taskBindings = 0}
 state.frameworkEnvironment = createGameModuleEnvironment(diagnostics)
 
+-- Universal modules receive this small service surface instead of the shell's
+-- mutable state table. Related operations stay grouped, and the values owned
+-- by one module remain inside that module.
+type OwnershipService = {
+    set: (string, any?) -> (),
+    apply: (Instance?) -> (),
+}
+type ModuleServices = {
+    movementInput: any,
+    aim: any,
+    menu: any,
+    mobileActions: any,
+    protectedTargets: any,
+    fovOwnership: OwnershipService,
+    platformStandOwnership: OwnershipService,
+    activity: any,
+    spoofAvatar: any,
+    projectileCalibration: any,
+    gameBridge: any,
+    shortcuts: any,
+    registries: any,
+}
+
+local function makePropertyOwnership(propertyName: string): OwnershipService
+    local owners: {[string]: any} = {}
+    local baselines: any = setmetatable({}, {__mode = "k"})
+    local sequence: number = 0
+    local service: any = {}
+    function service.set(ownerId: string, value: any?): ()
+        if value == nil then
+            owners[ownerId] = nil
+            if next(owners) == nil then
+                for instance: any, baseline: any in pairs(baselines) do
+                    if instance.Parent then
+                        instance[propertyName] = baseline
+                    end
+                end
+                baselines = setmetatable({}, {__mode = "k"})
+            end
+            return
+        end
+        local owner: any = owners[ownerId]
+        if not owner then
+            sequence += 1
+            owner = {sequence = sequence, value = value}
+            owners[ownerId] = owner
+        else
+            owner.value = value
+        end
+    end
+    function service.apply(instance: Instance?): ()
+        if not instance then
+            return
+        end
+        local target: any = instance
+        if baselines[target] == nil then
+            baselines[target] = target[propertyName]
+        end
+        local selected: any = nil
+        for _, owner: any in pairs(owners) do
+            if not selected or owner.sequence > selected.sequence then
+                selected = owner
+            end
+        end
+        if selected then
+            target[propertyName] = selected.value
+        end
+    end
+    return service :: OwnershipService
+end
+
+local protectedTargetProvider: (Player?) -> boolean = function(player: Player?): boolean
+    return player == nil or player == LocalPlayer
+end
+local activityFlags: {[string]: boolean} = {}
+local spoofEmotes: {any} = {}
+local spoofDescription: HumanoidDescription? = nil
+local projectileCalibrationOwner: any = nil
+local moduleServices: ModuleServices = {
+    movementInput = {
+        getVector = state.getMoveInput,
+        isJumpHeld = state.isJumpHeld,
+        onJumpRequest = state.onJumpRequest,
+    },
+    aim = {getRay = state.getAimRay},
+    menu = {
+        isVisible = function(): boolean return state.visible == true end,
+        isCapturingInput = function(): boolean
+            return state.keyCaptureCallback ~= nil or state.waitingForKey == true
+        end,
+        setVisible = function(visible: boolean): () state.setMenuVisible(visible) end,
+    },
+    mobileActions = {bindPlacement = state.bindMobileActionPlacement},
+    protectedTargets = {
+        isProtected = function(player: Player?): boolean
+            return protectedTargetProvider(player)
+        end,
+        setProvider = function(provider: ((Player?) -> boolean)?): ()
+            protectedTargetProvider = provider or function(player: Player?): boolean
+                return player == nil or player == LocalPlayer
+            end
+        end,
+    },
+    fovOwnership = makePropertyOwnership("FieldOfView"),
+    platformStandOwnership = makePropertyOwnership("PlatformStand"),
+    activity = {
+        set = function(name: string, active: boolean): () activityFlags[name] = active end,
+        isActive = function(name: string): boolean return activityFlags[name] == true end,
+    },
+    spoofAvatar = {
+        getEmotes = function(): {any} return spoofEmotes end,
+        setEmotes = function(emotes: {any}): () spoofEmotes = emotes end,
+        getDescription = function(): HumanoidDescription? return spoofDescription end,
+        setDescription = function(value: HumanoidDescription?): () spoofDescription = value end,
+    },
+    projectileCalibration = {
+        set = function(owner: any): () projectileCalibrationOwner = owner end,
+        get = function(): any return projectileCalibrationOwner end,
+    },
+    gameBridge = {
+        onEvent = state.onGameBridge,
+        playerRole = state.playerRole,
+    },
+    shortcuts = {bindActivation = state.bindFeatureActivationKey},
+    registries = {
+        wurstOptions = function(): any return state.wurstOptions end,
+        moduleSearch = function(): any return state.moduleSearch end,
+    },
+}
+state.frameworkEnvironment.services = moduleServices
+
 -- Kept in step with src/core/Manifest.luau by the validation workflow.
 local fallbackManifest: any = {
     version = 1,
@@ -6157,6 +6291,7 @@ local context: any = {
     render = libraries.render,
     libraries = libraries,
     host = state.frameworkEnvironment,
+    services = moduleServices,
 }
 local modulesAt: number = os.clock()
 local moduleCount: number = 0
@@ -6444,9 +6579,15 @@ local function cleanupRuntime(): ()
         table.clear(state.uiConnections)
     end)
     cleanupStep("projectile calibration", function(): ()
-        local calibration: any = state.universalProjectileCalibration
+        local services: any = state.frameworkEnvironment
+            and state.frameworkEnvironment.services
+        local registry: any = services and services.projectileCalibration
+        local calibration: any = registry and registry.get()
         if calibration and type(calibration.destroy) == "function" then
             calibration:destroy()
+        end
+        if registry then
+            registry.set(nil)
         end
     end)
     cleanupStep("task manager", function(): ()

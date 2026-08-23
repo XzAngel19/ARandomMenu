@@ -18,6 +18,7 @@ export type Runtime = {
     framework: any,
     entity: any,
     host: any,
+    services: any,
 }
 
 local Module = {
@@ -214,7 +215,7 @@ function Module.resolveTarget(context: Runtime, trigger: any): (Player?, number)
     local currentWorkspace: Workspace = host.workspace or workspace
     local options: any = trigger.Options
 
-    local ray: Ray? = host.state.getAimRay()
+    local ray: Ray? = context.services.aim.getRay()
     if not ray then
         return nil, 0
     end

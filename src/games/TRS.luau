@@ -215,7 +215,7 @@ local function buildTRSFeatures()
     local function validCarrier(owner)
         if not owner
             or owner == LocalPlayer
-            or state.isProtectedTarget(owner)
+            or Module.Runtime.Services.protectedTargets.isProtected(owner)
             or not owner.Character then
             return false
         end

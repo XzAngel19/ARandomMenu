@@ -28,7 +28,7 @@ return function(ctx: any): ()
         local FrameworkFile: any = require("../../../src/core/Framework")
         Mock.inject(world, FrameworkFile.init)
         local framework: any = FrameworkFile.init(host)
-        context = {framework = framework, entity = nil, weapons = nil, render = nil, host = host}
+        context = {framework = framework, entity = nil, weapons = nil, render = nil, host = host, services = host.services}
     end
     ctx.espContext = context
 
@@ -85,17 +85,16 @@ return function(ctx: any): ()
 
     local victim: any = world.addPlayer("FlingTarget", "Red", vector3(0, 0, 6))
     victim.Parent = host.Players
-    local originalProtection: any = host.state.isProtectedTarget
-    host.state.isProtectedTarget = function(_player: any): boolean
+    host.services.protectedTargets.setProvider(function(_player: any): boolean
         return true
-    end
+    end)
     fling.activate()
     check("a protected player is refused with the reason",
         #stub.notifications > 0
             and stub.notifications[#stub.notifications]
                 == "player protected",
         "notified: " .. tostring(stub.notifications[#stub.notifications]))
-    host.state.isProtectedTarget = originalProtection
+    host.services.protectedTargets.setProvider(nil)
 
     -- In the stand-in there is no RunService, so the orbit loop fails on its
     -- first wait — which is exactly the path worth pinning: restoration runs
@@ -116,7 +115,7 @@ return function(ctx: any): ()
             and string.sub(stub.notifications[#stub.notifications], 1, 13) == "fling failed:",
         "notified: " .. tostring(stub.notifications[#stub.notifications] ))
     check("the running flag is cleared for the next attempt",
-        host.state.flingRunning == false)
+        not host.services.activity.isActive("fling"))
     check("no task is held", stub.taskCount() == baseline)
 
     section("Gravity")

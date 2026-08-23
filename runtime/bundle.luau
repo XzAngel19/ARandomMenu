@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "0e12ed0f32e1fca6",
+    stamp = "9018948617faaa77",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -2808,6 +2808,53 @@ return Module
 
 export type CleanupItem = any
 
+export type MovementInputService = {
+    getVector: () -> (number, number),
+    isJumpHeld: () -> boolean,
+    onJumpRequest: ((() -> ())) -> RBXScriptConnection,
+}
+
+export type OwnershipService<T> = {
+    set: (ownerId: string, value: T?) -> (),
+    apply: (instance: Instance?) -> (),
+}
+
+export type ModuleServices = {
+    movementInput: MovementInputService,
+    aim: {getRay: () -> Ray?},
+    menu: {
+        isVisible: () -> boolean,
+        isCapturingInput: () -> boolean,
+        setVisible: (boolean) -> (),
+    },
+    mobileActions: {bindPlacement: (...any) -> any},
+    protectedTargets: {
+        isProtected: (Player?) -> boolean,
+        setProvider: (((Player?) -> boolean)?) -> (),
+    },
+    fovOwnership: OwnershipService<number>,
+    platformStandOwnership: OwnershipService<boolean>,
+    activity: {
+        set: (string, boolean) -> (),
+        isActive: (string) -> boolean,
+    },
+    spoofAvatar: any,
+    projectileCalibration: any,
+    gameBridge: any,
+    shortcuts: any,
+    registries: any,
+}
+
+export type ModuleContext = {
+    framework: Framework,
+    entity: any,
+    weapons: any,
+    render: any,
+    libraries: {[string]: any},
+    host: any,
+    services: ModuleServices,
+}
+
 export type Option = {
     Name: string,
     -- Live value, kept in sync by the option's own callback so a module can
@@ -3970,9 +4017,9 @@ function Module.init(context: any): EntityLibrary
     -- The friend list is universal and may not be loaded yet, so the question
     -- is asked through `state` rather than captured at init.
     function library:IsProtected(player: Player): boolean
-        local friendList: any = host.state and host.state.friendList
-        if friendList and type(friendList.isProtected) == "function" then
-            return friendList.isProtected(player) == true
+        local targets: any = host.services and host.services.protectedTargets
+        if targets and type(targets.isProtected) == "function" then
+            return targets.isProtected(player) == true
         end
         return false
     end
@@ -4089,7 +4136,7 @@ function Module.init(context: any): EntityLibrary
         if not camera then
             return nil
         end
-        local ray: Ray? = host.state and host.state.getAimRay and host.state.getAimRay()
+        local ray: Ray? = host.services and host.services.aim.getRay()
         local origin: Vector3 = ray and ray.Origin or camera.CFrame.Position
         local direction: Vector3 = ray and ray.Direction or camera.CFrame.LookVector
         return library:ClosestToRay(origin, direction, query)
@@ -13945,7 +13992,7 @@ return Module
 -- inside the MM2 module, which meant the protection vanished the moment you
 -- played anything else — so it is universal now, and every combat module
 -- (Kill Aura, TriggerBot, Fling, MM2's shoot helpers) asks the same question
--- here: `state.friendList.isProtected(player)`.
+-- through the shared protected-target service.
 --
 -- Always-on module: there is nothing to switch on. The list is either empty or
 -- it is not.
@@ -13954,6 +14001,7 @@ export type Runtime = {
     framework: any,
     entity: any,
     host: any,
+    services: any,
 }
 
 local Module = {
@@ -13986,7 +14034,7 @@ function Module.init(context: Runtime): any
     local framework: any = context.framework
     local players: Players = host.Players
     local localPlayer: Player = host.LocalPlayer
-    local state: any = host.state
+    local protectedTargets: any = context.services.protectedTargets
 
     local list: any = {
         names = {} :: {[string]: boolean},
@@ -14041,9 +14089,7 @@ function Module.init(context: Runtime): any
         end
     end
 
-    state.friendList = list
-    -- Kept for the game modules that already ask this question by name.
-    state.isProtectedTarget = list.isProtected
+    protectedTargets.setProvider(list.isProtected)
 
     local friends: any
     friends = framework.Categories.Utility:CreateModule({
@@ -14158,9 +14204,7 @@ function Module.init(context: Runtime): any
         pcall(function(): ()
             connection:Disconnect()
         end)
-        if state.friendList == list then
-            state.friendList = nil
-        end
+        protectedTargets.setProvider(nil)
     end
     Module.Initialized = true
     return friends
@@ -14213,7 +14257,7 @@ function Module.init(context: Runtime): any
     local localPlayer: Player = host.LocalPlayer
     local userInput: UserInputService = host.UserInputService
     local currentWorkspace: Workspace = host.workspace or workspace
-    local state: any = host.state
+    local menu: any = context.services.menu
 
     local tracked: {[Instance]: boolean} = {}
     -- `workspace:GetDescendants()` on a real map is tens of thousands of
@@ -14402,9 +14446,7 @@ function Module.init(context: Runtime): any
             picking = true
             -- The menu is in the way of the thing you are trying to point at,
             -- so it gets out of the way and comes back on its own.
-            if state.setMenuVisible then
-                state.setMenuVisible(false)
-            end
+            menu.setVisible(false)
             render:Notify("tap the object you want rendered")
         end,
     })
@@ -14491,9 +14533,7 @@ function Module.init(context: Runtime): any
             local model: Instance? = hit:FindFirstAncestorOfClass("Model")
             local name: string = model and model.Name or hit.Name
             learn(name)
-            if state.setMenuVisible then
-                state.setMenuVisible(true)
-            end
+            menu.setVisible(true)
             render:Notify(name .. " added")
         end
     )
@@ -14665,6 +14705,7 @@ export type Runtime = {
     framework: any,
     entity: any,
     host: any,
+    services: any,
 }
 
 local Module = {
@@ -14978,8 +15019,9 @@ function Module.init(context: Runtime): any
         end
     end
 
-    if host.state and type(host.state.onGameBridge) == "function" then
-        host.state.onGameBridge(function(kind: string, payload: any): ()
+    local gameBridge: any = context.services.gameBridge
+    if type(gameBridge.onEvent) == "function" then
+        gameBridge.onEvent(function(kind: string, payload: any): ()
             if kind == "roles" then
                 addRoleRows(payload)
             elseif kind == "extra" then
@@ -15007,6 +15049,7 @@ function Module.render(
     local host: any = context.host
     local entityLibrary: any = context.entity
     local render: any = context.render
+    local gameBridge: any = context.services.gameBridge
     local currentWorkspace: Workspace = host.workspace or workspace
     local camera: Camera? = currentWorkspace.CurrentCamera
     if not camera then
@@ -15059,8 +15102,8 @@ function Module.render(
         -- A role beats a team: in a game with roles, "murderer" is the fact
         -- the colour is there to carry, and the team is usually meaningless.
         local role: string? = nil
-        if host.state and type(host.state.playerRole) == "function" then
-            role = host.state.playerRole(player)
+        if type(gameBridge.playerRole) == "function" then
+            role = gameBridge.playerRole(player)
         end
         local roleOption: any = role and options[role .. " colour"] or nil
         local useRoleColour: boolean = roleOption ~= nil
@@ -16048,7 +16091,6 @@ function Module.init(context: Runtime): any
     local host: any = context.host
     local framework: any = context.framework
     local httpService: HttpService = host.HttpService
-    local state: any = host.state
     local product: any = host.PRODUCT
     local remoteLogFolder: string = product.storageFolder .. "/RemoteLogs"
 
@@ -16395,19 +16437,16 @@ function Module.init(context: Runtime): any
             .. "them. It watches; it never blocks, delays or alters a call."
     )
 
-    -- Exposed so other modules (and a future game module) can read what was
-    -- captured without going through the file.
-    state.remoteLog = {
-        entries = function(): {any}
-            local list: {any} = {}
-            for _, key: string in ipairs(order) do
-                table.insert(list, log[key])
-            end
-            return list
-        end,
-        report = buildReport,
-        save = saveReport,
-    }
+    -- Test and diagnostics access stays on this module, not on shell state.
+    Module.entries = function(): {any}
+        local list: {any} = {}
+        for _, key: string in ipairs(order) do
+            table.insert(list, log[key])
+        end
+        return list
+    end
+    Module.report = buildReport
+
 
     activeCleanup = function(): ()
         capturing = false
@@ -16415,9 +16454,8 @@ function Module.init(context: Runtime): any
             (restore :: () -> ())()
             restore = nil
         end
-        if state.remoteLog then
-            state.remoteLog = nil
-        end
+        Module.entries = nil
+        Module.report = nil
     end
     Module.Initialized = true
     return logger
@@ -16458,6 +16496,7 @@ export type Runtime = {
     framework: any,
     entity: any,
     host: any,
+    services: any,
 }
 
 local Module = {
@@ -16483,7 +16522,7 @@ function Module.init(context: Runtime): any
     local framework: any = context.framework
     local localPlayer: Player = host.LocalPlayer
     local userInput: UserInputService = host.UserInputService
-    local state: any = host.state
+    local menu: any = context.services.menu
 
     local runtime: any = {
         armedUntil = 0,
@@ -16629,7 +16668,7 @@ function Module.init(context: Runtime): any
             if processed or os.clock() >= runtime.armedUntil then
                 return
             end
-            if state.keyCaptureCallback or state.waitingForKey then
+            if menu.isCapturingInput() then
                 return
             end
             local touched: boolean = input.UserInputType == Enum.UserInputType.Touch
@@ -17117,7 +17156,7 @@ function Module.init(context: Runtime): any
                 -- Dragging a slider in the menu is a held mouse button too:
                 -- the executor-level click paths would land in the game
                 -- behind the window, so they stand down while it is open.
-                if host.state.visible
+                if context.services.menu.isVisible()
                     and (mode == "Left click" or mode == "Right click") then
                     return
                 end
@@ -17324,6 +17363,7 @@ export type Runtime = {
     framework: any,
     entity: any,
     host: any,
+    services: any,
 }
 
 local Module = {
@@ -17520,7 +17560,7 @@ function Module.resolveTarget(context: Runtime, trigger: any): (Player?, number)
     local currentWorkspace: Workspace = host.workspace or workspace
     local options: any = trigger.Options
 
-    local ray: Ray? = host.state.getAimRay()
+    local ray: Ray? = context.services.aim.getRay()
     if not ray then
         return nil, 0
     end
@@ -18157,6 +18197,7 @@ export type Runtime = {
     framework: any,
     entity: any,
     host: any,
+    services: any,
 }
 
 local Module = {
@@ -18201,8 +18242,8 @@ function Module.init(context: Runtime): any
         end
     end
     local actionId: string = "RejoinServer"
-    local wurstOptions: any = host.state
-        and rawget(host.state, "wurstOptions")
+    local registries: any = context.services.registries
+    local wurstOptions: any = registries.wurstOptions()
     if wurstOptions and type(wurstOptions.RegisterAction) == "function" then
         local registered: boolean, registration: any = pcall(
             wurstOptions.RegisterAction,
@@ -18217,7 +18258,7 @@ function Module.init(context: Runtime): any
         if not registered then
             error("Wurst Options refused Rejoin Server: " .. tostring(registration))
         end
-        local search: any = rawget(host.state, "moduleSearch")
+        local search: any = registries.moduleSearch()
         local searchFeature: any = {
             name = "Rejoin Server",
             configKey = "Universal.RejoinServer",
@@ -18648,6 +18689,7 @@ export type Runtime = {
     framework: any,
     entity: any,
     host: any,
+    services: any,
 }
 
 local Module = {
@@ -18663,7 +18705,7 @@ function Module.init(context: Runtime): any
     local host: any = context.host
     local framework: any = context.framework
     local getCharacterParts: any = host.getCharacterParts
-    local state: any = host.state
+    local shortcuts: any = context.services.shortcuts
     type PhaseDashSettings = {
         mode: string,
         distance: number,
@@ -18890,7 +18932,7 @@ function Module.init(context: Runtime): any
     -- like every other slot — the module used to arrive pre-bound to Q for no
     -- reason the player could see. On touch, tapping the slot places a DASH
     -- button.
-    state.bindFeatureActivationKey(phaseDash.Feature, nil, performPhaseDash)
+    shortcuts.bindActivation(phaseDash.Feature, nil, performPhaseDash)
 
     activeCleanup = function(): ()
         phaseDashEnabled = false
@@ -19137,6 +19179,7 @@ export type Runtime = {
     framework: any,
     entity: any,
     host: any,
+    services: any,
 }
 
 local Module = {
@@ -19151,7 +19194,9 @@ local activeCleanup: (() -> ())? = nil
 function Module.init(context: Runtime): any
     local host: any = context.host
     local framework: any = context.framework
-    local state: any = host.state
+    local movementInput: any = context.services.movementInput
+    local platformStand: any = context.services.platformStandOwnership
+    local mobileActions: any = context.services.mobileActions
     local getCharacterParts: any = host.getCharacterParts
     local UserInputService: any = host.UserInputService
     local currentWorkspace: Workspace = host.workspace or workspace
@@ -19194,60 +19239,13 @@ function Module.init(context: Runtime): any
         walkSpeed = nil :: number?,
     }
     local flySmoothedVelocity: Vector3 = Vector3.zero
-    -- PlatformStand is contested: Fly wants the character ragdolled while
-    -- VehicleSpeed may want it standing, and both can be on at once. The
-    -- controller arbitrates — the last owner to speak wins, and every baseline
-    -- goes back when the last owner leaves. It lives on `state` because the
-    -- two modules share it; it is not Fly's alone.
-    state.platformStandController = {
-        owners = {},
-        baselines = setmetatable({}, {__mode = "k"}),
-        sequence = 0,
-    }
-    state.platformStandController.set = function(ownerId: string, value: boolean?): ()
-        local controller: any = state.platformStandController
-        if value == nil then
-            controller.owners[ownerId] = nil
-            if next(controller.owners) == nil then
-                for humanoid: Humanoid, baseline: boolean in pairs(controller.baselines) do
-                    if humanoid.Parent then
-                        humanoid.PlatformStand = baseline
-                    end
-                end
-                controller.baselines = setmetatable({}, {__mode = "k"})
-            end
-            return
-        end
-        local owner: any = controller.owners[ownerId]
-        if not owner then
-            controller.sequence += 1
-            owner = {sequence = controller.sequence, value = value}
-            controller.owners[ownerId] = owner
-        else
-            owner.value = value
-        end
-    end
-    state.platformStandController.apply = function(humanoid: Humanoid): ()
-        local controller: any = state.platformStandController
-        if controller.baselines[humanoid] == nil then
-            controller.baselines[humanoid] = humanoid.PlatformStand
-        end
-        local selected: any = nil
-        for _, owner: any in pairs(controller.owners) do
-            if not selected or owner.sequence > selected.sequence then
-                selected = owner
-            end
-        end
-        if selected then
-            humanoid.PlatformStand = selected.value
-        end
-    end
+    -- Shared ownership prevents movement modules from fighting over PlatformStand.
     local flyObjects: {[Instance]: boolean} =
         setmetatable({}, {__mode = "k"}) :: any
     local flyTouchVertical: number = 0
 
     local function removeFlyObjects(): ()
-        state.platformStandController.set("Fly", nil)
+        platformStand.set("Fly", nil)
 
         for object: Instance in pairs(flyObjects) do
             if object.Parent then
@@ -19329,7 +19327,7 @@ function Module.init(context: Runtime): any
         -- control module: keyboard, thumbstick or gamepad, and it keeps answering
         -- while PlatformStand is on — the exact case where `MoveDirection` goes
         -- quiet and flying on a phone left the character frozen in place.
-        local forwardScalar: number, rightScalar: number = state.getMoveInput()
+        local forwardScalar: number, rightScalar: number = movementInput.getVector()
         local horizontal: Vector3 = cameraForward * forwardScalar
             + cameraRight * rightScalar
         if horizontal.Magnitude > 1 then
@@ -19349,7 +19347,7 @@ function Module.init(context: Runtime): any
         end
         -- On touch the jump button doubles as "up" so flying needs no placed
         -- button at all to get off the ground.
-        if vertical == 0 and not UserInputService.KeyboardEnabled and state.isJumpHeld() then
+        if vertical == 0 and not UserInputService.KeyboardEnabled and movementInput.isJumpHeld() then
             vertical = 1
         end
 
@@ -19644,8 +19642,8 @@ function Module.init(context: Runtime): any
                     (root :: BasePart).AssemblyLinearVelocity = Vector3.zero
                 end
                 if humanoid then
-                    state.platformStandController.set("Fly", false)
-                    state.platformStandController.apply(humanoid :: Humanoid)
+                    platformStand.set("Fly", false)
+                    platformStand.apply(humanoid :: Humanoid)
                 end
                 return
             end
@@ -19669,11 +19667,11 @@ function Module.init(context: Runtime): any
                 local canRagdoll: boolean = method ~= "WalkSpeed"
                     and floatMethod ~= "Floor"
                     and floatMethod ~= "Jump"
-                state.platformStandController.set(
+                platformStand.set(
                     "Fly",
                     canRagdoll and (flySettings.platformStand or method == "CFrame")
                 )
-                state.platformStandController.apply(humanoid)
+                platformStand.apply(humanoid)
 
                 local moveDirection, vertical, cameraForward = getFlyDirection(camera)
                 if flySettings.wallCheck and moveDirection.Magnitude > 0.001 then
@@ -19837,8 +19835,8 @@ function Module.init(context: Runtime): any
     -- Climbing and descending are holds on a keyboard, so they are holds on a
     -- phone too: keep a finger on UP to rise, lift it to level off. They used to
     -- latch on tap, which made hovering at a height nearly impossible.
-    if state.bindMobileActionPlacement then
-        state.bindMobileActionPlacement(
+    if mobileActions.bindPlacement then
+        mobileActions.bindPlacement(
             upKey.Object,
             "UniversalFlyUp",
             "UP",
@@ -19854,7 +19852,7 @@ function Module.init(context: Runtime): any
                 end,
             }
         )
-        state.bindMobileActionPlacement(
+        mobileActions.bindPlacement(
             downKey.Object,
             "UniversalFlyDown",
             "DOWN",
@@ -20559,6 +20557,7 @@ export type Runtime = {
     framework: any,
     entity: any,
     host: any,
+    services: any,
 }
 
 local Module = {
@@ -20574,7 +20573,7 @@ function Module.init(context: Runtime): any
     local host: any = context.host
     local framework: any = context.framework
     local getCharacterParts: any = host.getCharacterParts
-    local state: any = host.state
+    local movementInput: any = context.services.movementInput
     local UserInputService: any = host.UserInputService
     local infiniteJumpSettings = {
         mode = "Normal",
@@ -20588,14 +20587,14 @@ function Module.init(context: Runtime): any
     -- Both the enabled flag and the rate limiter live on `state` so the jump
     -- callback can keep checking them after the module's own teardown has
     -- started — a signal already dispatching still delivers one last event.
-    state.infiniteJumpEnabled = false
-    state.lastInfiniteJumpAt = -math.huge
+    local enabledNow: boolean = false
+    local lastJumpAt: number = -math.huge
 
     local function performInfiniteJump(): ()
         -- A disconnected signal can still deliver the event it was already
         -- dispatching, which on touch — where the jump button fires continuously —
         -- kept launching the character after the module had been switched off.
-        if not state.infiniteJumpEnabled then
+        if not enabledNow then
             return
         end
 
@@ -20613,10 +20612,10 @@ function Module.init(context: Runtime): any
         end
 
         local now: number = os.clock()
-        if now - state.lastInfiniteJumpAt < spacing then
+        if now - lastJumpAt < spacing then
             return
         end
-        state.lastInfiniteJumpAt = now
+        lastJumpAt = now
 
         local velocity: Vector3 = root.AssemblyLinearVelocity
         local vertical: number
@@ -20657,17 +20656,17 @@ function Module.init(context: Runtime): any
         Tooltip = "Jump again in mid-air, as a fixed height, a force, a "
             .. "climbing stack, a hold that rises, or a fall cancel.",
         Function = function(enabled: boolean): ()
-            state.infiniteJumpEnabled = false
-            state.lastInfiniteJumpAt = -math.huge
+            enabledNow = false
+            lastJumpAt = -math.huge
             if not enabled then
                 jump:SetStatus(nil)
                 return
             end
-            state.infiniteJumpEnabled = true
+            enabledNow = true
             jump:SetStatus(infiniteJumpSettings.mode)
 
             -- `JumpRequest` is the one jump signal every device raises.
-            jump:Clean(state.onJumpRequest(function(): ()
+            jump:Clean(movementInput.onJumpRequest(function(): ()
                 if infiniteJumpSettings.mode == "Rise" then
                     return
                 end
@@ -20675,9 +20674,9 @@ function Module.init(context: Runtime): any
             end))
 
             jump:Loop(function(): ()
-                if not state.infiniteJumpEnabled
+                if not enabledNow
                     or infiniteJumpSettings.mode ~= "Rise"
-                    or not state.isJumpHeld() then
+                    or not movementInput.isJumpHeld() then
                     return
                 end
 
@@ -20747,8 +20746,8 @@ function Module.init(context: Runtime): any
     jump:RefreshVisibility()
 
     activeCleanup = function(): ()
-        state.infiniteJumpEnabled = false
-        state.lastInfiniteJumpAt = -math.huge
+        enabledNow = false
+        lastJumpAt = -math.huge
     end
     Module.Initialized = true
     return jump
@@ -20776,6 +20775,7 @@ export type Runtime = {
     framework: any,
     entity: any,
     host: any,
+    services: any,
 }
 
 local Module = {
@@ -20792,62 +20792,17 @@ function Module.init(context: Runtime): any
     local TaskManager: any = host.TaskManager
     local featureConnections: any = host.featureConnections
     local disconnectFeatureConnection: any = host.disconnectFeatureConnection
-    local state: any = host.state
+    local fovOwnership: any = context.services.fovOwnership
     local createUniversalFeature: any = host.createUniversalFeature
     local addNumberOption: any = host.addNumberOption
     local workspace: any = host.workspace
     local fovSettings = {value = 90}
     local FovFeature: any = nil
-    state.fovController = state.fovController or {
-        owners = {},
-        baselines = setmetatable({}, {__mode = "k"}),
-        sequence = 0,
-    }
-    state.fovController.set = function(ownerId: string, value: number?): ()
-        local controller: any = state.fovController
-        if value == nil then
-            controller.owners[ownerId] = nil
-            if next(controller.owners) == nil then
-                for camera: Camera, baseline: number in pairs(controller.baselines) do
-                    if camera.Parent then
-                        camera.FieldOfView = baseline
-                    end
-                end
-                controller.baselines = setmetatable({}, {__mode = "k"})
-            end
-            return
-        end
-        local owner: any = controller.owners[ownerId]
-        if not owner then
-            controller.sequence += 1
-            owner = {sequence = controller.sequence, value = value}
-            controller.owners[ownerId] = owner
-        else
-            owner.value = value
-        end
-    end
-    state.fovController.apply = function(camera: Camera?): ()
-        if not camera then
-            return
-        end
-        local controller: any = state.fovController
-        if controller.baselines[camera] == nil then
-            controller.baselines[camera] = camera.FieldOfView
-        end
-        local selected: any = nil
-        for _, owner: any in pairs(controller.owners) do
-            if not selected or owner.sequence > selected.sequence then
-                selected = owner
-            end
-        end
-        if selected then
-            camera.FieldOfView = selected.value
-        end
-    end
+
 
     local function toggleFov(enabled)
         disconnectFeatureConnection("FOV")
-        state.fovController.set("Universal", enabled and fovSettings.value or nil)
+        fovOwnership.set("Universal", enabled and fovSettings.value or nil)
         if not enabled then
             if FovFeature then FovFeature:SetStatus(nil) end
             return
@@ -20855,8 +20810,8 @@ function Module.init(context: Runtime): any
 
         FovFeature:SetStatus(tostring(math.round(fovSettings.value)))
         featureConnections.FOV = TaskManager:Connect(function()
-            state.fovController.set("Universal", fovSettings.value)
-            state.fovController.apply(workspace.CurrentCamera)
+            fovOwnership.set("Universal", fovSettings.value)
+            fovOwnership.apply(workspace.CurrentCamera)
         end)
     end
 
@@ -20875,7 +20830,8 @@ function Module.init(context: Runtime): any
     end)
 
     activeCleanup = function(): ()
-        disconnectFeatureConnection("Fov")
+        disconnectFeatureConnection("FOV")
+        fovOwnership.set("Universal", nil)
     end
     Module.Initialized = true
     return FovFeature
@@ -21085,6 +21041,7 @@ export type Runtime = {
     framework: any,
     entity: any,
     host: any,
+    services: any,
 }
 
 local Module = {
@@ -21102,7 +21059,7 @@ function Module.init(context: Runtime): any
     local featureConnections: any = host.featureConnections
     local disconnectFeatureConnection: any = host.disconnectFeatureConnection
     local getCharacterParts: any = host.getCharacterParts
-    local state: any = host.state
+    local activity: any = context.services.activity
     local createUniversalFeature: any = host.createUniversalFeature
     local addNumberOption: any = host.addNumberOption
     local antiFlingSettings = {velocityLimit = 120}
@@ -21133,7 +21090,7 @@ function Module.init(context: Runtime): any
         featureConnections.AntiFling = TaskManager:Connect(function()
             -- Your own fling is deliberate; standing on the brakes during it
             -- is the module fighting its owner.
-            if state.flingRunning then
+            if activity.isActive("fling") then
                 return
             end
 
@@ -21314,6 +21271,7 @@ export type Runtime = {
     framework: any,
     entity: any,
     host: any,
+    services: any,
 }
 
 local Module = {
@@ -21331,7 +21289,8 @@ function Module.init(context: Runtime): any
     local LocalPlayer: any = host.LocalPlayer
     local getCharacterParts: any = host.getCharacterParts
     local notify: any = host.notify
-    local state: any = host.state
+    local activity: any = context.services.activity
+    local protectedTargets: any = context.services.protectedTargets
     local createUniversalFeature: any = host.createUniversalFeature
     local addToggleOption: any = host.addToggleOption
     local addNumberOption: any = host.addNumberOption
@@ -21357,7 +21316,7 @@ function Module.init(context: Runtime): any
     -- never stood down and fought the fling it was supposed to allow.
     local function setFlingRunning(running: boolean): ()
         flingRunning = running
-        state.flingRunning = running
+        activity.set("fling", running)
     end
     local findPlayerByText: (string) -> Player?
     local performFling: (Player) -> ()
@@ -21429,7 +21388,7 @@ function Module.init(context: Runtime): any
     -- a respawn cannot strand the routine, alternates Stepped/Heartbeat so the
     -- velocity actually replicates, and always restores the character.
     performFling = function(targetPlayer: Player): ()
-        if state.isProtectedTarget(targetPlayer) then
+        if protectedTargets.isProtected(targetPlayer) then
             notify("player protected")
             return
         end
@@ -21684,7 +21643,6 @@ function Module.init(context: Runtime): any
     local host: any = context.host
     local featureConnections: any = host.featureConnections
     local disconnectFeatureConnection: any = host.disconnectFeatureConnection
-    local state: any = host.state
     local createUniversalFeature: any = host.createUniversalFeature
     local addToggleOption: any = host.addToggleOption
 
@@ -21797,7 +21755,6 @@ function Module.init(context: Runtime): any
             end
         )
     end
-    state.toggleImproveFps = toggleImproveFps
 
     -- Flipping an option while the feature is already on has to redo the sweep,
     -- otherwise the setting only takes effect the next time it is toggled.
@@ -21874,7 +21831,6 @@ local activeCleanup: (() -> ())? = nil
 
 function Module.init(context: Runtime): any
     local host: any = context.host
-    local state: any = host.state
     local createUniversalFeature: any = host.createUniversalFeature
     local addNumberOption: any = host.addNumberOption
     local Lighting: any = host.Lighting
@@ -21882,28 +21838,28 @@ function Module.init(context: Runtime): any
     local featureConnections: any = host.featureConnections
     local TaskManager: any = host.TaskManager
 
-    state.fullbrightSettings = {
+    local fullbrightSettings = {
         brightness = 3,
         clockTime = 14,
     }
-    state.originalLighting = nil
+    local originalLighting: any = nil
 
-    state.toggleFullbright = function(enabled)
+    local function toggleFullbright(enabled: boolean): ()
         disconnectFeatureConnection("Fullbright")
 
         if not enabled then
-            if state.originalLighting then
-                Lighting.Brightness = state.originalLighting.brightness
-                Lighting.ClockTime = state.originalLighting.clockTime
-                Lighting.GlobalShadows = state.originalLighting.globalShadows
-                Lighting.FogEnd = state.originalLighting.fogEnd
-                Lighting.Ambient = state.originalLighting.ambient
-                Lighting.OutdoorAmbient = state.originalLighting.outdoorAmbient
+            if originalLighting then
+                Lighting.Brightness = originalLighting.brightness
+                Lighting.ClockTime = originalLighting.clockTime
+                Lighting.GlobalShadows = originalLighting.globalShadows
+                Lighting.FogEnd = originalLighting.fogEnd
+                Lighting.Ambient = originalLighting.ambient
+                Lighting.OutdoorAmbient = originalLighting.outdoorAmbient
             end
             return
         end
 
-        state.originalLighting = {
+        originalLighting = {
             brightness = Lighting.Brightness,
             clockTime = Lighting.ClockTime,
             globalShadows = Lighting.GlobalShadows,
@@ -21913,8 +21869,8 @@ function Module.init(context: Runtime): any
         }
 
         featureConnections.Fullbright = TaskManager:Connect(function()
-            Lighting.Brightness = state.fullbrightSettings.brightness
-            Lighting.ClockTime = state.fullbrightSettings.clockTime
+            Lighting.Brightness = fullbrightSettings.brightness
+            Lighting.ClockTime = fullbrightSettings.clockTime
             Lighting.GlobalShadows = false
             Lighting.FogEnd = 100000
             Lighting.Ambient = Color3.fromRGB(178, 178, 178)
@@ -21926,32 +21882,32 @@ function Module.init(context: Runtime): any
         "Fullbright",
         "Keep the scene bright and remove global shadows",
         15,
-        state.toggleFullbright,
+        toggleFullbright,
         {categoryName = "Render"}
     )
     addNumberOption(
         FullbrightFeature,
         "Brightness",
-        state.fullbrightSettings.brightness,
+        fullbrightSettings.brightness,
         0,
         10,
         function(value)
-            state.fullbrightSettings.brightness = value
+            fullbrightSettings.brightness = value
         end
     )
     addNumberOption(
         FullbrightFeature,
         "Clock time",
-        state.fullbrightSettings.clockTime,
+        fullbrightSettings.clockTime,
         0,
         24,
         function(value)
-            state.fullbrightSettings.clockTime = value
+            fullbrightSettings.clockTime = value
         end
     )
 
     activeCleanup = function(): ()
-        state.toggleFullbright(false)
+        toggleFullbright(false)
     end
     Module.Initialized = true
     return FullbrightFeature
@@ -22136,6 +22092,7 @@ export type Runtime = {
     framework: any,
     entity: any,
     host: any,
+    services: any,
 }
 
 local Module = {
@@ -22149,7 +22106,7 @@ local activeCleanup: (() -> ())? = nil
 
 function Module.init(context: Runtime): any
     local host: any = context.host
-    local state: any = host.state
+    local movementInput: any = context.services.movementInput
     local framework: any = context.framework
     local LocalPlayer: Player = host.LocalPlayer
     local currentWorkspace: Workspace = host.workspace or workspace
@@ -22185,8 +22142,8 @@ function Module.init(context: Runtime): any
     local function moveDirection(): Vector3
         local camera: Camera? = currentWorkspace.CurrentCamera
         local forward: number, right: number = 0, 0
-        if state.getMoveInput then
-            forward, right = state.getMoveInput()
+        if movementInput.getVector then
+            forward, right = movementInput.getVector()
         end
         if forward == 0 and right == 0 then
             local _, humanoid: Humanoid? = characterParts()
@@ -22784,6 +22741,7 @@ export type Runtime = {
     framework: any,
     entity: any,
     host: any,
+    services: any,
 }
 
 local Module = {
@@ -22794,10 +22752,11 @@ local Module = {
 }
 
 local activeController: any = nil
+local activeRegistry: any = nil
 
 function Module.init(context: Runtime): any
     local host: any = context.host
-    local state: any = host.state
+    local calibrationService: any = context.services.projectileCalibration
     local product: any = host.PRODUCT
     local notify: any = host.notify
     local createUniversalFeature: any = host.createUniversalFeature
@@ -23439,11 +23398,11 @@ function Module.init(context: Runtime): any
 
 
     local calibration: any = controllerFactory
-    state.universalProjectileCalibration = calibration
+    calibrationService.set(calibration)
+    activeRegistry = calibrationService
     calibration:setEnabled(true)
 
     local tuning: any = calibration.tuning
-    state.projectileSettings = tuning
 
     local ProjectileCalibrationFeature: any = createUniversalFeature(
         "Projectile Calibration",
@@ -23548,6 +23507,10 @@ function Module.destroy(): ()
         end)
     end
     activeController = nil
+    if activeRegistry then
+        activeRegistry.set(nil)
+    end
+    activeRegistry = nil
     Module.Initialized = false
 end
 
@@ -23577,6 +23540,7 @@ export type Runtime = {
     framework: any,
     entity: any,
     host: any,
+    services: any,
 }
 
 local Module = {
@@ -23598,7 +23562,7 @@ function Module.init(context: Runtime): any
     local host: any = context.host
     local framework: any = context.framework
     local localPlayer: Player = host.LocalPlayer
-    local state: any = host.state
+    local spoofAvatar: any = context.services.spoofAvatar
 
     local runtime: any = {
         original = nil :: HumanoidDescription?,
@@ -23611,8 +23575,6 @@ function Module.init(context: Runtime): any
     -- Spoof modules: the emote player lists what this one found, and the
     -- animation changer edits the description this one applied instead of
     -- fighting it.
-    state.spoofEmotes = state.spoofEmotes or {}
-    state.spoofDescription = state.spoofDescription or nil
 
     local function currentHumanoid(): Humanoid?
         local character: Model? = localPlayer.Character
@@ -23663,7 +23625,7 @@ function Module.init(context: Runtime): any
         table.sort(collected, function(left: any, right: any): boolean
             return left.name < right.name
         end)
-        state.spoofEmotes = collected
+        spoofAvatar.setEmotes(collected)
         return #collected
     end
 
@@ -23680,7 +23642,7 @@ function Module.init(context: Runtime): any
                 disguise:SetStatus(nil)
                 local original: HumanoidDescription? = runtime.original
                 runtime.applied = nil
-                state.spoofDescription = nil
+                spoofAvatar.setDescription(nil)
                 if original then
                     applyDescription(original :: HumanoidDescription)
                 end
@@ -23768,8 +23730,8 @@ function Module.init(context: Runtime): any
         end
         runtime.original = nil
         runtime.applied = nil
-        state.spoofDescription = nil
-        state.spoofEmotes = {}
+        spoofAvatar.setDescription(nil)
+        spoofAvatar.setEmotes({})
     end
     Module.Initialized = true
     return disguise
@@ -23789,7 +23751,7 @@ function Module.wear(
     end
     local host: any = context.host
     local players: Players = host.Players
-    local state: any = host.state
+    local spoofAvatar: any = context.services.spoofAvatar
     local text: string = tostring(disguise.Options["User"].Value or "")
     if string.match(text, "^%s*$") then
         disguise:Notify("paste a user id or a name")
@@ -23856,7 +23818,7 @@ function Module.wear(
     end
     runtime.userId = userId
     runtime.applied = target
-    state.spoofDescription = target
+    spoofAvatar.setDescription(target)
 
     local emoteCount: number = 0
     if disguise.Options["Take emotes"].Value then
@@ -24512,6 +24474,7 @@ export type Runtime = {
     framework: any,
     entity: any,
     host: any,
+    services: any,
 }
 
 local Module = {
@@ -24531,7 +24494,7 @@ function Module.init(context: Runtime): any
     local host: any = context.host
     local framework: any = context.framework
     local localPlayer: Player = host.LocalPlayer
-    local state: any = host.state
+    local spoofAvatar: any = context.services.spoofAvatar
 
     local runtime: any = {
         track = nil :: AnimationTrack?,
@@ -24543,7 +24506,6 @@ function Module.init(context: Runtime): any
         selected = nil :: string?,
     }
 
-    state.spoofEmotes = state.spoofEmotes or {}
 
     local function animator(): Animator?
         local character: Model? = localPlayer.Character
@@ -24574,7 +24536,7 @@ function Module.init(context: Runtime): any
     local function labels(): {string}
         local rows: {string} = {}
         runtime.byLabel = {}
-        for _, emote: any in ipairs(state.spoofEmotes or {}) do
+        for _, emote: any in ipairs(spoofAvatar.getEmotes()) do
             if type(emote) == "table" and type(emote.id) == "number" then
                 local label: string = tostring(emote.name) .. "  ·  avatar"
                 runtime.byLabel[label] = emote.id

@@ -33,6 +33,7 @@ return function(ctx: any): ()
         weapons = weapons,
         render = render,
         host = host,
+        services = host.services,
     }
     local esp: any = EspFile.init(espContext)
 
