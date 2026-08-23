@@ -150,10 +150,19 @@ function CFrameMeta.__sub(a: any, b: any): any
 end
 
 function CFrameMeta.__mul(a: any, b: any): any
-    -- Only the case the ESP needs: a point in the CFrame's own space, with no
-    -- rotation applied, which is enough to place the eight box corners.
-    if type(b) == "table" and b.X and b.Y and b.Z then
+    -- A point in this frame (ESP / ModelRect). Vector3 has XYZ and no
+    -- LookVector; a CFrame always has one.
+    if type(b) == "table" and b.X ~= nil and b.Y ~= nil and b.Z ~= nil
+        and b.LookVector == nil then
         return a.Position + b
+    end
+    -- CFrame composition. SpinBot writes `root.CFrame * CFrame.Angles(...)`.
+    if type(b) == "table" and b.Position ~= nil then
+        local composed: any = cframe(a.Position + b.Position, a.LookVector)
+        composed._rx = (a._rx or 0) + (b._rx or 0)
+        composed._ry = (a._ry or 0) + (b._ry or 0)
+        composed._rz = (a._rz or 0) + (b._rz or 0)
+        return composed
     end
     return a
 end
@@ -570,6 +579,21 @@ local function newInstance(className: string): any
         instance.Died = signal()
         instance.HealthChanged = signal()
         instance.StateChanged = signal()
+        instance.AutoRotate = true
+        instance.Health = 100
+        instance.MaxHealth = 100
+        instance.WalkSpeed = 16
+        instance.JumpPower = 50
+        instance.MoveDirection = vector3(0, 0, 0)
+        function instance:ChangeState(state: any): ()
+            instance.State = state
+            instance.StateChanged:Fire(state)
+        end
+    end
+    if className == "Highlight" then
+        instance.FillTransparency = 0.5
+        instance.OutlineTransparency = 0
+        instance.Adornee = nil
     end
 
     return instance
@@ -730,7 +754,7 @@ function Mock.install(): MockWorld
         HighlightDepthMode = enumFolder({"AlwaysOnTop", "Occluded"}),
         TextXAlignment = enumFolder({"Center", "Left", "Right"}),
         TextYAlignment = enumFolder({"Center", "Top", "Bottom"}),
-        HumanoidStateType = enumFolder({"Jumping", "Freefall", "Running"}),
+        HumanoidStateType = enumFolder({"Jumping", "Freefall", "Running", "Climbing"}),
         EasingStyle = enumFolder({"Quad", "Sine", "Linear", "Back", "Quart"}),
         EasingDirection = enumFolder({"Out", "In", "InOut"}),
         Material = enumFolder({"Air", "Plastic", "SmoothPlastic"}),
@@ -801,8 +825,12 @@ function Mock.install(): MockWorld
             local magnitude: number = delta.Magnitude
             return cframe(from, magnitude > 0 and delta.Unit or vector3(0, 0, -1))
         end,
-        Angles = function(_x: number, _y: number, _z: number): any
-            return cframe(vector3(0, 0, 0))
+        Angles = function(x: number, y: number, z: number): any
+            local rotated: any = cframe(vector3(0, 0, 0))
+            rotated._rx = x
+            rotated._ry = y
+            rotated._rz = z
+            return rotated
         end,
         identity = cframe(vector3(0, 0, 0)),
     }
@@ -962,9 +990,17 @@ function Mock.install(): MockWorld
         -- deterministic, which a perspective divide would not be. The third
         -- component is depth in front of the lens, exactly like the engine's:
         -- the camera looks down -Z, so depth is the negated world Z.
+        -- Off-screen also means outside the viewport rectangle, otherwise
+        -- Arrows cannot be tested without inventing a second camera.
         local depth: number = -position.Z
-        return vector3(640 + position.X * 10, 360 - position.Y * 10, depth),
-            depth > 0
+        local projectedX: number = 640 + position.X * 10
+        local projectedY: number = 360 - position.Y * 10
+        local viewport: any = self.ViewportSize
+        local inside: boolean = projectedX >= 0
+            and projectedX <= viewport.X
+            and projectedY >= 0
+            and projectedY <= viewport.Y
+        return vector3(projectedX, projectedY, depth), depth > 0 and inside
     end
     -- Screen space includes the top bar; viewport space does not. Click
     -- Teleport has to use this one, so the mock keeps them distinguishable.
@@ -994,7 +1030,12 @@ function Mock.install(): MockWorld
     mockWorkspace.DescendantAdded = signal()
     mockWorkspace.DescendantRemoving = signal()
     mockWorkspace.Gravity = 196.2
-    function mockWorkspace:Raycast(_origin: any, _direction: any, _params: any): any
+    function mockWorkspace:Raycast(origin: any, direction: any, params: any): any
+        world.lastRaycast = {
+            Origin = origin,
+            Direction = direction,
+            Params = params,
+        }
         return world.raycastResult
     end
     function mockWorkspace:GetPartBoundsInBox(_pivot: any, _size: any, params: any): {any}
@@ -1452,7 +1493,11 @@ function Mock.install(): MockWorld
         root.Name = "HumanoidRootPart"
         root.Position = position
         root.CFrame = cframe(position)
+        root.CFrame._rx = 0
+        root.CFrame._ry = 0
+        root.CFrame._rz = 0
         root.AssemblyLinearVelocity = vector3(0, 0, 0)
+        root.AssemblyAngularVelocity = vector3(0, 0, 0)
         root.Parent = character
         local head: any = newInstance("Part")
         head.Name = "Head"
@@ -1547,6 +1592,22 @@ function Mock.install(): MockWorld
             table.remove(roster, index)
         end
         playersService.PlayerRemoving:Fire(player)
+    end
+
+    function world.replaceCharacter(player: any, position: any): any
+        local previous: any = player.Character
+        local nextCharacter: any = buildCharacter(
+            player.Name,
+            position or (previous and previous:FindFirstChild("HumanoidRootPart")
+                and previous:FindFirstChild("HumanoidRootPart").Position)
+                or vector3(0, 0, 0)
+        )
+        player.Character = nextCharacter
+        if previous then
+            previous:Destroy()
+        end
+        player.CharacterAdded:Fire(nextCharacter)
+        return nextCharacter
     end
 
     local localPlayer: any = world.addPlayer("LocalTester", "Blue", vector3(0, 0, 0))

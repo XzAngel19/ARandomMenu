@@ -163,16 +163,17 @@ return function(ctx: any): ()
         -- Movement, Fun, Other); Blocks, Items and Chat are empty and must
         -- not draw a window.
         check("a window per populated category", built >= 5, tostring(built) .. " windows")
-        -- Rejoin Server is one of the frozen 38 universal entries, but Wurst
+        -- Rejoin Server is one of the frozen inventory entries, but Wurst
         -- exposes it as a management action rather than a hack card. The other
-        -- 37 entries (plus any game cards) must be in category windows, and
+        -- entries (plus any game cards) must be in category windows, and
         -- Rejoin must be reachable through Wurst Options.
+        local inventoryCount: number = ctx.inventory.count
         local optionActions: {string} = shellState.wurstOptions
             and shellState.wurstOptions.List()
             or {}
         check(
             "every universal entry is reachable as a card or Wurst Options action",
-            placed >= 37 and table.find(optionActions, "RejoinServer") ~= nil,
+            placed >= inventoryCount - 1 and table.find(optionActions, "RejoinServer") ~= nil,
             tostring(placed) .. " cards; Rejoin="
                 .. tostring(table.find(optionActions, "RejoinServer") ~= nil)
         )
@@ -254,8 +255,8 @@ return function(ctx: any): ()
         type(search) == "table"
             and type(search.Resolve) == "function"
             and type(search.Execute) == "function")
-    check("module search contains exactly the 43-module inventory",
-        search ~= nil and #search.entries == 43,
+    check("module search contains exactly the inventory snapshot",
+        search ~= nil and #search.entries == ctx.inventory.count,
         search and tostring(#search.entries) or "missing")
     for _, entry: any in ipairs(search.entries or {}) do
         check("module search keybind metadata: " .. tostring(entry.displayName),

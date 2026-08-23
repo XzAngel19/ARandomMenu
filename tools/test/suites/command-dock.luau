@@ -214,10 +214,6 @@ return function(ctx: any): ()
     )
 
     local wo: any = state.wurstOptions
-    local listed: {string} = {}
-    if type(wo) == "table" and type(wo.List) == "function" then
-        listed = wo.List()
-    end
     local invoked: {[string]: boolean} = {}
     if type(wo) == "table" and type(wo.InvokeAction) == "function" then
         local originalInvoke: any = wo.InvokeAction
@@ -237,14 +233,18 @@ return function(ctx: any): ()
         lastQuery
     )
     check(
-        "sensitive actions stay out of the 43-module registry",
+        "sensitive actions stay out of the module registry",
         type(searchApi) ~= "table"
             or (
                 searchApi.Resolve("Destruct").status == "not_found"
                 and searchApi.Resolve("Rejoin Server").status == "not_found"
             )
     )
-    check("the 43-module inventory is still the search set", #listed >= 0)
+    check(
+        "module search matches the inventory snapshot",
+        type(searchApi) == "table" and #searchApi.entries == ctx.inventory.count,
+        searchApi and tostring(#searchApi.entries) or "missing"
+    )
 
     if type(state.destruct) == "function" then
         state.destruct()
