@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "e5c95ea7ec65bef5",
+    stamp = "5ce648be8d5b41d2",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -6925,6 +6925,11 @@ function Module.init(context: any): any
             if requiresMenuOpen and not state.visible then
                 return
             end
+            local pointer: Vector2 = Vector2.new(input.Position.X, input.Position.Y)
+            if state.surfaceDragHitTest
+                and state.surfaceDragHitTest(pointer) then
+                return
+            end
             if state.surfaceDragOwner ~= nil
                 and state.surfaceDragOwner ~= root then
                 return
@@ -12911,26 +12916,45 @@ function Module.init(context: any): any
     placeHudList()
     state.onLayout(placeHudList)
 
+    -- One container per entry: the list layout owns the container's slot,
+    -- so the label inside it is free to slide without fighting layout.
+    local hudRows: {[string]: any} = {}
+
+    -- Custom movement uses the visible glyph bounds as its hit target. The
+    -- HackList frame stays transparent, inactive and at its normal size/ZIndex;
+    -- no oversized shield is placed over windows or game controls.
     local hudDragInput: InputObject? = nil
     local hudDragStart: Vector2 = Vector2.zero
     local hudDragOrigin: Vector2 = Vector2.zero
-    local function syncHudDragSurface(): ()
-        hudFrame.Active = hudPosition == "Custom" and state.visible == true
-        -- Custom placement must own the pointer above managed windows. Without
-        -- this, touching the list where it crossed a title bar moved both.
-        hudFrame.ZIndex = hudFrame.Active and 242 or 20
+    local function hudHitTest(point: Vector2): boolean
+        if hudPosition ~= "Custom" or state.visible ~= true then
+            return false
+        end
+        for _, row: any in pairs(hudRows) do
+            local target: GuiObject? = row.holder or row.container
+            if target and target.Parent and target.Visible then
+                local at: Vector2 = target.AbsolutePosition
+                local size: Vector2 = target.AbsoluteSize
+                if size.X > 0 and size.Y > 0
+                    and point.X >= at.X and point.X <= at.X + size.X
+                    and point.Y >= at.Y and point.Y <= at.Y + size.Y then
+                    return true
+                end
+            end
+        end
+        return false
     end
-    syncHudDragSurface()
-    state.addMenuVisibilityListener(function(): ()
-        syncHudDragSurface()
-    end)
-    table.insert(Furniture.connections, hudFrame.InputBegan:Connect(function(
+    state.surfaceDragHitTest = hudHitTest
+    hudFrame.Active = false
+    hudFrame.ZIndex = 20
+
+    table.insert(Furniture.connections, UserInputService.InputBegan:Connect(function(
         input: InputObject
     ): ()
-        if not hudFrame.Active
-            or state.surfaceDragOwner ~= nil
+        if state.surfaceDragOwner ~= nil
             or (input.UserInputType ~= Enum.UserInputType.MouseButton1
-                and input.UserInputType ~= Enum.UserInputType.Touch) then
+                and input.UserInputType ~= Enum.UserInputType.Touch)
+            or not hudHitTest(Vector2.new(input.Position.X, input.Position.Y)) then
             return
         end
         hudDragInput = input
@@ -12981,11 +13005,6 @@ function Module.init(context: any): any
             queueConfigSave()
         end
     end))
-
-    -- One container per entry: the list layout owns the container's slot,
-    -- so the label inside it is free to slide the prototype's 14 px without
-    -- fighting the layout for its position.
-    local hudRows: {[string]: any} = {}
 
     local function animationsOn(): boolean
         return hudAnimations and state.animationsEnabled ~= false
@@ -13278,7 +13297,6 @@ function Module.init(context: any): any
         SetPosition = function(value: string): ()
             hudPosition = value
             placeHudList()
-            syncHudDragSurface()
             if value == "Custom" then
                 notify("Drag the HackList while the menu is open")
             end
@@ -13321,7 +13339,7 @@ function Module.init(context: any): any
 
     -- ------------------------------------------------------------ Navigator
     -- Wurst's Navigator, as its own GUI rather than furniture on the ClickGUI
-    -- screen: a dimmed layer over the game, the search focused on open, a
+    -- screen: a compact layer over the game, an opt-in search field, a
     -- flat three-column grid ordered by how often the player has activated
     -- each feature (persisted per game), Enter firing the selection, Space
     -- opening its settings, arrows and Tab moving the selection, Escape and
@@ -13341,7 +13359,10 @@ function Module.init(context: any): any
         -- this supposedly full-screen surface cover only part of a phone.
         Parent = ScreenGui or PopupLayer,
         Name = "Navigator",
-        Active = true,
+        -- The transparent root is not an input shield. Search and result cells
+        -- remain interactive, while movement controls outside the compact panel
+        -- continue reaching the game.
+        Active = false,
         BackgroundColor3 = Color3.fromRGB(0, 0, 0),
         -- The root owns input and safe screen coordinates, but it is visually
         -- transparent. Only the compact Wurst panel below is dimmed; covering
@@ -13591,10 +13612,9 @@ function Module.init(context: any): any
         navScreen.Visible = true
         navSelected = 1
         rebuildNavigator()
-        -- Focused on open, as the Java focuses its search field. This is a
-        -- deliberate screen the player asked for; stealing the keyboard is
-        -- the point.
-        navSearch:CaptureFocus()
+        -- Search takes focus only when the player touches/clicks it. Automatic
+        -- focus consumed WASD and the mobile joystick, making the game appear
+        -- frozen whenever Navigator was open.
     end
 
     closeNavigator = function(): ()
@@ -13622,9 +13642,7 @@ function Module.init(context: any): any
     ): ()
         if enterPressed and navScreen.Visible then
             navActivate(navSelected)
-            -- Wurst keeps Navigator up after a toggle; so does this, with
-            -- the field ready for the next query.
-            navSearch:CaptureFocus()
+            -- Keep Navigator open, but return keyboard movement to the game.
         end
     end))
 
@@ -14128,6 +14146,9 @@ function Module.init(context: any): any
         Furniture.connections = {}
         if state.surfaceDragOwner == hudFrame then
             state.surfaceDragOwner = nil
+        end
+        if state.surfaceDragHitTest == hudHitTest then
+            state.surfaceDragHitTest = nil
         end
         chip:Destroy()
         hudFrame:Destroy()
@@ -18677,14 +18698,24 @@ return Module
 ]=====],
         ["src/modules/Movement/WallHop.luau"] = [=====[--!strict
 --
--- Wall Hop.
--- A jump made while facing a near-vertical wall kicks the character upward and
--- away from it. One raycast per jump request; no permanent movement loop.
+-- WallHop.
+-- Uses a fixed, tested offset sequence rather than exposing implementation
+-- constants as settings. Three probes find a usable wall edge; the hop only
+-- starts when either a side or the space above the wall is open.
 
 export type Runtime = {
     framework: any,
     host: any,
     services: any,
+}
+
+type PendingHop = {
+    root: BasePart,
+    humanoid: Humanoid,
+    normal: Vector3,
+    lateral: Vector3,
+    startedAt: number,
+    stage: number,
 }
 
 local Module = {
@@ -18703,6 +18734,19 @@ function Module.init(context: Runtime): any
     local getCharacterParts: any = host.getCharacterParts
     local currentWorkspace: Workspace = host.workspace or workspace
     local lastHopAt: number = -math.huge
+    local pending: PendingHop? = nil
+
+    local function cast(
+        origin: Vector3,
+        direction: Vector3,
+        parameters: RaycastParams
+    ): RaycastResult?
+        local hit: RaycastResult? = currentWorkspace:Raycast(origin, direction, parameters)
+        if hit and math.abs(hit.Normal.Y) <= 0.28 then
+            return hit
+        end
+        return nil
+    end
 
     local card: any
     card = framework.Categories.Movement:CreateModule({
@@ -18710,16 +18754,18 @@ function Module.init(context: Runtime): any
         Category = "Movement",
         ConfigKey = "Universal.WallHop",
         Order = 31,
-        Tooltip = "Jump at a wall to vault upward and away from it.",
+        Tooltip = "Uses nearby wall edges to perform a consistent wall hop.",
         Function = function(enabled: boolean): ()
+            pending = nil
             if not enabled then
                 card:SetStatus(nil)
                 return
             end
             card:SetStatus("ready")
+
             card:Clean(movementInput.onJumpRequest(function(): ()
                 local now: number = os.clock()
-                if now - lastHopAt < card.Options["Cooldown"].Value then
+                if now - lastHopAt < 0.22 or pending ~= nil then
                     return
                 end
                 local character: Model?, humanoid: Humanoid?, root: BasePart? =
@@ -18727,41 +18773,96 @@ function Module.init(context: Runtime): any
                 if not character or not humanoid or not root or humanoid.Health <= 0 then
                     return
                 end
+
                 local parameters: RaycastParams = RaycastParams.new()
                 parameters.FilterType = Enum.RaycastFilterType.Exclude
                 parameters.FilterDescendantsInstances = {character}
                 parameters.IgnoreWater = true
                 parameters.RespectCanCollide = true
-                local hit: RaycastResult? = currentWorkspace:Raycast(
-                    root.Position,
-                    root.CFrame.LookVector * card.Options["Reach"].Value,
-                    parameters
-                )
-                if not hit or math.abs(hit.Normal.Y) > 0.35 then
+
+                local forward: Vector3 = root.CFrame.LookVector
+                local right: Vector3 = root.CFrame.RightVector
+                local origin: Vector3 = root.Position + Vector3.new(0, 0.35, 0)
+                local centre: RaycastResult? = cast(origin, forward * 2.65, parameters)
+                if not centre then
                     return
                 end
-                lastHopAt = now
-                local velocity: Vector3 = root.AssemblyLinearVelocity
-                root.AssemblyLinearVelocity = Vector3.new(
-                    velocity.X + hit.Normal.X * card.Options["Push"].Value,
-                    math.max(velocity.Y, card.Options["Height"].Value),
-                    velocity.Z + hit.Normal.Z * card.Options["Push"].Value
+
+                local leftHit: RaycastResult? = cast(
+                    origin - right * 0.7,
+                    forward * 2.65,
+                    parameters
                 )
-                humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+                local rightHit: RaycastResult? = cast(
+                    origin + right * 0.7,
+                    forward * 2.65,
+                    parameters
+                )
+                local topHit: RaycastResult? = cast(
+                    origin + Vector3.new(0, 2.6, 0),
+                    forward * 2.4,
+                    parameters
+                )
+
+                -- A usable edge has room on one side or above. Pushing into a
+                -- fully covered wall is the unreliable case this check rejects.
+                local lateral: Vector3 = Vector3.zero
+                if not leftHit then
+                    lateral = right * -1
+                elseif not rightHit then
+                    lateral = right
+                elseif not topHit then
+                    lateral = humanoid.MoveDirection.Magnitude > 0.05
+                            and humanoid.MoveDirection.Unit
+                        or right
+                else
+                    card:SetStatus("blocked")
+                    return
+                end
+
+                lastHopAt = now
+                pending = {
+                    root = root,
+                    humanoid = humanoid,
+                    normal = centre.Normal,
+                    lateral = lateral,
+                    startedAt = now,
+                    stage = 0,
+                }
                 card:SetStatus("hop")
-                task.delay(0.25, function(): ()
-                    if card.Enabled then
-                        card:SetStatus("ready")
-                    end
-                end)
             end))
+
+            card:Loop(function(): ()
+                local hop: PendingHop? = pending
+                if not hop or not hop.root.Parent or hop.humanoid.Health <= 0 then
+                    pending = nil
+                    return
+                end
+                local elapsed: number = os.clock() - hop.startedAt
+                if hop.stage == 0 then
+                    hop.stage = 1
+                    hop.root.CFrame += hop.normal * 0.35
+                        + hop.lateral * 0.45
+                        + Vector3.new(0, 0.3, 0)
+                elseif hop.stage == 1 and elapsed >= 0.035 then
+                    hop.stage = 2
+                    hop.root.CFrame += hop.normal * 0.5
+                        + hop.lateral * 0.7
+                        + Vector3.new(0, 0.55, 0)
+                elseif hop.stage == 2 and elapsed >= 0.07 then
+                    local velocity: Vector3 = hop.root.AssemblyLinearVelocity
+                    hop.root.AssemblyLinearVelocity = Vector3.new(
+                        velocity.X + hop.normal.X * 18 + hop.lateral.X * 12,
+                        math.max(velocity.Y, 52),
+                        velocity.Z + hop.normal.Z * 18 + hop.lateral.Z * 12
+                    )
+                    hop.humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+                    pending = nil
+                    card:SetStatus("ready")
+                end
+            end)
         end,
     })
-
-    card:CreateSlider({Name = "Height", Min = 20, Max = 100, Step = 1, Default = 48})
-    card:CreateSlider({Name = "Push", Min = 0, Max = 60, Step = 1, Default = 24})
-    card:CreateSlider({Name = "Reach", Min = 1.5, Max = 5, Step = 0.1, Default = 2.5})
-    card:CreateSlider({Name = "Cooldown", Min = 0.1, Max = 1, Step = 0.05, Default = 0.25})
 
     activeCard = card
     Module.Initialized = true

@@ -141,6 +141,20 @@ SpinBot. Runtime/docs plus focused tests in your lane.
    modes instead of padding the module.
 6. Report field-test debt separately for physics-sensitive WallHop and SpinBot.
 
+## D9 — WallHop and combat-module design review
+
+1. Field-review the fixed WallHop sequence: probe spacing, edge classification,
+   offset order, cooldown, character replacement and server correction. Defaults
+   are the algorithm; do not expose implementation constants as settings.
+2. Compare requested Reach behavior with existing Hitboxes, Interact Extender,
+   weapon activation and game-specific remotes. Recommend one non-duplicated
+   ownership before adding another card.
+3. Specify a transparent aim-assist contract if useful (target selection,
+   visibility, FOV and explicit camera/input behavior). Do not introduce
+   metamethod hooks, remote spoofing or anti-cheat evasion into the shared core.
+4. Keep the option count small and report physics/game-specific limitations
+   honestly rather than labeling them bypass modes.
+
 ## Rules
 
 Suites that pin your surfaces update in the same commit. Report: hash,

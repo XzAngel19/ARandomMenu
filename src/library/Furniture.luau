@@ -484,26 +484,45 @@ function Module.init(context: any): any
     placeHudList()
     state.onLayout(placeHudList)
 
+    -- One container per entry: the list layout owns the container's slot,
+    -- so the label inside it is free to slide without fighting layout.
+    local hudRows: {[string]: any} = {}
+
+    -- Custom movement uses the visible glyph bounds as its hit target. The
+    -- HackList frame stays transparent, inactive and at its normal size/ZIndex;
+    -- no oversized shield is placed over windows or game controls.
     local hudDragInput: InputObject? = nil
     local hudDragStart: Vector2 = Vector2.zero
     local hudDragOrigin: Vector2 = Vector2.zero
-    local function syncHudDragSurface(): ()
-        hudFrame.Active = hudPosition == "Custom" and state.visible == true
-        -- Custom placement must own the pointer above managed windows. Without
-        -- this, touching the list where it crossed a title bar moved both.
-        hudFrame.ZIndex = hudFrame.Active and 242 or 20
+    local function hudHitTest(point: Vector2): boolean
+        if hudPosition ~= "Custom" or state.visible ~= true then
+            return false
+        end
+        for _, row: any in pairs(hudRows) do
+            local target: GuiObject? = row.holder or row.container
+            if target and target.Parent and target.Visible then
+                local at: Vector2 = target.AbsolutePosition
+                local size: Vector2 = target.AbsoluteSize
+                if size.X > 0 and size.Y > 0
+                    and point.X >= at.X and point.X <= at.X + size.X
+                    and point.Y >= at.Y and point.Y <= at.Y + size.Y then
+                    return true
+                end
+            end
+        end
+        return false
     end
-    syncHudDragSurface()
-    state.addMenuVisibilityListener(function(): ()
-        syncHudDragSurface()
-    end)
-    table.insert(Furniture.connections, hudFrame.InputBegan:Connect(function(
+    state.surfaceDragHitTest = hudHitTest
+    hudFrame.Active = false
+    hudFrame.ZIndex = 20
+
+    table.insert(Furniture.connections, UserInputService.InputBegan:Connect(function(
         input: InputObject
     ): ()
-        if not hudFrame.Active
-            or state.surfaceDragOwner ~= nil
+        if state.surfaceDragOwner ~= nil
             or (input.UserInputType ~= Enum.UserInputType.MouseButton1
-                and input.UserInputType ~= Enum.UserInputType.Touch) then
+                and input.UserInputType ~= Enum.UserInputType.Touch)
+            or not hudHitTest(Vector2.new(input.Position.X, input.Position.Y)) then
             return
         end
         hudDragInput = input
@@ -554,11 +573,6 @@ function Module.init(context: any): any
             queueConfigSave()
         end
     end))
-
-    -- One container per entry: the list layout owns the container's slot,
-    -- so the label inside it is free to slide the prototype's 14 px without
-    -- fighting the layout for its position.
-    local hudRows: {[string]: any} = {}
 
     local function animationsOn(): boolean
         return hudAnimations and state.animationsEnabled ~= false
@@ -851,7 +865,6 @@ function Module.init(context: any): any
         SetPosition = function(value: string): ()
             hudPosition = value
             placeHudList()
-            syncHudDragSurface()
             if value == "Custom" then
                 notify("Drag the HackList while the menu is open")
             end
@@ -894,7 +907,7 @@ function Module.init(context: any): any
 
     -- ------------------------------------------------------------ Navigator
     -- Wurst's Navigator, as its own GUI rather than furniture on the ClickGUI
-    -- screen: a dimmed layer over the game, the search focused on open, a
+    -- screen: a compact layer over the game, an opt-in search field, a
     -- flat three-column grid ordered by how often the player has activated
     -- each feature (persisted per game), Enter firing the selection, Space
     -- opening its settings, arrows and Tab moving the selection, Escape and
@@ -914,7 +927,10 @@ function Module.init(context: any): any
         -- this supposedly full-screen surface cover only part of a phone.
         Parent = ScreenGui or PopupLayer,
         Name = "Navigator",
-        Active = true,
+        -- The transparent root is not an input shield. Search and result cells
+        -- remain interactive, while movement controls outside the compact panel
+        -- continue reaching the game.
+        Active = false,
         BackgroundColor3 = Color3.fromRGB(0, 0, 0),
         -- The root owns input and safe screen coordinates, but it is visually
         -- transparent. Only the compact Wurst panel below is dimmed; covering
@@ -1164,10 +1180,9 @@ function Module.init(context: any): any
         navScreen.Visible = true
         navSelected = 1
         rebuildNavigator()
-        -- Focused on open, as the Java focuses its search field. This is a
-        -- deliberate screen the player asked for; stealing the keyboard is
-        -- the point.
-        navSearch:CaptureFocus()
+        -- Search takes focus only when the player touches/clicks it. Automatic
+        -- focus consumed WASD and the mobile joystick, making the game appear
+        -- frozen whenever Navigator was open.
     end
 
     closeNavigator = function(): ()
@@ -1195,9 +1210,7 @@ function Module.init(context: any): any
     ): ()
         if enterPressed and navScreen.Visible then
             navActivate(navSelected)
-            -- Wurst keeps Navigator up after a toggle; so does this, with
-            -- the field ready for the next query.
-            navSearch:CaptureFocus()
+            -- Keep Navigator open, but return keyboard movement to the game.
         end
     end))
 
@@ -1701,6 +1714,9 @@ function Module.init(context: any): any
         Furniture.connections = {}
         if state.surfaceDragOwner == hudFrame then
             state.surfaceDragOwner = nil
+        end
+        if state.surfaceDragHitTest == hudHitTest then
+            state.surfaceDragHitTest = nil
         end
         chip:Destroy()
         hudFrame:Destroy()

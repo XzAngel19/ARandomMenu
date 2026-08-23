@@ -470,6 +470,11 @@ function Module.init(context: any): any
             if requiresMenuOpen and not state.visible then
                 return
             end
+            local pointer: Vector2 = Vector2.new(input.Position.X, input.Position.Y)
+            if state.surfaceDragHitTest
+                and state.surfaceDragHitTest(pointer) then
+                return
+            end
             if state.surfaceDragOwner ~= nil
                 and state.surfaceDragOwner ~= root then
                 return

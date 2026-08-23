@@ -29,7 +29,7 @@ return function(ctx: any): ()
         {
             path = "../../../src/modules/Movement/WallHop",
             name = "WallHop",
-            options = {"Height", "Push", "Reach", "Cooldown"},
+            options = {},
         },
         {
             path = "../../../src/modules/Movement/SpinBot",

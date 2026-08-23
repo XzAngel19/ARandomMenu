@@ -104,6 +104,10 @@ return function(ctx: any): ()
             root.Visible == true,
             "Visible=" .. tostring(root.Visible)
         )
+        check(
+            "Navigator's transparent root does not freeze game input",
+            root.Active == false
+        )
     end
 
     check(
@@ -113,6 +117,12 @@ return function(ctx: any): ()
     local column: any = root and root:FindFirstChild("Column")
     local search: any = column and column:FindFirstChild("Search")
     check("Navigator has a search field", search ~= nil)
+    if search and type(search.IsFocused) == "function" then
+        check(
+            "opening Navigator does not steal movement keys for search",
+            search:IsFocused() == false
+        )
+    end
     local results: any = column and column:FindFirstChild("Results")
     check("Navigator has a results grid", results ~= nil)
     if results ~= nil then

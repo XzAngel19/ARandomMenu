@@ -123,6 +123,20 @@ Tools/tests/docs only.
 5. Report executor APIs that the mocks still approximate poorly; improve the
    mock rather than weakening runtime assertions.
 
+## C9 — Input and WallHop hold
+
+1. Hold Navigator as non-blocking: transparent root `Active=false`, no automatic
+   search focus, WASD/touch input untouched outside the compact panel.
+2. Hold Custom HackList movement through visible-glyph hit testing. No enlarged
+   frame, raised shield or broad Active region may be introduced.
+3. Exercise WallHop's three probes: reject a fully covered wall, accept a side
+   edge or open top, run each offset stage once, enforce the internal cooldown
+   and clear pending work on disable/death.
+4. Add field-shape fixtures for R6/R15 roots and streamed wall parts without
+   weakening exact runtime assertions.
+5. Keep anti-cheat evasion and metamethod-hook behavior out of test helpers;
+   tests should describe observable module behavior, not stealth.
+
 ## Rules
 
 Validate ends "All checks passed." with your new checks counted.

@@ -158,6 +158,16 @@ return function(ctx: any): ()
         visuals.root.Position.X.Offset == blockedX
     )
     host.state.surfaceDragOwner = nil
+    host.state.surfaceDragHitTest = function(_point: any): boolean
+        return true
+    end
+    blockedX = visuals.root.Position.X.Offset
+    drag(visuals, blockedX, 120, blockedX - 40, 120)
+    check(
+        "visible HackList glyph hit testing blocks an overlapping window drag",
+        visuals.root.Position.X.Offset == blockedX
+    )
+    host.state.surfaceDragHitTest = nil
 
     -- Snap: within eight pixels of another window's edge the drag lands
     -- flush; at nine it does not. Combat is at x=100, width=186, so its

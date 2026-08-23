@@ -1,13 +1,23 @@
 --!strict
 --
--- Wall Hop.
--- A jump made while facing a near-vertical wall kicks the character upward and
--- away from it. One raycast per jump request; no permanent movement loop.
+-- WallHop.
+-- Uses a fixed, tested offset sequence rather than exposing implementation
+-- constants as settings. Three probes find a usable wall edge; the hop only
+-- starts when either a side or the space above the wall is open.
 
 export type Runtime = {
     framework: any,
     host: any,
     services: any,
+}
+
+type PendingHop = {
+    root: BasePart,
+    humanoid: Humanoid,
+    normal: Vector3,
+    lateral: Vector3,
+    startedAt: number,
+    stage: number,
 }
 
 local Module = {
@@ -26,6 +36,19 @@ function Module.init(context: Runtime): any
     local getCharacterParts: any = host.getCharacterParts
     local currentWorkspace: Workspace = host.workspace or workspace
     local lastHopAt: number = -math.huge
+    local pending: PendingHop? = nil
+
+    local function cast(
+        origin: Vector3,
+        direction: Vector3,
+        parameters: RaycastParams
+    ): RaycastResult?
+        local hit: RaycastResult? = currentWorkspace:Raycast(origin, direction, parameters)
+        if hit and math.abs(hit.Normal.Y) <= 0.28 then
+            return hit
+        end
+        return nil
+    end
 
     local card: any
     card = framework.Categories.Movement:CreateModule({
@@ -33,16 +56,18 @@ function Module.init(context: Runtime): any
         Category = "Movement",
         ConfigKey = "Universal.WallHop",
         Order = 31,
-        Tooltip = "Jump at a wall to vault upward and away from it.",
+        Tooltip = "Uses nearby wall edges to perform a consistent wall hop.",
         Function = function(enabled: boolean): ()
+            pending = nil
             if not enabled then
                 card:SetStatus(nil)
                 return
             end
             card:SetStatus("ready")
+
             card:Clean(movementInput.onJumpRequest(function(): ()
                 local now: number = os.clock()
-                if now - lastHopAt < card.Options["Cooldown"].Value then
+                if now - lastHopAt < 0.22 or pending ~= nil then
                     return
                 end
                 local character: Model?, humanoid: Humanoid?, root: BasePart? =
@@ -50,41 +75,96 @@ function Module.init(context: Runtime): any
                 if not character or not humanoid or not root or humanoid.Health <= 0 then
                     return
                 end
+
                 local parameters: RaycastParams = RaycastParams.new()
                 parameters.FilterType = Enum.RaycastFilterType.Exclude
                 parameters.FilterDescendantsInstances = {character}
                 parameters.IgnoreWater = true
                 parameters.RespectCanCollide = true
-                local hit: RaycastResult? = currentWorkspace:Raycast(
-                    root.Position,
-                    root.CFrame.LookVector * card.Options["Reach"].Value,
-                    parameters
-                )
-                if not hit or math.abs(hit.Normal.Y) > 0.35 then
+
+                local forward: Vector3 = root.CFrame.LookVector
+                local right: Vector3 = root.CFrame.RightVector
+                local origin: Vector3 = root.Position + Vector3.new(0, 0.35, 0)
+                local centre: RaycastResult? = cast(origin, forward * 2.65, parameters)
+                if not centre then
                     return
                 end
-                lastHopAt = now
-                local velocity: Vector3 = root.AssemblyLinearVelocity
-                root.AssemblyLinearVelocity = Vector3.new(
-                    velocity.X + hit.Normal.X * card.Options["Push"].Value,
-                    math.max(velocity.Y, card.Options["Height"].Value),
-                    velocity.Z + hit.Normal.Z * card.Options["Push"].Value
+
+                local leftHit: RaycastResult? = cast(
+                    origin - right * 0.7,
+                    forward * 2.65,
+                    parameters
                 )
-                humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+                local rightHit: RaycastResult? = cast(
+                    origin + right * 0.7,
+                    forward * 2.65,
+                    parameters
+                )
+                local topHit: RaycastResult? = cast(
+                    origin + Vector3.new(0, 2.6, 0),
+                    forward * 2.4,
+                    parameters
+                )
+
+                -- A usable edge has room on one side or above. Pushing into a
+                -- fully covered wall is the unreliable case this check rejects.
+                local lateral: Vector3 = Vector3.zero
+                if not leftHit then
+                    lateral = right * -1
+                elseif not rightHit then
+                    lateral = right
+                elseif not topHit then
+                    lateral = humanoid.MoveDirection.Magnitude > 0.05
+                            and humanoid.MoveDirection.Unit
+                        or right
+                else
+                    card:SetStatus("blocked")
+                    return
+                end
+
+                lastHopAt = now
+                pending = {
+                    root = root,
+                    humanoid = humanoid,
+                    normal = centre.Normal,
+                    lateral = lateral,
+                    startedAt = now,
+                    stage = 0,
+                }
                 card:SetStatus("hop")
-                task.delay(0.25, function(): ()
-                    if card.Enabled then
-                        card:SetStatus("ready")
-                    end
-                end)
             end))
+
+            card:Loop(function(): ()
+                local hop: PendingHop? = pending
+                if not hop or not hop.root.Parent or hop.humanoid.Health <= 0 then
+                    pending = nil
+                    return
+                end
+                local elapsed: number = os.clock() - hop.startedAt
+                if hop.stage == 0 then
+                    hop.stage = 1
+                    hop.root.CFrame += hop.normal * 0.35
+                        + hop.lateral * 0.45
+                        + Vector3.new(0, 0.3, 0)
+                elseif hop.stage == 1 and elapsed >= 0.035 then
+                    hop.stage = 2
+                    hop.root.CFrame += hop.normal * 0.5
+                        + hop.lateral * 0.7
+                        + Vector3.new(0, 0.55, 0)
+                elseif hop.stage == 2 and elapsed >= 0.07 then
+                    local velocity: Vector3 = hop.root.AssemblyLinearVelocity
+                    hop.root.AssemblyLinearVelocity = Vector3.new(
+                        velocity.X + hop.normal.X * 18 + hop.lateral.X * 12,
+                        math.max(velocity.Y, 52),
+                        velocity.Z + hop.normal.Z * 18 + hop.lateral.Z * 12
+                    )
+                    hop.humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+                    pending = nil
+                    card:SetStatus("ready")
+                end
+            end)
         end,
     })
-
-    card:CreateSlider({Name = "Height", Min = 20, Max = 100, Step = 1, Default = 48})
-    card:CreateSlider({Name = "Push", Min = 0, Max = 60, Step = 1, Default = 24})
-    card:CreateSlider({Name = "Reach", Min = 1.5, Max = 5, Step = 0.1, Default = 2.5})
-    card:CreateSlider({Name = "Cooldown", Min = 0.1, Max = 1, Step = 0.05, Default = 0.25})
 
     activeCard = card
     Module.Initialized = true

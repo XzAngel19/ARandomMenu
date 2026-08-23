@@ -112,14 +112,27 @@ return function(ctx: any): ()
         end
         list.SetPosition("Custom")
         check(
-            "Custom HackList position enables dragging while the menu is open",
-            frame.Active == true and frame.AnchorPoint.X == 0
+            "Custom HackList uses visible-glyph hit testing without an input shield",
+            frame.Active == false
+                and frame.AnchorPoint.X == 0
+                and type(state.surfaceDragHitTest) == "function"
         )
+        local targetRow: any = frame:FindFirstChild(tostring(sample.name))
+        if targetRow then
+            targetRow.AbsolutePosition = world.vector2(70, 80)
+            targetRow.AbsoluteSize = world.vector2(120, 20)
+            for _, descendant: any in ipairs(targetRow:GetDescendants()) do
+                if descendant:IsA("GuiObject") then
+                    descendant.AbsolutePosition = world.vector2(70, 80)
+                    descendant.AbsoluteSize = world.vector2(120, 20)
+                end
+            end
+        end
         local touch: any = {
             UserInputType = world.globals.Enum.UserInputType.Touch,
             Position = world.vector3(80, 90, 0),
         }
-        frame.InputBegan:Fire(touch)
+        world.services.UserInputService.InputBegan:Fire(touch)
         touch.Position = world.vector3(140, 150, 0)
         world.services.UserInputService.InputChanged:Fire(touch)
         world.services.UserInputService.InputEnded:Fire(touch)

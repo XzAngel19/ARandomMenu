@@ -36,7 +36,7 @@ GUI-scale-1. Prototype `titleHeight` 26 is 13 × 2, not a 1080p invention.
 | Editable mobile actions | Roblox adaptation | Long press opens one shared Size / Opacity / Remove / Reset panel; position and appearance persist per button. |
 | Atomic rainbow chrome | Roblox adaptation | Accent, outline, enabled and derived accent shades repaint in one transaction; live Accent/Enabled palette bars show the current frame. |
 | HackList colour animation | requested adaptation | Animations modulates the selected RGB colour only; neutral colours remain neutral, while Rainbow alone owns the hue wheel. |
-| HackList Custom position | Roblox adaptation | Left and Right remain authoritative on every device; Custom lets the player drag and persist the list while the menu is open. |
+| HackList Custom position | Roblox adaptation | Left and Right remain authoritative; Custom drags only from visible glyph bounds, persists coordinates and never adds an input shield over windows. |
 | Monocraft atlas (`monocraft-16.png`) | Roblox adaptation | OFL fallback. 7.54.1 does not change the 1.18.1 font baseline. |
 | One ClickGui UIScale, user Scale 0.7–1.6 | exact | No 1080 / 1.35 formula. |
 - **Menu blur (user mandate, capture review 2026-08-22):** Wurst draws

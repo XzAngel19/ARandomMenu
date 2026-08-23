@@ -9,7 +9,7 @@ case and keeps the existing module/context/render contracts.
 | Chams | Render | Vape Chams Highlight mode | pooled Roblox `Highlight` instances, team and wall policy |
 | Arrows | Render | Vape Arrows | two pooled renderer lines per off-screen player; optional distance |
 | NPCESP | Render | Vape entity NPC targeting | throttled Humanoid model index plus shared Render sets |
-| WallHop | Movement | Roblox movement adaptation | one forward raycast per jump request, bounded cooldown |
+| WallHop | Movement | Roblox movement adaptation | three wall-edge probes plus a fixed multi-frame offset sequence; no tuning rows |
 | SpinBot | Fun | Vape SpinBot | CFrame or angular velocity with complete property restoration |
 
 The inventory authority is `tools/inventory_snapshot.json`. Manifest, fallback
