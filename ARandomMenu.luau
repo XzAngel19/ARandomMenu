@@ -363,7 +363,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "96940e2dca90d91c"
+local SOURCE_STAMP: string = "0e12ed0f32e1fca6"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -780,6 +780,22 @@ end
 -- outline and enabled together; three independent Set calls allowed Roblox to
 -- render a frame between them, leaving a yellow title with a cyan border.
 function ThemeEngine.SetMany(values: {[string]: Color3}): ()
+    -- Accent relatives are real tokens used by overlays and controls. Leaving
+    -- them frozen while Accent rotates is another form of palette desync.
+    if values.accent ~= nil or values.background ~= nil then
+        local accent: Color3 = values.accent or Theme.accent
+        local background: Color3 = values.background or Theme.background
+        local function mix(amount: number): Color3
+            return Color3.new(
+                background.R + (accent.R - background.R) * amount,
+                background.G + (accent.G - background.G) * amount,
+                background.B + (accent.B - background.B) * amount
+            )
+        end
+        values.accentDim = values.accentDim or mix(0.72)
+        values.accentSoft = values.accentSoft or mix(0.58)
+        values.accentFaint = values.accentFaint or mix(0.42)
+    end
     for token: string, value: Color3 in pairs(values) do
         Theme[token] = value
     end

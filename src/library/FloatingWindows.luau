@@ -43,6 +43,7 @@ function Module.init(context: any): any
     local makeTextBox: any = host.makeTextBox
     local makeTextLabel: any = host.makeTextLabel
     local Theme: any = host.Theme
+    local ThemeEngine: any = host.ThemeEngine
     local CONTROL_FONT: any = host.CONTROL_FONT
     local THIN_FONT: any = host.THIN_FONT
     local VALVE_FONT: any = host.VALVE_FONT
@@ -59,6 +60,14 @@ function Module.init(context: any): any
     local Stats: any = host.Stats
     local TaskManager: any = host.TaskManager
     local allFeatures: any = host.allFeatures
+
+    local function bind(instance: Instance, property: string, token: string): ()
+        if ThemeEngine and type(ThemeEngine.Bind) == "function" then
+            ThemeEngine.Bind(instance, property, token)
+        else
+            (instance :: any)[property] = Theme[token]
+        end
+    end
 
     -- Per-frame work this layer owns. In the shell these two loops simply ran
     -- for the life of the menu and were swept up when the task manager was
@@ -193,19 +202,20 @@ function Module.init(context: any): any
             Visible = false,
             ZIndex = 150,
         }) :: Frame
+        bind(root, "BackgroundColor3", "background")
         if not bare then
             create("UICorner", {
                 Parent = root,
                 CornerRadius = cornerRadius(UI_RADIUS.panel),
             })
-            -- Hairline only: the floating windows share the borderless look of
-            -- the main shell, so no grey frame draws attention at their corners.
-            create("UIStroke", {
+            local edge: UIStroke = create("UIStroke", {
                 Parent = root,
+                Name = "WindowOutline",
                 Color = Theme.outline,
-                Transparency = 0.78,
+                Transparency = 0.08,
                 Thickness = 1,
-            })
+            }) :: UIStroke
+            bind(edge, "Color", "outline")
 
             local shade: Frame = create("Frame", {
                 Parent = root,
@@ -215,6 +225,7 @@ function Module.init(context: any): any
                 BorderSizePixel = 0,
                 Size = UDim2.fromScale(1, 1),
             }) :: Frame
+            bind(shade, "BackgroundColor3", "background")
             shade:SetAttribute("FloatingDepth", 2)
         end
 
@@ -228,6 +239,7 @@ function Module.init(context: any): any
             Size = UDim2.new(1, 0, 0, headerHeight),
             Visible = not bare,
         }) :: Frame
+        bind(header, "BackgroundColor3", "surface")
         header:SetAttribute("FloatingDepth", 3)
 
         local closeButton: TextButton
@@ -251,12 +263,14 @@ function Module.init(context: any): any
                 Position = UDim2.fromOffset(0, headerHeight - 1),
                 Size = UDim2.new(1, 0, 0, 1),
             }) :: Frame
+            bind(accent, "BackgroundColor3", "outline")
             accent:SetAttribute("FloatingDepth", 1)
             local title: TextLabel = makeTextLabel(header, titleText, 10)
             title.FontFace = CONTROL_FONT
             title.Position = UDim2.fromOffset(10, 0)
             title.Size = UDim2.new(1, -40, 1, 0)
             title.TextColor3 = Theme.text
+            bind(title, "TextColor3", "text")
             title:SetAttribute("FloatingDepth", 2)
 
             closeButton = makeButton(header, "x", 9)
@@ -306,6 +320,7 @@ function Module.init(context: any): any
                 Thickness = 1,
                 Transparency = state.visible and 0.72 or 1,
             }) :: UIStroke
+            bind(hint, "Color", "outline")
             state.addMenuVisibilityListener(function(visible: boolean): ()
                 if not root.Parent then
                     return

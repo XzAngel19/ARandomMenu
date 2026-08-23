@@ -43,12 +43,22 @@ return function(ctx: any): ()
         local previousAccent: any = env.Theme.accent
         local previousOutline: any = env.Theme.outline
         local previousEnabled: any = env.Theme.enabled
+        local previousDim: any = env.Theme.accentDim
+        local previousSoft: any = env.Theme.accentSoft
+        local previousFaint: any = env.Theme.accentFaint
         local sampleColor: any = world.globals.Color3.fromRGB(17, 91, 203)
         env.ThemeEngine.SetMany({
             accent = sampleColor,
             outline = sampleColor,
             enabled = sampleColor,
         })
+        check(
+            "atomic Accent updates its derived palette tokens",
+            env.Theme.accentDim ~= nil
+                and env.Theme.accentSoft ~= nil
+                and env.Theme.accentFaint ~= nil
+                and env.Theme.accentDim ~= previousAccent
+        )
         local outlinesMatch: boolean = true
         for _, category: any in pairs(state.clickGui and state.clickGui.categories or {}) do
             local outline: any = category.window.root:FindFirstChild("WindowOutline")
@@ -61,6 +71,9 @@ return function(ctx: any): ()
             accent = previousAccent,
             outline = previousOutline,
             enabled = previousEnabled,
+            accentDim = previousDim,
+            accentSoft = previousSoft,
+            accentFaint = previousFaint,
         })
     end
 
@@ -73,6 +86,28 @@ return function(ctx: any): ()
                 and Inspect.findNamed(ui.root, "Option_MaxHeight") == nil
                 and Inspect.findNamed(ui.root, "Option_Maxsettingsheight") == nil
         )
+        local rainbowRow: any = Inspect.findNamed(ui.root, "Option_Rainbow")
+        local rainbowButton: any = rainbowRow
+            and rainbowRow:FindFirstChild("OptionClickTarget")
+        if rainbowButton and rainbowButton.MouseButton1Click then
+            rainbowButton.MouseButton1Click:Fire()
+            world.services.RunService.Heartbeat:Fire(0.1)
+            local accentRow: any = Inspect.findNamed(ui.root, "Option_Accent")
+            local enabledRow: any = Inspect.findNamed(ui.root, "Option_Enabled")
+            local accentBar: any = accentRow and accentRow:FindFirstChild("ColorBar")
+            local enabledBar: any = enabledRow and enabledRow:FindFirstChild("ColorBar")
+            check(
+                "Rainbow paints the Accent palette with its live colour",
+                accentBar ~= nil and accentBar.BackgroundColor3 == env.Theme.accent
+            )
+            check(
+                "Rainbow paints the Enabled palette with its live colour",
+                enabledBar ~= nil and enabledBar.BackgroundColor3 == env.Theme.enabled
+            )
+            rainbowButton.MouseButton1Click:Fire()
+        else
+            check("Rainbow control is reachable for live palette tests", false)
+        end
     end
 
     -- A short viewport must win over the 200 cap: otherwise phones still

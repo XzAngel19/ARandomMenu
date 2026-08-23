@@ -22,6 +22,7 @@ return function(ctx: any): ()
 
     local state: any = boot.state
     local env: any = boot.env
+    local world: any = boot.world
     local list: any = state.hudList
     check("the HackList is published", type(list) == "table")
     if type(list) ~= "table" then
@@ -72,9 +73,35 @@ return function(ctx: any): ()
     end
     check("the overlay lists the enabled module", entryCount() >= 1, tostring(entryCount()))
 
-    -- Opening HackList settings currently throws in Furniture.SetColor
-    -- (`row.label` is gone; the overlay draws through the bitmap
-    -- contract). Drive Mode live instead of walking into that crash.
+    if type(list.SetRainbow) == "function"
+        and type(list.SetColor) == "function"
+        and type(list.SetAnimations) == "function" then
+        list.SetRainbow(false)
+        list.SetColor(world.globals.Color3.fromRGB(255, 255, 255))
+        list.SetAnimations(true)
+        list.refresh()
+        local sampleRow: any = frame and frame:FindFirstChild(tostring(sample.name))
+        local neutralAnimation: boolean = false
+        if sampleRow then
+            for _, descendant: any in ipairs(sampleRow:GetDescendants()) do
+                local color: any = descendant.ImageColor3 or descendant.TextColor3
+                if color ~= nil then
+                    neutralAnimation = math.abs(color.R - color.G) < 0.001
+                        and math.abs(color.G - color.B) < 0.001
+                    if neutralAnimation then
+                        break
+                    end
+                end
+            end
+        end
+        check(
+            "white HackList Animations stay neutral instead of borrowing cyan",
+            neutralAnimation
+        )
+    end
+
+    -- The settings window may not be open in this visibility-only boot, so use
+    -- the published list API while retaining the same player-visible contract.
     local showToggle: any = nil
     if state.windows and type(state.windows.Get) == "function" then
         local hackWindow: any = state.windows.Get("HackList")

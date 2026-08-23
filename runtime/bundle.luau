@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "96940e2dca90d91c",
+    stamp = "0e12ed0f32e1fca6",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -8221,6 +8221,7 @@ function Module.init(context: any): any
     local makeTextBox: any = host.makeTextBox
     local makeTextLabel: any = host.makeTextLabel
     local Theme: any = host.Theme
+    local ThemeEngine: any = host.ThemeEngine
     local CONTROL_FONT: any = host.CONTROL_FONT
     local THIN_FONT: any = host.THIN_FONT
     local VALVE_FONT: any = host.VALVE_FONT
@@ -8237,6 +8238,14 @@ function Module.init(context: any): any
     local Stats: any = host.Stats
     local TaskManager: any = host.TaskManager
     local allFeatures: any = host.allFeatures
+
+    local function bind(instance: Instance, property: string, token: string): ()
+        if ThemeEngine and type(ThemeEngine.Bind) == "function" then
+            ThemeEngine.Bind(instance, property, token)
+        else
+            (instance :: any)[property] = Theme[token]
+        end
+    end
 
     -- Per-frame work this layer owns. In the shell these two loops simply ran
     -- for the life of the menu and were swept up when the task manager was
@@ -8371,19 +8380,20 @@ function Module.init(context: any): any
             Visible = false,
             ZIndex = 150,
         }) :: Frame
+        bind(root, "BackgroundColor3", "background")
         if not bare then
             create("UICorner", {
                 Parent = root,
                 CornerRadius = cornerRadius(UI_RADIUS.panel),
             })
-            -- Hairline only: the floating windows share the borderless look of
-            -- the main shell, so no grey frame draws attention at their corners.
-            create("UIStroke", {
+            local edge: UIStroke = create("UIStroke", {
                 Parent = root,
+                Name = "WindowOutline",
                 Color = Theme.outline,
-                Transparency = 0.78,
+                Transparency = 0.08,
                 Thickness = 1,
-            })
+            }) :: UIStroke
+            bind(edge, "Color", "outline")
 
             local shade: Frame = create("Frame", {
                 Parent = root,
@@ -8393,6 +8403,7 @@ function Module.init(context: any): any
                 BorderSizePixel = 0,
                 Size = UDim2.fromScale(1, 1),
             }) :: Frame
+            bind(shade, "BackgroundColor3", "background")
             shade:SetAttribute("FloatingDepth", 2)
         end
 
@@ -8406,6 +8417,7 @@ function Module.init(context: any): any
             Size = UDim2.new(1, 0, 0, headerHeight),
             Visible = not bare,
         }) :: Frame
+        bind(header, "BackgroundColor3", "surface")
         header:SetAttribute("FloatingDepth", 3)
 
         local closeButton: TextButton
@@ -8429,12 +8441,14 @@ function Module.init(context: any): any
                 Position = UDim2.fromOffset(0, headerHeight - 1),
                 Size = UDim2.new(1, 0, 0, 1),
             }) :: Frame
+            bind(accent, "BackgroundColor3", "outline")
             accent:SetAttribute("FloatingDepth", 1)
             local title: TextLabel = makeTextLabel(header, titleText, 10)
             title.FontFace = CONTROL_FONT
             title.Position = UDim2.fromOffset(10, 0)
             title.Size = UDim2.new(1, -40, 1, 0)
             title.TextColor3 = Theme.text
+            bind(title, "TextColor3", "text")
             title:SetAttribute("FloatingDepth", 2)
 
             closeButton = makeButton(header, "x", 9)
@@ -8484,6 +8498,7 @@ function Module.init(context: any): any
                 Thickness = 1,
                 Transparency = state.visible and 0.72 or 1,
             }) :: UIStroke
+            bind(hint, "Color", "outline")
             state.addMenuVisibilityListener(function(visible: boolean): ()
                 if not root.Parent then
                     return
@@ -11284,6 +11299,26 @@ function Module.init(context: any): any
     -- token machinery as the other three, so applyCardSkin repaints every
     -- row the moment it changes.
     local CLICKGUI_ENABLED: Color3 = Color3.fromRGB(32, 175, 32)
+    local uiPaletteRows: {[string]: Frame} = {}
+    local function paintPalette(labelText: string, color: Color3): ()
+        local option: Frame? = uiPaletteRows[labelText]
+        if not option then
+            return
+        end
+        local bar: Frame? = option:FindFirstChild("ColorBar") :: Frame?
+        local hex: TextLabel? = option:FindFirstChild("HexValue") :: TextLabel?
+        if bar then
+            bar.BackgroundColor3 = color
+        end
+        if hex then
+            hex.Text = string.format(
+                "#%02X%02X%02X",
+                math.floor(color.R * 255 + 0.5),
+                math.floor(color.G * 255 + 0.5),
+                math.floor(color.B * 255 + 0.5)
+            )
+        end
+    end
     for _, row: any in ipairs({
         {label = "Background", default = CLICKGUI_BACKGROUND, tokens = {"surface", "background"}},
         {label = "Accent", default = CLICKGUI_ACCENT, tokens = {"accent", "outline"}},
@@ -11292,24 +11327,32 @@ function Module.init(context: any): any
     }) do
         local tokens: {string} = row.tokens
         local labelText: string = row.label
-        addColorOption(uiPanel, labelText, row.default, function(color: Color3): ()
-            uiSettingsValues[labelText] = color
-            -- Wurst's Background paints window bodies, Accent paints title
-            -- bars *and* borders, Text paints every label — and in the Wurst
-            -- preset each pair already shares one value, so this mapping is
-            -- exact at boot.
-            if ThemeEngine and type(ThemeEngine.SetMany) == "function" then
-                local updates: {[string]: Color3} = {}
-                for _, token: string in ipairs(tokens) do
-                    updates[token] = color
-                end
-                ThemeEngine.SetMany(updates)
-            elseif ThemeEngine and type(ThemeEngine.Set) == "function" then
-                for _, token: string in ipairs(tokens) do
-                    ThemeEngine.Set(token, color)
+        local swatch: TextButton? = addColorOption(
+            uiPanel,
+            labelText,
+            row.default,
+            function(color: Color3): ()
+                uiSettingsValues[labelText] = color
+                -- Wurst's Background paints window bodies, Accent paints title
+                -- bars *and* borders, Text paints every label — and in the Wurst
+                -- preset each pair already shares one value, so this mapping is
+                -- exact at boot.
+                if ThemeEngine and type(ThemeEngine.SetMany) == "function" then
+                    local updates: {[string]: Color3} = {}
+                    for _, token: string in ipairs(tokens) do
+                        updates[token] = color
+                    end
+                    ThemeEngine.SetMany(updates)
+                elseif ThemeEngine and type(ThemeEngine.Set) == "function" then
+                    for _, token: string in ipairs(tokens) do
+                        ThemeEngine.Set(token, color)
+                    end
                 end
             end
-        end)
+        )
+        if swatch and swatch.Parent and swatch.Parent:IsA("Frame") then
+            uiPaletteRows[labelText] = swatch.Parent :: Frame
+        end
     end
 
     -- Rainbow, for fun — the user asked for it by name. While on, the
@@ -11331,6 +11374,8 @@ function Module.init(context: any): any
         if not value then
             local accent: any = uiSettingsValues["Accent"] or CLICKGUI_ACCENT
             local enabledColor: any = uiSettingsValues["Enabled"] or CLICKGUI_ENABLED
+            paintPalette("Accent", accent)
+            paintPalette("Enabled", enabledColor)
             if type(ThemeEngine.SetMany) == "function" then
                 ThemeEngine.SetMany({
                     accent = accent,
@@ -11352,6 +11397,8 @@ function Module.init(context: any): any
             end
             rainbowSince = 0
             local color: Color3 = Color3.fromHSV(rainbowElapsed * 0.25 % 1, 0.85, 1)
+            paintPalette("Accent", color)
+            paintPalette("Enabled", color)
             if type(ThemeEngine.SetMany) == "function" then
                 ThemeEngine.SetMany({
                     accent = color,
@@ -11972,12 +12019,16 @@ function Module.init(context: any): any
             Parent = button,
             CornerRadius = cornerRadius(12),
         })
-        create("UIStroke", {
+        local buttonOutline: UIStroke = (create("UIStroke", {
             Parent = button,
+            Name = "MobileActionOutline",
             Color = Theme.outline,
-            Transparency = 0.55,
+            Transparency = 0.35,
             Thickness = 1,
-        })
+        }) :: any) :: UIStroke
+        if ThemeEngine and type(ThemeEngine.Bind) == "function" then
+            ThemeEngine.Bind(buttonOutline, "Color", "outline")
+        end
         create("UITextSizeConstraint", {
             Parent = button,
             MaxTextSize = 12,
@@ -12736,26 +12787,24 @@ function Module.init(context: any): any
         -- Two different livings, the way the user drew the line:
         --   Rainbow     the whole hue wheel, each row a step behind — a real
         --               rainbow rolling down the list.
-        --   Animations  the list's own colour breathing: hue stays put
-        --               (your cyan stays cyan), brightness rides a sine
-        --               per row. Grey has no hue, so it borrows cyan.
+        --   Animations  variants of the selected list colour. Multiplying
+        --               RGB brightness preserves the chosen hue; neutral
+        --               colours stay neutral (white breathes through greys
+        --               instead of borrowing cyan).
         if hudRainbow then
             local hue: number = (hudRainbowClock * 0.35 + (order or 0) * 0.05) % 1
             return Color3.fromHSV(hue, 0.85, 1)
         end
         if animationsOn() then
-            local hue: number, saturation: number = 0.5, 0.85
-            pcall(function(): ()
-                local h: number, sat: number, _v: number = hudColor:ToHSV()
-                if sat > 0.05 then
-                    hue = h
-                    saturation = math.clamp(sat, 0.5, 1)
-                end
-            end)
             local wave: number = 0.5 + 0.5 * math.sin(
                 hudRainbowClock * 2.4 - (order or 0) * 0.65
             )
-            return Color3.fromHSV(hue, saturation, 0.45 + 0.55 * wave)
+            local brightness: number = 0.45 + 0.55 * wave
+            return Color3.new(
+                hudColor.R * brightness,
+                hudColor.G * brightness,
+                hudColor.B * brightness
+            )
         end
         return hudColor
     end

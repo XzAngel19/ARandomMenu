@@ -1538,6 +1538,26 @@ function Module.init(context: any): any
     -- token machinery as the other three, so applyCardSkin repaints every
     -- row the moment it changes.
     local CLICKGUI_ENABLED: Color3 = Color3.fromRGB(32, 175, 32)
+    local uiPaletteRows: {[string]: Frame} = {}
+    local function paintPalette(labelText: string, color: Color3): ()
+        local option: Frame? = uiPaletteRows[labelText]
+        if not option then
+            return
+        end
+        local bar: Frame? = option:FindFirstChild("ColorBar") :: Frame?
+        local hex: TextLabel? = option:FindFirstChild("HexValue") :: TextLabel?
+        if bar then
+            bar.BackgroundColor3 = color
+        end
+        if hex then
+            hex.Text = string.format(
+                "#%02X%02X%02X",
+                math.floor(color.R * 255 + 0.5),
+                math.floor(color.G * 255 + 0.5),
+                math.floor(color.B * 255 + 0.5)
+            )
+        end
+    end
     for _, row: any in ipairs({
         {label = "Background", default = CLICKGUI_BACKGROUND, tokens = {"surface", "background"}},
         {label = "Accent", default = CLICKGUI_ACCENT, tokens = {"accent", "outline"}},
@@ -1546,24 +1566,32 @@ function Module.init(context: any): any
     }) do
         local tokens: {string} = row.tokens
         local labelText: string = row.label
-        addColorOption(uiPanel, labelText, row.default, function(color: Color3): ()
-            uiSettingsValues[labelText] = color
-            -- Wurst's Background paints window bodies, Accent paints title
-            -- bars *and* borders, Text paints every label — and in the Wurst
-            -- preset each pair already shares one value, so this mapping is
-            -- exact at boot.
-            if ThemeEngine and type(ThemeEngine.SetMany) == "function" then
-                local updates: {[string]: Color3} = {}
-                for _, token: string in ipairs(tokens) do
-                    updates[token] = color
-                end
-                ThemeEngine.SetMany(updates)
-            elseif ThemeEngine and type(ThemeEngine.Set) == "function" then
-                for _, token: string in ipairs(tokens) do
-                    ThemeEngine.Set(token, color)
+        local swatch: TextButton? = addColorOption(
+            uiPanel,
+            labelText,
+            row.default,
+            function(color: Color3): ()
+                uiSettingsValues[labelText] = color
+                -- Wurst's Background paints window bodies, Accent paints title
+                -- bars *and* borders, Text paints every label — and in the Wurst
+                -- preset each pair already shares one value, so this mapping is
+                -- exact at boot.
+                if ThemeEngine and type(ThemeEngine.SetMany) == "function" then
+                    local updates: {[string]: Color3} = {}
+                    for _, token: string in ipairs(tokens) do
+                        updates[token] = color
+                    end
+                    ThemeEngine.SetMany(updates)
+                elseif ThemeEngine and type(ThemeEngine.Set) == "function" then
+                    for _, token: string in ipairs(tokens) do
+                        ThemeEngine.Set(token, color)
+                    end
                 end
             end
-        end)
+        )
+        if swatch and swatch.Parent and swatch.Parent:IsA("Frame") then
+            uiPaletteRows[labelText] = swatch.Parent :: Frame
+        end
     end
 
     -- Rainbow, for fun — the user asked for it by name. While on, the
@@ -1585,6 +1613,8 @@ function Module.init(context: any): any
         if not value then
             local accent: any = uiSettingsValues["Accent"] or CLICKGUI_ACCENT
             local enabledColor: any = uiSettingsValues["Enabled"] or CLICKGUI_ENABLED
+            paintPalette("Accent", accent)
+            paintPalette("Enabled", enabledColor)
             if type(ThemeEngine.SetMany) == "function" then
                 ThemeEngine.SetMany({
                     accent = accent,
@@ -1606,6 +1636,8 @@ function Module.init(context: any): any
             end
             rainbowSince = 0
             local color: Color3 = Color3.fromHSV(rainbowElapsed * 0.25 % 1, 0.85, 1)
+            paintPalette("Accent", color)
+            paintPalette("Enabled", color)
             if type(ThemeEngine.SetMany) == "function" then
                 ThemeEngine.SetMany({
                     accent = color,

@@ -452,12 +452,16 @@ function Module.init(context: any): any
             Parent = button,
             CornerRadius = cornerRadius(12),
         })
-        create("UIStroke", {
+        local buttonOutline: UIStroke = (create("UIStroke", {
             Parent = button,
+            Name = "MobileActionOutline",
             Color = Theme.outline,
-            Transparency = 0.55,
+            Transparency = 0.35,
             Thickness = 1,
-        })
+        }) :: any) :: UIStroke
+        if ThemeEngine and type(ThemeEngine.Bind) == "function" then
+            ThemeEngine.Bind(buttonOutline, "Color", "outline")
+        end
         create("UITextSizeConstraint", {
             Parent = button,
             MaxTextSize = 12,

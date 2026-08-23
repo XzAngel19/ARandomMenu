@@ -473,26 +473,24 @@ function Module.init(context: any): any
         -- Two different livings, the way the user drew the line:
         --   Rainbow     the whole hue wheel, each row a step behind — a real
         --               rainbow rolling down the list.
-        --   Animations  the list's own colour breathing: hue stays put
-        --               (your cyan stays cyan), brightness rides a sine
-        --               per row. Grey has no hue, so it borrows cyan.
+        --   Animations  variants of the selected list colour. Multiplying
+        --               RGB brightness preserves the chosen hue; neutral
+        --               colours stay neutral (white breathes through greys
+        --               instead of borrowing cyan).
         if hudRainbow then
             local hue: number = (hudRainbowClock * 0.35 + (order or 0) * 0.05) % 1
             return Color3.fromHSV(hue, 0.85, 1)
         end
         if animationsOn() then
-            local hue: number, saturation: number = 0.5, 0.85
-            pcall(function(): ()
-                local h: number, sat: number, _v: number = hudColor:ToHSV()
-                if sat > 0.05 then
-                    hue = h
-                    saturation = math.clamp(sat, 0.5, 1)
-                end
-            end)
             local wave: number = 0.5 + 0.5 * math.sin(
                 hudRainbowClock * 2.4 - (order or 0) * 0.65
             )
-            return Color3.fromHSV(hue, saturation, 0.45 + 0.55 * wave)
+            local brightness: number = 0.45 + 0.55 * wave
+            return Color3.new(
+                hudColor.R * brightness,
+                hudColor.G * brightness,
+                hudColor.B * brightness
+            )
         end
         return hudColor
     end
