@@ -418,6 +418,12 @@ function Module.init(context: any): any
 
         function window:SetPinned(pinned: boolean): ()
             window.pinned = pinned
+            -- A pinned window is allowed to outlive the menu. Once the player
+            -- removes that permission while the menu is closed, hide it now;
+            -- waiting for the next open/close cycle makes the pin look broken.
+            if not pinned and state.visible ~= true then
+                root.Visible = false
+            end
             persist(window)
         end
 

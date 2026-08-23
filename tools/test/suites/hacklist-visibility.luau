@@ -100,6 +100,37 @@ return function(ctx: any): ()
         )
     end
 
+    if type(list.SetPosition) == "function" then
+        list.SetPosition("Right")
+        check(
+            "HackList Position Right remains authoritative",
+            frame.AnchorPoint.X == 1,
+            tostring(frame.AnchorPoint.X)
+        )
+        if type(state.setMenuVisible) == "function" then
+            state.setMenuVisible(true)
+        end
+        list.SetPosition("Custom")
+        check(
+            "Custom HackList position enables dragging while the menu is open",
+            frame.Active == true and frame.AnchorPoint.X == 0
+        )
+        local touch: any = {
+            UserInputType = world.globals.Enum.UserInputType.Touch,
+            Position = world.vector3(80, 90, 0),
+        }
+        frame.InputBegan:Fire(touch)
+        touch.Position = world.vector3(140, 150, 0)
+        world.services.UserInputService.InputChanged:Fire(touch)
+        world.services.UserInputService.InputEnded:Fire(touch)
+        check(
+            "custom HackList drag persists logical coordinates",
+            type(env.configData.values["HackList.CustomX"]) == "number"
+                and type(env.configData.values["HackList.CustomY"]) == "number"
+        )
+        list.SetPosition("Left")
+    end
+
     -- The settings window may not be open in this visibility-only boot, so use
     -- the published list API while retaining the same player-visible contract.
     local showToggle: any = nil

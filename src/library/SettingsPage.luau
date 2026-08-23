@@ -413,7 +413,7 @@ function Module.init(context: any): any
                 end
             end
         )
-        local positions: {string} = {"Left", "Right"}
+        local positions: {string} = {"Left", "Right", "Custom"}
         addCycleOption(
             panel,
             "Position",

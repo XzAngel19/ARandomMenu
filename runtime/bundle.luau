@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "9018948617faaa77",
+    stamp = "4532e4410c688dd7",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -6838,6 +6838,12 @@ function Module.init(context: any): any
 
         function window:SetPinned(pinned: boolean): ()
             window.pinned = pinned
+            -- A pinned window is allowed to outlive the menu. Once the player
+            -- removes that permission while the menu is closed, hide it now;
+            -- waiting for the next open/close cycle makes the pin look broken.
+            if not pinned and state.visible ~= true then
+                root.Visible = false
+            end
             persist(window)
         end
 
@@ -10221,7 +10227,7 @@ function Module.init(context: any): any
                 end
             end
         )
-        local positions: {string} = {"Left", "Right"}
+        local positions: {string} = {"Left", "Right", "Custom"}
         addCycleOption(
             panel,
             "Position",
@@ -12769,10 +12775,9 @@ function Module.init(context: any): any
     end
 
     local function hudOnLeft(): boolean
-        -- A phone always keeps the list on the left, where a thumb does not
-        -- cover it (UI-V2, Mobile); a desktop follows Wurst's Position
-        -- setting, whose default is Left, under the logo.
-        return state.layout.compact or hudPosition == "Left"
+        -- Position is authoritative on every device. The old compact-layout
+        -- override silently turned Right back into Left on phones.
+        return hudPosition == "Left" or hudPosition == "Custom"
     end
 
     -- Assigned once the Navigator below exists; the left-hand list starts
@@ -12780,9 +12785,38 @@ function Module.init(context: any): any
     local navigatorBottom: () -> number = function(): number
         return FURNITURE_MARGIN_Y + LOGO_HEIGHT + 8
     end
+    local hudCustomX: number? = tonumber(configData.values["HackList.CustomX"])
+    local hudCustomY: number? = tonumber(configData.values["HackList.CustomY"])
+
+    local function logicalViewport(): Vector2
+        local windows: any = state.windows
+        if windows and type(windows.LogicalViewport) == "function" then
+            local ok: boolean, viewport: any = pcall(windows.LogicalViewport)
+            if ok and viewport then
+                return viewport
+            end
+        end
+        local raw: Vector2 = ScreenGui and ScreenGui.AbsoluteSize
+            or Vector2.new(1280, 720)
+        return raw
+    end
+
+    local function clampHudCustom(x: number, y: number): (number, number)
+        local viewport: Vector2 = logicalViewport()
+        return math.clamp(x, 0, math.max(viewport.X - 260, 0)),
+            math.clamp(y, 0, math.max(viewport.Y - 32, 0))
+    end
 
     local function placeHudList(): ()
-        if hudOnLeft() then
+        if hudPosition == "Custom" then
+            local x: number = hudCustomX or FURNITURE_MARGIN_X
+            local y: number = hudCustomY or navigatorBottom()
+            x, y = clampHudCustom(x, y)
+            hudCustomX, hudCustomY = x, y
+            hudFrame.AnchorPoint = Vector2.new(0, 0)
+            hudFrame.Position = UDim2.fromOffset(x, y)
+            hudLayout.HorizontalAlignment = Enum.HorizontalAlignment.Left
+        elseif hudOnLeft() then
             hudFrame.AnchorPoint = Vector2.new(0, 0)
             hudFrame.Position = UDim2.new(
                 0,
@@ -12816,6 +12850,69 @@ function Module.init(context: any): any
     end
     placeHudList()
     state.onLayout(placeHudList)
+
+    local hudDragInput: InputObject? = nil
+    local hudDragStart: Vector2 = Vector2.zero
+    local hudDragOrigin: Vector2 = Vector2.zero
+    local function syncHudDragSurface(): ()
+        hudFrame.Active = hudPosition == "Custom" and state.visible == true
+    end
+    syncHudDragSurface()
+    state.addMenuVisibilityListener(function(): ()
+        syncHudDragSurface()
+    end)
+    table.insert(Furniture.connections, hudFrame.InputBegan:Connect(function(
+        input: InputObject
+    ): ()
+        if not hudFrame.Active
+            or (input.UserInputType ~= Enum.UserInputType.MouseButton1
+                and input.UserInputType ~= Enum.UserInputType.Touch) then
+            return
+        end
+        hudDragInput = input
+        hudDragStart = Vector2.new(input.Position.X, input.Position.Y)
+        hudDragOrigin = Vector2.new(
+            hudFrame.Position.X.Offset,
+            hudFrame.Position.Y.Offset
+        )
+    end))
+    table.insert(Furniture.connections, UserInputService.InputChanged:Connect(function(
+        input: InputObject
+    ): ()
+        if not hudDragInput
+            or (input ~= hudDragInput
+                and not (hudDragInput.UserInputType == Enum.UserInputType.MouseButton1
+                    and input.UserInputType == Enum.UserInputType.MouseMovement)) then
+            return
+        end
+        local pointer: Vector2 = Vector2.new(input.Position.X, input.Position.Y)
+        local delta: Vector2 = pointer - hudDragStart
+        local windows: any = state.windows
+        if windows and type(windows.ScreenToLogical) == "function" then
+            delta = windows.ScreenToLogical(delta)
+        end
+        local x: number, y: number = clampHudCustom(
+            hudDragOrigin.X + delta.X,
+            hudDragOrigin.Y + delta.Y
+        )
+        hudCustomX, hudCustomY = x, y
+        hudFrame.Position = UDim2.fromOffset(x, y)
+    end))
+    table.insert(Furniture.connections, UserInputService.InputEnded:Connect(function(
+        input: InputObject
+    ): ()
+        if not hudDragInput
+            or (input ~= hudDragInput
+                and input.UserInputType ~= Enum.UserInputType.MouseButton1) then
+            return
+        end
+        hudDragInput = nil
+        if hudCustomX and hudCustomY then
+            configData.values["HackList.CustomX"] = hudCustomX
+            configData.values["HackList.CustomY"] = hudCustomY
+            queueConfigSave()
+        end
+    end))
 
     -- One container per entry: the list layout owns the container's slot,
     -- so the label inside it is free to slide the prototype's 14 px without
@@ -13113,6 +13210,10 @@ function Module.init(context: any): any
         SetPosition = function(value: string): ()
             hudPosition = value
             placeHudList()
+            syncHudDragSurface()
+            if value == "Custom" then
+                notify("Drag the HackList while the menu is open")
+            end
             forceHudRefresh()
         end,
         SetColor = function(color: Color3): ()

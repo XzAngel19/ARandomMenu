@@ -97,6 +97,14 @@ return function(ctx: any): ()
         movement.root.Visible == true)
     check("an unpinned window hides with the menu",
         visuals.root.Visible == false)
+    movement:SetPinned(false)
+    check(
+        "removing a pin while the menu is closed hides the window immediately",
+        movement.root.Visible == false
+    )
+    -- Preserve the persistence checks below; pinning again does not show the
+    -- window until the explicit SetVisible used by the next interaction.
+    movement:SetPinned(true)
     -- SetMenuVisible(false) hid the unpinned ones; snap needs them on
     -- screen, and the show path does not restore wasVisible yet.
     combat:SetVisible(true)

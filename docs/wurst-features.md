@@ -110,7 +110,7 @@ Navigator.
 | Name | Type | Default | Description | Here |
 |---|---|---|---|---|
 | Mode | Enum | `Auto` (`Auto`, `Count`, `Hidden`) | **Auto** mode renders the whole list if it fits onto the screen. **Count** mode only renders the number of active hacks. **Hidden** mode renders nothing. | none — Furniture implements Auto only |
-| Position | Enum | `Left` (`Left`, `Right`) | Which side of the screen the HackList should be shown on. Change this to **Right** when using TabGUI. | has — port default **Right**; `HACKLIST_POSITION` not named yet |
+| Position | Enum | `Left` (`Left`, `Right`) | Which side of the screen the HackList should be shown on. Change this to **Right** when using TabGUI. | adapted — port default **Left**; adds persisted `Custom` drag placement |
 | Color | Color | `#FFFFFF` | Color of the HackList text. Only visible when RainbowUI is disabled. | has — `HACKLIST_COLOR` |
 | Sort by | Enum | `Name` (`Name`, `Width`) | Determines how the HackList entries are sorted. Only visible when Mode is set to Auto. | none — Furniture sorts by Name |
 | Reverse sorting | Checkbox | off | (none) | has — `HACKLIST_REVERSE` |
