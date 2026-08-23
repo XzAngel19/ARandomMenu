@@ -77,13 +77,17 @@ local function pressGuiButton(button: GuiButton): boolean
     return pressed
 end
 
-local function isGameButton(instance: Instance, screenGui: Instance?): boolean
+local function isGameButton(
+    instance: Instance,
+    isMenuOwned: (Instance) -> boolean
+): boolean
     if not instance:IsA("GuiButton") then
         return false
     end
     -- The menu's own buttons are not the game's; clicking those would just be
-    -- the clicker fighting the interface.
-    if screenGui and instance:IsDescendantOf(screenGui) then
+    -- the clicker fighting the interface. The shell owns that distinction so
+    -- this module never depends on where the GUI is parented.
+    if isMenuOwned(instance) then
         return false
     end
     return true
@@ -94,7 +98,7 @@ function Module.init(context: Runtime): any
     local framework: any = context.framework
     local localPlayer: Player = host.LocalPlayer
     local userInput: UserInputService = host.UserInputService
-    local screenGui: Instance? = host.ScreenGui
+    local isMenuOwned: (Instance) -> boolean = host.isMenuOwned
     local weapons: any = context.weapons
 
     local runtime: any = {
@@ -124,7 +128,7 @@ function Module.init(context: Runtime): any
         end
         local wanted: string = string.lower(name)
         for _, descendant: Instance in ipairs(playerGui:GetDescendants()) do
-            if not isGameButton(descendant, screenGui) then
+            if not isGameButton(descendant, isMenuOwned) then
                 continue
             end
             if string.find(string.lower(descendant.Name), wanted, 1, true) then
@@ -354,7 +358,7 @@ function Module.init(context: Runtime): any
                 input.Position.Y
             )
             for _, candidate: Instance in ipairs(located) do
-                if isGameButton(candidate, screenGui) then
+                if isGameButton(candidate, isMenuOwned) then
                     runtime.learning = false
                     runtime.target = candidate :: GuiButton
                     clicker.Options["Button name"]:Set(candidate.Name)

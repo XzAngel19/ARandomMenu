@@ -1,33 +1,34 @@
-# C3 — module-contract conformance
+# Module contract conformance
 
-Report only. Base: integration tip `4ae81fe`. The gate is
-`tools/check_module_conformance.py`, walked over `src/modules/**`. D owns
-the authoring document (`docs/architecture/modules.md`); this file is the
-finding list until that tree is clean. Surface fixes go through D / A.
+The module architecture gate is blocking.
 
-Hard-fail flips in the same commit the last row below dies.
+`tools/check_module_conformance.py` walks every file under `src/modules/**` and
+rejects:
 
-## Allowed config namespaces
+- direct access to shell GUI roots (`ScreenGui` or `PopupLayer`);
+- bare `print` or `warn` calls;
+- persistence keys outside the approved namespaces.
 
-`Universal.*`, `UI.*`, `ClickGUI.*`, `Shortcut.*`, `WurstLogo.*`.
+## Approved persistence namespaces
 
-## Findings
+- `Universal.*`
+- `UI.*`
+- `ClickGUI.*`
+- `Shortcut.*`
+- `WurstLogo.*`
 
-| File | Kind | Why it stays |
-|---|---|---|
-| `src/modules/Combat/KillAura.luau` | ScreenGui reach-in | Target readout parents onto `host.ScreenGui`. A HUD overlay belongs on a documented host surface, not a chrome name. |
-| `src/modules/Combat/AutoClicker.luau` | ScreenGui reach-in | `isGameButton` excludes descendants of `host.ScreenGui` so the clicker does not fight the menu. Same chrome name. |
-| `src/modules/Combat/ProjectileCalibration.luau` | bare print/warn | Dataset write/stop/delete narrate to the console. The injected shadows mute them at runtime, but the calls are still a contract miss. |
-| `src/modules/Utility/RejoinServer.luau` | bare warn | Teleport failure path. Same: muted at runtime, still a reach for `warn`. |
-| `src/modules/Utility/RemoteLogger.luau` | bare print | Report dump. Same. |
+## Shell boundary
 
-No config key outside the documented namespaces. The Spoof pair persists
-`Universal.AnimationChanger.SavedIDs` and `Universal.EmotePlayer.SavedIDs`.
+Gameplay code never needs to know where the menu is parented. A module that
+must distinguish game UI from menu UI calls `host.isMenuOwned(instance)`.
+This keeps `gethui`, `CoreGui`, protection and GUI-root changes inside the
+shell.
 
-## What the silence gate already hard-fails
+User-facing diagnostics belong in `card:Notify(...)`, `card:SetStatus(...)` or
+the documented `host.notify(...)` helper. Modules do not write to the executor
+console. Remote Logger deliberately offers Save and Copy actions instead of a
+console-print action.
 
-`tools/check_silence.py` refuses `realPrint` / `realWarn` (and a
-`getfenv().print` grab) in `src/**` and `runtime/bundle.luau`. The shell's
-own shadows in `ARandomMenu.luau` are the only allowed site.
-
-`C_ARCHITECTURE_GATES_READY`
+The gate moved from report-only to hard-fail after the final findings in Auto
+Clicker, Projectile Calibration, Rejoin Server and Remote Logger were removed.
+A future violation fails `tools/validate.sh` and CI.

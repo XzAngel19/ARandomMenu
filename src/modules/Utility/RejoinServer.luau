@@ -25,6 +25,7 @@ function Module.init(context: Runtime): any
     local LocalPlayer: any = host.LocalPlayer
     local createUniversalFeature: any = host.createUniversalFeature
     local cloneReference: any = host.cloneReference
+    local notify: (string) -> () = host.notify
     local function rejoinCurrentServer(): ()
         local teleportService: TeleportService = cloneReference(
             game:GetService("TeleportService")
@@ -47,7 +48,7 @@ function Module.init(context: Runtime): any
                 teleportService:Teleport(placeId, LocalPlayer)
             end)
             if not ok then
-                warn("[Wurst] Rejoin failed: " .. tostring(teleportError))
+                notify("Rejoin failed: " .. tostring(teleportError))
             end
         end
     end

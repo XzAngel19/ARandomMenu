@@ -417,13 +417,6 @@ function Module.init(context: Runtime): any
         Function = saveReport,
     })
     logger:CreateButton({
-        Name = "Print to console",
-        Function = function(): ()
-            print(buildReport())
-            logger:Notify("printed " .. tostring(#order) .. " remotes")
-        end,
-    })
-    logger:CreateButton({
         Name = "Copy to clipboard",
         Function = function(): ()
             local environment: any = getfenv()

@@ -624,7 +624,6 @@ return function(ctx: any): ()
     end
     for _, name: string in ipairs({
         "Save to file",
-        "Print to console",
         "Copy to clipboard",
         "Clear log",
     }) do

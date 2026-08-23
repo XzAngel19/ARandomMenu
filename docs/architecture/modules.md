@@ -38,7 +38,7 @@ A universal module may use:
 - `context.framework.Categories.<OfficialCategory>:CreateModule(...)`;
 - `context.entity`, `context.weapons` and `context.render` through their published APIs;
 - `context.host` services (`Players`, `LocalPlayer`, `UserInputService`, `workspace`, `TaskManager`, `HttpService`, `PRODUCT`);
-- documented host helpers such as `getCharacterParts`, `notify` and target/friend predicates;
+- documented host helpers such as `getCharacterParts`, `notify`, `isMenuOwned` and target/friend predicates;
 - card lifecycle methods `Loop`, `Render`, `Event`, `Clean`, `Notify`, `SetStatus`;
 - option builders listed below.
 

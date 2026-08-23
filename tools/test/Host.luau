@@ -463,6 +463,9 @@ function Host.create(world: any): HostStub
     host.makeTextLabel = makeTextLabel
     host.makeButton = makeButton
     host.ScreenGui = screenGui
+    host.isMenuOwned = function(instance: any): boolean
+        return instance:IsDescendantOf(screenGui)
+    end
     host.HttpService = {
         JSONEncode = function(_self: any, value: any): string
             -- Enough of an encoder for a test to prove a file was written.

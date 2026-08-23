@@ -6,12 +6,12 @@ Rejects, when armed:
   (b) configData keys outside the documented namespaces
   (c) bare print / warn
 
-The tree is not clean today (KillAura/AutoClicker parent onto host.ScreenGui;
-ProjectileCalibration, RejoinServer and RemoteLogger still print). Report-only
-until that commit; HARD_FAIL flips in the same commit the last finding dies.
+The gate is blocking. Modules use the shell-owned `isMenuOwned` predicate
+instead of reaching into GUI roots, and user-facing diagnostics go through
+card status or notifications instead of the executor console.
 
-docs/architecture/modules.md is D's to write. The namespaces below are the
-ones the shell and the Spoof pair already persist under.
+docs/architecture/modules.md owns the contract. The namespaces below are the
+ones the shell and the Spoof pair persist under.
 """
 
 from __future__ import annotations
@@ -23,8 +23,8 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODULES = os.path.join(ROOT, "src/modules")
 
-# Flip to True in the commit that clears the last finding below.
-HARD_FAIL = False
+# This boundary is release-blocking. Never downgrade it to report-only.
+HARD_FAIL = True
 
 ALLOWED_KEY_PREFIXES = (
     "Universal.",

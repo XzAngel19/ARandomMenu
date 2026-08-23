@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "4ef59f24565ca109",
+    stamp = "1aee97475cec7403",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -16022,13 +16022,6 @@ function Module.init(context: Runtime): any
         Function = saveReport,
     })
     logger:CreateButton({
-        Name = "Print to console",
-        Function = function(): ()
-            print(buildReport())
-            logger:Notify("printed " .. tostring(#order) .. " remotes")
-        end,
-    })
-    logger:CreateButton({
         Name = "Copy to clipboard",
         Function = function(): ()
             local environment: any = getfenv()
@@ -16654,13 +16647,17 @@ local function pressGuiButton(button: GuiButton): boolean
     return pressed
 end
 
-local function isGameButton(instance: Instance, screenGui: Instance?): boolean
+local function isGameButton(
+    instance: Instance,
+    isMenuOwned: (Instance) -> boolean
+): boolean
     if not instance:IsA("GuiButton") then
         return false
     end
     -- The menu's own buttons are not the game's; clicking those would just be
-    -- the clicker fighting the interface.
-    if screenGui and instance:IsDescendantOf(screenGui) then
+    -- the clicker fighting the interface. The shell owns that distinction so
+    -- this module never depends on where the GUI is parented.
+    if isMenuOwned(instance) then
         return false
     end
     return true
@@ -16671,7 +16668,7 @@ function Module.init(context: Runtime): any
     local framework: any = context.framework
     local localPlayer: Player = host.LocalPlayer
     local userInput: UserInputService = host.UserInputService
-    local screenGui: Instance? = host.ScreenGui
+    local isMenuOwned: (Instance) -> boolean = host.isMenuOwned
     local weapons: any = context.weapons
 
     local runtime: any = {
@@ -16701,7 +16698,7 @@ function Module.init(context: Runtime): any
         end
         local wanted: string = string.lower(name)
         for _, descendant: Instance in ipairs(playerGui:GetDescendants()) do
-            if not isGameButton(descendant, screenGui) then
+            if not isGameButton(descendant, isMenuOwned) then
                 continue
             end
             if string.find(string.lower(descendant.Name), wanted, 1, true) then
@@ -16931,7 +16928,7 @@ function Module.init(context: Runtime): any
                 input.Position.Y
             )
             for _, candidate: Instance in ipairs(located) do
-                if isGameButton(candidate, screenGui) then
+                if isGameButton(candidate, isMenuOwned) then
                     runtime.learning = false
                     runtime.target = candidate :: GuiButton
                     clicker.Options["Button name"]:Set(candidate.Name)
@@ -17833,6 +17830,7 @@ function Module.init(context: Runtime): any
     local LocalPlayer: any = host.LocalPlayer
     local createUniversalFeature: any = host.createUniversalFeature
     local cloneReference: any = host.cloneReference
+    local notify: (string) -> () = host.notify
     local function rejoinCurrentServer(): ()
         local teleportService: TeleportService = cloneReference(
             game:GetService("TeleportService")
@@ -17855,7 +17853,7 @@ function Module.init(context: Runtime): any
                 teleportService:Teleport(placeId, LocalPlayer)
             end)
             if not ok then
-                warn("[Wurst] Rejoin failed: " .. tostring(teleportError))
+                notify("Rejoin failed: " .. tostring(teleportError))
             end
         end
     end
@@ -22458,8 +22456,6 @@ function Module.init(context: Runtime): any
     local host: any = context.host
     local state: any = host.state
     local product: any = host.PRODUCT
-    local logPrefix: string = "[" .. tostring(product.logPrefix)
-        .. ":UniversalTrajectory]"
     local notify: any = host.notify
     local createUniversalFeature: any = host.createUniversalFeature
     local addNumberOption: any = host.addNumberOption
@@ -22662,7 +22658,6 @@ function Module.init(context: Runtime): any
 
         saveSnapshot = function(reason: string): boolean
             if type(executorEnvironment.writefile) ~= "function" then
-                warn(logPrefix .. " writefile no está disponible.")
                 return false
             end
             local payload: {[string]: any} = {
@@ -22694,7 +22689,6 @@ function Module.init(context: Runtime): any
                 payload
             )
             if not encodedOk or type(encoded) ~= "string" then
-                warn(logPrefix .. " JSONEncode falló: " .. tostring(encoded))
                 return false
             end
             if type(executorEnvironment.makefolder) == "function" then
@@ -22702,23 +22696,15 @@ function Module.init(context: Runtime): any
                 pcall(executorEnvironment.makefolder, outputTelemetry)
                 pcall(executorEnvironment.makefolder, outputFolder)
             end
-            local writeOk: boolean, writeError: any = pcall(
+            local writeOk: boolean = pcall(
                 executorEnvironment.writefile,
                 outputPath,
                 encoded
             )
             if not writeOk then
-                warn(logPrefix .. " writefile falló: " .. tostring(writeError))
                 return false
             end
             runtime.dirty = false
-            print(
-                logPrefix .. " Guardado "
-                    .. outputPath
-                    .. " ("
-                    .. tostring(#encoded)
-                    .. " bytes)"
-            )
             return true
         end
 
@@ -23040,7 +23026,6 @@ function Module.init(context: Runtime): any
             if not enabled then
                 runtime.enabled = false
                 disconnectAll()
-                print(logPrefix .. " Calibración detenida.")
                 return
             end
             runtime.enabled = true
@@ -23055,12 +23040,6 @@ function Module.init(context: Runtime): any
             table.insert(runtime.connections, workspace.DescendantAdded:Connect(
                 considerCandidate
             ))
-            print(
-                logPrefix .. " Activa · buckets "
-                    .. tostring(tuning.bucketWidthMs)
-                    .. " ms · salida "
-                    .. outputPath
-            )
         end
 
         function controller:save(reason: string?): boolean
@@ -23071,7 +23050,6 @@ function Module.init(context: Runtime): any
             local deleteFile: any = executorEnvironment.delfile
             local isFile: any = executorEnvironment.isfile
             if type(deleteFile) ~= "function" then
-                warn(logPrefix .. " delfile no está disponible.")
                 return false
             end
             local exists: boolean = true
@@ -23080,12 +23058,8 @@ function Module.init(context: Runtime): any
                 exists = checked and result == true
             end
             if exists then
-                local deleted: boolean, deleteError: any = pcall(deleteFile, outputPath)
+                local deleted: boolean = pcall(deleteFile, outputPath)
                 if not deleted then
-                    warn(
-                        logPrefix .. " delfile falló: "
-                            .. tostring(deleteError)
-                    )
                     return false
                 end
             end
@@ -23095,13 +23069,12 @@ function Module.init(context: Runtime): any
             runtime.totalProjectiles = 0
             runtime.rejectedCandidates = 0
             runtime.dirty = false
-            print(logPrefix .. " Dataset de esta sesión eliminado.")
             return true
         end
 
         function controller:status(): string
             return string.format(
-                "Universal · activaciones %d · proyectiles %d · buckets %d",
+                "Universal · activations %d · projectiles %d · buckets %d",
                 runtime.totalActivations,
                 runtime.totalProjectiles,
                 (function(): number

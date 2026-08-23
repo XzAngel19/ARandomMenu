@@ -363,7 +363,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "4ef59f24565ca109"
+local SOURCE_STAMP: string = "1aee97475cec7403"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -5207,6 +5207,12 @@ local function createGameModuleEnvironment(
         makeButton = makeButton,
         makeTextBox = makeTextBox,
         notify = notify,
+        -- Modules can reject input owned by this menu without reaching into
+        -- the GUI tree. Keeping that boundary here lets the shell move or
+        -- protect its root without changing gameplay code.
+        isMenuOwned = function(instance: Instance): boolean
+            return instance:IsDescendantOf(ScreenGui)
+        end,
         TaskManager = TaskManager,
         featureConnections = featureConnections,
         disconnectFeatureConnection = disconnectFeatureConnection,
