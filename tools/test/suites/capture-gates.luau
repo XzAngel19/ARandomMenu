@@ -25,6 +25,13 @@ return function(ctx: any): ()
     local env: any = desktop.env
     local world: any = desktop.world
     check(
+        "late mobile-action initialization stays reachable through services",
+        env.services ~= nil
+            and env.services.mobileActions ~= nil
+            and type(env.services.mobileActions.bindPlacement) == "function"
+            and type(state.bindMobileActionPlacement) == "function"
+    )
+    check(
         "state.uiMaxHeight stays 200",
         state.uiMaxHeight == 200,
         tostring(state.uiMaxHeight)

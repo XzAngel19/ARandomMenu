@@ -6017,7 +6017,18 @@ local moduleServices: ModuleServices = {
         end,
         setVisible = function(visible: boolean): () state.setMenuVisible(visible) end,
     },
-    mobileActions = {bindPlacement = state.bindMobileActionPlacement},
+    mobileActions = {
+        -- MobileActions is a downloaded library initialized after this service
+        -- table is created. Capture-by-value here froze nil forever and made
+        -- every migrated module lose its placement button.
+        bindPlacement = function(...: any): any
+            local bindPlacement: any = state.bindMobileActionPlacement
+            if type(bindPlacement) == "function" then
+                return bindPlacement(...)
+            end
+            return nil
+        end,
+    },
     protectedTargets = {
         isProtected = function(player: Player?): boolean
             return protectedTargetProvider(player)
