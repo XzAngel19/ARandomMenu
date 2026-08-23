@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "52c950c3e3bcf2f2",
+    stamp = "96940e2dca90d91c",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -6949,8 +6949,9 @@ function Module.init(context: any): any
             -- bars *and* borders.
             local edge: UIStroke = (create("UIStroke", {
                 Parent = root,
+                Name = "WindowOutline",
                 Color = Theme.outline,
-                Transparency = 0.15,
+                Transparency = 0.08,
                 Thickness = 1,
             }) :: any) :: UIStroke
             bind(edge, "Color", "outline")
@@ -11297,7 +11298,13 @@ function Module.init(context: any): any
             -- bars *and* borders, Text paints every label — and in the Wurst
             -- preset each pair already shares one value, so this mapping is
             -- exact at boot.
-            if ThemeEngine and type(ThemeEngine.Set) == "function" then
+            if ThemeEngine and type(ThemeEngine.SetMany) == "function" then
+                local updates: {[string]: Color3} = {}
+                for _, token: string in ipairs(tokens) do
+                    updates[token] = color
+                end
+                ThemeEngine.SetMany(updates)
+            elseif ThemeEngine and type(ThemeEngine.Set) == "function" then
                 for _, token: string in ipairs(tokens) do
                     ThemeEngine.Set(token, color)
                 end
@@ -11324,9 +11331,17 @@ function Module.init(context: any): any
         if not value then
             local accent: any = uiSettingsValues["Accent"] or CLICKGUI_ACCENT
             local enabledColor: any = uiSettingsValues["Enabled"] or CLICKGUI_ENABLED
-            ThemeEngine.Set("accent", accent)
-            ThemeEngine.Set("outline", accent)
-            ThemeEngine.Set("enabled", enabledColor)
+            if type(ThemeEngine.SetMany) == "function" then
+                ThemeEngine.SetMany({
+                    accent = accent,
+                    outline = accent,
+                    enabled = enabledColor,
+                })
+            else
+                ThemeEngine.Set("accent", accent)
+                ThemeEngine.Set("outline", accent)
+                ThemeEngine.Set("enabled", enabledColor)
+            end
             return
         end
         rainbowConnection = trackUiConnection(RunService.Heartbeat:Connect(function(step: number): ()
@@ -11337,9 +11352,17 @@ function Module.init(context: any): any
             end
             rainbowSince = 0
             local color: Color3 = Color3.fromHSV(rainbowElapsed * 0.25 % 1, 0.85, 1)
-            ThemeEngine.Set("accent", color)
-            ThemeEngine.Set("outline", color)
-            ThemeEngine.Set("enabled", color)
+            if type(ThemeEngine.SetMany) == "function" then
+                ThemeEngine.SetMany({
+                    accent = color,
+                    outline = color,
+                    enabled = color,
+                })
+            else
+                ThemeEngine.Set("accent", color)
+                ThemeEngine.Set("outline", color)
+                ThemeEngine.Set("enabled", color)
+            end
         end))
     end)
 
@@ -11560,6 +11583,7 @@ function Module.init(context: any): any
     local makeTextLabel: any = host.makeTextLabel
     local notify: any = host.notify
     local Theme: any = host.Theme
+    local ThemeEngine: any = host.ThemeEngine
     local CONTROL_FONT: any = host.CONTROL_FONT
     local ScreenGui: any = host.ScreenGui
     local PopupLayer: any = host.PopupLayer
@@ -11705,12 +11729,16 @@ function Module.init(context: any): any
         Parent = editorPanel,
         CornerRadius = UDim.new(0, 12),
     })
-    create("UIStroke", {
+    local editorStroke: UIStroke = (create("UIStroke", {
         Parent = editorPanel,
+        Name = "WindowOutline",
         Color = Theme.outline,
         Thickness = 1,
-        Transparency = 0.25,
-    })
+        Transparency = 0.08,
+    }) :: any) :: UIStroke
+    if ThemeEngine and type(ThemeEngine.Bind) == "function" then
+        ThemeEngine.Bind(editorStroke, "Color", "outline")
+    end
     local editorTitle: TextLabel = (makeTextLabel(
         editorPanel,
         "Mobile button",
@@ -11771,11 +11799,16 @@ function Module.init(context: any): any
     local opacityValue: TextButton = editorButton("OpacityValue", "92%", 138, 89, 72)
     local opacityUp: TextButton = editorButton("OpacityUp", "+", 216, 89, 40)
     opacityValue.Active = false
-    local removeButton: TextButton = editorButton("Remove", "Remove", 14, 140, 120)
+    local removeButton: TextButton = editorButton("Remove", "Remove", 14, 140, 78)
     removeButton.BackgroundColor3 = Color3.fromRGB(120, 28, 28)
-    local doneButton: TextButton = editorButton("Done", "Done", 146, 140, 120)
+    local resetButton: TextButton = editorButton("Reset", "Reset", 101, 140, 78)
+    local doneButton: TextButton = editorButton("Done", "Done", 188, 140, 78)
     doneButton.BackgroundColor3 = Theme.enabled
     doneButton.TextColor3 = Theme.enabledText
+    if ThemeEngine and type(ThemeEngine.Bind) == "function" then
+        ThemeEngine.Bind(doneButton, "BackgroundColor3", "enabled")
+        ThemeEngine.Bind(doneButton, "TextColor3", "enabledText")
+    end
 
     local function closeEditor(): ()
         editingRecord = nil
@@ -11827,6 +11860,13 @@ function Module.init(context: any): any
     trackUiConnection(opacityUp.MouseButton1Click:Connect(function(): ()
         if editingRecord then
             editingRecord.opacity = math.clamp(editingRecord.opacity + 0.1, 0.2, 1)
+            refreshEditor()
+        end
+    end))
+    trackUiConnection(resetButton.MouseButton1Click:Connect(function(): ()
+        if editingRecord then
+            editingRecord.size = 52
+            editingRecord.opacity = 0.92
             refreshEditor()
         end
     end))

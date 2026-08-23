@@ -1552,7 +1552,13 @@ function Module.init(context: any): any
             -- bars *and* borders, Text paints every label — and in the Wurst
             -- preset each pair already shares one value, so this mapping is
             -- exact at boot.
-            if ThemeEngine and type(ThemeEngine.Set) == "function" then
+            if ThemeEngine and type(ThemeEngine.SetMany) == "function" then
+                local updates: {[string]: Color3} = {}
+                for _, token: string in ipairs(tokens) do
+                    updates[token] = color
+                end
+                ThemeEngine.SetMany(updates)
+            elseif ThemeEngine and type(ThemeEngine.Set) == "function" then
                 for _, token: string in ipairs(tokens) do
                     ThemeEngine.Set(token, color)
                 end
@@ -1579,9 +1585,17 @@ function Module.init(context: any): any
         if not value then
             local accent: any = uiSettingsValues["Accent"] or CLICKGUI_ACCENT
             local enabledColor: any = uiSettingsValues["Enabled"] or CLICKGUI_ENABLED
-            ThemeEngine.Set("accent", accent)
-            ThemeEngine.Set("outline", accent)
-            ThemeEngine.Set("enabled", enabledColor)
+            if type(ThemeEngine.SetMany) == "function" then
+                ThemeEngine.SetMany({
+                    accent = accent,
+                    outline = accent,
+                    enabled = enabledColor,
+                })
+            else
+                ThemeEngine.Set("accent", accent)
+                ThemeEngine.Set("outline", accent)
+                ThemeEngine.Set("enabled", enabledColor)
+            end
             return
         end
         rainbowConnection = trackUiConnection(RunService.Heartbeat:Connect(function(step: number): ()
@@ -1592,9 +1606,17 @@ function Module.init(context: any): any
             end
             rainbowSince = 0
             local color: Color3 = Color3.fromHSV(rainbowElapsed * 0.25 % 1, 0.85, 1)
-            ThemeEngine.Set("accent", color)
-            ThemeEngine.Set("outline", color)
-            ThemeEngine.Set("enabled", color)
+            if type(ThemeEngine.SetMany) == "function" then
+                ThemeEngine.SetMany({
+                    accent = color,
+                    outline = color,
+                    enabled = color,
+                })
+            else
+                ThemeEngine.Set("accent", color)
+                ThemeEngine.Set("outline", color)
+                ThemeEngine.Set("enabled", color)
+            end
         end))
     end)
 

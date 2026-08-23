@@ -576,8 +576,9 @@ function Module.init(context: any): any
             -- bars *and* borders.
             local edge: UIStroke = (create("UIStroke", {
                 Parent = root,
+                Name = "WindowOutline",
                 Color = Theme.outline,
-                Transparency = 0.15,
+                Transparency = 0.08,
                 Thickness = 1,
             }) :: any) :: UIStroke
             bind(edge, "Color", "outline")

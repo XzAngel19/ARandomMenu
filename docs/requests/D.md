@@ -75,8 +75,8 @@ Base on the current tip of `arena/01a02c8a-arandommenu`; do not re-land D1–D3.
 Review the shared `MobileActionEditor` against the YARHM references already
 listed in the authoring guide. Keep one panel, not one settings window per
 button. Audit touch spacing, labels, press feedback and the 36–120 px range on
-a real phone capture. Do not add decorative controls: Size, Opacity, Remove and
-Done are the complete surface. Report any visual issue rather than inventing
+a real phone capture. Do not add decorative controls: Size, Opacity, Remove,
+Reset and Done are the complete surface. Report any visual issue rather than inventing
 another global mobile-settings page.
 
 ## D6 — Next architecture pass: module-owned state
@@ -93,6 +93,33 @@ capture, Fly/Speed movement input, mobile action placement, Friend List target
 protection and the FOV/PlatformStand controllers. Do not wrap every state field
 one-for-one; reduce the surface. Extend the conformance gate only after the
 migration has a clean allowlist.
+
+## D7 — Next run: remove direct host-state coupling
+
+Base on the latest `arena/01a02c8a-arandommenu`. Runtime/docs and the tests that
+prove your migration; do not restyle GUI surfaces in this lane.
+
+Work in this order:
+
+1. Move module-owned values out of `host.state` and into each module's local
+   runtime (`InfiniteJump`, `Fullbright`, projectile calibration, Remote Logger,
+   Improve FPS and similar single-owner values).
+2. Publish small context services only for real cross-module contracts:
+   movement input, aim ray, menu visibility, mobile-action placement, protected
+   targets, FOV ownership and PlatformStand ownership. Group related methods;
+   never create one wrapper per old state field.
+3. Migrate callers, remove obsolete state fields and document the final context
+   surface in `docs/architecture/modules.md`.
+4. Extend module conformance with a narrow allowlist. New direct `host.state`
+   access must fail; temporary bridges need an owner and removal condition.
+5. After the surface is smaller, introduce concrete `Runtime`, `ModuleContext`
+   and service types for the migrated path. Do not attempt a repository-wide
+   `any` purge in the same commit.
+6. Preserve all visible behavior, config keys, the 38-module inventory and
+   teardown semantics.
+
+Report: commit hash, state accesses before/after, local values removed from the
+shell, services introduced, remaining bridges and types added.
 
 ## Rules
 

@@ -68,8 +68,8 @@ Base on the current tip of `arena/01a02c8a-arandommenu`; do not re-land C1–C4.
 
 1. Drive a placed mobile action through the mock: long press opens
    `MobileActionEditor`, size stays within 36–120, opacity stays within 20–100%,
-   all four values persist as `{x, y, size, opacity}`, and Remove destroys both
-   the button and its config entry.
+   all four values persist as `{x, y, size, opacity}`, Reset restores 52 px / 92%,
+   and Remove destroys both the button and its config entry.
 2. Hold-style buttons must release their action before the editor opens.
 3. Hold Navigator in raw ScreenGui space at full scale with a transparent root,
    Wurst's compact 456 px three-column panel, vertical overflow and no ClickGUI
@@ -78,6 +78,30 @@ Base on the current tip of `arena/01a02c8a-arandommenu`; do not re-land C1–C4.
    and selection rings repaint both times.
 5. Keep the synchronous category-height floor: every category below the 200 cap
    must expose all of its rows even when AbsoluteContentSize is one frame late.
+
+## C7 — Next run: retire permissive historical tests
+
+Base on the latest `arena/01a02c8a-arandommenu`. Tools/tests/docs only; do not
+change runtime behavior in this lane.
+
+1. Inventory every passing branch whose message says `waits on A`, `not
+   published yet`, `demonstrated debt`, or otherwise converts missing behavior
+   into a green check.
+2. For behavior that has landed, replace the branch with one unconditional
+   assertion and delete the historical fallback text.
+3. For an intentional product decision (for example, the dock is Navigator's
+   return control), rename the assertion to the actual contract rather than
+   calling it debt.
+4. For genuine missing behavior, write one failing-ready contract and a precise
+   debt entry; do not silently make CI red before the owning runtime lane lands.
+5. Add a repository gate that rejects new permissive phrases in active suites.
+   Keep an explicit, short allowlist only for real staged dependencies.
+6. Do not start the broad typing pass yet. First report the analyzer baseline
+   by subsystem; context types land after D removes the direct `host.state`
+   surface, otherwise types would freeze the wrong architecture.
+
+Report: commit hash, exact checks added/removed, every permissive branch retired,
+remaining allowlist and analyzer baseline.
 
 ## Rules
 

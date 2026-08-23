@@ -61,6 +61,13 @@ return function(ctx: any): ()
         windows.Get("combat") == combat
             and windows.Get("movement") == movement
             and windows.Get("visuals") == visuals)
+    for _, window: any in ipairs({combat, movement, visuals}) do
+        local outline: any = window.root:FindFirstChild("WindowOutline")
+        check(
+            "every managed window owns the same visible outline: " .. window.id,
+            outline ~= nil and outline.Transparency <= 0.08
+        )
+    end
     check("Get misses an unknown id", windows.Get("no-such-window") == nil)
 
     local function offset(window: any): (number, number)

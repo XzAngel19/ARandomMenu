@@ -205,7 +205,8 @@ return function(ctx: any): ()
     check("mobile actions publish one shared long-press editor", mobileEditor ~= nil)
     if mobileEditor then
         for _, control: string in ipairs({
-            "SizeDown", "SizeUp", "OpacityDown", "OpacityUp", "Remove", "Done",
+            "SizeDown", "SizeUp", "OpacityDown", "OpacityUp",
+            "Remove", "Reset", "Done",
         }) do
             check(
                 "mobile editor control: " .. control,

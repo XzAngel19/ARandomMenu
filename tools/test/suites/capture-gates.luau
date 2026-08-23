@@ -35,6 +35,35 @@ return function(ctx: any): ()
         tostring(state.uiMaxSettingsHeight)
     )
 
+    check(
+        "ThemeEngine publishes atomic related-token updates",
+        env.ThemeEngine ~= nil and type(env.ThemeEngine.SetMany) == "function"
+    )
+    if env.ThemeEngine and type(env.ThemeEngine.SetMany) == "function" then
+        local previousAccent: any = env.Theme.accent
+        local previousOutline: any = env.Theme.outline
+        local previousEnabled: any = env.Theme.enabled
+        local sampleColor: any = world.globals.Color3.fromRGB(17, 91, 203)
+        env.ThemeEngine.SetMany({
+            accent = sampleColor,
+            outline = sampleColor,
+            enabled = sampleColor,
+        })
+        local outlinesMatch: boolean = true
+        for _, category: any in pairs(state.clickGui and state.clickGui.categories or {}) do
+            local outline: any = category.window.root:FindFirstChild("WindowOutline")
+            outlinesMatch = outlinesMatch
+                and outline ~= nil
+                and outline.Color == sampleColor
+        end
+        check("Rainbow keeps every category outline on the same frame", outlinesMatch)
+        env.ThemeEngine.SetMany({
+            accent = previousAccent,
+            outline = previousOutline,
+            enabled = previousEnabled,
+        })
+    end
+
     local ui: any = state.windows and state.windows.Get and state.windows.Get("UISettings")
     check("UI Settings is published", ui ~= nil and ui.root ~= nil)
     if ui ~= nil and ui.root ~= nil then

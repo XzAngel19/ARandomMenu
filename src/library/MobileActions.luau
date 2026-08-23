@@ -63,6 +63,7 @@ function Module.init(context: any): any
     local makeTextLabel: any = host.makeTextLabel
     local notify: any = host.notify
     local Theme: any = host.Theme
+    local ThemeEngine: any = host.ThemeEngine
     local CONTROL_FONT: any = host.CONTROL_FONT
     local ScreenGui: any = host.ScreenGui
     local PopupLayer: any = host.PopupLayer
@@ -208,12 +209,16 @@ function Module.init(context: any): any
         Parent = editorPanel,
         CornerRadius = UDim.new(0, 12),
     })
-    create("UIStroke", {
+    local editorStroke: UIStroke = (create("UIStroke", {
         Parent = editorPanel,
+        Name = "WindowOutline",
         Color = Theme.outline,
         Thickness = 1,
-        Transparency = 0.25,
-    })
+        Transparency = 0.08,
+    }) :: any) :: UIStroke
+    if ThemeEngine and type(ThemeEngine.Bind) == "function" then
+        ThemeEngine.Bind(editorStroke, "Color", "outline")
+    end
     local editorTitle: TextLabel = (makeTextLabel(
         editorPanel,
         "Mobile button",
@@ -274,11 +279,16 @@ function Module.init(context: any): any
     local opacityValue: TextButton = editorButton("OpacityValue", "92%", 138, 89, 72)
     local opacityUp: TextButton = editorButton("OpacityUp", "+", 216, 89, 40)
     opacityValue.Active = false
-    local removeButton: TextButton = editorButton("Remove", "Remove", 14, 140, 120)
+    local removeButton: TextButton = editorButton("Remove", "Remove", 14, 140, 78)
     removeButton.BackgroundColor3 = Color3.fromRGB(120, 28, 28)
-    local doneButton: TextButton = editorButton("Done", "Done", 146, 140, 120)
+    local resetButton: TextButton = editorButton("Reset", "Reset", 101, 140, 78)
+    local doneButton: TextButton = editorButton("Done", "Done", 188, 140, 78)
     doneButton.BackgroundColor3 = Theme.enabled
     doneButton.TextColor3 = Theme.enabledText
+    if ThemeEngine and type(ThemeEngine.Bind) == "function" then
+        ThemeEngine.Bind(doneButton, "BackgroundColor3", "enabled")
+        ThemeEngine.Bind(doneButton, "TextColor3", "enabledText")
+    end
 
     local function closeEditor(): ()
         editingRecord = nil
@@ -330,6 +340,13 @@ function Module.init(context: any): any
     trackUiConnection(opacityUp.MouseButton1Click:Connect(function(): ()
         if editingRecord then
             editingRecord.opacity = math.clamp(editingRecord.opacity + 0.1, 0.2, 1)
+            refreshEditor()
+        end
+    end))
+    trackUiConnection(resetButton.MouseButton1Click:Connect(function(): ()
+        if editingRecord then
+            editingRecord.size = 52
+            editingRecord.opacity = 0.92
             refreshEditor()
         end
     end))

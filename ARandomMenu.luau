@@ -363,7 +363,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "52c950c3e3bcf2f2"
+local SOURCE_STAMP: string = "96940e2dca90d91c"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -776,15 +776,17 @@ function ThemeEngine.OnChange(callback: (string) -> ()): ()
     table.insert(themeListeners, callback)
 end
 
--- One token, repainted live. ThemeEngine.Apply is a whole preset; the UI
--- Settings window edits Background, Accent and Text one at a time, the way
--- Wurst's ClickGUI settings do, and each edit has to reach everything that
--- bound the token without waiting for a preset switch.
-function ThemeEngine.Set(token: string, value: Color3): ()
-    Theme[token] = value
+-- Repaint related tokens as one visual transaction. Rainbow drives accent,
+-- outline and enabled together; three independent Set calls allowed Roblox to
+-- render a frame between them, leaving a yellow title with a cyan border.
+function ThemeEngine.SetMany(values: {[string]: Color3}): ()
+    for token: string, value: Color3 in pairs(values) do
+        Theme[token] = value
+    end
     for instance: any, record: any in pairs(themeBindings) do
         for _, binding: any in ipairs(record) do
-            if binding.token == token then
+            local value: Color3? = values[binding.token]
+            if value then
                 pcall(function(): ()
                     instance[binding.property] = value
                 end)
@@ -794,6 +796,12 @@ function ThemeEngine.Set(token: string, value: Color3): ()
     for _, listener: (string) -> () in ipairs(themeListeners) do
         pcall(listener, ThemeEngine.name)
     end
+end
+
+-- One token, repainted live. ThemeEngine.Apply is a whole preset; the UI
+-- Settings window edits individual colours through this same transaction.
+function ThemeEngine.Set(token: string, value: Color3): ()
+    ThemeEngine.SetMany({[token] = value})
 end
 
 function ThemeEngine.Apply(name: string): boolean
