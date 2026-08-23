@@ -65,8 +65,30 @@ return function(ctx: any): ()
     Mock.inject(world, AnimationFile.init)
     local animations: any = AnimationFile.init(espContext)
     check("animation changer is registered", animations.Name == "Animation Changer")
-    for _, name: string in ipairs({"Pack", "Custom ID", "Apply", "Reset"}) do
+    for _, name: string in ipairs({"Pack", "Custom ID", "Save ID", "Apply", "Reset"}) do
         check("animation option: " .. name, animations.Options[name] ~= nil)
+    end
+
+    -- The classic packs ship with the module: no search, no fetch, the
+    -- catalog is part of the contract and full at require time.
+    do
+        local names: {[string]: boolean} = {}
+        local shipped: number = 0
+        for _, pack: any in ipairs(AnimationFile.builtinPacks or {}) do
+            names[tostring(pack.name)] = true
+            shipped += 1
+            local slots: number = 0
+            for _ in pairs(pack.ids or {}) do
+                slots += 1
+            end
+            check("pack " .. tostring(pack.name) .. " carries seven slots",
+                slots == 7, tostring(slots))
+        end
+        check("sixteen packs ship with the module", shipped == 16, tostring(shipped))
+        check("the classics are all present",
+            names["Ninja"] == true and names["Zombie"] == true
+                and names["Astronaut"] == true and names["Robot"] == true
+                and names["Werewolf"] == true and names["Vampire"] == true)
     end
 
     -- The Animate-script path, which is the one that works in a game that ships
@@ -125,7 +147,7 @@ return function(ctx: any): ()
     Mock.inject(world, EmoteFile.init)
     local emotePlayer: any = EmoteFile.init(espContext)
     check("emote player is registered", emotePlayer.Name == "Emote Player")
-    for _, name: string in ipairs({"Emote", "Custom ID", "Speed", "Loop", "Play", "Stop"}) do
+    for _, name: string in ipairs({"Emote", "Custom ID", "Save ID", "Speed", "Loop", "Play", "Stop"}) do
         check("emote option: " .. name, emotePlayer.Options[name] ~= nil)
     end
 

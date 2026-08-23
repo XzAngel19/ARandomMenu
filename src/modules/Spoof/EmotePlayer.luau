@@ -75,8 +75,10 @@ function Module.init(context: Runtime): any
         return created and made or nil
     end
 
-    -- Everything the player can pick from, in one list: what the disguise
-    -- found, what the last search returned, and nothing else.
+    -- Everything the player can pick from, in one list: the avatar's own
+    -- emotes, whatever the last search returned, and the ids saved by
+    -- hand — those survive rejoins, which is the point of saving them.
+    local SAVED_KEY: string = "Universal.EmotePlayer.SavedIDs"
     local function labels(): {string}
         local rows: {string} = {}
         runtime.byLabel = {}
@@ -90,6 +92,18 @@ function Module.init(context: Runtime): any
         for _, item: any in ipairs(runtime.catalog) do
             runtime.byLabel[item.label] = item.id
             table.insert(rows, item.label)
+        end
+        local saved: any = host.configData
+            and host.configData.values[SAVED_KEY]
+        if type(saved) == "string" and saved ~= "" then
+            for idText: string in string.gmatch(saved, "[^,]+") do
+                local id: number? = tonumber(idText)
+                if id then
+                    local label: string = "Saved " .. tostring(id)
+                    runtime.byLabel[label] = id
+                    table.insert(rows, label)
+                end
+            end
         end
         return rows
     end
@@ -151,7 +165,6 @@ function Module.init(context: Runtime): any
     emotes:CreateList({
         Name = "Emote",
         Items = labels,
-        EmptyText = "none yet — use Search",
         Tooltip = "Pick what to play: emotes from the avatar you are "
             .. "wearing, plus whatever the last search returned.",
         Function = function(_selected: any, names: {string}): ()
@@ -186,6 +199,43 @@ function Module.init(context: Runtime): any
         Default = "",
         Tooltip = "Optional: overrides the pick above when filled in. Any "
             .. "emote animation id, Roblox or UGC.",
+    })
+    emotes:CreateButton({
+        Name = "Save ID",
+        Tooltip = "Keeps the id from Custom ID in the Emote list, so it "
+            .. "survives rejoins and reinjects.",
+        Function = function(): ()
+            local typed: number? = tonumber(
+                tostring(emotes.Options["Custom ID"].Value or "")
+            )
+            if not typed or typed <= 0 then
+                emotes:Notify("put an emote id in Custom ID first")
+                return
+            end
+            local store: any = host.configData
+            if not store then
+                return
+            end
+            local saved: string = type(store.values[SAVED_KEY]) == "string"
+                and store.values[SAVED_KEY]
+                or ""
+            for idText: string in string.gmatch(saved, "[^,]+") do
+                if tonumber(idText) == typed then
+                    emotes:Notify(tostring(typed) .. " is already saved")
+                    return
+                end
+            end
+            store.values[SAVED_KEY] = saved == ""
+                and tostring(typed)
+                or (saved .. "," .. tostring(typed))
+            if type(host.queueConfigSave) == "function" then
+                host.queueConfigSave()
+            end
+            pcall(function(): ()
+                emotes.Options["Emote"]:Refresh()
+            end)
+            emotes:Notify("saved " .. tostring(typed))
+        end,
     })
     emotes:CreateSlider({
         Name = "Speed",

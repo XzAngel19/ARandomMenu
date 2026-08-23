@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "f44a5ee17e7506a8",
+    stamp = "04ded0229fd6e1fa",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -1440,7 +1440,7 @@ function Module.init(context: any): WidgetLibrary
     ): ()
         state.closeChoiceList()
 
-        local rowHeight: number = 22
+        local rowHeight: number = 24
         -- Fifty typefaces is not a list you scroll through, so anything longer
         -- than a screenful gets a filter field at the top, the way Vape's own
         -- lists do.
@@ -1459,8 +1459,8 @@ function Module.init(context: any): WidgetLibrary
         local list: Frame = create("Frame", {
             Parent = ScreenGui,
             Name = "ChoiceList",
-            BackgroundColor3 = Theme.surface,
-            BackgroundTransparency = 0.04,
+            BackgroundColor3 = Theme.surfaceRaised,
+            BackgroundTransparency = 0,
             BorderSizePixel = 0,
             Position = UDim2.fromOffset(
                 math.round(anchorPosition.X),
@@ -1474,9 +1474,11 @@ function Module.init(context: any): WidgetLibrary
         create("UIStroke", {
             Parent = list,
             Color = Theme.outline,
-            Transparency = 0.4,
+            Transparency = 0.15,
             Thickness = 1,
         })
+        -- No corner radius: every Wurst surface is a rectangle, and the
+        -- gate holds the line so a restyle cannot drift.
         -- Every entry the list is about to hold draws on the bitmap
         -- contract; the sweep's connection dies with the list.
         do
@@ -1576,7 +1578,7 @@ function Module.init(context: any): WidgetLibrary
                 Name = "Choice" .. tostring(itemIndex),
                 AutoButtonColor = false,
                 BackgroundColor3 = Theme.surfaceHover,
-                BackgroundTransparency = itemIndex == currentIndex and 0.35 or 1,
+                BackgroundTransparency = itemIndex == currentIndex and 0.25 or 1,
                 BorderSizePixel = 0,
                 FontFace = CONTROL_FONT,
                 LayoutOrder = itemIndex,
@@ -1590,17 +1592,34 @@ function Module.init(context: any): WidgetLibrary
             }) :: any) :: TextButton
             create("UIPadding", {
                 Parent = item,
-                PaddingLeft = UDim.new(0, 8),
+                PaddingLeft = UDim.new(0, 10),
                 PaddingRight = UDim.new(0, 8),
             })
+            -- The picked entry carries a slim accent bar on its left edge
+            -- — readable at a glance without a glyph.
+            if itemIndex == currentIndex then
+                create("Frame", {
+                    Parent = item,
+                    Name = "PickedBar",
+                    BackgroundColor3 = Theme.enabled,
+                    BorderSizePixel = 0,
+                    Position = UDim2.fromOffset(-10, 0),
+                    Size = UDim2.new(0, 3, 1, 0),
+                    ZIndex = 403,
+                })
+            end
             item.TextXAlignment = Enum.TextXAlignment.Left
             item.MouseEnter:Connect(function(): ()
                 if itemIndex ~= currentIndex then
-                    item.BackgroundTransparency = 0.72
+                    item.BackgroundTransparency = 0.6
+                    item.TextColor3 = Theme.text
                 end
             end)
             item.MouseLeave:Connect(function(): ()
-                item.BackgroundTransparency = itemIndex == currentIndex and 0.35 or 1
+                item.BackgroundTransparency = itemIndex == currentIndex and 0.25 or 1
+                item.TextColor3 = itemIndex == currentIndex
+                    and Theme.text
+                    or Theme.textMuted
             end)
             item.MouseButton1Click:Connect(function(): ()
                 close()
@@ -1679,7 +1698,7 @@ function Module.init(context: any): WidgetLibrary
     ): ()
         state.closeChoiceList()
 
-        local rowHeight: number = 22
+        local rowHeight: number = 24
         local rows: number = math.min(#items + (onBulk and 1 or 0), 7)
         local listHeight: number = math.max(rows, 1) * rowHeight + 8
         local anchorPosition: Vector2 = anchor.AbsolutePosition
@@ -1933,9 +1952,12 @@ function Module.init(context: any): WidgetLibrary
                 end
             end
             if total == 0 then
-                button.Text = definition.emptyText or "nothing detected"
+                -- Blank, not a caption: an empty chooser that says
+                -- "nothing detected" reads like a broken value. The row
+                -- label and the tooltip already explain the control.
+                button.Text = definition.emptyText or ""
             elseif count == 0 then
-                button.Text = "none of " .. tostring(total)
+                button.Text = ""
             elseif count == 1 then
                 button.Text = last
             elseif count == total then
@@ -12008,7 +12030,9 @@ local HACKLIST_ANIMATIONS: boolean = true
 local HACKLIST_FONT_SIZE: number = 16
 local HACKLIST_LINE_HEIGHT: number = 18
 local HACKLIST_TOP: number = 56
-local HACKLIST_SLIDE: number = 14
+-- 24 and a quarter second: the old 14 px over 0.15 s was invisible,
+-- which read as "Animations does nothing".
+local HACKLIST_SLIDE: number = 24
 
 -- Wurst's WurstLogo defaults: a white chip with black text, visible always.
 local WURSTLOGO_VISIBILITY: string = "Always"
@@ -12420,10 +12444,23 @@ function Module.init(context: any): any
         if not hudRainbow then
             return hudColor
         end
-        -- Vape-style wave: the base hue rides the clock and each row sits
-        -- a step behind the one above it.
-        local hue: number = (hudRainbowClock * 0.4 + (order or 0) * 0.045) % 1
-        return Color3.fromHSV(hue, 0.8, 1)
+        -- Not the whole hue wheel: variants of the list's own colour, the
+        -- way Vape's wave runs every shade of one cyan. The hue comes from
+        -- the Color row; brightness rides a sine and each row sits a step
+        -- behind the one above it. A grey or white base has no hue to
+        -- vary, so it borrows cyan — the classic.
+        local hue: number, saturation: number = 0.5, 0.85
+        pcall(function(): ()
+            local h: number, sat: number, _v: number = hudColor:ToHSV()
+            if sat > 0.05 then
+                hue = h
+                saturation = math.clamp(sat, 0.5, 1)
+            end
+        end)
+        local wave: number = 0.5 + 0.5 * math.sin(
+            hudRainbowClock * 2.4 - (order or 0) * 0.65
+        )
+        return Color3.fromHSV(hue, saturation, 0.45 + 0.55 * wave)
     end
     local function drawHudEntry(row: any, name: string, status: string?): ()
         row.name = name
@@ -12474,7 +12511,7 @@ function Module.init(context: any): any
         )
         TweenService:Create(
             holder,
-            TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+            TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
             {Position = resting}
         ):Play()
     end
@@ -12661,6 +12698,11 @@ function Module.init(context: any): any
         hudFrame.Visible = hudVisible
         if hudVisible then
             forceHudRefresh()
+            -- Animations, visibly: every line slides back in when the
+            -- list appears, not only when a single module toggles.
+            for _, row: any in pairs(hudRows) do
+                slideHudRow(row)
+            end
         end
     end
     Furniture.SetHackListVisible = setHackListVisible
@@ -13942,7 +13984,6 @@ function Module.init(context: Runtime): any
         Items = function(): {string}
             return known
         end,
-        EmptyText = "nothing added yet",
         Tooltip = "Every object the module knows about. Tick the ones to draw.",
         Function = function(_selected: any, names: {string}): ()
             wanted = names
@@ -23638,13 +23679,11 @@ return Module
 -- bundle. Cosmetic by construction: it changes what your character looks like
 -- while it moves, not how it moves.
 --
--- The packs are not a hard-coded list of asset ids. Those lists go stale, and
--- a wrong id is a module that silently does nothing, so the catalog is asked
--- instead: `AvatarEditorService:SearchCatalog` with the bundle type set to
--- animations and the creator pinned to **Roblox**, which is the filter that
--- keeps UGC out. Each bundle is then resolved to its individual animation
--- assets through `GetItemDetails`, and each asset is matched to the slot its
--- own name says it belongs to ("Ninja Run" is the run animation).
+-- Roblox's classic packs ship with the module — sixteen of them, the ids
+-- every animation script has carried for years. They load with the script,
+-- no catalog call, no search button, no waiting: open the settings and the
+-- list is simply there. A pack the table does not know still fits through
+-- Custom ID, which takes any bundle id and resolves it at apply time.
 --
 -- Two ways of applying it, because games disagree about which one survives:
 --
@@ -23669,6 +23708,9 @@ local Module = {
     PlaceId = 0,
     Events = {} :: {[string]: any},
     Initialized = false,
+    -- Published for the suites: the shipped catalog is part of the
+    -- module's contract, not an implementation detail.
+    builtinPacks = nil :: any,
 }
 
 local activeCleanup: (() -> ())? = nil
@@ -23699,6 +23741,30 @@ local ANIMATE_SLOTS: {[string]: {string}} = {
     MoodAnimation = {"mood"},
 }
 
+-- The classic Roblox animation packs, by animation asset id. These are the
+-- catalog animation assets themselves (each one is a container holding the
+-- weighted clips), which is exactly what HumanoidDescription fields take.
+-- Sixteen packs, stable for years; Custom ID covers anything newer.
+local BUILTIN_PACKS: {{name: string, ids: {[string]: number}}} = {
+    {name = "Astronaut", ids = {IdleAnimation = 1090133099, WalkAnimation = 1090131576, RunAnimation = 1090130630, JumpAnimation = 1090132507, FallAnimation = 1090132063, SwimAnimation = 1090133583, ClimbAnimation = 1090134016}},
+    {name = "Bubbly", ids = {IdleAnimation = 1018553897, WalkAnimation = 1018549681, RunAnimation = 1018548665, JumpAnimation = 1018553240, FallAnimation = 1018552770, SwimAnimation = 1018554245, ClimbAnimation = 1018554668}},
+    {name = "Cartoony", ids = {IdleAnimation = 837011741, WalkAnimation = 837010234, RunAnimation = 837009922, JumpAnimation = 837011171, FallAnimation = 837010685, SwimAnimation = 837012509, ClimbAnimation = 837013990}},
+    {name = "Elder", ids = {IdleAnimation = 892268340, WalkAnimation = 892267099, RunAnimation = 892265784, JumpAnimation = 892267917, FallAnimation = 892267521, SwimAnimation = 892268710, ClimbAnimation = 892269341}},
+    {name = "Knight", ids = {IdleAnimation = 734327140, WalkAnimation = 734326330, RunAnimation = 734325948, JumpAnimation = 734326930, FallAnimation = 734326679, SwimAnimation = 734327363, ClimbAnimation = 734329002}},
+    {name = "Levitation", ids = {IdleAnimation = 619542203, WalkAnimation = 619544080, RunAnimation = 619543231, JumpAnimation = 619542888, FallAnimation = 619541867, SwimAnimation = 619543721, ClimbAnimation = 619541458}},
+    {name = "Mage", ids = {IdleAnimation = 754637456, WalkAnimation = 754636298, RunAnimation = 754635032, JumpAnimation = 754637084, FallAnimation = 754636589, SwimAnimation = 754638471, ClimbAnimation = 754639239}},
+    {name = "Ninja", ids = {IdleAnimation = 658832408, WalkAnimation = 658831143, RunAnimation = 658830056, JumpAnimation = 658832070, FallAnimation = 658831500, SwimAnimation = 658832807, ClimbAnimation = 658833139}},
+    {name = "Pirate", ids = {IdleAnimation = 837024662, WalkAnimation = 837023892, RunAnimation = 837023444, JumpAnimation = 837024350, FallAnimation = 837024147, SwimAnimation = 837025054, ClimbAnimation = 837025325}},
+    {name = "Robot", ids = {IdleAnimation = 619521748, WalkAnimation = 619522849, RunAnimation = 619522386, JumpAnimation = 619522088, FallAnimation = 619521521, SwimAnimation = 619522642, ClimbAnimation = 619521311}},
+    {name = "Stylish", ids = {IdleAnimation = 619511648, WalkAnimation = 619512767, RunAnimation = 619512153, JumpAnimation = 619511974, FallAnimation = 619511417, SwimAnimation = 619512450, ClimbAnimation = 619509955}},
+    {name = "Superhero", ids = {IdleAnimation = 619528125, WalkAnimation = 619529601, RunAnimation = 619528716, JumpAnimation = 619528412, FallAnimation = 619527817, SwimAnimation = 619529095, ClimbAnimation = 619527470}},
+    {name = "Toy", ids = {IdleAnimation = 973771666, WalkAnimation = 973767371, RunAnimation = 973766674, JumpAnimation = 973770652, FallAnimation = 973768058, SwimAnimation = 973772659, ClimbAnimation = 973773170}},
+    {name = "Vampire", ids = {IdleAnimation = 1113742618, WalkAnimation = 1113741192, RunAnimation = 1113740510, JumpAnimation = 1113742359, FallAnimation = 1113742092, SwimAnimation = 1113742944, ClimbAnimation = 1113743239}},
+    {name = "Werewolf", ids = {IdleAnimation = 1113752682, WalkAnimation = 1113751657, RunAnimation = 1113750642, JumpAnimation = 1113752285, FallAnimation = 1113751889, SwimAnimation = 1113752975, ClimbAnimation = 1113754738}},
+    {name = "Zombie", ids = {IdleAnimation = 619535834, WalkAnimation = 619537468, RunAnimation = 619536621, JumpAnimation = 619536283, FallAnimation = 619535616, SwimAnimation = 619537096, ClimbAnimation = 619535091}},
+}
+Module.builtinPacks = BUILTIN_PACKS
+
 local function slotForName(name: string): string?
     local lowered: string = string.lower(name)
     for _, slot: {field: string, keys: {string}} in ipairs(SLOTS) do
@@ -23721,9 +23787,37 @@ function Module.init(context: Runtime): any
         byLabel = {} :: {[string]: any},
         selected = nil :: string?,
         original = nil :: {[string]: number}?,
-        searching = false,
         settingSelection = false,
     }
+
+    -- The built-in packs are the list; saved Custom IDs join them below.
+    -- Nothing loads, nothing searches — sixteen names, ready at boot.
+    local SAVED_KEY: string = "Universal.AnimationChanger.SavedIDs"
+    local function reloadPacks(): ()
+        runtime.packs = {}
+        runtime.byLabel = {}
+        for _, pack: any in ipairs(BUILTIN_PACKS) do
+            local entry: any = {label = pack.name, ids = pack.ids}
+            table.insert(runtime.packs, entry)
+            runtime.byLabel[entry.label] = entry
+        end
+        local saved: any = host.configData
+            and host.configData.values[SAVED_KEY]
+        if type(saved) == "string" and saved ~= "" then
+            for idText: string in string.gmatch(saved, "[^,]+") do
+                local id: number? = tonumber(idText)
+                if id then
+                    local entry: any = {
+                        label = "Saved " .. tostring(id),
+                        id = id,
+                    }
+                    table.insert(runtime.packs, entry)
+                    runtime.byLabel[entry.label] = entry
+                end
+            end
+        end
+    end
+    reloadPacks()
 
     local function avatarEditor(): any?
         local ok: boolean, service: any = pcall(function(): any
@@ -23795,9 +23889,6 @@ function Module.init(context: Runtime): any
                 end)
             end)
             task.spawn(function(): ()
-                if #runtime.packs == 0 then
-                    Module.search(context, animations, runtime)
-                end
                 Module.apply(context, animations, runtime, true)
             end)
         end,
@@ -23815,7 +23906,6 @@ function Module.init(context: Runtime): any
             end
             return labels
         end,
-        EmptyText = "none yet — Find packs",
         Tooltip = "Animation bundles published by Roblox. UGC is filtered out "
             .. "by the search itself.",
         Function = function(_selected: any, names: {string}): ()
@@ -23871,13 +23961,41 @@ function Module.init(context: Runtime): any
         end,
     })
     animations:CreateButton({
-        Name = "Find packs",
-        Tooltip = "Ask the catalog for every animation bundle Roblox itself "
-            .. "published; results land in the Pack list.",
+        Name = "Save ID",
+        Tooltip = "Keeps the bundle id from Custom ID in the Pack list, so "
+            .. "it survives rejoins and reinjects.",
         Function = function(): ()
-            task.spawn(function(): ()
-                Module.search(context, animations, runtime)
+            local typed: number? = tonumber(
+                tostring(animations.Options["Custom ID"].Value or "")
+            )
+            if not typed or typed <= 0 then
+                animations:Notify("put a bundle id in Custom ID first")
+                return
+            end
+            local store: any = host.configData
+            if not store then
+                return
+            end
+            local saved: string = type(store.values[SAVED_KEY]) == "string"
+                and store.values[SAVED_KEY]
+                or ""
+            for idText: string in string.gmatch(saved, "[^,]+") do
+                if tonumber(idText) == typed then
+                    animations:Notify(tostring(typed) .. " is already saved")
+                    return
+                end
+            end
+            store.values[SAVED_KEY] = saved == ""
+                and tostring(typed)
+                or (saved .. "," .. tostring(typed))
+            if type(host.queueConfigSave) == "function" then
+                host.queueConfigSave()
+            end
+            reloadPacks()
+            pcall(function(): ()
+                animations.Options["Pack"]:Refresh()
             end)
+            animations:Notify("saved " .. tostring(typed))
         end,
     })
     animations:CreateNote(
@@ -23894,68 +24012,6 @@ function Module.init(context: Runtime): any
     end
     Module.Initialized = true
     return animations
-end
-
--- Catalog search. Everything here is wrapped: the service exists in every
--- live experience, but it throws on restricted places and returns different
--- shapes across client versions, and a module that errors on a missing field
--- is worse than one that says "none found".
-function Module.search(context: Runtime, animations: any, runtime: any): ()
-    if runtime.searching then
-        return
-    end
-    runtime.searching = true
-    local found: {any} = {}
-
-    local ok: boolean = pcall(function(): ()
-        local service: any = game:GetService("AvatarEditorService")
-        local params: any = CatalogSearchParams.new()
-        pcall(function(): ()
-            params.BundleTypes = {Enum.BundleType.Animations}
-        end)
-        pcall(function(): ()
-            -- The one filter that separates Roblox's own packs from UGC.
-            params.CreatorName = "Roblox"
-        end)
-        pcall(function(): ()
-            params.SortType = Enum.CatalogSortType.MostFavorited
-        end)
-        local pages: any = service:SearchCatalog(params)
-        for _ = 1, 3 do
-            for _, item: any in ipairs(pages:GetCurrentPage()) do
-                local id: number? = tonumber(item.Id or item.id)
-                local name: string = tostring(item.Name or item.name or "Bundle")
-                if id then
-                    table.insert(found, {
-                        id = id,
-                        label = name .. "  ·  " .. tostring(id),
-                    })
-                end
-            end
-            if pages.IsFinished then
-                break
-            end
-            pages:AdvanceToNextPageAsync()
-        end
-    end)
-
-    runtime.searching = false
-    if not ok then
-        animations:Notify("the catalog refused the search")
-        return
-    end
-    table.sort(found, function(left: any, right: any): boolean
-        return left.label < right.label
-    end)
-    runtime.packs = found
-    runtime.byLabel = {}
-    for _, pack: any in ipairs(found) do
-        runtime.byLabel[pack.label] = pack
-    end
-    pcall(function(): ()
-        animations.Options["Pack"]:Refresh()
-    end)
-    animations:Notify(tostring(#found) .. " packs from Roblox")
 end
 
 -- A bundle item is often a container asset, not the AnimationClip that an
@@ -24113,21 +24169,29 @@ function Module.apply(
         return
     end
 
+    -- What to wear: a typed Custom ID wins, then the ticked pack. The
+    -- built-in packs already carry their asset ids; only a bundle id has
+    -- to be opened at the catalog.
     local typed: number? = tonumber(animations.Options["Custom ID"].Value)
-    local bundleId: number = typed or 0
-    if bundleId <= 0 then
-        local pack: any = runtime.selected and runtime.byLabel[runtime.selected]
-        bundleId = pack and pack.id or 0
-    end
-    if bundleId <= 0 then
+    local pack: any = runtime.selected and runtime.byLabel[runtime.selected]
+    local wearing: string = ""
+    local descriptionIds: {[string]: number} = {}
+    if typed and typed > 0 then
+        descriptionIds = Module.resolveBundle(typed)
+        wearing = "bundle " .. tostring(typed)
+    elseif pack and pack.ids then
+        descriptionIds = pack.ids
+        wearing = tostring(pack.label)
+    elseif pack and pack.id then
+        descriptionIds = Module.resolveBundle(pack.id)
+        wearing = tostring(pack.label)
+    else
         if not quiet then
             animations:Notify("pick a pack first")
         end
         return
     end
-
-    local ids: {[string]: number} = Module.resolveBundle(bundleId)
-    if next(ids) == nil then
+    if next(descriptionIds) == nil then
         if not quiet then
             animations:Notify("that bundle has no animations")
         end
@@ -24136,37 +24200,42 @@ function Module.apply(
 
     -- Both paths, always: the description is the supported route and the
     -- Animate script is the fallback that survives games re-applying their
-    -- own description. The old "Apply through" dropdown made the player
-    -- choose between halves of one job, which is exactly the kind of
-    -- setting Wurst would never ask about.
-    local through: string = "Both"
+    -- own description.
     local applied: boolean = false
-
-    if through ~= "Animate script" then
-        local ok: boolean, description: any = pcall(function(): any
-            return (humanoid :: Humanoid):GetAppliedDescription()
-        end)
-        if ok and typeof(description) == "Instance" then
-            for field: string, assetId: number in pairs(ids) do
-                pcall(function(): ()
-                    (description :: any)[field] = assetId
-                end)
-            end
-            applied = pcall(function(): ()
-                (humanoid :: Humanoid):ApplyDescription(
-                    description :: HumanoidDescription
-                )
+    local ok: boolean, description: any = pcall(function(): any
+        return (humanoid :: Humanoid):GetAppliedDescription()
+    end)
+    if ok and typeof(description) == "Instance" then
+        for field: string, assetId: number in pairs(descriptionIds) do
+            pcall(function(): ()
+                (description :: any)[field] = assetId
             end)
         end
+        applied = pcall(function(): ()
+            (humanoid :: Humanoid):ApplyDescription(
+                description :: HumanoidDescription
+            )
+        end)
     end
-    if through ~= "Description" then
-        applied = Module.patchAnimateScript(character :: Model, ids) or applied
+
+    -- The Animate script wants the playable clip, not the catalog
+    -- container the description takes; built-in ids are containers, so
+    -- each one opens to its clip here (and falls back to itself when the
+    -- asset already is one).
+    local animateIds: {[string]: number} = {}
+    for field: string, assetId: number in pairs(descriptionIds) do
+        local clip: number? = nil
+        pcall(function(): ()
+            clip = Module.resolveClipId(assetId)
+        end)
+        animateIds[field] = clip or assetId
     end
+    applied = Module.patchAnimateScript(character :: Model, animateIds) or applied
 
     if not quiet then
         animations:Notify(
             applied
-                and ("wearing bundle " .. tostring(bundleId))
+                and ("wearing " .. wearing)
                 or "nothing accepted the swap"
         )
     end
@@ -24290,8 +24359,10 @@ function Module.init(context: Runtime): any
         return created and made or nil
     end
 
-    -- Everything the player can pick from, in one list: what the disguise
-    -- found, what the last search returned, and nothing else.
+    -- Everything the player can pick from, in one list: the avatar's own
+    -- emotes, whatever the last search returned, and the ids saved by
+    -- hand — those survive rejoins, which is the point of saving them.
+    local SAVED_KEY: string = "Universal.EmotePlayer.SavedIDs"
     local function labels(): {string}
         local rows: {string} = {}
         runtime.byLabel = {}
@@ -24305,6 +24376,18 @@ function Module.init(context: Runtime): any
         for _, item: any in ipairs(runtime.catalog) do
             runtime.byLabel[item.label] = item.id
             table.insert(rows, item.label)
+        end
+        local saved: any = host.configData
+            and host.configData.values[SAVED_KEY]
+        if type(saved) == "string" and saved ~= "" then
+            for idText: string in string.gmatch(saved, "[^,]+") do
+                local id: number? = tonumber(idText)
+                if id then
+                    local label: string = "Saved " .. tostring(id)
+                    runtime.byLabel[label] = id
+                    table.insert(rows, label)
+                end
+            end
         end
         return rows
     end
@@ -24366,7 +24449,6 @@ function Module.init(context: Runtime): any
     emotes:CreateList({
         Name = "Emote",
         Items = labels,
-        EmptyText = "none yet — use Search",
         Tooltip = "Pick what to play: emotes from the avatar you are "
             .. "wearing, plus whatever the last search returned.",
         Function = function(_selected: any, names: {string}): ()
@@ -24401,6 +24483,43 @@ function Module.init(context: Runtime): any
         Default = "",
         Tooltip = "Optional: overrides the pick above when filled in. Any "
             .. "emote animation id, Roblox or UGC.",
+    })
+    emotes:CreateButton({
+        Name = "Save ID",
+        Tooltip = "Keeps the id from Custom ID in the Emote list, so it "
+            .. "survives rejoins and reinjects.",
+        Function = function(): ()
+            local typed: number? = tonumber(
+                tostring(emotes.Options["Custom ID"].Value or "")
+            )
+            if not typed or typed <= 0 then
+                emotes:Notify("put an emote id in Custom ID first")
+                return
+            end
+            local store: any = host.configData
+            if not store then
+                return
+            end
+            local saved: string = type(store.values[SAVED_KEY]) == "string"
+                and store.values[SAVED_KEY]
+                or ""
+            for idText: string in string.gmatch(saved, "[^,]+") do
+                if tonumber(idText) == typed then
+                    emotes:Notify(tostring(typed) .. " is already saved")
+                    return
+                end
+            end
+            store.values[SAVED_KEY] = saved == ""
+                and tostring(typed)
+                or (saved .. "," .. tostring(typed))
+            if type(host.queueConfigSave) == "function" then
+                host.queueConfigSave()
+            end
+            pcall(function(): ()
+                emotes.Options["Emote"]:Refresh()
+            end)
+            emotes:Notify("saved " .. tostring(typed))
+        end,
     })
     emotes:CreateSlider({
         Name = "Speed",

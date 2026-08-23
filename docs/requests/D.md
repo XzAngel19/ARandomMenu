@@ -1,66 +1,56 @@
-# Requests for agent D
+# Requests for agent D — architecture phase
 
-Work order from A (integrator). Base your branch on the current tip of
-`arena/01a0262f-arandommenu` and hand back a hash; A merges into the
-integration branch. Never open PRs, never push to main, never force-push.
+Work order from A (integrator). Base on the current tip of
+`arena/01a0262f-arandommenu`; hand back a hash, A merges. No PRs, no main,
+no force-push. Validate must end "All checks passed."
 
-## Context you must not fight
+## Standing verdicts (do not regress)
 
-The user reviewed real captures against real Wurst 7.19
-(https://github.com/Wurst-Imperium/Wurst7). Standing verdicts, already
-implemented on the integration branch — do not revert any of them:
+Code face, 16 px type, blur on, RightShift = menu, Navigator only behind
+the dock magnifier, zero console output (print/warn are gated shadows —
+never call the real ones), empty choosers stay blank, 38 modules frozen,
+identity frozen, Animation Changer ships its own pack catalog (no
+catalog search at boot), Custom ID + Save ID pattern in the Spoof pair.
 
-- The interface face is **Code** (engine vector), permanently. The Font pack
-  row is gone; the bitmap machinery survives only for the suites.
-- The type contract is **16 px** for module names, window titles and option
-  labels (the Wurst 8-logical size at GUI scale 2), 14 px for secondary text
-  (dropdown entries, search boxes, end labels). `layout.titleFontSize` /
-  `bodyFontSize` are 16 now.
-- Blur behind the open menu is mandatory.
-- Toasts live on the unscaled shell, bottom-right.
-- Inventory frozen at 38 modules; identity frozen (Wurst / 0.1 Beta /
-  RandomTestingMenu0001); no new hacks, no new categories.
+## D1 — Module authoring contract, written and enforced
 
-## D1 — Options audit against Wurst 7.19 (the big one)
+The goal the user set: anyone should be able to create a module, or
+re-skin the whole GUI, without touching anything else. Today that
+contract exists only as folklore. Write `docs/architecture/modules.md`:
 
-The user asked for the module options to be "simpler and more ordered, like
-Wurst has them" and doubts the earlier options rework. For every module that
-mirrors a real Wurst hack, open the 7.19 source and compare:
+- the exact `Module.init(context)` surface a module may touch (framework
+  categories, Create* builders, host services, Clean/Event) and what it
+  must never touch (state internals, ScreenGui, configData outside the
+  documented keys);
+- the option-builder catalog with one honest example each (toggle,
+  slider, dropdown, list, textbox, bind, color, button, note);
+- teardown rules: everything a module creates dies in Clean/destroy —
+  prove it by pointing at the teardown suite.
 
-- **Names**: our setting label vs Wurst's setting name. Port Wurst's wording
-  where the module is a genuine counterpart (e.g. Speed, Fullbright, X-Ray,
-  AntiAFK…). Keep ours where the module is Roblox-specific.
-- **Order**: Wurst lists settings in declaration order. Ours should read the
-  same way: primary toggle behaviour first, numbers after, cosmetic last.
-- **Noise**: any option that duplicates another, does nothing observable, or
-  exists "just in case" gets removed from the row list (the module keeps its
-  config key so old configs do not error).
-- Do NOT add options. Simplify only.
+Then audit all 38 modules against your own document and fix violators
+in your lane. Every deviation you cannot fix is a line item with a file
+and a reason.
 
-Deliverable: per-module table in `docs/visual/D-options-audit.md`
-(module → kept / renamed / removed / reordered, with the Wurst source file
-you compared against), plus the actual row changes in your lane files.
+## D2 — GUI-swap seam audit
 
-## D2 — 16 px QA pass on your surfaces
+The renderer must be replaceable. Framework and modules may know
+NOTHING about pixels: grep your lane for modules reaching into
+row/label/window internals and route them through the documented
+builders instead. Report the seams that remain (Cards/Widgets contracts
+the shell owns) in `docs/requests/D-to-A-visual.md` so A can harden
+them.
 
-The type contract moved from 11.5 to 16 and the gate only catches hard
-clipping. Walk Furniture, SettingsPage, ClickGui and Cards for soft damage:
-labels that now truncate too early, rows whose height reads cramped,
-buttons whose text crowds the border. Fix heights/insets in your lane;
-if a fix needs a Widgets or shell change, file it in
-`docs/requests/D-to-A-visual.md` instead of touching A's files.
+## D3 — Anti-slop copy pass, your lane
 
-## D3 — Window order debt
-
-C's audit flagged that after modules load, the ClickGUI window order can
-drift from CATEGORY_ORDER (Combat, Render, Blocks, Movement, Chat, Fun,
-Items, Other). Prove it or fix it; the eight windows must always read in
-Wurst's order on first run and after Reset Layout.
+Every player-visible string in Furniture/SettingsPage/ClickGui/Cards
+and the 38 modules: tooltips read like a person wrote them (short,
+concrete, no "allows you to", no "simply", no filler adverbs), notifies
+are lowercase-terse the way the Spoof pair now is ("saved 123", "no
+character yet"), no row label ends in a period, no two rows say the
+same thing in different words. List every string you changed in the
+report.
 
 ## Rules
 
-- `bash tools/preflight.sh <your-branch>` before each commit;
-  `python3 tools/bundle.py` + `LUAU_DIR=... bash tools/validate.sh` after
-  source changes — "All checks passed." or it does not ship.
-- Suites that pin your surfaces get updated in the same commit.
-- Report format: hash, branch, validate counts, what changed, honest debt.
+Suites that pin your surfaces update in the same commit. Report: hash,
+branch, validate counts, per-item summary, honest debt.

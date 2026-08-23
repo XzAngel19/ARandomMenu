@@ -59,7 +59,9 @@ local HACKLIST_ANIMATIONS: boolean = true
 local HACKLIST_FONT_SIZE: number = 16
 local HACKLIST_LINE_HEIGHT: number = 18
 local HACKLIST_TOP: number = 56
-local HACKLIST_SLIDE: number = 14
+-- 24 and a quarter second: the old 14 px over 0.15 s was invisible,
+-- which read as "Animations does nothing".
+local HACKLIST_SLIDE: number = 24
 
 -- Wurst's WurstLogo defaults: a white chip with black text, visible always.
 local WURSTLOGO_VISIBILITY: string = "Always"
@@ -471,10 +473,23 @@ function Module.init(context: any): any
         if not hudRainbow then
             return hudColor
         end
-        -- Vape-style wave: the base hue rides the clock and each row sits
-        -- a step behind the one above it.
-        local hue: number = (hudRainbowClock * 0.4 + (order or 0) * 0.045) % 1
-        return Color3.fromHSV(hue, 0.8, 1)
+        -- Not the whole hue wheel: variants of the list's own colour, the
+        -- way Vape's wave runs every shade of one cyan. The hue comes from
+        -- the Color row; brightness rides a sine and each row sits a step
+        -- behind the one above it. A grey or white base has no hue to
+        -- vary, so it borrows cyan — the classic.
+        local hue: number, saturation: number = 0.5, 0.85
+        pcall(function(): ()
+            local h: number, sat: number, _v: number = hudColor:ToHSV()
+            if sat > 0.05 then
+                hue = h
+                saturation = math.clamp(sat, 0.5, 1)
+            end
+        end)
+        local wave: number = 0.5 + 0.5 * math.sin(
+            hudRainbowClock * 2.4 - (order or 0) * 0.65
+        )
+        return Color3.fromHSV(hue, saturation, 0.45 + 0.55 * wave)
     end
     local function drawHudEntry(row: any, name: string, status: string?): ()
         row.name = name
@@ -525,7 +540,7 @@ function Module.init(context: any): any
         )
         TweenService:Create(
             holder,
-            TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+            TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
             {Position = resting}
         ):Play()
     end
@@ -712,6 +727,11 @@ function Module.init(context: any): any
         hudFrame.Visible = hudVisible
         if hudVisible then
             forceHudRefresh()
+            -- Animations, visibly: every line slides back in when the
+            -- list appears, not only when a single module toggles.
+            for _, row: any in pairs(hudRows) do
+                slideHudRow(row)
+            end
         end
     end
     Furniture.SetHackListVisible = setHackListVisible

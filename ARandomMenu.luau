@@ -363,7 +363,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "f44a5ee17e7506a8"
+local SOURCE_STAMP: string = "04ded0229fd6e1fa"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -400,6 +400,36 @@ local PRODUCT = {
 local function bootstrap(): ()
 local executorGlobals: any = getfenv()
 
+-- Silence is the contract. A cheat that narrates its own boot in the
+-- console — sections loaded, modules fetched, timing — is a cheat any
+-- moderator with F9 open can read. Every print and warn below this line
+-- goes through these shadows and says nothing unless the player set
+-- getgenv().ARANDOMMENU_DEBUG = true before injecting. The one fatal
+-- bootstrap report at the bottom of the file sits outside this function
+-- on purpose: a menu that dies silently cannot be fixed.
+local DEBUG_LOGS: boolean = (function(): boolean
+    local getGenv: any = executorGlobals.getgenv
+    if type(getGenv) == "function" then
+        local ok: boolean, genv: any = pcall(getGenv)
+        if ok and type(genv) == "table" then
+            return genv.ARANDOMMENU_DEBUG == true
+        end
+    end
+    return false
+end)()
+local realPrint: any = executorGlobals.print
+local realWarn: any = executorGlobals.warn
+local print = function(...: any): ()
+    if DEBUG_LOGS then
+        realPrint(...)
+    end
+end
+local warn = function(...: any): ()
+    if DEBUG_LOGS then
+        realWarn(...)
+    end
+end
+
 local function cloneReference(instance: any): any
     if type(executorGlobals.cloneref) == "function" then
         local success: boolean, cloned: any = pcall(executorGlobals.cloneref, instance)
@@ -418,7 +448,19 @@ local RunService: RunService = cloneReference(game:GetService("RunService"))
 local HttpService: HttpService = cloneReference(game:GetService("HttpService"))
 local CollectionService: CollectionService = cloneReference(game:GetService("CollectionService"))
 local Stats: Stats = cloneReference(game:GetService("Stats"))
-local LocalPlayer: Player = Players.LocalPlayer :: Player
+local LocalPlayer: Player = (function(): Player
+    -- Right after a teleport the queued loader runs before the client has
+    -- a player object: Players.LocalPlayer is nil for a few frames, and
+    -- indexing it killed the whole bootstrap ("attempt to index nil with
+    -- 'WaitForChild'", reported from the field). Keep-on-teleport only
+    -- works if boot waits here instead of assuming.
+    local player: any = Players.LocalPlayer
+    while player == nil do
+        task.wait(0.1)
+        player = Players.LocalPlayer
+    end
+    return player :: Player
+end)()
 local PlayerGui: PlayerGui = LocalPlayer:WaitForChild("PlayerGui") :: PlayerGui
 
 local GUI_NAME = PRODUCT.guiName
@@ -1181,6 +1223,13 @@ local function buildTeleportSnippet(): string
         "genv.ARANDOMMENU_TP_QUEUED = false",
         "if genv.ARANDOMMENU_STOPPED == true then return end",
         "genv.ARANDOMMENU_BRANCH = \"" .. RUNTIME_BRANCH .. "\"",
+        -- The queued script fires the instant the new place starts
+        -- loading; give the client a moment so the shell boots against a
+        -- real game instead of a half-built one.
+        "if not game:IsLoaded() then",
+        "    game.Loaded:Wait()",
+        "end",
+        "task.wait(1)",
         "local ok, err = pcall(function()",
         "    loadstring(game:HttpGet(",
         "        \"" .. RUNTIME_RAW_BASE
@@ -5108,6 +5157,11 @@ local function createGameModuleEnvironment(
     local environment: any = {
         game = game,
         workspace = workspace,
+        -- The silence shadows travel with the environment: a library or a
+        -- module that prints goes through the same debug gate the shell
+        -- does, so nothing in the stack can narrate itself to the console.
+        print = print,
+        warn = warn,
         Players = Players,
         UserInputService = UserInputService,
         TweenService = TweenService,
@@ -6464,6 +6518,11 @@ end)
 
 if not initialized then
     -- Nowhere on screen to say it any more: the intro that used to carry the
-    -- message is gone, so the console is the report.
-    warn("[" .. PRODUCT.logPrefix .. ":Bootstrap] Inicialización detenida:\n" .. tostring(bootstrapError))
+    -- message is gone, so the console is the report. This is the one line
+    -- that ignores the silence contract — a menu that dies mutely cannot
+    -- be fixed by anyone.
+    local reportFatal: any = (getfenv() :: any).warn
+    if type(reportFatal) == "function" then
+        reportFatal("[" .. PRODUCT.logPrefix .. ":Bootstrap] Inicialización detenida:\n" .. tostring(bootstrapError))
+    end
 end

@@ -176,7 +176,6 @@ function Module.init(context: Runtime): any
         Items = function(): {string}
             return known
         end,
-        EmptyText = "nothing added yet",
         Tooltip = "Every object the module knows about. Tick the ones to draw.",
         Function = function(_selected: any, names: {string}): ()
             wanted = names

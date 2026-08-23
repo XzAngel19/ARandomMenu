@@ -1,61 +1,51 @@
-# Requests for agent C
+# Requests for agent C — architecture phase
 
-Work order from A (integrator). Base your branch on the current tip of
-`arena/01a0262f-arandommenu` and hand back a hash; A merges into the
-integration branch. Never open PRs, never push to main, never force-push.
+Work order from A (integrator). Base on the current tip of
+`arena/01a0262f-arandommenu`; hand back a hash, A merges. No PRs, no main,
+no force-push. Tools, tests and docs only.
 
-## Context
+## Standing verdicts (do not regress)
 
-New standing verdicts on the integration branch (do not regress them):
-Code face permanent (no Font pack row), 16 px type contract
-(`layout.titleFontSize`/`bodyFontSize` = 16, secondary text 14), blur
-mandatory, toasts on the unscaled shell, and a boot-time **cache sweep**:
-`state.sweepStaleSources()` (deletes `ARandomMenu/` cached sources absent
-from the accepted bundle, spares `.stamp`) and `state.sweepStaleAssets()`
-(deletes files in `<storage>/Assets/` not named by the AssetManager
-manifest). Both run in a `task.spawn` right after "Bundle aceptado".
+Zero console output by default: the shell shadows print/warn behind
+`getgenv().ARANDOMMENU_DEBUG` and injects the shadows into the module
+environment. Boot waits for LocalPlayer (teleport reinjection lands
+before the player exists). Teleport persistence chains through
+queue_on_teleport with genv flags ARANDOMMENU_STOPPED /
+ARANDOMMENU_TP_QUEUED. Animation Changer ships 16 built-in packs
+(`Module.builtinPacks`).
 
-## C1 — Harness: file-system surface
+## C1 — Silence gate
 
-`tools/test/Roblox.luau` mocks `writefile/isfolder/makefolder` but not
-`readfile`, `isfile`, `listfiles` or `delfile`, so nothing that loads a
-config or sweeps a cache is testable without hand-injected globals. Add
-them, backed by `world.files` (listfiles = keys with the folder prefix;
-delfile removes the key; readfile returns the stored string). Keep the
-`world.*` contract stable for existing suites.
+A permanent suite check: boot the shell with print/warn captured in the
+mock env and assert zero calls without the debug flag, plus at least one
+with it. Then a validate step that greps the bundle for direct
+`realPrint`/`realWarn` style escapes outside the shell's own gate, so a
+future module cannot reintroduce console noise.
 
-## C2 — Suites for the new behaviours
+## C2 — Teleport-boot regression
 
-Permanent checks (new suite or extend visual-rc):
+The 422 crash from the field: boot must survive `Players.LocalPlayer`
+being nil at chunk start. Extend the mock so `world.localPlayer` can be
+published N ticks late, and assert the shell boots anyway. Also assert
+the queued snippet contains the game-loaded wait and compiles.
 
-1. **Cache sweep**: boot with seeded stale files in both caches; assert
-   stale deleted, shipped/live kept, `.stamp` kept, and that the sweep is
-   a no-op when the bundle was not accepted (offline lifeline rule).
-2. **Toast placement**: `ToastContainer` is a direct child of the shell
-   ScreenGui (not of PopupLayer), AnchorPoint (1,1), position bottom-right.
-3. **Type contract**: `state.layout.titleFontSize == 16`; a drawn card
-   title's Fallback label renders at 16; no "Font pack" text object exists
-   anywhere after boot.
-4. **Config font guard**: a config storing `interfaceFont = "Minecraft
-   (Monocraft)"` boots into Code (the picker no longer offers it).
+## C3 — Architecture conformance gates
 
-## C3 — Size parity re-audit vs ref-wurst-719
+Support D's module contract (docs/architecture/modules.md once D lands
+it) with teeth: a validate step that walks src/modules/** and rejects
+(a) direct ScreenGui/PopupLayer reach-ins, (b) configData keys outside
+the documented namespaces, (c) bare print/warn additions. Start in
+report-only mode if the tree is not clean; flip to hard-fail in the
+same commit the tree becomes clean.
 
-The port claims Wurst-at-GUI-scale-2 calibration: window width 200,
-TITLE_HEIGHT 26, cardHeight 22, text 16. Audit those against the pinned
-Wurst 7.19 source (ClickGuiWindow/HackButton metrics) and report deltas in
-`docs/visual/C-size-parity.md`. Report only — surface changes go through A.
+## C4 — Save ID / built-in pack coverage
 
-## C4 — VISUAL-RC.md refresh
-
-Re-prioritize the capture checklist for the user's next round: (1) ClickGUI
-idle showing the 16 px type, (2) toast visible fully inside the corner,
-(3) UI Settings without the Font pack row, (4) console line
-`[Wurst:Cache] swept …` after an update that removed files.
+Suite checks: Save ID appends to the persisted CSV once (no dupes),
+saved entries appear in the chooser after Refresh, the 16 built-in
+packs each carry seven slots (already pinned in spoof.luau — extend to
+the EmotePlayer saved-id path).
 
 ## Rules
 
-- `bash tools/preflight.sh <your-branch>` before each commit; validate must
-  end "All checks passed." with your new checks counted.
-- Do not touch shell/library surfaces; tools, tests and docs only.
-- Report format: hash, branch, validate counts, new check count, debt.
+Validate ends "All checks passed." with your new checks counted.
+Report: hash, branch, validate counts, new check count, debt.

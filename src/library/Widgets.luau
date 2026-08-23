@@ -1171,7 +1171,7 @@ function Module.init(context: any): WidgetLibrary
     ): ()
         state.closeChoiceList()
 
-        local rowHeight: number = 22
+        local rowHeight: number = 24
         -- Fifty typefaces is not a list you scroll through, so anything longer
         -- than a screenful gets a filter field at the top, the way Vape's own
         -- lists do.
@@ -1190,8 +1190,8 @@ function Module.init(context: any): WidgetLibrary
         local list: Frame = create("Frame", {
             Parent = ScreenGui,
             Name = "ChoiceList",
-            BackgroundColor3 = Theme.surface,
-            BackgroundTransparency = 0.04,
+            BackgroundColor3 = Theme.surfaceRaised,
+            BackgroundTransparency = 0,
             BorderSizePixel = 0,
             Position = UDim2.fromOffset(
                 math.round(anchorPosition.X),
@@ -1205,9 +1205,11 @@ function Module.init(context: any): WidgetLibrary
         create("UIStroke", {
             Parent = list,
             Color = Theme.outline,
-            Transparency = 0.4,
+            Transparency = 0.15,
             Thickness = 1,
         })
+        -- No corner radius: every Wurst surface is a rectangle, and the
+        -- gate holds the line so a restyle cannot drift.
         -- Every entry the list is about to hold draws on the bitmap
         -- contract; the sweep's connection dies with the list.
         do
@@ -1307,7 +1309,7 @@ function Module.init(context: any): WidgetLibrary
                 Name = "Choice" .. tostring(itemIndex),
                 AutoButtonColor = false,
                 BackgroundColor3 = Theme.surfaceHover,
-                BackgroundTransparency = itemIndex == currentIndex and 0.35 or 1,
+                BackgroundTransparency = itemIndex == currentIndex and 0.25 or 1,
                 BorderSizePixel = 0,
                 FontFace = CONTROL_FONT,
                 LayoutOrder = itemIndex,
@@ -1321,17 +1323,34 @@ function Module.init(context: any): WidgetLibrary
             }) :: any) :: TextButton
             create("UIPadding", {
                 Parent = item,
-                PaddingLeft = UDim.new(0, 8),
+                PaddingLeft = UDim.new(0, 10),
                 PaddingRight = UDim.new(0, 8),
             })
+            -- The picked entry carries a slim accent bar on its left edge
+            -- — readable at a glance without a glyph.
+            if itemIndex == currentIndex then
+                create("Frame", {
+                    Parent = item,
+                    Name = "PickedBar",
+                    BackgroundColor3 = Theme.enabled,
+                    BorderSizePixel = 0,
+                    Position = UDim2.fromOffset(-10, 0),
+                    Size = UDim2.new(0, 3, 1, 0),
+                    ZIndex = 403,
+                })
+            end
             item.TextXAlignment = Enum.TextXAlignment.Left
             item.MouseEnter:Connect(function(): ()
                 if itemIndex ~= currentIndex then
-                    item.BackgroundTransparency = 0.72
+                    item.BackgroundTransparency = 0.6
+                    item.TextColor3 = Theme.text
                 end
             end)
             item.MouseLeave:Connect(function(): ()
-                item.BackgroundTransparency = itemIndex == currentIndex and 0.35 or 1
+                item.BackgroundTransparency = itemIndex == currentIndex and 0.25 or 1
+                item.TextColor3 = itemIndex == currentIndex
+                    and Theme.text
+                    or Theme.textMuted
             end)
             item.MouseButton1Click:Connect(function(): ()
                 close()
@@ -1410,7 +1429,7 @@ function Module.init(context: any): WidgetLibrary
     ): ()
         state.closeChoiceList()
 
-        local rowHeight: number = 22
+        local rowHeight: number = 24
         local rows: number = math.min(#items + (onBulk and 1 or 0), 7)
         local listHeight: number = math.max(rows, 1) * rowHeight + 8
         local anchorPosition: Vector2 = anchor.AbsolutePosition
@@ -1664,9 +1683,12 @@ function Module.init(context: any): WidgetLibrary
                 end
             end
             if total == 0 then
-                button.Text = definition.emptyText or "nothing detected"
+                -- Blank, not a caption: an empty chooser that says
+                -- "nothing detected" reads like a broken value. The row
+                -- label and the tooltip already explain the control.
+                button.Text = definition.emptyText or ""
             elseif count == 0 then
-                button.Text = "none of " .. tostring(total)
+                button.Text = ""
             elseif count == 1 then
                 button.Text = last
             elseif count == total then
