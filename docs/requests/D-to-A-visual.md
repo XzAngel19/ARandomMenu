@@ -1,24 +1,19 @@
-# D → A visual integration notes
+# D → A: remaining GUI-swap seams
 
-Base composed from `b47dd40` plus A core `52a02ee`.
+Architecture audit on base `4ae81fe`.
 
-## Settings-window internals
+## Hardened in D
 
-- Module option rows remain owned by the canonical builders and are reparented by `WindowManager.OpenFeatureSettings`; D added no second container.
-- Category rows remain fixed-height. Settings windows reuse `FeatureSettings_<configKey>`, preserve values/Show/enabled, and release their own connections on teardown.
-- No module now creates decorative section rows or parents options to legacy scrolls.
-- Rejoin Server is registered once through Wurst Options and is absent from Other when that API exists.
+- Framework text options now expose `option:Set(value)`. ItemESP, Friend List and Auto Clicker no longer write `.Object.Text` themselves.
+- Killaura's private pixel-built target panel and its `Show target` row are removed. Target count remains available through the module status/HackList.
+- No module reads card row/title/arrow/window internals.
 
-## Composition fixes consumed from A
+## Remaining shared seam
 
-- `ClickGui.Retile()` now calls the manager clamp after assigning each slot, so A's physical-pixel snap covers reset layout as well as create/drag/reflow.
-- Cards keybind tooltip width/wrap now uses `bitmapText.measure` and `bitmapText.wrap`; bitmap draw uses `ellipsis=true`.
-- Furniture dock tooltip uses the same measure/wrap/draw contract.
+- `src/modules/Combat/AutoClicker.luau` receives `host.ScreenGui` only to reject the menu's own buttons while learning a game attack button. This is not presentation, but it is a shell-instance dependency. A future host contract such as `host.isMenuGui(instance): boolean` would remove the last direct ScreenGui reference without moving hit-testing into the module.
 
-## Shared behaviour
+## Documented storage exception
 
-- `state.SetMenuStyle(style, openImmediately)` is the one surface switch.
-- `state.moduleSearch` is the one command resolver/executor; the old shell function is only a notification wrapper.
-- Dock and HackList visibility are independent of module state.
+- Animation Changer and Emote Player read/write only their documented saved-ID keys through `host.configData`. They do not inspect layout, theme, windows or unrelated config.
 
-No renderer, Widgets geometry, WindowManager geometry, keybind-square geometry, atlas, font tool or module gameplay was changed in this pass.
+Cards/Widgets remain the GUI seam: modules declare controls; those libraries decide pixels.

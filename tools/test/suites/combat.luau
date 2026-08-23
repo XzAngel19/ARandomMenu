@@ -451,42 +451,6 @@ return function(ctx: any): ()
         string.format("%.4fs/frame", clickerPerFrame)
     )
 
-    -- Kill Aura target readout ------------------------------------------------------
-
-    section("Kill Aura show target")
-
-    world.raycastResult = nil
-    world.localPlayer.Character:FindFirstChild("HumanoidRootPart").Position =
-        world.vector3(0, 0, 0)
-    enemy.Character:FindFirstChild("HumanoidRootPart").Position = world.vector3(0, 0, -8)
-    aura.Options["Show target"].Value = true
-    aura.Options["Team check"].Value = true
-    aura:Toggle()
-    world.clock += 2
-    stub.step(0.016)
-
-    local panel: any = nil
-    for _, child: any in ipairs(host.ScreenGui.Children) do
-        if child.Name == "KillAuraTarget" then
-            panel = child
-        end
-    end
-    check("target panel exists while a target is held", panel ~= nil and panel.Visible == true)
-    check("panel names the target",
-        panel ~= nil and panel:FindFirstChild("TargetName").Text == "Enemy",
-        panel and tostring(panel:FindFirstChild("TargetName").Text) or "no panel")
-    check("panel reports health and distance",
-        panel ~= nil
-            and string.find(panel:FindFirstChild("TargetDetail").Text, "hp", 1, true) ~= nil,
-        panel and tostring(panel:FindFirstChild("TargetDetail").Text) or "no panel")
-
-    -- Out of reach: the readout goes away rather than lying about the target.
-    enemy.Character:FindFirstChild("HumanoidRootPart").Position = world.vector3(0, 0, -400)
-    world.clock += 1
-    stub.step(0.016)
-    check("panel hides when there is no target", panel ~= nil and panel.Visible == false)
-    aura:Toggle()
-
     -- Click Teleport ---------------------------------------------------------------
 
     section("Weapon discovery (no-Tool games)")

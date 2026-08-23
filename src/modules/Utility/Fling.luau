@@ -127,11 +127,11 @@ function Module.init(context: Runtime): any
     -- velocity actually replicates, and always restores the character.
     performFling = function(targetPlayer: Player): ()
         if state.isProtectedTarget(targetPlayer) then
-            notify("That player is protected by FriendList.")
+            notify("player protected")
             return
         end
         if flingRunning then
-            notify("A fling is already running.")
+            notify("fling already running")
             return
         end
 
@@ -140,7 +140,7 @@ function Module.init(context: Runtime): any
             local _, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
             if not humanoid or not root then
                 setFlingRunning(false)
-                notify("Your character is not ready.")
+                notify("character not ready")
                 return
             end
 
@@ -264,11 +264,11 @@ function Module.init(context: Runtime): any
 
             setFlingRunning(false)
             if not success then
-                notify("Fling failed: " .. tostring(errorMessage))
+                notify("fling failed: " .. tostring(errorMessage))
             elseif touchedTarget then
-                notify("Fling completed: " .. targetPlayer.Name .. " went down.")
+                notify("fling complete: " .. targetPlayer.Name .. " went down.")
             elseif reason == "left" then
-                notify("Fling stopped: " .. targetPlayer.Name .. " left the game.")
+                notify("fling stopped: " .. targetPlayer.Name .. " left the game.")
             elseif reason == "gone" then
                 notify("Fling stopped: the target character disappeared.")
             elseif reason == "died" then
@@ -292,7 +292,7 @@ function Module.init(context: Runtime): any
             if target then
                 performFling(target)
             else
-                notify("No matching player was found.")
+                notify("no matching player")
             end
         end,
         {action = true, categoryName = "Combat"}

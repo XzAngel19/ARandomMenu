@@ -93,7 +93,7 @@ return function(ctx: any): ()
     check("a protected player is refused with the reason",
         #stub.notifications > 0
             and stub.notifications[#stub.notifications]
-                == "That player is protected by FriendList.",
+                == "player protected",
         "notified: " .. tostring(stub.notifications[#stub.notifications]))
     host.state.isProtectedTarget = originalProtection
 
@@ -113,7 +113,7 @@ return function(ctx: any): ()
             .. ", speed " .. tostring(root.AssemblyLinearVelocity.Magnitude))
     check("and says what happened",
         #stub.notifications > 0
-            and string.sub(stub.notifications[#stub.notifications], 1, 13) == "Fling failed:",
+            and string.sub(stub.notifications[#stub.notifications], 1, 13) == "fling failed:",
         "notified: " .. tostring(stub.notifications[#stub.notifications] ))
     check("the running flag is cleared for the next attempt",
         host.state.flingRunning == false)

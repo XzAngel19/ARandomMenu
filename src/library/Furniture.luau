@@ -1419,7 +1419,7 @@ function Module.init(context: any): any
             searchBox.Text = ""
             local search: any = state.moduleSearch
             if type(search) ~= "table" or type(search.Execute) ~= "function" then
-                notify("Module search is not available")
+                notify("module search unavailable")
                 return
             end
             local result: any = search.Execute(query)
@@ -1440,13 +1440,13 @@ function Module.init(context: any): any
                     end
                     table.insert(names, tostring(match.displayName))
                 end
-                notify("Ambiguous: " .. table.concat(names, ", "))
+                notify("ambiguous: " .. table.concat(names, ", "))
             elseif status == "not_toggleable" then
                 notify(tostring(
                     result.entry and result.entry.displayName or query
                 ) .. " has nothing to toggle")
             else
-                notify("No module matches \"" .. query .. "\"")
+                notify("no module matches \"" .. query .. "\"")
             end
         end
         table.insert(

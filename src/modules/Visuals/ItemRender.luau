@@ -208,10 +208,7 @@ function Module.init(context: Runtime): any
             end
             learn(trimmed)
             -- The box is a way in, not a store: the list is the store.
-            addBox.Value = ""
-            pcall(function(): ()
-                addBox.Object.Text = ""
-            end)
+            addBox:Set("")
         end,
     })
 

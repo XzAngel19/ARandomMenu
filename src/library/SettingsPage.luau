@@ -822,7 +822,7 @@ function Module.init(context: any): any
                         end
                     end
                     rebuildKeybinds()
-                    notify("Keybind profile loaded: " .. name)
+                    notify("loaded profile " .. name)
                 end))
             end
             if profilesRecord then
@@ -842,7 +842,7 @@ function Module.init(context: any): any
         trackUiConnection(saveButton.MouseButton1Click:Connect(function(): ()
             local name: string = nameBox.Text:gsub("^%s+", ""):gsub("%s+$", "")
             if name == "" then
-                notify("Keybind profile: enter a name first")
+                notify("enter a profile name")
                 return
             end
             local snapshot: {[string]: string} = {}
@@ -855,7 +855,7 @@ function Module.init(context: any): any
             queueConfigSave()
             nameBox.Text = ""
             rebuildProfiles()
-            notify("Keybind profile saved: " .. name)
+            notify("saved profile " .. name)
         end))
 
         rebuildProfiles()
@@ -1138,7 +1138,7 @@ function Module.init(context: any): any
                 end
             end
             rebuildKeybinds()
-            notify("Keybinds reset — profiles are untouched, as in Wurst")
+            notify("keybinds reset")
         end)
         actionRow(keybindsRecord, 101, "Profiles…", openProfiles)
         rebuildKeybinds()
@@ -1326,7 +1326,7 @@ function Module.init(context: any): any
         end
         local compiler: any = (getfenv() :: any).loadstring
         if type(compiler) ~= "function" then
-            notify("Reinject unavailable: this executor has no loadstring")
+            notify("reinject unavailable")
             return
         end
         reinjectBusy = true
@@ -1359,7 +1359,7 @@ function Module.init(context: any): any
         if not downloaded then
             reinjectBusy = false
             setReinjectLabel("Reinject latest")
-            notify("Could not download the latest build")
+            notify("download failed")
             warn("[Wurst] Reinject download: "
                 .. table.concat(downloadFailures, " | "))
             return
@@ -1380,7 +1380,7 @@ function Module.init(context: any): any
         if type(compiled) ~= "function" then
             reinjectBusy = false
             setReinjectLabel("Reinject latest")
-            notify("The downloaded build could not be compiled")
+            notify("compile failed")
             warn("[Wurst] Reinject compile: " .. tostring(compileError))
             return
         end
@@ -1454,7 +1454,7 @@ function Module.init(context: any): any
                 record.placed = false
             end
         end
-        notify("Layout reset")
+        notify("layout reset")
     end
 
     -- The game check readout: *how* the game was recognised, which is
@@ -1670,7 +1670,7 @@ function Module.init(context: any): any
         if persist and type(persist.SetEnabled) == "function" then
             persist.SetEnabled(value)
             if value and persist.supported ~= true then
-                notify("This executor has no queue_on_teleport — "
+                notify("queue on teleport unavailable — "
                     .. "the menu cannot follow teleports here")
             end
         end

@@ -113,6 +113,9 @@ return function(ctx: any): ()
             and sampleColor.Metadata.color == true
             and sampleText.Metadata.type == "text"
             and sampleAction.Metadata.action == true)
+    sampleText:Set("updated")
+    check("textbox Set updates value and canonical control",
+        sampleText.Value == "updated" and sampleText.Object.Text == "updated")
 
     sample:Toggle()
     check("module enables", sample.Enabled == true)
