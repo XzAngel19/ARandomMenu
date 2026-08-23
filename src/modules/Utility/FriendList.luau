@@ -186,9 +186,7 @@ function Module.init(context: Runtime): any
                 namesBox.Value = current == ""
                     and closest.Player.Name
                     or (current .. ", " .. closest.Player.Name)
-                pcall(function(): ()
-                    namesBox.Object.Text = namesBox.Value
-                end)
+                namesBox:Set(namesBox.Value)
             end
             friends:Notify(closest.Player.Name .. " protected")
             publish()
@@ -201,9 +199,7 @@ function Module.init(context: Runtime): any
             list.names = {}
             if namesBox and namesBox.Object then
                 namesBox.Value = ""
-                pcall(function(): ()
-                    namesBox.Object.Text = ""
-                end)
+                namesBox:Set("")
             end
             friends:Notify("list cleared")
             publish()

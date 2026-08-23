@@ -652,6 +652,12 @@ function Module.init(context: any): Framework
                 definition2.Persist ~= false,
                 definition2.Tooltip
             )
+            option.Set = function(self: any, value: string): ()
+                self.Metadata.callback(value)
+                if self.Object then
+                    self.Object.Text = value
+                end
+            end
             return register(option, definition2)
         end
 

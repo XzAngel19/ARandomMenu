@@ -779,16 +779,16 @@ function Module.init(context: Runtime): any
     end)
     addActionOption(ProjectileCalibrationFeature, "Save analytics", function(): ()
         if calibration:save("manual") then
-            notify("Universal projectile analytics saved in the executor workspace.")
+            notify("analytics saved")
         else
-            notify("Universal projectile analytics could not be saved; check F9.")
+            notify("save failed; check F9")
         end
     end)
     addActionOption(ProjectileCalibrationFeature, "Delete analytics", function(): ()
         if calibration:delete() then
-            notify("Universal projectile analytics deleted for this PlaceId.")
+            notify("analytics deleted")
         else
-            notify("Universal projectile analytics could not be deleted; check F9.")
+            notify("delete failed; check F9")
         end
     end)
     addInformationOption(

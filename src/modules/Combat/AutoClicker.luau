@@ -357,10 +357,7 @@ function Module.init(context: Runtime): any
                 if isGameButton(candidate, screenGui) then
                     runtime.learning = false
                     runtime.target = candidate :: GuiButton
-                    clicker.Options["Button name"].Value = candidate.Name
-                    pcall(function(): ()
-                        clicker.Options["Button name"].Object.Text = candidate.Name
-                    end)
+                    clicker.Options["Button name"]:Set(candidate.Name)
                     clicker:Notify("bound to " .. candidate.Name)
                     return
                 end

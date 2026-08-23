@@ -5,7 +5,7 @@ Settings were compared against the Java declaration order, not the wiki. “Adap
 
 | Module | Wurst Java | Kept / renamed / removed / reordered |
 |---|---|---|
-| Killaura | `KillauraHack.java` | Kept Roblox weapon/target/contact controls. Removed presentation-only **Show advanced** and its gates. No Java-only SwingHand/container/entity-filter rows added. |
+| Killaura | `KillauraHack.java` | Kept Roblox weapon/target/contact controls. Removed presentation-only **Show advanced** and the private pixel-built **Show target** panel; target count remains in HackList status. No Java-only SwingHand/container/entity-filter rows added. |
 | TriggerBot | `TriggerBotHack.java` | Kept Roblox activation, reaction, target-part, range/team/wall controls. No Minecraft blocking/mouse simulation rows added. |
 | Auto Clicker | — | Roblox-only; kept one CPS range, activation, click target and capture controls. |
 | Hitboxes | — | Roblox-only; kept part/expand/filter/reveal/collision controls. |
@@ -48,6 +48,6 @@ Settings were compared against the Java declaration order, not the wiki. “Adap
 
 - 38 modules before and after.
 - No options added.
-- Removed two non-behavioural rows: `Killaura.Show advanced`, `Flight.Advanced settings`.
+- Removed three presentation rows: `Killaura.Show advanced`, `Killaura.Show target`, `Flight.Advanced settings`.
 - Existing module `configKey`s are unchanged.
 - All remaining rows correspond to observable Roblox behaviour or a canonical action.
