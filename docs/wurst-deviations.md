@@ -32,7 +32,7 @@ GUI-scale-1. Prototype `titleHeight` 26 is 13 × 2, not a 1080p invention.
 | No TabGUI (default Disabled) | exact | Shipping none matches Disabled. |
 | Keybind square on bindable rows | requested Roblox adaptation | Official Wurst binds only in Keybind Manager. The 18 px square shows the compact assigned key; group cards have none. It is not a KEY pill. |
 | Compact touch launcher | Roblox adaptation | Mobile keeps only Menu and Navigator; the shell fallback disappears once the dock exists. |
-| Full-screen responsive Navigator | Roblox adaptation | Raw ScreenGui space avoids ClickGUI scaling; three columns expand across the phone and repaint with the live theme. |
+| Compact Navigator panel | Roblox adaptation | A transparent raw-screen input root avoids ClickGUI scaling without dimming the whole game; Wurst's original 456 px three-column panel stays centred, scrolls on short screens and repaints with the live theme. |
 | Editable mobile actions | Roblox adaptation | Long press opens one shared Size / Opacity / Remove panel; position and appearance persist per button. |
 | Monocraft atlas (`monocraft-16.png`) | Roblox adaptation | OFL fallback. 7.54.1 does not change the 1.18.1 font baseline. |
 | One ClickGui UIScale, user Scale 0.7–1.6 | exact | No 1080 / 1.35 formula. |

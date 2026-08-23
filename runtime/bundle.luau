@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "ccc2563de3420885",
+    stamp = "52c950c3e3bcf2f2",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -13025,9 +13025,11 @@ function Module.init(context: any): any
     -- exist here, and Backspace only closes when the query is empty because
     -- it is also how the query is edited.
     local NAV_COLUMNS: number = 3
-    local NAV_CELL_HEIGHT: number = state.isMobile and 34 or 26
-    local NAV_CELL_GAP: number = 4
-    local NAV_LIMIT: number = 36
+    local NAV_CELL_WIDTH: number = 150
+    local NAV_CELL_HEIGHT: number = 22
+    local NAV_CELL_GAP: number = 3
+    local NAV_WIDTH: number = NAV_COLUMNS * NAV_CELL_WIDTH
+        + (NAV_COLUMNS - 1) * NAV_CELL_GAP
 
     local navScreen: Frame = (create("Frame", {
         -- Raw ScreenGui space: PopupLayer carries ClickGUI scale, which made
@@ -13036,7 +13038,10 @@ function Module.init(context: any): any
         Name = "Navigator",
         Active = true,
         BackgroundColor3 = Color3.fromRGB(0, 0, 0),
-        BackgroundTransparency = 0.45,
+        -- The root owns input and safe screen coordinates, but it is visually
+        -- transparent. Only the compact Wurst panel below is dimmed; covering
+        -- the whole game made Navigator feel like a second full menu.
+        BackgroundTransparency = 1,
         BorderSizePixel = 0,
         Size = UDim2.fromScale(1, 1),
         Visible = false,
@@ -13060,17 +13065,20 @@ function Module.init(context: any): any
         Parent = navScreen,
         Name = "Column",
         AnchorPoint = Vector2.new(0.5, 0),
-        BackgroundTransparency = 1,
+        BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+        BackgroundTransparency = 0.35,
         BorderSizePixel = 0,
-        Position = UDim2.new(0.5, 0, 0, 18),
-        Size = UDim2.new(0.92, 0, 1, -36),
+        Position = UDim2.new(0.5, 0, 0, 48),
+        Size = UDim2.fromOffset(NAV_WIDTH, 32),
         ZIndex = 247,
     }) :: any) :: Frame
-    create("UISizeConstraint", {
+    local navStroke: UIStroke = (create("UIStroke", {
         Parent = navColumn,
-        MaxSize = Vector2.new(960, 10000),
-        MinSize = Vector2.new(280, 0),
-    })
+        Name = "NavigatorStroke",
+        Color = Theme.outline,
+        Thickness = 1,
+        Transparency = 0.35,
+    }) :: any) :: UIStroke
 
     local navSearch: TextBox = (create("TextBox", {
         TextTruncate = Enum.TextTruncate.AtEnd,
@@ -13096,24 +13104,24 @@ function Module.init(context: any): any
         PaddingRight = UDim.new(0, 6),
     })
 
-    local navResults: Frame = (create("Frame", {
+    local navResults: ScrollingFrame = (create("ScrollingFrame", {
         Parent = navColumn,
         Name = "Results",
+        Active = true,
+        AutomaticCanvasSize = Enum.AutomaticSize.None,
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
+        CanvasSize = UDim2.new(),
         Position = UDim2.fromOffset(0, 38),
+        ScrollBarThickness = 3,
+        ScrollingDirection = Enum.ScrollingDirection.Y,
         Size = UDim2.new(1, 0, 1, -38),
         ZIndex = 247,
-    }) :: any) :: Frame
+    }) :: any) :: ScrollingFrame
     create("UIGridLayout", {
         Parent = navResults,
         CellPadding = UDim2.fromOffset(NAV_CELL_GAP, NAV_CELL_GAP),
-        CellSize = UDim2.new(
-            1 / NAV_COLUMNS,
-            -math.ceil(NAV_CELL_GAP * (NAV_COLUMNS - 1) / NAV_COLUMNS),
-            0,
-            NAV_CELL_HEIGHT
-        ),
+        CellSize = UDim2.fromOffset(NAV_CELL_WIDTH, NAV_CELL_HEIGHT),
         SortOrder = Enum.SortOrder.LayoutOrder,
     })
 
@@ -13215,9 +13223,6 @@ function Module.init(context: any): any
         navOrdered = {}
         navEntries = {}
         for index: number, feature: any in ipairs(matches) do
-            if index > NAV_LIMIT then
-                break
-            end
             table.insert(navOrdered, feature)
             local entry: TextButton = (create("TextButton", {
                 TextTruncate = Enum.TextTruncate.AtEnd,
@@ -13248,12 +13253,21 @@ function Module.init(context: any): any
         end
         navSelected = math.clamp(navSelected, 1, math.max(#navOrdered, 1))
         local rows: number = math.ceil(#navOrdered / NAV_COLUMNS)
-        navResults.Size = UDim2.new(
-            1,
-            0,
-            0,
-            rows * (NAV_CELL_HEIGHT + NAV_CELL_GAP)
+        local resultHeight: number = rows * NAV_CELL_HEIGHT
+            + math.max(rows - 1, 0) * NAV_CELL_GAP
+        local screenHeight: number = ScreenGui
+                and tonumber(ScreenGui.AbsoluteSize.Y)
+            or 0
+        if screenHeight <= 0 then
+            screenHeight = 480
+        end
+        local columnHeight: number = math.min(
+            38 + resultHeight,
+            math.max(160, screenHeight - 96)
         )
+        navColumn.Size = UDim2.fromOffset(NAV_WIDTH, columnHeight)
+        navResults.Size = UDim2.fromOffset(NAV_WIDTH, columnHeight - 38)
+        navResults.CanvasSize = UDim2.fromOffset(0, resultHeight)
         paintNavSelection()
     end
 
@@ -13771,6 +13785,7 @@ function Module.init(context: any): any
         -- manual colour changes stay synchronized instead of freezing at the
         -- colour that happened to be active when it opened.
         navSearch.TextColor3 = Theme.text
+        navStroke.Color = Theme.outline
         for _, entry: TextButton in ipairs(navEntries) do
             local ring: UIStroke? = entry:FindFirstChild("SelectionRing") :: UIStroke?
             if ring then

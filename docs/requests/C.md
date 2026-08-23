@@ -71,8 +71,9 @@ Base on the current tip of `arena/01a02c8a-arandommenu`; do not re-land C1–C4.
    all four values persist as `{x, y, size, opacity}`, and Remove destroys both
    the button and its config entry.
 2. Hold-style buttons must release their action before the editor opens.
-3. Hold Navigator in raw ScreenGui space at full scale, with a responsive
-   three-column grid and no ClickGUI UIScale ancestor.
+3. Hold Navigator in raw ScreenGui space at full scale with a transparent root,
+   Wurst's compact 456 px three-column panel, vertical overflow and no ClickGUI
+   UIScale ancestor.
 4. Change Theme.enabled twice while Navigator is open and assert active cells
    and selection rings repaint both times.
 5. Keep the synchronous category-height floor: every category below the 200 cap

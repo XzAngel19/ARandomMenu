@@ -75,6 +75,11 @@ return function(ctx: any): ()
                 and root.Size.Y.Scale == 1
         )
         check(
+            "Navigator does not dim the entire game",
+            root.BackgroundTransparency == 1,
+            tostring(root.BackgroundTransparency)
+        )
+        check(
             "Navigator is not a managed ClickGui window",
             state.windows == nil
                 or state.windows.Get == nil
@@ -122,6 +127,26 @@ return function(ctx: any): ()
     if type(nav.refresh) == "function" then
         nav.refresh()
         check("Navigator can rebuild its grid", true)
+    end
+    if column ~= nil then
+        check(
+            "Navigator keeps Wurst's original compact width",
+            column.Size.X.Offset == 456,
+            tostring(column.Size.X.Offset)
+        )
+    end
+    if results ~= nil then
+        local visibleEntries: number = 0
+        for _, child: any in ipairs(results:GetChildren()) do
+            if child:IsA("GuiObject") then
+                visibleEntries += 1
+            end
+        end
+        check(
+            "Navigator does not drop modules beyond the old 36-entry limit",
+            visibleEntries == #(captured.allFeatures or {}),
+            tostring(visibleEntries) .. "/" .. tostring(#(captured.allFeatures or {}))
+        )
     end
 
     -- Enter fires the top hit via FocusLost(true). Drive that if the

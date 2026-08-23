@@ -79,6 +79,21 @@ a real phone capture. Do not add decorative controls: Size, Opacity, Remove and
 Done are the complete surface. Report any visual issue rather than inventing
 another global mobile-settings page.
 
+## D6 — Next architecture pass: module-owned state
+
+The hard gate now blocks GUI-root and console reach-ins, but universal modules
+still contain direct `host.state` access. Classify every use into:
+
+- a module-local value that should leave global state;
+- a real cross-module service that needs a documented context API;
+- a temporary compatibility bridge with a named removal condition.
+
+Start with Auto Clicker menu visibility, TriggerBot aim ray, Click Teleport key
+capture, Fly/Speed movement input, mobile action placement, Friend List target
+protection and the FOV/PlatformStand controllers. Do not wrap every state field
+one-for-one; reduce the surface. Extend the conformance gate only after the
+migration has a clean allowlist.
+
 ## Rules
 
 Suites that pin your surfaces update in the same commit. Report: hash,
