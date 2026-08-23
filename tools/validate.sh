@@ -640,6 +640,13 @@ step "Silence gate"
 # getgenv().ARANDOMMENU_DEBUG. The shell file is the only allowed site.
 python3 tools/check_silence.py
 
+step "Runtime language is English"
+# The integrator deleted the Spanish bootstrap / loader / asset strings.
+# This holds those exact phrases, inside quoted literals only — not a
+# Spanish dictionary. Extend tools/runtime_language_banned.txt when
+# another player-visible Spanish line is removed.
+python3 tools/check_runtime_language.py
+
 step "Module architecture conformance"
 # D's authoring contract, with teeth: no ScreenGui/PopupLayer reach-ins,
 # no configData keys outside Universal/UI/ClickGUI/Shortcut/WurstLogo,
