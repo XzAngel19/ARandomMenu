@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "e5c95ea7ec65bef5",
+    stamp = "76a517508d120d9a",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -15008,13 +15008,6 @@ function Module.init(context: Runtime): any
         Index = 1,
         Tooltip = "Where the line to each target starts.",
     })
-    esp:CreateDropdown({
-        Name = "Chams",
-        List = {"Off", "Overlay", "Outline"},
-        Index = 1,
-        Tooltip = "Overlay fills the body through walls, Outline only rims it.",
-    })
-
     esp:CreateToggle({
         Name = "Team check",
         Default = false,
@@ -15448,13 +15441,6 @@ function Module.render(
             )
         end
 
-        -- Chams.
-        drawings:Highlight(
-            entity.Character,
-            colour,
-            0.55,
-            options["Chams"].Value
-        )
     end
 
     for player: Player in pairs(pool) do
@@ -15478,8 +15464,8 @@ return Module
         ["src/modules/Visuals/Chams.luau"] = [=====[--!strict
 --
 -- Chams.
--- Highlights live players through geometry. Inspired by Vape's Highlight mode,
--- but built on Roblox Highlight instances and this menu's module lifecycle.
+-- The standalone card owns every player Highlight. PlayerESP no longer creates
+-- a second Highlight for the same character.
 
 export type Runtime = {
     framework: any,
@@ -15501,8 +15487,28 @@ function Module.init(context: Runtime): any
     local framework: any = context.framework
     local entity: any = context.entity
     local host: any = context.host
+    local protectedTargets: any = context.services.protectedTargets
     local currentWorkspace: Workspace = host.workspace or workspace
     local highlights: {[Player]: Highlight} = {}
+
+    -- PlayerESP shipped Chams first. Migrate that one saved decision only when
+    -- the standalone card has never been configured; keep the old key so an
+    -- older build can still read the same profile.
+    local store: any = host.configData
+    if store and store.values and store.states then
+        local oldMode: any = store.values["Universal.PlayerESP.Chams"]
+        if store.states["Universal.Chams"] == nil
+            and (oldMode == "Overlay" or oldMode == "Outline") then
+            store.states["Universal.Chams"] = true
+            local fillKey: string = "Universal.Chams.Filltransparency"
+            if store.values[fillKey] == nil then
+                store.values[fillKey] = oldMode == "Outline" and 1 or 0.55
+            end
+            if type(host.queueConfigSave) == "function" then
+                host.queueConfigSave()
+            end
+        end
+    end
 
     local card: any
     local function clear(): ()
@@ -15530,24 +15536,29 @@ function Module.init(context: Runtime): any
                 local count: number = 0
                 for _, target: any in ipairs(entity:Refresh()) do
                     local player: Player = target.Player
-                    local allowed: boolean = card.Options["Teammates"].Value
+                    local allowedTeam: boolean = card.Options["Teammates"].Value
                         or not target.IsFriendly
-                    if allowed and target.Character and target.Humanoid.Health > 0 then
+                    local protected: boolean = protectedTargets.isProtected(player)
+                    if allowedTeam and not protected
+                        and target.Character
+                        and target.Humanoid
+                        and target.Humanoid.Health > 0 then
                         seen[player] = true
                         count += 1
                         local highlight: Highlight? = highlights[player]
-                        if not highlight then
+                        if not highlight or not highlight.Parent then
                             highlight = Instance.new("Highlight")
-                            highlight.Name = "ARandomMenu_Chams"
+                            highlight.Name = "Wurst_Chams"
                             highlight.Parent = currentWorkspace
                             highlights[player] = highlight
                         end
-                        highlight.Adornee = target.Character
-                        highlight.FillColor = card.Options["Fill colour"].Value
-                        highlight.OutlineColor = card.Options["Outline colour"].Value
-                        highlight.FillTransparency = card.Options["Fill transparency"].Value
-                        highlight.OutlineTransparency = card.Options["Outline transparency"].Value
-                        highlight.DepthMode = card.Options["Through walls"].Value
+                        local resolved: Highlight = highlight :: Highlight
+                        resolved.Adornee = target.Character
+                        resolved.FillColor = card.Options["Fill colour"].Value
+                        resolved.OutlineColor = card.Options["Outline colour"].Value
+                        resolved.FillTransparency = card.Options["Fill transparency"].Value
+                        resolved.OutlineTransparency = card.Options["Outline transparency"].Value
+                        resolved.DepthMode = card.Options["Through walls"].Value
                                 and Enum.HighlightDepthMode.AlwaysOnTop
                             or Enum.HighlightDepthMode.Occluded
                     end
@@ -15613,6 +15624,7 @@ function Module.init(context: Runtime): any
     local framework: any = context.framework
     local entity: any = context.entity
     local render: any = context.render
+    local protectedTargets: any = context.services.protectedTargets
     local currentWorkspace: Workspace = context.host.workspace or workspace
     local layer: Frame = render:Layer("ArrowsLayer")
     local shown: {[Player]: boolean} = {}
@@ -15640,7 +15652,8 @@ function Module.init(context: Runtime): any
             card:Render(function(): ()
                 local camera: Camera? = currentWorkspace.CurrentCamera
                 if not camera then
-                    clear()
+                    render:ReleaseAll(layer)
+                    table.clear(shown)
                     return
                 end
                 local viewport: Vector2 = camera.ViewportSize
@@ -15651,16 +15664,21 @@ function Module.init(context: Runtime): any
                 for _, target: any in ipairs(entity:Refresh()) do
                     local player: Player = target.Player
                     if (not card.Options["Teammates"].Value and target.IsFriendly)
+                        or protectedTargets.isProtected(player)
+                        or not target.Humanoid
+                        or target.Humanoid.Health <= 0
+                        or not target.RootPart
                         or target.Distance > card.Options["Max distance"].Value then
+                        render:Release(layer, player)
                         continue
                     end
                     local projected: Vector3, onScreen: boolean =
                         camera:WorldToViewportPoint(target.RootPart.Position)
-                    local drawing: any = render:Set(layer, player)
                     if onScreen then
-                        drawing:Show(false)
+                        render:Release(layer, player)
                         continue
                     end
+                    local drawing: any = render:Set(layer, player)
                     local delta: Vector2 = Vector2.new(projected.X, projected.Y) - centre
                     if projected.Z < 0 then
                         delta = Vector2.new(-delta.X, -delta.Y)
@@ -15756,25 +15774,39 @@ function Module.init(context: Runtime): any
     local getCharacterParts: any = host.getCharacterParts
     local layer: Frame = render:Layer("NpcEspLayer")
     local candidates: {[Model]: Humanoid} = {}
-    local nextScanAt: number = 0
 
-    local function scan(): ()
-        local found: {[Model]: Humanoid} = {}
-        for _, descendant: Instance in ipairs(currentWorkspace:GetDescendants()) do
-            if descendant:IsA("Humanoid") then
-                local model: Model? = descendant.Parent :: Model?
-                if model and model:IsA("Model")
-                    and players:GetPlayerFromCharacter(model) == nil then
-                    found[model] = descendant :: Humanoid
-                end
-            end
+    local function classify(instance: Instance): ()
+        if not instance:IsA("Humanoid") then
+            return
         end
-        for model: Model in pairs(candidates) do
-            if not found[model] then
+        local humanoid: Humanoid = instance :: Humanoid
+        local model: Model? = humanoid.Parent :: Model?
+        if not model or not model:IsA("Model")
+            or not model:IsDescendantOf(currentWorkspace)
+            or players:GetPlayerFromCharacter(model) ~= nil
+            or model == host.LocalPlayer.Character then
+            return
+        end
+        candidates[model] = humanoid
+    end
+
+    local function forget(instance: Instance): ()
+        if instance:IsA("Humanoid") then
+            local model: Model? = instance.Parent :: Model?
+            if model and candidates[model] == instance then
+                candidates[model] = nil
                 render:Release(layer, model)
             end
+        elseif instance:IsA("Model") and candidates[instance :: Model] then
+            candidates[instance :: Model] = nil
+            render:Release(layer, instance)
         end
-        candidates = found
+    end
+
+    local function scan(): ()
+        for _, descendant: Instance in ipairs(currentWorkspace:GetDescendants()) do
+            classify(descendant)
+        end
     end
 
     local card: any
@@ -15797,13 +15829,10 @@ function Module.init(context: Runtime): any
                 card:SetStatus(nil)
                 return
             end
-            nextScanAt = 0
+            scan()
+            card:Event(currentWorkspace.DescendantAdded, classify)
+            card:Event(currentWorkspace.DescendantRemoving, forget)
             card:Render(function(): ()
-                local now: number = os.clock()
-                if now >= nextScanAt then
-                    nextScanAt = now + 0.75
-                    scan()
-                end
                 local camera: Camera? = currentWorkspace.CurrentCamera
                 local _character: Model?, _humanoid: Humanoid?, localRoot: BasePart? =
                     getCharacterParts()
@@ -15812,6 +15841,13 @@ function Module.init(context: Runtime): any
                 end
                 local visibleCount: number = 0
                 for model: Model, humanoid: Humanoid in pairs(candidates) do
+                    if not model:IsDescendantOf(currentWorkspace)
+                        or players:GetPlayerFromCharacter(model) ~= nil
+                        or model == host.LocalPlayer.Character then
+                        candidates[model] = nil
+                        render:Release(layer, model)
+                        continue
+                    end
                     local root: BasePart? = model:FindFirstChild("HumanoidRootPart") :: BasePart?
                         or model.PrimaryPart
                         or model:FindFirstChildWhichIsA("BasePart") :: BasePart?
@@ -18716,6 +18752,7 @@ function Module.init(context: Runtime): any
                 card:SetStatus(nil)
                 return
             end
+            lastHopAt = -math.huge
             card:SetStatus("ready")
             card:Clean(movementInput.onJumpRequest(function(): ()
                 local now: number = os.clock()
@@ -18748,12 +18785,6 @@ function Module.init(context: Runtime): any
                     velocity.Z + hit.Normal.Z * card.Options["Push"].Value
                 )
                 humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-                card:SetStatus("hop")
-                task.delay(0.25, function(): ()
-                    if card.Enabled then
-                        card:SetStatus("ready")
-                    end
-                end)
             end))
         end,
     })
@@ -24232,17 +24263,32 @@ function Module.init(context: Runtime): any
     local framework: any = context.framework
     local getCharacterParts: any = context.host.getCharacterParts
     local baselines: any = setmetatable({}, {__mode = "k"})
+    local currentRoot: BasePart? = nil
 
-    local function restore(): ()
-        for root: BasePart, baseline: any in pairs(baselines) do
-            if root.Parent then
-                root.AssemblyAngularVelocity = baseline.angularVelocity
-                local humanoid: Humanoid? = root.Parent:FindFirstChildOfClass("Humanoid")
-                if humanoid then
-                    humanoid.AutoRotate = baseline.autoRotate
-                end
+    local function restoreRoot(root: BasePart): ()
+        local baseline: any = baselines[root]
+        if not baseline then
+            return
+        end
+        if root.Parent then
+            root.AssemblyAngularVelocity = baseline.angularVelocity
+            if baseline.cframeTouched then
+                root.CFrame = CFrame.new(root.Position)
+                    * (baseline.cframe - baseline.cframe.Position)
+            end
+            local humanoid: Humanoid? = root.Parent:FindFirstChildOfClass("Humanoid")
+            if humanoid then
+                humanoid.AutoRotate = baseline.autoRotate
             end
         end
+        baselines[root] = nil
+    end
+
+    local function restore(): ()
+        for root: BasePart in pairs(baselines) do
+            restoreRoot(root)
+        end
+        currentRoot = nil
         baselines = setmetatable({}, {__mode = "k"})
     end
 
@@ -24263,13 +24309,23 @@ function Module.init(context: Runtime): any
             card:Loop(function(deltaTime: number): ()
                 local _character: Model?, humanoid: Humanoid?, root: BasePart? =
                     getCharacterParts()
-                if not humanoid or not root then
+                if not humanoid or not root or humanoid.Health <= 0 then
+                    if currentRoot then
+                        restoreRoot(currentRoot :: BasePart)
+                        currentRoot = nil
+                    end
                     return
                 end
+                if currentRoot and currentRoot ~= root then
+                    restoreRoot(currentRoot :: BasePart)
+                end
+                currentRoot = root
                 if not baselines[root] then
                     baselines[root] = {
                         angularVelocity = root.AssemblyAngularVelocity,
                         autoRotate = humanoid.AutoRotate,
+                        cframe = root.CFrame,
+                        cframeTouched = false,
                     }
                 end
                 humanoid.AutoRotate = false
@@ -24282,6 +24338,7 @@ function Module.init(context: Runtime): any
                     root.AssemblyAngularVelocity = axis * math.rad(speed)
                 else
                     root.AssemblyAngularVelocity = Vector3.zero
+                    baselines[root].cframeTouched = true
                     local angle: number = math.rad(speed) * deltaTime
                     local rotation: CFrame = axisName == "X" and CFrame.Angles(angle, 0, 0)
                         or axisName == "Z" and CFrame.Angles(0, 0, angle)

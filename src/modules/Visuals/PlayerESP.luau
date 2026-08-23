@@ -147,13 +147,6 @@ function Module.init(context: Runtime): any
         Index = 1,
         Tooltip = "Where the line to each target starts.",
     })
-    esp:CreateDropdown({
-        Name = "Chams",
-        List = {"Off", "Overlay", "Outline"},
-        Index = 1,
-        Tooltip = "Overlay fills the body through walls, Outline only rims it.",
-    })
-
     esp:CreateToggle({
         Name = "Team check",
         Default = false,
@@ -587,13 +580,6 @@ function Module.render(
             )
         end
 
-        -- Chams.
-        drawings:Highlight(
-            entity.Character,
-            colour,
-            0.55,
-            options["Chams"].Value
-        )
     end
 
     for player: Player in pairs(pool) do

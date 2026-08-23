@@ -39,6 +39,7 @@ function Module.init(context: Runtime): any
                 card:SetStatus(nil)
                 return
             end
+            lastHopAt = -math.huge
             card:SetStatus("ready")
             card:Clean(movementInput.onJumpRequest(function(): ()
                 local now: number = os.clock()
@@ -71,12 +72,6 @@ function Module.init(context: Runtime): any
                     velocity.Z + hit.Normal.Z * card.Options["Push"].Value
                 )
                 humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-                card:SetStatus("hop")
-                task.delay(0.25, function(): ()
-                    if card.Enabled then
-                        card:SetStatus("ready")
-                    end
-                end)
             end))
         end,
     })

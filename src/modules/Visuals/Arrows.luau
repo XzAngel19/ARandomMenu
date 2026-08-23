@@ -25,6 +25,7 @@ function Module.init(context: Runtime): any
     local framework: any = context.framework
     local entity: any = context.entity
     local render: any = context.render
+    local protectedTargets: any = context.services.protectedTargets
     local currentWorkspace: Workspace = context.host.workspace or workspace
     local layer: Frame = render:Layer("ArrowsLayer")
     local shown: {[Player]: boolean} = {}
@@ -52,7 +53,8 @@ function Module.init(context: Runtime): any
             card:Render(function(): ()
                 local camera: Camera? = currentWorkspace.CurrentCamera
                 if not camera then
-                    clear()
+                    render:ReleaseAll(layer)
+                    table.clear(shown)
                     return
                 end
                 local viewport: Vector2 = camera.ViewportSize
@@ -63,16 +65,21 @@ function Module.init(context: Runtime): any
                 for _, target: any in ipairs(entity:Refresh()) do
                     local player: Player = target.Player
                     if (not card.Options["Teammates"].Value and target.IsFriendly)
+                        or protectedTargets.isProtected(player)
+                        or not target.Humanoid
+                        or target.Humanoid.Health <= 0
+                        or not target.RootPart
                         or target.Distance > card.Options["Max distance"].Value then
+                        render:Release(layer, player)
                         continue
                     end
                     local projected: Vector3, onScreen: boolean =
                         camera:WorldToViewportPoint(target.RootPart.Position)
-                    local drawing: any = render:Set(layer, player)
                     if onScreen then
-                        drawing:Show(false)
+                        render:Release(layer, player)
                         continue
                     end
+                    local drawing: any = render:Set(layer, player)
                     local delta: Vector2 = Vector2.new(projected.X, projected.Y) - centre
                     if projected.Z < 0 then
                         delta = Vector2.new(-delta.X, -delta.Y)
