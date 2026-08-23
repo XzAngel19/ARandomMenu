@@ -155,6 +155,7 @@ export type MenuState = {
     pill: any,                                      -- The floating pill toolbar: the launcher, and the one chrome that outlives closing the GUI
     refreshLauncher: () -> (),                      -- Re-evaluate the fallback mobile circle; the pill supersedes it while it exists
     windows: any,                                   -- The window manager: drag, collapse, pin, snap, persistence
+    surfaceDragOwner: GuiObject?,                   -- Exclusive pointer owner while a window or Custom HackList is moving
     floatingUi: any,                                -- Favourites, the overlay menu and the four overlays
     destroySessionTracking: () -> (),               -- Stop counting kills, deaths and time
     sessionInfo: any,                               -- What that count currently says

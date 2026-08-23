@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "4532e4410c688dd7",
+    stamp = "e5c95ea7ec65bef5",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -87,6 +87,21 @@ local Manifest: Manifest = {
             category = "Render",
         },
         {
+            path = "src/modules/Visuals/Chams.luau",
+            name = "Chams",
+            category = "Render",
+        },
+        {
+            path = "src/modules/Visuals/Arrows.luau",
+            name = "Arrows",
+            category = "Render",
+        },
+        {
+            path = "src/modules/Visuals/NPCESP.luau",
+            name = "NPCESP",
+            category = "Render",
+        },
+        {
             path = "src/modules/Combat/KillAura.luau",
             name = "Killaura",
             category = "Combat",
@@ -125,6 +140,11 @@ local Manifest: Manifest = {
         {
             path = "src/modules/Movement/Spider.luau",
             name = "Spider",
+            category = "Movement",
+        },
+        {
+            path = "src/modules/Movement/WallHop.luau",
+            name = "WallHop",
             category = "Movement",
         },
         {
@@ -246,6 +266,11 @@ local Manifest: Manifest = {
             path = "src/modules/Combat/ProjectileCalibration.luau",
             name = "Projectile Calibration",
             category = "Render",
+        },
+        {
+            path = "src/modules/Movement/SpinBot.luau",
+            name = "SpinBot",
+            category = "Fun",
         },
         {
             path = "src/modules/Spoof/Disguise.luau",
@@ -815,15 +840,26 @@ function Module.init(context: any): WidgetLibrary
                 UDim2.new(0.55, -CHILD_INSET, 0, 22)
         end
 
-        local step: number? = tonumber(stepValue)
-        if step ~= nil and step <= 0 then
-            step = nil
+        local requestedStep: number? = tonumber(stepValue)
+        if requestedStep ~= nil and requestedStep <= 0 then
+            requestedStep = nil
         end
-        -- The row's numeric contract, readable by anything that walks it:
-        -- the values are metadata whether or not the labels are bitmap.
+        -- Every slider has a finite precision. Integer-shaped ranges snap to
+        -- one; decimal ranges default to hundredths unless the module asks for
+        -- another step. Raw pointer ratios must never leak 1.7339128 into a
+        -- setting, config or status string.
+        local step: number = requestedStep or (integerOnly and 1 or 0.01)
+        local precisionFactor: number = 1
+        for _ = 1, 6 do
+            if math.abs(step * precisionFactor - math.round(step * precisionFactor)) < 1e-7 then
+                break
+            end
+            precisionFactor *= 10
+        end
+        -- The row's numeric contract, readable by anything that walks it.
         option:SetAttribute("Min", minimum)
         option:SetAttribute("Max", maximum)
-        option:SetAttribute("Step", step or (integerOnly and 1 or 0))
+        option:SetAttribute("Step", step)
 
         local slider: TextButton = (create("TextButton", {
             TextTruncate = Enum.TextTruncate.AtEnd,
@@ -956,14 +992,9 @@ function Module.init(context: any): WidgetLibrary
         -- then clamp. NaN and inf never reach here; isFiniteNumber refuses
         -- them at the door.
         local function quantize(raw: number): number
-            local stepped: number = raw
-            if step ~= nil then
-                stepped = minimum
-                    + math.round((stepped - minimum) / (step :: number))
-                        * (step :: number)
-            elseif integerOnly then
-                stepped = math.round(stepped)
-            end
+            local stepped: number = minimum
+                + math.round((raw - minimum) / step) * step
+            stepped = math.round(stepped * precisionFactor) / precisionFactor
             return math.clamp(stepped, minimum, maximum)
         end
         local function setValue(
@@ -3391,7 +3422,8 @@ function Module.init(context: any): Framework
                 definition2.Min or 0,
                 definition2.Max or 100,
                 valueCallback(option, definition2),
-                definition2.Tooltip
+                definition2.Tooltip,
+                definition2.Step
             )
             return register(option, definition2)
         end
@@ -5217,6 +5249,9 @@ function Module.init(context: any): RenderLibrary
             local resolved: Highlight = highlight :: Highlight
             resolved.Adornee = adornee
             resolved.Parent = adornee
+            resolved.DepthMode = mode == "Occluded"
+                    and Enum.HighlightDepthMode.Occluded
+                or Enum.HighlightDepthMode.AlwaysOnTop
             resolved.FillColor = colour
             resolved.OutlineColor = colour
             resolved.FillTransparency = mode == "Outline" and 1 or fill
@@ -6852,6 +6887,9 @@ function Module.init(context: any): any
         end
 
         function window:Destroy(): ()
+            if state.surfaceDragOwner == root then
+                state.surfaceDragOwner = nil
+            end
             local index: number? = table.find(manager.list, window)
             if index then
                 table.remove(manager.list, index)
@@ -6887,17 +6925,36 @@ function Module.init(context: any): any
             if requiresMenuOpen and not state.visible then
                 return
             end
-            if input.UserInputType == Enum.UserInputType.MouseButton1
-                or input.UserInputType == Enum.UserInputType.Touch then
-                dragging = true
-                dragInput = input
-                dragStart = Vector2.new(input.Position.X, input.Position.Y)
-                startPosition = Vector2.new(
-                    root.Position.X.Offset,
-                    root.Position.Y.Offset
-                )
-                raise(window)
+            if state.surfaceDragOwner ~= nil
+                and state.surfaceDragOwner ~= root then
+                return
             end
+            if input.UserInputType ~= Enum.UserInputType.MouseButton1
+                and input.UserInputType ~= Enum.UserInputType.Touch then
+                return
+            end
+            -- Some executors dispatch InputBegan to overlapping GuiObjects.
+            -- Require the pointer to be inside this exact drag handle instead
+            -- of accepting an event that began on a Custom HackList above it.
+            local absoluteSize: Vector2 = dragHandle.AbsoluteSize
+            if absoluteSize.X > 0 and absoluteSize.Y > 0 then
+                local absolutePosition: Vector2 = dragHandle.AbsolutePosition
+                if input.Position.X < absolutePosition.X
+                    or input.Position.X > absolutePosition.X + absoluteSize.X
+                    or input.Position.Y < absolutePosition.Y
+                    or input.Position.Y > absolutePosition.Y + absoluteSize.Y then
+                    return
+                end
+            end
+            dragging = true
+            dragInput = input
+            state.surfaceDragOwner = root
+            dragStart = Vector2.new(input.Position.X, input.Position.Y)
+            startPosition = Vector2.new(
+                root.Position.X.Offset,
+                root.Position.Y.Offset
+            )
+            raise(window)
         end))
         own(UserInputService.InputChanged:Connect(function(
             input: InputObject
@@ -6932,6 +6989,9 @@ function Module.init(context: any): any
                     or input.UserInputType == Enum.UserInputType.MouseButton1) then
                 dragging = false
                 dragInput = nil
+                if state.surfaceDragOwner == root then
+                    state.surfaceDragOwner = nil
+                end
                 -- From here on this is the user's position: reflow keeps its
                 -- hands off it, and only the viewport clamp may move it.
                 window.userMoved = true
@@ -12856,6 +12916,9 @@ function Module.init(context: any): any
     local hudDragOrigin: Vector2 = Vector2.zero
     local function syncHudDragSurface(): ()
         hudFrame.Active = hudPosition == "Custom" and state.visible == true
+        -- Custom placement must own the pointer above managed windows. Without
+        -- this, touching the list where it crossed a title bar moved both.
+        hudFrame.ZIndex = hudFrame.Active and 242 or 20
     end
     syncHudDragSurface()
     state.addMenuVisibilityListener(function(): ()
@@ -12865,11 +12928,13 @@ function Module.init(context: any): any
         input: InputObject
     ): ()
         if not hudFrame.Active
+            or state.surfaceDragOwner ~= nil
             or (input.UserInputType ~= Enum.UserInputType.MouseButton1
                 and input.UserInputType ~= Enum.UserInputType.Touch) then
             return
         end
         hudDragInput = input
+        state.surfaceDragOwner = hudFrame
         hudDragStart = Vector2.new(input.Position.X, input.Position.Y)
         hudDragOrigin = Vector2.new(
             hudFrame.Position.X.Offset,
@@ -12907,6 +12972,9 @@ function Module.init(context: any): any
             return
         end
         hudDragInput = nil
+        if state.surfaceDragOwner == hudFrame then
+            state.surfaceDragOwner = nil
+        end
         if hudCustomX and hudCustomY then
             configData.values["HackList.CustomX"] = hudCustomX
             configData.values["HackList.CustomY"] = hudCustomY
@@ -14058,6 +14126,9 @@ function Module.init(context: any): any
             end)
         end
         Furniture.connections = {}
+        if state.surfaceDragOwner == hudFrame then
+            state.surfaceDragOwner = nil
+        end
         chip:Destroy()
         hudFrame:Destroy()
         navScreen:Destroy()
@@ -15399,6 +15470,422 @@ function Module.destroy(): ()
         pcall(activeCleanup)
     end
     activeCleanup = nil
+    Module.Initialized = false
+end
+
+return Module
+]=====],
+        ["src/modules/Visuals/Chams.luau"] = [=====[--!strict
+--
+-- Chams.
+-- Highlights live players through geometry. Inspired by Vape's Highlight mode,
+-- but built on Roblox Highlight instances and this menu's module lifecycle.
+
+export type Runtime = {
+    framework: any,
+    entity: any,
+    host: any,
+    services: any,
+}
+
+local Module = {
+    Name = "Chams",
+    PlaceId = 0,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local activeCard: any = nil
+
+function Module.init(context: Runtime): any
+    local framework: any = context.framework
+    local entity: any = context.entity
+    local host: any = context.host
+    local currentWorkspace: Workspace = host.workspace or workspace
+    local highlights: {[Player]: Highlight} = {}
+
+    local card: any
+    local function clear(): ()
+        for player: Player, highlight: Highlight in pairs(highlights) do
+            highlights[player] = nil
+            highlight:Destroy()
+        end
+    end
+
+    card = framework.Categories.Visuals:CreateModule({
+        Name = "Chams",
+        Category = "Render",
+        ConfigKey = "Universal.Chams",
+        Order = 2,
+        Tooltip = "Highlights live players, optionally through walls.",
+        Function = function(enabled: boolean): ()
+            if not enabled then
+                clear()
+                card:SetStatus(nil)
+                return
+            end
+            card:SetStatus("0")
+            card:Render(function(): ()
+                local seen: {[Player]: boolean} = {}
+                local count: number = 0
+                for _, target: any in ipairs(entity:Refresh()) do
+                    local player: Player = target.Player
+                    local allowed: boolean = card.Options["Teammates"].Value
+                        or not target.IsFriendly
+                    if allowed and target.Character and target.Humanoid.Health > 0 then
+                        seen[player] = true
+                        count += 1
+                        local highlight: Highlight? = highlights[player]
+                        if not highlight then
+                            highlight = Instance.new("Highlight")
+                            highlight.Name = "ARandomMenu_Chams"
+                            highlight.Parent = currentWorkspace
+                            highlights[player] = highlight
+                        end
+                        highlight.Adornee = target.Character
+                        highlight.FillColor = card.Options["Fill colour"].Value
+                        highlight.OutlineColor = card.Options["Outline colour"].Value
+                        highlight.FillTransparency = card.Options["Fill transparency"].Value
+                        highlight.OutlineTransparency = card.Options["Outline transparency"].Value
+                        highlight.DepthMode = card.Options["Through walls"].Value
+                                and Enum.HighlightDepthMode.AlwaysOnTop
+                            or Enum.HighlightDepthMode.Occluded
+                    end
+                end
+                for player: Player, highlight: Highlight in pairs(highlights) do
+                    if not seen[player] then
+                        highlights[player] = nil
+                        highlight:Destroy()
+                    end
+                end
+                card:SetStatus(tostring(count))
+            end)
+            card:Clean(clear)
+        end,
+    })
+
+    card:CreateColor({Name = "Fill colour", Default = Color3.fromRGB(0, 204, 255)})
+    card:CreateColor({Name = "Outline colour", Default = Color3.fromRGB(255, 255, 255)})
+    card:CreateSlider({Name = "Fill transparency", Min = 0, Max = 1, Step = 0.05, Default = 0.5})
+    card:CreateSlider({Name = "Outline transparency", Min = 0, Max = 1, Step = 0.05, Default = 0})
+    card:CreateToggle({Name = "Through walls", Default = true})
+    card:CreateToggle({Name = "Teammates", Default = false})
+
+    activeCard = card
+    Module.Initialized = true
+    return card
+end
+
+function Module.destroy(): ()
+    if activeCard and activeCard.Enabled then
+        activeCard:Toggle(false)
+    end
+    activeCard = nil
+    Module.Initialized = false
+end
+
+return Module
+]=====],
+        ["src/modules/Visuals/Arrows.luau"] = [=====[--!strict
+--
+-- Arrows.
+-- Points toward live players that are outside the camera viewport. The geometry
+-- is pooled by the shared renderer; no GuiObjects are allocated per frame.
+
+export type Runtime = {
+    framework: any,
+    entity: any,
+    render: any,
+    host: any,
+    services: any,
+}
+
+local Module = {
+    Name = "Arrows",
+    PlaceId = 0,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local activeCard: any = nil
+
+function Module.init(context: Runtime): any
+    local framework: any = context.framework
+    local entity: any = context.entity
+    local render: any = context.render
+    local currentWorkspace: Workspace = context.host.workspace or workspace
+    local layer: Frame = render:Layer("ArrowsLayer")
+    local shown: {[Player]: boolean} = {}
+
+    local card: any
+    local function clear(): ()
+        render:ReleaseAll(layer)
+        table.clear(shown)
+        layer.Visible = false
+    end
+
+    card = framework.Categories.Visuals:CreateModule({
+        Name = "Arrows",
+        Category = "Render",
+        ConfigKey = "Universal.Arrows",
+        Order = 3,
+        Tooltip = "Points toward players outside the camera view.",
+        Function = function(enabled: boolean): ()
+            layer.Visible = enabled
+            if not enabled then
+                clear()
+                card:SetStatus(nil)
+                return
+            end
+            card:Render(function(): ()
+                local camera: Camera? = currentWorkspace.CurrentCamera
+                if not camera then
+                    clear()
+                    return
+                end
+                local viewport: Vector2 = camera.ViewportSize
+                local centre: Vector2 = Vector2.new(viewport.X / 2, viewport.Y / 2)
+                local radius: number = math.max(40, math.min(viewport.X, viewport.Y) * 0.4)
+                local seen: {[Player]: boolean} = {}
+                local count: number = 0
+                for _, target: any in ipairs(entity:Refresh()) do
+                    local player: Player = target.Player
+                    if (not card.Options["Teammates"].Value and target.IsFriendly)
+                        or target.Distance > card.Options["Max distance"].Value then
+                        continue
+                    end
+                    local projected: Vector3, onScreen: boolean =
+                        camera:WorldToViewportPoint(target.RootPart.Position)
+                    local drawing: any = render:Set(layer, player)
+                    if onScreen then
+                        drawing:Show(false)
+                        continue
+                    end
+                    local delta: Vector2 = Vector2.new(projected.X, projected.Y) - centre
+                    if projected.Z < 0 then
+                        delta = Vector2.new(-delta.X, -delta.Y)
+                    end
+                    if delta.Magnitude < 0.001 then
+                        delta = Vector2.new(0, -1)
+                    end
+                    local direction: Vector2 = delta.Unit
+                    local perpendicular: Vector2 = Vector2.new(-direction.Y, direction.X)
+                    local tip: Vector2 = centre + direction * radius
+                    local back: Vector2 = tip - direction * 16
+                    local colour: Color3 = card.Options["Colour"].Value
+                    drawing:Line("Arrow", 1, tip, back + perpendicular * 8, 2, colour)
+                    drawing:Line("Arrow", 2, tip, back - perpendicular * 8, 2, colour)
+                    drawing:HideLines("Arrow", 3, 8)
+                    if card.Options["Distance"].Value then
+                        drawing:Label(
+                            "Distance",
+                            tostring(math.round(target.Distance)) .. "m",
+                            tip - direction * 26,
+                            0.5,
+                            12,
+                            colour,
+                            true
+                        )
+                    else
+                        drawing:HideLabel("Distance")
+                    end
+                    drawing:Show(true)
+                    seen[player] = true
+                    count += 1
+                end
+                for player: Player in pairs(shown) do
+                    if not seen[player] then
+                        render:Release(layer, player)
+                    end
+                end
+                shown = seen
+                card:SetStatus(tostring(count))
+            end)
+            card:Clean(clear)
+        end,
+    })
+
+    card:CreateColor({Name = "Colour", Default = Color3.fromRGB(0, 204, 255)})
+    card:CreateToggle({Name = "Distance", Default = true})
+    card:CreateSlider({Name = "Max distance", Min = 25, Max = 2000, Step = 25, Default = 500})
+    card:CreateToggle({Name = "Teammates", Default = false})
+
+    activeCard = card
+    Module.Initialized = true
+    return card
+end
+
+function Module.destroy(): ()
+    if activeCard and activeCard.Enabled then
+        activeCard:Toggle(false)
+    end
+    activeCard = nil
+    Module.Initialized = false
+end
+
+return Module
+]=====],
+        ["src/modules/Visuals/NPCESP.luau"] = [=====[--!strict
+--
+-- NPC ESP.
+-- Finds humanoid models that do not belong to Players and renders them through
+-- the shared pool. Workspace is rescanned at a low rate, never every frame.
+
+export type Runtime = {
+    framework: any,
+    render: any,
+    host: any,
+    services: any,
+}
+
+local Module = {
+    Name = "NPCESP",
+    PlaceId = 0,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local activeCard: any = nil
+
+function Module.init(context: Runtime): any
+    local framework: any = context.framework
+    local render: any = context.render
+    local host: any = context.host
+    local players: Players = host.Players
+    local currentWorkspace: Workspace = host.workspace or workspace
+    local getCharacterParts: any = host.getCharacterParts
+    local layer: Frame = render:Layer("NpcEspLayer")
+    local candidates: {[Model]: Humanoid} = {}
+    local nextScanAt: number = 0
+
+    local function scan(): ()
+        local found: {[Model]: Humanoid} = {}
+        for _, descendant: Instance in ipairs(currentWorkspace:GetDescendants()) do
+            if descendant:IsA("Humanoid") then
+                local model: Model? = descendant.Parent :: Model?
+                if model and model:IsA("Model")
+                    and players:GetPlayerFromCharacter(model) == nil then
+                    found[model] = descendant :: Humanoid
+                end
+            end
+        end
+        for model: Model in pairs(candidates) do
+            if not found[model] then
+                render:Release(layer, model)
+            end
+        end
+        candidates = found
+    end
+
+    local card: any
+    local function clear(): ()
+        render:ReleaseAll(layer)
+        table.clear(candidates)
+        layer.Visible = false
+    end
+
+    card = framework.Categories.Visuals:CreateModule({
+        Name = "NPCESP",
+        Category = "Render",
+        ConfigKey = "Universal.NPCESP",
+        Order = 4,
+        Tooltip = "Boxes and highlights for non-player humanoid models.",
+        Function = function(enabled: boolean): ()
+            layer.Visible = enabled
+            if not enabled then
+                clear()
+                card:SetStatus(nil)
+                return
+            end
+            nextScanAt = 0
+            card:Render(function(): ()
+                local now: number = os.clock()
+                if now >= nextScanAt then
+                    nextScanAt = now + 0.75
+                    scan()
+                end
+                local camera: Camera? = currentWorkspace.CurrentCamera
+                local _character: Model?, _humanoid: Humanoid?, localRoot: BasePart? =
+                    getCharacterParts()
+                if not camera or not localRoot then
+                    return
+                end
+                local visibleCount: number = 0
+                for model: Model, humanoid: Humanoid in pairs(candidates) do
+                    local root: BasePart? = model:FindFirstChild("HumanoidRootPart") :: BasePart?
+                        or model.PrimaryPart
+                        or model:FindFirstChildWhichIsA("BasePart") :: BasePart?
+                    local drawing: any = render:Set(layer, model)
+                    if not root or humanoid.Health <= 0
+                        or (root.Position - localRoot.Position).Magnitude
+                            > card.Options["Max distance"].Value then
+                        drawing:Show(false)
+                        continue
+                    end
+                    local rect: any = render:ModelRect(camera, model)
+                    if not rect then
+                        drawing:Show(false)
+                        continue
+                    end
+                    local colour: Color3 = card.Options["Colour"].Value
+                    drawing:Box(
+                        rect,
+                        card.Options["Box"].Value and "Full" or "Off",
+                        1,
+                        colour
+                    )
+                    if card.Options["Name"].Value then
+                        local text: string = model.Name
+                        if card.Options["Health"].Value then
+                            text ..= " [" .. tostring(math.round(humanoid.Health)) .. "]"
+                        end
+                        drawing:Label(
+                            "NameTag",
+                            text,
+                            Vector2.new(rect.centreX, rect.top - 4),
+                            1,
+                            13,
+                            colour,
+                            true
+                        )
+                    else
+                        drawing:HideLabel("NameTag")
+                    end
+                    drawing:Highlight(
+                        model,
+                        colour,
+                        0.55,
+                        not card.Options["Highlight"].Value and "Off"
+                            or (card.Options["Through walls"].Value
+                                and "AlwaysOnTop" or "Occluded")
+                    )
+                    drawing:Show(true)
+                    visibleCount += 1
+                end
+                card:SetStatus(tostring(visibleCount))
+            end)
+            card:Clean(clear)
+        end,
+    })
+
+    card:CreateToggle({Name = "Box", Default = true})
+    card:CreateToggle({Name = "Highlight", Default = true})
+    card:CreateToggle({Name = "Through walls", Default = true, Show = {Option = "Highlight"}})
+    card:CreateToggle({Name = "Name", Default = true})
+    card:CreateToggle({Name = "Health", Default = true, Show = {Option = "Name"}})
+    card:CreateColor({Name = "Colour", Default = Color3.fromRGB(255, 170, 0)})
+    card:CreateSlider({Name = "Max distance", Min = 25, Max = 2000, Step = 25, Default = 500})
+
+    activeCard = card
+    Module.Initialized = true
+    return card
+end
+
+function Module.destroy(): ()
+    if activeCard and activeCard.Enabled then
+        activeCard:Toggle(false)
+    end
+    activeCard = nil
     Module.Initialized = false
 end
 
@@ -18183,6 +18670,109 @@ function Module.destroy(): ()
         pcall(activeCleanup)
     end
     activeCleanup = nil
+    Module.Initialized = false
+end
+
+return Module
+]=====],
+        ["src/modules/Movement/WallHop.luau"] = [=====[--!strict
+--
+-- Wall Hop.
+-- A jump made while facing a near-vertical wall kicks the character upward and
+-- away from it. One raycast per jump request; no permanent movement loop.
+
+export type Runtime = {
+    framework: any,
+    host: any,
+    services: any,
+}
+
+local Module = {
+    Name = "WallHop",
+    PlaceId = 0,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local activeCard: any = nil
+
+function Module.init(context: Runtime): any
+    local framework: any = context.framework
+    local host: any = context.host
+    local movementInput: any = context.services.movementInput
+    local getCharacterParts: any = host.getCharacterParts
+    local currentWorkspace: Workspace = host.workspace or workspace
+    local lastHopAt: number = -math.huge
+
+    local card: any
+    card = framework.Categories.Movement:CreateModule({
+        Name = "WallHop",
+        Category = "Movement",
+        ConfigKey = "Universal.WallHop",
+        Order = 31,
+        Tooltip = "Jump at a wall to vault upward and away from it.",
+        Function = function(enabled: boolean): ()
+            if not enabled then
+                card:SetStatus(nil)
+                return
+            end
+            card:SetStatus("ready")
+            card:Clean(movementInput.onJumpRequest(function(): ()
+                local now: number = os.clock()
+                if now - lastHopAt < card.Options["Cooldown"].Value then
+                    return
+                end
+                local character: Model?, humanoid: Humanoid?, root: BasePart? =
+                    getCharacterParts()
+                if not character or not humanoid or not root or humanoid.Health <= 0 then
+                    return
+                end
+                local parameters: RaycastParams = RaycastParams.new()
+                parameters.FilterType = Enum.RaycastFilterType.Exclude
+                parameters.FilterDescendantsInstances = {character}
+                parameters.IgnoreWater = true
+                parameters.RespectCanCollide = true
+                local hit: RaycastResult? = currentWorkspace:Raycast(
+                    root.Position,
+                    root.CFrame.LookVector * card.Options["Reach"].Value,
+                    parameters
+                )
+                if not hit or math.abs(hit.Normal.Y) > 0.35 then
+                    return
+                end
+                lastHopAt = now
+                local velocity: Vector3 = root.AssemblyLinearVelocity
+                root.AssemblyLinearVelocity = Vector3.new(
+                    velocity.X + hit.Normal.X * card.Options["Push"].Value,
+                    math.max(velocity.Y, card.Options["Height"].Value),
+                    velocity.Z + hit.Normal.Z * card.Options["Push"].Value
+                )
+                humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+                card:SetStatus("hop")
+                task.delay(0.25, function(): ()
+                    if card.Enabled then
+                        card:SetStatus("ready")
+                    end
+                end)
+            end))
+        end,
+    })
+
+    card:CreateSlider({Name = "Height", Min = 20, Max = 100, Step = 1, Default = 48})
+    card:CreateSlider({Name = "Push", Min = 0, Max = 60, Step = 1, Default = 24})
+    card:CreateSlider({Name = "Reach", Min = 1.5, Max = 5, Step = 0.1, Default = 2.5})
+    card:CreateSlider({Name = "Cooldown", Min = 0.1, Max = 1, Step = 0.05, Default = 0.25})
+
+    activeCard = card
+    Module.Initialized = true
+    return card
+end
+
+function Module.destroy(): ()
+    if activeCard and activeCard.Enabled then
+        activeCard:Toggle(false)
+    end
+    activeCard = nil
     Module.Initialized = false
 end
 
@@ -23612,6 +24202,120 @@ function Module.destroy(): ()
         activeRegistry.set(nil)
     end
     activeRegistry = nil
+    Module.Initialized = false
+end
+
+return Module
+]=====],
+        ["src/modules/Movement/SpinBot.luau"] = [=====[--!strict
+--
+-- SpinBot.
+-- Vape-inspired rotation with a direct CFrame mode and a physics angular-
+-- velocity mode. Every touched property is restored on disable.
+
+export type Runtime = {
+    framework: any,
+    host: any,
+    services: any,
+}
+
+local Module = {
+    Name = "SpinBot",
+    PlaceId = 0,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local activeCard: any = nil
+
+function Module.init(context: Runtime): any
+    local framework: any = context.framework
+    local getCharacterParts: any = context.host.getCharacterParts
+    local baselines: any = setmetatable({}, {__mode = "k"})
+
+    local function restore(): ()
+        for root: BasePart, baseline: any in pairs(baselines) do
+            if root.Parent then
+                root.AssemblyAngularVelocity = baseline.angularVelocity
+                local humanoid: Humanoid? = root.Parent:FindFirstChildOfClass("Humanoid")
+                if humanoid then
+                    humanoid.AutoRotate = baseline.autoRotate
+                end
+            end
+        end
+        baselines = setmetatable({}, {__mode = "k"})
+    end
+
+    local card: any
+    card = framework.Categories.Fun:CreateModule({
+        Name = "SpinBot",
+        Category = "Fun",
+        ConfigKey = "Universal.SpinBot",
+        Order = 40,
+        Tooltip = "Rotates your character continuously around the selected axis.",
+        Function = function(enabled: boolean): ()
+            if not enabled then
+                restore()
+                card:SetStatus(nil)
+                return
+            end
+            card:SetStatus(card.Options["Mode"].Value)
+            card:Loop(function(deltaTime: number): ()
+                local _character: Model?, humanoid: Humanoid?, root: BasePart? =
+                    getCharacterParts()
+                if not humanoid or not root then
+                    return
+                end
+                if not baselines[root] then
+                    baselines[root] = {
+                        angularVelocity = root.AssemblyAngularVelocity,
+                        autoRotate = humanoid.AutoRotate,
+                    }
+                end
+                humanoid.AutoRotate = false
+                local speed: number = card.Options["Speed"].Value
+                local axisName: string = card.Options["Axis"].Value
+                local axis: Vector3 = axisName == "X" and Vector3.new(1, 0, 0)
+                    or axisName == "Z" and Vector3.new(0, 0, 1)
+                    or Vector3.new(0, 1, 0)
+                if card.Options["Mode"].Value == "Velocity" then
+                    root.AssemblyAngularVelocity = axis * math.rad(speed)
+                else
+                    root.AssemblyAngularVelocity = Vector3.zero
+                    local angle: number = math.rad(speed) * deltaTime
+                    local rotation: CFrame = axisName == "X" and CFrame.Angles(angle, 0, 0)
+                        or axisName == "Z" and CFrame.Angles(0, 0, angle)
+                        or CFrame.Angles(0, angle, 0)
+                    root.CFrame = root.CFrame * rotation
+                end
+            end)
+            card:Clean(restore)
+        end,
+    })
+
+    card:CreateDropdown({
+        Name = "Mode",
+        List = {"CFrame", "Velocity"},
+        Index = 1,
+        Function = function(value: string): ()
+            if card then
+                card:SetStatus(value)
+            end
+        end,
+    })
+    card:CreateDropdown({Name = "Axis", List = {"Y", "X", "Z"}, Index = 1})
+    card:CreateSlider({Name = "Speed", Min = 30, Max = 1440, Step = 15, Default = 360})
+
+    activeCard = card
+    Module.Initialized = true
+    return card
+end
+
+function Module.destroy(): ()
+    if activeCard and activeCard.Enabled then
+        activeCard:Toggle(false)
+    end
+    activeCard = nil
     Module.Initialized = false
 end
 

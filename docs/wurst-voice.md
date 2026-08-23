@@ -114,7 +114,7 @@ the shot misses, the remote does not exist.
 ## Counterpart table
 
 Only hacks that have a counterpart in *this* menu. Wurst has 158; we
-have 38 universal cards plus the per-game ones. A blank Wurst column
+have 43 universal cards plus the per-game ones. A blank Wurst column
 means there is no counterpart — write a plain tooltip, do not invent
 one from a neighbour.
 

@@ -190,7 +190,7 @@ return function(ctx: any): ()
 
     local windows: any = state.windows
     local noFall: any = Inspect.featureNamed(env, "NoFall")
-    check("NoFall is one of the 38 modules", noFall ~= nil)
+    check("NoFall is one of the inventory modules", noFall ~= nil)
     if noFall ~= nil and type(windows) == "table" and type(windows.OpenFeatureSettings) == "function" then
         local window: any = windows.OpenFeatureSettings(noFall)
         check("NoFall Settings opens", window ~= nil)

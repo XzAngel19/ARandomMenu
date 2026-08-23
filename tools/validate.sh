@@ -188,7 +188,7 @@ if problems:
 print("ok")
 PYTHON
 
-step "Universal inventory stays 38 modules"
+step "Universal inventory matches the deliberate snapshot"
 # 7.54.1 GUI APPLY must not grow or rename Manifest.modules.
 python3 tools/check_inventory.py
 

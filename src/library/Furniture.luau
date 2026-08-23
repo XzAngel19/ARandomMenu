@@ -489,6 +489,9 @@ function Module.init(context: any): any
     local hudDragOrigin: Vector2 = Vector2.zero
     local function syncHudDragSurface(): ()
         hudFrame.Active = hudPosition == "Custom" and state.visible == true
+        -- Custom placement must own the pointer above managed windows. Without
+        -- this, touching the list where it crossed a title bar moved both.
+        hudFrame.ZIndex = hudFrame.Active and 242 or 20
     end
     syncHudDragSurface()
     state.addMenuVisibilityListener(function(): ()
@@ -498,11 +501,13 @@ function Module.init(context: any): any
         input: InputObject
     ): ()
         if not hudFrame.Active
+            or state.surfaceDragOwner ~= nil
             or (input.UserInputType ~= Enum.UserInputType.MouseButton1
                 and input.UserInputType ~= Enum.UserInputType.Touch) then
             return
         end
         hudDragInput = input
+        state.surfaceDragOwner = hudFrame
         hudDragStart = Vector2.new(input.Position.X, input.Position.Y)
         hudDragOrigin = Vector2.new(
             hudFrame.Position.X.Offset,
@@ -540,6 +545,9 @@ function Module.init(context: any): any
             return
         end
         hudDragInput = nil
+        if state.surfaceDragOwner == hudFrame then
+            state.surfaceDragOwner = nil
+        end
         if hudCustomX and hudCustomY then
             configData.values["HackList.CustomX"] = hudCustomX
             configData.values["HackList.CustomY"] = hudCustomY
@@ -1691,6 +1699,9 @@ function Module.init(context: any): any
             end)
         end
         Furniture.connections = {}
+        if state.surfaceDragOwner == hudFrame then
+            state.surfaceDragOwner = nil
+        end
         chip:Destroy()
         hudFrame:Destroy()
         navScreen:Destroy()

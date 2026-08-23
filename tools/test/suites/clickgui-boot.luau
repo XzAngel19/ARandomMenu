@@ -173,13 +173,16 @@ return function(ctx: any): ()
             cardsByName[feature.name] = feature
         end
     end
-    -- Machine-readable inventory. It is intentionally exactly 38 entries:
+    -- Machine-readable inventory. It is intentionally exactly 43 entries:
     -- modern Wurst may inform generic configuration infrastructure, never add
     -- a thirty-ninth hack to this port.
     local matrix: {[string]: any} = {
         ["Friend List"] = {kind = "roblox-only"},
         ItemESP = {kind = "adapted", counterpart = "ItemESP"},
         PlayerESP = {kind = "adapted", counterpart = "PlayerESP"},
+        Chams = {kind = "adapted", counterpart = "Chams"},
+        Arrows = {kind = "adapted", counterpart = "Arrows"},
+        NPCESP = {kind = "adapted", counterpart = "EntityESP NPCs"},
         Killaura = {kind = "adapted", counterpart = "Killaura"},
         ["Remote Logger"] = {kind = "roblox-only"},
         ["Click Teleport"] = {kind = "roblox-only"},
@@ -188,6 +191,7 @@ return function(ctx: any): ()
         ["X-Ray"] = {kind = "adapted", counterpart = "X-Ray"},
         HighJump = {kind = "adapted", counterpart = "HighJump"},
         Spider = {kind = "adapted", counterpart = "Spider"},
+        WallHop = {kind = "roblox-only"},
         SafeWalk = {kind = "adapted", counterpart = "SafeWalk"},
         ["Rejoin Server"] = {kind = "adapted", counterpart = "AutoReconnect"},
         Zoom = {kind = "adapted", counterpart = "Zoom"},
@@ -216,6 +220,7 @@ return function(ctx: any): ()
         ["Projectile Calibration"] = {
             kind = "adapted", counterpart = "Trajectories",
         },
+        SpinBot = {kind = "adapted", counterpart = "SpinBot"},
         Disguise = {kind = "roblox-only"},
         ["Animation Changer"] = {kind = "roblox-only"},
         ["Emote Player"] = {kind = "roblox-only"},
@@ -224,7 +229,7 @@ return function(ctx: any): ()
     for _name: string in pairs(matrix) do
         matrixCount += 1
     end
-    check("module matrix is exactly 38", matrixCount == 38, tostring(matrixCount))
+    check("module matrix is exactly 43", matrixCount == 43, tostring(matrixCount))
 
     local framework: any = host.state.framework
     local modulesByFeature: {[any]: any} = {}

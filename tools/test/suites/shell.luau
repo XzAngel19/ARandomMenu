@@ -254,8 +254,8 @@ return function(ctx: any): ()
         type(search) == "table"
             and type(search.Resolve) == "function"
             and type(search.Execute) == "function")
-    check("module search contains exactly the 38-module inventory",
-        search ~= nil and #search.entries == 38,
+    check("module search contains exactly the 43-module inventory",
+        search ~= nil and #search.entries == 43,
         search and tostring(#search.entries) or "missing")
     for _, entry: any in ipairs(search.entries or {}) do
         check("module search keybind metadata: " .. tostring(entry.displayName),

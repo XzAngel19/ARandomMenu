@@ -400,6 +400,9 @@ function Module.init(context: any): RenderLibrary
             local resolved: Highlight = highlight :: Highlight
             resolved.Adornee = adornee
             resolved.Parent = adornee
+            resolved.DepthMode = mode == "Occluded"
+                    and Enum.HighlightDepthMode.Occluded
+                or Enum.HighlightDepthMode.AlwaysOnTop
             resolved.FillColor = colour
             resolved.OutlineColor = colour
             resolved.FillTransparency = mode == "Outline" and 1 or fill

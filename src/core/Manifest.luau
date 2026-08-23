@@ -80,6 +80,21 @@ local Manifest: Manifest = {
             category = "Render",
         },
         {
+            path = "src/modules/Visuals/Chams.luau",
+            name = "Chams",
+            category = "Render",
+        },
+        {
+            path = "src/modules/Visuals/Arrows.luau",
+            name = "Arrows",
+            category = "Render",
+        },
+        {
+            path = "src/modules/Visuals/NPCESP.luau",
+            name = "NPCESP",
+            category = "Render",
+        },
+        {
             path = "src/modules/Combat/KillAura.luau",
             name = "Killaura",
             category = "Combat",
@@ -118,6 +133,11 @@ local Manifest: Manifest = {
         {
             path = "src/modules/Movement/Spider.luau",
             name = "Spider",
+            category = "Movement",
+        },
+        {
+            path = "src/modules/Movement/WallHop.luau",
+            name = "WallHop",
             category = "Movement",
         },
         {
@@ -239,6 +259,11 @@ local Manifest: Manifest = {
             path = "src/modules/Combat/ProjectileCalibration.luau",
             name = "Projectile Calibration",
             category = "Render",
+        },
+        {
+            path = "src/modules/Movement/SpinBot.luau",
+            name = "SpinBot",
+            category = "Fun",
         },
         {
             path = "src/modules/Spoof/Disguise.luau",

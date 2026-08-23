@@ -4,7 +4,7 @@
 --
 -- Full executor, getsynasset-only, no filesystem, no HTTP (assets),
 -- mobile full, mobile limited. Each boot must fall back honestly and
--- never throw. The 38-module inventory still starts.
+-- never throw. The 43-module inventory still starts.
 
 return function(ctx: any): ()
     local Mock: any = ctx.Mock
@@ -165,8 +165,8 @@ return function(ctx: any): ()
                     and boot.state.boot.timing.moduleCount
             ) or 0
             check(
-                label .. " still starts the 38-module inventory",
-                modules == 38,
+                label .. " still starts the 43-module inventory",
+                modules == 43,
                 tostring(modules)
             )
             if type(boot.state.destruct) == "function" then

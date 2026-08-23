@@ -801,6 +801,9 @@ function Mock.install(): MockWorld
             local magnitude: number = delta.Magnitude
             return cframe(from, magnitude > 0 and delta.Unit or vector3(0, 0, -1))
         end,
+        Angles = function(_x: number, _y: number, _z: number): any
+            return cframe(vector3(0, 0, 0))
+        end,
         identity = cframe(vector3(0, 0, 0)),
     }
     function CFrameMeta.PointToObjectSpace(self: any, point: any): any

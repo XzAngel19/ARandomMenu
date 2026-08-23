@@ -546,15 +546,26 @@ function Module.init(context: any): WidgetLibrary
                 UDim2.new(0.55, -CHILD_INSET, 0, 22)
         end
 
-        local step: number? = tonumber(stepValue)
-        if step ~= nil and step <= 0 then
-            step = nil
+        local requestedStep: number? = tonumber(stepValue)
+        if requestedStep ~= nil and requestedStep <= 0 then
+            requestedStep = nil
         end
-        -- The row's numeric contract, readable by anything that walks it:
-        -- the values are metadata whether or not the labels are bitmap.
+        -- Every slider has a finite precision. Integer-shaped ranges snap to
+        -- one; decimal ranges default to hundredths unless the module asks for
+        -- another step. Raw pointer ratios must never leak 1.7339128 into a
+        -- setting, config or status string.
+        local step: number = requestedStep or (integerOnly and 1 or 0.01)
+        local precisionFactor: number = 1
+        for _ = 1, 6 do
+            if math.abs(step * precisionFactor - math.round(step * precisionFactor)) < 1e-7 then
+                break
+            end
+            precisionFactor *= 10
+        end
+        -- The row's numeric contract, readable by anything that walks it.
         option:SetAttribute("Min", minimum)
         option:SetAttribute("Max", maximum)
-        option:SetAttribute("Step", step or (integerOnly and 1 or 0))
+        option:SetAttribute("Step", step)
 
         local slider: TextButton = (create("TextButton", {
             TextTruncate = Enum.TextTruncate.AtEnd,
@@ -687,14 +698,9 @@ function Module.init(context: any): WidgetLibrary
         -- then clamp. NaN and inf never reach here; isFiniteNumber refuses
         -- them at the door.
         local function quantize(raw: number): number
-            local stepped: number = raw
-            if step ~= nil then
-                stepped = minimum
-                    + math.round((stepped - minimum) / (step :: number))
-                        * (step :: number)
-            elseif integerOnly then
-                stepped = math.round(stepped)
-            end
+            local stepped: number = minimum
+                + math.round((raw - minimum) / step) * step
+            stepped = math.round(stepped * precisionFactor) / precisionFactor
             return math.clamp(stepped, minimum, maximum)
         end
         local function setValue(

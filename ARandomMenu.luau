@@ -363,7 +363,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "4532e4410c688dd7"
+local SOURCE_STAMP: string = "e5c95ea7ec65bef5"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -6088,6 +6088,9 @@ local fallbackManifest: any = {
         {path = "src/modules/Utility/FriendList.luau", name = "Friend List", category = "Other"},
         {path = "src/modules/Visuals/ItemRender.luau", name = "ItemESP", category = "Render"},
         {path = "src/modules/Visuals/PlayerESP.luau", name = "PlayerESP", category = "Render"},
+        {path = "src/modules/Visuals/Chams.luau", name = "Chams", category = "Render"},
+        {path = "src/modules/Visuals/Arrows.luau", name = "Arrows", category = "Render"},
+        {path = "src/modules/Visuals/NPCESP.luau", name = "NPCESP", category = "Render"},
         {path = "src/modules/Combat/KillAura.luau", name = "Killaura", category = "Combat"},
         {path = "src/modules/Utility/RemoteLogger.luau", name = "Remote Logger", category = "Other"},
         {path = "src/modules/Movement/ClickTeleport.luau", name = "Click Teleport", category = "Movement"},
@@ -6096,6 +6099,7 @@ local fallbackManifest: any = {
         {path = "src/modules/Visuals/XRay.luau", name = "X-Ray", category = "Render"},
         {path = "src/modules/Movement/HighJump.luau", name = "HighJump", category = "Movement"},
         {path = "src/modules/Movement/Spider.luau", name = "Spider", category = "Movement"},
+        {path = "src/modules/Movement/WallHop.luau", name = "WallHop", category = "Movement"},
         {path = "src/modules/Protection/SafeWalk.luau", name = "SafeWalk", category = "Movement"},
         {path = "src/modules/Utility/RejoinServer.luau", name = "Rejoin Server", category = "Other"},
         {path = "src/modules/Visuals/ZoomUnlocker.luau", name = "Zoom", category = "Render"},
@@ -6120,6 +6124,7 @@ local fallbackManifest: any = {
         {path = "src/modules/Movement/Speed.luau", name = "SpeedHack", category = "Movement"},
         {path = "src/modules/Combat/Hitboxes.luau", name = "Hitboxes", category = "Combat"},
         {path = "src/modules/Combat/ProjectileCalibration.luau", name = "Projectile Calibration", category = "Render"},
+        {path = "src/modules/Movement/SpinBot.luau", name = "SpinBot", category = "Fun"},
         {path = "src/modules/Spoof/Disguise.luau", name = "Disguise", category = "Fun"},
         {path = "src/modules/Spoof/AnimationChanger.luau", name = "Animation Changer", category = "Fun"},
         {path = "src/modules/Spoof/EmotePlayer.luau", name = "Emote Player", category = "Fun"},

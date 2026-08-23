@@ -432,6 +432,9 @@ function Module.init(context: any): any
         end
 
         function window:Destroy(): ()
+            if state.surfaceDragOwner == root then
+                state.surfaceDragOwner = nil
+            end
             local index: number? = table.find(manager.list, window)
             if index then
                 table.remove(manager.list, index)
@@ -467,17 +470,36 @@ function Module.init(context: any): any
             if requiresMenuOpen and not state.visible then
                 return
             end
-            if input.UserInputType == Enum.UserInputType.MouseButton1
-                or input.UserInputType == Enum.UserInputType.Touch then
-                dragging = true
-                dragInput = input
-                dragStart = Vector2.new(input.Position.X, input.Position.Y)
-                startPosition = Vector2.new(
-                    root.Position.X.Offset,
-                    root.Position.Y.Offset
-                )
-                raise(window)
+            if state.surfaceDragOwner ~= nil
+                and state.surfaceDragOwner ~= root then
+                return
             end
+            if input.UserInputType ~= Enum.UserInputType.MouseButton1
+                and input.UserInputType ~= Enum.UserInputType.Touch then
+                return
+            end
+            -- Some executors dispatch InputBegan to overlapping GuiObjects.
+            -- Require the pointer to be inside this exact drag handle instead
+            -- of accepting an event that began on a Custom HackList above it.
+            local absoluteSize: Vector2 = dragHandle.AbsoluteSize
+            if absoluteSize.X > 0 and absoluteSize.Y > 0 then
+                local absolutePosition: Vector2 = dragHandle.AbsolutePosition
+                if input.Position.X < absolutePosition.X
+                    or input.Position.X > absolutePosition.X + absoluteSize.X
+                    or input.Position.Y < absolutePosition.Y
+                    or input.Position.Y > absolutePosition.Y + absoluteSize.Y then
+                    return
+                end
+            end
+            dragging = true
+            dragInput = input
+            state.surfaceDragOwner = root
+            dragStart = Vector2.new(input.Position.X, input.Position.Y)
+            startPosition = Vector2.new(
+                root.Position.X.Offset,
+                root.Position.Y.Offset
+            )
+            raise(window)
         end))
         own(UserInputService.InputChanged:Connect(function(
             input: InputObject
@@ -512,6 +534,9 @@ function Module.init(context: any): any
                     or input.UserInputType == Enum.UserInputType.MouseButton1) then
                 dragging = false
                 dragInput = nil
+                if state.surfaceDragOwner == root then
+                    state.surfaceDragOwner = nil
+                end
                 -- From here on this is the user's position: reflow keeps its
                 -- hands off it, and only the viewport clamp may move it.
                 window.userMoved = true

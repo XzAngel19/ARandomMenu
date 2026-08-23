@@ -124,6 +124,16 @@ return function(ctx: any): ()
     -- Drag. The header is the handle; UserInputService carries the motion.
     local function drag(window: any, fromX: number, fromY: number, toX: number, toY: number): ()
         local handle: any = window.header or window.root
+        -- The real engine maintains these values. The mock needs them updated
+        -- so exact-hit drag ownership can reject overlapping surfaces.
+        handle.AbsolutePosition = vec2(
+            window.root.Position.X.Offset,
+            window.root.Position.Y.Offset
+        )
+        handle.AbsoluteSize = vec2(
+            window.root.Size.X.Offset,
+            window.headerHeight or window.root.Size.Y.Offset
+        )
         handle.InputBegan:Fire({
             UserInputType = mouse,
             Position = vec2(fromX, fromY),
@@ -137,6 +147,17 @@ return function(ctx: any): ()
             Position = vec2(toX, toY),
         })
     end
+
+    local blocker: any = Mock.newInstance("Frame")
+    blocker.Name = "CustomHackListDrag"
+    host.state.surfaceDragOwner = blocker
+    local blockedX: number = visuals.root.Position.X.Offset
+    drag(visuals, blockedX, 120, blockedX - 40, 120)
+    check(
+        "a Custom HackList drag cannot also move an overlapping window",
+        visuals.root.Position.X.Offset == blockedX
+    )
+    host.state.surfaceDragOwner = nil
 
     -- Snap: within eight pixels of another window's edge the drag lands
     -- flush; at nine it does not. Combat is at x=100, width=186, so its

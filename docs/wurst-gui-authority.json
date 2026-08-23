@@ -4,7 +4,7 @@
   "identity": {
     "product": "Wurst",
     "portVersion": "0.1 Beta",
-    "universalModules": 38,
+    "universalModules": 43,
     "wurstRelease": "7.19",
     "tag": "v7.19",
     "commit": "dbc25e930434adf20039de32c30e397c17983928",

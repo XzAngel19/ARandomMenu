@@ -103,6 +103,26 @@ change runtime behavior in this lane.
 Report: commit hash, exact checks added/removed, every permissive branch retired,
 remaining allowlist and analyzer baseline.
 
+## C8 — Module expansion gates
+
+Base on the latest integration tip with the deliberate 43-module inventory.
+Tools/tests/docs only.
+
+1. Add focused behavior tests for Chams, Arrows, NPCESP, WallHop and SpinBot,
+   beyond registration: target filtering, off-screen-only arrows, NPC exclusion
+   of Player characters, wall-normal/cooldown behavior, property restoration and
+   respawn teardown.
+2. Hold slider precision: Framework must forward `Step`; integer sliders stay
+   integral; decimal sliders without an explicit step use hundredths; no config
+   or visible value may retain raw pointer noise.
+3. Hold exclusive surface dragging: a Custom HackList pointer owner prevents an
+   overlapping window from starting a drag, and ownership always clears on
+   release/destruct.
+4. Replace count literals with the inventory snapshot where practical so the
+   next deliberate module addition changes one authority instead of many tests.
+5. Report executor APIs that the mocks still approximate poorly; improve the
+   mock rather than weakening runtime assertions.
+
 ## Rules
 
 Validate ends "All checks passed." with your new checks counted.

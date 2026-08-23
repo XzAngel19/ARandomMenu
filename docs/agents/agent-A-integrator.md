@@ -113,7 +113,7 @@ Done, and load-bearing:
   top-left, every one of the 38 cards reparented into the right one.
 - **The row** — fills with `enabled` when the module is on. 22 px, and nothing
   scales with the viewport any more.
-- **`card:SetStatus(text)`** — on the card, so all 38 modules can publish the
+- **`card:SetStatus(text)`** — on the card, so all 43 modules can publish the
   bracketed status the HUD list will read.
 - **`Module:Render`** — a second scheduler bucket on RenderStepped, because
   Heartbeat runs after the frame and made every overlay trail the camera.

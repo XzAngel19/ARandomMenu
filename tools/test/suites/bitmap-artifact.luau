@@ -42,7 +42,7 @@ return function(ctx: any): ()
             break
         end
     end
-    check("NoFall is one of the 38 modules", noFall ~= nil)
+    check("NoFall is one of the inventory modules", noFall ~= nil)
     if noFall == nil then
         return
     end

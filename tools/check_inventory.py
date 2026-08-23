@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Freeze the universal inventory at 38 modules.
+"""Freeze the deliberate universal inventory snapshot.
 
 A 7.54.1 GUI APPLY is not allowed to grow, shrink or rename
 Manifest.modules. Updating this snapshot is a deliberate inventory
@@ -54,7 +54,7 @@ def main() -> int:
     if got != wanted:
         failures.append(
             "Manifest.modules drifted from tools/inventory_snapshot.json. "
-            "A 7.54.1 GUI change must not edit this list. If the 38 "
+            "A 7.54.1 GUI change must not edit this list. If the inventory "
             "changed on purpose, update the snapshot in its own commit."
         )
         for index, (left, right) in enumerate(zip(wanted, got)):
@@ -92,8 +92,8 @@ def main() -> int:
             failures.append(f"{empty} must stay empty until a current module lands in it")
 
     authority = json.load(open(AUTHORITY, encoding="utf-8"))
-    if authority.get("identity", {}).get("universalModules") != 38:
-        failures.append("wurst-gui-authority.json must keep universalModules = 38")
+    if authority.get("identity", {}).get("universalModules") != snap["count"]:
+        failures.append("wurst-gui-authority.json must keep universalModules must match the snapshot")
     if authority.get("identity", {}).get("portVersion") != "0.1 Beta":
         failures.append("portVersion must stay 0.1 Beta")
     if authority.get("identity", {}).get("wurstRelease") != "7.19":

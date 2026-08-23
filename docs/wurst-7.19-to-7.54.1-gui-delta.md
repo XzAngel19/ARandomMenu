@@ -7,7 +7,7 @@ It compares **global ClickGUI / settings / persistence** only.
 It is **not** a permission to port hacks, modules, categories, or
 options that belong to features added after 7.19.
 
-The universal inventory stays **exactly 38 modules**. Branding stays
+The universal inventory is a deliberate **43-module** snapshot. Branding stays
 `Wurst` / `0.1 Beta`. The visual font baseline stays Minecraft
 **1.18.1** (Wurst 7.19's game). 7.54.1's later Minecraft font stack
 is rejected as a baseline.
@@ -153,12 +153,12 @@ Each is a global window/settings behaviour, not a new hack.
 
 | Topic | Why |
 |---|---|
-| Any hack added after 7.19 | Inventory freeze. 38 modules. |
+| Unreviewed post-7.19 hacks | Inventory changes require an explicit snapshot update and Roblox adaptation review. |
 | New categories | Official eight stay. |
 | BookOffers / PlantType / new-hack TextField widgets as required chrome | Belong to post-7.19 hacks. |
 | RainbowUI driving Accent | A *hack*, not a global ClickGUI setting. Do not invent it. |
 | Rebrand to 7.54.1 / change `0.1 Beta` | Identity. |
-| Replace 38 modules with the 7.54.1 hack list | Explicitly forbidden. |
+| Replace the 43-module snapshot wholesale with 7.54.1 | Explicitly forbidden. |
 | 7.54.1 Minecraft font (`unihex` / Unifont zip) as baseline | Font authority is 1.18.1. |
 | Force-English / Count Users / Spoof Vanilla / Wurst links | Minecraft / telemetry / Alexander's URLs. |
 | Radar as a ClickGUI window | Radar is a Minecraft hack HUD, not one of the 38. |

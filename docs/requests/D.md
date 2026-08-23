@@ -8,7 +8,7 @@ no force-push. Validate must end "All checks passed."
 
 Code face, 16 px type, blur on, RightShift = menu, Navigator only behind
 the dock magnifier, zero console output (print/warn are gated shadows —
-never call the real ones), empty choosers stay blank, 38 modules frozen,
+never call the real ones), empty choosers stay blank, 43 modules frozen,
 identity frozen, Animation Changer ships its own pack catalog (no
 catalog search at boot), Custom ID + Save ID pattern in the Spoof pair.
 
@@ -27,7 +27,7 @@ contract exists only as folklore. Write `docs/architecture/modules.md`:
 - teardown rules: everything a module creates dies in Clean/destroy —
   prove it by pointing at the teardown suite.
 
-Then audit all 38 modules against your own document and fix violators
+Then audit all 43 modules against your own document and fix violators
 in your lane. Every deviation you cannot fix is a line item with a file
 and a reason.
 
@@ -43,7 +43,7 @@ them.
 ## D3 — Anti-slop copy pass, your lane
 
 Every player-visible string in Furniture/SettingsPage/ClickGui/Cards
-and the 38 modules: tooltips read like a person wrote them (short,
+and the 43 modules: tooltips read like a person wrote them (short,
 concrete, no "allows you to", no "simply", no filler adverbs), notifies
 are lowercase-terse the way the Spoof pair now is ("saved 123", "no
 character yet"), no row label ends in a period, no two rows say the
@@ -54,7 +54,7 @@ report.
 
 Base on the current tip of `arena/01a02c8a-arandommenu`; do not re-land D1–D3.
 
-1. Audit every remaining player-visible option across the 38 universal modules.
+1. Audit every remaining player-visible option across the 43 universal modules.
    For each row ask whether it changes behavior, whether a safe default can
    replace it, and whether two rows express one decision. Remove only proven
    redundancy; preserve config keys for shipped behavior.
@@ -115,11 +115,31 @@ Work in this order:
 5. After the surface is smaller, introduce concrete `Runtime`, `ModuleContext`
    and service types for the migrated path. Do not attempt a repository-wide
    `any` purge in the same commit.
-6. Preserve all visible behavior, config keys, the 38-module inventory and
+6. Preserve all visible behavior, config keys, the 43-module inventory and
    teardown semantics.
 
 Report: commit hash, state accesses before/after, local values removed from the
 shell, services introduced, remaining bridges and types added.
+
+## D8 — Module expansion review
+
+Base on the latest integration tip with Chams, Arrows, NPCESP, WallHop and
+SpinBot. Runtime/docs plus focused tests in your lane.
+
+1. Compare each implementation with VapeV4's corresponding behavior and Roblox
+   engine semantics. Keep this project's service/render architecture; do not
+   copy Vape code.
+2. Resolve the intentional overlap between PlayerESP's embedded Chams option and
+   the standalone Chams card. Recommend one clear ownership and migrate without
+   silently changing existing configs.
+3. Audit target policy: friends, teammates, NPC classification, alive checks,
+   max distance, respawn and streamed descendants.
+4. Audit teardown/property restoration under disable, destruct, death and
+   character replacement. No Highlight, render set, angular velocity or jump
+   callback may survive.
+5. Keep options lean. Every setting must change behavior; remove speculative
+   modes instead of padding the module.
+6. Report field-test debt separately for physics-sensitive WallHop and SpinBot.
 
 ## Rules
 

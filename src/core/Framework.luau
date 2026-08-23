@@ -612,7 +612,8 @@ function Module.init(context: any): Framework
                 definition2.Min or 0,
                 definition2.Max or 100,
                 valueCallback(option, definition2),
-                definition2.Tooltip
+                definition2.Tooltip,
+                definition2.Step
             )
             return register(option, definition2)
         end

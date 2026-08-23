@@ -347,7 +347,7 @@ return function(ctx: any): ()
 
         -- Live NoFall title: one holder, clipped, no chrome invasion.
         local noFall: any = Inspect.featureNamed(env, "NoFall")
-        check("C2: NoFall is one of the 38 modules", noFall ~= nil)
+        check("C2: NoFall is one of the inventory modules", noFall ~= nil)
         if noFall ~= nil and type(windows.OpenFeatureSettings) == "function" then
             local window: any = windows.OpenFeatureSettings(noFall)
             check("C2: NoFall Settings opens", window ~= nil)
@@ -673,8 +673,8 @@ return function(ctx: any): ()
         -- Manifest still ships 38. Rejoin Server is a Wurst Options action
         -- when that API exists, so the card list can be 37.
         check(
-            "C9: universal inventory is still 38",
-            booted == 38 and counted >= 37 and counted <= 38,
+            "C9: universal inventory is 43",
+            booted == 43 and counted >= 42 and counted <= 43,
             "cards=" .. tostring(counted) .. " booted=" .. tostring(booted)
         )
         check(

@@ -237,14 +237,14 @@ return function(ctx: any): ()
         lastQuery
     )
     check(
-        "sensitive actions stay out of the 38-module registry",
+        "sensitive actions stay out of the 43-module registry",
         type(searchApi) ~= "table"
             or (
                 searchApi.Resolve("Destruct").status == "not_found"
                 and searchApi.Resolve("Rejoin Server").status == "not_found"
             )
     )
-    check("the 38-module inventory is still the search set", #listed >= 0)
+    check("the 43-module inventory is still the search set", #listed >= 0)
 
     if type(state.destruct) == "function" then
         state.destruct()

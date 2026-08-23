@@ -128,6 +128,50 @@ return function(ctx: any): ()
         end
     end
 
+    local decimalValue: number = 0
+    local decimalPanel: any = newPanel("Slider.Decimal")
+    widgets.addNumberOption(
+        decimalPanel,
+        "Opacity",
+        0.5,
+        0,
+        2,
+        function(value: number): () decimalValue = value end
+    )
+    local decimalRow: any = decimalPanel.optionRows[1]
+    local decimalSlider: any = decimalRow and decimalRow:FindFirstChild("Slider")
+    local decimalBox: any = decimalSlider and decimalSlider:FindFirstChild("NumericValue")
+    if decimalBox then
+        decimalBox.Text = "1.7339128"
+        decimalBox.FocusLost:Fire()
+    end
+    check(
+        "decimal sliders default to hundredths instead of raw pointer noise",
+        decimalValue == 1.73,
+        tostring(decimalValue)
+    )
+
+    local steppedValue: number = 0
+    local steppedPanel: any = newPanel("Slider.Stepped")
+    widgets.addNumberOption(
+        steppedPanel,
+        "Scale",
+        1,
+        0,
+        2,
+        function(value: number): () steppedValue = value end,
+        nil,
+        0.05
+    )
+    local steppedRow: any = steppedPanel.optionRows[1]
+    local steppedSlider: any = steppedRow and steppedRow:FindFirstChild("Slider")
+    local steppedBox: any = steppedSlider and steppedSlider:FindFirstChild("NumericValue")
+    if steppedBox then
+        steppedBox.Text = "1.7339128"
+        steppedBox.FocusLost:Fire()
+    end
+    check("explicit slider steps are respected", steppedValue == 1.75, tostring(steppedValue))
+
     -- Range: low / high stay ordered.
     local lows: {number} = {}
     local highs: {number} = {}
