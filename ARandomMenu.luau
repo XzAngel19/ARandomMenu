@@ -363,7 +363,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "04ded0229fd6e1fa"
+local SOURCE_STAMP: string = "220f763bee54898d"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -1005,6 +1005,13 @@ ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 ScreenGui:SetAttribute("BuildId", "0001-S17")
 
 local function parentScreenGui()
+    -- Hardened before it is parented: on executors that offer it,
+    -- protect_gui shields the instance from scripts walking the tree.
+    -- pcall'd like everything executor-shaped — absence is normal.
+    local protector: any = (getfenv() :: any).syn
+    if type(protector) == "table" and type(protector.protect_gui) == "function" then
+        pcall(protector.protect_gui, ScreenGui)
+    end
     if type(gethui) == "function" then
         local hiddenGuiOk, hiddenGui = pcall(gethui)
         if hiddenGuiOk and hiddenGui then
@@ -6469,12 +6476,29 @@ state.destruct = function(): ()
             ScreenGui:Destroy()
         end
     end)
-    -- Belt and braces: anything the runtime parented straight into PlayerGui
-    -- under the shared name (an older injection, a re-parented shell) goes too.
+    -- Belt and braces: anything the runtime parented straight into any of
+    -- the containers the shell can live in — gethui's hidden root, CoreGui
+    -- or PlayerGui — goes too. The old sweep only looked in PlayerGui,
+    -- which stopped matching reality the day the shell learned gethui.
     cleanupStep("leftovers", function(): ()
-        for _, child: Instance in ipairs(PlayerGui:GetChildren()) do
-            if child.Name == GUI_NAME then
-                child:Destroy()
+        local containers: {Instance} = {PlayerGui}
+        if type(gethui) == "function" then
+            local hiddenOk: boolean, hidden: any = pcall(gethui)
+            if hiddenOk and typeof(hidden) == "Instance" then
+                table.insert(containers, hidden)
+            end
+        end
+        local coreOk: boolean, coreGui: any = pcall(function(): Instance
+            return game:GetService("CoreGui")
+        end)
+        if coreOk and coreGui then
+            table.insert(containers, coreGui)
+        end
+        for _, container: Instance in ipairs(containers) do
+            for _, child: Instance in ipairs(container:GetChildren()) do
+                if child.Name == GUI_NAME then
+                    child:Destroy()
+                end
             end
         end
         local lighting: Instance? = Lighting:FindFirstChild(BLUR_NAME)

@@ -470,26 +470,31 @@ function Module.init(context: any): any
     -- the moment it resolves and fall back to Monocraft text until then.
     local hudRainbowClock: number = 0
     local function hudEntryColor(order: number?): Color3
-        if not hudRainbow then
-            return hudColor
+        -- Two different livings, the way the user drew the line:
+        --   Rainbow     the whole hue wheel, each row a step behind — a real
+        --               rainbow rolling down the list.
+        --   Animations  the list's own colour breathing: hue stays put
+        --               (your cyan stays cyan), brightness rides a sine
+        --               per row. Grey has no hue, so it borrows cyan.
+        if hudRainbow then
+            local hue: number = (hudRainbowClock * 0.35 + (order or 0) * 0.05) % 1
+            return Color3.fromHSV(hue, 0.85, 1)
         end
-        -- Not the whole hue wheel: variants of the list's own colour, the
-        -- way Vape's wave runs every shade of one cyan. The hue comes from
-        -- the Color row; brightness rides a sine and each row sits a step
-        -- behind the one above it. A grey or white base has no hue to
-        -- vary, so it borrows cyan — the classic.
-        local hue: number, saturation: number = 0.5, 0.85
-        pcall(function(): ()
-            local h: number, sat: number, _v: number = hudColor:ToHSV()
-            if sat > 0.05 then
-                hue = h
-                saturation = math.clamp(sat, 0.5, 1)
-            end
-        end)
-        local wave: number = 0.5 + 0.5 * math.sin(
-            hudRainbowClock * 2.4 - (order or 0) * 0.65
-        )
-        return Color3.fromHSV(hue, saturation, 0.45 + 0.55 * wave)
+        if animationsOn() then
+            local hue: number, saturation: number = 0.5, 0.85
+            pcall(function(): ()
+                local h: number, sat: number, _v: number = hudColor:ToHSV()
+                if sat > 0.05 then
+                    hue = h
+                    saturation = math.clamp(sat, 0.5, 1)
+                end
+            end)
+            local wave: number = 0.5 + 0.5 * math.sin(
+                hudRainbowClock * 2.4 - (order or 0) * 0.65
+            )
+            return Color3.fromHSV(hue, saturation, 0.45 + 0.55 * wave)
+        end
+        return hudColor
     end
     local function drawHudEntry(row: any, name: string, status: string?): ()
         row.name = name
@@ -689,7 +694,7 @@ function Module.init(context: any): any
         -- The rainbow rides every frame the list is visible, throttled to
         -- ~30 repaints a second; the pooled draw makes each one a recolour
         -- of a handful of rows, not a rebuild.
-        if hudRainbow and hudVisible then
+        if hudVisible and (hudRainbow or animationsOn()) then
             hudRainbowClock += deltaTime
             hudRainbowSince += deltaTime
             if hudRainbowSince >= 0.033 then
@@ -769,6 +774,7 @@ function Module.init(context: any): any
         end,
         SetAnimations = function(value: boolean): ()
             hudAnimations = value
+            forceHudRefresh()
         end,
         SetSize = function(value: string): ()
             hudSize = value
@@ -1046,7 +1052,18 @@ function Module.init(context: any): any
         paintNavSelection()
     end
 
+    -- Whether the ClickGUI was up when the Navigator took the screen, so
+    -- closing it can put things back the way they were. One surface at a
+    -- time: the user's order, and also just how a full-screen overlay
+    -- should behave.
+    local navigatorHidMenu: boolean = false
     local function openNavigator(): ()
+        if state.visible == true and type(state.setMenuVisible) == "function" then
+            navigatorHidMenu = true
+            state.setMenuVisible(false)
+        else
+            navigatorHidMenu = false
+        end
         navScreen.Visible = true
         navSelected = 1
         rebuildNavigator()
@@ -1060,6 +1077,12 @@ function Module.init(context: any): any
         navScreen.Visible = false
         navSearch:ReleaseFocus()
         navSearch.Text = ""
+        if navigatorHidMenu then
+            navigatorHidMenu = false
+            if type(state.setMenuVisible) == "function" then
+                state.setMenuVisible(true)
+            end
+        end
     end
 
     table.insert(

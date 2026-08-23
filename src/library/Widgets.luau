@@ -1339,18 +1339,30 @@ function Module.init(context: any): WidgetLibrary
                     ZIndex = 403,
                 })
             end
+            -- Every entry wears its own outline — the last thing the list
+            -- was missing. Quiet at rest, firm under the pointer, and the
+            -- picked row's is always on.
+            local itemStroke: UIStroke = (create("UIStroke", {
+                Parent = item,
+                Name = "EntryStroke",
+                Color = Theme.outline,
+                Thickness = 1,
+                Transparency = itemIndex == currentIndex and 0.35 or 0.82,
+            }) :: any) :: UIStroke
             item.TextXAlignment = Enum.TextXAlignment.Left
             item.MouseEnter:Connect(function(): ()
                 if itemIndex ~= currentIndex then
                     item.BackgroundTransparency = 0.6
                     item.TextColor3 = Theme.text
                 end
+                itemStroke.Transparency = 0.35
             end)
             item.MouseLeave:Connect(function(): ()
                 item.BackgroundTransparency = itemIndex == currentIndex and 0.25 or 1
                 item.TextColor3 = itemIndex == currentIndex
                     and Theme.text
                     or Theme.textMuted
+                itemStroke.Transparency = itemIndex == currentIndex and 0.35 or 0.82
             end)
             item.MouseButton1Click:Connect(function(): ()
                 close()

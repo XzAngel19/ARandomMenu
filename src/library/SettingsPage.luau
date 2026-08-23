@@ -1514,9 +1514,7 @@ function Module.init(context: any): any
             {"Accent", "#101010"},
             {"Text", "#F0F0F0"},
             {"Opacity", "0.85"},
-            {"Tooltip opacity", "0.75"},
             {"Max height", "1000"},
-            {"Max settings height", "1000"},
         },
     })
     uiRecord.open = true
@@ -1604,12 +1602,13 @@ function Module.init(context: any): any
         uiSettingsValues["Opacity"] = value
         windows.SetOpacity(value)
     end)
-    addNumberOption(uiPanel, "Tooltip opacity", TOOLTIP_OPACITY, 0.15, 1, function(value: number): ()
-        uiSettingsValues["Tooltip opacity"] = value
-        if state.featureTooltip then
-            state.featureTooltip.BackgroundTransparency = 1 - value
-        end
-    end)
+    -- No Tooltip opacity row: nobody tunes the transparency of a tooltip,
+    -- and the user called it out by name. It rides the default; the
+    -- published value stays for anything that reads it.
+    uiSettingsValues["Tooltip opacity"] = TOOLTIP_OPACITY
+    if state.featureTooltip then
+        state.featureTooltip.BackgroundTransparency = 1 - TOOLTIP_OPACITY
+    end
     addNumberOption(uiPanel, "Max height", MAX_HEIGHT, 0, 1000, function(value: number): ()
         uiSettingsValues["Max height"] = value
         state.uiMaxHeight = value
@@ -1618,21 +1617,12 @@ function Module.init(context: any): any
         end
         uiRecord.resize()
     end)
-    addNumberOption(uiPanel, "Max settings height", MAX_SETTINGS_HEIGHT, 0, 1000, function(value: number): ()
-        uiSettingsValues["Max settings height"] = value
-        maxSettingsHeight = value
-        -- Published: the window manager caps every popped-out feature
-        -- settings window with the same slider.
-        state.uiMaxSettingsHeight = value
-        for _, window: any in ipairs((state.windows and state.windows.list) or {}) do
-            if window.featureSettings and window.resizeToOptions then
-                window.resizeToOptions()
-            end
-        end
-        for _, record: any in ipairs(Settings.records) do
-            record.resize()
-        end
-    end)
+    -- No Max settings height row either: two height sliders for two
+    -- window kinds is menu-about-the-menu. Settings windows follow the
+    -- same Wurst 200 cap; the value stays published for the manager.
+    uiSettingsValues["Max settings height"] = MAX_SETTINGS_HEIGHT
+    maxSettingsHeight = MAX_SETTINGS_HEIGHT
+    state.uiMaxSettingsHeight = MAX_SETTINGS_HEIGHT
 
     -- No Menu style row: the Navigator is not a main surface any more.
     -- It opens from the dock's magnifier only; the open gesture always

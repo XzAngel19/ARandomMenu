@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "04ded0229fd6e1fa",
+    stamp = "220f763bee54898d",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -1608,18 +1608,30 @@ function Module.init(context: any): WidgetLibrary
                     ZIndex = 403,
                 })
             end
+            -- Every entry wears its own outline — the last thing the list
+            -- was missing. Quiet at rest, firm under the pointer, and the
+            -- picked row's is always on.
+            local itemStroke: UIStroke = (create("UIStroke", {
+                Parent = item,
+                Name = "EntryStroke",
+                Color = Theme.outline,
+                Thickness = 1,
+                Transparency = itemIndex == currentIndex and 0.35 or 0.82,
+            }) :: any) :: UIStroke
             item.TextXAlignment = Enum.TextXAlignment.Left
             item.MouseEnter:Connect(function(): ()
                 if itemIndex ~= currentIndex then
                     item.BackgroundTransparency = 0.6
                     item.TextColor3 = Theme.text
                 end
+                itemStroke.Transparency = 0.35
             end)
             item.MouseLeave:Connect(function(): ()
                 item.BackgroundTransparency = itemIndex == currentIndex and 0.25 or 1
                 item.TextColor3 = itemIndex == currentIndex
                     and Theme.text
                     or Theme.textMuted
+                itemStroke.Transparency = itemIndex == currentIndex and 0.35 or 0.82
             end)
             item.MouseButton1Click:Connect(function(): ()
                 close()
@@ -11183,9 +11195,7 @@ function Module.init(context: any): any
             {"Accent", "#101010"},
             {"Text", "#F0F0F0"},
             {"Opacity", "0.85"},
-            {"Tooltip opacity", "0.75"},
             {"Max height", "1000"},
-            {"Max settings height", "1000"},
         },
     })
     uiRecord.open = true
@@ -11273,12 +11283,13 @@ function Module.init(context: any): any
         uiSettingsValues["Opacity"] = value
         windows.SetOpacity(value)
     end)
-    addNumberOption(uiPanel, "Tooltip opacity", TOOLTIP_OPACITY, 0.15, 1, function(value: number): ()
-        uiSettingsValues["Tooltip opacity"] = value
-        if state.featureTooltip then
-            state.featureTooltip.BackgroundTransparency = 1 - value
-        end
-    end)
+    -- No Tooltip opacity row: nobody tunes the transparency of a tooltip,
+    -- and the user called it out by name. It rides the default; the
+    -- published value stays for anything that reads it.
+    uiSettingsValues["Tooltip opacity"] = TOOLTIP_OPACITY
+    if state.featureTooltip then
+        state.featureTooltip.BackgroundTransparency = 1 - TOOLTIP_OPACITY
+    end
     addNumberOption(uiPanel, "Max height", MAX_HEIGHT, 0, 1000, function(value: number): ()
         uiSettingsValues["Max height"] = value
         state.uiMaxHeight = value
@@ -11287,21 +11298,12 @@ function Module.init(context: any): any
         end
         uiRecord.resize()
     end)
-    addNumberOption(uiPanel, "Max settings height", MAX_SETTINGS_HEIGHT, 0, 1000, function(value: number): ()
-        uiSettingsValues["Max settings height"] = value
-        maxSettingsHeight = value
-        -- Published: the window manager caps every popped-out feature
-        -- settings window with the same slider.
-        state.uiMaxSettingsHeight = value
-        for _, window: any in ipairs((state.windows and state.windows.list) or {}) do
-            if window.featureSettings and window.resizeToOptions then
-                window.resizeToOptions()
-            end
-        end
-        for _, record: any in ipairs(Settings.records) do
-            record.resize()
-        end
-    end)
+    -- No Max settings height row either: two height sliders for two
+    -- window kinds is menu-about-the-menu. Settings windows follow the
+    -- same Wurst 200 cap; the value stays published for the manager.
+    uiSettingsValues["Max settings height"] = MAX_SETTINGS_HEIGHT
+    maxSettingsHeight = MAX_SETTINGS_HEIGHT
+    state.uiMaxSettingsHeight = MAX_SETTINGS_HEIGHT
 
     -- No Menu style row: the Navigator is not a main surface any more.
     -- It opens from the dock's magnifier only; the open gesture always
@@ -12441,26 +12443,31 @@ function Module.init(context: any): any
     -- the moment it resolves and fall back to Monocraft text until then.
     local hudRainbowClock: number = 0
     local function hudEntryColor(order: number?): Color3
-        if not hudRainbow then
-            return hudColor
+        -- Two different livings, the way the user drew the line:
+        --   Rainbow     the whole hue wheel, each row a step behind — a real
+        --               rainbow rolling down the list.
+        --   Animations  the list's own colour breathing: hue stays put
+        --               (your cyan stays cyan), brightness rides a sine
+        --               per row. Grey has no hue, so it borrows cyan.
+        if hudRainbow then
+            local hue: number = (hudRainbowClock * 0.35 + (order or 0) * 0.05) % 1
+            return Color3.fromHSV(hue, 0.85, 1)
         end
-        -- Not the whole hue wheel: variants of the list's own colour, the
-        -- way Vape's wave runs every shade of one cyan. The hue comes from
-        -- the Color row; brightness rides a sine and each row sits a step
-        -- behind the one above it. A grey or white base has no hue to
-        -- vary, so it borrows cyan — the classic.
-        local hue: number, saturation: number = 0.5, 0.85
-        pcall(function(): ()
-            local h: number, sat: number, _v: number = hudColor:ToHSV()
-            if sat > 0.05 then
-                hue = h
-                saturation = math.clamp(sat, 0.5, 1)
-            end
-        end)
-        local wave: number = 0.5 + 0.5 * math.sin(
-            hudRainbowClock * 2.4 - (order or 0) * 0.65
-        )
-        return Color3.fromHSV(hue, saturation, 0.45 + 0.55 * wave)
+        if animationsOn() then
+            local hue: number, saturation: number = 0.5, 0.85
+            pcall(function(): ()
+                local h: number, sat: number, _v: number = hudColor:ToHSV()
+                if sat > 0.05 then
+                    hue = h
+                    saturation = math.clamp(sat, 0.5, 1)
+                end
+            end)
+            local wave: number = 0.5 + 0.5 * math.sin(
+                hudRainbowClock * 2.4 - (order or 0) * 0.65
+            )
+            return Color3.fromHSV(hue, saturation, 0.45 + 0.55 * wave)
+        end
+        return hudColor
     end
     local function drawHudEntry(row: any, name: string, status: string?): ()
         row.name = name
@@ -12660,7 +12667,7 @@ function Module.init(context: any): any
         -- The rainbow rides every frame the list is visible, throttled to
         -- ~30 repaints a second; the pooled draw makes each one a recolour
         -- of a handful of rows, not a rebuild.
-        if hudRainbow and hudVisible then
+        if hudVisible and (hudRainbow or animationsOn()) then
             hudRainbowClock += deltaTime
             hudRainbowSince += deltaTime
             if hudRainbowSince >= 0.033 then
@@ -12740,6 +12747,7 @@ function Module.init(context: any): any
         end,
         SetAnimations = function(value: boolean): ()
             hudAnimations = value
+            forceHudRefresh()
         end,
         SetSize = function(value: string): ()
             hudSize = value
@@ -13017,7 +13025,18 @@ function Module.init(context: any): any
         paintNavSelection()
     end
 
+    -- Whether the ClickGUI was up when the Navigator took the screen, so
+    -- closing it can put things back the way they were. One surface at a
+    -- time: the user's order, and also just how a full-screen overlay
+    -- should behave.
+    local navigatorHidMenu: boolean = false
     local function openNavigator(): ()
+        if state.visible == true and type(state.setMenuVisible) == "function" then
+            navigatorHidMenu = true
+            state.setMenuVisible(false)
+        else
+            navigatorHidMenu = false
+        end
         navScreen.Visible = true
         navSelected = 1
         rebuildNavigator()
@@ -13031,6 +13050,12 @@ function Module.init(context: any): any
         navScreen.Visible = false
         navSearch:ReleaseFocus()
         navSearch.Text = ""
+        if navigatorHidMenu then
+            navigatorHidMenu = false
+            if type(state.setMenuVisible) == "function" then
+                state.setMenuVisible(true)
+            end
+        end
     end
 
     table.insert(
