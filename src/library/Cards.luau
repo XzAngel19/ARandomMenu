@@ -549,12 +549,12 @@ function Module.init(context: any): any
             local slot: TextButton =
                 (makeButton(row, "KEY", 9) :: any) :: TextButton
             slot.Name = "Shortcut"
-            slot.AnchorPoint = Vector2.new(1, 0.5)
-            slot.Position = UDim2.new(1, -30, 0, feature.collapsedHeight / 2)
-            slot.Size = UDim2.fromOffset(
-                state.layout.keySlotWidth,
-                state.layout.iconButton
-            )
+            -- Keep the touch shortcut in the same left-hand lane as the
+            -- desktop bind square. The old wide slot sat under centred module
+            -- names on narrow phone windows.
+            slot.AnchorPoint = Vector2.new(0, 0.5)
+            slot.Position = UDim2.new(0, 4, 0, feature.collapsedHeight / 2)
+            slot.Size = UDim2.fromOffset(22, 22)
             slot.ZIndex = 9
             applyKeySlotStyle(slot)
             slot.TextScaled = true
@@ -607,7 +607,7 @@ function Module.init(context: any): any
         -- feature without a registered binding. Rejoin is not a card anymore,
         -- so management actions remain outside this surface. A user-approved addition
         -- drawn in Wurst's grammar: flat rectangle, thin stroke, no
-        -- corner, no glyph, no "Press a key" — the capturing tint is the
+        -- corner and only the compact assigned key. The capturing tint is the
         -- canonical setKeySlotCapture recolour, which finds the stroke by
         -- its StyleStroke name. Capture and assignment go through the one
         -- keybind machine (beginKeyCapture + binding.assign): Escape
@@ -640,12 +640,10 @@ function Module.init(context: any): any
                 BorderSizePixel = 0,
                 FontFace = CONTROL_FONT,
                 Position = UDim2.new(0, 4, 0.5, 0),
-                Size = UDim2.fromOffset(12, 12),
+                Size = UDim2.fromOffset(18, 18),
                 Text = "",
-                -- The canonical capturer writes "..." into its button; the
-                -- square never shows text, so its ink stays invisible and
-                -- the state reads from colour alone.
-                TextTransparency = 1,
+                TextColor3 = Theme.text,
+                TextTransparency = 0,
                 TextSize = 8,
                 ZIndex = 8,
             }) :: any) :: TextButton
@@ -657,6 +655,40 @@ function Module.init(context: any): any
                 Thickness = 1,
                 Transparency = 0.6,
             }) :: any) :: UIStroke
+
+            local COMPACT_KEY_NAMES: {[string]: string} = {
+                LeftShift = "LS",
+                RightShift = "RS",
+                LeftControl = "LC",
+                RightControl = "RC",
+                LeftAlt = "LA",
+                RightAlt = "RA",
+                CapsLock = "CL",
+                Backspace = "Bk",
+                Return = "En",
+                Escape = "Es",
+                Space = "Sp",
+                PageUp = "PU",
+                PageDown = "PD",
+                Insert = "Ins",
+                Delete = "Del",
+                Home = "Hm",
+                End = "End",
+            }
+            local function keyCaption(): string
+                if binding.key == nil or binding.key == Enum.KeyCode.Unknown then
+                    return ""
+                end
+                local name: string = tostring(binding.key.Name or "")
+                local compact: string? = COMPACT_KEY_NAMES[name]
+                if compact then
+                    return compact
+                end
+                local display: string = state.keyDisplayName
+                        and tostring(state.keyDisplayName(name))
+                    or name
+                return string.sub(display, 1, 3)
+            end
 
             local capturing: boolean = false
             local function conflictWith(): any
@@ -674,6 +706,9 @@ function Module.init(context: any): any
                 if capturing then
                     return
                 end
+                local caption: string = keyCaption()
+                square.Text = caption
+                square:SetAttribute("CaptureIdleText", caption)
                 local bound: boolean = binding.key ~= nil
                     and binding.key ~= Enum.KeyCode.Unknown
                 local conflict: any = bound and conflictWith() or nil
@@ -696,6 +731,13 @@ function Module.init(context: any): any
             end
             feature.bindSquare = square
             feature.syncBindSquare = syncSquare
+            local refreshBinding: any = binding.refresh
+            binding.refresh = function(): ()
+                if refreshBinding then
+                    refreshBinding()
+                end
+                syncSquare()
+            end
             syncSquare()
 
             -- No physical keyboard, no square; one arriving shows it.
@@ -878,10 +920,9 @@ function Module.init(context: any): any
                     UDim2.fromOffset(22, metrics.cardHeight)
             end
             if shortcutButton then
-                (shortcutButton :: TextButton).Size =
-                    UDim2.fromOffset(metrics.keySlotWidth, metrics.iconButton);
+                (shortcutButton :: TextButton).Size = UDim2.fromOffset(22, 22);
                 (shortcutButton :: TextButton).Position =
-                    UDim2.new(1, -30, 0, metrics.cardHeight / 2)
+                    UDim2.new(0, 4, 0, metrics.cardHeight / 2)
             end
             activationTarget.Size = UDim2.new(1, 0, 0, metrics.cardHeight)
             options.Position = UDim2.fromOffset(4, metrics.cardHeight)

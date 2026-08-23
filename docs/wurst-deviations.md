@@ -18,21 +18,21 @@ GUI-scale-1. Prototype `titleHeight` 26 is 13 × 2, not a 1080p invention.
 | Occupied windows only (empty Blocks/Chat/Items hidden) | exact | Empty official categories stay in the contract and draw no window. |
 | Independent `<Feature> Settings` window | exact | `OpenFeatureSettings`; options reparent; row height unchanged. |
 | Settings cascade step 28×30 | exact (replaced) | `FindFreeRect` + `ReflowWindow`; AABB after the second pass is empty. |
-| Window width 200 / packed settings | adaptación Roblox aprobable | Category 200; settings pack via `packedWidth`. |
+| Window width 200 / packed settings | Roblox adaptation | Category 200; settings pack via `packedWidth`. |
 | WurstLogo stripe y=12..34, alpha 0.5 | exact | Java fill y=6..17. |
 | WurstLogo band packed to version | exact | `LOGO_WIDTH + 10 + (8 + #version × 12) + 4`. `+ 130` is gone. |
 | WurstLogo.Background seeded `#FFFFFF` | exact | Java default, half-alpha stripe y=6..17. |
 | AutoLocalize = false on helpers and roots | exact | Capture no longer translates Other/Text/Disabled/Zoom. |
 | Titles centred on the full row | exact | Arrow does not move the centre. |
-| RUN / KEY via `makeButton` (rounded in the shell) | **incorrecta** | Official action/combo/textbox are rectangles. |
-| addSectionOption uppercase headings | **incorrecta** if DISPLAY/FILTERS/STYLE/FLIGHT | Official has no decorative chips. |
+| RUN / KEY via `makeButton` (rounded in the shell) | **incorrect** | Official action/combo/textbox controls are rectangles. |
+| addSectionOption uppercase headings | **incorrect** for DISPLAY/FILTERS/STYLE/FLIGHT | Official Wurst has no decorative section chips. |
 | Keybinds lists unbound modules | exact (replaced) | Manager lists bound keys + menu key. Add dialog (`KeybindAdd`) is the desktop path to a NEW bind. |
-| Max height default 200 | exact | Stored 1000 from the old default must migrate. |
-| Navigator as its own screen + keys | exact | RightCtrl = ClickGUI, RightShift = Navigator. |
+| Internal height cap 200 | intentional adaptation | The impossible 0–1000 user slider is gone; viewport-aware layout owns the cap. |
+| Navigator as its own screen | exact shape, adapted entry | It opens only from the dock magnifier and owns its search. |
 | No TabGUI (default Disabled) | exact | Shipping none matches Disabled. |
-| Keybind square on bindable rows | adaptación Roblox pedida | User-requested. Official Wurst binds only in the Keybind Manager. The 22 px square is the capture target on toggle / action / hold rows; group cards have none. It replaces the old gate that banned desktop key slots. Not a KEY pill. |
-| Pill as one-button Roblox launcher | adaptación Roblox aprobable | The 5% Roblox. |
-| Monocraft atlas (`monocraft-16.png`) | adaptación Roblox aprobable | OFL fallback. 7.54.1 does not change the 1.18.1 font baseline. |
+| Keybind square on bindable rows | requested Roblox adaptation | Official Wurst binds only in Keybind Manager. The 18 px square shows the compact assigned key; group cards have none. It is not a KEY pill. |
+| Compact touch launcher | Roblox adaptation | Mobile keeps only Menu and Navigator; Navigator replaces the redundant dock search field. |
+| Monocraft atlas (`monocraft-16.png`) | Roblox adaptation | OFL fallback. 7.54.1 does not change the 1.18.1 font baseline. |
 | One ClickGui UIScale, user Scale 0.7–1.6 | exact | No 1080 / 1.35 formula. |
 - **Menu blur (user mandate, capture review 2026-08-22):** Wurst draws
   nothing between the player and the game; this port now does — one

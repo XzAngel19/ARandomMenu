@@ -20,7 +20,7 @@ local REQUIRED_RUNTIME_MARKER: string =
 -- downloads reads the same global to fetch its game modules from there too —
 -- so a branch can be tested end to end without merging it first:
 --
---   getgenv().ARANDOMMENU_BRANCH = "arena/01a01c6e-arandommenu"
+--   getgenv().ARANDOMMENU_BRANCH = "arena/01a02c8a-arandommenu"
 local REQUESTED_BRANCH: string = "main"
 do
     local override: any = executorEnvironment.ARANDOMMENU_BRANCH
@@ -58,12 +58,12 @@ table.insert(SOURCE_CANDIDATES, {
 
 local function validateSource(candidate: any): (boolean, string?)
     if type(candidate) ~= "string" then
-        return false, "la respuesta no es una cadena (tipo: "
+        return false, "response is not a string (type: "
             .. type(candidate) .. ")"
     end
     local source: string = candidate
     if #source < 1024 then
-        return false, "la respuesta es demasiado corta ("
+        return false, "response is too short ("
             .. tostring(#source) .. " bytes)"
     end
 
@@ -71,17 +71,17 @@ local function validateSource(candidate: any): (boolean, string?)
     prefix = string.gsub(prefix, "^\239\187\191", "")
     prefix = string.gsub(prefix, "^%s+", "")
     if string.find(prefix, "404: not found", 1, true) == 1 then
-        return false, "GitHub devolvió 404: Not Found"
+        return false, "GitHub returned 404: Not Found"
     end
     if string.find(prefix, "<!doctype html", 1, true) == 1
         or string.find(prefix, "<html", 1, true) == 1 then
-        return false, "el servidor devolvió HTML en lugar de Lua"
+        return false, "the server returned HTML instead of Lua"
     end
     if string.match(prefix, '^%{%s*"message"%s*:') then
-        return false, "el servidor devolvió un error JSON"
+        return false, "the server returned a JSON error"
     end
     if string.find(source, REQUIRED_RUNTIME_MARKER, 1, true) == nil then
-        return false, "runtime obsoleto: falta el marcador del hotfix 0/0"
+        return false, "outdated runtime: missing the 0/0 hotfix marker"
     end
     return true, nil
 end
@@ -92,7 +92,7 @@ local function downloadCurrentSource(): (string?, string?)
         local requestUrl: string = candidate.url
             .. "?loader=v3&nocache="
             .. HttpService:GenerateGUID(false)
-        print("[RTM:Loader] Descargando " .. candidate.label)
+        print("[RTM:Loader] Downloading " .. candidate.label)
         local downloaded: boolean, bodyOrError: any = pcall(function(): string
             return (game :: any):HttpGet(requestUrl, true)
         end)
@@ -100,7 +100,7 @@ local function downloadCurrentSource(): (string?, string?)
             local valid: boolean, validationError: string? =
                 validateSource(bodyOrError)
             if valid then
-                print("[RTM:Loader] Runtime válido: "
+                print("[RTM:Loader] Valid runtime: "
                     .. candidate.label .. " · " .. tostring(#bodyOrError) .. " bytes")
                 return bodyOrError :: string, nil
             end
@@ -119,18 +119,18 @@ local function readLocalFallback(): (string?, string?)
     local isFile: any = executorEnvironment.isfile
     local path: string = "ARandomMenu.luau"
     if type(readFile) ~= "function" then
-        return nil, "readfile no está disponible"
+        return nil, "readfile is unavailable"
     end
     if type(isFile) == "function" and not isFile(path) then
-        return nil, "no existe " .. path
+        return nil, "missing " .. path
     end
     local readOk: boolean, localSource: any = pcall(readFile, path)
     if not readOk then
-        return nil, "readfile falló: " .. tostring(localSource)
+        return nil, "readfile failed: " .. tostring(localSource)
     end
     local valid: boolean, validationError: string? = validateSource(localSource)
     if not valid then
-        return nil, "fallback local rechazado: " .. tostring(validationError)
+        return nil, "local fallback rejected: " .. tostring(validationError)
     end
     return localSource :: string, nil
 end
@@ -139,19 +139,19 @@ local source: string? = nil
 local remoteError: string? = nil
 source, remoteError = downloadCurrentSource()
 if source == nil then
-    warn("[RTM:Loader] Remotos no disponibles: " .. tostring(remoteError))
+    warn("[RTM:Loader] Remote sources unavailable: " .. tostring(remoteError))
     local fallbackSource: string?, fallbackError: string? = readLocalFallback()
     if fallbackSource == nil then
-        warn("[RTM:Loader] Sin runtime seguro: " .. tostring(fallbackError))
+        warn("[RTM:Loader] No safe runtime available: " .. tostring(fallbackError))
         return nil
     end
     source = fallbackSource
-    print("[RTM:Loader] Usando fallback local verificado")
+    print("[RTM:Loader] Using verified local fallback")
 end
 
 local compiler: any = executorEnvironment.loadstring or loadstring
 if type(compiler) ~= "function" then
-    warn("[RTM:Loader] El executor no expone loadstring")
+    warn("[RTM:Loader] The executor does not expose loadstring")
     return nil
 end
 local invoked: boolean, chunkOrError: any, returnedError: any = pcall(
@@ -160,11 +160,11 @@ local invoked: boolean, chunkOrError: any, returnedError: any = pcall(
     "@ARandomMenu.luau"
 )
 if not invoked or type(chunkOrError) ~= "function" then
-    warn("[RTM:Loader] Error de compilación: "
+    warn("[RTM:Loader] Compilation error: "
         .. tostring(invoked and returnedError or chunkOrError))
     return nil
 end
-print("[RTM:Loader] Compilación correcta · loader v3")
+print("[RTM:Loader] Compilation succeeded · loader v3")
 
 local executed: boolean, result: any = xpcall(
     chunkOrError,
@@ -177,8 +177,8 @@ local executed: boolean, result: any = xpcall(
     end
 )
 if not executed then
-    warn("[RTM:Loader] Error durante la ejecución:\n" .. tostring(result))
+    warn("[RTM:Loader] Runtime error:\n" .. tostring(result))
     return nil
 end
-print("[RTM:Loader] Ejecución completada")
+print("[RTM:Loader] Execution complete")
 return result

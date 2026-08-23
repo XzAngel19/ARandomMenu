@@ -1156,20 +1156,22 @@ function Module.init(context: any): any
     }
 
     -- ----------------------------------------------------------------- dock
-    -- The launcher, bottom-centre: [ Search module... ][ ≡ ]. The five per
-    -- cent of this menu that is Roblox rather than Wurst. It lives on the
-    -- raw ScreenGui, outside the ClickGUI's UIScale, sits 70 px above the
-    -- bottom so it clears where most games park their hotbar, and stays
-    -- visible with the GUI closed — it is how the GUI opens. Enter in the
-    -- search box resolves a module by name through
-    -- state.invokeModuleSearch (success / not found / ambiguous all
-    -- notify), then clears itself; it never runs administrative actions.
-    -- The ≡ button opens whichever surface UI.MenuStyle selects.
+    -- The launcher is the small Roblox adaptation around the Wurst surface.
+    -- Desktop keeps the direct module search. Touch devices already have the
+    -- Navigator's focused search, so their persistent dock is only the two
+    -- doors and does not cover the hotbar with a redundant text field.
+    local touchPrimary: boolean = state.isMobile == true
     local DOCK_SEARCH_WIDTH: number = 190
     local DOCK_BOTTOM_MARGIN: number = 70
+    local dockSearchWidth: number = touchPrimary and 0 or DOCK_SEARCH_WIDTH
+    local dockSearchGap: number = touchPrimary and 0 or PILL_GAP
+    local menuButtonX: number = PILL_PADDING_X
+        + dockSearchWidth
+        + dockSearchGap
+    local navButtonX: number = menuButtonX + PILL_BUTTON + PILL_GAP
     local pillWidth: number = PILL_PADDING_X * 2
-        + DOCK_SEARCH_WIDTH
-        + PILL_GAP
+        + dockSearchWidth
+        + dockSearchGap
         + PILL_BUTTON
         + PILL_GAP
         + PILL_BUTTON
@@ -1311,7 +1313,7 @@ function Module.init(context: any): any
 
     local menuButton: TextButton = pillButton(
         1,
-        PILL_PADDING_X + DOCK_SEARCH_WIDTH + PILL_GAP,
+        menuButtonX,
         "≡",
         16,
         "Show or hide the menu",
@@ -1337,7 +1339,7 @@ function Module.init(context: any): any
     -- the stack promises a magnifier codepoint.
     local navButton: TextButton = pillButton(
         2,
-        PILL_PADDING_X + DOCK_SEARCH_WIDTH + PILL_GAP * 2 + PILL_BUTTON,
+        navButtonX,
         "",
         16,
         "Navigator",
@@ -1390,10 +1392,9 @@ function Module.init(context: any): any
         local _ = handle
     end
 
-    -- The search half of the dock. A TextBox stays vector for its caret;
-    -- Enter submits, the box clears, and the resolver notifies success,
-    -- not-found or ambiguous. On touch the platform keyboard opens with
-    -- focus, which is the mobile path.
+    -- Desktop search stays vector for its caret. Enter submits, clears the
+    -- box and reports success, ambiguity or no match. Mobile search belongs
+    -- to Navigator, so this shell is hidden and has no TextBox on touch.
     local searchShell: Frame = (create("Frame", {
         Parent = pillFrame,
         Name = "DockSearch",
@@ -1401,14 +1402,15 @@ function Module.init(context: any): any
         BackgroundTransparency = 0.94,
         BorderSizePixel = 0,
         Position = UDim2.fromOffset(PILL_PADDING_X, PILL_PADDING_Y),
-        Size = UDim2.fromOffset(DOCK_SEARCH_WIDTH, PILL_BUTTON),
+        Size = UDim2.fromOffset(dockSearchWidth, PILL_BUTTON),
+        Visible = not touchPrimary,
         ZIndex = 241,
     }) :: any) :: Frame
     create("UICorner", {
         Parent = searchShell,
         CornerRadius = UDim.new(1, 0),
     })
-    if type(makeTextBox) == "function" then
+    if not touchPrimary and type(makeTextBox) == "function" then
         local searchBox: TextBox = (makeTextBox(searchShell, "") :: any) :: TextBox
         searchBox.Name = "DockSearchBox"
         searchBox.BackgroundTransparency = 1
@@ -1499,7 +1501,6 @@ function Module.init(context: any): any
     -- Executors on phones often emulate a mouse. The shell's device decision
     -- is authoritative: a phone can never lose its only launcher because an
     -- emulated MouseEnabled flag made it look like desktop.
-    local touchPrimary: boolean = state.isMobile == true
     local function setDockVisible(value: boolean): ()
         if touchPrimary then
             pillFrame.Visible = true

@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "1aee97475cec7403",
+    stamp = "d81720b3266480af",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -5875,12 +5875,12 @@ function Module.init(context: any): any
             local slot: TextButton =
                 (makeButton(row, "KEY", 9) :: any) :: TextButton
             slot.Name = "Shortcut"
-            slot.AnchorPoint = Vector2.new(1, 0.5)
-            slot.Position = UDim2.new(1, -30, 0, feature.collapsedHeight / 2)
-            slot.Size = UDim2.fromOffset(
-                state.layout.keySlotWidth,
-                state.layout.iconButton
-            )
+            -- Keep the touch shortcut in the same left-hand lane as the
+            -- desktop bind square. The old wide slot sat under centred module
+            -- names on narrow phone windows.
+            slot.AnchorPoint = Vector2.new(0, 0.5)
+            slot.Position = UDim2.new(0, 4, 0, feature.collapsedHeight / 2)
+            slot.Size = UDim2.fromOffset(22, 22)
             slot.ZIndex = 9
             applyKeySlotStyle(slot)
             slot.TextScaled = true
@@ -5933,7 +5933,7 @@ function Module.init(context: any): any
         -- feature without a registered binding. Rejoin is not a card anymore,
         -- so management actions remain outside this surface. A user-approved addition
         -- drawn in Wurst's grammar: flat rectangle, thin stroke, no
-        -- corner, no glyph, no "Press a key" — the capturing tint is the
+        -- corner and only the compact assigned key. The capturing tint is the
         -- canonical setKeySlotCapture recolour, which finds the stroke by
         -- its StyleStroke name. Capture and assignment go through the one
         -- keybind machine (beginKeyCapture + binding.assign): Escape
@@ -5966,12 +5966,10 @@ function Module.init(context: any): any
                 BorderSizePixel = 0,
                 FontFace = CONTROL_FONT,
                 Position = UDim2.new(0, 4, 0.5, 0),
-                Size = UDim2.fromOffset(12, 12),
+                Size = UDim2.fromOffset(18, 18),
                 Text = "",
-                -- The canonical capturer writes "..." into its button; the
-                -- square never shows text, so its ink stays invisible and
-                -- the state reads from colour alone.
-                TextTransparency = 1,
+                TextColor3 = Theme.text,
+                TextTransparency = 0,
                 TextSize = 8,
                 ZIndex = 8,
             }) :: any) :: TextButton
@@ -5983,6 +5981,40 @@ function Module.init(context: any): any
                 Thickness = 1,
                 Transparency = 0.6,
             }) :: any) :: UIStroke
+
+            local COMPACT_KEY_NAMES: {[string]: string} = {
+                LeftShift = "LS",
+                RightShift = "RS",
+                LeftControl = "LC",
+                RightControl = "RC",
+                LeftAlt = "LA",
+                RightAlt = "RA",
+                CapsLock = "CL",
+                Backspace = "Bk",
+                Return = "En",
+                Escape = "Es",
+                Space = "Sp",
+                PageUp = "PU",
+                PageDown = "PD",
+                Insert = "Ins",
+                Delete = "Del",
+                Home = "Hm",
+                End = "End",
+            }
+            local function keyCaption(): string
+                if binding.key == nil or binding.key == Enum.KeyCode.Unknown then
+                    return ""
+                end
+                local name: string = tostring(binding.key.Name or "")
+                local compact: string? = COMPACT_KEY_NAMES[name]
+                if compact then
+                    return compact
+                end
+                local display: string = state.keyDisplayName
+                        and tostring(state.keyDisplayName(name))
+                    or name
+                return string.sub(display, 1, 3)
+            end
 
             local capturing: boolean = false
             local function conflictWith(): any
@@ -6000,6 +6032,9 @@ function Module.init(context: any): any
                 if capturing then
                     return
                 end
+                local caption: string = keyCaption()
+                square.Text = caption
+                square:SetAttribute("CaptureIdleText", caption)
                 local bound: boolean = binding.key ~= nil
                     and binding.key ~= Enum.KeyCode.Unknown
                 local conflict: any = bound and conflictWith() or nil
@@ -6022,6 +6057,13 @@ function Module.init(context: any): any
             end
             feature.bindSquare = square
             feature.syncBindSquare = syncSquare
+            local refreshBinding: any = binding.refresh
+            binding.refresh = function(): ()
+                if refreshBinding then
+                    refreshBinding()
+                end
+                syncSquare()
+            end
             syncSquare()
 
             -- No physical keyboard, no square; one arriving shows it.
@@ -6204,10 +6246,9 @@ function Module.init(context: any): any
                     UDim2.fromOffset(22, metrics.cardHeight)
             end
             if shortcutButton then
-                (shortcutButton :: TextButton).Size =
-                    UDim2.fromOffset(metrics.keySlotWidth, metrics.iconButton);
+                (shortcutButton :: TextButton).Size = UDim2.fromOffset(22, 22);
                 (shortcutButton :: TextButton).Position =
-                    UDim2.new(1, -30, 0, metrics.cardHeight / 2)
+                    UDim2.new(0, 4, 0, metrics.cardHeight / 2)
             end
             activationTarget.Size = UDim2.new(1, 0, 0, metrics.cardHeight)
             options.Position = UDim2.fromOffset(4, metrics.cardHeight)
@@ -7914,16 +7955,15 @@ function Module.init(context: any): any
         -- limit and the body scrolls. A window padded out to a fixed height is
         -- how a category with two modules ends up looking broken.
         local function resize(): ()
-            -- Wurst's "Max height" setting, live: the UI Settings slider
-            -- publishes state.uiMaxHeight, and 0 means no limit, exactly as
-            -- Wurst's tooltip says. Until that slider has run once, the
-            -- window's own construction cap holds.
+            -- The shell publishes one stable logical cap. It is intentionally
+            -- not exposed as a 0–1000 user setting; the viewport remains the
+            -- final authority on short screens.
             local limit: number = tonumber(state.uiMaxHeight) or WINDOW_MAX_HEIGHT
             if limit <= 0 then
                 limit = math.huge
             end
-            -- A short viewport caps harder than the slider: a category
-            -- taller than the screen cannot be clamped into it, so the
+            -- A short viewport caps harder than the logical default: a
+            -- category taller than the screen cannot be clamped into it, so the
             -- body scrolls instead.
             limit = math.min(limit, logicalViewport().Y - 12)
             local wanted: number = math.min(
@@ -8009,8 +8049,8 @@ function Module.init(context: any): any
         end
     end
 
-    -- Re-clamp every category window after the Max height slider moves;
-    -- each record's own resize already knows how to read the live limit.
+    -- Re-clamp every category window after a viewport or layout change;
+    -- each record's own resize reads the shared logical limit.
     function ClickGui.RefreshHeights(): ()
         for _, name: string in ipairs(ClickGui.order) do
             local record: CategoryWindow = ClickGui.categories[name]
@@ -8075,6 +8115,7 @@ function Module.init(context: any): any
     -- layer and the listener stops mattering.
     state.onLayout(function(): ()
         scale.Scale = viewportScale()
+        ClickGui.RefreshHeights()
     end)
     ClickGui.scale = scale
 
@@ -9807,14 +9848,15 @@ function Module.init(context: any): any
         return camera and (camera :: Camera).ViewportSize or Vector2.new(1280, 720)
     end
 
-    -- The live "Max settings height" value; 0 means no limit, as Wurst's
-    -- tooltip says. The UI Settings window itself obeys "Max height" through
-    -- state.uiMaxHeight, like every other ClickGUI window.
+    -- Window height is an internal layout rule, not a user-facing tuning
+    -- surface. Both caps stay at Wurst's 200 logical pixels and the manager
+    -- clamps them further to the current viewport.
     local maxSettingsHeight: number = MAX_SETTINGS_HEIGHT
+    state.uiMaxHeight = MAX_HEIGHT
 
-    -- One window of setting lines. `settingsSized` windows follow the "Max
-    -- settings height" slider; the UI Settings window follows "Max height".
-    -- Wurst packs a settings window to its content — no window is 200 px
+    -- One window of setting lines. Feature settings use the settings cap;
+    -- management and UI windows use the general cap. Wurst packs a settings
+    -- window to its content — no window is 200 px
     -- because 200 was convenient. The width comes from the bitmap
     -- contract's measured advances when the contract is up (the estimate
     -- 12 px per glyph stands in on the harness): label + gap + value +
@@ -11201,7 +11243,6 @@ function Module.init(context: any): any
             {"Accent", "#101010"},
             {"Text", "#F0F0F0"},
             {"Opacity", "0.85"},
-            {"Max height", "1000"},
         },
     })
     uiRecord.open = true
@@ -11296,17 +11337,12 @@ function Module.init(context: any): any
     if state.featureTooltip then
         state.featureTooltip.BackgroundTransparency = 1 - TOOLTIP_OPACITY
     end
-    addNumberOption(uiPanel, "Max height", MAX_HEIGHT, 0, 1000, function(value: number): ()
-        uiSettingsValues["Max height"] = value
-        state.uiMaxHeight = value
-        if state.clickGui and state.clickGui.RefreshHeights then
-            state.clickGui.RefreshHeights()
-        end
-        uiRecord.resize()
-    end)
-    -- No Max settings height row either: two height sliders for two
-    -- window kinds is menu-about-the-menu. Settings windows follow the
-    -- same Wurst 200 cap; the value stays published for the manager.
+    -- Height caps are not settings. A 0–1000 slider exposed impossible
+    -- values on phones and made the settings window describe its own layout.
+    -- Keep the stable values published for window code and old configs, but
+    -- let the viewport-aware manager own the actual cap.
+    uiSettingsValues["Max height"] = MAX_HEIGHT
+    state.uiMaxHeight = MAX_HEIGHT
     uiSettingsValues["Max settings height"] = MAX_SETTINGS_HEIGHT
     maxSettingsHeight = MAX_SETTINGS_HEIGHT
     state.uiMaxSettingsHeight = MAX_SETTINGS_HEIGHT
@@ -13135,20 +13171,22 @@ function Module.init(context: any): any
     }
 
     -- ----------------------------------------------------------------- dock
-    -- The launcher, bottom-centre: [ Search module... ][ ≡ ]. The five per
-    -- cent of this menu that is Roblox rather than Wurst. It lives on the
-    -- raw ScreenGui, outside the ClickGUI's UIScale, sits 70 px above the
-    -- bottom so it clears where most games park their hotbar, and stays
-    -- visible with the GUI closed — it is how the GUI opens. Enter in the
-    -- search box resolves a module by name through
-    -- state.invokeModuleSearch (success / not found / ambiguous all
-    -- notify), then clears itself; it never runs administrative actions.
-    -- The ≡ button opens whichever surface UI.MenuStyle selects.
+    -- The launcher is the small Roblox adaptation around the Wurst surface.
+    -- Desktop keeps the direct module search. Touch devices already have the
+    -- Navigator's focused search, so their persistent dock is only the two
+    -- doors and does not cover the hotbar with a redundant text field.
+    local touchPrimary: boolean = state.isMobile == true
     local DOCK_SEARCH_WIDTH: number = 190
     local DOCK_BOTTOM_MARGIN: number = 70
+    local dockSearchWidth: number = touchPrimary and 0 or DOCK_SEARCH_WIDTH
+    local dockSearchGap: number = touchPrimary and 0 or PILL_GAP
+    local menuButtonX: number = PILL_PADDING_X
+        + dockSearchWidth
+        + dockSearchGap
+    local navButtonX: number = menuButtonX + PILL_BUTTON + PILL_GAP
     local pillWidth: number = PILL_PADDING_X * 2
-        + DOCK_SEARCH_WIDTH
-        + PILL_GAP
+        + dockSearchWidth
+        + dockSearchGap
         + PILL_BUTTON
         + PILL_GAP
         + PILL_BUTTON
@@ -13290,7 +13328,7 @@ function Module.init(context: any): any
 
     local menuButton: TextButton = pillButton(
         1,
-        PILL_PADDING_X + DOCK_SEARCH_WIDTH + PILL_GAP,
+        menuButtonX,
         "≡",
         16,
         "Show or hide the menu",
@@ -13316,7 +13354,7 @@ function Module.init(context: any): any
     -- the stack promises a magnifier codepoint.
     local navButton: TextButton = pillButton(
         2,
-        PILL_PADDING_X + DOCK_SEARCH_WIDTH + PILL_GAP * 2 + PILL_BUTTON,
+        navButtonX,
         "",
         16,
         "Navigator",
@@ -13369,10 +13407,9 @@ function Module.init(context: any): any
         local _ = handle
     end
 
-    -- The search half of the dock. A TextBox stays vector for its caret;
-    -- Enter submits, the box clears, and the resolver notifies success,
-    -- not-found or ambiguous. On touch the platform keyboard opens with
-    -- focus, which is the mobile path.
+    -- Desktop search stays vector for its caret. Enter submits, clears the
+    -- box and reports success, ambiguity or no match. Mobile search belongs
+    -- to Navigator, so this shell is hidden and has no TextBox on touch.
     local searchShell: Frame = (create("Frame", {
         Parent = pillFrame,
         Name = "DockSearch",
@@ -13380,14 +13417,15 @@ function Module.init(context: any): any
         BackgroundTransparency = 0.94,
         BorderSizePixel = 0,
         Position = UDim2.fromOffset(PILL_PADDING_X, PILL_PADDING_Y),
-        Size = UDim2.fromOffset(DOCK_SEARCH_WIDTH, PILL_BUTTON),
+        Size = UDim2.fromOffset(dockSearchWidth, PILL_BUTTON),
+        Visible = not touchPrimary,
         ZIndex = 241,
     }) :: any) :: Frame
     create("UICorner", {
         Parent = searchShell,
         CornerRadius = UDim.new(1, 0),
     })
-    if type(makeTextBox) == "function" then
+    if not touchPrimary and type(makeTextBox) == "function" then
         local searchBox: TextBox = (makeTextBox(searchShell, "") :: any) :: TextBox
         searchBox.Name = "DockSearchBox"
         searchBox.BackgroundTransparency = 1
@@ -13478,7 +13516,6 @@ function Module.init(context: any): any
     -- Executors on phones often emulate a mouse. The shell's device decision
     -- is authoritative: a phone can never lose its only launcher because an
     -- emulated MouseEnabled flag made it look like desktop.
-    local touchPrimary: boolean = state.isMobile == true
     local function setDockVisible(value: boolean): ()
         if touchPrimary then
             pillFrame.Visible = true

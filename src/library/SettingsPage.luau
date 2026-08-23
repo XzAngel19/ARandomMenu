@@ -120,14 +120,15 @@ function Module.init(context: any): any
         return camera and (camera :: Camera).ViewportSize or Vector2.new(1280, 720)
     end
 
-    -- The live "Max settings height" value; 0 means no limit, as Wurst's
-    -- tooltip says. The UI Settings window itself obeys "Max height" through
-    -- state.uiMaxHeight, like every other ClickGUI window.
+    -- Window height is an internal layout rule, not a user-facing tuning
+    -- surface. Both caps stay at Wurst's 200 logical pixels and the manager
+    -- clamps them further to the current viewport.
     local maxSettingsHeight: number = MAX_SETTINGS_HEIGHT
+    state.uiMaxHeight = MAX_HEIGHT
 
-    -- One window of setting lines. `settingsSized` windows follow the "Max
-    -- settings height" slider; the UI Settings window follows "Max height".
-    -- Wurst packs a settings window to its content — no window is 200 px
+    -- One window of setting lines. Feature settings use the settings cap;
+    -- management and UI windows use the general cap. Wurst packs a settings
+    -- window to its content — no window is 200 px
     -- because 200 was convenient. The width comes from the bitmap
     -- contract's measured advances when the contract is up (the estimate
     -- 12 px per glyph stands in on the harness): label + gap + value +
@@ -1514,7 +1515,6 @@ function Module.init(context: any): any
             {"Accent", "#101010"},
             {"Text", "#F0F0F0"},
             {"Opacity", "0.85"},
-            {"Max height", "1000"},
         },
     })
     uiRecord.open = true
@@ -1609,17 +1609,12 @@ function Module.init(context: any): any
     if state.featureTooltip then
         state.featureTooltip.BackgroundTransparency = 1 - TOOLTIP_OPACITY
     end
-    addNumberOption(uiPanel, "Max height", MAX_HEIGHT, 0, 1000, function(value: number): ()
-        uiSettingsValues["Max height"] = value
-        state.uiMaxHeight = value
-        if state.clickGui and state.clickGui.RefreshHeights then
-            state.clickGui.RefreshHeights()
-        end
-        uiRecord.resize()
-    end)
-    -- No Max settings height row either: two height sliders for two
-    -- window kinds is menu-about-the-menu. Settings windows follow the
-    -- same Wurst 200 cap; the value stays published for the manager.
+    -- Height caps are not settings. A 0–1000 slider exposed impossible
+    -- values on phones and made the settings window describe its own layout.
+    -- Keep the stable values published for window code and old configs, but
+    -- let the viewport-aware manager own the actual cap.
+    uiSettingsValues["Max height"] = MAX_HEIGHT
+    state.uiMaxHeight = MAX_HEIGHT
     uiSettingsValues["Max settings height"] = MAX_SETTINGS_HEIGHT
     maxSettingsHeight = MAX_SETTINGS_HEIGHT
     state.uiMaxSettingsHeight = MAX_SETTINGS_HEIGHT

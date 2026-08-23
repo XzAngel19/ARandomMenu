@@ -14,6 +14,7 @@ return function(ctx: any): ()
     local check: (string, boolean, string?) -> () = ctx.check
     local section: (string) -> () = ctx.section
     local host: any = ctx.host
+    local Inspect: any = require("../inspect")
 
     section("UI Settings")
 
@@ -39,6 +40,13 @@ return function(ctx: any): ()
     end
 
     local window: any = findWindow()
+    if window ~= nil then
+        check(
+            "the impossible 0-1000 Max height row is not user-facing",
+            Inspect.findNamed(window.root, "Option_Maxheight") == nil
+                and Inspect.findNamed(window.root, "Option_MaxHeight") == nil
+        )
+    end
     if published == nil and window == nil then
         check("UI Settings is not published yet; default tests wait on it", true)
         return

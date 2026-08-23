@@ -1179,7 +1179,7 @@ local function playConfiguredSound(): ()
     stopAutoPlaySound()
     local numericId = string.match(mm2Settings.autoPlayId, "%d+")
     if not numericId then
-        clearAutoPlaySetting("Audio ID inválido; reproducción desactivada")
+        clearAutoPlaySetting("Invalid audio ID; playback disabled")
         return
     end
 
@@ -1207,7 +1207,7 @@ local function playConfiguredSound(): ()
     autoPlayLoadConnection = AutoPlaySound.Loaded:Connect(playWhenLoaded)
     task.delay(4, function(): ()
         if generation == autoPlayGeneration and not AutoPlaySound.IsLoaded then
-            clearAutoPlaySetting("Audio ID no autorizado o no disponible")
+            clearAutoPlaySetting("Audio ID is not authorized or unavailable")
         end
     end)
 end
@@ -2359,7 +2359,7 @@ local function createTrajectoryCalibration(): any
 
     saveSnapshot = function(reason: string): boolean
         if type(environment.writefile) ~= "function" then
-            warn(trajectoryLogPrefix .. " writefile no está disponible; no se pudo guardar.")
+            warn(trajectoryLogPrefix .. " writefile is unavailable; data was not saved.")
             return false
         end
         local payload: {[string]: any} = {
@@ -2399,7 +2399,7 @@ local function createTrajectoryCalibration(): any
             payload
         )
         if not encodedOk or type(encoded) ~= "string" then
-            warn(trajectoryLogPrefix .. " JSONEncode falló: " .. tostring(encoded))
+            warn(trajectoryLogPrefix .. " JSONEncode failed: " .. tostring(encoded))
             return false
         end
         if type(environment.makefolder) == "function" then
@@ -2412,12 +2412,12 @@ local function createTrajectoryCalibration(): any
             encoded
         )
         if not writeOk then
-            warn(trajectoryLogPrefix .. " writefile falló: " .. tostring(writeError))
+            warn(trajectoryLogPrefix .. " writefile failed: " .. tostring(writeError))
             return false
         end
         runtime.dirty = false
         print(
-            trajectoryLogPrefix .. " Guardado "
+            trajectoryLogPrefix .. " Saved "
                 .. OUTPUT_PATH
                 .. " ("
                 .. tostring(#encoded)
@@ -2463,7 +2463,7 @@ local function createTrajectoryCalibration(): any
                 )
             end
             warn(
-                trajectoryLogPrefix .. " Caché schema 1 ignorada; schema 2 inicia limpio."
+                trajectoryLogPrefix .. " Cache schema 1 ignored; schema 2 starts clean."
             )
             return
         end
@@ -2906,7 +2906,7 @@ local function createTrajectoryCalibration(): any
                 task.wait(0.25)
             end
             if not weaponModule then
-                warn(trajectoryLogPrefix .. " WeaponService no apareció; Knife sigue activo.")
+                warn(trajectoryLogPrefix .. " WeaponService did not appear; Knife remains active.")
                 return
             end
             local loaded: boolean, weaponService: any = pcall(
@@ -2915,7 +2915,7 @@ local function createTrajectoryCalibration(): any
             )
             if not loaded or type(weaponService) ~= "table" then
                 warn(
-                    trajectoryLogPrefix .. " No se pudo observar WeaponService: "
+                    trajectoryLogPrefix .. " Could not observe WeaponService: "
                         .. tostring(weaponService)
                 )
                 return
@@ -2925,7 +2925,7 @@ local function createTrajectoryCalibration(): any
             end)
             if connected and connection then
                 trackConnection(connection :: RBXScriptConnection)
-                print(trajectoryLogPrefix .. " Confirmación GunFired conectada.")
+                print(trajectoryLogPrefix .. " GunFired confirmation connected.")
             else
                 warn(
                     trajectoryLogPrefix .. " GunFired no es compatible: "
@@ -2964,7 +2964,7 @@ local function createTrajectoryCalibration(): any
             )
         )
         installGunConfirmation()
-        print(trajectoryLogPrefix .. " Calibración pasiva iniciada en segundo plano.")
+        print(trajectoryLogPrefix .. " Passive calibration started in the background.")
     end
 
     function controller:save(reason: string?): boolean

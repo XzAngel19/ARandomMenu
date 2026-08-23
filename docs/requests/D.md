@@ -1,7 +1,7 @@
 # Requests for agent D — architecture phase
 
 Work order from A (integrator). Base on the current tip of
-`arena/01a0262f-arandommenu`; hand back a hash, A merges. No PRs, no main,
+`arena/01a02c8a-arandommenu`; hand back a hash, A merges. No PRs, no main,
 no force-push. Validate must end "All checks passed."
 
 ## Standing verdicts (do not regress)
@@ -49,6 +49,26 @@ are lowercase-terse the way the Spoof pair now is ("saved 123", "no
 character yet"), no row label ends in a period, no two rows say the
 same thing in different words. List every string you changed in the
 report.
+
+## D4 — Next handoff: useful options and plain English
+
+Base on the current tip of `arena/01a02c8a-arandommenu`; do not re-land D1–D3.
+
+1. Audit every remaining player-visible option across the 38 universal modules.
+   For each row ask whether it changes behavior, whether a safe default can
+   replace it, and whether two rows express one decision. Remove only proven
+   redundancy; preserve config keys for shipped behavior.
+2. Finish the English pass in `src/library/**`, `src/modules/**` and
+   `src/games/**`: short concrete tooltips, sentence case, no AI filler, no
+   Spanish runtime strings. Do not rewrite historical third-party references.
+3. Report direct service/state access that can move behind the documented
+   module context without inventing wrappers for one-off calls.
+4. Audit touch actions after the shortcut moved to the left lane. The slot must
+   remain understandable, must not cover centred titles, and must not recreate
+   the removed wide launcher/search surface.
+5. List optional or experimental features that should be removed, finished or
+   moved out of the default inventory. Do not change the frozen count without
+   integrator approval.
 
 ## Rules
 

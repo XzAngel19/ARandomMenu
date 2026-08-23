@@ -62,8 +62,9 @@ Each is a global window/settings behaviour, not a new hack.
   Wurst's own tooltip. Does not add a hack.
 - **Contract:** named defaults 200 / 200; a settings window's height
   `<= uiMaxSettingsHeight` when that value is > 0. Already held.
-- **Status vs port:** **ALREADY** (sliders / `state.uiMaxSettingsHeight`
-  / `state.uiMaxHeight`). Keep 7.19-compatible defaults (200).
+- **Status vs port:** **ADAPTED**. The 0–1000 sliders are intentionally not
+  user-facing on Roblox. `state.uiMaxSettingsHeight` and `state.uiMaxHeight`
+  remain fixed at 200, then clamp to the live logical viewport.
 
 ### APPLY-2 — Display clamp vs persisted position
 

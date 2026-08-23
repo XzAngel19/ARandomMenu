@@ -247,16 +247,15 @@ function Module.init(context: any): any
         -- limit and the body scrolls. A window padded out to a fixed height is
         -- how a category with two modules ends up looking broken.
         local function resize(): ()
-            -- Wurst's "Max height" setting, live: the UI Settings slider
-            -- publishes state.uiMaxHeight, and 0 means no limit, exactly as
-            -- Wurst's tooltip says. Until that slider has run once, the
-            -- window's own construction cap holds.
+            -- The shell publishes one stable logical cap. It is intentionally
+            -- not exposed as a 0–1000 user setting; the viewport remains the
+            -- final authority on short screens.
             local limit: number = tonumber(state.uiMaxHeight) or WINDOW_MAX_HEIGHT
             if limit <= 0 then
                 limit = math.huge
             end
-            -- A short viewport caps harder than the slider: a category
-            -- taller than the screen cannot be clamped into it, so the
+            -- A short viewport caps harder than the logical default: a
+            -- category taller than the screen cannot be clamped into it, so the
             -- body scrolls instead.
             limit = math.min(limit, logicalViewport().Y - 12)
             local wanted: number = math.min(
@@ -342,8 +341,8 @@ function Module.init(context: any): any
         end
     end
 
-    -- Re-clamp every category window after the Max height slider moves;
-    -- each record's own resize already knows how to read the live limit.
+    -- Re-clamp every category window after a viewport or layout change;
+    -- each record's own resize reads the shared logical limit.
     function ClickGui.RefreshHeights(): ()
         for _, name: string in ipairs(ClickGui.order) do
             local record: CategoryWindow = ClickGui.categories[name]
@@ -408,6 +407,7 @@ function Module.init(context: any): any
     -- layer and the listener stops mattering.
     state.onLayout(function(): ()
         scale.Scale = viewportScale()
+        ClickGui.RefreshHeights()
     end)
     ClickGui.scale = scale
 

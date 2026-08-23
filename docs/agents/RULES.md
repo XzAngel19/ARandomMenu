@@ -50,7 +50,7 @@ not.
 
 ## 2c. Two people share the integration branch
 
-The integrator and the reviewer both push to `arena/01a01c6e-arandommenu`. That
+The integrator and the reviewer both push to `arena/01a02c8a-arandommenu`. That
 is deliberate — it means the interface work never has to be merged — and it has
 one hazard: the branch can move under you between your last fetch and your push.
 
@@ -58,7 +58,7 @@ When a push is rejected with `fetch first`, **never force**. The other person's
 commit is not a mistake to overwrite:
 
 ```
-git fetch origin arena/01a01c6e-arandommenu
+git fetch origin arena/01a02c8a-arandommenu
 git merge FETCH_HEAD                 # or: git stash -u; git reset --hard FETCH_HEAD; git stash pop
 python3 tools/bundle.py              # the only conflicts are generated; regenerate, never pick a side
 bash tools/preflight.sh
@@ -179,7 +179,7 @@ merging would push an unfinished rebuild to every user. Sync your own branch
 instead, once, before doing anything else:
 
 ```
-git fetch origin arena/01a01c6e-arandommenu
+git fetch origin arena/01a02c8a-arandommenu
 git reset --hard FETCH_HEAD
 git fetch origin <your-branch>                 # refresh the lease's reference
 git push --force-with-lease origin HEAD
@@ -192,5 +192,5 @@ before that knowledge existed, so the push is rejected with `stale info`, which
 reads like an authentication problem and is not one.
 
 You are staying on your own branch; you are giving it the right contents. Later,
-to pick up integration work: `git fetch origin arena/01a01c6e-arandommenu &&
+to pick up integration work: `git fetch origin arena/01a02c8a-arandommenu &&
 git merge FETCH_HEAD`.

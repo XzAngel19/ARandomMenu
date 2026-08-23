@@ -175,9 +175,9 @@ return function(ctx: any): ()
         check("the square is named BindSquare", square.Name == "BindSquare")
         check("the square carries no corner",
             square:FindFirstChildOfClass("UICorner") == nil)
-        check("the square shows no text", square.Text == "")
-        check("the square is 12x12 on the 22 row",
-            square.Size.X.Offset == 12 and square.Size.Y.Offset == 12)
+        check("an unbound square is empty", square.Text == "")
+        check("the readable square is 18x18 on the 22 row",
+            square.Size.X.Offset == 18 and square.Size.Y.Offset == 18)
         check("the square floats left without moving the title's centre",
             square.Position.X.Offset == 4)
         local stroke: any = square:FindFirstChild("StyleStroke")

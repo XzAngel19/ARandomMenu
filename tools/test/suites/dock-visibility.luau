@@ -184,19 +184,16 @@ return function(ctx: any): ()
     end
 
     local mobileSearch: any = Inspect.dockSearch(mobileState)
-    check("the mobile touch path still has a search box", mobileSearch ~= nil)
-    if mobileSearch ~= nil and mobileSearch.FocusLost and mobileSearch.FocusLost.Fire then
-        local sample: any = Inspect.featureNamed(captured, "Killaura")
-        local before: boolean = sample ~= nil and sample.enabled == true
-        mobileSearch.Text = "Killaura"
-        mobileSearch.FocusLost:Fire(true)
-        if sample ~= nil then
-            check(
-                "the mobile submit path still reaches a module",
-                sample.enabled ~= before or type(mobileState.invokeModuleSearch) == "function"
-            )
-        end
-    end
+    check("the compact mobile dock has no redundant search box", mobileSearch == nil)
+    check(
+        "the mobile dock stays compact",
+        mobilePill ~= nil and mobilePill.Size.X.Offset <= 100,
+        mobilePill and tostring(mobilePill.Size.X.Offset) or "missing"
+    )
+    local navigatorSearch: any = mobileState.navigator
+        and mobileState.navigator.root
+        and Inspect.findNamed(mobileState.navigator.root, "Search")
+    check("Navigator remains the mobile search path", navigatorSearch ~= nil)
 
     if type(mobileState.destruct) == "function" then
         mobileState.destruct()

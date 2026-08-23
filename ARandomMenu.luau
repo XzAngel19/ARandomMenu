@@ -363,7 +363,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "1aee97475cec7403"
+local SOURCE_STAMP: string = "d81720b3266480af"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -1590,21 +1590,21 @@ local function validateAssetBytes(
     definition: AssetDefinition
 ): (boolean, string?)
     if type(bytes) ~= "string" then
-        return false, "respuesta no binaria: " .. type(bytes)
+        return false, "non-binary response: " .. type(bytes)
     end
     if #bytes < 64 then
-        return false, "respuesta demasiado corta: " .. tostring(#bytes) .. " bytes"
+        return false, "response too short: " .. tostring(#bytes) .. " bytes"
     end
     local prefix: string = string.lower(string.sub(bytes, 1, 128))
     if string.find(prefix, "<!doctype html", 1, true)
         or string.find(prefix, "<html", 1, true)
         or string.find(prefix, "404: not found", 1, true) then
-        return false, "la respuesta contiene HTML/404"
+        return false, "the response contains HTML/404"
     end
     if definition.assetType == "font/otf" then
         local fontSignature: string = string.sub(bytes, 1, 4)
         if fontSignature ~= "OTTO" and fontSignature ~= string.char(0, 1, 0, 0) then
-            return false, "firma OpenType/TrueType inválida"
+            return false, "invalid OpenType/TrueType signature"
         end
         return true, nil
     end
@@ -1613,7 +1613,7 @@ local function validateAssetBytes(
         and string.byte(bytes, 2) == 0xD8
         and string.byte(bytes, 3) == 0xFF
     if not isPng and not isJpeg then
-        return false, "firma PNG inválida"
+        return false, "invalid PNG signature"
     end
     return true, nil
 end
@@ -1629,7 +1629,7 @@ function AssetManager.ensureCacheFolder(): (boolean, string?)
             end
         end
         if type(makeFolder) ~= "function" then
-            return false, "makefolder no está disponible"
+            return false, "makefolder is unavailable"
         end
         local created: boolean, createError: any = pcall(makeFolder, path)
         if not created then
@@ -1689,11 +1689,11 @@ function AssetManager.readVerifiedCache(
     local isFile: any = getEnvironmentValue("isfile")
     local readFile: any = getEnvironmentValue("readfile")
     if type(isFile) ~= "function" or type(readFile) ~= "function" then
-        return nil, "isfile/readfile no están disponibles"
+        return nil, "isfile/readfile are unavailable"
     end
     local checked: boolean, exists: any = pcall(isFile, path)
     if not checked or not exists then
-        return nil, "archivo no encontrado"
+        return nil, "file not found"
     end
     local readOk: boolean, bytes: any = pcall(readFile, path)
     if not readOk then
@@ -1712,7 +1712,7 @@ end
 function AssetManager.download(definition: AssetDefinition): (string?, string?)
     local requestFunction: any, _requestName: string = selectHttpRequest()
 
-    local lastError: string = "sin respuesta"
+    local lastError: string = "no response"
     for attempt: number = 1, 3 do
         local requestOk: boolean, response: any
         if requestFunction then
@@ -1755,7 +1755,7 @@ function AssetManager.download(definition: AssetDefinition): (string?, string?)
                 .. tostring(validationError)
         end
 
-        lastError = "intento "
+        lastError = "attempt "
             .. tostring(attempt)
             .. ": "
             .. tostring(response)
@@ -1763,7 +1763,7 @@ function AssetManager.download(definition: AssetDefinition): (string?, string?)
             task.wait(0.35 * attempt)
         end
     end
-    return nil, "descarga agotó tres intentos; " .. lastError
+    return nil, "download failed after three attempts; " .. lastError
 end
 
 function AssetManager.resolve(logicalName: string): (string?, string?)
@@ -1779,10 +1779,10 @@ function AssetManager.resolve(logicalName: string): (string?, string?)
         or getEnvironmentValue("getsynasset")
     local writeFile: any = getEnvironmentValue("writefile")
     if type(assetFunction) ~= "function" then
-        return nil, "getcustomasset/getsynasset no está disponible"
+        return nil, "getcustomasset/getsynasset is unavailable"
     end
     if type(writeFile) ~= "function" then
-        return nil, "writefile no está disponible"
+        return nil, "writefile is unavailable"
     end
 
     local folderOk: boolean, folderError: string? =
@@ -1801,13 +1801,13 @@ function AssetManager.resolve(logicalName: string): (string?, string?)
         return alreadyResolved, nil
     end
     if AssetManager.resolving[logicalName] then
-        return nil, "tiempo de espera agotado para " .. logicalName
+        return nil, "timed out waiting for " .. logicalName
     end
     AssetManager.resolving[logicalName] = true
     local cachedBytes: string?, cacheError: string? =
         AssetManager.readVerifiedCache(path, definition)
     if not cachedBytes then
-        print("[" .. PRODUCT.logPrefix .. ":Assets] caché no reutilizable: " .. tostring(cacheError))
+        print("[" .. PRODUCT.logPrefix .. ":Assets] cache cannot be reused: " .. tostring(cacheError))
         local downloaded: string?, downloadError: string? =
             AssetManager.download(definition)
         if not downloaded then
@@ -1823,7 +1823,7 @@ function AssetManager.resolve(logicalName: string): (string?, string?)
             AssetManager.readVerifiedCache(path, definition)
         if not verified then
             AssetManager.resolving[logicalName] = false
-            return nil, "verificación posterior: " .. tostring(verifyError)
+            return nil, "post-write verification: " .. tostring(verifyError)
         end
     end
 
@@ -1846,7 +1846,7 @@ function AssetManager.resolveFont(
     local assetId: string?, loadError: string? = AssetManager.resolve(logicalName)
     if not assetId then
         warn(
-            "[" .. PRODUCT.logPrefix .. ":Assets] fuente fallback para "
+            "[" .. PRODUCT.logPrefix .. ":Assets] fallback font for "
                 .. logicalName
                 .. ": "
                 .. tostring(loadError)
@@ -1868,7 +1868,7 @@ function AssetManager.resolveFont(
         )
         return fallbackFont
     end
-    print("[" .. PRODUCT.logPrefix .. ":Assets] fuente cargada: " .. logicalName)
+    print("[" .. PRODUCT.logPrefix .. ":Assets] font loaded: " .. logicalName)
     return fontFace
 end
 
@@ -2109,22 +2109,22 @@ function SectionManager.initializeAllAsync(): ()
 
     for _, sectionName: string in ipairs(sectionNames) do
         task.spawn(function(): ()
-            print("[" .. PRODUCT.logPrefix .. ":Bootstrap] Inicializando sección " .. sectionName)
+            print("[" .. PRODUCT.logPrefix .. ":Bootstrap] Initializing section " .. sectionName)
             local success: boolean, errorMessage: string? =
                 SectionManager.initialize(sectionName)
             if not success then
                 failures += 1
                 warn(
-                    "[" .. PRODUCT.logPrefix .. ":Bootstrap] Sección "
+                    "[" .. PRODUCT.logPrefix .. ":Bootstrap] Section "
                         .. sectionName
-                        .. " falló: "
+                        .. " failed: "
                         .. tostring(errorMessage)
                 )
             end
             completed += 1
             if completed >= total then
                 print(
-                    "[" .. PRODUCT.logPrefix .. ":Bootstrap] Carga terminada · fallos="
+                    "[" .. PRODUCT.logPrefix .. ":Bootstrap] Load complete · failures="
                         .. tostring(failures)
                 )
             end
@@ -3851,7 +3851,7 @@ state.mvsdScroll = CardBin
 state.bedFightScroll = CardBin
 state.spoofScroll = CardBin
 
-print("[" .. PRODUCT.logPrefix .. ":Bootstrap] GUI base visible; construyendo funciones universales")
+print("[" .. PRODUCT.logPrefix .. ":Bootstrap] Base GUI visible; building universal features")
 
 local universalFeatures = {}
 local movementFeatures = {}
@@ -5325,7 +5325,7 @@ local function loadGameModule(
     }
     if type(executorEnvironment.loadstring) ~= "function"
         or type(executorEnvironment.setfenv) ~= "function" then
-        return nil, nil, diagnostics, "El ejecutor no admite loadstring/setfenv"
+        return nil, nil, diagnostics, "The executor does not support loadstring/setfenv"
     end
 
     local moduleName: string = GAME_MODULES[placeId]
@@ -5336,7 +5336,7 @@ local function loadGameModule(
         .. moduleName
         .. ".luau?v="
         .. SOURCE_STAMP
-    state.logBootstrap("Descargando módulo: " .. moduleUrl)
+    state.logBootstrap("Downloading module: " .. moduleUrl)
     local downloadSuccess: boolean, source: any = false, nil
     if type(state.fetchRepositorySource) == "function" then
         local fetched: string?, fetchError: string? =
@@ -5358,7 +5358,7 @@ local function loadGameModule(
             or string.find(candidate, "404: not found", 1, true)
             or string.find(candidate, "<!doctype html", 1, true)
             or string.find(candidate, "<html", 1, true) then
-            warn("[" .. PRODUCT.logPrefix .. ":Bootstrap] Respuesta remota inválida para " .. moduleName)
+            warn("[" .. PRODUCT.logPrefix .. ":Bootstrap] Invalid remote response for " .. moduleName)
             downloadSuccess = false
         end
     end
@@ -5372,21 +5372,21 @@ local function loadGameModule(
             if localSuccess and type(localSource) == "string" then
                 source = localSource
                 downloadSuccess = true
-                warn("[" .. PRODUCT.logPrefix .. ":Bootstrap] HTTP falló; usando fallback local " .. localPath)
+                warn("[" .. PRODUCT.logPrefix .. ":Bootstrap] HTTP failed; using local fallback " .. localPath)
             end
         end
     end
     if not downloadSuccess or type(source) ~= "string" then
-        return nil, nil, diagnostics, "Fallo HTTP: " .. tostring(source)
+        return nil, nil, diagnostics, "HTTP failure: " .. tostring(source)
     end
     local normalizedSource: string = string.lower(source)
     if #source < 64
         or string.find(normalizedSource, "404: not found", 1, true)
         or string.find(normalizedSource, "<!doctype html", 1, true)
         or string.find(normalizedSource, "<html", 1, true) then
-        return nil, nil, diagnostics, "Respuesta vacía, HTML o 404"
+        return nil, nil, diagnostics, "Empty response, HTML or 404"
     end
-    state.logBootstrap("Descarga correcta (" .. tostring(#source) .. " bytes)")
+    state.logBootstrap("Download succeeded (" .. tostring(#source) .. " bytes)")
 
     local chunk: any, compileError: any =
         executorEnvironment.loadstring(
@@ -5395,7 +5395,7 @@ local function loadGameModule(
         )
     if type(chunk) ~= "function" then
         return nil, nil, diagnostics,
-            "Error de compilación: " .. tostring(compileError)
+            "Compilation error: " .. tostring(compileError)
     end
 
     local moduleEnvironment: any = createGameModuleEnvironment(diagnostics)
@@ -5403,12 +5403,12 @@ local function loadGameModule(
     local runSuccess: boolean, loadedModule: any = pcall(chunk)
     if not runSuccess then
         return nil, nil, diagnostics,
-            "Error ejecutando chunk: " .. tostring(loadedModule)
+            "Chunk execution error: " .. tostring(loadedModule)
     end
     if type(loadedModule) ~= "table"
         or type(loadedModule.init) ~= "function"
         or type(loadedModule.destroy) ~= "function" then
-        return nil, nil, diagnostics, "El módulo no exporta init/destroy"
+        return nil, nil, diagnostics, "The module does not export init/destroy"
     end
     return loadedModule :: GameModule, moduleEnvironment, diagnostics, nil
 end
@@ -5425,9 +5425,9 @@ local function registerPlaceModule(
     end
 
     state.logBootstrap(
-        "PlaceId detectado: "
+        "Detected PlaceId: "
             .. tostring(game.PlaceId)
-            .. " · módulo "
+            .. " · module "
             .. tostring(ACTIVE_GAME_MODULE)
             .. " (" .. ACTIVE_GAME_SOURCE .. ")"
     )
@@ -5437,9 +5437,9 @@ local function registerPlaceModule(
             loadGameModule(placeId)
         if not loadedModule then
             state.logBootstrapError(
-                "No se pudo cargar " .. tabName .. ": " .. tostring(loadError)
+                "Could not load " .. tabName .. ": " .. tostring(loadError)
             )
-            error(loadError or "No se pudo cargar el módulo")
+            error(loadError or "Could not load the module")
         end
         local taskCountBefore: number = TaskManager.nextId
         local featureCountBefore: number = #allFeatures
@@ -5470,7 +5470,7 @@ local function registerPlaceModule(
             )
             if not rolledBack then
                 state.logBootstrapError(
-                    tabName .. " rollback falló: " .. tostring(rollbackError)
+                    tabName .. " rollback failed: " .. tostring(rollbackError)
                 )
             end
             for connectionName: string in pairs(featureConnections) do
@@ -5508,14 +5508,14 @@ local function registerPlaceModule(
                     state.floatingUi.unregisterFeature(feature)
                 end
             end
-            state.logBootstrapError(tabName .. " init falló: " .. tostring(initError))
+            state.logBootstrapError(tabName .. " init failed: " .. tostring(initError))
             error(initError)
         end
         diagnostics.taskBindings = TaskManager.nextId - taskCountBefore
         state.activeGameModule = loadedModule
         state.logBootstrap(
             tabName
-                .. " activo · UI callbacks="
+                .. " active · UI callbacks="
                 .. tostring(diagnostics.uiBindings)
                 .. " · Task callbacks="
                 .. tostring(diagnostics.taskBindings)
@@ -5526,7 +5526,7 @@ local function registerPlaceModule(
             )
             if not destroyed then
                 state.logBootstrapError(
-                    tabName .. " destroy falló: " .. tostring(destroyError)
+                    tabName .. " destroy failed: " .. tostring(destroyError)
                 )
             end
         end
@@ -5545,9 +5545,9 @@ local function registerPlaceModule(
 end
 
 state.logBootstrap(
-    "Inicializando PlaceId="
+    "Initializing PlaceId="
         .. tostring(game.PlaceId)
-        .. " · módulo="
+        .. " · module="
         .. tostring(ACTIVE_GAME_MODULE or "Universal")
 )
 
@@ -5806,24 +5806,24 @@ state.fetchRepositorySource = function(path: string): (string?, string?)
             return localSource :: string, nil
         end
     end
-    return nil, downloadError or ("Descarga fallida: " .. path)
+    return nil, downloadError or ("Download failed: " .. path)
 end
 
 state.compileRepositorySource = function(path: string, source: string): (any, string?)
     local environment: any = getfenv()
     if type(environment.loadstring) ~= "function" then
-        return nil, "El ejecutor no admite loadstring"
+        return nil, "The executor does not support loadstring"
     end
     local chunk: any, compileError: any = environment.loadstring(source, "@" .. path)
     if type(chunk) ~= "function" then
-        return nil, "Compilación fallida (" .. path .. "): " .. tostring(compileError)
+        return nil, "Compilation failed (" .. path .. "): " .. tostring(compileError)
     end
     if type(environment.setfenv) == "function" and state.frameworkEnvironment then
         environment.setfenv(chunk, state.frameworkEnvironment)
     end
     local ran: boolean, result: any = pcall(chunk)
     if not ran then
-        return nil, "Ejecución fallida (" .. path .. "): " .. tostring(result)
+        return nil, "Execution failed (" .. path .. "): " .. tostring(result)
     end
     return result, nil
 end
@@ -5961,7 +5961,7 @@ if type(packed) == "table"
     and packed.stamp == SOURCE_STAMP
     and type(packed.files) == "table" then
     state.boot.bundle = packed.files
-    state.logBootstrap("Bundle aceptado · stamp=" .. SOURCE_STAMP)
+    state.logBootstrap("Bundle accepted · stamp=" .. SOURCE_STAMP)
     -- With the real bundle in hand the disk caches have a truth to be
     -- compared against: whatever this update stopped shipping — an old
     -- module source, a renamed asset version, an image a rework dropped —
@@ -6021,7 +6021,7 @@ local function loadPiece(path: string): any?
     local piece: any, failure: string? = state.fetchRepositoryChunk(path)
     if type(piece) ~= "table" or type(piece.init) ~= "function" then
         state.logBootstrapError(
-            "Módulo inválido: " .. path .. " · " .. tostring(failure)
+            "Invalid module: " .. path .. " · " .. tostring(failure)
         )
         return nil
     end
@@ -6046,15 +6046,15 @@ if widgetPiece then
             end
         end
     else
-        state.logBootstrapError("Widgets init falló: " .. tostring(builders))
+        state.logBootstrapError("Widgets init failed: " .. tostring(builders))
     end
 end
 state.markBoot("widgets", widgetsAt)
 if not widgetBuilders then
     state.logBootstrapError(
-        "Sin librería de controles; los módulos no pueden construir sus paneles"
+        "Widget library unavailable; modules cannot build their settings"
     )
-    notify("No se pudo cargar la librería de controles")
+    notify("Could not load the widget library")
     state.summarizeBoot()
     return
 end
@@ -6062,7 +6062,7 @@ end
 local frameworkAt: number = os.clock()
 local frameworkPiece: any? = loadPiece(manifest.core[1] or "src/core/Framework.luau")
 if not frameworkPiece then
-    state.logBootstrapError("Framework no disponible; módulos externos omitidos")
+    state.logBootstrapError("Framework unavailable; external modules skipped")
     state.summarizeBoot()
     return
 end
@@ -6071,7 +6071,7 @@ local frameworkOk: boolean, framework: any = pcall(
     state.frameworkEnvironment
 )
 if not frameworkOk or type(framework) ~= "table" then
-    state.logBootstrapError("Framework init falló: " .. tostring(framework))
+    state.logBootstrapError("Framework init failed: " .. tostring(framework))
     state.summarizeBoot()
     return
 end
@@ -6092,7 +6092,7 @@ for _, path: string in ipairs(manifest.libraries or {}) do
     )
     if not startedOk or type(library) ~= "table" then
         state.logBootstrapError(
-            "Librería falló (" .. path .. "): " .. tostring(library)
+            "Library failed (" .. path .. "): " .. tostring(library)
         )
         continue
     end
@@ -6114,8 +6114,8 @@ if cardLibrary and type(cardLibrary.createUniversalFeature) == "function" then
         return cardLibrary.createUniversalFeature(...)
     end
 else
-    state.logBootstrapError("Sin fábrica de tarjetas; ningún módulo puede crear su tarjeta")
-    notify("No se pudo cargar la fábrica de tarjetas")
+    state.logBootstrapError("Card factory unavailable; modules cannot create cards")
+    notify("Could not load the card factory")
     return
 end
 
@@ -6142,10 +6142,10 @@ for _, entry: any in ipairs(manifest.modules) do
         if started then
             table.insert(loaded, piece)
             moduleCount += 1
-            state.logBootstrap("Módulo cargado: " .. path)
+            state.logBootstrap("Module loaded: " .. path)
         else
             state.logBootstrapError(
-                "Módulo falló (" .. path .. "): " .. tostring(failure)
+                "Module failed (" .. path .. "): " .. tostring(failure)
             )
         end
     end
@@ -6163,9 +6163,9 @@ if moduleCount < #manifest.modules then
         tostring(missing)
             .. " de "
             .. tostring(#manifest.modules)
-            .. " módulos no arrancaron; busca \"Módulo falló\" más arriba"
+            .. " modules did not start; look for \"Module failed\" above"
     )
-    notify(tostring(missing) .. " módulos no cargaron — revisa la consola")
+    notify(tostring(missing) .. " modules did not load — check the console")
 end
 
 state.cleanupFrameworkRuntime = function(): ()
@@ -6553,6 +6553,6 @@ if not initialized then
     -- be fixed by anyone.
     local reportFatal: any = (getfenv() :: any).warn
     if type(reportFatal) == "function" then
-        reportFatal("[" .. PRODUCT.logPrefix .. ":Bootstrap] Inicialización detenida:\n" .. tostring(bootstrapError))
+        reportFatal("[" .. PRODUCT.logPrefix .. ":Bootstrap] Initialization stopped:\n" .. tostring(bootstrapError))
     end
 end

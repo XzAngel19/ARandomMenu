@@ -1,7 +1,7 @@
 # Requests for agent C — architecture phase
 
 Work order from A (integrator). Base on the current tip of
-`arena/01a0262f-arandommenu`; hand back a hash, A merges. No PRs, no main,
+`arena/01a02c8a-arandommenu`; hand back a hash, A merges. No PRs, no main,
 no force-push. Tools, tests and docs only.
 
 ## Standing verdicts (do not regress)
@@ -44,6 +44,25 @@ Suite checks: Save ID appends to the persisted CSV once (no dupes),
 saved entries appear in the chooser after Refresh, the 16 built-in
 packs each carry seven slots (already pinned in spoof.luau — extend to
 the EmotePlayer saved-id path).
+
+## C5 — Next handoff: language and responsive gates
+
+Base on the current tip of `arena/01a02c8a-arandommenu`; do not re-land C1–C4.
+
+1. Add a focused runtime-language gate for player-visible strings in
+   `ARandomMenu.luau`, `loadstring`, `src/library/**`, `src/modules/**` and
+   `src/games/**`. English is the product language. Avoid a naive dictionary
+   that flags identifiers or third-party reference files; seed the gate with
+   the concrete Spanish runtime phrases removed by the integrator and document
+   how to extend it.
+2. Hold the mobile capture fixes: no `DockSearchBox` on touch-primary devices,
+   mobile pill width at most 100 px, Navigator still has `Search`, and the
+   mobile shortcut slot stays left of the title lane.
+3. Hold the height decision: UI Settings has no `Option_Maxheight` row, while
+   `state.uiMaxHeight` and `state.uiMaxSettingsHeight` stay 200 and viewport
+   clamping still wins.
+4. Add a test that changing/resetting a binding through Keybind Manager updates
+   the visible per-row square, not only direct square capture.
 
 ## Rules
 

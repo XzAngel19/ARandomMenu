@@ -177,6 +177,11 @@ return function(ctx: any): ()
             host.state.keyCaptureCallback(world.globals.Enum.KeyCode.Q)
         end
         check("a key press binds the square", true)
+        check(
+            "the square shows the assigned key",
+            tostring(liveSquare.Text or "") == "Q",
+            tostring(liveSquare.Text)
+        )
 
         liveSquare.MouseButton1Click:Fire()
         world.services.UserInputService.InputBegan:Fire({
@@ -222,6 +227,21 @@ return function(ctx: any): ()
         207,
         function(_on: boolean): () end
     )
+    local phoneShortcut: any = phone.shortcutButton
+    check(
+        "the mobile shortcut stays in the left lane",
+        phoneShortcut ~= nil
+            and phoneShortcut.Position.X.Offset == 4
+            and phoneShortcut.Size.X.Offset == 22,
+        phoneShortcut and tostring(phoneShortcut.Position.X.Offset) or "missing"
+    )
+    if phone.title and phoneShortcut then
+        check(
+            "the mobile shortcut ends before the title starts",
+            phoneShortcut.Position.X.Offset + phoneShortcut.Size.X.Offset
+                <= phone.title.Position.X.Offset
+        )
+    end
     local phoneSquare: any = Inspect.findBindSquare(phone)
     if phoneSquare ~= nil then
         check(
