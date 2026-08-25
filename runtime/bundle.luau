@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "fdf7969ea77f1484",
+    stamp = "74933a0dd52bade5",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -24302,7 +24302,6 @@ function Module.init(context: Runtime): any
     local entityLibrary: any = context.entity
     local Players: any = host.Players
     local LocalPlayer: any = host.LocalPlayer
-    local protectedTargets: any = context.services.protectedTargets
 
     type HitboxSettings = {
         part: string,
@@ -24464,12 +24463,6 @@ function Module.init(context: Runtime): any
                 continue
             end
             if entityLibrary:IsProtected(player) then
-                continue
-            end
-            -- Friend List is not a team check: it is a promise the rest of the
-            -- combat cards already keep, and an inflated friend is as visible
-            -- to the server as an inflated enemy.
-            if protectedTargets.isProtected(player) then
                 continue
             end
             local character: Model? = player.Character
