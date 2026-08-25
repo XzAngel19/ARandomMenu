@@ -623,6 +623,7 @@ function Host.create(world: any): HostStub
     local spoofEmotes: {any} = {}
     local spoofDescription: any = nil
     local calibration: any = nil
+    world.screenCaptures = 0
     host.services = {
         movementInput = {
             getVector = function(): (number, number) return host.state.getMoveInput() end,
@@ -630,6 +631,18 @@ function Host.create(world: any): HostStub
             onJumpRequest = function(callback: any): any return host.state.onJumpRequest(callback) end,
         },
         aim = {getRay = function(): any return host.state.getAimRay() end},
+        screenCapture = {
+            isAvailable = function(): boolean return true end,
+            capture = function(path: string): (boolean, string?)
+                world.screenCaptures += 1
+                world.files[path] = "PNG"
+                return true, nil
+            end,
+            writeText = function(path: string, contents: string): boolean
+                world.files[path] = contents
+                return true
+            end,
+        },
         menu = {
             isVisible = function(): boolean return host.state.visible == true end,
             isCapturingInput = function(): boolean

@@ -43,6 +43,11 @@ export type OwnershipService<T> = {
 export type ModuleServices = {
     movementInput: MovementInputService,
     aim: {getRay: () -> Ray?},
+    screenCapture: {
+        isAvailable: () -> boolean,
+        capture: (string) -> (boolean, string?),
+        writeText: (string, string) -> boolean,
+    },
     menu: {
         isVisible: () -> boolean,
         isCapturingInput: () -> boolean,

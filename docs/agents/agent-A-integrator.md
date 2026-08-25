@@ -110,10 +110,10 @@ Done, and load-bearing:
   persistence per profile. `Create` builds a window, `Adopt` manages a frame
   that already exists. Owns and releases its own connections.
 - **`ClickGui`** (`state.clickGui`) — six category windows tiled from the
-  top-left, every one of the 38 cards reparented into the right one.
+  top-left, every one of the 45 cards reparented into the right one.
 - **The row** — fills with `enabled` when the module is on. 22 px, and nothing
   scales with the viewport any more.
-- **`card:SetStatus(text)`** — on the card, so all 43 modules can publish the
+- **`card:SetStatus(text)`** — on the card, so all 45 modules can publish the
   bracketed status the HUD list will read.
 - **`Module:Render`** — a second scheduler bucket on RenderStepped, because
   Heartbeat runs after the frame and made every overlay trail the camera.

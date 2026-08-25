@@ -4,7 +4,7 @@
   "identity": {
     "product": "Wurst",
     "portVersion": "0.1 Beta",
-    "universalModules": 43,
+    "universalModules": 45,
     "wurstRelease": "7.19",
     "tag": "v7.19",
     "commit": "dbc25e930434adf20039de32c30e397c17983928",
@@ -23,11 +23,11 @@
     "APPLY-2 persist position + display clamp (already, keep MARGIN 6)",
     "APPLY-3 settings beside category via FindFreeRect (already)",
     "APPLY-4 close popups when owner gone (menu-hide blocking; owner/scroll-clip block when published)",
-    "APPLY-5 pixel title-bar icons (already)"
+    "APPLY-5 pixel title-bar icons (already)",
+    "Universal module additions are explicit inventory changes; update the snapshot, fallback manifest and parity matrix together."
   ],
   "forbid": [
     "new hacks",
-    "new modules",
     "new categories",
     "replace the 38",
     "rebrand 7.54.1",

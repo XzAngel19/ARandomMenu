@@ -363,7 +363,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "cbe83b8e79971041"
+local SOURCE_STAMP: string = "d383fa75223a3352"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -6003,6 +6003,80 @@ local activityFlags: {[string]: boolean} = {}
 local spoofEmotes: {any} = {}
 local spoofDescription: HumanoidDescription? = nil
 local projectileCalibrationOwner: any = nil
+
+-- Screen capture is an optional executor capability, not a hidden collector.
+-- Learning calls this service only after the player presses its Capture now
+-- button. The standard Roblox API has no screenshot function, so absence is a
+-- normal and explicit result.
+local SCREEN_CAPTURE_NAMES: {string} = {
+    "screenshot",
+    "captureScreenshot",
+    "capture_screenshot",
+    "getScreenshot",
+}
+local function findScreenCapture(): any
+    local environment: any = getfenv()
+    for _, name: string in ipairs(SCREEN_CAPTURE_NAMES) do
+        local candidate: any = environment[name]
+        if type(candidate) == "function" then
+            return candidate
+        end
+    end
+    return nil
+end
+local screenCaptureService: any = {
+    isAvailable = function(): boolean
+        return findScreenCapture() ~= nil
+    end,
+    capture = function(path: string): (boolean, string?)
+        local environment: any = getfenv()
+        local capture: any = findScreenCapture()
+        if type(capture) ~= "function" then
+            return false, "executor has no screen capture API"
+        end
+        local folder: string? = string.match(path, "^(.*)/[^/]+$")
+        local isFolder: any = environment.isfolder
+        local makeFolder: any = environment.makefolder
+        if folder and type(isFolder) == "function" and type(makeFolder) == "function" then
+            local parent: string? = string.match(folder :: string, "^(.*)/[^/]+$")
+            if parent and not isFolder(parent) then
+                pcall(makeFolder, parent)
+            end
+            if not isFolder(folder :: string) then
+                pcall(makeFolder, folder)
+            end
+        end
+        -- Path-first is the contract used by the service. A no-argument retry
+        -- covers executors whose function chooses its own output while still
+        -- keeping the action explicit and local.
+        local ok: boolean, result: any = pcall(capture, path)
+        if not ok then
+            ok, result = pcall(capture)
+        end
+        if not ok then
+            return false, tostring(result)
+        end
+        if result == false then
+            return false, "screen capture API declined the request"
+        end
+        -- Some executors return image bytes instead of writing the path. Only
+        -- a returned string is accepted as data; there is no network fallback.
+        if type(result) == "string"
+            and result ~= ""
+            and type(environment.writefile) == "function" then
+            pcall(environment.writefile, path, result)
+        end
+        return true, nil
+    end,
+    writeText = function(path: string, contents: string): boolean
+        local environment: any = getfenv()
+        if type(environment.writefile) ~= "function" then
+            return false
+        end
+        return pcall(environment.writefile, path, contents) == true
+    end,
+}
+
 local moduleServices: ModuleServices = {
     movementInput = {
         getVector = state.getMoveInput,
@@ -6010,6 +6084,7 @@ local moduleServices: ModuleServices = {
         onJumpRequest = state.onJumpRequest,
     },
     aim = {getRay = state.getAimRay},
+    screenCapture = screenCaptureService,
     menu = {
         isVisible = function(): boolean return state.visible == true end,
         isCapturingInput = function(): boolean
@@ -6074,6 +6149,7 @@ local fallbackManifest: any = {
     core = {"src/core/Framework.luau"},
     libraries = {
         "src/library/Entity.luau",
+        "src/library/Targeting.luau",
         "src/library/Weapons.luau",
         "src/library/Render.luau",
         "src/library/Cards.luau",
@@ -6093,9 +6169,11 @@ local fallbackManifest: any = {
         {path = "src/modules/Visuals/NPCESP.luau", name = "NPCESP", category = "Render"},
         {path = "src/modules/Combat/KillAura.luau", name = "Killaura", category = "Combat"},
         {path = "src/modules/Utility/RemoteLogger.luau", name = "Remote Logger", category = "Other"},
+        {path = "src/modules/Utility/Learning.luau", name = "Learning", category = "Other"},
         {path = "src/modules/Movement/ClickTeleport.luau", name = "Click Teleport", category = "Movement"},
         {path = "src/modules/Combat/AutoClicker.luau", name = "Auto Clicker", category = "Combat"},
         {path = "src/modules/Combat/TriggerBot.luau", name = "TriggerBot", category = "Combat"},
+        {path = "src/modules/Combat/AimAssist.luau", name = "Aim Assist", category = "Combat"},
         {path = "src/modules/Visuals/XRay.luau", name = "X-Ray", category = "Render"},
         {path = "src/modules/Movement/HighJump.luau", name = "HighJump", category = "Movement"},
         {path = "src/modules/Movement/Spider.luau", name = "Spider", category = "Movement"},

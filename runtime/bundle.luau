@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "cbe83b8e79971041",
+    stamp = "d383fa75223a3352",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -43,6 +43,7 @@ local Manifest: Manifest = {
     },
     libraries = {
         "src/library/Entity.luau",
+        "src/library/Targeting.luau",
         "src/library/Weapons.luau",
         "src/library/Render.luau",
         -- The card factory. Every module calls it, so it comes before the
@@ -112,6 +113,11 @@ local Manifest: Manifest = {
             category = "Other",
         },
         {
+            path = "src/modules/Utility/Learning.luau",
+            name = "Learning",
+            category = "Other",
+        },
+        {
             path = "src/modules/Movement/ClickTeleport.luau",
             name = "Click Teleport",
             category = "Movement",
@@ -124,6 +130,11 @@ local Manifest: Manifest = {
         {
             path = "src/modules/Combat/TriggerBot.luau",
             name = "TriggerBot",
+            category = "Combat",
+        },
+        {
+            path = "src/modules/Combat/AimAssist.luau",
+            name = "Aim Assist",
             category = "Combat",
         },
         -- Spoof: cosmetic only, and each one lands on its own page.
@@ -2853,6 +2864,11 @@ export type OwnershipService<T> = {
 export type ModuleServices = {
     movementInput: MovementInputService,
     aim: {getRay: () -> Ray?},
+    screenCapture: {
+        isAvailable: () -> boolean,
+        capture: (string) -> (boolean, string?),
+        writeText: (string, string) -> boolean,
+    },
     menu: {
         isVisible: () -> boolean,
         isCapturingInput: () -> boolean,
@@ -4228,6 +4244,268 @@ end
 
 function Module.destroy(): ()
     local library: EntityLibrary? = activeLibrary
+    if library then
+        library:Destroy()
+    end
+    activeLibrary = nil
+    Module.Initialized = false
+end
+
+return Module
+]=====],
+        ["src/library/Targeting.luau"] = [=====[--!strict
+--
+-- Targeting library.
+--
+-- Target selection is deliberately pure from a module's point of view: it
+-- reads the entity index and camera, applies the same team/friend/visibility
+-- policy to every caller, and returns a record. It never moves the camera,
+-- fires a tool, edits a remote or installs a hook. Aim Assist uses the result;
+-- a future supported-game adapter can use the same result without sharing any
+-- of the side effects.
+
+export type Query = {
+    FOV: number?,
+    MaxDistance: number?,
+    TargetPart: string?,
+    Prediction: number?,
+    TeamCheck: boolean?,
+    VisibilityCheck: boolean?,
+    Priority: string?,
+}
+
+export type Target = {
+    player: Player,
+    entity: any,
+    character: Model,
+    part: BasePart,
+    position: Vector3,
+    screenPosition: Vector2,
+    distance: number,
+    cursorDistance: number,
+}
+
+export type Library = {
+    List: (self: Library, entities: any, query: Query?) -> {Target},
+    Select: (self: Library, entities: any, query: Query?) -> Target?,
+    Destroy: (self: Library) -> (),
+}
+
+local Module = {
+    Name = "Targeting",
+    PlaceId = 0,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local activeLibrary: Library? = nil
+
+local function asBasePart(instance: Instance?): BasePart?
+    if instance and instance:IsA("BasePart") then
+        return instance :: BasePart
+    end
+    return nil
+end
+
+function Module.init(context: any): Library
+    local host: any = context.host or context
+    local userInput: UserInputService? = host.UserInputService
+    local currentWorkspace: Workspace = host.workspace or workspace
+    local localPlayer: Player? = host.LocalPlayer
+    local services: any = context.services or host.services
+
+    local library: any = {}
+
+    local function camera(): Camera?
+        return currentWorkspace.CurrentCamera
+    end
+
+    local function cursor(cameraObject: Camera): Vector2
+        if userInput and userInput.MouseEnabled then
+            local ok: boolean, location: any = pcall(
+                (userInput :: UserInputService).GetMouseLocation,
+                userInput
+            )
+            if ok and typeof(location) == "Vector2" then
+                return location :: Vector2
+            end
+        end
+        local viewport: Vector2 = cameraObject.ViewportSize
+        return Vector2.new(viewport.X / 2, viewport.Y / 2)
+    end
+
+    local function targetParts(entity: any, requested: string?): {BasePart}
+        local character: Model = entity.Character
+        local wanted: string = requested or "Closest"
+        if wanted == "Head" then
+            return {
+                asBasePart(character:FindFirstChild("Head")) or entity.RootPart,
+            }
+        end
+        if wanted == "Torso" then
+            return {
+                asBasePart(character:FindFirstChild("UpperTorso"))
+                    or asBasePart(character:FindFirstChild("Torso"))
+                    or entity.RootPart,
+            }
+        end
+        if wanted ~= "Closest" then
+            return {entity.RootPart}
+        end
+        local head: BasePart? = asBasePart(character:FindFirstChild("Head"))
+        if head then
+            return {head, entity.RootPart}
+        end
+        return {entity.RootPart}
+    end
+
+    local function protected(player: Player): boolean
+        local policy: any = services and services.protectedTargets
+        if policy and type(policy.isProtected) == "function" then
+            return policy.isProtected(player) == true
+        end
+        return false
+    end
+
+    local function visibleFrom(
+        cameraObject: Camera,
+        entity: any,
+        position: Vector3
+    ): boolean
+        local origin: Vector3 = cameraObject.CFrame.Position
+        local parameters: RaycastParams = RaycastParams.new()
+        parameters.FilterType = Enum.RaycastFilterType.Exclude
+        local ignored: {Instance} = {entity.Character, cameraObject}
+        if localPlayer and localPlayer.Character then
+            table.insert(ignored, localPlayer.Character)
+        end
+        parameters.FilterDescendantsInstances = ignored
+        parameters.IgnoreWater = true
+        local ok: boolean, result: any = pcall(
+            currentWorkspace.Raycast,
+            currentWorkspace,
+            origin,
+            position - origin,
+            parameters
+        )
+        return ok and result == nil
+    end
+
+    local function candidateForPart(
+        cameraObject: Camera,
+        pointer: Vector2,
+        entity: any,
+        part: BasePart,
+        prediction: number,
+        query: Query
+    ): Target?
+        local velocity: Vector3 = part.AssemblyLinearVelocity or Vector3.zero
+        local predicted: Vector3 = part.Position + velocity * prediction
+        local projected: Vector3, onScreen: boolean =
+            cameraObject:WorldToViewportPoint(predicted)
+        if not onScreen or projected.Z <= 0 then
+            return nil
+        end
+        local screenPosition: Vector2 = Vector2.new(projected.X, projected.Y)
+        local cursorDistance: number = (screenPosition - pointer).Magnitude
+        if query.FOV ~= nil and cursorDistance > (query.FOV :: number) then
+            return nil
+        end
+        if query.VisibilityCheck == true
+            and not visibleFrom(cameraObject, entity, predicted) then
+            return nil
+        end
+        return {
+            player = entity.Player,
+            entity = entity,
+            character = entity.Character,
+            part = part,
+            position = predicted,
+            screenPosition = screenPosition,
+            distance = entity.Distance,
+            cursorDistance = cursorDistance,
+        }
+    end
+
+    function library:List(entities: any, query: Query?): {Target}
+        local options: Query = query or {}
+        local cameraObject: Camera? = camera()
+        if not cameraObject or not entities then
+            return {}
+        end
+        if type(entities.Refresh) == "function" then
+            entities:Refresh()
+        end
+        local pointer: Vector2 = cursor(cameraObject :: Camera)
+        local found: {Target} = {}
+        local maxDistance: number = options.MaxDistance or math.huge
+        local prediction: number = math.max(options.Prediction or 0, 0)
+
+        for _, entity: any in ipairs(entities.List or {}) do
+            if entity.Distance > maxDistance then
+                continue
+            end
+            if options.TeamCheck ~= false and entity.IsFriendly then
+                continue
+            end
+            if protected(entity.Player) then
+                continue
+            end
+
+            local bestForEntity: Target? = nil
+            for _, part: BasePart in ipairs(targetParts(entity, options.TargetPart)) do
+                local candidate: Target? = candidateForPart(
+                    cameraObject :: Camera,
+                    pointer,
+                    entity,
+                    part,
+                    prediction,
+                    options
+                )
+                if candidate
+                    and (not bestForEntity
+                        or candidate.cursorDistance < (bestForEntity :: Target).cursorDistance) then
+                    bestForEntity = candidate
+                end
+            end
+            if bestForEntity then
+                table.insert(found, bestForEntity :: Target)
+            end
+        end
+
+        local priority: string = options.Priority or "Cursor"
+        table.sort(found, function(first: Target, second: Target): boolean
+            if priority == "Distance" then
+                if first.distance == second.distance then
+                    return first.cursorDistance < second.cursorDistance
+                end
+                return first.distance < second.distance
+            end
+            if first.cursorDistance == second.cursorDistance then
+                return first.distance < second.distance
+            end
+            return first.cursorDistance < second.cursorDistance
+        end)
+        return found
+    end
+
+    function library:Select(entities: any, query: Query?): Target?
+        return self:List(entities, query)[1]
+    end
+
+    function library:Destroy(): ()
+        if activeLibrary == library then
+            activeLibrary = nil
+        end
+    end
+
+    activeLibrary = (library :: any) :: Library
+    Module.Initialized = true
+    return (library :: any) :: Library
+end
+
+function Module.destroy(): ()
+    local library: Library? = activeLibrary
     if library then
         library:Destroy()
     end
@@ -17116,6 +17394,153 @@ end
 
 return Module
 ]=====],
+        ["src/modules/Utility/Learning.luau"] = [=====[--!strict
+--
+-- Learning.
+--
+-- Creates a local, user-triggered screen sample for feature engineering. A
+-- capture is never taken in the background, uploaded, or sent through a
+-- remote: the player must press Capture now, and the executor must expose an
+-- explicit screenshot function. The sidecar JSON describes the sample without
+-- copying gameplay objects or player chat.
+--
+-- Roblox's standard Luau API has no screen-capture primitive. The shell
+-- exposes a small capability service for executors that provide one; when it
+-- is unavailable this card reports that fact instead of pretending to capture.
+
+export type Runtime = {
+    framework: any,
+    host: any,
+    services: any,
+}
+
+local Module = {
+    Name = "Learning",
+    PlaceId = 0,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local activeCard: any = nil
+
+function Module.init(context: Runtime): any
+    local framework: any = context.framework
+    local host: any = context.host
+    local services: any = context.services
+    local captureService: any = services and services.screenCapture
+    local product: any = host.PRODUCT or {}
+    local httpService: any = host.HttpService
+    local currentWorkspace: Workspace = host.workspace or workspace
+    local sampleNumber: number = 0
+    local card: any
+
+    local function writeMetadata(path: string, payload: any): boolean
+        if not captureService or type(captureService.writeText) ~= "function" then
+            return false
+        end
+        local ok: boolean, encoded: any = pcall(function(): string
+            return httpService:JSONEncode(payload)
+        end)
+        if not ok or type(encoded) ~= "string" then
+            return false
+        end
+        return captureService.writeText(path, encoded) == true
+    end
+
+    local function captureSample(): ()
+        if not captureService or type(captureService.isAvailable) ~= "function"
+            or not captureService.isAvailable() then
+            card:Notify("screenshot API unavailable")
+            card:SetStatus("unavailable")
+            return
+        end
+        if type(captureService.capture) ~= "function"
+            or type(captureService.writeText) ~= "function" then
+            card:Notify("screen capture service incomplete")
+            card:SetStatus("unavailable")
+            return
+        end
+
+        sampleNumber += 1
+        local folder: string = tostring(product.storageFolder or "ARandomMenu")
+            .. "/Learning"
+        local stamp: string = tostring(os.time())
+        local base: string = folder
+            .. "/"
+            .. tostring(game.PlaceId)
+            .. "-"
+            .. stamp
+            .. "-"
+            .. tostring(sampleNumber)
+        local imagePath: string = base .. ".png"
+        local metadataPath: string = base .. ".json"
+        local captured: boolean, reason: any = captureService.capture(imagePath)
+        if not captured then
+            card:Notify(tostring(reason or "screen capture failed"))
+            card:SetStatus("failed")
+            return
+        end
+
+        local camera: Camera? = currentWorkspace.CurrentCamera
+        local viewport: Vector2 = camera
+            and camera.ViewportSize
+            or Vector2.new(0, 0)
+        local payload: {[string]: any} = {
+            schema = 1,
+            kind = "learning-screen-sample",
+            image = imagePath,
+            capturedAt = os.time(),
+            placeId = game.PlaceId,
+            viewport = {width = viewport.X, height = viewport.Y},
+            source = "manual Capture now action",
+            menuVisible = services.menu.isVisible(),
+        }
+        local wrote: boolean = writeMetadata(metadataPath, payload)
+        if not wrote then
+            card:Notify("image saved; metadata could not be written")
+            card:SetStatus("image saved")
+            return
+        end
+        card:SetStatus("saved " .. tostring(sampleNumber))
+        card:Notify("saved learning sample " .. tostring(sampleNumber))
+    end
+
+    card = framework.Categories.Other:CreateModule({
+        Name = "Learning",
+        Category = "Other",
+        ConfigKey = "Universal.Learning",
+        Kind = "group",
+        Order = 26,
+        Tooltip = "Save a manual local screenshot and a small metadata sidecar.",
+        Function = function(_enabled: boolean): ()
+            -- Group cards have no runtime loop. Keeping this callback empty
+            -- makes the ownership explicit: only the button below captures.
+        end,
+    })
+    card:CreateButton({
+        Name = "Capture now",
+        Tooltip = "Save one screenshot locally; no upload or background capture.",
+        Function = captureSample,
+    })
+    card:CreateNote(
+        "Manual and local only. Standard Roblox Luau has no screenshot API."
+    )
+
+    activeCard = card
+    Module.Initialized = true
+    return card
+end
+
+function Module.destroy(): ()
+    if activeCard and activeCard.Enabled then
+        activeCard:Toggle(false)
+    end
+    activeCard = nil
+    Module.Initialized = false
+end
+
+return Module
+]=====],
         ["src/modules/Movement/ClickTeleport.luau"] = [=====[--!strict
 --
 -- Click Teleport.
@@ -18314,6 +18739,237 @@ function Module.destroy(): ()
         pcall(activeCleanup)
     end
     activeCleanup = nil
+    Module.Initialized = false
+end
+
+return Module
+]=====],
+        ["src/modules/Combat/AimAssist.luau"] = [=====[--!strict
+--
+-- Aim Assist.
+--
+-- A visible, camera-only assist for supported Roblox experiences. It asks the
+-- shared Targeting library for a valid player, then eases the local camera
+-- toward that point while the module is enabled. It does not hook Raycast,
+-- spoof Mouse.Hit, rewrite remotes, simulate clicks or change hitboxes.
+--
+-- That boundary is intentional. A module can own its camera effect without
+-- affecting other modules; a global hook cannot. The target selector is kept
+-- separate so a future, explicitly supported game adapter can consume the
+-- same target record without changing this universal module.
+
+export type Runtime = {
+    framework: any,
+    entity: any,
+    host: any,
+    libraries: {[string]: any},
+    services: any,
+}
+
+local Module = {
+    Name = "AimAssist",
+    PlaceId = 0,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local activeCard: any = nil
+
+function Module.init(context: Runtime): any
+    local framework: any = context.framework
+    local host: any = context.host
+    local services: any = context.services
+    local targeting: any = context.libraries and context.libraries.targeting
+    local entity: any = context.entity
+    local userInput: UserInputService = host.UserInputService
+    local currentWorkspace: Workspace = host.workspace or workspace
+    local runtime: any = {
+        target = nil,
+    }
+    local card: any
+
+    local function camera(): Camera?
+        return currentWorkspace.CurrentCamera
+    end
+
+    local function moveCamera(target: any, deltaTime: number): boolean
+        local cameraObject: Camera? = camera()
+        if not cameraObject or not target then
+            return false
+        end
+        local current: CFrame = cameraObject.CFrame
+        local offset: Vector3 = target.position - current.Position
+        if offset.Magnitude <= 0.001 then
+            return false
+        end
+
+        -- 100 means near-snap and lower values ease in. The rate is capped by
+        -- the frame delta, so a dropped frame cannot fling the view past the
+        -- target or produce a NaN CFrame.
+        local smoothing: number = card.Options["Smoothing"].Value
+        local response: number = 2 + smoothing * 0.18
+        local alpha: number = math.clamp(
+            math.max(deltaTime, 1 / 240) * response,
+            0,
+            smoothing >= 100 and 1 or 0.85
+        )
+        local currentLook: Vector3 = current.LookVector
+        local blended: Vector3 = currentLook:Lerp(offset.Unit, alpha)
+        if blended.Magnitude <= 0.001 then
+            return false
+        end
+        cameraObject.CFrame = CFrame.lookAt(
+            current.Position,
+            current.Position + blended.Unit
+        )
+        return true
+    end
+
+    local function anotherAimAdapterIsActive(): boolean
+        local activity: any = services and services.activity
+        return activity ~= nil
+            and type(activity.isActive) == "function"
+            and activity.isActive("mvsdSilentAim") == true
+    end
+
+    local function selectTarget(): any
+        if anotherAimAdapterIsActive()
+            or not targeting
+            or type(targeting.Select) ~= "function" then
+            return nil
+        end
+        local options: any = card.Options
+        return targeting:Select(entity, {
+            FOV = options["FOV"].Value,
+            MaxDistance = options["Max distance"].Value,
+            TargetPart = options["Target part"].Value,
+            Prediction = options["Prediction"].Value,
+            TeamCheck = options["Team check"].Value,
+            VisibilityCheck = options["Visibility check"].Value,
+            Priority = options["Priority"].Value,
+        })
+    end
+
+    card = framework.Categories.Combat:CreateModule({
+        Name = "Aim Assist",
+        Category = "Combat",
+        ConfigKey = "Universal.AimAssist",
+        Order = 4,
+        Tooltip = "Eases the local camera toward a valid target; no raycast or "
+            .. "remote hooks.",
+        Function = function(enabled: boolean): ()
+            runtime.target = nil
+            if not enabled then
+                card:SetStatus(nil)
+                return
+            end
+            card:SetStatus("searching")
+            card:Render(function(deltaTime: number): ()
+                -- Menu surfaces own input while open. Do not steer the camera
+                -- under a settings window or while a key is being assigned.
+                if anotherAimAdapterIsActive()
+                    or services.menu.isVisible()
+                    or services.menu.isCapturingInput() then
+                    runtime.target = nil
+                    card:SetStatus("paused")
+                    return
+                end
+                if userInput:GetFocusedTextBox() then
+                    runtime.target = nil
+                    card:SetStatus("paused")
+                    return
+                end
+
+                local selected: any = selectTarget()
+                runtime.target = selected
+                if not selected then
+                    card:SetStatus("searching")
+                    return
+                end
+                local moved: boolean = moveCamera(selected, deltaTime)
+                local displayName: string = tostring(selected.player.DisplayName
+                    or selected.player.Name)
+                local distance: number = math.round(selected.distance)
+                card:SetStatus(
+                    displayName .. " · " .. tostring(distance) .. " studs"
+                        .. (moved and " · locked" or " · ready")
+                )
+            end)
+            card:Clean(function(): ()
+                runtime.target = nil
+                card:SetStatus(nil)
+            end)
+        end,
+    })
+
+    card:CreateSlider({
+        Name = "FOV",
+        Min = 15,
+        Max = 500,
+        Step = 5,
+        Default = 180,
+        Tooltip = "Pixels around the cursor in which a target may be selected.",
+    })
+    card:CreateSlider({
+        Name = "Smoothing",
+        Min = 5,
+        Max = 100,
+        Step = 5,
+        Default = 45,
+        Tooltip = "Camera response. Higher values reach the target faster.",
+    })
+    card:CreateDropdown({
+        Name = "Target part",
+        List = {"Closest", "Head", "Torso"},
+        Index = 1,
+        Tooltip = "Body part used as the camera target.",
+    })
+    card:CreateDropdown({
+        Name = "Priority",
+        List = {"Cursor", "Distance"},
+        Index = 1,
+        Tooltip = "Choose the target nearest the cursor or nearest in the world.",
+    })
+    card:CreateSlider({
+        Name = "Prediction",
+        Min = 0,
+        Max = 0.5,
+        Step = 0.01,
+        Default = 0.06,
+        Tooltip = "Seconds of target velocity to lead. Set to 0 for no lead.",
+    })
+    card:CreateSlider({
+        Name = "Max distance",
+        Min = 25,
+        Max = 2000,
+        Step = 5,
+        Default = 600,
+        Tooltip = "Ignore targets farther than this many studs.",
+    })
+    card:CreateToggle({
+        Name = "Visibility check",
+        Default = true,
+        Tooltip = "Skip targets hidden by map geometry.",
+    })
+    card:CreateToggle({
+        Name = "Team check",
+        Default = true,
+        Tooltip = "Skip teammates and Friend List entries.",
+    })
+    card:CreateNote(
+        "Camera-only assist. It never edits remotes, raycasts or hitboxes."
+    )
+
+    activeCard = card
+    Module.Initialized = true
+    return card
+end
+
+function Module.destroy(): ()
+    if activeCard and activeCard.Enabled then
+        activeCard:Toggle(false)
+    end
+    activeCard = nil
     Module.Initialized = false
 end
 

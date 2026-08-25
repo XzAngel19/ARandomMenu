@@ -36,6 +36,7 @@ local Manifest: Manifest = {
     },
     libraries = {
         "src/library/Entity.luau",
+        "src/library/Targeting.luau",
         "src/library/Weapons.luau",
         "src/library/Render.luau",
         -- The card factory. Every module calls it, so it comes before the
@@ -105,6 +106,11 @@ local Manifest: Manifest = {
             category = "Other",
         },
         {
+            path = "src/modules/Utility/Learning.luau",
+            name = "Learning",
+            category = "Other",
+        },
+        {
             path = "src/modules/Movement/ClickTeleport.luau",
             name = "Click Teleport",
             category = "Movement",
@@ -117,6 +123,11 @@ local Manifest: Manifest = {
         {
             path = "src/modules/Combat/TriggerBot.luau",
             name = "TriggerBot",
+            category = "Combat",
+        },
+        {
+            path = "src/modules/Combat/AimAssist.luau",
+            name = "Aim Assist",
             category = "Combat",
         },
         -- Spoof: cosmetic only, and each one lands on its own page.

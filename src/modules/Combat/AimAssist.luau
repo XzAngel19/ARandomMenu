@@ -1,0 +1,230 @@
+--!strict
+--
+-- Aim Assist.
+--
+-- A visible, camera-only assist for supported Roblox experiences. It asks the
+-- shared Targeting library for a valid player, then eases the local camera
+-- toward that point while the module is enabled. It does not hook Raycast,
+-- spoof Mouse.Hit, rewrite remotes, simulate clicks or change hitboxes.
+--
+-- That boundary is intentional. A module can own its camera effect without
+-- affecting other modules; a global hook cannot. The target selector is kept
+-- separate so a future, explicitly supported game adapter can consume the
+-- same target record without changing this universal module.
+
+export type Runtime = {
+    framework: any,
+    entity: any,
+    host: any,
+    libraries: {[string]: any},
+    services: any,
+}
+
+local Module = {
+    Name = "AimAssist",
+    PlaceId = 0,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local activeCard: any = nil
+
+function Module.init(context: Runtime): any
+    local framework: any = context.framework
+    local host: any = context.host
+    local services: any = context.services
+    local targeting: any = context.libraries and context.libraries.targeting
+    local entity: any = context.entity
+    local userInput: UserInputService = host.UserInputService
+    local currentWorkspace: Workspace = host.workspace or workspace
+    local runtime: any = {
+        target = nil,
+    }
+    local card: any
+
+    local function camera(): Camera?
+        return currentWorkspace.CurrentCamera
+    end
+
+    local function moveCamera(target: any, deltaTime: number): boolean
+        local cameraObject: Camera? = camera()
+        if not cameraObject or not target then
+            return false
+        end
+        local current: CFrame = cameraObject.CFrame
+        local offset: Vector3 = target.position - current.Position
+        if offset.Magnitude <= 0.001 then
+            return false
+        end
+
+        -- 100 means near-snap and lower values ease in. The rate is capped by
+        -- the frame delta, so a dropped frame cannot fling the view past the
+        -- target or produce a NaN CFrame.
+        local smoothing: number = card.Options["Smoothing"].Value
+        local response: number = 2 + smoothing * 0.18
+        local alpha: number = math.clamp(
+            math.max(deltaTime, 1 / 240) * response,
+            0,
+            smoothing >= 100 and 1 or 0.85
+        )
+        local currentLook: Vector3 = current.LookVector
+        local blended: Vector3 = currentLook:Lerp(offset.Unit, alpha)
+        if blended.Magnitude <= 0.001 then
+            return false
+        end
+        cameraObject.CFrame = CFrame.lookAt(
+            current.Position,
+            current.Position + blended.Unit
+        )
+        return true
+    end
+
+    local function anotherAimAdapterIsActive(): boolean
+        local activity: any = services and services.activity
+        return activity ~= nil
+            and type(activity.isActive) == "function"
+            and activity.isActive("mvsdSilentAim") == true
+    end
+
+    local function selectTarget(): any
+        if anotherAimAdapterIsActive()
+            or not targeting
+            or type(targeting.Select) ~= "function" then
+            return nil
+        end
+        local options: any = card.Options
+        return targeting:Select(entity, {
+            FOV = options["FOV"].Value,
+            MaxDistance = options["Max distance"].Value,
+            TargetPart = options["Target part"].Value,
+            Prediction = options["Prediction"].Value,
+            TeamCheck = options["Team check"].Value,
+            VisibilityCheck = options["Visibility check"].Value,
+            Priority = options["Priority"].Value,
+        })
+    end
+
+    card = framework.Categories.Combat:CreateModule({
+        Name = "Aim Assist",
+        Category = "Combat",
+        ConfigKey = "Universal.AimAssist",
+        Order = 4,
+        Tooltip = "Eases the local camera toward a valid target; no raycast or "
+            .. "remote hooks.",
+        Function = function(enabled: boolean): ()
+            runtime.target = nil
+            if not enabled then
+                card:SetStatus(nil)
+                return
+            end
+            card:SetStatus("searching")
+            card:Render(function(deltaTime: number): ()
+                -- Menu surfaces own input while open. Do not steer the camera
+                -- under a settings window or while a key is being assigned.
+                if anotherAimAdapterIsActive()
+                    or services.menu.isVisible()
+                    or services.menu.isCapturingInput() then
+                    runtime.target = nil
+                    card:SetStatus("paused")
+                    return
+                end
+                if userInput:GetFocusedTextBox() then
+                    runtime.target = nil
+                    card:SetStatus("paused")
+                    return
+                end
+
+                local selected: any = selectTarget()
+                runtime.target = selected
+                if not selected then
+                    card:SetStatus("searching")
+                    return
+                end
+                local moved: boolean = moveCamera(selected, deltaTime)
+                local displayName: string = tostring(selected.player.DisplayName
+                    or selected.player.Name)
+                local distance: number = math.round(selected.distance)
+                card:SetStatus(
+                    displayName .. " · " .. tostring(distance) .. " studs"
+                        .. (moved and " · locked" or " · ready")
+                )
+            end)
+            card:Clean(function(): ()
+                runtime.target = nil
+                card:SetStatus(nil)
+            end)
+        end,
+    })
+
+    card:CreateSlider({
+        Name = "FOV",
+        Min = 15,
+        Max = 500,
+        Step = 5,
+        Default = 180,
+        Tooltip = "Pixels around the cursor in which a target may be selected.",
+    })
+    card:CreateSlider({
+        Name = "Smoothing",
+        Min = 5,
+        Max = 100,
+        Step = 5,
+        Default = 45,
+        Tooltip = "Camera response. Higher values reach the target faster.",
+    })
+    card:CreateDropdown({
+        Name = "Target part",
+        List = {"Closest", "Head", "Torso"},
+        Index = 1,
+        Tooltip = "Body part used as the camera target.",
+    })
+    card:CreateDropdown({
+        Name = "Priority",
+        List = {"Cursor", "Distance"},
+        Index = 1,
+        Tooltip = "Choose the target nearest the cursor or nearest in the world.",
+    })
+    card:CreateSlider({
+        Name = "Prediction",
+        Min = 0,
+        Max = 0.5,
+        Step = 0.01,
+        Default = 0.06,
+        Tooltip = "Seconds of target velocity to lead. Set to 0 for no lead.",
+    })
+    card:CreateSlider({
+        Name = "Max distance",
+        Min = 25,
+        Max = 2000,
+        Step = 5,
+        Default = 600,
+        Tooltip = "Ignore targets farther than this many studs.",
+    })
+    card:CreateToggle({
+        Name = "Visibility check",
+        Default = true,
+        Tooltip = "Skip targets hidden by map geometry.",
+    })
+    card:CreateToggle({
+        Name = "Team check",
+        Default = true,
+        Tooltip = "Skip teammates and Friend List entries.",
+    })
+    card:CreateNote(
+        "Camera-only assist. It never edits remotes, raycasts or hitboxes."
+    )
+
+    activeCard = card
+    Module.Initialized = true
+    return card
+end
+
+function Module.destroy(): ()
+    if activeCard and activeCard.Enabled then
+        activeCard:Toggle(false)
+    end
+    activeCard = nil
+    Module.Initialized = false
+end
+
+return Module

@@ -105,6 +105,19 @@ type AimRuntime = {
 
 local moduleCleanup: () -> () = function(): () end
 
+-- The universal Aim Assist is camera-only, but this legacy game adapter owns
+-- process-wide ray hooks while its own Silent Aim card is on. Publish that
+-- ownership so the universal camera module can stand down instead of competing
+-- with it. This flag does not install, remove or hide a hook.
+local function setSilentAimActivity(active: boolean): ()
+    local runtime: any = Module.Runtime
+    local services: any = runtime and runtime.Services
+    local activity: any = services and services.activity
+    if activity and type(activity.set) == "function" then
+        activity.set("mvsdSilentAim", active)
+    end
+end
+
 local function buildMVSDFeatures(): ()
     local settings: AimSettings = {
         teamCheck = true,
@@ -880,6 +893,7 @@ local function buildMVSDFeatures(): ()
     local function syncCoreTask(): ()
         disconnectFeatureConnection("MVSDAimCore")
         if not anyFeatureEnabled() then
+            setSilentAimActivity(false)
             releaseAutoShoot()
             uninstallHooks()
             if runtime.visuals then
@@ -900,6 +914,7 @@ local function buildMVSDFeatures(): ()
         elseif not settings.aimEnabled and (runtime.rayHookInstalled or runtime.raycastHookInstalled) then
             uninstallHooks()
         end
+        setSilentAimActivity(settings.aimEnabled)
         getVisuals()
         featureConnections.MVSDAimCore = TaskManager:Connect(updateCore)
     end
@@ -1034,6 +1049,7 @@ local function buildMVSDFeatures(): ()
     end)
 
     state.cleanupMVSDRuntime = function(): ()
+        setSilentAimActivity(false)
         disconnectFeatureConnection("MVSDAimCore")
         releaseAutoShoot()
         uninstallHooks()

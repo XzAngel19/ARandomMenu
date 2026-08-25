@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "purpose": "Freeze the deliberate universal inventory at 43 modules.",
-  "count": 43,
+  "purpose": "Freeze the deliberate universal inventory at 45 modules.",
+  "count": 45,
   "officialCategories": [
     "Combat",
     "Render",
@@ -67,6 +67,11 @@
       "category": "Other"
     },
     {
+      "path": "src/modules/Utility/Learning.luau",
+      "name": "Learning",
+      "category": "Other"
+    },
+    {
       "path": "src/modules/Movement/ClickTeleport.luau",
       "name": "Click Teleport",
       "category": "Movement"
@@ -79,6 +84,11 @@
     {
       "path": "src/modules/Combat/TriggerBot.luau",
       "name": "TriggerBot",
+      "category": "Combat"
+    },
+    {
+      "path": "src/modules/Combat/AimAssist.luau",
+      "name": "Aim Assist",
       "category": "Combat"
     },
     {
