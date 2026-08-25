@@ -59,6 +59,9 @@ function Module.init(context: Runtime): any
         Tooltip = "Uses nearby wall edges to perform a consistent wall hop.",
         Function = function(enabled: boolean): ()
             pending = nil
+            -- A hop spent just before the card was switched off must not eat
+            -- the first jump request after it comes back.
+            lastHopAt = -math.huge
             if not enabled then
                 card:SetStatus(nil)
                 return
@@ -136,8 +139,21 @@ function Module.init(context: Runtime): any
 
             card:Loop(function(): ()
                 local hop: PendingHop? = pending
-                if not hop or not hop.root.Parent or hop.humanoid.Health <= 0 then
+                if not hop then
+                    return
+                end
+                -- A character replaced mid-sequence is a different assembly, and
+                -- a humanoid that died mid-sequence is not going to jump. Either
+                -- way the remaining offsets are dropped rather than written into
+                -- whatever is wearing the name now.
+                local _character: Model?, humanoid: Humanoid?, root: BasePart? =
+                    getCharacterParts()
+                if not hop.root.Parent
+                    or hop.humanoid.Health <= 0
+                    or root ~= hop.root
+                    or humanoid ~= hop.humanoid then
                     pending = nil
+                    card:SetStatus("ready")
                     return
                 end
                 local elapsed: number = os.clock() - hop.startedAt

@@ -326,6 +326,69 @@ return function(ctx: any): ()
         stub.step(0.04)
         check("WallHop can run again after cooldown", root.AssemblyLinearVelocity.Y == 52)
 
+        -- A game that swaps Character to another model without destroying the
+        -- old one. The pending hop belongs to the old root either way, and
+        -- writing its remaining offsets into the new assembly is what turned a
+        -- respawn into a launch.
+        stub.step(0.23)
+        root.AssemblyLinearVelocity = world.vector3(0, 0, 0)
+        casts = 0
+        world.fireJumpRequest()
+        check("the replacement case starts a hop", card.Status == "hop",
+            tostring(card.Status))
+
+        local standIn: any = Mock.newInstance("Model")
+        standIn.Name = "WallHopStandIn"
+        local standInHumanoid: any = Mock.newInstance("Humanoid")
+        standInHumanoid.Health = 100
+        standInHumanoid.Parent = standIn
+        local standInRoot: any = Mock.newInstance("Part")
+        standInRoot.Name = "HumanoidRootPart"
+        standInRoot.AssemblyLinearVelocity = world.vector3(0, 0, 0)
+        standInRoot.Parent = standIn
+        standIn.Parent = world.workspace
+        local realCharacter: any = world.localPlayer.Character
+        world.localPlayer.Character = standIn
+        stub.step(0.02)
+        stub.step(0.04)
+        stub.step(0.04)
+        check("a swapped character drops the hop instead of launching the new one",
+            standInRoot.AssemblyLinearVelocity.Y == 0,
+            "velocity is " .. tostring(standInRoot.AssemblyLinearVelocity.Y))
+        check("and the old root gets no further offsets",
+            root.AssemblyLinearVelocity.Y == 0,
+            "velocity is " .. tostring(root.AssemblyLinearVelocity.Y))
+        world.localPlayer.Character = realCharacter
+        standIn.Parent = nil
+
+        -- Death between the first offset and the last: the rest of the sequence
+        -- is dropped rather than applied to a corpse.
+        stub.step(0.23)
+        root.AssemblyLinearVelocity = world.vector3(0, 0, 0)
+        casts = 0
+        world.fireJumpRequest()
+        humanoid.Health = 0
+        stub.step(0.02)
+        stub.step(0.04)
+        stub.step(0.04)
+        check("a death mid-sequence drops the hop",
+            root.AssemblyLinearVelocity.Y == 0,
+            "velocity is " .. tostring(root.AssemblyLinearVelocity.Y))
+        humanoid.Health = 100
+
+        -- A hop spent just before the card went off must not eat the first jump
+        -- request after it comes back.
+        stub.step(0.23)
+        root.AssemblyLinearVelocity = world.vector3(0, 0, 0)
+        casts = 0
+        world.fireJumpRequest()
+        card:Toggle(false)
+        card:Toggle(true)
+        casts = 0
+        world.fireJumpRequest()
+        check("re-enabling clears the cooldown", casts > 0,
+            "casts: " .. tostring(casts))
+
         card:Toggle(false)
         local jumpCount: number = #(world.jumpCallbacks or {})
         root.AssemblyLinearVelocity = world.vector3(0, 0, 0)
@@ -367,6 +430,50 @@ return function(ctx: any): ()
                 < 1e-6,
             tostring(root.AssemblyAngularVelocity.Y)
         )
+
+        -- A game that swaps Character without destroying the old model still
+        -- owes the old root its properties back.
+        local standIn: any = Mock.newInstance("Model")
+        standIn.Name = "SpinStandIn"
+        local standInHumanoid: any = Mock.newInstance("Humanoid")
+        standInHumanoid.Health = 100
+        standInHumanoid.AutoRotate = true
+        standInHumanoid.Parent = standIn
+        local standInRoot: any = Mock.newInstance("Part")
+        standInRoot.Name = "HumanoidRootPart"
+        standInRoot.Parent = standIn
+        standIn.Parent = world.workspace
+        local realCharacter: any = world.localPlayer.Character
+        world.localPlayer.Character = standIn
+        stub.step(0.016)
+        check("a swapped character hands the old root its properties back",
+            humanoid.AutoRotate == true and root.AssemblyAngularVelocity.Y == 0,
+            "autoRotate " .. tostring(humanoid.AutoRotate)
+                .. " · angular " .. tostring(root.AssemblyAngularVelocity.Y))
+        check("and takes over the new one", standInHumanoid.AutoRotate == false)
+        world.localPlayer.Character = realCharacter
+        standIn.Parent = nil
+        stub.step(0.016)
+
+        -- A game that clamps angular velocity zeroes it between frames. The
+        -- write is absolute, so one frame is one turn rate and not the sum of
+        -- every frame since the card was enabled.
+        root.AssemblyAngularVelocity = world.vector3(0, 0, 0)
+        stub.step(0.016)
+        check("a clamped assembly is re-asserted, not compounded",
+            math.abs(root.AssemblyAngularVelocity.Y
+                - math.rad(card.Options["Speed"].Value)) < 1e-6,
+            tostring(root.AssemblyAngularVelocity.Y))
+
+        -- A server correction moves the root. CFrame mode composes its rotation
+        -- onto wherever the character now is instead of dragging it back.
+        ctx.setOption(card, "Mode", "CFrame")
+        stub.step(0.016)
+        root.CFrame = world.globals.CFrame.new(world.vector3(40, 5, -12))
+        stub.step(0.016)
+        check("a corrected position survives the spin",
+            root.CFrame.Position.X == 40 and root.CFrame.Position.Y == 5,
+            tostring(root.CFrame.Position))
 
         local replaced: any = world.replaceCharacter(
             world.localPlayer,

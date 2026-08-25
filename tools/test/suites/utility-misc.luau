@@ -183,6 +183,25 @@ return function(ctx: any): ()
         prompt.MaxActivationDistance == 10 and prompt.HoldDuration == 1.5
             and detector.MaxActivationDistance == 8)
 
+    -- Teardown owes the same thing disable does. The refresh sweep and every
+    -- extended prompt used to outlive the card, so unloading the menu left the
+    -- whole place reaching for the slider's distance.
+    local tasksBeforeExtend: number = stub.taskCount()
+    interact.activate()
+    check("enabling owns one refresh sweep", stub.taskCount() == tasksBeforeExtend + 1,
+        "tasks: " .. tostring(stub.taskCount()))
+    InteractFile.destroy()
+    check("teardown drops the refresh sweep", stub.taskCount() == tasksBeforeExtend,
+        "tasks: " .. tostring(stub.taskCount()))
+    check("teardown restores the prompt and the detector",
+        prompt.MaxActivationDistance == 10 and prompt.HoldDuration == 1.5
+            and detector.MaxActivationDistance == 8)
+    prompt.MaxActivationDistance = 10
+    stub.step(1)
+    check("and nothing re-extends it afterwards",
+        prompt.MaxActivationDistance == 10,
+        "distance is " .. tostring(prompt.MaxActivationDistance))
+
     section("Lag Switch")
 
     local networkSettings: any = world.networkSettings

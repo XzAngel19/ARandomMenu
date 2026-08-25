@@ -51,6 +51,13 @@ A module must not use:
 - `host.state` or any other shell-state reach-in;
 - `configData` except a documented module-owned persistence key when no option can represent the data;
 - real `print`/`warn`; the injected shadows are silent and diagnostics belong in status/notify;
+- process-wide engine hooks (`hookfunction`, `hookmetamethod`, `hookproperty`,
+  `hookconstructor`, `replaceclosure`, `setrawmetatable`). A hook belongs to the
+  process, not to the card that installed it: every other caller of that closure
+  or metamethod inherits it. The single exception is listed in
+  `tools/check_module_conformance.py` with an owner and a removal condition, and
+  the gate fails without that entry. A game adapter under `src/games/**` may hook
+  when it says so explicitly; that permission does not extend to a universal card;
 - renderer or theme geometry.
 
 World instances created for gameplay are allowed. They must be owned by `Clean` or `destroy`.
@@ -231,14 +238,18 @@ A list of rules is AND. Omitted `Values` means a true toggle. `Invert = true` ne
 - Signals: `card:Event`.
 - Instances/functions/handles: `card:Clean`.
 - Exact borrowed properties are cached per instance and restored on disable and destroy.
+- A property the game rewrote while the module held it belongs to the game: adopt
+  it as the new baseline instead of restoring the value the module first saw.
 - A direct connection not passed to `Event`/`Clean` is a leak.
+- A hook that cannot be removed is reported to the player, not hidden behind a
+  clean-looking disable.
 - AnimationTracks are stopped **and destroyed**.
 - Settings-window close does not disable gameplay; full teardown removes windows, tasks and connections.
 
-Proof lives in `tools/test/suites/clickgui-boot.luau`, the focused module suites and `tools/test/suites/teardown.luau`: all 38 cards open/reopen settings, preserve values/Show/enabled, toggle safely and return task/connection counts to baseline.
+Proof lives in `tools/test/suites/clickgui-boot.luau`, the focused module suites and `tools/test/suites/teardown.luau`: every card opens/reopens settings, preserves values/Show/enabled, toggles safely and returns task/connection counts to baseline.
 
 ## Current audited exceptions
 
 - `AnimationChanger` and `EmotePlayer` use documented module-owned saved-ID keys in `host.configData` because the saved catalog is not one scalar option.
 
-Universal modules have no direct `host.state` access and no row/window/pixel dependency. `tools/check_module_conformance.py` blocks either reach-in.
+Universal modules have no direct `host.state` access, no row/window/pixel dependency and no unlisted engine hook. `tools/check_module_conformance.py` blocks all three.

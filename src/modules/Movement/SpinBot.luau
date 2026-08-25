@@ -2,7 +2,14 @@
 --
 -- SpinBot.
 -- Vape-inspired rotation with a direct CFrame mode and a physics angular-
--- velocity mode. Every touched property is restored on disable.
+-- velocity mode. Every touched property is restored on disable, on death and
+-- when the character is replaced mid-spin.
+--
+-- What it cannot promise is that the server agrees. Velocity mode writes
+-- `AssemblyAngularVelocity`, which a server-owned assembly or an angular-
+-- velocity clamp can simply ignore; CFrame mode writes the root directly,
+-- which a server that corrects position will fight. Neither is a bypass and
+-- neither is presented as one.
 
 export type Runtime = {
     framework: any,
@@ -114,14 +121,29 @@ function Module.init(context: Runtime): any
         Name = "Mode",
         List = {"CFrame", "Velocity"},
         Index = 1,
+        Tooltip = "CFrame turns the root directly. Velocity asks the physics "
+            .. "engine to spin the assembly, which a server that owns your "
+            .. "character can clamp.",
         Function = function(value: string): ()
             if card then
                 card:SetStatus(value)
             end
         end,
     })
-    card:CreateDropdown({Name = "Axis", List = {"Y", "X", "Z"}, Index = 1})
-    card:CreateSlider({Name = "Speed", Min = 30, Max = 1440, Step = 15, Default = 360})
+    card:CreateDropdown({
+        Name = "Axis",
+        List = {"Y", "X", "Z"},
+        Index = 1,
+        Tooltip = "Y turns you in place. X and Z tumble.",
+    })
+    card:CreateSlider({
+        Name = "Speed",
+        Min = 30,
+        Max = 1440,
+        Step = 15,
+        Default = 360,
+        Tooltip = "Degrees per second. 360 is one turn a second.",
+    })
 
     activeCard = card
     Module.Initialized = true

@@ -80,6 +80,10 @@ WallHop has no direct VapeV4 universal counterpart in the checked reference. Rob
 
 The delayed status callback was removed. It changed no movement behavior and could outlive the session. Height, Push, Reach and Cooldown each change the hop.
 
+> Superseded: the card was rebuilt afterwards around a fixed offset sequence and
+> now exposes **no** options at all — the algorithm is the default. See
+> `docs/architecture/reach-ownership.md` for the current lifecycle checks.
+
 ### SpinBot
 
 VapeV4 offers CFrame, rotational velocity and BodyMover modes with independent axes. This port keeps two engine-backed modes and one selected axis:

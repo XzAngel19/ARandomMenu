@@ -8,10 +8,11 @@
 -- a player can reason about, where a multiplier ("body scale 2.25") means
 -- nothing until you have seen it.
 --
--- Three things the reference version leaves out and this keeps: teammates are
+-- Four things the reference version leaves out and this keeps: teammates are
 -- skipped (inflating the person you cannot hit only hides the person you can),
--- NPCs are opt-in, and a part is restored the moment it stops being a target
--- rather than only when the module is switched off.
+-- Friend List entries are skipped for the same reason, NPCs are opt-in, and a
+-- part is restored the moment it stops being a target rather than only when
+-- the module is switched off.
 --
 -- It lived in the shell until now, for no reason other than being written
 -- there first.
@@ -36,25 +37,7 @@ function Module.init(context: Runtime): any
     local framework: any = context.framework
     local Players: any = host.Players
     local LocalPlayer: any = host.LocalPlayer
-
-    -- Hitboxes.
-    --
-    -- The reference implementation is four lines: remember a part's size, add the
-    -- slider to it every frame, put it back on disable. That is the right shape —
-    -- an expansion in studs is a number a player can reason about ("six studs of
-    -- extra reach"), where the multiplier this menu used before ("body scale
-    -- 2.25") means nothing until you have seen it. So this is that model, with the
-    -- three things the reference version leaves out:
-    --
-    --   * teammates are skipped, because inflating the person you cannot hit only
-    --     makes it harder to see the person you can;
-    --   * NPCs are opt-in, since half the games this runs in are full of them;
-    --   * every part is restored exactly, including when it stops being a target
-    --     mid-round (team swap, respawn, mode change), instead of only on disable.
-    --
-    -- Collision is dropped on the expanded part on purpose: a twelve-stud invisible
-    -- box that still collides shoves its owner around the map, which is visible to
-    -- everyone in the server.
+    local protectedTargets: any = context.services.protectedTargets
 
     type HitboxSettings = {
         part: string,
@@ -66,11 +49,21 @@ function Module.init(context: Runtime): any
         noCollision: boolean,
     }
 
+    type HitboxWritten = {
+        size: Vector3,
+        transparency: number,
+        canCollide: boolean,
+        massless: boolean,
+    }
+
     type OriginalHitboxState = {
         size: Vector3,
         transparency: number,
         canCollide: boolean,
         massless: boolean,
+        -- What the module wrote on the last sweep, so an external change to the
+        -- part can be told apart from the module's own write.
+        written: HitboxWritten,
     }
 
     local hitboxSettings: HitboxSettings = {
@@ -114,17 +107,60 @@ function Module.init(context: Runtime): any
                 transparency = part.Transparency,
                 canCollide = part.CanCollide,
                 massless = part.Massless,
+                written = {
+                    size = part.Size,
+                    transparency = part.Transparency,
+                    canCollide = part.CanCollide,
+                    massless = part.Massless,
+                },
             }
             originalHitboxes[part] = original
         end
         local resolved: OriginalHitboxState = original :: OriginalHitboxState
+        local last: HitboxWritten = resolved.written
+
+        -- A property the game rewrote behind the module's back is the game's to
+        -- keep: adopt it as the baseline instead of writing the stale one back
+        -- on restore. R15 scaling and size potions both resize a character
+        -- mid-round, and a restore that ignored them put the old body back.
+        if part.Size ~= last.size then
+            resolved.size = part.Size
+        end
+        if part.Transparency ~= last.transparency then
+            resolved.transparency = part.Transparency
+        end
+        if part.CanCollide ~= last.canCollide then
+            resolved.canCollide = part.CanCollide
+        end
+        if part.Massless ~= last.massless then
+            resolved.massless = part.Massless
+        end
+
         local expand: number = hitboxSettings.expand
-        part.Size = resolved.size + Vector3.new(expand, expand, expand)
-        part.Transparency = hitboxSettings.reveal
+        local nextSize: Vector3 = resolved.size + Vector3.new(expand, expand, expand)
+        local nextTransparency: number = hitboxSettings.reveal
             and math.clamp(hitboxSettings.transparency / 100, 0, 1)
             or resolved.transparency
-        part.CanCollide = not hitboxSettings.noCollision and resolved.canCollide
-        part.Massless = true
+        local nextCanCollide: boolean = not hitboxSettings.noCollision and resolved.canCollide
+
+        -- Steady state writes nothing: the sweep runs every frame over every
+        -- target, and a property write the engine already has is still a write.
+        if part.Size ~= nextSize then
+            part.Size = nextSize
+        end
+        if part.Transparency ~= nextTransparency then
+            part.Transparency = nextTransparency
+        end
+        if part.CanCollide ~= nextCanCollide then
+            part.CanCollide = nextCanCollide
+        end
+        if not part.Massless then
+            part.Massless = true
+        end
+        last.size = nextSize
+        last.transparency = nextTransparency
+        last.canCollide = nextCanCollide
+        last.massless = true
     end
 
     -- Which parts of one character the current mode targets. Everything else that
@@ -163,6 +199,12 @@ function Module.init(context: Runtime): any
             if hitboxSettings.teamCheck
                 and LocalPlayer.Team ~= nil
                 and player.Team == LocalPlayer.Team then
+                continue
+            end
+            -- Friend List is not a team check: it is a promise the rest of the
+            -- combat cards already keep, and an inflated friend is as visible
+            -- to the server as an inflated enemy.
+            if protectedTargets.isProtected(player) then
                 continue
             end
             local character: Model? = player.Character
@@ -223,8 +265,9 @@ function Module.init(context: Runtime): any
         Name = "Hitboxes",
         Category = "Combat",
         Order = 3,
-        Tooltip = "Expand the part enemies are hit on, in studs. Every part "
-            .. "is restored exactly when it stops being a target.",
+        Tooltip = "Expand the part enemies are hit on, in studs. Teammates and "
+            .. "friends are left alone, and every part is restored exactly when "
+            .. "it stops being a target.",
         Function = function(enabled: boolean): ()
             restoreHitboxes()
             hitboxNpcCachedAt = -1

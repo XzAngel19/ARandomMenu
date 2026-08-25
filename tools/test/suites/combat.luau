@@ -143,12 +143,10 @@ return function(ctx: any): ()
 
     check("card is registered", aura ~= nil and aura.Name == "Killaura")
     for _, name: string in ipairs({
-        "Swing range",
+        "Reach",
         "Max targets",
-        "Mode",
         "Priority",
         "Swings per second",
-        "Attack range",
         "Field of view",
         "Rotation",
         "Contact damage",
@@ -158,6 +156,12 @@ return function(ctx: any): ()
     }) do
         check("option: " .. name, aura.Options[name] ~= nil)
     end
+    check("one reach replaced the swing-range / attack-range pair",
+        aura.Options["Swing range"] == nil and aura.Options["Attack range"] == nil)
+    check("Max targets replaced the Multi/Single mode",
+        aura.Options["Mode"] == nil)
+    check("Contact damage replaced Swing only",
+        aura.Options["Swing only"] == nil)
     check("the jitter row is gone, the jitter is not",
         aura.Options["Rate jitter"] == nil)
     check("one highlight colour replaced the pair",
@@ -229,8 +233,21 @@ return function(ctx: any): ()
     world.clock += 1
     local beforeRange: number = sword.Activations or 0
     stub.step(0.016)
-    check("ignores targets beyond the swing range",
+    check("ignores targets beyond the reach",
         (sword.Activations or 0) == beforeRange)
+
+    -- Reach is now the only distance gate, and it gates the touch events too:
+    -- the enemy is back at eight studs, so a reach of six selects nobody.
+    enemy.Character:FindFirstChild("HumanoidRootPart").Position = world.vector3(0, 0, -8)
+    aura.Options["Reach"].Value = 6
+    world.touchFires = 0
+    world.clock += 1
+    local beforeShortReach: number = sword.Activations or 0
+    stub.step(0.016)
+    check("a target outside the reach is neither swung at nor touched",
+        (sword.Activations or 0) == beforeShortReach and world.touchFires == 0,
+        "touches: " .. tostring(world.touchFires))
+    aura.Options["Reach"].Value = 12
 
     aura:Toggle()
     check("aura disables", aura.Enabled == false)
@@ -290,16 +307,19 @@ return function(ctx: any): ()
         "shield: " .. tostring(shield.Activations))
     aura.Options["Weapon name"].Value = ""
 
-    -- Swing only: the tool is pressed, no touch events are fired.
-    aura.Options["Swing only"].Value = true
+    -- Contact damage off: the tool is pressed, no touch events are fired. This
+    -- is the row that replaced "Swing only", which did exactly the same thing
+    -- from the other side.
+    aura.Options["Contact damage"].Value = false
     world.touchFires = 0
     local swordBefore3: number = sword.Activations or 0
     world.clock += 1
     stub.step(0.016)
-    check("swing only presses the weapon", (sword.Activations or 0) > swordBefore3)
-    check("swing only fires no contact events", world.touchFires == 0,
+    check("contact damage off still presses the weapon",
+        (sword.Activations or 0) > swordBefore3)
+    check("contact damage off fires no contact events", world.touchFires == 0,
         "touches: " .. tostring(world.touchFires))
-    aura.Options["Swing only"].Value = false
+    aura.Options["Contact damage"].Value = true
     aura:Toggle()
     shield:Destroy()
 
@@ -633,6 +653,7 @@ return function(ctx: any): ()
     logger:Toggle()
     check("logger enables", logger.Enabled == true)
     check("hook was installed", world.namecallHook ~= nil)
+    local installsAfterEnable: number = world.namecallInstalls
 
     -- A game firing one of its own remotes, exactly as the hook sees it.
     local remote: any = Mock.newInstance("RemoteEvent")
@@ -684,6 +705,20 @@ return function(ctx: any): ()
     logger.Feature.options["Clear log"].run()
     check("clears the log", #LoggerFile.entries() == 0)
     logger:Toggle()
+    -- The one thing a metamethod hook owes the rest of the client: it is gone
+    -- when the card is off, not merely quiet.
+    check("disable hands the __namecall metamethod back", world.namecallHook == nil,
+        "hook is " .. type(world.namecallHook))
+    logger:Toggle()
+    check("re-enabling installs one hook, not a second",
+        world.namecallInstalls == installsAfterEnable + 1,
+        "installs: " .. tostring(world.namecallInstalls))
+    check("and every install so far has been matched by a removal",
+        world.namecallRestores == world.namecallInstalls - 1,
+        "installs " .. tostring(world.namecallInstalls)
+            .. " · removals " .. tostring(world.namecallRestores))
+    logger:Toggle()
+    check("and the second disable removes it again", world.namecallHook == nil)
 
     -- Improve FPS --------------------------------------------------------------------
 

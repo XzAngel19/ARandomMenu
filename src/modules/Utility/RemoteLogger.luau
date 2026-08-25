@@ -15,10 +15,12 @@
 --   * how many times it was called and when it was first and last seen,
 --   * a ready-to-paste call snippet built from the newest arguments.
 --
--- The hook is `__namecall`, which is the one path every FireServer goes
--- through, plus direct `FireServer`/`InvokeServer` calls for games that store
--- the function rather than calling the method. `checkcaller` keeps the menu's
--- own traffic out of the log.
+-- The hook is `__namecall`, which is the one path a `remote:FireServer(...)`
+-- call goes through. A game that stored the function instead of calling the
+-- method is not covered, and that gap is deliberate: the alternative is a
+-- second hook on an instance method, which is a second process-wide surface
+-- this card would have to own. `checkcaller` keeps the menu's own traffic out
+-- of the log.
 
 export type Runtime = {
     framework: any,
@@ -240,14 +242,21 @@ function Module.init(context: Runtime): any
         end
         hooked = true
         restore = function(): ()
-            -- Restoring a metamethod hook is executor-specific; where it is
-            -- not supported the capture flag alone stops the recording, and
-            -- the hook is a single boolean test from then on.
-            local restoreFn: any = environment.restorefunction
-            if type(restoreFn) == "function" then
-                pcall(restoreFn, previous)
+            -- Handing the original metamethod back is the only thing that
+            -- removes the hook. `restorefunction` takes a hooked *function*,
+            -- not the closure `hookmetamethod` returned, so the version this
+            -- replaced never removed anything: the hook stayed installed for
+            -- the rest of the session with only the capture flag between it
+            -- and every remote in the game.
+            local removed: boolean = pcall(hookMetamethod, game, "__namecall", previous)
+            if removed then
+                hooked = false
+                return
             end
-            hooked = false
+            -- An executor that will not give the metamethod back keeps an inert
+            -- hook — one boolean test, then straight through. `hooked` stays
+            -- true so a later enable cannot stack a second one on top.
+            logger:Notify("hook stays until rejoin")
         end
         return true
     end

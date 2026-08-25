@@ -93,6 +93,35 @@ return function(ctx: any): ()
         enemyHead.Size.X == headSize.X,
         "size is " .. tostring(enemyHead.Size.X))
 
+    -- Friend List is the same promise the other combat cards keep: an inflated
+    -- friend is as visible to the server as an inflated enemy.
+    ctx.setOption(hitboxes, "Part", "Root")
+    host.services.protectedTargets.setProvider(function(player: any): boolean
+        return player == enemy
+    end)
+    hitboxes.Feature.activate()
+    stub.step(1 / 60)
+    check("a protected player keeps their real size",
+        enemyRoot.Size.X == rootSize.X,
+        "size is " .. tostring(enemyRoot.Size.X))
+    host.services.protectedTargets.setProvider(nil)
+    stub.step(1 / 60)
+    check("and is expanded again once the protection goes",
+        enemyRoot.Size.X == rootSize.X + 4,
+        "size is " .. tostring(enemyRoot.Size.X))
+
+    -- A game that rescales a character mid-round owns that size. The restore
+    -- has to put back the game's number, not the one the module first saw.
+    enemyRoot.Size = vector3(3, 3, 2)
+    stub.step(1 / 60)
+    check("a rescaled part is re-expanded from the game's new size",
+        enemyRoot.Size.X == 7,
+        "size is " .. tostring(enemyRoot.Size.X))
+    hitboxes.Feature.activate()
+    check("and restored to the size the game last set",
+        enemyRoot.Size.X == 3,
+        "size is " .. tostring(enemyRoot.Size.X))
+
     section("Projectile Calibration")
 
     local ProjectileFile: any = require("../../../src/modules/Combat/ProjectileCalibration")
@@ -159,4 +188,5 @@ return function(ctx: any): ()
     -- Leave the shared world as the next suite expects it.
     enemyRoot.Size = vector3(2, 2, 1)
     enemyHead.Size = vector3(1.2, 1.2, 1.2)
+    host.services.protectedTargets.setProvider(nil)
 end

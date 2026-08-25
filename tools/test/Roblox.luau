@@ -863,12 +863,34 @@ function Mock.install(): MockWorld
     -- fired one of its own remotes, and writes land in a table rather than on
     -- a disk that does not exist here.
     world.files = {}
+    -- A hook is a swapped metamethod, so the mock swaps one: it returns the
+    -- previous metamethod and drops the replacement when a module hands the
+    -- original back. A mock that always returned a fresh closure could not tell
+    -- a removed hook from an installed one, and that is the only fact about a
+    -- teardown worth testing.
+    world.namecallOriginal = function(): any
+        return nil
+    end
+    world.namecallInstalls = 0
+    world.namecallRestores = 0
     globals.hookmetamethod = function(_target: any, name: string, replacement: any): any
-        if name == "__namecall" then
+        if name ~= "__namecall" then
+            return function(): ()
+            end
+        end
+        local previous: any = world.namecallHook or world.namecallOriginal
+        -- Not `and nil or` for the swap: that expression can never produce nil,
+        -- so handing the original back used to leave the hook looking
+        -- installed. Installs and restores are counted apart because a test
+        -- that only counted calls could not tell one from the other.
+        if replacement == world.namecallOriginal then
+            world.namecallRestores += 1
+            world.namecallHook = nil
+        else
+            world.namecallInstalls += 1
             world.namecallHook = replacement
         end
-        return function(): ()
-        end
+        return previous
     end
     globals.getnamecallmethod = function(): string
         return world.namecallMethod or "FireServer"
