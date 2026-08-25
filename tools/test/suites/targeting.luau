@@ -248,6 +248,19 @@ return function(ctx: any): ()
         tostring(aim.Status)
     )
 
+    camera.CFrame = world.globals.CFrame.new(world.vector3(0, 5, 0))
+    aim.Options["Mode"].Value = "Aim Assist"
+    aim.Options["Target NPCs"].Value = false
+    aim.Options["Smoothing"].Value = 0
+    stub.step(0.016)
+    local snapLook: any = camera.CFrame.LookVector
+    camera.CFrame = world.globals.CFrame.new(world.vector3(0, 5, 0))
+    aim.Options["Smoothing"].Value = 100
+    stub.step(0.016)
+    local slowLook: any = camera.CFrame.LookVector
+    check("zero smoothing snaps instead of behaving like a preset", snapLook ~= slowLook)
+    aim.Options["Smoothing"].Value = 35
+
     local npc: any = Mock.newInstance("Model")
     npc.Name = "AimDummy"
     local npcHumanoid: any = Mock.newInstance("Humanoid")

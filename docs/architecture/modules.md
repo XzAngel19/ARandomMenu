@@ -107,7 +107,7 @@ A one-shot uses `Action = true`. A module with no options declares none; never a
 
 ## Option builders
 
-Every option is created in display order. `Show` is declarative; the framework owns visibility after reparent/reopen.
+Every option is created in display order. `Show` is declarative; the framework owns visibility after reparent/reopen. Numeric sliders use Min/Max/Step for the drag rail; their editable text field accepts any finite numeric value and never silently clamps it to the rail.
 
 ### Toggle
 

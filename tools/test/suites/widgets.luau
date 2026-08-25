@@ -172,8 +172,8 @@ return function(ctx: any): ()
         end)
         return seen
     end
-    check("stored number above range clamps", loadedNumber(999) == 50)
-    check("stored number below range clamps", loadedNumber(-999) == 10)
+    check("stored number above the rail is preserved", loadedNumber(999) == 999)
+    check("stored number below the rail is preserved", loadedNumber(-999) == -999)
     check("stored NaN falls back to default", loadedNumber(0 / 0) == 25)
     check("stored infinity falls back to default", loadedNumber(math.huge) == 25)
 

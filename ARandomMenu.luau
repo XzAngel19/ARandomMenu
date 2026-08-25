@@ -363,7 +363,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "74933a0dd52bade5"
+local SOURCE_STAMP: string = "ba982ffd35af029d"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -1446,6 +1446,66 @@ local function trackUiConnection(
     return connection
 end
 
+-- First-person controllers usually force MouseBehavior back to LockCenter.
+-- While the ClickGUI is open the menu owns the cursor instead: it captures the
+-- game value once, applies Default and shows the icon, then restores both exact
+-- values on close. No cursor state is touched while the menu is hidden.
+local menuCursorState: any = {
+    owned = false,
+    applying = false,
+    behavior = nil,
+    iconEnabled = nil,
+}
+local function setMenuCursorUnlocked(visible: boolean): ()
+    if menuCursorState.applying then
+        return
+    end
+    if visible then
+        if not menuCursorState.owned then
+            menuCursorState.behavior = UserInputService.MouseBehavior
+            menuCursorState.iconEnabled = UserInputService.MouseIconEnabled
+            menuCursorState.owned = true
+        end
+        menuCursorState.applying = true
+        pcall(function(): ()
+            UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+            UserInputService.MouseIconEnabled = true
+        end)
+        menuCursorState.applying = false
+        return
+    end
+    if not menuCursorState.owned then
+        return
+    end
+    menuCursorState.applying = true
+    pcall(function(): ()
+        UserInputService.MouseBehavior = menuCursorState.behavior
+        UserInputService.MouseIconEnabled = menuCursorState.iconEnabled
+    end)
+    menuCursorState.applying = false
+    menuCursorState.behavior = nil
+    menuCursorState.iconEnabled = nil
+    menuCursorState.owned = false
+end
+
+-- Re-apply after a camera script writes LockCenter while the menu is open.
+-- These listeners are shell-owned and disappear with the UI connection list.
+local function enforceMenuCursor(): ()
+    if menuCursorState.applying then
+        return
+    end
+    if state.visible == true
+        and menuCursorState.owned
+        and (UserInputService.MouseBehavior ~= Enum.MouseBehavior.Default
+            or UserInputService.MouseIconEnabled ~= true) then
+        setMenuCursorUnlocked(true)
+    end
+end
+pcall(function(): ()
+    trackUiConnection(UserInputService:GetPropertyChangedSignal("MouseBehavior"):Connect(enforceMenuCursor))
+    trackUiConnection(UserInputService:GetPropertyChangedSignal("MouseIconEnabled"):Connect(enforceMenuCursor))
+end)
+
 -- There is no blur controller any more. The old menu dimmed the whole game
 -- behind a BlurEffect while it was open, with a hail layer drawn on top;
 -- Wurst draws its windows over the untouched game and nothing else, so the
@@ -1476,6 +1536,7 @@ end
 -- boolean it always was.
 local function setMenuVisibleCore(visible: boolean): ()
     state.visible = visible
+    setMenuCursorUnlocked(visible)
     if MenuBlur then
         pcall(function(): ()
             MenuBlur.Enabled = visible == true
@@ -6626,6 +6687,9 @@ local function cleanupRuntime(): ()
             MenuBlur:Destroy()
             MenuBlur = nil
         end
+    end)
+    cleanupStep("cursor", function(): ()
+        setMenuCursorUnlocked(false)
     end)
     cleanupStep("session", function(): ()
         if type(state.destroySessionTracking) == "function" then

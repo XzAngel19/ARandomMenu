@@ -60,19 +60,24 @@ function Module.init(context: Runtime): any
             return false
         end
 
-        -- 100 means near-snap and lower values ease in. The rate is capped by
-        -- the frame delta, so a dropped frame cannot fling the view past the
-        -- target or produce a NaN CFrame.
-        local smoothing: number = card.Options["Smoothing"].Value
+        -- Smoothing is a time constant, not a speed preset: 0 snaps to the
+        -- target, while 100 takes roughly a second to settle. Aimbot gets a
+        -- modest lock response boost, but the same slider still controls how
+        -- gentle the movement is. The exponential form behaves consistently
+        -- across frame rates and never overshoots.
+        local smoothing: number = math.clamp(card.Options["Smoothing"].Value, 0, 100)
         local mode: string = card.Options["Mode"].Value
-        local response: number = mode == "Aimbot"
-            and 3 + smoothing * 0.22
-            or 2 + smoothing * 0.18
-        local alpha: number = math.clamp(
-            math.max(deltaTime, 1 / 240) * response,
-            0,
-            smoothing >= 100 and 1 or 0.85
-        )
+        local alpha: number
+        if smoothing <= 0 then
+            alpha = 1
+        else
+            local timeConstant: number = 0.02 + smoothing * 0.01
+            if mode == "Aimbot" then
+                timeConstant *= 0.75
+            end
+            alpha = 1 - math.exp(-math.max(deltaTime, 1 / 240) / timeConstant)
+            alpha = math.clamp(alpha, 0, 1)
+        end
         local currentLook: Vector3 = current.LookVector
         local blended: Vector3 = currentLook:Lerp(offset.Unit, alpha)
         if blended.Magnitude <= 0.001 then
@@ -208,11 +213,12 @@ function Module.init(context: Runtime): any
     })
     card:CreateSlider({
         Name = "Smoothing",
-        Min = 5,
+        Min = 0,
         Max = 100,
         Step = 5,
-        Default = 45,
-        Tooltip = "Camera response. Higher values reach the target faster.",
+        Default = 35,
+        Tooltip = "0 snaps to the target; higher values make the camera settle "
+            .. "more slowly. Aimbot keeps its target lock separately.",
     })
     card:CreateDropdown({
         Name = "Target part",

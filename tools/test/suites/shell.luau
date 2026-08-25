@@ -355,6 +355,9 @@ return function(ctx: any): ()
         }, false)
     end
 
+    local cursorBaseline: any = world.globals.Enum.MouseBehavior.LockCenter
+    inputService.MouseBehavior = cursorBaseline
+    inputService.MouseIconEnabled = false
     pressToggle()
     check(
         "the toggle key opens the menu",
@@ -362,12 +365,28 @@ return function(ctx: any): ()
             and clickGui ~= nil and clickGui.categories.Combat ~= nil
             and clickGui.categories.Combat.window.root.Visible == true
     )
+    check(
+        "opening the menu unlocks the cursor in first person",
+        inputService.MouseBehavior == world.globals.Enum.MouseBehavior.Default
+            and inputService.MouseIconEnabled == true
+    )
+    inputService.MouseBehavior = cursorBaseline
+    check(
+        "the menu reclaims a cursor lock while open",
+        inputService.MouseBehavior == world.globals.Enum.MouseBehavior.Default
+            and inputService.MouseIconEnabled == true
+    )
     pressToggle()
     check(
         "the toggle key closes the menu",
         shellState ~= nil and shellState.visible == false
             and clickGui ~= nil and clickGui.categories.Combat ~= nil
             and clickGui.categories.Combat.window.root.Visible == false
+    )
+    check(
+        "closing the menu restores the game's cursor state",
+        inputService.MouseBehavior == cursorBaseline
+            and inputService.MouseIconEnabled == false
     )
 
     if shellState and type(shellState.destruct) == "function" then

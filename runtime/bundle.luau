@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "74933a0dd52bade5",
+    stamp = "ba982ffd35af029d",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -812,7 +812,7 @@ function Module.init(context: any): WidgetLibrary
         if magnitude >= 1e9 or (magnitude > 0 and magnitude < 1e-4) then
             return string.format("%.3e", value)
         end
-        return string.format("%.7g", value)
+        return string.format("%.12g", value)
     end
 
     local function addNumberOption(
@@ -831,8 +831,11 @@ function Module.init(context: any): WidgetLibrary
         -- A stored value is clamped into the row's own range on load: a
         -- config written by an older build (Max height 1000) or edited by
         -- hand must not smuggle an out-of-range number past the slider.
+        -- The endpoints describe the drag rail, not a hard limit for the
+        -- numeric field. A typed finite value may be outside that rail and is
+        -- preserved; dragging the rail intentionally returns it to the rail.
         local value: number = isFiniteNumber(storedValue)
-            and math.clamp(storedValue :: number, minimum, maximum)
+            and (storedValue :: number)
             or defaultValue
         local integerOnly: boolean = defaultValue % 1 == 0
             and minimum % 1 == 0
@@ -871,6 +874,7 @@ function Module.init(context: any): WidgetLibrary
         option:SetAttribute("Min", minimum)
         option:SetAttribute("Max", maximum)
         option:SetAttribute("Step", step)
+        option:SetAttribute("FreeNumeric", true)
 
         local slider: TextButton = (create("TextButton", {
             TextTruncate = Enum.TextTruncate.AtEnd,
@@ -998,11 +1002,14 @@ function Module.init(context: any): WidgetLibrary
             .. formatCompactNumber(maximum)
 
         local editing: boolean = false
-        -- Every path — drag, typed text, stored value — lands on the same
-        -- rule: snap to the step (or to integers when the row is integer),
-        -- then clamp. NaN and inf never reach here; isFiniteNumber refuses
-        -- them at the door.
-        local function quantize(raw: number): number
+        -- Dragging uses the rail's finite interval and its step. Typed input
+        -- is free numeric input: keep the exact finite value instead of
+        -- silently replacing a deliberate value with a slider endpoint. NaN
+        -- and infinities never reach here; isFiniteNumber rejects them.
+        local function quantize(raw: number, fromSlider: boolean): number
+            if not fromSlider then
+                return raw
+            end
             local stepped: number = minimum
                 + math.round((raw - minimum) / step) * step
             stepped = math.round(stepped * precisionFactor) / precisionFactor
@@ -1016,7 +1023,7 @@ function Module.init(context: any): WidgetLibrary
             if not isFiniteNumber(nextValue) then
                 return
             end
-            value = quantize(nextValue)
+            value = quantize(nextValue, _fromSlider)
             local alpha: number = maximum == minimum
                 and 0
                 or math.clamp((value - minimum) / (maximum - minimum), 0, 1)
@@ -1109,16 +1116,17 @@ function Module.init(context: any): WidgetLibrary
             feature.configKey .. "." .. labelText:gsub("%W", "")
         local storedLow: number? = tonumber(configData.values[baseKey .. ".Low"])
         local storedHigh: number? = tonumber(configData.values[baseKey .. ".High"])
-        local low: number = math.clamp(
-            storedLow or tonumber(definition.defaultLow) or minimum,
-            minimum,
-            maximum
-        )
-        local high: number = math.clamp(
-            storedHigh or tonumber(definition.defaultHigh) or maximum,
-            minimum,
-            maximum
-        )
+        -- As with single sliders, the rail endpoints describe pointer input;
+        -- the two text fields accept any finite numeric value. Keep the pair in
+        -- order, but do not silently clamp a stored or typed value to a preset.
+        local low: number = isFiniteNumber(storedLow)
+            and (storedLow :: number)
+            or tonumber(definition.defaultLow)
+            or minimum
+        local high: number = isFiniteNumber(storedHigh)
+            and (storedHigh :: number)
+            or tonumber(definition.defaultHigh)
+            or maximum
         if low > high then
             low, high = high, low
         end
@@ -1197,6 +1205,7 @@ function Module.init(context: any): WidgetLibrary
         option:SetAttribute("Min", minimum)
         option:SetAttribute("Max", maximum)
         option:SetAttribute("Step", step or (integerOnly and 1 or 0))
+        option:SetAttribute("FreeNumeric", true)
         local highBox: TextBox = (flatTextBox(option, "") :: any) :: TextBox
         highBox.Name = "HighValue"
         highBox.AnchorPoint = Vector2.new(1, 0)
@@ -1295,17 +1304,11 @@ function Module.init(context: any): WidgetLibrary
             return math.clamp(value, minimum, maximum)
         end
 
-        -- The typed path shares the drag path's rules: quantise, clamp,
-        -- and keep the pair ordered. Invalid text restores the old value.
+        -- The typed path keeps a finite value exactly as entered. Only the
+        -- drag path uses the rail's step and endpoints; typed range values are
+        -- still ordered below when the second field is committed.
         local function quantizeTyped(raw: number): number
-            if step ~= nil then
-                raw = minimum
-                    + math.round((raw - minimum) / (step :: number))
-                        * (step :: number)
-            elseif integerOnly then
-                raw = math.round(raw)
-            end
-            return math.clamp(raw, minimum, maximum)
+            return raw
         end
 
         local function updateFromScreenX(screenX: number): ()
@@ -1399,6 +1402,7 @@ function Module.init(context: any): WidgetLibrary
     -- the options underneath it and the value is picked directly, instead of
     -- clicking the same button four times to get back to the one you wanted.
     state.closeChoiceList = function(): () end
+    state.choiceListAnchor = nil :: TextButton?
 
     -- APPLY-4, 7.54.1's closeInvalidPopups: a popup dies with its owner.
     -- Walk up from the row that opened it to the scrolling body and the
@@ -1480,6 +1484,10 @@ function Module.init(context: any): WidgetLibrary
         currentIndex: number,
         onPick: (number) -> ()
     ): ()
+        if state.choiceListAnchor == anchor then
+            state.closeChoiceList()
+            return
+        end
         state.closeChoiceList()
 
         local rowHeight: number = 24
@@ -1604,9 +1612,13 @@ function Module.init(context: any): WidgetLibrary
             end
             ownerConnections = {}
             list:Destroy()
+            if state.choiceListAnchor == anchor then
+                state.choiceListAnchor = nil
+            end
             state.closeChoiceList = function(): () end
         end
         state.closeChoiceList = close
+        state.choiceListAnchor = anchor
         -- APPLY-4: the list dies when its owner window closes, collapses,
         -- hides, is destroyed, or the owner row scrolls out of the clip.
         ownerConnections = watchPopupOwner(anchor, close)
@@ -1750,6 +1762,10 @@ function Module.init(context: any): WidgetLibrary
         onToggle: (string, boolean) -> (),
         onBulk: ((boolean) -> ())?
     ): ()
+        if state.choiceListAnchor == anchor then
+            state.closeChoiceList()
+            return
+        end
         state.closeChoiceList()
 
         local rowHeight: number = 24
@@ -1822,9 +1838,13 @@ function Module.init(context: any): WidgetLibrary
             end
             ownerConnections = {}
             list:Destroy()
+            if state.choiceListAnchor == anchor then
+                state.choiceListAnchor = nil
+            end
             state.closeChoiceList = function(): () end
         end
         state.closeChoiceList = close
+        state.choiceListAnchor = anchor
         -- APPLY-4: the list dies when its owner window closes, collapses,
         -- hides, is destroyed, or the owner row scrolls out of the clip.
         ownerConnections = watchPopupOwner(anchor, close)
@@ -19111,19 +19131,24 @@ function Module.init(context: Runtime): any
             return false
         end
 
-        -- 100 means near-snap and lower values ease in. The rate is capped by
-        -- the frame delta, so a dropped frame cannot fling the view past the
-        -- target or produce a NaN CFrame.
-        local smoothing: number = card.Options["Smoothing"].Value
+        -- Smoothing is a time constant, not a speed preset: 0 snaps to the
+        -- target, while 100 takes roughly a second to settle. Aimbot gets a
+        -- modest lock response boost, but the same slider still controls how
+        -- gentle the movement is. The exponential form behaves consistently
+        -- across frame rates and never overshoots.
+        local smoothing: number = math.clamp(card.Options["Smoothing"].Value, 0, 100)
         local mode: string = card.Options["Mode"].Value
-        local response: number = mode == "Aimbot"
-            and 3 + smoothing * 0.22
-            or 2 + smoothing * 0.18
-        local alpha: number = math.clamp(
-            math.max(deltaTime, 1 / 240) * response,
-            0,
-            smoothing >= 100 and 1 or 0.85
-        )
+        local alpha: number
+        if smoothing <= 0 then
+            alpha = 1
+        else
+            local timeConstant: number = 0.02 + smoothing * 0.01
+            if mode == "Aimbot" then
+                timeConstant *= 0.75
+            end
+            alpha = 1 - math.exp(-math.max(deltaTime, 1 / 240) / timeConstant)
+            alpha = math.clamp(alpha, 0, 1)
+        end
         local currentLook: Vector3 = current.LookVector
         local blended: Vector3 = currentLook:Lerp(offset.Unit, alpha)
         if blended.Magnitude <= 0.001 then
@@ -19259,11 +19284,12 @@ function Module.init(context: Runtime): any
     })
     card:CreateSlider({
         Name = "Smoothing",
-        Min = 5,
+        Min = 0,
         Max = 100,
         Step = 5,
-        Default = 45,
-        Tooltip = "Camera response. Higher values reach the target faster.",
+        Default = 35,
+        Tooltip = "0 snaps to the target; higher values make the camera settle "
+            .. "more slowly. Aimbot keeps its target lock separately.",
     })
     card:CreateDropdown({
         Name = "Target part",
