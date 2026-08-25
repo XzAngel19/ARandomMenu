@@ -6,6 +6,13 @@
 -- the place, and can drop their hold time to nothing. Both are client-side
 -- properties of the prompt: the server still runs the same handler it always
 -- would, you are simply allowed to reach it from further away.
+--
+-- This is the menu's Reach, and the name says what it reaches. Wurst's Reach
+-- extends how far you can use a block; the Roblox equivalent of "use a block"
+-- is a ProximityPrompt or a ClickDetector, and that is the whole of it. Combat
+-- reach is a different thing with a different owner — `docs/architecture/
+-- reach-ownership.md` records why it is not this card, and why it is not a
+-- universal card at all.
 
 export type Runtime = {
     framework: any,
@@ -53,24 +60,38 @@ function Module.init(context: Runtime): any
 
     local function refreshInteractionExtender(): ()
         for prompt: ProximityPrompt, original: PromptState in pairs(originalPrompts) do
-            if prompt.Parent then
-                prompt.MaxActivationDistance = interactionExtenderEnabled
-                        and interactionSettings.proximityPrompts
-                        and interactionSettings.distance
-                    or original.distance
-                prompt.HoldDuration = interactionExtenderEnabled
-                        and interactionSettings.proximityPrompts
-                        and interactionSettings.instantPrompts
-                        and 0
-                    or original.holdDuration
+            if not prompt.Parent then
+                continue
+            end
+            local wantedDistance: number = interactionExtenderEnabled
+                    and interactionSettings.proximityPrompts
+                    and interactionSettings.distance
+                or original.distance
+            local wantedHold: number = interactionExtenderEnabled
+                    and interactionSettings.proximityPrompts
+                    and interactionSettings.instantPrompts
+                    and 0
+                or original.holdDuration
+            -- Only write what changed. This sweep runs twice a second over every
+            -- prompt in the place, and a property write the engine already has
+            -- is still a write the game's own scripts can observe.
+            if prompt.MaxActivationDistance ~= wantedDistance then
+                prompt.MaxActivationDistance = wantedDistance
+            end
+            if prompt.HoldDuration ~= wantedHold then
+                prompt.HoldDuration = wantedHold
             end
         end
         for detector: ClickDetector, originalDistance: number in pairs(originalClickDetectors) do
-            if detector.Parent then
-                detector.MaxActivationDistance = interactionExtenderEnabled
-                        and interactionSettings.clickDetectors
-                        and interactionSettings.distance
-                    or originalDistance
+            if not detector.Parent then
+                continue
+            end
+            local wantedDistance: number = interactionExtenderEnabled
+                    and interactionSettings.clickDetectors
+                    and interactionSettings.distance
+                or originalDistance
+            if detector.MaxActivationDistance ~= wantedDistance then
+                detector.MaxActivationDistance = wantedDistance
             end
         end
     end
@@ -197,8 +218,17 @@ function Module.init(context: Runtime): any
         end
     )
 
+    -- Teardown has to undo the properties, not just drop the listener: the
+    -- sweep connection and every extended prompt outlived the card, so a
+    -- client that unloaded the menu left the whole place reaching 32 studs.
     activeCleanup = function(): ()
         disconnectFeatureConnection("InteractExtender")
+        disconnectFeatureConnection("InteractExtenderRefresh")
+        restoreInteractionExtender()
+        interactionRefreshClock = 0
+        if InteractFeature then
+            InteractFeature:SetStatus(nil)
+        end
     end
     Module.Initialized = true
     return InteractFeature

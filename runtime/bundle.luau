@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "db7acc9f38778192",
+    stamp = "fdf7969ea77f1484",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -16528,17 +16528,23 @@ return Module
 -- version is one range slider, a CPS slider and an angle; this one separates
 -- the three decisions that actually change how it behaves in a game:
 --
---   * When to swing      — swing range, field of view, wall check, priority.
+--   * When to swing      — reach, field of view, wall check, priority.
 --   * How to hit         — the tool's own Activate, plus contact firing
 --                          (`firetouchinterest`) for weapons that only damage
---                          on touch, at a shorter attack range.
+--                          on touch.
 --   * How obvious to be  — rotation off, snapped for a single frame around the
 --                          swing (silent), or held on the target.
 --
--- Defaults are deliberately playable: a single target, 12-stud reach, 9 swings
--- a second, a 220° forward field of view, walls respected and friends skipped.
--- Blatant targeting is explicit: it scans the full reach instead of pretending
--- to be a cursor trigger, while Legit keeps a readable forward cone.
+-- Reach is one number. It used to be two — a swing range that picked the
+-- targets and a shorter attack range that gated the touch events — and at the
+-- shipped defaults the second one never fired, because every target inside 12
+-- studs was already inside 14. One distance, one row: the aura swings at, and
+-- fires contact on, exactly the players it selected.
+--
+-- Kill Aura is not a cursor trigger. Its default 360° cone scans every
+-- direction around the character; Field of view is only a deliberate way to
+-- narrow that scan. Defaults are deliberately useful: three targets, 18-stud
+-- reach, 8 swings a second, walls ignored and friends skipped.
 
 export type Runtime = {
     framework: any,
@@ -16652,7 +16658,7 @@ function Module.init(context: Runtime): any
         end
     end
 
-    local function markTarget(entity: any, inAttackRange: boolean, options: any): ()
+    local function markTarget(entity: any, options: any): ()
         if not options["Highlight targets"].Value then
             return
         end
@@ -16669,13 +16675,7 @@ function Module.init(context: Runtime): any
         local highlight: Highlight = existing :: Highlight
         highlight.Adornee = entity.Character
         highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-        -- One colour, dimmed for "in swing range but not being hit yet": the
-        -- gap between the two is worth seeing, and it does not need a second
-        -- colour picker to say so.
-        local base: Color3 = options["Highlight colour"].Value
-        local colour: Color3 = inAttackRange
-            and base
-            or base:Lerp(Color3.new(0, 0, 0), 0.45)
+        local colour: Color3 = options["Highlight colour"].Value
         highlight.FillColor = colour
         highlight.OutlineColor = colour
     end
@@ -16792,6 +16792,21 @@ function Module.init(context: Runtime): any
         end
     end
 
+    -- Reach replaced the swing-range / attack-range pair. Carry a saved swing
+    -- range across only when the new key has never been written, and keep the
+    -- old key so an older build can still read the same profile.
+    local store: any = host.configData
+    if store and store.values then
+        local reachKey: string = "Universal.KillAura.Reach"
+        local stored: any = store.values["Universal.KillAura.Swingrange"]
+        if store.values[reachKey] == nil and type(stored) == "number" then
+            store.values[reachKey] = stored
+            if type(host.queueConfigSave) == "function" then
+                host.queueConfigSave()
+            end
+        end
+    end
+
     aura = framework.Categories.Combat:CreateModule({
         Name = "Killaura",
         Category = "Combat",
@@ -16865,13 +16880,11 @@ function Module.init(context: Runtime): any
 
                 entityLibrary:Refresh()
                 local targets: {any} = entityLibrary:InRange({
-                    Range = options["Swing range"].Value,
+                    Range = options["Reach"].Value,
                     Limit = math.round(options["Max targets"].Value),
                     IgnoreTeam = not options["Team check"].Value,
                     IgnoreWalls = not options["Wall check"].Value,
-                    Angle = options["Targeting"].Value == "Blatant"
-                        and nil
-                        or options["Field of view"].Value,
+                    Angle = options["Field of view"].Value,
                     IncludeNPCs = options["Target NPCs"].Value,
                     Sort = options["Priority"].Value,
                 })
@@ -16888,8 +16901,6 @@ function Module.init(context: Runtime): any
                 -- it was one more thing to read.
                 local jitter: number = 1 / rate * 0.25
                 local canSwing: boolean = now >= nextSwingAt
-                local attackRange: number = options["Attack range"].Value
-                local mode: string = options["Mode"].Value
                 local keep: {[any]: boolean} = {}
 
                 local root: BasePart? = entityLibrary.LocalEntity
@@ -16916,13 +16927,9 @@ function Module.init(context: Runtime): any
                     )
                 end
 
-                for index: number, entity: any in ipairs(targets) do
-                    if mode == "Single" and index > 1 then
-                        break
-                    end
+                for _, entity: any in ipairs(targets) do
                     keep[entity.Player or entity.Character] = true
-                    local inAttackRange: boolean = entity.Distance <= attackRange
-                    markTarget(entity, inAttackRange, options)
+                    markTarget(entity, options)
 
                     if not canSwing then
                         continue
@@ -16967,19 +16974,13 @@ function Module.init(context: Runtime): any
                             weapons:Swing()
                         end
                     end
-                    if options["Swing only"].Value then
-                        -- Swing and nothing else: the tool's own Activate, no
-                        -- touch events, no reach. What a player's hand does.
-                        continue
-                    end
                     if not options["Contact damage"].Value then
+                        -- Swing and nothing else: the tool's own Activate, no
+                        -- touch events. What a player's hand does.
                         continue
                     end
-                    -- Reach is the distance check; walls are a separate
-                    -- decision, so a player can have one without the other.
-                    if not inAttackRange then
-                        continue
-                    end
+                    -- Walls are a separate decision from reach, so a player can
+                    -- have one without the other.
                     if not options["Hit through walls"].Value
                         and not entityLibrary:VisibleFrom(entity) then
                         continue
@@ -17054,39 +17055,21 @@ function Module.init(context: Runtime): any
             aura:Notify((tool :: Tool).Name .. " bound")
         end,
     })
-    aura:CreateToggle({
-        Name = "Swing only",
-        Default = false,
-        Tooltip = "Only press the weapon; never fire its touch events. Slower, "
-            .. "but indistinguishable from swinging by hand.",
-    })
-
     aura:CreateSlider({
-        Name = "Swing range",
+        Name = "Reach",
         Min = 5,
         Max = 60,
-        Default = 12,
-        Tooltip = "Distance at which the weapon starts swinging.",
+        Default = 18,
+        Tooltip = "Distance at which the weapon swings and its touch events "
+            .. "fire. This is the only Kill Aura distance.",
     })
     aura:CreateSlider({
         Name = "Max targets",
         Min = 1,
         Max = 10,
         Default = 3,
-    })
-    aura:CreateDropdown({
-        Name = "Mode",
-        List = {"Multi", "Single"},
-        Index = 1,
-        Tooltip = "Multi hits everyone in reach per swing, Single sticks to "
-            .. "the best target.",
-    })
-    aura:CreateDropdown({
-        Name = "Targeting",
-        List = {"Legit", "Blatant"},
-        Index = 1,
-        Tooltip = "Legit respects the forward FOV; Blatant scans the full "
-            .. "reach without requiring the cursor on a target.",
+        Tooltip = "How many valid players or NPCs one swing may hit. One "
+            .. "sticks to the best target.",
     })
     aura:CreateDropdown({
         Name = "Priority",
@@ -17115,25 +17098,18 @@ function Module.init(context: Runtime): any
         Default = Enum.KeyCode.Unknown,
     })
     aura:CreateSlider({
-        Name = "Attack range",
-        Min = 5,
-        Max = 40,
-        Default = 14,
-        Tooltip = "Distance at which contact damage is fired. Keep it near "
-            .. "the weapon's real reach.",
-    })
-    aura:CreateSlider({
         Name = "Field of view",
         Min = 30,
         Max = 360,
-        Default = 220,
-        Tooltip = "Degrees in front of you a target has to be inside.",
+        Default = 360,
+        Tooltip = "Degrees around your character. 360 scans every direction; "
+            .. "this is not cursor aim.",
     })
     aura:CreateDropdown({
         Name = "Rotation",
         List = {"Off", "Silent", "Face"},
-        Index = 1,
-        Tooltip = "Off never turns you; Silent turns you for the swing only; "
+        Index = 2,
+        Tooltip = "Silent turns you for the swing only and puts you back; "
             .. "Face keeps you pointed at the target.",
     })
     aura:CreateSlider({
@@ -17146,7 +17122,7 @@ function Module.init(context: Runtime): any
     })
     aura:CreateToggle({
         Name = "Hit through walls",
-        Default = false,
+        Default = true,
         Tooltip = "Fire contact damage even when the target is behind "
             .. "geometry. Independent of the wall check, which decides "
             .. "whether the target is picked at all.",
@@ -17159,8 +17135,9 @@ function Module.init(context: Runtime): any
     })
     aura:CreateToggle({
         Name = "Wall check",
-        Default = true,
-        Tooltip = "Skip targets hidden by map geometry.",
+        Default = false,
+        Tooltip = "Off by default: the aura hits through walls and floors "
+            .. "until you ask it not to.",
     })
     aura:CreateToggle({
         Name = "Team check",
@@ -17201,8 +17178,9 @@ function Module.init(context: Runtime): any
 
     aura:CreateNote(
         "Safe band: 8-12 swings a second and a reach close to the weapon's "
-            .. "own. Friend List protects players from this module in every "
-            .. "game."
+            .. "own. Reach is the only distance this card reads; there is no "
+            .. "second, longer one. Friend List protects players from this "
+            .. "module in every game."
     )
 
     activeCleanup = function(): ()
@@ -17239,10 +17217,12 @@ return Module
 --   * how many times it was called and when it was first and last seen,
 --   * a ready-to-paste call snippet built from the newest arguments.
 --
--- The hook is `__namecall`, which is the one path every FireServer goes
--- through, plus direct `FireServer`/`InvokeServer` calls for games that store
--- the function rather than calling the method. `checkcaller` keeps the menu's
--- own traffic out of the log.
+-- The hook is `__namecall`, which is the one path a `remote:FireServer(...)`
+-- call goes through. A game that stored the function instead of calling the
+-- method is not covered, and that gap is deliberate: the alternative is a
+-- second hook on an instance method, which is a second process-wide surface
+-- this card would have to own. `checkcaller` keeps the menu's own traffic out
+-- of the log.
 
 export type Runtime = {
     framework: any,
@@ -17464,14 +17444,21 @@ function Module.init(context: Runtime): any
         end
         hooked = true
         restore = function(): ()
-            -- Restoring a metamethod hook is executor-specific; where it is
-            -- not supported the capture flag alone stops the recording, and
-            -- the hook is a single boolean test from then on.
-            local restoreFn: any = environment.restorefunction
-            if type(restoreFn) == "function" then
-                pcall(restoreFn, previous)
+            -- Handing the original metamethod back is the only thing that
+            -- removes the hook. `restorefunction` takes a hooked *function*,
+            -- not the closure `hookmetamethod` returned, so the version this
+            -- replaced never removed anything: the hook stayed installed for
+            -- the rest of the session with only the capture flag between it
+            -- and every remote in the game.
+            local removed: boolean = pcall(hookMetamethod, game, "__namecall", previous)
+            if removed then
+                hooked = false
+                return
             end
-            hooked = false
+            -- An executor that will not give the metamethod back keeps an inert
+            -- hook — one boolean test, then straight through. `hooked` stays
+            -- true so a later enable cannot stack a second one on top.
+            logger:Notify("hook stays until rejoin")
         end
         return true
     end
@@ -19814,6 +19801,9 @@ function Module.init(context: Runtime): any
         Tooltip = "Uses nearby wall edges to perform a consistent wall hop.",
         Function = function(enabled: boolean): ()
             pending = nil
+            -- A hop spent just before the card was switched off must not eat
+            -- the first jump request after it comes back.
+            lastHopAt = -math.huge
             if not enabled then
                 card:SetStatus(nil)
                 return
@@ -19891,8 +19881,21 @@ function Module.init(context: Runtime): any
 
             card:Loop(function(): ()
                 local hop: PendingHop? = pending
-                if not hop or not hop.root.Parent or hop.humanoid.Health <= 0 then
+                if not hop then
+                    return
+                end
+                -- A character replaced mid-sequence is a different assembly, and
+                -- a humanoid that died mid-sequence is not going to jump. Either
+                -- way the remaining offsets are dropped rather than written into
+                -- whatever is wearing the name now.
+                local _character: Model?, humanoid: Humanoid?, root: BasePart? =
+                    getCharacterParts()
+                if not hop.root.Parent
+                    or hop.humanoid.Health <= 0
+                    or root ~= hop.root
+                    or humanoid ~= hop.humanoid then
                     pending = nil
+                    card:SetStatus("ready")
                     return
                 end
                 local elapsed: number = os.clock() - hop.startedAt
@@ -20318,6 +20321,13 @@ return Module
 -- the place, and can drop their hold time to nothing. Both are client-side
 -- properties of the prompt: the server still runs the same handler it always
 -- would, you are simply allowed to reach it from further away.
+--
+-- This is the menu's Reach, and the name says what it reaches. Wurst's Reach
+-- extends how far you can use a block; the Roblox equivalent of "use a block"
+-- is a ProximityPrompt or a ClickDetector, and that is the whole of it. Combat
+-- reach is a different thing with a different owner — `docs/architecture/
+-- reach-ownership.md` records why it is not this card, and why it is not a
+-- universal card at all.
 
 export type Runtime = {
     framework: any,
@@ -20365,24 +20375,38 @@ function Module.init(context: Runtime): any
 
     local function refreshInteractionExtender(): ()
         for prompt: ProximityPrompt, original: PromptState in pairs(originalPrompts) do
-            if prompt.Parent then
-                prompt.MaxActivationDistance = interactionExtenderEnabled
-                        and interactionSettings.proximityPrompts
-                        and interactionSettings.distance
-                    or original.distance
-                prompt.HoldDuration = interactionExtenderEnabled
-                        and interactionSettings.proximityPrompts
-                        and interactionSettings.instantPrompts
-                        and 0
-                    or original.holdDuration
+            if not prompt.Parent then
+                continue
+            end
+            local wantedDistance: number = interactionExtenderEnabled
+                    and interactionSettings.proximityPrompts
+                    and interactionSettings.distance
+                or original.distance
+            local wantedHold: number = interactionExtenderEnabled
+                    and interactionSettings.proximityPrompts
+                    and interactionSettings.instantPrompts
+                    and 0
+                or original.holdDuration
+            -- Only write what changed. This sweep runs twice a second over every
+            -- prompt in the place, and a property write the engine already has
+            -- is still a write the game's own scripts can observe.
+            if prompt.MaxActivationDistance ~= wantedDistance then
+                prompt.MaxActivationDistance = wantedDistance
+            end
+            if prompt.HoldDuration ~= wantedHold then
+                prompt.HoldDuration = wantedHold
             end
         end
         for detector: ClickDetector, originalDistance: number in pairs(originalClickDetectors) do
-            if detector.Parent then
-                detector.MaxActivationDistance = interactionExtenderEnabled
-                        and interactionSettings.clickDetectors
-                        and interactionSettings.distance
-                    or originalDistance
+            if not detector.Parent then
+                continue
+            end
+            local wantedDistance: number = interactionExtenderEnabled
+                    and interactionSettings.clickDetectors
+                    and interactionSettings.distance
+                or originalDistance
+            if detector.MaxActivationDistance ~= wantedDistance then
+                detector.MaxActivationDistance = wantedDistance
             end
         end
     end
@@ -20509,8 +20533,17 @@ function Module.init(context: Runtime): any
         end
     )
 
+    -- Teardown has to undo the properties, not just drop the listener: the
+    -- sweep connection and every extended prompt outlived the card, so a
+    -- client that unloaded the menu left the whole place reaching 32 studs.
     activeCleanup = function(): ()
         disconnectFeatureConnection("InteractExtender")
+        disconnectFeatureConnection("InteractExtenderRefresh")
+        restoreInteractionExtender()
+        interactionRefreshClock = 0
+        if InteractFeature then
+            InteractFeature:SetStatus(nil)
+        end
     end
     Module.Initialized = true
     return InteractFeature
@@ -24239,10 +24272,11 @@ return Module
 -- a player can reason about, where a multiplier ("body scale 2.25") means
 -- nothing until you have seen it.
 --
--- Three things the reference version leaves out and this keeps: teammates are
+-- Four things the reference version leaves out and this keeps: teammates are
 -- skipped (inflating the person you cannot hit only hides the person you can),
--- NPCs are opt-in, and a part is restored the moment it stops being a target
--- rather than only when the module is switched off.
+-- Friend List entries are skipped for the same reason, NPCs are opt-in, and a
+-- part is restored the moment it stops being a target rather than only when
+-- the module is switched off.
 --
 -- It lived in the shell until now, for no reason other than being written
 -- there first.
@@ -24268,25 +24302,7 @@ function Module.init(context: Runtime): any
     local entityLibrary: any = context.entity
     local Players: any = host.Players
     local LocalPlayer: any = host.LocalPlayer
-
-    -- Hitboxes.
-    --
-    -- The reference implementation is four lines: remember a part's size, add the
-    -- slider to it every frame, put it back on disable. That is the right shape —
-    -- an expansion in studs is a number a player can reason about ("six studs of
-    -- extra reach"), where the multiplier this menu used before ("body scale
-    -- 2.25") means nothing until you have seen it. So this is that model, with the
-    -- three things the reference version leaves out:
-    --
-    --   * teammates are skipped, because inflating the person you cannot hit only
-    --     makes it harder to see the person you can;
-    --   * NPCs are opt-in, since half the games this runs in are full of them;
-    --   * every part is restored exactly, including when it stops being a target
-    --     mid-round (team swap, respawn, mode change), instead of only on disable.
-    --
-    -- Collision is dropped on the expanded part on purpose: a twelve-stud invisible
-    -- box that still collides shoves its owner around the map, which is visible to
-    -- everyone in the server.
+    local protectedTargets: any = context.services.protectedTargets
 
     type HitboxSettings = {
         part: string,
@@ -24298,11 +24314,21 @@ function Module.init(context: Runtime): any
         noCollision: boolean,
     }
 
+    type HitboxWritten = {
+        size: Vector3,
+        transparency: number,
+        canCollide: boolean,
+        massless: boolean,
+    }
+
     type OriginalHitboxState = {
         size: Vector3,
         transparency: number,
         canCollide: boolean,
         massless: boolean,
+        -- What the module wrote on the last sweep, so an external change to the
+        -- part can be told apart from the module's own write.
+        written: HitboxWritten,
     }
 
     local hitboxSettings: HitboxSettings = {
@@ -24346,17 +24372,60 @@ function Module.init(context: Runtime): any
                 transparency = part.Transparency,
                 canCollide = part.CanCollide,
                 massless = part.Massless,
+                written = {
+                    size = part.Size,
+                    transparency = part.Transparency,
+                    canCollide = part.CanCollide,
+                    massless = part.Massless,
+                },
             }
             originalHitboxes[part] = original
         end
         local resolved: OriginalHitboxState = original :: OriginalHitboxState
+        local last: HitboxWritten = resolved.written
+
+        -- A property the game rewrote behind the module's back is the game's to
+        -- keep: adopt it as the baseline instead of writing the stale one back
+        -- on restore. R15 scaling and size potions both resize a character
+        -- mid-round, and a restore that ignored them put the old body back.
+        if part.Size ~= last.size then
+            resolved.size = part.Size
+        end
+        if part.Transparency ~= last.transparency then
+            resolved.transparency = part.Transparency
+        end
+        if part.CanCollide ~= last.canCollide then
+            resolved.canCollide = part.CanCollide
+        end
+        if part.Massless ~= last.massless then
+            resolved.massless = part.Massless
+        end
+
         local expand: number = hitboxSettings.expand
-        part.Size = resolved.size + Vector3.new(expand, expand, expand)
-        part.Transparency = hitboxSettings.reveal
+        local nextSize: Vector3 = resolved.size + Vector3.new(expand, expand, expand)
+        local nextTransparency: number = hitboxSettings.reveal
             and math.clamp(hitboxSettings.transparency / 100, 0, 1)
             or resolved.transparency
-        part.CanCollide = not hitboxSettings.noCollision and resolved.canCollide
-        part.Massless = true
+        local nextCanCollide: boolean = not hitboxSettings.noCollision and resolved.canCollide
+
+        -- Steady state writes nothing: the sweep runs every frame over every
+        -- target, and a property write the engine already has is still a write.
+        if part.Size ~= nextSize then
+            part.Size = nextSize
+        end
+        if part.Transparency ~= nextTransparency then
+            part.Transparency = nextTransparency
+        end
+        if part.CanCollide ~= nextCanCollide then
+            part.CanCollide = nextCanCollide
+        end
+        if not part.Massless then
+            part.Massless = true
+        end
+        last.size = nextSize
+        last.transparency = nextTransparency
+        last.canCollide = nextCanCollide
+        last.massless = true
     end
 
     -- Which parts of one character the current mode targets. Everything else that
@@ -24395,6 +24464,12 @@ function Module.init(context: Runtime): any
                 continue
             end
             if entityLibrary:IsProtected(player) then
+                continue
+            end
+            -- Friend List is not a team check: it is a promise the rest of the
+            -- combat cards already keep, and an inflated friend is as visible
+            -- to the server as an inflated enemy.
+            if protectedTargets.isProtected(player) then
                 continue
             end
             local character: Model? = player.Character
@@ -24441,8 +24516,9 @@ function Module.init(context: Runtime): any
         Name = "Hitboxes",
         Category = "Combat",
         Order = 3,
-        Tooltip = "Expand the part enemies are hit on, in studs. Every part "
-            .. "is restored exactly when it stops being a target.",
+        Tooltip = "Expand the part enemies are hit on, in studs. Teammates and "
+            .. "friends are left alone, and every part is restored exactly when "
+            .. "it stops being a target.",
         Function = function(enabled: boolean): ()
             restoreHitboxes()
             if not enabled then
@@ -25354,7 +25430,14 @@ return Module
 --
 -- SpinBot.
 -- Vape-inspired rotation with a direct CFrame mode and a physics angular-
--- velocity mode. Every touched property is restored on disable.
+-- velocity mode. Every touched property is restored on disable, on death and
+-- when the character is replaced mid-spin.
+--
+-- What it cannot promise is that the server agrees. Velocity mode writes
+-- `AssemblyAngularVelocity`, which a server-owned assembly or an angular-
+-- velocity clamp can simply ignore; CFrame mode writes the root directly,
+-- which a server that corrects position will fight. Neither is a bypass and
+-- neither is presented as one.
 
 export type Runtime = {
     framework: any,
@@ -25466,14 +25549,29 @@ function Module.init(context: Runtime): any
         Name = "Mode",
         List = {"CFrame", "Velocity"},
         Index = 1,
+        Tooltip = "CFrame turns the root directly. Velocity asks the physics "
+            .. "engine to spin the assembly, which a server that owns your "
+            .. "character can clamp.",
         Function = function(value: string): ()
             if card then
                 card:SetStatus(value)
             end
         end,
     })
-    card:CreateDropdown({Name = "Axis", List = {"Y", "X", "Z"}, Index = 1})
-    card:CreateSlider({Name = "Speed", Min = 30, Max = 1440, Step = 15, Default = 360})
+    card:CreateDropdown({
+        Name = "Axis",
+        List = {"Y", "X", "Z"},
+        Index = 1,
+        Tooltip = "Y turns you in place. X and Z tumble.",
+    })
+    card:CreateSlider({
+        Name = "Speed",
+        Min = 30,
+        Max = 1440,
+        Step = 15,
+        Default = 360,
+        Tooltip = "Degrees per second. 360 is one turn a second.",
+    })
 
     activeCard = card
     Module.Initialized = true

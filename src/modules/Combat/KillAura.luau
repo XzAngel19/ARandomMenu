@@ -6,17 +6,23 @@
 -- version is one range slider, a CPS slider and an angle; this one separates
 -- the three decisions that actually change how it behaves in a game:
 --
---   * When to swing      — swing range, field of view, wall check, priority.
+--   * When to swing      — reach, field of view, wall check, priority.
 --   * How to hit         — the tool's own Activate, plus contact firing
 --                          (`firetouchinterest`) for weapons that only damage
---                          on touch, at a shorter attack range.
+--                          on touch.
 --   * How obvious to be  — rotation off, snapped for a single frame around the
 --                          swing (silent), or held on the target.
 --
--- Defaults are deliberately playable: a single target, 12-stud reach, 9 swings
--- a second, a 220° forward field of view, walls respected and friends skipped.
--- Blatant targeting is explicit: it scans the full reach instead of pretending
--- to be a cursor trigger, while Legit keeps a readable forward cone.
+-- Reach is one number. It used to be two — a swing range that picked the
+-- targets and a shorter attack range that gated the touch events — and at the
+-- shipped defaults the second one never fired, because every target inside 12
+-- studs was already inside 14. One distance, one row: the aura swings at, and
+-- fires contact on, exactly the players it selected.
+--
+-- Kill Aura is not a cursor trigger. Its default 360° cone scans every
+-- direction around the character; Field of view is only a deliberate way to
+-- narrow that scan. Defaults are deliberately useful: three targets, 18-stud
+-- reach, 8 swings a second, walls ignored and friends skipped.
 
 export type Runtime = {
     framework: any,
@@ -130,7 +136,7 @@ function Module.init(context: Runtime): any
         end
     end
 
-    local function markTarget(entity: any, inAttackRange: boolean, options: any): ()
+    local function markTarget(entity: any, options: any): ()
         if not options["Highlight targets"].Value then
             return
         end
@@ -147,13 +153,7 @@ function Module.init(context: Runtime): any
         local highlight: Highlight = existing :: Highlight
         highlight.Adornee = entity.Character
         highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-        -- One colour, dimmed for "in swing range but not being hit yet": the
-        -- gap between the two is worth seeing, and it does not need a second
-        -- colour picker to say so.
-        local base: Color3 = options["Highlight colour"].Value
-        local colour: Color3 = inAttackRange
-            and base
-            or base:Lerp(Color3.new(0, 0, 0), 0.45)
+        local colour: Color3 = options["Highlight colour"].Value
         highlight.FillColor = colour
         highlight.OutlineColor = colour
     end
@@ -270,6 +270,21 @@ function Module.init(context: Runtime): any
         end
     end
 
+    -- Reach replaced the swing-range / attack-range pair. Carry a saved swing
+    -- range across only when the new key has never been written, and keep the
+    -- old key so an older build can still read the same profile.
+    local store: any = host.configData
+    if store and store.values then
+        local reachKey: string = "Universal.KillAura.Reach"
+        local stored: any = store.values["Universal.KillAura.Swingrange"]
+        if store.values[reachKey] == nil and type(stored) == "number" then
+            store.values[reachKey] = stored
+            if type(host.queueConfigSave) == "function" then
+                host.queueConfigSave()
+            end
+        end
+    end
+
     aura = framework.Categories.Combat:CreateModule({
         Name = "Killaura",
         Category = "Combat",
@@ -343,13 +358,11 @@ function Module.init(context: Runtime): any
 
                 entityLibrary:Refresh()
                 local targets: {any} = entityLibrary:InRange({
-                    Range = options["Swing range"].Value,
+                    Range = options["Reach"].Value,
                     Limit = math.round(options["Max targets"].Value),
                     IgnoreTeam = not options["Team check"].Value,
                     IgnoreWalls = not options["Wall check"].Value,
-                    Angle = options["Targeting"].Value == "Blatant"
-                        and nil
-                        or options["Field of view"].Value,
+                    Angle = options["Field of view"].Value,
                     IncludeNPCs = options["Target NPCs"].Value,
                     Sort = options["Priority"].Value,
                 })
@@ -366,8 +379,6 @@ function Module.init(context: Runtime): any
                 -- it was one more thing to read.
                 local jitter: number = 1 / rate * 0.25
                 local canSwing: boolean = now >= nextSwingAt
-                local attackRange: number = options["Attack range"].Value
-                local mode: string = options["Mode"].Value
                 local keep: {[any]: boolean} = {}
 
                 local root: BasePart? = entityLibrary.LocalEntity
@@ -394,13 +405,9 @@ function Module.init(context: Runtime): any
                     )
                 end
 
-                for index: number, entity: any in ipairs(targets) do
-                    if mode == "Single" and index > 1 then
-                        break
-                    end
+                for _, entity: any in ipairs(targets) do
                     keep[entity.Player or entity.Character] = true
-                    local inAttackRange: boolean = entity.Distance <= attackRange
-                    markTarget(entity, inAttackRange, options)
+                    markTarget(entity, options)
 
                     if not canSwing then
                         continue
@@ -445,19 +452,13 @@ function Module.init(context: Runtime): any
                             weapons:Swing()
                         end
                     end
-                    if options["Swing only"].Value then
-                        -- Swing and nothing else: the tool's own Activate, no
-                        -- touch events, no reach. What a player's hand does.
-                        continue
-                    end
                     if not options["Contact damage"].Value then
+                        -- Swing and nothing else: the tool's own Activate, no
+                        -- touch events. What a player's hand does.
                         continue
                     end
-                    -- Reach is the distance check; walls are a separate
-                    -- decision, so a player can have one without the other.
-                    if not inAttackRange then
-                        continue
-                    end
+                    -- Walls are a separate decision from reach, so a player can
+                    -- have one without the other.
                     if not options["Hit through walls"].Value
                         and not entityLibrary:VisibleFrom(entity) then
                         continue
@@ -532,39 +533,21 @@ function Module.init(context: Runtime): any
             aura:Notify((tool :: Tool).Name .. " bound")
         end,
     })
-    aura:CreateToggle({
-        Name = "Swing only",
-        Default = false,
-        Tooltip = "Only press the weapon; never fire its touch events. Slower, "
-            .. "but indistinguishable from swinging by hand.",
-    })
-
     aura:CreateSlider({
-        Name = "Swing range",
+        Name = "Reach",
         Min = 5,
         Max = 60,
-        Default = 12,
-        Tooltip = "Distance at which the weapon starts swinging.",
+        Default = 18,
+        Tooltip = "Distance at which the weapon swings and its touch events "
+            .. "fire. This is the only Kill Aura distance.",
     })
     aura:CreateSlider({
         Name = "Max targets",
         Min = 1,
         Max = 10,
         Default = 3,
-    })
-    aura:CreateDropdown({
-        Name = "Mode",
-        List = {"Multi", "Single"},
-        Index = 1,
-        Tooltip = "Multi hits everyone in reach per swing, Single sticks to "
-            .. "the best target.",
-    })
-    aura:CreateDropdown({
-        Name = "Targeting",
-        List = {"Legit", "Blatant"},
-        Index = 1,
-        Tooltip = "Legit respects the forward FOV; Blatant scans the full "
-            .. "reach without requiring the cursor on a target.",
+        Tooltip = "How many valid players or NPCs one swing may hit. One "
+            .. "sticks to the best target.",
     })
     aura:CreateDropdown({
         Name = "Priority",
@@ -593,25 +576,18 @@ function Module.init(context: Runtime): any
         Default = Enum.KeyCode.Unknown,
     })
     aura:CreateSlider({
-        Name = "Attack range",
-        Min = 5,
-        Max = 40,
-        Default = 14,
-        Tooltip = "Distance at which contact damage is fired. Keep it near "
-            .. "the weapon's real reach.",
-    })
-    aura:CreateSlider({
         Name = "Field of view",
         Min = 30,
         Max = 360,
-        Default = 220,
-        Tooltip = "Degrees in front of you a target has to be inside.",
+        Default = 360,
+        Tooltip = "Degrees around your character. 360 scans every direction; "
+            .. "this is not cursor aim.",
     })
     aura:CreateDropdown({
         Name = "Rotation",
         List = {"Off", "Silent", "Face"},
-        Index = 1,
-        Tooltip = "Off never turns you; Silent turns you for the swing only; "
+        Index = 2,
+        Tooltip = "Silent turns you for the swing only and puts you back; "
             .. "Face keeps you pointed at the target.",
     })
     aura:CreateSlider({
@@ -624,7 +600,7 @@ function Module.init(context: Runtime): any
     })
     aura:CreateToggle({
         Name = "Hit through walls",
-        Default = false,
+        Default = true,
         Tooltip = "Fire contact damage even when the target is behind "
             .. "geometry. Independent of the wall check, which decides "
             .. "whether the target is picked at all.",
@@ -637,8 +613,9 @@ function Module.init(context: Runtime): any
     })
     aura:CreateToggle({
         Name = "Wall check",
-        Default = true,
-        Tooltip = "Skip targets hidden by map geometry.",
+        Default = false,
+        Tooltip = "Off by default: the aura hits through walls and floors "
+            .. "until you ask it not to.",
     })
     aura:CreateToggle({
         Name = "Team check",
@@ -679,8 +656,9 @@ function Module.init(context: Runtime): any
 
     aura:CreateNote(
         "Safe band: 8-12 swings a second and a reach close to the weapon's "
-            .. "own. Friend List protects players from this module in every "
-            .. "game."
+            .. "own. Reach is the only distance this card reads; there is no "
+            .. "second, longer one. Friend List protects players from this "
+            .. "module in every game."
     )
 
     activeCleanup = function(): ()

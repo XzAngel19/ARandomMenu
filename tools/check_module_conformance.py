@@ -6,6 +6,14 @@ Rejects, when armed:
   (b) configData keys outside the documented namespaces
   (c) bare print / warn
   (d) direct host.state access
+  (e) process-wide engine hooks outside the allowlist
+
+(e) is the one that cannot be reviewed by reading a diff. A `hookmetamethod`
+installed by one card sits on a surface every other caller in the client
+shares, so "it is only in this module" is not an isolation argument — see
+docs/architecture/targeting-and-learning.md. The gate scans src/modules only:
+a game adapter under src/games may hook when it says so explicitly, and MVSD's
+silent aim is the standing example of what that has to look like.
 
 The gate is blocking. Modules use the shell-owned `isMenuOwned` predicate
 instead of reaching into GUI roots, and user-facing diagnostics go through
@@ -36,6 +44,24 @@ ALLOWED_KEY_PREFIXES = (
 )
 
 SCREEN = re.compile(r"\b(?:ScreenGui|PopupLayer)\b")
+# A hook by any of these names changes a closure or a metatable that every
+# other caller in the process reads. `getrawmetatable` is a read and stays
+# allowed; `newcclosure` wraps a closure without replacing anybody else's.
+HOOK = re.compile(
+    r"\b(?:hookfunction|hookmetamethod|hookproperty|hookconstructor"
+    r"|replaceclosure|setrawmetatable)\b"
+)
+
+# One entry per module allowed to install a hook, with the owner and the
+# condition that removes it. Adding a line here is the review, so it does not
+# happen by accident in a diff.
+HOOK_ALLOWLIST = {
+    # Remote Logger exists to watch the game call its own remotes, which is
+    # only observable from __namecall. Owner: D.
+    # Removal condition: an observation path that does not need a metamethod,
+    # or the card leaving the default inventory.
+    "src/modules/Utility/RemoteLogger.luau",
+}
 PRINT = re.compile(r"\b(?:print|warn)\s*\(")
 HOST_STATE = re.compile(r"\bhost\s*\.\s*state\b")
 SAVED_KEY = re.compile(r'(?:local\s+)?SAVED_KEY\s*:\s*string\s*=\s*"([^"]+)"')
@@ -90,6 +116,17 @@ def scan(rel: str) -> list[str]:
         if not is_code(line):
             continue
         findings.append(f"{rel}:{line_no}: direct host.state access")
+
+    if rel not in HOOK_ALLOWLIST:
+        for match in HOOK.finditer(text):
+            line_no = text.count("\n", 0, match.start()) + 1
+            line = text.splitlines()[line_no - 1]
+            if not is_code(line):
+                continue
+            findings.append(
+                f"{rel}:{line_no}: process-wide hook {match.group(0)} needs an "
+                "allowlist entry with an owner and a removal condition"
+            )
 
     keys: list[tuple[int, str]] = []
     for match in CONFIG_INDEX.finditer(text):
