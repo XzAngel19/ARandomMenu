@@ -37,16 +37,17 @@ letting pointer noise create long decimal tails.
 
 ## Aim Assist smoothing
 
-`Smoothing` now spans 0–100 with distinct behavior:
+`Smoothing` belongs only to normal `Aim Assist` and spans 0–100 with distinct
+behavior:
 
 - `0` snaps to the selected point;
 - positive values use a frame-rate-independent exponential response;
-- larger values take longer to settle;
-- `Aimbot` retains its valid target and uses a modest response boost, while
-  normal `Aim Assist` continues to retarget within its cursor FOV.
+- larger values take longer to settle.
 
-The two modes therefore differ in target policy and lock retention, not just in
-the label on the card.
+`Aimbot` hides that control and always uses zero smoothing. Its separate
+`Sticky target` toggle controls lock retention; turning it off clears the lock
+and selects a fresh valid target every frame. The two modes therefore differ in
+both target policy and movement semantics, not just in the label on the card.
 
 ## Supported Redirect adapters
 

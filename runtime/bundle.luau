@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "ba982ffd35af029d",
+    stamp = "f44caf29328cab60",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -19131,23 +19131,19 @@ function Module.init(context: Runtime): any
             return false
         end
 
-        -- Smoothing is a time constant, not a speed preset: 0 snaps to the
-        -- target, while 100 takes roughly a second to settle. Aimbot gets a
-        -- modest lock response boost, but the same slider still controls how
-        -- gentle the movement is. The exponential form behaves consistently
-        -- across frame rates and never overshoots.
-        local smoothing: number = math.clamp(card.Options["Smoothing"].Value, 0, 100)
+        -- Aimbot is deliberately a snap lock: it has no smoothing control and
+        -- does not keep pulling the camera after the user chooses the mode. The
+        -- normal assist uses a frame-rate-independent time constant; zero is a
+        -- useful snap value and larger values settle more gently.
         local mode: string = card.Options["Mode"].Value
-        local alpha: number
-        if smoothing <= 0 then
-            alpha = 1
-        else
-            local timeConstant: number = 0.02 + smoothing * 0.01
-            if mode == "Aimbot" then
-                timeConstant *= 0.75
+        local alpha: number = 1
+        if mode ~= "Aimbot" then
+            local smoothing: number = card.Options["Smoothing"].Value
+            if smoothing > 0 then
+                local timeConstant: number = 0.02 + smoothing * 0.01
+                alpha = 1 - math.exp(-math.max(deltaTime, 1 / 240) / timeConstant)
+                alpha = math.clamp(alpha, 0, 1)
             end
-            alpha = 1 - math.exp(-math.max(deltaTime, 1 / 240) / timeConstant)
-            alpha = math.clamp(alpha, 0, 1)
         end
         local currentLook: Vector3 = current.LookVector
         local blended: Vector3 = currentLook:Lerp(offset.Unit, alpha)
@@ -19194,7 +19190,7 @@ function Module.init(context: Runtime): any
             runtime.lockedTarget = nil
             return candidates[1]
         end
-        if runtime.lockedTarget then
+        if options["Sticky target"].Value and runtime.lockedTarget then
             for _, candidate: any in ipairs(candidates) do
                 if candidate.entity == runtime.lockedTarget.entity then
                     runtime.lockedTarget = candidate
@@ -19284,12 +19280,13 @@ function Module.init(context: Runtime): any
     })
     card:CreateSlider({
         Name = "Smoothing",
+        Show = {Option = "Mode", Values = {"Aim Assist"}},
         Min = 0,
         Max = 100,
         Step = 5,
         Default = 35,
         Tooltip = "0 snaps to the target; higher values make the camera settle "
-            .. "more slowly. Aimbot keeps its target lock separately.",
+            .. "more slowly. Aimbot always uses zero smoothing.",
     })
     card:CreateDropdown({
         Name = "Target part",
@@ -19333,6 +19330,18 @@ function Module.init(context: Runtime): any
         Name = "Target NPCs",
         Default = false,
         Tooltip = "Include non-player humanoid models in both modes.",
+    })
+    card:CreateToggle({
+        Name = "Sticky target",
+        Show = {Option = "Mode", Values = {"Aimbot"}},
+        Default = true,
+        Function = function(value: boolean): ()
+            if not value then
+                runtime.lockedTarget = nil
+            end
+        end,
+        Tooltip = "Hold the current Aimbot target. Turn off to release it and "
+            .. "select a new target every frame.",
     })
     card:CreateNote(
         "Camera-only assist. It never edits remotes, raycasts or hitboxes."

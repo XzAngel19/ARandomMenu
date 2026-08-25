@@ -281,11 +281,16 @@ return function(ctx: any): ()
     npc.Parent = world.workspace
     entity:Refresh(true)
     aim.Options["Mode"].Value = "Aimbot"
+    aim:RefreshVisibility()
+    check("Aimbot hides the normal smoothing control", aim.Options["Smoothing"].Visible == false)
+    check("Aimbot exposes a releasable sticky-target control", aim.Options["Sticky target"].Visible == true)
+    aim.Options["Smoothing"].Value = 100
+    aim.Options["Sticky target"].Value = true
     aim.Options["Target NPCs"].Value = true
     aim.Options["FOV"].Value = 15
     stub.step(0.016)
     check(
-        "Aimbot can lock an NPC outside the Assist FOV",
+        "Aimbot snaps to an NPC outside the Assist FOV",
         string.find(tostring(aim.Status), "AimDummy", 1, true) ~= nil,
         tostring(aim.Status)
     )

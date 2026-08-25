@@ -29,8 +29,9 @@ file records the audit scope, not a second list of cards.
   neutral and visible instead of being incorrectly treated as a teammate.
 - NPCESP now has its own Team check and uses the shared policy.
 - Aim Assist exposes `Aim Assist` and `Aimbot` modes. The first respects its
-  cursor FOV; the second uses a stable smooth lock over valid on-screen
-  characters and can opt into NPCs. It still only changes the local camera.
+  cursor FOV and smoothing control; the second uses a zero-smoothing lock over
+  valid characters, with an explicit `Sticky target` release control, and can
+  opt into NPCs. It still only changes the local camera.
 
 ## Remaining field debt
 

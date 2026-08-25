@@ -16,10 +16,12 @@ labels and runtime strings must remain English. Work from the latest
 >
 > Test free finite numeric TextBoxes separately from pointer drags. Typed and
 > stored values outside the rail must survive; pointer drags must still snap to
-> the rail; NaN and infinity must be rejected. Test Aim Assist smoothing at 0,
-> a middle value and 100, and verify the Aimbot mode uses its lock policy
-> rather than merely changing a label. Do not make missing behavior a green
-> check, and do not add screenshot uploads or global hooks.
+> the rail; NaN and infinity must be rejected. Test normal Aim Assist
+> smoothing at 0, a middle value and 100, and verify that the control is hidden
+> in Aimbot. Aimbot must use fixed zero smoothing, expose a releasable Sticky
+> target control, and use its lock policy rather than merely changing a label.
+> Do not make missing behavior a green check, and do not add screenshot uploads
+> or global hooks.
 >
 > Run the full validation command, report the exact count and any mock debt,
 > then hand the integrator the commit hash.
