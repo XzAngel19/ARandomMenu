@@ -61,6 +61,54 @@ return function(ctx: any): ()
     })
     check("Friend List policy is shared by Targeting", #protected == 0)
     host.services.protectedTargets.setProvider(nil)
+
+    local npc: any = Mock.newInstance("Model")
+    npc.Name = "FriendlyDummy"
+    local npcHumanoid: any = Mock.newInstance("Humanoid")
+    npcHumanoid.Name = "Humanoid"
+    npcHumanoid.Health = 100
+    npcHumanoid.MaxHealth = 100
+    npcHumanoid.Parent = npc
+    local npcRoot: any = Mock.newInstance("Part")
+    npcRoot.Name = "HumanoidRootPart"
+    npcRoot.Position = world.vector3(0, 0, -25)
+    npcRoot.Parent = npc
+    local npcHead: any = Mock.newInstance("Part")
+    npcHead.Name = "Head"
+    npcHead.Position = world.vector3(0, 2, -25)
+    npcHead.Parent = npc
+    npc:SetAttribute("Team", "Blue")
+    npc.Parent = world.workspace
+    entity:Refresh(true)
+    local function containsModel(list: {any}, model: any): boolean
+        for _, target: any in ipairs(list) do
+            if target.character == model then
+                return true
+            end
+        end
+        return false
+    end
+    local friendlyNpcTargets: {any} = targeting:List(entity, {
+        FOV = 220,
+        MaxDistance = 100,
+        TargetPart = "Head",
+        IncludeNPCs = true,
+        TeamCheck = true,
+        VisibilityCheck = false,
+    })
+    check("Targeting team policy skips a same-team NPC", not containsModel(friendlyNpcTargets, npc))
+    npc:SetAttribute("Team", "Red")
+    entity:Refresh(true)
+    local enemyNpcTargets: {any} = targeting:List(entity, {
+        FOV = 220,
+        MaxDistance = 100,
+        TargetPart = "Head",
+        IncludeNPCs = true,
+        TeamCheck = true,
+        VisibilityCheck = false,
+    })
+    check("Targeting can include an opposing NPC", containsModel(enemyNpcTargets, npc))
+    entity:Refresh(true)
     TargetingFile.destroy()
 
     section("Aim Assist")
@@ -82,6 +130,8 @@ return function(ctx: any): ()
     local aim: any = AimFile.init(context)
     check("Aim Assist card is registered", aim ~= nil and aim.Name == "Aim Assist")
     check("Aim Assist has no hook option", aim.Options["Hook"] == nil)
+    check("Aim Assist exposes normal and Aimbot modes",
+        aim.Options["Mode"] ~= nil and aim.Options["Target NPCs"] ~= nil)
     host.state.visible = false
     host.state.keyCaptureCallback = nil
     host.state.waitingForKey = false
@@ -98,7 +148,14 @@ return function(ctx: any): ()
     check("Aim Assist yields to a game-specific aim adapter", aim.Status == "paused",
         tostring(aim.Status))
     host.services.activity.set("mvsdSilentAim", false)
+    aim.Options["Mode"].Value = "Aimbot"
+    aim.Options["Target NPCs"].Value = true
+    aim.Options["FOV"].Value = 15
+    stub.step(0.016)
+    check("Aimbot can select an NPC outside the Assist FOV", string.find(tostring(aim.Status), "FriendlyDummy", 1, true) ~= nil,
+        tostring(aim.Status))
     aim:Toggle(false)
+    npc:Destroy()
     check("Aim Assist disable removes its frame task", aim.Enabled == false)
     check("Aim Assist does not activate tools", (world.mouseClicks or 0) == clicksBefore)
     AimFile.destroy()

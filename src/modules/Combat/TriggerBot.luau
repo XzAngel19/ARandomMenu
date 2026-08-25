@@ -46,7 +46,7 @@ function Module.init(context: Runtime): any
     -- Per-target arming: the delay restarts whenever the crosshair moves onto
     -- a different player, which is what stops a sweep across a crowd from
     -- emptying a magazine.
-    local armedTarget: Player? = nil
+    local armedTarget: any = nil
     local armedAt: number = 0
     local nextShotAt: number = 0
 
@@ -83,7 +83,7 @@ function Module.init(context: Runtime): any
 
                 local tool: Tool? = findTool(character)
 
-                local target: Player?, distance: number =
+                local target: any, distance: number =
                     Module.resolveTarget(context, trigger)
                 if not target then
                     armedTarget = nil
@@ -196,6 +196,11 @@ function Module.init(context: Runtime): any
         Default = true,
         Tooltip = "Never fire at a target with geometry in the way.",
     })
+    trigger:CreateToggle({
+        Name = "Target NPCs",
+        Default = false,
+        Tooltip = "Also recognize non-player humanoid models under the crosshair.",
+    })
 
     activeCleanup = function(): ()
         armedTarget = nil
@@ -207,7 +212,7 @@ end
 -- Two ways of deciding what is under the crosshair, because they fail on
 -- different games: a raycast is exact but misses tools with custom hitboxes,
 -- and a screen-space radius catches those but needs a tolerance.
-function Module.resolveTarget(context: Runtime, trigger: any): (Player?, number)
+function Module.resolveTarget(context: Runtime, trigger: any): (any, number)
     local host: any = context.host
     local entityLibrary: any = context.entity
     local players: Players = host.Players
@@ -220,6 +225,7 @@ function Module.resolveTarget(context: Runtime, trigger: any): (Player?, number)
         return nil, 0
     end
     local resolvedRay: Ray = ray :: Ray
+    entityLibrary:Refresh()
 
     local partFilter: string = options["Target part"].Value
     local radius: number = options["Aim tolerance"].Value
@@ -246,10 +252,11 @@ function Module.resolveTarget(context: Runtime, trigger: any): (Player?, number)
             return nil, 0
         end
         local player: Player? = players:GetPlayerFromCharacter(character)
-        if not player then
-            return nil, 0
-        end
-        local entity: any = entityLibrary:Get(player)
+        local entity: any = player
+            and entityLibrary:Get(player)
+            or (options["Target NPCs"].Value
+                and entityLibrary.GetNpc
+                and entityLibrary:GetNpc(character))
         if not entity then
             return nil, 0
         end
@@ -266,7 +273,7 @@ function Module.resolveTarget(context: Runtime, trigger: any): (Player?, number)
             and hit.Name ~= "HumanoidRootPart" then
             return nil, 0
         end
-        return player, entity.Distance
+        return player or character, entity.Distance
     end
 
     entityLibrary:Refresh()
@@ -281,13 +288,14 @@ function Module.resolveTarget(context: Runtime, trigger: any): (Player?, number)
             MaxDistance = options["Max distance"].Value,
             IgnoreTeam = not options["Team check"].Value,
             IgnoreWalls = not options["Wall check"].Value,
+            IncludeNPCs = options["Target NPCs"].Value,
             Part = partFilter == "Head" and "Head" or nil,
         }
     )
     if not entity then
         return nil, 0
     end
-    return entity.Player, entity.Distance
+    return entity.Player or entity.Character, entity.Distance
 end
 
 -- Firing, in the order things actually work.

@@ -24,7 +24,7 @@ local RUNTIME_SAFETY_SOURCE_URL: string =
 --
 -- Every feature card is filed under a category and the cards inside a category
 -- are then sorted alphabetically, so the list reads
--- "Combat / Fling, Hitboxes… · Player / Fly, High Jump, Infinite Jump…".
+-- "Combat / Aim Assist, Auto Clicker, Hitboxes… · Movement / Fly, High Jump…".
 -- Anything not listed here (including everything the per-game modules add)
 -- falls back to DEFAULT_FEATURE_CATEGORY, which is always rendered last and
 -- without a header when it is the only category on a page.
@@ -116,7 +116,7 @@ local FEATURE_CATEGORIES: {[string]: string} = {
     ["Zoom Unlocker"] = "Render",
 
     -- Protection
-    ["Anti-Fling"] = "Movement",
+    ["Anti-Fling"] = "Other",
     ["Anti-Void"] = "Movement",
     ["Safe Walk"] = "Movement",
     ["No Fall"] = "Movement",
@@ -363,7 +363,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "d383fa75223a3352"
+local SOURCE_STAMP: string = "db7acc9f38778192"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -6193,9 +6193,9 @@ local fallbackManifest: any = {
         {path = "src/modules/Visuals/FieldOfView.luau", name = "FOV", category = "Render"},
         {path = "src/modules/Movement/Noclip.luau", name = "Noclip", category = "Movement"},
         {path = "src/modules/Utility/AntiAfk.luau", name = "AntiAFK", category = "Other"},
-        {path = "src/modules/Protection/AntiFling.luau", name = "Anti-Fling", category = "Combat"},
-        {path = "src/modules/Utility/LagSwitch.luau", name = "Lag Switch", category = "Movement"},
-        {path = "src/modules/Utility/Fling.luau", name = "Fling", category = "Combat"},
+        {path = "src/modules/Protection/AntiFling.luau", name = "Anti-Fling", category = "Other"},
+        {path = "src/modules/Utility/LagSwitch.luau", name = "Lag Switch", category = "Other"},
+        {path = "src/modules/Utility/Fling.luau", name = "Fling", category = "Other"},
         {path = "src/modules/Utility/ImproveFps.luau", name = "Improve FPS", category = "Other"},
         {path = "src/modules/Visuals/Fullbright.luau", name = "Fullbright", category = "Render"},
         {path = "src/modules/Movement/FreezeMovements.luau", name = "Freeze Movements", category = "Movement"},

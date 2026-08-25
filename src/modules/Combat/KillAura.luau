@@ -14,9 +14,9 @@
 --                          swing (silent), or held on the target.
 --
 -- Defaults are deliberately playable: a single target, 12-stud reach, 9 swings
--- a second, a 220° field of view, walls respected and friends skipped. Turning
--- it on and leaving every option alone works; the rest is folded away behind
--- one switch.
+-- a second, a 220° forward field of view, walls respected and friends skipped.
+-- Blatant targeting is explicit: it scans the full reach instead of pretending
+-- to be a cursor trigger, while Legit keeps a readable forward cone.
 
 export type Runtime = {
     framework: any,
@@ -117,15 +117,15 @@ function Module.init(context: Runtime): any
 
     local nextSwingAt: number = 0
     local nextStatusAt: number = 0
-    local highlights: {[Player]: Highlight} = {}
+    local highlights: {[any]: Highlight} = {}
 
-    local function clearHighlights(keep: {[Player]: boolean}?): ()
-        for player: Player, highlight: Highlight in pairs(highlights) do
-            if not keep or not keep[player] then
+    local function clearHighlights(keep: {[any]: boolean}?): ()
+        for key: any, highlight: Highlight in pairs(highlights) do
+            if not keep or not keep[key] then
                 pcall(function(): ()
                     highlight:Destroy()
                 end)
-                highlights[player] = nil
+                highlights[key] = nil
             end
         end
     end
@@ -134,13 +134,14 @@ function Module.init(context: Runtime): any
         if not options["Highlight targets"].Value then
             return
         end
-        local existing: Highlight? = highlights[entity.Player]
+        local key: any = entity.Player or entity.Character
+        local existing: Highlight? = highlights[key]
         if not existing or not existing.Parent then
             local created: Highlight = Instance.new("Highlight")
             created.Name = "RTM_KillAuraTarget"
             created.FillTransparency = 0.75
             created.Parent = entity.Character
-            highlights[entity.Player] = created
+            highlights[key] = created
             existing = created
         end
         local highlight: Highlight = existing :: Highlight
@@ -346,7 +347,10 @@ function Module.init(context: Runtime): any
                     Limit = math.round(options["Max targets"].Value),
                     IgnoreTeam = not options["Team check"].Value,
                     IgnoreWalls = not options["Wall check"].Value,
-                    Angle = options["Field of view"].Value,
+                    Angle = options["Targeting"].Value == "Blatant"
+                        and nil
+                        or options["Field of view"].Value,
+                    IncludeNPCs = options["Target NPCs"].Value,
                     Sort = options["Priority"].Value,
                 })
                 updateTargetStatus(#targets)
@@ -364,7 +368,7 @@ function Module.init(context: Runtime): any
                 local canSwing: boolean = now >= nextSwingAt
                 local attackRange: number = options["Attack range"].Value
                 local mode: string = options["Mode"].Value
-                local keep: {[Player]: boolean} = {}
+                local keep: {[any]: boolean} = {}
 
                 local root: BasePart? = entityLibrary.LocalEntity
                     and entityLibrary.LocalEntity.RootPart
@@ -394,7 +398,7 @@ function Module.init(context: Runtime): any
                     if mode == "Single" and index > 1 then
                         break
                     end
-                    keep[entity.Player] = true
+                    keep[entity.Player or entity.Character] = true
                     local inAttackRange: boolean = entity.Distance <= attackRange
                     markTarget(entity, inAttackRange, options)
 
@@ -556,6 +560,13 @@ function Module.init(context: Runtime): any
             .. "the best target.",
     })
     aura:CreateDropdown({
+        Name = "Targeting",
+        List = {"Legit", "Blatant"},
+        Index = 1,
+        Tooltip = "Legit respects the forward FOV; Blatant scans the full "
+            .. "reach without requiring the cursor on a target.",
+    })
+    aura:CreateDropdown({
         Name = "Priority",
         List = {"Distance", "Health", "Threat"},
         Index = 1,
@@ -599,8 +610,8 @@ function Module.init(context: Runtime): any
     aura:CreateDropdown({
         Name = "Rotation",
         List = {"Off", "Silent", "Face"},
-        Index = 2,
-        Tooltip = "Silent turns you for the swing only and puts you back; "
+        Index = 1,
+        Tooltip = "Off never turns you; Silent turns you for the swing only; "
             .. "Face keeps you pointed at the target.",
     })
     aura:CreateSlider({
@@ -613,7 +624,7 @@ function Module.init(context: Runtime): any
     })
     aura:CreateToggle({
         Name = "Hit through walls",
-        Default = true,
+        Default = false,
         Tooltip = "Fire contact damage even when the target is behind "
             .. "geometry. Independent of the wall check, which decides "
             .. "whether the target is picked at all.",
@@ -626,13 +637,18 @@ function Module.init(context: Runtime): any
     })
     aura:CreateToggle({
         Name = "Wall check",
-        Default = false,
-        Tooltip = "Off by default: the aura hits through walls and floors "
-            .. "until you ask it not to.",
+        Default = true,
+        Tooltip = "Skip targets hidden by map geometry.",
     })
     aura:CreateToggle({
         Name = "Team check",
+        Default = true,
+        Tooltip = "Skip teammates and Friend List entries.",
+    })
+    aura:CreateToggle({
+        Name = "Target NPCs",
         Default = false,
+        Tooltip = "Include non-player humanoid models in the reach scan.",
     })
     aura:CreateToggle({
         Name = "Require tool",

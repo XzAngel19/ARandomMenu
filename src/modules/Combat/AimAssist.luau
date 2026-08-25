@@ -3,9 +3,11 @@
 -- Aim Assist.
 --
 -- A visible, camera-only assist for supported Roblox experiences. It asks the
--- shared Targeting library for a valid player, then eases the local camera
--- toward that point while the module is enabled. It does not hook Raycast,
--- spoof Mouse.Hit, rewrite remotes, simulate clicks or change hitboxes.
+-- shared Targeting library for a valid player or NPC, then eases the local
+-- camera toward that point while the module is enabled. Assist uses a cursor
+-- FOV; Aimbot removes that gate and keeps a smooth, stable lock. It does not
+-- hook Raycast, spoof Mouse.Hit, rewrite remotes, simulate clicks or change
+-- hitboxes.
 --
 -- That boundary is intentional. A module can own its camera effect without
 -- affecting other modules; a global hook cannot. The target selector is kept
@@ -39,6 +41,7 @@ function Module.init(context: Runtime): any
     local currentWorkspace: Workspace = host.workspace or workspace
     local runtime: any = {
         target = nil,
+        lockedTarget = nil,
     }
     local card: any
 
@@ -61,7 +64,10 @@ function Module.init(context: Runtime): any
         -- the frame delta, so a dropped frame cannot fling the view past the
         -- target or produce a NaN CFrame.
         local smoothing: number = card.Options["Smoothing"].Value
-        local response: number = 2 + smoothing * 0.18
+        local mode: string = card.Options["Mode"].Value
+        local response: number = mode == "Aimbot"
+            and 3 + smoothing * 0.22
+            or 2 + smoothing * 0.18
         local alpha: number = math.clamp(
             math.max(deltaTime, 1 / 240) * response,
             0,
@@ -89,19 +95,39 @@ function Module.init(context: Runtime): any
     local function selectTarget(): any
         if anotherAimAdapterIsActive()
             or not targeting
-            or type(targeting.Select) ~= "function" then
+            or type(targeting.List) ~= "function" then
             return nil
         end
         local options: any = card.Options
-        return targeting:Select(entity, {
-            FOV = options["FOV"].Value,
+        local mode: string = options["Mode"].Value
+        local candidates: {any} = targeting:List(entity, {
+            -- Assist respects the user's cursor FOV. Aimbot intentionally
+            -- removes that gate, then keeps one valid target until it leaves
+            -- the query so the camera does not jump between players every frame.
+            FOV = mode == "Aim Assist" and options["FOV"].Value or nil,
             MaxDistance = options["Max distance"].Value,
             TargetPart = options["Target part"].Value,
             Prediction = options["Prediction"].Value,
             TeamCheck = options["Team check"].Value,
             VisibilityCheck = options["Visibility check"].Value,
             Priority = options["Priority"].Value,
+            IncludeNPCs = options["Target NPCs"].Value,
+            AllowOffscreen = mode == "Aimbot",
         })
+        if mode ~= "Aimbot" then
+            runtime.lockedTarget = nil
+            return candidates[1]
+        end
+        if runtime.lockedTarget then
+            for _, candidate: any in ipairs(candidates) do
+                if candidate.entity == runtime.lockedTarget.entity then
+                    runtime.lockedTarget = candidate
+                    return candidate
+                end
+            end
+        end
+        runtime.lockedTarget = candidates[1]
+        return runtime.lockedTarget
     end
 
     card = framework.Categories.Combat:CreateModule({
@@ -113,6 +139,7 @@ function Module.init(context: Runtime): any
             .. "remote hooks.",
         Function = function(enabled: boolean): ()
             runtime.target = nil
+            runtime.lockedTarget = nil
             if not enabled then
                 card:SetStatus(nil)
                 return
@@ -125,11 +152,13 @@ function Module.init(context: Runtime): any
                     or services.menu.isVisible()
                     or services.menu.isCapturingInput() then
                     runtime.target = nil
+                    runtime.lockedTarget = nil
                     card:SetStatus("paused")
                     return
                 end
                 if userInput:GetFocusedTextBox() then
                     runtime.target = nil
+                    runtime.lockedTarget = nil
                     card:SetStatus("paused")
                     return
                 end
@@ -141,8 +170,10 @@ function Module.init(context: Runtime): any
                     return
                 end
                 local moved: boolean = moveCamera(selected, deltaTime)
-                local displayName: string = tostring(selected.player.DisplayName
-                    or selected.player.Name)
+                local targetPlayer: Player? = selected.player
+                local displayName: string = targetPlayer
+                    and tostring(targetPlayer.DisplayName or targetPlayer.Name)
+                    or tostring(selected.entity.Name or selected.character.Name)
                 local distance: number = math.round(selected.distance)
                 card:SetStatus(
                     displayName .. " · " .. tostring(distance) .. " studs"
@@ -156,8 +187,19 @@ function Module.init(context: Runtime): any
         end,
     })
 
+    card:CreateDropdown({
+        Name = "Mode",
+        List = {"Aim Assist", "Aimbot"},
+        Index = 1,
+        Function = function(): ()
+            runtime.lockedTarget = nil
+        end,
+        Tooltip = "Aim Assist respects FOV; Aimbot keeps a smooth lock on the "
+            .. "best valid character on screen.",
+    })
     card:CreateSlider({
         Name = "FOV",
+        Show = {Option = "Mode", Values = {"Aim Assist"}},
         Min = 15,
         Max = 500,
         Step = 5,
@@ -209,6 +251,11 @@ function Module.init(context: Runtime): any
         Name = "Team check",
         Default = true,
         Tooltip = "Skip teammates and Friend List entries.",
+    })
+    card:CreateToggle({
+        Name = "Target NPCs",
+        Default = false,
+        Tooltip = "Include non-player humanoid models in both modes.",
     })
     card:CreateNote(
         "Camera-only assist. It never edits remotes, raycasts or hitboxes."

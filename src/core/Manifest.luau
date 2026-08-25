@@ -229,17 +229,17 @@ local Manifest: Manifest = {
         {
             path = "src/modules/Protection/AntiFling.luau",
             name = "Anti-Fling",
-            category = "Combat",
+            category = "Other",
         },
         {
             path = "src/modules/Utility/LagSwitch.luau",
             name = "Lag Switch",
-            category = "Movement",
+            category = "Other",
         },
         {
             path = "src/modules/Utility/Fling.luau",
             name = "Fling",
-            category = "Combat",
+            category = "Other",
         },
         {
             path = "src/modules/Utility/ImproveFps.luau",

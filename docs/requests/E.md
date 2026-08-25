@@ -44,6 +44,17 @@ strings produced by an agent remain English.
 > snapshot update. Hand back a commit hash, validation count and honest field
 > debt.
 
+## Agent C — full 45-module audit
+
+> Run the complete manifest against the headless boot, settings reopen and
+> teardown suites. For every card, compare the declared options with the code
+> path that reads them, verify that disable/destruct restores borrowed
+> properties, and record real field-test debt instead of adding permissive
+> checks. Pay special attention to the new alphabetic category order, Other
+> placement for Anti-Fling/Fling/Lag Switch, NPC target policy and Team/Faction
+> normalization. Do not change gameplay semantics in the test lane and do not
+> add global hooks, remote spoofing or screenshot upload behavior.
+>
 ## Agent A — integration and isolation review
 
 > You are agent A on `XzAngel19/ARandomMenu`, the integrator. Stay on

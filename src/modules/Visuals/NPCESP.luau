@@ -6,6 +6,7 @@
 
 export type Runtime = {
     framework: any,
+    entity: any,
     render: any,
     host: any,
     services: any,
@@ -22,6 +23,7 @@ local activeCard: any = nil
 
 function Module.init(context: Runtime): any
     local framework: any = context.framework
+    local entityLibrary: any = context.entity
     local render: any = context.render
     local host: any = context.host
     local players: Players = host.Players
@@ -103,6 +105,13 @@ function Module.init(context: Runtime): any
                         render:Release(layer, model)
                         continue
                     end
+                    if card.Options["Team check"].Value
+                        and entityLibrary
+                        and type(entityLibrary.IsFriendlyModel) == "function"
+                        and entityLibrary:IsFriendlyModel(model) then
+                        render:Release(layer, model)
+                        continue
+                    end
                     local root: BasePart? = model:FindFirstChild("HumanoidRootPart") :: BasePart?
                         or model.PrimaryPart
                         or model:FindFirstChildWhichIsA("BasePart") :: BasePart?
@@ -164,6 +173,11 @@ function Module.init(context: Runtime): any
     card:CreateToggle({Name = "Through walls", Default = true, Show = {Option = "Highlight"}})
     card:CreateToggle({Name = "Name", Default = true})
     card:CreateToggle({Name = "Health", Default = true, Show = {Option = "Name"}})
+    card:CreateToggle({
+        Name = "Team check",
+        Default = true,
+        Tooltip = "Skip NPCs whose Team, Faction or team attribute matches yours.",
+    })
     card:CreateColor({Name = "Colour", Default = Color3.fromRGB(255, 170, 0)})
     card:CreateSlider({Name = "Max distance", Min = 25, Max = 2000, Step = 25, Default = 500})
 

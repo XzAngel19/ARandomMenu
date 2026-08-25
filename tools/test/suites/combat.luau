@@ -14,6 +14,7 @@ return function(ctx: any): ()
     local check: (string, boolean, string?) -> () = ctx.check
     local section: (string) -> () = ctx.section
     local espContext: any = ctx.espContext
+    local entity: any = ctx.entity
     local enemy: any = ctx.enemy
     local ally: any = ctx.ally
     local weapons: any = ctx.weapons
@@ -89,6 +90,44 @@ return function(ctx: any): ()
     check("team check rejects an ally", (tool.Activations or 0) == 1,
         "activations: " .. tostring(tool.Activations))
 
+    local npc: any = Mock.newInstance("Model")
+    npc.Name = "TriggerDummy"
+    local npcHumanoid: any = Mock.newInstance("Humanoid")
+    npcHumanoid.Name = "Humanoid"
+    npcHumanoid.Health = 100
+    npcHumanoid.MaxHealth = 100
+    npcHumanoid.Parent = npc
+    local npcRoot: any = Mock.newInstance("Part")
+    npcRoot.Name = "HumanoidRootPart"
+    npcRoot.Position = world.vector3(0, 0, -25)
+    npcRoot.Parent = npc
+    npc.PrimaryPart = npcRoot
+    local npcHead: any = Mock.newInstance("Part")
+    npcHead.Name = "Head"
+    npcHead.Position = world.vector3(0, 2, -25)
+    npcHead.Parent = npc
+    npc:SetAttribute("Team", "Red")
+    npc.Parent = world.workspace
+    entity:Refresh(true)
+    check("Entity indexes the trigger NPC", entity:GetNpc(npc) ~= nil)
+    trigger.Options["Target NPCs"].Value = true
+    trigger.Options["Target part"].Value = "Head"
+    world.raycastResult = {
+        Instance = npcHead,
+        Position = world.vector3(0, 2, -25),
+    }
+    local resolvedNpc: any, resolvedDistance: number = TriggerFile.resolveTarget(espContext, trigger)
+    check("TriggerBot resolves the NPC ray hit", resolvedNpc == npc and resolvedDistance == 25,
+        tostring(resolvedNpc) .. " / " .. tostring(resolvedDistance))
+    world.clock += 1
+    stub.step(0.016)
+    world.clock += 1
+    stub.step(0.016)
+    check("TargetBot can arm on a non-player humanoid", (tool.Activations or 0) == 2,
+        "activations: " .. tostring(tool.Activations))
+    npc:Destroy()
+    trigger.Options["Target NPCs"].Value = false
+
     trigger:Toggle()
     check("trigger disables", trigger.Enabled == false)
     world.raycastResult = {
@@ -97,7 +136,7 @@ return function(ctx: any): ()
     }
     world.clock += 1
     stub.step(0.016)
-    check("nothing fires while disabled", (tool.Activations or 0) == 1,
+    check("nothing fires while disabled", (tool.Activations or 0) == 2,
         "activations: " .. tostring(tool.Activations))
 
     -- Wall-clock, not the mocked os.clock. Raise only with a comment saying
@@ -209,6 +248,38 @@ return function(ctx: any): ()
     stub.step(0.016)
     check("respects the swing rate", (sword.Activations or 0) == beforeRate,
         "activations: " .. tostring(sword.Activations))
+
+    local auraNpc: any = Mock.newInstance("Model")
+    auraNpc.Name = "AuraDummy"
+    local auraNpcHumanoid: any = Mock.newInstance("Humanoid")
+    auraNpcHumanoid.Name = "Humanoid"
+    auraNpcHumanoid.Health = 100
+    auraNpcHumanoid.MaxHealth = 100
+    auraNpcHumanoid.Parent = auraNpc
+    local auraNpcRoot: any = Mock.newInstance("Part")
+    auraNpcRoot.Name = "HumanoidRootPart"
+    auraNpcRoot.Position = world.vector3(0, 0, 8)
+    auraNpcRoot.Parent = auraNpc
+    auraNpc.PrimaryPart = auraNpcRoot
+    local auraNpcHead: any = Mock.newInstance("Part")
+    auraNpcHead.Name = "Head"
+    auraNpcHead.Position = world.vector3(0, 2, 8)
+    auraNpcHead.Parent = auraNpc
+    auraNpc:SetAttribute("Team", "Red")
+    auraNpc.Parent = world.workspace
+    enemy.Character:FindFirstChild("HumanoidRootPart").Position = world.vector3(0, 0, -400)
+    aura.Options["Targeting"].Value = "Blatant"
+    aura.Options["Target NPCs"].Value = true
+    aura.Options["Rotation"].Value = "Off"
+    local beforeNpc: number = sword.Activations or 0
+    world.clock += 1
+    stub.step(0.016)
+    check("Blatant Kill Aura scans without a cursor lock", (sword.Activations or 0) > beforeNpc,
+        "activations: " .. tostring(sword.Activations))
+    auraNpc:Destroy()
+    enemy.Character:FindFirstChild("HumanoidRootPart").Position = world.vector3(0, 0, -8)
+    aura.Options["Targeting"].Value = "Legit"
+    aura.Options["Target NPCs"].Value = false
 
     -- Friend protection has to win over an in-range target.
     ctx.setOption(friendList, "Protected names", "Enemy")

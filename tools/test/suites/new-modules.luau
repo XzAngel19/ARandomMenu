@@ -132,6 +132,19 @@ return function(ctx: any): ()
     check("a non-player Humanoid model is classified as an NPC",
         npcLayer and npcLayer:FindFirstChild("TrainingDummy") ~= nil)
 
+    local friendlyNpc: any, _friendlyHumanoid: any = npc("FriendlyDummy", world.vector3(5, 0, -20))
+    friendlyNpc:SetAttribute("Team", "Blue")
+    friendlyNpc.Parent = world.workspace
+    stub.step(0.02)
+    check("NPCESP team check skips a same-team NPC",
+        npcLayer and npcLayer:FindFirstChild("FriendlyDummy") == nil)
+    npcEsp.Options["Team check"].Value = false
+    stub.step(0.02)
+    check("NPCESP can show the same NPC when team check is off",
+        npcLayer and npcLayer:FindFirstChild("FriendlyDummy") ~= nil)
+    npcEsp.Options["Team check"].Value = true
+    friendlyNpc:Destroy()
+
     local streamedNpc: any = npc("StreamedDummy", world.vector3(5, 0, -25))
     streamedNpc.Parent = world.workspace
     stub.step(0.02)

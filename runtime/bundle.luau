@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "d383fa75223a3352",
+    stamp = "db7acc9f38778192",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -236,17 +236,17 @@ local Manifest: Manifest = {
         {
             path = "src/modules/Protection/AntiFling.luau",
             name = "Anti-Fling",
-            category = "Combat",
+            category = "Other",
         },
         {
             path = "src/modules/Utility/LagSwitch.luau",
             name = "Lag Switch",
-            category = "Movement",
+            category = "Other",
         },
         {
             path = "src/modules/Utility/Fling.luau",
             name = "Fling",
-            category = "Combat",
+            category = "Other",
         },
         {
             path = "src/modules/Utility/ImproveFps.luau",
@@ -3802,7 +3802,7 @@ return Module
 -- per-frame numbers (health, distance).
 
 export type Entity = {
-    Player: Player,
+    Player: Player?,
     Character: Model,
     Humanoid: Humanoid,
     RootPart: BasePart,
@@ -3812,6 +3812,8 @@ export type Entity = {
     Distance: number,
     Team: Team?,
     IsFriendly: boolean,
+    IsNPC: boolean,
+    Name: string,
 }
 
 export type RangeQuery = {
@@ -3822,6 +3824,7 @@ export type RangeQuery = {
     IgnoreFriends: boolean?,
     Angle: number?,
     Sort: string?,
+    IncludeNPCs: boolean?,
 }
 
 export type EntityQuery = {
@@ -3830,19 +3833,25 @@ export type EntityQuery = {
     MaxDistance: number?,
     IgnoreTeam: boolean?,
     IgnoreWalls: boolean?,
+    IgnoreFriends: boolean?,
     Part: string?,
+    IncludeNPCs: boolean?,
 }
 
 export type EntityLibrary = {
     List: {Entity},
     ByPlayer: {[Player]: Entity},
+    NPCList: {Entity},
+    ByModel: {[Model]: Entity},
     LocalEntity: Entity?,
     IsAlive: (self: EntityLibrary) -> boolean,
     Refresh: (self: EntityLibrary) -> {Entity},
     Get: (self: EntityLibrary, player: Player) -> Entity?,
+    GetNpc: (self: EntityLibrary, model: Model) -> Entity?,
     ForEach: (self: EntityLibrary, callback: (Entity) -> ()) -> (),
-    IsFriendly: (self: EntityLibrary, player: Player) -> boolean,
-    IsProtected: (self: EntityLibrary, player: Player) -> boolean,
+    IsFriendly: (self: EntityLibrary, player: Player?) -> boolean,
+    IsFriendlyModel: (self: EntityLibrary, model: Model) -> boolean,
+    IsProtected: (self: EntityLibrary, player: Player?) -> boolean,
     InRange: (self: EntityLibrary, query: RangeQuery) -> {Entity},
     ClosestToRay: (
         self: EntityLibrary,
@@ -3901,6 +3910,8 @@ function Module.init(context: any): EntityLibrary
     local library: any = {
         List = {},
         ByPlayer = {},
+        NPCList = {},
+        ByModel = {},
         LocalEntity = nil,
         Connections = {},
         -- Four modules can each ask for a refresh in the same frame. Doing the
@@ -3908,6 +3919,8 @@ function Module.init(context: any): EntityLibrary
         -- saving in the whole visual stack.
         lastRefresh = -1,
         pool = setmetatable({}, {__mode = "k"}),
+        npcPool = setmetatable({}, {__mode = "k"}),
+        npcModels = setmetatable({}, {__mode = "k"}),
         rigs = setmetatable({}, {__mode = "k"}),
     }
 
@@ -3928,19 +3941,193 @@ function Module.init(context: any): EntityLibrary
         return root
     end
 
-    function library:IsFriendly(player: Player): boolean
-        -- Neutral teams are not friends: in most shooters everybody sits on
-        -- "Neutral" until a round starts, and treating that as friendly makes
-        -- every combat module refuse to work.
-        local team: Team? = player.Team
-        local localTeam: Team? = localPlayer.Team
-        if not team or not localTeam then
+    -- Experiences do not agree on how an NPC declares its faction. Prefer
+    -- explicit attributes, then Team/TeamColor-like properties, and compare a
+    -- normalized name or value with the local player. Missing metadata is
+    -- neutral rather than friendly: an unlabelled training dummy must not make
+    -- every NPC disappear when Team check is enabled.
+    local TEAM_ATTRIBUTE_NAMES: {string} = {
+        "Team",
+        "TeamId",
+        "TeamID",
+        "Faction",
+        "FactionId",
+        "FactionID",
+    }
+
+    local function normalizeTeamValue(value: any): string?
+        if value == nil then
+            return nil
+        end
+        if typeof(value) == "Instance" then
+            return "name:" .. string.lower((value :: Instance).Name)
+        end
+        if type(value) == "table" and type(value.Name) == "string" then
+            return "name:" .. string.lower(value.Name)
+        end
+        if type(value) == "table"
+            and type(value.R) == "number"
+            and type(value.G) == "number"
+            and type(value.B) == "number" then
+            return string.format(
+                "colour:%d:%d:%d",
+                math.round(value.R * 255),
+                math.round(value.G * 255),
+                math.round(value.B * 255)
+            )
+        end
+        if type(value) == "table" and value.Color ~= nil then
+            local nested: string? = normalizeTeamValue(value.Color)
+            if nested then
+                return nested
+            end
+        end
+        if type(value) == "string" then
+            return "name:" .. string.lower(value)
+        end
+        local text: string = tostring(value)
+        if text == "" or text == "nil" then
+            return nil
+        end
+        return "value:" .. string.lower(text)
+    end
+
+    local function teamToken(instance: Instance): string?
+        for _, attributeName: string in ipairs(TEAM_ATTRIBUTE_NAMES) do
+            local ok: boolean, value: any = pcall(
+                instance.GetAttribute,
+                instance,
+                attributeName
+            )
+            if ok then
+                local normalized: string? = normalizeTeamValue(value)
+                if normalized then
+                    return normalized
+                end
+            end
+        end
+
+        local direct: any = (instance :: any).Team
+        local normalizedDirect: string? = normalizeTeamValue(direct)
+        if normalizedDirect then
+            return normalizedDirect
+        end
+        local colour: any = (instance :: any).TeamColor
+        local normalizedColour: string? = normalizeTeamValue(colour)
+        if normalizedColour then
+            return normalizedColour
+        end
+        local child: Instance? = instance:FindFirstChild("Team")
+        if child then
+            local childValue: any = (child :: any).Value
+            return normalizeTeamValue(childValue or child.Name)
+        end
+        return nil
+    end
+
+    local function localTeamToken(): string?
+        return teamToken(localPlayer)
+    end
+
+    function library:IsFriendly(player: Player?): boolean
+        if not player or player == localPlayer then
             return false
         end
-        if player.Neutral or localPlayer.Neutral then
+        -- Neutral players are deliberately not assigned to a team.
+        if player.Neutral == true or localPlayer.Neutral == true then
             return false
         end
-        return team == localTeam
+        local localToken: string? = localTeamToken()
+        local targetToken: string? = teamToken(player)
+        return localToken ~= nil and targetToken ~= nil and localToken == targetToken
+    end
+
+    function library:IsFriendlyModel(model: Model): boolean
+        if model == localPlayer.Character then
+            return false
+        end
+        local localToken: string? = localTeamToken()
+        local targetToken: string? = teamToken(model)
+        return localToken ~= nil and targetToken ~= nil and localToken == targetToken
+    end
+
+    local function npcParts(model: Model): (Humanoid?, BasePart?)
+        local humanoid: Humanoid? =
+            model:FindFirstChildOfClass("Humanoid") :: Humanoid?
+        local root: BasePart? =
+            model:FindFirstChild("HumanoidRootPart") :: BasePart?
+                or model.PrimaryPart
+                or model:FindFirstChildWhichIsA("BasePart") :: BasePart?
+        return humanoid, root
+    end
+
+    local function isNpcModel(model: Model): boolean
+        if not model.Parent or model == localPlayer.Character then
+            return false
+        end
+        if players:GetPlayerFromCharacter(model) ~= nil then
+            return false
+        end
+        local humanoid: Humanoid?, root: BasePart? = npcParts(model)
+        return humanoid ~= nil and root ~= nil
+    end
+
+    local function modelFor(instance: Instance): Model?
+        if instance:IsA("Model") then
+            return instance :: Model
+        end
+        return instance:FindFirstAncestorOfClass("Model") :: Model?
+    end
+
+    local function indexNpc(instance: Instance): ()
+        local model: Model? = modelFor(instance)
+        if model and isNpcModel(model) then
+            library.npcModels[model] = true
+        end
+    end
+
+    local function unindexNpc(instance: Instance): ()
+        local model: Model? = modelFor(instance)
+        if model and (instance == model or not model.Parent) then
+            library.npcModels[model] = nil
+            library.ByModel[model] = nil
+        end
+    end
+
+    local function refreshNpcs(originPosition: Vector3): ()
+        local list: {Entity} = library.NPCList
+        local byModel: {[Model]: Entity} = library.ByModel
+        table.clear(list)
+        table.clear(byModel)
+        for model: Model in pairs(library.npcModels) do
+            if not isNpcModel(model) then
+                library.npcModels[model] = nil
+                continue
+            end
+            local humanoid: Humanoid?, root: BasePart? = npcParts(model)
+            if not humanoid or not root or humanoid.Health <= 0 then
+                continue
+            end
+            local entity: any = library.npcPool[model]
+            if not entity then
+                entity = {}
+                library.npcPool[model] = entity
+            end
+            entity.Player = nil
+            entity.Character = model
+            entity.Humanoid = humanoid
+            entity.RootPart = root
+            entity.Head = model:FindFirstChild("Head") :: BasePart?
+            entity.Health = humanoid.Health
+            entity.MaxHealth = math.max(humanoid.MaxHealth, 1)
+            entity.Distance = (originPosition - root.Position).Magnitude
+            entity.Team = nil
+            entity.IsFriendly = library:IsFriendlyModel(model)
+            entity.IsNPC = true
+            entity.Name = model.Name
+            byModel[model] = entity
+            table.insert(list, entity)
+        end
     end
 
     function library:Refresh(force: boolean?): {Entity}
@@ -3986,6 +4173,8 @@ function Module.init(context: any): EntityLibrary
             entity.Distance = (originPosition - root.Position).Magnitude
             entity.Team = player.Team
             entity.IsFriendly = library:IsFriendly(player)
+            entity.IsNPC = false
+            entity.Name = player.Name
 
             byPlayer[player] = entity
             if player == localPlayer then
@@ -3998,6 +4187,7 @@ function Module.init(context: any): EntityLibrary
         if not byPlayer[localPlayer] then
             library.LocalEntity = nil
         end
+        refreshNpcs(originPosition)
         return list
     end
 
@@ -4008,6 +4198,10 @@ function Module.init(context: any): EntityLibrary
 
     function library:Get(player: Player): Entity?
         return library.ByPlayer[player]
+    end
+
+    function library:GetNpc(model: Model): Entity?
+        return library.ByModel[model]
     end
 
     function library:ForEach(callback: (Entity) -> ()): ()
@@ -4064,7 +4258,10 @@ function Module.init(context: any): EntityLibrary
 
     -- The friend list is universal and may not be loaded yet, so the question
     -- is asked through `state` rather than captured at init.
-    function library:IsProtected(player: Player): boolean
+    function library:IsProtected(player: Player?): boolean
+        if not player then
+            return false
+        end
         local targets: any = host.services and host.services.protectedTargets
         if targets and type(targets.isProtected) == "function" then
             return targets.isProtected(player) == true
@@ -4085,15 +4282,15 @@ function Module.init(context: any): EntityLibrary
         local halfAngle: number? = query.Angle and math.rad(query.Angle) / 2 or nil
         local candidates: {Entity} = {}
 
-        for _, entity: Entity in ipairs(library.List) do
+        local function consider(entity: Entity): ()
             if entity.Distance > query.Range then
-                continue
+                return
             end
             if not query.IgnoreTeam and entity.IsFriendly then
-                continue
+                return
             end
             if not query.IgnoreFriends and library:IsProtected(entity.Player) then
-                continue
+                return
             end
             if halfAngle then
                 local delta: Vector3 = (entity.RootPart.Position - resolvedOrigin.Position)
@@ -4101,14 +4298,23 @@ function Module.init(context: any): EntityLibrary
                 if delta.Magnitude > 0.001 and facing.Magnitude > 0.001 then
                     local dot: number = facing.Unit:Dot(delta.Unit)
                     if math.acos(math.clamp(dot, -1, 1)) > halfAngle then
-                        continue
+                        return
                     end
                 end
             end
             if not query.IgnoreWalls and not library:VisibleFrom(entity) then
-                continue
+                return
             end
             table.insert(candidates, entity)
+        end
+
+        for _, entity: Entity in ipairs(library.List) do
+            consider(entity)
+        end
+        if query.IncludeNPCs then
+            for _, entity: Entity in ipairs(library.NPCList) do
+                consider(entity)
+            end
         end
 
         local sortMode: string = query.Sort or "Distance"
@@ -4145,12 +4351,15 @@ function Module.init(context: any): EntityLibrary
         local best: Entity? = nil
         local bestScore: number = math.huge
 
-        for _, entity: Entity in ipairs(library.List) do
+        local function consider(entity: Entity): ()
             if not options.IgnoreTeam and entity.IsFriendly then
-                continue
+                return
             end
             if entity.Distance > maxDistance then
-                continue
+                return
+            end
+            if not options.IgnoreFriends and library:IsProtected(entity.Player) then
+                return
             end
             local part: BasePart = entity.RootPart
             if options.Part == "Head" and entity.Head then
@@ -4159,16 +4368,23 @@ function Module.init(context: any): EntityLibrary
             local offset: Vector3 = part.Position - origin
             local along: number = offset:Dot(unit)
             if along <= 0 then
-                continue
+                return
             end
             -- Perpendicular distance from the ray, which is the same ordering
             -- a screen-space check gives without needing the camera.
             local perpendicular: number = (offset - unit * along).Magnitude
-            if perpendicular < bestScore then
-                if options.IgnoreWalls or library:VisibleFrom(entity) then
-                    best = entity
-                    bestScore = perpendicular
-                end
+            if perpendicular < bestScore
+                and (options.IgnoreWalls or library:VisibleFrom(entity)) then
+                best = entity
+                bestScore = perpendicular
+            end
+        end
+        for _, entity: Entity in ipairs(library.List) do
+            consider(entity)
+        end
+        if options.IncludeNPCs then
+            for _, entity: Entity in ipairs(library.NPCList) do
+                consider(entity)
             end
         end
 
@@ -4199,11 +4415,30 @@ function Module.init(context: any): EntityLibrary
         library.Connections = {}
         library.List = {}
         library.ByPlayer = {}
+        library.NPCList = {}
+        library.ByModel = {}
+        library.npcModels = setmetatable({}, {__mode = "k"})
         library.LocalEntity = nil
         if activeLibrary == library then
             activeLibrary = nil
         end
     end
+
+    -- NPCs are indexed from workspace signals as well. Their entities stay
+    -- outside `List`, so ESP that is explicitly player-only keeps its existing
+    -- contract, while combat queries can opt in without a full descendant scan
+    -- each frame.
+    for _, descendant: Instance in ipairs(currentWorkspace:GetDescendants()) do
+        indexNpc(descendant)
+    end
+    table.insert(
+        library.Connections,
+        currentWorkspace.DescendantAdded:Connect(indexNpc)
+    )
+    table.insert(
+        library.Connections,
+        currentWorkspace.DescendantRemoving:Connect(unindexNpc)
+    )
 
     -- Signal-driven invalidation. `Refresh` is cheap enough to call per frame,
     -- but a spawn or a leave should be reflected immediately rather than on
@@ -4259,8 +4494,9 @@ return Module
 --
 -- Target selection is deliberately pure from a module's point of view: it
 -- reads the entity index and camera, applies the same team/friend/visibility
--- policy to every caller, and returns a record. It never moves the camera,
--- fires a tool, edits a remote or installs a hook. Aim Assist uses the result;
+-- policy to every caller, and returns a player or NPC record. It never moves
+-- the camera, fires a tool, edits a remote or installs a hook. Aim Assist uses
+-- the result;
 -- a future supported-game adapter can use the same result without sharing any
 -- of the side effects.
 
@@ -4272,10 +4508,12 @@ export type Query = {
     TeamCheck: boolean?,
     VisibilityCheck: boolean?,
     Priority: string?,
+    IncludeNPCs: boolean?,
+    AllowOffscreen: boolean?,
 }
 
 export type Target = {
-    player: Player,
+    player: Player?,
     entity: any,
     character: Model,
     part: BasePart,
@@ -4359,7 +4597,10 @@ function Module.init(context: any): Library
         return {entity.RootPart}
     end
 
-    local function protected(player: Player): boolean
+    local function protected(player: Player?): boolean
+        if not player then
+            return false
+        end
         local policy: any = services and services.protectedTargets
         if policy and type(policy.isProtected) == "function" then
             return policy.isProtected(player) == true
@@ -4403,11 +4644,13 @@ function Module.init(context: any): Library
         local predicted: Vector3 = part.Position + velocity * prediction
         local projected: Vector3, onScreen: boolean =
             cameraObject:WorldToViewportPoint(predicted)
-        if not onScreen or projected.Z <= 0 then
+        if (not onScreen or projected.Z <= 0) and not query.AllowOffscreen then
             return nil
         end
         local screenPosition: Vector2 = Vector2.new(projected.X, projected.Y)
-        local cursorDistance: number = (screenPosition - pointer).Magnitude
+        local cursorDistance: number = onScreen
+                and (screenPosition - pointer).Magnitude
+            or math.huge
         if query.FOV ~= nil and cursorDistance > (query.FOV :: number) then
             return nil
         end
@@ -4441,15 +4684,15 @@ function Module.init(context: any): Library
         local maxDistance: number = options.MaxDistance or math.huge
         local prediction: number = math.max(options.Prediction or 0, 0)
 
-        for _, entity: any in ipairs(entities.List or {}) do
+        local function consider(entity: any): ()
             if entity.Distance > maxDistance then
-                continue
+                return
             end
             if options.TeamCheck ~= false and entity.IsFriendly then
-                continue
+                return
             end
             if protected(entity.Player) then
-                continue
+                return
             end
 
             local bestForEntity: Target? = nil
@@ -4470,6 +4713,14 @@ function Module.init(context: any): Library
             end
             if bestForEntity then
                 table.insert(found, bestForEntity :: Target)
+            end
+        end
+        for _, entity: any in ipairs(entities.List or {}) do
+            consider(entity)
+        end
+        if options.IncludeNPCs then
+            for _, entity: any in ipairs(entities.NPCList or {}) do
+                consider(entity)
             end
         end
 
@@ -8403,6 +8654,34 @@ function Module.init(context: any): any
         return record
     end
 
+    -- A category receives cards as modules finish loading, not in display
+    -- order. Keep the body sorted by the visible module name so late game
+    -- cards cannot land between two unrelated rows or make the window look
+    -- like the loader's internal manifest.
+    local function sortCategoryRows(record: CategoryWindow): ()
+        local rows: {GuiObject} = {}
+        for _, child: Instance in ipairs(record.window.body:GetChildren()) do
+            if not child:IsA("GuiObject") then
+                continue
+            end
+            local key: any = child:GetAttribute("FeatureSortName")
+            if type(key) == "string" then
+                table.insert(rows, child :: GuiObject)
+            end
+        end
+        table.sort(rows, function(left: GuiObject, right: GuiObject): boolean
+            local leftKey: string = tostring(left:GetAttribute("FeatureSortName") or "")
+            local rightKey: string = tostring(right:GetAttribute("FeatureSortName") or "")
+            if leftKey == rightKey then
+                return left.Name < right.Name
+            end
+            return leftKey < rightKey
+        end)
+        for index: number, row: GuiObject in ipairs(rows) do
+            row.LayoutOrder = index
+        end
+    end
+
     -- A card is a row in the window for its category. It keeps every behaviour
     -- it already had; all that changes is where it is parented and that it now
     -- stretches to the window's width instead of the page's.
@@ -8423,6 +8702,7 @@ function Module.init(context: any): any
         record.count += 1;
         (row :: Frame).Parent = record.window.body;
         (row :: Frame).Size = UDim2.new(1, 0, 0, feature.collapsedHeight or 22)
+        sortCategoryRows(record)
         if record.resize then
             (record.resize :: () -> ())()
         end
@@ -16050,6 +16330,7 @@ return Module
 
 export type Runtime = {
     framework: any,
+    entity: any,
     render: any,
     host: any,
     services: any,
@@ -16066,6 +16347,7 @@ local activeCard: any = nil
 
 function Module.init(context: Runtime): any
     local framework: any = context.framework
+    local entityLibrary: any = context.entity
     local render: any = context.render
     local host: any = context.host
     local players: Players = host.Players
@@ -16147,6 +16429,13 @@ function Module.init(context: Runtime): any
                         render:Release(layer, model)
                         continue
                     end
+                    if card.Options["Team check"].Value
+                        and entityLibrary
+                        and type(entityLibrary.IsFriendlyModel) == "function"
+                        and entityLibrary:IsFriendlyModel(model) then
+                        render:Release(layer, model)
+                        continue
+                    end
                     local root: BasePart? = model:FindFirstChild("HumanoidRootPart") :: BasePart?
                         or model.PrimaryPart
                         or model:FindFirstChildWhichIsA("BasePart") :: BasePart?
@@ -16208,6 +16497,11 @@ function Module.init(context: Runtime): any
     card:CreateToggle({Name = "Through walls", Default = true, Show = {Option = "Highlight"}})
     card:CreateToggle({Name = "Name", Default = true})
     card:CreateToggle({Name = "Health", Default = true, Show = {Option = "Name"}})
+    card:CreateToggle({
+        Name = "Team check",
+        Default = true,
+        Tooltip = "Skip NPCs whose Team, Faction or team attribute matches yours.",
+    })
     card:CreateColor({Name = "Colour", Default = Color3.fromRGB(255, 170, 0)})
     card:CreateSlider({Name = "Max distance", Min = 25, Max = 2000, Step = 25, Default = 500})
 
@@ -16242,9 +16536,9 @@ return Module
 --                          swing (silent), or held on the target.
 --
 -- Defaults are deliberately playable: a single target, 12-stud reach, 9 swings
--- a second, a 220° field of view, walls respected and friends skipped. Turning
--- it on and leaving every option alone works; the rest is folded away behind
--- one switch.
+-- a second, a 220° forward field of view, walls respected and friends skipped.
+-- Blatant targeting is explicit: it scans the full reach instead of pretending
+-- to be a cursor trigger, while Legit keeps a readable forward cone.
 
 export type Runtime = {
     framework: any,
@@ -16345,15 +16639,15 @@ function Module.init(context: Runtime): any
 
     local nextSwingAt: number = 0
     local nextStatusAt: number = 0
-    local highlights: {[Player]: Highlight} = {}
+    local highlights: {[any]: Highlight} = {}
 
-    local function clearHighlights(keep: {[Player]: boolean}?): ()
-        for player: Player, highlight: Highlight in pairs(highlights) do
-            if not keep or not keep[player] then
+    local function clearHighlights(keep: {[any]: boolean}?): ()
+        for key: any, highlight: Highlight in pairs(highlights) do
+            if not keep or not keep[key] then
                 pcall(function(): ()
                     highlight:Destroy()
                 end)
-                highlights[player] = nil
+                highlights[key] = nil
             end
         end
     end
@@ -16362,13 +16656,14 @@ function Module.init(context: Runtime): any
         if not options["Highlight targets"].Value then
             return
         end
-        local existing: Highlight? = highlights[entity.Player]
+        local key: any = entity.Player or entity.Character
+        local existing: Highlight? = highlights[key]
         if not existing or not existing.Parent then
             local created: Highlight = Instance.new("Highlight")
             created.Name = "RTM_KillAuraTarget"
             created.FillTransparency = 0.75
             created.Parent = entity.Character
-            highlights[entity.Player] = created
+            highlights[key] = created
             existing = created
         end
         local highlight: Highlight = existing :: Highlight
@@ -16574,7 +16869,10 @@ function Module.init(context: Runtime): any
                     Limit = math.round(options["Max targets"].Value),
                     IgnoreTeam = not options["Team check"].Value,
                     IgnoreWalls = not options["Wall check"].Value,
-                    Angle = options["Field of view"].Value,
+                    Angle = options["Targeting"].Value == "Blatant"
+                        and nil
+                        or options["Field of view"].Value,
+                    IncludeNPCs = options["Target NPCs"].Value,
                     Sort = options["Priority"].Value,
                 })
                 updateTargetStatus(#targets)
@@ -16592,7 +16890,7 @@ function Module.init(context: Runtime): any
                 local canSwing: boolean = now >= nextSwingAt
                 local attackRange: number = options["Attack range"].Value
                 local mode: string = options["Mode"].Value
-                local keep: {[Player]: boolean} = {}
+                local keep: {[any]: boolean} = {}
 
                 local root: BasePart? = entityLibrary.LocalEntity
                     and entityLibrary.LocalEntity.RootPart
@@ -16622,7 +16920,7 @@ function Module.init(context: Runtime): any
                     if mode == "Single" and index > 1 then
                         break
                     end
-                    keep[entity.Player] = true
+                    keep[entity.Player or entity.Character] = true
                     local inAttackRange: boolean = entity.Distance <= attackRange
                     markTarget(entity, inAttackRange, options)
 
@@ -16784,6 +17082,13 @@ function Module.init(context: Runtime): any
             .. "the best target.",
     })
     aura:CreateDropdown({
+        Name = "Targeting",
+        List = {"Legit", "Blatant"},
+        Index = 1,
+        Tooltip = "Legit respects the forward FOV; Blatant scans the full "
+            .. "reach without requiring the cursor on a target.",
+    })
+    aura:CreateDropdown({
         Name = "Priority",
         List = {"Distance", "Health", "Threat"},
         Index = 1,
@@ -16827,8 +17132,8 @@ function Module.init(context: Runtime): any
     aura:CreateDropdown({
         Name = "Rotation",
         List = {"Off", "Silent", "Face"},
-        Index = 2,
-        Tooltip = "Silent turns you for the swing only and puts you back; "
+        Index = 1,
+        Tooltip = "Off never turns you; Silent turns you for the swing only; "
             .. "Face keeps you pointed at the target.",
     })
     aura:CreateSlider({
@@ -16841,7 +17146,7 @@ function Module.init(context: Runtime): any
     })
     aura:CreateToggle({
         Name = "Hit through walls",
-        Default = true,
+        Default = false,
         Tooltip = "Fire contact damage even when the target is behind "
             .. "geometry. Independent of the wall check, which decides "
             .. "whether the target is picked at all.",
@@ -16854,13 +17159,18 @@ function Module.init(context: Runtime): any
     })
     aura:CreateToggle({
         Name = "Wall check",
-        Default = false,
-        Tooltip = "Off by default: the aura hits through walls and floors "
-            .. "until you ask it not to.",
+        Default = true,
+        Tooltip = "Skip targets hidden by map geometry.",
     })
     aura:CreateToggle({
         Name = "Team check",
+        Default = true,
+        Tooltip = "Skip teammates and Friend List entries.",
+    })
+    aura:CreateToggle({
+        Name = "Target NPCs",
         Default = false,
+        Tooltip = "Include non-player humanoid models in the reach scan.",
     })
     aura:CreateToggle({
         Name = "Require tool",
@@ -18461,7 +18771,7 @@ function Module.init(context: Runtime): any
     -- Per-target arming: the delay restarts whenever the crosshair moves onto
     -- a different player, which is what stops a sweep across a crowd from
     -- emptying a magazine.
-    local armedTarget: Player? = nil
+    local armedTarget: any = nil
     local armedAt: number = 0
     local nextShotAt: number = 0
 
@@ -18498,7 +18808,7 @@ function Module.init(context: Runtime): any
 
                 local tool: Tool? = findTool(character)
 
-                local target: Player?, distance: number =
+                local target: any, distance: number =
                     Module.resolveTarget(context, trigger)
                 if not target then
                     armedTarget = nil
@@ -18611,6 +18921,11 @@ function Module.init(context: Runtime): any
         Default = true,
         Tooltip = "Never fire at a target with geometry in the way.",
     })
+    trigger:CreateToggle({
+        Name = "Target NPCs",
+        Default = false,
+        Tooltip = "Also recognize non-player humanoid models under the crosshair.",
+    })
 
     activeCleanup = function(): ()
         armedTarget = nil
@@ -18622,7 +18937,7 @@ end
 -- Two ways of deciding what is under the crosshair, because they fail on
 -- different games: a raycast is exact but misses tools with custom hitboxes,
 -- and a screen-space radius catches those but needs a tolerance.
-function Module.resolveTarget(context: Runtime, trigger: any): (Player?, number)
+function Module.resolveTarget(context: Runtime, trigger: any): (any, number)
     local host: any = context.host
     local entityLibrary: any = context.entity
     local players: Players = host.Players
@@ -18635,6 +18950,7 @@ function Module.resolveTarget(context: Runtime, trigger: any): (Player?, number)
         return nil, 0
     end
     local resolvedRay: Ray = ray :: Ray
+    entityLibrary:Refresh()
 
     local partFilter: string = options["Target part"].Value
     local radius: number = options["Aim tolerance"].Value
@@ -18661,10 +18977,11 @@ function Module.resolveTarget(context: Runtime, trigger: any): (Player?, number)
             return nil, 0
         end
         local player: Player? = players:GetPlayerFromCharacter(character)
-        if not player then
-            return nil, 0
-        end
-        local entity: any = entityLibrary:Get(player)
+        local entity: any = player
+            and entityLibrary:Get(player)
+            or (options["Target NPCs"].Value
+                and entityLibrary.GetNpc
+                and entityLibrary:GetNpc(character))
         if not entity then
             return nil, 0
         end
@@ -18681,7 +18998,7 @@ function Module.resolveTarget(context: Runtime, trigger: any): (Player?, number)
             and hit.Name ~= "HumanoidRootPart" then
             return nil, 0
         end
-        return player, entity.Distance
+        return player or character, entity.Distance
     end
 
     entityLibrary:Refresh()
@@ -18696,13 +19013,14 @@ function Module.resolveTarget(context: Runtime, trigger: any): (Player?, number)
             MaxDistance = options["Max distance"].Value,
             IgnoreTeam = not options["Team check"].Value,
             IgnoreWalls = not options["Wall check"].Value,
+            IncludeNPCs = options["Target NPCs"].Value,
             Part = partFilter == "Head" and "Head" or nil,
         }
     )
     if not entity then
         return nil, 0
     end
-    return entity.Player, entity.Distance
+    return entity.Player or entity.Character, entity.Distance
 end
 
 -- Firing, in the order things actually work.
@@ -18749,9 +19067,11 @@ return Module
 -- Aim Assist.
 --
 -- A visible, camera-only assist for supported Roblox experiences. It asks the
--- shared Targeting library for a valid player, then eases the local camera
--- toward that point while the module is enabled. It does not hook Raycast,
--- spoof Mouse.Hit, rewrite remotes, simulate clicks or change hitboxes.
+-- shared Targeting library for a valid player or NPC, then eases the local
+-- camera toward that point while the module is enabled. Assist uses a cursor
+-- FOV; Aimbot removes that gate and keeps a smooth, stable lock. It does not
+-- hook Raycast, spoof Mouse.Hit, rewrite remotes, simulate clicks or change
+-- hitboxes.
 --
 -- That boundary is intentional. A module can own its camera effect without
 -- affecting other modules; a global hook cannot. The target selector is kept
@@ -18785,6 +19105,7 @@ function Module.init(context: Runtime): any
     local currentWorkspace: Workspace = host.workspace or workspace
     local runtime: any = {
         target = nil,
+        lockedTarget = nil,
     }
     local card: any
 
@@ -18807,7 +19128,10 @@ function Module.init(context: Runtime): any
         -- the frame delta, so a dropped frame cannot fling the view past the
         -- target or produce a NaN CFrame.
         local smoothing: number = card.Options["Smoothing"].Value
-        local response: number = 2 + smoothing * 0.18
+        local mode: string = card.Options["Mode"].Value
+        local response: number = mode == "Aimbot"
+            and 3 + smoothing * 0.22
+            or 2 + smoothing * 0.18
         local alpha: number = math.clamp(
             math.max(deltaTime, 1 / 240) * response,
             0,
@@ -18835,19 +19159,39 @@ function Module.init(context: Runtime): any
     local function selectTarget(): any
         if anotherAimAdapterIsActive()
             or not targeting
-            or type(targeting.Select) ~= "function" then
+            or type(targeting.List) ~= "function" then
             return nil
         end
         local options: any = card.Options
-        return targeting:Select(entity, {
-            FOV = options["FOV"].Value,
+        local mode: string = options["Mode"].Value
+        local candidates: {any} = targeting:List(entity, {
+            -- Assist respects the user's cursor FOV. Aimbot intentionally
+            -- removes that gate, then keeps one valid target until it leaves
+            -- the query so the camera does not jump between players every frame.
+            FOV = mode == "Aim Assist" and options["FOV"].Value or nil,
             MaxDistance = options["Max distance"].Value,
             TargetPart = options["Target part"].Value,
             Prediction = options["Prediction"].Value,
             TeamCheck = options["Team check"].Value,
             VisibilityCheck = options["Visibility check"].Value,
             Priority = options["Priority"].Value,
+            IncludeNPCs = options["Target NPCs"].Value,
+            AllowOffscreen = mode == "Aimbot",
         })
+        if mode ~= "Aimbot" then
+            runtime.lockedTarget = nil
+            return candidates[1]
+        end
+        if runtime.lockedTarget then
+            for _, candidate: any in ipairs(candidates) do
+                if candidate.entity == runtime.lockedTarget.entity then
+                    runtime.lockedTarget = candidate
+                    return candidate
+                end
+            end
+        end
+        runtime.lockedTarget = candidates[1]
+        return runtime.lockedTarget
     end
 
     card = framework.Categories.Combat:CreateModule({
@@ -18859,6 +19203,7 @@ function Module.init(context: Runtime): any
             .. "remote hooks.",
         Function = function(enabled: boolean): ()
             runtime.target = nil
+            runtime.lockedTarget = nil
             if not enabled then
                 card:SetStatus(nil)
                 return
@@ -18871,11 +19216,13 @@ function Module.init(context: Runtime): any
                     or services.menu.isVisible()
                     or services.menu.isCapturingInput() then
                     runtime.target = nil
+                    runtime.lockedTarget = nil
                     card:SetStatus("paused")
                     return
                 end
                 if userInput:GetFocusedTextBox() then
                     runtime.target = nil
+                    runtime.lockedTarget = nil
                     card:SetStatus("paused")
                     return
                 end
@@ -18887,8 +19234,10 @@ function Module.init(context: Runtime): any
                     return
                 end
                 local moved: boolean = moveCamera(selected, deltaTime)
-                local displayName: string = tostring(selected.player.DisplayName
-                    or selected.player.Name)
+                local targetPlayer: Player? = selected.player
+                local displayName: string = targetPlayer
+                    and tostring(targetPlayer.DisplayName or targetPlayer.Name)
+                    or tostring(selected.entity.Name or selected.character.Name)
                 local distance: number = math.round(selected.distance)
                 card:SetStatus(
                     displayName .. " · " .. tostring(distance) .. " studs"
@@ -18902,8 +19251,19 @@ function Module.init(context: Runtime): any
         end,
     })
 
+    card:CreateDropdown({
+        Name = "Mode",
+        List = {"Aim Assist", "Aimbot"},
+        Index = 1,
+        Function = function(): ()
+            runtime.lockedTarget = nil
+        end,
+        Tooltip = "Aim Assist respects FOV; Aimbot keeps a smooth lock on the "
+            .. "best valid character on screen.",
+    })
     card:CreateSlider({
         Name = "FOV",
+        Show = {Option = "Mode", Values = {"Aim Assist"}},
         Min = 15,
         Max = 500,
         Step = 5,
@@ -18955,6 +19315,11 @@ function Module.init(context: Runtime): any
         Name = "Team check",
         Default = true,
         Tooltip = "Skip teammates and Friend List entries.",
+    })
+    card:CreateToggle({
+        Name = "Target NPCs",
+        Default = false,
+        Tooltip = "Include non-player humanoid models in both modes.",
     })
     card:CreateNote(
         "Camera-only assist. It never edits remotes, raycasts or hitboxes."
@@ -22607,7 +22972,7 @@ function Module.init(context: Runtime): any
         "Stop extreme local velocity and return to safety",
         14,
         toggleAntiFling,
-        {categoryName = "Combat"}
+        {categoryName = "Other"}
     )
     addNumberOption(
         AntiFlingFeature,
@@ -22708,7 +23073,7 @@ function Module.init(context: Runtime): any
         "Simulate extreme incoming replication delay",
         16,
         toggleLagSwitch,
-        {categoryName = "Movement"}
+        {categoryName = "Other"}
     )
     addNumberOption(
         LagSwitchFeature,
@@ -23041,7 +23406,7 @@ function Module.init(context: Runtime): any
                 notify("no matching player")
             end
         end,
-        {action = true, categoryName = "Combat"}
+        {action = true, categoryName = "Other"}
     )
     addTextOption(FlingFeature, "Target player", universalFlingSettings.target, function(value)
         universalFlingSettings.target = value
@@ -23900,6 +24265,7 @@ local activeCleanup: (() -> ())? = nil
 function Module.init(context: Runtime): any
     local host: any = context.host
     local framework: any = context.framework
+    local entityLibrary: any = context.entity
     local Players: any = host.Players
     local LocalPlayer: any = host.LocalPlayer
 
@@ -24014,21 +24380,21 @@ function Module.init(context: Runtime): any
         end
     end
 
-    -- NPCs are found by walking the workspace, which is the one part of this that
-    -- is not cheap, so the answer is kept for two seconds. Players are re-read
-    -- every frame: that list is short and a respawn has to be picked up at once.
-    local hitboxNpcCache: {Model} = {}
-    local hitboxNpcCachedAt: number = -1
-
+    -- Entity owns the signal-indexed NPC list and the same team/Friend List
+    -- policy used by combat and ESP. Hitboxes consumes that index instead of
+    -- scanning only workspace's direct children, which missed NPCs nested in a
+    -- map folder and made Team check behave differently from other cards.
     local function hitboxTargets(): {Model}
         local targets: {Model} = {}
+        entityLibrary:Refresh()
         for _, player: Player in ipairs(Players:GetPlayers()) do
             if player == LocalPlayer then
                 continue
             end
-            if hitboxSettings.teamCheck
-                and LocalPlayer.Team ~= nil
-                and player.Team == LocalPlayer.Team then
+            if hitboxSettings.teamCheck and entityLibrary:IsFriendly(player) then
+                continue
+            end
+            if entityLibrary:IsProtected(player) then
                 continue
             end
             local character: Model? = player.Character
@@ -24039,26 +24405,12 @@ function Module.init(context: Runtime): any
             end
         end
         if hitboxSettings.includeNpcs then
-            local now: number = os.clock()
-            if now - hitboxNpcCachedAt > 2 then
-                hitboxNpcCachedAt = now
-                hitboxNpcCache = {}
-                for _, child: Instance in ipairs(workspace:GetChildren()) do
-                    if not child:IsA("Model") or child == LocalPlayer.Character then
-                        continue
-                    end
-                    local humanoid: Humanoid? =
-                        child:FindFirstChildOfClass("Humanoid") :: Humanoid?
-                    if humanoid
-                        and (humanoid :: Humanoid).Health > 0
-                        and Players:GetPlayerFromCharacter(child) == nil then
-                        table.insert(hitboxNpcCache, child :: Model)
-                    end
-                end
-            end
-            for _, npc: Model in ipairs(hitboxNpcCache) do
-                if npc.Parent then
-                    table.insert(targets, npc)
+            for _, npc: any in ipairs(entityLibrary.NPCList or {}) do
+                if (not hitboxSettings.teamCheck or not npc.IsFriendly)
+                    and npc.Character
+                    and npc.Humanoid
+                    and npc.Humanoid.Health > 0 then
+                    table.insert(targets, npc.Character)
                 end
             end
         end
@@ -24093,8 +24445,6 @@ function Module.init(context: Runtime): any
             .. "is restored exactly when it stops being a target.",
         Function = function(enabled: boolean): ()
             restoreHitboxes()
-            hitboxNpcCachedAt = -1
-            hitboxNpcCache = {}
             if not enabled then
                 hitboxes:SetStatus(nil)
                 return

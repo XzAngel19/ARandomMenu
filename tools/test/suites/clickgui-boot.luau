@@ -454,6 +454,36 @@ return function(ctx: any): ()
         end
     end
 
+    -- Module load order is not display order. Every category body must be
+    -- alphabetic by the visible card name, including cards added late by a
+    -- game module.
+    local liveClickGui: any = gui
+    if liveClickGui and liveClickGui.categories then
+        for categoryName: string, record: any in pairs(liveClickGui.categories) do
+            local rows: {any} = {}
+            for _, child: any in ipairs(record.window.body:GetChildren()) do
+                if child:IsA("GuiObject")
+                    and type(child:GetAttribute("FeatureSortName")) == "string" then
+                    table.insert(rows, child)
+                end
+            end
+            table.sort(rows, function(left: any, right: any): boolean
+                return (left.LayoutOrder or 0) < (right.LayoutOrder or 0)
+            end)
+            local previous: string = ""
+            local sorted: boolean = true
+            for _, row: any in ipairs(rows) do
+                local key: string = tostring(row:GetAttribute("FeatureSortName"))
+                if key < previous then
+                    sorted = false
+                    break
+                end
+                previous = key
+            end
+            check("module rows are alphabetic: " .. categoryName, sorted)
+        end
+    end
+
     for _, record: any in ipairs(openedSettings) do
         local window: any = record.window
         if window then

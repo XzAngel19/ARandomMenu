@@ -14,7 +14,7 @@
 -- per-frame numbers (health, distance).
 
 export type Entity = {
-    Player: Player,
+    Player: Player?,
     Character: Model,
     Humanoid: Humanoid,
     RootPart: BasePart,
@@ -24,6 +24,8 @@ export type Entity = {
     Distance: number,
     Team: Team?,
     IsFriendly: boolean,
+    IsNPC: boolean,
+    Name: string,
 }
 
 export type RangeQuery = {
@@ -34,6 +36,7 @@ export type RangeQuery = {
     IgnoreFriends: boolean?,
     Angle: number?,
     Sort: string?,
+    IncludeNPCs: boolean?,
 }
 
 export type EntityQuery = {
@@ -42,19 +45,25 @@ export type EntityQuery = {
     MaxDistance: number?,
     IgnoreTeam: boolean?,
     IgnoreWalls: boolean?,
+    IgnoreFriends: boolean?,
     Part: string?,
+    IncludeNPCs: boolean?,
 }
 
 export type EntityLibrary = {
     List: {Entity},
     ByPlayer: {[Player]: Entity},
+    NPCList: {Entity},
+    ByModel: {[Model]: Entity},
     LocalEntity: Entity?,
     IsAlive: (self: EntityLibrary) -> boolean,
     Refresh: (self: EntityLibrary) -> {Entity},
     Get: (self: EntityLibrary, player: Player) -> Entity?,
+    GetNpc: (self: EntityLibrary, model: Model) -> Entity?,
     ForEach: (self: EntityLibrary, callback: (Entity) -> ()) -> (),
-    IsFriendly: (self: EntityLibrary, player: Player) -> boolean,
-    IsProtected: (self: EntityLibrary, player: Player) -> boolean,
+    IsFriendly: (self: EntityLibrary, player: Player?) -> boolean,
+    IsFriendlyModel: (self: EntityLibrary, model: Model) -> boolean,
+    IsProtected: (self: EntityLibrary, player: Player?) -> boolean,
     InRange: (self: EntityLibrary, query: RangeQuery) -> {Entity},
     ClosestToRay: (
         self: EntityLibrary,
@@ -113,6 +122,8 @@ function Module.init(context: any): EntityLibrary
     local library: any = {
         List = {},
         ByPlayer = {},
+        NPCList = {},
+        ByModel = {},
         LocalEntity = nil,
         Connections = {},
         -- Four modules can each ask for a refresh in the same frame. Doing the
@@ -120,6 +131,8 @@ function Module.init(context: any): EntityLibrary
         -- saving in the whole visual stack.
         lastRefresh = -1,
         pool = setmetatable({}, {__mode = "k"}),
+        npcPool = setmetatable({}, {__mode = "k"}),
+        npcModels = setmetatable({}, {__mode = "k"}),
         rigs = setmetatable({}, {__mode = "k"}),
     }
 
@@ -140,19 +153,193 @@ function Module.init(context: any): EntityLibrary
         return root
     end
 
-    function library:IsFriendly(player: Player): boolean
-        -- Neutral teams are not friends: in most shooters everybody sits on
-        -- "Neutral" until a round starts, and treating that as friendly makes
-        -- every combat module refuse to work.
-        local team: Team? = player.Team
-        local localTeam: Team? = localPlayer.Team
-        if not team or not localTeam then
+    -- Experiences do not agree on how an NPC declares its faction. Prefer
+    -- explicit attributes, then Team/TeamColor-like properties, and compare a
+    -- normalized name or value with the local player. Missing metadata is
+    -- neutral rather than friendly: an unlabelled training dummy must not make
+    -- every NPC disappear when Team check is enabled.
+    local TEAM_ATTRIBUTE_NAMES: {string} = {
+        "Team",
+        "TeamId",
+        "TeamID",
+        "Faction",
+        "FactionId",
+        "FactionID",
+    }
+
+    local function normalizeTeamValue(value: any): string?
+        if value == nil then
+            return nil
+        end
+        if typeof(value) == "Instance" then
+            return "name:" .. string.lower((value :: Instance).Name)
+        end
+        if type(value) == "table" and type(value.Name) == "string" then
+            return "name:" .. string.lower(value.Name)
+        end
+        if type(value) == "table"
+            and type(value.R) == "number"
+            and type(value.G) == "number"
+            and type(value.B) == "number" then
+            return string.format(
+                "colour:%d:%d:%d",
+                math.round(value.R * 255),
+                math.round(value.G * 255),
+                math.round(value.B * 255)
+            )
+        end
+        if type(value) == "table" and value.Color ~= nil then
+            local nested: string? = normalizeTeamValue(value.Color)
+            if nested then
+                return nested
+            end
+        end
+        if type(value) == "string" then
+            return "name:" .. string.lower(value)
+        end
+        local text: string = tostring(value)
+        if text == "" or text == "nil" then
+            return nil
+        end
+        return "value:" .. string.lower(text)
+    end
+
+    local function teamToken(instance: Instance): string?
+        for _, attributeName: string in ipairs(TEAM_ATTRIBUTE_NAMES) do
+            local ok: boolean, value: any = pcall(
+                instance.GetAttribute,
+                instance,
+                attributeName
+            )
+            if ok then
+                local normalized: string? = normalizeTeamValue(value)
+                if normalized then
+                    return normalized
+                end
+            end
+        end
+
+        local direct: any = (instance :: any).Team
+        local normalizedDirect: string? = normalizeTeamValue(direct)
+        if normalizedDirect then
+            return normalizedDirect
+        end
+        local colour: any = (instance :: any).TeamColor
+        local normalizedColour: string? = normalizeTeamValue(colour)
+        if normalizedColour then
+            return normalizedColour
+        end
+        local child: Instance? = instance:FindFirstChild("Team")
+        if child then
+            local childValue: any = (child :: any).Value
+            return normalizeTeamValue(childValue or child.Name)
+        end
+        return nil
+    end
+
+    local function localTeamToken(): string?
+        return teamToken(localPlayer)
+    end
+
+    function library:IsFriendly(player: Player?): boolean
+        if not player or player == localPlayer then
             return false
         end
-        if player.Neutral or localPlayer.Neutral then
+        -- Neutral players are deliberately not assigned to a team.
+        if player.Neutral == true or localPlayer.Neutral == true then
             return false
         end
-        return team == localTeam
+        local localToken: string? = localTeamToken()
+        local targetToken: string? = teamToken(player)
+        return localToken ~= nil and targetToken ~= nil and localToken == targetToken
+    end
+
+    function library:IsFriendlyModel(model: Model): boolean
+        if model == localPlayer.Character then
+            return false
+        end
+        local localToken: string? = localTeamToken()
+        local targetToken: string? = teamToken(model)
+        return localToken ~= nil and targetToken ~= nil and localToken == targetToken
+    end
+
+    local function npcParts(model: Model): (Humanoid?, BasePart?)
+        local humanoid: Humanoid? =
+            model:FindFirstChildOfClass("Humanoid") :: Humanoid?
+        local root: BasePart? =
+            model:FindFirstChild("HumanoidRootPart") :: BasePart?
+                or model.PrimaryPart
+                or model:FindFirstChildWhichIsA("BasePart") :: BasePart?
+        return humanoid, root
+    end
+
+    local function isNpcModel(model: Model): boolean
+        if not model.Parent or model == localPlayer.Character then
+            return false
+        end
+        if players:GetPlayerFromCharacter(model) ~= nil then
+            return false
+        end
+        local humanoid: Humanoid?, root: BasePart? = npcParts(model)
+        return humanoid ~= nil and root ~= nil
+    end
+
+    local function modelFor(instance: Instance): Model?
+        if instance:IsA("Model") then
+            return instance :: Model
+        end
+        return instance:FindFirstAncestorOfClass("Model") :: Model?
+    end
+
+    local function indexNpc(instance: Instance): ()
+        local model: Model? = modelFor(instance)
+        if model and isNpcModel(model) then
+            library.npcModels[model] = true
+        end
+    end
+
+    local function unindexNpc(instance: Instance): ()
+        local model: Model? = modelFor(instance)
+        if model and (instance == model or not model.Parent) then
+            library.npcModels[model] = nil
+            library.ByModel[model] = nil
+        end
+    end
+
+    local function refreshNpcs(originPosition: Vector3): ()
+        local list: {Entity} = library.NPCList
+        local byModel: {[Model]: Entity} = library.ByModel
+        table.clear(list)
+        table.clear(byModel)
+        for model: Model in pairs(library.npcModels) do
+            if not isNpcModel(model) then
+                library.npcModels[model] = nil
+                continue
+            end
+            local humanoid: Humanoid?, root: BasePart? = npcParts(model)
+            if not humanoid or not root or humanoid.Health <= 0 then
+                continue
+            end
+            local entity: any = library.npcPool[model]
+            if not entity then
+                entity = {}
+                library.npcPool[model] = entity
+            end
+            entity.Player = nil
+            entity.Character = model
+            entity.Humanoid = humanoid
+            entity.RootPart = root
+            entity.Head = model:FindFirstChild("Head") :: BasePart?
+            entity.Health = humanoid.Health
+            entity.MaxHealth = math.max(humanoid.MaxHealth, 1)
+            entity.Distance = (originPosition - root.Position).Magnitude
+            entity.Team = nil
+            entity.IsFriendly = library:IsFriendlyModel(model)
+            entity.IsNPC = true
+            entity.Name = model.Name
+            byModel[model] = entity
+            table.insert(list, entity)
+        end
     end
 
     function library:Refresh(force: boolean?): {Entity}
@@ -198,6 +385,8 @@ function Module.init(context: any): EntityLibrary
             entity.Distance = (originPosition - root.Position).Magnitude
             entity.Team = player.Team
             entity.IsFriendly = library:IsFriendly(player)
+            entity.IsNPC = false
+            entity.Name = player.Name
 
             byPlayer[player] = entity
             if player == localPlayer then
@@ -210,6 +399,7 @@ function Module.init(context: any): EntityLibrary
         if not byPlayer[localPlayer] then
             library.LocalEntity = nil
         end
+        refreshNpcs(originPosition)
         return list
     end
 
@@ -220,6 +410,10 @@ function Module.init(context: any): EntityLibrary
 
     function library:Get(player: Player): Entity?
         return library.ByPlayer[player]
+    end
+
+    function library:GetNpc(model: Model): Entity?
+        return library.ByModel[model]
     end
 
     function library:ForEach(callback: (Entity) -> ()): ()
@@ -276,7 +470,10 @@ function Module.init(context: any): EntityLibrary
 
     -- The friend list is universal and may not be loaded yet, so the question
     -- is asked through `state` rather than captured at init.
-    function library:IsProtected(player: Player): boolean
+    function library:IsProtected(player: Player?): boolean
+        if not player then
+            return false
+        end
         local targets: any = host.services and host.services.protectedTargets
         if targets and type(targets.isProtected) == "function" then
             return targets.isProtected(player) == true
@@ -297,15 +494,15 @@ function Module.init(context: any): EntityLibrary
         local halfAngle: number? = query.Angle and math.rad(query.Angle) / 2 or nil
         local candidates: {Entity} = {}
 
-        for _, entity: Entity in ipairs(library.List) do
+        local function consider(entity: Entity): ()
             if entity.Distance > query.Range then
-                continue
+                return
             end
             if not query.IgnoreTeam and entity.IsFriendly then
-                continue
+                return
             end
             if not query.IgnoreFriends and library:IsProtected(entity.Player) then
-                continue
+                return
             end
             if halfAngle then
                 local delta: Vector3 = (entity.RootPart.Position - resolvedOrigin.Position)
@@ -313,14 +510,23 @@ function Module.init(context: any): EntityLibrary
                 if delta.Magnitude > 0.001 and facing.Magnitude > 0.001 then
                     local dot: number = facing.Unit:Dot(delta.Unit)
                     if math.acos(math.clamp(dot, -1, 1)) > halfAngle then
-                        continue
+                        return
                     end
                 end
             end
             if not query.IgnoreWalls and not library:VisibleFrom(entity) then
-                continue
+                return
             end
             table.insert(candidates, entity)
+        end
+
+        for _, entity: Entity in ipairs(library.List) do
+            consider(entity)
+        end
+        if query.IncludeNPCs then
+            for _, entity: Entity in ipairs(library.NPCList) do
+                consider(entity)
+            end
         end
 
         local sortMode: string = query.Sort or "Distance"
@@ -357,12 +563,15 @@ function Module.init(context: any): EntityLibrary
         local best: Entity? = nil
         local bestScore: number = math.huge
 
-        for _, entity: Entity in ipairs(library.List) do
+        local function consider(entity: Entity): ()
             if not options.IgnoreTeam and entity.IsFriendly then
-                continue
+                return
             end
             if entity.Distance > maxDistance then
-                continue
+                return
+            end
+            if not options.IgnoreFriends and library:IsProtected(entity.Player) then
+                return
             end
             local part: BasePart = entity.RootPart
             if options.Part == "Head" and entity.Head then
@@ -371,16 +580,23 @@ function Module.init(context: any): EntityLibrary
             local offset: Vector3 = part.Position - origin
             local along: number = offset:Dot(unit)
             if along <= 0 then
-                continue
+                return
             end
             -- Perpendicular distance from the ray, which is the same ordering
             -- a screen-space check gives without needing the camera.
             local perpendicular: number = (offset - unit * along).Magnitude
-            if perpendicular < bestScore then
-                if options.IgnoreWalls or library:VisibleFrom(entity) then
-                    best = entity
-                    bestScore = perpendicular
-                end
+            if perpendicular < bestScore
+                and (options.IgnoreWalls or library:VisibleFrom(entity)) then
+                best = entity
+                bestScore = perpendicular
+            end
+        end
+        for _, entity: Entity in ipairs(library.List) do
+            consider(entity)
+        end
+        if options.IncludeNPCs then
+            for _, entity: Entity in ipairs(library.NPCList) do
+                consider(entity)
             end
         end
 
@@ -411,11 +627,30 @@ function Module.init(context: any): EntityLibrary
         library.Connections = {}
         library.List = {}
         library.ByPlayer = {}
+        library.NPCList = {}
+        library.ByModel = {}
+        library.npcModels = setmetatable({}, {__mode = "k"})
         library.LocalEntity = nil
         if activeLibrary == library then
             activeLibrary = nil
         end
     end
+
+    -- NPCs are indexed from workspace signals as well. Their entities stay
+    -- outside `List`, so ESP that is explicitly player-only keeps its existing
+    -- contract, while combat queries can opt in without a full descendant scan
+    -- each frame.
+    for _, descendant: Instance in ipairs(currentWorkspace:GetDescendants()) do
+        indexNpc(descendant)
+    end
+    table.insert(
+        library.Connections,
+        currentWorkspace.DescendantAdded:Connect(indexNpc)
+    )
+    table.insert(
+        library.Connections,
+        currentWorkspace.DescendantRemoving:Connect(unindexNpc)
+    )
 
     -- Signal-driven invalidation. `Refresh` is cheap enough to call per frame,
     -- but a spawn or a leave should be reflected immediately rather than on
