@@ -13,6 +13,18 @@ is downloaded by the menu, compiled by the validation workflow or referenced by
   list and the entity-library approach used by ESP and TriggerBot all come from
   reading it.
 
+- `bedwars-vape-6872274481.lua.txt` — a third-party Vape script for Roblox
+  BedWars, place `8444591321`: 21,452 lines and 182 modules, including every
+  feature the BedWars round asks for. It is the behavioural reference for
+  `src/games/BedWars.luau` in the same role `vape-v4-universal.lua.txt` plays for
+  the universal cards, and the same rule applies: read it for contracts, never
+  copy code. Two things it settles that no decompile would: blocks and beds are
+  enumerated through the CollectionService tags `'block'` and `'bed'`, and many
+  actions are the game's own client controllers (`ItemDropController.dropItemInHand`,
+  `UserInputController.getUserInputType`) rather than a forged remote. Where it
+  and `remote-logs/8444591321-*.json` disagree, the capture wins: the script may
+  be written against an older client.
+
 - `bedfight-place-dump.rbxmx.zip` — a saved place from BedFight, the worked
   example behind `src/library/Weapons.luau`. It contains **no `Tool` instances
   at all**: its swords are view models under `workspace.CurrentCamera.ViewModel`,

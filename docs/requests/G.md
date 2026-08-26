@@ -12,6 +12,8 @@ and the integrator moved it, so a path from an older copy of this file is stale:
   references, 281 `RemoteFunction` references, 279 `ProximityPrompt`s and 795
   `Highlight`s. No agent has mined it yet; `.gitignore` now refuses the unpacked
   file, so unpack it, mine it, and delete it.
+- `reference/bedwars-vape-6872274481.lua.txt` — a third-party Vape script for
+  this exact place, described under "The reference script" below.
 
 All code, UI labels and runtime strings stay English. Work from the current
 `arena/01a03bca-arandommenu` tip, push to your own session branch, never open a
@@ -80,15 +82,15 @@ no `Tool`, exactly like BedFight.
 
 ## The reference script
 
-`6872274481.lua` at the repository root is a third-party Vape/CatVape BedWars
-script: 21,452 lines, **182 modules**, and it already implements everything the
-request lists. It is a behavioural reference in exactly the same role as
-`reference/vape-v4-universal.lua.txt`, and the same rules apply:
+`reference/bedwars-vape-6872274481.lua.txt` is a third-party Vape/CatVape
+BedWars script: 21,452 lines, **182 modules**, and it already implements
+everything the request lists. It is a behavioural reference in exactly the same
+role as `reference/vape-v4-universal.lua.txt`, and the same rules apply:
 
 - read it for **behaviour and contracts**, never copy code into this repository;
-- move it to `reference/` beside the other dumps; its loader prelude
-  (`downloadFile`, the `catvape.dev` fetch, the cache watermark) is not something
-  this project reproduces in any form;
+- its loader prelude (`downloadFile`, the `catvape.dev` fetch, the cache
+  watermark) is not something this project reproduces in any form, and the
+  `.lua.txt` suffix keeps the lint and compile gates off somebody else's file;
 - where it and the Remote Logger capture disagree, the capture wins: the script
   may be written against an older client.
 
