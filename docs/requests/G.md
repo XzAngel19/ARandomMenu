@@ -69,11 +69,12 @@ no `Tool`, exactly like BedFight.
    there is no universal Reach card.
 2. **The rate is the weapon's, not ours.** Measured cooldowns: wooden, iron,
    diamond, void and light swords 0.30 s; sparkler 0.33 s; ice 0.40 s; daggers
-   and rageblade 0.25 s. That is **2.5–4.0 hits per second**, and the community
-   ceiling is about **33–34 registered hits per 10 seconds**. The "36 hits per
-   second" figure in the original request is roughly ten times the real number
-   and must not become a slider maximum: a card that offers 36 swings a second
-   in a game whose fastest sword allows 4 is a card that gets the player kicked.
+   and rageblade 0.25 s. A player swinging by hand lands about 27–33 registered
+   hits per 10 seconds; the hitreg method the request asks for targets
+   **35–36 per 10 seconds**, which is above the 0.30 s sword's own ceiling of
+   33.3 and therefore sits deliberately inside the margin the server leaves. It
+   is a real target, not a typo — but it is per 10 seconds, never per second,
+   and no slider may offer a rate the weapon's cooldown cannot produce.
 
 ## Agent D — the game module
 
@@ -121,36 +122,97 @@ Requested features, triaged against the capture:
   a hook is the one thing `tools/check_module_conformance.py` will fail on if it
   ever leaks into `src/modules/**`.
 
+### Order of work
+
+1. Mine the place and write the facts into the module header the way BedFight
+   does: bed container and bed model shape, generator containers, item-shop
+   prompt parts, kit-to-item definitions, and where an inventory is readable.
+   Nothing guessed; if the dump does not answer it, it goes on the capture list.
+2. The remote layer: one helper per remote, each with a payload builder that
+   refuses to send a shape the capture does not have. This is what every feature
+   below is built on, so it lands first and alone.
+3. `Kill Aura` with the hitreg row, then `Autoclicker`'s BedWars detection on the
+   same rate contract.
+4. The block features: `FastPlace`, `Scaffold`, `Nuker`.
+5. The economy features: `ShopClicker`, `Chest steal`, `Autotool`, `fast drop`.
+6. The projectile features: `Projectile aimbot`, `Projectile tracers`.
+7. The read-only features: `Inventory ESP`, then `BedESP` and `KitESP` once the
+   mining pass answers them.
+8. The movement and knockback features: `Velocity`, `Nofall (custom)`,
+   `Target strafe`, `Noslow`, `Phase` — each one only where the universal card
+   genuinely cannot do the job, and never as a fork of it.
+9. The desktop dock search option. `src/library/Furniture.luau` and
+   `src/library/SettingsPage.luau` are D's lane: the preference, the row in the
+   UI Settings panel, the rebuild path that makes the row real, and the suite
+   that proves the field is gone and the Navigator door is untouched.
+
+Each step is its own commit with its suite. Steps 3-8 are blocked on step 2;
+steps 7's `BedESP` and `KitESP` are blocked on step 1.
+
 ### Kill Aura hitreg
 
-One control, `CreateTwoSlider`, in **hits per second**, drawn per swing by
-`GetRandomValue()` so the interval is never machine-exact:
+The unit the player thinks in is **hits per 10 seconds**, and that is the unit
+the row uses. One `CreateTwoSlider`, drawn per swing by `GetRandomValue()` so the
+interval is never machine-exact:
 
-- rail 2.0–4.0, default band 2.8–3.2;
-- the module clamps the drawn rate to the equipped weapon's cooldown when it can
-  read the weapon, and to 4.0 when it cannot;
-- the card's status shows the drawn rate, the way Wurst shows a mode or a count;
-- the tooltip states the real ceiling (about 33 hits in 10 s) so nobody reads a
-  slider maximum as a promise.
+- rail 30–37, default band **35–36**;
+- the drawn value converts to an interval as `10 / hits` — 35 is 0.2857 s, 36 is
+  0.2778 s — and the swing waits that long, plus no human reaction time;
+- the card's status shows the **registered** rate over a rolling window, not the
+  drawn one, so a band the server refuses is visible instead of silently
+  optimistic;
+- the tooltip says what the number is and what it is not.
+
+Why 35–36 is the target and also the edge: a 0.30 s sword cooldown allows
+`10 / 0.30 = 33.3` hits per 10 s, so 35 sits 4.8 % under the nominal cooldown
+and 36 sits 7.4 % under. Whether those register is the server's decision, not
+the module's — it depends on whether the cooldown is enforced on the client, on
+the server's own clock, or against the timestamp in the payload. So the module
+aims at the band, measures what actually lands, and clamps down when it does
+not. Per weapon the ceiling is:
+
+| Weapon | Cooldown | Ceiling per 10 s |
+| --- | --- | --- |
+| daggers, rageblade | 0.25 s | 40 |
+| wooden, iron, diamond, void, light | 0.30 s | 33 |
+| sparkler | 0.33 s | 30 |
+| ice | 0.40 s | 25 |
+
+When the module can read the equipped weapon it clamps the band to that ceiling;
+35–36 on an ice sword is not a setting, it is a request the game will ignore.
+When it cannot read the weapon, it clamps to the 0.30 s case and says so.
 
 `Autoclicker (detect tool)` is the same rate contract with a hand on the mouse:
 detect the equipped `Accessory` under `Inventories.<localPlayer>` instead of a
-`Tool`, and hold the same cooldown.
+`Tool`, express the row in the same hits-per-10-seconds unit, and hold the same
+clamp.
 
 ## Agent C — gates
 
-Read `docs/agents/RULES.md` and `docs/architecture/modules.md`. Add focused
-headless tests for the new game module, in your lane, landing with D's commit:
+Read `docs/agents/RULES.md` and `docs/architecture/modules.md`. Your lane is the
+suites and the tooling; land each gate in the same commit as the code it pins.
+In order:
 
-- place gating: nothing is built for any other place id;
-- every remote call goes through a fixture that records the payload, and each
-  payload matches the captured shape field for field;
-- the hitreg rail: a drawn rate never leaves 2.0–4.0, and a weapon with a 0.4 s
-  cooldown clamps it to 2.5;
-- teardown: no connection, task or property survives disable, death or a
-  character replacement;
-- the payload validator refuses an inconsistent `SwordHit` rather than sending
-  it.
+1. **Place gating.** Nothing in `src/games/BedWars.luau` is built for any other
+   place id. Assert it by initialising the module against a different
+   `game.PlaceId` and requiring zero features and zero connections.
+2. **Payload parity.** Every remote call goes through a fixture that records the
+   payload, and each recorded payload matches the captured shape in this file
+   field for field — `PlaceBlock`, `DamageBlock`, `SwordHit`, `ProjectileFire`,
+   `BedwarsPurchaseItem`, `SetInvItem`, `AckKnockback`. A field the capture does
+   not have is a failure, not a tolerance.
+3. **The hitreg rail.** A drawn value never leaves 30–37 hits per 10 seconds, the
+   interval is `10 / hits`, and the per-weapon clamp holds: 0.40 s caps at 25,
+   0.30 s caps at 33, 0.25 s allows the full rail. Assert the *interval*, not the
+   label.
+4. **The registered rate is measured, not claimed.** With a fixture that rejects
+   every third hit, the status must fall below the drawn band. A card that
+   reports the band it asked for is the failure this check exists to catch.
+5. **The payload validator refuses an inconsistent `SwordHit`** — a
+   `targetPosition` the `raycast` block cannot reach, or a `selfPosition` that is
+   not the character's — and sends nothing.
+6. **Teardown.** No connection, task, drawing or borrowed property survives
+   disable, death, or a character replacement.
 
 Do not turn a missing executor capability into a passing check, and do not add
 screenshot uploads, remote rewriting or anti-cheat bypass logic to make a test
@@ -171,14 +233,12 @@ green. Report the exact check count and any mock debt.
    Update `docs/agents/RULES.md` and the `docs/requests/*.md` headers that name
    the old branch, and tell C and D the new name in your reply, not only in a
    file.
-3. **Option to hide the desktop dock search.** The dock already collapses its
-   search field on touch: `src/library/Furniture.luau:1276-1284` computes
-   `dockSearchWidth` as `touchPrimary and 0 or DOCK_SEARCH_WIDTH` and the field
-   at line 1515 is sized from it. Desktop needs the same zero, behind a stored
-   preference, with the row in the UI Settings panel that
-   `src/library/SettingsPage.luau:1501` builds. The seam exists; what is missing
-   is the preference and a rebuild path so the row is not decorative. It must
-   not add a second door to the Navigator and must not bring back the wide
+3. **Desktop dock search option** — D implements it, since
+   `src/library/Furniture.luau` and `src/library/SettingsPage.luau` are D's lane
+   (the seam is `Furniture.luau:1276-1284`, where `dockSearchWidth` is already
+   `0` on touch, and the field sized from it at line 1515; the row belongs in
+   the UI Settings panel `SettingsPage.luau:1501` builds). Your job is to review
+   that it adds no second door to the Navigator and does not bring back the wide
    launcher surface.
 4. Repository hygiene: the two 7z parts put 24 MB of binary in git and the
    unpacked place is 170 MB. Decide where large captures live — `reference/`
