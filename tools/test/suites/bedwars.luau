@@ -531,6 +531,39 @@ return function(ctx: any): ()
         "status: " .. tostring(features.drop.status))
     features.drop.activate()
 
+    -- ------------------------------------------------------ projectile tracer
+
+    -- The tracer shares the aimbot's solver, so what is new here is that it
+    -- draws and that it draws a falling arc rather than a straight line.
+    weapon.Parent = nil
+    local tracerBow: any = Mock.newInstance("Accessory")
+    tracerBow.Name = "bow"
+    tracerBow.Parent = world.localPlayer.Character
+    features.tracer.activate()
+    world.clock += 1
+    stub.step(0.016)
+    local tracerFolder: any = world.workspace:FindFirstChild("Wurst_BedWarsTracer")
+    check("the tracer draws its arc", tracerFolder ~= nil
+        and #tracerFolder:GetChildren() == 12,
+        "points: " .. tostring(tracerFolder and #tracerFolder:GetChildren() or 0))
+    if tracerFolder then
+        local first: any = tracerFolder:FindFirstChild("T1")
+        local last: any = tracerFolder:FindFirstChild("T12")
+        check("and the arc falls, because gravity is in it",
+            first ~= nil and last ~= nil and last.CFrame.Position.Y < first.CFrame.Position.Y,
+            first and last
+                and string.format("%.1f -> %.1f",
+                    first.CFrame.Position.Y, last.CFrame.Position.Y) or "missing")
+        check("the tracer fires no remote of its own",
+            #(sent["ProjectileFire"] :: any) == 0,
+            "calls: " .. tostring(#(sent["ProjectileFire"] :: any)))
+    end
+    features.tracer.activate()
+    check("disabling clears the arc",
+        world.workspace:FindFirstChild("Wurst_BedWarsTracer") == nil)
+    tracerBow:Destroy()
+    weapon.Parent = world.localPlayer.Character
+
     BedWarsFile.destroy()
     check("destroy leaves no connection behind",
         next(host.featureConnections) == nil

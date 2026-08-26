@@ -127,13 +127,10 @@ function Module.init(runtime: any): any
     local Players: any = host.Players
     local LocalPlayer: Player = host.LocalPlayer
     local _services: any = runtime.Services or (host.services or {})
-    -- No registry table of its own yet: the shell publishes one per game
-    -- (`state.bedFightFeatures` and friends) and BedWars does not have one
-    -- until the shell registers this place module. Reading a field nothing
-    -- assigns is exactly what the contracts gate refuses, so these cards group
-    -- under the default section until the shell says otherwise. The two lines
-    -- needed are requested in `docs/requests/A.md`.
-    local registry: any = nil
+    -- The shell publishes one registry per game and registers this place
+    -- module, so these cards group under their own BedWars section instead of
+    -- the default one.
+    local registry: any = state.bedWarsFeatures
 
     local function characterParts(): (Model?, Humanoid?, BasePart?)
         local own: Model? = LocalPlayer.Character
@@ -193,7 +190,7 @@ function Module.init(runtime: any): any
     local ownedConnections: {string} = {
         "BedWarsAura", "BedWarsClicker", "BedWarsPlace", "BedWarsNuke",
         "BedWarsEspAdded", "BedWarsEspRemoved", "BedWarsChest", "BedWarsAutoTool",
-        "BedWarsInventory", "BedWarsAimbot", "BedWarsDrop",
+        "BedWarsInventory", "BedWarsAimbot", "BedWarsDrop", "BedWarsTracer",
     }
     runtimeState.disconnectAll = function(): ()
         for _, key: string in ipairs(ownedConnections) do
@@ -204,6 +201,9 @@ function Module.init(runtime: any): any
         if type(runtimeState.cleanupPanels) == "function" then
             pcall(runtimeState.cleanupPanels)
         end
+        if type(runtimeState.cleanupTracer) == "function" then
+            pcall(runtimeState.cleanupTracer)
+        end
     end
 
     local AuraFeature: any = nil
@@ -211,6 +211,7 @@ function Module.init(runtime: any): any
     local InventoryFeature: any = nil
     local AimbotFeature: any = nil
     local DropFeature: any = nil
+    local TracerFeature: any = nil
     local PlaceFeature: any = nil
     local NukeFeature: any = nil
     local EspFeature: any = nil
@@ -1051,6 +1052,11 @@ function Module.init(runtime: any): any
         delay = 0.5,
         wallCheck = true,
         teamCheck = true,
+        -- 100 is what the capture's telepearl implies. A bow is faster and the
+        -- per-weapon `launchVelocity` lives in the game's own modules, so until
+        -- that is read the player states it: a wrong speed aims low, and a row
+        -- is more honest than a table of numbers nobody can check.
+        speed = 100,
     }
     local projectileRuntime: any = {nextAt = 0}
 
@@ -1231,10 +1237,7 @@ function Module.init(runtime: any): any
                         return
                     end
 
-                    -- 100 is the reference's default launch speed and matches
-                    -- the telepearl in the capture (~108). Gravity is the
-                    -- workspace's; a game that changes it changes the arc.
-                    local speed: number = 100
+                    local speed: number = projectileSettings.speed
                     local gravity: number = workspace.Gravity
                     local target: BasePart = bestPart :: BasePart
                     local velocity: Vector3?, flight: number? = solveTrajectory(
@@ -1366,8 +1369,123 @@ function Module.init(runtime: any): any
             dropSettings.rate = value
         end)
 
+    -- ------------------------------------------------------ projectile tracer
+    --
+    -- The same solver the aimbot uses, drawn instead of fired. Read-only: no
+    -- remote, no aim change, nothing the server can see. It is the honest half
+    -- of a projectile aimbot, and it is the one that teaches the arc.
+    local tracerRuntime: any = {folder = nil, points = {} :: {any}}
+    local TRACER_SAMPLES: number = 12
+
+    local function clearTracer(): ()
+        if tracerRuntime.folder then
+            pcall(function(): ()
+                tracerRuntime.folder:Destroy()
+            end)
+            tracerRuntime.folder = nil
+        end
+        tracerRuntime.points = {}
+    end
+
+    TracerFeature = createUniversalFeature(
+        "Projectile Tracers",
+        "Draws the arc the shot in hand would take",
+        11,
+        function(enabled: boolean): ()
+            host.disconnectFeatureConnection("BedWarsTracer")
+            clearTracer()
+            if not enabled then
+                if TracerFeature then
+                    TracerFeature:SetStatus(nil)
+                end
+                return
+            end
+            TracerFeature:SetStatus("no projectile")
+            local nextAt: number = 0
+            host.featureConnections.BedWarsTracer =
+                TaskManager:Connect(function(): ()
+                    local now: number = os.clock()
+                    if now < nextAt then
+                        return
+                    end
+                    nextAt = now + 0.1
+                    local weapon: Instance? = projectileWeapon()
+                    local view: Camera? = camera()
+                    if not weapon or not view then
+                        clearTracer()
+                        TracerFeature:SetStatus("no projectile")
+                        return
+                    end
+                    local own: Model?, humanoid: Humanoid?, root: BasePart? =
+                        characterParts()
+                    if not own or not humanoid or not root
+                        or (humanoid :: Humanoid).Health <= 0 then
+                        return
+                    end
+
+                    -- Straight ahead, not at a player: a tracer shows where the
+                    -- shot goes, and choosing a target for it would be an aimbot
+                    -- wearing a different name.
+                    local origin: Vector3 = (view :: Camera).CFrame.Position
+                    local forward: Vector3 = (view :: Camera).CFrame.LookVector
+                    local gravity: number = workspace.Gravity
+                    local speed: number = projectileSettings.speed
+                    -- Out to the farthest this weapon can throw, not to an
+                    -- arbitrary distance: past speed^2 / gravity there is no
+                    -- arc to draw and the solver correctly refuses one.
+                    local maxRange: number = speed * speed / math.max(gravity, 1)
+                    local aimPoint: Vector3 = origin + forward * maxRange * 0.9
+                    local velocity: Vector3?, flight: number? = solveTrajectory(
+                        origin, aimPoint, Vector3.new(0, 0, 0), speed, gravity
+                    )
+                    if not velocity then
+                        clearTracer()
+                        TracerFeature:SetStatus("no arc")
+                        return
+                    end
+
+                    local launch: Vector3 = velocity :: Vector3
+                    local total: number = flight :: number
+                    if not tracerRuntime.folder then
+                        tracerRuntime.folder = create("Folder", {
+                            Name = "Wurst_BedWarsTracer",
+                            Parent = workspace,
+                        })
+                    end
+                    local folder: any = tracerRuntime.folder
+                    for index: number = 1, TRACER_SAMPLES do
+                        local at: number = total * index / TRACER_SAMPLES
+                        local position: Vector3 = origin + launch * at
+                            - Vector3.new(0, 0.5 * gravity * at * at, 0)
+                        local point: any = tracerRuntime.points[index]
+                        if not point or not point.Parent then
+                            point = create("Part", {
+                                Name = "T" .. tostring(index),
+                                Parent = folder,
+                                Size = Vector3.new(0.3, 0.3, 0.3),
+                                Anchored = true,
+                                CanCollide = false,
+                                CanQuery = false,
+                                CanTouch = false,
+                                Material = Enum.Material.Neon,
+                                Color = Color3.fromRGB(120, 200, 255),
+                                Transparency = 0.25,
+                            })
+                            tracerRuntime.points[index] = point
+                        end
+                        point.CFrame = CFrame.new(position)
+                    end
+                    TracerFeature:SetStatus(string.format("%.2fs", total))
+                end)
+        end,
+        {categoryName = "Render", registry = registry}
+    )
+
     runtimeState.cleanupPanels = function(): ()
         destroyInventoryPanel()
+    end
+    runtimeState.cleanupTracer = function(): ()
+        clearTracer()
     end
 
     Module.Initialized = true
@@ -1382,6 +1500,7 @@ function Module.init(runtime: any): any
         inventory = InventoryFeature,
         aimbot = AimbotFeature,
         drop = DropFeature,
+        tracer = TracerFeature,
     }
 end
 
