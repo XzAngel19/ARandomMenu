@@ -193,7 +193,7 @@ function Module.init(runtime: any): any
     local ownedConnections: {string} = {
         "BedWarsAura", "BedWarsClicker", "BedWarsPlace", "BedWarsNuke",
         "BedWarsEspAdded", "BedWarsEspRemoved", "BedWarsChest", "BedWarsAutoTool",
-        "BedWarsInventory",
+        "BedWarsInventory", "BedWarsAimbot", "BedWarsDrop",
     }
     runtimeState.disconnectAll = function(): ()
         for _, key: string in ipairs(ownedConnections) do
@@ -209,6 +209,8 @@ function Module.init(runtime: any): any
     local AuraFeature: any = nil
     local ClickerFeature: any = nil
     local InventoryFeature: any = nil
+    local AimbotFeature: any = nil
+    local DropFeature: any = nil
     local PlaceFeature: any = nil
     local NukeFeature: any = nil
     local EspFeature: any = nil
@@ -1023,6 +1025,347 @@ function Module.init(runtime: any): any
             inventorySettings.range = value
         end)
 
+    -- ----------------------------------------------------- projectile aimbot
+    --
+    -- The capture gives the whole shot away: `ProjectileFire` takes the weapon,
+    -- the item type twice, two origins, the launch velocity, a projectile id, a
+    -- table with `drawDurationSec` and `shotId`, and a timestamp. Every one of
+    -- those is chosen by the client, so the aim is ours to solve.
+    --
+    -- What this does not do is copy the reference client's solver. That one
+    -- takes fourteen arguments and carries hard-coded fudge factors for
+    -- balloons (1.2, 1, 0.975) and a bare `6` for one state; none of those
+    -- numbers are derivable from anything the game publishes, so none of them
+    -- are here. Speed and gravity come from the weapon and the workspace, and
+    -- the flight is solved by bracketing the demand curve and bisecting onto
+    -- it, which is forty lines and has nothing to tune.
+    --
+    -- The consequence worth knowing: range is physics, not a setting. A shot
+    -- leaves at `speed` and falls at `workspace.Gravity`, so the farthest it
+    -- can go is speed^2 / gravity - about 51 studs at the 100 stud/s the
+    -- capture's telepearl implies, under the default 196.2. Past that the card
+    -- reports "out of range" instead of lobbing a shot that lands short. The
+    -- Range row filters targets; it cannot extend the arc.
+    local projectileSettings: any = {
+        range = 120,
+        delay = 0.5,
+        wallCheck = true,
+        teamCheck = true,
+    }
+    local projectileRuntime: any = {nextAt = 0}
+
+    -- Projectile weapons, by the part of the name that never changes. The game
+    -- has a long tail of them; these are the ones a shot makes sense for.
+    local PROJECTILE_WORDS: {string} = {"bow", "arrow", "pearl", "snowball", "egg", "potion"}
+
+    local function projectileWeapon(): Instance?
+        local own: Model? = LocalPlayer.Character
+        if not own then
+            return nil
+        end
+        for _, child: Instance in ipairs((own :: Model):GetChildren()) do
+            if not child:IsA("Accessory") then
+                continue
+            end
+            for _, word: string in ipairs(PROJECTILE_WORDS) do
+                if child.Name:find(word) then
+                    return child
+                end
+            end
+        end
+        return nil
+    end
+
+    -- Launch velocity and flight time for a projectile of `speed` under
+    -- `gravity` to meet a target moving at `velocity`, or nil when no angle
+    -- reaches it.
+    --
+    -- To hit a displacement D in time t a projectile needs an initial velocity
+    -- of D/t plus half the gravity it will fall over that time, so the speed
+    -- the shot demands is a function of t alone: it starts enormous, bottoms
+    -- out, and climbs again. Solving for the t where that demand equals the
+    -- weapon's speed is a bracket and a bisection.
+    --
+    -- It is not the fixed-point iteration that iteration looks like it should
+    -- be (`t = demand(t) / speed`), because the derivative of the drop term is
+    -- `gravity * t / speed`, which is 1.77 at a one-second flight with a 100
+    -- stud shot. Above 1 the iteration runs away: it was measured climbing
+    -- 0.707, 0.861, 1.014 and on to NaN before the bisection replaced it.
+    local function solveTrajectory(
+        origin: Vector3,
+        targetPosition: Vector3,
+        targetVelocity: Vector3,
+        speed: number,
+        gravity: number
+    ): (Vector3?, number?)
+        if speed <= 0 then
+            return nil, nil
+        end
+
+        local function demand(flight: number): Vector3
+            local aim: Vector3 = targetPosition + targetVelocity * flight
+            local drop: Vector3 = Vector3.new(0, 0.5 * gravity * flight * flight, 0)
+            return ((aim - origin) + drop) / flight
+        end
+
+        local SCAN_STEP: number = 0.02
+        local low: number = SCAN_STEP
+        local high: number? = nil
+        local flight: number = low
+        for _ = 1, 300 do
+            flight += SCAN_STEP
+            if demand(flight).Magnitude <= speed then
+                high = flight
+                break
+            end
+            low = flight
+        end
+        if not high then
+            return nil, nil
+        end
+        for _ = 1, 24 do
+            local mid: number = (low + (high :: number)) / 2
+            if demand(mid).Magnitude > speed then
+                low = mid
+            else
+                high = mid
+            end
+        end
+        local solved: number = high :: number
+        return demand(solved), solved
+    end
+    Module.solveTrajectory = solveTrajectory
+
+    local function randomId(length: number): string
+        local alphabet: string =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+        local out: {string} = {}
+        for _ = 1, length do
+            local index: number = math.random(1, #alphabet)
+            table.insert(out, alphabet:sub(index, index))
+        end
+        return table.concat(out)
+    end
+
+    AimbotFeature = createUniversalFeature(
+        "Projectile Aimbot",
+        "Solves the shot and fires the game's own projectile remote",
+        9,
+        function(enabled: boolean): ()
+            host.disconnectFeatureConnection("BedWarsAimbot")
+            projectileRuntime.nextAt = 0
+            if not enabled then
+                if AimbotFeature then
+                    AimbotFeature:SetStatus(nil)
+                end
+                return
+            end
+            AimbotFeature:SetStatus("no projectile")
+            host.featureConnections.BedWarsAimbot =
+                TaskManager:Connect(function(): ()
+                    local now: number = os.clock()
+                    if now < projectileRuntime.nextAt then
+                        return
+                    end
+                    local weapon: Instance? = projectileWeapon()
+                    if not weapon then
+                        AimbotFeature:SetStatus("no projectile")
+                        return
+                    end
+                    local own: Model?, humanoid: Humanoid?, root: BasePart? =
+                        characterParts()
+                    local view: Camera? = camera()
+                    if not own or not humanoid or not root or not view
+                        or (humanoid :: Humanoid).Health <= 0 then
+                        return
+                    end
+
+                    local origin: Vector3 = (view :: Camera).CFrame.Position
+                    local best: Player? = nil
+                    local bestPart: BasePart? = nil
+                    local bestDistance: number = projectileSettings.range
+                    for _, player: Player in ipairs(Players:GetPlayers()) do
+                        if player == LocalPlayer then
+                            continue
+                        end
+                        if projectileSettings.teamCheck and sameTeam(player) then
+                            continue
+                        end
+                        local character: Model? = player.Character
+                        local otherHumanoid: Humanoid? = character
+                            and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+                        local part: BasePart? = character
+                            and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+                        if not otherHumanoid or not part
+                            or (otherHumanoid :: Humanoid).Health <= 0 then
+                            continue
+                        end
+                        local distance: number =
+                            ((part :: BasePart).Position - origin).Magnitude
+                        if distance > bestDistance then
+                            continue
+                        end
+                        if projectileSettings.wallCheck then
+                            local parameters: RaycastParams = RaycastParams.new()
+                            parameters.FilterType = Enum.RaycastFilterType.Exclude
+                            parameters.FilterDescendantsInstances = {
+                                own :: Model,
+                                character :: Model,
+                            }
+                            local blocked: RaycastResult? = workspace:Raycast(
+                                origin,
+                                (part :: BasePart).Position - origin,
+                                parameters
+                            )
+                            if blocked then
+                                continue
+                            end
+                        end
+                        best = player
+                        bestPart = part :: BasePart
+                        bestDistance = distance
+                    end
+
+                    if not best or not bestPart then
+                        AimbotFeature:SetStatus("searching")
+                        return
+                    end
+
+                    -- 100 is the reference's default launch speed and matches
+                    -- the telepearl in the capture (~108). Gravity is the
+                    -- workspace's; a game that changes it changes the arc.
+                    local speed: number = 100
+                    local gravity: number = workspace.Gravity
+                    local target: BasePart = bestPart :: BasePart
+                    local velocity: Vector3?, flight: number? = solveTrajectory(
+                        origin,
+                        target.Position,
+                        target.AssemblyLinearVelocity,
+                        speed,
+                        gravity
+                    )
+                    if not velocity then
+                        AimbotFeature:SetStatus("out of range")
+                        return
+                    end
+                    projectileRuntime.nextAt = now + projectileSettings.delay
+                    local itemType: string = (weapon :: Instance).Name
+                    fire("ProjectileFire",
+                        weapon,
+                        itemType,
+                        itemType,
+                        origin,
+                        origin - Vector3.new(0, 2, 0),
+                        velocity :: Vector3,
+                        randomId(8),
+                        {drawDurationSec = 0.15, shotId = randomId(8)},
+                        os.time()
+                    )
+                    AimbotFeature:SetStatus(string.format(
+                        "%s · %.2fs",
+                        (best :: Player).Name,
+                        flight :: number
+                    ))
+                end)
+        end,
+        {categoryName = "Combat", registry = registry}
+    )
+    addNumberOption(AimbotFeature, "Range", projectileSettings.range, 10, 300,
+        function(value: number): ()
+            projectileSettings.range = value
+        end)
+    addNumberOption(AimbotFeature, "Seconds between shots", projectileSettings.delay,
+        0.1, 2,
+        function(value: number): ()
+            projectileSettings.delay = value
+        end)
+    addToggleOption(AimbotFeature, "Wall check", projectileSettings.wallCheck,
+        function(value: boolean): ()
+            projectileSettings.wallCheck = value
+        end)
+    addToggleOption(AimbotFeature, "Team check", projectileSettings.teamCheck,
+        function(value: boolean): ()
+            projectileSettings.teamCheck = value
+        end)
+
+    -- ----------------------------------------------------------- fast drop
+    --
+    -- There is no drop remote in the capture, and the reference client does not
+    -- use one either: it calls the game's own `ItemDropController.dropItemInHand`.
+    -- That is a ModuleScript in the game's tree, so it is found by name and
+    -- called, never reimplemented - a drop we forged would not match whatever
+    -- the controller sends, and the controller is the thing the server expects.
+    local dropSettings: any = {rate = 8}
+    local dropRuntime: any = {controller = nil, missing = false}
+
+    local function dropController(): any
+        if dropRuntime.controller then
+            return dropRuntime.controller
+        end
+        if dropRuntime.missing then
+            return nil
+        end
+        local replicated: Instance? = game:GetService("ReplicatedStorage")
+        if not replicated then
+            return nil
+        end
+        for _, descendant: Instance in ipairs(replicated:GetDescendants()) do
+            if descendant.Name == "ItemDropController" and descendant:IsA("ModuleScript") then
+                local ok: boolean, loaded: any = pcall(require, descendant)
+                if ok and type(loaded) == "table"
+                    and type(loaded.dropItemInHand) == "function" then
+                    dropRuntime.controller = loaded
+                    return loaded
+                end
+                -- Found the name and it is not the controller we need. Say so
+                -- once rather than rescanning every frame for nothing.
+                dropRuntime.missing = true
+                return nil
+            end
+        end
+        dropRuntime.missing = true
+        return nil
+    end
+
+    DropFeature = createUniversalFeature(
+        "Fast Drop",
+        "Drops what is in hand through the game's own controller",
+        10,
+        function(enabled: boolean): ()
+            host.disconnectFeatureConnection("BedWarsDrop")
+            if not enabled then
+                if DropFeature then
+                    DropFeature:SetStatus(nil)
+                end
+                return
+            end
+            DropFeature:SetStatus("idle")
+            local nextAt: number = 0
+            host.featureConnections.BedWarsDrop =
+                TaskManager:Connect(function(): ()
+                    local now: number = os.clock()
+                    if now < nextAt then
+                        return
+                    end
+                    local controller: any = dropController()
+                    if not controller then
+                        DropFeature:SetStatus("no controller")
+                        return
+                    end
+                    nextAt = now + 1 / math.max(dropSettings.rate, 0.5)
+                    local ok: boolean = pcall(function(): ()
+                        controller.dropItemInHand()
+                    end)
+                    DropFeature:SetStatus(ok and "dropping" or "refused")
+                end)
+        end,
+        {categoryName = "Other", registry = registry}
+    )
+    addNumberOption(DropFeature, "Drops per second", dropSettings.rate, 1, 20,
+        function(value: number): ()
+            dropSettings.rate = value
+        end)
+
     runtimeState.cleanupPanels = function(): ()
         destroyInventoryPanel()
     end
@@ -1037,10 +1380,13 @@ function Module.init(runtime: any): any
         chest = ChestFeature,
         autoTool = AutoToolFeature,
         inventory = InventoryFeature,
+        aimbot = AimbotFeature,
+        drop = DropFeature,
     }
 end
 
 function Module.destroy(): ()
+    Module.solveTrajectory = nil
     if type(runtimeState.disconnectAll) == "function" then
         pcall(runtimeState.disconnectAll)
     end

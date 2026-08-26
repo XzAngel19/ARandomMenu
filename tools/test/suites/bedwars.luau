@@ -50,6 +50,7 @@ return function(ctx: any): ()
     fakeRemote("DamageBlock", "RemoteFunction")
     fakeRemote("SetInvItem", "RemoteFunction")
     fakeRemote("Inventory/SetObservedChest", "RemoteEvent")
+    fakeRemote("ProjectileFire", "RemoteFunction")
 
     -- Weapons in this game are Accessories, not Tools. Without one in hand the
     -- aura has nothing to name in the payload and must stay quiet.
@@ -428,6 +429,107 @@ return function(ctx: any): ()
     ironStack:Destroy()
     enemyInventory:Destroy()
     inventoriesRoot:Destroy()
+
+    -- ---------------------------------------------------- projectile aimbot
+
+    -- The solver is the whole feature, so it is tested as what it is: a
+    -- function that returns a launch velocity and a flight time. Simulating the
+    -- flight is the only check that cannot be argued with.
+    local solveOrigin: any = world.vector3(0, 0, 0)
+    -- 28 studs, well inside the v^2/g ceiling: a 100 stud/s shot under the
+    -- workspace's 196.2 gravity reaches about 51 studs and not one more, so a
+    -- farther target is correctly refused rather than badly aimed.
+    local solveTarget: any = world.vector3(20, 0, -20)
+    local solved, flightTime = BedWarsFile.solveTrajectory(
+        solveOrigin, solveTarget, world.vector3(0, 0, 0), 100, 196.2)
+    check("the solver returns a velocity and a flight time",
+        solved ~= nil and flightTime ~= nil and flightTime > 0,
+        "flight: " .. tostring(flightTime))
+    check("the launch speed is the one the weapon has",
+        solved ~= nil and math.abs(solved.Magnitude - 100) < 1,
+        solved and string.format("%.2f", solved.Magnitude) or "none")
+    if solved then
+        local landed: any = solveOrigin + (solved :: any) * (flightTime :: number)
+            - world.vector3(0, 0.5 * 196.2 * (flightTime :: number) ^ 2, 0)
+        local miss: number = (landed - solveTarget).Magnitude
+        check("the solved shot actually lands on the target", miss < 1,
+            string.format("%.3f studs off", miss))
+    end
+    local moving, movingFlight = BedWarsFile.solveTrajectory(
+        solveOrigin, solveTarget, world.vector3(10, 0, 0), 100, 196.2)
+    if moving and movingFlight then
+        local lead: any = solveTarget + world.vector3(10, 0, 0) * (movingFlight :: number)
+        local moved: any = solveOrigin + (moving :: any) * (movingFlight :: number)
+            - world.vector3(0, 0.5 * 196.2 * (movingFlight :: number) ^ 2, 0)
+        check("a moving target is led, not shot at where it was",
+            (moved - lead).Magnitude < 1
+                and (moved - solveTarget).Magnitude > 1,
+            string.format("%.2f studs", (moved - solveTarget).Magnitude))
+    end
+    local impossible = BedWarsFile.solveTrajectory(
+        solveOrigin, world.vector3(0, 0, -5000), world.vector3(0, 0, 0), 100, 196.2)
+    check("a target no angle can reach is refused, not approximated",
+        impossible == nil)
+
+    -- With a projectile in hand it fires the game's own remote, in the argument
+    -- order the capture recorded.
+    weapon.Parent = nil
+    local bow: any = Mock.newInstance("Accessory")
+    bow.Name = "bow"
+    bow.Parent = world.localPlayer.Character
+    sent["ProjectileFire"] = {}
+    features.aimbot.activate()
+    world.clock += 1
+    stub.step(0.016)
+    local shots: any = sent["ProjectileFire"]
+    check("a projectile in hand fires ProjectileFire",
+        shots ~= nil and #shots >= 1,
+        "calls: " .. tostring(shots and #shots or 0))
+    local shot: any = shots and shots[1]
+    check("with the nine arguments the capture recorded",
+        shot ~= nil and #shot == 9,
+        "args: " .. tostring(shot and #shot or 0))
+    if shot then
+        check("weapon and item type first, as captured",
+            shot[1] == bow and shot[2] == "bow" and shot[3] == "bow")
+        check("a launch velocity of the weapon's own speed",
+            (typeof(shot[6]) == "Vector3" or typeof(shot[6]) == "table") and math.abs(shot[6].Magnitude - 100) < 5,
+            (typeof(shot[6]) == "Vector3" or typeof(shot[6]) == "table")
+                and string.format("%.2f", shot[6].Magnitude) or typeof(shot[6]))
+        check("a projectile id and a shot id, distinct",
+            type(shot[7]) == "string" and #shot[7] == 8
+                and type(shot[8]) == "table" and type(shot[8].shotId) == "string"
+                and shot[8].shotId ~= shot[7])
+        check("the draw duration key is the captured spelling",
+            type(shot[8]) == "table" and shot[8].drawDurationSec ~= nil
+                and shot[8].drawDurationSeconds == nil)
+        check("and a timestamp last", type(shot[9]) == "number")
+    end
+    features.aimbot.activate()
+
+    -- No projectile in hand, no shot: the card must not invent a weapon.
+    bow.Parent = nil
+    sent["ProjectileFire"] = {}
+    features.aimbot.activate()
+    world.clock += 1
+    stub.step(0.016)
+    check("empty hands fire nothing", #(sent["ProjectileFire"] :: any) == 0,
+        "status: " .. tostring(features.aimbot.status))
+    features.aimbot.activate()
+    bow:Destroy()
+    weapon.Parent = world.localPlayer.Character
+
+    -- ----------------------------------------------------------- fast drop
+
+    -- There is no drop remote and the game's controller is not in the mock, so
+    -- what is provable here is that the card says so instead of pretending.
+    features.drop.activate()
+    world.clock += 1
+    stub.step(0.016)
+    check("fast drop reports a missing controller rather than lying",
+        features.drop.status == "no controller",
+        "status: " .. tostring(features.drop.status))
+    features.drop.activate()
 
     BedWarsFile.destroy()
     check("destroy leaves no connection behind",
