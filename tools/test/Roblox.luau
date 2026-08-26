@@ -1186,6 +1186,29 @@ function Mock.install(): MockWorld
                 end
             end
         end
+        -- Removal is half of a tag-driven feature: a mark that survives the
+        -- instance it is attached to is a leak, and a mock without the removed
+        -- signal makes that leak untestable rather than absent.
+        local removed: {[string]: any} = {}
+        function collectionService:GetInstanceRemovedSignal(tag: string): any
+            if removed[tag] == nil then
+                removed[tag] = signal()
+            end
+            return removed[tag]
+        end
+        function collectionService:RemoveTag(instance: any, tag: string): ()
+            local list: {any} = tagged[tag]
+            if list == nil then
+                return
+            end
+            local index: number? = table.find(list, instance)
+            if index then
+                table.remove(list, index :: number)
+                if removed[tag] then
+                    removed[tag]:Fire(instance)
+                end
+            end
+        end
     end
     services.CollectionService = collectionService
     services.Stats = newInstance("Stats")

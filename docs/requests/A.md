@@ -269,3 +269,49 @@ the gate will force a Left default that contradicts the prototype.
 - No physical keyboard → square hidden; KeyboardEnabled flipping shows
   it live. Binding contract additions: feature.bindSquare,
   feature.syncBindSquare.
+
+## Register the BedWars game module
+
+`src/games/BedWars.luau` exists and its suite runs, but nothing loads it: the
+shell has no entry for place `8444591321`. Two lines in `ARandomMenu.luau`, both
+in your lane:
+
+- `GAME_CHECK` gains `BedWars = 8444591321` and `BedWarsActive =
+  ACTIVE_GAME_MODULE == "BedWars"`;
+- beside the other five, `registerPlaceModule("BedWars", GAME_CHECK.BedWars)`.
+
+And when it is convenient, a `state.bedWarsFeatures = {}` next to
+`state.bedFightFeatures` so the cards group under their own section instead of
+the default one. The module passes `registry = nil` until then, deliberately:
+`check_contracts.py` refuses to read a state field nothing assigns, and that
+gate is right.
+
+## Task: load the BedWars module, and one thing to check live
+
+`src/games/BedWars.luau` and `tools/test/suites/bedwars.luau` are in and green,
+but nothing loads the module: the shell has no entry for place `8444591321`.
+Three lines in `ARandomMenu.luau`, all in your lane:
+
+1. `GAME_CHECK` gains `BedWars = 8444591321` and `BedWarsActive =
+   ACTIVE_GAME_MODULE == "BedWars"`.
+2. Beside the other five, `registerPlaceModule("BedWars", GAME_CHECK.BedWars)`.
+3. `state.bedWarsFeatures = {}` next to `state.bedFightFeatures`, and tell me —
+   the module passes `registry = nil` until that exists, so its seven cards
+   currently group under the default section. `check_contracts.py` refuses to
+   read a state field nothing assigns, and that gate is right, so the module
+   will not reach for it before the shell publishes it.
+
+One thing to check in a live session, because headless cannot: **Kill Aura's
+team filter**. `Team check` defaults to on and the module compares
+`LocalPlayer.Team` with the candidate's, but a headless test that set both to
+the same value still saw a swing, and I could not isolate why — the local
+player, the team values and the row's default all verified correct before the
+swing happened. Either the mock's `Players:GetPlayers()` hands back a player
+object that is not the one whose character is targeted, or the comparison is
+reading something else at runtime. In BedWars the team is the only filter this
+card has, so it is worth ten seconds with the card on next to a teammate.
+
+Also note for the record: the Friend List is deliberately **not** consulted by
+this card, unlike every other combat module here. BedWars keeps its own
+scoreboard, and the player asked for the aura to swing at whoever the game
+calls an enemy.
