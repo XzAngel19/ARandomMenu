@@ -76,6 +76,60 @@ no `Tool`, exactly like BedFight.
    is a real target, not a typo — but it is per 10 seconds, never per second,
    and no slider may offer a rate the weapon's cooldown cannot produce.
 
+## The reference script
+
+`6872274481.lua` at the repository root is a third-party Vape/CatVape BedWars
+script: 21,452 lines, **182 modules**, and it already implements everything the
+request lists. It is a behavioural reference in exactly the same role as
+`reference/vape-v4-universal.lua.txt`, and the same rules apply:
+
+- read it for **behaviour and contracts**, never copy code into this repository;
+- move it to `reference/` beside the other dumps; its loader prelude
+  (`downloadFile`, the `catvape.dev` fetch, the cache watermark) is not something
+  this project reproduces in any form;
+- where it and the Remote Logger capture disagree, the capture wins: the script
+  may be written against an older client.
+
+### What it answers
+
+Four items were listed as needing a definition. They are defined:
+
+- **PotESP / "dessert pots"** — the block is `desert_pot`. Blocks are enumerated
+  through CollectionService, not by walking the workspace:
+  `GetTagged('block')`, `GetInstanceAddedSignal('block')`,
+  `GetInstanceRemovedSignal('block')`, filtered on `Name == 'desert_pot'`. The
+  icon mesh template is the first `MeshPart` under
+  `ReplicatedStorage.Assets.Blocks.desert_pot`.
+- **BedPlates / BedESP** — beds carry the CollectionService tag `'bed'`, same
+  three signals. That is also how `Nuker` finds a bed without mining the place
+  for a container name.
+- **Statespoofer** — the reference calls it `DeviceSpoofer`. It replaces
+  `bedwars.UserInputController.getUserInputType` and fires the game's own
+  `SendUserInputType` handler with `{userInputType = 'MOBILE'|'PC'|'GAMEPAD'}`,
+  restoring both on disable. That remote is **not** in our capture, so it needs
+  a live capture before it ships.
+- **FastDrop** — no remote at all: it calls the game's own
+  `bedwars.ItemDropController.dropItemInHand` while a key is held, no textbox has
+  focus and no inventory is open.
+
+### The two facts that change the design
+
+1. **CollectionService tags `'block'` and `'bed'` are the enumeration path.** No
+   workspace sweep, no cached NPC-style scan, and streaming is handled by the
+   added/removed signals. BedFight has no such tags, which is why it walks the
+   tree; BedWars does not need to.
+2. **Prefer the game's own client controllers over forged payloads.** The script
+   reaches `bedwars.ItemDropController`, `bedwars.UserInputController` and
+   `bedwars.Handler:Get(name):Fire('SendToServer', ...)`. Calling the game's own
+   controller produces a payload the game itself built, which is the strongest
+   form of the `SwordHit` consistency rule above. Forge a payload only where no
+   controller exists, and say so in the module header.
+
+One calibration note: the reference AutoClicker offers CPS 1–9 (default 7) and a
+separate Block CPS 1–12. Those are **clicks**, not registered hits — clicking a
+0.30 s sword at 7 CPS still lands about 3.3 hits a second. Our hitreg row is in
+registered hits per 10 seconds and must not be relabelled to match.
+
 ## Agent D — the game module
 
 Build `src/games/BedWars.luau` behind the place check for `8444591321`. You own
@@ -111,10 +165,13 @@ Requested features, triaged against the capture:
 - **Not captured, needs a live session** — the drop remote behind `fast drop`
   (`PickupItemDrop` is the pickup, not the drop), and every argument shape the
   log's 17 remotes did not cover. Do not guess these; ask for another capture.
-- **Needs a definition before anyone writes it** — `PotESP` ("dessert pots":
-  confirm the item and where it lives) and `Statespoofer`. A state spoofer that
-  exists to defeat an anti-cheat check is out of scope for this repository; if
-  the intent is something else, name the behaviour and it can be judged.
+- **Defined by the reference script** — `PotESP` (`desert_pot`), `BedPlates`
+  and `BedESP` (tag `'bed'`), `Statespoofer` (device spoofing, needs a capture of
+  `SendUserInputType`) and `fast drop` (`ItemDropController.dropItemInHand`). See
+  "What it answers" above. A device spoofer that exists only to defeat an
+  anti-cheat check stays out of scope; this one reports an input type to the
+  game's own handler and restores it, which is a different thing, but it does not
+  ship until the remote is captured.
 - **`Redirect (Silent Aim)`** — stays inside `src/games/BedWars.luau`, is off by
   default, and says what it is. Prefer redirecting the *payload*
   (`validate.raycast.cursorDirection` and `cameraPosition`) over hooking
