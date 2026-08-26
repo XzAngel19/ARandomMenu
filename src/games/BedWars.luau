@@ -193,15 +193,22 @@ function Module.init(runtime: any): any
     local ownedConnections: {string} = {
         "BedWarsAura", "BedWarsClicker", "BedWarsPlace", "BedWarsNuke",
         "BedWarsEspAdded", "BedWarsEspRemoved", "BedWarsChest", "BedWarsAutoTool",
+        "BedWarsInventory",
     }
     runtimeState.disconnectAll = function(): ()
         for _, key: string in ipairs(ownedConnections) do
             host.disconnectFeatureConnection(key)
         end
+        -- Panels are parented to the ScreenGui, not to a connection, so
+        -- dropping the listeners alone would leave them on screen.
+        if type(runtimeState.cleanupPanels) == "function" then
+            pcall(runtimeState.cleanupPanels)
+        end
     end
 
     local AuraFeature: any = nil
     local ClickerFeature: any = nil
+    local InventoryFeature: any = nil
     local PlaceFeature: any = nil
     local NukeFeature: any = nil
     local EspFeature: any = nil
@@ -865,6 +872,161 @@ function Module.init(runtime: any): any
         {categoryName = "Other", registry = registry}
     )
 
+    -- -------------------------------------------------------- inventory esp
+    --
+    -- Inventories are readable client-side under
+    -- `ReplicatedStorage.Inventories.<player>`, one child per item. No remote,
+    -- no hook, nothing written: this card only reads what the game already
+    -- replicated and draws it. It shows whoever the camera is nearest to, which
+    -- is the player a BedWars fight is actually about.
+    local inventorySettings: any = {range = 60, maxRows = 12}
+    local inventoryRuntime: any = {panel = nil, signature = ""}
+
+    local function destroyInventoryPanel(): ()
+        if inventoryRuntime.panel then
+            pcall(function(): ()
+                inventoryRuntime.panel:Destroy()
+            end)
+            inventoryRuntime.panel = nil
+        end
+        inventoryRuntime.signature = ""
+    end
+
+    -- The player the camera is closest to, inside the slider's range. Camera
+    -- aim rather than character aim: this is a read-out, and you look at the
+    -- player you are reading.
+    local function aimedPlayer(): Player?
+        local view: Camera? = camera()
+        if not view then
+            return nil
+        end
+        local origin: Vector3 = (view :: Camera).CFrame.Position
+        local direction: Vector3 = (view :: Camera).CFrame.LookVector
+        local best: Player? = nil
+        local bestScore: number = inventorySettings.range
+        for _, player: Player in ipairs(Players:GetPlayers()) do
+            if player == LocalPlayer then
+                continue
+            end
+            local character: Model? = player.Character
+            local humanoid: Humanoid? = character
+                and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+            local part: BasePart? = character
+                and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+            if not humanoid or not part or (humanoid :: Humanoid).Health <= 0 then
+                continue
+            end
+            local offset: Vector3 = (part :: BasePart).Position - origin
+            local distance: number = offset.Magnitude
+            if distance > inventorySettings.range then
+                continue
+            end
+            -- Off to the side is not "aimed at": reject anything more than
+            -- about 30 degrees from where the camera points.
+            if distance > 0.001 and offset.Unit:Dot(direction) < 0.86 then
+                continue
+            end
+            if distance < bestScore then
+                best = player
+                bestScore = distance
+            end
+        end
+        return best
+    end
+
+    local function inventoryOf(player: Player): Instance?
+        local replicated: Instance? = game:GetService("ReplicatedStorage")
+        local inventories: Instance? = replicated
+            and replicated:FindFirstChild("Inventories") :: Instance?
+        return inventories
+            and inventories:FindFirstChild(player.Name) :: Instance?
+    end
+
+    local function renderInventory(player: Player, folder: Instance): ()
+        local names: {string} = {}
+        for _, item: Instance in ipairs(folder:GetChildren()) do
+            table.insert(names, item.Name)
+        end
+        table.sort(names)
+        local signature: string = player.Name .. "|" .. table.concat(names, ",")
+        if signature == inventoryRuntime.signature and inventoryRuntime.panel then
+            return
+        end
+        inventoryRuntime.signature = signature
+        destroyInventoryPanel()
+
+        local rows: number = math.min(#names, inventorySettings.maxRows)
+        local root: Frame = create("Frame", {
+            Parent = host.ScreenGui,
+            Name = "Wurst_BedWarsInventory",
+            AnchorPoint = Vector2.new(1, 0),
+            BackgroundColor3 = Color3.fromRGB(14, 14, 16),
+            BackgroundTransparency = 0.15,
+            BorderSizePixel = 0,
+            Position = UDim2.new(1, -18, 0, 90),
+            Size = UDim2.fromOffset(196, 34 + rows * 18),
+            ZIndex = 60,
+        }) :: Frame
+        create("UICorner", {Parent = root, CornerRadius = UDim.new(0, 4)})
+        makeTextLabel(root, player.Name, 14)
+        for index: number = 1, rows do
+            makeTextLabel(root, names[index], 14)
+        end
+        if #names > rows then
+            makeTextLabel(root, "+" .. tostring(#names - rows) .. " more", 14)
+        end
+        inventoryRuntime.panel = root
+    end
+
+    InventoryFeature = createUniversalFeature(
+        "Inventory ESP",
+        "Reads the inventory of the player you are looking at",
+        8,
+        function(enabled: boolean): ()
+            host.disconnectFeatureConnection("BedWarsInventory")
+            destroyInventoryPanel()
+            if not enabled then
+                if InventoryFeature then
+                    InventoryFeature:SetStatus(nil)
+                end
+                return
+            end
+            InventoryFeature:SetStatus("searching")
+            local nextAt: number = 0
+            host.featureConnections.BedWarsInventory =
+                TaskManager:Connect(function(): ()
+                    local now: number = os.clock()
+                    if now < nextAt then
+                        return
+                    end
+                    nextAt = now + 0.25
+                    local player: Player? = aimedPlayer()
+                    if not player then
+                        destroyInventoryPanel()
+                        InventoryFeature:SetStatus("searching")
+                        return
+                    end
+                    local folder: Instance? = inventoryOf(player :: Player)
+                    if not folder then
+                        destroyInventoryPanel()
+                        InventoryFeature:SetStatus("no data")
+                        return
+                    end
+                    renderInventory(player :: Player, folder :: Instance)
+                    InventoryFeature:SetStatus((player :: Player).Name)
+                end)
+        end,
+        {categoryName = "Render", registry = registry}
+    )
+    addNumberOption(InventoryFeature, "Range", inventorySettings.range, 10, 200,
+        function(value: number): ()
+            inventorySettings.range = value
+        end)
+
+    runtimeState.cleanupPanels = function(): ()
+        destroyInventoryPanel()
+    end
+
     Module.Initialized = true
     return {
         aura = AuraFeature,
@@ -874,6 +1036,7 @@ function Module.init(runtime: any): any
         esp = EspFeature,
         chest = ChestFeature,
         autoTool = AutoToolFeature,
+        inventory = InventoryFeature,
     }
 end
 

@@ -372,6 +372,63 @@ return function(ctx: any): ()
     mine:Destroy()
     inventoryFolder:Destroy()
 
+    -- -------------------------------------------------------- inventory esp
+
+    local function panelText(panel: any): string
+        local parts: {string} = {}
+        for _, child: any in ipairs(panel:GetDescendants()) do
+            if child.ClassName == "TextLabel" then
+                table.insert(parts, tostring(child.Text))
+            end
+        end
+        return table.concat(parts, "|")
+    end
+
+    local inventoriesRoot: any = Mock.newInstance("Folder")
+    inventoriesRoot.Name = "Inventories"
+    inventoriesRoot.Parent = replicated
+    local enemyInventory: any = Mock.newInstance("Folder")
+    enemyInventory.Name = enemy.Name
+    enemyInventory.Parent = inventoriesRoot
+    local ironStack: any = Mock.newInstance("Accessory")
+    ironStack.Name = "iron"
+    ironStack.Parent = enemyInventory
+
+    check("Inventory ESP is one row",
+        features.inventory.options["Range"] ~= nil)
+    features.inventory.activate()
+    world.clock += 1
+    stub.step(0.016)
+    local panel: any = host.ScreenGui:FindFirstChild("Wurst_BedWarsInventory")
+    check("the panel opens on the player being looked at",
+        panel ~= nil and features.inventory.status == enemy.Name,
+        "status: " .. tostring(features.inventory.status))
+    check("it names that player and lists what they carry",
+        panel ~= nil and string.find(panelText(panel), enemy.Name, 1, true) ~= nil
+            and string.find(panelText(panel), "iron", 1, true) ~= nil,
+        panel and panelText(panel) or "no panel")
+
+    -- Out of range means no panel, not a stale one.
+    enemyRoot.Position = world.vector3(0, 0, -500)
+    world.clock += 1
+    stub.step(0.016)
+    -- Another player may still be in range and take the panel over; what has
+    -- to be true is that the one who moved away is no longer the one shown.
+    local movedPanel: any = host.ScreenGui:FindFirstChild("Wurst_BedWarsInventory")
+    check("a player out of range is no longer the one shown",
+        features.inventory.status ~= enemy.Name
+            and (movedPanel == nil
+                or string.find(panelText(movedPanel), enemy.Name, 1, true) == nil),
+        "status: " .. tostring(features.inventory.status))
+    enemyRoot.Position = world.vector3(0, 0, -8)
+
+    features.inventory.activate()
+    check("disabling destroys the panel",
+        host.ScreenGui:FindFirstChild("Wurst_BedWarsInventory") == nil)
+    ironStack:Destroy()
+    enemyInventory:Destroy()
+    inventoriesRoot:Destroy()
+
     BedWarsFile.destroy()
     check("destroy leaves no connection behind",
         next(host.featureConnections) == nil
