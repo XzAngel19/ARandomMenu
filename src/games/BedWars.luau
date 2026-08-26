@@ -121,6 +121,7 @@ function Module.init(runtime: any): any
     local createUniversalFeature: any = host.createUniversalFeature
     local addToggleOption: any = host.addToggleOption
     local addNumberOption: any = host.addNumberOption
+    local addTextOption: any = host.addTextOption
     local create: any = host.create
     local makeTextLabel: any = host.makeTextLabel
     local TaskManager: any = host.TaskManager
@@ -191,6 +192,7 @@ function Module.init(runtime: any): any
         "BedWarsAura", "BedWarsClicker", "BedWarsPlace", "BedWarsNuke",
         "BedWarsEspAdded", "BedWarsEspRemoved", "BedWarsChest", "BedWarsAutoTool",
         "BedWarsInventory", "BedWarsAimbot", "BedWarsDrop", "BedWarsTracer",
+        "BedWarsShop",
     }
     runtimeState.disconnectAll = function(): ()
         for _, key: string in ipairs(ownedConnections) do
@@ -207,8 +209,8 @@ function Module.init(runtime: any): any
     end
 
     local AuraFeature: any = nil
-    local ClickerFeature: any = nil
     local InventoryFeature: any = nil
+    local ShopFeature: any = nil
     local AimbotFeature: any = nil
     local DropFeature: any = nil
     local TracerFeature: any = nil
@@ -455,144 +457,6 @@ function Module.init(runtime: any): any
             position = position,
         })
     end
-
-    -- ------------------------------------------------------------- clicker
-    --
-    -- An autoclicker for this game has to know what is in the hand, because
-    -- the three things worth clicking do three different things: a sword
-    -- swings, wool places, a pickaxe mines. Anything else in hand is not
-    -- clicked at all - a BedWars inventory is full of pearls, potions and
-    -- armour, and clicking those is how a player wastes a stack.
-    local clickSettings: any = {rate = 8, woolOnly = true, pickaxe = true}
-
-    -- What is being held, by the only three names this card cares about.
-    local function heldKind(): string?
-        local own: Model? = LocalPlayer.Character
-        if not own then
-            return nil
-        end
-        local inventory: Instance? = game:GetService("ReplicatedStorage")
-        inventory = inventory and inventory:FindFirstChild("Inventories") :: Instance?
-        inventory = inventory and inventory:FindFirstChild(LocalPlayer.Name) :: Instance?
-        local candidates: {Instance} = {}
-        for _, child: Instance in ipairs((own :: Model):GetChildren()) do
-            if child:IsA("Accessory") then
-                table.insert(candidates, child)
-            end
-        end
-        if inventory then
-            for _, child: Instance in ipairs((inventory :: Instance):GetChildren()) do
-                table.insert(candidates, child)
-            end
-        end
-        for _, item: Instance in ipairs(candidates) do
-            local name: string = item.Name
-            if name:find("sword") then
-                return "sword"
-            end
-        end
-        for _, item: Instance in ipairs(candidates) do
-            if item.Name:find("wool") then
-                return "wool"
-            end
-        end
-        if clickSettings.pickaxe then
-            for _, item: Instance in ipairs(candidates) do
-                if item.Name:find("pickaxe") then
-                    return "pickaxe"
-                end
-            end
-        end
-        return nil
-    end
-
-    ClickerFeature = createUniversalFeature(
-        -- Not "Auto Clicker": that card already exists in the universal set,
-        -- and two rows with one name is how a player enables the wrong one.
-        "Smart Clicker",
-        "Clicks for the item in hand: sword, wool or pickaxe",
-        7,
-        function(enabled: boolean): ()
-            host.disconnectFeatureConnection("BedWarsClicker")
-            if not enabled then
-                if ClickerFeature then
-                    ClickerFeature:SetStatus(nil)
-                end
-                return
-            end
-            ClickerFeature:SetStatus("idle")
-            local nextAt: number = 0
-            host.featureConnections.BedWarsClicker =
-                TaskManager:Connect(function(): ()
-                    local now: number = os.clock()
-                    if now < nextAt then
-                        return
-                    end
-                    local kind: string? = heldKind()
-                    if not kind then
-                        ClickerFeature:SetStatus("idle")
-                        return
-                    end
-                    local own: Model?, humanoid: Humanoid?, root: BasePart? =
-                        characterParts()
-                    local view: Camera? = camera()
-                    if not own or not humanoid or not root or not view
-                        or (humanoid :: Humanoid).Health <= 0 then
-                        return
-                    end
-                    nextAt = now + 1 / math.max(clickSettings.rate, 0.5)
-                    ClickerFeature:SetStatus(kind :: string)
-
-                    if kind == "sword" then
-                        -- No target in reach is a real whiff, and the game
-                        -- reports those too: SwordSwingMiss is in the capture.
-                        fire("SwordSwingMiss", {
-                            chargeRatio = 0,
-                            weapon = equippedWeapon(),
-                        })
-                        return
-                    end
-
-                    local origin: Vector3 = (view :: Camera).CFrame.Position
-                    local direction: Vector3 = (view :: Camera).CFrame.LookVector
-                    local parameters: RaycastParams = RaycastParams.new()
-                    parameters.FilterType = Enum.RaycastFilterType.Exclude
-                    parameters.FilterDescendantsInstances = {own :: Model}
-                    local hit: RaycastResult? =
-                        workspace:Raycast(origin, direction * 20, parameters)
-                    if not hit then
-                        return
-                    end
-                    if kind == "wool" then
-                        -- "Wool only" is the whole point of the row: a stack of
-                        -- wool is cheap and replaceable, and the blocks a
-                        -- player is saving for a bridge defence are not.
-                        placeAt((hit :: RaycastResult).Position)
-                        return
-                    end
-                    local position: Vector3 = (hit :: RaycastResult).Position
-                    fire("DamageBlock", {
-                        blockRef = {blockPosition = position},
-                        hitPosition = position,
-                        hitNormal = (hit :: RaycastResult).Normal,
-                    })
-                end)
-        end,
-        {categoryName = "Combat", registry = registry}
-    )
-    addNumberOption(ClickerFeature, "Clicks per second", clickSettings.rate, 1, 20,
-        function(value: number): ()
-            clickSettings.rate = value
-        end)
-    addToggleOption(ClickerFeature, "Wool only", clickSettings.woolOnly,
-        function(value: boolean): ()
-            clickSettings.woolOnly = value
-            placeSettings.block = value and "wool_white" or placeSettings.block
-        end)
-    addToggleOption(ClickerFeature, "Pickaxe", clickSettings.pickaxe,
-        function(value: boolean): ()
-            clickSettings.pickaxe = value
-        end)
 
     -- ----------------------------------------------------------------- place
     --
@@ -1481,6 +1345,179 @@ function Module.init(runtime: any): any
         {categoryName = "Render", registry = registry}
     )
 
+    -- ------------------------------------------------------- weapon source
+    --
+    -- There is no second Auto Clicker and no second Kill Aura for this game.
+    -- The universal cards already press whatever the weapon library finds, so
+    -- the game describes what it has and how to press it, and holding the
+    -- attack button autoclicks exactly as it does anywhere else. The sword
+    -- swings, wool places, a pickaxe mines; anything else in hand is not a
+    -- weapon and is left alone.
+    local function pressableKind(name: string): string?
+        if name:find("sword") then
+            return "Sword"
+        end
+        if name:find("wool") then
+            return "Wool"
+        end
+        if name:find("pickaxe") then
+            return "Pickaxe"
+        end
+        return nil
+    end
+
+    local function gamePressables(): {{any}}
+        local own: Model? = LocalPlayer.Character
+        if not own then
+            return {}
+        end
+        local inventory: Instance? = game:GetService("ReplicatedStorage")
+        inventory = inventory and inventory:FindFirstChild("Inventories") :: Instance?
+        inventory = inventory and inventory:FindFirstChild(LocalPlayer.Name) :: Instance?
+        local pool: {Instance} = {}
+        for _, child: Instance in ipairs((own :: Model):GetChildren()) do
+            if child:IsA("Accessory") then
+                table.insert(pool, child)
+            end
+        end
+        if inventory then
+            for _, child: Instance in ipairs((inventory :: Instance):GetChildren()) do
+                table.insert(pool, child)
+            end
+        end
+        local out: {{any}} = {}
+        local seen: {[string]: boolean} = {}
+        for _, item: Instance in ipairs(pool) do
+            local kind: string? = pressableKind(item.Name)
+            if kind and not seen[kind :: string] then
+                seen[kind :: string] = true
+                table.insert(out, {kind :: string, item})
+            end
+        end
+        return out
+    end
+
+    -- Where the player is looking, or nil: placing and mining both need a
+    -- surface, and guessing one is how a player bridges into the void.
+    local function aimedSurface(): Vector3?
+        local own: Model? = LocalPlayer.Character
+        local view: Camera? = camera()
+        if not own or not view then
+            return nil
+        end
+        local parameters: RaycastParams = RaycastParams.new()
+        parameters.FilterType = Enum.RaycastFilterType.Exclude
+        parameters.FilterDescendantsInstances = {own :: Model}
+        local hit: RaycastResult? = workspace:Raycast(
+            (view :: Camera).CFrame.Position,
+            (view :: Camera).CFrame.LookVector * 20,
+            parameters
+        )
+        return hit and (hit :: RaycastResult).Position or nil
+    end
+
+    local function gamePress(label: string): boolean
+        if label == "Sword" then
+            -- A swing with nobody in reach is a real event and the game
+            -- reports it; SwordSwingMiss is in the capture.
+            return fire("SwordSwingMiss", {
+                chargeRatio = 0,
+                weapon = equippedWeapon(),
+            })
+        end
+        local position: Vector3? = aimedSurface()
+        if not position then
+            return false
+        end
+        if label == "Wool" then
+            return placeAt(position :: Vector3)
+        end
+        if label == "Pickaxe" then
+            return fire("DamageBlock", {
+                blockRef = {blockPosition = position :: Vector3},
+                hitPosition = position :: Vector3,
+                hitNormal = Vector3.new(0, 1, 0),
+            })
+        end
+        return false
+    end
+
+    local weaponLibrary: any = state.weaponLibrary
+    if weaponLibrary and type(weaponLibrary.RegisterGameSource) == "function" then
+        weaponLibrary:RegisterGameSource({scan = gamePressables, press = gamePress})
+        runtimeState.unregisterWeapons = function(): ()
+            weaponLibrary:RegisterGameSource(nil)
+        end
+    end
+
+    -- ---------------------------------------------------------- shop clicker
+    --
+    -- `BedwarsPurchaseItem` arrives with the whole shop entry in it - currency,
+    -- item type, amount, price, category - and a shop id. The server checks
+    -- those against its own shop, so a price we invent is a purchase it
+    -- refuses; the player reads the real numbers off the shop and types them.
+    local shopSettings: any = {
+        item = "wool_white",
+        amount = 16,
+        price = 8,
+        rate = 4,
+        shopId = "3_item_shop_2",
+    }
+
+    ShopFeature = createUniversalFeature(
+        "Shop Clicker",
+        "Buys the same item over and over from the shop you are standing at",
+        12,
+        function(enabled: boolean): ()
+            host.disconnectFeatureConnection("BedWarsShop")
+            if not enabled then
+                if ShopFeature then
+                    ShopFeature:SetStatus(nil)
+                end
+                return
+            end
+            ShopFeature:SetStatus(shopSettings.item)
+            local nextAt: number = 0
+            host.featureConnections.BedWarsShop =
+                TaskManager:Connect(function(): ()
+                    local now: number = os.clock()
+                    if now < nextAt then
+                        return
+                    end
+                    nextAt = now + 1 / math.max(shopSettings.rate, 0.5)
+                    fire("BedwarsPurchaseItem", {
+                        shopItem = {
+                            currency = "iron",
+                            itemType = shopSettings.item,
+                            amount = shopSettings.amount,
+                            price = shopSettings.price,
+                            category = "Blocks",
+                        },
+                        shopId = shopSettings.shopId,
+                    })
+                end)
+        end,
+        {categoryName = "Other", registry = registry}
+    )
+    addTextOption(ShopFeature, "Item type", shopSettings.item, function(value: string): ()
+        shopSettings.item = value
+        if ShopFeature then
+            ShopFeature:SetStatus(value)
+        end
+    end)
+    addNumberOption(ShopFeature, "Amount", shopSettings.amount, 1, 64,
+        function(value: number): ()
+            shopSettings.amount = math.round(value)
+        end)
+    addNumberOption(ShopFeature, "Price", shopSettings.price, 1, 9999,
+        function(value: number): ()
+            shopSettings.price = math.round(value)
+        end)
+    addNumberOption(ShopFeature, "Buys per second", shopSettings.rate, 1, 20,
+        function(value: number): ()
+            shopSettings.rate = value
+        end)
+
     runtimeState.cleanupPanels = function(): ()
         destroyInventoryPanel()
     end
@@ -1491,7 +1528,6 @@ function Module.init(runtime: any): any
     Module.Initialized = true
     return {
         aura = AuraFeature,
-        clicker = ClickerFeature,
         place = PlaceFeature,
         nuke = NukeFeature,
         esp = EspFeature,
@@ -1501,11 +1537,16 @@ function Module.init(runtime: any): any
         aimbot = AimbotFeature,
         drop = DropFeature,
         tracer = TracerFeature,
+        shop = ShopFeature,
     }
 end
 
 function Module.destroy(): ()
     Module.solveTrajectory = nil
+    if type(runtimeState.unregisterWeapons) == "function" then
+        pcall(runtimeState.unregisterWeapons)
+    end
+    runtimeState.unregisterWeapons = nil
     if type(runtimeState.disconnectAll) == "function" then
         pcall(runtimeState.disconnectAll)
     end

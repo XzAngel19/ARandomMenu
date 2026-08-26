@@ -377,3 +377,21 @@ should remove it, or `run.luau` should snapshot and restore the roster around
 each suite. That is your call and C's lane respectively; I have not changed
 either, because a fix and the test that proves it belong in one commit and this
 one is mine only by accident of finding it.
+
+## Review: I added a registration point to `src/library/Weapons.luau`
+
+Flagging it because that file is yours and the rule is that I ask first - the
+instruction was to make the universal Auto Clicker work in BedWars through game
+support rather than fork it, and the weapon library is the only seam that
+reaches both cards.
+
+The change is additive: `library:RegisterGameSource({scan, press})`. A game
+describes what can be pressed and how; `Scan` prepends those candidates with
+kind `"Game"`, `Activate` routes that kind to the game's `press`, and
+`RegisterGameSource(nil)` clears it. No existing call path changes, and the
+combat suite still passes untouched.
+
+BedWars uses it for sword / wool / pickaxe, so holding the attack button
+autoclicks in BedWars exactly as it does anywhere else, and there is no second
+Auto Clicker or Kill Aura card in that game any more. If you would rather the
+seam lived somewhere else, it is three small functions to move.

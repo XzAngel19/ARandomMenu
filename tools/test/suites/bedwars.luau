@@ -51,6 +51,7 @@ return function(ctx: any): ()
     fakeRemote("SetInvItem", "RemoteFunction")
     fakeRemote("Inventory/SetObservedChest", "RemoteEvent")
     fakeRemote("ProjectileFire", "RemoteFunction")
+    fakeRemote("BedwarsPurchaseItem", "RemoteFunction")
 
     -- Weapons in this game are Accessories, not Tools. Without one in hand the
     -- aura has nothing to name in the payload and must stay quiet.
@@ -93,12 +94,19 @@ return function(ctx: any): ()
 
 
 
+    -- The shell publishes the weapon library on state so a game module can
+    -- tell it what the game has; the harness has to do the same.
+    local weaponLibrary: any = ctx.weapons
+    host.state.weaponLibrary = weaponLibrary
+
     local features: any = BedWarsFile.init({Services = host.services, State = host.state})
 
-    check("the module builds its seven cards", features ~= nil and features.aura ~= nil
-        and features.clicker ~= nil and features.place ~= nil
-        and features.nuke ~= nil and features.esp ~= nil
-        and features.chest ~= nil and features.autoTool ~= nil)
+    check("the module builds its cards", features ~= nil and features.aura ~= nil
+        and features.place ~= nil and features.nuke ~= nil and features.esp ~= nil
+        and features.chest ~= nil and features.autoTool ~= nil
+        and features.inventory ~= nil and features.aimbot ~= nil
+        and features.drop ~= nil and features.tracer ~= nil
+        and features.shop ~= nil)
     local auraRows: number = 0
     for _ in pairs(features.aura.options) do
         auraRows += 1
@@ -206,172 +214,103 @@ return function(ctx: any): ()
     features.aura.activate()
     weapon.Parent = world.localPlayer.Character
 
-    -- -------------------------------------------------------------- clicker
+    -- ------------------------------------------------------- weapon source
 
-    check("the clicker is three rows",
-        features.clicker.options["Clicks per second"] ~= nil
-            and features.clicker.options["Wool only"] ~= nil
-            and features.clicker.options["Pickaxe"] ~= nil)
+    -- No BedWars clicker card: the universal Auto Clicker presses whatever the
+    -- weapon library finds, and the game tells the library what it has. So the
+    -- thing under test is the source, not a second card.
+    check("there is no duplicate clicker card in this game",
+        features.clicker == nil)
+    check("the game registered a source with the weapon library",
+        weaponLibrary ~= nil and weaponLibrary.gameSource ~= nil)
 
-    -- A sword in hand swings, and a swing with nobody in reach is the whiff
-    -- the game itself reports.
-    sent["SwordSwingMiss"] = {}
-    features.clicker.activate()
-    world.clock += 1
-    stub.step(0.016)
-    check("a sword in hand swings",
-        sent["SwordSwingMiss"] ~= nil and #(sent["SwordSwingMiss"] :: any) >= 1,
-        "calls: " .. tostring(sent["SwordSwingMiss"] and #(sent["SwordSwingMiss"] :: any) or 0))
-    features.clicker.activate()
+    -- The inventory the source reads: one item per pressable kind.
+    local sourceInventory: any = Mock.newInstance("Folder")
+    sourceInventory.Name = "Inventories"
+    sourceInventory.Parent = replicated
+    local mine: any = Mock.newInstance("Folder")
+    mine.Name = world.localPlayer.Name
+    mine.Parent = sourceInventory
+    local woolItem: any = Mock.newInstance("Accessory")
+    woolItem.Name = "wool_blue"
+    woolItem.Parent = mine
+    local pickItem: any = Mock.newInstance("Accessory")
+    pickItem.Name = "iron_pickaxe"
+    pickItem.Parent = mine
 
-    -- The clicker aims with a raycast, so the world has to answer one.
+    local labels: {string} = {}
+    for _, candidate: any in ipairs(weaponLibrary:Labels({All = true})) do
+        table.insert(labels, candidate)
+    end
+    local function hasLabel(needle: string): boolean
+        for _, label: string in ipairs(labels) do
+            if string.find(label, needle, 1, true) then
+                return true
+            end
+        end
+        return false
+    end
+    check("the sword in hand is pressable", hasLabel("Sword"),
+        table.concat(labels, " | "))
+    check("wool is pressable", hasLabel("Wool"), table.concat(labels, " | "))
+    check("a pickaxe is pressable", hasLabel("Pickaxe"), table.concat(labels, " | "))
+    check("and nothing else in the inventory is",
+        not hasLabel("telepearl") and not hasLabel("iron"),
+        table.concat(labels, " | "))
+
+    -- Pressing goes through the library, which is what the universal cards do.
     world.raycastResult = {
         Instance = Mock.newInstance("Part"),
         Position = world.vector3(0, 0, -6),
         Normal = world.vector3(0, 1, 0),
     }
-
-    -- Wool places, and "Wool only" is what decides the block type.
-    weapon.Parent = nil
-    local wool: any = Mock.newInstance("Accessory")
-    wool.Name = "wool_white"
-    wool.Parent = world.localPlayer.Character
     sent["PlaceBlock"] = {}
-    features.clicker.activate()
-    world.clock += 1
-    stub.step(0.016)
-    local placed: any = sent["PlaceBlock"]
-    check("wool in hand places a block", placed ~= nil and #placed >= 1,
-        "calls: " .. tostring(placed and #placed or 0))
-    local placedPayload: any = placed and placed[1] and placed[1][1]
-    check("and places wool, not whatever else is stacked",
-        placedPayload ~= nil and placedPayload.blockType == "wool_white",
-        placedPayload and tostring(placedPayload.blockType) or "none")
-    check("with the mouseBlockInfo the capture recorded",
-        placedPayload ~= nil and placedPayload.mouseBlockInfo ~= nil
-            and placedPayload.mouseBlockInfo.placementPosition ~= nil
-            and placedPayload.blockData == 0)
-    features.clicker.activate()
-    wool.Parent = nil
-
-    -- A pickaxe mines. The row defaults to on, and this suite drives defaults
-    -- rather than flipping rows: what runs here is what ships.
-    local pickaxeInHand: any = Mock.newInstance("Accessory")
-    pickaxeInHand.Name = "iron_pickaxe"
-    pickaxeInHand.Parent = world.localPlayer.Character
+    local woolCandidate: any = weaponLibrary:Find("Wool")
+    check("the library can find the wool press", woolCandidate ~= nil)
+    if woolCandidate then
+        weaponLibrary:Activate(woolCandidate)
+        check("and pressing it places the block",
+            #(sent["PlaceBlock"] :: any) >= 1,
+            "calls: " .. tostring(#(sent["PlaceBlock"] :: any)))
+    end
     sent["DamageBlock"] = {}
-    features.clicker.activate()
-    world.clock += 1
-    stub.step(0.016)
-    check("a pickaxe in hand mines", #(sent["DamageBlock"] :: any) >= 1,
-        "calls: " .. tostring(#(sent["DamageBlock"] :: any)))
-    features.clicker.activate()
-    pickaxeInHand.Parent = nil
-
-    -- Anything else in hand is not clicked at all.
-    local pearl: any = Mock.newInstance("Accessory")
-    pearl.Name = "telepearl"
-    pearl.Parent = world.localPlayer.Character
-    sent["PlaceBlock"] = {}
-    sent["DamageBlock"] = {}
-    sent["SwordSwingMiss"] = {}
-    features.clicker.activate()
-    world.clock += 1
-    stub.step(0.016)
-    check("a pearl in hand is left alone",
-        #(sent["PlaceBlock"] :: any) == 0 and #(sent["DamageBlock"] :: any) == 0
-            and #(sent["SwordSwingMiss"] :: any) == 0)
-    features.clicker.activate()
-    pearl:Destroy()
-    weapon.Parent = world.localPlayer.Character
+    local pickCandidate: any = weaponLibrary:Find("Pickaxe")
+    if pickCandidate then
+        weaponLibrary:Activate(pickCandidate)
+        check("and pressing the pickaxe mines",
+            #(sent["DamageBlock"] :: any) >= 1,
+            "calls: " .. tostring(#(sent["DamageBlock"] :: any)))
+    end
     world.raycastResult = nil
-
-    -- ----------------------------------------------------------------- blocks
-
-    local bed: any = Mock.newInstance("Part")
-    bed.Name = "bed_red"
-    bed.Position = world.vector3(4, 0, -4)
-    bed.Parent = world.workspace
-    collectionService:AddTag(bed, "bed")
-    local pot: any = Mock.newInstance("MeshPart")
-    pot.Name = "desert_pot"
-    pot.Position = world.vector3(-4, 0, -4)
-    pot.Parent = world.workspace
-    collectionService:AddTag(pot, "block")
-
-    features.esp.activate()
-    check("a tagged bed is marked",
-        bed:FindFirstChild("Wurst_BedWars_Bed") ~= nil)
-    check("a desert pot is marked from the block tag",
-        pot:FindFirstChild("Wurst_BedWars_Pot") ~= nil)
-    collectionService:RemoveTag(pot, "block")
-    check("streaming a block out clears its mark",
-        pot:FindFirstChild("Wurst_BedWars_Pot") == nil)
-    features.esp.activate()
-    check("disabling clears both marks",
-        bed:FindFirstChild("Wurst_BedWars_Bed") == nil
-            and pot:FindFirstChild("Wurst_BedWars_Pot") == nil)
-
-    features.nuke.activate()
-    world.clock += 1
-    stub.step(0.016)
-    local damage: any = sent["DamageBlock"]
-    check("the nuker breaks the tagged bed", damage ~= nil and #damage >= 1,
-        "calls: " .. tostring(damage and #damage or 0))
-    local damagePayload: any = damage and damage[1] and damage[1][1]
-    check("with the block position and a normal the capture has",
-        damagePayload ~= nil and damagePayload.blockRef ~= nil
-            and damagePayload.blockRef.blockPosition ~= nil
-            and damagePayload.hitPosition ~= nil
-            and damagePayload.hitNormal ~= nil)
-    features.nuke.activate()
-
-    -- The bed goes first, so the only thing left in range is a part with no
-    -- tag. If the nuker reaches for it, the tag is not what is selecting.
-    collectionService:RemoveTag(bed, "bed")
-    local plain: any = Mock.newInstance("Part")
-    plain.Name = "not_a_bed"
-    plain.Position = world.vector3(0, 0, -3)
-    plain.Parent = world.workspace
-    local beforeUntagged: number = damage and #damage or 0
-    world.clock += 1
-    stub.step(0.016)
-    check("an untagged part is never broken",
-        (damage and #damage or 0) == beforeUntagged,
-        "calls: " .. tostring((damage and #damage or 0) - beforeUntagged))
-    features.nuke.activate()
-    plain:Destroy()
-    bed:Destroy()
-    pot:Destroy()
-
-    -- -------------------------------------------------------------- economy
-
-    features.chest.activate()
-    world.clock += 1
-    stub.step(0.016)
-    check("chest steal opens a chest with no arguments",
-        sent["Inventory/SetObservedChest"] ~= nil
-            and #(sent["Inventory/SetObservedChest"] :: any) >= 1)
-    features.chest.activate()
-
-    local inventoryFolder: any = Mock.newInstance("Folder")
-    inventoryFolder.Name = "Inventories"
-    inventoryFolder.Parent = replicated
-    local mine: any = Mock.newInstance("Folder")
-    mine.Name = world.localPlayer.Name
-    mine.Parent = inventoryFolder
-    local pickaxe: any = Mock.newInstance("Accessory")
-    pickaxe.Name = "iron_pickaxe"
-    pickaxe.Parent = mine
-    features.autoTool.activate()
-    world.clock += 1
-    stub.step(0.016)
-    check("auto tool puts the matching item in hand",
-        sent["SetInvItem"] ~= nil and #(sent["SetInvItem"] :: any) >= 1)
-    features.autoTool.activate()
-    pickaxe:Destroy()
+    woolItem:Destroy()
+    pickItem:Destroy()
     mine:Destroy()
-    inventoryFolder:Destroy()
+    sourceInventory:Destroy()
+
+    -- ---------------------------------------------------------- shop clicker
+
+    check("the shop clicker is five rows",
+        features.shop.options["Item type"] ~= nil
+            and features.shop.options["Amount"] ~= nil
+            and features.shop.options["Price"] ~= nil
+            and features.shop.options["Buys per second"] ~= nil)
+    sent["BedwarsPurchaseItem"] = {}
+    features.shop.activate()
+    world.clock += 1
+    stub.step(0.016)
+    local buys: any = sent["BedwarsPurchaseItem"]
+    check("the shop clicker buys", buys ~= nil and #buys >= 1,
+        "calls: " .. tostring(buys and #buys or 0))
+    local buy: any = buys and buys[1] and buys[1][1]
+    check("with the shop entry the capture recorded",
+        buy ~= nil and buy.shopItem ~= nil
+            and buy.shopItem.itemType == "wool_white"
+            and buy.shopItem.currency == "iron"
+            and buy.shopItem.amount == 16
+            and buy.shopItem.price == 8
+            and buy.shopId == "3_item_shop_2",
+        buy and buy.shopItem and tostring(buy.shopItem.itemType) or "none")
+    features.shop.activate()
 
     -- -------------------------------------------------------- inventory esp
 

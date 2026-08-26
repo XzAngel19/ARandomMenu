@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "4bd347f2a37f0ee9",
+    stamp = "52c0953d28a6105a",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -4819,6 +4819,18 @@ export type Candidate = {
     instance: Instance,
 }
 
+-- A game that has no Tool, no view model and no button to press still has
+-- things worth swinging. BedWars is the worked example: the sword is an
+-- Accessory and the swing is a remote. Rather than fork the cards that press
+-- weapons, the game describes what it has and how to press it, and the
+-- universal Auto Clicker and Kill Aura press it like anything else.
+export type GameSource = {
+    -- Returns {label, instance} pairs for whatever can be pressed right now.
+    scan: () -> {{string}},
+    -- Presses one of them. Returns whether anything was sent.
+    press: (label: string) -> boolean,
+}
+
 export type WeaponLibrary = {
     Scan: (self: WeaponLibrary, query: any?) -> {Candidate},
     Labels: (self: WeaponLibrary, query: any?) -> {string},
@@ -4829,6 +4841,7 @@ export type WeaponLibrary = {
     Invalidate: (self: WeaponLibrary) -> (),
     SetAllowEquip: (self: WeaponLibrary, allowed: boolean) -> (),
     Swing: (self: WeaponLibrary) -> boolean,
+    RegisterGameSource: (self: WeaponLibrary, source: GameSource?) -> (),
     PressButton: (self: WeaponLibrary, button: GuiButton) -> boolean,
     Destroy: (self: WeaponLibrary) -> (),
 }
@@ -5128,6 +5141,14 @@ function Module.init(context: any): WeaponLibrary
         library.cachedAt = -1
     end
 
+    -- One source per game, and nil clears it. Registering invalidates the
+    -- scan cache so the new presses appear on the next pick rather than after
+    -- the cache expires on its own.
+    function library:RegisterGameSource(source: any): ()
+        library.gameSource = source
+        library.cachedAt = -1
+    end
+
     function library:SetAllowEquip(allowed: boolean): ()
         library.allowEquip = allowed == true
     end
@@ -5165,6 +5186,19 @@ function Module.init(context: any): WeaponLibrary
                 melee = melee,
                 instance = instance,
             })
+        end
+
+        -- Game-provided presses come first: in a game that publishes them, its
+        -- own sword is the thing the player means by "the weapon".
+        if library.gameSource and type(library.gameSource.scan) == "function" then
+            local ok: boolean, listed: any = pcall(library.gameSource.scan)
+            if ok and type(listed) == "table" then
+                for _, entry: any in ipairs(listed) do
+                    if type(entry) == "table" and entry[1] and entry[2] then
+                        add("Game", tostring(entry[1]), entry[2])
+                    end
+                end
+            end
         end
 
         -- 1. Classic tools, held or stowed.
@@ -5334,6 +5368,15 @@ function Module.init(context: any): WeaponLibrary
 
     function library:Activate(candidate: Candidate): boolean
         local instance: Instance = candidate.instance
+        if candidate.kind == "Game" then
+            -- The instance is only an identity here; the game decides what
+            -- pressing means, and it may not involve the instance at all.
+            if not library.gameSource or type(library.gameSource.press) ~= "function" then
+                return false
+            end
+            local ok: boolean, pressed: any = pcall(library.gameSource.press, candidate.label)
+            return ok and pressed == true
+        end
         if not instance.Parent then
             return false
         end
