@@ -56,6 +56,7 @@ export type MenuState = {
     trsFeatures: {[string]: any},
     vdFeatures: {[string]: any},
     bedFightFeatures: {[string]: any},
+    bedWarsFeatures: {[string]: any},
     applyCardSkin: (any, boolean?) -> (),           -- Repaint one card for the active skin and hover state
     restyleAllFeatures: (boolean) -> (),            -- Repaint every card at once, after a skin change
     restyleButtons: (boolean) -> (),                -- The same for loose buttons

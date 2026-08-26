@@ -363,7 +363,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "f44caf29328cab60"
+local SOURCE_STAMP: string = "4bd347f2a37f0ee9"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -474,6 +474,7 @@ local CONFIG_FILE = CONFIG_PROFILE_FOLDER
 local REPOSITORY_RAW_BASE = RUNTIME_RAW_BASE
 
 local GAME_MODULES: {[number]: string} = {
+    [8444591321] = "BedWars",
     [71480482338212] = "BedFight",
     [142823291] = "MM2",
     [14315258385] = "TRS",
@@ -616,6 +617,7 @@ end
 local GAME_CHECK = {
     MM2 = 142823291,
     BedFight = 71480482338212,
+    BedWars = 8444591321,
     TRS = 14315258385,
     VD = 93978595733734,
     MVSD = 135856908115931,
@@ -624,6 +626,7 @@ local GAME_CHECK = {
     VDActive = ACTIVE_GAME_MODULE == "VD",
     MVSDActive = ACTIVE_GAME_MODULE == "MVSD",
     BedFightActive = ACTIVE_GAME_MODULE == "BedFight",
+    BedWarsActive = ACTIVE_GAME_MODULE == "BedWars",
 }
 
 function GAME_CHECK.matches(identifier: number): boolean
@@ -3949,6 +3952,7 @@ state.trsFeatures = {}
 state.spoofFeatures = {}
 state.vdFeatures = {}
 state.bedFightFeatures = {}
+state.bedWarsFeatures = {}
 state.mvsdFeatures = {}
 local allFeatures: {any} = {}
 local featureConnections = {}
@@ -5383,6 +5387,7 @@ local function createGameModuleEnvironment(
         mm2Features = mm2Features,
         vdFeatures = state.vdFeatures,
         bedFightFeatures = state.bedFightFeatures,
+        bedWarsFeatures = state.bedWarsFeatures,
         mvsdFeatures = state.mvsdFeatures,
         allFeatures = allFeatures,
         cleanupMM2Runtime = cleanupMM2Runtime,
@@ -5646,6 +5651,7 @@ registerPlaceModule("TRS", GAME_CHECK.TRS)
 registerPlaceModule("VD", GAME_CHECK.VD)
 registerPlaceModule("MVSD", GAME_CHECK.MVSD)
 registerPlaceModule("BedFight", GAME_CHECK.BedFight)
+registerPlaceModule("BedWars", GAME_CHECK.BedWars)
 
 if PENDING_FINGERPRINT then
     task.spawn(function(): ()
@@ -5663,6 +5669,7 @@ if PENDING_FINGERPRINT then
                 GAME_CHECK.VDActive = detected == "VD"
                 GAME_CHECK.MVSDActive = detected == "MVSD"
                 GAME_CHECK.BedFightActive = detected == "BedFight"
+                GAME_CHECK.BedWarsActive = detected == "BedWars"
                 GAME_CHECK.source = ACTIVE_GAME_SOURCE
                 PENDING_FINGERPRINT = false
                 registerPlaceModule(detected, GAME_CHECK[detected] or 0)

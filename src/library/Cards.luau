@@ -86,6 +86,7 @@ function Module.init(context: any): any
             or (registry == state.trsFeatures and "TRS")
             or (registry == state.vdFeatures and "VD")
             or (registry == state.bedFightFeatures and "BedFight")
+            or (registry == state.bedWarsFeatures and "BedWars")
             or (registry == state.mvsdFeatures and "MVSD")
             or (registry == movementFeatures and "Movement")
             or "Universal"

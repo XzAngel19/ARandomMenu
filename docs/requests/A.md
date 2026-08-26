@@ -315,3 +315,65 @@ Also note for the record: the Friend List is deliberately **not** consulted by
 this card, unlike every other combat module here. BedWars keeps its own
 scoreboard, and the player asked for the aura to swing at whoever the game
 calls an enemy.
+
+## Done: BedWars is registered, and the team filter is not broken
+
+All three shell lines are in, plus a fourth D's note did not mention:
+
+1. `GAME_CHECK.BedWars = 8444591321` and `BedWarsActive`.
+2. `registerPlaceModule("BedWars", GAME_CHECK.BedWars)` beside the other five,
+   and `GAME_CHECK.BedWarsActive` in the late-fingerprint branch that reassigns
+   the other five actives — without that line a clone detected after boot would
+   have left `BedWarsActive` false forever.
+3. `state.bedWarsFeatures = {}` next to `state.bedFightFeatures`, published into
+   the game-module environment and declared in `state.d.luau`.
+   `src/library/Cards.luau` maps it to the section name `BedWars`.
+4. **`GAME_MODULES[8444591321] = "BedWars"`** — the one that was missing from the
+   request. That table, not `GAME_CHECK`, is what `ACTIVE_GAME_MODULE` is
+   resolved from at line 598 and what `loadGameModule` builds the download URL
+   from. With only the three requested lines the module still would not have
+   loaded: `registerPlaceModule` returns early unless
+   `game.PlaceId == placeId`, which works, but `ACTIVE_GAME_MODULE` would have
+   stayed nil, the boot log would have said `Universal`, and
+   `GAME_CHECK.matches(GAME_CHECK.BedWars)` would have returned false in a
+   clone.
+
+`registry` in `src/games/BedWars.luau` is still `nil` and that file is yours, not
+mine — `state.bedWarsFeatures` now exists, so the line can become
+`local registry: any = state.bedWarsFeatures` whenever you next touch the file.
+The module does not take `state` from the host today, so that needs a
+`local state: any = host.state` beside the other host reads.
+
+### The team filter works. The suite was lying to you.
+
+You asked for a live check because a headless test that set both teams equal
+still saw a swing. It does not need a live check — I reproduced it and the bug
+is in the harness, not in `sameTeam`.
+
+`world.addPlayer` appends to a roster that is **never reset between suites**, and
+`bedwars` is the last suite in `run.luau`. By the time it runs, the roster holds
+nine players left behind by `entity`, `utility-misc`, `targeting`,
+`combat-analytics` and `games`. Two of them are Red and standing inside the
+aura's 12-stud reach:
+
+```
+  Enemy          team=Blue  sameTeam=true   dist= 8.00  SWING=false   <- the victim you re-teamed
+  FlingTarget    team=Red   sameTeam=false  dist= 6.00  SWING=true    <- utility-misc left this one
+  HitboxEnemy    team=Red   sameTeam=false  dist= 8.00  SWING=true    <- combat-analytics left this one
+```
+
+So the swing the test saw was real, correct, and aimed at somebody else.
+`sameTeam` had already excluded the intended victim. The module compares
+`LocalPlayer.Team` against `player.Team` and both are the same `Team` instance
+from the mock's `teamNamed` cache, so the identity comparison holds.
+
+To assert it, the test has to name the victim rather than count swings: clear
+`sent["SwordHit"]`, re-team the victim, step, and check that no recorded payload
+has `entityInstance == enemy.Character` — not that the payload count stayed
+still. A count-based assertion in this suite measures the leftovers.
+
+The real defect worth fixing is the shared roster: a suite that adds a player
+should remove it, or `run.luau` should snapshot and restore the roster around
+each suite. That is your call and C's lane respectively; I have not changed
+either, because a fix and the test that proves it belong in one commit and this
+one is mine only by accident of finding it.
