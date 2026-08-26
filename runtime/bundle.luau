@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "f44caf29328cab60",
+    stamp = "4bd347f2a37f0ee9",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -6043,6 +6043,7 @@ function Module.init(context: any): any
             or (registry == state.trsFeatures and "TRS")
             or (registry == state.vdFeatures and "VD")
             or (registry == state.bedFightFeatures and "BedFight")
+            or (registry == state.bedWarsFeatures and "BedWars")
             or (registry == state.mvsdFeatures and "MVSD")
             or (registry == movementFeatures and "Movement")
             or "Universal"
