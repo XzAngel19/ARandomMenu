@@ -1,0 +1,106 @@
+-- Wurst remote log
+-- place 8444591321
+-- 17 remotes
+
+----------------------------------------------------------------------
+ReplicatedStorage.rbxts_include.node_modules.@rbxts.net.out._NetManaged.SetInvItem
+  class RemoteFunction  ·  InvokeServer  ·  33 calls
+  args  {["hand"] = «Accessory ReplicatedStorage.Inventories.Angelitohajaj.wool_blue»}
+game:GetService("ReplicatedStorage") -- ReplicatedStorage.rbxts_include.node_modules.@rbxts.net.out._NetManaged.SetInvItem
+-- :InvokeServer({["hand"] = «Accessory ReplicatedStorage.Inventories.Angelitohajaj.wool_blue»})
+----------------------------------------------------------------------
+ReplicatedStorage.rbxts_include.node_modules.@easy-games.block-engine.node_modules.@rbxts.net.out._NetManaged.PlaceBlock
+  class RemoteFunction  ·  InvokeServer  ·  99 calls
+  args  {["mouseBlockInfo"] = {["placementPosition"] = Vector3(172, 14, 137)}, ["blockType"] = "wool_blue", ["blockData"] = 0, ["position"] = Vector3(172, 14, 137)}
+game:GetService("ReplicatedStorage") -- ReplicatedStorage.rbxts_include.node_modules.@easy-games.block-engine.node_modules.@rbxts.net.out._NetManaged.PlaceBlock
+-- :InvokeServer({["mouseBlockInfo"] = {["placementPosition"] = Vector3(172, 14, 137)}, ["blockType"] = "wool_blue", ["blockData"] = 0, ["position"] = Vector3(172, 14, 137)})
+----------------------------------------------------------------------
+ReplicatedStorage.rbxts_include.node_modules.@rbxts.net.out._NetManaged.TridentUnanchor
+  class RemoteFunction  ·  InvokeServer  ·  225 calls
+  args  
+game:GetService("ReplicatedStorage") -- ReplicatedStorage.rbxts_include.node_modules.@rbxts.net.out._NetManaged.TridentUnanchor
+-- :InvokeServer()
+----------------------------------------------------------------------
+ReplicatedStorage.rbxts_include.node_modules.@rbxts.net.out._NetManaged.GroundHit
+  class RemoteEvent  ·  FireServer  ·  59 calls
+  args  «Part Workspace.wool_blue», Vector3(-3.159808874130249, -0.6083294153213501, 19.74881362915039), 1787702347.790681
+game:GetService("ReplicatedStorage") -- ReplicatedStorage.rbxts_include.node_modules.@rbxts.net.out._NetManaged.GroundHit
+-- :FireServer(«Part Workspace.wool_blue», Vector3(-3.159808874130249, -0.6083294153213501, 19.74881362915039), 1787702347.790681)
+----------------------------------------------------------------------
+ReplicatedStorage.rbxts_include.node_modules.@rbxts.net.out._NetManaged.SwordSwingMiss
+  class RemoteEvent  ·  FireServer  ·  22 calls
+  args  {["chargeRatio"] = 0, ["weapon"] = «Accessory ReplicatedStorage.Inventories.Angelitohajaj.stone_sword»}
+game:GetService("ReplicatedStorage") -- ReplicatedStorage.rbxts_include.node_modules.@rbxts.net.out._NetManaged.SwordSwingMiss
+-- :FireServer({["chargeRatio"] = 0, ["weapon"] = «Accessory ReplicatedStorage.Inventories.Angelitohajaj.stone_sword»})
+----------------------------------------------------------------------
+ReplicatedStorage.rbxts_include.node_modules.@rbxts.net.out._NetManaged.SwordHit
+  class RemoteEvent  ·  FireServer  ·  18 calls
+  args  {["entityInstance"] = «Model Workspace.Diamond Guardian», ["chargedAttack"] = {["chargeRatio"] = 0}, ["validate"] = {["targetPosition"] = {["value"] = Vector3(499.8117980957031, 48, 496.8756103515625)}, ["raycast"] = {["cursorDirection"] = {...}, ["cameraPosition"] = {...}}, ["selfPosition"] = {["value"] = Vector3(503.4914855957031, 46.4999885559082, 504.15655517578125)}}, ["weapon"] = «Accessory ReplicatedStorage.Inventories.Angelitohajaj.stone_sword»}
+game:GetService("ReplicatedStorage") -- ReplicatedStorage.rbxts_include.node_modules.@rbxts.net.out._NetManaged.SwordHit
+-- :FireServer({["entityInstance"] = «Model Workspace.Diamond Guardian», ["chargedAttack"] = {["chargeRatio"] = 0}, ["validate"] = {["targetPosition"] = {["value"] = Vector3(499.8117980957031, 48, 496.8756103515625)}, ["raycast"] = {["cursorDirection"] = {...}, ["cameraPosition"] = {...}}, ["selfPosition"] = {["value"] = Vector3(503.4914855957031, 46.4999885559082, 504.15655517578125)}}, ["weapon"] = «Accessory ReplicatedStorage.Inventories.Angelitohajaj.stone_sword»})
+----------------------------------------------------------------------
+ReplicatedStorage.rbxts_include.node_modules.@rbxts.net.out._NetManaged.AckKnockback
+  class RemoteEvent  ·  FireServer  ·  3 calls
+  args  {["knockbackId"] = 64, ["playerPosition"] = Vector3(492.8514099121094, 46.4999885559082, 500.65643310546875)}
+game:GetService("ReplicatedStorage") -- ReplicatedStorage.rbxts_include.node_modules.@rbxts.net.out._NetManaged.AckKnockback
+-- :FireServer({["knockbackId"] = 64, ["playerPosition"] = Vector3(492.8514099121094, 46.4999885559082, 500.65643310546875)})
+----------------------------------------------------------------------
+ReplicatedStorage.rbxts_include.node_modules.@rbxts.net.out._NetManaged.PickupItemDrop
+  class RemoteFunction  ·  InvokeServer  ·  5 calls
+  args  {["itemDrop"] = «Part Workspace.ItemDrops.iron»}
+game:GetService("ReplicatedStorage") -- ReplicatedStorage.rbxts_include.node_modules.@rbxts.net.out._NetManaged.PickupItemDrop
+-- :InvokeServer({["itemDrop"] = «Part Workspace.ItemDrops.iron»})
+----------------------------------------------------------------------
+ReplicatedStorage.rbxts_include.node_modules.@rbxts.net.out._NetManaged.ProjectileFire
+  class RemoteFunction  ·  InvokeServer  ·  19 calls
+  args  «Accessory ReplicatedStorage.Inventories.Angelitohajaj.telepearl», "telepearl", "telepearl", Vector3(380.42718505859375, 53.747371673583984, 440.9269714355469), Vector3(380.42718505859375, 51.747371673583984, 440.9269714355469), Vector3(-1.4478729963302612, -6.3148651123046875, 108.39934539794922), "XPG34DYU", {["drawDurationSec"] = 0.1470182230696082, ["shotId"] = "TGF9NZ1N"}, 1787702373.925818
+game:GetService("ReplicatedStorage") -- ReplicatedStorage.rbxts_include.node_modules.@rbxts.net.out._NetManaged.ProjectileFire
+-- :InvokeServer(«Accessory ReplicatedStorage.Inventories.Angelitohajaj.telepearl», "telepearl", "telepearl", Vector3(380.42718505859375, 53.747371673583984, 440.9269714355469), Vector3(380.42718505859375, 51.747371673583984, 440.9269714355469), Vector3(-1.4478729963302612, -6.3148651123046875, 108.39934539794922), "XPG34DYU", {["drawDurationSec"] = 0.1470182230696082, ["shotId"] = "TGF9NZ1N"}, 1787702373.925818)
+----------------------------------------------------------------------
+ReplicatedStorage.rbxts_include.node_modules.@rbxts.net.out._NetManaged.ProjectileHit
+  class RemoteEvent  ·  FireServer  ·  36 calls
+  args  "XPG34DYU"
+game:GetService("ReplicatedStorage") -- ReplicatedStorage.rbxts_include.node_modules.@rbxts.net.out._NetManaged.ProjectileHit
+-- :FireServer("XPG34DYU")
+----------------------------------------------------------------------
+ReplicatedStorage.rbxts_include.node_modules.@easy-games.block-engine.node_modules.@rbxts.net.out._NetManaged.DamageBlock
+  class RemoteFunction  ·  InvokeServer  ·  11 calls
+  args  {["blockRef"] = {["blockPosition"] = Vector3(126, 15, 202)}, ["hitPosition"] = Vector3(376.5, 45.58338928222656, 606.0039672851562), ["hitNormal"] = Vector3(-1, 0, 0)}
+game:GetService("ReplicatedStorage") -- ReplicatedStorage.rbxts_include.node_modules.@easy-games.block-engine.node_modules.@rbxts.net.out._NetManaged.DamageBlock
+-- :InvokeServer({["blockRef"] = {["blockPosition"] = Vector3(126, 15, 202)}, ["hitPosition"] = Vector3(376.5, 45.58338928222656, 606.0039672851562), ["hitNormal"] = Vector3(-1, 0, 0)})
+----------------------------------------------------------------------
+ReplicatedStorage.rbxts_include.node_modules.@rbxts.net.out._NetManaged.Inventory/SetObservedChest
+  class RemoteEvent  ·  FireServer  ·  6 calls
+  args  
+game:GetService("ReplicatedStorage") -- ReplicatedStorage.rbxts_include.node_modules.@rbxts.net.out._NetManaged.Inventory/SetObservedChest
+-- :FireServer()
+----------------------------------------------------------------------
+ReplicatedStorage.rbxts_include.node_modules.@rbxts.net.out._NetManaged.BedwarsPurchaseItem
+  class RemoteFunction  ·  InvokeServer  ·  24 calls
+  args  {["shopItem"] = {["currency"] = "iron", ["itemType"] = "wool_white", ["amount"] = 16, ["price"] = 8, ["category"] = "Blocks", ["disabledInQueue"] = {[1] = "mine_wars"}}, ["shopId"] = "3_item_shop_2"}
+game:GetService("ReplicatedStorage") -- ReplicatedStorage.rbxts_include.node_modules.@rbxts.net.out._NetManaged.BedwarsPurchaseItem
+-- :InvokeServer({["shopItem"] = {["currency"] = "iron", ["itemType"] = "wool_white", ["amount"] = 16, ["price"] = 8, ["category"] = "Blocks", ["disabledInQueue"] = {[1] = "mine_wars"}}, ["shopId"] = "3_item_shop_2"})
+----------------------------------------------------------------------
+ReplicatedStorage.rbxts_include.node_modules.@rbxts.net.out._NetManaged.RequestPurchaseTeamUpgrade
+  class RemoteFunction  ·  InvokeServer  ·  9 calls
+  args  "ARMOR"
+game:GetService("ReplicatedStorage") -- ReplicatedStorage.rbxts_include.node_modules.@rbxts.net.out._NetManaged.RequestPurchaseTeamUpgrade
+-- :InvokeServer("ARMOR")
+----------------------------------------------------------------------
+ReplicatedStorage.rbxts_include.node_modules.@rbxts.net.out._NetManaged.RequestPurchaseBedTeamUpgrade
+  class RemoteFunction  ·  InvokeServer  ·  3 calls
+  args  "bed_alarm"
+game:GetService("ReplicatedStorage") -- ReplicatedStorage.rbxts_include.node_modules.@rbxts.net.out._NetManaged.RequestPurchaseBedTeamUpgrade
+-- :InvokeServer("bed_alarm")
+----------------------------------------------------------------------
+ReplicatedStorage.rbxts_include.node_modules.@rbxts.net.out._NetManaged.CustomMatches/RequestMatchMapSaveInfo
+  class RemoteEvent  ·  FireServer  ·  1 calls
+  args  "F6BF7970-4BD8-495E-8788-0F3761F943C6", {}
+game:GetService("ReplicatedStorage") -- ReplicatedStorage.rbxts_include.node_modules.@rbxts.net.out._NetManaged.CustomMatches/RequestMatchMapSaveInfo
+-- :FireServer("F6BF7970-4BD8-495E-8788-0F3761F943C6", {})
+----------------------------------------------------------------------
+ReplicatedStorage.rbxts_include.node_modules.@rbxts.net.out._NetManaged.GetMatchStats
+  class RemoteFunction  ·  InvokeServer  ·  2 calls
+  args  
+game:GetService("ReplicatedStorage") -- ReplicatedStorage.rbxts_include.node_modules.@rbxts.net.out._NetManaged.GetMatchStats
+-- :InvokeServer()
