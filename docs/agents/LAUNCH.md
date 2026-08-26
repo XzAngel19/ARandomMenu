@@ -19,7 +19,7 @@ its own branch throughout — this is not switching branches, it is giving the
 branch the right contents.
 
 ```
-git fetch origin arena/01a02c8a-arandommenu
+git fetch origin arena/01a03bca-arandommenu
 git reset --hard FETCH_HEAD
 git fetch origin <your-branch>                 # refresh the lease's reference
 git push --force-with-lease origin HEAD
@@ -32,7 +32,7 @@ failure and is not one.
 
 The probe commit is thrown away by that reset, which is fine — it already proved
 what it was for. To pick up later integration work, `git fetch origin
-arena/01a02c8a-arandommenu && git merge FETCH_HEAD`.
+arena/01a03bca-arandommenu && git merge FETCH_HEAD`.
 
 Both messages below start with this.
 
@@ -44,7 +44,7 @@ Both messages below start with this.
 > briefs for agents C and D, you merge their branches, and you build the
 > interface yourself.
 >
-> Work only on `arena/01a02c8a-arandommenu`. Never push to `main` — the loader
+> Work only on `arena/01a03bca-arandommenu`. Never push to `main` — the loader
 > ships from it. **Never open a pull request**, not even a draft: a PR here can
 > auto-merge, and when it does GitHub closes the other agent's session and it
 > loses remote access mid-task. That is how a finished commit of fifteen files
@@ -82,7 +82,7 @@ Both messages below start with this.
 > contents:
 >
 > ```
-> git fetch origin arena/01a02c8a-arandommenu
+> git fetch origin arena/01a03bca-arandommenu
 > git reset --hard FETCH_HEAD
 > git fetch origin <your-branch>               # refresh the lease's reference
 > git push --force-with-lease origin HEAD
@@ -126,7 +126,7 @@ Both messages below start with this.
 > contents:
 >
 > ```
-> git fetch origin arena/01a02c8a-arandommenu
+> git fetch origin arena/01a03bca-arandommenu
 > git reset --hard FETCH_HEAD
 > git fetch origin <your-branch>               # refresh the lease's reference
 > git push --force-with-lease origin HEAD

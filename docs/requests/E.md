@@ -58,7 +58,7 @@ strings produced by an agent remain English.
 ## Agent A — integration and isolation review
 
 > You are agent A on `XzAngel19/ARandomMenu`, the integrator. Stay on
-> `arena/01a02c8a-arandommenu`, run preflight before committing, and read
+> `arena/01a03bca-arandommenu`, run preflight before committing, and read
 > `docs/architecture/targeting-and-learning.md`.
 >
 > Integrate C/D commits only after checking that `Targeting` remains read-only

@@ -15,3 +15,9 @@ __pycache__/
 /assets/font/minecraft-atlas.png
 /assets/font/minecraft-atlas.json
 /build/
+
+# Unpacked place dumps. reference/places/ holds the compressed capture; the
+# .rbxlx it expands to is 170 MB of XML and is a build input, never a commit.
+/reference/places/*.rbxlx
+/reference/places/*.rbxl
+/reference/places/*.rbxmx

@@ -48,9 +48,25 @@ deletes work that is already pushed. The script checks one thing — that HEAD i
 built on what is actually on the server — and tells you how to recover if it is
 not.
 
+## 2a. The integration branch is `arena/01a03bca-arandommenu`
+
+It used to be `arena/01a02c8a-arandommenu`, and that name is still written in
+older briefs and in commit messages. It moved because an Arena session is pinned
+to the branch Arena created for it: the integrator session that owned the old
+name is gone, and no new session can push to it. The current integrator seeded
+its own branch by fast-forwarding the old tip (`24b4c9d`) into
+`arena/01a03bca-arandommenu`, so **no history was lost and nothing needs
+rebasing** — the old name is a prefix of the new one.
+
+Read it as: wherever an older document says `arena/01a02c8a-arandommenu`, the
+branch to fetch, base on and hand work back to is
+`arena/01a03bca-arandommenu`. It will move again the next time the integrator
+session is replaced; the tip is always whichever `arena/*` branch the integrator
+names in its reply, and its contents always contain the previous one.
+
 ## 2c. Two people share the integration branch
 
-The integrator and the reviewer both push to `arena/01a02c8a-arandommenu`. That
+The integrator and the reviewer both push to `arena/01a03bca-arandommenu`. That
 is deliberate — it means the interface work never has to be merged — and it has
 one hazard: the branch can move under you between your last fetch and your push.
 
@@ -58,11 +74,11 @@ When a push is rejected with `fetch first`, **never force**. The other person's
 commit is not a mistake to overwrite:
 
 ```
-git fetch origin arena/01a02c8a-arandommenu
+git fetch origin arena/01a03bca-arandommenu
 git merge FETCH_HEAD                 # or: git stash -u; git reset --hard FETCH_HEAD; git stash pop
 python3 tools/bundle.py              # the only conflicts are generated; regenerate, never pick a side
-bash tools/preflight.sh
-LUAU_DIR=/tmp/luau-src/build bash tools/validate.sh
+bash tools/preflight.sh <your-branch>
+LUAU_DIR=/tmp/luau-src bash tools/validate.sh
 git push origin HEAD
 ```
 
@@ -109,7 +125,7 @@ goes in the reply you write to the user, in prose. Writing it only into
 ## 6. Run the gate before every push
 
 ```
-LUAU_DIR=/tmp/luau-src/build bash tools/validate.sh
+LUAU_DIR=/tmp/luau-src bash tools/validate.sh
 ```
 
 It must print `All checks passed.` `/tmp` does not survive between turns, so
@@ -117,12 +133,17 @@ you will have to rebuild Luau roughly every session — start it in the
 background first thing, it takes 2-4 minutes:
 
 ```
-export PATH="$HOME/.local/bin:$PATH"
-command -v cmake >/dev/null || pip3 install --quiet --break-system-packages cmake
 rm -rf /tmp/luau-src && git clone --depth 1 -b 0.732 https://github.com/luau-lang/luau.git /tmp/luau-src
-cd /tmp/luau-src && cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --target Luau.Compile.CLI Luau.Repl.CLI Luau.Analyze.CLI -j4
+make -C /tmp/luau-src config=release luau luau-compile luau-analyze -j2
 ```
+
+Use the Makefile, not CMake. Recent sandboxes ship no `cmake` at all and the
+`pip3 install cmake` line this rule used to carry is one more thing that can
+fail before the build even starts; upstream's Makefile needs only `g++` and
+`make`, which are always present. It leaves the three binaries symlinked at
+`/tmp/luau-src/luau*`, so `LUAU_DIR=/tmp/luau-src` — without the `/build`
+suffix the old recipe produced. `-j2` matches the two cores the sandbox
+actually has; a higher number only oversubscribes them.
 
 ## 7. A refactor does not change behaviour
 
@@ -179,7 +200,7 @@ merging would push an unfinished rebuild to every user. Sync your own branch
 instead, once, before doing anything else:
 
 ```
-git fetch origin arena/01a02c8a-arandommenu
+git fetch origin arena/01a03bca-arandommenu
 git reset --hard FETCH_HEAD
 git fetch origin <your-branch>                 # refresh the lease's reference
 git push --force-with-lease origin HEAD
@@ -192,5 +213,5 @@ before that knowledge existed, so the push is rejected with `stale info`, which
 reads like an authentication problem and is not one.
 
 You are staying on your own branch; you are giving it the right contents. Later,
-to pick up integration work: `git fetch origin arena/01a02c8a-arandommenu &&
+to pick up integration work: `git fetch origin arena/01a03bca-arandommenu &&
 git merge FETCH_HEAD`.

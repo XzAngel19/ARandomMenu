@@ -1,18 +1,20 @@
 # Agent prompts — BedWars adapter round
 
-New game: **Roblox BedWars, place `8444591321`**. The material is at the
-repository root of `arena/01a02c8a-arandommenu`:
+New game: **Roblox BedWars, place `8444591321`**. The material is in
+`reference/` on `arena/01a03bca-arandommenu` — it landed in the repository root
+and the integrator moved it, so a path from an older copy of this file is stale:
 
-- `8444591321-1787702434.json` / `.txt` — a live Remote Logger capture, 17
-  remotes, real argument shapes.
-- `Place_8444591321_partes.7z.001` + `.002` — the saved place. Concatenate the
-  two parts and unpack: the payload is one `Place_8444591321.rbxlx`, 170 MB of
-  XML. It contains 1558 `RemoteEvent` references, 281 `RemoteFunction`
-  references, 279 `ProximityPrompt`s and 795 `Highlight`s. No agent has mined it
-  yet; do not commit the unpacked file.
+- `reference/remote-logs/8444591321-1787702434.json` / `.txt` — a live Remote
+  Logger capture, 17 remotes, real argument shapes.
+- `reference/places/Place_8444591321_partes.7z.001` + `.002` — the saved place.
+  Concatenate the two parts and unpack: the payload is one
+  `Place_8444591321.rbxlx`, 170 MB of XML. It contains 1558 `RemoteEvent`
+  references, 281 `RemoteFunction` references, 279 `ProximityPrompt`s and 795
+  `Highlight`s. No agent has mined it yet; `.gitignore` now refuses the unpacked
+  file, so unpack it, mine it, and delete it.
 
 All code, UI labels and runtime strings stay English. Work from the current
-`arena/01a02c8a-arandommenu` tip, push to your own session branch, never open a
+`arena/01a03bca-arandommenu` tip, push to your own session branch, never open a
 PR, never touch `main`.
 
 ## Read first
@@ -30,7 +32,7 @@ from a capture, nothing guessed — and none of its payload shapes.
 
 ## The captured contract
 
-Verified from `8444591321-1787702434.json`. Everything below is a real capture,
+Verified from `reference/remote-logs/8444591321-1787702434.json`. Everything below is a real capture,
 not an inference:
 
 | Remote | Kind | Arguments |
@@ -282,14 +284,15 @@ green. Report the exact check count and any mock debt.
    bundle freshness, regenerate `runtime/bundle.luau` and the stamp instead of
    picking a side, keep the 45-card inventory and the alphabetic category
    ordering, and report the exact check count with the hashes.
-2. **New session, new integration branch.** The previous integrator session is
-   gone. Your Arena session is pinned to its own `arena/<id>-arandommenu`
-   branch, so you cannot push to `arena/01a02c8a-arandommenu`; seed yourself by
-   merging that tip (`main` is an ancestor of it, so the merge fast-forwards)
-   and treat your own session branch as the integration branch from then on.
-   Update `docs/agents/RULES.md` and the `docs/requests/*.md` headers that name
-   the old branch, and tell C and D the new name in your reply, not only in a
-   file.
+2. **New session, new integration branch — done.** The previous integrator
+   session was gone and its branch `arena/01a02c8a-arandommenu` could not be
+   pushed to, because an Arena session is pinned to the branch Arena created
+   for it. The current integrator merged that tip (`24b4c9d`) into its own
+   branch — a fast-forward, `main` being an ancestor — so
+   **`arena/01a03bca-arandommenu` is the integration branch** and contains the
+   old one whole. `docs/agents/RULES.md` §2a records the move; every other
+   document here now names the new branch. C and D: fetch, base and hand work
+   back against `arena/01a03bca-arandommenu`.
 3. **Desktop dock search option** — D implements it, since
    `src/library/Furniture.luau` and `src/library/SettingsPage.luau` are D's lane
    (the seam is `Furniture.luau:1276-1284`, where `dockSearchWidth` is already
@@ -297,10 +300,12 @@ green. Report the exact check count and any mock debt.
    the UI Settings panel `SettingsPage.luau:1501` builds). Your job is to review
    that it adds no second door to the Navigator and does not bring back the wide
    launcher surface.
-4. Repository hygiene: the two 7z parts put 24 MB of binary in git and the
-   unpacked place is 170 MB. Decide where large captures live — `reference/`
-   holds `bedfight-place-dump.rbxmx.zip` at 1.3 MB, which is the precedent — and
-   record it before the next capture lands.
+4. **Repository hygiene — done.** Remote logs go in
+   `reference/remote-logs/`, compressed saved places in `reference/places/`,
+   the unpacked `.rbxlx` is git-ignored and never committed, and a capture over
+   roughly 50 MB compressed arrives as a link instead of a commit. The rule and
+   its reasoning are in `reference/README.md`; the four BedWars files were moved
+   out of the repository root to match it.
 
 ## Rules
 

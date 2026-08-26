@@ -12,9 +12,19 @@ building.
 
 ## The branch, and the two things that destroy work
 
-You work on **`arena/01a02c8a-arandommenu`** and push only there. Never `main`:
+You work on **`arena/01a03bca-arandommenu`** and push only there. Never `main`:
 the loader ships from it, so merging into it would push an unfinished rebuild to
 every player.
+
+That name is not permanent and the way it changes is worth knowing before it
+surprises you. An Arena session can only push to the branch Arena created for
+it, so the integration branch dies with the integrator session that owns it. The
+replacement does not adopt the old name — it cannot — it fast-forwards the old
+tip into its own branch and that branch becomes the integration branch. This has
+happened twice: `arena/01a01c6e` → `arena/01a02c8a` → `arena/01a03bca`. Nothing
+is lost, because each name contains the previous one whole; what breaks is every
+document that hard-codes a branch, which is why `RULES.md` §2a now says so in one
+place and everything else points at it.
 
 ### Never open a pull request
 
@@ -137,31 +147,56 @@ for, and the whole layer is on one `UIScale` derived from viewport height
 against 1080p, clamped 0.85–1.6, because the interface was measured against
 Vape's and Wurst is bigger.
 
-Not done, in order — **this is your queue**:
+**That three-item queue is finished, and this section used to claim otherwise.**
+It was written before the furniture landed and never revised, so a session that
+trusted it would have rebuilt three things that already exist and are already
+pinned by suites. What is actually on the tip, each with the check that proves
+it runs rather than merely compiles:
 
-1. **The furniture.** None of it exists yet and it is most of what still makes
-   the menu not look like Wurst. The wordmark with Wurst's own logo, already
-   vendored and verified at `assets/wurst/wurst_128.png` and reachable through
-   the shell's `getcustomasset` path; the stats block under it; the floating
-   Roblox pill as the launcher; the HUD list down the right edge — every
-   module's `card.status` is already populated, so it has something to show the
-   day you write it; and tooltips on a 400 ms hover.
-2. Wurst's setting lines inside an expanded row: label left, value right, a 5 px
-   bar with a 7×11 knob underneath, a small square checkbox, and a colour as
-   label + hex + a bar of that colour under it.
-3. UI Settings, Keybinds and Presets as windows, against C's inventory in
-   `docs/wurst-features.md` — it carries the exact names, types and defaults, and
-   the parity gate fails a window that ships the wrong default.
+1. **The furniture** — `src/library/Furniture.luau`. The wordmark draws
+   `assets/wurst/wurst_128.png` through the shell's `wurstLogo` asset key on
+   Wurst's white chip (`Furniture` suite: the band is the y=6..17 half-alpha
+   stripe, packed to logo + gap + version, and it is not `brandLogo` or the old
+   `menu-logo.jpg`); the pill is published and survives the GUI closing; the
+   HackList draws one line per enabled module from `card:SetStatus` and omits
+   disabled ones; tooltips are `TOOLTIP_DELAY_MS = 400`.
+   **The stats block is not missing — it was deliberately removed.** The old
+   FPS/PING/TIME/PLACE readout is gone because Wurst draws the sausage and the
+   version in that corner and nothing else, and there is a standing check named
+   `FPS/PING/TIME/PLACE are not on the HUD`. Do not rebuild it from this brief's
+   old wording.
+2. **Wurst's setting lines** — `src/library/Widgets.luau`, held by the
+   `settings-widgets` suite: label left, value right, a rail with a square knob,
+   a square checkbox rather than a switch, and a colour row as label + hex + a
+   bar of that colour. The numbers are **rail 6 px, knob 16×16**, not the
+   "5 px bar with a 7×11 knob" this brief used to say — those were the Java
+   values before `docs/wurst-deviations.md` recorded the scale-2 conversion, and
+   `spec.json` now holds the Luau constants to 6 / 16 / 16.
+3. **The windows** — `src/library/SettingsPage.luau` builds UI Settings,
+   HackList, Keybinds, Add Keybind, Wurst Options and Keybind Profiles.
+   "Presets" was never a Wurst object: `docs/wurst-features.md` §Presets is
+   explicit that Wurst has **Keybind Profiles** and no theme preset, and that
+   this repository's `storageFolder/Profiles/Game_<id>.Config` is a different
+   thing that must not be renamed to look like one.
+
+So the interface queue is now driven by what the parity gate and the prototype
+still disagree about, not by this list. Before starting anything here, diff the
+prototype against the code rather than trusting a paragraph: the gate
+(`tools/extract_prototype_spec.py --check`) is the only statement of intent that
+cannot go stale, because it fails when it does.
 
 ## Who builds what, so nobody builds it twice
 
 There are four of us on this and two of us can write interface code, so the
 split is explicit:
 
-- **You** build the interface: points 2, 3 and 4 of the list above — the pill,
-  the wordmark, the stats block, the HUD list, tooltips, Wurst's setting lines
-  inside an expanded row, and then UI Settings, Keybinds and Presets as windows
-  against C's inventory in `docs/wurst-features.md`.
+- **You** build the interface. That used to read "points 2, 3 and 4 of the list
+  above — the pill, the wordmark, the stats block, the HUD list, tooltips…",
+  which is stale in two ways: those points are built, and the stats block was
+  deliberately deleted rather than left undone. The lane is unchanged —
+  `src/library/Furniture.luau`, `Widgets.luau`, `SettingsPage.luau`,
+  `ClickGui.luau`, `WindowManager.luau`, `Cards.luau` and the shell — but the
+  work is whatever the prototype and the parity gate still disagree about.
 - **The reviewer** verifies what you push, integrates C's and D's branches, and
   writes their briefs. It does not build interface features while you are
   building them; if it needs to touch one of your files to unblock somebody, it

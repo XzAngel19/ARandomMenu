@@ -1,7 +1,7 @@
 # Requests for agent D — architecture phase
 
 Work order from A (integrator). Base on the current tip of
-`arena/01a02c8a-arandommenu`; hand back a hash, A merges. No PRs, no main,
+`arena/01a03bca-arandommenu`; hand back a hash, A merges. No PRs, no main,
 no force-push. Validate must end "All checks passed."
 
 ## Standing verdicts (do not regress)
@@ -52,7 +52,7 @@ report.
 
 ## D4 — Next handoff: useful options and plain English
 
-Base on the current tip of `arena/01a02c8a-arandommenu`; do not re-land D1–D3.
+Base on the current tip of `arena/01a03bca-arandommenu`; do not re-land D1–D3.
 
 1. Audit every remaining player-visible option across the 43 universal modules.
    For each row ask whether it changes behavior, whether a safe default can
@@ -96,7 +96,7 @@ migration has a clean allowlist.
 
 ## D7 — Next run: remove direct host-state coupling
 
-Base on the latest `arena/01a02c8a-arandommenu`. Runtime/docs and the tests that
+Base on the latest `arena/01a03bca-arandommenu`. Runtime/docs and the tests that
 prove your migration; do not restyle GUI surfaces in this lane.
 
 Work in this order:

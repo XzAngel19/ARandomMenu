@@ -18,7 +18,7 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
   to point the whole runtime (loader, bootstrap and game modules) at a branch:
 
   ```lua
-  getgenv().ARANDOMMENU_BRANCH = "arena/01a02c8a-arandommenu"
+  getgenv().ARANDOMMENU_BRANCH = "arena/01a03bca-arandommenu"
   loadstring(game:HttpGet(
       "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/"
           .. getgenv().ARANDOMMENU_BRANCH .. "/ARandomMenu.luau"))()
