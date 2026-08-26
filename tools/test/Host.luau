@@ -472,10 +472,48 @@ function Host.create(world: any): HostStub
     host.isMenuOwned = function(instance: any): boolean
         return instance:IsDescendantOf(screenGui)
     end
+    -- Enough of a JSON encoder for Learning metadata. The previous count
+    -- stub turned every dictionary into "[0 entries]", so a missing sidecar
+    -- schema could not fail a test.
+    local function encodeJson(value: any): string
+        local valueType: string = type(value)
+        if value == nil then
+            return "null"
+        end
+        if valueType == "boolean" then
+            return value and "true" or "false"
+        end
+        if valueType == "number" then
+            return tostring(value)
+        end
+        if valueType == "string" then
+            return '"'
+                .. (value :: string):gsub("\\", "\\\\"):gsub("\"", "\\\"")
+                .. '"'
+        end
+        if valueType ~= "table" then
+            return "null"
+        end
+        local object: any = value
+        if object[1] ~= nil then
+            local items: {string} = {}
+            for _, item: any in ipairs(object) do
+                table.insert(items, encodeJson(item))
+            end
+            return "[" .. table.concat(items, ",") .. "]"
+        end
+        local fields: {string} = {}
+        for key: any, item: any in pairs(object) do
+            table.insert(fields, encodeJson(tostring(key)) .. ":" .. encodeJson(item))
+        end
+        return "{" .. table.concat(fields, ",") .. "}"
+    end
     host.HttpService = {
         JSONEncode = function(_self: any, value: any): string
-            -- Enough of an encoder for a test to prove a file was written.
-            return "[" .. tostring(#value) .. " entries]"
+            return encodeJson(value)
+        end,
+        JSONDecode = function(_self: any, _text: string): any
+            return {}
         end,
     }
     host.Players = world.players
@@ -632,7 +670,9 @@ function Host.create(world: any): HostStub
         },
         aim = {getRay = function(): any return host.state.getAimRay() end},
         screenCapture = {
-            isAvailable = function(): boolean return true end,
+            isAvailable = function(): boolean
+                return world.screenCaptureAvailable == true
+            end,
             capture = function(path: string): (boolean, string?)
                 world.screenCaptures += 1
                 world.files[path] = "PNG"

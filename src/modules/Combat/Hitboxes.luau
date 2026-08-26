@@ -35,9 +35,9 @@ local activeCleanup: (() -> ())? = nil
 function Module.init(context: Runtime): any
     local host: any = context.host
     local framework: any = context.framework
+    local entityLibrary: any = context.entity
     local Players: any = host.Players
     local LocalPlayer: any = host.LocalPlayer
-    local protectedTargets: any = context.services.protectedTargets
 
     type HitboxSettings = {
         part: string,
@@ -184,27 +184,21 @@ function Module.init(context: Runtime): any
         end
     end
 
-    -- NPCs are found by walking the workspace, which is the one part of this that
-    -- is not cheap, so the answer is kept for two seconds. Players are re-read
-    -- every frame: that list is short and a respawn has to be picked up at once.
-    local hitboxNpcCache: {Model} = {}
-    local hitboxNpcCachedAt: number = -1
-
+    -- Entity owns the signal-indexed NPC list and the same team/Friend List
+    -- policy used by combat and ESP. Hitboxes consumes that index instead of
+    -- scanning only workspace's direct children, which missed NPCs nested in a
+    -- map folder and made Team check behave differently from other cards.
     local function hitboxTargets(): {Model}
         local targets: {Model} = {}
+        entityLibrary:Refresh()
         for _, player: Player in ipairs(Players:GetPlayers()) do
             if player == LocalPlayer then
                 continue
             end
-            if hitboxSettings.teamCheck
-                and LocalPlayer.Team ~= nil
-                and player.Team == LocalPlayer.Team then
+            if hitboxSettings.teamCheck and entityLibrary:IsFriendly(player) then
                 continue
             end
-            -- Friend List is not a team check: it is a promise the rest of the
-            -- combat cards already keep, and an inflated friend is as visible
-            -- to the server as an inflated enemy.
-            if protectedTargets.isProtected(player) then
+            if entityLibrary:IsProtected(player) then
                 continue
             end
             local character: Model? = player.Character
@@ -215,26 +209,12 @@ function Module.init(context: Runtime): any
             end
         end
         if hitboxSettings.includeNpcs then
-            local now: number = os.clock()
-            if now - hitboxNpcCachedAt > 2 then
-                hitboxNpcCachedAt = now
-                hitboxNpcCache = {}
-                for _, child: Instance in ipairs(workspace:GetChildren()) do
-                    if not child:IsA("Model") or child == LocalPlayer.Character then
-                        continue
-                    end
-                    local humanoid: Humanoid? =
-                        child:FindFirstChildOfClass("Humanoid") :: Humanoid?
-                    if humanoid
-                        and (humanoid :: Humanoid).Health > 0
-                        and Players:GetPlayerFromCharacter(child) == nil then
-                        table.insert(hitboxNpcCache, child :: Model)
-                    end
-                end
-            end
-            for _, npc: Model in ipairs(hitboxNpcCache) do
-                if npc.Parent then
-                    table.insert(targets, npc)
+            for _, npc: any in ipairs(entityLibrary.NPCList or {}) do
+                if (not hitboxSettings.teamCheck or not npc.IsFriendly)
+                    and npc.Character
+                    and npc.Humanoid
+                    and npc.Humanoid.Health > 0 then
+                    table.insert(targets, npc.Character)
                 end
             end
         end
@@ -270,8 +250,6 @@ function Module.init(context: Runtime): any
             .. "it stops being a target.",
         Function = function(enabled: boolean): ()
             restoreHitboxes()
-            hitboxNpcCachedAt = -1
-            hitboxNpcCache = {}
             if not enabled then
                 hitboxes:SetStatus(nil)
                 return

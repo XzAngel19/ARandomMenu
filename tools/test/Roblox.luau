@@ -765,6 +765,7 @@ function Mock.install(): MockWorld
             "MouseMovement",
             "Keyboard",
         }),
+        MouseBehavior = enumFolder({"Default", "LockCenter", "LockCurrentPosition"}),
         ApplyStrokeMode = enumFolder({"Contextual", "Border"}),
         SortOrder = enumFolder({"LayoutOrder", "Name"}),
         ScaleType = enumFolder({"Crop", "Fit", "Stretch"}),
@@ -1108,6 +1109,8 @@ function Mock.install(): MockWorld
     inputService.KeyboardEnabled = true
     inputService.MouseEnabled = true
     inputService.GamepadEnabled = false
+    inputService.MouseBehavior = globals.Enum.MouseBehavior.Default
+    inputService.MouseIconEnabled = true
     inputService.InputBegan = signal()
     inputService.InputChanged = signal()
     inputService.InputEnded = signal()

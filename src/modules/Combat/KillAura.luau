@@ -19,9 +19,10 @@
 -- studs was already inside 14. One distance, one row: the aura swings at, and
 -- fires contact on, exactly the players it selected.
 --
--- Defaults are deliberately playable: three targets, 12-stud reach, 8 swings a
--- second, a 220° field of view and friends skipped. Turning it on and leaving
--- every option alone works.
+-- Kill Aura is not a cursor trigger. Its default 360° cone scans every
+-- direction around the character; Field of view is only a deliberate way to
+-- narrow that scan. Defaults are deliberately useful: three targets, 18-stud
+-- reach, 8 swings a second, walls ignored and friends skipped.
 
 export type Runtime = {
     framework: any,
@@ -122,15 +123,15 @@ function Module.init(context: Runtime): any
 
     local nextSwingAt: number = 0
     local nextStatusAt: number = 0
-    local highlights: {[Player]: Highlight} = {}
+    local highlights: {[any]: Highlight} = {}
 
-    local function clearHighlights(keep: {[Player]: boolean}?): ()
-        for player: Player, highlight: Highlight in pairs(highlights) do
-            if not keep or not keep[player] then
+    local function clearHighlights(keep: {[any]: boolean}?): ()
+        for key: any, highlight: Highlight in pairs(highlights) do
+            if not keep or not keep[key] then
                 pcall(function(): ()
                     highlight:Destroy()
                 end)
-                highlights[player] = nil
+                highlights[key] = nil
             end
         end
     end
@@ -139,13 +140,14 @@ function Module.init(context: Runtime): any
         if not options["Highlight targets"].Value then
             return
         end
-        local existing: Highlight? = highlights[entity.Player]
+        local key: any = entity.Player or entity.Character
+        local existing: Highlight? = highlights[key]
         if not existing or not existing.Parent then
             local created: Highlight = Instance.new("Highlight")
             created.Name = "RTM_KillAuraTarget"
             created.FillTransparency = 0.75
             created.Parent = entity.Character
-            highlights[entity.Player] = created
+            highlights[key] = created
             existing = created
         end
         local highlight: Highlight = existing :: Highlight
@@ -361,6 +363,7 @@ function Module.init(context: Runtime): any
                     IgnoreTeam = not options["Team check"].Value,
                     IgnoreWalls = not options["Wall check"].Value,
                     Angle = options["Field of view"].Value,
+                    IncludeNPCs = options["Target NPCs"].Value,
                     Sort = options["Priority"].Value,
                 })
                 updateTargetStatus(#targets)
@@ -376,7 +379,7 @@ function Module.init(context: Runtime): any
                 -- it was one more thing to read.
                 local jitter: number = 1 / rate * 0.25
                 local canSwing: boolean = now >= nextSwingAt
-                local keep: {[Player]: boolean} = {}
+                local keep: {[any]: boolean} = {}
 
                 local root: BasePart? = entityLibrary.LocalEntity
                     and entityLibrary.LocalEntity.RootPart
@@ -403,7 +406,7 @@ function Module.init(context: Runtime): any
                 end
 
                 for _, entity: any in ipairs(targets) do
-                    keep[entity.Player] = true
+                    keep[entity.Player or entity.Character] = true
                     markTarget(entity, options)
 
                     if not canSwing then
@@ -534,17 +537,17 @@ function Module.init(context: Runtime): any
         Name = "Reach",
         Min = 5,
         Max = 60,
-        Default = 12,
+        Default = 18,
         Tooltip = "Distance at which the weapon swings and its touch events "
-            .. "fire. Keep it near the weapon's real reach.",
+            .. "fire. This is the only Kill Aura distance.",
     })
     aura:CreateSlider({
         Name = "Max targets",
         Min = 1,
         Max = 10,
         Default = 3,
-        Tooltip = "How many players one swing may hit. One makes the aura "
-            .. "stick to the best target.",
+        Tooltip = "How many valid players or NPCs one swing may hit. One "
+            .. "sticks to the best target.",
     })
     aura:CreateDropdown({
         Name = "Priority",
@@ -576,8 +579,9 @@ function Module.init(context: Runtime): any
         Name = "Field of view",
         Min = 30,
         Max = 360,
-        Default = 220,
-        Tooltip = "Degrees in front of you a target has to be inside.",
+        Default = 360,
+        Tooltip = "Degrees around your character. 360 scans every direction; "
+            .. "this is not cursor aim.",
     })
     aura:CreateDropdown({
         Name = "Rotation",
@@ -615,7 +619,13 @@ function Module.init(context: Runtime): any
     })
     aura:CreateToggle({
         Name = "Team check",
+        Default = true,
+        Tooltip = "Skip teammates and Friend List entries.",
+    })
+    aura:CreateToggle({
+        Name = "Target NPCs",
         Default = false,
+        Tooltip = "Include non-player humanoid models in the reach scan.",
     })
     aura:CreateToggle({
         Name = "Require tool",

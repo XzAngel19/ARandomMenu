@@ -198,6 +198,13 @@ return function(ctx: any): ()
                 end
                 check("combo press picks a value", combo.Text == "Count", tostring(combo.Text))
             end
+            combo.MouseButton1Click:Fire()
+            check("combo can open the same ChoiceList again", host.ScreenGui:FindFirstChild("ChoiceList") ~= nil)
+            local comboArrow: any = comboRow:FindFirstChild("ComboArrow")
+            if comboArrow then
+                comboArrow.MouseButton1Click:Fire()
+            end
+            check("pressing the open combo arrow closes the ChoiceList", host.ScreenGui:FindFirstChild("ChoiceList") == nil)
         end
     end
 

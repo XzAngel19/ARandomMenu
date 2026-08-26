@@ -298,6 +298,34 @@ function Module.init(context: any): any
         return record
     end
 
+    -- A category receives cards as modules finish loading, not in display
+    -- order. Keep the body sorted by the visible module name so late game
+    -- cards cannot land between two unrelated rows or make the window look
+    -- like the loader's internal manifest.
+    local function sortCategoryRows(record: CategoryWindow): ()
+        local rows: {GuiObject} = {}
+        for _, child: Instance in ipairs(record.window.body:GetChildren()) do
+            if not child:IsA("GuiObject") then
+                continue
+            end
+            local key: any = child:GetAttribute("FeatureSortName")
+            if type(key) == "string" then
+                table.insert(rows, child :: GuiObject)
+            end
+        end
+        table.sort(rows, function(left: GuiObject, right: GuiObject): boolean
+            local leftKey: string = tostring(left:GetAttribute("FeatureSortName") or "")
+            local rightKey: string = tostring(right:GetAttribute("FeatureSortName") or "")
+            if leftKey == rightKey then
+                return left.Name < right.Name
+            end
+            return leftKey < rightKey
+        end)
+        for index: number, row: GuiObject in ipairs(rows) do
+            row.LayoutOrder = index
+        end
+    end
+
     -- A card is a row in the window for its category. It keeps every behaviour
     -- it already had; all that changes is where it is parented and that it now
     -- stretches to the window's width instead of the page's.
@@ -318,6 +346,7 @@ function Module.init(context: any): any
         record.count += 1;
         (row :: Frame).Parent = record.window.body;
         (row :: Frame).Size = UDim2.new(1, 0, 0, feature.collapsedHeight or 22)
+        sortCategoryRows(record)
         if record.resize then
             (record.resize :: () -> ())()
         end

@@ -36,7 +36,7 @@ return Module
 A universal module may use:
 
 - `context.framework.Categories.<OfficialCategory>:CreateModule(...)`;
-- `context.entity`, `context.weapons` and `context.render` through their published APIs;
+- `context.entity`, `context.weapons`, `context.render` and the shared `Targeting` library through their published APIs;
 - `context.host` engine services (`Players`, `LocalPlayer`, `UserInputService`, `workspace`, `TaskManager`, `HttpService`, `PRODUCT`);
 - documented host helpers such as `getCharacterParts`, `notify` and `isMenuOwned`;
 - the grouped `context.services` contracts below;
@@ -69,6 +69,7 @@ Services group a decision; they are not one wrapper per shell field.
 
 - `movementInput`: movement vector, held-jump state and filtered jump requests;
 - `aim`: the device-correct aim ray;
+- `screenCapture`: explicit local screenshot capability and text-file writing for Learning; it never uploads;
 - `menu`: visibility, input-capture state and explicit visibility changes;
 - `mobileActions`: placement of a module action on touch devices;
 - `protectedTargets`: one shared protection predicate and its Friend List provider;
@@ -79,6 +80,8 @@ Services group a decision; they are not one wrapper per shell field.
 - `gameBridge`: game role and ESP bridge events;
 - `shortcuts`: module activation binding;
 - `registries`: Wurst Options and module-search registration.
+
+`Entity.List` remains player-only for visual compatibility. Combat queries may opt into signal-indexed `Entity.NPCList`, and `Entity:IsFriendly` / `IsFriendlyModel` normalize Team, Faction and common attribute values before applying Team check.
 
 Module-local settings, caches, rate limits and captured baselines stay local. A module must not publish them through a service merely to make a test inspect them.
 
@@ -104,7 +107,7 @@ A one-shot uses `Action = true`. A module with no options declares none; never a
 
 ## Option builders
 
-Every option is created in display order. `Show` is declarative; the framework owns visibility after reparent/reopen.
+Every option is created in display order. `Show` is declarative; the framework owns visibility after reparent/reopen. Numeric sliders use Min/Max/Step for the drag rail; their editable text field accepts any finite numeric value and never silently clamps it to the rail.
 
 ### Toggle
 
@@ -246,10 +249,10 @@ A list of rules is AND. Omitted `Values` means a true toggle. `Invert = true` ne
 - AnimationTracks are stopped **and destroyed**.
 - Settings-window close does not disable gameplay; full teardown removes windows, tasks and connections.
 
-Proof lives in `tools/test/suites/clickgui-boot.luau`, the focused module suites and `tools/test/suites/teardown.luau`: every card opens/reopens settings, preserves values/Show/enabled, toggles safely and returns task/connection counts to baseline.
+Proof lives in `tools/test/suites/clickgui-boot.luau`, the focused module suites and `tools/test/suites/teardown.luau`: all 45 cards open/reopen settings, preserve values/Show/enabled, toggle safely and return task/connection counts to baseline. The same ClickGUI placement pass assigns each category's rows an alphabetic `LayoutOrder` by visible module name.
 
 ## Current audited exceptions
 
 - `AnimationChanger` and `EmotePlayer` use documented module-owned saved-ID keys in `host.configData` because the saved catalog is not one scalar option.
 
-Universal modules have no direct `host.state` access, no row/window/pixel dependency and no unlisted engine hook. `tools/check_module_conformance.py` blocks all three.
+Universal modules have no direct `host.state` access and no row/window/pixel dependency. `tools/check_module_conformance.py` blocks either reach-in.

@@ -73,6 +73,7 @@ export type MenuState = {
     openChoiceList: (...any) -> (),                 -- The single-choice popup, also used by the settings page
     openMultiList: (...any) -> (),                  -- The multi-choice popup
     closeChoiceList: () -> (),                      -- Close whichever is open
+    choiceListAnchor: TextButton?,                  -- The row whose popup is open; pressing its arrow toggles it closed
     listControls: {[string]: any},                  -- Per-list handles so a module can tick an entry it just discovered
     listSelections: {[string]: {[string]: boolean}}, -- What each list currently has selected
     colorPicker: any,                               -- The one colour picker; teardown releases its drag listeners

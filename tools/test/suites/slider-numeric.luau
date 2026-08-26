@@ -2,9 +2,10 @@
 --
 -- Headless tests: numeric sliders and ranges.
 --
--- A Wurst slider shows min / max and an editable current value. Speed
--- stays a single number. Auto Clicker's CPS is a low/high range that
--- stays ordered. Typed junk, NaN and inf must not stick.
+-- A Wurst slider shows min / max and an editable current value. The rail
+-- keeps a finite drag range, while the text field accepts any finite number.
+-- Auto Clicker's CPS is a low/high range that stays ordered. Typed junk, NaN
+-- and inf must not stick.
 
 return function(ctx: any): ()
     local Mock: any = ctx.Mock
@@ -76,6 +77,10 @@ return function(ctx: any): ()
         end
         check("FocusLost commits a typed current value", last == 64, tostring(last))
 
+        box.Text = "9999"
+        box.FocusLost:Fire()
+        check("typed values are not clamped to the drag rail", last == 9999, tostring(last))
+
         local before: number = last
         box.Text = "not-a-number"
         if box.FocusLost and box.FocusLost.Fire then
@@ -109,7 +114,7 @@ return function(ctx: any): ()
             end
             slider.InputBegan:Fire({
                 UserInputType = world.globals.Enum.UserInputType.MouseButton1,
-                Position = world.globals.Vector2.new(200, 0),
+                Position = world.globals.Vector2.new(100, 0),
             })
             check(
                 "a drag past the end clamps to max",
@@ -146,8 +151,8 @@ return function(ctx: any): ()
         decimalBox.FocusLost:Fire()
     end
     check(
-        "decimal sliders default to hundredths instead of raw pointer noise",
-        decimalValue == 1.73,
+        "typed decimal sliders preserve deliberate precision",
+        decimalValue == 1.7339128,
         tostring(decimalValue)
     )
 
@@ -170,15 +175,15 @@ return function(ctx: any): ()
         steppedBox.Text = "1.7339128"
         steppedBox.FocusLost:Fire()
     end
-    check("explicit slider steps are respected", steppedValue == 1.75, tostring(steppedValue))
+    check("typed values ignore the drag step", steppedValue == 1.7339128, tostring(steppedValue))
     check(
-        "decimal config stores the quantized value, not pointer noise",
-        host.configData.values["Slider.Decimal.Opacity"] == 1.73,
+        "decimal config stores the deliberate typed value",
+        host.configData.values["Slider.Decimal.Opacity"] == 1.7339128,
         tostring(host.configData.values["Slider.Decimal.Opacity"])
     )
     check(
-        "explicit step config stores the snapped value",
-        host.configData.values["Slider.Stepped.Scale"] == 1.75,
+        "explicit step remains a drag-rail setting",
+        host.configData.values["Slider.Stepped.Scale"] == 1.7339128,
         tostring(host.configData.values["Slider.Stepped.Scale"])
     )
 
@@ -200,13 +205,13 @@ return function(ctx: any): ()
         integerBox.FocusLost:Fire()
     end
     check(
-        "integer sliders stay integral after typed noise",
-        integerValue == 33 and integerValue % 1 == 0,
+        "integer sliders preserve a deliberate typed fraction",
+        integerValue == 32.7,
         tostring(integerValue)
     )
     check(
-        "integer config never keeps a fractional leftover",
-        host.configData.values["Slider.Integer.Count"] == 33,
+        "integer config preserves a deliberate typed fraction",
+        host.configData.values["Slider.Integer.Count"] == 32.7,
         tostring(host.configData.values["Slider.Integer.Count"])
     )
     if integerSlider then
@@ -259,6 +264,15 @@ return function(ctx: any): ()
             "the editable range starts at its configured defaults",
             tonumber(lowValue.Text) == 8 and tonumber(highValue.Text) == 12,
             tostring(lowValue.Text) .. "–" .. tostring(highValue.Text)
+        )
+        lowValue.Text = "-999"
+        lowValue.FocusLost:Fire()
+        highValue.Text = "9999"
+        highValue.FocusLost:Fire()
+        check(
+            "typed range values are not clamped to the drag rail",
+            lows[#lows] == -999 and highs[#highs] == 9999,
+            tostring(lows[#lows]) .. ".." .. tostring(highs[#highs])
         )
     end
 

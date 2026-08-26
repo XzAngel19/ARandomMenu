@@ -69,7 +69,7 @@ function Module.init(context: Runtime): any
         "Simulate extreme incoming replication delay",
         16,
         toggleLagSwitch,
-        {categoryName = "Movement"}
+        {categoryName = "Other"}
     )
     addNumberOption(
         LagSwitchFeature,

@@ -4,8 +4,9 @@
 --
 -- Target selection is deliberately pure from a module's point of view: it
 -- reads the entity index and camera, applies the same team/friend/visibility
--- policy to every caller, and returns a record. It never moves the camera,
--- fires a tool, edits a remote or installs a hook. Aim Assist uses the result;
+-- policy to every caller, and returns a player or NPC record. It never moves
+-- the camera, fires a tool, edits a remote or installs a hook. Aim Assist uses
+-- the result;
 -- a future supported-game adapter can use the same result without sharing any
 -- of the side effects.
 
@@ -17,10 +18,12 @@ export type Query = {
     TeamCheck: boolean?,
     VisibilityCheck: boolean?,
     Priority: string?,
+    IncludeNPCs: boolean?,
+    AllowOffscreen: boolean?,
 }
 
 export type Target = {
-    player: Player,
+    player: Player?,
     entity: any,
     character: Model,
     part: BasePart,
@@ -104,7 +107,10 @@ function Module.init(context: any): Library
         return {entity.RootPart}
     end
 
-    local function protected(player: Player): boolean
+    local function protected(player: Player?): boolean
+        if not player then
+            return false
+        end
         local policy: any = services and services.protectedTargets
         if policy and type(policy.isProtected) == "function" then
             return policy.isProtected(player) == true
@@ -148,11 +154,13 @@ function Module.init(context: any): Library
         local predicted: Vector3 = part.Position + velocity * prediction
         local projected: Vector3, onScreen: boolean =
             cameraObject:WorldToViewportPoint(predicted)
-        if not onScreen or projected.Z <= 0 then
+        if (not onScreen or projected.Z <= 0) and not query.AllowOffscreen then
             return nil
         end
         local screenPosition: Vector2 = Vector2.new(projected.X, projected.Y)
-        local cursorDistance: number = (screenPosition - pointer).Magnitude
+        local cursorDistance: number = onScreen
+                and (screenPosition - pointer).Magnitude
+            or math.huge
         if query.FOV ~= nil and cursorDistance > (query.FOV :: number) then
             return nil
         end
@@ -186,15 +194,15 @@ function Module.init(context: any): Library
         local maxDistance: number = options.MaxDistance or math.huge
         local prediction: number = math.max(options.Prediction or 0, 0)
 
-        for _, entity: any in ipairs(entities.List or {}) do
+        local function consider(entity: any): ()
             if entity.Distance > maxDistance then
-                continue
+                return
             end
             if options.TeamCheck ~= false and entity.IsFriendly then
-                continue
+                return
             end
             if protected(entity.Player) then
-                continue
+                return
             end
 
             local bestForEntity: Target? = nil
@@ -215,6 +223,14 @@ function Module.init(context: any): Library
             end
             if bestForEntity then
                 table.insert(found, bestForEntity :: Target)
+            end
+        end
+        for _, entity: any in ipairs(entities.List or {}) do
+            consider(entity)
+        end
+        if options.IncludeNPCs then
+            for _, entity: any in ipairs(entities.NPCList or {}) do
+                consider(entity)
             end
         end
 

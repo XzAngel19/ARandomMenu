@@ -46,11 +46,11 @@ stop something happening to you, Spoof has no Wurst window.
 | No Fall | Protection | NoFall | Movement | adapted |
 | Safe Walk | Protection | SafeWalk | Movement | adapted |
 | Anti-Void | Protection | — | — | roblox-only |
-| Anti-Fling | Protection | AntiKnockback / AntiEntityPush | Combat / Movement | adapted |
+| Anti-Fling | Other | AntiKnockback / AntiEntityPush | Combat / Movement | adapted |
 | Anti-AFK | Utility | AntiAFK | Other | adapted |
 | Gravity | Utility | — | — | roblox-only |
-| Fling | Utility | — | — | roblox-only |
-| Lag Switch | Utility | Blink | Movement | adapted |
+| Fling | Other | — | — | roblox-only |
+| Lag Switch | Other | Blink | Movement | adapted |
 | Improve FPS | Utility | — | — | roblox-only |
 | Interact Extender | Utility | Reach | Other | adapted |
 | Rejoin Server | Utility | AutoReconnect | Other | adapted |
