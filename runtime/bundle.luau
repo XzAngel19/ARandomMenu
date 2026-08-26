@@ -3,7 +3,7 @@
 -- The stamp is a digest of every packed file; the runtime refuses
 -- the bundle when it does not match SOURCE_STAMP in ARandomMenu.luau.
 return {
-    stamp = "52c0953d28a6105a",
+    stamp = "d148fc87f8a6f9df",
     files = {
         ["src/core/Manifest.luau"] = [=====[--!strict
 --
@@ -4828,7 +4828,10 @@ export type GameSource = {
     -- Returns {label, instance} pairs for whatever can be pressed right now.
     scan: () -> {{string}},
     -- Presses one of them. Returns whether anything was sent.
-    press: (label: string) -> boolean,
+    -- `target` is the entity the caller is aiming at, when it has one. A game
+    -- whose attack names its victim needs it; a game whose attack is a button
+    -- ignores it.
+    press: (label: string, target: any?) -> boolean,
 }
 
 export type WeaponLibrary = {
@@ -4836,7 +4839,7 @@ export type WeaponLibrary = {
     Labels: (self: WeaponLibrary, query: any?) -> {string},
     Find: (self: WeaponLibrary, label: string) -> Candidate?,
     IsMelee: (self: WeaponLibrary, name: string) -> boolean,
-    Activate: (self: WeaponLibrary, candidate: Candidate) -> boolean,
+    Activate: (self: WeaponLibrary, candidate: Candidate, target: any?) -> boolean,
     Best: (self: WeaponLibrary, query: any?) -> Candidate?,
     Invalidate: (self: WeaponLibrary) -> (),
     SetAllowEquip: (self: WeaponLibrary, allowed: boolean) -> (),
@@ -5334,7 +5337,11 @@ function Module.init(context: any): WeaponLibrary
     -- a hotbar slot, which at least equips the thing.
     function library:Best(query: any?): Candidate?
         local found: {Candidate} = library:Scan(query or {All = false})
-        local order: {string} = {"Tool", "Button", "Slot", "ViewModel"}
+        -- "Game" is first on purpose: a game that describes its own presses
+        -- knows better than a scan that guesses from instance classes. Without
+        -- it a leftover on-screen button outranked the game's own sword, and
+        -- the clicker pressed something the game did not care about.
+        local order: {string} = {"Game", "Tool", "Button", "Slot", "ViewModel"}
         local character: Model? = localPlayer.Character
         for _, kind: string in ipairs(order) do
             for _, candidate: Candidate in ipairs(found) do
@@ -5366,7 +5373,7 @@ function Module.init(context: any): WeaponLibrary
         return library:Activate(candidate :: Candidate)
     end
 
-    function library:Activate(candidate: Candidate): boolean
+    function library:Activate(candidate: Candidate, target: any?): boolean
         local instance: Instance = candidate.instance
         if candidate.kind == "Game" then
             -- The instance is only an identity here; the game decides what
@@ -5374,7 +5381,8 @@ function Module.init(context: any): WeaponLibrary
             if not library.gameSource or type(library.gameSource.press) ~= "function" then
                 return false
             end
-            local ok: boolean, pressed: any = pcall(library.gameSource.press, candidate.label)
+            local ok: boolean, pressed: any =
+                pcall(library.gameSource.press, candidate.label, target)
             return ok and pressed == true
         end
         if not instance.Parent then
@@ -17012,7 +17020,9 @@ function Module.init(context: Runtime): any
                     if weapons then
                         for _, label: string in ipairs(aura.Options["Weapons"].Selected or {}) do
                             local candidate: any = weapons:Find(label)
-                            if candidate and weapons:Activate(candidate) then
+                            -- The target travels with the press: a game whose attack names
+                        -- its victim cannot swing at nobody.
+                        if candidate and weapons:Activate(candidate, entity) then
                                 swung = true
                             end
                         end
@@ -17026,7 +17036,7 @@ function Module.init(context: Runtime): any
                         -- means a melee weapon, never the bow that happened
                         -- to be in the same hotbar.
                         local fallback: any = weapons:Best({Melee = true})
-                        swung = fallback ~= nil and weapons:Activate(fallback)
+                        swung = fallback ~= nil and weapons:Activate(fallback, entity)
                     end
                     -- Extra presses for games that count each one as a hit.
                     local extraHits: number =
@@ -18602,21 +18612,18 @@ function Module.init(context: Runtime): any
                 if mode == "Tool" then
                     local tool: Tool? = equippedTool()
                     if tool then
-                        if options["Weapons only"].Value
-                            and weapons
-                            and not weapons:IsMelee((tool :: Tool).Name) then
-                            return
-                        end
                         pcall(function(): ()
                             (tool :: Tool):Activate()
                         end)
                         return
                     end
-                    -- No Tool in hand does not mean no weapon: games like
-                    -- BedFight swing a view model through their own button,
-                    -- and the weapon library knows how to reach it.
+                    -- No Tool in hand does not mean nothing to press: BedFight
+                    -- swings a view model through its own button, and BedWars
+                    -- has no Tool at all. The weapon library knows what the
+                    -- game offers, and it is asked for all of it - filtering to
+                    -- melee here is what made a stack of blocks unclickable.
                     if weapons then
-                        local candidate: any = weapons:Best({Melee = true})
+                        local candidate: any = weapons:Best({All = true})
                         if candidate then
                             weapons:Activate(candidate)
                         end
@@ -18689,13 +18696,6 @@ function Module.init(context: Runtime): any
         Tooltip = "What one click means: activate the equipped tool, a real "
             .. "left or right click through the executor, or the game's own "
             .. "on-screen attack button.",
-    })
-    clicker:CreateToggle({
-        Name = "Weapons only",
-        Show = {Option = "Click", Values = {"Tool"}},
-        Default = false,
-        Tooltip = "Only click while what you are holding is a melee weapon, "
-            .. "so a pickaxe or a stack of blocks is never swung.",
     })
     clicker:CreateTextBox({
         Name = "Button name",

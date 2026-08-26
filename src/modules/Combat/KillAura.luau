@@ -426,7 +426,9 @@ function Module.init(context: Runtime): any
                     if weapons then
                         for _, label: string in ipairs(aura.Options["Weapons"].Selected or {}) do
                             local candidate: any = weapons:Find(label)
-                            if candidate and weapons:Activate(candidate) then
+                            -- The target travels with the press: a game whose attack names
+                        -- its victim cannot swing at nobody.
+                        if candidate and weapons:Activate(candidate, entity) then
                                 swung = true
                             end
                         end
@@ -440,7 +442,7 @@ function Module.init(context: Runtime): any
                         -- means a melee weapon, never the bow that happened
                         -- to be in the same hotbar.
                         local fallback: any = weapons:Best({Melee = true})
-                        swung = fallback ~= nil and weapons:Activate(fallback)
+                        swung = fallback ~= nil and weapons:Activate(fallback, entity)
                     end
                     -- Extra presses for games that count each one as a hit.
                     local extraHits: number =

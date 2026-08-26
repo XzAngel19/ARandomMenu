@@ -40,7 +40,10 @@ export type GameSource = {
     -- Returns {label, instance} pairs for whatever can be pressed right now.
     scan: () -> {{string}},
     -- Presses one of them. Returns whether anything was sent.
-    press: (label: string) -> boolean,
+    -- `target` is the entity the caller is aiming at, when it has one. A game
+    -- whose attack names its victim needs it; a game whose attack is a button
+    -- ignores it.
+    press: (label: string, target: any?) -> boolean,
 }
 
 export type WeaponLibrary = {
@@ -48,7 +51,7 @@ export type WeaponLibrary = {
     Labels: (self: WeaponLibrary, query: any?) -> {string},
     Find: (self: WeaponLibrary, label: string) -> Candidate?,
     IsMelee: (self: WeaponLibrary, name: string) -> boolean,
-    Activate: (self: WeaponLibrary, candidate: Candidate) -> boolean,
+    Activate: (self: WeaponLibrary, candidate: Candidate, target: any?) -> boolean,
     Best: (self: WeaponLibrary, query: any?) -> Candidate?,
     Invalidate: (self: WeaponLibrary) -> (),
     SetAllowEquip: (self: WeaponLibrary, allowed: boolean) -> (),
@@ -546,7 +549,11 @@ function Module.init(context: any): WeaponLibrary
     -- a hotbar slot, which at least equips the thing.
     function library:Best(query: any?): Candidate?
         local found: {Candidate} = library:Scan(query or {All = false})
-        local order: {string} = {"Tool", "Button", "Slot", "ViewModel"}
+        -- "Game" is first on purpose: a game that describes its own presses
+        -- knows better than a scan that guesses from instance classes. Without
+        -- it a leftover on-screen button outranked the game's own sword, and
+        -- the clicker pressed something the game did not care about.
+        local order: {string} = {"Game", "Tool", "Button", "Slot", "ViewModel"}
         local character: Model? = localPlayer.Character
         for _, kind: string in ipairs(order) do
             for _, candidate: Candidate in ipairs(found) do
@@ -578,7 +585,7 @@ function Module.init(context: any): WeaponLibrary
         return library:Activate(candidate :: Candidate)
     end
 
-    function library:Activate(candidate: Candidate): boolean
+    function library:Activate(candidate: Candidate, target: any?): boolean
         local instance: Instance = candidate.instance
         if candidate.kind == "Game" then
             -- The instance is only an identity here; the game decides what
@@ -586,7 +593,8 @@ function Module.init(context: any): WeaponLibrary
             if not library.gameSource or type(library.gameSource.press) ~= "function" then
                 return false
             end
-            local ok: boolean, pressed: any = pcall(library.gameSource.press, candidate.label)
+            local ok: boolean, pressed: any =
+                pcall(library.gameSource.press, candidate.label, target)
             return ok and pressed == true
         end
         if not instance.Parent then

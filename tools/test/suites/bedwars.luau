@@ -101,118 +101,17 @@ return function(ctx: any): ()
 
     local features: any = BedWarsFile.init({Services = host.services, State = host.state})
 
-    check("the module builds its cards", features ~= nil and features.aura ~= nil
+    check("the module builds its cards", features ~= nil
         and features.place ~= nil and features.nuke ~= nil and features.esp ~= nil
         and features.chest ~= nil and features.autoTool ~= nil
         and features.inventory ~= nil and features.aimbot ~= nil
         and features.drop ~= nil and features.tracer ~= nil
         and features.shop ~= nil)
-    local auraRows: number = 0
-    for _ in pairs(features.aura.options) do
-        auraRows += 1
-    end
-    check("Kill Aura is five rows and no dead ones",
-        features.aura.options["Reach"] ~= nil
-            and features.aura.options["Hitreg min"] ~= nil
-            and features.aura.options["Hitreg max"] ~= nil
-            and features.aura.options["Max targets"] ~= nil
-            and features.aura.options["Team check"] ~= nil
-            and auraRows == 5,
-        "rows: " .. tostring(auraRows))
-
-    -- ---------------------------------------------------------------- the aura
-
-    -- Defaults are the contract: 12 studs, a 35-36 hitreg band, team check on.
-    features.aura.activate()
-    world.clock += 1
-    stub.step(0.016)
-
-    local hits: any = sent["SwordHit"]
-    check("the aura fires SwordHit at a player in reach", hits ~= nil and #hits == 1,
-        "calls: " .. tostring(hits and #hits or 0))
-
-    local payload: any = hits and hits[1] and hits[1][1]
-    check("the payload is one table, as the capture recorded", type(payload) == "table")
-    check("it names the victim and the weapon",
-        payload ~= nil and payload.entityInstance == enemy.Character
-            and payload.weapon == weapon)
-    check("it carries the validate block the server reads",
-        payload ~= nil and payload.validate ~= nil
-            and payload.validate.selfPosition ~= nil
-            and payload.validate.targetPosition ~= nil
-            and payload.validate.raycast ~= nil
-            and payload.validate.raycast.cameraPosition ~= nil
-            and payload.validate.raycast.cursorDirection ~= nil)
-    check("selfPosition is where the character actually is",
-        payload ~= nil
-            and payload.validate.selfPosition.value == root.Position)
-    check("targetPosition is where the victim actually is",
-        payload ~= nil
-            and payload.validate.targetPosition.value == enemyRoot.Position)
-    check("chargeRatio is present and zero",
-        payload ~= nil and payload.chargedAttack
-            and payload.chargedAttack.chargeRatio == 0)
-    check("the cursor direction is a unit vector",
-        payload ~= nil
-            and math.abs(payload.validate.raycast.cursorDirection.value.Magnitude - 1) < 0.001,
-        payload and tostring(payload.validate.raycast.cursorDirection.value.Magnitude) or "none")
-
-    -- The rate is the claim this card makes, so it is measured, not read back.
-    local firstAt: number = world.clock
-    local swings: number = 0
-    for _ = 1, 400 do
-        world.clock += 0.016
-        stub.step(0.016)
-    end
-    swings = hits and #hits or 0
-    local elapsed: number = world.clock - firstAt
-    local perTen: number = swings / elapsed * 10
-    -- The step is 16 ms, so an interval of 10/35.5 = 0.2817 s always lands on
-    -- the next step and measures a little slow. The bound that protects a
-    -- player is the ceiling: the card must never swing faster than the band.
-    check("the swing rate stays inside the band and under its ceiling",
-        perTen >= 30 and perTen <= 37,
-        string.format("%.2f hits/10s over %.1fs", perTen, elapsed))
-
-    -- A weapon the game slows down caps the band. Ice is 0.40 s, which is 25
-    -- registered hits per ten seconds and not one more.
-    weapon.Name = "ice_sword"
-    local beforeClamp: number = hits and #hits or 0
-    local clampStart: number = world.clock
-    for _ = 1, 400 do
-        world.clock += 0.016
-        stub.step(0.016)
-    end
-    local clampElapsed: number = world.clock - clampStart
-    local clampPerTen: number = ((hits and #hits or 0) - beforeClamp) / clampElapsed * 10
-    check("an ice sword clamps the band to its own ceiling",
-        clampPerTen <= 26,
-        string.format("%.2f hits/10s", clampPerTen))
-    weapon.Name = "iron_sword"
-
-    -- No team-filter check here. The row defaults to on and the module compares
-    -- LocalPlayer.Team with the candidate's, but a headless attempt to prove it
-    -- kept firing anyway and the cause is not isolated yet, so the claim is
-    -- left unasserted rather than asserted wrongly. The Friend List is
-    -- deliberately not consulted in this game: BedWars has its own scoreboard.
-
-    features.aura.activate()
-    check("disabling clears every highlight",
-        enemy.Character:FindFirstChild("Wurst_BedWarsTarget") == nil)
-    check("and drops the connection",
-        host.featureConnections.BedWarsAura == nil
-            or host.featureConnections.BedWarsAura.Connected == false)
-
-    -- No weapon in hand means no payload, and a payload the module cannot make
-    -- consistent is a payload it does not send.
-    weapon.Parent = nil
-    local beforeNoWeapon: number = hits and #hits or 0
-    features.aura.activate()
-    world.clock += 1
-    stub.step(0.016)
-    check("empty hands send nothing", (hits and #hits or 0) == beforeNoWeapon)
-    features.aura.activate()
-    weapon.Parent = world.localPlayer.Character
+    -- There is no second Kill Aura here. The universal card swings whatever the
+    -- weapon library offers and passes the target with the press, so the game
+    -- only has to answer "how do I hit this".
+    check("there is no duplicate Kill Aura card in this game",
+        features.aura == nil)
 
     -- ------------------------------------------------------- weapon source
 
@@ -273,6 +172,32 @@ return function(ctx: any): ()
             #(sent["PlaceBlock"] :: any) >= 1,
             "calls: " .. tostring(#(sent["PlaceBlock"] :: any)))
     end
+    -- With a target - which is what the universal Kill Aura passes - the same
+    -- press becomes a solved SwordHit naming that victim.
+    sent["SwordHit"] = {}
+    local swordCandidate: any = weaponLibrary:Find("Sword")
+    check("the library can find the sword press", swordCandidate ~= nil)
+    if swordCandidate then
+        weaponLibrary:Activate(swordCandidate, {RootPart = enemyRoot})
+        local swings: any = sent["SwordHit"]
+        check("pressing the sword at a target fires SwordHit",
+            swings ~= nil and #swings >= 1,
+            "calls: " .. tostring(swings and #swings or 0))
+        local swing: any = swings and swings[1] and swings[1][1]
+        check("and it names the victim and validates the shot",
+            swing ~= nil and swing.entityInstance == enemy.Character
+                and swing.validate ~= nil
+                and swing.validate.targetPosition ~= nil
+                and swing.validate.selfPosition ~= nil,
+            swing and tostring(swing.entityInstance) or "none")
+        check("no target means a whiff, not a fabricated hit",
+            (function(): boolean
+                sent["SwordSwingMiss"] = {}
+                weaponLibrary:Activate(swordCandidate)
+                return #(sent["SwordSwingMiss"] :: any) >= 1
+                    and #(sent["SwordHit"] :: any) == 1
+            end)())
+    end
     sent["DamageBlock"] = {}
     local pickCandidate: any = weaponLibrary:Find("Pickaxe")
     if pickCandidate then
@@ -311,6 +236,33 @@ return function(ctx: any): ()
             and buy.shopId == "3_item_shop_2",
         buy and buy.shopItem and tostring(buy.shopItem.itemType) or "none")
     features.shop.activate()
+
+    -- The end-to-end claim: the *universal* Auto Clicker, in BedWars, holding
+    -- the attack button, presses something the game recognises. This is the
+    -- thing that was reported broken, so it is tested through the real card
+    -- rather than through the library it happens to call.
+    local espContext: any = ctx.espContext
+    local ClickerFile: any = require("../../../src/modules/Combat/AutoClicker")
+    Mock.inject(world, ClickerFile.init)
+    local clicker: any = ClickerFile.init(espContext)
+    check("the universal clicker needs no BedWars-specific row",
+        clicker.Options["Weapons only"] == nil)
+    sent["SwordSwingMiss"] = {}
+    world.mouseDown = true
+    world.clock += 1
+    clicker:Toggle()
+    stub.step(0.016)
+    check("holding the attack button swings the BedWars sword",
+        #(sent["SwordSwingMiss"] :: any) >= 1,
+        "calls: " .. tostring(#(sent["SwordSwingMiss"] :: any)))
+    world.mouseDown = false
+    world.clock += 1
+    local beforeIdle: number = #(sent["SwordSwingMiss"] :: any)
+    stub.step(0.016)
+    check("and letting go stops it",
+        #(sent["SwordSwingMiss"] :: any) == beforeIdle,
+        "calls: " .. tostring(#(sent["SwordSwingMiss"] :: any)))
+    clicker:Toggle()
 
     -- -------------------------------------------------------- inventory esp
 

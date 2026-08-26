@@ -219,21 +219,18 @@ function Module.init(context: Runtime): any
                 if mode == "Tool" then
                     local tool: Tool? = equippedTool()
                     if tool then
-                        if options["Weapons only"].Value
-                            and weapons
-                            and not weapons:IsMelee((tool :: Tool).Name) then
-                            return
-                        end
                         pcall(function(): ()
                             (tool :: Tool):Activate()
                         end)
                         return
                     end
-                    -- No Tool in hand does not mean no weapon: games like
-                    -- BedFight swing a view model through their own button,
-                    -- and the weapon library knows how to reach it.
+                    -- No Tool in hand does not mean nothing to press: BedFight
+                    -- swings a view model through its own button, and BedWars
+                    -- has no Tool at all. The weapon library knows what the
+                    -- game offers, and it is asked for all of it - filtering to
+                    -- melee here is what made a stack of blocks unclickable.
                     if weapons then
-                        local candidate: any = weapons:Best({Melee = true})
+                        local candidate: any = weapons:Best({All = true})
                         if candidate then
                             weapons:Activate(candidate)
                         end
@@ -306,13 +303,6 @@ function Module.init(context: Runtime): any
         Tooltip = "What one click means: activate the equipped tool, a real "
             .. "left or right click through the executor, or the game's own "
             .. "on-screen attack button.",
-    })
-    clicker:CreateToggle({
-        Name = "Weapons only",
-        Show = {Option = "Click", Values = {"Tool"}},
-        Default = false,
-        Tooltip = "Only click while what you are holding is a melee weapon, "
-            .. "so a pickaxe or a stack of blocks is never swung.",
     })
     clicker:CreateTextBox({
         Name = "Button name",

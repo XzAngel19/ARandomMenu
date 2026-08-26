@@ -409,11 +409,16 @@ return function(ctx: any): ()
         "Activation",
         "Hold key",
         "Click",
-        "Weapons only",
         "Button name",
     }) do
         check("option: " .. name, clicker.Options[name] ~= nil)
     end
+
+    -- "Weapons only" is gone: filtering the click to melee is what made a
+    -- pickaxe and a stack of blocks unclickable, and a clicker that quietly
+    -- refuses to click what you are holding is not a clicker.
+    check("the Weapons only filter is gone",
+        clicker.Options["Weapons only"] == nil)
 
     -- Tool mode: presses whatever is equipped, at the configured rate — but only
     -- while the attack is actually held down.

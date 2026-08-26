@@ -208,7 +208,6 @@ function Module.init(runtime: any): any
         end
     end
 
-    local AuraFeature: any = nil
     local InventoryFeature: any = nil
     local ShopFeature: any = nil
     local AimbotFeature: any = nil
@@ -314,133 +313,6 @@ function Module.init(runtime: any): any
         }
     end
 
-    AuraFeature = createUniversalFeature(
-        "Kill Aura",
-        "Swings at players in reach on the weapon's own hitreg",
-        1,
-        function(enabled: boolean): ()
-            host.disconnectFeatureConnection("BedWarsAura")
-            auraRuntime.nextSwingAt = 0
-            auraRuntime.hits = {}
-            clearHighlights()
-            if not enabled then
-                if AuraFeature then
-                    AuraFeature:SetStatus(nil)
-                end
-                return
-            end
-            AuraFeature:SetStatus("0/10s")
-            host.featureConnections.BedWarsAura =
-                TaskManager:Connect(function(): ()
-                    local now: number = os.clock()
-                    if now < auraRuntime.nextSwingAt then
-                        return
-                    end
-                    local own: Model?, humanoid: Humanoid?, root: BasePart? =
-                        characterParts()
-                    if not own or not humanoid or not root
-                        or (humanoid :: Humanoid).Health <= 0 then
-                        return
-                    end
-
-                    local origin: Vector3 = (root :: BasePart).Position
-                    local reach: number = auraSettings.reach
-                    local best: BasePart? = nil
-                    local bestCharacter: Model? = nil
-                    local bestDistance: number = reach
-                    local hitCount: number = 0
-
-                    for _, player: Player in ipairs(Players:GetPlayers()) do
-                        if hitCount >= auraSettings.maxTargets then
-                            break
-                        end
-                        if isProtected(player) then
-                            continue
-                        end
-                        if auraSettings.teamCheck and sameTeam(player) then
-                            continue
-                        end
-                        local other: Model? = player.Character
-                        local otherHumanoid: Humanoid? = other
-                            and other:FindFirstChildOfClass("Humanoid") :: Humanoid?
-                        local otherRoot: BasePart? = other
-                            and other:FindFirstChild("HumanoidRootPart") :: BasePart?
-                        if not other or not otherHumanoid or not otherRoot
-                            or (otherHumanoid :: Humanoid).Health <= 0 then
-                            continue
-                        end
-                        local distance: number =
-                            ((otherRoot :: BasePart).Position - origin).Magnitude
-                        if distance > bestDistance then
-                            continue
-                        end
-                        -- One swing, one target: the capture shows a single
-                        -- entityInstance per SwordHit, so "multi" here would be
-                        -- several remotes in one frame, which is a different
-                        -- and much louder thing.
-                        best = otherRoot :: BasePart
-                        bestCharacter = other
-                        bestDistance = distance
-                        hitCount += 1
-                    end
-
-                    if not best or not bestCharacter then
-                        clearHighlights()
-                        AuraFeature:SetStatus(tostring(#auraRuntime.hits) .. "/10s")
-                        return
-                    end
-
-                    local payload: {[string]: any}? =
-                        swordHitPayload(best :: BasePart)
-                    if not payload then
-                        -- No weapon in hand, or no camera: nothing to claim.
-                        clearHighlights()
-                        return
-                    end
-
-                    local ceiling: number = weaponCeiling(equippedWeapon())
-                    local low: number = math.clamp(auraSettings.minHits, 1, ceiling)
-                    local high: number =
-                        math.clamp(math.max(auraSettings.maxHits, low), 1, ceiling)
-                    local drawn: number = low + (math.random() * (high - low))
-                    auraRuntime.nextSwingAt = now + (10 / drawn)
-
-                    local sent: boolean = fire("SwordHit", payload :: any)
-                    markTarget(bestCharacter :: Model, Color3.fromRGB(235, 110, 110))
-                    local registered: number = sent and registerHit(now) or 0
-                    AuraFeature:SetStatus(tostring(registered) .. "/10s")
-                end)
-        end,
-        {categoryName = "Combat", registry = registry}
-    )
-    addNumberOption(AuraFeature, "Reach", auraSettings.reach, 5, 30, function(value: number): ()
-        auraSettings.reach = value
-    end)
-    -- Two rows, not a range control: hitreg is the one setting here a player
-    -- tunes by feel, and min/max are the words the game's own community uses.
-    -- 35-36 registered hits per ten seconds is above a 0.30 s sword's nominal
-    -- ceiling of 33, which is the whole point - it sits in the margin the
-    -- server leaves. The card clamps the pair to the equipped weapon, so an
-    -- ice sword at 0.40 s cannot be asked for a rate it will refuse.
-    addNumberOption(AuraFeature, "Hitreg min", auraSettings.minHits, 1, 40,
-        function(value: number): ()
-            auraSettings.minHits = value
-            if auraSettings.maxHits < value then
-                auraSettings.maxHits = value
-            end
-        end)
-    addNumberOption(AuraFeature, "Hitreg max", auraSettings.maxHits, 1, 40,
-        function(value: number): ()
-            auraSettings.maxHits = math.max(value, auraSettings.minHits)
-        end)
-    addNumberOption(AuraFeature, "Max targets", auraSettings.maxTargets, 1, 5,
-        function(value: number): ()
-            auraSettings.maxTargets = math.round(value)
-        end)
-    addToggleOption(AuraFeature, "Team check", auraSettings.teamCheck,
-        function(value: boolean): ()
-            auraSettings.teamCheck = value
-        end)
 
     -- `PlaceBlock` wants the block type, the placement position and a
     -- `mouseBlockInfo` table. The capture shows all three, with `blockData` at
@@ -1416,10 +1288,25 @@ function Module.init(runtime: any): any
         return hit and (hit :: RaycastResult).Position or nil
     end
 
-    local function gamePress(label: string): boolean
+    local function gamePress(label: string, target: any?): boolean
         if label == "Sword" then
-            -- A swing with nobody in reach is a real event and the game
-            -- reports it; SwordSwingMiss is in the capture.
+            -- A target means the universal Kill Aura is swinging at somebody,
+            -- and in this game that is a solved SwordHit rather than a button
+            -- press: the client names the victim and the server takes its word,
+            -- so the payload has to be consistent with where we stand.
+            local targetRoot: BasePart? = target and target.RootPart
+            if targetRoot then
+                local view: Camera? = camera()
+                if not view then
+                    return false
+                end
+                local payload: {[string]: any}? = swordHitPayload(targetRoot :: BasePart)
+                if not payload then
+                    return false
+                end
+                return fire("SwordHit", payload :: any)
+            end
+            -- No target is a real whiff, and the game reports those too.
             return fire("SwordSwingMiss", {
                 chargeRatio = 0,
                 weapon = equippedWeapon(),
@@ -1527,7 +1414,6 @@ function Module.init(runtime: any): any
 
     Module.Initialized = true
     return {
-        aura = AuraFeature,
         place = PlaceFeature,
         nuke = NukeFeature,
         esp = EspFeature,
