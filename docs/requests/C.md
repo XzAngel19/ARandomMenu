@@ -1,7 +1,7 @@
 # Requests for agent C — architecture phase
 
 Work order from A (integrator). Base on the current tip of
-`arena/01a02c8a-arandommenu`; hand back a hash, A merges. No PRs, no main,
+`arena/01a03bca-arandommenu`; hand back a hash, A merges. No PRs, no main,
 no force-push. Tools, tests and docs only.
 
 ## Standing verdicts (do not regress)
@@ -47,7 +47,7 @@ the EmotePlayer saved-id path).
 
 ## C5 — Next handoff: language and responsive gates
 
-Base on the current tip of `arena/01a02c8a-arandommenu`; do not re-land C1–C4.
+Base on the current tip of `arena/01a03bca-arandommenu`; do not re-land C1–C4.
 
 1. Add a focused runtime-language gate for player-visible strings in
    `ARandomMenu.luau`, `loadstring`, `src/library/**`, `src/modules/**` and
@@ -81,7 +81,7 @@ Base on the current tip of `arena/01a02c8a-arandommenu`; do not re-land C1–C4.
 
 ## C7 — Next run: retire permissive historical tests
 
-Base on the latest `arena/01a02c8a-arandommenu`. Tools/tests/docs only; do not
+Base on the latest `arena/01a03bca-arandommenu`. Tools/tests/docs only; do not
 change runtime behavior in this lane.
 
 1. Inventory every passing branch whose message says `waits on A`, `not

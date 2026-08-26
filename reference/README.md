@@ -22,7 +22,14 @@ is downloaded by the menu, compiled by the validation workflow or referenced by
   `MouseButton1Click` the game listens on. Every one of those three shapes is
   something the weapon library now looks for.
 
-- `remote-logs/` — Remote Logger output captured live in BedFight. These are
+- `places/` — saved places, compressed, one directory per capture round.
+  `Place_8444591321_partes.7z.001` + `.002` is Roblox BedWars, place
+  `8444591321`: concatenate the two parts and unpack to get one
+  `Place_8444591321.rbxlx`. See "Where a large capture goes" below before adding
+  another.
+
+- `remote-logs/` — Remote Logger output captured live in BedFight and BedWars.
+  These are
   the argument shapes no decompiler can give you, because they are the values a
   specific action produced: `PlaceBlock("Green Wool", 5, Vector3(-237, 60, 6))`,
   `SwordHit(«Model PlayersContainer.someone», "Wooden Sword")`,
@@ -39,3 +46,29 @@ for reading, not code this repository compiles or lints, and its first line is
 its own cache watermark rather than `--!strict` — so a checker that walks every
 `.lua` file in the repository would either fail on it or force us to edit
 somebody else's file.
+
+## Where a large capture goes
+
+Decided when the BedWars round landed 24 MB of 7z parts and a 5 KB remote log
+loose in the repository root, which is where nothing else in this project lives.
+
+- **Remote logs go in `reference/remote-logs/`**, named
+  `<placeId>-<timestamp>.json` and `.txt`, both parts. They are small — the
+  BedWars pair is 15 KB — text, and they are the only record of an argument
+  shape that no decompile can reproduce, so they are committed without
+  discussion.
+- **Saved places go in `reference/places/`**, compressed, never expanded. The
+  precedent is `bedfight-place-dump.rbxmx.zip` at 1.3 MB. Keep the archive the
+  capture arrived as: the BedWars place is two 7z parts because that is how it
+  was split to upload, and re-packing it would break the checksum the user can
+  verify against their own copy.
+- **The unpacked place is never committed.** `Place_8444591321.rbxlx` is 170 MB
+  of XML; `.gitignore` refuses `*.rbxlx`, `*.rbxl` and `*.rbxmx` under
+  `reference/places/` so an unpack in the working tree cannot be staged by
+  accident. Unpack it, mine it, write the facts into the game module's header,
+  delete it.
+- **Above roughly 50 MB compressed, do not commit at all.** Git stores every
+  version forever and this repository is cloned by every agent session; the
+  BedWars parts already put 24 MB of permanent binary in the history, which is
+  half of what `.git` weighs. A capture that size arrives as a link the user
+  posts in chat, and the facts mined from it live in the module header.

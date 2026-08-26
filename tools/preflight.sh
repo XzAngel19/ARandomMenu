@@ -12,7 +12,12 @@
 # about to commit on top of what is actually on the server.
 set -uo pipefail
 
-BRANCH="${1:-arena/01a01c6e-arandommenu}"
+# Pass your own session branch. The default is the current integration branch;
+# it has changed three times, because an Arena session is pinned to the branch
+# Arena created for it and a session cannot outlive its own branch. Relying on
+# the default from an agent that owns a different branch is how this script
+# reports "ok" against somebody else's tip.
+BRANCH="${1:-arena/01a03bca-arandommenu}"
 
 remote_tip="$(git ls-remote origin "refs/heads/${BRANCH}" | cut -f1)"
 if [ -z "${remote_tip}" ]; then

@@ -2,7 +2,7 @@
 
 These are the follow-up review briefs for the next C/D pass. All code, UI
 labels and runtime strings must remain English. Work from the latest
-`arena/01a02c8a-arandommenu` tip and return a commit hash without opening a PR.
+`arena/01a03bca-arandommenu` tip and return a commit hash without opening a PR.
 
 ## Agent C — UI and numeric regression gates
 

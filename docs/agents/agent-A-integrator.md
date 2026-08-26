@@ -12,7 +12,7 @@ building.
 
 ## The branch, and the two things that destroy work
 
-You work on **`arena/01a02c8a-arandommenu`** and push only there. Never `main`:
+You work on **`arena/01a03bca-arandommenu`** and push only there. Never `main`:
 the loader ships from it, so merging into it would push an unfinished rebuild to
 every player.
 
