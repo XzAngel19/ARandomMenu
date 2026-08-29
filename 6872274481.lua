@@ -2447,6 +2447,7 @@ run(function()
 	local Wool
 	local BlockCPS = {}
 	local Thread
+	local PlaceRange
 
 	local function uiOpen()
 		local ok, open = pcall(function()
@@ -2483,7 +2484,7 @@ run(function()
 							if inputService.TouchEnabled then
 								task.spawn(blockPlacer.autoBridge, blockPlacer, workspace:GetServerTimeNow() - bedwars.KnockbackController:getLastKnockbackTime() >= 0.2)
 							else
-								local mouseinfo = blockPlacer.clientManager:getBlockSelector():getMouseInfo(0)
+								local mouseinfo = blockPlacer.clientManager:getBlockSelector():getMouseInfo(0, {range = PlaceRange.Value})
 								if mouseinfo and mouseinfo.placementPosition == mouseinfo.placementPosition then
 									task.spawn(blockPlacer.placeBlock, blockPlacer, mouseinfo.placementPosition)
 								end
@@ -2574,6 +2575,13 @@ run(function()
 		end
 	})
 	Wool = AutoClicker:CreateToggle({Name = 'Wool only', Tooltip = 'Only clicks when you are holding wool.', Darker = true})
+	PlaceRange = AutoClicker:CreateSlider({
+		Name = 'Place range',
+		Min = 1,
+		Max = 30,
+		Default = 14,
+		Tooltip = 'Reach for autoclicker block placing (tower/stairs). Manual clicks are unaffected.'
+	})
 	BlockCPS = AutoClicker:CreateTwoSlider({
 		Name = 'Block CPS',
 		Min = 1,
