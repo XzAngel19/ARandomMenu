@@ -2487,6 +2487,11 @@ run(function()
 	local ParticleColor2
 	local ParticleSize
 	local Face
+	local HorizontalRange
+	local VerticalRange
+	local AirHit
+	local SwingTime
+	local AttackSpeed
 	local Overlay = OverlapParams.new()
 	Overlay.FilterType = Enum.RaycastFilterType.Include
 	local Particles, Boxes, AttackDelay = {}, {}, tick()
@@ -2526,15 +2531,21 @@ run(function()
 								local delta = (v.RootPart.Position - selfpos)
 								local angle = math.acos(localfacing:Dot((delta * Vector3.new(1, 0, 1)).Unit))
 								if angle > (math.rad(AngleSlider.Value) / 2) then continue end
+								if (delta * Vector3.new(1, 0, 1)).Magnitude > HorizontalRange.Value then continue end
+								if math.abs(delta.Y) > VerticalRange.Value then continue end
+								if v.Humanoid and v.Humanoid.FloorMaterial == Enum.Material.Air then
+									local chance = math.random(math.min(AirHit.Value.Min, AirHit.Value.Max), math.max(AirHit.Value.Min, AirHit.Value.Max))
+									if math.random(1, 100) > chance then continue end
+								end
 	
 								table.insert(attacked, {
 									Entity = v,
 									Check = delta.Magnitude > AttackRange.Value and BoxSwingColor or BoxAttackColor
 								})
-								targetinfo.Targets[v] = tick() + 1
+								targetinfo.Targets[v] = tick() + SwingTime.Value
 	
 								if AttackDelay < tick() then
-									AttackDelay = tick() + (1 / CPS.GetRandomValue())
+									AttackDelay = tick() + AttackSpeed.Value
 									tool:Activate()
 								end
 	
@@ -2583,18 +2594,12 @@ run(function()
 		Tooltip = 'Attack players around you\nwithout aiming at them.'
 	})
 	Targets = Killaura:CreateTargets({Players = true})
-	CPS = Killaura:CreateTwoSlider({
-		Name = 'Attacks per Second',
-		Min = 1,
-		Max = 20,
-		DefaultMin = 12,
-		DefaultMax = 12
-	})
+	-- Rate is a fixed cooldown (Attack speed) instead of a CPS range.
 	SwingRange = Killaura:CreateSlider({
 		Name = 'Swing range',
 		Min = 1,
 		Max = 30,
-		Default = 13,
+		Default = 25,
 		Suffix = function(val)
 			return val == 1 and 'stud' or 'studs'
 		end
@@ -2603,16 +2608,44 @@ run(function()
 		Name = 'Attack range',
 		Min = 1,
 		Max = 30,
-		Default = 13,
+		Default = 16,
 		Suffix = function(val)
 			return val == 1 and 'stud' or 'studs'
+		end
+	})
+	HorizontalRange = Killaura:CreateSlider({
+		Name = 'Horizontal range',
+		Min = 1,
+		Max = 30,
+		Default = 28,
+		Suffix = function(val)
+			return val == 1 and 'stud' or 'studs'
+		end
+	})
+	VerticalRange = Killaura:CreateSlider({
+		Name = 'Vertical range',
+		Min = 1,
+		Max = 30,
+		Default = 28,
+		Suffix = function(val)
+			return val == 1 and 'stud' or 'studs'
+		end
+	})
+	Killaura:CreateButton({
+		Name = 'Sync to legit ranges',
+		Tooltip = 'Sets every range to what the BedWars sword actually reaches',
+		Function = function()
+			SwingRange:SetValue(14)
+			AttackRange:SetValue(14)
+			HorizontalRange:SetValue(14)
+			VerticalRange:SetValue(8)
 		end
 	})
 	AngleSlider = Killaura:CreateSlider({
 		Name = 'Max angle',
 		Min = 1,
 		Max = 360,
-		Default = 90
+		Default = 360
 	})
 	Max = Killaura:CreateSlider({
 		Name = 'Max targets',
@@ -2622,6 +2655,36 @@ run(function()
 	})
 	Mouse = Killaura:CreateToggle({Name = 'Require mouse down'})
 	Lunge = Killaura:CreateToggle({Name = 'Sword lunge only'})
+	AirHit = Killaura:CreateTwoSlider({
+		Name = 'Air hit chance',
+		Min = 0,
+		Max = 100,
+		DefaultMin = 100,
+		DefaultMax = 100,
+		Suffix = function(val)
+			return val .. '%'
+		end
+	})
+	SwingTime = Killaura:CreateSlider({
+		Name = 'Swing time',
+		Min = 0.01,
+		Max = 1,
+		Default = 0.11,
+		Decimal = 2,
+		Suffix = function(val)
+			return val == 1 and 'second' or 'seconds'
+		end
+	})
+	AttackSpeed = Killaura:CreateSlider({
+		Name = 'Attack speed',
+		Min = 0.05,
+		Max = 1,
+		Default = 0.285,
+		Decimal = 3,
+		Suffix = function(val)
+			return val == 1 and 'second' or 'seconds'
+		end
+	})
 	Killaura:CreateToggle({
 		Name = 'Show target',
 		Function = function(callback)
