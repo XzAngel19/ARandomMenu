@@ -2447,28 +2447,14 @@ run(function()
 	local Wool
 	local BlockCPS = {}
 	local Thread
-	local BridgeHelp
-	local lastAbrupt = 0
 
-	-- Bridge Help: si estas mirando hacia abajo (construyendo en torre) el aim
-	-- deriva un pixel y el bloque sale a izquierda/derecha. Fijamos X/Z a la
-	-- columna del jugador y dejamos que Y siga al cursor, hasta que muevas el
-	-- mouse de golpe (delta grande), que ahi te devolvemos el control.
-	local function bridgeHelpPos(real)
-		local delta = inputService:GetMouseDelta()
-		if delta.Magnitude > 30 then
-			lastAbrupt = tick()
-		end
-		local lookingDown = gameCamera.CFrame.LookVector.Y < -0.35
-		if not lookingDown or (tick() - lastAbrupt) < 0.25 then
-			return real
-		end
-		local root = entitylib.character.RootPart
-		return Vector3.new(
-			math.floor(root.Position.X / 3) * 3 + 1.5,
-			real.Y,
-			math.floor(root.Position.Z / 3) * 3 + 1.5
-		)
+	local function uiOpen()
+		local ok, open = pcall(function()
+			return bedwars.AppController:isLayerOpen(bedwars.UILayers.SHOP)
+				or bedwars.AppController:isLayerOpen(bedwars.UILayers.INVENTORY)
+				or bedwars.AppController:isLayerOpen(bedwars.UILayers.MAIN)
+		end)
+		return ok and open or false
 	end
 	
 	local function isAttack(input)
@@ -2486,7 +2472,11 @@ run(function()
 	
 		Thread = task.delay(1 / (store.hand.toolType == 'block' and BlockCPS or CPS).GetRandomValue(), function()
 			repeat
-				if not bedwars.AppController:isLayerOpen(bedwars.UILayers.MAIN) then
+				-- Con la shop/inventario/main abierto no procesamos clicks: evita
+				-- pelear con la UI y el lag de spamear compras mientras clickeas.
+				if uiOpen() then
+					task.wait(0.1)
+				elseif not bedwars.AppController:isLayerOpen(bedwars.UILayers.MAIN) then
 					local blockPlacer = bedwars.BlockPlacementController.blockPlacer
 					if store.hand.toolType == 'block' and (Wool.Enabled and store.hand.tool.Name:find('wool_') or not Wool.Enabled) and blockPlacer and canPlace() then
 						if (workspace:GetServerTimeNow() - bedwars.BlockCpsController.lastPlaceTimestamp) >= ((1 / 12) * 0.5) then
@@ -2495,7 +2485,7 @@ run(function()
 							else
 								local mouseinfo = blockPlacer.clientManager:getBlockSelector():getMouseInfo(0)
 								if mouseinfo and mouseinfo.placementPosition == mouseinfo.placementPosition then
-									task.spawn(blockPlacer.placeBlock, blockPlacer, BridgeHelp.Enabled and bridgeHelpPos(mouseinfo.placementPosition) or mouseinfo.placementPosition)
+									task.spawn(blockPlacer.placeBlock, blockPlacer, mouseinfo.placementPosition)
 								end
 							end
 						end
@@ -2504,14 +2494,6 @@ run(function()
 							bedwars.SwordController:mobileSwingPressed()
 						elseif canSwing() and not bedwars.SwordController.disableSwingState then
 							bedwars.SwordController:swingSwordAtMouse(0.39)
-						end
-					elseif Pickaxe.Enabled and store.hand.tool and bedwars.ItemMeta[store.hand.tool.Name] and bedwars.ItemMeta[store.hand.tool.Name].breakBlock then
-						local placer = bedwars.BlockPlacementController and bedwars.BlockPlacementController.blockPlacer
-						local selector = placer and placer.clientManager and placer.clientManager:getBlockSelector()
-						local info = selector and selector:getMouseInfo(1)
-						local blk = info and info.target and info.target.blockInstance
-						if blk and canPlace() then
-							bedwars.breakBlock(blk, true, true)
 						end
 					end
 				end
@@ -2577,15 +2559,6 @@ run(function()
 		Max = 9,
 		DefaultMin = 7,
 		DefaultMax = 7
-	})
-	Pickaxe = AutoClicker:CreateToggle({
-		Name = 'Pickaxe',
-		Default = true,
-		Tooltip = 'Auto-mine with pickaxes/axes while holding attack.'
-	})
-	BridgeHelp = AutoClicker:CreateToggle({
-		Name = 'Bridge Help',
-		Tooltip = 'When looking down, locks block placement to your column so it does not drift sideways until you flick the mouse.'
 	})
 	AutoClicker:CreateToggle({
 		Name = 'Place Blocks',
