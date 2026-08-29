@@ -2482,6 +2482,14 @@ run(function()
 						elseif canSwing() and not bedwars.SwordController.disableSwingState then
 							bedwars.SwordController:swingSwordAtMouse(0.39)
 						end
+					elseif Pickaxe.Enabled and store.hand.tool and bedwars.ItemMeta[store.hand.tool.Name] and bedwars.ItemMeta[store.hand.tool.Name].breakBlock then
+						local placer = bedwars.BlockPlacementController and bedwars.BlockPlacementController.blockPlacer
+						local selector = placer and placer.clientManager and placer.clientManager:getBlockSelector()
+						local info = selector and selector:getMouseInfo(1)
+						local blk = info and info.target and info.target.blockInstance
+						if blk and canPlace() then
+							bedwars.breakBlock(blk, true, true)
+						end
 					end
 				end
 	
@@ -2546,6 +2554,11 @@ run(function()
 		Max = 9,
 		DefaultMin = 7,
 		DefaultMax = 7
+	})
+	Pickaxe = AutoClicker:CreateToggle({
+		Name = 'Pickaxe',
+		Default = true,
+		Tooltip = 'Auto-mine with pickaxes/axes while holding attack.'
 	})
 	AutoClicker:CreateToggle({
 		Name = 'Place Blocks',
@@ -3401,14 +3414,26 @@ run(function()
 			end
 	
 			if callback then
+				local lastSeen = 0
 				old = bedwars.KnockbackUtil.applyKnockback
 				bedwars.KnockbackUtil.applyKnockback = function(root, mass, dir, knockback, ...)
 					if rand:NextNumber(0, 100) > Chance.Value then return end
-					local check = (not TargetCheck.Enabled) or entitylib.EntityPosition({
-						Range = 50,
-						Part = 'RootPart',
-						Players = true
-					})
+					local check
+					if TargetCheck.Enabled then
+						-- Sticky: while chasing, the target flickers out of the 50-stud
+						-- check for a frame or two and you'd eat full knockback. Keep
+						-- the reduction for a second after the last time you saw them.
+						if entitylib.EntityPosition({
+							Range = 50,
+							Part = 'RootPart',
+							Players = true
+						}) then
+							lastSeen = tick()
+						end
+						check = (tick() - lastSeen) < 1
+					else
+						check = true
+					end
 	
 					if check then
 						knockback = knockback or {}
@@ -9890,12 +9915,14 @@ run(function()
 	
 						if wool then
 							local root = entitylib.character.RootPart
-							if Tower.Enabled and inputService:IsKeyDown(Enum.KeyCode.Space) and (not inputService:GetFocusedTextBox()) then
+							local wantUp = (Tower.Enabled and inputService:IsKeyDown(Enum.KeyCode.Space))
+								or (TowerOnly.Enabled and entitylib.character.Humanoid.MoveDirection.Magnitude > 0)
+							if wantUp and (not inputService:GetFocusedTextBox()) then
 								root.Velocity = Vector3.new(root.Velocity.X, 38, root.Velocity.Z)
 							end
 	
 							for i = Expand.Value, 1, -1 do
-								local currentpos = roundPos(root.Position - Vector3.new(0, entitylib.character.HipHeight + (Downwards.Enabled and inputService:IsKeyDown(Enum.KeyCode.LeftShift) and 4.5 or 1.5), 0) + entitylib.character.Humanoid.MoveDirection * (i * 3))
+								local currentpos = roundPos(root.Position - Vector3.new(0, entitylib.character.HipHeight + (Downwards.Enabled and inputService:IsKeyDown(Enum.KeyCode.LeftShift) and 4.5 or 1.5), 0) + entitylib.character.Humanoid.MoveDirection * (TowerOnly.Enabled and 0 or (i * 3)))
 								if Diagonal.Enabled then
 									if math.abs(math.round(math.deg(math.atan2(-entitylib.character.Humanoid.MoveDirection.X, -entitylib.character.Humanoid.MoveDirection.Z)) / 45) * 45) % 90 == 45 then
 										local dt = (lastpos - currentpos)
@@ -9932,6 +9959,10 @@ run(function()
 	Tower = Scaffold:CreateToggle({
 		Name = 'Tower',
 		Default = true
+	})
+	TowerOnly = Scaffold:CreateToggle({
+		Name = 'Tower only',
+		Tooltip = 'Only stack blocks under you to gain height, instead of bridging forward.'
 	})
 	Downwards = Scaffold:CreateToggle({
 		Name = 'Downwards',
