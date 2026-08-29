@@ -1,0 +1,18 @@
+{
+    "added": [
+        "AutoConqueror",
+        "AutoSkoll",
+        "AutoWhimElement",
+        "AutoJade",
+        "AutoVoidRegent",
+        "AutoChestSplit"
+    ],
+    "updated": [
+        "AutoFish",
+        "AutoWhisper",
+        "Clutch",
+        "AutoTool",
+        "NoFall"
+    ],
+    "text": "[BEDWARS]\n\u001b[2;32m[+]\u001b[0m Added AutoConqueror (drops the banner you pick beside you when a fight starts, on attack or as soon as someone walks up)\n\u001b[2;32m[+]\u001b[0m Added AutoSkoll (replaces AutoVoidHunter, throws Fenrir straight at your target instead of wherever your camera points, and picks when to set the mark off)\n\u001b[2;32m[+]\u001b[0m Added AutoWhimElement (reads every Tome of the Elements it can reach so Whim unlocks its spells)\n\u001b[2;32m[+]\u001b[0m Added AutoJade (slams the hammer down right before you land)\n\u001b[2;32m[+]\u001b[0m Added AutoVoidRegent (the same landing slam with the void axe)\n\u001b[2;32m[+]\u001b[0m Added Minigame mode to AutoFish (Legit plays the catch bar out itself instead of winning the moment it opens)\n\u001b[2;32m[+]\u001b[0m Added AutoChestSplit (banks the split into your personal chest the second you are stood at one, so you do not lose it on the way home)\n\u001b[2;32m[+]\u001b[0m Added Auto owl to AutoWhisper (pick a teammate and the owl gets sent to them as soon as the ability is up)\n\u001b[2;32m[+]\u001b[0m Added Accuracy to Clutch (how close to the real fall damage limit it cuts it, lower catches you higher up with room to spare)\n\u001b[2;32m[+]\u001b[0m Added Damage to NoFall (how much of each fall still lands on you, so you are not the guy who never takes fall damage)\n\u001b[2;34m[*]\u001b[0m Reworked AutoTool\n\t-> Mode (Look swaps while you are still aiming at the block, Break is the old swap on first hit)\n\t-> Delay (how long you have to be looking at it before the swap)\n\t-> Switch back (puts the item you were holding back once you look away)\n\u001b[2;33m[!]\u001b[0m Fixed the GUI erroring on every injection (a removed legit module left its settings list connected)"
+}
