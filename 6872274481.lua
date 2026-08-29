@@ -2447,6 +2447,29 @@ run(function()
 	local Wool
 	local BlockCPS = {}
 	local Thread
+	local BridgeHelp
+	local lastAbrupt = 0
+
+	-- Bridge Help: si estas mirando hacia abajo (construyendo en torre) el aim
+	-- deriva un pixel y el bloque sale a izquierda/derecha. Fijamos X/Z a la
+	-- columna del jugador y dejamos que Y siga al cursor, hasta que muevas el
+	-- mouse de golpe (delta grande), que ahi te devolvemos el control.
+	local function bridgeHelpPos(real)
+		local delta = inputService:GetMouseDelta()
+		if delta.Magnitude > 30 then
+			lastAbrupt = tick()
+		end
+		local lookingDown = gameCamera.CFrame.LookVector.Y < -0.35
+		if not lookingDown or (tick() - lastAbrupt) < 0.25 then
+			return real
+		end
+		local root = entitylib.character.RootPart
+		return Vector3.new(
+			math.floor(root.Position.X / 3) * 3 + 1.5,
+			real.Y,
+			math.floor(root.Position.Z / 3) * 3 + 1.5
+		)
+	end
 	
 	local function isAttack(input)
 		local keybinds = bedwars.KeybindLoadController:getKeybinds()
@@ -2472,7 +2495,7 @@ run(function()
 							else
 								local mouseinfo = blockPlacer.clientManager:getBlockSelector():getMouseInfo(0)
 								if mouseinfo and mouseinfo.placementPosition == mouseinfo.placementPosition then
-									task.spawn(blockPlacer.placeBlock, blockPlacer, mouseinfo.placementPosition)
+									task.spawn(blockPlacer.placeBlock, blockPlacer, BridgeHelp.Enabled and bridgeHelpPos(mouseinfo.placementPosition) or mouseinfo.placementPosition)
 								end
 							end
 						end
@@ -2559,6 +2582,10 @@ run(function()
 		Name = 'Pickaxe',
 		Default = true,
 		Tooltip = 'Auto-mine with pickaxes/axes while holding attack.'
+	})
+	BridgeHelp = AutoClicker:CreateToggle({
+		Name = 'Bridge Help',
+		Tooltip = 'When looking down, locks block placement to your column so it does not drift sideways until you flick the mouse.'
 	})
 	AutoClicker:CreateToggle({
 		Name = 'Place Blocks',
@@ -9916,7 +9943,7 @@ run(function()
 						if wool then
 							local root = entitylib.character.RootPart
 							local wantUp = (Tower.Enabled and inputService:IsKeyDown(Enum.KeyCode.Space))
-								or (TowerOnly.Enabled and entitylib.character.Humanoid.MoveDirection.Magnitude > 0)
+								or TowerOnly.Enabled
 							if wantUp and (not inputService:GetFocusedTextBox()) then
 								root.Velocity = Vector3.new(root.Velocity.X, 38, root.Velocity.Z)
 							end
@@ -9944,7 +9971,7 @@ run(function()
 							end
 						end
 					end
-					task.wait(0.03)
+					task.wait(TowerOnly.Enabled and 0 or 0.03)
 				until not Scaffold.Enabled
 				clearVisuals()
 			end
