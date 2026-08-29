@@ -2492,6 +2492,10 @@ run(function()
 	local AirHit
 	local SwingTime
 	local AttackSpeed
+	-- Solo las matches de BedWars (squads/ranked/solos). El lobby y los demas
+	-- juegos tienen otro place id y quedan con el Killaura original.
+	local SyncButton
+	local isBedwars = game.PlaceId == 6872274481 or game.PlaceId == 6872265039
 	local Overlay = OverlapParams.new()
 	Overlay.FilterType = Enum.RaycastFilterType.Include
 	local Particles, Boxes, AttackDelay = {}, {}, tick()
@@ -2531,9 +2535,9 @@ run(function()
 								local delta = (v.RootPart.Position - selfpos)
 								local angle = math.acos(localfacing:Dot((delta * Vector3.new(1, 0, 1)).Unit))
 								if angle > (math.rad(AngleSlider.Value) / 2) then continue end
-								if (delta * Vector3.new(1, 0, 1)).Magnitude > HorizontalRange.Value then continue end
-								if math.abs(delta.Y) > VerticalRange.Value then continue end
-								if v.Humanoid and v.Humanoid.FloorMaterial == Enum.Material.Air then
+								if isBedwars and (delta * Vector3.new(1, 0, 1)).Magnitude > HorizontalRange.Value then continue end
+								if isBedwars and math.abs(delta.Y) > VerticalRange.Value then continue end
+								if isBedwars and v.Humanoid and v.Humanoid.FloorMaterial == Enum.Material.Air then
 									local chance = math.random(math.min(AirHit.Value.Min, AirHit.Value.Max), math.max(AirHit.Value.Min, AirHit.Value.Max))
 									if math.random(1, 100) > chance then continue end
 								end
@@ -2542,10 +2546,10 @@ run(function()
 									Entity = v,
 									Check = delta.Magnitude > AttackRange.Value and BoxSwingColor or BoxAttackColor
 								})
-								targetinfo.Targets[v] = tick() + SwingTime.Value
+								targetinfo.Targets[v] = tick() + (isBedwars and SwingTime.Value or 1)
 	
 								if AttackDelay < tick() then
-									AttackDelay = tick() + AttackSpeed.Value
+									AttackDelay = tick() + (isBedwars and AttackSpeed.Value or (1 / CPS.GetRandomValue()))
 									tool:Activate()
 								end
 	
@@ -2631,7 +2635,7 @@ run(function()
 			return val == 1 and 'stud' or 'studs'
 		end
 	})
-	Killaura:CreateButton({
+	SyncButton = Killaura:CreateButton({
 		Name = 'Sync to legit ranges',
 		Tooltip = 'Sets every range to what the BedWars sword actually reaches',
 		Function = function()
@@ -2816,6 +2820,11 @@ run(function()
 		Visible = false
 	})
 	Face = Killaura:CreateToggle({Name = 'Face target'})
+	if not isBedwars then
+		for _, o in ipairs({HorizontalRange, VerticalRange, AirHit, SwingTime, AttackSpeed, SyncButton}) do
+			if o and o.Object then o.Object.Visible = false end
+		end
+	end
 end)
 
 run(function()
