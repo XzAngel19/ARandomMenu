@@ -2539,6 +2539,8 @@ run(function()
 		return input.UserInputType == keyboard or input.KeyCode == keyboard or input.KeyCode == gamepad
 	end
 	
+	local PlaceRange
+
 	local function getBlockInterval()
 		return 1 / (bedwars.SharedConstants.BLOCK_PLACE_CPS or 12)
 	end
@@ -2566,7 +2568,7 @@ run(function()
 								task.spawn(blockPlacer.autoBridge, blockPlacer, workspace:GetServerTimeNow() - bedwars.KnockbackController:getLastKnockbackTime() >= 0.2)
 							else
 								local selector = blockPlacer.clientManager:getBlockSelector()
-								local mouseinfo = selector and selector:getMouseInfo(0)
+								local mouseinfo = selector and selector:getMouseInfo(0, {range = PlaceRange.Value})
 								if mouseinfo and mouseinfo.placementPosition == mouseinfo.placementPosition then
 									task.spawn(blockPlacer.placeBlock, blockPlacer, mouseinfo.placementPosition, mouseinfo)
 								end
@@ -2657,6 +2659,13 @@ run(function()
 		end
 	})
 	Wool = AutoClicker:CreateToggle({Name = 'Wool only', Tooltip = 'Only clicks when you are holding wool.', Darker = true})
+	PlaceRange = AutoClicker:CreateSlider({
+		Name = 'Place range',
+		Min = 1,
+		Max = 30,
+		Default = 14,
+		Tooltip = 'Reach for autoclicker placing (tower/stairs). Manual clicks unaffected.'
+	})
 	BlockCPS = AutoClicker:CreateTwoSlider({
 		Name = 'Block CPS',
 		Min = 1,
@@ -3563,14 +3572,26 @@ run(function()
 			end
 	
 			if callback then
+				local lastSeen = 0
 				old = bedwars.KnockbackUtil.applyKnockback
 				bedwars.KnockbackUtil.applyKnockback = function(root, mass, dir, knockback, ...)
 					if rand:NextNumber(0, 100) > Chance.Value then return end
-					local check = (not TargetCheck.Enabled) or entitylib.EntityPosition({
-						Range = 50,
-						Part = 'RootPart',
-						Players = true
-					})
+					local check
+					if TargetCheck.Enabled then
+						-- Sticky: al perseguir, el objetivo parpadea fuera del chequeo
+						-- y te comias el knockback completo. Mantenemos la reduccion
+						-- 1s despues de la ultima vez que lo viste.
+						if entitylib.EntityPosition({
+							Range = 50,
+							Part = 'RootPart',
+							Players = true
+						}) then
+							lastSeen = tick()
+						end
+						check = (tick() - lastSeen) < 1
+					else
+						check = true
+					end
 	
 					if check then
 						knockback = knockback or {}
@@ -10761,7 +10782,11 @@ run(function()
 								local block, blockpos = getPlacedBlock(currentpos)
 								if not block then
 									blockpos = checkAdjacent(blockpos * 3) and blockpos * 3 or blockProximity(currentpos)
-									if blockpos then
+									-- Con Expand 1 (legit) solo pone el bloque que vas a
+									-- pisar, y solo mientras te moves, para que no tire
+									-- bloques a lo loco cuando estas quieto.
+									local moving = entitylib.character.Humanoid.MoveDirection.Magnitude > 0.1
+									if blockpos and (Expand.Value > 1 or moving) then
 										task.delay(0, bedwars.placeBlock, blockpos, wool, false)
 									end
 								end
@@ -10769,7 +10794,7 @@ run(function()
 							end
 						end
 					end
-					task.wait(0.03)
+					task.wait(Expand.Value == 1 and 0.1 or 0.03)
 				until not Scaffold.Enabled
 				clearVisuals()
 			end
