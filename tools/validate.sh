@@ -63,13 +63,23 @@ step() {
     printf '\n== %s\n' "$1"
 }
 
-# Source files, excluding reference/ (third-party code kept for reading) and
-# declaration files (which are types, not programs).
+# Third-party code kept in the tree but not ours to reformat or validate:
+#   * reference/ — commercial capture/source kept for reading;
+#   * the root CatVape/Vape client — init.lua, main.lua, universal.lua,
+#     6872274481.lua and libraries/. Executor-side deliverable, Luraph-
+#     obfuscated in places, downloaded from api.catvape.dev; the same rule
+#     that excludes reference/ applies: it is not ours to rewrite.
+#
+# Source files, excluding those and declaration files (which are types, not
+# programs).
 source_files() {
-    find . -path ./.git -prune -o -path ./reference -prune -o -type f \
+    find . -path ./.git -prune -o -path ./reference -prune -o \
+        -path ./libraries -prune -o -type f \
         \( -name "*.lua" -o -name "*.luau" \) ! -name "*.d.luau" \
         ! -name "_shell_source.luau" ! -name "_bundle_source.luau" \
-        ! -name "_inventory_snapshot.luau" -print
+        ! -name "_inventory_snapshot.luau" \
+        ! -path ./init.lua ! -path ./main.lua ! -path ./universal.lua \
+        ! -path ./6872274481.lua -print
 }
 
 step "Licence and attribution"
@@ -556,13 +566,18 @@ PYTHON
 echo "ok"
 
 step "Strict Luau headers"
+# The same shape as source_files(): reference/ and the root CatVape/Vape
+# client are not ours to reformat, so they are excluded here too.
 while IFS= read -r file; do
     test "$(head -n 1 "$file")" = "--!strict" || {
         echo "$file does not start with --!strict"
         exit 1
     }
-done < <(find . -path ./.git -prune -o -path ./reference -prune -o -type f \
-    \( -name "*.lua" -o -name "*.luau" \) -print)
+done < <(find . -path ./.git -prune -o -path ./reference -prune -o \
+    -path ./libraries -prune -o -type f \
+    \( -name "*.lua" -o -name "*.luau" \) \
+    ! -path ./init.lua ! -path ./main.lua ! -path ./universal.lua \
+    ! -path ./6872274481.lua -print)
 echo "ok"
 
 step "Loader freshness guard"

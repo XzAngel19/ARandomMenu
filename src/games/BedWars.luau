@@ -100,21 +100,6 @@ local function fire(name: string, ...: any): boolean
     end)
 end
 
--- Sword cooldowns are per weapon: 0.30 s for wooden, iron, diamond, void and
--- light swords, 0.33 s for sparkler, 0.40 s for ice, 0.25 s for daggers and the
--- rageblade. Expressed as the ceiling in registered hits per ten seconds,
--- because that is the unit a BedWars player measures hitreg in.
-local WEAPON_CEILING: {[string]: number} = {
-    ice_sword = 25,
-    sparkler = 30,
-    sparkler_sword = 30,
-    diamond_dagger = 40,
-    iron_dagger = 40,
-    rageblade = 40,
-}
-
-local DEFAULT_CEILING: number = 33
-
 function Module.init(runtime: any): any
     local environment: any = getfenv()
     local host: any = environment
@@ -163,22 +148,9 @@ function Module.init(runtime: any): any
         return nil
     end
 
-    local function weaponCeiling(weapon: Instance?): number
-        if not weapon then
-            return DEFAULT_CEILING
-        end
-        return WEAPON_CEILING[(weapon :: Instance).Name] or DEFAULT_CEILING
-    end
-
-    -- Deliberately not consulting the Friend List, unlike every other combat
-    -- card in this menu. BedWars is a team game with its own scoreboard: who
-    -- is on your side is the game's answer, not a list maintained beside it,
-    -- and the player asked for the aura to swing at whoever the game calls an
-    -- enemy. The team check below is that answer, and it is on by default.
-    local function isProtected(player: Player): boolean
-        return player == LocalPlayer
-    end
-
+    -- BedWars decides sides on its own scoreboard, not by the menu's Friend
+    -- List: the shared Entity library already treats equal Roblox teams as
+    -- friendly, and this copy drives the aimbot's own team check.
     local function sameTeam(player: Player): boolean
         return LocalPlayer.Team ~= nil and player.Team == LocalPlayer.Team
     end
@@ -218,65 +190,6 @@ function Module.init(runtime: any): any
     local EspFeature: any = nil
     local ChestFeature: any = nil
     local AutoToolFeature: any = nil
-
-    -- ------------------------------------------------------------------ aura
-    --
-    -- Deliberately small. The universal Kill Aura carries nineteen rows because
-    -- it has to work in games nobody has looked at; this one has been looked
-    -- at, so every row that did not change an outcome is gone. Four rows:
-    -- reach, the hitreg band, how many targets, and the team check.
-    local auraSettings: any = {
-        reach = 12,
-        minHits = 35,
-        maxHits = 36,
-        maxTargets = 1,
-        -- On by default: in a team game the default answer to "should I swing
-        -- at this player" is the scoreboard's, not ours.
-        teamCheck = true,
-    }
-    local auraRuntime: any = {
-        nextSwingAt = 0,
-        hits = {} :: {number},
-        highlights = {} :: {[Instance]: Highlight},
-    }
-
-    local function clearHighlights(): ()
-        for key: Instance, highlight: Highlight in pairs(auraRuntime.highlights) do
-            pcall(function(): ()
-                highlight:Destroy()
-            end)
-            auraRuntime.highlights[key] = nil
-        end
-    end
-
-    -- Registered hits in the last ten seconds, measured from the swings this
-    -- module actually sent. A band the server refuses has to be visible; a
-    -- status that echoes the setting back is decoration.
-    local function registerHit(now: number): number
-        local list: {number} = auraRuntime.hits
-        table.insert(list, now)
-        while #list > 0 and now - list[1] > 10 do
-            table.remove(list, 1)
-        end
-        return #list
-    end
-
-    local function markTarget(targetCharacter: Model, colour: Color3): ()
-        local existing: Highlight? = auraRuntime.highlights[targetCharacter]
-        if not existing or not (existing :: Highlight).Parent then
-            local created: Highlight = create("Highlight", {
-                Name = "Wurst_BedWarsTarget",
-                FillTransparency = 0.75,
-                Parent = targetCharacter,
-            }) :: Highlight
-            auraRuntime.highlights[targetCharacter] = created
-            existing = created
-        end
-        local highlight: Highlight = existing :: Highlight
-        highlight.Adornee = targetCharacter
-        highlight.FillColor = colour
-        highlight.OutlineColor = colour
-    end
 
     -- The payload is built from what is true right now: the character's own
     -- position, the camera the player is looking through, and the target's
