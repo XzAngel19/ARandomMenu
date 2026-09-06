@@ -136,6 +136,7 @@ export type MenuState = {
     cleanupVDRuntime: () -> (),
     cleanupMVSDRuntime: () -> (),
     cleanupBedFightRuntime: () -> (),
+    cleanupBedWarsRuntime: () -> (),
 
     -- Pages that are libraries of their own
     animationsEnabled: boolean,                     -- Whether the interface animates

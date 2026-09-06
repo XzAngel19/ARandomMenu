@@ -123,6 +123,28 @@ return function(ctx: any): ()
             search:IsFocused() == false
         )
     end
+    -- Space is a character of the query ("kill aura", "auto clicker"), not a
+    -- command, while the caret is in the search box: opening the selection's
+    -- settings on Space would close the Navigator mid-query and lose it.
+    if search ~= nil
+        and type(search.CaptureFocus) == "function"
+        and type(search.ReleaseFocus) == "function" then
+        search:CaptureFocus()
+        world.services.UserInputService.InputBegan:Fire({
+            UserInputType = world.globals.Enum.UserInputType.Keyboard,
+            KeyCode = world.globals.Enum.KeyCode.Space,
+        }, false)
+        check(
+            "Space while editing the query does not close Navigator",
+            root ~= nil and root.Visible == true,
+            "Visible=" .. tostring(root and root.Visible)
+        )
+        check(
+            "the search box still owns the caret after Space",
+            search:IsFocused() == true
+        )
+        search:ReleaseFocus()
+    end
     local results: any = column and column:FindFirstChild("Results")
     check("Navigator has a results grid", results ~= nil)
     if results ~= nil then

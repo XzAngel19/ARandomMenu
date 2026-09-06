@@ -1029,6 +1029,11 @@ function Module.init(context: any): any
     local navOrdered: {any} = {}
     local navEntries: {TextButton} = {}
     local navSelected: number = 1
+    -- Cell clicks belong to the grid generation, not to the module: the
+    -- previous generation's buttons are destroyed on the next rebuild, so
+    -- their connections are disconnected here instead of piling up in
+    -- Furniture.connections for the rest of the session.
+    local navCellConnections: {RBXScriptConnection} = {}
     local rebuildNavigator: () -> () = function(): () end
 
     local function paintNavEntry(index: number): ()
@@ -1092,6 +1097,12 @@ function Module.init(context: any): any
     end
 
     rebuildNavigator = function(): ()
+        for _, connection: RBXScriptConnection in ipairs(navCellConnections) do
+            pcall(function(): ()
+                connection:Disconnect()
+            end)
+        end
+        table.clear(navCellConnections)
         for _, child: Instance in ipairs(navResults:GetChildren()) do
             if child:IsA("GuiObject") then
                 child:Destroy()
@@ -1139,7 +1150,7 @@ function Module.init(context: any): any
                 Transparency = 1,
             })
             navEntries[index] = entry
-            table.insert(Furniture.connections, entry.MouseButton1Click:Connect(function(): ()
+            table.insert(navCellConnections, entry.MouseButton1Click:Connect(function(): ()
                 navSelected = index
                 navActivate(index)
                 paintNavSelection()
@@ -1215,7 +1226,11 @@ function Module.init(context: any): any
     end))
 
     -- The keyboard, while the screen is up. Arrows and Tab move the
-    -- selection even while the search box owns the caret.
+    -- selection even while the search box owns the caret; Space does not
+    -- belong in that list — it is a character of the query ("kill aura",
+    -- "auto clicker"), so while the caret is in the box it types instead
+    -- of opening the selection's settings. Enter is the box's own
+    -- FocusLost, handled above.
     table.insert(Furniture.connections, UserInputService.InputBegan:Connect(function(
         input: InputObject,
         _gameProcessed: boolean
@@ -1243,6 +1258,9 @@ function Module.init(context: any): any
         elseif key == Enum.KeyCode.Left then
             step = -1
         elseif key == Enum.KeyCode.Space then
+            if navSearch:IsFocused() then
+                return
+            end
             navOpenSettings(navSelected)
             return
         else
@@ -1712,6 +1730,12 @@ function Module.init(context: any): any
             end)
         end
         Furniture.connections = {}
+        for _, connection: RBXScriptConnection in ipairs(navCellConnections) do
+            pcall(function(): ()
+                connection:Disconnect()
+            end)
+        end
+        table.clear(navCellConnections)
         if state.surfaceDragOwner == hudFrame then
             state.surfaceDragOwner = nil
         end

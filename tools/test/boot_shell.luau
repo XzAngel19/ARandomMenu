@@ -39,6 +39,15 @@ return function(ctx: any): any
         if type(url) == "string" and string.find(url, "runtime/bundle.luau", 1, true) then
             return bundleSource
         end
+        -- A suite may serve specific extra files (game modules are not in the
+        -- bundle; they are fetched per-URL at runtime). Anything not served
+        -- here stays a 404, exactly like the real world's rejected URL.
+        if type(ctx.httpGet) == "function" then
+            local served: any = ctx.httpGet(url)
+            if type(served) == "string" then
+                return served
+            end
+        end
         return "404: Not Found"
     end
 

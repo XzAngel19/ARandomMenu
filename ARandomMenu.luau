@@ -220,15 +220,6 @@ local FEATURE_CATEGORIES: {[string]: string} = {
 --   group   three stacked rules: a container of settings, always running.
 
 
--- Sort key for a whole category. The catch-all always sinks to the bottom;
--- every real category is ordered alphabetically.
-local function featureCategoryRank(category: string): string
-    if category == DEFAULT_FEATURE_CATEGORY then
-        return "\255" .. category
-    end
-    return category
-end
-
 -- ---------------------------------------------------------------------------
 -- Design tokens
 -- ---------------------------------------------------------------------------
@@ -363,7 +354,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "d148fc87f8a6f9df"
+local SOURCE_STAMP: string = "7b0d8659d7052c74"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -5599,6 +5590,19 @@ local function registerPlaceModule(
                     feature.settingsWindow = nil
                 end
                 table.remove(allFeatures, index)
+                -- The card only exists because the module created it; a stub
+                -- left in the search registry would answer "Fast Place" with
+                -- a toggle that drives a half-initialised module.
+                if state.moduleSearch
+                    and type(state.moduleSearch.Unregister) == "function" then
+                    state.moduleSearch.Unregister(feature)
+                end
+                -- The keybind slot ran through bindActionShortcut, which
+                -- stores its own binding under the card's config key; a
+                -- binding left behind would keep firing the destroyed card.
+                if feature.configKey and state.shortcutBindings then
+                    state.shortcutBindings[feature.configKey] = nil
+                end
                 if state.floatingUi and state.floatingUi.unregisterFeature then
                     state.floatingUi.unregisterFeature(feature)
                 end
@@ -5635,6 +5639,8 @@ local function registerPlaceModule(
             state.cleanupMVSDRuntime = destroyModule
         elseif tabName == "BedFight" then
             state.cleanupBedFightRuntime = destroyModule
+        elseif tabName == "BedWars" then
+            state.cleanupBedWarsRuntime = destroyModule
         end
     end)
 end
@@ -6795,6 +6801,7 @@ local function cleanupRuntime(): ()
         "cleanupVDRuntime",
         "cleanupMVSDRuntime",
         "cleanupBedFightRuntime",
+        "cleanupBedWarsRuntime",
     }) do
         local cleanup: any = state[key]
         if type(cleanup) == "function" then

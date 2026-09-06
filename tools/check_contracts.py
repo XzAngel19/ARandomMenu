@@ -419,6 +419,59 @@ def loader_contract(shell: str, failures: list) -> None:
         failures.append("ARandomMenu.luau: bootstrap timing summary is missing")
 
 
+def game_teardown_contract(shell: str, failures: list) -> None:
+    """Every game the shell registers must have a runtime teardown slot.
+
+    Game modules are loaded per-place, not through the framework, so their
+    runtime is shut down by one dedicated slot each. BedWars had no slot at
+    all: its module was registered, but the cleanup loop never named it and
+    `Module.destroy` never ran on menu close. The loop below is the only place
+    the shell shuts a per-game runtime down, so anything registered above has
+    to be named there.
+    """
+    registered = sorted(set(re.findall(
+        r'registerPlaceModule\(\s*"([A-Za-z0-9]+)"', shell
+    )))
+    if not registered:
+        failures.append(
+            "ARandomMenu.luau: no game modules are registered; "
+            "registerPlaceModule/cleanup pair is missing"
+        )
+        return
+    start = shell.find('cleanupStep("MM2 runtime", cleanupMM2Runtime)')
+    end = shell.find("state.destruct = function", start)
+    if start < 0 or end < 0:
+        failures.append(
+            "ARandomMenu.luau: the game runtime teardown loop is missing"
+        )
+        return
+    teardown_region = shell[start:end]
+    for name in registered:
+        if name == "MM2":
+            if "cleanupMM2Runtime" not in teardown_region:
+                failures.append(
+                    f"ARandomMenu.luau: {name} is registered but its runtime "
+                    "is never destroyed on menu close"
+                )
+            if "cleanupMM2Runtime = destroyModule" not in shell:
+                failures.append(
+                    f"ARandomMenu.luau: {name}'s teardown slot is never "
+                    "assigned when the module starts"
+                )
+            continue
+        slot = f"cleanup{name}Runtime"
+        if f'"{slot}"' not in teardown_region:
+            failures.append(
+                f"ARandomMenu.luau: {name} is registered but has no "
+                f'"{slot}" teardown slot'
+            )
+        if f"state.{slot} = destroyModule" not in shell:
+            failures.append(
+                f"ARandomMenu.luau: {name}'s teardown slot is never assigned "
+                "when the module starts"
+            )
+
+
 def main() -> int:
     shell = open(SHELL).read()
     sources = sorted(glob.glob("src/**/*.luau", recursive=True))
@@ -435,6 +488,7 @@ def main() -> int:
     card_name_contract(shell, failures)
     text_fits_contract(failures)
     loader_contract(shell, failures)
+    game_teardown_contract(shell, failures)
 
     if failures:
         for line in failures:
