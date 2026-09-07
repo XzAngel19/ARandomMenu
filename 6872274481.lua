@@ -2414,22 +2414,44 @@ run(function()
 	local BlockCPS = {}
 	local Thread
 	
+	local function isAttack(input)
+		local keybinds = bedwars.KeybindLoadController:getKeybinds()
+		local keyboard = keybinds and keybinds.keyboard and keybinds.keyboard.controlActions.Attack or Enum.UserInputType.MouseButton1
+		local gamepad = keybinds and keybinds.gamepad and keybinds.gamepad.controlActions.Attack or Enum.KeyCode.ButtonR2
+	
+		return input.UserInputType == keyboard or input.KeyCode == keyboard or input.KeyCode == gamepad
+	end
+	
+	local PlaceRange
+
+	local function getBlockInterval()
+		return 1 / (bedwars.SharedConstants.BLOCK_PLACE_CPS or 12)
+	end
+	
+	local function getClickDelay()
+		if store.hand.toolType == 'block' then
+			return math.max(1 / BlockCPS:GetRandomValue(), getBlockInterval())
+		end
+	
+		return 1 / CPS:GetRandomValue()
+	end
+	
 	local function AutoClick()
 		if Thread then
 			task.cancel(Thread)
 		end
 	
-		Thread = task.delay(store.hand.toolType == 'block' and math.max(1 / BlockCPS:GetRandomValue(), 1 / (bedwars.SharedConstants.BLOCK_PLACE_CPS or 12)) or 1 / CPS:GetRandomValue(), function()
+		Thread = task.delay(getClickDelay(), function()
 			repeat
 				if not bedwars.AppController:isLayerOpen(bedwars.UILayers.MAIN) then
 					local blockPlacer = bedwars.BlockPlacementController.blockPlacer
 					if store.hand.toolType == 'block' and Place.Enabled and (Wool.Enabled and store.hand.tool.Name:find('wool_') or not Wool.Enabled) and blockPlacer and canPlace() then
-						if (workspace:GetServerTimeNow() - bedwars.BlockCpsController.lastPlaceTimestamp) >= ((1 / (bedwars.SharedConstants.BLOCK_PLACE_CPS or 12)) * 0.5) then
+						if (workspace:GetServerTimeNow() - bedwars.BlockCpsController.lastPlaceTimestamp) >= (getBlockInterval() * 0.5) then
 							if inputService.TouchEnabled then
 								task.spawn(blockPlacer.autoBridge, blockPlacer, workspace:GetServerTimeNow() - bedwars.KnockbackController:getLastKnockbackTime() >= 0.2)
 							else
 								local selector = blockPlacer.clientManager:getBlockSelector()
-								local mouseinfo = selector and selector:getMouseInfo(0)
+								local mouseinfo = selector and selector:getMouseInfo(0, {range = PlaceRange.Value})
 								if mouseinfo and mouseinfo.placementPosition == mouseinfo.placementPosition then
 									task.spawn(blockPlacer.placeBlock, blockPlacer, mouseinfo.placementPosition, mouseinfo)
 								end
@@ -2444,7 +2466,7 @@ run(function()
 					end
 				end
 	
-				task.wait(store.hand.toolType == 'block' and math.max(1 / BlockCPS:GetRandomValue(), 1 / (bedwars.SharedConstants.BLOCK_PLACE_CPS or 12)) or 1 / CPS:GetRandomValue())
+				task.wait(getClickDelay())
 			until not AutoClicker.Enabled
 		end)
 	end
@@ -2454,19 +2476,13 @@ run(function()
 		Function = function(callback)
 			if callback then
 				AutoClicker:Clean(inputService.InputBegan:Connect(function(input)
-					local keybinds = bedwars.KeybindLoadController:getKeybinds()
-					local keyboard = keybinds and keybinds.keyboard and keybinds.keyboard.controlActions.Attack or Enum.UserInputType.MouseButton1
-					local gamepad = keybinds and keybinds.gamepad and keybinds.gamepad.controlActions.Attack or Enum.KeyCode.ButtonR2
-					if input.UserInputType == keyboard or input.KeyCode == keyboard or input.KeyCode == gamepad then
+					if isAttack(input) then
 						AutoClick()
 					end
 				end))
 	
 				AutoClicker:Clean(inputService.InputEnded:Connect(function(input)
-					local keybinds = bedwars.KeybindLoadController:getKeybinds()
-					local keyboard = keybinds and keybinds.keyboard and keybinds.keyboard.controlActions.Attack or Enum.UserInputType.MouseButton1
-					local gamepad = keybinds and keybinds.gamepad and keybinds.gamepad.controlActions.Attack or Enum.KeyCode.ButtonR2
-					if (input.UserInputType == keyboard or input.KeyCode == keyboard or input.KeyCode == gamepad) and Thread then
+					if isAttack(input) and Thread then
 						task.cancel(Thread)
 						Thread = nil
 					end
@@ -2505,7 +2521,6 @@ run(function()
 		end,
 		Tooltip = 'Hold attack button to automatically click'
 	})
-	
 	CPS = AutoClicker:CreateTwoSlider({
 		Name = 'CPS',
 		Min = 1,
@@ -2515,18 +2530,25 @@ run(function()
 	})
 	Place = AutoClicker:CreateToggle({
 		Name = 'Place Blocks',
+		Default = true,
 		Function = function(callback)
 			if BlockCPS.Object then
 				BlockCPS.Object.Visible = callback
 			end
 	
-			if Wool then
+			if Wool and Wool.Object then
 				Wool.Object.Visible = callback
 			end
-		end,
-		Default = true
+		end
 	})
 	Wool = AutoClicker:CreateToggle({Name = 'Wool only', Tooltip = 'Only clicks when you are holding wool.', Darker = true})
+	PlaceRange = AutoClicker:CreateSlider({
+		Name = 'Place range',
+		Min = 1,
+		Max = 30,
+		Default = 14,
+		Tooltip = 'Reach for autoclicker placing (tower/stairs). Manual clicks unaffected.'
+	})
 	BlockCPS = AutoClicker:CreateTwoSlider({
 		Name = 'Block CPS',
 		Min = 1,
@@ -11052,6 +11074,10 @@ run(function()
 		end
 	end
 	
+	local function getBlockInterval()
+		return 1 / (bedwars.SharedConstants.BLOCK_PLACE_CPS or 12)
+	end
+	
 	local function nearCorner(poscheck, pos)
 		local startpos = poscheck - Vector3.new(3, 3, 3)
 		local endpos = poscheck + Vector3.new(3, 3, 3)
@@ -11093,15 +11119,47 @@ run(function()
 			if wool then
 				return wool, amount
 			else
-				for _, v in store.inventory.inventory.items do
-					if bedwars.ItemMeta[v.itemType].block then
-						return v.itemType, v.amount
+				for _, item in store.inventory.inventory.items do
+					if bedwars.ItemMeta[item.itemType].block then
+						return item.itemType, item.amount
 					end
 				end
 			end
 		end
 	
 		return nil, 0
+	end
+	
+	local function clearVisuals()
+		if visualTween then
+			visualTween:Cancel()
+			visualTween = nil
+		end
+		if visualBlock then
+			visualBlock.Parent = nil
+		end
+		visualPos = nil
+	end
+	
+	local function updateVisual(pos)
+		if not visualBlock or not pos then return end
+	
+		local blockpos = bedwars.BlockController:getBlockPosition(pos) * 3
+		if visualPos == blockpos then return end
+	
+		if visualTween then
+			visualTween:Cancel()
+			visualTween = nil
+		end
+	
+		if visualBlock.Parent == gameCamera then
+			visualTween = tweenService:Create(visualBlock, TweenInfo.new(visualSpeed, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {CFrame = CFrame.new(blockpos)})
+			visualTween:Play()
+		else
+			visualBlock.CFrame = CFrame.new(blockpos)
+			visualBlock.Parent = gameCamera
+		end
+		visualPos = blockpos
 	end
 	
 	Scaffold = vape.Categories.Utility:CreateModule({
@@ -11145,51 +11203,35 @@ run(function()
 									end
 								end
 	
-								if visualBlock and currentpos then
-									local visual = bedwars.BlockController:getBlockPosition(currentpos) * 3
-									if visualPos ~= visual then
-										if visualTween then
-											visualTween:Cancel()
-											visualTween = nil
-										end
-	
-										if visualBlock.Parent == gameCamera then
-											visualTween = tweenService:Create(visualBlock, TweenInfo.new(visualSpeed, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {CFrame = CFrame.new(visual)})
-											visualTween:Play()
-										else
-											visualBlock.CFrame = CFrame.new(visual)
-											visualBlock.Parent = gameCamera
-										end
-										visualPos = visual
-									end
-								end
-	
+								updateVisual(currentpos)
 								local block, blockpos = getPlacedBlock(currentpos)
 								if not block then
 									blockpos = checkAdjacent(blockpos * 3) and blockpos * 3 or blockProximity(currentpos)
-									if blockpos then
-										task.delay(0, bedwars.placeBlock, blockpos, wool, false)
+									-- Con Expand 1 (legit) solo pone el bloque que vas a
+									-- pisar, y solo mientras te moves, para que no tire
+									-- bloques a lo loco cuando estas quieto.
+									local moving = entitylib.character.Humanoid.MoveDirection.Magnitude > 0.1
+									if blockpos and (Expand.Value > 1 or moving) then
+										-- Misma disciplina que el AutoClicker: respeta el intervalo
+										-- de colocacion del motor para que el scaffold se vea igual
+										-- al clicker y no tire bloques mas rapido que el.
+										local now = workspace:GetServerTimeNow()
+										if (now - bedwars.BlockCpsController.lastPlaceTimestamp) >= (getBlockInterval() * 0.5) then
+											task.delay(0, bedwars.placeBlock, blockpos, wool, false)
+										end
 									end
 								end
 								lastpos = currentpos
 							end
 						end
 					end
-					task.wait(0.03)
+					task.wait(Expand.Value == 1 and 0.1 or 0.03)
 				until not Scaffold.Enabled
-				if visualTween then
-					visualTween:Cancel()
-					visualTween = nil
-				end
-				if visualBlock then
-					visualBlock.Parent = nil
-				end
-				visualPos = nil
+				clearVisuals()
 			end
 		end,
 		Tooltip = 'Helps you make bridges/scaffold walk.'
 	})
-	
 	Expand = Scaffold:CreateSlider({
 		Name = 'Expand',
 		Min = 1,
@@ -11211,6 +11253,7 @@ run(function()
 	Mouse = Scaffold:CreateToggle({Name = 'Require mouse down'})
 	Scaffold:CreateToggle({
 		Name = 'Visual',
+		Tooltip = 'Renders an overlay on the block about to be placed',
 		Function = function(callback)
 			FillColor.Object.Visible = callback
 			OutlineColor.Object.Visible = callback
@@ -11233,19 +11276,11 @@ run(function()
 				selection.Parent = visualBlock
 				bedwars.QueryUtil:setQueryIgnored(visualBlock, true)
 			else
-				if visualTween then
-					visualTween:Cancel()
-					visualTween = nil
-				end
-				if visualBlock then
-					visualBlock.Parent = nil
-				end
-				visualPos = nil
+				clearVisuals()
 				visualBlock:Destroy()
 				visualBlock = nil
 			end
-		end,
-		Tooltip = 'Renders an overlay on the block about to be placed'
+		end
 	})
 	FillColor = Scaffold:CreateColorSlider({
 		Name = 'Fill Color',
