@@ -30,11 +30,11 @@ do
 end
 
 local MAIN_SOURCE_URL: string =
-    "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/main/ARandomMenu.luau"
+    "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/main/src/ARandomMenu.luau"
 local BRANCH_SOURCE_URL: string =
     "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/"
         .. REQUESTED_BRANCH
-        .. "/ARandomMenu.luau"
+        .. "/src/ARandomMenu.luau"
 local SAFETY_SOURCE_URL: string =
     "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/4b10e4bfe00aa356afb3e0420a72e745327f6259/ARandomMenu.luau"
 
@@ -117,7 +117,7 @@ end
 local function readLocalFallback(): (string?, string?)
     local readFile: any = executorEnvironment.readfile
     local isFile: any = executorEnvironment.isfile
-    local path: string = "ARandomMenu.luau"
+    local path: string = "src/ARandomMenu.luau"
     if type(readFile) ~= "function" then
         return nil, "readfile is unavailable"
     end
@@ -157,7 +157,7 @@ end
 local invoked: boolean, chunkOrError: any, returnedError: any = pcall(
     compiler,
     source,
-    "@ARandomMenu.luau"
+    "@src/ARandomMenu.luau"
 )
 if not invoked or type(chunkOrError) ~= "function" then
     warn("[RTM:Loader] Compilation error: "

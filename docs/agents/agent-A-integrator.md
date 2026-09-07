@@ -62,12 +62,12 @@ git merge --no-edit refs/remotes/origin/agentD
 ```
 
 The only conflicts you will ever see are the generated files —
-`runtime/bundle.luau` and the `SOURCE_STAMP` line in `ARandomMenu.luau`. **Take
+`runtime/bundle.luau` and the `SOURCE_STAMP` line in `src/ARandomMenu.luau`. **Take
 neither side.** Resolve by regenerating:
 
 ```
-git checkout --ours ARandomMenu.luau runtime/bundle.luau
-git add ARandomMenu.luau runtime/bundle.luau
+git checkout --ours src/ARandomMenu.luau runtime/bundle.luau
+git add src/ARandomMenu.luau runtime/bundle.luau
 python3 tools/bundle.py
 ```
 
@@ -134,7 +134,7 @@ Done, and load-bearing:
 
 **The demolition is done.** Your predecessor removed `Main`, `centerMain`, the
 sidebar, `createTab`, `setTab`, the page host, the search and the card subtitle:
-2,454 lines out, the shell down to 5,288, `state.d.luau` cleaned of the 21 keys
+2,454 lines out, the shell down to 5,288, `tools/types/state.d.luau` cleaned of the 21 keys
 that lost their owner. The scroll aliases it left behind (`state.universalScroll
 = CardBin` and friends) are deliberate and load-bearing — game modules still
 name a parent — and they go when those modules move to `CreateModule`.

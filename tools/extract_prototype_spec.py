@@ -28,7 +28,7 @@ import wurst_features
 
 PROTOTYPE = "docs/design/prototype/index.html"
 SPEC = "docs/design/prototype/spec.json"
-SHELL = "ARandomMenu.luau"
+SHELL = "src/ARandomMenu.luau"
 WIDGETS = "src/library/Widgets.luau"
 WINDOWS = "src/library/WindowManager.luau"
 # The file being written against this spec. The moment it exists, every

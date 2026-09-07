@@ -27,7 +27,7 @@ return function(ctx: any): ()
         playerGui.Name = "PlayerGui"
         playerGui.Parent = world.localPlayer
 
-        local chunk: any, compileError: any = loadstring(source, "@ARandomMenu.luau")
+        local chunk: any, compileError: any = loadstring(source, "@src/ARandomMenu.luau")
         if type(chunk) ~= "function" then
             return {
                 ok = false,

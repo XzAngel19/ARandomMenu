@@ -47,7 +47,7 @@ def emit_inventory(dest: Path) -> None:
 
 def main() -> None:
     test_dir = ROOT / "tools/test"
-    emit_string_module(ROOT / "ARandomMenu.luau", test_dir / "_shell_source.luau")
+    emit_string_module(ROOT / "src/ARandomMenu.luau", test_dir / "_shell_source.luau")
     emit_string_module(ROOT / "runtime/bundle.luau", test_dir / "_bundle_source.luau")
     emit_inventory(test_dir / "_inventory_snapshot.luau")
 

@@ -335,7 +335,7 @@ end
 --   getgenv().ARANDOMMENU_BRANCH = "arena/01a01c6e-arandommenu"
 --   loadstring(game:HttpGet(
 --       "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/"
---           .. getgenv().ARANDOMMENU_BRANCH .. "/ARandomMenu.luau"))()
+--           .. getgenv().ARANDOMMENU_BRANCH .. "/src/ARandomMenu.luau"))()
 --
 -- It defaults to `main`, so normal injections are unaffected.
 local RUNTIME_BRANCH: string = "main"
@@ -354,7 +354,7 @@ local RUNTIME_RAW_BASE: string =
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
-local SOURCE_STAMP: string = "7b0d8659d7052c74"
+local SOURCE_STAMP: string = "b6e3c03ba8ac6ad1"
 -- The clock starts here, when the bootstrap chunk begins running.
 --
 -- It used to start inside the module loader, which is near the *end* of the
@@ -1258,7 +1258,7 @@ local function buildTeleportSnippet(): string
         "local ok, err = pcall(function()",
         "    loadstring(game:HttpGet(",
         "        \"" .. RUNTIME_RAW_BASE
-            .. "ARandomMenu.luau?t=\" .. tostring(os.time())",
+            .. "src/ARandomMenu.luau?t=\" .. tostring(os.time())",
         "    ))()",
         "end)",
         "if not ok then",

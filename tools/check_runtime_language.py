@@ -24,7 +24,7 @@ STRING_LITERAL = re.compile(
     r"|'(?:\\.|[^'\\])*'"
 )
 
-SCAN_FILES = ("ARandomMenu.luau", "loadstring")
+SCAN_FILES = ("src/ARandomMenu.luau", "loadstring")
 SCAN_DIRS = (
     os.path.join(ROOT, "src/library"),
     os.path.join(ROOT, "src/modules"),

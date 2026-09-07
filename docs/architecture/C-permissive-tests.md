@@ -36,7 +36,7 @@ instead of a green skip.
 
 ## Analyzer baseline (no typing pass)
 
-`luau-analyze --defs=env.d.luau` without Roblox instance defs. Unknown
+`luau-analyze --defs=tools/types/env.d.luau` without Roblox instance defs. Unknown
 globals that the shell actually publishes are filtered by validate's
 existing lint step. Counts below are raw analyzer lines (type errors +
 unknown globals + lints) per subsystem, taken on this tip. They are a
@@ -59,7 +59,7 @@ Regenerate with:
 ```
 for d in src/core src/library src/modules src/games tools/test; do
   find "$d" -name '*.luau' | while read f; do
-    luau-analyze --defs=env.d.luau "$f" 2>&1 | wc -l
+    luau-analyze --defs=tools/types/env.d.luau "$f" 2>&1 | wc -l
   done | awk -v d="$d" '{s+=$1} END {print d, s}'
 done
 ```

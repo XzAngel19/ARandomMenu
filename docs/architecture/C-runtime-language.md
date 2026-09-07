@@ -8,7 +8,7 @@ telemetry strings in `afe8223`. This gate holds that deletion.
 
 `tools/check_runtime_language.py` walks:
 
-- `ARandomMenu.luau`
+- `src/ARandomMenu.luau`
 - `loadstring`
 - `src/library/**`
 - `src/modules/**`

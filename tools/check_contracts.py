@@ -20,7 +20,7 @@ import math
 import re
 import sys
 
-SHELL = "ARandomMenu.luau"
+SHELL = "src/ARandomMenu.luau"
 OPTION_BUILDERS = (
     "Toggle|Slider|TwoSlider|Dropdown|Bind|TextBox|Color|List|Button|Section"
 )
@@ -194,11 +194,11 @@ def state_index_contract(sources: list, failures: list) -> None:
     a declared key nothing assigns is documentation describing a menu that does
     not exist.
     """
-    index = open("state.d.luau").read()
+    index = open("tools/types/state.d.luau").read()
     declared = set(re.findall(r"^    (\w+):", index, re.M))
 
     assigned = set()
-    for path in ["ARandomMenu.luau"] + [p for p in sources if p.startswith("src/")]:
+    for path in [SHELL] + [p for p in sources if p.startswith("src/")]:
         assigned |= set(re.findall(r"\bstate\.(\w+)\s*=[^=]", open(path).read()))
 
     for name in sorted(assigned - declared):
@@ -221,7 +221,7 @@ def state_index_comment_contract(failures: list) -> None:
     after a blank line with no comment of its own is a hole. A comment that
     is just the key again, or shorter than a short sentence, is padding.
     """
-    text = open("state.d.luau").read()
+    text = open("tools/types/state.d.luau").read()
     start = text.find("export type MenuState")
     end = text.find("\n}\n", start)
     if start < 0 or end < 0:
@@ -354,7 +354,7 @@ def text_fits_contract(failures: list) -> None:
     builder = re.compile(
         r"\b(?:host\.)?(?:makeTextLabel|makeButton)\(\s*[^,]+,.*?,\s*(\d+)\s*\)"
     )
-    for path in ["ARandomMenu.luau"] + sorted(
+    for path in [SHELL] + sorted(
         glob.glob("src/**/*.luau", recursive=True)
     ):
         lines = open(path).read().split("\n")

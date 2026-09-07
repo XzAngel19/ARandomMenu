@@ -8,7 +8,7 @@
   Development harness only. It is not shipped to the executor and the runtime
   never reads it.
 
-  It mirrors `computeLayoutMetrics` from ARandomMenu.luau so the Mobile /
+  It mirrors `computeLayoutMetrics` from src/ARandomMenu.luau so the Mobile /
   Tablet / Desktop breakpoints, the fixed centred shell, the collapsed
   navigation rail, the card columns and the chrome-less HUD overlays can be
   checked at the reference viewports without launching Roblox. Keep the
@@ -167,7 +167,7 @@
 <main><div id="stage"></div></main>
 <div class="caption" id="caption"></div>
 <script>
-// Mirror of computeLayoutMetrics() in ARandomMenu.luau.
+// Mirror of computeLayoutMetrics() in src/ARandomMenu.luau.
 function metrics(vw, vh, touch) {
   const width = Math.max(240, vw), height = Math.max(200, vh);
   let mode = "Desktop";

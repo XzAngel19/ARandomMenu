@@ -174,7 +174,7 @@ import subprocess
 pattern = re.compile(r'(Instance\.new|create)\(\s*"BlurEffect"')
 sites = []
 for path in subprocess.run(
-    ["git", "ls-files", "ARandomMenu.luau", "src/library", "src/core"],
+    ["git", "ls-files", "src/ARandomMenu.luau", "src/library", "src/core"],
     capture_output=True,
     text=True,
 ).stdout.split():
@@ -184,9 +184,9 @@ for path in subprocess.run(
     for match in pattern.finditer(text):
         line = text.count("\n", 0, match.start()) + 1
         sites.append(f"{path}:{line}")
-shell = open("ARandomMenu.luau", encoding="utf-8", errors="replace").read()
+shell = open("src/ARandomMenu.luau", encoding="utf-8", errors="replace").read()
 problems = []
-if len(sites) != 1 or not sites[0].startswith("ARandomMenu.luau"):
+if len(sites) != 1 or not sites[0].startswith("src/ARandomMenu.luau"):
     problems.append("expected exactly one BlurEffect site in the shell, got: " + (", ".join(sites) or "none"))
 if "MenuBlur.Name = BLUR_NAME" not in shell:
     problems.append("the blur must take PRODUCT.blurName so the reinject sweep finds it")
@@ -392,7 +392,7 @@ PYTHON
 
 step "Product name"
 # Display names of the previous product must not be hard-coded in tools/ or
-# docs/. The filename ARandomMenu.luau stays: it is the loader entry point.
+# docs/. The component keeps the name ARandomMenu while living in src/.
 # The shell still logs a three-letter prefix and names its GUI after the old
 # product; those live in one constant once the integrator publishes it.
 python3 - <<'PYTHON'
@@ -417,7 +417,7 @@ for path in subprocess.run(
 if offenders:
     raise SystemExit(
         "old product name hard-coded:\n  " + "\n  ".join(offenders)
-        + "\n  the display name is Wurst; the file ARandomMenu.luau keeps its name"
+        + "\n  the display name is Wurst; the shell is src/ARandomMenu.luau"
     )
 PYTHON
 echo "ok"
@@ -455,6 +455,9 @@ echo "ok"
 step "Source layout"
 # Every .luau under src/ has to be reachable: named by the manifest, or a
 # per-place game module the loader fetches by name. Nothing else runs.
+# The shell itself is the one exception: it is the file the loader fetches
+# (src/ARandomMenu.luau) and the manifest packs only what the shell then
+# downloads, so it is sibling to the bundle, never inside it.
 #
 # This step used to be a hand-written list of files that must exist, which is
 # a check that cannot fail for any reason worth knowing about — and it was
@@ -473,6 +476,8 @@ reachable.add("src/core/Manifest.luau")
 # Game modules are fetched by name from src/games/ when a place is recognised,
 # so they are reachable without appearing in the manifest.
 reachable |= set(glob.glob("src/games/*.luau"))
+# The loader fetches the shell itself by name; it is outside the bundle.
+reachable.add("src/ARandomMenu.luau")
 
 orphans = sorted(set(glob.glob("src/**/*.luau", recursive=True)) - reachable)
 if orphans:
@@ -505,7 +510,7 @@ step "Manifest matches the runtime fallback"
 # download itself fails; the two must not drift apart.
 while IFS= read -r path; do
     test -f "$path" || { echo "manifest lists a missing file: $path"; exit 1; }
-    grep -q "\"$path\"" ARandomMenu.luau || {
+    grep -q "\"$path\"" src/ARandomMenu.luau || {
         echo "runtime fallback is missing: $path"
         exit 1
     }
@@ -582,8 +587,8 @@ echo "ok"
 
 step "Loader freshness guard"
 grep -q 'REQUIRED_RUNTIME_MARKER' loadstring
-grep -q 'RUNTIME_SAFETY_SOURCE_URL' ARandomMenu.luau
-! grep -q 'corner.Enabled' ARandomMenu.luau
+grep -q 'RUNTIME_SAFETY_SOURCE_URL' src/ARandomMenu.luau
+! grep -q 'corner.Enabled' src/ARandomMenu.luau
 ! grep -q 'corner.Enabled' src/gui/Current/gui.lua
 echo "ok"
 
@@ -718,7 +723,7 @@ if [ -n "$luau_analyze" ]; then
     # usually the leftover half of a change (LocalUnused).
     lint_output="$(mktemp)"
     while IFS= read -r file; do
-        "$luau_analyze" --defs=env.d.luau "$file" 2>&1 \
+        "$luau_analyze" --defs=tools/types/env.d.luau "$file" 2>&1 \
             | grep -E "LocalUnused|LocalShadow|GlobalUsedAsLocal|DuplicateLocal|DuplicateFunction|UnreachableCode|DuplicateCondition" \
             >> "$lint_output" || true
     done < <(source_files)
@@ -745,10 +750,15 @@ if [ -n "$luau_analyze" ]; then
     : > "$analyze_output"
     while IFS= read -r file; do
         case "$file" in ./src/*) ;; *) continue ;; esac
+        # The shell is the one src/ file that runs in the executor environment
+        # where readfile, gethui and friends are real globals; it does not run
+        # in the menu table this check is about. Its own free names are the
+        # executor's contract, recorded in tools/types/env.d.luau.
+        [ "$file" = "./src/ARandomMenu.luau" ] && continue
         # luau-analyze exits non-zero on any type error, and this repository
         # has many that are not defects: no Roblox type definitions are fed to
         # it. Only the unknown-global lines matter here.
-        "$luau_analyze" --defs=env.d.luau "$file" 2>&1 \
+        "$luau_analyze" --defs=tools/types/env.d.luau "$file" 2>&1 \
             | sed -n "s#^\(\./[^(]*\)(.*Unknown global '\([^']*\)'.*#\1 \2#p" \
             >> "$analyze_output" || true
     done < <(source_files)
@@ -776,10 +786,10 @@ ROBLOX = {
     "Font", "BrickColor", "Random", "Axes", "Faces", "PhysicalProperties",
     "OverlapParams", "RaycastParams", "DateTime", "CatalogSearchParams",
 }
-declarations = open("env.d.luau").read()
+declarations = open("tools/types/env.d.luau").read()
 EXECUTOR = set(re.findall(r"^declare (?:function )?(\w+)", declarations, re.M))
 
-published = environment_keys(open("ARandomMenu.luau").read()) | ROBLOX | EXECUTOR
+published = environment_keys(open("src/ARandomMenu.luau").read()) | ROBLOX | EXECUTOR
 failures = []
 seen = set()
 for line in open(os.environ["ANALYZE_OUTPUT"]):
@@ -821,10 +831,10 @@ import sys
 # alive purely so this grep would keep succeeding — which measured nothing
 # and cost a real line of the file it was measuring.
 anchor = "state.universalScroll = CardBin"
-source = open("ARandomMenu.luau").read()
+source = open("src/ARandomMenu.luau").read()
 if anchor not in source:
     raise SystemExit(
-        "probe anchor missing from ARandomMenu.luau — point it at another "
+        "probe anchor missing from src/ARandomMenu.luau — point it at another "
         "statement in the shell's largest scope, do not add one for it"
     )
 padding = "\n".join(

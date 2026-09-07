@@ -105,7 +105,7 @@ If you need a change in someone else's file: append the request to
 keep working around it.
 
 **Regenerating the bundle is not editing the shell.** `python3 tools/bundle.py`
-rewrites `runtime/bundle.luau` and one stamp line in `ARandomMenu.luau`, both of
+rewrites `runtime/bundle.luau` and one stamp line in `src/ARandomMenu.luau`, both of
 which are generated from your sources. Run it whenever the gate tells you the
 stamp is stale, and commit both files with your change — the alternative is what
 happened the first time this was unclear: an agent finished a correct increment
@@ -175,7 +175,7 @@ work evaporates while you do it. Then report what happened.
 - Directory names `dist/`, `build/`, `out/`, `node_modules/` are excluded from
   workspace snapshots. Generated output lives in `runtime/`.
 - `luau-analyze` reports every free global as unknown, including `Enum`. That is
-  expected; the global contract compensates by reading `env.d.luau`.
+  expected; the global contract compensates by reading `tools/types/env.d.luau`.
 - `curl` to raw.githubusercontent is SSL-blocked. `gh api` works.
 - Downloading CI logs is blocked. Verify CI by job step name and conclusion.
 

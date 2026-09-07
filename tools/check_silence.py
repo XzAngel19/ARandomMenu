@@ -4,7 +4,7 @@
 print/warn inside bootstrap() are local shadows gated on
 getgenv().ARANDOMMENU_DEBUG. A module or library that reaches for
 realPrint/realWarn (or an equivalent getfenv().print capture) bypasses
-that gate. The gate itself lives in ARandomMenu.luau and is the only
+that gate. The gate itself lives in src/ARandomMenu.luau and is the only
 file allowed to name those locals.
 """
 
@@ -18,7 +18,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # The shell owns the shadows. Everything else — including the packed
 # bundle — talking to the real printers is a leak.
-ALLOWED = {"ARandomMenu.luau"}
+ALLOWED = {"src/ARandomMenu.luau"}
 
 # realPrint / realWarn, and a getfenv().print / getfenv().warn grab that
 # would skip the injected shadows.

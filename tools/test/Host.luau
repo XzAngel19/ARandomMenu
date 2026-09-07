@@ -967,7 +967,7 @@ function Host.create(world: any): HostStub
         storageFolder = "RandomTestingMenu0001",
     }
     host.REPOSITORY_RAW_BASE = "https://example.invalid/"
-    host.RUNTIME_SAFETY_SOURCE_URL = "https://example.invalid/ARandomMenu.luau"
+    host.RUNTIME_SAFETY_SOURCE_URL = "https://example.invalid/src/ARandomMenu.luau"
     host.RUNTIME_COMPATIBILITY_MARKER = "test-marker"
     host.SOURCE_STAMP = "testtesttesttest"
     -- Every label registered for text scaling. The three make* helpers feed

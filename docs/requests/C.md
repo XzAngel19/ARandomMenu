@@ -50,7 +50,7 @@ the EmotePlayer saved-id path).
 Base on the current tip of `arena/01a03bca-arandommenu`; do not re-land C1–C4.
 
 1. Add a focused runtime-language gate for player-visible strings in
-   `ARandomMenu.luau`, `loadstring`, `src/library/**`, `src/modules/**` and
+   `src/ARandomMenu.luau`, `loadstring`, `src/library/**`, `src/modules/**` and
    `src/games/**`. English is the product language. Avoid a naive dictionary
    that flags identifiers or third-party reference files; seed the gate with
    the concrete Spanish runtime phrases removed by the integrator and document

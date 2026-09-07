@@ -21,16 +21,16 @@ Standalone strict-Luau menu with a remote, PlaceId-driven game-module runtime.
   getgenv().ARANDOMMENU_BRANCH = "arena/01a03bca-arandommenu"
   loadstring(game:HttpGet(
       "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/"
-          .. getgenv().ARANDOMMENU_BRANCH .. "/ARandomMenu.luau"))()
+          .. getgenv().ARANDOMMENU_BRANCH .. "/src/ARandomMenu.luau"))()
   ```
 
   It defaults to `main`, and the loader still falls back to main and then to
   the known-good snapshot if the branch fails to download.
-- `loadstring` downloads the current `ARandomMenu.luau` bootstrap.
+- `loadstring` downloads the current `src/ARandomMenu.luau` bootstrap.
 - Loader v3 rejects the stale `0/0` runtime, retries a known-good immutable
   snapshot when GitHub's branch CDN has not propagated, and never runs an
   outdated local fallback.
-- `ARandomMenu.luau` creates the shared responsive UI, component factory,
+- `src/ARandomMenu.luau` creates the shared responsive UI, component factory,
   notifications, state and the single-heartbeat `TaskManager`.
 - The bootstrap reads `game.PlaceId` and downloads the named game module from
   the repository raw URL. MM2, TRS and VD resolve to their named modules.
@@ -616,7 +616,7 @@ lifecycle all gone from it. Item Render and the game marks are next.
 
 ## Getting the shell out of the way
 
-`ARandomMenu.luau` is the window, the widgets and the loader — and it had
+`src/ARandomMenu.luau` is the window, the widgets and the loader — and it had
 grown into the place where features were written too, because that is where
 the first one was written. Everything below the shell belongs in
 `src/modules/**`, where the kernel, the contracts and the tests already live.
@@ -696,7 +696,7 @@ now something checks it.
 
 ### The settings page
 
-The Config. tab was another eight hundred lines of `ARandomMenu.luau`: interface
+The Config. tab was another eight hundred lines of `src/ARandomMenu.luau`: interface
 scale and typeface, blur, animations, the toggle key, re-inject, destruct, the
 detected game and the mobile action size. None of it is shell logic — it is a
 page of controls exactly like a module's panel — and it is
@@ -722,7 +722,7 @@ the tree for weeks:
   existing when MVSD's marks were folded into the universal ESP. It threw, and
   the two lines of cleanup after it never ran.
 
-The check reads what the executor provides from `env.d.luau` and what the shell
+The check reads what the executor provides from `tools/types/env.d.luau` and what the shell
 provides from the environment table itself, so there is no hand-kept list to go
 stale.
 
@@ -790,7 +790,7 @@ The queue: `state` into typed tables. The shell's four remaining blocks
 
 ## Module architecture
 
-Modules are files, not another thousand lines of `ARandomMenu.luau`. The main
+Modules are files, not another thousand lines of `src/ARandomMenu.luau`. The main
 file is the shell — window, cards, option rows, keybind registry — and
 everything below the shell is downloaded from the repository at runtime:
 
@@ -871,7 +871,7 @@ the crosshair — in one place, with one team check and one visibility raycast.
 
 **The manifest.** `src/core/Manifest.luau` is the file list. Adding a module is
 one line there and one file under `src/modules/<Category>/`; nothing in
-`ARandomMenu.luau` changes. The runtime keeps an embedded copy as a fallback for
+`src/ARandomMenu.luau` changes. The runtime keeps an embedded copy as a fallback for
 a failed manifest download, and the validation workflow fails if the two drift
 apart. Every piece exports the same `init` / `destroy` pair the per-game modules
 use, and `destroy` runs from the menu's own teardown step.
@@ -1359,7 +1359,7 @@ validation workflow.
 - `src/games/Universal.luau`: the universal/movement module contract only — a
   manifest of feature ids, names and ordering. Every universal implementation
   (Fly, Speed, Infinite Jump, Click Teleport, Noclip …) lives in
-  `ARandomMenu.luau`.
+  `src/ARandomMenu.luau`.
 - `src/games/MM2.luau`: complete MM2 implementation.
 - `src/games/TRS.luau`: complete TRS implementation.
 - `src/games/VD.luau`: Violence District survivor, killer and visibility tools.

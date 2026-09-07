@@ -1303,7 +1303,7 @@ function Gui.new(options: GuiOptions?): GuiController
                 reinjectButton.Text = "DOWNLOADING…"
             end
             local sourceUrls: {string} = {
-                resolved.reinjectUrl or (RAW_BASE .. "ARandomMenu.luau"),
+                resolved.reinjectUrl or (RAW_BASE .. "src/ARandomMenu.luau"),
                 RUNTIME_SAFETY_SOURCE_URL,
             }
             local downloaded: boolean = false
@@ -1343,7 +1343,7 @@ function Gui.new(options: GuiOptions?): GuiController
             local compiledOk: boolean, compiledOrError: any, returnedError: any = pcall(
                 compiler,
                 sourceOrError,
-                "@ARandomMenu.luau"
+                "@src/ARandomMenu.luau"
             )
             if not compiledOk or type(compiledOrError) ~= "function" then
                 reinjecting = false

@@ -32,7 +32,7 @@ FONT_URL_HINTS = (
 
 def tracked() -> list[str]:
     result = subprocess.run(
-        ["git", "ls-files", "tools", "ARandomMenu.luau", "src", "docs", "assets"],
+        ["git", "ls-files", "tools", "src/ARandomMenu.luau", "src", "docs", "assets"],
         cwd=ROOT,
         capture_output=True,
         text=True,

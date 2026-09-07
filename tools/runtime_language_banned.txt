@@ -1,6 +1,6 @@
 # Concrete Spanish runtime phrases the integrator removed (afe8223).
 # One phrase per line. Matching is case-sensitive and only inside
-# quoted Luau string literals in ARandomMenu.luau, loadstring,
+# quoted Luau string literals in src/ARandomMenu.luau, loadstring,
 # src/library/**, src/modules/** and src/games/**.
 #
 # Add a line here when a player-visible Spanish string is deleted.
