@@ -2786,6 +2786,139 @@ run(function()
 end)
 
 run(function()
+	local KillAura
+	local Targets
+	local TargetPart
+	local Mode
+	local Range
+	local Animation
+
+	local nextAttack = 0
+
+	local function attack(entity, tool, targetpos)
+		local selfpos = entitylib.character.RootPart.Position
+		local delta = targetpos - selfpos
+		local dir = delta.Magnitude > 0.001 and delta.Unit or Vector3.new(0, -1, 0)
+		local reach = getReach(tool) or 0
+		local pos = selfpos + dir * math.max(delta.Magnitude - (reach - 0.001), 0)
+
+		if Animation.Enabled then
+			bedwars.GameAnimationUtil:playAnimation(lplr.Character, bedwars.AnimationType.PUNCH)
+		end
+
+		bedwars.SwordController.lastAttack = workspace:GetServerTimeNow()
+		store.attackReach = (delta.Magnitude * 100) // 1 / 100
+		store.attackReachUpdate = tick() + 1
+
+		bedwars.Handler:Get('SwordHit'):Fire('SendToServer', {
+			weapon = tool,
+			entityInstance = entity.Character,
+			validate = {
+				raycast = {
+					cameraPosition = {value = pos},
+					cursorDirection = {value = dir}
+				},
+				targetPosition = {value = targetpos},
+				selfPosition = {value = pos}
+			}
+		})
+	end
+
+	KillAura = vape.Categories.Combat:CreateModule({
+		Name = 'KillAura',
+		Function = function(callback)
+			if callback then
+				nextAttack = 0
+
+				repeat
+					-- Con la tienda/menu del juego abierto no se ataca (glitch UI),
+					-- y tampoco mientras lanzas una habilidad o el swing esta bloqueado.
+					if entitylib.isAlive and not bedwars.AppController:isLayerOpen(bedwars.UILayers.MAIN) and not isCasting() and not bedwars.SwordController:getSwordSwingDisabled() then
+						local tool = store.hand.tool
+						local itemmeta = tool and bedwars.ItemMeta[tool.Name]
+						-- Solo espadas normales: las de carga (martillos, hoces) las
+						-- maneja ChargeAura, aqui se verian como golpes sin cargar.
+						if tool and store.hand.toolType == 'sword' and itemmeta and itemmeta.sword and not itemmeta.sword.chargedAttack then
+							local target = entitylib.EntityPosition({
+								Range = Range.Value + (getReach(tool) or 0),
+								Part = 'RootPart',
+								Players = Targets.Players.Enabled,
+								NPCs = Targets.NPCs.Enabled,
+								Priority = Targets.Priority.Value,
+								Wallcheck = Targets.Walls.Enabled,
+								Sort = sortmethods[Mode.Value]
+							})
+
+							if target then
+								-- Lo publica para que AimAssist (Usar objetivo de killaura)
+								-- apunte exactamente al que esta atacando este modulo.
+								store.KillauraTarget = target
+								store.attacking = true
+								targetinfo.Targets[target] = tick() + 1
+
+								if tick() >= nextAttack then
+									attack(target, tool, getTargetPart(target, TargetPart.Value).Position)
+									nextAttack = tick() + getSwordSpeed(tool)
+								end
+							else
+								store.KillauraTarget = nil
+								store.attacking = false
+							end
+						else
+							store.KillauraTarget = nil
+							store.attacking = false
+						end
+					end
+					task.wait()
+				until not KillAura.Enabled
+
+				store.KillauraTarget = nil
+				store.attacking = false
+			end
+		end,
+		Tooltip = 'Swings at the closest valid enemy with the sword you hold, on the sword real cooldown'
+	})
+
+	Targets = KillAura:CreateTargets({
+		Players = true,
+		NPCs = true,
+		Walls = true
+	})
+	local methods = {'Distance', 'Health', 'Angle'}
+	for _, v in sortlist do
+		if not table.find(methods, v) then
+			table.insert(methods, v)
+		end
+	end
+	Mode = KillAura:CreateDropdown({
+		Name = 'Target mode',
+		List = methods,
+		Default = 'Distance'
+	})
+	TargetPart = KillAura:CreateDropdown({
+		Name = 'Target part',
+		List = partlist,
+		Default = 'RootPart'
+	})
+	Range = KillAura:CreateSlider({
+		Name = 'Extra range',
+		Min = 0,
+		Max = 10,
+		Default = 2,
+		Decimal = 10,
+		Suffix = function(val)
+			return val <= 1 and 'stud' or 'studs'
+		end,
+		Tooltip = 'Added on top of the sword itself attack range'
+	})
+	Animation = KillAura:CreateToggle({
+		Name = 'Animation',
+		Default = true,
+		Tooltip = 'Plays a visible swing on every hit for a legit look'
+	})
+end)
+
+run(function()
 	local ChargeAura
 	local Targets
 	local Mode
@@ -2885,7 +3018,7 @@ run(function()
 				nextSwap = 0
 	
 				repeat
-					if entitylib.isAlive and not isCasting() and not bedwars.SwordController:getSwordSwingDisabled() then
+					if entitylib.isAlive and not bedwars.AppController:isLayerOpen(bedwars.UILayers.MAIN) and not isCasting() and not bedwars.SwordController:getSwordSwingDisabled() then
 						local tool = store.hand.tool
 						local charged = getCharged(tool)
 						local weapon = (not charged and Swap.Enabled) and getChargedWeapon() or nil
@@ -2902,6 +3035,13 @@ run(function()
 								Sort = sortmethods[Mode.Value]
 							})
 	
+							if target then
+								-- Comparte el objetivo con AimAssist (Usar objetivo de killaura).
+								store.KillauraTarget = target
+							else
+								store.KillauraTarget = nil
+							end
+
 							if target and weapon and tick() >= nextSwap then
 								local hotbar = getHotbar(weapon.tool)
 								if hotbar then
@@ -2948,6 +3088,8 @@ run(function()
 					end
 					task.wait()
 				until not ChargeAura.Enabled
+
+				store.KillauraTarget = nil
 	
 				store.attacking = false
 				local tool = store.hand.tool
@@ -5607,7 +5749,7 @@ run(function()
 		Function = function(callback)
 			if callback then
 				repeat
-					if (workspace:GetServerTimeNow() - bedwars.SwordController.lastAttack) > 0.5 and (not AFKCheck.Enabled or not isAfk()) then
+					if (workspace:GetServerTimeNow() - bedwars.SwordController.lastAttack) > 0.5 and (not AFKCheck.Enabled or not isAfk()) and not bedwars.AppController:isLayerOpen(bedwars.UILayers.MAIN) then
 						local ent = entitylib.EntityPosition({
 							Part = 'RootPart',
 							Range = Range.Value,
@@ -14340,7 +14482,7 @@ run(function()
 									item = store.inventory.inventory.armor[i + 1] == 'empty' and state and getBestArmor(i) or nil,
 									armorSlot = i
 								})
-								vapeEvents.InventoryChanged.Event:Wait()
+								vapeEvents.InventoryChanged.Event:Wait(0.4)
 							end
 						end
 						task.wait(0.1)
@@ -14353,7 +14495,7 @@ run(function()
 							item = store.inventory.inventory.armor[i + 1] == 'empty' and getBestArmor(i) or nil,
 							armorSlot = i
 						})
-						vapeEvents.InventoryChanged.Event:Wait()
+						vapeEvents.InventoryChanged.Event:Wait(0.4)
 					end
 				end
 			end
@@ -15550,7 +15692,7 @@ run(function()
 						type = 'InventoryRemoveFromHotbar',
 						slot = slot - 1
 					})
-					vapeEvents.InventoryChanged.Event:Wait()
+					vapeEvents.InventoryChanged.Event:Wait(0.4)
 				end
 	
 				local newslot
@@ -15566,7 +15708,7 @@ run(function()
 						type = 'InventoryRemoveFromHotbar',
 						slot = newslot
 					})
-					vapeEvents.InventoryChanged.Event:Wait()
+					vapeEvents.InventoryChanged.Event:Wait(0.4)
 					if olditem.item then
 						local swap
 						for _, v2 in store.inventory.inventory.items do
@@ -15580,7 +15722,7 @@ run(function()
 							item = swap,
 							slot = newslot
 						})
-						vapeEvents.InventoryChanged.Event:Wait()
+						vapeEvents.InventoryChanged.Event:Wait(0.4)
 					end
 				end
 	
@@ -15596,7 +15738,7 @@ run(function()
 					item = held,
 					slot = slot - 1
 				})
-				vapeEvents.InventoryChanged.Event:Wait()
+				vapeEvents.InventoryChanged.Event:Wait(0.4)
 			elseif Clear.Enabled then
 				local newslot
 				for i, v2 in store.inventory.hotbar do
@@ -15611,7 +15753,7 @@ run(function()
 						type = 'InventoryRemoveFromHotbar',
 						slot = newslot
 					})
-					vapeEvents.InventoryChanged.Event:Wait()
+					vapeEvents.InventoryChanged.Event:Wait(0.4)
 				end
 			end
 		end
