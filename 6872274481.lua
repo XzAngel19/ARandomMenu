@@ -664,6 +664,10 @@ local function expectKnockback(root, flight, from, multiplier)
 end
 getgenv().expectKnockback = expectKnockback
 
+-- Una flecha/proyectil enemigo esta en camino de impactarnos: el Velocity lo
+-- lee para reducir el knockback (no puedes saltar bien con una flecha encima).
+local incomingArrowUntil = 0
+
 local function scanProjectile(origin, velocity, projectileType, shooter)
 	if not entitylib.isAlive then return end
 
@@ -685,6 +689,9 @@ local function scanProjectile(origin, velocity, projectileType, shooter)
 		end
 
 		if hit then
+			if v.Character == lplr.Character then
+				incomingArrowUntil = math.max(incomingArrowUntil, workspace:GetServerTimeNow() + hit + 0.8)
+			end
 			expectKnockback(root, hit, origin, meta and meta.knockback)
 		end
 	end
@@ -750,7 +757,10 @@ local function hotbarSwitch(slot)
 			type = 'InventorySelectHotbarSlot',
 			slot = slot
 		})
-		vapeEvents.InventoryChanged.Event:Wait()
+		-- Espera con limite: si el juego no confirma el cambio (o el slot ya
+		-- estaba, o dos modulos cambiaron a la vez y el evento quedo consumido),
+		-- el hilo no se queda colgado buscando un evento que nunca llega.
+		vapeEvents.InventoryChanged.Event:Wait(0.4)
 		return true
 	end
 	return false
@@ -1719,7 +1729,10 @@ run(function()
 	end
 
 	bedwars.placeBlock = function(pos, item)
-		if not canPlace() then return end
+		-- Con la tienda o cualquier capa principal del juego abierta no se
+		-- colocan bloques (glitch de la interfaz). Cubre todos los modulos que
+		-- pasan por aqui: Block-In, BedPatcher, counter TNT, scaffold, etc.
+		if not canPlace() or bedwars.AppController:isLayerOpen(bedwars.UILayers.MAIN) then return end
 		if getItem(item) then
 			store.blockPlacer.blockType = item
 			return store.blockPlacer:placeBlock(bedwars.BlockController:getBlockPosition(pos))
@@ -3709,6 +3722,7 @@ run(function()
 end)
 
 	
+	
 run(function()
 	local Velocity
 	local Horizontal
@@ -3723,6 +3737,8 @@ run(function()
 	local lastHit = 0
 	local smartLoop
 	local hitConnection
+	local lastMode
+	local bridgeCacheAt, bridgeCache = 0, false
 
 	local function healthPercent()
 		if not entitylib.isAlive or not entitylib.character or not entitylib.character.Humanoid then return 100 end
@@ -3741,6 +3757,36 @@ run(function()
 		return toolType ~= 'sword'
 	end
 
+	-- Puente: solo una linea estrecha de bloques bajo los pies, ningun suelo
+	-- ancho alrededor. Si hay muchos bloques (isla, base, plataforma) no es
+	-- un puente y el knockback vuelve a ser normal.
+	local function onBridge()
+		if not entitylib.isAlive or not entitylib.character then return false end
+		if tick() < bridgeCacheAt then return bridgeCache end
+		bridgeCacheAt = tick() + 0.25
+		bridgeCache = false
+		local character = entitylib.character
+		local root = character.RootPart
+		if not root then return false end
+		-- Bloque exacto bajo los pies (celda del suelo), no un bloque cualquiera.
+		local feet = root.Position - Vector3.new(0, (character.HipHeight or 2) + 2.5, 0)
+		if not getPlacedBlock(feet) then return false end
+		-- Cuenta los bloques en las celdas vecinas (3x3 alrededor del centro).
+		-- Un puente de una linea tiene 1-4 bloques aqui; una isla/base tiene muchos mas.
+		local center = bedwars.BlockController:getBlockPosition(feet)
+		local blocks = getBlocksInPoints(center - Vector3.one, center + Vector3.one)
+		bridgeCache = #blocks <= 5
+		table.clear(blocks)
+		return bridgeCache
+	end
+
+	-- Flecha: un proyectil enemigo fue previsto para impactarnos, o un golpe
+	-- acaba de llegar desde lejos (arco), no un espadazo a corta distancia.
+	-- (incomingArrowUntil se guarda en tiempo de servidor para no mezclar relojes.)
+	local function arrowRisk()
+		return workspace:GetServerTimeNow() < incomingArrowUntil
+	end
+
 	-- PvP: alguien cerca o te acaban de golpear.
 	local function combatActive()
 		if tick() - lastHit < 2.5 then return true end
@@ -3757,19 +3803,37 @@ run(function()
 		knockbackModule:SetAttribute('ConstantManager_kbUpwardStrength', defaults.vertical * (verticalPct / 100))
 	end
 
+	-- Al apagar el modulo hay que devolver los valores originales del juego.
+	-- Antes se dejaba 100/100, cambiando el knockback del juego para siempre.
+	local function restoreDefaults()
+		if not defaults then return end
+		knockbackModule:SetAttribute('ConstantManager_kbDirectionStrength', defaults.horizontal)
+		knockbackModule:SetAttribute('ConstantManager_kbUpwardStrength', defaults.vertical)
+	end
+
 	Velocity = vape.Categories.Combat:CreateModule({
 		Name = 'Velocity',
 		Function = function(callback)
 			if not canDebug then
 				if callback then
 					defaults = defaults or {
-						horizontal = knockbackModule:GetAttribute('ConstantManager_kbDirectionStrength'),
-						vertical = knockbackModule:GetAttribute('ConstantManager_kbUpwardStrength')
+						-- Si el juego aun no inicializo el modulo (lobby/preequipo), el
+						-- atributo es nil: usar 100 (multiplicador 1x) para no romper
+						-- los calculos ni dejar valores corruptos al apagar el modulo.
+						horizontal = knockbackModule:GetAttribute('ConstantManager_kbDirectionStrength') or 100,
+						vertical = knockbackModule:GetAttribute('ConstantManager_kbUpwardStrength') or 100
 					}
 					lastHit = 0
+					lastMode = nil
 					hitConnection = vapeEvents.EntityDamageEvent.Event:Connect(function(damageTable)
 						if not entitylib.isAlive or damageTable.entityInstance ~= lplr.Character then return end
 						lastHit = tick()
+						-- Golpe desde lejos = flecha. Deja el knockback minimo.
+						local root = entitylib.character and entitylib.character.RootPart
+						local from = damageTable.fromPosition
+						if root and typeof(from) == 'Vector3' and (root.Position - from).Magnitude > 24 then
+							incomingArrowUntil = math.max(incomingArrowUntil, workspace:GetServerTimeNow() + 1.8)
+						end
 						-- Empuje extra al huir: mas velocidad para salvarse del puente.
 						if Smart.Enabled and escapeRisk() then
 							knockbackSpeed = math.max(knockbackSpeed, 34)
@@ -3778,26 +3842,38 @@ run(function()
 					end)
 					smartLoop = task.spawn(function()
 						while Velocity.Enabled do
+							local mode = 'idle'
 							if Smart.Enabled then
-								if escapeRisk() then
-									-- Proteccion total: no te tiran del puente.
-									applyAttributes(8, 0)
+								if onBridge() or arrowRisk() then
+									-- Puente o flecha: minimo, que no te saquen del puente.
+									mode = 'protect'
+								elseif escapeRisk() then
+									mode = 'escape'
 								elseif combatActive() then
 									-- PvP: se activa la reduccion configurada.
+									mode = 'pvp'
+								end
+							else
+								mode = 'manual'
+							end
+							if mode ~= lastMode then
+								if mode == 'protect' or mode == 'escape' then
+									applyAttributes(5, 0)
+								elseif mode == 'pvp' or mode == 'manual' then
 									applyAttributes(Horizontal.Value, Vertical.Value)
 								else
 									applyAttributes(100, 100)
 								end
-							else
-								applyAttributes(Horizontal.Value, Vertical.Value)
+								lastMode = mode
 							end
-							task.wait(0.15)
+							task.wait(0.2)
 						end
 					end)
 				elseif defaults then
 					if hitConnection then hitConnection:Disconnect() hitConnection = nil end
 					if smartLoop then task.cancel(smartLoop) smartLoop = nil end
-					applyAttributes(100, 100)
+					restoreDefaults()
+					lastMode = nil
 				end
 				return
 			end
@@ -3821,6 +3897,25 @@ run(function()
 							knockback.vertical = (knockback.vertical or 1) * (Vertical.Value / 100)
 						end
 
+						return old(root, mass, dir, knockback, ...)
+					end
+
+					-- Puente o flecha entrante: minimo absoluto. Si ademas vas con
+					-- bloques y poca vida, empuje corto para alejarte.
+					if onBridge() or arrowRisk() then
+						knockback = knockback or {}
+						local horizontal = knockback.horizontal or 1
+						knockback.horizontal = horizontal * 0.05
+						knockback.vertical = (knockback.vertical or 1) * 0
+						if escapeRisk() then
+							local kin = bedwars.KnockbackUtil.calculateKnockbackVelocity(Vector3.one, 1, {
+								vertical = 0,
+								horizontal = horizontal
+							}).Magnitude
+							knockbackSpeed = math.max(knockbackSpeed, kin * 1.6)
+							knockbackBoost = tick() + 1.4
+						end
+						lastHit = tick()
 						return old(root, mass, dir, knockback, ...)
 					end
 
@@ -3855,8 +3950,12 @@ run(function()
 				end
 
 				hitConnection = vapeEvents.EntityDamageEvent.Event:Connect(function(damageTable)
-					if entitylib.isAlive and damageTable.entityInstance == lplr.Character then
-						lastHit = tick()
+					if not entitylib.isAlive or damageTable.entityInstance ~= lplr.Character then return end
+					lastHit = tick()
+					local root = entitylib.character and entitylib.character.RootPart
+					local from = damageTable.fromPosition
+					if root and typeof(from) == 'Vector3' and (root.Position - from).Magnitude > 24 then
+						incomingArrowUntil = math.max(incomingArrowUntil, workspace:GetServerTimeNow() + 1.8)
 					end
 				end)
 			else
@@ -3902,7 +4001,7 @@ run(function()
 	Smart = Velocity:CreateToggle({
 		Name = 'Smart',
 		Default = true,
-		Tooltip = 'Auto: with blocks at low HP it keeps you on the bridge and pushes you away; while fighting it applies the sliders'
+		Tooltip = 'Auto: bridges and arrows get near-zero knockback; while fighting it applies the sliders'
 	})
 	EscapeHP = Velocity:CreateSlider({
 		Name = 'Escape HP',
@@ -10206,7 +10305,7 @@ run(function()
 		Function = function(callback)
 			if callback then
 				AutoBlockUp:Clean(runService.Heartbeat:Connect(function()
-					if entitylib.isAlive and up then
+					if entitylib.isAlive and up and not bedwars.AppController:isLayerOpen(bedwars.UILayers.MAIN) then
 						local item
 						if store.hand.toolType == 'block' and (store.hand.amount or 0) > 0 then
 							item = store.hand.tool and store.hand.tool.Name
@@ -11762,7 +11861,10 @@ run(function()
 	
 			if callback then
 				repeat
-					if entitylib.isAlive then
+					-- Tienda/menu del juego abierto: no colocar bloques. Antes el
+					-- scaffold seguia poniendo bloques con la tienda abierta y eso
+					-- rompia la interfaz del juego.
+					if entitylib.isAlive and not bedwars.AppController:isLayerOpen(bedwars.UILayers.MAIN) then
 						local wool, amount = getScaffoldBlock()
 	
 						if Mouse.Enabled then
@@ -12602,7 +12704,7 @@ run(function()
 				end))
 	
 				AutoTool:Clean(runService.Heartbeat:Connect(function()
-					if Mode.Value ~= 'Look' or not entitylib.isAlive then return end
+					if Mode.Value ~= 'Look' or not entitylib.isAlive or bedwars.AppController:isLayerOpen(bedwars.UILayers.MAIN) then return end
 	
 					local held = store.hand.tool and bedwars.ItemMeta[store.hand.tool.Name]
 					if not (held and held.breakBlock) then
@@ -13288,6 +13390,10 @@ run(function()
 		Function = function(callback)
 			if callback then
 				repeat
+					if bedwars.AppController:isLayerOpen(bedwars.UILayers.MAIN) then
+						task.wait(0.25)
+						continue
+					end
 					local bed = getBedNear()
 					if bed then
 						for i2, v2 in getBlocks() do
