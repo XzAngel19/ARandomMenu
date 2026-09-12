@@ -785,7 +785,7 @@ local function hotbarSwitch(slot)
 			type = 'InventorySelectHotbarSlot',
 			slot = slot
 		})
-		vapeEvents.InventoryChanged.Event:Wait()
+		vapeEvents.InventoryChanged.Event:Wait(0.4)
 		return true
 	end
 	return false
@@ -14870,7 +14870,7 @@ run(function()
 									item = store.inventory.inventory.armor[i + 1] == 'empty' and state and getBestArmor(i) or nil,
 									armorSlot = i
 								})
-								vapeEvents.InventoryChanged.Event:Wait()
+								vapeEvents.InventoryChanged.Event:Wait(0.4)
 							end
 						end
 						task.wait(0.1)
@@ -14883,7 +14883,7 @@ run(function()
 							item = store.inventory.inventory.armor[i + 1] == 'empty' and getBestArmor(i) or nil,
 							armorSlot = i
 						})
-						vapeEvents.InventoryChanged.Event:Wait()
+						vapeEvents.InventoryChanged.Event:Wait(0.4)
 					end
 				end
 			end
@@ -16080,7 +16080,7 @@ run(function()
 						type = 'InventoryRemoveFromHotbar',
 						slot = slot - 1
 					})
-					vapeEvents.InventoryChanged.Event:Wait()
+					vapeEvents.InventoryChanged.Event:Wait(0.4)
 				end
 	
 				local newslot
@@ -16096,7 +16096,7 @@ run(function()
 						type = 'InventoryRemoveFromHotbar',
 						slot = newslot
 					})
-					vapeEvents.InventoryChanged.Event:Wait()
+					vapeEvents.InventoryChanged.Event:Wait(0.4)
 					if olditem.item then
 						local swap
 						for _, v2 in store.inventory.inventory.items do
@@ -16110,7 +16110,7 @@ run(function()
 							item = swap,
 							slot = newslot
 						})
-						vapeEvents.InventoryChanged.Event:Wait()
+						vapeEvents.InventoryChanged.Event:Wait(0.4)
 					end
 				end
 	
@@ -16126,7 +16126,7 @@ run(function()
 					item = held,
 					slot = slot - 1
 				})
-				vapeEvents.InventoryChanged.Event:Wait()
+				vapeEvents.InventoryChanged.Event:Wait(0.4)
 			elseif Clear.Enabled then
 				local newslot
 				for i, v2 in store.inventory.hotbar do
@@ -16141,7 +16141,7 @@ run(function()
 						type = 'InventoryRemoveFromHotbar',
 						slot = newslot
 					})
-					vapeEvents.InventoryChanged.Event:Wait()
+					vapeEvents.InventoryChanged.Event:Wait(0.4)
 				end
 			end
 		end
