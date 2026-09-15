@@ -76,6 +76,65 @@ local assetfunction = getcustomasset
 vape.Libraries.navigation = loadstring(downloadFile('catsix/libraries/navigation.lua'), 'navigation')()
 
 local entitylib = vape.Libraries.entity
+
+-- EntityLib mejorado: el wallcheck original solo raycastea a UNA parte del
+-- cuerpo (RootPart o la elegida); si esa linea exacta queda tapada por un
+-- bloque, el objetivo "no existe" aunque se le vea un pie o una mano por un
+-- hueco. Ahora se prueba el cuerpo entero: si CUALQUIER parte es visible lo
+-- detecta, y si no se ve ninguna parte sigue oculto (nada de pegar a traves
+-- de paredes completas).
+local entityBodyParts = {'Head', 'Torso', 'UpperTorso', 'LowerTorso', 'HumanoidRootPart', 'LeftHand', 'RightHand', 'LeftFoot', 'RightFoot', 'LeftLowerArm', 'RightLowerArm', 'LeftLowerLeg', 'RightLowerLeg', 'LeftUpperArm', 'RightUpperArm', 'LeftUpperLeg', 'RightUpperLeg', 'Left Arm', 'Right Arm', 'Left Leg', 'Right Leg'}
+
+local function upgradeEntityPicker(name)
+	local real = entitylib[name]
+	entitylib[name] = function(entitysettings)
+		if entitylib.isAlive and entitysettings and entitysettings.Wallcheck then
+			local realWallcheck = entitylib.Wallcheck
+			local partKey = entitysettings.Part or 'RootPart'
+			-- El wallcheck de la lib no dice a que entidad pertenece el punto;
+			-- identificamos la entidad comparando la posicion con la lista.
+			entitylib.Wallcheck = function(origin, position, ignoreobject)
+				local entity
+				for _, e in entitylib.List do
+					local p = e[partKey]
+					if p and p.Position == position then
+						entity = e
+						break
+					end
+				end
+
+				local char = entity and entity.Character
+				if not char then
+					return realWallcheck(origin, position, ignoreobject)
+				end
+
+				if not realWallcheck(origin, position, ignoreobject) then
+					return nil
+				end
+
+				local primaryName = entity[partKey] and entity[partKey].Name
+				for _, partname in entityBodyParts do
+					if partname ~= primaryName then
+						local part = char:FindFirstChild(partname)
+						if part and not realWallcheck(origin, part.Position, ignoreobject) then
+							return nil
+						end
+					end
+				end
+
+				return true
+			end
+			local result = real(entitysettings)
+			entitylib.Wallcheck = realWallcheck
+			return result
+		end
+		return real(entitysettings)
+	end
+end
+
+upgradeEntityPicker('EntityPosition')
+upgradeEntityPicker('AllPosition')
+upgradeEntityPicker('EntityMouse')
 local targetinfo = vape.Libraries.targetinfo
 local sessioninfo = vape.Libraries.sessioninfo
 local uipallet = vape.Libraries.uipallet
@@ -785,7 +844,7 @@ local function hotbarSwitch(slot)
 			type = 'InventorySelectHotbarSlot',
 			slot = slot
 		})
-		vapeEvents.InventoryChanged.Event:Wait()
+		vapeEvents.InventoryChanged.Event:Wait(0.4)
 		return true
 	end
 	return false
@@ -2544,6 +2603,7 @@ run(function()
 	local Wool
 	local BlockCPS = {}
 	local Thread
+	local PlaceRange
 	
 	local function isAttackInput(input)
 		local keybinds = bedwars.KeybindLoadController.getKeybinds and bedwars.KeybindLoadController:getKeybinds()
@@ -2570,7 +2630,7 @@ run(function()
 								task.spawn(blockPlacer.autoBridge, blockPlacer, workspace:GetServerTimeNow() - bedwars.KnockbackController:getLastKnockbackTime() >= 0.2)
 							else
 								local selector = blockPlacer.clientManager:getBlockSelector()
-								local mouseinfo = selector and selector:getMouseInfo(0)
+								local mouseinfo = selector and selector:getMouseInfo(0, {range = PlaceRange.Value})
 								if mouseinfo and mouseinfo.placementPosition == mouseinfo.placementPosition then
 									task.spawn(blockPlacer.placeBlock, blockPlacer, mouseinfo.placementPosition, mouseinfo)
 								end
@@ -2663,13 +2723,21 @@ run(function()
 		end,
 		Default = true
 	})
-	Wool = AutoClicker:CreateToggle({Name = 'Wool only', Tooltip = 'Only clicks when you are holding wool.', Darker = true})
+	Wool = AutoClicker:CreateToggle({Name = 'Wool only', Tooltip = 'Only clicks when you are holding wool.', Darker = true, Default = true})
+	PlaceRange = AutoClicker:CreateSlider({
+		Name = 'Place range',
+		Min = 1,
+		Max = 30,
+		Default = 14,
+		Darker = true,
+		Tooltip = 'Reach for autoclicker placing (tower/stairs). Manual clicks unaffected.'
+	})
 	BlockCPS = AutoClicker:CreateTwoSlider({
 		Name = 'Block CPS',
 		Min = 1,
-		Max = 20,
-		DefaultMin = 20,
-		DefaultMax = 20,
+		Max = 12,
+		DefaultMin = 12,
+		DefaultMax = 12,
 		Darker = true
 	})
 end)
@@ -12120,6 +12188,7 @@ run(function()
 	local Scaffold
 	local Expand
 	local Tower
+	local CoverHead
 	local Downwards
 	local Diagonal
 	local LimitItem
@@ -12139,6 +12208,10 @@ run(function()
 				end
 			end
 		end
+	end
+	
+	local function getBlockInterval()
+		return 1 / (bedwars.SharedConstants.BLOCK_PLACE_CPS or 12)
 	end
 	
 	local function nearCorner(poscheck, pos)
@@ -12182,15 +12255,47 @@ run(function()
 			if wool then
 				return wool, amount
 			else
-				for _, v in store.inventory.inventory.items do
-					if bedwars.ItemMeta[v.itemType].block then
-						return v.itemType, v.amount
+				for _, item in store.inventory.inventory.items do
+					if bedwars.ItemMeta[item.itemType].block then
+						return item.itemType, item.amount
 					end
 				end
 			end
 		end
 	
 		return nil, 0
+	end
+	
+	local function clearVisuals()
+		if visualTween then
+			visualTween:Cancel()
+			visualTween = nil
+		end
+		if visualBlock then
+			visualBlock.Parent = nil
+		end
+		visualPos = nil
+	end
+	
+	local function updateVisual(pos)
+		if not visualBlock or not pos then return end
+	
+		local blockpos = bedwars.BlockController:getBlockPosition(pos) * 3
+		if visualPos == blockpos then return end
+	
+		if visualTween then
+			visualTween:Cancel()
+			visualTween = nil
+		end
+	
+		if visualBlock.Parent == gameCamera then
+			visualTween = tweenService:Create(visualBlock, TweenInfo.new(visualSpeed, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {CFrame = CFrame.new(blockpos)})
+			visualTween:Play()
+		else
+			visualBlock.CFrame = CFrame.new(blockpos)
+			visualBlock.Parent = gameCamera
+		end
+		visualPos = blockpos
 	end
 	
 	Scaffold = vape.Categories.Utility:CreateModule({
@@ -12202,7 +12307,10 @@ run(function()
 	
 			if callback then
 				repeat
-					if entitylib.isAlive then
+					-- Tienda/menu del juego abierto: no colocar bloques. Antes el
+					-- scaffold seguia poniendo bloques con la tienda abierta y eso
+					-- rompia la interfaz del juego.
+					if entitylib.isAlive and not bedwars.AppController:isLayerOpen(bedwars.UILayers.MAIN) then
 						local wool, amount = getScaffoldBlock()
 	
 						if Mouse.Enabled then
@@ -12219,14 +12327,48 @@ run(function()
 	
 						if wool then
 							local root = entitylib.character.RootPart
-							if Tower.Enabled and inputService:IsKeyDown(Enum.KeyCode.Space) and (not inputService:GetFocusedTextBox()) then
+							local towering = Tower.Enabled and inputService:IsKeyDown(Enum.KeyCode.Space) and (not inputService:GetFocusedTextBox())
+							local descending = Downwards.Enabled and inputService:IsKeyDown(Enum.KeyCode.LeftShift)
+							if towering then
 								root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, 38, root.AssemblyLinearVelocity.Z)
 							end
+							-- Bajada controlada: al bajar de la torre (Shift) frena la caida
+							-- para que de tiempo a poner cada bloque, en vez de lanzarte en picada.
+							if descending and root.AssemblyLinearVelocity.Y < -38 then
+								root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, -38, root.AssemblyLinearVelocity.Z)
+							end
+							local moveDir = entitylib.character.Humanoid.MoveDirection
+							-- Zona muerta de drift: torreando en alto, cualquier micro-movimiento
+							-- lateral hacia que el scaffold tirara bloques alrededor de la columna.
+							-- Con la zona muerta solo se apila el bloque limpio bajo los pies.
+							if towering and moveDir.Magnitude < 0.35 then
+								moveDir = Vector3.zero
+							end
 	
+							-- Cubrirse la cabeza: con el mouse apuntando hacia arriba el
+							-- scaffold pone un bloque-techo sobre la cabeza (contra
+							-- proyectiles) en vez de seguir rellenando debajo de los
+							-- pies, que era la desventaja del scaffold normal.
+							local covering = CoverHead.Enabled and gameCamera and gameCamera.CFrame.LookVector.Y > 0.45
+							if covering then
+								local currentpos = roundPos(root.Position + Vector3.new(0, 4.5, 0))
+								updateVisual(currentpos)
+								local block, blockpos = getPlacedBlock(currentpos)
+								if not block then
+									blockpos = checkAdjacent(blockpos * 3) and blockpos * 3 or blockProximity(currentpos)
+									if blockpos then
+										local now = workspace:GetServerTimeNow()
+										if (now - bedwars.BlockCpsController.lastPlaceTimestamp) >= (getBlockInterval() * 0.5) then
+											task.delay(0, bedwars.placeBlock, blockpos, wool, false)
+										end
+									end
+								end
+								lastpos = currentpos
+							else
 							for i = Expand.Value, 1, -1 do
-								local currentpos = roundPos(root.Position - Vector3.new(0, entitylib.character.HipHeight + (Downwards.Enabled and inputService:IsKeyDown(Enum.KeyCode.LeftShift) and 4.5 or 1.5), 0) + entitylib.character.Humanoid.MoveDirection * (i * 3))
+								local currentpos = roundPos(root.Position - Vector3.new(0, entitylib.character.HipHeight + (Downwards.Enabled and inputService:IsKeyDown(Enum.KeyCode.LeftShift) and 4.5 or 1.5), 0) + moveDir * (i * 3))
 								if Diagonal.Enabled then
-									if math.abs(math.round(math.deg(math.atan2(-entitylib.character.Humanoid.MoveDirection.X, -entitylib.character.Humanoid.MoveDirection.Z)) / 45) * 45) % 90 == 45 then
+									if math.abs(math.round(math.deg(math.atan2(-moveDir.X, -moveDir.Z)) / 45) * 45) % 90 == 45 then
 										local dt = (lastpos - currentpos)
 										if ((dt.X == 0 and dt.Z ~= 0) or (dt.X ~= 0 and dt.Z == 0)) and ((lastpos - root.Position) * Vector3.new(1, 0, 1)).Magnitude < 2.5 then
 											currentpos = lastpos
@@ -12234,51 +12376,36 @@ run(function()
 									end
 								end
 	
-								if visualBlock and currentpos then
-									local visual = bedwars.BlockController:getBlockPosition(currentpos) * 3
-									if visualPos ~= visual then
-										if visualTween then
-											visualTween:Cancel()
-											visualTween = nil
-										end
-	
-										if visualBlock.Parent == gameCamera then
-											visualTween = tweenService:Create(visualBlock, TweenInfo.new(visualSpeed, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {CFrame = CFrame.new(visual)})
-											visualTween:Play()
-										else
-											visualBlock.CFrame = CFrame.new(visual)
-											visualBlock.Parent = gameCamera
-										end
-										visualPos = visual
-									end
-								end
-	
+								updateVisual(currentpos)
 								local block, blockpos = getPlacedBlock(currentpos)
 								if not block then
 									blockpos = checkAdjacent(blockpos * 3) and blockpos * 3 or blockProximity(currentpos)
-									if blockpos then
-										task.delay(0, bedwars.placeBlock, blockpos, wool, false)
+									-- Coloca si te moves, si estas torreandote (Space) o si
+									-- estas bajando la torre (Shift): asi puedes apilar o descender
+									-- parado en tu columna, sin tener que moverte.
+									local moving = moveDir.Magnitude > 0.1
+									if blockpos and (Expand.Value > 1 or moving or towering or descending) then
+										-- Misma disciplina que el AutoClicker: respeta el intervalo
+										-- de colocacion del motor para que el scaffold se vea igual
+										-- al clicker y no tire bloques mas rapido que el.
+										local now = workspace:GetServerTimeNow()
+										if (now - bedwars.BlockCpsController.lastPlaceTimestamp) >= (getBlockInterval() * 0.5) then
+											task.delay(0, bedwars.placeBlock, blockpos, wool, false)
+										end
 									end
 								end
 								lastpos = currentpos
 							end
+							end
 						end
 					end
-					task.wait(0.03)
+					task.wait(Expand.Value == 1 and 0.1 or 0.03)
 				until not Scaffold.Enabled
-				if visualTween then
-					visualTween:Cancel()
-					visualTween = nil
-				end
-				if visualBlock then
-					visualBlock.Parent = nil
-				end
-				visualPos = nil
+				clearVisuals()
 			end
 		end,
 		Tooltip = 'Helps you make bridges/scaffold walk.'
 	})
-	
 	Expand = Scaffold:CreateSlider({
 		Name = 'Expand',
 		Min = 1,
@@ -12287,6 +12414,11 @@ run(function()
 	Tower = Scaffold:CreateToggle({
 		Name = 'Tower',
 		Default = true
+	})
+	CoverHead = Scaffold:CreateToggle({
+		Name = 'Cover head',
+		Default = true,
+		Tooltip = 'Aiming up places a roof block above your head instead of below you (anti projectiles)'
 	})
 	Downwards = Scaffold:CreateToggle({
 		Name = 'Downwards',
@@ -12300,6 +12432,7 @@ run(function()
 	Mouse = Scaffold:CreateToggle({Name = 'Require mouse down'})
 	Scaffold:CreateToggle({
 		Name = 'Visual',
+		Tooltip = 'Renders an overlay on the block about to be placed',
 		Function = function(callback)
 			FillColor.Object.Visible = callback
 			OutlineColor.Object.Visible = callback
@@ -12322,19 +12455,11 @@ run(function()
 				selection.Parent = visualBlock
 				bedwars.QueryUtil:setQueryIgnored(visualBlock, true)
 			else
-				if visualTween then
-					visualTween:Cancel()
-					visualTween = nil
-				end
-				if visualBlock then
-					visualBlock.Parent = nil
-				end
-				visualPos = nil
+				clearVisuals()
 				visualBlock:Destroy()
 				visualBlock = nil
 			end
-		end,
-		Tooltip = 'Renders an overlay on the block about to be placed'
+		end
 	})
 	FillColor = Scaffold:CreateColorSlider({
 		Name = 'Fill Color',
@@ -14908,7 +15033,7 @@ run(function()
 									item = store.inventory.inventory.armor[i + 1] == 'empty' and state and getBestArmor(i) or nil,
 									armorSlot = i
 								})
-								vapeEvents.InventoryChanged.Event:Wait()
+								vapeEvents.InventoryChanged.Event:Wait(0.4)
 							end
 						end
 						task.wait(0.1)
@@ -14921,7 +15046,7 @@ run(function()
 							item = store.inventory.inventory.armor[i + 1] == 'empty' and getBestArmor(i) or nil,
 							armorSlot = i
 						})
-						vapeEvents.InventoryChanged.Event:Wait()
+						vapeEvents.InventoryChanged.Event:Wait(0.4)
 					end
 				end
 			end
@@ -16120,7 +16245,7 @@ run(function()
 						type = 'InventoryRemoveFromHotbar',
 						slot = slot - 1
 					})
-					vapeEvents.InventoryChanged.Event:Wait()
+					vapeEvents.InventoryChanged.Event:Wait(0.4)
 				end
 	
 				local newslot
@@ -16136,7 +16261,7 @@ run(function()
 						type = 'InventoryRemoveFromHotbar',
 						slot = newslot
 					})
-					vapeEvents.InventoryChanged.Event:Wait()
+					vapeEvents.InventoryChanged.Event:Wait(0.4)
 					if olditem.item then
 						local swap
 						for _, v2 in store.inventory.inventory.items do
@@ -16150,7 +16275,7 @@ run(function()
 							item = swap,
 							slot = newslot
 						})
-						vapeEvents.InventoryChanged.Event:Wait()
+						vapeEvents.InventoryChanged.Event:Wait(0.4)
 					end
 				end
 	
@@ -16166,7 +16291,7 @@ run(function()
 					item = held,
 					slot = slot - 1
 				})
-				vapeEvents.InventoryChanged.Event:Wait()
+				vapeEvents.InventoryChanged.Event:Wait(0.4)
 			elseif Clear.Enabled then
 				local newslot
 				for i, v2 in store.inventory.hotbar do
@@ -16181,7 +16306,7 @@ run(function()
 						type = 'InventoryRemoveFromHotbar',
 						slot = newslot
 					})
-					vapeEvents.InventoryChanged.Event:Wait()
+					vapeEvents.InventoryChanged.Event:Wait(0.4)
 				end
 			end
 		end
