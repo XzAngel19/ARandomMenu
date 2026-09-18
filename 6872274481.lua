@@ -83,7 +83,9 @@ local entitylib = vape.Libraries.entity
 -- hueco. Ahora se prueba el cuerpo entero: si CUALQUIER parte es visible lo
 -- detecta, y si no se ve ninguna parte sigue oculto (nada de pegar a traves
 -- de paredes completas).
-local entityBodyParts = {'Head', 'Torso', 'UpperTorso', 'LowerTorso', 'HumanoidRootPart', 'LeftHand', 'RightHand', 'LeftFoot', 'RightFoot', 'LeftLowerArm', 'RightLowerArm', 'LeftLowerLeg', 'RightLowerLeg', 'LeftUpperArm', 'RightUpperArm', 'LeftUpperLeg', 'RightUpperLeg', 'Left Arm', 'Right Arm', 'Left Leg', 'Right Leg'}
+-- Lista recortada a lo que de verdad asoma por un hueco: cada parte
+-- es un raycast por candidato, y los raycasts son lo que quema CPU.
+local entityBodyParts = {'Head', 'Torso', 'UpperTorso', 'LowerTorso', 'HumanoidRootPart', 'LeftHand', 'RightHand', 'LeftFoot', 'RightFoot', 'LeftLowerLeg', 'RightLowerLeg', 'Left Arm', 'Right Arm', 'Left Leg', 'Right Leg'}
 
 local function upgradeEntityPicker(name)
 	local real = entitylib[name]
@@ -4358,7 +4360,12 @@ run(function()
 	local Vertical
 	local LoseHealth
 	local Always
+	local Combo
+	local SpeedBoost
 	local stack
+	local lastHit = 0
+	local comboCount = 0
+	local speedBoost = 0
 
 	DamageBoost = vape.Categories.Blatant:CreateModule({
 		Name = 'DamageBoost',
@@ -4385,6 +4392,16 @@ run(function()
 						return
 					end
 
+					-- Detectar que te estan conejando: golpes cayendo en menos
+					-- de 2.5s entre si. Es el momento donde hace falta el comeback.
+					local now = tick()
+					if now - lastHit <= 2.5 then
+						comboCount += 1
+					else
+						comboCount = 0
+					end
+					lastHit = now
+
 					-- Ping para Speed/Fly (con throttle), como siempre.
 					if tick() > (stack or 0) then
 						local horizontal = multiplier and multiplier.horizontal or 1
@@ -4403,14 +4420,42 @@ run(function()
 						return
 					end
 
-					-- Nunca al 100%: conservar parte del empujon es lo que hace
-					-- que se vea legit; el golpe sigue empujando, solo empuja menos.
+					-- Mientras te conean, escala el corte para soltarte del combo:
+					-- ahi es donde el comeback pasa (te quedas en rango y tus
+					-- golpes siguen conectando). Nunca pasa de 85%: el golpe sigue
+					-- empujando un poco, por eso se ve legit.
+					local extra = comboCount >= 1 and Combo.Value or 0
 					local oldMultiplier = damageTable.knockbackMultiplier or {}
 					damageTable.knockbackMultiplier = {
-						horizontal = (oldMultiplier.horizontal or 1) * (1 - Horizontal.Value / 100),
-						vertical = (oldMultiplier.vertical or 1) * (1 - Vertical.Value / 100)
+						horizontal = (oldMultiplier.horizontal or 1) * (1 - math.min(Horizontal.Value + extra, 85) / 100),
+						vertical = (oldMultiplier.vertical or 1) * (1 - math.min(Vertical.Value + extra, 85) / 100)
 					}
+
+					-- Empujoncito de velocidad a proposito diminuto (0.5 studs):
+					-- se siente como un paso mas rapido, nada que un anticheat
+					-- pueda marcar ni que bugee el movimiento.
+					local hum = entitylib.character.Humanoid
+					if SpeedBoost.Value > 0 and hum and speedBoost < SpeedBoost.Value then
+						local add = SpeedBoost.Value - speedBoost
+						hum.WalkSpeed += add
+						speedBoost += add
+					end
 				end))
+
+				-- Al apagar el modulo se devuelve la velocidad prestada.
+				DamageBoost:Clean(lplr.CharacterAdded:Connect(function()
+					speedBoost = 0
+				end))
+			else
+				if speedBoost > 0 then
+					pcall(function()
+						local hum = entitylib.character and entitylib.character.Humanoid
+						if hum then
+							hum.WalkSpeed -= speedBoost
+						end
+					end)
+					speedBoost = 0
+				end
 			end
 		end,
 		Tooltip = 'Reduces the knockback you take while losing the fight, so hits stop bouncing you around'
@@ -4420,14 +4465,14 @@ run(function()
 		Name = 'Horizontal reduce',
 		Min = 5,
 		Max = 80,
-		Default = 40,
+		Default = 45,
 		Suffix = '%'
 	})
 	Vertical = DamageBoost:CreateSlider({
 		Name = 'Vertical reduce',
 		Min = 0,
 		Max = 80,
-		Default = 50,
+		Default = 65,
 		Suffix = '%'
 	})
 	LoseHealth = DamageBoost:CreateSlider({
@@ -4442,7 +4487,28 @@ run(function()
 		Name = 'Reduce on every hit',
 		Default = false
 	})
-end)run(function()
+	Combo = DamageBoost:CreateSlider({
+		Name = 'Combo escape',
+		Min = 0,
+		Max = 40,
+		Default = 20,
+		Suffix = '%',
+		Tooltip = 'Extra knockback reduction while they are comboing you (hits landing within 2.5s of each other)'
+	})
+	SpeedBoost = DamageBoost:CreateSlider({
+		Name = 'Walk speed',
+		Min = 0,
+		Max = 1,
+		Default = 0.5,
+		Decimal = 10,
+		Suffix = function(val)
+			return val <= 1 and 'stud' or 'studs'
+		end,
+		Tooltip = 'Tiny direct walkspeed bump when a hit lands while losing, on purpose very small (max 1)'
+	})
+end)
+
+run(function()
 	local DeathAdderAimbot
 	local Mode
 	local BedRange
@@ -12368,6 +12434,7 @@ run(function()
 	local Tower
 	local CoverHead
 	local CoverAngle
+	local coverSticky = false
 	local Downwards
 	local Diagonal
 	local LimitItem
@@ -12529,9 +12596,13 @@ run(function()
 							-- proyectiles) en vez de seguir rellenando debajo de los
 							-- pies, que era la desventaja del scaffold normal.
 							local look = gameCamera.CFrame.LookVector
-							-- Basta con que el mouse apunte hacia arriba el angulo elegido
-							-- (Cover angle): ahi el scaffold cubre en vez de rellenar abajo.
-							local covering = CoverHead.Enabled and gameCamera and look.Y > math.sin(math.rad(CoverAngle.Value))
+							-- Con histerezis: se activa con solo apuntar un poco hacia
+							-- arriba (angulo Cover angle) y para volver a rellenar abajo
+							-- hay que bajar la mirada a la mitad del angulo. Asi los micro
+							-- movimientos de la mira ya no sueltan bloques abajo mientras
+							-- te cubres, y la reaccion al subir la mira es inmediata.
+							local covering = CoverHead.Enabled and gameCamera and look.Y > math.sin(math.rad(coverSticky and (CoverAngle.Value * 0.5) or CoverAngle.Value))
+							coverSticky = covering
 							if covering then
 								-- El bloque-techo se corre hacia donde apuntas, para que
 								-- cubra tu cabeza desde el lado del que te dispara.
@@ -12585,7 +12656,7 @@ run(function()
 							end
 						end
 					end
-					task.wait(Expand.Value == 1 and 0.1 or 0.03)
+					task.wait((wool and coverSticky) and 0.03 or (Expand.Value == 1 and 0.1 or 0.03))
 				until not Scaffold.Enabled
 				clearVisuals()
 			end
@@ -12608,9 +12679,9 @@ run(function()
 	})
 	CoverAngle = Scaffold:CreateSlider({
 		Name = 'Cover angle',
-		Min = 5,
+		Min = 1,
 		Max = 60,
-		Default = 20,
+		Default = 10,
 		Darker = true,
 		Suffix = function()
 			return 'deg'
