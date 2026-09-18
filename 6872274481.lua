@@ -4354,102 +4354,81 @@ end)
 
 run(function()
 	local DamageBoost
-	local Boost
-	local BoostTime
+	local Horizontal
+	local Vertical
 	local LoseHealth
 	local Always
 	local stack
-	local boostModifier
-	local boostUntil = 0
-
-	local function stopBoost()
-		if boostModifier then
-			pcall(function()
-				bedwars.SprintController:getMovementStatusModifier():removeModifier(boostModifier)
-			end)
-			boostModifier = nil
-		end
-		boostUntil = 0
-	end
-
-	local function startBoost()
-		local hum = entitylib.character and entitylib.character.Humanoid
-		-- "Me estan ganando": poca vida; o siempre, con Surge on every hit.
-		local losing = Always.Enabled or (hum and hum.MaxHealth > 0 and (hum.Health / hum.MaxHealth) * 100 <= LoseHealth.Value)
-		if not losing then
-			return
-		end
-
-		local boost = 1 + (Boost.Value / 100)
-		if not boostModifier then
-			boostModifier = {moveSpeedMultiplier = boost}
-			bedwars.SprintController:getMovementStatusModifier():addModifier(boostModifier)
-		else
-			boostModifier.moveSpeedMultiplier = boost
-		end
-		boostUntil = tick() + BoostTime.Value
-	end
 
 	DamageBoost = vape.Categories.Blatant:CreateModule({
 		Name = 'DamageBoost',
 		Function = function(callback)
 			if callback then
 				DamageBoost:Clean(vapeEvents.EntityDamageEvent.Event:Connect(function(damageTable)
+					-- El impulso se juega con el KNOCKBACK, no con la velocidad:
+					-- tocar la velocidad la pilla el anticheat y bugea el
+					-- movimiento. Reducir el empujon de los golpes se ve legit
+					-- porque tu velocidad base nunca cambia.
+					if damageTable.entityInstance ~= lplr.Character or (vape.Modules.LongJump or {}).Enabled then
+						return
+					end
+
 					-- La tabla de knockback puede no venir (o venir desactivada):
-					-- sin esto el boost se quedaba en 0 o sumaba velocidad cuando
-					-- el golpe ni siquiera iba a empujarte.
-					if damageTable.entityInstance == lplr.Character and not (vape.Modules.LongJump or {}).Enabled then
-						if entitylib.isAlive and tick() > (stack or 0) then
-							local multiplier = damageTable.knockbackMultiplier
-							if multiplier and multiplier.disabled then return end
-							local horizontal = multiplier and multiplier.horizontal or 1
-							knockbackSpeed = bedwars.KnockbackUtil.calculateKnockbackVelocity(Vector3.one, 1, {
-								vertical = 0,
-								horizontal = horizontal
-							}).Magnitude * (0.9 + (store.ping.total or 0))
-							stack = tick() + (knockbackSpeed / 45)
-							knockbackBoost = tick() + (horizontal / 3.5)
-						end
-
-						-- Impulso propio al recibir golpes: velocidad extra temporal
-						-- con los modifiers del juego (el mismo sistema que usa
-						-- NoSlow/Speed), para esquivar o salir de la pelea cuando
-						-- vas perdiendo, sin necesitar otro modulo encendido.
-						if entitylib.isAlive then
-							startBoost()
-						end
+					-- sin esto el impulso se quedaba en 0 o sumaba cuando el golpe
+					-- ni siquiera iba a empujarte.
+					local multiplier = damageTable.knockbackMultiplier
+					if multiplier and multiplier.disabled then
+						return
 					end
+
+					if not entitylib.isAlive then
+						return
+					end
+
+					-- Ping para Speed/Fly (con throttle), como siempre.
+					if tick() > (stack or 0) then
+						local horizontal = multiplier and multiplier.horizontal or 1
+						knockbackSpeed = bedwars.KnockbackUtil.calculateKnockbackVelocity(Vector3.one, 1, {
+							vertical = 0,
+							horizontal = horizontal
+						}).Magnitude * (0.9 + (store.ping.total or 0))
+						stack = tick() + (knockbackSpeed / 45)
+						knockbackBoost = tick() + (horizontal / 3.5)
+					end
+
+					-- "Me estan ganando": solo si tu vida esta en el umbral, o
+					-- siempre con la opcion activada.
+					local hum = entitylib.character.Humanoid
+					if not Always.Enabled and not (hum and hum.MaxHealth > 0 and (hum.Health / hum.MaxHealth) * 100 <= LoseHealth.Value) then
+						return
+					end
+
+					-- Nunca al 100%: conservar parte del empujon es lo que hace
+					-- que se vea legit; el golpe sigue empujando, solo empuja menos.
+					local oldMultiplier = damageTable.knockbackMultiplier or {}
+					damageTable.knockbackMultiplier = {
+						horizontal = (oldMultiplier.horizontal or 1) * (1 - Horizontal.Value / 100),
+						vertical = (oldMultiplier.vertical or 1) * (1 - Vertical.Value / 100)
+					}
 				end))
-
-				-- Mantiene el impulso vivo y lo retira al expirar.
-				while DamageBoost.Enabled do
-					if boostModifier and tick() > boostUntil then
-						stopBoost()
-					end
-					task.wait(0.1)
-				end
-				stopBoost()
 			end
 		end,
-		Tooltip = 'Gives you a temporary speed surge when hit and losing the fight, to strafe or disengage'
+		Tooltip = 'Reduces the knockback you take while losing the fight, so hits stop bouncing you around'
 	})
 
-	Boost = DamageBoost:CreateSlider({
-		Name = 'Extra speed',
+	Horizontal = DamageBoost:CreateSlider({
+		Name = 'Horizontal reduce',
 		Min = 5,
 		Max = 80,
-		Default = 30,
+		Default = 40,
 		Suffix = '%'
 	})
-	BoostTime = DamageBoost:CreateSlider({
-		Name = 'Boost time',
-		Min = 1,
-		Max = 6,
-		Default = 2,
-		Decimal = 10,
-		Suffix = function(val)
-			return val <= 1 and 'sec' or 'secs'
-		end
+	Vertical = DamageBoost:CreateSlider({
+		Name = 'Vertical reduce',
+		Min = 0,
+		Max = 80,
+		Default = 50,
+		Suffix = '%'
 	})
 	LoseHealth = DamageBoost:CreateSlider({
 		Name = 'Losing health',
@@ -4457,15 +4436,13 @@ run(function()
 		Max = 100,
 		Default = 60,
 		Suffix = '%',
-		Tooltip = 'Only surges when your health is at or below this percentage'
+		Tooltip = 'Only reduces knockback when your health is at or below this percentage'
 	})
 	Always = DamageBoost:CreateToggle({
-		Name = 'Surge on every hit',
+		Name = 'Reduce on every hit',
 		Default = false
 	})
-end)
-
-run(function()
+end)run(function()
 	local DeathAdderAimbot
 	local Mode
 	local BedRange
