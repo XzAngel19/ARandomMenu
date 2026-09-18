@@ -4354,8 +4354,42 @@ end)
 
 run(function()
 	local DamageBoost
+	local Boost
+	local BoostTime
+	local LoseHealth
+	local Always
 	local stack
-	
+	local boostModifier
+	local boostUntil = 0
+
+	local function stopBoost()
+		if boostModifier then
+			pcall(function()
+				bedwars.SprintController:getMovementStatusModifier():removeModifier(boostModifier)
+			end)
+			boostModifier = nil
+		end
+		boostUntil = 0
+	end
+
+	local function startBoost()
+		local hum = entitylib.character and entitylib.character.Humanoid
+		-- "Me estan ganando": poca vida; o siempre, con Surge on every hit.
+		local losing = Always.Enabled or (hum and hum.MaxHealth > 0 and (hum.Health / hum.MaxHealth) * 100 <= LoseHealth.Value)
+		if not losing then
+			return
+		end
+
+		local boost = 1 + (Boost.Value / 100)
+		if not boostModifier then
+			boostModifier = {moveSpeedMultiplier = boost}
+			bedwars.SprintController:getMovementStatusModifier():addModifier(boostModifier)
+		else
+			boostModifier.moveSpeedMultiplier = boost
+		end
+		boostUntil = tick() + BoostTime.Value
+	end
+
 	DamageBoost = vape.Categories.Blatant:CreateModule({
 		Name = 'DamageBoost',
 		Function = function(callback)
@@ -4364,21 +4398,70 @@ run(function()
 					-- La tabla de knockback puede no venir (o venir desactivada):
 					-- sin esto el boost se quedaba en 0 o sumaba velocidad cuando
 					-- el golpe ni siquiera iba a empujarte.
-					if entitylib.isAlive and tick() > (stack or 0) and damageTable.entityInstance == lplr.Character and not (vape.Modules.LongJump or {}).Enabled then
-						local multiplier = damageTable.knockbackMultiplier
-						if multiplier and multiplier.disabled then return end
-						local horizontal = multiplier and multiplier.horizontal or 1
-						knockbackSpeed = bedwars.KnockbackUtil.calculateKnockbackVelocity(Vector3.one, 1, {
-							vertical = 0,
-							horizontal = horizontal
-						}).Magnitude * (0.9 + (store.ping.total or 0))
-						stack = tick() + (knockbackSpeed / 45)
-						knockbackBoost = tick() + (horizontal / 3.5)
+					if damageTable.entityInstance == lplr.Character and not (vape.Modules.LongJump or {}).Enabled then
+						if entitylib.isAlive and tick() > (stack or 0) then
+							local multiplier = damageTable.knockbackMultiplier
+							if multiplier and multiplier.disabled then return end
+							local horizontal = multiplier and multiplier.horizontal or 1
+							knockbackSpeed = bedwars.KnockbackUtil.calculateKnockbackVelocity(Vector3.one, 1, {
+								vertical = 0,
+								horizontal = horizontal
+							}).Magnitude * (0.9 + (store.ping.total or 0))
+							stack = tick() + (knockbackSpeed / 45)
+							knockbackBoost = tick() + (horizontal / 3.5)
+						end
+
+						-- Impulso propio al recibir golpes: velocidad extra temporal
+						-- con los modifiers del juego (el mismo sistema que usa
+						-- NoSlow/Speed), para esquivar o salir de la pelea cuando
+						-- vas perdiendo, sin necesitar otro modulo encendido.
+						if entitylib.isAlive then
+							startBoost()
+						end
 					end
 				end))
+
+				-- Mantiene el impulso vivo y lo retira al expirar.
+				while DamageBoost.Enabled do
+					if boostModifier and tick() > boostUntil then
+						stopBoost()
+					end
+					task.wait(0.1)
+				end
+				stopBoost()
 			end
 		end,
-		Tooltip = 'Makes you go slightly faster when damaged'
+		Tooltip = 'Gives you a temporary speed surge when hit and losing the fight, to strafe or disengage'
+	})
+
+	Boost = DamageBoost:CreateSlider({
+		Name = 'Extra speed',
+		Min = 5,
+		Max = 80,
+		Default = 30,
+		Suffix = '%'
+	})
+	BoostTime = DamageBoost:CreateSlider({
+		Name = 'Boost time',
+		Min = 1,
+		Max = 6,
+		Default = 2,
+		Decimal = 10,
+		Suffix = function(val)
+			return val <= 1 and 'sec' or 'secs'
+		end
+	})
+	LoseHealth = DamageBoost:CreateSlider({
+		Name = 'Losing health',
+		Min = 5,
+		Max = 100,
+		Default = 60,
+		Suffix = '%',
+		Tooltip = 'Only surges when your health is at or below this percentage'
+	})
+	Always = DamageBoost:CreateToggle({
+		Name = 'Surge on every hit',
+		Default = false
 	})
 end)
 
@@ -12307,6 +12390,7 @@ run(function()
 	local Expand
 	local Tower
 	local CoverHead
+	local CoverAngle
 	local Downwards
 	local Diagonal
 	local LimitItem
@@ -12467,9 +12551,16 @@ run(function()
 							-- scaffold pone un bloque-techo sobre la cabeza (contra
 							-- proyectiles) en vez de seguir rellenando debajo de los
 							-- pies, que era la desventaja del scaffold normal.
-							local covering = CoverHead.Enabled and gameCamera and gameCamera.CFrame.LookVector.Y > 0.45
+							local look = gameCamera.CFrame.LookVector
+							-- Basta con que el mouse apunte hacia arriba el angulo elegido
+							-- (Cover angle): ahi el scaffold cubre en vez de rellenar abajo.
+							local covering = CoverHead.Enabled and gameCamera and look.Y > math.sin(math.rad(CoverAngle.Value))
 							if covering then
-								local currentpos = roundPos(root.Position + Vector3.new(0, 4.5, 0))
+								-- El bloque-techo se corre hacia donde apuntas, para que
+								-- cubra tu cabeza desde el lado del que te dispara.
+								local lean = Vector3.new(look.X, 0, look.Z)
+								lean = lean.Magnitude > 0.05 and lean.Unit * 1.4 or Vector3.zero
+								local currentpos = roundPos(root.Position + Vector3.new(0, 4.5, 0) + lean)
 								updateVisual(currentpos)
 								local block, blockpos = getPlacedBlock(currentpos)
 								if not block then
@@ -12536,7 +12627,18 @@ run(function()
 	CoverHead = Scaffold:CreateToggle({
 		Name = 'Cover head',
 		Default = true,
-		Tooltip = 'Aiming up places a roof block above your head instead of below you (anti projectiles)'
+		Tooltip = 'Aiming up beyond the cover angle roofs your head instead of placing below you (anti projectiles)'
+	})
+	CoverAngle = Scaffold:CreateSlider({
+		Name = 'Cover angle',
+		Min = 5,
+		Max = 60,
+		Default = 20,
+		Darker = true,
+		Suffix = function()
+			return 'deg'
+		end,
+		Tooltip = 'How far up you must aim before the scaffold starts covering instead'
 	})
 	Downwards = Scaffold:CreateToggle({
 		Name = 'Downwards',
