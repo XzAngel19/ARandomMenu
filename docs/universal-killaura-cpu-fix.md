@@ -127,3 +127,45 @@ pin('catsix')
 
 Para revertir (volver a dejar que las updates reemplacen): borra el archivo o el
 folder `catsix` y deja que el cliente lo descargue de nuevo.
+
+### El orden correcto: pin ANTES de abrir catvape
+
+El barrido de updates corre dentro del script de catvape cuando arranca, asi que un
+comando corrido "despues de abrir" siempre llega tarde. La solucion es un wrapper que
+primero quita las marcas de los archivos cacheados y despues carga el cliente — el
+barrido arranca, no encuentra marcas en tus archivos y los deja intactos:
+
+```lua
+-- PIN + CARGA: ejecuta esto EN LUGAR de tu loadstring de catvape
+local function pin(folder)
+	for _, f in listfiles(folder) do
+		if isfolder(f) then
+			pin(f)
+		elseif f:sub(-4) == '.lua' and isfile(f) then
+			local src = readfile(f)
+			if src:find('--This watermark', 1, true) then
+				writefile(f, (src:gsub('^%-%-This watermark[^\n]*\n', '', 1)))
+			end
+		end
+	end
+end
+if isfolder('catsix') then
+	pin('catsix')
+end
+
+-- AQUI va tu loadstring de catvape de siempre, sin cambios:
+-- loadstring(game:HttpGet('...'))()
+```
+
+Guardar ese wrapper como archivo del executor y ejecutarlo cada sesion (o bindearlo)
+equivale a "no se puede actualizar": el pin corre siempre antes del barrido.
+
+Notas:
+- La primera vez, asegurate de que tus archivos parcheados (universal.lua con el fix
+  de CPU, 6872274481.lua) ya esten en catsix antes de correr el wrapper.
+- Al estar fijados, NINGUNA update automatica los toca — tampoco las buenas. Para
+  tomar una update a proposito: borra el archivo concreto, abre catvape (re-descarga
+  con marca), vuelve a aplicar los fixes y re-corre el wrapper.
+- Si el loader expone un modo developer/local (p. ej. `shared.vape_developer = true`)
+  que salte la descarga, seria una alternativa; el wrapper no depende de flags
+  ocultos y funciona garantizado con el mecanismo documentado de la marca.
