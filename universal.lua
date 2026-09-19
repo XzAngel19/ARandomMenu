@@ -2487,6 +2487,10 @@ run(function()
 	local Overlay = OverlapParams.new()
 	Overlay.FilterType = Enum.RaycastFilterType.Include
 	local Particles, Boxes, AttackDelay = {}, {}, tick()
+	-- Cache del sensor de toque del arma: buscarlo recursivamente en CADA
+	-- frame quema CPU y el resultado no cambia mientras no cambies de arma.
+	local lastTool, cachedInterest, nextInterestCheck = nil, nil, 0
+	local hadTargets = false
 	
 	Killaura = vape.Categories.Blatant:CreateModule({
 		Name = 'Killaura',
@@ -2496,7 +2500,15 @@ run(function()
 					local interest, tool
 					if not Mouse.Enabled or inputService:IsMouseButtonPressed(0) then
 						tool = getTool()
-						interest = tool and tool:FindFirstChildWhichIsA('TouchTransmitter', true) or nil
+						-- Rebusca solo al cambiar de arma o cada 0.25s de seguridad;
+						-- el resultado es el mismo que buscarlo cada frame.
+						if tool ~= lastTool or tick() > nextInterestCheck then
+							lastTool, nextInterestCheck = tool, tick() + 0.25
+							cachedInterest = tool and tool:FindFirstChildWhichIsA('TouchTransmitter', true) or nil
+						elseif cachedInterest and not cachedInterest.Parent then
+							cachedInterest = nil
+						end
+						interest = cachedInterest
 					end
 					local attacked = {}
 					if interest then
@@ -2513,11 +2525,13 @@ run(function()
 						if #plrs > 0 then
 							local selfpos = entitylib.character.RootPart.Position
 							local localfacing = entitylib.character.RootPart.CFrame.LookVector * Vector3.new(1, 0, 1)
+							-- Mismo filtro de angulo sin math.acos por candidato: comparar
+							-- el dot contra el coseno del limite es exactamente igual.
+							local minDot = math.cos(math.rad(AngleSlider.Value) / 2)
 	
 							for _, v in plrs do
 								local delta = (v.RootPart.Position - selfpos)
-								local angle = math.acos(localfacing:Dot((delta * Vector3.new(1, 0, 1)).Unit))
-								if angle > (math.rad(AngleSlider.Value) / 2) then continue end
+								if localfacing:Dot((delta * Vector3.new(1, 0, 1)).Unit) < minDot then continue end
 	
 								table.insert(attacked, {
 									Entity = v,
@@ -2542,18 +2556,24 @@ run(function()
 						end
 					end
 	
-					for i, v in Boxes do
-						v.Adornee = attacked[i] and attacked[i].Entity.RootPart or nil
-						if v.Adornee then
-							v.Color3 = Color3.fromHSV(attacked[i].Check.Hue, attacked[i].Check.Sat, attacked[i].Check.Value)
-							v.Transparency = 1 - attacked[i].Check.Opacity
+					-- Los visuales solo se recorren cuando hay objetivos este frame o
+					-- los habia el anterior (para limpiar); con la zona vacia no se
+					-- itera nada, mismo resultado que dejar los loops vacios correr.
+					if #attacked > 0 or hadTargets then
+						for i, v in Boxes do
+							v.Adornee = attacked[i] and attacked[i].Entity.RootPart or nil
+							if v.Adornee then
+								v.Color3 = Color3.fromHSV(attacked[i].Check.Hue, attacked[i].Check.Sat, attacked[i].Check.Value)
+								v.Transparency = 1 - attacked[i].Check.Opacity
+							end
+						end
+						
+						for i, v in Particles do
+							v.Position = attacked[i] and attacked[i].Entity.RootPart.Position or Vector3.new(9e9, 9e9, 9e9)
+							v.Parent = attacked[i] and gameCamera or nil
 						end
 					end
-	
-					for i, v in Particles do
-						v.Position = attacked[i] and attacked[i].Entity.RootPart.Position or Vector3.new(9e9, 9e9, 9e9)
-						v.Parent = attacked[i] and gameCamera or nil
-					end
+					hadTargets = #attacked > 0
 	
 					if Face.Enabled and attacked[1] then
 						local vec = attacked[1].Entity.RootPart.Position * Vector3.new(1, 0, 1)
