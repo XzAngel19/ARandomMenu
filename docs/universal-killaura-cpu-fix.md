@@ -98,3 +98,32 @@ swings visuales, no daño extra.
 Si al abrir el archivo el bloque no coincide con estos patrones (catvape cambio la
 estructura), vuela el contenido de las lineas 2470–2749 a este repo y se hace el
 parche exacto sobre el codigo real.
+
+## Anexo: fijar tus archivos para que las updates no los pisen
+
+El propio `universal.lua` documenta el mecanismo: `downloadFile` solo descarga si el
+archivo NO existe, y el loader marca cada cache con la linea
+`--This watermark is used to delete the file if its cached...`. Esa marca es lo que
+el updater borra al actualizar; un archivo sin la marca se considera tuyo y se deja
+intacto. Comando para fijar todo el folder (correrlo en el executor con catvape ya
+cargado una vez):
+
+```lua
+local function pin(folder)
+	for _, f in listfiles(folder) do
+		if isfolder(f) then
+			pin(f)
+		elseif f:sub(-4) == '.lua' and isfile(f) then
+			local src = readfile(f)
+			if src:find('--This watermark', 1, true) then
+				writefile(f, (src:gsub('^%-%-This watermark[^\n]*\n', '', 1)))
+				print('fijado:', f)
+			end
+		end
+	end
+end
+pin('catsix')
+```
+
+Para revertir (volver a dejar que las updates reemplacen): borra el archivo o el
+folder `catsix` y deja que el cliente lo descargue de nuevo.

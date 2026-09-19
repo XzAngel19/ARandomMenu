@@ -79,7 +79,7 @@ source_files() {
         ! -name "_shell_source.luau" ! -name "_bundle_source.luau" \
         ! -name "_inventory_snapshot.luau" \
         ! -path ./init.lua ! -path ./main.lua ! -path ./universal.lua \
-        ! -path ./6872274481.lua ! -path ./entity.lua -print
+        ! -path ./6872274481.lua ! -path ./entity.lua ! -path ./universal.lua -print
 }
 
 step "Licence and attribution"
@@ -581,8 +581,8 @@ while IFS= read -r file; do
 done < <(find . -path ./.git -prune -o -path ./reference -prune -o \
     -path ./libraries -prune -o -type f \
     \( -name "*.lua" -o -name "*.luau" \) \
-    ! -path ./init.lua ! -path ./main.lua ! -path ./universal.lua \
-    ! -path ./6872274481.lua ! -path ./entity.lua -print)
+    ! -path ./init.lua ! -path ./main.lua \
+    ! -path ./6872274481.lua ! -path ./entity.lua ! -path ./universal.lua -print)
 echo "ok"
 
 step "Loader freshness guard"
