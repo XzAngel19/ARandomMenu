@@ -12576,7 +12576,16 @@ run(function()
 							local towering = Tower.Enabled and inputService:IsKeyDown(Enum.KeyCode.Space) and (not inputService:GetFocusedTextBox())
 							local descending = Downwards.Enabled and inputService:IsKeyDown(Enum.KeyCode.LeftShift)
 							if towering then
-								root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, 38, root.AssemblyLinearVelocity.Z)
+								-- Solo se eleva con soporte real: hay bloque bajo los pies
+								-- o acabamos de colocar uno. Si los bloques no se ponen
+								-- (te quedaste sin, lag, fuera de alcance), seguir presionando
+								-- ya no te lanza al vacio: sin soporte no hay impulso y caes
+								-- de vuelta a tu ultimo bloque, como cualquier jugador.
+								local supported = getPlacedBlock(root.Position - Vector3.new(0, entitylib.character.HipHeight + 1.5, 0))
+									or (workspace:GetServerTimeNow() - bedwars.BlockCpsController.lastPlaceTimestamp) < 0.15
+								if supported then
+									root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, 38, root.AssemblyLinearVelocity.Z)
+								end
 							end
 							-- Bajada controlada: al bajar de la torre (Shift) frena la caida
 							-- para que de tiempo a poner cada bloque, en vez de lanzarte en picada.
@@ -12656,7 +12665,11 @@ run(function()
 							end
 						end
 					end
-					task.wait((wool and coverSticky) and 0.03 or (Expand.Value == 1 and 0.1 or 0.03))
+					-- Cadencia de autoclicker: reintenta a la mitad del intervalo de
+					-- colocacion del motor (12/s reales). Antes dormia 0.1s en legit
+					-- y eso hacia el scaffold lento; asi reacciona al instante cuando
+					-- el motor libera el siguiente lugar, sin pasarse del limite.
+					task.wait(getBlockInterval() * 0.5)
 				until not Scaffold.Enabled
 				clearVisuals()
 			end
