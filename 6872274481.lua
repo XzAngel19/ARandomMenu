@@ -1,6 +1,6 @@
 --This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.
 local vape = shared.vape
-local ScriptRevision: string = "2026-09-26-r4"
+local ScriptRevision: string = "2026-09-26-r5"
 getgenv().ARandomMenuBedwarsRevision = ScriptRevision
 local loadstring = function(...)
     local Chunk, Message = loadstring(...)
@@ -14360,6 +14360,8 @@ Run(function()
 	local Scaffold
 	local Expand
 	local Tower
+	local Staircase
+	local Clutch
 	local Downwards
 	local Diagonal
 	local LimitItem
@@ -14371,6 +14373,17 @@ Run(function()
 	    Vector3.new(0, 3, 0), Vector3.new(0, -3, 0),
 	    Vector3.new(0, 0, 3), Vector3.new(0, 0, -3)
 	}
+	local StairAdjacent: {Vector3} = {}
+	for X: number = -3, 3, 3 do
+	    for Y: number = -3, 3, 3 do
+	        for Z: number = -3, 3, 3 do
+	            local Offset: Vector3 = Vector3.new(X, Y, Z)
+	            if Offset ~= Vector3.zero then
+	                table.insert(StairAdjacent, Offset)
+	            end
+	        end
+	    end
+	end
 	local LastPosition, Label, VisualBlock = Vector3.zero
 	local VisualTween, VisualPosition
 	local VisualSpeed: number = 0.1
@@ -14408,8 +14421,8 @@ Run(function()
 	end
 	getgenv().blockProximity = BlockProximity
 	
-	local function CheckAdjacent(Position: Vector3): boolean
-	    for _, v: Vector3 in Adjacent do
+	local function CheckAdjacent(Position: Vector3, StairSupport: boolean?): boolean
+	    for _, v: Vector3 in (StairSupport and StairAdjacent or Adjacent) do
 	        if GetPlacedBlock(Position + v) then
 	            return true
 	        end
@@ -14484,20 +14497,70 @@ Run(function()
 	    end
 
 	    local Velocity: Vector3 = Root.AssemblyLinearVelocity
-	    Root.AssemblyLinearVelocity = Vector3.new(Velocity.X, math.max(Velocity.Y, 38), Velocity.Z)
+	    Root.AssemblyLinearVelocity = Vector3.new(Velocity.X, math.max(Velocity.Y, 39), Velocity.Z)
 	    return true
 	end
 
-	local function PlaceScaffoldBlock(Position: Vector3, Wool: string): boolean
+	local function TryStairBoost(CellPosition: Vector3): boolean
+	    if not Staircase.Enabled or not GetPlacedBlock(CellPosition) then
+	        return false
+	    end
+	    local Root: BasePart = Entity.character.RootPart
+	    local Velocity: Vector3 = Root.AssemblyLinearVelocity
+	    -- A sustained but tiny lift is enough to move the feet into the next
+	    -- three-stud row while running; unlike Tower's 39Y impulse it does not
+	    -- force a vertical column.
+	    Root.AssemblyLinearVelocity = Vector3.new(Velocity.X, math.max(Velocity.Y, 12), Velocity.Z)
+	    return true
+	end
+
+	local function FindClutchPosition(Root: BasePart, Humanoid: Humanoid): Vector3?
+	    local Predicted: Vector3 = Root.Position + Root.AssemblyLinearVelocity * 0.08 - Vector3.new(0, Humanoid.HipHeight + 1.5, 0)
+	    local Center: Vector3 = Bedwars.BlockController:getBlockPosition(Predicted)
+	    local BlockStore = Bedwars.BlockController:getStore()
+	    local Seen: {[Vector3]: boolean} = {}
+	    local BestPosition, BestScore = nil, math.huge
+
+	    -- At most 100 store reads, and only while actually falling. The removed
+	    -- proximity code did thousands of reads continuously.
+	    for X: number = -2, 2 do
+	        for Y: number = -2, 1 do
+	            for Z: number = -2, 2 do
+	                local SupportCell: Vector3 = Center + Vector3.new(X, Y, Z)
+	                if not BlockStore:getBlockAt(SupportCell) then
+	                    continue
+	                end
+	                local SupportPosition: Vector3 = SupportCell * 3
+	                for _, Side: Vector3 in Adjacent do
+	                    local Candidate: Vector3 = SupportPosition + Side
+	                    if Seen[Candidate] then
+	                        continue
+	                    end
+	                    Seen[Candidate] = true
+	                    if Candidate.Y > Root.Position.Y - Humanoid.HipHeight or (Candidate - Root.Position).Magnitude > 18 or GetPlacedBlock(Candidate) then
+	                        continue
+	                    end
+	                    local Score: number = (Candidate - Predicted).Magnitude
+	                    if Score < BestScore then
+	                        BestPosition, BestScore = Candidate, Score
+	                    end
+	                end
+	            end
+	        end
+	    end
+	    return BestPosition
+	end
+
+	local function PlaceScaffoldBlock(Position: Vector3, Wool: string, StairSupport: boolean?): boolean
 	    if not CanScaffoldPlace() then
 	        return false
 	    end
 	    local _, CellPosition = CellKey(Position)
 	    local Root: BasePart = Entity.character.RootPart
-	    -- Never borrow a remote platform as a placement anchor. Scaffold only
-	    -- accepts a face-adjacent cell in legitimate placement range; pointed
-	    -- placement remains AutoClicker's job.
-	    if (Root.Position - CellPosition).Magnitude > 18 or GetPlacedBlock(CellPosition) or not CheckAdjacent(CellPosition) then
+	    -- Never borrow a remote platform as a placement anchor. Normal Scaffold
+	    -- requires a face; only explicit Staircase mode permits a local diagonal.
+	    -- Pointed placement remains AutoClicker's job.
+	    if (Root.Position - CellPosition).Magnitude > 18 or GetPlacedBlock(CellPosition) or not CheckAdjacent(CellPosition, StairSupport) then
 	        return false
 	    end
 
@@ -14549,6 +14612,8 @@ Run(function()
 	                        -- placement; a vertical tower starts only while stationary.
 	                        local Towering: boolean = Tower.Enabled and SpaceHeld and MoveDirection.Magnitude < 0.05
 	                        local Descending: boolean = not Towering and Downwards.Enabled and UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
+	                        local LookingDown: boolean = Camera.CFrame.LookVector.Y < -0.45
+	                        local Stairing: boolean = Staircase.Enabled and LookingDown and MoveDirection.Magnitude >= 0.05 and not Descending
 
 	                        if Towering then
 	                            local _, SupportCell = CellKey(Root.Position - Vector3.new(0, Humanoid.HipHeight + 1.5, 0))
@@ -14567,10 +14632,26 @@ Run(function()
 	                            TowerInterrupted = false
 	                        end
 
+	                        if Stairing then
+	                            local _, SupportCell = CellKey(Root.Position - Vector3.new(0, Humanoid.HipHeight + 1.5, 0))
+	                            TryStairBoost(SupportCell)
+	                        end
+
+	                        local ClutchPosition: Vector3? = nil
+	                        if Clutch.Enabled and not Towering and Humanoid.FloorMaterial == Enum.Material.Air and Root.AssemblyLinearVelocity.Y < -12 then
+	                            ClutchPosition = FindClutchPosition(Root, Humanoid)
+	                            if ClutchPosition and HasSafeSurface(ClutchPosition) then
+	                                ClutchPosition = nil
+	                            end
+	                            if ClutchPosition then
+	                                PlaceScaffoldBlock(ClutchPosition, Wool)
+	                            end
+	                        end
+
 	                        -- If knockback throws a stationary tower into another
 	                        -- structure, stop automatic anchoring while Space remains
 	                        -- held. AutoClicker can still place there when aimed.
-	                        if not (Towering and TowerInterrupted) then
+	                        if not (Towering and TowerInterrupted) and not ClutchPosition then
 	                            local FirstStep: number = Descending and 1 or Expand.Value
 	                            for Step: number = FirstStep, 1, -1 do
 	                                local BasePosition: Vector3 = Root.Position - Vector3.new(0, Humanoid.HipHeight + (Descending and 4.5 or 1.5), 0)
@@ -14608,7 +14689,7 @@ Run(function()
 	                                    -- Face adjacency is both cheaper and more
 	                                    -- accurate than scanning thousands of nearby
 	                                    -- cells for an unrelated platform.
-	                                    if CheckAdjacent(CellPosition) and not HasSafeSurface(CellPosition) and PlaceScaffoldBlock(CellPosition, Wool) then
+	                                    if CheckAdjacent(CellPosition, Stairing) and not HasSafeSurface(CellPosition) and PlaceScaffoldBlock(CellPosition, Wool, Stairing) then
 	                                        LastPosition = CurrentPosition
 	                                        break
 	                                    end
@@ -14653,7 +14734,17 @@ Run(function()
 	Tower = Scaffold:CreateToggle({
 	    Name = "Tower",
 	    Default = true,
-	    Tooltip = "Uses the small vertical boost only while Space is held and your character is stationary; moving jumps keep normal bridge placement"
+	    Tooltip = "Uses the vertical boost only while Space is held and your character is stationary; moving jumps keep normal bridge placement"
+	})
+	Staircase = Scaffold:CreateToggle({
+	    Name = "Staircase",
+	    Default = true,
+	    Tooltip = "While running and looking down, uses a tiny 12Y lift and controlled diagonal support to form a staircase instead of a flat floor"
+	})
+	Clutch = Scaffold:CreateToggle({
+	    Name = "Clutch",
+	    Default = true,
+	    Tooltip = "While falling, searches a small nearby area for a valid structure face to catch; it stays disabled during a stationary tower knockback"
 	})
 	Downwards = Scaffold:CreateToggle({
 	    Name = "Downwards",
