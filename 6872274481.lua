@@ -14457,11 +14457,7 @@ Run(function()
 	local Adjacent, LastPosition, Label, VisualBlock = {}, Vector3.zero
 	local VisualTween, VisualPosition
 	local VisualSpeed: number = 0.1
-	local CoverHead
-	local CoverSticky = false
 	local TowerLock: Vector3?
-	local CoverRay: RaycastParams = RaycastParams.new()
-	CoverRay.FilterType = Enum.RaycastFilterType.Exclude
 	
 	local function GetBlockInterval(): number
 	    return 1 / (Bedwars.SharedConstants.BLOCK_PLACE_CPS or 12)
@@ -14591,67 +14587,6 @@ Run(function()
 	                            MoveDirection = Vector3.zero
 	                        end
 	
-	                        -- Cubrirse la cabeza: con el mouse apuntando hacia arriba el
-	                        -- scaffold pone un bloque-techo sobre la cabeza (contra
-	                        -- proyectiles) en vez de seguir rellenando debajo de los pies.
-	                        -- Cubrirse la cabeza por raycast: se mira DONDE apunta el mouse
-	                        -- de verdad. Si el punto apuntado esta sobre tu personaje
-	                        -- (torso, cabeza o cerca de tu columna), el bloque-techo aparece
-	                        -- justo ahi. Apuntar a una estructura adelante sigue puentiando
-	                        -- normal: nada de bloques que te sofoquen al subir estructuras.
-	                        local MouseLocation: Vector2 = UserInputService:GetMouseLocation()
-	                        local MouseRay: Ray = Camera:ViewportPointToRay(MouseLocation.X, MouseLocation.Y - GuiService:GetGuiInset().Y)
-	                        CoverRay.FilterDescendantsInstances = {LocalPlayer.Character, Camera}
-	                        local AimResult: RaycastResult? = workspace:Raycast(MouseRay.Origin, MouseRay.Direction * 40, CoverRay)
-	                        local AimPoint: Vector3 = AimResult and AimResult.Position or (MouseRay.Origin + MouseRay.Direction * 6)
-	                        -- Histerezis suave: se activa apuntando sobre el pecho y se
-	                        -- suelta recien bajo la cintura, para que la mira no parpadee
-	                        -- entre cubrir y puentear.
-	                        -- El cover SOLO participa estando quieto: caminando/puentiando
-	                        -- nunca roba la colocacion de bloques (ese era el problema del
-	                        -- raycast). Paras, miras a tu torso/cabeza, y cubre.
-	                        local Covering: boolean = CoverHead.Enabled and not Towering and MoveDirection.Magnitude < 0.1 and AimPoint.Y > Root.Position.Y + (CoverSticky and 1.5 or 2.5) and ((AimPoint - Root.Position) * Vector3.new(1, 0, 1)).Magnitude <= 5
-	                        CoverSticky = Covering
-	                        if Covering then
-	                            -- El techo SIEMPRE queda a la altura sobre tu cabeza (nivel
-	                            -- techo): jamas sale una pared a la cara al puentear. Solo se
-	                            -- desliza hacia el lado donde apuntas, a lo sumo una celda.
-	                            local Lean: Vector3 = Vector3.new(AimPoint.X - Root.Position.X, 0, AimPoint.Z - Root.Position.Z)
-	                            Lean = Lean.Magnitude > 0.1 and Lean.Unit * math.min(Lean.Magnitude, 3) or Vector3.zero
-	                            local CurrentPosition: Vector3 = RoundPosition(Root.Position + Vector3.new(0, 4.5, 0) + Lean)
-	                            if VisualBlock and CurrentPosition then
-	                                local VisualTarget: Vector3 = Bedwars.BlockController:getBlockPosition(CurrentPosition) * 3
-	                                if VisualPosition ~= VisualTarget then
-	                                    if VisualTween then
-	                                        VisualTween:Cancel()
-	                                        VisualTween = nil
-	                                    end
-	
-	                                    if VisualBlock.Parent == Camera then
-	                                        VisualTween = TweenService:Create(VisualBlock, TweenInfo.new(VisualSpeed, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {CFrame = CFrame.new(VisualTarget)})
-	                                        VisualTween:Play()
-	                                    else
-	                                        VisualBlock.CFrame = CFrame.new(VisualTarget)
-	                                        VisualBlock.Parent = Camera
-	                                    end
-	                                    VisualPosition = VisualTarget
-	                                end
-	                            end
-	
-	                            local Block, BlockPosition = GetPlacedBlock(CurrentPosition)
-	                            if not Block then
-	                                BlockPosition = CheckAdjacent(BlockPosition * 3) and BlockPosition * 3 or BlockProximity(CurrentPosition)
-	                                if BlockPosition then
-	                                    if (workspace:GetServerTimeNow() - Bedwars.BlockCpsController.lastPlaceTimestamp) >= (GetBlockInterval() * 0.5) then
-	                                        task.delay(0, Bedwars.placeBlock, BlockPosition, Wool, false)
-	                                    end
-	                                end
-	                            end
-	                            LastPosition = CurrentPosition
-	                            task.wait(GetBlockInterval() * 0.5)
-	                            continue
-	                        end
-	
 	                        for Step: number = Expand.Value, 1, -1 do
 	                            local BaseCell: Vector3 = Root.Position - Vector3.new(0, Entity.character.HipHeight + (Downwards.Enabled and UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) and 4.5 or 1.5), 0)
 	                            if Towering and TowerLock then
@@ -14728,11 +14663,6 @@ Run(function()
 	Tower = Scaffold:CreateToggle({
 	    Name = "Tower",
 	    Default = true
-	})
-	CoverHead = Scaffold:CreateToggle({
-	    Name = "Cover head",
-	    Default = true,
-	    Tooltip = "Pointing at your own torso or head places the roof block right there (anti projectiles); aiming elsewhere keeps bridging"
 	})
 	Downwards = Scaffold:CreateToggle({
 	    Name = "Downwards",
