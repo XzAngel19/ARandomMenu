@@ -89,6 +89,9 @@ local Entity = vape.Libraries.entity
 -- de verdad asoma por un hueco: cada parte es un raycast por candidato.
 local EntityBodyParts = {"Head", "Torso", "UpperTorso", "LowerTorso", "HumanoidRootPart", "LeftHand", "RightHand", "LeftFoot", "RightFoot", "LeftLowerLeg", "RightLowerLeg", "Left Arm", "Right Arm", "Left Leg", "Right Leg"}
 
+-- Visibilidad por entidad: {expira, visible} (anti lag del killaura)
+local VisibilityCache: {[Model]: {any}} = {}
+
 local function UpgradeEntityPicker(Name: string)
 	local Real = Entity[Name]
 	Entity[Name] = function(EntitySettings)
@@ -116,16 +119,33 @@ local function UpgradeEntityPicker(Name: string)
 					return nil
 				end
 
+				-- Cache de visibilidad por entidad (~100ms): el killaura escanea cada
+				-- frame y repetir hasta 9 raycasts por candidato en cada pasada es
+				-- lo que lo laguea. La visibilidad no cambia en 100ms.
+				local Cached = VisibilityCache[Found]
+				if Cached and tick() < Cached[1] then
+					return Cached[2] or nil
+				end
+
 				local PrimaryName = Found[PartKey] and Found[PartKey].Name
+				local Visible = false
+				local Probes = 0
 				for _, PartName in EntityBodyParts do
-					if PartName ~= PrimaryName then
+					if not Visible and Probes < 6 and PartName ~= PrimaryName then
 						local Part = Character:FindFirstChild(PartName)
-						if Part and not RealWallcheck(Origin, Part.Position, IgnoreObject) then
-							return nil
+						if Part then
+							Probes += 1
+							if not RealWallcheck(Origin, Part.Position, IgnoreObject) then
+								Visible = true
+							end
 						end
 					end
 				end
 
+				VisibilityCache[Found] = {tick() + 0.1, Visible}
+				if not Visible then
+					return nil
+				end
 				return true
 			end
 			local Result = Real(EntitySettings)
@@ -14587,7 +14607,10 @@ Run(function()
 	                        -- Histerezis suave: se activa apuntando sobre el pecho y se
 	                        -- suelta recien bajo la cintura, para que la mira no parpadee
 	                        -- entre cubrir y puentear.
-	                        local Covering: boolean = CoverHead.Enabled and not Towering and AimPoint.Y > Root.Position.Y + (CoverSticky and 1.5 or 2.5) and ((AimPoint - Root.Position) * Vector3.new(1, 0, 1)).Magnitude <= 5
+	                        -- El cover SOLO participa estando quieto: caminando/puentiando
+	                        -- nunca roba la colocacion de bloques (ese era el problema del
+	                        -- raycast). Paras, miras a tu torso/cabeza, y cubre.
+	                        local Covering: boolean = CoverHead.Enabled and not Towering and MoveDirection.Magnitude < 0.1 and AimPoint.Y > Root.Position.Y + (CoverSticky and 1.5 or 2.5) and ((AimPoint - Root.Position) * Vector3.new(1, 0, 1)).Magnitude <= 5
 	                        CoverSticky = Covering
 	                        if Covering then
 	                            -- El techo SIEMPRE queda a la altura sobre tu cabeza (nivel
