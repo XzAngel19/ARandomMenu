@@ -14571,19 +14571,11 @@ Run(function()
 	                        if Towering then
 	                            -- Columna fijada al empezar a torrear: la torre sale
 	                            -- perfectamente recta aunque el personaje tiemble.
+	                            -- Torre 100% legit: CERO impulsos. Saltas normal y el
+	                            -- bloque aparece en la celda que tus pies cruzan al subir.
 	                            if not TowerLock then
 	                                local UnderCell: Vector3 = RoundPosition(Root.Position - Vector3.new(0, Entity.character.HipHeight + 1.5, 0))
 	                                TowerLock = Vector3.new(UnderCell.X, UnderCell.Y, UnderCell.Z)
-	                            end
-	                            -- Solo se eleva con soporte real: bloque bajo los pies o
-	                            -- una colocacion que acaba de aterrizar. Si los bloques no
-	                            -- se ponen (sin lana, lag, fuera de alcance), seguir
-	                            -- presionando ya no te lanza al vacio: sin soporte no hay
-	                            -- impulso y caes de vuelta a tu ultimo bloque.
-	                            local Supported = GetPlacedBlock(Root.Position - Vector3.new(0, Entity.character.HipHeight + 1.5, 0))
-	                                or (workspace:GetServerTimeNow() - Bedwars.BlockCpsController.lastPlaceTimestamp) < 0.15
-	                            if Supported then
-	                                Root.AssemblyLinearVelocity = Vector3.new(Root.AssemblyLinearVelocity.X, 38, Root.AssemblyLinearVelocity.Z)
 	                            end
 	                        end
 	                        -- Bajada controlada: al bajar de la torre (Shift) frena la
@@ -14601,6 +14593,13 @@ Run(function()
 	                        for Step: number = Expand.Value, 1, -1 do
 	                            local BaseCell: Vector3 = Root.Position - Vector3.new(0, Entity.character.HipHeight + (Downwards.Enabled and UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) and 4.5 or 1.5), 0)
 	                            if Towering and TowerLock then
+	                                -- En el aire y subiendo: la celda objetivo es la que
+	                                -- los pies estan cruzando (salto normal, salto-coloca
+	                                -- legit). En el suelo o cayendo: el bloque bajo los
+	                                -- pies de siempre.
+	                                if Entity.character.Humanoid.FloorMaterial == Enum.Material.Air and Root.AssemblyLinearVelocity.Y > 0 then
+	                                    BaseCell += Vector3.new(0, 3, 0)
+	                                end
 	                                BaseCell = Vector3.new(TowerLock.X, BaseCell.Y, TowerLock.Z)
 	                            end
 	                            local CurrentPosition: Vector3 = RoundPosition(BaseCell + MoveDirection * (Step * 3))
