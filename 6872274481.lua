@@ -14439,6 +14439,7 @@ Run(function()
 	local VisualSpeed: number = 0.1
 	local CoverHead
 	local CoverSticky = false
+	local TowerLock: Vector3?
 	local CoverRay: RaycastParams = RaycastParams.new()
 	CoverRay.FilterType = Enum.RaycastFilterType.Exclude
 	
@@ -14537,7 +14538,16 @@ Run(function()
 	                        local Root: BasePart = Entity.character.RootPart
 	                        local Towering: boolean = Tower.Enabled and UserInputService:IsKeyDown(Enum.KeyCode.Space) and (not UserInputService:GetFocusedTextBox())
 	                        local Descending: boolean = Downwards.Enabled and UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
+	                        if not Towering then
+	                            TowerLock = nil
+	                        end
 	                        if Towering then
+	                            -- Columna fijada al empezar a torrear: la torre sale
+	                            -- perfectamente recta aunque el personaje tiemble.
+	                            if not TowerLock then
+	                                local UnderCell: Vector3 = RoundPosition(Root.Position - Vector3.new(0, Entity.character.HipHeight + 1.5, 0))
+	                                TowerLock = Vector3.new(UnderCell.X, UnderCell.Y, UnderCell.Z)
+	                            end
 	                            -- Solo se eleva con soporte real: bloque bajo los pies o
 	                            -- una colocacion que acaba de aterrizar. Si los bloques no
 	                            -- se ponen (sin lana, lag, fuera de alcance), seguir
@@ -14577,18 +14587,15 @@ Run(function()
 	                        -- Histerezis suave: se activa apuntando sobre el pecho y se
 	                        -- suelta recien bajo la cintura, para que la mira no parpadee
 	                        -- entre cubrir y puentear.
-	                        local Covering: boolean = CoverHead.Enabled and AimPoint.Y > Root.Position.Y + (CoverSticky and 1.5 or 2.5) and ((AimPoint - Root.Position) * Vector3.new(1, 0, 1)).Magnitude <= 5
+	                        local Covering: boolean = CoverHead.Enabled and not Towering and AimPoint.Y > Root.Position.Y + (CoverSticky and 1.5 or 2.5) and ((AimPoint - Root.Position) * Vector3.new(1, 0, 1)).Magnitude <= 5
 	                        CoverSticky = Covering
 	                        if Covering then
-	                            local CurrentPosition: Vector3 = RoundPosition(AimPoint)
-	                            -- Nunca dentro de tu propio torso/cabeza: si el punto cae en
-	                            -- tu celda, el bloque sube a la celda sobre tu cabeza
-	                            -- (protege exactamente igual y no te sofoca).
-	                            local TorsoCell: Vector3 = RoundPosition(Root.Position + Vector3.new(0, 1.5, 0))
-	                            local HeadCell: Vector3 = RoundPosition(Root.Position + Vector3.new(0, 3, 0))
-	                            if CurrentPosition == TorsoCell or CurrentPosition == HeadCell then
-	                                CurrentPosition = RoundPosition(Root.Position + Vector3.new(0, 4.5, 0))
-	                            end
+	                            -- El techo SIEMPRE queda a la altura sobre tu cabeza (nivel
+	                            -- techo): jamas sale una pared a la cara al puentear. Solo se
+	                            -- desliza hacia el lado donde apuntas, a lo sumo una celda.
+	                            local Lean: Vector3 = Vector3.new(AimPoint.X - Root.Position.X, 0, AimPoint.Z - Root.Position.Z)
+	                            Lean = Lean.Magnitude > 0.1 and Lean.Unit * math.min(Lean.Magnitude, 3) or Vector3.zero
+	                            local CurrentPosition: Vector3 = RoundPosition(Root.Position + Vector3.new(0, 4.5, 0) + Lean)
 	                            if VisualBlock and CurrentPosition then
 	                                local VisualTarget: Vector3 = Bedwars.BlockController:getBlockPosition(CurrentPosition) * 3
 	                                if VisualPosition ~= VisualTarget then
@@ -14623,7 +14630,11 @@ Run(function()
 	                        end
 	
 	                        for Step: number = Expand.Value, 1, -1 do
-	                            local CurrentPosition: Vector3 = RoundPosition(Root.Position - Vector3.new(0, Entity.character.HipHeight + (Downwards.Enabled and UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) and 4.5 or 1.5), 0) + MoveDirection * (Step * 3))
+	                            local BaseCell: Vector3 = Root.Position - Vector3.new(0, Entity.character.HipHeight + (Downwards.Enabled and UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) and 4.5 or 1.5), 0)
+	                            if Towering and TowerLock then
+	                                BaseCell = Vector3.new(TowerLock.X, BaseCell.Y, TowerLock.Z)
+	                            end
+	                            local CurrentPosition: Vector3 = RoundPosition(BaseCell + MoveDirection * (Step * 3))
 	                            if Diagonal.Enabled then
 	                                if math.abs(math.round(math.deg(math.atan2(-MoveDirection.X, -MoveDirection.Z)) / 45) * 45) % 90 == 45 then
 	                                    local Delta: Vector3 = (LastPosition - CurrentPosition)
