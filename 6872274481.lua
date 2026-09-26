@@ -1,5 +1,7 @@
 --This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.
 local vape = shared.vape
+local ScriptRevision: string = "2026-09-26-r3"
+getgenv().ARandomMenuBedwarsRevision = ScriptRevision
 local loadstring = function(...)
     local Chunk, Message = loadstring(...)
     if Message and vape then
@@ -2570,7 +2572,13 @@ local function GetFunctionRange(Func)
 end
 getgenv().getFunctionRange = GetFunctionRange
 
-for _, v: string in {"AntiRagdoll", "TriggerBot", "SilentAim", "Jesus", "Invisible", "AutoRejoin", "Rejoin", "Disabler", "Timer", "ServerHop", "Wallhop", "Xray", "MouseTP", "MurderMystery"} do
+-- Remove stale/default copies before rebuilding these modules. This is
+-- especially important when the updated game file is executed without fully
+-- restarting Vape; otherwise the old NoFall/Nuker UI can remain on screen.
+for _, v: string in {
+    "AntiRagdoll", "TriggerBot", "SilentAim", "Jesus", "Invisible", "AutoRejoin", "Rejoin", "Disabler", "Timer", "ServerHop", "Wallhop", "Xray", "MouseTP", "MurderMystery",
+    "AutoClicker", "NoFall", "Scaffold", "Block-In", "FastPlace", "Nuker", "Breaker"
+} do
     vape:Remove(v)
 end
 
@@ -5626,7 +5634,10 @@ Run(function()
 	            table.clear(Disabled)
 	        end
 	    end,
-	    Tooltip = "Prevents taking fall damage."
+	    ExtraText = function()
+	        return `Original · {ScriptRevision}`
+	    end,
+	    Tooltip = "Original NoFall restored: uses the previous Landed pulse and tracked fall velocity."
 	})
 
 	Damage = NoFall:CreateSlider({
@@ -17393,7 +17404,13 @@ Run(function()
 	            table.clear(Parts)
 	        end
 	    end,
-	    Tooltip = "Break blocks around you automatically"
+	    ExtraText = function()
+	        if not Wallcheck or not Wallcheck.Enabled then
+	            return "Walls: off"
+	        end
+	        return BlockInWallcheck and BlockInWallcheck.Enabled and "Walls: Block-In" or "Walls: normal"
+	    end,
+	    Tooltip = `Break blocks automatically · {ScriptRevision}`
 	})
 	
 	Mode = Nuker:CreateDropdown({
@@ -28549,3 +28566,7 @@ Run(function()
 	    Tooltip = "Slows your mouse by the same amount you zoomed in"
 	})
 end)
+
+-- Visible confirmation that the corrected game file, rather than an older
+-- cached copy, reached the executor.
+task.defer(SendNotification, "BedWars", `Loaded corrected modules ({ScriptRevision})`, 6)
