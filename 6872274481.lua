@@ -4707,101 +4707,110 @@ Run(function()
 	local DamageBoost
 	local Horizontal
 	local Vertical
-	local LoseHealth
-	local Always
+	local EscapeHealth
+	local Trade
 	local Combo
 	local SpeedBoost
 	local Escape
 	local NoAttack
+	local OldApply: ((BasePart, number, Vector3, any) -> any)?
 	local Stack: number?
-	local LastHit = 0
-	local ComboCount = 0
+	local LastKnockback = 0
 	local AppliedSpeed = 0
 	
-	DamageBoost = vape.Categories.Blatant:CreateModule({
+DamageBoost = vape.Categories.Blatant:CreateModule({
 	    Name = "DamageBoost",
 	    Function = function(Callback: boolean)
 	        if Callback then
+	            -- Evento de dano: solo informacion. Lleva el ping para Speed/Fly
+	            -- (con throttle) y el paso extra de velocidad cuando el modo
+	            -- escape activa. El knockback de verdad se toca en el gancho de abajo.
 	            DamageBoost:Clean(VapeEvents.EntityDamageEvent.Event:Connect(function(DamageTable)
-	                -- El impulso se juega con el KNOCKBACK, no con la velocidad
-	                -- (salvo el empujoncito deliberadamente diminuto de abajo):
-	                -- tu velocidad base nunca cambia, nada raro que marcar.
 	                if DamageTable.entityInstance ~= LocalPlayer.Character or (vape.Modules.LongJump or {}).Enabled then
 	                    return
 	                end
-	
+		    
 	                local Multiplier = DamageTable.knockbackMultiplier
 	                if Multiplier and Multiplier.disabled then
 	                    return
 	                end
-	
+		    
+	                if tick() > (Stack or 0) then
+	                    local PingHorizontal: number = Multiplier and Multiplier.horizontal or 1
+	                    KnockbackSpeed = Bedwars.KnockbackUtil.calculateKnockbackVelocity(Vector3.one, 1, {
+	                        vertical = 0,
+	                        horizontal = PingHorizontal
+	                    }).Magnitude * (0.9 + (Store.ping.total or 0))
+	                    Stack = tick() + (KnockbackSpeed / 45)
+	                    KnockbackBoost = tick() + (PingHorizontal / 3.5)
+	                end
+		    
 	                if not Entity.isAlive then
 	                    return
 	                end
-	
-	                -- Ping para Speed/Fly (con throttle), como siempre.
-	                if tick() > (Stack or 0) then
-	                    local Horizontal: number = Multiplier and Multiplier.horizontal or 1
-	                    KnockbackSpeed = Bedwars.KnockbackUtil.calculateKnockbackVelocity(Vector3.one, 1, {
-	                        vertical = 0,
-	                        horizontal = Horizontal
-	                    }).Magnitude * (0.9 + (Store.ping.total or 0))
-	                    Stack = tick() + (KnockbackSpeed / 45)
-	                    KnockbackBoost = tick() + (Horizontal / 3.5)
-	                end
-	
-	                -- Te estan conejando: golpes cayendo en menos de 2.5s entre si.
-	                local Now = tick()
-	                if Now - LastHit <= 2.5 then
-	                    ComboCount += 1
-	                else
-	                    ComboCount = 0
-	                end
-	                LastHit = Now
-	
 	                local Humanoid = Entity.character and Entity.character.Humanoid
-	                local OldMultiplier = DamageTable.knockbackMultiplier or {}
-	                local ApplySpeed = false
-	
-	                -- HUYENDO (llevas un rato sin atacar): el golpe debe lanzarte
-	                -- MAS LEJOS para soltarte del perseguidor. Amplificar el propio
-	                -- empujon se ve natural porque viaja en la direccion del golpe.
-	                if (workspace:GetServerTimeNow() - Bedwars.SwordController.lastAttack) > NoAttack.Value then
-	                    DamageTable.knockbackMultiplier = {
-	                        horizontal = (OldMultiplier.horizontal or 1) * (1 + Escape.Value / 100),
-	                        vertical = (OldMultiplier.vertical or 1) * (1 + Escape.Value / 200)
-	                    }
-	                    ApplySpeed = true
-	                else
-	                    -- PVP: solo si vas perdiendo (o siempre con la opcion), recorta
-	                    -- el empujon para quedarte en rango; si te estan conejando,
-	                    -- escala el corte (nunca pasa de 85%: sigue empujando un poco).
-	                    if not Always.Enabled and not (Humanoid and Humanoid.MaxHealth > 0 and (Humanoid.Health / Humanoid.MaxHealth) * 100 <= LoseHealth.Value) then
-	                        return
-	                    end
-	
-	                    local Extra = ComboCount >= 1 and Combo.Value or 0
-	                    DamageTable.knockbackMultiplier = {
-	                        horizontal = (OldMultiplier.horizontal or 1) * (1 - math.min(Horizontal.Value + Extra, 85) / 100),
-	                        vertical = (OldMultiplier.vertical or 1) * (1 - math.min(Vertical.Value + Extra, 85) / 100)
-	                    }
-	                    ApplySpeed = true
-	                end
-	
-	                -- Empujoncito de velocidad a proposito diminuto (0.5 studs):
-	                -- se siente como un paso mas rapido, nada que un anticheat
-	                -- pueda marcar ni que bugee el movimiento.
-	                if ApplySpeed and SpeedBoost.Value > 0 and Humanoid and AppliedSpeed < SpeedBoost.Value then
+	                local Fleeing = (workspace:GetServerTimeNow() - Bedwars.SwordController.lastAttack) > NoAttack.Value
+	                local Comboed = tick() - LastKnockback <= 2.5
+	                local Low = Humanoid and Humanoid.MaxHealth > 0 and (Humanoid.Health / Humanoid.MaxHealth) * 100 <= EscapeHealth.Value
+	                if (Fleeing or Comboed or Low) and SpeedBoost.Value > 0 and Humanoid and AppliedSpeed < SpeedBoost.Value then
 	                    local Add = SpeedBoost.Value - AppliedSpeed
 	                    Humanoid.WalkSpeed += Add
 	                    AppliedSpeed += Add
 	                end
 	            end))
-	
-	            DamageBoost:Clean(LocalPlayer.CharacterAdded:Connect(function()
-	                AppliedSpeed = 0
-	            end))
+		    
+	            -- LA PARTE QUE SI CUENTA: el juego aplica el empujon en TU cliente via
+	            -- KnockbackUtil.applyKnockback. La version vieja mutaba la tabla del
+	            -- evento de dano, que es una COPIA que este script construye para
+	            -- informarse: el juego nunca la lee, por eso el boost no hacia nada.
+	            -- Este gancho es el mismo mecanismo del modulo Velocity.
+	            OldApply = Bedwars.KnockbackUtil.applyKnockback
+	            Bedwars.KnockbackUtil.applyKnockback = function(Root: BasePart, Mass: number, Direction: Vector3, Knockback: any, ...)
+	                if not Entity.isAlive or not Entity.character or Root ~= Entity.character.RootPart or (vape.Modules.LongJump or {}).Enabled then
+	                    return OldApply(Root, Mass, Direction, Knockback, ...)
+	                end
+		    
+	                local WasComboed = tick() - LastKnockback <= 2.5
+	                LastKnockback = tick()
+	                if Knockback and Knockback.disabled then
+	                    return OldApply(Root, Mass, Direction, Knockback, ...)
+	                end
+		    
+	                -- Escalera de modos, lo mas urgente primero:
+	                -- 1. Huyendo (NoAttack secs sin atacar) o vida de emergencia: el golpe
+	                --    te lanza MAS LEJOS y sueltas al perseguidor.
+	                -- 2. Te estan conejando (2+ golpes en 2.5s): amplificar para ROMPER el
+	                --    combo (la version vieja RECORTABA aqui: morias sin knockback).
+	                -- 3. Trade sano (opcional, apagado por defecto): recorte suave para
+	                --    quedarte en rango mientras intercambias golpes.
+	                local Humanoid = Entity.character.Humanoid
+	                local HealthPct = Humanoid.MaxHealth > 0 and (Humanoid.Health / Humanoid.MaxHealth) * 100 or 100
+	                local Amplify: number = 0
+	                if (workspace:GetServerTimeNow() - Bedwars.SwordController.lastAttack) > NoAttack.Value or HealthPct <= EscapeHealth.Value then
+	                    Amplify = Escape.Value
+	                elseif WasComboed then
+	                    Amplify = Combo.Value
+	                elseif not Trade.Enabled then
+	                    return OldApply(Root, Mass, Direction, Knockback, ...)
+	                end
+		    
+	                Knockback = Knockback or {}
+	                if Amplify > 0 then
+	                    Knockback.horizontal = (Knockback.horizontal or 1) * (1 + Amplify / 100)
+	                    Knockback.vertical = (Knockback.vertical or 1) * (1 + Amplify / 200)
+	                elseif Horizontal.Value == 0 and Vertical.Value == 0 then
+	                    return OldApply(Root, Mass, Direction, Knockback, ...)
+	                else
+	                    Knockback.horizontal = (Knockback.horizontal or 1) * (1 - math.min(Horizontal.Value, 85) / 100)
+	                    Knockback.vertical = (Knockback.vertical or 1) * (1 - math.min(Vertical.Value, 85) / 100)
+	                end
+	                return OldApply(Root, Mass, Direction, Knockback, ...)
+	            end
 	        else
+	            if OldApply then
+	                Bedwars.KnockbackUtil.applyKnockback = OldApply
+	                OldApply = nil
+	            end
 	            if AppliedSpeed > 0 then
 	                pcall(function()
 	                    local Humanoid = Entity.character and Entity.character.Humanoid
@@ -4813,63 +4822,18 @@ Run(function()
 	            end
 	        end
 	    end,
-	    Tooltip = "Smart knockback: cuts it while fighting and losing, amplifies it while running so you can break away"
-	})
+	    Tooltip = "Real knockback control: amplifies it while running, comboed, or low so you always break away; optional gentle cut while trading healthy"
+})
 	
-	Horizontal = DamageBoost:CreateSlider({
-	    Name = "Horizontal reduce",
-	    Min = 5,
-	    Max = 80,
-	    Default = 45,
-	    Suffix = "%"
-	})
-	Vertical = DamageBoost:CreateSlider({
-	    Name = "Vertical reduce",
-	    Min = 0,
-	    Max = 80,
-	    Default = 65,
-	    Suffix = "%"
-	})
-	LoseHealth = DamageBoost:CreateSlider({
-	    Name = "Losing health",
-	    Min = 5,
-	    Max = 100,
-	    Default = 60,
-	    Suffix = "%",
-	    Tooltip = "Only reduces knockback when your health is at or below this percentage"
-	})
-	Always = DamageBoost:CreateToggle({
-	    Name = "Reduce on every hit",
-	    Default = false
-	})
-	Combo = DamageBoost:CreateSlider({
-	    Name = "Combo escape",
-	    Min = 0,
-	    Max = 40,
-	    Default = 20,
-	    Suffix = "%",
-	    Tooltip = "Extra knockback reduction while they are comboing you (hits landing within 2.5s of each other)"
-	})
-	SpeedBoost = DamageBoost:CreateSlider({
-	    Name = "Walk speed",
-	    Min = 0,
-	    Max = 1,
-	    Default = 0.5,
-	    Decimal = 10,
-	    Suffix = function(Val: number)
-	        return Val <= 1 and "stud" or "studs"
-	    end,
-	    Tooltip = "Tiny direct walkspeed bump when a hit lands while losing, on purpose very small (max 1)"
-	})
-	Escape = DamageBoost:CreateSlider({
+Escape = DamageBoost:CreateSlider({
 	    Name = "Escape boost",
 	    Min = 0,
 	    Max = 80,
 	    Default = 35,
 	    Suffix = "%",
-	    Tooltip = "While you are running (no attacks for a while), hits push you this much further so you can break away"
-	})
-	NoAttack = DamageBoost:CreateSlider({
+	    Tooltip = "While running (no attacks for a while) or at emergency health, hits push you this much further so you break away"
+})
+NoAttack = DamageBoost:CreateSlider({
 	    Name = "No attack time",
 	    Min = 1,
 	    Max = 5,
@@ -4879,9 +4843,56 @@ Run(function()
 	        return Val <= 1 and "sec" or "secs"
 	    end,
 	    Tooltip = "How long without attacking before the module treats you as fleeing"
-	})
+})
+EscapeHealth = DamageBoost:CreateSlider({
+	    Name = "Escape below",
+	    Min = 5,
+	    Max = 100,
+	    Default = 40,
+	    Suffix = "%",
+	    Tooltip = "Emergency: at or below this health percentage every hit pushes you away (escape mode), no matter what"
+})
+Combo = DamageBoost:CreateSlider({
+	    Name = "Combo escape",
+	    Min = 0,
+	    Max = 40,
+	    Default = 20,
+	    Suffix = "%",
+	    Tooltip = "Extra push to BREAK the combo when they are hitting you repeatedly (hits landing within 2.5s of each other)"
+})
+Trade = DamageBoost:CreateToggle({
+	    Name = "Trade mode",
+	    Default = false,
+	    Tooltip = "While healthy, not comboed, and trading, cut the knockback you take to stay in range (classic velocity)"
+})
+Horizontal = DamageBoost:CreateSlider({
+	    Name = "Horizontal reduce",
+	    Min = 5,
+	    Max = 80,
+	    Default = 45,
+	    Suffix = "%",
+	    Tooltip = "Trade mode only: horizontal knockback cut while trading healthy"
+})
+Vertical = DamageBoost:CreateSlider({
+	    Name = "Vertical reduce",
+	    Min = 0,
+	    Max = 80,
+	    Default = 65,
+	    Suffix = "%",
+	    Tooltip = "Trade mode only: vertical knockback cut while trading healthy"
+})
+SpeedBoost = DamageBoost:CreateSlider({
+	    Name = "Walk speed",
+	    Min = 0,
+	    Max = 1,
+	    Default = 0.5,
+	    Decimal = 10,
+	    Suffix = function(Val: number)
+	        return Val <= 1 and "stud" or "studs"
+	    end,
+	    Tooltip = "Tiny direct walkspeed bump while escaping, on purpose very small (max 1)"
+})
 end)
-
 Run(function()
 	local DeathAdderAimbot
 	local Mode
