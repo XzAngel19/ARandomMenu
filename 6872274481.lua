@@ -4691,6 +4691,8 @@ Run(function()
 	local Always
 	local Combo
 	local SpeedBoost
+	local Escape
+	local NoAttack
 	local Stack: number?
 	local LastHit = 0
 	local ComboCount = 0
@@ -4737,26 +4739,39 @@ Run(function()
 	                end
 	                LastHit = Now
 	
-	                -- "Me estan ganando": solo si tu vida esta en el umbral, o
-	                -- siempre con la opcion activada.
 	                local Humanoid = Entity.character and Entity.character.Humanoid
-	                if not Always.Enabled and not (Humanoid and Humanoid.MaxHealth > 0 and (Humanoid.Health / Humanoid.MaxHealth) * 100 <= LoseHealth.Value) then
-	                    return
-	                end
-	
-	                -- Mientras te conean, escala el corte para soltarte del combo
-	                -- (nunca pasa de 85%: el golpe sigue empujando un poco).
-	                local Extra = ComboCount >= 1 and Combo.Value or 0
 	                local OldMultiplier = DamageTable.knockbackMultiplier or {}
-	                DamageTable.knockbackMultiplier = {
-	                    horizontal = (OldMultiplier.horizontal or 1) * (1 - math.min(Horizontal.Value + Extra, 85) / 100),
-	                    vertical = (OldMultiplier.vertical or 1) * (1 - math.min(Vertical.Value + Extra, 85) / 100)
-	                }
+	                local ApplySpeed = false
+	
+	                -- HUYENDO (llevas un rato sin atacar): el golpe debe lanzarte
+	                -- MAS LEJOS para soltarte del perseguidor. Amplificar el propio
+	                -- empujon se ve natural porque viaja en la direccion del golpe.
+	                if (workspace:GetServerTimeNow() - Bedwars.SwordController.lastAttack) > NoAttack.Value then
+	                    DamageTable.knockbackMultiplier = {
+	                        horizontal = (OldMultiplier.horizontal or 1) * (1 + Escape.Value / 100),
+	                        vertical = (OldMultiplier.vertical or 1) * (1 + Escape.Value / 200)
+	                    }
+	                    ApplySpeed = true
+	                else
+	                    -- PVP: solo si vas perdiendo (o siempre con la opcion), recorta
+	                    -- el empujon para quedarte en rango; si te estan conejando,
+	                    -- escala el corte (nunca pasa de 85%: sigue empujando un poco).
+	                    if not Always.Enabled and not (Humanoid and Humanoid.MaxHealth > 0 and (Humanoid.Health / Humanoid.MaxHealth) * 100 <= LoseHealth.Value) then
+	                        return
+	                    end
+	
+	                    local Extra = ComboCount >= 1 and Combo.Value or 0
+	                    DamageTable.knockbackMultiplier = {
+	                        horizontal = (OldMultiplier.horizontal or 1) * (1 - math.min(Horizontal.Value + Extra, 85) / 100),
+	                        vertical = (OldMultiplier.vertical or 1) * (1 - math.min(Vertical.Value + Extra, 85) / 100)
+	                    }
+	                    ApplySpeed = true
+	                end
 	
 	                -- Empujoncito de velocidad a proposito diminuto (0.5 studs):
 	                -- se siente como un paso mas rapido, nada que un anticheat
 	                -- pueda marcar ni que bugee el movimiento.
-	                if SpeedBoost.Value > 0 and Humanoid and AppliedSpeed < SpeedBoost.Value then
+	                if ApplySpeed and SpeedBoost.Value > 0 and Humanoid and AppliedSpeed < SpeedBoost.Value then
 	                    local Add = SpeedBoost.Value - AppliedSpeed
 	                    Humanoid.WalkSpeed += Add
 	                    AppliedSpeed += Add
@@ -4778,7 +4793,7 @@ Run(function()
 	            end
 	        end
 	    end,
-	    Tooltip = "Reduces the knockback you take while losing the fight, so hits stop bouncing you around"
+	    Tooltip = "Smart knockback: cuts it while fighting and losing, amplifies it while running so you can break away"
 	})
 	
 	Horizontal = DamageBoost:CreateSlider({
@@ -4825,6 +4840,25 @@ Run(function()
 	        return Val <= 1 and "stud" or "studs"
 	    end,
 	    Tooltip = "Tiny direct walkspeed bump when a hit lands while losing, on purpose very small (max 1)"
+	})
+	Escape = DamageBoost:CreateSlider({
+	    Name = "Escape boost",
+	    Min = 0,
+	    Max = 80,
+	    Default = 35,
+	    Suffix = "%",
+	    Tooltip = "While you are running (no attacks for a while), hits push you this much further so you can break away"
+	})
+	NoAttack = DamageBoost:CreateSlider({
+	    Name = "No attack time",
+	    Min = 1,
+	    Max = 5,
+	    Default = 2,
+	    Decimal = 10,
+	    Suffix = function(Val: number)
+	        return Val <= 1 and "sec" or "secs"
+	    end,
+	    Tooltip = "How long without attacking before the module treats you as fleeing"
 	})
 end)
 
@@ -14404,8 +14438,9 @@ Run(function()
 	local VisualTween, VisualPosition
 	local VisualSpeed: number = 0.1
 	local CoverHead
-	local CoverAngle
 	local CoverSticky = false
+	local CoverRay: RaycastParams = RaycastParams.new()
+	CoverRay.FilterType = Enum.RaycastFilterType.Exclude
 	
 	local function GetBlockInterval(): number
 	    return 1 / (Bedwars.SharedConstants.BLOCK_PLACE_CPS or 12)
@@ -14529,19 +14564,31 @@ Run(function()
 	                        -- Cubrirse la cabeza: con el mouse apuntando hacia arriba el
 	                        -- scaffold pone un bloque-techo sobre la cabeza (contra
 	                        -- proyectiles) en vez de seguir rellenando debajo de los pies.
-	                        local Look: Vector3 = Camera.CFrame.LookVector
-	                        -- Histerezis: se activa apuntando apenas hacia arriba (Cover
-	                        -- angle) y para volver a rellenar abajo hay que bajar la mirada
-	                        -- a la mitad del angulo: los micro-movimientos de la mira ya no
-	                        -- sueltan bloques debajo mientras te cubres.
-	                        local Covering: boolean = CoverHead.Enabled and Look.Y > math.sin(math.rad(CoverSticky and (CoverAngle.Value * 0.5) or CoverAngle.Value))
+	                        -- Cubrirse la cabeza por raycast: se mira DONDE apunta el mouse
+	                        -- de verdad. Si el punto apuntado esta sobre tu personaje
+	                        -- (torso, cabeza o cerca de tu columna), el bloque-techo aparece
+	                        -- justo ahi. Apuntar a una estructura adelante sigue puentiando
+	                        -- normal: nada de bloques que te sofoquen al subir estructuras.
+	                        local MouseLocation: Vector2 = UserInputService:GetMouseLocation()
+	                        local MouseRay: Ray = Camera:ViewportPointToRay(MouseLocation.X, MouseLocation.Y - GuiService:GetGuiInset().Y)
+	                        CoverRay.FilterDescendantsInstances = {LocalPlayer.Character, Camera}
+	                        local AimResult: RaycastResult? = workspace:Raycast(MouseRay.Origin, MouseRay.Direction * 40, CoverRay)
+	                        local AimPoint: Vector3 = AimResult and AimResult.Position or (MouseRay.Origin + MouseRay.Direction * 6)
+	                        -- Histerezis suave: se activa apuntando sobre el pecho y se
+	                        -- suelta recien bajo la cintura, para que la mira no parpadee
+	                        -- entre cubrir y puentear.
+	                        local Covering: boolean = CoverHead.Enabled and AimPoint.Y > Root.Position.Y + (CoverSticky and 1.5 or 2.5) and ((AimPoint - Root.Position) * Vector3.new(1, 0, 1)).Magnitude <= 5
 	                        CoverSticky = Covering
 	                        if Covering then
-	                            -- El bloque-techo se corre hacia donde apuntas para que
-	                            -- cubra tu cabeza desde el lado del atacante.
-	                            local Lean: Vector3 = Vector3.new(Look.X, 0, Look.Z)
-	                            Lean = Lean.Magnitude > 0.05 and Lean.Unit * 1.4 or Vector3.zero
-	                            local CurrentPosition: Vector3 = RoundPosition(Root.Position + Vector3.new(0, 4.5, 0) + Lean)
+	                            local CurrentPosition: Vector3 = RoundPosition(AimPoint)
+	                            -- Nunca dentro de tu propio torso/cabeza: si el punto cae en
+	                            -- tu celda, el bloque sube a la celda sobre tu cabeza
+	                            -- (protege exactamente igual y no te sofoca).
+	                            local TorsoCell: Vector3 = RoundPosition(Root.Position + Vector3.new(0, 1.5, 0))
+	                            local HeadCell: Vector3 = RoundPosition(Root.Position + Vector3.new(0, 3, 0))
+	                            if CurrentPosition == TorsoCell or CurrentPosition == HeadCell then
+	                                CurrentPosition = RoundPosition(Root.Position + Vector3.new(0, 4.5, 0))
+	                            end
 	                            if VisualBlock and CurrentPosition then
 	                                local VisualTarget: Vector3 = Bedwars.BlockController:getBlockPosition(CurrentPosition) * 3
 	                                if VisualPosition ~= VisualTarget then
@@ -14651,18 +14698,7 @@ Run(function()
 	CoverHead = Scaffold:CreateToggle({
 	    Name = "Cover head",
 	    Default = true,
-	    Tooltip = "Aiming up beyond the cover angle roofs your head instead of placing below you (anti projectiles)"
-	})
-	CoverAngle = Scaffold:CreateSlider({
-	    Name = "Cover angle",
-	    Min = 1,
-	    Max = 60,
-	    Default = 10,
-	    Darker = true,
-	    Suffix = function(Val: number)
-	        return "deg"
-	    end,
-	    Tooltip = "How far up you must aim before the scaffold starts covering instead"
+	    Tooltip = "Pointing at your own torso or head places the roof block right there (anti projectiles); aiming elsewhere keeps bridging"
 	})
 	Downwards = Scaffold:CreateToggle({
 	    Name = "Downwards",
