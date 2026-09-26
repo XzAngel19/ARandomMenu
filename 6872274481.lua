@@ -1,6 +1,6 @@
 --This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.
 local vape = shared.vape
-local ScriptRevision: string = "2026-09-26-r3"
+local ScriptRevision: string = "2026-09-26-r4"
 getgenv().ARandomMenuBedwarsRevision = ScriptRevision
 local loadstring = function(...)
     local Chunk, Message = loadstring(...)
@@ -1985,6 +1985,12 @@ Run(function()
                             Exposed[Node[2]] = {v}
                         end
                     end
+                    continue
+                end
+                -- The enclosure-aware bed route exists to remove enemy bed
+                -- defense, not the player's own Block-In shell. Own blocks are
+                -- hard route boundaries unless the user targets them separately.
+                if CharacterSightOnly and Block:GetAttribute("PlacedByUserId") == LocalPlayer.UserId then
                     continue
                 end
 
@@ -14360,27 +14366,23 @@ Run(function()
 	local Mouse
 	local FillColor
 	local OutlineColor
-	local Adjacent, LastPosition, Label, VisualBlock = {}, Vector3.zero
+	local Adjacent: {Vector3} = {
+	    Vector3.new(3, 0, 0), Vector3.new(-3, 0, 0),
+	    Vector3.new(0, 3, 0), Vector3.new(0, -3, 0),
+	    Vector3.new(0, 0, 3), Vector3.new(0, 0, -3)
+	}
+	local LastPosition, Label, VisualBlock = Vector3.zero
 	local VisualTween, VisualPosition
 	local VisualSpeed: number = 0.1
 	local NextPlacement: number = 0
+	local TowerColumn: Vector3?
+	local TowerInterrupted: boolean = false
 	local SurfaceParams: RaycastParams = RaycastParams.new()
 	SurfaceParams.FilterType = Enum.RaycastFilterType.Exclude
 	SurfaceParams.RespectCanCollide = true
 
 	local function GetBlockInterval(): number
 	    return 1 / GetBlockPlaceCPS()
-	end
-	
-	for X: number = -3, 3, 3 do
-	    for Y: number = -3, 3, 3 do
-	        for Z: number = -3, 3, 3 do
-	            local Offset: Vector3 = Vector3.new(X, Y, Z)
-	            if Offset ~= Vector3.zero then
-	                table.insert(Adjacent, Offset)
-	            end
-	        end
-	    end
 	end
 	
 	local function NearCorner(BlockPosition: Vector3, Position: Vector3): Vector3
@@ -14491,10 +14493,18 @@ Run(function()
 	        return false
 	    end
 	    local _, CellPosition = CellKey(Position)
+	    local Root: BasePart = Entity.character.RootPart
+	    -- Never borrow a remote platform as a placement anchor. Scaffold only
+	    -- accepts a face-adjacent cell in legitimate placement range; pointed
+	    -- placement remains AutoClicker's job.
+	    if (Root.Position - CellPosition).Magnitude > 18 or GetPlacedBlock(CellPosition) or not CheckAdjacent(CellPosition) then
+	        return false
+	    end
+
 	    local Now: number = workspace:GetServerTimeNow()
 	    local Interval: number = GetBlockInterval()
 	    local GamePlacedAt: number = tonumber(Bedwars.BlockCpsController.lastPlaceTimestamp) or 0
-	    if Now < NextPlacement or (Store.autoBlockPlacePriority or 0) > Now or Now - GamePlacedAt < Interval or GetPlacedBlock(CellPosition) then
+	    if Now < NextPlacement or (Store.autoBlockPlacePriority or 0) > Now or Now - GamePlacedAt < Interval then
 	        return false
 	    end
 
@@ -14514,6 +14524,8 @@ Run(function()
 
 	        if Callback then
 	            NextPlacement = 0
+	            TowerColumn = nil
+	            TowerInterrupted = false
 	            repeat
 	                if Entity.isAlive and not vape.MovementOwner then
 	                    local Wool, Amount = GetScaffoldBlock()
@@ -14540,56 +14552,86 @@ Run(function()
 
 	                        if Towering then
 	                            local _, SupportCell = CellKey(Root.Position - Vector3.new(0, Humanoid.HipHeight + 1.5, 0))
-	                            TryTowerBoost(SupportCell)
+	                            if not TowerColumn then
+	                                TowerColumn = Vector3.new(SupportCell.X, 0, SupportCell.Z)
+	                            end
+	                            local HorizontalOffset: number = (Vector3.new(Root.Position.X, 0, Root.Position.Z) - TowerColumn).Magnitude
+	                            if HorizontalOffset > 2.35 then
+	                                TowerInterrupted = true
+	                            end
+	                            if not TowerInterrupted then
+	                                TryTowerBoost(SupportCell)
+	                            end
+	                        else
+	                            TowerColumn = nil
+	                            TowerInterrupted = false
 	                        end
 
-	                        local FirstStep: number = Descending and 1 or Expand.Value
-	                        for Step: number = FirstStep, 1, -1 do
-	                            local BasePosition: Vector3 = Root.Position - Vector3.new(0, Humanoid.HipHeight + (Descending and 4.5 or 1.5), 0)
-	                            local CurrentPosition: Vector3 = RoundPosition(BasePosition + MoveDirection * (Step * 3))
-	                            if Diagonal.Enabled and MoveDirection.Magnitude > 0 then
-	                                if math.abs(math.round(math.deg(math.atan2(-MoveDirection.X, -MoveDirection.Z)) / 45) * 45) % 90 == 45 then
-	                                    local Delta: Vector3 = LastPosition - CurrentPosition
-	                                    if ((Delta.X == 0 and Delta.Z ~= 0) or (Delta.X ~= 0 and Delta.Z == 0)) and ((LastPosition - Root.Position) * Vector3.new(1, 0, 1)).Magnitude < 2.5 then
-	                                        CurrentPosition = LastPosition
+	                        -- If knockback throws a stationary tower into another
+	                        -- structure, stop automatic anchoring while Space remains
+	                        -- held. AutoClicker can still place there when aimed.
+	                        if not (Towering and TowerInterrupted) then
+	                            local FirstStep: number = Descending and 1 or Expand.Value
+	                            for Step: number = FirstStep, 1, -1 do
+	                                local BasePosition: Vector3 = Root.Position - Vector3.new(0, Humanoid.HipHeight + (Descending and 4.5 or 1.5), 0)
+	                                local CurrentPosition: Vector3 = RoundPosition(BasePosition + MoveDirection * (Step * 3))
+	                                if Diagonal.Enabled and MoveDirection.Magnitude > 0 then
+	                                    if math.abs(math.round(math.deg(math.atan2(-MoveDirection.X, -MoveDirection.Z)) / 45) * 45) % 90 == 45 then
+	                                        local Delta: Vector3 = LastPosition - CurrentPosition
+	                                        if ((Delta.X == 0 and Delta.Z ~= 0) or (Delta.X ~= 0 and Delta.Z == 0)) and ((LastPosition - Root.Position) * Vector3.new(1, 0, 1)).Magnitude < 2.5 then
+	                                            CurrentPosition = LastPosition
+	                                        end
 	                                    end
 	                                end
-	                            end
 
-	                            if VisualBlock then
-	                                local VisualTarget: Vector3 = Bedwars.BlockController:getBlockPosition(CurrentPosition) * 3
-	                                if VisualPosition ~= VisualTarget then
-	                                    if VisualTween then
-	                                        VisualTween:Cancel()
-	                                        VisualTween = nil
+	                                if VisualBlock then
+	                                    local VisualTarget: Vector3 = Bedwars.BlockController:getBlockPosition(CurrentPosition) * 3
+	                                    if VisualPosition ~= VisualTarget then
+	                                        if VisualTween then
+	                                            VisualTween:Cancel()
+	                                            VisualTween = nil
+	                                        end
+	                                        if VisualBlock.Parent == Camera then
+	                                            VisualTween = TweenService:Create(VisualBlock, TweenInfo.new(VisualSpeed, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {CFrame = CFrame.new(VisualTarget)})
+	                                            VisualTween:Play()
+	                                        else
+	                                            VisualBlock.CFrame = CFrame.new(VisualTarget)
+	                                            VisualBlock.Parent = Camera
+	                                        end
+	                                        VisualPosition = VisualTarget
 	                                    end
-	                                    if VisualBlock.Parent == Camera then
-	                                        VisualTween = TweenService:Create(VisualBlock, TweenInfo.new(VisualSpeed, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {CFrame = CFrame.new(VisualTarget)})
-	                                        VisualTween:Play()
-	                                    else
-	                                        VisualBlock.CFrame = CFrame.new(VisualTarget)
-	                                        VisualBlock.Parent = Camera
-	                                    end
-	                                    VisualPosition = VisualTarget
 	                                end
-	                            end
 
-	                            local Block, BlockPosition = GetPlacedBlock(CurrentPosition)
-	                            if not Block and not HasSafeSurface(CurrentPosition) then
-	                                BlockPosition = CheckAdjacent(BlockPosition * 3) and BlockPosition * 3 or BlockProximity(CurrentPosition)
-	                                if BlockPosition and PlaceScaffoldBlock(BlockPosition, Wool) then
-	                                    LastPosition = CurrentPosition
-	                                    break
+	                                local Block, BlockCell = GetPlacedBlock(CurrentPosition)
+	                                if not Block then
+	                                    local CellPosition: Vector3 = BlockCell * 3
+	                                    -- Face adjacency is both cheaper and more
+	                                    -- accurate than scanning thousands of nearby
+	                                    -- cells for an unrelated platform.
+	                                    if CheckAdjacent(CellPosition) and not HasSafeSurface(CellPosition) and PlaceScaffoldBlock(CellPosition, Wool) then
+	                                        LastPosition = CurrentPosition
+	                                        break
+	                                    end
 	                                end
+	                                LastPosition = CurrentPosition
 	                            end
-	                            LastPosition = CurrentPosition
 	                        end
+	                    else
+	                        TowerColumn = nil
+	                        TowerInterrupted = false
 	                    end
 	                end
-	                -- Movement/aim tracking remains fast even when placement itself
-	                -- is capped at the active FastPlace (or legitimate 12 CPS) rate.
-	                task.wait(math.max(math.min(GetBlockInterval() * 0.5, 0.03), 0.005))
+	                -- Sleep toward the next legal send instead of doing expensive
+	                -- full scans every frame. The final wake-up lands close to the
+	                -- CPS boundary, keeping placement responsive without busy-loop lag.
+	                local Interval: number = GetBlockInterval()
+	                local Now: number = workspace:GetServerTimeNow()
+	                local GameDue: number = (tonumber(Bedwars.BlockCpsController.lastPlaceTimestamp) or 0) + Interval
+	                local Due: number = math.max(NextPlacement, GameDue, Store.autoBlockPlacePriority or 0)
+	                task.wait(Due > Now and math.clamp(Due - Now, 0.003, 0.03) or 0.01)
 	            until not Scaffold.Enabled
+	            TowerColumn = nil
+	            TowerInterrupted = false
 	            if VisualTween then
 	                VisualTween:Cancel()
 	                VisualTween = nil
