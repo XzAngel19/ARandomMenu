@@ -635,6 +635,25 @@ local function CanPlace(): boolean
 end
 getgenv().canPlace = CanPlace
 
+local function GetBlockPlaceCPS(): number
+    -- FastPlace is created later in this file, so resolve the live module each
+    -- time instead of capturing a stale value during module construction.
+    local FastPlace = vape.Modules and vape.Modules.FastPlace
+    if FastPlace and FastPlace.Enabled then
+        local Options = FastPlace.Options
+        local CPSOption = Options and (Options.Cps or Options.CPS or Options["Cps"] or Options["CPS"])
+        local Value: number? = CPSOption and tonumber(CPSOption.Value) or tonumber(Store.fastPlaceCPS) or tonumber(Bedwars.SharedConstants.BLOCK_PLACE_CPS)
+        if Value then
+            return math.clamp(Value, 1, 100)
+        end
+    end
+
+    -- Without a live FastPlace module, never infer a stale boosted constant.
+    -- BedWars' legitimate maximum is 12 CPS.
+    return 12
+end
+getgenv().getBlockPlaceCPS = GetBlockPlaceCPS
+
 Store.lastInput = tick()
 local function MarkInput(Input: InputObject)
     if Input.UserInputType ~= Enum.UserInputType.MouseMovement or Input.Delta.Magnitude > 0 then
@@ -1714,6 +1733,27 @@ Run(function()
                     return Remote:SendToServer(AttackTable, ...)
                 end
             }
+        elseif RemoteName == "GroundHit" then
+            -- Keep this wrapper installed even while NoFall is disabled.  The
+            -- BedWars controller caches this remote, so wrapping it only after
+            -- a fall would leave the real landing report untouched.
+            return {
+                instance = Remote.instance,
+                SendToServer = function(_, ...)
+                    local Args = table.pack(...)
+                    if Store.noFall then
+                        for i = 1, Args.n do
+                            local Velocity = Args[i]
+                            if typeof(Velocity) == "Vector3" and Velocity.Y < -20 then
+                                Args[i] = Vector3.new(Velocity.X, -20, Velocity.Z)
+                                Store.noFallReport = os.clock()
+                                break
+                            end
+                        end
+                    end
+                    return Remote.SendToServer(Remote, table.unpack(Args, 1, Args.n))
+                end
+            }
         elseif TrapDisabler.Enabled and (RemoteName == "StepOnSnapTrap" and TrapSnap.Enabled or RemoteName == "TriggerInvisibleLandmine" and TrapMine.Enabled or RemoteName == "StepOnTeleportBlock" and TrapTeleport.Enabled or RemoteName == "StepOnVoidPortal" and TrapPortal.Enabled) then
             return {SendToServer = function() end}
         elseif KnockbackSpoof.Enabled and RemoteName == "AckKnockback" then
@@ -1750,7 +1790,7 @@ Run(function()
         return OldHit(self, ...)
     end
 
-    local PathCache, BlockHealthbar = {}, {blockHealth = -1, breakingBlockPosition = Vector3.zero}
+    local PathCache, EnclosedPathCache, BlockHealthbar = {}, {}, {blockHealth = -1, breakingBlockPosition = Vector3.zero}
     Store.swordDistance = Bedwars.CombatConstant.RAYCAST_SWORD_CHARACTER_DISTANCE
     Store.blockPlacer = Bedwars.BlockPlacer.new(Bedwars.BlockEngine, "wool_white")
 
@@ -1800,6 +1840,9 @@ Run(function()
 
     OldSetBlock = BlockStore.setBlock
     BlockStore.setBlock = function(self, Position: Vector3, Block)
+        -- A Block-In wall can change which side of a bed is reachable without
+        -- moving the player into another cell.
+        table.clear(EnclosedPathCache)
         Navigation.World:Invalidate(Position.X, Position.Y, Position.Z)
         return OldSetBlock(self, Position, Block)
     end
@@ -1819,11 +1862,16 @@ Run(function()
         return GetBlockHealth(Block, Bedwars.BlockController:getBlockPosition(BlockPosition)) / Tool
     end
 
-    CalculatePath = function(Target, BlockPosition: Vector3, SolidOnly: boolean?, BreakMethod)
+    CalculatePath = function(Target, BlockPosition: Vector3, SolidOnly: boolean?, BreakMethod, MaxRange: number?, CharacterSightOnly: boolean?)
         local Origin: Vector3 = Entity.character.RootPart.Position
         local Cell: Vector3 = Bedwars.BlockController:getBlockPosition(Origin)
-        local Key: string = `{BlockPosition.X},{BlockPosition.Y},{BlockPosition.Z}|{SolidOnly and 1 or 0}|{BreakMethod == BreakMethods.Distance and 1 or 0}`
-        local Cached = PathCache[Key]
+        MaxRange = math.min(MaxRange or 30, 30)
+        -- Block-In routes have a dedicated cache which setBlock clears on every
+        -- replicated wall change. A cell-only cache would preserve a formerly
+        -- open, now inaccessible side of the bed.
+        local ActivePathCache = CharacterSightOnly and EnclosedPathCache or PathCache
+        local Key: string = `{BlockPosition.X},{BlockPosition.Y},{BlockPosition.Z}|{SolidOnly and 1 or 0}|{BreakMethod == BreakMethods.Distance and 1 or 0}|{MaxRange}`
+        local Cached = ActivePathCache[Key]
         if Cached and Cached.cell == Cell then
             return Cached.pos, Cached.cost, Cached.path
         end
@@ -1898,7 +1946,10 @@ Run(function()
         end
 
         local Sightlines = {}
-        local Eyes: {Vector3} = {Entity.character.Head.Position, Camera.CFrame.Position}
+        -- Nuker's wallchecked bed route must start inside the player's current
+        -- enclosure. A third-person camera can sit beyond a Block-In wall and
+        -- otherwise make the inaccessible far side look like the best route.
+        local Eyes: {Vector3} = CharacterSightOnly and {Entity.character.Head.Position} or {Entity.character.Head.Position, Camera.CFrame.Position}
         local function CanSee(Aim: Vector3): boolean
             if Sightlines[Aim] == nil then
                 Sightlines[Aim] = false
@@ -1912,12 +1963,12 @@ Run(function()
             return Sightlines[Aim]
         end
 
-        if GetPlacedBlock(BlockPosition) and (BlockPosition - Origin).Magnitude <= 30 then
+        if GetPlacedBlock(BlockPosition) and (BlockPosition - Origin).Magnitude <= MaxRange then
             for _, v: Vector3 in Sides do
                 v = BlockPosition + v
                 if not GetPlacedBlock(v) and (SolidOnly and IsOpen(v) or not SolidOnly and CanSee(v)) then
                     local Direct = {}
-                    PathCache[Key] = {cell = Cell, pos = BlockPosition, cost = 0, path = Direct}
+                    ActivePathCache[Key] = {cell = Cell, pos = BlockPosition, cost = 0, path = Direct}
                     return BlockPosition, 0, Direct
                 end
             end
@@ -1972,7 +2023,7 @@ Run(function()
         for Position: Vector3, Openings: {Vector3} in Exposed do
             local Delta: Vector3 = Position - Origin
             local Magnitude: number = Delta.Magnitude
-            if Magnitude <= 30 then
+            if Magnitude <= MaxRange then
                 local Facing: number = Magnitude > 0 and Delta:Dot(Look) / Magnitude or 1
                 table.insert(Candidates, {Distances[Position], Position, Openings, Magnitude, Facing, Distances[Position] + (Magnitude / 6) - (Position == Previous and 1.5 or 0)})
             end
@@ -2010,7 +2061,7 @@ Run(function()
             end
         end
 
-        PathCache[Key] = {cell = Cell, pos = BestPosition, cost = BestCost, path = BreakPath}
+        ActivePathCache[Key] = {cell = Cell, pos = BestPosition, cost = BestCost, path = BreakPath}
         return BestPosition, BestCost, BreakPath
     end
 
@@ -2024,7 +2075,7 @@ Run(function()
         end
     end
 
-    Bedwars.breakBlock = function(Block, Effects, AnimationMode, CustomHealthbar, AutoTool, Wallcheck, Method, DirectOnly)
+    Bedwars.breakBlock = function(Block, Effects, AnimationMode, CustomHealthbar, AutoTool, Wallcheck, Method, DirectOnly, MaxRange: number?, CharacterSightOnly: boolean?)
         if LocalPlayer:GetAttribute("DenyBlockBreak") or not Entity.isAlive or (vape.Modules.InfiniteFly or {}).Enabled then
             return
         end
@@ -2034,7 +2085,7 @@ Run(function()
         local Direct: boolean = false
 
         for _, v: Vector3 in (Handler and Handler:getContainedPositions(Block) or {Block.Position / 3}) do
-            local CellPosition, CellCost, CellPath = CalculatePath(Block, v * 3, not Wallcheck, Method or nil)
+            local CellPosition, CellCost, CellPath = CalculatePath(Block, v * 3, not Wallcheck, Method or nil, MaxRange, CharacterSightOnly)
             local Distance: number = CellPosition and (LocalPosition - CellPosition).Magnitude or math.huge
             local Hit: boolean = CellPosition == v * 3
             if CellPosition and (Hit and not Direct or Hit == Direct and (CellCost < Cost or (CellCost == Cost and Position ~= Store.breakTarget and (CellPosition == Store.breakTarget or Distance < (LocalPosition - Position).Magnitude)))) then
@@ -2049,7 +2100,7 @@ Run(function()
         Store.breakTarget = Position
 
         if Position then
-            if (Entity.character.RootPart.Position - Position).Magnitude > 30 then
+            if (Entity.character.RootPart.Position - Position).Magnitude > math.min(MaxRange or 30, 30) then
                 return
             end
             local HitBlock, HitPosition = GetPlacedBlock(Position)
@@ -2780,6 +2831,7 @@ Run(function()
 	local CPS
 	local Place
 	local Wool
+	local PlaceRange
 	local BlockCPS = {}
 	local Thread: thread?
 	
@@ -2793,22 +2845,45 @@ Run(function()
 	    return Input.UserInputType == Keyboard or Input.KeyCode == Keyboard or Input.KeyCode == Gamepad
 	end
 	
-	local function AutoClick()
+	local function GetClickDelay(): number
+	    if Store.hand.toolType == "block" then
+	        return math.max(1 / BlockCPS:GetRandomValue(), 1 / GetBlockPlaceCPS())
+	    end
+	    return 1 / CPS:GetRandomValue()
+	end
+
+	local function ScaffoldOwnsPlacement(): boolean
+	    local ScaffoldModule = vape.Modules and vape.Modules.Scaffold
+	    return ScaffoldModule and ScaffoldModule.Enabled or false
+	end
+
+	local function StopClick()
 	    if Thread then
 	        task.cancel(Thread)
+	        Thread = nil
 	    end
-	
-	    Thread = task.delay(Store.hand.toolType == "block" and math.max(1 / BlockCPS:GetRandomValue(), 1 / (Bedwars.SharedConstants.BLOCK_PLACE_CPS or 12)) or 1 / CPS:GetRandomValue(), function()
+	    Store.autoBlockClick = false
+	end
+
+	local function AutoClick()
+	    StopClick()
+	    Store.autoBlockClick = true
+
+	    Thread = task.delay(GetClickDelay(), function()
 	        repeat
 	            if not Bedwars.AppController:isLayerOpen(Bedwars.UILayers.MAIN) then
 	                local BlockPlacer = Bedwars.BlockPlacementController.blockPlacer
-	                if Store.hand.toolType == "block" and Place.Enabled and (Wool.Enabled and Store.hand.tool.Name:find("wool_") or not Wool.Enabled) and BlockPlacer and CanPlace() then
-	                    if (workspace:GetServerTimeNow() - Bedwars.BlockCpsController.lastPlaceTimestamp) >= ((1 / (Bedwars.SharedConstants.BLOCK_PLACE_CPS or 12)) * 0.5) then
-	                        if UserInputService.TouchEnabled then
-	                            task.spawn(BlockPlacer.autoBridge, BlockPlacer, workspace:GetServerTimeNow() - Bedwars.KnockbackController:getLastKnockbackTime() >= 0.2)
-	                        else
+	                local HandTool = Store.hand.tool
+	                if Store.hand.toolType == "block" and Place.Enabled and HandTool and (not Wool.Enabled or HandTool.Name:find("wool", 1, true)) and BlockPlacer and CanPlace() then
+	                    -- Scaffold owns the under-player cell while active. Letting the
+	                    -- clicker call autoBridge at the same time is what produced
+	                    -- duplicate blocks and one-cell side drift.
+	                    if not ScaffoldOwnsPlacement() then
+	                        local Interval: number = 1 / GetBlockPlaceCPS()
+	                        local LastPlace: number = tonumber(Bedwars.BlockCpsController.lastPlaceTimestamp) or 0
+	                        if workspace:GetServerTimeNow() - LastPlace >= Interval then
 	                            local Selector = BlockPlacer.clientManager:getBlockSelector()
-	                            local MouseInfo = Selector and Selector:getMouseInfo(0)
+	                            local MouseInfo = Selector and Selector:getMouseInfo(0, {range = PlaceRange.Value})
 	                            if MouseInfo and MouseInfo.placementPosition == MouseInfo.placementPosition then
 	                                task.spawn(BlockPlacer.placeBlock, BlockPlacer, MouseInfo.placementPosition, MouseInfo)
 	                            end
@@ -2820,13 +2895,15 @@ Run(function()
 	                    elseif CanSwing() and not Bedwars.SwordController.disableSwingState then
 	                        Bedwars.SwordController:swingSwordAtMouse(0.39)
 	                    end
-	                elseif Store.hand.tool and Bedwars.IsItemClaw(Store.hand.tool.Name) then
-	                    Bedwars.SummonerClawHandController:attack(Store.hand.tool.Name)
+	                elseif HandTool and Bedwars.IsItemClaw(HandTool.Name) then
+	                    Bedwars.SummonerClawHandController:attack(HandTool.Name)
 	                end
 	            end
-	
-	            task.wait(Store.hand.toolType == "block" and math.max(1 / BlockCPS:GetRandomValue(), 1 / (Bedwars.SharedConstants.BLOCK_PLACE_CPS or 12)) or 1 / CPS:GetRandomValue())
+
+	            task.wait(GetClickDelay())
 	        until not AutoClicker.Enabled
+	        Thread = nil
+	        Store.autoBlockClick = false
 	    end)
 	end
 	
@@ -2841,9 +2918,8 @@ Run(function()
 	            end))
 	
 	            AutoClicker:Clean(UserInputService.InputEnded:Connect(function(Input: InputObject)
-	                if IsAttackInput(Input) and Thread then
-	                    task.cancel(Thread)
-	                    Thread = nil
+	                if IsAttackInput(Input) then
+	                    StopClick()
 	                end
 	            end))
 	
@@ -2855,12 +2931,7 @@ Run(function()
 	                    end
 	                    Hooked[Button] = true
 	                    AutoClicker:Clean(Button.MouseButton1Down:Connect(AutoClick))
-	                    AutoClicker:Clean(Button.MouseButton1Up:Connect(function()
-	                        if Thread then
-	                            task.cancel(Thread)
-	                            Thread = nil
-	                        end
-	                    end))
+	                    AutoClicker:Clean(Button.MouseButton1Up:Connect(StopClick))
 	                end
 	
 	                task.spawn(function()
@@ -2876,13 +2947,10 @@ Run(function()
 	                end)
 	            end
 	        else
-	            if Thread then
-	                task.cancel(Thread)
-	                Thread = nil
-	            end
+	            StopClick()
 	        end
 	    end,
-	    Tooltip = "Hold attack button to automatically click"
+	    Tooltip = "Hold attack to click; block placement shares FastPlace timing and yields its cell to Scaffold"
 	})
 	
 	CPS = AutoClicker:CreateTwoSlider({
@@ -2902,10 +2970,21 @@ Run(function()
 	        if Wool then
 	            Wool.Object.Visible = Callback
 	        end
+	        if PlaceRange then
+	            PlaceRange.Object.Visible = Callback
+	        end
 	    end,
 	    Default = true
 	})
 	Wool = AutoClicker:CreateToggle({Name = "Wool only", Tooltip = "Only clicks when you are holding wool.", Darker = true})
+	PlaceRange = AutoClicker:CreateSlider({
+	    Name = "Place range",
+	    Min = 1,
+	    Max = 30,
+	    Default = 14,
+	    Darker = true,
+	    Tooltip = "Range used only by AutoClicker placement; it does not move manual clicks or Scaffold sideways"
+	})
 	BlockCPS = AutoClicker:CreateTwoSlider({
 	    Name = "Block CPS",
 	    Min = 1,
@@ -5511,102 +5590,110 @@ end)
 
 Run(function()
 	local NoFall
-	local Damage
-	local Disabled: {[Humanoid]: {any}} = setmetatable({}, {__mode = "k"})
 	local GroundHit = Bedwars.Handler:Get("GroundHit")
+	local GroundInstance = GroundHit.Remote and GroundHit.Remote.instance
+	local OldNamecall
+	local FallToken: number = 0
 	
-	local function DisableFallConnections(Humanoid: Humanoid)
-	    if Disabled[Humanoid] or not getconnections then
+	local function SafeVelocity(Velocity: Vector3): Vector3
+	    return Vector3.new(Velocity.X, math.max(Velocity.Y, -20), Velocity.Z)
+	end
+
+	local function InstallGroundHook()
+	    if OldNamecall or not hookmetamethod or not newcclosure or not GroundInstance then
 	        return
 	    end
-	    Disabled[Humanoid] = {}
-	    for _, Connection: any in getconnections(Humanoid.StateChanged) do
-	        if Connection.Disable then
-	            Connection:Disable()
-	            table.insert(Disabled[Humanoid], Connection)
+
+	    OldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+	        if Store.noFall and not checkcaller() and getnamecallmethod() == "FireServer" and self == GroundInstance then
+	            local Args = table.pack(...)
+	            for i = 1, Args.n do
+	                if typeof(Args[i]) == "Vector3" and Args[i].Y < -20 then
+	                    Args[i] = SafeVelocity(Args[i])
+	                    break
+	                end
+	            end
+	            Store.noFallReport = os.clock()
+	            return OldNamecall(self, table.unpack(Args, 1, Args.n))
 	        end
-	    end
+	        return OldNamecall(self, ...)
+	    end))
 	end
 
 	NoFall = vape.Categories.Blatant:CreateModule({
 	    Name = "NoFall",
 	    Function = function(Callback: boolean)
-	        if Callback then
-	            if Entity.isAlive then
-	                DisableFallConnections(Entity.character.Humanoid)
-	            end
-	
-	            local LastReport: number = 0
-	            local Falling: boolean = false
-	            NoFall:Clean(RunService.PostSimulation:Connect(function()
-	                if not Entity.isAlive or Store.matchState ~= 1 or Store.infinitefly then
-	                    Falling = false
-	                    return
-	                end
-
-	                local Root: BasePart = Entity.character.RootPart
-	                local Humanoid: Humanoid = Entity.character.Humanoid
-	                local Velocity: Vector3 = Root.AssemblyLinearVelocity
-	                local Threshold: number = -(45 + (Damage.Value * 0.75))
-	                local Airborne: boolean = Humanoid.FloorMaterial == Enum.Material.Air
-
-	                if not Airborne or Velocity.Y >= 0 then
-	                    Falling = false
-	                    return
-	                end
-
-	                if Velocity.Y < Threshold and (not Falling or workspace:GetServerTimeNow() - LastReport >= 0.5) then
-	                    Falling = true
-	                    LastReport = workspace:GetServerTimeNow()
-	                    -- GroundHit's second argument is landing velocity.  The old
-	                    -- implementation sent the dangerous fall speed while still in
-	                    -- the air, so the server could damage launched players before
-	                    -- they landed.  Report a harmless landing instead and leave the
-	                    -- real airborne velocity untouched.
-	                    GroundHit:Fire("SendToServer", nil, Vector3.zero, LastReport)
-	                end
-	
-	                -- Executors without getconnections cannot silence the game's local
-	                -- landing listener.  In that case only soften the final few studs;
-	                -- launches and ordinary airborne movement remain unchanged.
-	                local Silenced: boolean = Disabled[Humanoid] ~= nil and #Disabled[Humanoid] > 0
-	                if not Silenced and Velocity.Y < Threshold then
-	                    local Distance: number = Humanoid.HipHeight + (Root.Size.Y / 2) + 3
-	                    if Entity.Raycast(Root.Position, Vector3.new(0, -Distance, 0), Store.airRay) then
-	                        Root.AssemblyLinearVelocity = Vector3.new(Velocity.X, -8, Velocity.Z)
-	                    end
-	                end
-	            end))
-	
-	            NoFall:Clean(Entity.Events.LocalAdded:Connect(function(Ent)
-	                if Ent.Humanoid:WaitForChild("Animator", 5) then
-	                    task.wait(0.25)
-	                    if NoFall.Enabled then
-	                        DisableFallConnections(Ent.Humanoid)
-	                    end
-	                end
-	            end))
-	        else
-	            for _, Connections: {any} in Disabled do
-	                for _, Connection: any in Connections do
-	                    if Connection.Enable then
-	                        Connection:Enable()
-	                    end
-	                end
-	            end
-	            table.clear(Disabled)
+	        Store.noFall = Callback
+	        FallToken += 1
+	        if not Callback then
+	            return
 	        end
-	    end,
-	    Tooltip = "Prevents fall damage without turning airborne launches into fake hard landings"
-	})
+
+	        InstallGroundHook()
+	        local CurrentFall: number = FallToken
+	        local Falling: boolean = false
+	        local RayParams: RaycastParams = RaycastParams.new()
+	        RayParams.FilterType = Enum.RaycastFilterType.Exclude
+	        RayParams.RespectCanCollide = true
+
+	        NoFall:Clean(RunService.PostSimulation:Connect(function(Delta: number)
+	            if not Entity.isAlive or Store.matchState ~= 1 or Store.infinitefly then
+	                Falling = false
+	                return
+	            end
+
+	            local Character = Entity.character
+	            local Root: BasePart = Character.RootPart
+	            local Humanoid: Humanoid = Character.Humanoid
+	            local Velocity: Vector3 = Root.AssemblyLinearVelocity
+	            if Velocity.Y < -45 then
+	                Falling = true
+	            elseif Velocity.Y > -5 or Humanoid.FloorMaterial ~= Enum.Material.Air then
+	                Falling = false
+	            end
+
+	            if not Falling then
+	                return
+	            end
+
+	            -- Last-line fallback for controllers which cached GroundHit before
+	            -- our remote hook: reduce only the final impact frame, preserving
+	            -- horizontal movement and the rest of the fall.
+	            RayParams.FilterDescendantsInstances = {Character, Camera}
+	            local CheckDistance: number = math.clamp(math.abs(Velocity.Y) * math.max(Delta, 1 / 240) + 3.5, 5, 12)
+	            local Ground = workspace:Raycast(Root.Position, Vector3.new(0, -CheckDistance, 0), RayParams)
+	            if not Ground or Ground.Normal.Y < 0.35 then
+	                return
+	            end
 	
-	Damage = NoFall:CreateSlider({
-	    Name = "Damage",
-	    Min = 0,
-	    Max = 100,
-	    Default = 0,
-	    Suffix = "%",
-	    Tooltip = "How much fall speed is allowed before NoFall sends a safe landing report"
+	            Falling = false
+	            local Safe: Vector3 = SafeVelocity(Velocity)
+	            local TouchTime: number = os.clock()
+	            Root.AssemblyLinearVelocity = Safe
+
+	            -- Normally the game's genuine landing report is sanitized by the
+	            -- hook above. Send one safe report only when that report never
+	            -- arrives, so old and new controller versions are both covered.
+	            task.delay(0.12, function()
+	                if not NoFall.Enabled or CurrentFall ~= FallToken or not Entity.isAlive or Entity.character.RootPart ~= Root then
+	                    return
+	                end
+	                if (Store.noFallReport or 0) >= TouchTime then
+	                    return
+	                end
+	                local StillGrounded = Humanoid.FloorMaterial ~= Enum.Material.Air
+	                if not StillGrounded then
+	                    RayParams.FilterDescendantsInstances = {Character, Camera}
+	                    StillGrounded = workspace:Raycast(Root.Position, Vector3.new(0, -5, 0), RayParams) ~= nil
+	                end
+	                if StillGrounded then
+	                    GroundHit:Fire("SendToServer", nil, Safe, workspace:GetServerTimeNow())
+	                    Store.noFallReport = os.clock()
+	                end
+	            end)
+	        end))
+	    end,
+	    Tooltip = "Sanitizes the real landing report and safely limits only a dangerous final impact frame."
 	})
 end)
 
@@ -14327,14 +14414,13 @@ Run(function()
 	local LastAttempt: number = 0
 	local LastPlacedCell: Vector3?
 	local LastPlacedAt: number = 0
-	local LastTowerBoostCell: Vector3?
 	local PendingCells: {[string]: number} = {}
 	local SurfaceParams: RaycastParams = RaycastParams.new()
 	SurfaceParams.FilterType = Enum.RaycastFilterType.Exclude
 	SurfaceParams.RespectCanCollide = true
 
 	local function GetBlockInterval(): number
-	    return 1 / math.max(tonumber(Bedwars.SharedConstants.BLOCK_PLACE_CPS) or 12, 1)
+	    return 1 / GetBlockPlaceCPS()
 	end
 	
 	for X: number = -3, 3, 3 do
@@ -14387,12 +14473,13 @@ Run(function()
 	end
 
 	local function GetScaffoldBlock()
-	    if Store.hand.toolType == "block" and Store.hand.tool and IsWool(Store.hand.tool.Name) then
-	        return Store.hand.tool.Name, Store.hand.amount
+	    local HeldAmount: number = tonumber(Store.hand.amount) or 0
+	    if HeldAmount > 0 and Store.hand.toolType == "block" and Store.hand.tool and IsWool(Store.hand.tool.Name) then
+	        return Store.hand.tool.Name, HeldAmount
 	    end
 	    if not LimitItem.Enabled then
 	        local Wool, Amount = GetWool()
-	        if Wool and IsWool(Wool) then
+	        if Wool and IsWool(Wool) and (tonumber(Amount) or 0) > 0 then
 	            return Wool, Amount
 	        end
 	    end
@@ -14404,6 +14491,10 @@ Run(function()
 	local function CellKey(Position: Vector3): (string, Vector3)
 	    local Cell: Vector3 = Bedwars.BlockController:getBlockPosition(Position)
 	    return `{Cell.X}:{Cell.Y}:{Cell.Z}`, Cell * 3
+	end
+
+	local function CanScaffoldPlace(): boolean
+	    return Entity.isAlive and Store.matchState == 1 and not LocalPlayer:GetAttribute("Spectator") and CanPlace()
 	end
 
 	local function HasSafeSurface(Position: Vector3): boolean
@@ -14418,8 +14509,36 @@ Run(function()
 	    return GetPlacedBlock(Hit.Position - Hit.Normal * 0.1) == nil
 	end
 
+	local function TryTowerBoost(CellPosition: Vector3): boolean
+	    if not Scaffold or not Scaffold.Enabled or not Tower.Enabled or vape.MovementOwner or not CanScaffoldPlace() then
+	        return false
+	    end
+	    local Wool, Amount = GetScaffoldBlock()
+	    if not Wool or (tonumber(Amount) or 0) <= 0 then
+	        return false
+	    end
+	    if not UserInputService:IsKeyDown(Enum.KeyCode.Space) or UserInputService:GetFocusedTextBox() then
+	        return false
+	    end
+	    if not GetPlacedBlock(CellPosition) then
+	        return false
+	    end
+
+	    local Root: BasePart = Entity.character.RootPart
+	    local Humanoid: Humanoid = Entity.character.Humanoid
+	    local _, UnderCell = CellKey(Root.Position - Vector3.new(0, Humanoid.HipHeight + 1.5, 0))
+	    local Difference: Vector3 = UnderCell - CellPosition
+	    if math.abs(Difference.X) > 0.01 or math.abs(Difference.Y) > 0.01 or math.abs(Difference.Z) > 0.01 then
+	        return false
+	    end
+
+	    local Velocity: Vector3 = Root.AssemblyLinearVelocity
+	    Root.AssemblyLinearVelocity = Vector3.new(Velocity.X, math.max(Velocity.Y, 38), Velocity.Z)
+	    return true
+	end
+
 	local function QueuePlacement(Position: Vector3, Wool: string): boolean
-	    if not CanPlace() then
+	    if not CanScaffoldPlace() then
 	        return false
 	    end
 	    local Key, CellPosition = CellKey(Position)
@@ -14439,6 +14558,9 @@ Run(function()
 	            if GetPlacedBlock(CellPosition) then
 	                LastPlacedCell = CellPosition
 	                LastPlacedAt = workspace:GetServerTimeNow()
+	                -- Restore the original tower impulse immediately after the
+	                -- placement is confirmed. No confirmed block means no boost.
+	                TryTowerBoost(CellPosition)
 	                break
 	            end
 	            task.wait()
@@ -14457,12 +14579,11 @@ Run(function()
 	
 	        if Callback then
 	            LastPlacedCell = nil
-	            LastTowerBoostCell = nil
 	            table.clear(PendingCells)
 	            repeat
 	                if Entity.isAlive and not vape.MovementOwner then
 	                    local Wool, Amount = GetScaffoldBlock()
-	                    if Mouse.Enabled and not UserInputService:IsMouseButtonPressed(0) then
+	                    if Mouse.Enabled and not UserInputService:IsMouseButtonPressed(0) and not Store.autoBlockClick then
 	                        Wool = nil
 	                    end
 	
@@ -14488,16 +14609,20 @@ Run(function()
 	                            TowerLock = nil
 	                        end
 	
-	                        -- A tower impulse is allowed once for a newly confirmed
-	                        -- block directly below the player. Failed/denied placement
-	                        -- therefore cannot turn Scaffold into flight.
-	                        if Towering and LastPlacedCell and LastPlacedCell ~= LastTowerBoostCell and workspace:GetServerTimeNow() - LastPlacedAt <= math.max(GetBlockInterval() * 3, 0.35) then
-	                            local _, UnderCell = CellKey(Root.Position - Vector3.new(0, Humanoid.HipHeight + 1.5, 0))
-	                            if UnderCell == LastPlacedCell and GetPlacedBlock(UnderCell) then
-	                                local Velocity: Vector3 = Root.AssemblyLinearVelocity
-	                                Root.AssemblyLinearVelocity = Vector3.new(Velocity.X, math.max(Velocity.Y, 38), Velocity.Z)
-	                                LastTowerBoostCell = LastPlacedCell
-	                            end
+	                        if Towering then
+	                            -- Preserve the original 38-Y tower impulse immediately,
+	                            -- including on the first support block.  Wool/CanPlace
+	                            -- and the replicated support cell are the only placement
+	                            -- safeguards; network confirmation is not allowed to
+	                            -- postpone a usable tower jump.
+	                            local _, SupportCell = CellKey(Root.Position - Vector3.new(0, Humanoid.HipHeight + 1.5, 0))
+	                            TryTowerBoost(SupportCell)
+	                        end
+
+	                        -- The placement confirmation also tries immediately; this
+	                        -- retry covers replication arriving between loop frames.
+	                        if Towering and LastPlacedCell and workspace:GetServerTimeNow() - LastPlacedAt <= math.max(GetBlockInterval() * 4, 0.5) then
+	                            TryTowerBoost(LastPlacedCell)
 	                        end
 
 	                        local FirstStep: number = Descending and 1 or Expand.Value
@@ -16996,9 +17121,10 @@ Run(function()
 	FastPlace = vape.Categories.World:CreateModule({
 	    Name = "FastPlace",
 	    Function = function(Callback: boolean)
-	        Bedwars.SharedConstants.BLOCK_PLACE_CPS = Callback and CPS.Value or 12
+	        Store.fastPlaceCPS = Callback and CPS.Value or nil
+	        Bedwars.SharedConstants.BLOCK_PLACE_CPS = Store.fastPlaceCPS or 12
 	    end,
-	    Tooltip = "Changes the block place delay"
+	    Tooltip = "Changes the block place delay; Scaffold and AutoClicker use this live CPS"
 	})
 	
 	CPS = FastPlace:CreateSlider({
@@ -17007,6 +17133,7 @@ Run(function()
 	    Max = 100,
 	    Function = function(Val: number)
 	        if FastPlace.Enabled then
+	            Store.fastPlaceCPS = Val
 	            Bedwars.SharedConstants.BLOCK_PLACE_CPS = Val
 	        end
 	    end,
@@ -17228,7 +17355,8 @@ Run(function()
 	        return false
 	    end
 	
-	    local BreakPosition, BreakPath, EndPosition = Bedwars.breakBlock(Block, Effect.Enabled, Animation.Value ~= "No Animation" and Animation.Value or nil, CustomHealth.Enabled and CustomHealthbar or nil, AutoTool.Enabled, Wallcheck.Enabled, ClosestBreak.Enabled and BreakMethods.Distance or BreakMethods[Mode.Value], not Route)
+	    local AllowedRange: number = math.min(Range.Value, Bedwars.BlockBreaker:getRange())
+	    local BreakPosition, BreakPath, EndPosition = Bedwars.breakBlock(Block, Effect.Enabled, Animation.Value ~= "No Animation" and Animation.Value or nil, CustomHealth.Enabled and CustomHealthbar or nil, AutoTool.Enabled, Wallcheck.Enabled, ClosestBreak.Enabled and BreakMethods.Distance or BreakMethods[Mode.Value], not Route, AllowedRange, Route and Wallcheck.Enabled)
 	    local CurrentNode = BreakPosition
 	    for _, v: Part in Parts do
 	        v.Position = CurrentNode or Vector3.zero
