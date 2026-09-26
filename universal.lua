@@ -2559,11 +2559,23 @@ Run(function()
 	local Overlay: OverlapParams = OverlapParams.new()
 	Overlay.FilterType = Enum.RaycastFilterType.Include
 	local Particles, Boxes, AttackDelay = {}, {}, tick()
+	-- Cache del sensor de toque del arma: buscarlo recursivamente en CADA
+	-- frame quema CPU y el resultado no cambia mientras no cambies de arma.
+	local LastTool: Instance?, CachedInterest: Instance?, NextInterestCheck = nil, nil, 0
+	local HadTargets = false
+	local LastManualSwing = 0
 	
 	Killaura = vape.Categories.Blatant:CreateModule({
 	    Name = "Killaura",
 	    Function = function(Callback: boolean)
 	        if Callback then
+	            -- Anti double swing: si acabas de golpear TU, el aura no
+	            -- re-activa el arma en la misma ventana (no duplica el swing).
+	            Killaura:Clean(UserInputService.InputBegan:Connect(function(Input: InputObject)
+	                if Input.UserInputType == Enum.UserInputType.MouseButton1 then
+	                    LastManualSwing = tick()
+	                end
+	            end))
 	            repeat
 	                local Interest, Tool
 	                if not Mouse.Enabled or UserInputService:IsMouseButtonPressed(0) then
@@ -2609,7 +2621,7 @@ Run(function()
 	                            })
 	                            TargetInfo.Targets[v] = tick() + 1
 	
-	                            if AttackDelay < tick() then
+	                            if AttackDelay < tick() and tick() - LastManualSwing > 0.25 then
 	                                AttackDelay = tick() + (1 / CPS.GetRandomValue())
 	                                Tool:Activate()
 	                            end
