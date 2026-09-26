@@ -80,6 +80,65 @@ vape.Libraries.bedwarscontroller = vape.Libraries.navigation.Controller
 vape.Libraries.bedwarsadapter = vape.Libraries.navigation.Adapter
 
 local Entity = vape.Libraries.entity
+
+-- EntityLib mejorado: el wallcheck original solo raycastea a UNA parte del
+-- cuerpo; si esa linea exacta queda tapada por un bloque, el objetivo "no
+-- existe" aunque se le vea un pie por un hueco. Ahora si CUALQUIER parte
+-- del cuerpo es visible lo detecta, y si no se ve ninguna sigue oculto
+-- (nada de pegar a traves de paredes completas). Lista recortada a lo que
+-- de verdad asoma por un hueco: cada parte es un raycast por candidato.
+local EntityBodyParts = {"Head", "Torso", "UpperTorso", "LowerTorso", "HumanoidRootPart", "LeftHand", "RightHand", "LeftFoot", "RightFoot", "LeftLowerLeg", "RightLowerLeg", "Left Arm", "Right Arm", "Left Leg", "Right Leg"}
+
+local function UpgradeEntityPicker(Name: string)
+	local Real = Entity[Name]
+	Entity[Name] = function(EntitySettings)
+		if Entity.isAlive and EntitySettings and EntitySettings.Wallcheck then
+			local RealWallcheck = Entity.Wallcheck
+			local PartKey = EntitySettings.Part or "RootPart"
+			-- El wallcheck de la lib no dice a que entidad pertenece el punto;
+			-- identificamos la entidad comparando la posicion con la lista.
+			Entity.Wallcheck = function(Origin, Position, IgnoreObject)
+				local Found
+				for _, Candidate in Entity.List do
+					local Part = Candidate[PartKey]
+					if Part and Part.Position == Position then
+						Found = Candidate
+						break
+					end
+				end
+
+				local Character = Found and Found.Character
+				if not Character then
+					return RealWallcheck(Origin, Position, IgnoreObject)
+				end
+
+				if not RealWallcheck(Origin, Position, IgnoreObject) then
+					return nil
+				end
+
+				local PrimaryName = Found[PartKey] and Found[PartKey].Name
+				for _, PartName in EntityBodyParts do
+					if PartName ~= PrimaryName then
+						local Part = Character:FindFirstChild(PartName)
+						if Part and not RealWallcheck(Origin, Part.Position, IgnoreObject) then
+							return nil
+						end
+					end
+				end
+
+				return true
+			end
+			local Result = Real(EntitySettings)
+			Entity.Wallcheck = RealWallcheck
+			return Result
+		end
+		return Real(EntitySettings)
+	end
+end
+
+UpgradeEntityPicker("EntityPosition")
+UpgradeEntityPicker("AllPosition")
+UpgradeEntityPicker("EntityMouse")
 local TargetInfo = vape.Libraries.targetinfo
 local SessionInfo = vape.Libraries.sessioninfo
 local UIPallet = vape.Libraries.uipallet
@@ -883,7 +942,7 @@ local function HotbarSwitch(Slot: number?): boolean
             type = "InventorySelectHotbarSlot",
             slot = Slot
         })
-        VapeEvents.InventoryChanged.Event:Wait()
+        VapeEvents.InventoryChanged.Event:Wait(0.4)
         return true
     end
     return false
@@ -2781,6 +2840,7 @@ Run(function()
 	local Wool
 	local BlockCPS = {}
 	local Thread: thread?
+	local PlaceRange
 	
 	local function IsAttackInput(Input: InputObject): boolean
 	    local Keybinds = Bedwars.KeybindLoadController.getKeybinds and Bedwars.KeybindLoadController:getKeybinds()
@@ -2807,7 +2867,7 @@ Run(function()
 	                            task.spawn(BlockPlacer.autoBridge, BlockPlacer, workspace:GetServerTimeNow() - Bedwars.KnockbackController:getLastKnockbackTime() >= 0.2)
 	                        else
 	                            local Selector = BlockPlacer.clientManager:getBlockSelector()
-	                            local MouseInfo = Selector and Selector:getMouseInfo(0)
+	                            local MouseInfo = Selector and Selector:getMouseInfo(0, {range = PlaceRange.Value})
 	                            if MouseInfo and MouseInfo.placementPosition == MouseInfo.placementPosition then
 	                                task.spawn(BlockPlacer.placeBlock, BlockPlacer, MouseInfo.placementPosition, MouseInfo)
 	                            end
@@ -2904,13 +2964,21 @@ Run(function()
 	    end,
 	    Default = true
 	})
-	Wool = AutoClicker:CreateToggle({Name = "Wool only", Tooltip = "Only clicks when you are holding wool.", Darker = true})
+	Wool = AutoClicker:CreateToggle({Name = "Wool only", Tooltip = "Only clicks when you are holding wool.", Darker = true, Default = true})
+	PlaceRange = AutoClicker:CreateSlider({
+	    Name = "Place range",
+	    Min = 1,
+	    Max = 30,
+	    Default = 14,
+	    Darker = true,
+	    Tooltip = "Reach for autoclicker placing (tower/stairs). Manual clicks unaffected."
+	})
 	BlockCPS = AutoClicker:CreateTwoSlider({
 	    Name = "Block CPS",
 	    Min = 1,
-	    Max = 20,
-	    DefaultMin = 20,
-	    DefaultMax = 20,
+	    Max = 12,
+	    DefaultMin = 12,
+	    DefaultMax = 12,
 	    Darker = true
 	})
 end)
@@ -4617,15 +4685,41 @@ end)
 
 Run(function()
 	local DamageBoost
+	local Horizontal
+	local Vertical
+	local LoseHealth
+	local Always
+	local Combo
+	local SpeedBoost
 	local Stack: number?
+	local LastHit = 0
+	local ComboCount = 0
+	local AppliedSpeed = 0
 	
 	DamageBoost = vape.Categories.Blatant:CreateModule({
 	    Name = "DamageBoost",
 	    Function = function(Callback: boolean)
 	        if Callback then
 	            DamageBoost:Clean(VapeEvents.EntityDamageEvent.Event:Connect(function(DamageTable)
-	                if Entity.isAlive and tick() > (Stack or 0) and DamageTable.entityInstance == LocalPlayer.Character and not vape.Modules.LongJump.Enabled then
-	                    local Horizontal: number = DamageTable.knockbackMultiplier and DamageTable.knockbackMultiplier.horizontal or 0
+	                -- El impulso se juega con el KNOCKBACK, no con la velocidad
+	                -- (salvo el empujoncito deliberadamente diminuto de abajo):
+	                -- tu velocidad base nunca cambia, nada raro que marcar.
+	                if DamageTable.entityInstance ~= LocalPlayer.Character or (vape.Modules.LongJump or {}).Enabled then
+	                    return
+	                end
+	
+	                local Multiplier = DamageTable.knockbackMultiplier
+	                if Multiplier and Multiplier.disabled then
+	                    return
+	                end
+	
+	                if not Entity.isAlive then
+	                    return
+	                end
+	
+	                -- Ping para Speed/Fly (con throttle), como siempre.
+	                if tick() > (Stack or 0) then
+	                    local Horizontal: number = Multiplier and Multiplier.horizontal or 1
 	                    KnockbackSpeed = Bedwars.KnockbackUtil.calculateKnockbackVelocity(Vector3.one, 1, {
 	                        vertical = 0,
 	                        horizontal = Horizontal
@@ -4633,10 +4727,104 @@ Run(function()
 	                    Stack = tick() + (KnockbackSpeed / 45)
 	                    KnockbackBoost = tick() + (Horizontal / 3.5)
 	                end
+	
+	                -- Te estan conejando: golpes cayendo en menos de 2.5s entre si.
+	                local Now = tick()
+	                if Now - LastHit <= 2.5 then
+	                    ComboCount += 1
+	                else
+	                    ComboCount = 0
+	                end
+	                LastHit = Now
+	
+	                -- "Me estan ganando": solo si tu vida esta en el umbral, o
+	                -- siempre con la opcion activada.
+	                local Humanoid = Entity.character and Entity.character.Humanoid
+	                if not Always.Enabled and not (Humanoid and Humanoid.MaxHealth > 0 and (Humanoid.Health / Humanoid.MaxHealth) * 100 <= LoseHealth.Value) then
+	                    return
+	                end
+	
+	                -- Mientras te conean, escala el corte para soltarte del combo
+	                -- (nunca pasa de 85%: el golpe sigue empujando un poco).
+	                local Extra = ComboCount >= 1 and Combo.Value or 0
+	                local OldMultiplier = DamageTable.knockbackMultiplier or {}
+	                DamageTable.knockbackMultiplier = {
+	                    horizontal = (OldMultiplier.horizontal or 1) * (1 - math.min(Horizontal.Value + Extra, 85) / 100),
+	                    vertical = (OldMultiplier.vertical or 1) * (1 - math.min(Vertical.Value + Extra, 85) / 100)
+	                }
+	
+	                -- Empujoncito de velocidad a proposito diminuto (0.5 studs):
+	                -- se siente como un paso mas rapido, nada que un anticheat
+	                -- pueda marcar ni que bugee el movimiento.
+	                if SpeedBoost.Value > 0 and Humanoid and AppliedSpeed < SpeedBoost.Value then
+	                    local Add = SpeedBoost.Value - AppliedSpeed
+	                    Humanoid.WalkSpeed += Add
+	                    AppliedSpeed += Add
+	                end
 	            end))
+	
+	            DamageBoost:Clean(LocalPlayer.CharacterAdded:Connect(function()
+	                AppliedSpeed = 0
+	            end))
+	        else
+	            if AppliedSpeed > 0 then
+	                pcall(function()
+	                    local Humanoid = Entity.character and Entity.character.Humanoid
+	                    if Humanoid then
+	                        Humanoid.WalkSpeed -= AppliedSpeed
+	                    end
+	                end)
+	                AppliedSpeed = 0
+	            end
 	        end
 	    end,
-	    Tooltip = "Makes you go slightly faster when damaged"
+	    Tooltip = "Reduces the knockback you take while losing the fight, so hits stop bouncing you around"
+	})
+	
+	Horizontal = DamageBoost:CreateSlider({
+	    Name = "Horizontal reduce",
+	    Min = 5,
+	    Max = 80,
+	    Default = 45,
+	    Suffix = "%"
+	})
+	Vertical = DamageBoost:CreateSlider({
+	    Name = "Vertical reduce",
+	    Min = 0,
+	    Max = 80,
+	    Default = 65,
+	    Suffix = "%"
+	})
+	LoseHealth = DamageBoost:CreateSlider({
+	    Name = "Losing health",
+	    Min = 5,
+	    Max = 100,
+	    Default = 60,
+	    Suffix = "%",
+	    Tooltip = "Only reduces knockback when your health is at or below this percentage"
+	})
+	Always = DamageBoost:CreateToggle({
+	    Name = "Reduce on every hit",
+	    Default = false
+	})
+	Combo = DamageBoost:CreateSlider({
+	    Name = "Combo escape",
+	    Min = 0,
+	    Max = 40,
+	    Default = 20,
+	    Suffix = "%",
+	    Tooltip = "Extra knockback reduction while they are comboing you (hits landing within 2.5s of each other)"
+	})
+	SpeedBoost = DamageBoost:CreateSlider({
+	    Name = "Walk speed",
+	    Min = 0,
+	    Max = 1,
+	    Default = 0.5,
+	    Decimal = 10,
+	    Suffix = function(Val: number)
+	        return Val <= 1 and "stud" or "studs"
+	    end,
+	    Tooltip = "Tiny direct walkspeed bump when a hit lands while losing, on purpose very small (max 1)"
 	})
 end)
 
@@ -12359,7 +12547,12 @@ Run(function()
 	        local TeamId = v:GetAttribute("Team")
 	        if v ~= LocalPlayer and TeamId and not Honored[TeamId] and (LocalPlayer:GetAttribute(TeamId == Team and "HonorPointsLeftToGiveToAllies" or "HonorPointsLeftToGiveToOpponents") or 0) > 0 then
 	            Honored[TeamId] = true
-	            Bedwars.HonorController:honorPlayer(v.UserId):await()
+	            -- honorPlayer puede devolver promesa o nada segun la version del
+	            -- juego; si esperamos a ciegas el modulo muere aqui.
+	            local HonorPromise = Bedwars.HonorController:honorPlayer(v.UserId)
+	            if HonorPromise and HonorPromise.await then
+	                HonorPromise:await()
+	            end
 	            task.wait(Delay.Value)
 	        end
 	    end
@@ -12967,7 +13160,9 @@ Run(function()
 	                                if TargetPosition then
 	                                    local ShootPosition: Vector3 = (CFrame.new(Origin, TargetPosition) * CFrame.new(Vector3.new(-Bedwars.BowConstantsTable.RelX, -Bedwars.BowConstantsTable.RelY, -Bedwars.BowConstantsTable.RelZ))).Position
 	                                    local Aim: Vector3 = Ent and PredictionLib.SolveTrajectory(ShootPosition, ProjectileSpeed, Gravity, Ent.RootPart.Position, Ent.RootPart.AssemblyLinearVelocity, workspace.Gravity, Ent.HipHeight, Ent.Jumping and 42.6 or nil, nil, Ent.Humanoid.FloorMaterial == Enum.Material.Air or math.abs(Ent.RootPart.AssemblyLinearVelocity.Y) > 0.01, Ent.RootPart.Position, Ent.RootPart, nil, true) or TargetPosition
-	                                    if Animation.Enabled then
+	                                    -- Si el controller no tiene el metodo (update del juego),
+	                                    -- cae a la ruta remota en vez de morir con cada disparo.
+	                                    if Animation.Enabled and Bedwars.ProjectileController.launchProjectileWithValues then
 	                                        Bedwars.ProjectileController:launchProjectileWithValues({
 	                                            initialVelocity = CFrame.lookAt(ShootPosition, Aim).LookVector * ProjectileSpeed,
 	                                            positionFrom = ShootPosition,
@@ -14208,6 +14403,13 @@ Run(function()
 	local Adjacent, LastPosition, Label, VisualBlock = {}, Vector3.zero
 	local VisualTween, VisualPosition
 	local VisualSpeed: number = 0.1
+	local CoverHead
+	local CoverAngle
+	local CoverSticky = false
+	
+	local function GetBlockInterval(): number
+	    return 1 / (Bedwars.SharedConstants.BLOCK_PLACE_CPS or 12)
+	end
 	
 	for X: number = -3, 3, 3 do
 	    for Y: number = -3, 3, 3 do
@@ -14298,14 +14500,85 @@ Run(function()
 	
 	                    if Wool then
 	                        local Root: BasePart = Entity.character.RootPart
-	                        if Tower.Enabled and UserInputService:IsKeyDown(Enum.KeyCode.Space) and (not UserInputService:GetFocusedTextBox()) then
-	                            Root.AssemblyLinearVelocity = Vector3.new(Root.AssemblyLinearVelocity.X, 38, Root.AssemblyLinearVelocity.Z)
+	                        local Towering: boolean = Tower.Enabled and UserInputService:IsKeyDown(Enum.KeyCode.Space) and (not UserInputService:GetFocusedTextBox())
+	                        local Descending: boolean = Downwards.Enabled and UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
+	                        if Towering then
+	                            -- Solo se eleva con soporte real: bloque bajo los pies o
+	                            -- una colocacion que acaba de aterrizar. Si los bloques no
+	                            -- se ponen (sin lana, lag, fuera de alcance), seguir
+	                            -- presionando ya no te lanza al vacio: sin soporte no hay
+	                            -- impulso y caes de vuelta a tu ultimo bloque.
+	                            local Supported = GetPlacedBlock(Root.Position - Vector3.new(0, Entity.character.HipHeight + 1.5, 0))
+	                                or (workspace:GetServerTimeNow() - Bedwars.BlockCpsController.lastPlaceTimestamp) < 0.15
+	                            if Supported then
+	                                Root.AssemblyLinearVelocity = Vector3.new(Root.AssemblyLinearVelocity.X, 38, Root.AssemblyLinearVelocity.Z)
+	                            end
+	                        end
+	                        -- Bajada controlada: al bajar de la torre (Shift) frena la
+	                        -- caida para dar tiempo a colocar cada bloque.
+	                        if Descending and Root.AssemblyLinearVelocity.Y < -38 then
+	                            Root.AssemblyLinearVelocity = Vector3.new(Root.AssemblyLinearVelocity.X, -38, Root.AssemblyLinearVelocity.Z)
+	                        end
+	                        local MoveDirection: Vector3 = Entity.character.Humanoid.MoveDirection
+	                        -- Zona muerta de drift: torreando en alto, micro-movimientos
+	                        -- laterales ya no riegan bloques alrededor de la columna.
+	                        if Towering and MoveDirection.Magnitude < 0.35 then
+	                            MoveDirection = Vector3.zero
+	                        end
+	
+	                        -- Cubrirse la cabeza: con el mouse apuntando hacia arriba el
+	                        -- scaffold pone un bloque-techo sobre la cabeza (contra
+	                        -- proyectiles) en vez de seguir rellenando debajo de los pies.
+	                        local Look: Vector3 = Camera.CFrame.LookVector
+	                        -- Histerezis: se activa apuntando apenas hacia arriba (Cover
+	                        -- angle) y para volver a rellenar abajo hay que bajar la mirada
+	                        -- a la mitad del angulo: los micro-movimientos de la mira ya no
+	                        -- sueltan bloques debajo mientras te cubres.
+	                        local Covering: boolean = CoverHead.Enabled and Look.Y > math.sin(math.rad(CoverSticky and (CoverAngle.Value * 0.5) or CoverAngle.Value))
+	                        CoverSticky = Covering
+	                        if Covering then
+	                            -- El bloque-techo se corre hacia donde apuntas para que
+	                            -- cubra tu cabeza desde el lado del atacante.
+	                            local Lean: Vector3 = Vector3.new(Look.X, 0, Look.Z)
+	                            Lean = Lean.Magnitude > 0.05 and Lean.Unit * 1.4 or Vector3.zero
+	                            local CurrentPosition: Vector3 = RoundPosition(Root.Position + Vector3.new(0, 4.5, 0) + Lean)
+	                            if VisualBlock and CurrentPosition then
+	                                local VisualTarget: Vector3 = Bedwars.BlockController:getBlockPosition(CurrentPosition) * 3
+	                                if VisualPosition ~= VisualTarget then
+	                                    if VisualTween then
+	                                        VisualTween:Cancel()
+	                                        VisualTween = nil
+	                                    end
+	
+	                                    if VisualBlock.Parent == Camera then
+	                                        VisualTween = TweenService:Create(VisualBlock, TweenInfo.new(VisualSpeed, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {CFrame = CFrame.new(VisualTarget)})
+	                                        VisualTween:Play()
+	                                    else
+	                                        VisualBlock.CFrame = CFrame.new(VisualTarget)
+	                                        VisualBlock.Parent = Camera
+	                                    end
+	                                    VisualPosition = VisualTarget
+	                                end
+	                            end
+	
+	                            local Block, BlockPosition = GetPlacedBlock(CurrentPosition)
+	                            if not Block then
+	                                BlockPosition = CheckAdjacent(BlockPosition * 3) and BlockPosition * 3 or BlockProximity(CurrentPosition)
+	                                if BlockPosition then
+	                                    if (workspace:GetServerTimeNow() - Bedwars.BlockCpsController.lastPlaceTimestamp) >= (GetBlockInterval() * 0.5) then
+	                                        task.delay(0, Bedwars.placeBlock, BlockPosition, Wool, false)
+	                                    end
+	                                end
+	                            end
+	                            LastPosition = CurrentPosition
+	                            task.wait(GetBlockInterval() * 0.5)
+	                            continue
 	                        end
 	
 	                        for Step: number = Expand.Value, 1, -1 do
-	                            local CurrentPosition: Vector3 = RoundPosition(Root.Position - Vector3.new(0, Entity.character.HipHeight + (Downwards.Enabled and UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) and 4.5 or 1.5), 0) + Entity.character.Humanoid.MoveDirection * (Step * 3))
+	                            local CurrentPosition: Vector3 = RoundPosition(Root.Position - Vector3.new(0, Entity.character.HipHeight + (Downwards.Enabled and UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) and 4.5 or 1.5), 0) + MoveDirection * (Step * 3))
 	                            if Diagonal.Enabled then
-	                                if math.abs(math.round(math.deg(math.atan2(-Entity.character.Humanoid.MoveDirection.X, -Entity.character.Humanoid.MoveDirection.Z)) / 45) * 45) % 90 == 45 then
+	                                if math.abs(math.round(math.deg(math.atan2(-MoveDirection.X, -MoveDirection.Z)) / 45) * 45) % 90 == 45 then
 	                                    local Delta: Vector3 = (LastPosition - CurrentPosition)
 	                                    if ((Delta.X == 0 and Delta.Z ~= 0) or (Delta.X ~= 0 and Delta.Z == 0)) and ((LastPosition - Root.Position) * Vector3.new(1, 0, 1)).Magnitude < 2.5 then
 	                                        CurrentPosition = LastPosition
@@ -14335,15 +14608,23 @@ Run(function()
 	                            local Block, BlockPosition = GetPlacedBlock(CurrentPosition)
 	                            if not Block then
 	                                BlockPosition = CheckAdjacent(BlockPosition * 3) and BlockPosition * 3 or BlockProximity(CurrentPosition)
-	                                if BlockPosition then
-	                                    task.delay(0, Bedwars.placeBlock, BlockPosition, Wool, false)
+	                                -- Coloca si te moves, torreando (Space) o bajando (Shift):
+	                                -- puedes apilar o descender parado, y siempre respeta el
+	                                -- intervalo de colocacion del motor (disciplina del clicker).
+	                                if BlockPosition and (Expand.Value > 1 or MoveDirection.Magnitude > 0.1 or Towering or Descending) then
+	                                    if (workspace:GetServerTimeNow() - Bedwars.BlockCpsController.lastPlaceTimestamp) >= (GetBlockInterval() * 0.5) then
+	                                        task.delay(0, Bedwars.placeBlock, BlockPosition, Wool, false)
+	                                    end
 	                                end
 	                            end
 	                            LastPosition = CurrentPosition
 	                        end
 	                    end
 	                end
-	                task.wait(0.03)
+	                -- Cadencia de autoclicker: reintenta a la mitad del intervalo de
+	                -- colocacion del motor. Antes dormia fijo y se sentia lento; asi
+	                -- reacciona al instante sin pasarse del limite legit del motor.
+	                task.wait(GetBlockInterval() * 0.5)
 	            until not Scaffold.Enabled
 	            if VisualTween then
 	                VisualTween:Cancel()
@@ -14366,6 +14647,22 @@ Run(function()
 	Tower = Scaffold:CreateToggle({
 	    Name = "Tower",
 	    Default = true
+	})
+	CoverHead = Scaffold:CreateToggle({
+	    Name = "Cover head",
+	    Default = true,
+	    Tooltip = "Aiming up beyond the cover angle roofs your head instead of placing below you (anti projectiles)"
+	})
+	CoverAngle = Scaffold:CreateSlider({
+	    Name = "Cover angle",
+	    Min = 1,
+	    Max = 60,
+	    Default = 10,
+	    Darker = true,
+	    Suffix = function(Val: number)
+	        return "deg"
+	    end,
+	    Tooltip = "How far up you must aim before the scaffold starts covering instead"
 	})
 	Downwards = Scaffold:CreateToggle({
 	    Name = "Downwards",
@@ -17255,7 +17552,7 @@ Run(function()
 	                                item = Store.inventory.inventory.armor[Slot + 1] == "empty" and State and GetBestArmor(Slot) or nil,
 	                                armorSlot = Slot
 	                            })
-	                            VapeEvents.InventoryChanged.Event:Wait()
+	                            VapeEvents.InventoryChanged.Event:Wait(0.4)
 	                        end
 	                    end
 	                    task.wait(0.1)
@@ -17268,7 +17565,7 @@ Run(function()
 	                        item = Store.inventory.inventory.armor[Slot + 1] == "empty" and GetBestArmor(Slot) or nil,
 	                        armorSlot = Slot
 	                    })
-	                    VapeEvents.InventoryChanged.Event:Wait()
+	                    VapeEvents.InventoryChanged.Event:Wait(0.4)
 	                end
 	            end
 	        end
@@ -18519,7 +18816,7 @@ Run(function()
 	                    type = "InventoryRemoveFromHotbar",
 	                    slot = Slot - 1
 	                })
-	                VapeEvents.InventoryChanged.Event:Wait()
+	                VapeEvents.InventoryChanged.Event:Wait(0.4)
 	            end
 	
 	            local NewSlot
@@ -18535,7 +18832,7 @@ Run(function()
 	                    type = "InventoryRemoveFromHotbar",
 	                    slot = NewSlot
 	                })
-	                VapeEvents.InventoryChanged.Event:Wait()
+	                VapeEvents.InventoryChanged.Event:Wait(0.4)
 	                if OldItem.item then
 	                    local Swap
 	                    for _, Item: any in Store.inventory.inventory.items do
@@ -18549,7 +18846,7 @@ Run(function()
 	                        item = Swap,
 	                        slot = NewSlot
 	                    })
-	                    VapeEvents.InventoryChanged.Event:Wait()
+	                    VapeEvents.InventoryChanged.Event:Wait(0.4)
 	                end
 	            end
 	
@@ -18565,7 +18862,7 @@ Run(function()
 	                item = Held,
 	                slot = Slot - 1
 	            })
-	            VapeEvents.InventoryChanged.Event:Wait()
+	            VapeEvents.InventoryChanged.Event:Wait(0.4)
 	        elseif Clear.Enabled then
 	            local NewSlot
 	            for i: number, HotbarSlot: any in Store.inventory.hotbar do
@@ -18580,7 +18877,7 @@ Run(function()
 	                    type = "InventoryRemoveFromHotbar",
 	                    slot = NewSlot
 	                })
-	                VapeEvents.InventoryChanged.Event:Wait()
+	                VapeEvents.InventoryChanged.Event:Wait(0.4)
 	            end
 	        end
 	    end

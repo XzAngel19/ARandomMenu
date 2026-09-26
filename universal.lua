@@ -2568,7 +2568,15 @@ Run(function()
 	                local Interest, Tool
 	                if not Mouse.Enabled or UserInputService:IsMouseButtonPressed(0) then
 	                    Tool = GetTool()
-	                    Interest = Tool and Tool:FindFirstChildWhichIsA("TouchTransmitter", true) or nil
+	                    -- Rebusca solo al cambiar de arma o cada 0.25s de seguridad;
+	                    -- el resultado es el mismo que buscarlo cada frame.
+	                    if Tool ~= LastTool or tick() > NextInterestCheck then
+	                        LastTool, NextInterestCheck = Tool, tick() + 0.25
+	                        CachedInterest = Tool and Tool:FindFirstChildWhichIsA("TouchTransmitter", true) or nil
+	                    elseif CachedInterest and not CachedInterest.Parent then
+	                        CachedInterest = nil
+	                    end
+	                    Interest = CachedInterest
 	                end
 	                local Attacked = {}
 	                if Interest then
@@ -2585,11 +2593,13 @@ Run(function()
 	                    if #Entities > 0 then
 	                        local SelfPosition: Vector3 = Entity.character.RootPart.Position
 	                        local LocalFacing: Vector3 = Entity.character.RootPart.CFrame.LookVector * Vector3.new(1, 0, 1)
+	                        -- Mismo filtro de angulo sin math.acos por candidato: comparar
+	                        -- el dot contra el coseno del limite es exactamente igual.
+	                        local MinDot: number = math.cos(math.rad(AngleSlider.Value) / 2)
 	
 	                        for _, v: any in Entities do
 	                            local Delta: Vector3 = (v.RootPart.Position - SelfPosition)
-	                            local Angle: number = math.acos(LocalFacing:Dot((Delta * Vector3.new(1, 0, 1)).Unit))
-	                            if Angle > (math.rad(AngleSlider.Value) / 2) then
+	                            if LocalFacing:Dot((Delta * Vector3.new(1, 0, 1)).Unit) < MinDot then
 	                                continue
 	                            end
 	
@@ -2620,18 +2630,24 @@ Run(function()
 	                    end
 	                end
 	
-	                for i: number, v: BoxHandleAdornment in Boxes do
-	                    v.Adornee = Attacked[i] and Attacked[i].Entity.RootPart or nil
-	                    if v.Adornee then
-	                        v.Color3 = Color3.fromHSV(Attacked[i].Check.Hue, Attacked[i].Check.Sat, Attacked[i].Check.Value)
-	                        v.Transparency = 1 - Attacked[i].Check.Opacity
+	                -- Los visuales solo se recorren cuando hay objetivos este frame o
+	                -- los habia el anterior (para limpiar); con la zona vacia no se
+	                -- itera nada, mismo resultado que dejar los loops vacios correr.
+	                if #Attacked > 0 or HadTargets then
+	                    for i: number, v: BoxHandleAdornment in Boxes do
+	                        v.Adornee = Attacked[i] and Attacked[i].Entity.RootPart or nil
+	                        if v.Adornee then
+	                            v.Color3 = Color3.fromHSV(Attacked[i].Check.Hue, Attacked[i].Check.Sat, Attacked[i].Check.Value)
+	                            v.Transparency = 1 - Attacked[i].Check.Opacity
+	                        end
+	                    end
+	
+	                    for i: number, v: Part in Particles do
+	                        v.Position = Attacked[i] and Attacked[i].Entity.RootPart.Position or Vector3.new(9e9, 9e9, 9e9)
+	                        v.Parent = Attacked[i] and Camera or nil
 	                    end
 	                end
-	
-	                for i: number, v: Part in Particles do
-	                    v.Position = Attacked[i] and Attacked[i].Entity.RootPart.Position or Vector3.new(9e9, 9e9, 9e9)
-	                    v.Parent = Attacked[i] and Camera or nil
-	                end
+	                HadTargets = #Attacked > 0
 	
 	                if Face.Enabled and Attacked[1] then
 	                    local TargetPosition: Vector3 = Attacked[1].Entity.RootPart.Position * Vector3.new(1, 0, 1)
