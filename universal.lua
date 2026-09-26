@@ -2572,7 +2572,9 @@ Run(function()
 	            -- Anti double swing: si acabas de golpear TU, el aura no
 	            -- re-activa el arma en la misma ventana (no duplica el swing).
 	            Killaura:Clean(UserInputService.InputBegan:Connect(function(Input: InputObject)
-	                if Input.UserInputType == Enum.UserInputType.MouseButton1 then
+	                -- MouseButton1 en PC, Touch en movil: el click manual de cualquier
+	                -- plataforma abre la misma ventana sin doble swing.
+	                if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
 	                    LastManualSwing = tick()
 	                end
 	            end))
