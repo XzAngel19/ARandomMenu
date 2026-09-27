@@ -1,6 +1,6 @@
 --This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.
 local vape = shared.vape
-local ScriptRevision: string = "2026-09-26-r7"
+local ScriptRevision: string = "2026-09-26-r8"
 getgenv().ARandomMenuBedwarsRevision = ScriptRevision
 local loadstring = function(...)
     local Chunk, Message = loadstring(...)
@@ -14366,9 +14366,13 @@ Run(function()
 	local Mouse
 	local FillColor
 	local OutlineColor
-	-- The original Scaffold accepts all neighbouring cells. The diagonal
-	-- neighbours are what let its moving tower impulse form natural stairs.
-	local Adjacent: {Vector3} = {}
+	local Adjacent, LastPosition, Label, VisualBlock = {}, Vector3.zero
+	local VisualTween, VisualPosition
+	local VisualSpeed: number = 0.1
+	local NextPlacement: number = 0
+	local NextClutchSearch: number = 0
+	local ClutchPosition: Vector3?
+
 	for X: number = -3, 3, 3 do
 	    for Y: number = -3, 3, 3 do
 	        for Z: number = -3, 3, 3 do
@@ -14379,19 +14383,7 @@ Run(function()
 	        end
 	    end
 	end
-	local LastPosition, Label, VisualBlock = Vector3.zero
-	local VisualTween, VisualPosition
-	local VisualSpeed: number = 0.1
-	local NextPlacement: number = 0
-	local NextClutchSearch: number = 0
-	local ClutchPosition: Vector3?
-	local TowerColumn: Vector3?
-	local TowerInterrupted: boolean = false
 
-	local function GetBlockInterval(): number
-	    return 1 / GetBlockPlaceCPS()
-	end
-	
 	local function NearCorner(BlockPosition: Vector3, Position: Vector3): Vector3
 	    local StartPosition: Vector3 = BlockPosition - Vector3.new(3, 3, 3)
 	    local EndPosition: Vector3 = BlockPosition + Vector3.new(3, 3, 3)
@@ -14399,12 +14391,9 @@ Run(function()
 	    return Vector3.new(math.clamp(Check.X, StartPosition.X, EndPosition.X), math.clamp(Check.Y, StartPosition.Y, EndPosition.Y), math.clamp(Check.Z, StartPosition.Z, EndPosition.Z))
 	end
 	getgenv().nearCorner = NearCorner
-	
+
 	local function BlockProximity(Position: Vector3): Vector3?
 	    local Magnitude, Closest = 60
-	    -- Original clutch search, reduced from a 21-stud cube to a nearby
-	    -- 9-stud cube and throttled while falling. This preserves the catch
-	    -- without continuously scanning thousands of unrelated cells.
 	    local Search: Vector3 = Vector3.new(9, 9, 9)
 	    local Blocks = GetBlocksInPoints(Bedwars.BlockController:getBlockPosition(Position - Search), Bedwars.BlockController:getBlockPosition(Position + Search))
 	    for _, v: Vector3 in Blocks do
@@ -14418,7 +14407,7 @@ Run(function()
 	    return Closest
 	end
 	getgenv().blockProximity = BlockProximity
-	
+
 	local function CheckAdjacent(Position: Vector3): boolean
 	    for _, v: Vector3 in Adjacent do
 	        if GetPlacedBlock(Position + v) then
@@ -14428,94 +14417,33 @@ Run(function()
 	    return false
 	end
 	getgenv().checkAdjacent = CheckAdjacent
-	
-	local function GetScaffoldBlock()
-	    local function GetActualBlock(ItemType: string?)
-	        local Item = ItemType and GetItem(ItemType)
-	        local Amount: number = Item and (tonumber(Item.amount) or 0) or 0
-	        local Meta = ItemType and Bedwars.ItemMeta[ItemType]
-	        if Item and Amount > 0 and Meta and Meta.block then
-	            return ItemType, Amount
-	        end
-	    end
 
-	    -- Keep the original selection order, but read the real inventory entry.
-	    -- Store.hand can briefly retain a consumed stack and must never power Tower.
-	    if Store.hand.toolType == "block" and Store.hand.tool then
-	        local ItemType, Amount = GetActualBlock(Store.hand.tool.Name)
-	        if ItemType then
-	            return ItemType, Amount
-	        end
-	    end
-	    if not LimitItem.Enabled then
-	        local Wool = GetWool()
-	        local ItemType, Amount = GetActualBlock(Wool)
-	        if ItemType then
-	            return ItemType, Amount
-	        end
-	        for _, Item: any in Store.inventory.inventory.items do
-	            ItemType, Amount = GetActualBlock(Item.itemType)
-	            if ItemType then
-	                return ItemType, Amount
-	            end
-	        end
+	local function GetActualWool(ItemType: string?)
+	    local Item = ItemType and GetItem(ItemType)
+	    local Amount: number = Item and (tonumber(Item.amount) or 0) or 0
+	    local Meta = ItemType and Bedwars.ItemMeta[ItemType]
+	    if Item and Amount > 0 and Meta and Meta.block and ItemType:find("wool", 1, true) then
+	        return ItemType, Amount
 	    end
 	    return nil, 0
 	end
 
-	local function GetCellPosition(Position: Vector3): Vector3
-	    return Bedwars.BlockController:getBlockPosition(Position) * 3
-	end
-
-	local function CanScaffoldPlace(): boolean
-	    return Entity.isAlive and Store.matchState == 1 and not LocalPlayer:GetAttribute("Spectator") and CanPlace()
-	end
-
-	local function TryTowerBoost(SupportCell: Vector3, ItemType: string): boolean
-	    if not Scaffold.Enabled or not Tower.Enabled or vape.MovementOwner or not CanScaffoldPlace() then
-	        return false
+	local function GetScaffoldBlock()
+	    if Store.hand.toolType == "block" and Store.hand.tool and Store.hand.tool.Name:find("wool", 1, true) then
+	        local Wool, Amount = GetActualWool(Store.hand.tool.Name)
+	        if Wool then
+	            return Wool, Amount
+	        end
 	    end
-	    local Item = GetItem(ItemType)
-	    if not Item or (tonumber(Item.amount) or 0) <= 0 then
-	        return false
+	    if not LimitItem.Enabled then
+	        for _, Item: any in Store.inventory.inventory.items do
+	            local Wool, Amount = GetActualWool(Item.itemType)
+	            if Wool then
+	                return Wool, Amount
+	            end
+	        end
 	    end
-	    -- Tower may only push from a real replicated block directly below the
-	    -- character. An empty cell, stale hand stack, or failed placement gives no
-	    -- impulse, so holding Space can never turn Scaffold into flight.
-	    if not GetPlacedBlock(SupportCell) then
-	        return false
-	    end
-
-	    local Root: BasePart = Entity.character.RootPart
-	    local Velocity: Vector3 = Root.AssemblyLinearVelocity
-	    Root.AssemblyLinearVelocity = Vector3.new(Velocity.X, math.max(Velocity.Y, 39), Velocity.Z)
-	    return true
-	end
-
-	local function PlaceScaffoldBlock(Position: Vector3, ItemType: string): boolean
-	    if not CanScaffoldPlace() then
-	        return false
-	    end
-	    local Item = GetItem(ItemType)
-	    if not Item or (tonumber(Item.amount) or 0) <= 0 then
-	        return false
-	    end
-	    local CellPosition: Vector3 = GetCellPosition(Position)
-	    local Root: BasePart = Entity.character.RootPart
-	    if (Root.Position - CellPosition).Magnitude > 18 or GetPlacedBlock(CellPosition) or not CheckAdjacent(CellPosition) then
-	        return false
-	    end
-
-	    local Now: number = workspace:GetServerTimeNow()
-	    local Interval: number = GetBlockInterval()
-	    local GamePlacedAt: number = tonumber(Bedwars.BlockCpsController.lastPlaceTimestamp) or 0
-	    if Now < NextPlacement or (Store.autoBlockPlacePriority or 0) > Now or Now - GamePlacedAt < Interval then
-	        return false
-	    end
-
-	    NextPlacement = Now + Interval
-	    task.spawn(Bedwars.placeBlock, CellPosition, ItemType)
-	    return true
+	    return nil, 0
 	end
 
 	Scaffold = vape.Categories.Utility:CreateModule({
@@ -14529,13 +14457,14 @@ Run(function()
 	            NextPlacement = 0
 	            NextClutchSearch = 0
 	            ClutchPosition = nil
-	            TowerColumn = nil
-	            TowerInterrupted = false
 	            repeat
 	                if Entity.isAlive and not vape.MovementOwner then
 	                    local Wool, Amount = GetScaffoldBlock()
-	                    if Mouse.Enabled and not UserInputService:IsMouseButtonPressed(0) and not Store.autoBlockClick then
-	                        Wool = nil
+
+	                    if Mouse.Enabled then
+	                        if not UserInputService:IsMouseButtonPressed(0) then
+	                            Wool = nil
+	                        end
 	                    end
 
 	                    if Label then
@@ -14544,103 +14473,82 @@ Run(function()
 	                        Label.TextColor3 = Color3.fromHSV((Amount / 128) / 2.8, 0.86, 1)
 	                    end
 
-	                    if Wool and CanScaffoldPlace() then
+	                    if Wool then
 	                        local Root: BasePart = Entity.character.RootPart
-	                        local Humanoid: Humanoid = Entity.character.Humanoid
-	                        local MoveDirection: Vector3 = Humanoid.MoveDirection
-	                        local SpaceHeld: boolean = UserInputService:IsKeyDown(Enum.KeyCode.Space) and not UserInputService:GetFocusedTextBox()
-	                        -- This is the original Tower interaction: Space changes
-	                        -- only vertical velocity and MoveDirection stays free.
-	                        local Towering: boolean = Tower.Enabled and SpaceHeld
-	                        local StationaryTower: boolean = Towering and MoveDirection.Magnitude < 0.05
-	                        local Descending: boolean = not Towering and Downwards.Enabled and UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
-	                        local SupportCell: Vector3 = GetCellPosition(Root.Position - Vector3.new(0, Humanoid.HipHeight + 1.5, 0))
-
-	                        if StationaryTower then
-	                            if not TowerColumn then
-	                                TowerColumn = Vector3.new(SupportCell.X, 0, SupportCell.Z)
-	                            end
-	                            if (Vector3.new(Root.Position.X, 0, Root.Position.Z) - TowerColumn).Magnitude > 2.35 then
-	                                TowerInterrupted = true
-	                            end
-	                        else
-	                            TowerColumn = nil
-	                            TowerInterrupted = false
+	                        local WoolItem = GetItem(Wool)
+	                        if Tower.Enabled and WoolItem and (tonumber(WoolItem.amount) or 0) > 0 and UserInputService:IsKeyDown(Enum.KeyCode.Space) and (not UserInputService:GetFocusedTextBox()) then
+	                            Root.AssemblyLinearVelocity = Vector3.new(Root.AssemblyLinearVelocity.X, 38, Root.AssemblyLinearVelocity.Z)
+	                        end
+	                        local Falling: boolean = Entity.character.Humanoid.FloorMaterial == Enum.Material.Air and Root.AssemblyLinearVelocity.Y < -12
+	                        if not Falling then
+	                            ClutchPosition = nil
 	                        end
 
-	                        if Towering and not TowerInterrupted then
-	                            TryTowerBoost(SupportCell, Wool)
-	                        end
-
-	                        -- Preserve the original nearby-structure clutch only
-	                        -- while genuinely falling. A displaced stationary tower
-	                        -- remains suspended until Space is released or movement
-	                        -- becomes intentional.
-	                        if not (StationaryTower and TowerInterrupted) then
-	                            local Falling: boolean = Humanoid.FloorMaterial == Enum.Material.Air and Root.AssemblyLinearVelocity.Y < -12
-	                            if Falling then
-	                                local Now: number = workspace:GetServerTimeNow()
-	                                if Now >= NextClutchSearch then
-	                                    NextClutchSearch = Now + 0.05
-	                                    ClutchPosition = BlockProximity(Root.Position - Vector3.new(0, Humanoid.HipHeight + 1.5, 0))
+	                        for Step: number = Expand.Value, 1, -1 do
+	                            local CurrentPosition: Vector3 = RoundPosition(Root.Position - Vector3.new(0, Entity.character.HipHeight + (Downwards.Enabled and UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) and 4.5 or 1.5), 0) + Entity.character.Humanoid.MoveDirection * (Step * 3))
+	                            if Diagonal.Enabled then
+	                                if math.abs(math.round(math.deg(math.atan2(-Entity.character.Humanoid.MoveDirection.X, -Entity.character.Humanoid.MoveDirection.Z)) / 45) * 45) % 90 == 45 then
+	                                    local Delta: Vector3 = (LastPosition - CurrentPosition)
+	                                    if ((Delta.X == 0 and Delta.Z ~= 0) or (Delta.X ~= 0 and Delta.Z == 0)) and ((LastPosition - Root.Position) * Vector3.new(1, 0, 1)).Magnitude < 2.5 then
+	                                        CurrentPosition = LastPosition
+	                                    end
 	                                end
-	                            else
-	                                ClutchPosition = nil
 	                            end
-	                            local FirstStep: number = Descending and 1 or Expand.Value
-	                            for Step: number = FirstStep, 1, -1 do
-	                                local BasePosition: Vector3 = Root.Position - Vector3.new(0, Humanoid.HipHeight + (Descending and 4.5 or 1.5), 0)
-	                                local CurrentPosition: Vector3 = RoundPosition(BasePosition + MoveDirection * (Step * 3))
-	                                if Diagonal.Enabled and MoveDirection.Magnitude > 0 then
-	                                    if math.abs(math.round(math.deg(math.atan2(-MoveDirection.X, -MoveDirection.Z)) / 45) * 45) % 90 == 45 then
-	                                        local Delta: Vector3 = LastPosition - CurrentPosition
-	                                        if ((Delta.X == 0 and Delta.Z ~= 0) or (Delta.X ~= 0 and Delta.Z == 0)) and ((LastPosition - Root.Position) * Vector3.new(1, 0, 1)).Magnitude < 2.5 then
-	                                            CurrentPosition = LastPosition
-	                                        end
+
+	                            if VisualBlock and CurrentPosition then
+	                                local VisualTarget: Vector3 = Bedwars.BlockController:getBlockPosition(CurrentPosition) * 3
+	                                if VisualPosition ~= VisualTarget then
+	                                    if VisualTween then
+	                                        VisualTween:Cancel()
+	                                        VisualTween = nil
 	                                    end
+
+	                                    if VisualBlock.Parent == Camera then
+	                                        VisualTween = TweenService:Create(VisualBlock, TweenInfo.new(VisualSpeed, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {CFrame = CFrame.new(VisualTarget)})
+	                                        VisualTween:Play()
+	                                    else
+	                                        VisualBlock.CFrame = CFrame.new(VisualTarget)
+	                                        VisualBlock.Parent = Camera
+	                                    end
+	                                    VisualPosition = VisualTarget
+	                                end
+	                            end
+
+	                            local Block, BlockPosition = GetPlacedBlock(CurrentPosition)
+	                            if not Block then
+	                                local CellPosition: Vector3 = BlockPosition * 3
+	                                if CheckAdjacent(CellPosition) then
+	                                    BlockPosition = CellPosition
+	                                elseif Falling then
+	                                    local Now: number = workspace:GetServerTimeNow()
+	                                    if Now >= NextClutchSearch then
+	                                        NextClutchSearch = Now + 0.05
+	                                        ClutchPosition = BlockProximity(CurrentPosition)
+	                                    end
+	                                    BlockPosition = ClutchPosition
+	                                else
+	                                    BlockPosition = nil
 	                                end
 
-	                                if VisualBlock then
-	                                    local VisualTarget: Vector3 = Bedwars.BlockController:getBlockPosition(CurrentPosition) * 3
-	                                    if VisualPosition ~= VisualTarget then
-	                                        if VisualTween then
-	                                            VisualTween:Cancel()
-	                                            VisualTween = nil
-	                                        end
-	                                        if VisualBlock.Parent == Camera then
-	                                            VisualTween = TweenService:Create(VisualBlock, TweenInfo.new(VisualSpeed, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {CFrame = CFrame.new(VisualTarget)})
-	                                            VisualTween:Play()
-	                                        else
-	                                            VisualBlock.CFrame = CFrame.new(VisualTarget)
-	                                            VisualBlock.Parent = Camera
-	                                        end
-	                                        VisualPosition = VisualTarget
-	                                    end
-	                                end
-
-	                                local Block, BlockCell = GetPlacedBlock(CurrentPosition)
-	                                if not Block then
-	                                    local CellPosition: Vector3 = BlockCell * 3
-	                                    local Placement: Vector3? = CheckAdjacent(CellPosition) and CellPosition or Falling and ClutchPosition or nil
-	                                    if Placement and PlaceScaffoldBlock(Placement, Wool) then
+	                                if BlockPosition and (Root.Position - BlockPosition).Magnitude <= 18 then
+	                                    local Now: number = workspace:GetServerTimeNow()
+	                                    local Interval: number = 1 / GetBlockPlaceCPS()
+	                                    local GamePlacedAt: number = tonumber(Bedwars.BlockCpsController.lastPlaceTimestamp) or 0
+	                                    if Now >= NextPlacement and (Store.autoBlockPlacePriority or 0) <= Now and Now - GamePlacedAt >= Interval then
+	                                        NextPlacement = Now + Interval
+	                                        task.delay(0, Bedwars.placeBlock, BlockPosition, Wool, false)
 	                                        LastPosition = CurrentPosition
 	                                        break
 	                                    end
 	                                end
-	                                LastPosition = CurrentPosition
 	                            end
+	                            LastPosition = CurrentPosition
 	                        end
-	                    else
-	                        TowerColumn = nil
-	                        TowerInterrupted = false
 	                    end
 	                end
-	                -- Original 0.03 loop, shortened only when FastPlace is faster.
-	                task.wait(math.min(0.03, GetBlockInterval()))
+	                task.wait(math.min(0.03, 1 / GetBlockPlaceCPS()))
 	            until not Scaffold.Enabled
 	            ClutchPosition = nil
-	            TowerColumn = nil
-	            TowerInterrupted = false
 	            if VisualTween then
 	                VisualTween:Cancel()
 	                VisualTween = nil
@@ -14653,7 +14561,7 @@ Run(function()
 	    end,
 	    Tooltip = "Helps you make bridges/scaffold walk."
 	})
-	
+
 	Expand = Scaffold:CreateSlider({
 	    Name = "Expand",
 	    Min = 1,
