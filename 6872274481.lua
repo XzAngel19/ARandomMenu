@@ -1,6 +1,6 @@
 --This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.
 local vape = shared.vape
-local ScriptRevision: string = "2026-09-26-r6"
+local ScriptRevision: string = "2026-09-26-r7"
 getgenv().ARandomMenuBedwarsRevision = ScriptRevision
 local loadstring = function(...)
     local Chunk, Message = loadstring(...)
@@ -14387,9 +14387,6 @@ Run(function()
 	local ClutchPosition: Vector3?
 	local TowerColumn: Vector3?
 	local TowerInterrupted: boolean = false
-	local SurfaceParams: RaycastParams = RaycastParams.new()
-	SurfaceParams.FilterType = Enum.RaycastFilterType.Exclude
-	SurfaceParams.RespectCanCollide = true
 
 	local function GetBlockInterval(): number
 	    return 1 / GetBlockPlaceCPS()
@@ -14432,74 +14429,79 @@ Run(function()
 	end
 	getgenv().checkAdjacent = CheckAdjacent
 	
-	local function IsWool(ItemType: string?): boolean
-	    local Meta = ItemType and Bedwars.ItemMeta[ItemType]
-	    return Meta ~= nil and Meta.block ~= nil and ItemType:find("wool", 1, true) ~= nil
-	end
-
 	local function GetScaffoldBlock()
-	    local HeldAmount: number = tonumber(Store.hand.amount) or 0
-	    if HeldAmount > 0 and Store.hand.toolType == "block" and Store.hand.tool and IsWool(Store.hand.tool.Name) then
-	        return Store.hand.tool.Name, HeldAmount
-	    end
-	    if not LimitItem.Enabled then
-	        local Wool, Amount = GetWool()
-	        if Wool and IsWool(Wool) and (tonumber(Amount) or 0) > 0 then
-	            return Wool, Amount
+	    local function GetActualBlock(ItemType: string?)
+	        local Item = ItemType and GetItem(ItemType)
+	        local Amount: number = Item and (tonumber(Item.amount) or 0) or 0
+	        local Meta = ItemType and Bedwars.ItemMeta[ItemType]
+	        if Item and Amount > 0 and Meta and Meta.block then
+	            return ItemType, Amount
 	        end
 	    end
-	    -- Scaffold is intentionally wool-only. Utility blocks (TNT, obsidian,
-	    -- cannons, etc.) must never be consumed by an automatic bridge.
+
+	    -- Keep the original selection order, but read the real inventory entry.
+	    -- Store.hand can briefly retain a consumed stack and must never power Tower.
+	    if Store.hand.toolType == "block" and Store.hand.tool then
+	        local ItemType, Amount = GetActualBlock(Store.hand.tool.Name)
+	        if ItemType then
+	            return ItemType, Amount
+	        end
+	    end
+	    if not LimitItem.Enabled then
+	        local Wool = GetWool()
+	        local ItemType, Amount = GetActualBlock(Wool)
+	        if ItemType then
+	            return ItemType, Amount
+	        end
+	        for _, Item: any in Store.inventory.inventory.items do
+	            ItemType, Amount = GetActualBlock(Item.itemType)
+	            if ItemType then
+	                return ItemType, Amount
+	            end
+	        end
+	    end
 	    return nil, 0
 	end
-	
-	local function CellKey(Position: Vector3): (string, Vector3)
-	    local Cell: Vector3 = Bedwars.BlockController:getBlockPosition(Position)
-	    return `{Cell.X}:{Cell.Y}:{Cell.Z}`, Cell * 3
+
+	local function GetCellPosition(Position: Vector3): Vector3
+	    return Bedwars.BlockController:getBlockPosition(Position) * 3
 	end
 
 	local function CanScaffoldPlace(): boolean
 	    return Entity.isAlive and Store.matchState == 1 and not LocalPlayer:GetAttribute("Spectator") and CanPlace()
 	end
 
-	local function HasSafeSurface(Position: Vector3): boolean
-	    local _, CellPosition = CellKey(Position)
-	    SurfaceParams.FilterDescendantsInstances = {LocalPlayer.Character, Camera}
-	    local Hit: RaycastResult? = workspace:Raycast(CellPosition + Vector3.new(0, 3, 0), Vector3.new(0, -4.75, 0), SurfaceParams)
-	    if not Hit then
+	local function TryTowerBoost(SupportCell: Vector3, ItemType: string): boolean
+	    if not Scaffold.Enabled or not Tower.Enabled or vape.MovementOwner or not CanScaffoldPlace() then
 	        return false
 	    end
-	    -- Sample just inside the hit surface so a placed BedWars block rounds to
-	    -- its own cell instead of the empty cell above it.
-	    return GetPlacedBlock(Hit.Position - Hit.Normal * 0.1) == nil
-	end
-
-	local function TryTowerBoost(): boolean
-	    if not Scaffold or not Scaffold.Enabled or not Tower.Enabled or vape.MovementOwner or not CanScaffoldPlace() then
+	    local Item = GetItem(ItemType)
+	    if not Item or (tonumber(Item.amount) or 0) <= 0 then
 	        return false
 	    end
-	    local Wool, Amount = GetScaffoldBlock()
-	    if not Wool or (tonumber(Amount) or 0) <= 0 or not UserInputService:IsKeyDown(Enum.KeyCode.Space) or UserInputService:GetFocusedTextBox() then
+	    -- Tower may only push from a real replicated block directly below the
+	    -- character. An empty cell, stale hand stack, or failed placement gives no
+	    -- impulse, so holding Space can never turn Scaffold into flight.
+	    if not GetPlacedBlock(SupportCell) then
 	        return false
 	    end
 
-	    -- Original behavior: the impulse follows Space immediately and is not
-	    -- delayed behind block replication. The only added guard is whether
-	    -- Scaffold is currently capable of placing usable wool.
 	    local Root: BasePart = Entity.character.RootPart
 	    local Velocity: Vector3 = Root.AssemblyLinearVelocity
 	    Root.AssemblyLinearVelocity = Vector3.new(Velocity.X, math.max(Velocity.Y, 39), Velocity.Z)
 	    return true
 	end
 
-	local function PlaceScaffoldBlock(Position: Vector3, Wool: string): boolean
+	local function PlaceScaffoldBlock(Position: Vector3, ItemType: string): boolean
 	    if not CanScaffoldPlace() then
 	        return false
 	    end
-	    local _, CellPosition = CellKey(Position)
+	    local Item = GetItem(ItemType)
+	    if not Item or (tonumber(Item.amount) or 0) <= 0 then
+	        return false
+	    end
+	    local CellPosition: Vector3 = GetCellPosition(Position)
 	    local Root: BasePart = Entity.character.RootPart
-	    -- Keep the original adjacent-cell behavior but reject out-of-range sends.
-	    -- Remote structure catches are handled only by the falling clutch below.
 	    if (Root.Position - CellPosition).Magnitude > 18 or GetPlacedBlock(CellPosition) or not CheckAdjacent(CellPosition) then
 	        return false
 	    end
@@ -14511,10 +14513,8 @@ Run(function()
 	        return false
 	    end
 
-	    -- Only the actual send is rate-limited. Position selection continues every
-	    -- frame so running, jumping and changing direction remain responsive.
 	    NextPlacement = Now + Interval
-	    task.spawn(Bedwars.placeBlock, CellPosition, Wool)
+	    task.spawn(Bedwars.placeBlock, CellPosition, ItemType)
 	    return true
 	end
 
@@ -14549,21 +14549,18 @@ Run(function()
 	                        local Humanoid: Humanoid = Entity.character.Humanoid
 	                        local MoveDirection: Vector3 = Humanoid.MoveDirection
 	                        local SpaceHeld: boolean = UserInputService:IsKeyDown(Enum.KeyCode.Space) and not UserInputService:GetFocusedTextBox()
-	                        -- Match the original Scaffold: Space applies the same
-	                        -- tower impulse while MoveDirection keeps controlling the
-	                        -- placement line. Moving + Space therefore forms stairs
-	                        -- naturally instead of entering a separate mode.
+	                        -- This is the original Tower interaction: Space changes
+	                        -- only vertical velocity and MoveDirection stays free.
 	                        local Towering: boolean = Tower.Enabled and SpaceHeld
 	                        local StationaryTower: boolean = Towering and MoveDirection.Magnitude < 0.05
 	                        local Descending: boolean = not Towering and Downwards.Enabled and UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
+	                        local SupportCell: Vector3 = GetCellPosition(Root.Position - Vector3.new(0, Humanoid.HipHeight + 1.5, 0))
 
 	                        if StationaryTower then
-	                            local _, SupportCell = CellKey(Root.Position - Vector3.new(0, Humanoid.HipHeight + 1.5, 0))
 	                            if not TowerColumn then
 	                                TowerColumn = Vector3.new(SupportCell.X, 0, SupportCell.Z)
 	                            end
-	                            local HorizontalOffset: number = (Vector3.new(Root.Position.X, 0, Root.Position.Z) - TowerColumn).Magnitude
-	                            if HorizontalOffset > 2.35 then
+	                            if (Vector3.new(Root.Position.X, 0, Root.Position.Z) - TowerColumn).Magnitude > 2.35 then
 	                                TowerInterrupted = true
 	                            end
 	                        else
@@ -14572,7 +14569,7 @@ Run(function()
 	                        end
 
 	                        if Towering and not TowerInterrupted then
-	                            TryTowerBoost()
+	                            TryTowerBoost(SupportCell, Wool)
 	                        end
 
 	                        -- Preserve the original nearby-structure clutch only
@@ -14625,7 +14622,7 @@ Run(function()
 	                                if not Block then
 	                                    local CellPosition: Vector3 = BlockCell * 3
 	                                    local Placement: Vector3? = CheckAdjacent(CellPosition) and CellPosition or Falling and ClutchPosition or nil
-	                                    if Placement and not HasSafeSurface(Placement) and PlaceScaffoldBlock(Placement, Wool) then
+	                                    if Placement and PlaceScaffoldBlock(Placement, Wool) then
 	                                        LastPosition = CurrentPosition
 	                                        break
 	                                    end
@@ -14638,14 +14635,8 @@ Run(function()
 	                        TowerInterrupted = false
 	                    end
 	                end
-	                -- Sleep toward the next legal send instead of doing expensive
-	                -- full scans every frame. The final wake-up lands close to the
-	                -- CPS boundary, keeping placement responsive without busy-loop lag.
-	                local Interval: number = GetBlockInterval()
-	                local Now: number = workspace:GetServerTimeNow()
-	                local GameDue: number = (tonumber(Bedwars.BlockCpsController.lastPlaceTimestamp) or 0) + Interval
-	                local Due: number = math.max(NextPlacement, GameDue, Store.autoBlockPlacePriority or 0)
-	                task.wait(Due > Now and math.clamp(Due - Now, 0.003, 0.03) or 0.01)
+	                -- Original 0.03 loop, shortened only when FastPlace is faster.
+	                task.wait(math.min(0.03, GetBlockInterval()))
 	            until not Scaffold.Enabled
 	            ClutchPosition = nil
 	            TowerColumn = nil
@@ -14670,8 +14661,7 @@ Run(function()
 	})
 	Tower = Scaffold:CreateToggle({
 	    Name = "Tower",
-	    Default = true,
-	    Tooltip = "Original behavior: Space applies the boost; moving at the same time naturally forms stairs"
+	    Default = true
 	})
 	Downwards = Scaffold:CreateToggle({
 	    Name = "Downwards",
