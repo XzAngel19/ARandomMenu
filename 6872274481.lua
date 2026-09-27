@@ -1,6 +1,6 @@
 --This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.
 local vape = shared.vape
-local ScriptRevision: string = "2026-09-26-r8"
+local ScriptRevision: string = "2026-09-26-r9"
 getgenv().ARandomMenuBedwarsRevision = ScriptRevision
 local loadstring = function(...)
     local Chunk, Message = loadstring(...)
@@ -14369,9 +14369,6 @@ Run(function()
 	local Adjacent, LastPosition, Label, VisualBlock = {}, Vector3.zero
 	local VisualTween, VisualPosition
 	local VisualSpeed: number = 0.1
-	local NextPlacement: number = 0
-	local NextClutchSearch: number = 0
-	local ClutchPosition: Vector3?
 
 	for X: number = -3, 3, 3 do
 	    for Y: number = -3, 3, 3 do
@@ -14394,8 +14391,7 @@ Run(function()
 
 	local function BlockProximity(Position: Vector3): Vector3?
 	    local Magnitude, Closest = 60
-	    local Search: Vector3 = Vector3.new(9, 9, 9)
-	    local Blocks = GetBlocksInPoints(Bedwars.BlockController:getBlockPosition(Position - Search), Bedwars.BlockController:getBlockPosition(Position + Search))
+	    local Blocks = GetBlocksInPoints(Bedwars.BlockController:getBlockPosition(Position - Vector3.new(21, 21, 21)), Bedwars.BlockController:getBlockPosition(Position + Vector3.new(21, 21, 21)))
 	    for _, v: Vector3 in Blocks do
 	        local BlockPosition: Vector3 = NearCorner(v, Position)
 	        local NewMagnitude: number = (Position - BlockPosition).Magnitude
@@ -14418,31 +14414,22 @@ Run(function()
 	end
 	getgenv().checkAdjacent = CheckAdjacent
 
-	local function GetActualWool(ItemType: string?)
-	    local Item = ItemType and GetItem(ItemType)
-	    local Amount: number = Item and (tonumber(Item.amount) or 0) or 0
-	    local Meta = ItemType and Bedwars.ItemMeta[ItemType]
-	    if Item and Amount > 0 and Meta and Meta.block and ItemType:find("wool", 1, true) then
-	        return ItemType, Amount
-	    end
-	    return nil, 0
-	end
-
 	local function GetScaffoldBlock()
-	    if Store.hand.toolType == "block" and Store.hand.tool and Store.hand.tool.Name:find("wool", 1, true) then
-	        local Wool, Amount = GetActualWool(Store.hand.tool.Name)
+	    if Store.hand.toolType == "block" then
+	        return Store.hand.tool.Name, Store.hand.amount
+	    elseif (not LimitItem.Enabled) then
+	        local Wool, Amount = GetWool()
 	        if Wool then
 	            return Wool, Amount
-	        end
-	    end
-	    if not LimitItem.Enabled then
-	        for _, Item: any in Store.inventory.inventory.items do
-	            local Wool, Amount = GetActualWool(Item.itemType)
-	            if Wool then
-	                return Wool, Amount
+	        else
+	            for _, v: any in Store.inventory.inventory.items do
+	                if Bedwars.ItemMeta[v.itemType].block then
+	                    return v.itemType, v.amount
+	                end
 	            end
 	        end
 	    end
+
 	    return nil, 0
 	end
 
@@ -14454,9 +14441,6 @@ Run(function()
 	        end
 
 	        if Callback then
-	            NextPlacement = 0
-	            NextClutchSearch = 0
-	            ClutchPosition = nil
 	            repeat
 	                if Entity.isAlive and not vape.MovementOwner then
 	                    local Wool, Amount = GetScaffoldBlock()
@@ -14476,12 +14460,9 @@ Run(function()
 	                    if Wool then
 	                        local Root: BasePart = Entity.character.RootPart
 	                        local WoolItem = GetItem(Wool)
-	                        if Tower.Enabled and WoolItem and (tonumber(WoolItem.amount) or 0) > 0 and UserInputService:IsKeyDown(Enum.KeyCode.Space) and (not UserInputService:GetFocusedTextBox()) then
+	                        local BlockBelow = GetPlacedBlock(Root.Position - Vector3.new(0, Entity.character.HipHeight + 1.5, 0))
+	                        if Tower.Enabled and WoolItem and (tonumber(WoolItem.amount) or 0) > 0 and BlockBelow and UserInputService:IsKeyDown(Enum.KeyCode.Space) and (not UserInputService:GetFocusedTextBox()) then
 	                            Root.AssemblyLinearVelocity = Vector3.new(Root.AssemblyLinearVelocity.X, 38, Root.AssemblyLinearVelocity.Z)
-	                        end
-	                        local Falling: boolean = Entity.character.Humanoid.FloorMaterial == Enum.Material.Air and Root.AssemblyLinearVelocity.Y < -12
-	                        if not Falling then
-	                            ClutchPosition = nil
 	                        end
 
 	                        for Step: number = Expand.Value, 1, -1 do
@@ -14516,39 +14497,17 @@ Run(function()
 
 	                            local Block, BlockPosition = GetPlacedBlock(CurrentPosition)
 	                            if not Block then
-	                                local CellPosition: Vector3 = BlockPosition * 3
-	                                if CheckAdjacent(CellPosition) then
-	                                    BlockPosition = CellPosition
-	                                elseif Falling then
-	                                    local Now: number = workspace:GetServerTimeNow()
-	                                    if Now >= NextClutchSearch then
-	                                        NextClutchSearch = Now + 0.05
-	                                        ClutchPosition = BlockProximity(CurrentPosition)
-	                                    end
-	                                    BlockPosition = ClutchPosition
-	                                else
-	                                    BlockPosition = nil
-	                                end
-
-	                                if BlockPosition and (Root.Position - BlockPosition).Magnitude <= 18 then
-	                                    local Now: number = workspace:GetServerTimeNow()
-	                                    local Interval: number = 1 / GetBlockPlaceCPS()
-	                                    local GamePlacedAt: number = tonumber(Bedwars.BlockCpsController.lastPlaceTimestamp) or 0
-	                                    if Now >= NextPlacement and (Store.autoBlockPlacePriority or 0) <= Now and Now - GamePlacedAt >= Interval then
-	                                        NextPlacement = Now + Interval
-	                                        task.delay(0, Bedwars.placeBlock, BlockPosition, Wool, false)
-	                                        LastPosition = CurrentPosition
-	                                        break
-	                                    end
+	                                BlockPosition = CheckAdjacent(BlockPosition * 3) and BlockPosition * 3 or BlockProximity(CurrentPosition)
+	                                if BlockPosition then
+	                                    task.delay(0, Bedwars.placeBlock, BlockPosition, Wool, false)
 	                                end
 	                            end
 	                            LastPosition = CurrentPosition
 	                        end
 	                    end
 	                end
-	                task.wait(math.min(0.03, 1 / GetBlockPlaceCPS()))
+	                task.wait(0.03)
 	            until not Scaffold.Enabled
-	            ClutchPosition = nil
 	            if VisualTween then
 	                VisualTween:Cancel()
 	                VisualTween = nil
