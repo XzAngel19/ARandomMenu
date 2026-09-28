@@ -1,6 +1,6 @@
 --This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.
 local vape = shared.vape
-local ScriptRevision: string = "2026-09-26-r9"
+local ScriptRevision: string = "2026-09-26-r10"
 getgenv().ARandomMenuBedwarsRevision = ScriptRevision
 local loadstring = function(...)
     local Chunk, Message = loadstring(...)
@@ -1927,15 +1927,16 @@ Run(function()
         end
 
         local Sightlines = {}
-        -- Nuker's wallchecked bed route must start inside the player's current
-        -- enclosure. A third-person camera can sit beyond a Block-In wall and
-        -- otherwise make the inaccessible far side look like the best route.
-        local Eyes: {Vector3} = CharacterSightOnly and {Entity.character.Head.Position} or {Entity.character.Head.Position, Camera.CFrame.Position}
+        -- Wallcheck belongs to the character, never to a third-person camera
+        -- that may already be outside a Block-In wall. Head/root samples allow
+        -- any opening the player can actually mine through without seeing
+        -- through a solid cell.
+        local CharacterOrigins: {Vector3} = {Entity.character.Head.Position, Entity.character.RootPart.Position}
         local function CanSee(Aim: Vector3): boolean
             if Sightlines[Aim] == nil then
                 Sightlines[Aim] = false
-                for _, v: Vector3 in Eyes do
-                    if Trace(v, Aim) then
+                for _, OriginPosition: Vector3 in CharacterOrigins do
+                    if Trace(OriginPosition, Aim) then
                         Sightlines[Aim] = true
                         break
                     end
@@ -1955,12 +1956,44 @@ Run(function()
             end
         end
 
-        local Visited, Queue, Distances, Exposed, BreakPath = {}, {{0, BlockPosition}}, {[BlockPosition] = 0}, {}, {}
-        local Head: number = 0
+        local RouteCost = BreakMethod or BreakMethods.Health
+        local Visited, Queue, Distances, Exposed, BreakPath = {}, {}, {[BlockPosition] = 0}, {}, {}
+        local function PushQueue(Node)
+            local Index: number = #Queue + 1
+            while Index > 1 do
+                local Parent: number = math.floor(Index / 2)
+                if Queue[Parent][1] <= Node[1] then
+                    break
+                end
+                Queue[Index] = Queue[Parent]
+                Index = Parent
+            end
+            Queue[Index] = Node
+        end
+        local function PopQueue()
+            local First = Queue[1]
+            local Last = table.remove(Queue)
+            if #Queue > 0 then
+                local Index: number = 1
+                while Index * 2 <= #Queue do
+                    local Child: number = Index * 2
+                    if Child < #Queue and Queue[Child + 1][1] < Queue[Child][1] then
+                        Child += 1
+                    end
+                    if Queue[Child][1] >= Last[1] then
+                        break
+                    end
+                    Queue[Index] = Queue[Child]
+                    Index = Child
+                end
+                Queue[Index] = Last
+            end
+            return First
+        end
+        PushQueue({0, BlockPosition})
 
         for _ = 1, 10000 do
-            Head += 1
-            local Node = Queue[Head]
+            local Node = PopQueue()
             if not Node then
                 break
             end
@@ -1971,7 +2004,7 @@ Run(function()
 
             for _, v: Vector3 in Sides do
                 v = Node[2] + v
-                if Visited[v] then
+                if Visited[v] or (v - Origin).Magnitude > MaxRange then
                     continue
                 end
 
@@ -1994,57 +2027,65 @@ Run(function()
                     continue
                 end
 
-                local CurrentDistance: number = Node[1] + GetBlockHits(Block, v)
+                local CurrentDistance: number = Node[1] + RouteCost(Block, v)
                 if CurrentDistance < (Distances[v] or math.huge) then
                     Distances[v] = CurrentDistance
                     BreakPath[v] = Node[2]
-                    table.insert(Queue, {CurrentDistance, v})
+                    PushQueue({CurrentDistance, v})
                 end
             end
         end
 
         local Nearest: boolean = BreakMethod == BreakMethods.Distance
         local Previous = Store.breakTarget
-        local Look: Vector3 = Camera.CFrame.LookVector
         local Candidates = {}
+        local PreviousCandidate
         for Position: Vector3, Openings: {Vector3} in Exposed do
-            local Delta: Vector3 = Position - Origin
-            local Magnitude: number = Delta.Magnitude
+            local Magnitude: number = (Position - Origin).Magnitude
             if Magnitude <= MaxRange then
-                local Facing: number = Magnitude > 0 and Delta:Dot(Look) / Magnitude or 1
-                table.insert(Candidates, {Distances[Position], Position, Openings, Magnitude, Facing, Distances[Position] + (Magnitude / 6) - (Position == Previous and 1.5 or 0)})
+                local Candidate = {Distances[Position] or math.huge, Position, Openings, Magnitude}
+                table.insert(Candidates, Candidate)
+                if Position == Previous then
+                    PreviousCandidate = Candidate
+                end
             end
         end
 
+        local function IsCandidateReachable(Candidate): boolean
+            for _, Opening: Vector3 in Candidate[3] do
+                if SolidOnly and IsOpen(Opening) or not SolidOnly and CanSee(Opening) then
+                    return true
+                end
+            end
+            return false
+        end
+
         table.sort(Candidates, function(A, B): boolean
-            if Nearest then
-                if A[6] ~= B[6] then
-                    return A[6] < B[6]
-                end
-            else
-                if A[1] ~= B[1] then
-                    return A[1] < B[1]
-                end
-                if Previous and (A[2] == Previous) ~= (B[2] == Previous) then
-                    return A[2] == Previous
-                end
+            if Nearest and A[4] ~= B[4] then
+                return A[4] < B[4]
+            end
+            if A[1] ~= B[1] then
+                return A[1] < B[1]
             end
             if A[4] ~= B[4] then
                 return A[4] < B[4]
             end
-            return A[5] > B[5]
+            local AP, BP = A[2], B[2]
+            return AP.X ~= BP.X and AP.X < BP.X or AP.X == BP.X and (AP.Y ~= BP.Y and AP.Y < BP.Y or AP.Y == BP.Y and AP.Z < BP.Z)
         end)
 
+        -- Once a reachable defense block is selected, keep mining it until it
+        -- disappears or a wall makes it invalid. Movement and camera rotation
+        -- must not make Nuker alternate between equal routes.
         local BestPosition, BestCost
-        for _, v: any in Candidates do
-            for _, Opening: Vector3 in v[3] do
-                if SolidOnly and IsOpen(Opening) or not SolidOnly and CanSee(Opening) then
-                    BestPosition, BestCost = v[2], v[1]
+        if PreviousCandidate and IsCandidateReachable(PreviousCandidate) then
+            BestPosition, BestCost = PreviousCandidate[2], PreviousCandidate[1]
+        else
+            for _, Candidate: any in Candidates do
+                if IsCandidateReachable(Candidate) then
+                    BestPosition, BestCost = Candidate[2], Candidate[1]
                     break
                 end
-            end
-            if BestPosition then
-                break
             end
         end
 
@@ -2073,10 +2114,18 @@ Run(function()
 
         for _, v: Vector3 in (Handler and Handler:getContainedPositions(Block) or {Block.Position / 3}) do
             local CellPosition, CellCost, CellPath = CalculatePath(Block, v * 3, not Wallcheck, Method or nil, MaxRange, CharacterSightOnly)
-            local Distance: number = CellPosition and (LocalPosition - CellPosition).Magnitude or math.huge
-            local Hit: boolean = CellPosition == v * 3
-            if CellPosition and (Hit and not Direct or Hit == Direct and (CellCost < Cost or (CellCost == Cost and Position ~= Store.breakTarget and (CellPosition == Store.breakTarget or Distance < (LocalPosition - Position).Magnitude)))) then
-                Cost, Position, Target, BreakPath, Direct = CellCost, CellPosition, v * 3, CellPath, Hit
+            if CellPosition then
+                local Distance: number = (LocalPosition - CellPosition).Magnitude
+                local Hit: boolean = CellPosition == v * 3
+                local Sticky: boolean = CellPosition == Store.breakTarget
+                local CurrentSticky: boolean = Position == Store.breakTarget
+                local Better: boolean = Position == nil
+                    or Hit ~= Direct and Hit
+                    or Hit == Direct and Sticky ~= CurrentSticky and Sticky
+                    or Hit == Direct and Sticky == CurrentSticky and (CellCost < Cost or CellCost == Cost and Distance < (LocalPosition - Position).Magnitude)
+                if Better then
+                    Cost, Position, Target, BreakPath, Direct = CellCost, CellPosition, v * 3, CellPath, Hit
+                end
             end
         end
 
@@ -2267,6 +2316,7 @@ Run(function()
             player = select(5, ...)
         }
         table.clear(PathCache)
+        table.clear(EnclosedPathCache)
         VapeEvents.BreakBlockEvent:Fire(Data)
     end))
 
@@ -2317,9 +2367,11 @@ Run(function()
             Store.map = Map
             vape:Clean(Map.Blocks.ChildRemoved:Connect(function()
                 table.clear(PathCache)
+                table.clear(EnclosedPathCache)
             end))
             vape:Clean(Map.Blocks.ChildAdded:Connect(function(Block: Instance)
                 table.clear(PathCache)
+                table.clear(EnclosedPathCache)
                 task.defer(function()
                     if Block:IsA("BasePart") and Block:GetAttribute("Block") and (Block:GetAttribute("PlacedByUserId") or 0) ~= 0 then
                         local Position: Vector3 = Block.Position / 3
@@ -2555,6 +2607,7 @@ Run(function()
         table.clear(Bedwars)
         table.clear(Store)
         table.clear(PathCache)
+        table.clear(EnclosedPathCache)
         table.clear(Sides)
         StoreChanged:disconnect()
         StoreChanged = nil
@@ -14369,6 +14422,8 @@ Run(function()
 	local Adjacent, LastPosition, Label, VisualBlock = {}, Vector3.zero
 	local VisualTween, VisualPosition
 	local VisualSpeed: number = 0.1
+	local NextPlacement: number = 0
+	local PlacementInterval: number = 1 / 12
 
 	for X: number = -3, 3, 3 do
 	    for Y: number = -3, 3, 3 do
@@ -14441,6 +14496,7 @@ Run(function()
 	        end
 
 	        if Callback then
+	            NextPlacement = 0
 	            repeat
 	                if Entity.isAlive and not vape.MovementOwner then
 	                    local Wool, Amount = GetScaffoldBlock()
@@ -14499,14 +14555,22 @@ Run(function()
 	                            if not Block then
 	                                BlockPosition = CheckAdjacent(BlockPosition * 3) and BlockPosition * 3 or BlockProximity(CurrentPosition)
 	                                if BlockPosition then
-	                                    task.delay(0, Bedwars.placeBlock, BlockPosition, Wool, false)
+	                                    local Now: number = workspace:GetServerTimeNow()
+	                                    local GamePlacedAt: number = tonumber(Bedwars.BlockCpsController.lastPlaceTimestamp) or 0
+	                                    if Now >= NextPlacement and Now - GamePlacedAt >= PlacementInterval and (Store.autoBlockPlacePriority or 0) <= Now then
+	                                        NextPlacement = Now + PlacementInterval
+	                                        task.delay(0, Bedwars.placeBlock, BlockPosition, Wool, false)
+	                                        LastPosition = CurrentPosition
+	                                        break
+	                                    end
 	                                end
 	                            end
 	                            LastPosition = CurrentPosition
 	                        end
 	                    end
 	                end
-	                task.wait(0.03)
+	                local PlacementWait: number = NextPlacement - workspace:GetServerTimeNow()
+	                task.wait(PlacementWait > 0 and math.min(0.03, PlacementWait) or 0.03)
 	            until not Scaffold.Enabled
 	            if VisualTween then
 	                VisualTween:Cancel()
@@ -17177,7 +17241,7 @@ Run(function()
 	                continue
 	            end
 	        end
-	        if Wallcheck.Enabled and not ClosestBreak.Enabled and ViewAngle.Value < 180 then
+	        if not Route and Wallcheck.Enabled and not ClosestBreak.Enabled and ViewAngle.Value < 180 then
 	            local Offset: Vector3 = v.Position - Camera.CFrame.Position
 	            if Offset.Magnitude > 0 and math.deg(math.acos(math.clamp(Offset.Unit:Dot(Camera.CFrame.LookVector), -1, 1))) > ViewAngle.Value then
 	                continue
@@ -17355,7 +17419,7 @@ Run(function()
 	    Name = "Break speed",
 	    Min = 0,
 	    Max = 0.3,
-	    Default = 0.25,
+	    Default = 0.1,
 	    Decimal = 100,
 	    Suffix = "seconds"
 	})
@@ -17431,13 +17495,13 @@ Run(function()
 	        end
 	    end,
 	    Default = true,
-	    Tooltip = "Enable or disable all Nuker wall/path checks"
+	    Tooltip = "Routes from your character through openings that are not blocked by walls; the camera is never used as a shortcut"
 	})
 	BlockInWallcheck = Nuker:CreateToggle({
 	    Name = "Block-In aware",
 	    Default = true,
 	    Darker = true,
-	    Tooltip = "When boxed in, only selects the bed-defense wall reachable from your character's side; disable this to use the old camera-aware route"
+	    Tooltip = "When boxed in, treats your own Block-In shell as a boundary and chooses a reachable enemy bed-defense route"
 	})
 	ViewAngle = Nuker:CreateSlider({
 	    Name = "View angle",
@@ -17446,7 +17510,7 @@ Run(function()
 	    Default = 60,
 	    Suffix = "degrees",
 	    Darker = true,
-	    Tooltip = "How far off your crosshair a block can sit in legit mode, 180 breaks anything in range"
+	    Tooltip = "Camera angle filter for non-bed targets; bed routing uses character wallcheck and remains stable while you move"
 	})
 	AutoTool = Nuker:CreateToggle({
 	    Name = "Auto Tool",
