@@ -1,6 +1,6 @@
 --This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.
 local vape = shared.vape
-local ScriptRevision: string = "2026-09-26-r10"
+local ScriptRevision: string = "2026-09-26-r11"
 getgenv().ARandomMenuBedwarsRevision = ScriptRevision
 local loadstring = function(...)
     local Chunk, Message = loadstring(...)
@@ -14422,8 +14422,6 @@ Run(function()
 	local Adjacent, LastPosition, Label, VisualBlock = {}, Vector3.zero
 	local VisualTween, VisualPosition
 	local VisualSpeed: number = 0.1
-	local NextPlacement: number = 0
-	local PlacementInterval: number = 1 / 12
 
 	for X: number = -3, 3, 3 do
 	    for Y: number = -3, 3, 3 do
@@ -14496,7 +14494,6 @@ Run(function()
 	        end
 
 	        if Callback then
-	            NextPlacement = 0
 	            repeat
 	                if Entity.isAlive and not vape.MovementOwner then
 	                    local Wool, Amount = GetScaffoldBlock()
@@ -14555,22 +14552,14 @@ Run(function()
 	                            if not Block then
 	                                BlockPosition = CheckAdjacent(BlockPosition * 3) and BlockPosition * 3 or BlockProximity(CurrentPosition)
 	                                if BlockPosition then
-	                                    local Now: number = workspace:GetServerTimeNow()
-	                                    local GamePlacedAt: number = tonumber(Bedwars.BlockCpsController.lastPlaceTimestamp) or 0
-	                                    if Now >= NextPlacement and Now - GamePlacedAt >= PlacementInterval and (Store.autoBlockPlacePriority or 0) <= Now then
-	                                        NextPlacement = Now + PlacementInterval
-	                                        task.delay(0, Bedwars.placeBlock, BlockPosition, Wool, false)
-	                                        LastPosition = CurrentPosition
-	                                        break
-	                                    end
+	                                    task.delay(0, Bedwars.placeBlock, BlockPosition, Wool, false)
 	                                end
 	                            end
 	                            LastPosition = CurrentPosition
 	                        end
 	                    end
 	                end
-	                local PlacementWait: number = NextPlacement - workspace:GetServerTimeNow()
-	                task.wait(PlacementWait > 0 and math.min(0.03, PlacementWait) or 0.03)
+	                task.wait(0.03)
 	            until not Scaffold.Enabled
 	            if VisualTween then
 	                VisualTween:Cancel()
