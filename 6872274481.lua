@@ -1,6 +1,6 @@
 --This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.
 local vape = shared.vape
-local ScriptRevision: string = "2026-09-29-r13"
+local ScriptRevision: string = "2026-09-29-r14"
 getgenv().ARandomMenuBedwarsRevision = ScriptRevision
 local loadstring = function(...)
     local Chunk, Message = loadstring(...)
@@ -16591,58 +16591,8 @@ Run(function()
 	    return RoundPosition(Hit and Vector3.new(Position.X, Hit.Position.Y + 1.5, Position.Z) or Position)
 	end
 	
-	local function IsOnBedStructure(Cells: {Vector3}, FootPosition: Vector3, RootSize: Vector3): boolean
-	    -- Root.Position can cross a cell boundary while part of the character is
-	    -- still standing on the edge of a defense block. Test actual footprint
-	    -- overlap instead of rounding only the root's center to one support cell.
-	    local LimitX: number = 1.45 + (RootSize.X * 0.5)
-	    local LimitZ: number = 1.45 + (RootSize.Z * 0.5)
-	    local function SupportsCharacter(Position: Vector3): boolean
-	        return GetPlacedBlock(Position) ~= nil
-	            and math.abs(Position.Y - FootPosition.Y) <= 0.75
-	            and math.abs(Position.X - FootPosition.X) <= LimitX
-	            and math.abs(Position.Z - FootPosition.Z) <= LimitZ
-	    end
-
-	    local Queue, Visited = {}, {}
-	    local Head: number = 1
-	    for _, Cell: Vector3 in Cells do
-	        local Position: Vector3 = Cell * 3
-	        Visited[Position] = true
-	        table.insert(Queue, {Position, 0})
-	    end
-
-	    while Queue[Head] do
-	        local Position: Vector3, Depth: number = Queue[Head][1], Queue[Head][2]
-	        Head += 1
-	        if SupportsCharacter(Position) then
-	            return true
-	        end
-	        if Depth >= 2 then
-	            continue
-	        end
-	        for _, Side: Vector3 in Sides do
-	            local NextPosition: Vector3 = Position + Side
-	            if Visited[NextPosition] then
-	                continue
-	            end
-	            Visited[NextPosition] = true
-	            local Block = GetPlacedBlock(NextPosition)
-	            if Block and (Block:GetAttribute("PlacedByUserId") or 0) ~= 0 then
-	                table.insert(Queue, {NextPosition, Depth + 1})
-	            end
-	        end
-	    end
-	    return false
-	end
-
 	local function GetBedNear()
-	    if Entity.character.Humanoid.FloorMaterial == Enum.Material.Air then
-	        return nil
-	    end
-	    local Root: BasePart = Entity.character.RootPart
-	    local LocalPosition: Vector3 = Root.Position
-	    local FootPosition: Vector3 = LocalPosition - Vector3.new(0, Entity.character.HipHeight + 1.5, 0)
+	    local LocalPosition: Vector3 = Entity.character.RootPart.Position
 	    for _, v: BasePart in CollectionService:GetTagged("bed") do
 	        if (LocalPosition - v.Position).Magnitude >= 14 or v:GetAttribute(`Team{LocalPlayer:GetAttribute("Team") or -1}NoBreak`) then
 	            continue
@@ -16650,7 +16600,26 @@ Run(function()
 	
 	        local Handler = Bedwars.BlockController:getHandlerRegistry():getHandler(v.Name)
 	        local Cells = Handler and Handler:getContainedPositions(v) or {v.Position / 3}
-	        if IsOnBedStructure(Cells, FootPosition, Root.Size) then
+	        local Occupied = {}
+	        for _, Cell: Vector3 in Cells do
+	            Occupied[Cell * 3] = true
+	        end
+
+	        local Defended: boolean = true
+	        for _, Cell: Vector3 in Cells do
+	            for i: number = 1, #Sides do
+	                local Position: Vector3 = (Cell * 3) + Sides[i]
+	                if not Occupied[Position] and not GetPlacedBlock(Position) then
+	                    Defended = false
+	                    break
+	                end
+	            end
+	            if not Defended then
+	                break
+	            end
+	        end
+
+	        if Defended then
 	            return v
 	        end
 	    end
@@ -16851,7 +16820,7 @@ Run(function()
 	                        end
 	                    end
 	                elseif Mode.Value == "On bind" then
-	                    SendNotification("Block-In", "Stand on the enemy bed or its defense before using Block-In", 4, "alert")
+	                    SendNotification("Block-In", "Move near a fully defended enemy bed before using Block-In", 4, "alert")
 	                end
 	
 	                if Mode.Value == "On bind" then
@@ -16872,7 +16841,7 @@ Run(function()
 	    Name = "Mode",
 	    List = {"On bind", "When near"},
 	    Default = "On bind",
-	    Tooltip = "Both modes require you to stand on the enemy bed or its connected defense; When near repeats automatically"
+	    Tooltip = "Uses the original nearby defended-bed detection; When near repeats automatically"
 	})
 	Patch = BlockIn:CreateToggle({
 	    Name = "Patch",
