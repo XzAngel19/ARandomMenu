@@ -1,6 +1,6 @@
 --This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.
 local vape = shared.vape
-local ScriptRevision: string = "2026-09-29-r14"
+local ScriptRevision: string = "2026-09-30-r15"
 getgenv().ARandomMenuBedwarsRevision = ScriptRevision
 local loadstring = function(...)
     local Chunk, Message = loadstring(...)
@@ -2004,7 +2004,11 @@ Run(function()
 
             for _, v: Vector3 in Sides do
                 v = Node[2] + v
-                if Visited[v] or (v - Origin).Magnitude > MaxRange then
+                -- Plan through the whole local bed defense, even when an inner
+                -- block or the bed itself is just outside legal break range.
+                -- Range remains a hard constraint when candidates are chosen
+                -- and again before the server break request is sent.
+                if Visited[v] or (v - BlockPosition).Magnitude > 15 then
                     continue
                 end
 
@@ -2036,14 +2040,17 @@ Run(function()
             end
         end
 
-        local Nearest: boolean = BreakMethod == BreakMethods.Distance
         local Previous = Store.breakTarget
+        local PreviousCleared: boolean = Previous ~= nil and GetPlacedBlock(Previous) == nil
+        local ContinuesClearedRoute: boolean = false
         local Candidates = {}
         local PreviousCandidate
         for Position: Vector3, Openings: {Vector3} in Exposed do
             local Magnitude: number = (Position - Origin).Magnitude
+            local ClearedContinuation: boolean = PreviousCleared and table.find(Openings, Previous) ~= nil
+            ContinuesClearedRoute = ContinuesClearedRoute or ClearedContinuation
             if Magnitude <= MaxRange then
-                local Candidate = {Distances[Position] or math.huge, Position, Openings, Magnitude}
+                local Candidate = {Distances[Position] or math.huge, Position, Openings, Magnitude, ClearedContinuation}
                 table.insert(Candidates, Candidate)
                 if Position == Previous then
                     PreviousCandidate = Candidate
@@ -2051,9 +2058,13 @@ Run(function()
             end
         end
 
+        local function IsOpeningReachable(Opening: Vector3): boolean
+            return SolidOnly and IsOpen(Opening) or not SolidOnly and CanSee(Opening)
+        end
+
         local function IsCandidateReachable(Candidate): boolean
             for _, Opening: Vector3 in Candidate[3] do
-                if SolidOnly and IsOpen(Opening) or not SolidOnly and CanSee(Opening) then
+                if IsOpeningReachable(Opening) then
                     return true
                 end
             end
@@ -2078,9 +2089,9 @@ Run(function()
         end
 
         table.sort(Candidates, function(A, B): boolean
-            if Nearest and A[4] ~= B[4] then
-                return A[4] < B[4]
-            end
+            -- The complete cost back to the bed is the strategic value. Raw
+            -- distance to the player is only a tie-breaker; otherwise a nearby
+            -- unrelated face wins over the useful block at the edge of range.
             if A[1] ~= B[1] then
                 return A[1] < B[1]
             end
@@ -2092,11 +2103,25 @@ Run(function()
         end)
 
         -- Keep the current route precise. If an enemy covers the block being
-        -- mined, the new outer blocker points back to it through BreakPath, so
-        -- mine that blocker instead of retracting to another side of the bed.
+        -- mined, the new outer blocker points back to it through BreakPath. If
+        -- the selected block was broken, its empty cell is the exact opening
+        -- to the next inner block, so continue inward instead of changing sides.
         local BestPosition, BestCost
         if PreviousCandidate and IsCandidateReachable(PreviousCandidate) then
             BestPosition, BestCost = PreviousCandidate[2], PreviousCandidate[1]
+        elseif PreviousCleared then
+            for _, Candidate: any in Candidates do
+                if Candidate[5] and IsOpeningReachable(Previous) then
+                    BestPosition, BestCost = Candidate[2], Candidate[1]
+                    break
+                end
+            end
+            -- The next block (or bed) on this corridor exists but is currently
+            -- outside range or character-side reach. Wait for a legal position;
+            -- do not spend time opening an unrelated side of the defense.
+            if not BestPosition and ContinuesClearedRoute then
+                return nil, nil, BreakPath
+            end
         elseif Previous then
             for _, Candidate: any in Candidates do
                 if ContinuesPreviousRoute(Candidate) and IsCandidateReachable(Candidate) then
