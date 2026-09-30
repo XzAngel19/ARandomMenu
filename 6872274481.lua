@@ -1,6 +1,6 @@
 --This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.
 local vape = shared.vape
-local ScriptRevision: string = "2026-09-26-r11"
+local ScriptRevision: string = "2026-09-26-r12"
 getgenv().ARandomMenuBedwarsRevision = ScriptRevision
 local loadstring = function(...)
     local Chunk, Message = loadstring(...)
@@ -2060,6 +2060,23 @@ Run(function()
             return false
         end
 
+        local function ContinuesPreviousRoute(Candidate): boolean
+            if not Previous then
+                return false
+            end
+            local Current: Vector3? = Candidate[2]
+            for _ = 1, 100 do
+                if Current == Previous then
+                    return true
+                end
+                Current = Current and BreakPath[Current] or nil
+                if not Current then
+                    break
+                end
+            end
+            return false
+        end
+
         table.sort(Candidates, function(A, B): boolean
             if Nearest and A[4] ~= B[4] then
                 return A[4] < B[4]
@@ -2074,13 +2091,21 @@ Run(function()
             return AP.X ~= BP.X and AP.X < BP.X or AP.X == BP.X and (AP.Y ~= BP.Y and AP.Y < BP.Y or AP.Y == BP.Y and AP.Z < BP.Z)
         end)
 
-        -- Once a reachable defense block is selected, keep mining it until it
-        -- disappears or a wall makes it invalid. Movement and camera rotation
-        -- must not make Nuker alternate between equal routes.
+        -- Keep the current route precise. If an enemy covers the block being
+        -- mined, the new outer blocker points back to it through BreakPath, so
+        -- mine that blocker instead of retracting to another side of the bed.
         local BestPosition, BestCost
         if PreviousCandidate and IsCandidateReachable(PreviousCandidate) then
             BestPosition, BestCost = PreviousCandidate[2], PreviousCandidate[1]
-        else
+        elseif Previous then
+            for _, Candidate: any in Candidates do
+                if ContinuesPreviousRoute(Candidate) and IsCandidateReachable(Candidate) then
+                    BestPosition, BestCost = Candidate[2], Candidate[1]
+                    break
+                end
+            end
+        end
+        if not BestPosition then
             for _, Candidate: any in Candidates do
                 if IsCandidateReachable(Candidate) then
                     BestPosition, BestCost = Candidate[2], Candidate[1]
@@ -2109,10 +2134,26 @@ Run(function()
         end
         local Handler = Bedwars.BlockController:getHandlerRegistry():getHandler(Block.Name)
         local LocalPosition: Vector3 = Entity.character.RootPart.Position
+        local ContainedPositions = Handler and Handler:getContainedPositions(Block) or {Block.Position / 3}
+        local ExposedBed: boolean = false
+        if Wallcheck and Block:HasTag("bed") then
+            for _, BedCell: Vector3 in ContainedPositions do
+                for _, Side: Vector3 in Sides do
+                    if not GetPlacedBlock((BedCell * 3) + Side) then
+                        ExposedBed = true
+                        break
+                    end
+                end
+                if ExposedBed then
+                    break
+                end
+            end
+        end
+
         local Cost, Position, Target, BreakPath = math.huge
         local Direct: boolean = false
 
-        for _, v: Vector3 in (Handler and Handler:getContainedPositions(Block) or {Block.Position / 3}) do
+        for _, v: Vector3 in ContainedPositions do
             local CellPosition, CellCost, CellPath = CalculatePath(Block, v * 3, not Wallcheck, Method or nil, MaxRange, CharacterSightOnly)
             if CellPosition then
                 local Distance: number = (LocalPosition - CellPosition).Magnitude
@@ -2129,6 +2170,12 @@ Run(function()
             end
         end
 
+        -- If any bed face is already open, wallcheck must either mine the bed
+        -- directly or wait. It must not waste time retracting to a nearby
+        -- defense block on another side.
+        if ExposedBed and not Direct then
+            return
+        end
         if DirectOnly and not Direct then
             return
         end
@@ -14518,8 +14565,22 @@ Run(function()
 	                            Root.AssemblyLinearVelocity = Vector3.new(Root.AssemblyLinearVelocity.X, 38, Root.AssemblyLinearVelocity.Z)
 	                        end
 
+	                        -- Only bias the original proximity fallback during a
+	                        -- real fall. Normal bridges, towers and stairs keep the
+	                        -- exact original position calculation below.
+	                        local ClutchOffset: Vector3 = Vector3.zero
+	                        if Entity.character.Humanoid.FloorMaterial == Enum.Material.Air and Root.AssemblyLinearVelocity.Y < -12 and Entity.character.Humanoid.MoveDirection.Magnitude < 0.05 then
+	                            local Horizontal: Vector3 = Root.AssemblyLinearVelocity * Vector3.new(1, 0, 1)
+	                            if Horizontal.Magnitude < 0.05 then
+	                                Horizontal = Camera.CFrame.LookVector * Vector3.new(1, 0, 1)
+	                            end
+	                            if Horizontal.Magnitude >= 0.05 then
+	                                ClutchOffset = Horizontal.Unit * 3
+	                            end
+	                        end
+
 	                        for Step: number = Expand.Value, 1, -1 do
-	                            local CurrentPosition: Vector3 = RoundPosition(Root.Position - Vector3.new(0, Entity.character.HipHeight + (Downwards.Enabled and UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) and 4.5 or 1.5), 0) + Entity.character.Humanoid.MoveDirection * (Step * 3))
+	                            local CurrentPosition: Vector3 = RoundPosition(Root.Position - Vector3.new(0, Entity.character.HipHeight + (Downwards.Enabled and UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) and 4.5 or 1.5), 0) + Entity.character.Humanoid.MoveDirection * (Step * 3) + ClutchOffset)
 	                            if Diagonal.Enabled then
 	                                if math.abs(math.round(math.deg(math.atan2(-Entity.character.Humanoid.MoveDirection.X, -Entity.character.Humanoid.MoveDirection.Z)) / 45) * 45) % 90 == 45 then
 	                                    local Delta: Vector3 = (LastPosition - CurrentPosition)
@@ -16530,8 +16591,50 @@ Run(function()
 	    return RoundPosition(Hit and Vector3.new(Position.X, Hit.Position.Y + 1.5, Position.Z) or Position)
 	end
 	
+	local function IsOnBedStructure(Cells: {Vector3}, SupportPosition: Vector3): boolean
+	    local Support = GetPlacedBlock(SupportPosition)
+	    if not Support then
+	        return false
+	    end
+
+	    local Queue, Visited = {}, {}
+	    local Head: number = 1
+	    for _, Cell: Vector3 in Cells do
+	        local Position: Vector3 = Cell * 3
+	        Visited[Position] = true
+	        table.insert(Queue, {Position, 0})
+	    end
+
+	    while Queue[Head] do
+	        local Position: Vector3, Depth: number = Queue[Head][1], Queue[Head][2]
+	        Head += 1
+	        if Position == SupportPosition then
+	            return true
+	        end
+	        if Depth >= 2 then
+	            continue
+	        end
+	        for _, Side: Vector3 in Sides do
+	            local NextPosition: Vector3 = Position + Side
+	            if Visited[NextPosition] then
+	                continue
+	            end
+	            Visited[NextPosition] = true
+	            local Block = GetPlacedBlock(NextPosition)
+	            if Block and (Block:GetAttribute("PlacedByUserId") or 0) ~= 0 then
+	                table.insert(Queue, {NextPosition, Depth + 1})
+	            end
+	        end
+	    end
+	    return false
+	end
+
 	local function GetBedNear()
+	    if Entity.character.Humanoid.FloorMaterial == Enum.Material.Air then
+	        return nil
+	    end
 	    local LocalPosition: Vector3 = Entity.character.RootPart.Position
+	    local SupportPosition: Vector3 = Bedwars.BlockController:getBlockPosition(LocalPosition - Vector3.new(0, Entity.character.HipHeight + 1.5, 0)) * 3
 	    for _, v: BasePart in CollectionService:GetTagged("bed") do
 	        if (LocalPosition - v.Position).Magnitude >= 14 or v:GetAttribute(`Team{LocalPlayer:GetAttribute("Team") or -1}NoBreak`) then
 	            continue
@@ -16539,26 +16642,7 @@ Run(function()
 	
 	        local Handler = Bedwars.BlockController:getHandlerRegistry():getHandler(v.Name)
 	        local Cells = Handler and Handler:getContainedPositions(v) or {v.Position / 3}
-	        local Occupied = {}
-	        for _, Cell: Vector3 in Cells do
-	            Occupied[Cell * 3] = true
-	        end
-	
-	        local Defended: boolean = true
-	        for _, Cell: Vector3 in Cells do
-	            for i: number = 1, #Sides do
-	                local Position: Vector3 = (Cell * 3) + Sides[i]
-	                if not Occupied[Position] and not GetPlacedBlock(Position) then
-	                    Defended = false
-	                    break
-	                end
-	            end
-	            if not Defended then
-	                break
-	            end
-	        end
-	
-	        if Defended then
+	        if IsOnBedStructure(Cells, SupportPosition) then
 	            return v
 	        end
 	    end
@@ -16736,11 +16820,12 @@ Run(function()
 	    Function = function(Callback: boolean)
 	        if Callback then
 	            repeat
-	                if Entity.isAlive and (Mode.Value == "On bind" or GetBedNear()) then
+	                local Bed = Entity.isAlive and GetBedNear()
+	                if Bed then
 	                    local Early: boolean = false
 	                    repeat
 	                        task.wait()
-	                        if Entity.isAlive and not Early then
+	                        if Entity.isAlive and not Early and GetBedNear() then
 	                            local Origin: Vector3 = GetOrigin()
 	                            local Drop: number = Entity.character.RootPart.Position.Y - Origin.Y
 	                            Early = Drop >= 6 and Drop <= 24
@@ -16750,13 +16835,15 @@ Run(function()
 	                        end
 	                    until not BlockIn.Enabled or not Entity.isAlive or Entity.character.Humanoid.FloorMaterial ~= Enum.Material.Air
 	
-	                    if Entity.isAlive then
+	                    if Entity.isAlive and GetBedNear() then
 	                        local Origin: Vector3 = GetOrigin()
 	                        PlacePattern(Origin, GetPattern(Origin, GetPlacedBlock), math.huge)
-	                        if Patch.Enabled and Entity.isAlive then
+	                        if Patch.Enabled and Entity.isAlive and GetBedNear() then
 	                            PlacePattern(Origin, GetPatchPattern(Origin), math.huge)
 	                        end
 	                    end
+	                elseif Mode.Value == "On bind" then
+	                    SendNotification("Block-In", "Stand on the enemy bed or its defense before using Block-In", 4, "alert")
 	                end
 	
 	                if Mode.Value == "On bind" then
@@ -16777,7 +16864,7 @@ Run(function()
 	    Name = "Mode",
 	    List = {"On bind", "When near"},
 	    Default = "On bind",
-	    Tooltip = "On bind blocks you in once per keypress, When near keeps you blocked in while you are on an enemy bed"
+	    Tooltip = "Both modes require you to stand on the enemy bed or its connected defense; When near repeats automatically"
 	})
 	Patch = BlockIn:CreateToggle({
 	    Name = "Patch",
