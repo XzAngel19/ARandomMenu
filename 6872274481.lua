@@ -1,6 +1,6 @@
 --This watermark is used to delete the file if its cached, remove it to make the file persist after vape updates.
 local vape = shared.vape
-local ScriptRevision: string = "2026-09-26-r12"
+local ScriptRevision: string = "2026-09-29-r13"
 getgenv().ARandomMenuBedwarsRevision = ScriptRevision
 local loadstring = function(...)
     local Chunk, Message = loadstring(...)
@@ -2135,16 +2135,16 @@ Run(function()
         local Handler = Bedwars.BlockController:getHandlerRegistry():getHandler(Block.Name)
         local LocalPosition: Vector3 = Entity.character.RootPart.Position
         local ContainedPositions = Handler and Handler:getContainedPositions(Block) or {Block.Position / 3}
-        local ExposedBed: boolean = false
-        if Wallcheck and Block:HasTag("bed") then
+        local OpenedSelectedFace: boolean = false
+        if Wallcheck and Block:HasTag("bed") and Store.breakTarget and not GetPlacedBlock(Store.breakTarget) then
             for _, BedCell: Vector3 in ContainedPositions do
                 for _, Side: Vector3 in Sides do
-                    if not GetPlacedBlock((BedCell * 3) + Side) then
-                        ExposedBed = true
+                    if (BedCell * 3) + Side == Store.breakTarget then
+                        OpenedSelectedFace = true
                         break
                     end
                 end
-                if ExposedBed then
+                if OpenedSelectedFace then
                     break
                 end
             end
@@ -2170,10 +2170,10 @@ Run(function()
             end
         end
 
-        -- If any bed face is already open, wallcheck must either mine the bed
-        -- directly or wait. It must not waste time retracting to a nearby
-        -- defense block on another side.
-        if ExposedBed and not Direct then
+        -- Only an opening made on our selected corridor should make wallcheck
+        -- wait for a direct bed hit. An unreachable opening made by a teammate
+        -- on the far side must not interrupt the reachable block already mined.
+        if OpenedSelectedFace and not Direct then
             return
         end
         if DirectOnly and not Direct then
@@ -16591,10 +16591,17 @@ Run(function()
 	    return RoundPosition(Hit and Vector3.new(Position.X, Hit.Position.Y + 1.5, Position.Z) or Position)
 	end
 	
-	local function IsOnBedStructure(Cells: {Vector3}, SupportPosition: Vector3): boolean
-	    local Support = GetPlacedBlock(SupportPosition)
-	    if not Support then
-	        return false
+	local function IsOnBedStructure(Cells: {Vector3}, FootPosition: Vector3, RootSize: Vector3): boolean
+	    -- Root.Position can cross a cell boundary while part of the character is
+	    -- still standing on the edge of a defense block. Test actual footprint
+	    -- overlap instead of rounding only the root's center to one support cell.
+	    local LimitX: number = 1.45 + (RootSize.X * 0.5)
+	    local LimitZ: number = 1.45 + (RootSize.Z * 0.5)
+	    local function SupportsCharacter(Position: Vector3): boolean
+	        return GetPlacedBlock(Position) ~= nil
+	            and math.abs(Position.Y - FootPosition.Y) <= 0.75
+	            and math.abs(Position.X - FootPosition.X) <= LimitX
+	            and math.abs(Position.Z - FootPosition.Z) <= LimitZ
 	    end
 
 	    local Queue, Visited = {}, {}
@@ -16608,7 +16615,7 @@ Run(function()
 	    while Queue[Head] do
 	        local Position: Vector3, Depth: number = Queue[Head][1], Queue[Head][2]
 	        Head += 1
-	        if Position == SupportPosition then
+	        if SupportsCharacter(Position) then
 	            return true
 	        end
 	        if Depth >= 2 then
@@ -16633,8 +16640,9 @@ Run(function()
 	    if Entity.character.Humanoid.FloorMaterial == Enum.Material.Air then
 	        return nil
 	    end
-	    local LocalPosition: Vector3 = Entity.character.RootPart.Position
-	    local SupportPosition: Vector3 = Bedwars.BlockController:getBlockPosition(LocalPosition - Vector3.new(0, Entity.character.HipHeight + 1.5, 0)) * 3
+	    local Root: BasePart = Entity.character.RootPart
+	    local LocalPosition: Vector3 = Root.Position
+	    local FootPosition: Vector3 = LocalPosition - Vector3.new(0, Entity.character.HipHeight + 1.5, 0)
 	    for _, v: BasePart in CollectionService:GetTagged("bed") do
 	        if (LocalPosition - v.Position).Magnitude >= 14 or v:GetAttribute(`Team{LocalPlayer:GetAttribute("Team") or -1}NoBreak`) then
 	            continue
@@ -16642,7 +16650,7 @@ Run(function()
 	
 	        local Handler = Bedwars.BlockController:getHandlerRegistry():getHandler(v.Name)
 	        local Cells = Handler and Handler:getContainedPositions(v) or {v.Position / 3}
-	        if IsOnBedStructure(Cells, SupportPosition) then
+	        if IsOnBedStructure(Cells, FootPosition, Root.Size) then
 	            return v
 	        end
 	    end
