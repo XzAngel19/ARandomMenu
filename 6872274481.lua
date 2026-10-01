@@ -1,5 +1,5 @@
 local vape = shared.vape
-local ScriptRevision: string = "2026-10-01-r17"
+local ScriptRevision: string = "2026-10-01-r18"
 getgenv().ARandomMenuBedwarsRevision = ScriptRevision
 local loadstring = function(...)
     local Chunk, Message = loadstring(...)
@@ -15823,17 +15823,18 @@ Run(function()
 	getgenv().checkAdjacent = CheckAdjacent
 	
 	local function GetScaffoldBlock()
-	    if Store.hand.toolType == "block" then
-	        return Store.hand.tool.Name, Store.hand.amount
-	    elseif (not LimitItem.Enabled) then
+	    local HeldAmount: number = tonumber(Store.hand.amount) or 0
+	    if Store.hand.toolType == "block" and Store.hand.tool and HeldAmount > 0 then
+	        return Store.hand.tool.Name, HeldAmount
+	    elseif not LimitItem.Enabled then
 	        local Wool, Amount = GetWool()
-	        if Wool then
+	        if Wool and (tonumber(Amount) or 0) > 0 then
 	            return Wool, Amount
-	        else
-	            for _, v: any in Store.inventory.inventory.items do
-	                if Bedwars.ItemMeta[v.itemType].block then
-	                    return v.itemType, v.amount
-	                end
+	        end
+	        for _, v: any in Store.inventory.inventory.items do
+	            local Meta = Bedwars.ItemMeta[v.itemType]
+	            if Meta and Meta.block and (tonumber(v.amount) or 0) > 0 then
+	                return v.itemType, v.amount
 	            end
 	        end
 	    end
@@ -15849,6 +15850,9 @@ Run(function()
 	        end
 	
 	        if Callback then
+	            -- A fresh toggle must not inherit Diagonal state from an older
+	            -- bridge, but the original placement loop stays untouched.
+	            LastPosition = Vector3.zero
 	            repeat
 	                if Entity.isAlive and not vape.MovementOwner then
 	                    local Wool, Amount = GetScaffoldBlock()
@@ -15872,22 +15876,8 @@ Run(function()
 	                            Root.AssemblyLinearVelocity = Vector3.new(Root.AssemblyLinearVelocity.X, 38, Root.AssemblyLinearVelocity.Z)
 	                        end
 	
-	                        -- Preserve the upstream Scaffold path and add one cell
-	                        -- of horizontal control only for a genuine stationary
-	                        -- fall. Movement bridges, stairs and Tower stay original.
-	                        local ClutchOffset: Vector3 = Vector3.zero
-	                        if Entity.character.Humanoid.FloorMaterial == Enum.Material.Air and Root.AssemblyLinearVelocity.Y < -12 and Entity.character.Humanoid.MoveDirection.Magnitude < 0.05 then
-	                            local Horizontal: Vector3 = Root.AssemblyLinearVelocity * Vector3.new(1, 0, 1)
-	                            if Horizontal.Magnitude < 0.05 then
-	                                Horizontal = Camera.CFrame.LookVector * Vector3.new(1, 0, 1)
-	                            end
-	                            if Horizontal.Magnitude >= 0.05 then
-	                                ClutchOffset = Horizontal.Unit * 3
-	                            end
-	                        end
-
 	                        for Step: number = Expand.Value, 1, -1 do
-	                            local CurrentPosition: Vector3 = RoundPosition(Root.Position - Vector3.new(0, Entity.character.HipHeight + (Downwards.Enabled and UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) and 4.5 or 1.5), 0) + Entity.character.Humanoid.MoveDirection * (Step * 3) + ClutchOffset)
+	                            local CurrentPosition: Vector3 = RoundPosition(Root.Position - Vector3.new(0, Entity.character.HipHeight + (Downwards.Enabled and UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) and 4.5 or 1.5), 0) + Entity.character.Humanoid.MoveDirection * (Step * 3))
 	                            if Diagonal.Enabled then
 	                                if math.abs(math.round(math.deg(math.atan2(-Entity.character.Humanoid.MoveDirection.X, -Entity.character.Humanoid.MoveDirection.Z)) / 45) * 45) % 90 == 45 then
 	                                    local Delta: Vector3 = (LastPosition - CurrentPosition)
@@ -15939,7 +15929,7 @@ Run(function()
 	            VisualPosition = nil
 	        end
 	    end,
-	    Tooltip = "Helps you make bridges/scaffold walk."
+	    Tooltip = "Original fluid placement path with safe inventory and grounded Tower checks"
 	})
 	
 	Expand = Scaffold:CreateSlider({
