@@ -1,5 +1,5 @@
 local vape = shared.vape
-local ScriptRevision: string = "2026-10-01-r16"
+local ScriptRevision: string = "2026-10-01-r17"
 getgenv().ARandomMenuBedwarsRevision = ScriptRevision
 local loadstring = function(...)
     local Chunk, Message = loadstring(...)
@@ -939,8 +939,10 @@ end
 getgenv().getTableSize = GetTableSize
 
 local function GetHotbar(Tool)
+    local ToolName: string? = typeof(Tool) == "Instance" and Tool.Name or type(Tool) == "string" and Tool or type(Tool) == "table" and (Tool.itemType or Tool.Name) or nil
     for i: number, v: any in (Store.inventory.hotbar or {}) do
-        if v.item and v.item.tool == Tool then
+        local Item = v.item
+        if Item and (Item.tool == Tool or ToolName and (Item.itemType == ToolName or Item.tool and Item.tool.Name == ToolName)) then
             return i - 1
         end
     end
@@ -3246,6 +3248,7 @@ Run(function()
 	local CPS
 	local Place
 	local Wool
+	local PlaceRange
 	local BlockCPS = {}
 	local Thread: thread?
 	
@@ -3259,22 +3262,39 @@ Run(function()
 	    return Input.UserInputType == Keyboard or Input.KeyCode == Keyboard or Input.KeyCode == Gamepad
 	end
 	
-	local function AutoClick()
+	local function GetClickDelay(): number
+	    if Store.hand.toolType == "block" then
+	        local PlaceCPS: number = math.max(tonumber(Bedwars.SharedConstants.BLOCK_PLACE_CPS) or 12, 1)
+	        return math.max(1 / BlockCPS:GetRandomValue(), 1 / PlaceCPS)
+	    end
+	    return 1 / CPS:GetRandomValue()
+	end
+
+	local function StopClick()
 	    if Thread then
 	        task.cancel(Thread)
+	        Thread = nil
 	    end
+	    Store.autoBlockClick = false
+	end
+
+	local function AutoClick()
+	    StopClick()
+	    Store.autoBlockClick = true
 	
-	    Thread = task.delay(Store.hand.toolType == "block" and math.max(1 / BlockCPS:GetRandomValue(), 1 / (Bedwars.SharedConstants.BLOCK_PLACE_CPS or 12)) or 1 / CPS:GetRandomValue(), function()
+	    Thread = task.delay(GetClickDelay(), function()
 	        repeat
 	            if not Bedwars.AppController:isLayerOpen(Bedwars.UILayers.MAIN) then
 	                local BlockPlacer = Bedwars.BlockPlacementController.blockPlacer
-	                if Store.hand.toolType == "block" and Place.Enabled and (Wool.Enabled and Store.hand.tool.Name:find("wool_") or not Wool.Enabled) and BlockPlacer and CanPlace() then
-	                    if (workspace:GetServerTimeNow() - Bedwars.BlockCpsController.lastPlaceTimestamp) >= ((1 / (Bedwars.SharedConstants.BLOCK_PLACE_CPS or 12)) * 0.5) then
+	                local HandTool = Store.hand.tool
+	                if Store.hand.toolType == "block" and Place.Enabled and HandTool and (not Wool.Enabled or HandTool.Name:find("wool", 1, true)) and BlockPlacer and CanPlace() then
+	                    local PlaceCPS: number = math.max(tonumber(Bedwars.SharedConstants.BLOCK_PLACE_CPS) or 12, 1)
+	                    if (workspace:GetServerTimeNow() - Bedwars.BlockCpsController.lastPlaceTimestamp) >= ((1 / PlaceCPS) * 0.5) then
 	                        if UserInputService.TouchEnabled then
 	                            task.spawn(BlockPlacer.autoBridge, BlockPlacer, workspace:GetServerTimeNow() - Bedwars.KnockbackController:getLastKnockbackTime() >= 0.2)
 	                        else
 	                            local Selector = BlockPlacer.clientManager:getBlockSelector()
-	                            local MouseInfo = Selector and Selector:getMouseInfo(0)
+	                            local MouseInfo = Selector and Selector:getMouseInfo(0, {range = PlaceRange.Value})
 	                            if MouseInfo and MouseInfo.placementPosition == MouseInfo.placementPosition then
 	                                task.spawn(BlockPlacer.placeBlock, BlockPlacer, MouseInfo.placementPosition, MouseInfo)
 	                            end
@@ -3286,13 +3306,15 @@ Run(function()
 	                    elseif CanSwing() and not Bedwars.SwordController.disableSwingState then
 	                        Bedwars.SwordController:swingSwordAtMouse(0.39)
 	                    end
-	                elseif Store.hand.tool and Bedwars.IsItemClaw(Store.hand.tool.Name) then
-	                    Bedwars.SummonerClawHandController:attack(Store.hand.tool.Name)
+	                elseif HandTool and Bedwars.IsItemClaw(HandTool.Name) then
+	                    Bedwars.SummonerClawHandController:attack(HandTool.Name)
 	                end
 	            end
 	
-	            task.wait(Store.hand.toolType == "block" and math.max(1 / BlockCPS:GetRandomValue(), 1 / (Bedwars.SharedConstants.BLOCK_PLACE_CPS or 12)) or 1 / CPS:GetRandomValue())
+	            task.wait(GetClickDelay())
 	        until not AutoClicker.Enabled
+	        Thread = nil
+	        Store.autoBlockClick = false
 	    end)
 	end
 	
@@ -3307,9 +3329,8 @@ Run(function()
 	            end))
 	
 	            AutoClicker:Clean(UserInputService.InputEnded:Connect(function(Input: InputObject)
-	                if IsAttackInput(Input) and Thread then
-	                    task.cancel(Thread)
-	                    Thread = nil
+	                if IsAttackInput(Input) then
+	                    StopClick()
 	                end
 	            end))
 	
@@ -3321,12 +3342,7 @@ Run(function()
 	                    end
 	                    Hooked[Button] = true
 	                    AutoClicker:Clean(Button.MouseButton1Down:Connect(AutoClick))
-	                    AutoClicker:Clean(Button.MouseButton1Up:Connect(function()
-	                        if Thread then
-	                            task.cancel(Thread)
-	                            Thread = nil
-	                        end
-	                    end))
+	                    AutoClicker:Clean(Button.MouseButton1Up:Connect(StopClick))
 	                end
 	
 	                task.spawn(function()
@@ -3342,13 +3358,10 @@ Run(function()
 	                end)
 	            end
 	        else
-	            if Thread then
-	                task.cancel(Thread)
-	                Thread = nil
-	            end
+	            StopClick()
 	        end
 	    end,
-	    Tooltip = "Hold attack button to automatically click"
+	    Tooltip = "Hold attack to click; targeted block placement remains available alongside Scaffold"
 	})
 	
 	CPS = AutoClicker:CreateTwoSlider({
@@ -3368,10 +3381,21 @@ Run(function()
 	        if Wool then
 	            Wool.Object.Visible = Callback
 	        end
+	        if PlaceRange then
+	            PlaceRange.Object.Visible = Callback
+	        end
 	    end,
 	    Default = true
 	})
 	Wool = AutoClicker:CreateToggle({Name = "Wool only", Tooltip = "Only clicks when you are holding wool.", Darker = true})
+	PlaceRange = AutoClicker:CreateSlider({
+	    Name = "Place range",
+	    Min = 1,
+	    Max = 30,
+	    Default = 14,
+	    Darker = true,
+	    Tooltip = "Maximum range for AutoClicker's targeted desktop block placement"
+	})
 	BlockCPS = AutoClicker:CreateTwoSlider({
 	    Name = "Block CPS",
 	    Min = 1,
@@ -5128,14 +5152,68 @@ end)
 
 Run(function()
 	local DamageBoost
+	local EscapeHorizontal
+	local EscapeVertical
+	local CombatHorizontal
+	local CombatVertical
+	local EscapeHealth
 	local Stack: number?
+	local OldApply: (...any) -> ...any
+	local ApplyHook: (...any) -> ...any
+
+	local function IsLongJumping(): boolean
+	    local Module = vape.Modules.LongJump
+	    return Module and Module.Enabled or false
+	end
+
+	local function GetHealthPercent(): number
+	    if not Entity.isAlive then
+	        return 100
+	    end
+	    local Health: number = Entity.character.Health or Entity.character.Humanoid.Health
+	    local MaxHealth: number = Entity.character.MaxHealth or Entity.character.Humanoid.MaxHealth
+	    return MaxHealth > 0 and (Health / MaxHealth) * 100 or 100
+	end
+
+	local function IsEscaping(): boolean
+	    if not Entity.isAlive then
+	        return false
+	    end
+	    local Humanoid: Humanoid = Entity.character.Humanoid
+	    local Running: boolean = Humanoid.MoveDirection.Magnitude > 0.1
+	    local Unarmed: boolean = Store.hand.toolType ~= "sword"
+	    return GetHealthPercent() <= EscapeHealth.Value or (Running and Unarmed)
+	end
 	
 	DamageBoost = vape.Categories.Blatant:CreateModule({
 	    Name = "DamageBoost",
 	    Function = function(Callback: boolean)
 	        if Callback then
+	            -- Keep the updated movement boost and restore the configurable
+	            -- escape/combat knockback behavior from the corrected build.
+	            OldApply = Bedwars.KnockbackUtil.applyKnockback
+	            ApplyHook = function(Root: BasePart, Mass: number, Direction: Vector3, Knockback, ...)
+	                if not DamageBoost.Enabled or not Entity.isAlive or Root ~= Entity.character.RootPart or IsLongJumping() or typeof(Knockback) == "table" and Knockback.disabled then
+	                    return OldApply(Root, Mass, Direction, Knockback, ...)
+	                end
+
+	                local Adjusted = typeof(Knockback) == "table" and table.clone(Knockback) or {}
+	                if IsEscaping() then
+	                    Adjusted.horizontal = (Adjusted.horizontal or 1) * (EscapeHorizontal.Value / 100)
+	                    Adjusted.vertical = (Adjusted.vertical or 1) * (EscapeVertical.Value / 100)
+	                elseif Store.hand.toolType == "sword" or Store.attacking then
+	                    Adjusted.horizontal = (Adjusted.horizontal or 1) * (CombatHorizontal.Value / 100)
+	                    Adjusted.vertical = (Adjusted.vertical or 1) * (CombatVertical.Value / 100)
+	                else
+	                    return OldApply(Root, Mass, Direction, Knockback, ...)
+	                end
+
+	                return OldApply(Root, Mass, Direction, Adjusted, ...)
+	            end
+	            Bedwars.KnockbackUtil.applyKnockback = ApplyHook
+
 	            DamageBoost:Clean(VapeEvents.EntityDamageEvent.Event:Connect(function(DamageTable)
-	                if Entity.isAlive and tick() > (Stack or 0) and DamageTable.entityInstance == LocalPlayer.Character and not vape.Modules.LongJump.Enabled then
+	                if Entity.isAlive and tick() > (Stack or 0) and DamageTable.entityInstance == LocalPlayer.Character and not IsLongJumping() then
 	                    local Horizontal: number = DamageTable.knockbackMultiplier and DamageTable.knockbackMultiplier.horizontal or 0
 	                    KnockbackSpeed = Bedwars.KnockbackUtil.calculateKnockbackVelocity(Vector3.one, 1, {
 	                        vertical = 0,
@@ -5145,9 +5223,53 @@ Run(function()
 	                    KnockbackBoost = tick() + (Horizontal / 3.5)
 	                end
 	            end))
+	        elseif ApplyHook and Bedwars.KnockbackUtil.applyKnockback == ApplyHook then
+	            Bedwars.KnockbackUtil.applyKnockback = OldApply
+	            OldApply, ApplyHook, Stack = nil, nil, nil
 	        end
 	    end,
-	    Tooltip = "Makes you go slightly faster when damaged"
+	    Tooltip = "Keeps the updated damage-speed boost and lets escape/combat knockback be tuned separately"
+	})
+
+	EscapeHorizontal = DamageBoost:CreateSlider({
+	    Name = "Escape horizontal",
+	    Min = 100,
+	    Max = 200,
+	    Default = 140,
+	    Suffix = "%",
+	    Tooltip = "Horizontal knockback while running without a sword or at low health"
+	})
+	EscapeVertical = DamageBoost:CreateSlider({
+	    Name = "Escape vertical",
+	    Min = 100,
+	    Max = 160,
+	    Default = 110,
+	    Suffix = "%",
+	    Tooltip = "Vertical knockback while escaping"
+	})
+	CombatHorizontal = DamageBoost:CreateSlider({
+	    Name = "Combat horizontal",
+	    Min = 1,
+	    Max = 100,
+	    Default = 18,
+	    Suffix = "%",
+	    Tooltip = "Small horizontal knockback kept while a sword is held"
+	})
+	CombatVertical = DamageBoost:CreateSlider({
+	    Name = "Combat vertical",
+	    Min = 1,
+	    Max = 100,
+	    Default = 25,
+	    Suffix = "%",
+	    Tooltip = "Small vertical knockback kept while a sword is held"
+	})
+	EscapeHealth = DamageBoost:CreateSlider({
+	    Name = "Escape below",
+	    Min = 1,
+	    Max = 100,
+	    Default = 35,
+	    Suffix = "%",
+	    Tooltip = "Always uses escape knockback at or below this health"
 	})
 end)
 
@@ -15732,7 +15854,7 @@ Run(function()
 	                    local Wool, Amount = GetScaffoldBlock()
 	
 	                    if Mouse.Enabled then
-	                        if not UserInputService:IsMouseButtonPressed(0) then
+	                        if not UserInputService:IsMouseButtonPressed(0) and not Store.autoBlockClick then
 	                            Wool = nil
 	                        end
 	                    end
@@ -17997,6 +18119,7 @@ Run(function()
 	local Priority
 	local Return
 	local Switch
+	local LimitItem
 	local Wool
 	local Blacklist
 	local CenterOrigin: Vector3?
@@ -18134,6 +18257,15 @@ Run(function()
 	    local Hotbar = Store.hand.tool and GetHotbar(Store.hand.tool) or nil
 	    local PlaceDelay: number = 1 / math.min(Bedwars.DefaultPlaceCPS or math.huge, Bedwars.SharedConstants.BLOCK_PLACE_CPS)
 	    local Placed: number = 0
+	    local ShouldSwitch: boolean = Switch.Enabled and not LimitItem.Enabled
+
+	    if LimitItem.Enabled then
+	        local HeldName: string? = Store.hand.toolType == "block" and Store.hand.tool and Store.hand.tool.Name or nil
+	        if not Blocks[1] or HeldName ~= Blocks[1].Type then
+	            return
+	        end
+	        Blocks = {Blocks[1]}
+	    end
 	
 	    for _, Offset: Vector3 in Cells do
 	        if Placed >= Limit or not BlockIn.Enabled or not Entity.isAlive then
@@ -18161,7 +18293,7 @@ Run(function()
 	            break
 	        end
 	
-	        if Switch.Enabled then
+	        if ShouldSwitch then
 	            HotbarSwitch(Block.Slot)
 	        end
 	        task.spawn(Bedwars.placeBlock, Position, Block.Type)
@@ -18170,7 +18302,7 @@ Run(function()
 	            Placed += 1
 	        end
 	    end
-	    if Return.Enabled and Switch.Enabled and Hotbar then
+	    if Return.Enabled and ShouldSwitch and Hotbar then
 	        HotbarSwitch(Hotbar)
 	    end
 	end
@@ -18239,6 +18371,10 @@ Run(function()
 	    Tooltip = "Hardest picks the highest-health block in your inventory, including Obsidian, and shows it beside Block-In"
 	})
 	Switch = BlockIn:CreateToggle({Name = "Switch", Default = true})
+	LimitItem = BlockIn:CreateToggle({
+	    Name = "Limit to items",
+	    Tooltip = "Only runs while the exact block selected by Block priority is already in your hand"
+	})
 	Return = BlockIn:CreateToggle({Name = "Return to last slot", Default = true})
 	Wool = BlockIn:CreateToggle({Name = "Wool only"})
 	Blacklist = BlockIn:CreateTextList({
