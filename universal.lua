@@ -1,3 +1,5 @@
+local UniversalRevision: string = "2026-10-01-r16"
+getgenv().ARandomMenuUniversalRevision = UniversalRevision
 local loadstring = function(...)
     local Chunk, Error = loadstring(...)
     if Error and vape then
@@ -10541,3 +10543,5 @@ Run(function()
 	    Default = 12
 	})
 end)
+-- Visible confirmation that the merged universal file reached the executor.
+task.defer(SendNotification, "Universal", `Loaded merged modules ({UniversalRevision})`, 6)
