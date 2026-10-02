@@ -1,5 +1,5 @@
 local vape = shared.vape
-local ScriptRevision: string = "2026-10-01-r19"
+local ScriptRevision: string = "2026-10-01-r20"
 getgenv().ARandomMenuBedwarsRevision = ScriptRevision
 local loadstring = function(...)
     local Chunk, Message = loadstring(...)
@@ -3128,6 +3128,10 @@ Run(function()
 	local PlaceRange
 	local BlockCPS = {}
 	local Thread: thread?
+	local ActiveInputs: {[any]: boolean} = {}
+	local HoldDelay: number = 0.18
+	Store.autoBlockClick = false
+	Store.autoBlockClickOwner = false
 	
 	local function IsAttackInput(Input: InputObject): boolean
 	    local Keybinds = Bedwars.KeybindLoadController.getKeybinds and Bedwars.KeybindLoadController:getKeybinds()
@@ -3138,6 +3142,31 @@ Run(function()
 	
 	    return Input.UserInputType == Keyboard or Input.KeyCode == Keyboard or Input.KeyCode == Gamepad
 	end
+
+	local function GetInputKey(Input: InputObject): string
+	    return `input:{Input.UserInputType.Name}:{Input.KeyCode.Name}`
+	end
+
+	local function HasAttackInput(): boolean
+	    return next(ActiveInputs) ~= nil
+	end
+
+	local function CanAutoPlace(): boolean
+	    local HandTool = Store.hand.tool
+	    return Store.hand.toolType == "block"
+	        and Place.Enabled
+	        and HandTool ~= nil
+	        and (not Wool.Enabled or HandTool.Name:find("wool", 1, true) ~= nil)
+	end
+
+	local function UpdateInputState(): boolean
+	    local Held: boolean = HasAttackInput()
+	    Store.autoBlockClick = Held
+	    -- AutoClicker owns block placement for this press. Scaffold observes this
+	    -- per-press flag so a tap cannot dispatch both placement controllers.
+	    Store.autoBlockClickOwner = Held and CanAutoPlace()
+	    return Held
+	end
 	
 	local function GetClickDelay(): number
 	    if Store.hand.toolType == "block" then
@@ -3147,52 +3176,94 @@ Run(function()
 	    return 1 / CPS:GetRandomValue()
 	end
 
-	local function StopClick()
+	local function PerformClick()
+	    UpdateInputState()
+	    if Bedwars.AppController:isLayerOpen(Bedwars.UILayers.MAIN) then
+	        return
+	    end
+
+	    local HandTool = Store.hand.tool
+	    if CanAutoPlace() then
+	        local BlockPlacer = Bedwars.BlockPlacementController.blockPlacer
+	        if not BlockPlacer or not CanPlace() then
+	            return
+	        end
+
+	        -- One invocation can place at most one block. The BedWars placement
+	        -- controller remains the authority for its real server cooldown.
+	        if UserInputService.TouchEnabled then
+	            task.spawn(BlockPlacer.autoBridge, BlockPlacer, workspace:GetServerTimeNow() - Bedwars.KnockbackController:getLastKnockbackTime() >= 0.2)
+	        else
+	            local Selector = BlockPlacer.clientManager:getBlockSelector()
+	            local MouseInfo = Selector and Selector:getMouseInfo(0, {range = PlaceRange.Value})
+	            if MouseInfo and MouseInfo.placementPosition == MouseInfo.placementPosition then
+	                task.spawn(BlockPlacer.placeBlock, BlockPlacer, MouseInfo.placementPosition, MouseInfo)
+	            end
+	        end
+	    elseif Store.hand.toolType == "sword" then
+	        if UserInputService.TouchEnabled then
+	            Bedwars.SwordController:mobileSwingPressed()
+	        elseif CanSwing() and not Bedwars.SwordController.disableSwingState then
+	            Bedwars.SwordController:swingSwordAtMouse(0.39)
+	        end
+	    elseif HandTool and Bedwars.IsItemClaw(HandTool.Name) then
+	        Bedwars.SummonerClawHandController:attack(HandTool.Name)
+	    end
+	end
+
+	local function StopClick(ClearInputs: boolean?)
+	    if ClearInputs then
+	        table.clear(ActiveInputs)
+	    end
 	    if Thread then
 	        task.cancel(Thread)
 	        Thread = nil
 	    end
 	    Store.autoBlockClick = false
+	    Store.autoBlockClickOwner = false
 	end
 
-	local function AutoClick()
-	    StopClick()
-	    Store.autoBlockClick = true
-	
-	    Thread = task.delay(GetClickDelay(), function()
-	        repeat
-	            if not Bedwars.AppController:isLayerOpen(Bedwars.UILayers.MAIN) then
-	                local BlockPlacer = Bedwars.BlockPlacementController.blockPlacer
-	                local HandTool = Store.hand.tool
-	                if Store.hand.toolType == "block" and Place.Enabled and HandTool and (not Wool.Enabled or HandTool.Name:find("wool", 1, true)) and BlockPlacer and CanPlace() then
-	                    local PlaceCPS: number = math.max(tonumber(Bedwars.SharedConstants.BLOCK_PLACE_CPS) or 12, 1)
-	                    if (workspace:GetServerTimeNow() - Bedwars.BlockCpsController.lastPlaceTimestamp) >= ((1 / PlaceCPS) * 0.5) then
-	                        if UserInputService.TouchEnabled then
-	                            task.spawn(BlockPlacer.autoBridge, BlockPlacer, workspace:GetServerTimeNow() - Bedwars.KnockbackController:getLastKnockbackTime() >= 0.2)
-	                        else
-	                            local Selector = BlockPlacer.clientManager:getBlockSelector()
-	                            local MouseInfo = Selector and Selector:getMouseInfo(0, {range = PlaceRange.Value})
-	                            if MouseInfo and MouseInfo.placementPosition == MouseInfo.placementPosition then
-	                                task.spawn(BlockPlacer.placeBlock, BlockPlacer, MouseInfo.placementPosition, MouseInfo)
-	                            end
-	                        end
-	                    end
-	                elseif Store.hand.toolType == "sword" then
-	                    if UserInputService.TouchEnabled then
-	                        Bedwars.SwordController:mobileSwingPressed()
-	                    elseif CanSwing() and not Bedwars.SwordController.disableSwingState then
-	                        Bedwars.SwordController:swingSwordAtMouse(0.39)
-	                    end
-	                elseif HandTool and Bedwars.IsItemClaw(HandTool.Name) then
-	                    Bedwars.SummonerClawHandController:attack(HandTool.Name)
-	                end
+	local function BeginClick(Source: any)
+	    if ActiveInputs[Source] then
+	        return
+	    end
+	    local AlreadyHeld: boolean = HasAttackInput()
+	    ActiveInputs[Source] = true
+	    if AlreadyHeld then
+	        UpdateInputState()
+	        return
+	    end
+
+	    -- A tap acts now, not one CPS interval later.
+	    UpdateInputState()
+	    PerformClick()
+	    local NextClick: number = os.clock() + HoldDelay
+	    Thread = task.spawn(function()
+	        while AutoClicker.Enabled and HasAttackInput() do
+	            UpdateInputState()
+	            local Now: number = os.clock()
+	            if Now >= NextClick then
+	                PerformClick()
+	                local Delay: number = GetClickDelay()
+	                repeat
+	                    NextClick += Delay
+	                until NextClick > Now
 	            end
-	
-	            task.wait(GetClickDelay())
-	        until not AutoClicker.Enabled
+	            task.wait()
+	        end
 	        Thread = nil
 	        Store.autoBlockClick = false
+	        Store.autoBlockClickOwner = false
 	    end)
+	end
+
+	local function EndClick(Source: any)
+	    ActiveInputs[Source] = nil
+	    if not HasAttackInput() then
+	        StopClick()
+	    else
+	        UpdateInputState()
+	    end
 	end
 	
 	AutoClicker = vape.Categories.Combat:CreateModule({
@@ -3201,14 +3272,17 @@ Run(function()
 	        if Callback then
 	            AutoClicker:Clean(UserInputService.InputBegan:Connect(function(Input: InputObject)
 	                if IsAttackInput(Input) then
-	                    AutoClick()
+	                    BeginClick(GetInputKey(Input))
 	                end
 	            end))
 	
 	            AutoClicker:Clean(UserInputService.InputEnded:Connect(function(Input: InputObject)
 	                if IsAttackInput(Input) then
-	                    StopClick()
+	                    EndClick(GetInputKey(Input))
 	                end
+	            end))
+	            AutoClicker:Clean(UserInputService.WindowFocusReleased:Connect(function()
+	                StopClick(true)
 	            end))
 	
 	            if UserInputService.TouchEnabled then
@@ -3218,8 +3292,20 @@ Run(function()
 	                        return
 	                    end
 	                    Hooked[Button] = true
-	                    AutoClicker:Clean(Button.MouseButton1Down:Connect(AutoClick))
-	                    AutoClicker:Clean(Button.MouseButton1Up:Connect(StopClick))
+	                    AutoClicker:Clean(Button.MouseButton1Down:Connect(function()
+	                        BeginClick(Button)
+	                    end))
+	                    AutoClicker:Clean(Button.MouseButton1Up:Connect(function()
+	                        EndClick(Button)
+	                    end))
+	                    AutoClicker:Clean(Button.InputEnded:Connect(function(Input: InputObject)
+	                        if Input.UserInputType == Enum.UserInputType.Touch or Input.UserInputType == Enum.UserInputType.MouseButton1 then
+	                            EndClick(Button)
+	                        end
+	                    end))
+	                    AutoClicker:Clean(Button.Destroying:Connect(function()
+	                        EndClick(Button)
+	                    end))
 	                end
 	
 	                task.spawn(function()
@@ -3235,10 +3321,10 @@ Run(function()
 	                end)
 	            end
 	        else
-	            StopClick()
+	            StopClick(true)
 	        end
 	    end,
-	    Tooltip = "Hold attack to click; targeted block placement remains available alongside Scaffold"
+	    Tooltip = "Taps act immediately and once; holding starts precise repeated clicks after a short threshold"
 	})
 	
 	CPS = AutoClicker:CreateTwoSlider({
@@ -15643,10 +15729,13 @@ Run(function()
 	                if Entity.isAlive and not vape.MovementOwner then
 	                    local Wool, Amount = GetScaffoldBlock()
 	
-	                    if Mouse.Enabled then
-	                        if not UserInputService:IsMouseButtonPressed(0) and not Store.autoBlockClick then
-	                            Wool = nil
-	                        end
+	                    -- A block press belongs to exactly one placement
+	                    -- controller. AutoClicker owns its tap/hold while active;
+	                    -- Scaffold resumes unchanged as soon as that press ends.
+	                    if Store.autoBlockClickOwner then
+	                        Wool = nil
+	                    elseif Mouse.Enabled and not UserInputService:IsMouseButtonPressed(0) and not Store.autoBlockClick then
+	                        Wool = nil
 	                    end
 	
 	                    if Label then

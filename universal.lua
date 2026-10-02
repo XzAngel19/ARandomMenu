@@ -1,4 +1,4 @@
-local UniversalRevision: string = "2026-10-01-r19"
+local UniversalRevision: string = "2026-10-01-r20"
 getgenv().ARandomMenuUniversalRevision = UniversalRevision
 local loadstring = function(...)
     local Chunk, Error = loadstring(...)
