@@ -1,4 +1,6 @@
 local vape = shared.vape
+local ScriptRevision: string = "2026-10-02-r21"
+getgenv().ARandomMenuBedwarsRevision = ScriptRevision
 local loadstring = function(...)
     local Chunk, Message = loadstring(...)
     if Message and vape then
@@ -937,8 +939,10 @@ end
 getgenv().getTableSize = GetTableSize
 
 local function GetHotbar(Tool)
+    local ToolName: string? = typeof(Tool) == "Instance" and Tool.Name or type(Tool) == "string" and Tool or type(Tool) == "table" and (Tool.itemType or Tool.Name) or nil
     for i: number, v: any in (Store.inventory.hotbar or {}) do
-        if v.item and v.item.tool == Tool then
+        local Item = v.item
+        if Item and (Item.tool == Tool or ToolName and (Item.itemType == ToolName or Item.tool and Item.tool.Name == ToolName)) then
             return i - 1
         end
     end
@@ -1870,6 +1874,10 @@ Run(function()
 
     OldSetBlock = BlockStore.setBlock
     BlockStore.setBlock = function(self, Position: Vector3, Block)
+        -- Topology changes invalidate wallcheck routes; movement and knockback
+        -- do not, keeping a valid strategic target stable while being hit.
+        table.clear(PathCache)
+        BreakFocus = nil
         Navigation.World:Invalidate(Position.X, Position.Y, Position.Z)
         return OldSetBlock(self, Position, Block)
     end
@@ -1889,16 +1897,31 @@ Run(function()
         return GetBlockHealth(Block, bedwars.BlockController:getBlockPosition(BlockPosition)) / Tool
     end
 
-    CalculatePath = function(Target, BlockPosition: Vector3, SolidOnly: boolean?, BreakMethod)
+    CalculatePath = function(Target, BlockPosition: Vector3, BreakMethod, MaxRange: number?, IgnoreOwnBlocks: boolean?)
         local Origin: Vector3 = Entity.character.RootPart.Position
-        local Cell: Vector3 = bedwars.BlockController:getBlockPosition(Origin)
-        local Key: string = `{BlockPosition.X},{BlockPosition.Y},{BlockPosition.Z}|{SolidOnly and 1 or 0}|{BreakMethod == BreakMethods.Distance and 1 or 0}`
-        local Cached = PathCache[Key]
-        if Cached and Cached.cell == Cell and os.clock() - Cached.clock < 0.25 then
-            return Cached.pos, Cached.cost, Cached.path
+        MaxRange = math.min(MaxRange or 30, 30)
+
+        -- Wallcheck routes are based on the bed's real exposed faces, not the
+        -- camera or the character's exact position. This keeps the route stable
+        -- through knockback while still requiring an opening in the defense.
+        local RouteCost = BreakMethod or BreakMethods.Health
+        local Key: string = `{BlockPosition.X},{BlockPosition.Y},{BlockPosition.Z}|{BreakMethod == BreakMethods.Distance and 1 or 0}|{MaxRange}|{IgnoreOwnBlocks and 1 or 0}`
+        if RouteCost == BreakMethods.Health then
+            Key ..= `|{(Store.tools.wool or {}).itemType or ""},{(Store.tools.wood or {}).itemType or ""},{(Store.tools.stone or {}).itemType or ""}`
         end
 
-        local Placed, Hits = {}, {}
+        local Cached = PathCache[Key]
+        if Cached then
+            if Cached.pos and GetPlacedBlock(Cached.pos) and (Cached.pos - Origin).Magnitude <= MaxRange then
+                return Cached.pos, Cached.cost, Cached.path
+            end
+            if not Cached.pos and Cached.origin and (Cached.origin - Origin).Magnitude < 3 then
+                return nil, nil, Cached.path
+            end
+            PathCache[Key] = nil
+        end
+
+        local Placed, Costs = {}, {}
         local function GetCellBlock(Position: Vector3)
             local Block: any = Placed[Position]
             if Block == nil then
@@ -1908,199 +1931,184 @@ Run(function()
             return Block or nil
         end
 
-        local function GetCellHits(Block, Position: Vector3): number | boolean
-            local Value: number | boolean? = Hits[Position]
+        local function GetCellCost(Block, Position: Vector3): number
+            local Value: number? = Costs[Position]
             if Value == nil then
-                Value = not Block:GetAttribute("NoBreak") and GetBlockHits(Block, Position)
-                Hits[Position] = Value
+                Value = tonumber(RouteCost(Block, Position)) or math.huge
+                Costs[Position] = Value
             end
             return Value
         end
 
-        local Routes = {}
+        -- An exposed face only has to connect to open air around the defense.
+        -- It intentionally does not need a perfect camera/head ray: aligned
+        -- gaps in Block-In and bed defense remain usable even after knockback.
+        local OpenRoutes = {}
         local function IsOpen(Open: Vector3): boolean
-            if Routes[Open] ~= nil then
-                return Routes[Open]
+            if OpenRoutes[Open] ~= nil then
+                return OpenRoutes[Open]
             end
-            local Queue, Seen, Reached = {Open}, {[Open] = true}, true
 
+            local Queue, Seen, Reached = {Open}, {[Open] = true}, false
             for _ = 1, 400 do
                 local Current = table.remove(Queue)
                 if not Current then
-                    Reached = false
                     break
                 end
                 if (Current - BlockPosition).Magnitude > 15 then
+                    Reached = true
                     break
                 end
 
-                for _, v: Vector3 in Sides do
-                    v = Current + v
-                    if Seen[v] or GetCellBlock(v) then
-                        continue
+                for _, Side: Vector3 in Sides do
+                    local Next: Vector3 = Current + Side
+                    if not Seen[Next] and not GetCellBlock(Next) then
+                        Seen[Next] = true
+                        table.insert(Queue, Next)
                     end
-                    Seen[v] = true
-                    table.insert(Queue, v)
                 end
             end
 
-            for SeenCell: Vector3 in Seen do
-                Routes[SeenCell] = Reached
+            for Position: Vector3 in Seen do
+                OpenRoutes[Position] = Reached
             end
             return Reached
         end
 
-        local function Boundary(Index: number, Component: number, Delta: number)
-            if Delta == 0 then
-                return 0, math.huge, math.huge
-            end
-            local Step: number = Delta > 0 and 1 or -1
-            return Step, ((((Index + (Step * 0.5)) * 3) - Component) / Delta), (3 / math.abs(Delta))
-        end
-
-        local function Trace(From: Vector3, Aim: Vector3): boolean
-            local Start, Direction = bedwars.BlockController:getBlockPosition(From), Aim - From
-            local X, Y, Z = Start.X, Start.Y, Start.Z
-            local StepX, NextX, DeltaX = Boundary(X, From.X, Direction.X)
-            local StepY, NextY, DeltaY = Boundary(Y, From.Y, Direction.Y)
-            local StepZ, NextZ, DeltaZ = Boundary(Z, From.Z, Direction.Z)
-
-            for _ = 1, 100 do
-                if NextX > 1 and NextY > 1 and NextZ > 1 then
-                    break
-                end
-
-                if NextX <= NextY and NextX <= NextZ then
-                    X, NextX = X + StepX, NextX + DeltaX
-                elseif NextY <= NextZ then
-                    Y, NextY = Y + StepY, NextY + DeltaY
-                else
-                    Z, NextZ = Z + StepZ, NextZ + DeltaZ
-                end
-
-                if GetPlacedBlock(Vector3.new(X, Y, Z) * 3) then
-                    return false
-                end
-            end
-
-            return true
-        end
-
-        local Sightlines = {}
-        local Eyes: {Vector3} = {Entity.character.Head.Position, Camera.CFrame.Position}
-        local function CanSee(Aim: Vector3): boolean
-            if Sightlines[Aim] == nil then
-                Sightlines[Aim] = false
-                for _, v: Vector3 in Eyes do
-                    if Trace(v, Aim) then
-                        Sightlines[Aim] = true
-                        break
-                    end
-                end
-            end
-            return Sightlines[Aim]
-        end
-
-        if GetCellBlock(BlockPosition) and (BlockPosition - Origin).Magnitude <= 30 then
-            for _, v: Vector3 in Sides do
-                v = BlockPosition + v
-                if not GetCellBlock(v) and (SolidOnly and IsOpen(v) or not SolidOnly and CanSee(v)) then
+        -- A hole reaching either bed cell is enough. Exact character sight is
+        -- deliberately not required; this is the permissive part of wallcheck.
+        if GetCellBlock(BlockPosition) and (BlockPosition - Origin).Magnitude <= MaxRange then
+            for _, Side: Vector3 in Sides do
+                local Opening: Vector3 = BlockPosition + Side
+                if not GetCellBlock(Opening) and IsOpen(Opening) then
                     local Direct = {}
-                    PathCache[Key] = {cell = Cell, clock = os.clock(), pos = BlockPosition, cost = 0, path = Direct}
+                    PathCache[Key] = {pos = BlockPosition, cost = 0, path = Direct}
                     return BlockPosition, 0, Direct
                 end
             end
         end
 
-        local Visited, Queue, Distances, Exposed, BreakPath = {}, {{0, BlockPosition}}, {[BlockPosition] = 0}, {}, {}
-        local Head: number = 0
+        local Visited, Queue = {}, {}
+        local Distances, Exposed, BreakPath = {[BlockPosition] = 0}, {}, {}
+        local function PushQueue(Node)
+            local Index: number = #Queue + 1
+            while Index > 1 do
+                local Parent: number = math.floor(Index / 2)
+                if Queue[Parent][1] <= Node[1] then
+                    break
+                end
+                Queue[Index] = Queue[Parent]
+                Index = Parent
+            end
+            Queue[Index] = Node
+        end
+        local function PopQueue()
+            local First = Queue[1]
+            local Last = table.remove(Queue)
+            if #Queue > 0 then
+                local Index: number = 1
+                while Index * 2 <= #Queue do
+                    local Child: number = Index * 2
+                    if Child < #Queue and Queue[Child + 1][1] < Queue[Child][1] then
+                        Child += 1
+                    end
+                    if Queue[Child][1] >= Last[1] then
+                        break
+                    end
+                    Queue[Index] = Queue[Child]
+                    Index = Child
+                end
+                Queue[Index] = Last
+            end
+            return First
+        end
+        PushQueue({0, BlockPosition})
 
-        for _ = 1, 10000 do
-            Head += 1
-            local Node = Queue[Head]
+        -- Dijkstra from the bed makes the first exposed block on the cheapest
+        -- complete corridor the strategic choice (tool-adjusted health or the
+        -- selected distance mode), rather than merely the closest face.
+        for _ = 1, 1500 do
+            local Node = PopQueue()
             if not Node then
                 break
             end
-            if Visited[Node[2]] then
+            local Position: Vector3 = Node[2]
+            if Visited[Position] then
                 continue
             end
-            Visited[Node[2]] = true
+            Visited[Position] = true
 
-            for _, v: Vector3 in Sides do
-                v = Node[2] + v
-                if Visited[v] then
+            for _, Side: Vector3 in Sides do
+                local Next: Vector3 = Position + Side
+                if Visited[Next] or (Next - BlockPosition).Magnitude > 15 then
                     continue
                 end
 
-                local Block = GetCellBlock(v)
-                local BlockHits: number | boolean? = Block and Block ~= Target and GetCellHits(Block, v)
-                if not BlockHits then
-                    if not Block then
-                        local Cells = Exposed[Node[2]]
-                        if Cells then
-                            table.insert(Cells, v)
-                        else
-                            Exposed[Node[2]] = {v}
-                        end
+                local Block = GetCellBlock(Next)
+                if not Block then
+                    local Openings = Exposed[Position]
+                    if Openings then
+                        table.insert(Openings, Next)
+                    else
+                        Exposed[Position] = {Next}
                     end
                     continue
                 end
+                if Block == Target or Block:GetAttribute("NoBreak") then
+                    continue
+                end
+                if IgnoreOwnBlocks and Block:GetAttribute("PlacedByUserId") == LocalPlayer.UserId then
+                    continue
+                end
 
-                local CurrentDistance: number = Node[1] + BlockHits
-                if CurrentDistance < (Distances[v] or math.huge) then
-                    Distances[v] = CurrentDistance
-                    BreakPath[v] = Node[2]
-                    table.insert(Queue, {CurrentDistance, v})
+                local Distance: number = Node[1] + GetCellCost(Block, Next)
+                if Distance < (Distances[Next] or math.huge) then
+                    Distances[Next] = Distance
+                    BreakPath[Next] = Position
+                    PushQueue({Distance, Next})
                 end
             end
         end
 
-        local Nearest: boolean = BreakMethod == BreakMethods.Distance
-        local Previous = Store.breakTarget
-        local Look: Vector3 = Camera.CFrame.LookVector
+        local Previous: Vector3? = Store.breakTarget
         local Candidates = {}
         for Position: Vector3, Openings: {Vector3} in Exposed do
-            local Delta: Vector3 = Position - Origin
-            local Magnitude: number = Delta.Magnitude
-            if Magnitude <= 30 then
-                local Facing: number = Magnitude > 0 and Delta:Dot(Look) / Magnitude or 1
-                table.insert(Candidates, {Distances[Position], Position, Openings, Magnitude, Facing, Distances[Position] + (Magnitude / 6) - (Position == Previous and 1.5 or 0)})
+            local Block = GetCellBlock(Position)
+            local Magnitude: number = (Position - Origin).Magnitude
+            if Block and Magnitude <= MaxRange then
+                for _, Opening: Vector3 in Openings do
+                    if IsOpen(Opening) then
+                        table.insert(Candidates, {
+                            Distances[Position] or 0,
+                            Position,
+                            Magnitude,
+                            Position == Previous
+                        })
+                        break
+                    end
+                end
             end
         end
 
         table.sort(Candidates, function(A, B): boolean
-            if Nearest then
-                if A[6] ~= B[6] then
-                    return A[6] < B[6]
-                end
-            else
-                if A[1] ~= B[1] then
-                    return A[1] < B[1]
-                end
-                if Previous and (A[2] == Previous) ~= (B[2] == Previous) then
-                    return A[2] == Previous
-                end
+            if A[1] ~= B[1] then
+                return A[1] < B[1]
             end
+            -- Knockback must not flip between equally strategic faces.
             if A[4] ~= B[4] then
-                return A[4] < B[4]
+                return A[4]
             end
-            return A[5] > B[5]
+            if A[3] ~= B[3] then
+                return A[3] < B[3]
+            end
+            local AP, BP = A[2], B[2]
+            return AP.X ~= BP.X and AP.X < BP.X or AP.X == BP.X and (AP.Y ~= BP.Y and AP.Y < BP.Y or AP.Y == BP.Y and AP.Z < BP.Z)
         end)
 
-        local BestPosition, BestCost
-        for _, v: any in Candidates do
-            for _, Opening: Vector3 in v[3] do
-                if SolidOnly and IsOpen(Opening) or not SolidOnly and CanSee(Opening) then
-                    BestPosition, BestCost = v[2], v[1]
-                    break
-                end
-            end
-            if BestPosition then
-                break
-            end
-        end
-
-        PathCache[Key] = {cell = Cell, clock = os.clock(), pos = BestPosition, cost = BestCost, path = BreakPath}
+        local Best = Candidates[1]
+        local BestPosition: Vector3? = Best and Best[2] or nil
+        local BestCost: number? = Best and Best[1] or nil
+        PathCache[Key] = {pos = BestPosition, cost = BestCost, path = BreakPath, origin = Origin}
         return BestPosition, BestCost, BreakPath
     end
 
@@ -2120,7 +2128,7 @@ Run(function()
         BreakRequest = BreakRequests[#BreakRequests]
     end
 
-    bedwars.breakBlock = function(Block, Effects, AnimationMode, CustomHealthbar, AutoTool, Wallcheck, Method, DirectOnly, Sequential: boolean?)
+    bedwars.breakBlock = function(Block, Effects, AnimationMode, CustomHealthbar, AutoTool, Wallcheck, Method, DirectOnly, Sequential: boolean?, MaxRange: number?, IgnoreOwnBlocks: boolean?)
         if LocalPlayer:GetAttribute("DenyBlockBreak") or not Entity.isAlive or (vape.Modules.InfiniteFly or {}).Enabled then
             return
         end
@@ -2135,31 +2143,63 @@ Run(function()
         if BreakRequest and (not Sequential or #BreakRequests >= 4) then
             return BreakRequest.position, BreakRequest.path, BreakRequest.target, false
         end
+
         local Handler = bedwars.BlockController:getHandlerRegistry():getHandler(Block.Name)
         local LocalPosition: Vector3 = Entity.character.RootPart.Position
+        local ContainedPositions = Handler and Handler:getContainedPositions(Block) or {bedwars.BlockController:getBlockPosition(Block.Position)}
+        local AllowedRange: number = math.min(MaxRange or 30, 30)
         local Cost, Position, Target, BreakPath = math.huge
         local Direct: boolean = false
 
-        if Sequential and BreakFocus and BreakFocus.block == Block and BreakFocus.wallcheck == Wallcheck and BreakFocus.method == Method and GetPlacedBlock(BreakFocus.position) == BreakFocus.hit and (LocalPosition - BreakFocus.position).Magnitude <= 30 and not BreakFocus.hit:GetAttribute("NoBreak") then
+        if Sequential and BreakFocus
+            and BreakFocus.block == Block
+            and BreakFocus.wallcheck == Wallcheck
+            and BreakFocus.method == Method
+            and BreakFocus.range == AllowedRange
+            and BreakFocus.ignoreOwn == IgnoreOwnBlocks
+            and GetPlacedBlock(BreakFocus.position) == BreakFocus.hit
+            and (LocalPosition - BreakFocus.position).Magnitude <= AllowedRange
+            and not BreakFocus.hit:GetAttribute("NoBreak") then
             Position, Target, BreakPath, Direct = BreakFocus.position, BreakFocus.target, BreakFocus.path, BreakFocus.direct
         end
-        for _, v: Vector3 in (Position and {} or Handler and Handler:getContainedPositions(Block) or {bedwars.BlockController:getBlockPosition(Block.Position)}) do
-            local CellPosition, CellCost, CellPath = CalculatePath(Block, v * 3, not Wallcheck, Method or nil)
-            local Distance: number = CellPosition and (LocalPosition - CellPosition).Magnitude or math.huge
-            local Hit: boolean = CellPosition == v * 3
-            if CellPosition and (Hit and not Direct or Hit == Direct and (CellCost < Cost or (CellCost == Cost and Position ~= Store.breakTarget and (CellPosition == Store.breakTarget or Distance < (LocalPosition - Position).Magnitude)))) then
-                Cost, Position, Target, BreakPath, Direct = CellCost, CellPosition, v * 3, CellPath, Hit
+
+        if not Position and not Wallcheck then
+            -- Blatant mode deliberately targets the requested object itself and
+            -- does no opening, camera, or defense-corridor checks.
+            for _, Cell: Vector3 in ContainedPositions do
+                local TargetPosition: Vector3 = Cell * 3
+                local Distance: number = (LocalPosition - TargetPosition).Magnitude
+                if Distance <= AllowedRange and GetPlacedBlock(TargetPosition) and (not Position or Distance < (LocalPosition - Position).Magnitude) then
+                    Cost, Position, Target, BreakPath, Direct = 0, TargetPosition, TargetPosition, {}, true
+                end
+            end
+        elseif not Position then
+            for _, Cell: Vector3 in ContainedPositions do
+                local TargetPosition: Vector3 = Cell * 3
+                local CellPosition, CellCost, CellPath = CalculatePath(Block, TargetPosition, Method or nil, AllowedRange, IgnoreOwnBlocks)
+                if CellPosition then
+                    local Distance: number = (LocalPosition - CellPosition).Magnitude
+                    local Hit: boolean = CellPosition == TargetPosition
+                    local Sticky: boolean = CellPosition == Store.breakTarget
+                    local CurrentSticky: boolean = Position == Store.breakTarget
+                    local Better: boolean = Position == nil
+                        or Hit ~= Direct and Hit
+                        or Hit == Direct and CellCost < Cost
+                        or Hit == Direct and CellCost == Cost and Sticky ~= CurrentSticky and Sticky
+                        or Hit == Direct and CellCost == Cost and Sticky == CurrentSticky and Distance < (LocalPosition - Position).Magnitude
+                    if Better then
+                        Cost, Position, Target, BreakPath, Direct = CellCost, CellPosition, TargetPosition, CellPath, Hit
+                    end
+                end
             end
         end
 
         if DirectOnly and not Direct then
             return
         end
-
-        Store.breakTarget = Position
-
         if Position then
-            if (Entity.character.RootPart.Position - Position).Magnitude > 30 then
+            Store.breakTarget = Position
+            if (Entity.character.RootPart.Position - Position).Magnitude > AllowedRange then
                 return
             end
             local HitBlock, HitPosition = GetPlacedBlock(Position)
@@ -2198,7 +2238,7 @@ Run(function()
             local Request = {position = Position, target = Target, path = BreakPath, hit = HitBlock, sent = tick()}
             table.insert(BreakRequests, Request)
             BreakRequest = Request
-            BreakFocus = Sequential and {block = Block, hit = HitBlock, position = Position, target = Target, path = BreakPath, direct = Direct, wallcheck = Wallcheck, method = Method} or nil
+            BreakFocus = Sequential and {block = Block, hit = HitBlock, position = Position, target = Target, path = BreakPath, direct = Direct, wallcheck = Wallcheck, method = Method, range = AllowedRange, ignoreOwn = IgnoreOwnBlocks} or nil
             local Focus = BreakFocus
             local Promise = bedwars.ClientDamageBlock:Get("DamageBlock"):CallServerAsync({
                 blockRef = {blockPosition = HitPosition},
@@ -2385,6 +2425,7 @@ Run(function()
             player = select(5, ...)
         }
         table.clear(PathCache)
+        BreakFocus = nil
         VapeEvents.BreakBlockEvent:Fire(Data)
     end))
 
@@ -2435,9 +2476,11 @@ Run(function()
             Store.map = Map
             vape:Clean(Map.Blocks.ChildRemoved:Connect(function()
                 table.clear(PathCache)
+                BreakFocus = nil
             end))
             vape:Clean(Map.Blocks.ChildAdded:Connect(function(Block: Instance)
                 table.clear(PathCache)
+                BreakFocus = nil
                 task.defer(function()
                     if Block:IsA("BasePart") and Block:GetAttribute("Block") and (Block:GetAttribute("PlacedByUserId") or 0) ~= 0 then
                         local Position: Vector3 = Block.Position / 3
@@ -3152,8 +3195,13 @@ Run(function()
 	local CPS
 	local Place
 	local Wool
+	local PlaceRange
 	local BlockCPS = {}
 	local Thread: thread?
+	local ActiveInputs: {[any]: boolean} = {}
+	local HoldDelay: number = 0.18
+	Store.autoBlockClick = false
+	Store.autoBlockClickOwner = false
 	
 	local function IsAttackInput(Input: InputObject): boolean
 	    local Keybinds = bedwars.KeybindLoadController.getKeybinds and bedwars.KeybindLoadController:getKeybinds()
@@ -3164,42 +3212,128 @@ Run(function()
 	
 	    return Input.UserInputType == Keyboard or Input.KeyCode == Keyboard or Input.KeyCode == Gamepad
 	end
+
+	local function GetInputKey(Input: InputObject): string
+	    return `input:{Input.UserInputType.Name}:{Input.KeyCode.Name}`
+	end
+
+	local function HasAttackInput(): boolean
+	    return next(ActiveInputs) ~= nil
+	end
+
+	local function CanAutoPlace(): boolean
+	    local HandTool = Store.hand.tool
+	    return Store.hand.toolType == "block"
+	        and Place.Enabled
+	        and HandTool ~= nil
+	        and (not Wool.Enabled or HandTool.Name:find("wool", 1, true) ~= nil)
+	end
+
+	local function UpdateInputState(): boolean
+	    local Held: boolean = HasAttackInput()
+	    Store.autoBlockClick = Held
+	    -- AutoClicker owns block placement for this press. Scaffold observes this
+	    -- per-press flag so a tap cannot dispatch both placement controllers.
+	    Store.autoBlockClickOwner = Held and CanAutoPlace()
+	    return Held
+	end
 	
-	local function AutoClick()
+	local function GetClickDelay(): number
+	    if Store.hand.toolType == "block" then
+	        local PlaceCPS: number = math.max(tonumber(bedwars.SharedConstants.BLOCK_PLACE_CPS) or 12, 1)
+	        return math.max(1 / BlockCPS:GetRandomValue(), 1 / PlaceCPS)
+	    end
+	    return 1 / CPS:GetRandomValue()
+	end
+
+	local function PerformClick()
+	    UpdateInputState()
+	    if bedwars.AppController:isLayerOpen(bedwars.UILayers.MAIN) then
+	        return
+	    end
+
+	    local HandTool = Store.hand.tool
+	    if CanAutoPlace() then
+	        local BlockPlacer = bedwars.BlockPlacementController.blockPlacer
+	        if not BlockPlacer or not CanPlace() then
+	            return
+	        end
+
+	        -- One invocation can place at most one block. The BedWars placement
+	        -- controller remains the authority for its real server cooldown.
+	        if UserInputService.TouchEnabled then
+	            task.spawn(BlockPlacer.autoBridge, BlockPlacer, workspace:GetServerTimeNow() - bedwars.KnockbackController:getLastKnockbackTime() >= 0.2)
+	        else
+	            local Selector = BlockPlacer.clientManager:getBlockSelector()
+	            local MouseInfo = Selector and Selector:getMouseInfo(0, {range = PlaceRange.Value})
+	            if MouseInfo and MouseInfo.placementPosition == MouseInfo.placementPosition then
+	                task.spawn(BlockPlacer.placeBlock, BlockPlacer, MouseInfo.placementPosition, MouseInfo)
+	            end
+	        end
+	    elseif Store.hand.toolType == "sword" then
+	        if UserInputService.TouchEnabled then
+	            bedwars.SwordController:mobileSwingPressed()
+	        elseif CanSwing() and not bedwars.SwordController.disableSwingState then
+	            bedwars.SwordController:swingSwordAtMouse(0.39)
+	        end
+	    elseif HandTool and bedwars.IsItemClaw(HandTool.Name) then
+	        bedwars.SummonerClawHandController:attack(HandTool.Name)
+	    end
+	end
+
+	local function StopClick(ClearInputs: boolean?)
+	    if ClearInputs then
+	        table.clear(ActiveInputs)
+	    end
 	    if Thread then
 	        task.cancel(Thread)
+	        Thread = nil
 	    end
-	
-	    Thread = task.delay(Store.hand.toolType == "block" and math.max(1 / BlockCPS:GetRandomValue(), 1 / (bedwars.SharedConstants.BLOCK_PLACE_CPS or 12)) or 1 / CPS:GetRandomValue(), function()
-	        repeat
-	            if not bedwars.AppController:isLayerOpen(bedwars.UILayers.MAIN) then
-	                local BlockPlacer = bedwars.BlockPlacementController.blockPlacer
-	                if Store.hand.toolType == "block" and Place.Enabled and (Wool.Enabled and Store.hand.tool.Name:find("wool_") or not Wool.Enabled) and BlockPlacer and CanPlace() then
-	                    if (workspace:GetServerTimeNow() - bedwars.BlockCpsController.lastPlaceTimestamp) >= ((1 / (bedwars.SharedConstants.BLOCK_PLACE_CPS or 12)) * 0.5) then
-	                        if UserInputService.TouchEnabled then
-	                            task.spawn(BlockPlacer.autoBridge, BlockPlacer, workspace:GetServerTimeNow() - bedwars.KnockbackController:getLastKnockbackTime() >= 0.2)
-	                        else
-	                            local Selector = BlockPlacer.clientManager:getBlockSelector()
-	                            local MouseInfo = Selector and Selector:getMouseInfo(0)
-	                            if MouseInfo and MouseInfo.placementPosition == MouseInfo.placementPosition then
-	                                task.spawn(BlockPlacer.placeBlock, BlockPlacer, MouseInfo.placementPosition, MouseInfo)
-	                            end
-	                        end
-	                    end
-	                elseif Store.hand.toolType == "sword" then
-	                    if UserInputService.TouchEnabled then
-	                        bedwars.SwordController:mobileSwingPressed()
-	                    elseif CanSwing() and not bedwars.SwordController.disableSwingState then
-	                        bedwars.SwordController:swingSwordAtMouse(0.39)
-	                    end
-	                elseif Store.hand.tool and bedwars.IsItemClaw(Store.hand.tool.Name) then
-	                    bedwars.SummonerClawHandController:attack(Store.hand.tool.Name)
-	                end
+	    Store.autoBlockClick = false
+	    Store.autoBlockClickOwner = false
+	end
+
+	local function BeginClick(Source: any)
+	    if ActiveInputs[Source] then
+	        return
+	    end
+	    local AlreadyHeld: boolean = HasAttackInput()
+	    ActiveInputs[Source] = true
+	    if AlreadyHeld then
+	        UpdateInputState()
+	        return
+	    end
+
+	    -- A tap acts now, not one CPS interval later.
+	    UpdateInputState()
+	    PerformClick()
+	    local NextClick: number = os.clock() + HoldDelay
+	    Thread = task.spawn(function()
+	        while AutoClicker.Enabled and HasAttackInput() do
+	            UpdateInputState()
+	            local Now: number = os.clock()
+	            if Now >= NextClick then
+	                PerformClick()
+	                local Delay: number = GetClickDelay()
+	                repeat
+	                    NextClick += Delay
+	                until NextClick > Now
 	            end
-	
-	            task.wait(Store.hand.toolType == "block" and math.max(1 / BlockCPS:GetRandomValue(), 1 / (bedwars.SharedConstants.BLOCK_PLACE_CPS or 12)) or 1 / CPS:GetRandomValue())
-	        until not AutoClicker.Enabled
+	            task.wait()
+	        end
+	        Thread = nil
+	        Store.autoBlockClick = false
+	        Store.autoBlockClickOwner = false
 	    end)
+	end
+
+	local function EndClick(Source: any)
+	    ActiveInputs[Source] = nil
+	    if not HasAttackInput() then
+	        StopClick()
+	    else
+	        UpdateInputState()
+	    end
 	end
 	
 	AutoClicker = vape.Categories.Combat:CreateModule({
@@ -3208,15 +3342,17 @@ Run(function()
 	        if Callback then
 	            AutoClicker:Clean(UserInputService.InputBegan:Connect(function(Input: InputObject)
 	                if IsAttackInput(Input) then
-	                    AutoClick()
+	                    BeginClick(GetInputKey(Input))
 	                end
 	            end))
 	
 	            AutoClicker:Clean(UserInputService.InputEnded:Connect(function(Input: InputObject)
-	                if IsAttackInput(Input) and Thread then
-	                    task.cancel(Thread)
-	                    Thread = nil
+	                if IsAttackInput(Input) then
+	                    EndClick(GetInputKey(Input))
 	                end
+	            end))
+	            AutoClicker:Clean(UserInputService.WindowFocusReleased:Connect(function()
+	                StopClick(true)
 	            end))
 	
 	            if UserInputService.TouchEnabled then
@@ -3226,12 +3362,19 @@ Run(function()
 	                        return
 	                    end
 	                    Hooked[Button] = true
-	                    AutoClicker:Clean(Button.MouseButton1Down:Connect(AutoClick))
+	                    AutoClicker:Clean(Button.MouseButton1Down:Connect(function()
+	                        BeginClick(Button)
+	                    end))
 	                    AutoClicker:Clean(Button.MouseButton1Up:Connect(function()
-	                        if Thread then
-	                            task.cancel(Thread)
-	                            Thread = nil
+	                        EndClick(Button)
+	                    end))
+	                    AutoClicker:Clean(Button.InputEnded:Connect(function(Input: InputObject)
+	                        if Input.UserInputType == Enum.UserInputType.Touch or Input.UserInputType == Enum.UserInputType.MouseButton1 then
+	                            EndClick(Button)
 	                        end
+	                    end))
+	                    AutoClicker:Clean(Button.Destroying:Connect(function()
+	                        EndClick(Button)
 	                    end))
 	                end
 	
@@ -3248,13 +3391,10 @@ Run(function()
 	                end)
 	            end
 	        else
-	            if Thread then
-	                task.cancel(Thread)
-	                Thread = nil
-	            end
+	            StopClick(true)
 	        end
 	    end,
-	    Tooltip = "Hold attack button to automatically click"
+	    Tooltip = "Taps act immediately and once; holding starts precise repeated clicks after a short threshold"
 	})
 	
 	CPS = AutoClicker:CreateTwoSlider({
@@ -3274,10 +3414,21 @@ Run(function()
 	        if Wool then
 	            Wool.Object.Visible = Callback
 	        end
+	        if PlaceRange then
+	            PlaceRange.Object.Visible = Callback
+	        end
 	    end,
 	    Default = true
 	})
 	Wool = AutoClicker:CreateToggle({Name = "Wool only", Tooltip = "Only clicks when you are holding wool.", Darker = true})
+	PlaceRange = AutoClicker:CreateSlider({
+	    Name = "Place range",
+	    Min = 1,
+	    Max = 30,
+	    Default = 14,
+	    Darker = true,
+	    Tooltip = "Maximum range for AutoClicker's targeted desktop block placement"
+	})
 	BlockCPS = AutoClicker:CreateTwoSlider({
 	    Name = "Block CPS",
 	    Min = 1,
@@ -4783,13 +4934,18 @@ end)
 Run(function()
 	local DamageBoost
 	local Stack: number?
+
+	local function IsLongJumping(): boolean
+	    local Module = vape.Modules.LongJump
+	    return Module and Module.Enabled or false
+	end
 	
 	DamageBoost = vape.Categories.Blatant:CreateModule({
 	    Name = "DamageBoost",
 	    Function = function(Callback: boolean)
 	        if Callback then
 	            DamageBoost:Clean(VapeEvents.EntityDamageEvent.Event:Connect(function(DamageTable)
-	                if Entity.isAlive and tick() > (Stack or 0) and DamageTable.entityInstance == LocalPlayer.Character and not vape.Modules.LongJump.Enabled then
+	                if Entity.isAlive and tick() > (Stack or 0) and DamageTable.entityInstance == LocalPlayer.Character and not IsLongJumping() then
 	                    local Horizontal: number = DamageTable.knockbackMultiplier and DamageTable.knockbackMultiplier.horizontal or 0
 	                    KnockbackSpeed = bedwars.KnockbackUtil.calculateKnockbackVelocity(Vector3.one, 1, {
 	                        vertical = 0,
@@ -4799,9 +4955,11 @@ Run(function()
 	                    KnockbackBoost = tick() + (Horizontal / 3.5)
 	                end
 	            end))
+	        else
+	            Stack = nil
 	        end
 	    end,
-	    Tooltip = "Makes you go slightly faster when damaged"
+	    Tooltip = "Adds the normal short speed boost after damage without changing received knockback"
 	})
 end)
 
@@ -5689,7 +5847,10 @@ Run(function()
 	            table.clear(Disabled)
 	        end
 	    end,
-	    Tooltip = "Prevents taking fall damage."
+	    ExtraText = function()
+	        return `Accepted · {ScriptRevision}`
+	    end,
+	    Tooltip = "Uses the accepted Landed pulse and preserves newer cannon-flight velocity changes."
 	})
 	
 	Damage = NoFall:CreateSlider({
@@ -15333,17 +15494,18 @@ Run(function()
 	getgenv().checkAdjacent = CheckAdjacent
 	
 	local function GetScaffoldBlock()
-	    if Store.hand.toolType == "block" then
-	        return Store.hand.tool.Name, Store.hand.amount
-	    elseif (not LimitItem.Enabled) then
+	    local HeldAmount: number = tonumber(Store.hand.amount) or 0
+	    if Store.hand.toolType == "block" and Store.hand.tool and HeldAmount > 0 then
+	        return Store.hand.tool.Name, HeldAmount
+	    elseif not LimitItem.Enabled then
 	        local Wool, Amount = GetWool()
-	        if Wool then
+	        if Wool and (tonumber(Amount) or 0) > 0 then
 	            return Wool, Amount
-	        else
-	            for _, v: any in Store.inventory.inventory.items do
-	                if bedwars.ItemMeta[v.itemType].block then
-	                    return v.itemType, v.amount
-	                end
+	        end
+	        for _, v: any in Store.inventory.inventory.items do
+	            local Meta = bedwars.ItemMeta[v.itemType]
+	            if Meta and Meta.block and (tonumber(v.amount) or 0) > 0 then
+	                return v.itemType, v.amount
 	            end
 	        end
 	    end
@@ -15359,14 +15521,20 @@ Run(function()
 	        end
 	
 	        if Callback then
+	            -- A fresh toggle must not inherit Diagonal state from an older
+	            -- bridge, but the original placement loop stays untouched.
+	            LastPosition = Vector3.zero
 	            repeat
 	                if Entity.isAlive and not vape.MovementOwner then
 	                    local Wool, Amount = GetScaffoldBlock()
 	
-	                    if Mouse.Enabled then
-	                        if not UserInputService:IsMouseButtonPressed(0) then
-	                            Wool = nil
-	                        end
+	                    -- A block press belongs to exactly one placement
+	                    -- controller. AutoClicker owns its tap/hold while active;
+	                    -- Scaffold resumes unchanged as soon as that press ends.
+	                    if Store.autoBlockClickOwner then
+	                        Wool = nil
+	                    elseif Mouse.Enabled and not UserInputService:IsMouseButtonPressed(0) and not Store.autoBlockClick then
+	                        Wool = nil
 	                    end
 	
 	                    if Label then
@@ -15377,7 +15545,8 @@ Run(function()
 	
 	                    if Wool then
 	                        local Root: BasePart = Entity.character.RootPart
-	                        if Tower.Enabled and UserInputService:IsKeyDown(Enum.KeyCode.Space) and (not UserInputService:GetFocusedTextBox()) then
+	                        local BlockBelow = GetPlacedBlock(Root.Position - Vector3.new(0, Entity.character.HipHeight + 1.5, 0))
+	                        if Tower.Enabled and (tonumber(Amount) or 0) > 0 and BlockBelow and UserInputService:IsKeyDown(Enum.KeyCode.Space) and (not UserInputService:GetFocusedTextBox()) then
 	                            Root.AssemblyLinearVelocity = Vector3.new(Root.AssemblyLinearVelocity.X, 38, Root.AssemblyLinearVelocity.Z)
 	                        end
 	
@@ -15434,7 +15603,7 @@ Run(function()
 	            VisualPosition = nil
 	        end
 	    end,
-	    Tooltip = "Helps you make bridges/scaffold walk."
+	    Tooltip = "Original fluid placement path with safe inventory and grounded Tower checks"
 	})
 	
 	Expand = Scaffold:CreateSlider({
@@ -17622,6 +17791,7 @@ Run(function()
 	local Priority
 	local Return
 	local Switch
+	local LimitItem
 	local Wool
 	local Blacklist
 	local CenterOrigin: Vector3?
@@ -17685,19 +17855,35 @@ Run(function()
 	
 	local function GetBlocks()
 	    local Blocks = {}
-	    for _, v: any in Store.inventory.inventory.items do
-	        local Block = bedwars.ItemMeta[v.itemType].block
-	        if Block and (Wool.Enabled and v.itemType:find("wool") or not Wool.Enabled and not table.find(Blacklist.ListEnabled, v.itemType:find("wool") and "wool" or v.itemType)) then
+	    local WoolOnly: boolean = Wool and Wool.Enabled or false
+	    local Blacklisted: {string} = Blacklist and Blacklist.ListEnabled or {}
+	    local Items = Store.inventory and Store.inventory.inventory and Store.inventory.inventory.items or {}
+	    for _, v: any in Items do
+	        local Meta = bedwars.ItemMeta[v.itemType]
+	        local Block = Meta and Meta.block
+	        local BlacklistName: string = v.itemType:find("wool") and "wool" or v.itemType
+	        if Block and (WoolOnly and v.itemType:find("wool") or not WoolOnly and not table.find(Blacklisted, BlacklistName)) then
 	            local Slot: number? = GetHotbar(v.tool)
-	            if Slot or not Switch.Enabled then
-	                table.insert(Blocks, {Type = v.itemType, Health = Block.health, Slot = Slot, Amount = v.amount or math.huge})
+	            if Slot or not (Switch and Switch.Enabled) then
+	                table.insert(Blocks, {Type = v.itemType, Health = Block.health or 0, Slot = Slot, Amount = v.amount or math.huge})
 	            end
 	        end
 	    end
 	    if #Blocks > 1 then
-	        table.sort(Blocks, Priorities[Priority.Value])
+	        table.sort(Blocks, Priorities[Priority and Priority.Value or "Lowest cost"])
 	    end
 	    return Blocks
+	end
+
+	local function GetPriorityBlockName(): string
+	    local Selected = GetBlocks()[1]
+	    if not Selected then
+	        return "No block"
+	    end
+	    local Meta = bedwars.ItemMeta[Selected.Type]
+	    return Meta and Meta.displayName or (tostring(Selected.Type):gsub("_", " "):gsub("%a+", function(Word: string)
+	        return Word:sub(1, 1):upper() .. Word:sub(2)
+	    end))
 	end
 	
 	local function GetEnclosure(Origin: Vector3, Grounded: boolean): {Vector3}
@@ -17743,6 +17929,15 @@ Run(function()
 	    local Hotbar = Store.hand.tool and GetHotbar(Store.hand.tool) or nil
 	    local PlaceDelay: number = 1 / math.min(bedwars.DefaultPlaceCPS or math.huge, bedwars.SharedConstants.BLOCK_PLACE_CPS)
 	    local Placed: number = 0
+	    local ShouldSwitch: boolean = Switch.Enabled and not LimitItem.Enabled
+
+	    if LimitItem.Enabled then
+	        local HeldName: string? = Store.hand.toolType == "block" and Store.hand.tool and Store.hand.tool.Name or nil
+	        if not Blocks[1] or HeldName ~= Blocks[1].Type then
+	            return
+	        end
+	        Blocks = {Blocks[1]}
+	    end
 	
 	    for _, Offset: Vector3 in Cells do
 	        if Placed >= Limit or not BlockIn.Enabled or not Entity.isAlive then
@@ -17770,7 +17965,7 @@ Run(function()
 	            break
 	        end
 	
-	        if Switch.Enabled then
+	        if ShouldSwitch then
 	            HotbarSwitch(Block.Slot)
 	        end
 	        task.spawn(bedwars.placeBlock, Position, Block.Type)
@@ -17779,7 +17974,7 @@ Run(function()
 	            Placed += 1
 	        end
 	    end
-	    if Return.Enabled and Switch.Enabled and Hotbar then
+	    if Return.Enabled and ShouldSwitch and Hotbar then
 	        HotbarSwitch(Hotbar)
 	    end
 	end
@@ -17824,6 +18019,9 @@ Run(function()
 	            until not BlockIn.Enabled
 	        end
 	    end,
+	    ExtraText = function()
+	        return GetPriorityBlockName()
+	    end,
 	    Tooltip = "Automatically blocks you in by building walls around you"
 	})
 	
@@ -17841,9 +18039,14 @@ Run(function()
 	Priority = BlockIn:CreateDropdown({
 	    Name = "Block priority",
 	    List = {"Lowest cost", "Hardest"},
-	    Default = "Lowest cost"
+	    Default = "Lowest cost",
+	    Tooltip = "Hardest picks the highest-health block in your inventory, including Obsidian, and shows it beside Block-In"
 	})
 	Switch = BlockIn:CreateToggle({Name = "Switch", Default = true})
+	LimitItem = BlockIn:CreateToggle({
+	    Name = "Limit to items",
+	    Tooltip = "Only runs while the exact block selected by Block priority is already in your hand"
+	})
 	Return = BlockIn:CreateToggle({Name = "Return to last slot", Default = true})
 	Wool = BlockIn:CreateToggle({Name = "Wool only"})
 	Blacklist = BlockIn:CreateTextList({
@@ -18118,7 +18321,6 @@ Run(function()
 	local SelfBreak
 	local LimitItem
 	local Wallcheck
-	local ViewAngle
 	local AutoTool
 	local PlayerCheck
 	local CustomList, Parts = {}, {}
@@ -18283,8 +18485,11 @@ Run(function()
 	    end
 	
 	    local Block, Closest = nil, math.huge
+	    -- Wallcheck may inspect a bed just beyond reach when a useful outer
+	    -- defense block is still inside legal breaking range.
+	    local TargetRange: number = Route and Wallcheck.Enabled and math.min(Range.Value + 15, 45) or Range.Value
 	    for _, v: BasePart in List do
-	        if (v.Position - LocalPosition).Magnitude >= Range.Value or not IsBlockBreakable(v) then
+	        if (v.Position - LocalPosition).Magnitude > TargetRange or not IsBlockBreakable(v) then
 	            continue
 	        end
 	        if not SelfBreak.Enabled and v:GetAttribute("PlacedByUserId") == LocalPlayer.UserId then
@@ -18293,12 +18498,6 @@ Run(function()
 	        if TeamCheck then
 	            local Placer: Player? = Players:GetPlayerByUserId(v:GetAttribute("PlacedByUserId") or 0)
 	            if Placer and Placer:GetAttribute("Team") == LocalPlayer:GetAttribute("Team") then
-	                continue
-	            end
-	        end
-	        if Wallcheck.Enabled and not ClosestBreak.Enabled and ViewAngle.Value < 180 then
-	            local Offset: Vector3 = v.Position - Camera.CFrame.Position
-	            if Offset.Magnitude > 0 and math.deg(math.acos(math.clamp(Offset.Unit:Dot(Camera.CFrame.LookVector), -1, 1))) > ViewAngle.Value then
 	                continue
 	            end
 	        end
@@ -18339,9 +18538,10 @@ Run(function()
 	    ActiveBlock = Block
 	    if tick() < NextBreak then return true end
 	    local Started: number = tick()
-	    local BreakPosition, BreakPath, EndPosition, Requested = bedwars.breakBlock(Block, Effect.Enabled, Animation.Value ~= "No Animation" and Animation.Value or nil, CustomHealth.Enabled and CustomHealthbar or nil, AutoTool.Enabled, Wallcheck.Enabled, ClosestBreak.Enabled and BreakMethods.Distance or BreakMethods[Mode.Value], not Route, true)
+	    local AllowedRange: number = math.min(Range.Value, bedwars.BlockBreaker:getRange())
+	    local BreakPosition, BreakPath, EndPosition, Requested = bedwars.breakBlock(Block, Effect.Enabled, Animation.Value ~= "No Animation" and Animation.Value or nil, CustomHealth.Enabled and CustomHealthbar or nil, AutoTool.Enabled, Wallcheck.Enabled, ClosestBreak.Enabled and BreakMethods.Distance or BreakMethods[Mode.Value], not Route, true, AllowedRange, Route and Wallcheck.Enabled and not SelfBreak.Enabled)
 	    if Requested then NextBreak = Started + math.max(BreakSpeed.Value, bedwars.BlockBreaker:getCooldown()) end
-	    local CurrentNode = BreakPosition
+	    local CurrentNode = Effect.Enabled and BreakPosition or nil
 	    if CurrentNode or PathShown then
 	        PathShown = CurrentNode ~= nil
 	        for _, v: Part in Parts do
@@ -18461,7 +18661,10 @@ Run(function()
 	            PathShown = false
 	        end
 	    end,
-	    Tooltip = "Break blocks around you automatically"
+	    ExtraText = function()
+	        return Wallcheck and Wallcheck.Enabled and "Wallcheck" or "Blatant"
+	    end,
+	    Tooltip = `Break blocks around you automatically · {ScriptRevision}`
 	})
 	
 	Mode = Nuker:CreateDropdown({
@@ -18555,23 +18758,9 @@ Run(function()
 	})
 	SelfBreak = Nuker:CreateToggle({Name = "Self Break"})
 	Wallcheck = Nuker:CreateToggle({
-	    Name = "Legit mode",
-	    Function = function(Callback: boolean)
-	        if ViewAngle then
-	            ViewAngle.Object.Visible = Callback
-	        end
-	    end,
+	    Name = "Wallcheck",
 	    Default = true,
-	    Tooltip = "Checks for blocks inside the bed instead of directly targetting bed,\nand only breaks what you are actually looking at"
-	})
-	ViewAngle = Nuker:CreateSlider({
-	    Name = "View angle",
-	    Min = 5,
-	    Max = 180,
-	    Default = 60,
-	    Suffix = "degrees",
-	    Darker = true,
-	    Tooltip = "How far off your crosshair a block can sit in legit mode, 180 breaks anything in range"
+	    Tooltip = "Uses exposed openings and the cheapest bed-defense corridor; disable for blatant direct nuking"
 	})
 	AutoTool = Nuker:CreateToggle({
 	    Name = "Auto Tool",
@@ -30155,3 +30344,5 @@ Run(function()
 	    Tooltip = "Slows your mouse by the same amount you zoomed in"
 	})
 end)
+-- Visible confirmation that this merged game file reached the executor.
+task.defer(SendNotification, "BedWars", `Loaded merged modules ({ScriptRevision})`, 6)
