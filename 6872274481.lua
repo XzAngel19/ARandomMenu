@@ -1,5 +1,5 @@
 local vape = shared.vape
-local ScriptRevision: string = "2026-10-02-r21"
+local ScriptRevision: string = "2026-10-02-r22"
 getgenv().ARandomMenuBedwarsRevision = ScriptRevision
 local loadstring = function(...)
     local Chunk, Message = loadstring(...)
@@ -3195,166 +3195,73 @@ Run(function()
 	local CPS
 	local Place
 	local Wool
-	local PlaceRange
 	local BlockCPS = {}
 	local Thread: thread?
-	local ActiveInputs: {[any]: boolean} = {}
-	local HoldDelay: number = 0.18
-	Store.autoBlockClick = false
-	Store.autoBlockClickOwner = false
-	
+
 	local function IsAttackInput(Input: InputObject): boolean
 	    local Keybinds = bedwars.KeybindLoadController.getKeybinds and bedwars.KeybindLoadController:getKeybinds()
 	    local Keyboard = Keybinds and Keybinds.keyboard and Keybinds.keyboard.controlActions.Attack
 	    local Gamepad = Keybinds and Keybinds.gamepad and Keybinds.gamepad.controlActions.Attack
 	    Keyboard = typeof(Keyboard) == "EnumItem" and Keyboard or Enum.UserInputType.MouseButton1
 	    Gamepad = typeof(Gamepad) == "EnumItem" and Gamepad or Enum.KeyCode.ButtonR2
-	
+
 	    return Input.UserInputType == Keyboard or Input.KeyCode == Keyboard or Input.KeyCode == Gamepad
 	end
 
-	local function GetInputKey(Input: InputObject): string
-	    return `input:{Input.UserInputType.Name}:{Input.KeyCode.Name}`
-	end
-
-	local function HasAttackInput(): boolean
-	    return next(ActiveInputs) ~= nil
-	end
-
-	local function CanAutoPlace(): boolean
-	    local HandTool = Store.hand.tool
-	    return Store.hand.toolType == "block"
-	        and Place.Enabled
-	        and HandTool ~= nil
-	        and (not Wool.Enabled or HandTool.Name:find("wool", 1, true) ~= nil)
-	end
-
-	local function UpdateInputState(): boolean
-	    local Held: boolean = HasAttackInput()
-	    Store.autoBlockClick = Held
-	    -- AutoClicker owns block placement for this press. Scaffold observes this
-	    -- per-press flag so a tap cannot dispatch both placement controllers.
-	    Store.autoBlockClickOwner = Held and CanAutoPlace()
-	    return Held
-	end
-	
-	local function GetClickDelay(): number
-	    if Store.hand.toolType == "block" then
-	        local PlaceCPS: number = math.max(tonumber(bedwars.SharedConstants.BLOCK_PLACE_CPS) or 12, 1)
-	        return math.max(1 / BlockCPS:GetRandomValue(), 1 / PlaceCPS)
-	    end
-	    return 1 / CPS:GetRandomValue()
-	end
-
-	local function PerformClick()
-	    UpdateInputState()
-	    if bedwars.AppController:isLayerOpen(bedwars.UILayers.MAIN) then
-	        return
-	    end
-
-	    local HandTool = Store.hand.tool
-	    if CanAutoPlace() then
-	        local BlockPlacer = bedwars.BlockPlacementController.blockPlacer
-	        if not BlockPlacer or not CanPlace() then
-	            return
-	        end
-
-	        -- One invocation can place at most one block. The BedWars placement
-	        -- controller remains the authority for its real server cooldown.
-	        if UserInputService.TouchEnabled then
-	            task.spawn(BlockPlacer.autoBridge, BlockPlacer, workspace:GetServerTimeNow() - bedwars.KnockbackController:getLastKnockbackTime() >= 0.2)
-	        else
-	            local Selector = BlockPlacer.clientManager:getBlockSelector()
-	            local MouseInfo = Selector and Selector:getMouseInfo(0, {range = PlaceRange.Value})
-	            if MouseInfo and MouseInfo.placementPosition == MouseInfo.placementPosition then
-	                task.spawn(BlockPlacer.placeBlock, BlockPlacer, MouseInfo.placementPosition, MouseInfo)
-	            end
-	        end
-	    elseif Store.hand.toolType == "sword" then
-	        if UserInputService.TouchEnabled then
-	            bedwars.SwordController:mobileSwingPressed()
-	        elseif CanSwing() and not bedwars.SwordController.disableSwingState then
-	            bedwars.SwordController:swingSwordAtMouse(0.39)
-	        end
-	    elseif HandTool and bedwars.IsItemClaw(HandTool.Name) then
-	        bedwars.SummonerClawHandController:attack(HandTool.Name)
-	    end
-	end
-
-	local function StopClick(ClearInputs: boolean?)
-	    if ClearInputs then
-	        table.clear(ActiveInputs)
-	    end
+	local function AutoClick()
 	    if Thread then
 	        task.cancel(Thread)
-	        Thread = nil
-	    end
-	    Store.autoBlockClick = false
-	    Store.autoBlockClickOwner = false
-	end
-
-	local function BeginClick(Source: any)
-	    if ActiveInputs[Source] then
-	        return
-	    end
-	    local AlreadyHeld: boolean = HasAttackInput()
-	    ActiveInputs[Source] = true
-	    if AlreadyHeld then
-	        UpdateInputState()
-	        return
 	    end
 
-	    -- A tap acts now, not one CPS interval later.
-	    UpdateInputState()
-	    PerformClick()
-	    local NextClick: number = os.clock() + HoldDelay
-	    Thread = task.spawn(function()
-	        while AutoClicker.Enabled and HasAttackInput() do
-	            UpdateInputState()
-	            local Now: number = os.clock()
-	            if Now >= NextClick then
-	                PerformClick()
-	                local Delay: number = GetClickDelay()
-	                repeat
-	                    NextClick += Delay
-	                until NextClick > Now
+	    Thread = task.delay(Store.hand.toolType == "block" and math.max(1 / BlockCPS:GetRandomValue(), 1 / (bedwars.SharedConstants.BLOCK_PLACE_CPS or 12)) or 1 / CPS:GetRandomValue(), function()
+	        repeat
+	            if not bedwars.AppController:isLayerOpen(bedwars.UILayers.MAIN) then
+	                local BlockPlacer = bedwars.BlockPlacementController.blockPlacer
+	                if Store.hand.toolType == "block" and Place.Enabled and (Wool.Enabled and Store.hand.tool.Name:find("wool_") or not Wool.Enabled) and BlockPlacer and CanPlace() then
+	                    if (workspace:GetServerTimeNow() - bedwars.BlockCpsController.lastPlaceTimestamp) >= ((1 / (bedwars.SharedConstants.BLOCK_PLACE_CPS or 12)) * 0.5) then
+	                        if UserInputService.TouchEnabled then
+	                            task.spawn(BlockPlacer.autoBridge, BlockPlacer, workspace:GetServerTimeNow() - bedwars.KnockbackController:getLastKnockbackTime() >= 0.2)
+	                        else
+	                            local Selector = BlockPlacer.clientManager:getBlockSelector()
+	                            local MouseInfo = Selector and Selector:getMouseInfo(0)
+	                            if MouseInfo and MouseInfo.placementPosition == MouseInfo.placementPosition then
+	                                task.spawn(BlockPlacer.placeBlock, BlockPlacer, MouseInfo.placementPosition, MouseInfo)
+	                            end
+	                        end
+	                    end
+	                elseif Store.hand.toolType == "sword" then
+	                    if UserInputService.TouchEnabled then
+	                        bedwars.SwordController:mobileSwingPressed()
+	                    elseif CanSwing() and not bedwars.SwordController.disableSwingState then
+	                        bedwars.SwordController:swingSwordAtMouse(0.39)
+	                    end
+	                elseif Store.hand.tool and bedwars.IsItemClaw(Store.hand.tool.Name) then
+	                    bedwars.SummonerClawHandController:attack(Store.hand.tool.Name)
+	                end
 	            end
-	            task.wait()
-	        end
-	        Thread = nil
-	        Store.autoBlockClick = false
-	        Store.autoBlockClickOwner = false
+
+	            task.wait(Store.hand.toolType == "block" and math.max(1 / BlockCPS:GetRandomValue(), 1 / (bedwars.SharedConstants.BLOCK_PLACE_CPS or 12)) or 1 / CPS:GetRandomValue())
+	        until not AutoClicker.Enabled
 	    end)
 	end
 
-	local function EndClick(Source: any)
-	    ActiveInputs[Source] = nil
-	    if not HasAttackInput() then
-	        StopClick()
-	    else
-	        UpdateInputState()
-	    end
-	end
-	
 	AutoClicker = vape.Categories.Combat:CreateModule({
 	    Name = "AutoClicker",
 	    Function = function(Callback: boolean)
 	        if Callback then
 	            AutoClicker:Clean(UserInputService.InputBegan:Connect(function(Input: InputObject)
 	                if IsAttackInput(Input) then
-	                    BeginClick(GetInputKey(Input))
+	                    AutoClick()
 	                end
 	            end))
-	
+
 	            AutoClicker:Clean(UserInputService.InputEnded:Connect(function(Input: InputObject)
-	                if IsAttackInput(Input) then
-	                    EndClick(GetInputKey(Input))
+	                if IsAttackInput(Input) and Thread then
+	                    task.cancel(Thread)
+	                    Thread = nil
 	                end
 	            end))
-	            AutoClicker:Clean(UserInputService.WindowFocusReleased:Connect(function()
-	                StopClick(true)
-	            end))
-	
+
 	            if UserInputService.TouchEnabled then
 	                local Hooked: {[Instance]: boolean} = {}
 	                local function HookButton(Button: Instance)
@@ -3362,28 +3269,21 @@ Run(function()
 	                        return
 	                    end
 	                    Hooked[Button] = true
-	                    AutoClicker:Clean(Button.MouseButton1Down:Connect(function()
-	                        BeginClick(Button)
-	                    end))
+	                    AutoClicker:Clean(Button.MouseButton1Down:Connect(AutoClick))
 	                    AutoClicker:Clean(Button.MouseButton1Up:Connect(function()
-	                        EndClick(Button)
-	                    end))
-	                    AutoClicker:Clean(Button.InputEnded:Connect(function(Input: InputObject)
-	                        if Input.UserInputType == Enum.UserInputType.Touch or Input.UserInputType == Enum.UserInputType.MouseButton1 then
-	                            EndClick(Button)
+	                        if Thread then
+	                            task.cancel(Thread)
+	                            Thread = nil
 	                        end
 	                    end))
-	                    AutoClicker:Clean(Button.Destroying:Connect(function()
-	                        EndClick(Button)
-	                    end))
 	                end
-	
+
 	                task.spawn(function()
 	                    local MobileUI: Instance? = LocalPlayer.PlayerGui:WaitForChild("MobileUI", 20)
 	                    if not MobileUI or not AutoClicker.Enabled then
 	                        return
 	                    end
-	
+
 	                    for _, v: Instance in MobileUI:GetChildren() do
 	                        HookButton(v)
 	                    end
@@ -3391,12 +3291,15 @@ Run(function()
 	                end)
 	            end
 	        else
-	            StopClick(true)
+	            if Thread then
+	                task.cancel(Thread)
+	                Thread = nil
+	            end
 	        end
 	    end,
-	    Tooltip = "Taps act immediately and once; holding starts precise repeated clicks after a short threshold"
+	    Tooltip = "Hold attack button to automatically click"
 	})
-	
+
 	CPS = AutoClicker:CreateTwoSlider({
 	    Name = "CPS",
 	    Min = 1,
@@ -3410,25 +3313,14 @@ Run(function()
 	        if BlockCPS.Object then
 	            BlockCPS.Object.Visible = Callback
 	        end
-	
+
 	        if Wool then
 	            Wool.Object.Visible = Callback
-	        end
-	        if PlaceRange then
-	            PlaceRange.Object.Visible = Callback
 	        end
 	    end,
 	    Default = true
 	})
 	Wool = AutoClicker:CreateToggle({Name = "Wool only", Tooltip = "Only clicks when you are holding wool.", Darker = true})
-	PlaceRange = AutoClicker:CreateSlider({
-	    Name = "Place range",
-	    Min = 1,
-	    Max = 30,
-	    Default = 14,
-	    Darker = true,
-	    Tooltip = "Maximum range for AutoClicker's targeted desktop block placement"
-	})
 	BlockCPS = AutoClicker:CreateTwoSlider({
 	    Name = "Block CPS",
 	    Min = 1,
@@ -15448,7 +15340,7 @@ Run(function()
 	local Adjacent, LastPosition, Label, VisualBlock = {}, Vector3.zero
 	local VisualTween, VisualPosition
 	local VisualSpeed: number = 0.1
-	
+
 	for X: number = -3, 3, 3 do
 	    for Y: number = -3, 3, 3 do
 	        for Z: number = -3, 3, 3 do
@@ -15459,7 +15351,7 @@ Run(function()
 	        end
 	    end
 	end
-	
+
 	local function NearCorner(BlockPosition: Vector3, Position: Vector3): Vector3
 	    local StartPosition: Vector3 = BlockPosition - Vector3.new(3, 3, 3)
 	    local EndPosition: Vector3 = BlockPosition + Vector3.new(3, 3, 3)
@@ -15467,7 +15359,7 @@ Run(function()
 	    return Vector3.new(math.clamp(Check.X, StartPosition.X, EndPosition.X), math.clamp(Check.Y, StartPosition.Y, EndPosition.Y), math.clamp(Check.Z, StartPosition.Z, EndPosition.Z))
 	end
 	getgenv().nearCorner = NearCorner
-	
+
 	local function BlockProximity(Position: Vector3): Vector3?
 	    local Magnitude, Closest = 60
 	    local Blocks = GetBlocksInPoints(bedwars.BlockController:getBlockPosition(Position - Vector3.new(21, 21, 21)), bedwars.BlockController:getBlockPosition(Position + Vector3.new(21, 21, 21)))
@@ -15482,7 +15374,7 @@ Run(function()
 	    return Closest
 	end
 	getgenv().blockProximity = BlockProximity
-	
+
 	local function CheckAdjacent(Position: Vector3): boolean
 	    for _, v: Vector3 in Adjacent do
 	        if GetPlacedBlock(Position + v) then
@@ -15492,64 +15384,56 @@ Run(function()
 	    return false
 	end
 	getgenv().checkAdjacent = CheckAdjacent
-	
+
 	local function GetScaffoldBlock()
-	    local HeldAmount: number = tonumber(Store.hand.amount) or 0
-	    if Store.hand.toolType == "block" and Store.hand.tool and HeldAmount > 0 then
-	        return Store.hand.tool.Name, HeldAmount
-	    elseif not LimitItem.Enabled then
+	    if Store.hand.toolType == "block" then
+	        return Store.hand.tool.Name, Store.hand.amount
+	    elseif (not LimitItem.Enabled) then
 	        local Wool, Amount = GetWool()
-	        if Wool and (tonumber(Amount) or 0) > 0 then
+	        if Wool then
 	            return Wool, Amount
-	        end
-	        for _, v: any in Store.inventory.inventory.items do
-	            local Meta = bedwars.ItemMeta[v.itemType]
-	            if Meta and Meta.block and (tonumber(v.amount) or 0) > 0 then
-	                return v.itemType, v.amount
+	        else
+	            for _, v: any in Store.inventory.inventory.items do
+	                if bedwars.ItemMeta[v.itemType].block then
+	                    return v.itemType, v.amount
+	                end
 	            end
 	        end
 	    end
-	
+
 	    return nil, 0
 	end
-	
+
 	Scaffold = vape.Categories.Utility:CreateModule({
 	    Name = "Scaffold",
 	    Function = function(Callback: boolean)
 	        if Label then
 	            Label.Visible = Callback
 	        end
-	
+
 	        if Callback then
-	            -- A fresh toggle must not inherit Diagonal state from an older
-	            -- bridge, but the original placement loop stays untouched.
-	            LastPosition = Vector3.zero
 	            repeat
 	                if Entity.isAlive and not vape.MovementOwner then
 	                    local Wool, Amount = GetScaffoldBlock()
-	
-	                    -- A block press belongs to exactly one placement
-	                    -- controller. AutoClicker owns its tap/hold while active;
-	                    -- Scaffold resumes unchanged as soon as that press ends.
-	                    if Store.autoBlockClickOwner then
-	                        Wool = nil
-	                    elseif Mouse.Enabled and not UserInputService:IsMouseButtonPressed(0) and not Store.autoBlockClick then
-	                        Wool = nil
+
+	                    if Mouse.Enabled then
+	                        if not UserInputService:IsMouseButtonPressed(0) then
+	                            Wool = nil
+	                        end
 	                    end
-	
+
 	                    if Label then
 	                        Amount = Amount or 0
 	                        Label.Text = `{Amount} <font color="rgb(170, 170, 170)">(Scaffold)</font>`
 	                        Label.TextColor3 = Color3.fromHSV((Amount / 128) / 2.8, 0.86, 1)
 	                    end
-	
+
 	                    if Wool then
 	                        local Root: BasePart = Entity.character.RootPart
-	                        local BlockBelow = GetPlacedBlock(Root.Position - Vector3.new(0, Entity.character.HipHeight + 1.5, 0))
-	                        if Tower.Enabled and (tonumber(Amount) or 0) > 0 and BlockBelow and UserInputService:IsKeyDown(Enum.KeyCode.Space) and (not UserInputService:GetFocusedTextBox()) then
+	                        if Tower.Enabled and UserInputService:IsKeyDown(Enum.KeyCode.Space) and (not UserInputService:GetFocusedTextBox()) then
 	                            Root.AssemblyLinearVelocity = Vector3.new(Root.AssemblyLinearVelocity.X, 38, Root.AssemblyLinearVelocity.Z)
 	                        end
-	
+
 	                        for Step: number = Expand.Value, 1, -1 do
 	                            local CurrentPosition: Vector3 = RoundPosition(Root.Position - Vector3.new(0, Entity.character.HipHeight + (Downwards.Enabled and UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) and 4.5 or 1.5), 0) + Entity.character.Humanoid.MoveDirection * (Step * 3))
 	                            if Diagonal.Enabled then
@@ -15560,7 +15444,7 @@ Run(function()
 	                                    end
 	                                end
 	                            end
-	
+
 	                            if VisualBlock and CurrentPosition then
 	                                local VisualTarget: Vector3 = bedwars.BlockController:getBlockPosition(CurrentPosition) * 3
 	                                if VisualPosition ~= VisualTarget then
@@ -15568,7 +15452,7 @@ Run(function()
 	                                        VisualTween:Cancel()
 	                                        VisualTween = nil
 	                                    end
-	
+
 	                                    if VisualBlock.Parent == Camera then
 	                                        VisualTween = TweenService:Create(VisualBlock, TweenInfo.new(VisualSpeed, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {CFrame = CFrame.new(VisualTarget)})
 	                                        VisualTween:Play()
@@ -15579,7 +15463,7 @@ Run(function()
 	                                    VisualPosition = VisualTarget
 	                                end
 	                            end
-	
+
 	                            local Block, BlockPosition = GetPlacedBlock(CurrentPosition)
 	                            if not Block then
 	                                BlockPosition = CheckAdjacent(BlockPosition * 3) and BlockPosition * 3 or BlockProximity(CurrentPosition)
@@ -15603,9 +15487,9 @@ Run(function()
 	            VisualPosition = nil
 	        end
 	    end,
-	    Tooltip = "Original fluid placement path with safe inventory and grounded Tower checks"
+	    Tooltip = "Helps you make bridges/scaffold walk."
 	})
-	
+
 	Expand = Scaffold:CreateSlider({
 	    Name = "Expand",
 	    Min = 1,
