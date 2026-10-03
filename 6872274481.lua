@@ -1,5 +1,5 @@
 local vape = shared.vape
-local ScriptRevision: string = "2026-10-02-r24"
+local ScriptRevision: string = "2026-10-03-r25"
 getgenv().ARandomMenuBedwarsRevision = ScriptRevision
 local loadstring = function(...)
     local Chunk, Message = loadstring(...)
@@ -2128,7 +2128,7 @@ Run(function()
         BreakRequest = BreakRequests[#BreakRequests]
     end
 
-    bedwars.breakBlock = function(Block, Effects, AnimationMode, CustomHealthbar, AutoTool, Wallcheck, Method, DirectOnly, Sequential: boolean?, MaxRange: number?, IgnoreOwnBlocks: boolean?)
+    bedwars.breakBlock = function(Block, Effects, AnimationMode, CustomHealthbar, AutoTool, Wallcheck, Method, DirectOnly, Sequential: boolean?, MaxRange: number?, IgnoreOwnBlocks: boolean?, StrategicRoute: boolean?)
         if LocalPlayer:GetAttribute("DenyBlockBreak") or not Entity.isAlive or (vape.Modules.InfiniteFly or {}).Enabled then
             return
         end
@@ -2151,7 +2151,10 @@ Run(function()
         local Cost, Position, Target, BreakPath = math.huge
         local Direct: boolean = false
 
-        if Sequential and BreakFocus
+        -- Wallchecked beds are cheap to recompute from the stable route cache.
+        -- Never pin one defense material through BreakFocus: inventory/tool or
+        -- route changes must be allowed to promote a cheaper strategic block.
+        if Sequential and not StrategicRoute and BreakFocus
             and BreakFocus.block == Block
             and BreakFocus.wallcheck == Wallcheck
             and BreakFocus.method == Method
@@ -2238,7 +2241,7 @@ Run(function()
             local Request = {position = Position, target = Target, path = BreakPath, hit = HitBlock, sent = tick()}
             table.insert(BreakRequests, Request)
             BreakRequest = Request
-            BreakFocus = Sequential and {block = Block, hit = HitBlock, position = Position, target = Target, path = BreakPath, direct = Direct, wallcheck = Wallcheck, method = Method, range = AllowedRange, ignoreOwn = IgnoreOwnBlocks} or nil
+            BreakFocus = Sequential and not StrategicRoute and {block = Block, hit = HitBlock, position = Position, target = Target, path = BreakPath, direct = Direct, wallcheck = Wallcheck, method = Method, range = AllowedRange, ignoreOwn = IgnoreOwnBlocks} or nil
             local Focus = BreakFocus
             local Promise = bedwars.ClientDamageBlock:Get("DamageBlock"):CallServerAsync({
                 blockRef = {blockPosition = HitPosition},
@@ -18423,7 +18426,11 @@ Run(function()
 	    if tick() < NextBreak then return true end
 	    local Started: number = tick()
 	    local AllowedRange: number = math.min(Range.Value, bedwars.BlockBreaker:getRange())
-	    local BreakPosition, BreakPath, EndPosition, Requested = bedwars.breakBlock(Block, Effect.Enabled, Animation.Value ~= "No Animation" and Animation.Value or nil, CustomHealth.Enabled and CustomHealthbar or nil, AutoTool.Enabled, Wallcheck.Enabled, ClosestBreak.Enabled and BreakMethods.Distance or BreakMethods[Mode.Value], not Route, true, AllowedRange, Route and Wallcheck.Enabled and not SelfBreak.Enabled)
+	    -- A wallchecked bed always uses complete tool-adjusted route cost.
+	    -- Proximity/crosshair may choose the bed, but never Obsidian over a
+	    -- cheaper wool corridor merely because the Obsidian is closer.
+	    local BreakMethod = Route and Wallcheck.Enabled and BreakMethods.Health or ClosestBreak.Enabled and BreakMethods.Distance or BreakMethods[Mode.Value]
+	    local BreakPosition, BreakPath, EndPosition, Requested = bedwars.breakBlock(Block, Effect.Enabled, Animation.Value ~= "No Animation" and Animation.Value or nil, CustomHealth.Enabled and CustomHealthbar or nil, AutoTool.Enabled, Wallcheck.Enabled, BreakMethod, not Route, true, AllowedRange, Route and Wallcheck.Enabled and not SelfBreak.Enabled, Route and Wallcheck.Enabled)
 	    if Requested then NextBreak = Started + math.max(BreakSpeed.Value, bedwars.BlockBreaker:getCooldown()) end
 	    local CurrentNode = Effect.Enabled and BreakPosition or nil
 	    if CurrentNode or PathShown then
@@ -18554,14 +18561,15 @@ Run(function()
 	Mode = Nuker:CreateDropdown({
 	    Name = "Break mode",
 	    List = {"Health", "Distance"},
-	    Default = "Health"
+	    Default = "Health",
+	    Tooltip = "Wallchecked beds always use strategic Health cost; this setting controls other targets"
 	})
 	ClosestBreak = Nuker:CreateToggle({
 	    Name = "Closest break",
 	    Function = function(Callback: boolean)
 	        Mode.Object.Visible = not Callback
 	    end,
-	    Tooltip = "Ignores the break mode and always takes the block nearest your crosshair, seeing straight through players"
+	    Tooltip = "Chooses targets nearest your crosshair; a wallchecked bed still uses its cheapest strategic defense corridor"
 	})
 	Range = Nuker:CreateSlider({
 	    Name = "Break range",
