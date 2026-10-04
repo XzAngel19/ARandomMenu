@@ -1,7 +1,7 @@
 local RUNTIME_COMPATIBILITY_MARKER: string =
     "Initialization error — check executor console"
 local RUNTIME_SAFETY_SOURCE_URL: string =
-    "https://raw.githubusercontent.com/XzAngel19/Wurst/4b10e4bfe00aa356afb3e0420a72e745327f6259/Wurst.lua"
+    "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/arena/01a10572-arandommenu/src/Wurst.lua"
 
 local DEFAULT_FEATURE_CATEGORY: string = "Other"
 
@@ -193,7 +193,7 @@ local function computeLayoutMetrics(
     }
 end
 
-local RUNTIME_BRANCH: string = "main"
+local RUNTIME_BRANCH: string = "arena/01a10572-arandommenu"
 do
     local override: any = (getfenv() :: any).WURST_BRANCH
     if type(override) == "string" and override ~= "" then
@@ -201,7 +201,7 @@ do
     end
 end
 local RUNTIME_RAW_BASE: string =
-    "https://raw.githubusercontent.com/XzAngel19/Wurst/refs/heads/"
+    "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/"
         .. RUNTIME_BRANCH
         .. "/"
 
@@ -216,9 +216,9 @@ local PRODUCT = {
     version = "0.1 Beta",
 
     logPrefix = "Wurst",
-    guiName = "RandomTestingMenu0001",
-    blurName = "RandomTestingMenu0001Blur",
-    storageFolder = "RandomTestingMenu0001",
+    guiName = "Wurst",
+    blurName = "WurstBlur",
+    storageFolder = "Wurst",
 }
 
 local function bootstrap(): ()
