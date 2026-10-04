@@ -8,7 +8,7 @@
 -- text that finds it.
 --
 -- Every module in the menu is built by calling this once. It was the last
--- large thing left in `ARandomMenu.luau`, and it is not shell logic: the shell
+-- large thing left in `ARandomMenu.lua`, and it is not shell logic: the shell
 -- owns the window, the rail and the boards; this owns what sits on a board.
 --
 -- The shell copies the returned function into the environment every module

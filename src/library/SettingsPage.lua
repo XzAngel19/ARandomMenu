@@ -1333,7 +1333,7 @@ function Module.init(context: any): any
         reinjectBusy = true
         setReinjectLabel("Downloading…")
         local sourceUrls: {string} = {
-            REPOSITORY_RAW_BASE .. "src/ARandomMenu.luau",
+            REPOSITORY_RAW_BASE .. "src/ARandomMenu.lua",
             RUNTIME_SAFETY_SOURCE_URL,
         }
         local sourceOrError: any = nil
@@ -1370,7 +1370,7 @@ function Module.init(context: any): any
         local compiledOk: boolean, compileResult: any, returnedError: any = pcall(
             compiler,
             sourceOrError,
-            "@src/ARandomMenu.luau"
+            "@src/ARandomMenu.lua"
         )
         if compiledOk then
             compiled = compileResult

@@ -28,7 +28,7 @@ local CACHE_ROOT: string = "ARandomMenu/Assets"
 local RUNTIME_COMPATIBILITY_MARKER: string =
     "Initialization error — check executor console"
 local RUNTIME_SAFETY_SOURCE_URL: string =
-    "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/4b10e4bfe00aa356afb3e0420a72e745327f6259/ARandomMenu.luau"
+    "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/4b10e4bfe00aa356afb3e0420a72e745327f6259/ARandomMenu.lua"
 
 export type Theme = {
     Background: Color3,
@@ -139,53 +139,53 @@ local THEME: Theme = table.freeze({
 -- are explicit fallbacks for executors without a file asset API.
 local ASSETS: {[string]: AssetSource} = table.freeze({
     Header = {
-        url = RAW_BASE .. "src/gui/Current/Assets/Header/anime-header.jpg",
+        url = RAW_BASE .. "src/GUI's/Wurst/Assets/Header/anime-header.jpg",
         fileName = "anime-header-v1.jpg",
         fallback = "rbxassetid://6031091002",
     },
     CosmicControls = {
         url = RAW_BASE
-            .. "src/gui/Current/Assets/Source/cosmic-controls-sheet.png",
+            .. "src/GUI's/Wurst/Assets/Source/cosmic-controls-sheet.png",
         fileName = "cosmic-controls-sheet-v1.png",
         fallback = "rbxassetid://6031094678",
     },
     KeybindPill = {
-        url = RAW_BASE .. "src/gui/Current/Assets/Frames/keybind-pill-hd.png",
+        url = RAW_BASE .. "src/GUI's/Wurst/Assets/Frames/keybind-pill-hd.png",
         fileName = "keybind-pill-hd-v1.png",
         fallback = "",
     },
     MobileToggle = {
-        url = RAW_BASE .. "src/gui/Current/Images/menu-toggle.png",
+        url = RAW_BASE .. "src/GUI's/Wurst/Images/menu-toggle.png",
         fileName = "menu-toggle-v3.png",
         fallback = "rbxassetid://6031094678",
     },
     InkScratch = {
-        url = RAW_BASE .. "src/gui/Current/Assets/Decorations/ink-scratch.png",
+        url = RAW_BASE .. "src/GUI's/Wurst/Assets/Decorations/ink-scratch.png",
         fileName = "ink-scratch-v1.png",
         fallback = "rbxassetid://6031280882",
     },
     Spinner = {
-        url = RAW_BASE .. "src/gui/Current/Assets/Status/spinner_minimal.png",
+        url = RAW_BASE .. "src/GUI's/Wurst/Assets/Status/spinner_minimal.png",
         fileName = "spinner-minimal-v1.png",
         fallback = "rbxassetid://6031094678",
     },
     IconHome = {
-        url = RAW_BASE .. "src/gui/Current/Assets/Icons/home.png",
+        url = RAW_BASE .. "src/GUI's/Wurst/Assets/Icons/home.png",
         fileName = "icon-home-v1.png",
         fallback = "rbxassetid://6026568198",
     },
     IconSearch = {
-        url = RAW_BASE .. "src/gui/Current/Assets/Icons/search.png",
+        url = RAW_BASE .. "src/GUI's/Wurst/Assets/Icons/search.png",
         fileName = "icon-search-v1.png",
         fallback = "rbxassetid://6031154871",
     },
     IconSettings = {
-        url = RAW_BASE .. "src/gui/Current/Assets/Icons/settings.png",
+        url = RAW_BASE .. "src/GUI's/Wurst/Assets/Icons/settings.png",
         fileName = "icon-settings-v1.png",
         fallback = "rbxassetid://6031280882",
     },
     IconTarget = {
-        url = RAW_BASE .. "src/gui/Current/Assets/Icons/target_cross.png",
+        url = RAW_BASE .. "src/GUI's/Wurst/Assets/Icons/target_cross.png",
         fileName = "icon-target-v1.png",
         fallback = "rbxassetid://6034287594",
     },
@@ -1303,7 +1303,7 @@ function Gui.new(options: GuiOptions?): GuiController
                 reinjectButton.Text = "DOWNLOADING…"
             end
             local sourceUrls: {string} = {
-                resolved.reinjectUrl or (RAW_BASE .. "src/ARandomMenu.luau"),
+                resolved.reinjectUrl or (RAW_BASE .. "src/ARandomMenu.lua"),
                 RUNTIME_SAFETY_SOURCE_URL,
             }
             local downloaded: boolean = false
@@ -1343,7 +1343,7 @@ function Gui.new(options: GuiOptions?): GuiController
             local compiledOk: boolean, compiledOrError: any, returnedError: any = pcall(
                 compiler,
                 sourceOrError,
-                "@src/ARandomMenu.luau"
+                "@src/ARandomMenu.lua"
             )
             if not compiledOk or type(compiledOrError) ~= "function" then
                 reinjecting = false

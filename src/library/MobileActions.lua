@@ -8,7 +8,7 @@
 -- key, and remembering all of it between sessions.
 --
 -- The launcher — the one button that opens the menu — deliberately stays in
--- `ARandomMenu.luau`. On a phone it is the only way in, so it cannot depend on
+-- `ARandomMenu.lua`. On a phone it is the only way in, so it cannot depend on
 -- a download: if this file never arrives the player loses their shortcuts, not
 -- their menu.
 

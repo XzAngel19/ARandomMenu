@@ -7,7 +7,7 @@
 -- session panel, the target panel and the radar — each with its own compact
 -- settings window.
 --
--- Eighteen hundred lines of it lived in `ARandomMenu.luau`, which is most of
+-- Eighteen hundred lines of it lived in `ARandomMenu.lua`, which is most of
 -- the reason the shell was still five figures long. None of it is shell logic:
 -- a floating window is a draggable frame with a title bar and a close button,
 -- and an overlay is a thing drawn on a timer from values the game already

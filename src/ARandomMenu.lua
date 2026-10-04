@@ -18,7 +18,7 @@
 local RUNTIME_COMPATIBILITY_MARKER: string =
     "Initialization error — check executor console"
 local RUNTIME_SAFETY_SOURCE_URL: string =
-    "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/4b10e4bfe00aa356afb3e0420a72e745327f6259/ARandomMenu.luau"
+    "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/4b10e4bfe00aa356afb3e0420a72e745327f6259/ARandomMenu.lua"
 
 -- Module taxonomy.
 --
@@ -335,7 +335,7 @@ end
 --   getgenv().ARANDOMMENU_BRANCH = "arena/01a01c6e-arandommenu"
 --   loadstring(game:HttpGet(
 --       "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/"
---           .. getgenv().ARANDOMMENU_BRANCH .. "/src/ARandomMenu.luau"))()
+--           .. getgenv().ARANDOMMENU_BRANCH .. "/src/ARandomMenu.lua"))()
 --
 -- It defaults to `main`, so normal injections are unaffected.
 local RUNTIME_BRANCH: string = "main"
@@ -350,7 +350,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
--- Content stamp of every file packed into runtime/bundle.luau. Written by
+-- Content stamp of every file packed into runtime/bundle.lua. Written by
 -- `tools/bundle.py`; the gate fails if it drifts from the sources. Used as
 -- `?v=` so the CDN and the executor can cache a URL that still changes the
 -- moment the content does.
@@ -1258,7 +1258,7 @@ local function buildTeleportSnippet(): string
         "local ok, err = pcall(function()",
         "    loadstring(game:HttpGet(",
         "        \"" .. RUNTIME_RAW_BASE
-            .. "src/ARandomMenu.luau?t=\" .. tostring(os.time())",
+            .. "src/ARandomMenu.lua?t=\" .. tostring(os.time())",
         "    ))()",
         "end)",
         "if not ok then",
@@ -1584,7 +1584,7 @@ local AssetManager: any = {
         -- the cache sweep below reclaims their old files.
         valveFont = {
             url = REPOSITORY_RAW_BASE
-                .. "src/gui/Current/Assets/Typography/ValveBD.otf",
+                .. "src/GUI's/Wurst/Assets/Typography/ValveBD.otf",
             fileName = "valve-bd-v1.otf",
             fallback = "",
             version = 1,
@@ -1599,7 +1599,7 @@ local AssetManager: any = {
         -- square, built to be a repository avatar, and it renders as a black
         -- brick anywhere with a background behind it.
         wurstLogo = {
-            url = REPOSITORY_RAW_BASE .. "src/assets/wurst/wurst_128.png",
+            url = REPOSITORY_RAW_BASE .. "src/GUI's/Wurst/Assets/Wurst/wurst_128.png",
             fileName = "wurst-logo-v1.png",
             fallback = "",
             version = 1,
@@ -1609,7 +1609,7 @@ local AssetManager: any = {
         -- rasterised into a fixed-cell grid by tools/make_font_atlas.py.
         -- OFL; the licence ships beside the OTF it was rendered from.
         bitmapFontAtlas = {
-            url = REPOSITORY_RAW_BASE .. "src/assets/font/monocraft-16.png",
+            url = REPOSITORY_RAW_BASE .. "src/GUI's/Wurst/Assets/Font/monocraft-16.png",
             fileName = "monocraft-16-v1.png",
             fallback = "",
             version = 1,
@@ -1622,21 +1622,21 @@ local AssetManager: any = {
         -- build time by tools/make_font_atlas.py and mirrored in the
         -- contract's atlas family below.
         bitmapFontAtlas8 = {
-            url = REPOSITORY_RAW_BASE .. "src/assets/font/monocraft-8.png",
+            url = REPOSITORY_RAW_BASE .. "src/GUI's/Wurst/Assets/Font/monocraft-8.png",
             fileName = "monocraft-8-v1.png",
             fallback = "",
             version = 1,
             assetType = "image/png",
         },
         bitmapFontAtlas24 = {
-            url = REPOSITORY_RAW_BASE .. "src/assets/font/monocraft-24.png",
+            url = REPOSITORY_RAW_BASE .. "src/GUI's/Wurst/Assets/Font/monocraft-24.png",
             fileName = "monocraft-24-v1.png",
             fallback = "",
             version = 1,
             assetType = "image/png",
         },
         bitmapFontAtlas32 = {
-            url = REPOSITORY_RAW_BASE .. "src/assets/font/monocraft-32.png",
+            url = REPOSITORY_RAW_BASE .. "src/GUI's/Wurst/Assets/Font/monocraft-32.png",
             fileName = "monocraft-32-v1.png",
             fallback = "",
             version = 1,
@@ -5225,7 +5225,7 @@ state.logBootstrapError = function(message: string): ()
     warn("[" .. PRODUCT.logPrefix .. ":Bootstrap] " .. message)
 end
 
--- The option builders, once src/library/Widgets.luau has been downloaded.
+-- The option builders, once src/library/Widgets.lua has been downloaded.
 --
 -- Nil until then, which is why the widget library is the very first thing the
 -- loader fetches: a module that builds its panel against a half-filled
@@ -5419,13 +5419,13 @@ local function loadGameModule(
     local moduleUrl: string = REPOSITORY_RAW_BASE
         .. "src/games/"
         .. moduleName
-        .. ".luau?v="
+        .. ".lua?v="
         .. SOURCE_STAMP
     state.logBootstrap("Downloading module: " .. moduleUrl)
     local downloadSuccess: boolean, source: any = false, nil
     if type(state.fetchRepositorySource) == "function" then
         local fetched: string?, fetchError: string? =
-            state.fetchRepositorySource("src/games/" .. moduleName .. ".luau")
+            state.fetchRepositorySource("src/games/" .. moduleName .. ".lua")
         if fetched then
             source = fetched
             downloadSuccess = true
@@ -5450,7 +5450,7 @@ local function loadGameModule(
     if not downloadSuccess or type(source) ~= "string" then
         local readFile: any = executorEnvironment.readfile
         local isFile: any = executorEnvironment.isfile
-        local localPath: string = "ARandomMenu/src/games/" .. moduleName .. ".luau"
+        local localPath: string = "ARandomMenu/src/games/" .. moduleName .. ".lua"
         if type(readFile) == "function"
             and (type(isFile) ~= "function" or isFile(localPath)) then
             local localSuccess: boolean, localSource: any = pcall(readFile, localPath)
@@ -5476,7 +5476,7 @@ local function loadGameModule(
     local chunk: any, compileError: any =
         executorEnvironment.loadstring(
             source,
-            "@src/games/" .. moduleName .. ".luau"
+            "@src/games/" .. moduleName .. ".lua"
         )
     if type(chunk) ~= "function" then
         return nil, nil, diagnostics,
@@ -5692,7 +5692,7 @@ end
 --
 -- Everything above this line is the shell: the window, the cards, the option
 -- rows, the keybind registry. Everything below is loaded as separate files —
--- a kernel (`src/core/Framework.luau`), shared libraries (`src/library/*`) and
+-- a kernel (`src/library/Framework.lua`), shared libraries (`src/library/*`) and
 -- one file per module under `src/modules/<Category>/`.
 --
 -- Splitting it this way is what makes a module a self-contained declaration
@@ -6216,75 +6216,75 @@ local moduleServices: ModuleServices = {
 }
 state.frameworkEnvironment.services = moduleServices
 
--- Kept in step with src/core/Manifest.luau by the validation workflow.
+-- Kept in step with src/library/Manifest.lua by the validation workflow.
 local fallbackManifest: any = {
     version = 1,
-    widgets = "src/library/Widgets.luau",
-    core = {"src/core/Framework.luau"},
+    widgets = "src/library/Widgets.lua",
+    core = {"src/library/Framework.lua"},
     libraries = {
-        "src/library/Entity.luau",
-        "src/library/Targeting.luau",
-        "src/library/Weapons.luau",
-        "src/library/Render.luau",
-        "src/library/Cards.luau",
-        "src/library/WindowManager.luau",
-        "src/library/ClickGui.luau",
-        "src/library/FloatingWindows.luau",
-        "src/library/SettingsPage.luau",
-        "src/library/MobileActions.luau",
-        "src/library/Furniture.luau",
+        "src/library/Entity.lua",
+        "src/library/Targeting.lua",
+        "src/library/Weapons.lua",
+        "src/library/Render.lua",
+        "src/library/Cards.lua",
+        "src/library/WindowManager.lua",
+        "src/library/ClickGui.lua",
+        "src/library/FloatingWindows.lua",
+        "src/library/SettingsPage.lua",
+        "src/library/MobileActions.lua",
+        "src/library/Furniture.lua",
     },
     modules = {
-        {path = "src/modules/Utility/FriendList.luau", name = "Friend List", category = "Other"},
-        {path = "src/modules/Visuals/ItemRender.luau", name = "ItemESP", category = "Render"},
-        {path = "src/modules/Visuals/PlayerESP.luau", name = "PlayerESP", category = "Render"},
-        {path = "src/modules/Visuals/Chams.luau", name = "Chams", category = "Render"},
-        {path = "src/modules/Visuals/Arrows.luau", name = "Arrows", category = "Render"},
-        {path = "src/modules/Visuals/NPCESP.luau", name = "NPCESP", category = "Render"},
-        {path = "src/modules/Combat/KillAura.luau", name = "Killaura", category = "Combat"},
-        {path = "src/modules/Utility/RemoteLogger.luau", name = "Remote Logger", category = "Other"},
-        {path = "src/modules/Utility/Learning.luau", name = "Learning", category = "Other"},
-        {path = "src/modules/Movement/ClickTeleport.luau", name = "Click Teleport", category = "Movement"},
-        {path = "src/modules/Combat/AutoClicker.luau", name = "Auto Clicker", category = "Combat"},
-        {path = "src/modules/Combat/TriggerBot.luau", name = "TriggerBot", category = "Combat"},
-        {path = "src/modules/Combat/AimAssist.luau", name = "Aim Assist", category = "Combat"},
-        {path = "src/modules/Visuals/XRay.luau", name = "X-Ray", category = "Render"},
-        {path = "src/modules/Movement/HighJump.luau", name = "HighJump", category = "Movement"},
-        {path = "src/modules/Movement/Spider.luau", name = "Spider", category = "Movement"},
-        {path = "src/modules/Movement/WallHop.luau", name = "WallHop", category = "Movement"},
-        {path = "src/modules/Protection/SafeWalk.luau", name = "SafeWalk", category = "Movement"},
-        {path = "src/modules/Utility/RejoinServer.luau", name = "Rejoin Server", category = "Other"},
-        {path = "src/modules/Visuals/ZoomUnlocker.luau", name = "Zoom", category = "Render"},
-        {path = "src/modules/Utility/InteractExtender.luau", name = "Interact Extender", category = "Other"},
-        {path = "src/modules/Movement/PhaseDash.luau", name = "Phase Dash", category = "Movement"},
-        {path = "src/modules/Protection/NoFall.luau", name = "NoFall", category = "Movement"},
-        {path = "src/modules/Movement/Fly.luau", name = "Flight", category = "Movement"},
-        {path = "src/modules/Movement/VehicleSpeed.luau", name = "Vehicle Speed", category = "Movement"},
-        {path = "src/modules/Protection/AntiVoid.luau", name = "Anti-Void", category = "Movement"},
-        {path = "src/modules/Utility/Gravity.luau", name = "Gravity", category = "Movement"},
-        {path = "src/modules/Movement/JumpPower.luau", name = "Jump Power", category = "Movement"},
-        {path = "src/modules/Movement/InfiniteJump.luau", name = "Infinite Jump", category = "Movement"},
-        {path = "src/modules/Visuals/FieldOfView.luau", name = "FOV", category = "Render"},
-        {path = "src/modules/Movement/Noclip.luau", name = "Noclip", category = "Movement"},
-        {path = "src/modules/Utility/AntiAfk.luau", name = "AntiAFK", category = "Other"},
-        {path = "src/modules/Protection/AntiFling.luau", name = "Anti-Fling", category = "Other"},
-        {path = "src/modules/Utility/LagSwitch.luau", name = "Lag Switch", category = "Other"},
-        {path = "src/modules/Utility/Fling.luau", name = "Fling", category = "Other"},
-        {path = "src/modules/Utility/ImproveFps.luau", name = "Improve FPS", category = "Other"},
-        {path = "src/modules/Visuals/Fullbright.luau", name = "Fullbright", category = "Render"},
-        {path = "src/modules/Movement/FreezeMovements.luau", name = "Freeze Movements", category = "Movement"},
-        {path = "src/modules/Movement/Speed.luau", name = "SpeedHack", category = "Movement"},
-        {path = "src/modules/Combat/Hitboxes.luau", name = "Hitboxes", category = "Combat"},
-        {path = "src/modules/Combat/ProjectileCalibration.luau", name = "Projectile Calibration", category = "Render"},
-        {path = "src/modules/Movement/SpinBot.luau", name = "SpinBot", category = "Fun"},
-        {path = "src/modules/Spoof/Disguise.luau", name = "Disguise", category = "Fun"},
-        {path = "src/modules/Spoof/AnimationChanger.luau", name = "Animation Changer", category = "Fun"},
-        {path = "src/modules/Spoof/EmotePlayer.luau", name = "Emote Player", category = "Fun"},
+        {path = "src/modules/Utility/FriendList.lua", name = "Friend List", category = "Other"},
+        {path = "src/modules/Visuals/ItemRender.lua", name = "ItemESP", category = "Render"},
+        {path = "src/modules/Visuals/PlayerESP.lua", name = "PlayerESP", category = "Render"},
+        {path = "src/modules/Visuals/Chams.lua", name = "Chams", category = "Render"},
+        {path = "src/modules/Visuals/Arrows.lua", name = "Arrows", category = "Render"},
+        {path = "src/modules/Visuals/NPCESP.lua", name = "NPCESP", category = "Render"},
+        {path = "src/modules/Combat/KillAura.lua", name = "Killaura", category = "Combat"},
+        {path = "src/modules/Utility/RemoteLogger.lua", name = "Remote Logger", category = "Other"},
+        {path = "src/modules/Utility/Learning.lua", name = "Learning", category = "Other"},
+        {path = "src/modules/Movement/ClickTeleport.lua", name = "Click Teleport", category = "Movement"},
+        {path = "src/modules/Combat/AutoClicker.lua", name = "Auto Clicker", category = "Combat"},
+        {path = "src/modules/Combat/TriggerBot.lua", name = "TriggerBot", category = "Combat"},
+        {path = "src/modules/Combat/AimAssist.lua", name = "Aim Assist", category = "Combat"},
+        {path = "src/modules/Visuals/XRay.lua", name = "X-Ray", category = "Render"},
+        {path = "src/modules/Movement/HighJump.lua", name = "HighJump", category = "Movement"},
+        {path = "src/modules/Movement/Spider.lua", name = "Spider", category = "Movement"},
+        {path = "src/modules/Movement/WallHop.lua", name = "WallHop", category = "Movement"},
+        {path = "src/modules/Protection/SafeWalk.lua", name = "SafeWalk", category = "Movement"},
+        {path = "src/modules/Utility/RejoinServer.lua", name = "Rejoin Server", category = "Other"},
+        {path = "src/modules/Visuals/ZoomUnlocker.lua", name = "Zoom", category = "Render"},
+        {path = "src/modules/Utility/InteractExtender.lua", name = "Interact Extender", category = "Other"},
+        {path = "src/modules/Movement/PhaseDash.lua", name = "Phase Dash", category = "Movement"},
+        {path = "src/modules/Protection/NoFall.lua", name = "NoFall", category = "Movement"},
+        {path = "src/modules/Movement/Fly.lua", name = "Flight", category = "Movement"},
+        {path = "src/modules/Movement/VehicleSpeed.lua", name = "Vehicle Speed", category = "Movement"},
+        {path = "src/modules/Protection/AntiVoid.lua", name = "Anti-Void", category = "Movement"},
+        {path = "src/modules/Utility/Gravity.lua", name = "Gravity", category = "Movement"},
+        {path = "src/modules/Movement/JumpPower.lua", name = "Jump Power", category = "Movement"},
+        {path = "src/modules/Movement/InfiniteJump.lua", name = "Infinite Jump", category = "Movement"},
+        {path = "src/modules/Visuals/FieldOfView.lua", name = "FOV", category = "Render"},
+        {path = "src/modules/Movement/Noclip.lua", name = "Noclip", category = "Movement"},
+        {path = "src/modules/Utility/AntiAfk.lua", name = "AntiAFK", category = "Other"},
+        {path = "src/modules/Protection/AntiFling.lua", name = "Anti-Fling", category = "Other"},
+        {path = "src/modules/Utility/LagSwitch.lua", name = "Lag Switch", category = "Other"},
+        {path = "src/modules/Utility/Fling.lua", name = "Fling", category = "Other"},
+        {path = "src/modules/Utility/ImproveFps.lua", name = "Improve FPS", category = "Other"},
+        {path = "src/modules/Visuals/Fullbright.lua", name = "Fullbright", category = "Render"},
+        {path = "src/modules/Movement/FreezeMovements.lua", name = "Freeze Movements", category = "Movement"},
+        {path = "src/modules/Movement/Speed.lua", name = "SpeedHack", category = "Movement"},
+        {path = "src/modules/Combat/Hitboxes.lua", name = "Hitboxes", category = "Combat"},
+        {path = "src/modules/Combat/ProjectileCalibration.lua", name = "Projectile Calibration", category = "Render"},
+        {path = "src/modules/Movement/SpinBot.lua", name = "SpinBot", category = "Fun"},
+        {path = "src/modules/Spoof/Disguise.lua", name = "Disguise", category = "Fun"},
+        {path = "src/modules/Spoof/AnimationChanger.lua", name = "Animation Changer", category = "Fun"},
+        {path = "src/modules/Spoof/EmotePlayer.lua", name = "Emote Player", category = "Fun"},
     },
 }
 
 local bundleAt: number = os.clock()
-local packed: any, packedError: string? = state.fetchRepositoryChunk("src/bundle.luau")
+local packed: any, packedError: string? = state.fetchRepositoryChunk("src/bundle.lua")
 if type(packed) == "table"
     and packed.stamp == SOURCE_STAMP
     and type(packed.files) == "table" then
@@ -6320,7 +6320,7 @@ state.markBoot("bundle", bundleAt)
 
 local manifestAt: number = os.clock()
 local manifest: any, manifestError: string? =
-    state.fetchRepositoryChunk("src/core/Manifest.luau")
+    state.fetchRepositoryChunk("src/library/Manifest.lua")
 if type(manifest) ~= "table" or type(manifest.modules) ~= "table" then
     if manifestError then
         state.logBootstrapError("Manifest: " .. manifestError)
@@ -6330,7 +6330,7 @@ end
 state.markBoot("manifest", manifestAt)
 
 local loadList: {string} = {}
-table.insert(loadList, manifest.widgets or "src/library/Widgets.luau")
+table.insert(loadList, manifest.widgets or "src/library/Widgets.lua")
 for _, path: string in ipairs(manifest.core or {}) do
     table.insert(loadList, path)
 end
@@ -6357,7 +6357,7 @@ local function loadPiece(path: string): any?
 end
 
 local widgetsAt: number = os.clock()
-local widgetPath: string = manifest.widgets or "src/library/Widgets.luau"
+local widgetPath: string = manifest.widgets or "src/library/Widgets.lua"
 local widgetPiece: any? = loadPiece(widgetPath)
 if widgetPiece then
     local widgetOk: boolean, builders: any = pcall(
@@ -6388,7 +6388,7 @@ if not widgetBuilders then
 end
 
 local frameworkAt: number = os.clock()
-local frameworkPiece: any? = loadPiece(manifest.core[1] or "src/core/Framework.luau")
+local frameworkPiece: any? = loadPiece(manifest.core[1] or "src/library/Framework.lua")
 if not frameworkPiece then
     state.logBootstrapError("Framework unavailable; external modules skipped")
     state.summarizeBoot()
@@ -6426,7 +6426,7 @@ for _, path: string in ipairs(manifest.libraries or {}) do
     end
     table.insert(loaded, piece)
     local key: string = string.lower(
-        string.match(path, "([^/]+)%.luau$") or path
+        string.match(path, "([^/]+)%.lua$") or path
     )
     libraries[key] = library
 end

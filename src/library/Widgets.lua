@@ -7,7 +7,7 @@
 -- single- and multi-select lists, the key slot, the text box, the colour
 -- swatch and the colour picker behind it.
 --
--- These lived in `ARandomMenu.luau` and were the single largest thing in it —
+-- These lived in `ARandomMenu.lua` and were the single largest thing in it —
 -- close to two thousand lines of interface code sitting in the same function
 -- scope as the window, the rail and the loader, which is how that function
 -- ended up three locals away from Luau's 200-register ceiling. None of it is
