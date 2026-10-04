@@ -1,5 +1,3 @@
---!strict
-
 local Module = {
     Name = "VD",
     PlaceId = 93978595733734,
@@ -26,9 +24,7 @@ type CollisionState = {
 local moduleCleanup: () -> () = function(): () end
 
 local function buildVDFeatures(): ()
-    -- Role colours live with the builder rather than at file scope: the file
-    -- loads in sandboxed test environments whose globals arrive only through
-    -- injection, after the module body has already run.
+
     local VD_KILLER_COLOR: Color3 = Color3.fromRGB(166, 110, 255)
     local VD_ALERT_COLOR: Color3 = Color3.fromRGB(255, 190, 88)
 
@@ -180,7 +176,7 @@ local function buildVDFeatures(): ()
             return runtime.visualFolder
         end
         local folder: Folder = Instance.new("Folder")
-        folder.Name = "RTM_VD_Visuals"
+        folder.Name = "Wurst_VD_Visuals"
         folder.Parent = ScreenGui
         runtime.visualFolder = folder
         return folder
@@ -204,7 +200,7 @@ local function buildVDFeatures(): ()
         maxDistance: number
     ): MarkerRecord
         local highlight: Highlight = Instance.new("Highlight")
-        highlight.Name = "RTM_VD_Highlight"
+        highlight.Name = "Wurst_VD_Highlight"
         highlight.Adornee = adornee
         highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
         highlight.FillColor = color
@@ -219,7 +215,7 @@ local function buildVDFeatures(): ()
         }
         if text then
             local billboard: BillboardGui = Instance.new("BillboardGui")
-            billboard.Name = "RTM_VD_Label"
+            billboard.Name = "Wurst_VD_Label"
             billboard.Adornee = root
             billboard.AlwaysOnTop = true
             billboard.MaxDistance = maxDistance
@@ -425,7 +421,7 @@ local function buildVDFeatures(): ()
 
     local function createProximityGui(): ScreenGui
         local gui: ScreenGui = Instance.new("ScreenGui")
-        gui.Name = "RTM_VD_Proximity"
+        gui.Name = "Wurst_VD_Proximity"
         gui.IgnoreGuiInset = true
         gui.ResetOnSpawn = false
         gui.Parent = PlayerGui
@@ -638,7 +634,7 @@ local function buildVDFeatures(): ()
             return
         end
         local animation: Animation = Instance.new("Animation")
-        animation.Name = "RTM_VD_RepairCrouch"
+        animation.Name = "Wurst_VD_RepairCrouch"
         animation.AnimationId = "rbxassetid://73650663675588"
         local ok: boolean, loaded: any = pcall(function(): AnimationTrack
             return animator:LoadAnimation(animation)
@@ -738,10 +734,7 @@ local function buildVDFeatures(): ()
             end
             maintainRepairAnimation()
             if settings.autoGeneratorMode == "Blatant" then
-                -- Blatant means every tick the game would accept, not a
-                -- frame-rate-driven flood: eight FireServers per frame is
-                -- hundreds per second, which is not cheating visibly, it is
-                -- shouting at the server.
+
                 if os.clock() - runtime.lastRepairFire >= 0.03 then
                     runtime.lastRepairFire = os.clock()
                     repairRemote:FireServer(point, true)
@@ -914,9 +907,7 @@ local function buildVDFeatures(): ()
                 return
             end
             if settings.hitAuraMode == "Blatant" then
-                -- The reach is what makes this mode blatant; the rate stays
-                -- inside a fast human's. A four-per-frame burst with no clock
-                -- check was hundreds of attacks a second.
+
                 if os.clock() - runtime.lastHit >= 0.12 then
                     runtime.lastHit = os.clock()
                     attackRemote:FireServer()
@@ -1097,7 +1088,7 @@ local function buildVDFeatures(): ()
                         local line: Part? = facingParts[player]
                         if not line then
                             line = Instance.new("Part")
-                            line.Name = "RTM_VD_Facing"
+                            line.Name = "Wurst_VD_Facing"
                             line.Anchored = true
                             line.CanCollide = false
                             line.CanQuery = false
@@ -1454,7 +1445,7 @@ local function buildVDFeatures(): ()
 
     local function createCooldownGui(): ScreenGui
         local gui: ScreenGui = Instance.new("ScreenGui")
-        gui.Name = "RTM_VD_Cooldowns"
+        gui.Name = "Wurst_VD_Cooldowns"
         gui.IgnoreGuiInset = true
         gui.ResetOnSpawn = false
         gui.Parent = PlayerGui
@@ -1593,9 +1584,6 @@ local function buildVDFeatures(): ()
         end)
     end
 
-    -- The universal Player ESP learns this game's two roles, so its boxes,
-    -- chams, tracers and name tags all read Killer or Survivor without VD
-    -- having to draw any of them itself.
     registerRoleProvider({
         Name = "VD",
         Roles = {"Killer", "Survivor"},
@@ -1612,10 +1600,6 @@ local function buildVDFeatures(): ()
         end,
     })
 
-    -- Generators are an option of the universal Player ESP, not a card of
-    -- their own: it is the same "mark a thing through a wall" idea, and the
-    -- only reason it lives in this file is that nothing universal knows what a
-    -- VD generator is. The rows appear only in this game.
     registerEspExtra({
         Name = "Generators",
         Default = false,

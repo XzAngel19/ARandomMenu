@@ -1,28 +1,3 @@
---!strict
---
--- Weapon discovery.
---
--- `Character:FindFirstChildOfClass("Tool")` describes one way of holding a
--- weapon, and plenty of games do not use it. The BedFight dump in `reference/`
--- is the worked example: that game contains **no Tool instances at all**. Its
--- swords are
---
---   * view models — `workspace.CurrentCamera.ViewModel["Wooden Sword"]`, a
---     plain Model swapped in and out by the client;
---   * hotbar slots — GuiButtons under `PlayerGui.BackpackGui.HotbarList`,
---     driven by an `InventoryHandler` module keyed by item class
---     ("Swords", "Katanas", "Daggers", "Battle Axes", "Maces", "Spears");
---   * and, on touch, a dedicated button at
---     `PlayerGui.MobileGui.ButtonsFrame.Sword` whose `MouseButton1Click` is
---     what actually swings.
---
--- So this library does not look for a class. It collects every plausible way of
--- swinging that exists right now — tools, view models, inventory buttons,
--- on-screen action buttons — labels each one, and lets the module (and the
--- player, through a selection list) decide which of them to use. Activation is
--- per kind: a Tool is activated, a button is pressed the way a finger presses
--- it, a view model is swung by pressing whatever button owns it.
-
 export type Candidate = {
     id: string,
     label: string,
@@ -31,18 +6,10 @@ export type Candidate = {
     instance: Instance,
 }
 
--- A game that has no Tool, no view model and no button to press still has
--- things worth swinging. BedWars is the worked example: the sword is an
--- Accessory and the swing is a remote. Rather than fork the cards that press
--- weapons, the game describes what it has and how to press it, and the
--- universal Auto Clicker and Kill Aura press it like anything else.
 export type GameSource = {
-    -- Returns {label, instance} pairs for whatever can be pressed right now.
+
     scan: () -> {{string}},
-    -- Presses one of them. Returns whether anything was sent.
-    -- `target` is the entity the caller is aiming at, when it has one. A game
-    -- whose attack names its victim needs it; a game whose attack is a button
-    -- ignores it.
+
     press: (label: string, target: any?) -> boolean,
 }
 
@@ -68,9 +35,6 @@ local Module = {
     Initialized = false,
 }
 
--- Words that mean "this hits things". Deliberately generous: a false positive
--- costs one unticked row in a list, a false negative costs a module that does
--- nothing and no way to find out why.
 local WEAPON_WORDS: {string} = {
     "sword",
     "katana",
@@ -99,9 +63,6 @@ local WEAPON_WORDS: {string} = {
     "combat",
 }
 
--- Words that mean "this is a melee weapon": a blade, a haft, a fist. This is
--- the list the pickers actually offer, because "what may Kill Aura swing" has
--- exactly one sane answer and it is not "everything the client owns".
 local MELEE_WORDS: {string} = {
     "sword",
     "katana",
@@ -129,9 +90,6 @@ local MELEE_WORDS: {string} = {
     "knuckle",
 }
 
--- Words that mean "this throws or shoots". A bow is a weapon and still has no
--- business in a melee picker: swinging it does nothing and it pushes the sword
--- one row further down.
 local RANGED_WORDS: {string} = {
     "bow",
     "crossbow",
@@ -154,9 +112,6 @@ local RANGED_WORDS: {string} = {
     "fireball",
 }
 
--- Rig, animation and control names. A view-model container is full of these
--- ("RightUpperArm", "Sneak", "Blocks", "Idle"), and listing them is what made
--- the weapon picker read as a dump of the character's insides.
 local RIG_WORDS: {string} = {
     "hand",
     "arm",
@@ -194,10 +149,6 @@ local RIG_WORDS: {string} = {
     "sequence",
 }
 
--- Words that mean "this is not a weapon". A hotbar holds wool, planks, emotes
--- and cosmetics next to the sword, and listing all of it turned the picker
--- into an inventory dump. A blocked word always wins: nothing called
--- "EmoteWheel" is a blade, whatever else its name contains.
 local NOT_WEAPON_WORDS: {string} = {
     "emote",
     "animation",
@@ -236,7 +187,6 @@ local NOT_WEAPON_WORDS: {string} = {
     "shopkeeper",
 }
 
--- Containers whose children are inventory slots rather than decoration.
 local INVENTORY_WORDS: {string} = {
     "hotbar",
     "backpack",
@@ -246,7 +196,6 @@ local INVENTORY_WORDS: {string} = {
     "items",
 }
 
--- Containers a game builds for touch controls.
 local TOUCH_WORDS: {string} = {
     "mobile",
     "touch",
@@ -266,9 +215,6 @@ local function containsWord(text: string, words: {string}): boolean
     return false
 end
 
--- One question, asked the same way everywhere: is this thing a melee weapon?
--- A rig part, an animation, a block or anything that shoots is not, whatever
--- else its name happens to contain.
 local function isMeleeName(name: string): boolean
     if containsWord(name, NOT_WEAPON_WORDS)
         or containsWord(name, RANGED_WORDS)
@@ -298,23 +244,15 @@ function Module.init(context: any): WeaponLibrary
     local menuGui: Instance? = host.ScreenGui
 
     local library: any = {
-        -- Scanning walks every GuiButton in the PlayerGui. Kill Aura asks for
-        -- a weapon on every swing and the Auto Clicker on every click, so the
-        -- answer is cached for a second: a hotbar does not change nine times a
-        -- second, and this is the difference between a scan per swing and a
-        -- scan per second.
+
         cache = {},
         cachedAt = -1,
         cachedAll = false,
         cachedMelee = false,
-        -- Off by default: nothing in this menu should decide for the player
-        -- what is in their hands.
+
         allowEquip = false,
     }
 
-    -- Firing a GuiButton the way a real press does. BedFight's mobile sword
-    -- listens on MouseButton1Down and MouseButton1Click and does its work in a
-    -- one-shot InputBegan opened by the former, so both are fired, in order.
     function library:PressButton(button: GuiButton): boolean
         local environment: any = getfenv()
         local connectionsOf: any = environment.getconnections
@@ -356,9 +294,6 @@ function Module.init(context: any): WeaponLibrary
         library.cachedAt = -1
     end
 
-    -- One source per game, and nil clears it. Registering invalidates the
-    -- scan cache so the new presses appear on the next pick rather than after
-    -- the cache expires on its own.
     function library:RegisterGameSource(source: any): ()
         library.gameSource = source
         library.cachedAt = -1
@@ -380,9 +315,6 @@ function Module.init(context: any): WeaponLibrary
         local found: {Candidate} = {}
         local seen: {[string]: boolean} = {}
 
-        -- `Melee` is the filter every picker uses. It is applied here rather
-        -- than at display time so `Find`, `Best` and `Labels` can never
-        -- disagree about what counts as a weapon.
         local meleeOnly: boolean = options.Melee == true
         local function add(kind: string, label: string, instance: Instance): ()
             local id: string = kind .. ":" .. label
@@ -403,8 +335,6 @@ function Module.init(context: any): WeaponLibrary
             })
         end
 
-        -- Game-provided presses come first: in a game that publishes them, its
-        -- own sword is the thing the player means by "the weapon".
         if library.gameSource and type(library.gameSource.scan) == "function" then
             local ok: boolean, listed: any = pcall(library.gameSource.scan)
             if ok and type(listed) == "table" then
@@ -416,7 +346,6 @@ function Module.init(context: any): WeaponLibrary
             end
         end
 
-        -- 1. Classic tools, held or stowed.
         local character: Model? = localPlayer.Character
         if character then
             for _, child: Instance in ipairs(character:GetChildren()) do
@@ -434,8 +363,6 @@ function Module.init(context: any): WeaponLibrary
             end
         end
 
-        -- 2. View models: the weapon you can see but cannot pick up. They live
-        -- under the camera in BedFight, and under the character in others.
         local viewRoots: {Instance} = {}
         local camera: Camera? = currentWorkspace.CurrentCamera
         if camera then
@@ -454,13 +381,7 @@ function Module.init(context: any): WeaponLibrary
                     add("ViewModel", child.Name, child)
                 end
                 if string.find(string.lower(child.Name), "viewmodel", 1, true) then
-                    -- Whatever the client has put in your hands right now.
-                    --
-                    -- This branch used to take every child of the view model,
-                    -- which is how "RightUpperArm", "Sneak" and "Blocks" ended
-                    -- up in a list of weapons: a view model contains the whole
-                    -- first-person rig, not just the sword. Only names that
-                    -- read as a melee weapon are taken now.
+
                     for _, held: Instance in ipairs(child:GetChildren()) do
                         if not held:IsA("Model") and not held:IsA("BasePart") then
                             continue
@@ -474,7 +395,6 @@ function Module.init(context: any): WeaponLibrary
             end
         end
 
-        -- 3. Interface: inventory slots and touch buttons the game built.
         local playerGui: Instance? = localPlayer:FindFirstChild("PlayerGui")
         if playerGui then
             for _, descendant: Instance in ipairs(playerGui:GetDescendants()) do
@@ -482,7 +402,7 @@ function Module.init(context: any): WeaponLibrary
                     continue
                 end
                 if isMenuOwned(descendant) then
-                    -- The menu's own controls are not the game's weapons.
+
                     continue
                 end
                 if containsWord(descendant.Name, NOT_WEAPON_WORDS) then
@@ -490,9 +410,7 @@ function Module.init(context: any): WeaponLibrary
                 end
                 local named: boolean = containsWord(descendant.Name, WEAPON_WORDS)
                 if not named then
-                    -- Unnamed buttons are only interesting when the caller
-                    -- explicitly asks for everything, and even then only from
-                    -- the touch controls, where the swing button lives.
+
                     if not everything then
                         continue
                     end
@@ -524,8 +442,6 @@ function Module.init(context: any): WeaponLibrary
         return labels
     end
 
-    -- Exposed so a module can ask about a name it already has (the tool in
-    -- your hands, say) without running a scan.
     function library:IsMelee(name: string): boolean
         return isMeleeName(name)
     end
@@ -543,16 +459,9 @@ function Module.init(context: any): WeaponLibrary
         return nil
     end
 
-    -- What to hit with when nobody has picked anything. Held tools first,
-    -- because that is what most games mean by "your weapon"; then the touch
-    -- button, which is the only thing that swings in games like BedFight; then
-    -- a hotbar slot, which at least equips the thing.
     function library:Best(query: any?): Candidate?
         local found: {Candidate} = library:Scan(query or {All = false})
-        -- "Game" is first on purpose: a game that describes its own presses
-        -- knows better than a scan that guesses from instance classes. Without
-        -- it a leftover on-screen button outranked the game's own sword, and
-        -- the clicker pressed something the game did not care about.
+
         local order: {string} = {"Game", "Tool", "Button", "Slot", "ViewModel"}
         local character: Model? = localPlayer.Character
         for _, kind: string in ipairs(order) do
@@ -564,9 +473,7 @@ function Module.init(context: any): WeaponLibrary
                     and character
                     and candidate.instance.Parent ~= character
                     and not library.allowEquip then
-                    -- A stowed tool is a worse answer than the button that
-                    -- swings whatever is already equipped, and taking it out
-                    -- of the backpack is not this module's decision.
+
                     continue
                 end
                 return candidate
@@ -576,7 +483,7 @@ function Module.init(context: any): WeaponLibrary
     end
 
     function library:Swing(): boolean
-        -- A blade first; anything the game will accept as an attack second.
+
         local candidate: Candidate? = library:Best({Melee = true})
             or library:Best()
         if not candidate then
@@ -588,8 +495,7 @@ function Module.init(context: any): WeaponLibrary
     function library:Activate(candidate: Candidate, target: any?): boolean
         local instance: Instance = candidate.instance
         if candidate.kind == "Game" then
-            -- The instance is only an identity here; the game decides what
-            -- pressing means, and it may not involve the instance at all.
+
             if not library.gameSource or type(library.gameSource.press) ~= "function" then
                 return false
             end
@@ -602,11 +508,7 @@ function Module.init(context: any): WeaponLibrary
         end
         if candidate.kind == "Tool" then
             local tool: Tool = instance :: Tool
-            -- Equipping is a visible action that takes the weapon out of the
-            -- player's hands and puts a different one in them, so it only
-            -- happens when the caller asks for it. A stowed tool is activated
-            -- where it stands otherwise; games that ignore that are the reason
-            -- the button and view-model paths exist.
+
             if library.allowEquip and tool.Parent ~= localPlayer.Character then
                 local humanoid: Humanoid? = localPlayer.Character
                     and localPlayer.Character:FindFirstChildOfClass("Humanoid") :: Humanoid?
@@ -624,9 +526,7 @@ function Module.init(context: any): WeaponLibrary
             return library:PressButton(instance :: GuiButton)
         end
         if candidate.kind == "ViewModel" then
-            -- A view model is scenery: the swing belongs to whatever button
-            -- drives it, so the nearest touch button wins and the caller falls
-            -- back to its own click path when there is none.
+
             for _, other: Candidate in ipairs(library:Scan({All = true})) do
                 if other.kind == "Button" then
                     return library:PressButton(other.instance :: GuiButton)

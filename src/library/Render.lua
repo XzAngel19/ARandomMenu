@@ -1,28 +1,3 @@
---!strict
---
--- Render library.
---
--- Four modules were each drawing the same things their own way: the player
--- ESP, Item Render, BedFight's bed and generator marks and VD's objective
--- marks. Every one of them projected world points, pooled a handful of frames
--- per target, rotated 1px frames into lines, sized a label, made a Highlight,
--- and got some detail wrong on its own — a plate sized from the box instead of
--- from the text, a box that survived its target leaving the screen, a corner
--- behind the lens projecting to a huge negative coordinate.
---
--- This is that work, once. A module asks for a layer, asks for a drawing set
--- per target, and tells the set what to draw; the pooling, the projection and
--- the "put it back when the target is gone" bookkeeping live here.
---
--- Two rules the whole library follows:
---
---   * a set is **hidden**, never destroyed, while its target is alive but not
---     drawable. Releasing rebuilds every instance the moment the target comes
---     back, which is the difference between an ESP that flickers and one that
---     does not;
---   * nothing is created per frame. Lines and labels are pooled by index and
---     reused, so a frame costs property writes.
-
 export type Rect = {
     left: number,
     right: number,
@@ -74,7 +49,7 @@ function Module.init(context: any): RenderLibrary
     local screenGui: Instance = host.ScreenGui
 
     local library: any = {}
-    -- Weak on the layer so a destroyed page takes its pools with it.
+
     local pools: any = setmetatable({}, {__mode = "k"})
 
     function library:Layer(name: string): Frame
@@ -89,17 +64,13 @@ function Module.init(context: any): RenderLibrary
             BorderSizePixel = 0,
             Size = UDim2.fromScale(1, 1),
             Visible = false,
-            -- Behind every panel the menu draws: this is world information,
-            -- not interface, and must never cover a control.
+
             ZIndex = 0,
         }) :: Frame
         pools[layer] = {}
         return layer
     end
 
-    -- One drawing set per target. The names are the ones the tests and the
-    -- existing modules already look for (`Box1`, `Bone1`, `NameTag`), because
-    -- a rename here is a silent break everywhere else.
     local function newSet(layer: Frame, key: any): DrawingSet
         local root: Frame = create("Frame", {
             Parent = layer,
@@ -130,8 +101,7 @@ function Module.init(context: any): RenderLibrary
             end
             local frame: Frame = create("Frame", {
                 Parent = root,
-                -- Named by what it is drawing, so the explorer reads as the
-                -- overlay rather than as forty anonymous frames.
+
                 Name = group .. tostring(index),
                 AnchorPoint = Vector2.new(0.5, 0.5),
                 BorderSizePixel = 0,
@@ -181,8 +151,6 @@ function Module.init(context: any): RenderLibrary
             end
         end
 
-        -- Lines 1..8 are the box: four sides for "Full", or the same eight
-        -- halves reused as brackets for "Corner".
         function set:Box(
             rect: Rect,
             mode: string,
@@ -267,9 +235,6 @@ function Module.init(context: any): RenderLibrary
                 UDim2.fromOffset(math.round(resolved.width), math.round(resolved.height))
         end
 
-        -- A label the text sizes, not the box: AutomaticSize on X with five
-        -- pixels of padding, so the plate is exactly as wide as what is
-        -- written on it.
         function set:Label(
             slot: string,
             text: string,
@@ -292,7 +257,7 @@ function Module.init(context: any): RenderLibrary
                     Text = "",
                     TextColor3 = Color3.fromRGB(236, 236, 240),
                     TextSize = size,
-                    -- Nothing to truncate: the box grows to the text.
+
                     TextTruncate = Enum.TextTruncate.None,
                     TextXAlignment = Enum.TextXAlignment.Center,
                     TextYAlignment = Enum.TextYAlignment.Center,
@@ -324,8 +289,6 @@ function Module.init(context: any): RenderLibrary
             end
         end
 
-        -- Health, pinned wherever the caller says: a 2px track with a fill
-        -- that runs from the bottom, coloured by how much is left.
         function set:Bar(at: Vector2, height: number, fraction: number): ()
             if not set.barTrack then
                 set.barTrack = create("Frame", {
@@ -373,8 +336,6 @@ function Module.init(context: any): RenderLibrary
             root.Visible = visible
         end
 
-        -- Chams. Kept on the set so it dies with it, which is what stops a
-        -- highlight outliving the module that made it.
         function set:Highlight(
             adornee: Instance?,
             colour: Color3,
@@ -392,7 +353,7 @@ function Module.init(context: any): RenderLibrary
             if not highlight or not (highlight :: Highlight).Parent then
                 highlight = create("Highlight", {
                     Parent = adornee,
-                    Name = "RTM_Chams",
+                    Name = "Wurst_Chams",
                     DepthMode = Enum.HighlightDepthMode.AlwaysOnTop,
                 }) :: Highlight
                 set.highlight = highlight
@@ -468,12 +429,6 @@ function Module.init(context: any): RenderLibrary
         return Vector2.new(point.X, point.Y)
     end
 
-    -- The eight corners of the model's own bounding box, projected, with the
-    -- extremes taken. A height guess with a fixed width ratio gets the shape
-    -- wrong for a rig with its arms out or a camera at an angle, and a corner
-    -- behind the lens projects to a huge negative coordinate — which is where
-    -- boxes that stretch across the screen come from. Any corner behind the
-    -- camera means no rectangle at all.
     function library:ModelRect(camera: Camera, model: Model): Rect?
         local ok: boolean, boundsCFrame: any, boundsSize: any = pcall(function(): (CFrame, Vector3)
             return model:GetBoundingBox()

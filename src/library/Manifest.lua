@@ -1,16 +1,3 @@
---!strict
---
--- Module manifest.
---
--- The single ordered list of everything the runtime downloads on top of
--- `ARandomMenu.lua`: the kernel first, then shared libraries, then the module
--- files themselves. Adding a module means adding one line here and one file
--- under `src/modules/<Category>/`; nothing in the main file has to change.
---
--- The runtime keeps a copy of this list as a fallback for the case where the
--- manifest itself cannot be downloaded, and the repository's validation
--- workflow fails if the two ever drift apart.
-
 export type ModuleEntry = {
     path: string,
     name: string,
@@ -27,10 +14,8 @@ export type Manifest = {
 
 local Manifest: Manifest = {
     version = 1,
-    -- Listed on its own rather than among the libraries: the option builders
-    -- have to exist before any other file runs, because every module builds
-    -- its panel out of them the moment it starts.
-    widgets = "src/library/Widgets.lua",
+
+    widgets = "src/GUI's/Wurst/Code/Widgets.lua",
     core = {
         "src/library/Framework.lua",
     },
@@ -39,255 +24,246 @@ local Manifest: Manifest = {
         "src/library/Targeting.lua",
         "src/library/Weapons.lua",
         "src/library/Render.lua",
-        -- The card factory. Every module calls it, so it comes before the
-        -- pages that read the cards it builds.
-        "src/library/Cards.lua",
-        -- Before anything that draws a floating window, because they all ask
-        -- it to build one rather than writing drag and clamp out again.
-        "src/library/WindowManager.lua",
-        -- Wurst's layout: one window per category. It only moves the cards
-        -- the factory already built, so it comes after both.
-        "src/library/ClickGui.lua",
-        -- Before the pages below: a favourite registers as its card is built,
-        -- and the settings page reads the overlay registry.
-        "src/library/FloatingWindows.lua",
-        -- Not a service the modules ask for: it fills the Config. tab. It is
-        -- listed here because it needs the same environment and the same
-        -- start-once/stop-once handling every other library gets.
-        "src/library/SettingsPage.lua",
-        -- Placed phone shortcuts. The launcher that opens the menu is not here:
-        -- it stays in the shell, because on a phone it is the only way in.
-        "src/library/MobileActions.lua",
-        -- The HUD furniture: wordmark, stats block. Last because it only
-        -- draws — nothing below it asks it for anything.
-        "src/library/Furniture.lua",
+
+        "src/GUI's/Wurst/Code/Cards.lua",
+
+        "src/GUI's/Wurst/Code/WindowManager.lua",
+
+        "src/GUI's/Wurst/Code/ClickGui.lua",
+
+        "src/GUI's/Wurst/Code/FloatingWindows.lua",
+
+        "src/GUI's/Wurst/Code/SettingsPage.lua",
+
+        "src/GUI's/Wurst/Code/MobileActions.lua",
+
+        "src/GUI's/Wurst/Code/Furniture.lua",
     },
     modules = {
-        -- Friend List comes first: every targeting module below asks it who
-        -- must not be touched.
+
         {
-            path = "src/modules/Utility/FriendList.lua",
+            path = "src/Hacks/FriendList.lua",
             name = "Friend List",
             category = "Other",
         },
         {
-            path = "src/modules/Visuals/ItemRender.lua",
+            path = "src/Hacks/ItemRender.lua",
             name = "ItemESP",
             category = "Render",
         },
         {
-            path = "src/modules/Visuals/PlayerESP.lua",
+            path = "src/Hacks/PlayerESP.lua",
             name = "PlayerESP",
             category = "Render",
         },
         {
-            path = "src/modules/Visuals/Chams.lua",
+            path = "src/Hacks/Chams.lua",
             name = "Chams",
             category = "Render",
         },
         {
-            path = "src/modules/Visuals/Arrows.lua",
+            path = "src/Hacks/Arrows.lua",
             name = "Arrows",
             category = "Render",
         },
         {
-            path = "src/modules/Visuals/NPCESP.lua",
+            path = "src/Hacks/NPCESP.lua",
             name = "NPCESP",
             category = "Render",
         },
         {
-            path = "src/modules/Combat/KillAura.lua",
+            path = "src/Hacks/KillAura.lua",
             name = "Killaura",
             category = "Combat",
         },
         {
-            path = "src/modules/Utility/RemoteLogger.lua",
+            path = "src/Hacks/RemoteLogger.lua",
             name = "Remote Logger",
             category = "Other",
         },
         {
-            path = "src/modules/Utility/Learning.lua",
+            path = "src/Hacks/Learning.lua",
             name = "Learning",
             category = "Other",
         },
         {
-            path = "src/modules/Movement/ClickTeleport.lua",
+            path = "src/Hacks/ClickTeleport.lua",
             name = "Click Teleport",
             category = "Movement",
         },
         {
-            path = "src/modules/Combat/AutoClicker.lua",
+            path = "src/Hacks/AutoClicker.lua",
             name = "Auto Clicker",
             category = "Combat",
         },
         {
-            path = "src/modules/Combat/TriggerBot.lua",
+            path = "src/Hacks/TriggerBot.lua",
             name = "TriggerBot",
             category = "Combat",
         },
         {
-            path = "src/modules/Combat/AimAssist.lua",
+            path = "src/Hacks/AimAssist.lua",
             name = "Aim Assist",
             category = "Combat",
         },
-        -- Spoof: cosmetic only, and each one lands on its own page.
+
         {
-            path = "src/modules/Visuals/XRay.lua",
+            path = "src/Hacks/XRay.lua",
             name = "X-Ray",
             category = "Render",
         },
         {
-            path = "src/modules/Movement/HighJump.lua",
+            path = "src/Hacks/HighJump.lua",
             name = "HighJump",
             category = "Movement",
         },
         {
-            path = "src/modules/Movement/Spider.lua",
+            path = "src/Hacks/Spider.lua",
             name = "Spider",
             category = "Movement",
         },
         {
-            path = "src/modules/Movement/WallHop.lua",
+            path = "src/Hacks/WallHop.lua",
             name = "WallHop",
             category = "Movement",
         },
         {
-            path = "src/modules/Protection/SafeWalk.lua",
+            path = "src/Hacks/SafeWalk.lua",
             name = "SafeWalk",
             category = "Movement",
         },
         {
-            path = "src/modules/Utility/RejoinServer.lua",
+            path = "src/Hacks/RejoinServer.lua",
             name = "Rejoin Server",
             category = "Other",
         },
         {
-            path = "src/modules/Visuals/ZoomUnlocker.lua",
+            path = "src/Hacks/ZoomUnlocker.lua",
             name = "Zoom",
             category = "Render",
         },
         {
-            path = "src/modules/Utility/InteractExtender.lua",
+            path = "src/Hacks/InteractExtender.lua",
             name = "Interact Extender",
             category = "Other",
         },
         {
-            path = "src/modules/Movement/PhaseDash.lua",
+            path = "src/Hacks/PhaseDash.lua",
             name = "Phase Dash",
             category = "Movement",
         },
         {
-            path = "src/modules/Protection/NoFall.lua",
+            path = "src/Hacks/NoFall.lua",
             name = "NoFall",
             category = "Movement",
         },
         {
-            path = "src/modules/Movement/Fly.lua",
+            path = "src/Hacks/Fly.lua",
             name = "Flight",
             category = "Movement",
         },
         {
-            path = "src/modules/Movement/VehicleSpeed.lua",
+            path = "src/Hacks/VehicleSpeed.lua",
             name = "Vehicle Speed",
             category = "Movement",
         },
         {
-            path = "src/modules/Protection/AntiVoid.lua",
+            path = "src/Hacks/AntiVoid.lua",
             name = "Anti-Void",
             category = "Movement",
         },
         {
-            path = "src/modules/Utility/Gravity.lua",
+            path = "src/Hacks/Gravity.lua",
             name = "Gravity",
             category = "Movement",
         },
         {
-            path = "src/modules/Movement/JumpPower.lua",
+            path = "src/Hacks/JumpPower.lua",
             name = "Jump Power",
             category = "Movement",
         },
         {
-            path = "src/modules/Movement/InfiniteJump.lua",
+            path = "src/Hacks/InfiniteJump.lua",
             name = "Infinite Jump",
             category = "Movement",
         },
         {
-            path = "src/modules/Visuals/FieldOfView.lua",
+            path = "src/Hacks/FieldOfView.lua",
             name = "FOV",
             category = "Render",
         },
         {
-            path = "src/modules/Movement/Noclip.lua",
+            path = "src/Hacks/Noclip.lua",
             name = "Noclip",
             category = "Movement",
         },
         {
-            path = "src/modules/Utility/AntiAfk.lua",
+            path = "src/Hacks/AntiAfk.lua",
             name = "AntiAFK",
             category = "Other",
         },
         {
-            path = "src/modules/Protection/AntiFling.lua",
+            path = "src/Hacks/AntiFling.lua",
             name = "Anti-Fling",
             category = "Other",
         },
         {
-            path = "src/modules/Utility/LagSwitch.lua",
+            path = "src/Hacks/LagSwitch.lua",
             name = "Lag Switch",
             category = "Other",
         },
         {
-            path = "src/modules/Utility/Fling.lua",
+            path = "src/Hacks/Fling.lua",
             name = "Fling",
             category = "Other",
         },
         {
-            path = "src/modules/Utility/ImproveFps.lua",
+            path = "src/Hacks/ImproveFps.lua",
             name = "Improve FPS",
             category = "Other",
         },
         {
-            path = "src/modules/Visuals/Fullbright.lua",
+            path = "src/Hacks/Fullbright.lua",
             name = "Fullbright",
             category = "Render",
         },
         {
-            path = "src/modules/Movement/FreezeMovements.lua",
+            path = "src/Hacks/FreezeMovements.lua",
             name = "Freeze Movements",
             category = "Movement",
         },
         {
-            path = "src/modules/Movement/Speed.lua",
+            path = "src/Hacks/Speed.lua",
             name = "SpeedHack",
             category = "Movement",
         },
         {
-            path = "src/modules/Combat/Hitboxes.lua",
+            path = "src/Hacks/Hitboxes.lua",
             name = "Hitboxes",
             category = "Combat",
         },
         {
-            path = "src/modules/Combat/ProjectileCalibration.lua",
+            path = "src/Hacks/ProjectileCalibration.lua",
             name = "Projectile Calibration",
             category = "Render",
         },
         {
-            path = "src/modules/Movement/SpinBot.lua",
+            path = "src/Hacks/SpinBot.lua",
             name = "SpinBot",
             category = "Fun",
         },
         {
-            path = "src/modules/Spoof/Disguise.lua",
+            path = "src/Hacks/Disguise.lua",
             name = "Disguise",
             category = "Fun",
         },
         {
-            path = "src/modules/Spoof/AnimationChanger.lua",
+            path = "src/Hacks/AnimationChanger.lua",
             name = "Animation Changer",
             category = "Fun",
         },
         {
-            path = "src/modules/Spoof/EmotePlayer.lua",
+            path = "src/Hacks/EmotePlayer.lua",
             name = "Emote Player",
             category = "Fun",
         },

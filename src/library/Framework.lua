@@ -1,32 +1,3 @@
---!strict
---
--- Module framework.
---
--- The menu used to be one 14,000-line file where every module inlined its own
--- UI wiring, its own connection bookkeeping and its own teardown. Vape V4 gets
--- around the same problem with a tiny kernel — categories own modules, modules
--- own options, and everything a module allocates goes on a cleanup list that is
--- emptied the moment it is switched off. This is that kernel, expressed against
--- this menu's own card/option API instead of Vape's GUI library.
---
--- A module file therefore reads as a declaration:
---
---     local Module = framework.Categories.Combat:CreateModule({
---         Name = "TriggerBot",
---         Tooltip = "Fires the equipped tool at whatever the crosshair is on",
---         Function = function(enabled: boolean): ()
---             if not enabled then
---                 return
---             end
---             Module:Loop(function(deltaTime: number): ()
---                 ...
---             end)
---         end,
---     })
---     local Delay = Module:CreateSlider({Name = "Delay", Min = 0, Max = 1})
---
--- and never touches connection tables, config keys or card layout.
-
 export type CleanupItem = any
 
 export type MovementInputService = {
@@ -83,9 +54,7 @@ export type ModuleContext = {
 
 export type Option = {
     Name: string,
-    -- Live value, kept in sync by the option's own callback so a module can
-    -- read `Slider.Value` inside a loop instead of caching every setting in a
-    -- table of its own.
+
     Value: any,
     Object: any,
     SetVisible: (self: Option, visible: boolean) -> (),
@@ -145,13 +114,6 @@ local Module = {
     Initialized = false,
 }
 
--- The categories a module can be filed under. They mirror the page taxonomy
--- the card grid already sorts by, so a module declaring `Category = "Combat"`
--- lands in the Combat block with no further wiring.
--- The shared category contract: official Wurst 7's eight windows, matching
--- the shell's OFFICIAL_CATEGORIES and ClickGui's CATEGORY_ORDER. Pre-created
--- so module files can index straight into `framework.Categories.Combat`
--- without a nil check.
 local KNOWN_CATEGORIES: {string} = {
     "Combat",
     "Render",
@@ -169,11 +131,6 @@ local function isKnownCategory(name: string): boolean
     return table.find(KNOWN_CATEGORIES, name) ~= nil
 end
 
--- The port's old names, answering with the official category until D refiles
--- each module (docs/wurst-categories.md is the per-card map). This table must
--- agree with the shell's CATEGORY_ALIASES — it is the same contract, copied
--- because a downloaded core file cannot reach the shell's locals at require
--- time.
 local CATEGORY_ALIASES: {[string]: string} = {
     ["Visuals"] = "Render",
     ["Protection"] = "Movement",
@@ -190,9 +147,6 @@ local function canonicalCategory(name: string): string
     return CATEGORY_ALIASES[name] or "Other"
 end
 
--- Cleanup accepts whatever a module happens to be holding: a signal
--- connection, an instance, a task handle or a plain function. Guessing here
--- once is what lets every module stay free of teardown code.
 local function disposeItem(item: CleanupItem): ()
     if item == nil then
         return
@@ -358,10 +312,6 @@ function Module.init(context: any): Framework
     end
     host.state.moduleSearch = moduleSearch
 
-    -- The option table is built before the control, because every builder
-    -- replays the stored value through the callback the moment the row is
-    -- created — a callback that would otherwise be writing into a table that
-    -- does not exist yet.
     local function newOption(
         name: string,
         initialValue: any,
@@ -443,9 +393,6 @@ function Module.init(context: any): Framework
             Cleanup = {},
         }
 
-        -- The card only ever sees one callback. Enabling runs the module's own
-        -- `Function`; disabling runs it too and then empties the cleanup list,
-        -- so a module that forgets to disconnect something still cannot leak.
         local function onToggle(enabled: boolean?): ()
             local nextState: boolean = enabled == true
             created.Enabled = nextState
@@ -457,8 +404,7 @@ function Module.init(context: any): Framework
                 handler(nextState)
             end
             if not nextState then
-                -- Anything the disable branch allocated is not part of the
-                -- next session either.
+
                 created:CleanAll()
             end
         end
@@ -488,25 +434,6 @@ function Module.init(context: any): Framework
         created.Feature = feature
         feature.frameworkModule = true
 
-        -- Conditional rows, declared rather than wired.
-        --
-        -- A module used to hide its own controls by hand: a toggle whose
-        -- Function walked a list of other options calling SetVisible. That is
-        -- three places to keep in step (the list, the callback, the initial
-        -- pass), and it is why panels drifted into showing rows that did
-        -- nothing — Click Teleport asked for a player name while you were
-        -- teleporting to an item.
-        --
-        -- An option says what it depends on instead:
-        --
-        --     teleport:CreateTextBox({
-        --         Name = "Player",
-        --         Show = {Option = "Destination", Values = {"Named player"}},
-        --     })
-        --
-        -- and the kernel hides it whenever that is not true. `Values` omitted
-        -- means "while the other option is on", which covers a toggle gating
-        -- a group.
         local function register(option: any, definition2: any?): Option
             option.Feature = feature
             local optionId: string = option.Name:gsub("%W", "")
@@ -520,24 +447,13 @@ function Module.init(context: any): Framework
             created.Options[option.Name] = option
             table.insert(created.OptionMetadata, option.Metadata)
             feature.optionMetadata = created.OptionMetadata
-            -- A rule arriving is itself a reason to run the pass.
-            --
-            -- Rules used to be evaluated only when some option's *value*
-            -- changed, and a rule is attached after its own builder has
-            -- finished — so the last gated row of a panel stayed on screen
-            -- until something else moved. Every module worked around it by
-            -- ending its panel with an ungated row, or by calling
-            -- `RefreshVisibility()` by hand: an ordering rule nobody can see
-            -- in the code and everybody has to remember.
+
             if gated then
                 created:RefreshVisibility()
             end
             return option
         end
 
-        -- One rule, or a list of rules that all have to hold — "the advanced
-        -- block is open *and* the activation is Hold key" is two facts, and a
-        -- row that needs both should not have to pick one.
         local function ruleHolds(rule: any): boolean
             local source: any = created.Options[rule.Option]
             local holds: boolean = false
@@ -623,11 +539,6 @@ function Module.init(context: any): Framework
             return register(option, definition2)
         end
 
-        -- A range is one setting, not two. `Value` stays a table so a module
-        -- reads `CPS.Value.Min`, and `GetRandomValue()` is the whole point of
-        -- the control: a rate drawn between the two ends every time it is
-        -- asked for, which is what stops a loop from running at a constant,
-        -- perfectly machine-shaped interval.
         function created:CreateTwoSlider(definition2: any): Option
             local minimum: number = definition2.Min or 0
             local maximum: number = definition2.Max or 100
@@ -727,17 +638,14 @@ function Module.init(context: any): Framework
             return register(option, definition2)
         end
 
-        -- A list is a set, not a choice: "which of the nine swords this game
-        -- gave me should the module use" cannot be answered by a dropdown.
         function created:CreateList(definition2: any): Option
             local option: any = newOption(definition2.Name, {}, "list", definition2)
             option.Selected = {}
-            -- `state` is the fallback for hosts that expose the builder
-            -- there rather than in the module environment.
+
             local builder: any = host.addListOption
                 or (host.state and host.state.addListOption)
             if type(builder) ~= "function" then
-                -- A missing builder must cost one row, not the whole panel.
+
                 return register(option)
             end
             local optionKey: string = feature.configKey
@@ -759,7 +667,7 @@ function Module.init(context: any): Framework
                 emptyText = definition2.EmptyText,
                 onChanged = listChanged,
             })
-            -- Tick, untick and re-read from the module side.
+
             local controls: any = host.state
                 and host.state.listControls
                 and host.state.listControls[optionKey]
@@ -804,8 +712,7 @@ function Module.init(context: any): Framework
             option.Object = host.addSectionOption
                 and host.addSectionOption(feature, name)
                 or nil
-            -- A heading takes no definition; a caller that wants one to follow
-            -- a gate sets `.Show` on the option it gets back.
+
             return register(option)
         end
 
@@ -824,10 +731,6 @@ function Module.init(context: any): Framework
             return created:Clean(host.TaskManager:Connect(callback))
         end
 
-        -- Anything that draws from the camera belongs here rather than on
-        -- `Loop`. Heartbeat runs after the frame has been rendered, so an
-        -- overlay built there is always showing the previous frame's camera
-        -- and swims behind the world whenever the player turns.
         function created:Render(callback: (number) -> ()): any
             return created:Clean(host.TaskManager:Connect(callback, "render"))
         end
@@ -839,8 +742,7 @@ function Module.init(context: any): Framework
         function created:CleanAll(): ()
             local items: {CleanupItem} = created.Cleanup
             created.Cleanup = {}
-            -- Reverse order: the last thing allocated is usually the thing
-            -- depending on everything before it.
+
             for index: number = #items, 1, -1 do
                 disposeItem(items[index])
             end
@@ -857,8 +759,6 @@ function Module.init(context: any): Framework
             onToggle(not created.Enabled)
         end
 
-        -- The status belongs to the card, which every module has, rather than
-        -- to this wrapper, which only eighteen of them do. This forwards.
         function created:SetStatus(status: string?): ()
             created.Status = status
             if feature and type(feature.SetStatus) == "function" then
@@ -883,10 +783,7 @@ function Module.init(context: any): Framework
         if existing then
             return existing
         end
-        -- One category object per official window. Asking for an old port
-        -- name ("Visuals") answers with the official category it maps to, so
-        -- a module that has not been refiled yet lands in one of Wurst's
-        -- eight windows instead of dying on a nil index.
+
         local canonical: string = canonicalCategory(name)
         local category: any = framework.Categories[canonical]
         if not category then
@@ -939,9 +836,6 @@ function Module.init(context: any): Framework
         end
     end
 
-    -- Pre-create the taxonomy so module files can index straight into
-    -- `framework.Categories.Combat` without a nil check — including the old
-    -- port names, which answer with the official category they map to.
     for _, name: string in ipairs(KNOWN_CATEGORIES) do
         framework:GetCategory(name)
     end

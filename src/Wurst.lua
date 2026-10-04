@@ -1,0 +1,5824 @@
+local RUNTIME_COMPATIBILITY_MARKER: string =
+    "Initialization error — check executor console"
+local RUNTIME_SAFETY_SOURCE_URL: string =
+    "https://raw.githubusercontent.com/XzAngel19/Wurst/4b10e4bfe00aa356afb3e0420a72e745327f6259/Wurst.lua"
+
+local DEFAULT_FEATURE_CATEGORY: string = "Other"
+
+local OFFICIAL_CATEGORIES: {string} = {
+    "Combat",
+    "Render",
+    "Blocks",
+    "Movement",
+    "Chat",
+    "Fun",
+    "Items",
+    "Other",
+}
+
+local CATEGORY_ALIASES: {[string]: string} = {
+    ["Visuals"] = "Render",
+    ["Protection"] = "Movement",
+    ["Utility"] = "Other",
+    ["Spoof"] = "Fun",
+    ["General"] = "Other",
+    ["Player"] = "Movement",
+}
+
+local function normalizeFeatureCategory(name: any): string
+    local resolved: string = tostring(name or DEFAULT_FEATURE_CATEGORY)
+    if table.find(OFFICIAL_CATEGORIES, resolved) ~= nil then
+        return resolved
+    end
+    return CATEGORY_ALIASES[resolved] or DEFAULT_FEATURE_CATEGORY
+end
+
+local FEATURE_CATEGORIES: {[string]: string} = {
+
+    ["Click Teleport"] = "Movement",
+    ["Fly"] = "Movement",
+    ["Freeze Movements"] = "Movement",
+    ["High Jump"] = "Movement",
+    ["Infinite Jump"] = "Movement",
+    ["Jump Power"] = "Movement",
+    ["Noclip"] = "Movement",
+    ["Phase Dash"] = "Movement",
+    ["Speed"] = "Movement",
+    ["Spider"] = "Movement",
+    ["Walk Speed"] = "Movement",
+
+    ["Hitboxes"] = "Combat",
+    ["Projectile Calibration"] = "Combat",
+
+    ["FOV"] = "Render",
+    ["Fullbright"] = "Render",
+    ["Player ESP"] = "Render",
+    ["X-Ray"] = "Render",
+    ["Zoom Unlocker"] = "Render",
+
+    ["Anti-Fling"] = "Other",
+    ["Anti-Void"] = "Movement",
+    ["Safe Walk"] = "Movement",
+    ["No Fall"] = "Movement",
+
+    ["Anti-AFK"] = "Other",
+    ["Fling"] = "Other",
+    ["Gravity"] = "Other",
+    ["Improve FPS"] = "Other",
+    ["Interact Extender"] = "Other",
+    ["Lag Switch"] = "Other",
+    ["Rejoin Server"] = "Other",
+
+    ["Instant Role Notify"] = "Other",
+    ["Shoot"] = "Combat",
+    ["Trajectory Calibration"] = "Combat",
+    ["Knife"] = "Combat",
+    ["Loop All Interact"] = "Other",
+    ["Silence"] = "Other",
+    ["Auto Play ID"] = "Other",
+    ["Sprint"] = "Movement",
+    ["Always Show Timer"] = "Render",
+    ["Teleport"] = "Movement",
+    ["Role Fling"] = "Other",
+    ["Hide Names"] = "Movement",
+
+    ["Auto Tackle"] = "Combat",
+    ["Auto Dribble"] = "Combat",
+    ["Auto Pickup"] = "Other",
+    ["Pass Assist"] = "Combat",
+    ["Shoot Assist"] = "Combat",
+    ["Power Shot"] = "Combat",
+    ["Large Shoot"] = "Combat",
+    ["Best Goal Visual"] = "Render",
+    ["Ball Trajectory"] = "Render",
+    ["Goalkeeper Assist"] = "Combat",
+    ["Auto Header"] = "Combat",
+
+    ["Auto Generator"] = "Other",
+    ["Auto Parry / Auto Block"] = "Movement",
+    ["Killer Hit Aura"] = "Combat",
+    ["Fast Vault Optimizer"] = "Movement",
+    ["Cooldown Modifier"] = "Other",
+    ["Damage Boost"] = "Movement",
+    ["Noclip (Vaults & Pallets)"] = "Movement",
+    ["WalkSpeed Hack"] = "Movement",
+    ["Silent Steps / Anti-Sound"] = "Movement",
+    ["Killer Proximity Visualizer"] = "Render",
+    ["Line of Sight ESP"] = "Render",
+    ["Locker & Hideout Detector"] = "Render",
+    ["Killer Power Cooldowns"] = "Render",
+    ["VD Field of View"] = "Render",
+    ["Optimize Blind / Flash Protection"] = "Movement",
+    ["VD Fullbright"] = "Render",
+
+    ["Silent Aim"] = "Combat",
+    ["Auto Shoot"] = "Combat",
+    ["Trigger Opportunity"] = "Render",
+
+    ["Round Info"] = "Render",
+    ["Auto Swing"] = "Combat",
+    ["Bed Nuker"] = "Combat",
+    ["Scaffold"] = "Movement",
+    ["Anti Void"] = "Movement",
+    ["Server Aura"] = "Combat",
+    ["Server Scaffold"] = "Movement",
+    ["Server Miner"] = "Other",
+    ["Auto Buy"] = "Other",
+    ["Quick Actions"] = "Other",
+}
+
+local UI_RADIUS: {[string]: number} = {
+    shell = 8,
+    panel = 5,
+    card = 4,
+    control = 3,
+    chip = 3,
+}
+
+local UI_MOTION: {[string]: number} = {
+    fast = 0.1,
+    base = 0.16,
+    slow = 0.22,
+}
+
+type LayoutMetrics = {
+    mode: string,
+    compact: boolean,
+    touch: boolean,
+    contentPadding: number,
+    cardSpacing: number,
+    cardHeight: number,
+    cardCorner: number,
+    controlHeight: number,
+    optionRowHeight: number,
+    switchWidth: number,
+    switchHeight: number,
+    iconButton: number,
+    keySlotWidth: number,
+    touchTarget: number,
+    titleFontSize: number,
+    bodyFontSize: number,
+    captionFontSize: number,
+    scrollBar: number,
+}
+
+local function computeLayoutMetrics(
+    _viewport: Vector2,
+    touchEnabled: boolean
+): LayoutMetrics
+    local mode: string = "Desktop"
+    if touchEnabled then
+        mode = "Mobile"
+    end
+    local mobile: boolean = mode == "Mobile"
+    return {
+        mode = mode,
+        compact = mobile,
+        touch = touchEnabled,
+        contentPadding = 10,
+        cardSpacing = 2,
+        cardHeight = 22,
+        cardCorner = UI_RADIUS.card,
+        controlHeight = 20,
+        optionRowHeight = 22,
+        switchWidth = 26,
+        switchHeight = 14,
+        iconButton = 16,
+        keySlotWidth = 34,
+        touchTarget = touchEnabled and 32 or 24,
+        titleFontSize = 16,
+        bodyFontSize = 16,
+        captionFontSize = 12,
+        scrollBar = 3,
+    }
+end
+
+local RUNTIME_BRANCH: string = "main"
+do
+    local override: any = (getfenv() :: any).WURST_BRANCH
+    if type(override) == "string" and override ~= "" then
+        RUNTIME_BRANCH = (override:gsub("^refs/heads/", ""))
+    end
+end
+local RUNTIME_RAW_BASE: string =
+    "https://raw.githubusercontent.com/XzAngel19/Wurst/refs/heads/"
+        .. RUNTIME_BRANCH
+        .. "/"
+
+local SOURCE_STAMP: string = "19bd8c03e2379123"
+
+local BOOT_STARTED_AT: number = os.clock()
+local BOOT_FINGERPRINT_SECONDS: number = 0
+local PENDING_FINGERPRINT: boolean = false
+
+local PRODUCT = {
+    name = "Wurst",
+    version = "0.1 Beta",
+
+    logPrefix = "Wurst",
+    guiName = "RandomTestingMenu0001",
+    blurName = "RandomTestingMenu0001Blur",
+    storageFolder = "RandomTestingMenu0001",
+}
+
+local function bootstrap(): ()
+local executorGlobals: any = getfenv()
+
+local DEBUG_LOGS: boolean = (function(): boolean
+    local getGenv: any = executorGlobals.getgenv
+    if type(getGenv) == "function" then
+        local ok: boolean, genv: any = pcall(getGenv)
+        if ok and type(genv) == "table" then
+            return genv.WURST_DEBUG == true
+        end
+    end
+    return false
+end)()
+local realPrint: any = executorGlobals.print
+local realWarn: any = executorGlobals.warn
+local print = function(...: any): ()
+    if DEBUG_LOGS then
+        realPrint(...)
+    end
+end
+local warn = function(...: any): ()
+    if DEBUG_LOGS then
+        realWarn(...)
+    end
+end
+
+local function cloneReference(instance: any): any
+    if type(executorGlobals.cloneref) == "function" then
+        local success: boolean, cloned: any = pcall(executorGlobals.cloneref, instance)
+        if success then
+            return cloned
+        end
+    end
+    return instance
+end
+
+local Players: Players = cloneReference(game:GetService("Players"))
+local UserInputService: UserInputService = cloneReference(game:GetService("UserInputService"))
+local TweenService: TweenService = cloneReference(game:GetService("TweenService"))
+local Lighting: Lighting = cloneReference(game:GetService("Lighting"))
+local RunService: RunService = cloneReference(game:GetService("RunService"))
+local HttpService: HttpService = cloneReference(game:GetService("HttpService"))
+local CollectionService: CollectionService = cloneReference(game:GetService("CollectionService"))
+local Stats: Stats = cloneReference(game:GetService("Stats"))
+local LocalPlayer: Player = (function(): Player
+
+    local player: any = Players.LocalPlayer
+    while player == nil do
+        task.wait(0.1)
+        player = Players.LocalPlayer
+    end
+    return player :: Player
+end)()
+local PlayerGui: PlayerGui = LocalPlayer:WaitForChild("PlayerGui") :: PlayerGui
+
+local GUI_NAME = PRODUCT.guiName
+local BLUR_NAME = PRODUCT.blurName
+local CONFIG_FOLDER = PRODUCT.storageFolder
+local CONFIG_PROFILE_FOLDER = CONFIG_FOLDER .. "/Profiles"
+local CONFIG_FILE = CONFIG_PROFILE_FOLDER
+    .. "/Game_"
+    .. tostring(game.GameId > 0 and game.GameId or game.PlaceId)
+    .. ".Config"
+local REPOSITORY_RAW_BASE = RUNTIME_RAW_BASE
+
+local GAME_MODULES: {[number]: string} = {
+    [8444591321] = "BedWars",
+    [71480482338212] = "BedFight",
+    [142823291] = "MM2",
+    [14315258385] = "TRS",
+    [93978595733734] = "VD",
+    [135856908115931] = "MVSD",
+}
+
+type GameFingerprint = {
+    module: string,
+    required: number,
+    markers: {(ReplicatedStorage) -> boolean},
+}
+
+local GAME_FINGERPRINTS: {GameFingerprint} = {
+    {
+        module = "MM2",
+        required = 4,
+        markers = {
+
+            function(replicated: ReplicatedStorage): boolean
+                local remotes: Instance? = replicated:FindFirstChild("Remotes")
+                local gameplay: Instance? = remotes
+                    and remotes:FindFirstChild("Gameplay")
+                if not gameplay then
+                    return false
+                end
+                local found: number = 0
+                for _, name: string in ipairs({
+                    "RoundStart",
+                    "RoundEndFade",
+                    "GetCurrentPlayerData",
+                    "PlayerDataChanged",
+                }) do
+                    if gameplay:FindFirstChild(name) then
+                        found += 1
+                    end
+                end
+                return found >= 3
+            end,
+
+            function(replicated: ReplicatedStorage): boolean
+                local services: Instance? =
+                    replicated:FindFirstChild("ClientServices")
+                local weaponService: Instance? = services
+                    and services:FindFirstChild("WeaponService")
+                return weaponService ~= nil
+                    and weaponService:FindFirstChild("GunFired") ~= nil
+            end,
+
+            function(replicated: ReplicatedStorage): boolean
+                local mainGui: Instance? = replicated:FindFirstChild("MainGUI")
+                local gameFrame: Instance? = mainGui
+                    and mainGui:FindFirstChild("Game")
+                return gameFrame ~= nil
+                    and gameFrame:FindFirstChild("Timer") ~= nil
+            end,
+
+            function(_replicated: ReplicatedStorage): boolean
+                local ok: boolean, groups: any = pcall(function(): any
+                    return game:GetService("PhysicsService")
+                        :GetRegisteredCollisionGroups()
+                end)
+                if not ok or type(groups) ~= "table" then
+                    return false
+                end
+                for _, group: any in ipairs(groups) do
+                    if type(group) == "table" and group.name == "Murderer" then
+                        return true
+                    end
+                end
+                return false
+            end,
+
+            function(_replicated: ReplicatedStorage): boolean
+                for _, object: Instance in ipairs(workspace:GetChildren()) do
+                    if object:IsA("Model")
+                        and object.Name ~= "Lobby"
+                        and (object:FindFirstChild("CoinContainer")
+                            or object:FindFirstChild("CoinAreas")) then
+                        return true
+                    end
+                end
+                return false
+            end,
+        },
+    },
+}
+
+local function detectGameModuleByStructure(): (string?, number)
+    local replicated: ReplicatedStorage = game:GetService("ReplicatedStorage")
+    for _, fingerprint: GameFingerprint in ipairs(GAME_FINGERPRINTS) do
+        local score: number = 0
+        for _, marker: (ReplicatedStorage) -> boolean in ipairs(fingerprint.markers) do
+            local ok: boolean, matched: any = pcall(marker, replicated)
+            if ok and matched == true then
+                score += 1
+            end
+        end
+        if score >= fingerprint.required then
+            return fingerprint.module, score
+        end
+    end
+    return nil, 0
+end
+
+local ACTIVE_GAME_MODULE: string? = GAME_MODULES[game.PlaceId]
+local ACTIVE_GAME_SOURCE: string = ACTIVE_GAME_MODULE and "PlaceId" or "none"
+PENDING_FINGERPRINT = ACTIVE_GAME_MODULE == nil
+if not ACTIVE_GAME_MODULE then
+
+    local fingerprintAt: number = os.clock()
+    local detected: string?, score: number = detectGameModuleByStructure()
+    BOOT_FINGERPRINT_SECONDS = os.clock() - fingerprintAt
+    if detected then
+        ACTIVE_GAME_MODULE = detected
+        ACTIVE_GAME_SOURCE = "fingerprint " .. tostring(score) .. " markers"
+        PENDING_FINGERPRINT = false
+    end
+end
+
+local GAME_CHECK = {
+    MM2 = 142823291,
+    BedFight = 71480482338212,
+    BedWars = 8444591321,
+    TRS = 14315258385,
+    VD = 93978595733734,
+    MVSD = 135856908115931,
+    MM2Active = ACTIVE_GAME_MODULE == "MM2",
+    TRSActive = ACTIVE_GAME_MODULE == "TRS",
+    VDActive = ACTIVE_GAME_MODULE == "VD",
+    MVSDActive = ACTIVE_GAME_MODULE == "MVSD",
+    BedFightActive = ACTIVE_GAME_MODULE == "BedFight",
+    BedWarsActive = ACTIVE_GAME_MODULE == "BedWars",
+}
+
+function GAME_CHECK.matches(identifier: number): boolean
+    if game.PlaceId == identifier then
+        return true
+    end
+
+    for placeId: number, moduleName: string in pairs(GAME_MODULES) do
+        if placeId == identifier then
+            return ACTIVE_GAME_MODULE == moduleName
+        end
+    end
+    return false
+end
+
+GAME_CHECK.source = ACTIVE_GAME_SOURCE
+
+export type ThemeShape = {
+    opacity: number,
+    tooltipOpacity: number,
+    radius: number,
+    rowHeight: number,
+    borderThickness: number,
+    maxHeight: number,
+    scale: number,
+}
+
+local THEME_PRESETS: {[string]: {[string]: Color3}} = {
+
+    Wurst = {
+        background = Color3.fromRGB(64, 64, 64),
+        sidebar = Color3.fromRGB(48, 48, 48),
+        surface = Color3.fromRGB(64, 64, 64),
+        surfaceRaised = Color3.fromRGB(74, 74, 74),
+        surfaceHover = Color3.fromRGB(86, 86, 86),
+        surfacePressed = Color3.fromRGB(96, 96, 96),
+        button = Color3.fromRGB(56, 56, 56),
+        buttonHover = Color3.fromRGB(72, 72, 72),
+        buttonPressed = Color3.fromRGB(84, 84, 84),
+        outline = Color3.fromRGB(16, 16, 16),
+        accent = Color3.fromRGB(16, 16, 16),
+        accentDim = Color3.fromRGB(36, 36, 36),
+        accentFaint = Color3.fromRGB(56, 56, 56),
+        accentSoft = Color3.fromRGB(40, 40, 40),
+        accentText = Color3.fromRGB(240, 240, 240),
+
+        enabled = Color3.fromRGB(32, 175, 32),
+        enabledText = Color3.fromRGB(240, 240, 240),
+        text = Color3.fromRGB(240, 240, 240),
+        textMuted = Color3.fromRGB(168, 168, 168),
+        tooltip = Color3.fromRGB(24, 24, 24),
+    },
+
+    Monochrome = {
+        background = Color3.fromRGB(8, 8, 9),
+        sidebar = Color3.fromRGB(13, 13, 14),
+        surface = Color3.fromRGB(26, 26, 28),
+        surfaceRaised = Color3.fromRGB(32, 32, 35),
+        surfaceHover = Color3.fromRGB(40, 40, 44),
+        surfacePressed = Color3.fromRGB(48, 48, 52),
+        button = Color3.fromRGB(32, 32, 35),
+        buttonHover = Color3.fromRGB(46, 46, 50),
+        buttonPressed = Color3.fromRGB(56, 56, 61),
+        outline = Color3.fromRGB(92, 92, 98),
+        accent = Color3.fromRGB(236, 236, 238),
+        accentDim = Color3.fromRGB(196, 196, 202),
+        accentFaint = Color3.fromRGB(160, 160, 168),
+        accentSoft = Color3.fromRGB(52, 52, 56),
+        accentText = Color3.fromRGB(8, 8, 9),
+        enabled = Color3.fromRGB(236, 236, 238),
+        enabledText = Color3.fromRGB(8, 8, 9),
+        text = Color3.fromRGB(245, 245, 247),
+        textMuted = Color3.fromRGB(158, 158, 166),
+        tooltip = Color3.fromRGB(16, 16, 18),
+    },
+}
+
+local Theme: {[string]: Color3} = {}
+for token: string, value: Color3 in pairs(THEME_PRESETS.Wurst) do
+    Theme[token] = value
+end
+
+Theme.positive = Color3.fromRGB(126, 196, 138)
+Theme.negative = Color3.fromRGB(214, 106, 106)
+
+local ThemeEngine = {
+    name = "Wurst",
+    presets = THEME_PRESETS,
+    tokens = Theme,
+    shape = {
+        opacity = 0.86,
+        tooltipOpacity = 0.95,
+        radius = 0,
+        rowHeight = 22,
+        borderThickness = 1,
+        maxHeight = 340,
+        scale = 1,
+    } :: ThemeShape,
+}
+
+local themeBindings: any = setmetatable({}, {__mode = "k"})
+local themeListeners: {(string) -> ()} = {}
+
+function ThemeEngine.Bind(
+    instance: Instance,
+    property: string,
+    token: string
+): Instance
+    local record: any = themeBindings[instance]
+    if not record then
+        record = {}
+        themeBindings[instance] = record
+    end
+    table.insert(record, {property = property, token = token})
+    local value: Color3? = Theme[token]
+    if value then
+        (instance :: any)[property] = value
+    end
+    return instance
+end
+
+function ThemeEngine.OnChange(callback: (string) -> ()): ()
+    table.insert(themeListeners, callback)
+end
+
+function ThemeEngine.SetMany(values: {[string]: Color3}): ()
+
+    if values.accent ~= nil or values.background ~= nil then
+        local accent: Color3 = values.accent or Theme.accent
+        local background: Color3 = values.background or Theme.background
+        local function mix(amount: number): Color3
+            return Color3.new(
+                background.R + (accent.R - background.R) * amount,
+                background.G + (accent.G - background.G) * amount,
+                background.B + (accent.B - background.B) * amount
+            )
+        end
+        values.accentDim = values.accentDim or mix(0.72)
+        values.accentSoft = values.accentSoft or mix(0.58)
+        values.accentFaint = values.accentFaint or mix(0.42)
+    end
+    for token: string, value: Color3 in pairs(values) do
+        Theme[token] = value
+    end
+    for instance: any, record: any in pairs(themeBindings) do
+        for _, binding: any in ipairs(record) do
+            local value: Color3? = values[binding.token]
+            if value then
+                pcall(function(): ()
+                    instance[binding.property] = value
+                end)
+            end
+        end
+    end
+    for _, listener: (string) -> () in ipairs(themeListeners) do
+        pcall(listener, ThemeEngine.name)
+    end
+end
+
+function ThemeEngine.Set(token: string, value: Color3): ()
+    ThemeEngine.SetMany({[token] = value})
+end
+
+function ThemeEngine.Apply(name: string): boolean
+    local preset: {[string]: Color3}? = THEME_PRESETS[name]
+    if not preset then
+        return false
+    end
+    for token: string, value: Color3 in pairs(preset :: {[string]: Color3}) do
+        Theme[token] = value
+    end
+    ThemeEngine.name = name
+    for instance: any, record: any in pairs(themeBindings) do
+        for _, binding: any in ipairs(record) do
+            local value: Color3? = Theme[binding.token]
+            if value then
+
+                pcall(function(): ()
+                    instance[binding.property] = value
+                end)
+            end
+        end
+    end
+    for _, listener: (string) -> () in ipairs(themeListeners) do
+        pcall(listener, name)
+    end
+    return true
+end
+
+local DEFAULT_HEADER_COLOR: Color3 = Theme.text
+local DEFAULT_MENU_COLOR: Color3 = Theme.background
+local DEFAULT_SURFACE_COLOR: Color3 = Theme.surface
+local DEFAULT_BORDER_COLOR: Color3 = Theme.outline
+
+local TITLE_FONT: Font = Font.new(
+    "rbxasset://fonts/families/BuilderSans.json",
+    Enum.FontWeight.Bold,
+    Enum.FontStyle.Normal
+)
+local THIN_FONT: Font = Font.new(
+    "rbxasset://fonts/families/BuilderSans.json",
+    Enum.FontWeight.Regular,
+    Enum.FontStyle.Normal
+)
+local CONTROL_FONT: Font = Font.new(
+    "rbxasset://fonts/families/BuilderSans.json",
+    Enum.FontWeight.SemiBold,
+    Enum.FontStyle.Normal
+)
+local VALVE_FONT: Font = CONTROL_FONT
+local TEXT_BASE_MULTIPLIER: number = 1.35
+local TEXT_SCALE_MINIMUM: number = 0.8
+local TEXT_SCALE_MAXIMUM: number = 1.2
+local IS_MOBILE_DEVICE: boolean = UserInputService.TouchEnabled
+    and not UserInputService.KeyboardEnabled
+
+local configData: any = {
+    version = 1,
+    states = {},
+    values = {},
+    ui = {},
+}
+local configSaveQueued = false
+
+local function loadConfig()
+    if type(isfile) ~= "function" or type(readfile) ~= "function" then
+        return
+    end
+
+    local success, loaded = pcall(function()
+        if not isfile(CONFIG_FILE) then
+            return nil
+        end
+        return HttpService:JSONDecode(readfile(CONFIG_FILE))
+    end)
+
+    if success and type(loaded) == "table" then
+        configData.version = loaded.version or 1
+        configData.states = type(loaded.states) == "table" and loaded.states or {}
+        configData.values = type(loaded.values) == "table" and loaded.values or {}
+        configData.ui = type(loaded.ui) == "table" and loaded.ui or {}
+    end
+
+    configData.ui.windowPosition = nil
+    configData.ui.windowSize = nil
+end
+
+local function saveConfigNow()
+    if type(writefile) ~= "function" then
+        return
+    end
+
+    pcall(function()
+        if type(isfolder) == "function"
+            and type(makefolder) == "function"
+            and not isfolder(CONFIG_FOLDER) then
+            makefolder(CONFIG_FOLDER)
+        end
+        if type(isfolder) == "function"
+            and type(makefolder) == "function"
+            and not isfolder(CONFIG_PROFILE_FOLDER) then
+            makefolder(CONFIG_PROFILE_FOLDER)
+        end
+        writefile(CONFIG_FILE, HttpService:JSONEncode(configData))
+    end)
+end
+
+local function queueConfigSave()
+    if configSaveQueued then
+        return
+    end
+    configSaveQueued = true
+    task.delay(0.35, function()
+        configSaveQueued = false
+        saveConfigNow()
+    end)
+end
+
+local function colorFromConfig(value, fallback)
+    if type(value) == "table" then
+        return Color3.fromRGB(
+            math.clamp(tonumber(value[1]) or 0, 0, 255),
+            math.clamp(tonumber(value[2]) or 0, 0, 255),
+            math.clamp(tonumber(value[3]) or 0, 0, 255)
+        )
+    end
+    return fallback
+end
+
+local function colorToConfig(color)
+    return {
+        math.round(color.R * 255),
+        math.round(color.G * 255),
+        math.round(color.B * 255),
+    }
+end
+
+loadConfig()
+
+local function findExistingGui()
+    local locations = {PlayerGui}
+
+    local coreGuiOk, coreGui = pcall(function()
+        return game:GetService("CoreGui")
+    end)
+
+    if coreGuiOk and coreGui then
+        table.insert(locations, coreGui)
+    end
+
+    if type(gethui) == "function" then
+        local hiddenGuiOk, hiddenGui = pcall(gethui)
+        if hiddenGuiOk and hiddenGui then
+            table.insert(locations, hiddenGui)
+        end
+    end
+
+    for _, location in ipairs(locations) do
+
+        local existing = location:FindFirstChild(GUI_NAME)
+        while existing do
+            existing:Destroy()
+            existing = location:FindFirstChild(GUI_NAME)
+        end
+    end
+end
+
+findExistingGui()
+
+local oldBlur = Lighting:FindFirstChild(BLUR_NAME)
+if oldBlur then
+    oldBlur:Destroy()
+end
+
+local MenuBlur: any = nil
+pcall(function(): ()
+    MenuBlur = Instance.new("BlurEffect")
+    MenuBlur.Name = BLUR_NAME
+    MenuBlur.Size = 14
+    MenuBlur.Enabled = false
+    MenuBlur.Parent = Lighting
+end)
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = GUI_NAME
+ScreenGui.ResetOnSpawn = false
+ScreenGui.IgnoreGuiInset = true
+
+ScreenGui.AutoLocalize = false
+ScreenGui.DisplayOrder = 999999
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui:SetAttribute("BuildId", "0001-S17")
+
+local function parentScreenGui()
+
+    local protector: any = (getfenv() :: any).syn
+    if type(protector) == "table" and type(protector.protect_gui) == "function" then
+        pcall(protector.protect_gui, ScreenGui)
+    end
+    if type(gethui) == "function" then
+        local hiddenGuiOk, hiddenGui = pcall(gethui)
+        if hiddenGuiOk and hiddenGui then
+            local parented = pcall(function()
+                ScreenGui.Parent = hiddenGui
+            end)
+            if parented then
+                return
+            end
+        end
+    end
+
+    local coreGuiOk, coreGui = pcall(function()
+        return game:GetService("CoreGui")
+    end)
+
+    if coreGuiOk and coreGui then
+        local parented = pcall(function()
+            ScreenGui.Parent = coreGui
+        end)
+        if parented then
+            return
+        end
+    end
+
+    ScreenGui.Parent = PlayerGui
+end
+
+parentScreenGui()
+
+local PopupLayer: Frame = Instance.new("Frame")
+PopupLayer.Name = "PopupLayer"
+PopupLayer.Active = false
+PopupLayer.BackgroundTransparency = 1
+PopupLayer.BorderSizePixel = 0
+PopupLayer.Size = UDim2.fromScale(1, 1)
+PopupLayer.ZIndex = 150
+PopupLayer.Parent = ScreenGui
+
+local savedToggleKey = Enum.KeyCode.RightShift
+if type(configData.ui.toggleKey) == "string" then
+    pcall(function()
+        savedToggleKey = Enum.KeyCode[configData.ui.toggleKey]
+            or Enum.KeyCode.RightShift
+    end)
+end
+
+local state: any = {
+
+    visible = false,
+    isMobile = IS_MOBILE_DEVICE,
+    guiStyle = "Default",
+    mobileMenuButtonVisible = true,
+    toggleKey = savedToggleKey,
+    waitingForKey = false,
+    keyCaptureCallback = nil,
+    headerColor = DEFAULT_HEADER_COLOR,
+    menuColor = DEFAULT_MENU_COLOR,
+    hookFunction = (getfenv() :: any).hookfunction,
+    hookMetamethod = (getfenv() :: any).hookmetamethod,
+    getNamecallMethod = (getfenv() :: any).getnamecallmethod,
+    newCClosure = (getfenv() :: any).newcclosure,
+    fireTouchInterest = (getfenv() :: any).firetouchinterest,
+    requireModule = require,
+    uiConnections = {} :: {RBXScriptConnection},
+    styledButtons = {} :: {TextButton},
+    styledTextBoxes = {} :: {TextBox},
+}
+
+state.activeGameName = ACTIVE_GAME_MODULE
+
+state.textScale = configData.ui.textScaleCalibrationVersion == 2
+    and math.clamp(
+        tonumber(configData.ui.textScale) or 1,
+        TEXT_SCALE_MINIMUM,
+        TEXT_SCALE_MAXIMUM
+    )
+    or 1
+state.animationsEnabled = configData.ui.animationsEnabled ~= false
+
+state.mobileButtonSize = math.clamp(
+    tonumber(configData.ui.mobileButtonSize) or 52,
+    28,
+    120
+)
+configData.ui.guiStyle = nil
+
+if configData.ui.wurstSchema ~= 3 then
+    if configData.ui.wurstSchema ~= 2 then
+
+        configData.values["ClickGUI.Maxheight"] = nil
+        configData.values["ClickGUI.Maxsettingsheight"] = nil
+        configData.values["ClickGUI.Opacity"] = nil
+        configData.values["ClickGUI.Tooltipopacity"] = nil
+        configData.values["WurstLogo.Background"] = nil
+        configData.values["WurstLogo.Text"] = nil
+        configData.values["WurstLogo.Visibility"] = nil
+    end
+
+    configData.ui.wurstSchema = 3
+    configData.ui.windows = {}
+    queueConfigSave()
+end
+configData.ui.textScaleCalibrationVersion = 2
+
+state.menuStyle = "Wurst"
+
+if configData.values["UI.CodeFaceMigration"] ~= 1 then
+    configData.values["UI.CodeFaceMigration"] = 1
+    if configData.values.interfaceFont ~= nil
+        and configData.values.interfaceFont ~= "Code" then
+        configData.values.interfaceFont = "Code"
+    end
+    if configData.values["UI.FontPack"] ~= nil
+        and configData.values["UI.FontPack"] ~= "Code" then
+        configData.values["UI.FontPack"] = "Code"
+    end
+    queueConfigSave()
+end
+
+state.fontPack = "Code"
+
+local persistenceEnvironment: any = getfenv()
+
+local function persistenceGenv(): any
+    local getGenv: any = persistenceEnvironment.getgenv
+    if type(getGenv) == "function" then
+        local ok: boolean, genv: any = pcall(getGenv)
+        if ok and type(genv) == "table" then
+            return genv
+        end
+    end
+    return nil
+end
+
+local function resolveTeleportQueue(): any
+    local direct: any = persistenceEnvironment.queue_on_teleport
+    if type(direct) == "function" then
+        return direct
+    end
+    for _, providerName: string in ipairs({"syn", "fluxus"}) do
+        local provider: any = persistenceEnvironment[providerName]
+        if type(provider) == "table"
+            and type(provider.queue_on_teleport) == "function" then
+            local queue: any = provider.queue_on_teleport
+            return function(source: string): ()
+                queue(source)
+            end
+        end
+    end
+    return nil
+end
+
+local function buildTeleportSnippet(): string
+
+    return table.concat({
+        "local genv = (type(getgenv) == \"function\" and getgenv()) or {}",
+        "genv.WURST_TP_QUEUED = false",
+        "if genv.WURST_STOPPED == true then return end",
+        "genv.WURST_BRANCH = \"" .. RUNTIME_BRANCH .. "\"",
+
+        "if not game:IsLoaded() then",
+        "    game.Loaded:Wait()",
+        "end",
+        "task.wait(1)",
+        "local ok, err = pcall(function()",
+        "    loadstring(game:HttpGet(",
+        "        \"" .. RUNTIME_RAW_BASE
+            .. "src/Wurst.lua?t=\" .. tostring(os.time())",
+        "    ))()",
+        "end)",
+        "if not ok then",
+        "    warn(\"[Wurst] teleport reinject failed: \" .. tostring(err))",
+        "end",
+    }, "\n")
+end
+
+state.teleportPersist = {
+    supported = resolveTeleportQueue() ~= nil,
+
+    enabled = configData.states["ClickGUI.Keepafterteleport"] ~= false,
+}
+
+state.teleportPersist.Sync = function(): ()
+    local contract: any = state.teleportPersist
+    local genv: any = persistenceGenv()
+    if genv then
+
+        genv.WURST_STOPPED = contract.enabled ~= true
+    end
+    if contract.enabled ~= true then
+        return
+    end
+    local queue: any = resolveTeleportQueue()
+    if type(queue) ~= "function" then
+        if not contract._unsupportedSaid then
+            contract._unsupportedSaid = true
+            warn("[" .. PRODUCT.logPrefix .. "] queue_on_teleport is not "
+                .. "available on this executor; the menu cannot follow "
+                .. "teleports here")
+        end
+        return
+    end
+    if genv and genv.WURST_TP_QUEUED == true then
+
+        return
+    end
+    local armed: boolean = pcall(queue, buildTeleportSnippet())
+    if armed and genv then
+        genv.WURST_TP_QUEUED = true
+    end
+    if armed then
+        print("[" .. PRODUCT.logPrefix .. "] Teleport persistence armed — "
+            .. "the menu follows the next teleport")
+    end
+end
+
+state.teleportPersist.SetEnabled = function(enabled: boolean): ()
+    state.teleportPersist.enabled = enabled == true
+    state.teleportPersist.Sync()
+end
+
+state.teleportPersist.Sync()
+
+state.menuStyleListeners = {} :: {(string) -> ()}
+
+state.SetMenuStyle = function(style: string, openImmediately: boolean?): ()
+    if style ~= "Wurst" and style ~= "Navigator" then
+        return
+    end
+    state.menuStyle = style
+    configData.values["UI.MenuStyle"] = style
+    queueConfigSave()
+    local navigator: any = state.navigator
+    local navigatorOpen: boolean = navigator ~= nil
+        and navigator.root ~= nil
+        and navigator.root.Visible == true
+    if style == "Wurst" then
+        if navigatorOpen and type(navigator.Close) == "function" then
+            navigator.Close()
+        end
+        if openImmediately and not state.visible then
+            state.setMenuVisible(true)
+        end
+    else
+        if state.visible then
+            state.setMenuVisible(false)
+        end
+        if openImmediately and navigator
+            and type(navigator.Open) == "function" then
+            navigator.Open()
+        end
+    end
+    for _, listener: (string) -> () in ipairs(state.menuStyleListeners) do
+        pcall(listener, style)
+    end
+end
+
+state.openMenuSurface = function(): ()
+    if state.menuStyle == "Navigator" then
+        local navigator: any = state.navigator
+        if navigator and navigator.root and navigator.root.Visible then
+            navigator.Close()
+            return
+        end
+
+        if state.visible then
+            state.setMenuVisible(false)
+        end
+        if navigator and type(navigator.Open) == "function" then
+            navigator.Open()
+            return
+        end
+    end
+
+    local navigator: any = state.navigator
+    if navigator and navigator.root and navigator.root.Visible
+        and type(navigator.Close) == "function" then
+        navigator.Close()
+    end
+    state.setMenuVisible(not state.visible)
+end
+
+state.layout = computeLayoutMetrics(
+    (workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize)
+        or Vector2.new(1280, 720),
+    UserInputService.TouchEnabled
+)
+state.layoutListeners = {} :: {(LayoutMetrics) -> ()}
+
+state.onLayout = function(listener: (LayoutMetrics) -> ()): ()
+    table.insert(state.layoutListeners, listener)
+end
+
+state.refreshLayout = function(force: boolean?): ()
+    local camera: Camera? = workspace.CurrentCamera
+    local viewport: Vector2 = camera
+        and camera.ViewportSize
+        or Vector2.new(1280, 720)
+    local nextLayout: LayoutMetrics = computeLayoutMetrics(
+        viewport,
+        UserInputService.TouchEnabled
+    )
+    local previous: LayoutMetrics = state.layout
+    if not force
+        and previous.mode == nextLayout.mode
+        and previous.cardHeight == nextLayout.cardHeight then
+        return
+    end
+    state.layout = nextLayout
+    for _, listener: (LayoutMetrics) -> () in ipairs(state.layoutListeners) do
+        local ok: boolean, failure: any = pcall(listener, nextLayout)
+        if not ok then
+            warn("[" .. PRODUCT.name .. "] layout listener: " .. tostring(failure))
+        end
+    end
+end
+
+local function trackUiConnection(
+    connection: RBXScriptConnection
+): RBXScriptConnection
+    table.insert(state.uiConnections, connection)
+    return connection
+end
+
+local menuCursorState: any = {
+    owned = false,
+    applying = false,
+    behavior = nil,
+    iconEnabled = nil,
+}
+local function setMenuCursorUnlocked(visible: boolean): ()
+    if menuCursorState.applying then
+        return
+    end
+    if visible then
+        if not menuCursorState.owned then
+            menuCursorState.behavior = UserInputService.MouseBehavior
+            menuCursorState.iconEnabled = UserInputService.MouseIconEnabled
+            menuCursorState.owned = true
+        end
+        menuCursorState.applying = true
+        pcall(function(): ()
+            UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+            UserInputService.MouseIconEnabled = true
+        end)
+        menuCursorState.applying = false
+        return
+    end
+    if not menuCursorState.owned then
+        return
+    end
+    menuCursorState.applying = true
+    pcall(function(): ()
+        UserInputService.MouseBehavior = menuCursorState.behavior
+        UserInputService.MouseIconEnabled = menuCursorState.iconEnabled
+    end)
+    menuCursorState.applying = false
+    menuCursorState.behavior = nil
+    menuCursorState.iconEnabled = nil
+    menuCursorState.owned = false
+end
+
+local function enforceMenuCursor(): ()
+    if menuCursorState.applying then
+        return
+    end
+    if state.visible == true
+        and menuCursorState.owned
+        and (UserInputService.MouseBehavior ~= Enum.MouseBehavior.Default
+            or UserInputService.MouseIconEnabled ~= true) then
+        setMenuCursorUnlocked(true)
+    end
+end
+pcall(function(): ()
+    trackUiConnection(UserInputService:GetPropertyChangedSignal("MouseBehavior"):Connect(enforceMenuCursor))
+    trackUiConnection(UserInputService:GetPropertyChangedSignal("MouseIconEnabled"):Connect(enforceMenuCursor))
+end)
+
+local menuVisibilityListeners: {(boolean) -> ()} = {}
+state.addMenuVisibilityListener = function(listener: (boolean) -> ()): ()
+    table.insert(menuVisibilityListeners, listener)
+end
+
+local function setMenuVisibleCore(visible: boolean): ()
+    state.visible = visible
+    setMenuCursorUnlocked(visible)
+    if MenuBlur then
+        pcall(function(): ()
+            MenuBlur.Enabled = visible == true
+        end)
+    end
+    for _, listener: (boolean) -> () in ipairs(menuVisibilityListeners) do
+        pcall(listener, visible)
+    end
+end
+state.setMenuVisible = setMenuVisibleCore
+
+type AssetDefinition = {
+    url: string,
+    fileName: string,
+    fallback: string,
+    version: number?,
+    assetType: string?,
+}
+
+do
+local generatedEnvironment: any = nil
+if type(executorGlobals.getgenv) == "function" then
+    local environmentOk: boolean, resolvedEnvironment: any = pcall(
+        executorGlobals.getgenv
+    )
+    if environmentOk and type(resolvedEnvironment) == "table" then
+        generatedEnvironment = resolvedEnvironment
+    end
+end
+
+local function getEnvironmentValue(name: string): any
+    if generatedEnvironment and generatedEnvironment[name] ~= nil then
+        return generatedEnvironment[name]
+    end
+    return executorGlobals[name]
+end
+
+local AssetManager: any = {
+    cacheRoot = CONFIG_FOLDER,
+    cacheFolder = CONFIG_FOLDER .. "/Assets",
+    resolved = {} :: {[string]: string},
+    resolving = {} :: {[string]: boolean},
+
+    manifest = {
+
+        valveFont = {
+            url = REPOSITORY_RAW_BASE
+                .. "src/GUI's/Wurst/Assets/Typography/ValveBD.otf",
+            fileName = "valve-bd-v1.otf",
+            fallback = "",
+            version = 1,
+            assetType = "font/otf",
+        },
+
+        wurstLogo = {
+            url = REPOSITORY_RAW_BASE .. "src/GUI's/Wurst/Assets/Wurst/wurst_128.png",
+            fileName = "wurst-logo-v1.png",
+            fallback = "",
+            version = 1,
+            assetType = "image/png",
+        },
+
+        bitmapFontAtlas = {
+            url = REPOSITORY_RAW_BASE .. "src/GUI's/Wurst/Assets/Font/monocraft-16.png",
+            fileName = "monocraft-16-v1.png",
+            fallback = "",
+            version = 1,
+            assetType = "image/png",
+        },
+
+        bitmapFontAtlas8 = {
+            url = REPOSITORY_RAW_BASE .. "src/GUI's/Wurst/Assets/Font/monocraft-8.png",
+            fileName = "monocraft-8-v1.png",
+            fallback = "",
+            version = 1,
+            assetType = "image/png",
+        },
+        bitmapFontAtlas24 = {
+            url = REPOSITORY_RAW_BASE .. "src/GUI's/Wurst/Assets/Font/monocraft-24.png",
+            fileName = "monocraft-24-v1.png",
+            fallback = "",
+            version = 1,
+            assetType = "image/png",
+        },
+        bitmapFontAtlas32 = {
+            url = REPOSITORY_RAW_BASE .. "src/GUI's/Wurst/Assets/Font/monocraft-32.png",
+            fileName = "monocraft-32-v1.png",
+            fallback = "",
+            version = 1,
+            assetType = "image/png",
+        },
+
+    } :: {[string]: AssetDefinition},
+}
+
+local function selectHttpRequest(): (any, string)
+    local synEnvironment: any = getEnvironmentValue("syn")
+    local candidates: {{any}} = {
+        {getEnvironmentValue("request"), "request"},
+        {getEnvironmentValue("http_request"), "http_request"},
+        {getEnvironmentValue("httprequest"), "httprequest"},
+        {synEnvironment and synEnvironment.request, "syn.request"},
+    }
+    for _, candidate: {any} in ipairs(candidates) do
+        if type(candidate[1]) == "function" then
+            return candidate[1], tostring(candidate[2])
+        end
+    end
+    return nil, "game:HttpGet"
+end
+
+local function validateAssetBytes(
+    bytes: any,
+    definition: AssetDefinition
+): (boolean, string?)
+    if type(bytes) ~= "string" then
+        return false, "non-binary response: " .. type(bytes)
+    end
+    if #bytes < 64 then
+        return false, "response too short: " .. tostring(#bytes) .. " bytes"
+    end
+    local prefix: string = string.lower(string.sub(bytes, 1, 128))
+    if string.find(prefix, "<!doctype html", 1, true)
+        or string.find(prefix, "<html", 1, true)
+        or string.find(prefix, "404: not found", 1, true) then
+        return false, "the response contains HTML/404"
+    end
+    if definition.assetType == "font/otf" then
+        local fontSignature: string = string.sub(bytes, 1, 4)
+        if fontSignature ~= "OTTO" and fontSignature ~= string.char(0, 1, 0, 0) then
+            return false, "invalid OpenType/TrueType signature"
+        end
+        return true, nil
+    end
+    local isPng: boolean = string.sub(bytes, 1, 8) == "\137PNG\r\n\26\n"
+    local isJpeg: boolean = string.byte(bytes, 1) == 0xFF
+        and string.byte(bytes, 2) == 0xD8
+        and string.byte(bytes, 3) == 0xFF
+    if not isPng and not isJpeg then
+        return false, "invalid PNG signature"
+    end
+    return true, nil
+end
+
+function AssetManager.ensureCacheFolder(): (boolean, string?)
+    local isFolder: any = getEnvironmentValue("isfolder")
+    local makeFolder: any = getEnvironmentValue("makefolder")
+    local function ensureOne(path: string): (boolean, string?)
+        if type(isFolder) == "function" then
+            local checked: boolean, exists: any = pcall(isFolder, path)
+            if checked and exists then
+                return true, nil
+            end
+        end
+        if type(makeFolder) ~= "function" then
+            return false, "makefolder is unavailable"
+        end
+        local created: boolean, createError: any = pcall(makeFolder, path)
+        if not created then
+            return false, tostring(createError)
+        end
+        return true, nil
+    end
+
+    local rootOk: boolean, rootError: string? = ensureOne(AssetManager.cacheRoot)
+    if not rootOk then
+        return false, "carpeta principal: " .. tostring(rootError)
+    end
+    local cacheOk: boolean, cacheError: string? = ensureOne(AssetManager.cacheFolder)
+    if not cacheOk then
+        return false, "carpeta Assets: " .. tostring(cacheError)
+    end
+    return true, nil
+end
+
+function AssetManager.sweepStaleCache(): number
+    local listFiles: any = getEnvironmentValue("listfiles")
+    local deleteFile: any = getEnvironmentValue("delfile")
+    if type(listFiles) ~= "function" or type(deleteFile) ~= "function" then
+        return 0
+    end
+    local expected: {[string]: boolean} = {}
+    for _, definition: any in pairs(AssetManager.manifest) do
+        expected[tostring(definition.fileName)] = true
+    end
+    local listed: boolean, entries: any = pcall(listFiles, AssetManager.cacheFolder)
+    if not listed or type(entries) ~= "table" then
+        return 0
+    end
+    local removed: number = 0
+    for _, path: any in ipairs(entries) do
+        local entry: string = tostring(path)
+        local fileName: string = entry:gsub("\\", "/"):match("([^/]+)$") or entry
+        if not expected[fileName] then
+            if pcall(deleteFile, entry) then
+                removed += 1
+            end
+        end
+    end
+    return removed
+end
+
+function AssetManager.readVerifiedCache(
+    path: string,
+    definition: AssetDefinition
+): (string?, string?)
+    local isFile: any = getEnvironmentValue("isfile")
+    local readFile: any = getEnvironmentValue("readfile")
+    if type(isFile) ~= "function" or type(readFile) ~= "function" then
+        return nil, "isfile/readfile are unavailable"
+    end
+    local checked: boolean, exists: any = pcall(isFile, path)
+    if not checked or not exists then
+        return nil, "file not found"
+    end
+    local readOk: boolean, bytes: any = pcall(readFile, path)
+    if not readOk then
+        return nil, "readfile: " .. tostring(bytes)
+    end
+    local valid: boolean, validationError: string? = validateAssetBytes(
+        bytes,
+        definition
+    )
+    if not valid then
+        return nil, validationError
+    end
+    return bytes, nil
+end
+
+function AssetManager.download(definition: AssetDefinition): (string?, string?)
+    local requestFunction: any, _requestName: string = selectHttpRequest()
+
+    local lastError: string = "no response"
+    for attempt: number = 1, 3 do
+        local requestOk: boolean, response: any
+        if requestFunction then
+            requestOk, response = pcall(requestFunction, {
+                Url = definition.url,
+                Method = "GET",
+                Headers = {Accept = definition.assetType or "*/*"},
+            })
+        else
+            requestOk, response = pcall(function(): any
+                return {
+                    StatusCode = 200,
+                    Body = (game :: any):HttpGet(definition.url, true),
+                }
+            end)
+        end
+
+        if requestOk then
+            local statusCode: number = 0
+            local bytes: any = nil
+            if type(response) == "string" then
+                statusCode = 200
+                bytes = response
+            elseif type(response) == "table" then
+                statusCode = tonumber(
+                    response.StatusCode or response.Status or response.status_code
+                ) or 0
+                bytes = response.Body or response.body or response.ResponseBody
+            end
+            local valid: boolean, validationError: string? = validateAssetBytes(
+                bytes,
+                definition
+            )
+            if statusCode >= 200 and statusCode < 300 and valid then
+                return bytes, nil
+            end
+            response = "HTTP "
+                .. tostring(statusCode)
+                .. ": "
+                .. tostring(validationError)
+        end
+
+        lastError = "attempt "
+            .. tostring(attempt)
+            .. ": "
+            .. tostring(response)
+        if attempt < 3 then
+            task.wait(0.35 * attempt)
+        end
+    end
+    return nil, "download failed after three attempts; " .. lastError
+end
+
+function AssetManager.resolve(logicalName: string): (string?, string?)
+    local alreadyResolved: string? = AssetManager.resolved[logicalName]
+    if alreadyResolved then
+        return alreadyResolved, nil
+    end
+    local definition: AssetDefinition? = AssetManager.manifest[logicalName]
+    if not definition then
+        return nil, "asset desconocido: " .. logicalName
+    end
+    local assetFunction: any = getEnvironmentValue("getcustomasset")
+        or getEnvironmentValue("getsynasset")
+    local writeFile: any = getEnvironmentValue("writefile")
+    if type(assetFunction) ~= "function" then
+        return nil, "getcustomasset/getsynasset is unavailable"
+    end
+    if type(writeFile) ~= "function" then
+        return nil, "writefile is unavailable"
+    end
+
+    local folderOk: boolean, folderError: string? =
+        AssetManager.ensureCacheFolder()
+    if not folderOk then
+        return nil, folderError
+    end
+    local path: string = AssetManager.cacheFolder .. "/" .. definition.fileName
+    local waitTime: number = 0
+    while AssetManager.resolving[logicalName] and waitTime < 12 do
+        task.wait(0.05)
+        waitTime += 0.05
+    end
+    alreadyResolved = AssetManager.resolved[logicalName]
+    if alreadyResolved then
+        return alreadyResolved, nil
+    end
+    if AssetManager.resolving[logicalName] then
+        return nil, "timed out waiting for " .. logicalName
+    end
+    AssetManager.resolving[logicalName] = true
+    local cachedBytes: string?, cacheError: string? =
+        AssetManager.readVerifiedCache(path, definition)
+    if not cachedBytes then
+        print("[" .. PRODUCT.logPrefix .. ":Assets] cache cannot be reused: " .. tostring(cacheError))
+        local downloaded: string?, downloadError: string? =
+            AssetManager.download(definition)
+        if not downloaded then
+            AssetManager.resolving[logicalName] = false
+            return nil, downloadError
+        end
+        local written: boolean, writeError: any = pcall(writeFile, path, downloaded)
+        if not written then
+            AssetManager.resolving[logicalName] = false
+            return nil, "writefile: " .. tostring(writeError)
+        end
+        local verified: string?, verifyError: string? =
+            AssetManager.readVerifiedCache(path, definition)
+        if not verified then
+            AssetManager.resolving[logicalName] = false
+            return nil, "post-write verification: " .. tostring(verifyError)
+        end
+    end
+
+    local assetOk: boolean, assetId: any = pcall(assetFunction, path)
+    if not assetOk or type(assetId) ~= "string" or assetId == "" then
+        AssetManager.resolving[logicalName] = false
+        return nil, "getcustomasset: " .. tostring(assetId)
+    end
+    AssetManager.resolved[logicalName] = assetId
+    AssetManager.resolving[logicalName] = false
+    return assetId, nil
+end
+
+function AssetManager.resolveFont(
+    logicalName: string,
+    fallbackFont: Font,
+    weight: Enum.FontWeight,
+    style: Enum.FontStyle
+): Font
+    local assetId: string?, loadError: string? = AssetManager.resolve(logicalName)
+    if not assetId then
+        warn(
+            "[" .. PRODUCT.logPrefix .. ":Assets] fallback font for "
+                .. logicalName
+                .. ": "
+                .. tostring(loadError)
+        )
+        return fallbackFont
+    end
+    local fontOk: boolean, fontFace: any = pcall(
+        Font.new,
+        assetId,
+        weight,
+        style
+    )
+    if not fontOk or typeof(fontFace) ~= "Font" then
+        warn(
+            "[" .. PRODUCT.logPrefix .. ":Assets] Font.new fallback para "
+                .. logicalName
+                .. ": "
+                .. tostring(fontFace)
+        )
+        return fallbackFont
+    end
+    print("[" .. PRODUCT.logPrefix .. ":Assets] font loaded: " .. logicalName)
+    return fontFace
+end
+
+    VALVE_FONT = AssetManager.resolveFont(
+        "valveFont",
+        CONTROL_FONT,
+        Enum.FontWeight.Bold,
+        Enum.FontStyle.Normal
+    )
+
+state.customFontAssets = {
+
+    ["Valve"] = "valveFont",
+}
+
+state.listInterfaceFonts = function(): {string}
+    local names: {string} = {"Menu default"}
+
+    for _, item: EnumItem in ipairs(Enum.Font:GetEnumItems()) do
+        if item ~= Enum.Font.Unknown then
+            table.insert(names, item.Name)
+        end
+    end
+    for name: string in pairs(state.customFontAssets) do
+        table.insert(names, name)
+    end
+    table.sort(names, function(first: string, second: string): boolean
+        if first == "Menu default" then
+            return true
+        end
+        if second == "Menu default" then
+            return false
+        end
+        return first < second
+    end)
+    return names
+end
+
+state.resolveInterfaceFont = function(name: string): Font?
+    if name == "Menu default" then
+        return Font.new(
+            "rbxasset://fonts/families/BuilderSans.json",
+            Enum.FontWeight.Regular,
+            Enum.FontStyle.Normal
+        )
+    end
+    local customAsset: string? = state.customFontAssets[name]
+    if customAsset then
+
+        return AssetManager.resolveFont(
+            customAsset,
+            CONTROL_FONT,
+            Enum.FontWeight.Regular,
+            Enum.FontStyle.Normal
+        )
+    end
+    local enumOk: boolean, enumItem: any = pcall(function(): any
+        return (Enum.Font :: any)[name]
+    end)
+    if not enumOk or typeof(enumItem) ~= "EnumItem" then
+        return nil
+    end
+    local fontOk: boolean, face: any = pcall(Font.fromEnum, enumItem)
+    if not fontOk then
+        return nil
+    end
+    return face :: Font
+end
+
+state.applyInterfaceFont = function(name: string, persist: boolean?): ()
+    local base: Font? = state.resolveInterfaceFont(name)
+    if not base then
+        return
+    end
+    local resolvedBase: Font = base :: Font
+    local family: string = resolvedBase.Family
+    local style: Enum.FontStyle = resolvedBase.Style
+
+    local hasWeights: boolean =
+        string.find(family, "fonts/families/", 1, true) ~= nil
+    local titleWeight: Enum.FontWeight = hasWeights
+        and Enum.FontWeight.Bold
+        or resolvedBase.Weight
+    local controlWeight: Enum.FontWeight = hasWeights
+        and Enum.FontWeight.SemiBold
+        or resolvedBase.Weight
+    local bodyWeight: Enum.FontWeight = hasWeights
+        and Enum.FontWeight.Regular
+        or resolvedBase.Weight
+    TITLE_FONT = Font.new(family, titleWeight, style)
+    CONTROL_FONT = Font.new(family, controlWeight, style)
+    THIN_FONT = Font.new(family, bodyWeight, style)
+    VALVE_FONT = CONTROL_FONT
+
+    for _, descendant: Instance in ipairs(ScreenGui:GetDescendants()) do
+        if descendant:IsA("TextLabel")
+            or descendant:IsA("TextButton")
+            or descendant:IsA("TextBox") then
+
+            local current: Font? = (descendant :: any).FontFace
+            if current then
+                local weight: Enum.FontWeight = hasWeights
+                    and (current :: Font).Weight
+                    or resolvedBase.Weight
+                local ok: boolean = pcall(function(): ()
+                    (descendant :: any).FontFace =
+                        Font.new(family, weight, (current :: Font).Style)
+                end)
+                if not ok then
+                    (descendant :: any).FontFace = resolvedBase
+                end
+            else
+                (descendant :: any).FontFace = resolvedBase
+            end
+        end
+    end
+
+    if persist ~= false then
+        configData.values.interfaceFont = name
+        queueConfigSave()
+    end
+end
+
+state.resolveAsset = function(logicalName: string): (string?, string?)
+    return AssetManager.resolve(logicalName)
+end
+
+state.sweepStaleAssets = function(): number
+    return AssetManager.sweepStaleCache()
+end
+
+state.applyAssetImage = function(
+    logicalName: string,
+    image: ImageLabel,
+    onApplied: (() -> ())?
+): ()
+    task.spawn(function(): ()
+        local assetId: string?, failure: string? = AssetManager.resolve(logicalName)
+        if not assetId then
+            warn("[" .. PRODUCT.logPrefix .. ":Assets] " .. logicalName .. ": " .. tostring(failure))
+            return
+        end
+        if not image.Parent then
+            return
+        end
+        image.Image = assetId :: string
+        if onApplied then
+            onApplied()
+        end
+    end)
+end
+end
+
+local registeredText = {}
+local SectionManager = {
+    entries = {},
+}
+
+function SectionManager.register(sectionName, builder)
+    SectionManager.entries[sectionName] = {
+        builder = builder,
+        loaded = false,
+        loading = false,
+    }
+end
+
+function SectionManager.initialize(sectionName: string): (boolean, string?)
+    local entry = SectionManager.entries[sectionName]
+    if not entry or entry.loaded or entry.loading then
+        return entry ~= nil and entry.loaded == true, nil
+    end
+
+    entry.loading = true
+
+    local success, errorMessage = xpcall(entry.builder, function(message)
+        local text = tostring(message)
+        if debug and type(debug.traceback) == "function" then
+            return debug.traceback(text, 2)
+        end
+        return text
+    end)
+
+    entry.loading = false
+    if success then
+        entry.loaded = true
+        return true, nil
+    end
+
+    warn(
+        "[" .. PRODUCT.name .. "] "
+            .. sectionName
+            .. " failed to initialize: "
+            .. tostring(errorMessage)
+    )
+    return false, tostring(errorMessage)
+end
+
+function SectionManager.initializeAllAsync(): ()
+    local sectionNames: {string} = {}
+    for sectionName: string in pairs(SectionManager.entries) do
+        table.insert(sectionNames, sectionName)
+    end
+    table.sort(sectionNames)
+
+    local total: number = #sectionNames
+    local completed: number = 0
+    local failures: number = 0
+
+    if total == 0 then
+        return
+    end
+
+    for _, sectionName: string in ipairs(sectionNames) do
+        task.spawn(function(): ()
+            print("[" .. PRODUCT.logPrefix .. ":Bootstrap] Initializing section " .. sectionName)
+            local success: boolean, errorMessage: string? =
+                SectionManager.initialize(sectionName)
+            if not success then
+                failures += 1
+                warn(
+                    "[" .. PRODUCT.logPrefix .. ":Bootstrap] Section "
+                        .. sectionName
+                        .. " failed: "
+                        .. tostring(errorMessage)
+                )
+            end
+            completed += 1
+            if completed >= total then
+                print(
+                    "[" .. PRODUCT.logPrefix .. ":Bootstrap] Load complete · failures="
+                        .. tostring(failures)
+                )
+            end
+        end)
+    end
+end
+
+local function create(className, properties)
+    local object = Instance.new(className)
+
+    for property, value in pairs(properties or {}) do
+        if property ~= "Parent" then
+            object[property] = value
+        end
+    end
+
+    if object:IsA("TextLabel")
+        or object:IsA("TextButton")
+        or object:IsA("TextBox") then
+        object.AutoLocalize = false
+    end
+
+    if properties and properties.Parent then
+        object.Parent = properties.Parent
+    end
+
+    return object
+end
+
+local function cornerRadius(_radius: number): UDim
+    return UDim.new(0, 0)
+end
+
+local function addRoundedStyle(
+    object: GuiObject,
+    radius: number,
+    strokeTransparency: number?
+): (UICorner, UIStroke)
+    local corner: UICorner = Instance.new("UICorner")
+    corner.Name = "StyleCorner"
+    corner.CornerRadius = cornerRadius(radius)
+    corner.Parent = object
+
+    local stroke: UIStroke = Instance.new("UIStroke")
+    stroke.Name = "StyleStroke"
+    stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    stroke.Color = Theme.outline
+    stroke.Thickness = 1
+    stroke.Transparency = strokeTransparency or 0.45
+    stroke.Parent = object
+    return corner, stroke
+end
+
+state.bitmapText = {
+    size = 16,
+    lineHeight = 18,
+
+    advance = 12,
+
+    ascent = 14,
+
+    source = "monocraft-fallback",
+
+    atlas = {
+        ready = false,
+        image = nil :: string?,
+        size = 16,
+        first = 32,
+        last = 126,
+        columns = 16,
+        cellWidth = 11,
+        cellHeight = 17,
+        advance = 11,
+        ascent = 15,
+        descent = 2,
+
+        generation = 0,
+
+        fallbackGlyph = 63,
+    },
+    onReady = {} :: {() -> ()},
+
+    stats = {
+        draws = 0,
+        skipped = 0,
+        glyphsCreated = 0,
+        glyphsReused = 0,
+        lastDrawMs = 0,
+    },
+
+    _live = setmetatable({}, {__mode = "k"}) :: any,
+
+    _adopted = setmetatable({}, {__mode = "k"}) :: any,
+
+    _pendingAdopt = setmetatable({}, {__mode = "k"}) :: any,
+
+    width = function(text: any): number
+        return state.bitmapText.measure({{text = tostring(text)}}, 16)
+    end,
+    make = function(properties: any): TextLabel
+        local resolved: any = {}
+        for key: string, value: any in pairs(properties or {}) do
+            resolved[key] = value
+        end
+        resolved.FontFace = CONTROL_FONT
+        resolved.TextSize = resolved.TextSize or 16
+        if resolved.TextTruncate == nil then
+            resolved.TextTruncate = Enum.TextTruncate.AtEnd
+        end
+        return (create("TextLabel", resolved) :: any) :: TextLabel
+    end,
+}
+
+local fontEnvironment: any = getfenv()
+state.bitmapText.capabilities = {
+    canHttp = type((game :: any).HttpGet) == "function",
+    canRead = type(fontEnvironment.readfile) == "function",
+    canWrite = type(fontEnvironment.writefile) == "function",
+    canCustomAsset = type(fontEnvironment.getcustomasset) == "function",
+    canSynAsset = type(fontEnvironment.getsynasset) == "function",
+    mobile = state.isMobile == true,
+    desktop = state.isMobile ~= true,
+}
+
+state.bitmapText.family = {
+    [8] = {
+        ready = false, image = nil :: string?, size = 8, columns = 16,
+        cellWidth = 5, cellHeight = 9, advance = 5, ascent = 8, descent = 1,
+        asset = "bitmapFontAtlas8",
+    },
+    [16] = state.bitmapText.atlas,
+    [24] = {
+        ready = false, image = nil :: string?, size = 24, columns = 16,
+        cellWidth = 16, cellHeight = 25, advance = 16, ascent = 22, descent = 3,
+        asset = "bitmapFontAtlas24",
+    },
+    [32] = {
+        ready = false, image = nil :: string?, size = 32, columns = 16,
+        cellWidth = 21, cellHeight = 33, advance = 21, ascent = 29, descent = 4,
+        asset = "bitmapFontAtlas32",
+    },
+}
+
+state.bitmapText.layerScale = function(): number
+    local instance: any = PopupLayer:FindFirstChild("ClickGuiScale")
+    local value: number = instance and tonumber(instance.Scale) or 1
+    if value ~= value or value <= 0 then
+        value = 1
+    end
+    return value
+end
+
+state.bitmapText.pickAtlas = function(physicalSize: number): any
+    local contract: any = state.bitmapText
+
+    if contract.rasterFamilyEnabled == false then
+        return contract.atlas
+    end
+    local smallestCovering: any = nil
+    local largest: any = nil
+    for _, member: any in pairs(contract.family) do
+        if member.ready and member.image then
+            if member.size >= physicalSize
+                and (smallestCovering == nil
+                    or member.size < smallestCovering.size) then
+                smallestCovering = member
+            end
+            if largest == nil or member.size > largest.size then
+                largest = member
+            end
+        end
+    end
+    return smallestCovering or largest or contract.atlas
+end
+
+state.bitmapText.baselineFor = function(textSize: number?): number
+    local contract: any = state.bitmapText
+    return contract.atlas.ascent * ((tonumber(textSize) or 16) / contract.atlas.size)
+end
+
+state.bitmapText.eachCode = function(text: string, visit: (number) -> ()): ()
+    if utf8.len(text) ~= nil then
+        for _, code: number in utf8.codes(text) do
+            visit(code)
+        end
+    else
+        for position: number = 1, #text do
+            visit(string.byte(text, position) or 63)
+        end
+    end
+end
+
+local function contractAdvanceFor(atlas: any, code: number, scale: number): number
+    local advances: any = atlas.advances
+    local specific: any = advances and (advances[code] or advances[tostring(code)])
+    return (tonumber(specific) or atlas.advance) * scale
+end
+
+state.bitmapText.measure = function(segments: {any}, textSize: number?): number
+    local contract: any = state.bitmapText
+    local atlas: any = contract.atlas
+    local scale: number = (tonumber(textSize) or 16) / contract.size
+    local widest: number = 0
+    local x: number = 0
+    for _, segment: any in ipairs(segments) do
+        contract.eachCode(tostring(segment.text or ""), function(code: number): ()
+            if code == 10 then
+                x = 0
+            else
+                if atlas.ready then
+                    x += contractAdvanceFor(atlas, code, scale)
+                else
+                    x += contract.advance * scale
+                end
+                widest = math.max(widest, x)
+            end
+        end)
+    end
+    return widest
+end
+
+state.bitmapText.wrap = function(
+    text: any,
+    wrapWidth: number,
+    textSize: number?
+): (string, number)
+    local contract: any = state.bitmapText
+    local lines: {string} = {}
+    local current: string = ""
+    for word: string in string.gmatch(tostring(text or ""), "%S+") do
+        local candidate: string = current == "" and word
+            or (current .. " " .. word)
+        if contract.measure({{text = candidate}}, textSize) <= wrapWidth
+            or current == "" then
+            current = candidate
+        else
+            table.insert(lines, current)
+            current = word
+        end
+    end
+    if current ~= "" then
+        table.insert(lines, current)
+    end
+    if #lines == 0 then
+        lines = {""}
+    end
+    return table.concat(lines, "\n"), #lines
+end
+
+state.bitmapText.draw = function(
+    parent: Instance,
+    segments: {any},
+    options: any
+): Frame
+    local startedAt: number = os.clock()
+    local contract: any = state.bitmapText
+    local resolvedOptions: any = options or {}
+    local name: string = tostring(resolvedOptions.Name or "BitmapText")
+    local textSize: number = tonumber(resolvedOptions.TextSize) or 16
+    local zIndex: number = tonumber(resolvedOptions.ZIndex) or 20
+    local align: string = tostring(resolvedOptions.align or "Left")
+    local shadow: boolean = resolvedOptions.shadow == true
+    local maxWidth: number? = tonumber(resolvedOptions.maxWidth)
+    local wantsEllipsis: boolean = resolvedOptions.ellipsis == true
+    local transparency: number = tonumber(resolvedOptions.transparency) or 0
+    local atlas: any = contract.atlas
+
+    local deviceScale: number = contract.layerScale()
+    local raster: any = contract.pickAtlas(textSize * deviceScale)
+    local parts: {string} = {
+        tostring(textSize), align, tostring(shadow),
+        tostring(maxWidth), tostring(atlas.ready),
+        tostring(transparency), tostring(wantsEllipsis),
+        string.format("%.4f", deviceScale),
+        tostring(raster and raster.size),
+        tostring(atlas.generation),
+    }
+    for _, segment: any in ipairs(segments) do
+        local color: Color3 = segment.color or Theme.text
+        table.insert(parts, tostring(segment.text or ""))
+        table.insert(parts, string.format(
+            "%02X%02X%02X",
+            math.floor(color.R * 255 + 0.5),
+            math.floor(color.G * 255 + 0.5),
+            math.floor(color.B * 255 + 0.5)
+        ))
+    end
+    local signature: string = table.concat(parts, "\1")
+
+    local holder: any = (parent :: any):FindFirstChild(name)
+    local record: any = holder and contract._live[holder]
+    if holder and not record then
+
+        holder:Destroy()
+        holder = nil
+    end
+    if not holder then
+        holder = create("Frame", {
+            Parent = parent,
+            Name = name,
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+        })
+        record = {glyphs = {} :: {ImageLabel}, fallback = nil :: TextLabel?}
+        contract._live[holder] = record
+    end
+    record.request = {parent = parent, segments = segments, options = resolvedOptions}
+
+    holder.ZIndex = zIndex
+    if resolvedOptions.AnchorPoint or resolvedOptions.Position then
+        holder.AnchorPoint = resolvedOptions.AnchorPoint or Vector2.new(0, 0.5)
+        holder.Position = resolvedOptions.Position or UDim2.new(0, 0, 0.5, 0)
+    elseif align == "Right" then
+        holder.AnchorPoint = Vector2.new(1, 0.5)
+        holder.Position = UDim2.new(1, 0, 0.5, 0)
+    elseif align == "Center" then
+        holder.AnchorPoint = Vector2.new(0.5, 0.5)
+        holder.Position = UDim2.new(0.5, 0, 0.5, 0)
+    else
+        holder.AnchorPoint = Vector2.new(0, 0.5)
+        holder.Position = UDim2.new(0, 0, 0.5, 0)
+    end
+
+    if record.signature == signature then
+        contract.stats.skipped += 1
+        return holder :: Frame
+    end
+    record.signature = signature
+
+    local used: number = 0
+    local function nextGlyph(): ImageLabel
+        used += 1
+        local glyph: ImageLabel? = record.glyphs[used]
+        if glyph then
+            contract.stats.glyphsReused += 1
+        else
+            glyph = (create("ImageLabel", {
+                Parent = holder,
+                Name = "G",
+                BackgroundTransparency = 1,
+                BorderSizePixel = 0,
+            }) :: any) :: ImageLabel
+
+            pcall(function(): ()
+                (glyph :: any).ResampleMode = Enum.ResamplerMode.Pixelated
+            end)
+            record.glyphs[used] = glyph
+            contract.stats.glyphsCreated += 1
+        end
+        (glyph :: ImageLabel).Visible = true
+        return glyph :: ImageLabel
+    end
+
+    local width: number = 0
+    local height: number = 0
+    if atlas.ready and atlas.image then
+        if next(contract._pendingAdopt) ~= nil then
+            contract.flushPendingAdopt()
+        end
+        if record.fallback then
+            (record.fallback :: TextLabel).Visible = false
+        end
+
+        local scale: number = textSize / atlas.size
+        local function snapPx(value: number): number
+            return math.round(value * deviceScale) / deviceScale
+        end
+        local rasterScale: number = textSize / raster.size
+        local pixelStep: number = 1 / deviceScale
+        local glyphWidth: number = math.max(
+            pixelStep,
+            snapPx(raster.cellWidth * rasterScale)
+        )
+        local glyphHeight: number = math.max(
+            pixelStep,
+            snapPx(raster.cellHeight * rasterScale)
+        )
+        local lineAdvance: number = contract.lineHeight * scale
+        local shadowOffset: number = math.max(pixelStep, snapPx(2 * scale))
+        local x: number = 0
+        local y: number = 0
+        local lineCount: number = 1
+        local truncated: boolean = false
+        local lastColor: Color3 = Theme.text
+        local function blit(code: number, paint: Color3, dx: number, dy: number, z: number): ()
+            local index: number = code - atlas.first
+            local glyph: ImageLabel = nextGlyph()
+            glyph.Image = raster.image
+            glyph.ImageColor3 = paint
+            glyph.ImageTransparency = transparency
+            glyph.ImageRectOffset = Vector2.new(
+                (index % raster.columns) * raster.cellWidth,
+                (index // raster.columns) * raster.cellHeight
+            )
+            glyph.ImageRectSize = Vector2.new(raster.cellWidth, raster.cellHeight)
+            glyph.Position = UDim2.fromOffset(snapPx(dx), snapPx(dy))
+            glyph.Size = UDim2.fromOffset(glyphWidth, glyphHeight)
+            glyph.ZIndex = z
+        end
+        for _, segment: any in ipairs(segments) do
+            local color: Color3 = segment.color or Theme.text
+
+            local shade: Color3 = Color3.new(
+                color.R * 0.25, color.G * 0.25, color.B * 0.25
+            )
+            lastColor = color
+            contract.eachCode(tostring(segment.text or ""), function(code: number): ()
+                if code == 10 then
+                    x = 0
+                    y += lineAdvance
+                    lineCount += 1
+                    return
+                end
+                local advance: number = contractAdvanceFor(atlas, code, scale)
+                if maxWidth ~= nil and x + advance > maxWidth then
+                    truncated = true
+                    return
+                end
+                if code ~= 32 then
+                    local mapped: number = code
+                    if code < atlas.first or code > atlas.last then
+                        mapped = atlas.fallbackGlyph
+                    end
+                    if shadow then
+                        blit(mapped, shade, x + shadowOffset, y + shadowOffset, zIndex + 1)
+                    end
+                    blit(mapped, color, x, y, zIndex + 2)
+                end
+                x += advance
+                width = math.max(width, x)
+            end)
+        end
+
+        if truncated and wantsEllipsis then
+            local dot: number = 46
+            local dotAdvance: number = contractAdvanceFor(atlas, dot, scale)
+            local budget: number = (maxWidth :: number)
+            local dotX: number = math.min(x, budget - dotAdvance * 2)
+            if dotX >= 0 then
+                if shadow then
+                    blit(dot, Color3.new(lastColor.R * 0.25, lastColor.G * 0.25, lastColor.B * 0.25), dotX + shadowOffset, y + shadowOffset, zIndex + 1)
+                    blit(dot, Color3.new(lastColor.R * 0.25, lastColor.G * 0.25, lastColor.B * 0.25), dotX + dotAdvance + shadowOffset, y + shadowOffset, zIndex + 1)
+                end
+                blit(dot, lastColor, dotX, y, zIndex + 2)
+                blit(dot, lastColor, dotX + dotAdvance, y, zIndex + 2)
+                width = math.max(width, dotX + dotAdvance * 2)
+            end
+        end
+        height = glyphHeight + (lineCount - 1) * lineAdvance
+    else
+        local composed: {string} = {}
+        local estimated: number = 0
+        for _, segment: any in ipairs(segments) do
+            local text: string = tostring(segment.text or "")
+                :gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;")
+            local color: Color3 = segment.color or Theme.text
+            table.insert(composed, string.format(
+                '<font color="#%02X%02X%02X">%s</font>',
+                math.floor(color.R * 255 + 0.5),
+                math.floor(color.G * 255 + 0.5),
+                math.floor(color.B * 255 + 0.5),
+                text
+            ))
+            estimated += #tostring(segment.text or "")
+        end
+        local fallback: TextLabel? = record.fallback
+        if not fallback then
+            fallback = contract.make({
+                Parent = holder,
+                Name = "Fallback",
+                BackgroundTransparency = 1,
+                RichText = true,
+                Size = UDim2.new(1, 0, 1, 0),
+                TextColor3 = Theme.text,
+            })
+            record.fallback = fallback
+
+            contract._adopted[fallback] = true
+        end
+        local label: TextLabel = fallback :: TextLabel
+        label.Visible = true
+        label.Text = table.concat(composed)
+        label.TextSize = textSize
+        label.TextTransparency = transparency
+        label.TextXAlignment = align == "Right" and Enum.TextXAlignment.Right
+            or align == "Center" and Enum.TextXAlignment.Center
+            or Enum.TextXAlignment.Left
+        label.ZIndex = zIndex + 1
+        width = estimated * math.floor(textSize * 0.75)
+        height = math.floor(textSize * 1.125)
+    end
+
+    for index: number = used + 1, #record.glyphs do
+        (record.glyphs[index] :: ImageLabel).Visible = false
+    end
+
+    if maxWidth ~= nil then
+        width = math.min(width, maxWidth)
+    end
+    holder.ClipsDescendants = maxWidth ~= nil
+    holder.Size = UDim2.fromOffset(width, height)
+    holder:SetAttribute("MeasuredWidth", width)
+    contract.stats.draws += 1
+    contract.stats.lastDrawMs = (os.clock() - startedAt) * 1000
+    return holder :: Frame
+end
+
+state.bitmapText.release = function(holder: Instance?): ()
+    if holder then
+        state.bitmapText._live[holder] = nil
+        holder:Destroy()
+    end
+end
+
+state.bitmapText.adopt = function(label: any, options: any?): ()
+    local contract: any = state.bitmapText
+    if label == nil
+        or type(label.IsA) ~= "function"
+        or label:IsA("TextBox")
+        or not (label:IsA("TextLabel") or label:IsA("TextButton")) then
+        return
+    end
+    if label:GetAttribute("NoBitmap") == true then
+        return
+    end
+    if contract._adopted[label] then
+        return
+    end
+
+    if label.Parent ~= nil and contract._live[label.Parent] ~= nil then
+        return
+    end
+
+    if not (contract.atlas.ready and contract.atlas.image) then
+        contract._pendingAdopt[label] = options or true
+        return
+    end
+    contract._pendingAdopt[label] = nil
+    local resolvedOptions: any = options or {}
+    contract._adopted[label] = true
+    label.TextTransparency = 1
+    label.ClipsDescendants = true
+    local function paint(): ()
+        if label.Parent == nil then
+            return
+        end
+        local alignment: any = label.TextXAlignment
+        contract.draw(label, {
+            {text = label.Text, color = label.TextColor3},
+        }, {
+            Name = "Glyphs",
+            TextSize = label.TextSize,
+            ZIndex = (tonumber(label.ZIndex) or 1) + 1,
+            align = alignment == Enum.TextXAlignment.Right and "Right"
+                or alignment == Enum.TextXAlignment.Center and "Center"
+                or "Left",
+            shadow = resolvedOptions.shadow == true,
+        })
+    end
+    paint()
+
+    pcall(function(): ()
+        label:GetPropertyChangedSignal("Text"):Connect(paint)
+        label:GetPropertyChangedSignal("TextColor3"):Connect(paint)
+        label:GetPropertyChangedSignal("TextSize"):Connect(paint)
+    end)
+end
+
+state.bitmapText.flushPendingAdopt = function(): ()
+    local contract: any = state.bitmapText
+    if not (contract.atlas.ready and contract.atlas.image) then
+        return
+    end
+    local parked: {Instance} = {}
+    for label: any in pairs(contract._pendingAdopt) do
+        table.insert(parked, label)
+    end
+    for _, label: any in ipairs(parked) do
+        local options: any = contract._pendingAdopt[label]
+        contract._pendingAdopt[label] = nil
+        if label.Parent ~= nil then
+            contract.adopt(label, type(options) == "table" and options or nil)
+        end
+    end
+end
+
+state.bitmapText.adoptTree = function(root: Instance, options: any?): any
+    local contract: any = state.bitmapText
+    pcall(function(): ()
+        for _, descendant: Instance in ipairs(root:GetDescendants()) do
+            contract.adopt(descendant, options)
+        end
+    end)
+    local connected: boolean, connection: any = pcall(function(): any
+        return root.DescendantAdded:Connect(function(descendant: Instance): ()
+            contract.adopt(descendant, options)
+        end)
+    end)
+    if connected and connection then
+        return connection
+    end
+    return {
+        Connected = false,
+        Disconnect = function(): () end,
+    }
+end
+
+state.bitmapText.loadExactAtlas = function(image: string, metrics: any): ()
+    local atlas: any = state.bitmapText.atlas
+    if type(image) ~= "string" or type(metrics) ~= "table" then
+        return
+    end
+    for _, key: string in ipairs({
+        "size", "first", "last", "columns", "cellWidth", "cellHeight", "advance",
+    }) do
+        if tonumber(metrics[key]) then
+            atlas[key] = tonumber(metrics[key])
+        end
+    end
+
+    if type(metrics.advances) == "table" then
+        atlas.advances = metrics.advances
+    else
+        atlas.advances = nil
+    end
+    atlas.image = image
+    atlas.ready = true
+    atlas.generation += 1
+    state.bitmapText.rasterFamilyEnabled = false
+    state.bitmapText.source = "minecraft-exact"
+    for holder: any, record: any in pairs(state.bitmapText._live) do
+        if holder.Parent ~= nil and record.request ~= nil then
+            pcall(function(): ()
+                state.bitmapText.draw(
+                    record.request.parent,
+                    record.request.segments,
+                    record.request.options
+                )
+            end)
+        end
+    end
+    for _, listener: () -> () in ipairs(state.bitmapText.onReady) do
+        pcall(listener)
+    end
+end
+
+state.bitmapText._fallback = {
+    size = 16, first = 32, last = 126, columns = 16,
+    cellWidth = 11, cellHeight = 17, advance = 11, ascent = 15, descent = 2,
+}
+state.bitmapText.rasterFamilyEnabled = true
+
+state.bitmapText.restoreFallbackAtlas = function(): ()
+    local contract: any = state.bitmapText
+    local atlas: any = contract.atlas
+    for key: string, value: number in pairs(contract._fallback) do
+        atlas[key] = value
+    end
+    atlas.advances = nil
+    atlas.image = contract._fallbackImage
+    atlas.ready = contract._fallbackImage ~= nil
+    atlas.generation += 1
+    contract.rasterFamilyEnabled = true
+    contract.source = atlas.ready and "monocraft-fallback" or "unavailable"
+end
+
+state.bitmapText.packs = {
+    ["Minecraft 1.18.1"] = {
+        folder = "MinecraftFont",
+        version = "1.18.1",
+        source = "minecraft-exact",
+    },
+    ["Minecraft 26.2"] = {
+        folder = "MinecraftFont-26.2",
+        version = "26.2",
+        source = "minecraft-26.2-local",
+    },
+}
+
+state.bitmapText.probePack = function(selection: string): boolean
+    local contract: any = state.bitmapText
+    local pack: any = contract.packs[selection]
+    if not pack then
+        return false
+    end
+    local loaded: boolean = false
+    pcall(function(): ()
+        if type(isfile) ~= "function" or type(readfile) ~= "function" then
+            return
+        end
+        local manifestPath: string = pack.folder .. "/manifest.json"
+        if not isfile(manifestPath) then
+            return
+        end
+        local manifest: any = HttpService:JSONDecode(readfile(manifestPath))
+        if type(manifest) ~= "table"
+            or manifest.format ~= "wurst-minecraft-font-v1"
+            or manifest.version ~= pack.version
+            or type(manifest.runtime) ~= "table" then
+            warn("[" .. PRODUCT.logPrefix .. ":Assets] " .. pack.folder
+                .. "/ is present but not a Minecraft " .. pack.version
+                .. " pack; ignoring")
+            return
+        end
+        local imagePath: string = pack.folder .. "/"
+            .. tostring(manifest.runtime.image or "runtime-ascii.png")
+        if not isfile(imagePath) then
+            return
+        end
+        local registerAsset: any = fontEnvironment.getcustomasset
+            or fontEnvironment.getsynasset
+        if type(registerAsset) ~= "function" then
+            return
+        end
+        local assetOk: boolean, assetId: any = pcall(registerAsset, imagePath)
+        if assetOk and type(assetId) == "string" and assetId ~= "" then
+            contract.loadExactAtlas(assetId, manifest.runtime)
+            contract.source = pack.source
+            loaded = true
+        end
+    end)
+    return loaded
+end
+
+state.bitmapText.applyFontPack = function(selection: string): ()
+    local contract: any = state.bitmapText
+    state.fontPack = selection
+    contract.restoreFallbackAtlas()
+    if selection == "Code" then
+
+        contract.atlas.ready = false
+        contract.atlas.generation += 1
+        contract.source = "code-vector"
+    end
+    if selection ~= "Monocraft" and selection ~= "Code"
+        and contract.packs[selection] then
+        if not contract.probePack(selection)
+            and contract._packWarned ~= selection then
+            contract._packWarned = selection
+            warn("[" .. PRODUCT.logPrefix .. ":Assets] font pack \""
+                .. selection
+                .. "\" is not installed; rendering the Monocraft fallback (OFL)")
+        end
+    end
+    contract.flushPendingAdopt()
+    for holder: any, record: any in pairs(contract._live) do
+        if holder.Parent ~= nil and record.request ~= nil then
+            pcall(function(): ()
+                contract.draw(
+                    record.request.parent,
+                    record.request.segments,
+                    record.request.options
+                )
+            end)
+        end
+    end
+    for _, listener: () -> () in ipairs(contract.onReady) do
+        pcall(listener)
+    end
+end
+
+task.spawn(function(): ()
+    local contract: any = state.bitmapText
+
+    if state.fontPack == "Code" then
+        contract.source = "code-vector"
+        return
+    end
+    if type(state.resolveAsset) ~= "function" then
+        state.bitmapText.source = "unavailable"
+        return
+    end
+
+    local packLoaded: boolean = false
+    if state.fontPack ~= "Monocraft" then
+        packLoaded = contract.probePack(state.fontPack)
+        if packLoaded then
+            print("[" .. PRODUCT.logPrefix .. ":Assets] font pack loaded: "
+                .. tostring(state.fontPack))
+        elseif contract._packWarned ~= state.fontPack then
+            contract._packWarned = state.fontPack
+            warn("[" .. PRODUCT.logPrefix .. ":Assets] font pack \""
+                .. tostring(state.fontPack)
+                .. "\" is not installed; rendering the Monocraft fallback (OFL)")
+        end
+    end
+
+    local assetId: string?, atlasError: string? =
+        state.resolveAsset("bitmapFontAtlas")
+    if assetId then
+        contract._fallbackImage = assetId
+        if not packLoaded then
+            contract.atlas.image = assetId
+            contract.atlas.ready = true
+            contract.atlas.generation += 1
+            contract.source = "monocraft-fallback"
+        end
+
+        for _, member: any in pairs(contract.family) do
+            if member ~= contract.atlas and member.asset then
+                pcall(function(): ()
+                    local memberId: string? = (state.resolveAsset(member.asset))
+                    if memberId then
+                        member.image = memberId
+                        member.ready = true
+                    end
+                end)
+            end
+        end
+    elseif not packLoaded then
+        contract.source = "unavailable"
+        warn("[" .. PRODUCT.logPrefix .. ":Assets] no bitmap atlas ("
+            .. tostring(atlasError)
+            .. "); text renders on the vector stand-in")
+        return
+    end
+    contract.flushPendingAdopt()
+    for holder: any, record: any in pairs(contract._live) do
+        if holder.Parent ~= nil and record.request ~= nil then
+            pcall(function(): ()
+                contract.draw(
+                    record.request.parent,
+                    record.request.segments,
+                    record.request.options
+                )
+            end)
+        end
+    end
+    for _, listener: () -> () in ipairs(contract.onReady) do
+        pcall(listener)
+    end
+end)
+
+state.onLayout(function(): ()
+    for holder: any, record: any in pairs(state.bitmapText._live) do
+        if holder.Parent ~= nil and record.request ~= nil then
+            pcall(function(): ()
+                state.bitmapText.draw(
+                    record.request.parent,
+                    record.request.segments,
+                    record.request.options
+                )
+            end)
+        end
+    end
+end)
+
+state.registeredTextIndex = setmetatable({}, {__mode = "k"}) :: any
+
+local function registerText(
+    object: TextLabel | TextButton | TextBox,
+    normalSize: number
+): TextLabel | TextButton | TextBox
+    local entry: any = {
+        object = object,
+        normalSize = normalSize,
+    }
+    table.insert(registeredText, entry)
+    state.registeredTextIndex[object] = entry
+
+    object.TextSize = math.round(
+        normalSize * TEXT_BASE_MULTIPLIER * state.textScale
+    )
+    return object
+end
+
+local function fitTextSize(object: any, requested: number): number
+    local height: number = object.AbsoluteSize.Y
+    if height <= 0 then
+        local vertical: UDim = object.Size.Y
+        height = vertical.Scale == 0 and vertical.Offset or 0
+    end
+    if height <= 0 then
+        return requested
+    end
+    return math.max(7, math.min(requested, math.floor((height - 2) / 1.2)))
+end
+state.fitTextSize = fitTextSize
+
+state.setTextMetric = function(object: any, normalSize: number): ()
+    local entry: any = state.registeredTextIndex[object]
+    if entry then
+        entry.normalSize = normalSize
+    end
+    object.TextSize = fitTextSize(
+        object,
+        math.round(normalSize * TEXT_BASE_MULTIPLIER * state.textScale)
+    )
+end
+
+local function makeTextLabel(
+    parent: Instance,
+    text: string,
+    normalSize: number?
+): TextLabel
+
+    return registerText(create("TextLabel", {
+        Parent = parent,
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        ClipsDescendants = true,
+        FontFace = THIN_FONT,
+        Text = text,
+        TextColor3 = Theme.text,
+        TextTruncate = Enum.TextTruncate.AtEnd,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextYAlignment = Enum.TextYAlignment.Center,
+    }), normalSize or 14) :: TextLabel
+end
+
+local function makeButton(
+    parent: Instance,
+    text: string,
+    normalSize: number?
+): TextButton
+    local isDefaultStyle: boolean = state.guiStyle == "Default"
+    local button = registerText(create("TextButton", {
+        Parent = parent,
+        AutoButtonColor = false,
+        ClipsDescendants = true,
+        TextTruncate = Enum.TextTruncate.AtEnd,
+        BackgroundColor3 = isDefaultStyle
+            and Theme.button
+            or DEFAULT_SURFACE_COLOR,
+        BorderSizePixel = 0,
+        FontFace = CONTROL_FONT,
+        Text = text,
+        TextColor3 = isDefaultStyle
+            and Theme.text
+            or Theme.text,
+        TextXAlignment = Enum.TextXAlignment.Center,
+        TextYAlignment = Enum.TextYAlignment.Center,
+    }), normalSize or 14)
+
+    addRoundedStyle(button, 9, 0.48)
+    button:SetAttribute(
+        "IdleColor",
+        isDefaultStyle and Theme.button or DEFAULT_SURFACE_COLOR
+    )
+    button:SetAttribute(
+        "HoverColor",
+        isDefaultStyle and Theme.buttonHover or Theme.surfaceHover
+    )
+    button:SetAttribute(
+        "PressedColor",
+        isDefaultStyle and Theme.buttonPressed or Theme.surfacePressed
+    )
+    table.insert(state.styledButtons, button)
+
+    trackUiConnection(button.MouseEnter:Connect(function()
+        if button:GetAttribute("NoHover") or button:GetAttribute("Disabled") then
+            return
+        end
+        local configuredHover: any = button:GetAttribute("HoverColor")
+        local hoverColor: Color3 = typeof(configuredHover) == "Color3"
+            and configuredHover
+            or Theme.surfaceHover
+        TweenService:Create(
+            button,
+            TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+            {BackgroundColor3 = hoverColor}
+        ):Play()
+    end))
+
+    trackUiConnection(button.MouseLeave:Connect(function()
+        if button:GetAttribute("NoHover") then
+            return
+        end
+        local selectedColor: any = button:GetAttribute("SelectedColor")
+        local configuredIdle: any = button:GetAttribute("IdleColor")
+        local targetColor: Color3 = button:GetAttribute("Selected")
+            and (typeof(selectedColor) == "Color3" and selectedColor or Theme.accentSoft)
+            or (typeof(configuredIdle) == "Color3"
+                and configuredIdle
+                or DEFAULT_SURFACE_COLOR)
+
+        TweenService:Create(
+            button,
+            TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+            {BackgroundColor3 = targetColor}
+        ):Play()
+    end))
+
+    trackUiConnection(button.MouseButton1Down:Connect(function(): ()
+        if button:GetAttribute("Disabled")
+            or button:GetAttribute("NoPressEffect") then
+            return
+        end
+        local configuredPressed: any = button:GetAttribute("PressedColor")
+        local pressedColor: Color3 = typeof(configuredPressed) == "Color3"
+            and configuredPressed
+            or Theme.surfacePressed
+        TweenService:Create(
+            button,
+            TweenInfo.new(0.08, Enum.EasingStyle.Quad),
+            {BackgroundColor3 = pressedColor}
+        ):Play()
+    end))
+
+    trackUiConnection(button.MouseButton1Up:Connect(function(): ()
+        if button:GetAttribute("Disabled")
+            or button:GetAttribute("NoPressEffect") then
+            return
+        end
+        local selectedColor: any = button:GetAttribute("SelectedColor")
+        local configuredHover: any = button:GetAttribute("HoverColor")
+        local targetColor: Color3 = button:GetAttribute("Selected")
+            and (typeof(selectedColor) == "Color3" and selectedColor or Theme.accentSoft)
+            or (typeof(configuredHover) == "Color3"
+                and configuredHover
+                or Theme.surfaceHover)
+        TweenService:Create(
+            button,
+            TweenInfo.new(UI_MOTION.fast, Enum.EasingStyle.Quad),
+            {BackgroundColor3 = targetColor}
+        ):Play()
+    end))
+
+    return button :: TextButton
+end
+
+local function setToggleSwitch(button: TextButton, enabled: boolean, animate: boolean?): ()
+    button:SetAttribute("Checked", enabled)
+    local frame: Frame? = button:FindFirstChild("SwitchTrack") :: Frame?
+    local core: Frame? = frame and frame:FindFirstChild("Knob") :: Frame?
+    if not frame or not core then
+        return
+    end
+    local stroke: UIStroke? = frame:FindFirstChild("MarkStroke") :: UIStroke?
+    local targetSize: UDim2 = enabled
+        and UDim2.fromScale(0.62, 0.62)
+        or UDim2.fromScale(0, 0)
+    local targetTransparency: number = enabled and 0.05 or 1
+    if animate and state.animationsEnabled then
+        TweenService:Create(core, TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quart), {
+            Size = targetSize,
+            BackgroundTransparency = targetTransparency,
+        }):Play()
+    else
+        core.Size = targetSize
+        core.BackgroundTransparency = targetTransparency
+    end
+    if stroke then
+        stroke.Transparency = enabled and 0.15 or 0.45
+    end
+end
+
+local function createToggleSwitch(
+    parent: Instance,
+    enabled: boolean,
+    width: number?
+): TextButton
+    local markSize: number = math.clamp(width or 15, 12, 18)
+    local button: TextButton = create("TextButton", {
+        TextTruncate = Enum.TextTruncate.AtEnd,
+        ClipsDescendants = true,
+        Parent = parent,
+        Active = true,
+        AutoButtonColor = false,
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+
+        Size = UDim2.fromOffset(math.max(markSize + 14, 28), 30),
+        Text = "",
+    }) :: TextButton
+    local frame: Frame = create("Frame", {
+        Parent = button,
+        Name = "SwitchTrack",
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        BackgroundColor3 = Theme.text,
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Position = UDim2.fromScale(0.5, 0.5),
+        Size = UDim2.fromOffset(markSize, markSize),
+        ZIndex = button.ZIndex + 1,
+    }) :: Frame
+    create("UIStroke", {
+        Parent = frame,
+        Name = "MarkStroke",
+        Color = Theme.outline,
+        Transparency = 0.45,
+        Thickness = 1,
+    })
+
+    local _core: Frame = create("Frame", {
+        Parent = frame,
+        Name = "Knob",
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        BackgroundColor3 = Theme.text,
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Position = UDim2.fromScale(0.5, 0.5),
+        Size = UDim2.fromScale(0, 0),
+        ZIndex = frame.ZIndex + 1,
+    }) :: Frame
+    setToggleSwitch(button, enabled, false)
+    return button
+end
+
+local function applyKeySlotStyle(button: TextButton): ()
+    button.ZIndex = math.max(2, button.ZIndex)
+    button.BackgroundColor3 = Theme.surface
+    button.BackgroundTransparency = 0.54
+    button.TextColor3 = Theme.textMuted
+    button:SetAttribute("ThemeRole", "KeySlot")
+    button:SetAttribute("IdleColor", Theme.surface)
+    button:SetAttribute("HoverColor", Theme.surfaceHover)
+    button:SetAttribute("PressedColor", Theme.buttonPressed)
+    local buttonStroke: UIStroke? = button:FindFirstChildOfClass("UIStroke")
+    if buttonStroke then
+        buttonStroke.Color = Theme.outline
+        buttonStroke.Transparency = 0.78
+    end
+end
+
+state.applyLinesGlyph = function(
+    button: TextButton,
+    dimmed: boolean,
+    active: boolean?
+): ()
+    button.Text = ""
+    local existing: Instance? = button:FindFirstChild("LinesGlyph")
+    local glyph: Frame
+    if existing and existing:IsA("Frame") then
+        glyph = existing :: Frame
+    else
+        glyph = create("Frame", {
+            Parent = button,
+            Name = "LinesGlyph",
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Position = UDim2.fromScale(0.5, 0.5),
+            Size = UDim2.fromOffset(12, 8),
+            ZIndex = button.ZIndex + 1,
+        }) :: Frame
+        for index: number = 1, 3 do
+            local _bar: Frame = create("Frame", {
+                Parent = glyph,
+                Name = "Line" .. tostring(index),
+                AnchorPoint = Vector2.new(0.5, 0.5),
+                BackgroundColor3 = Theme.text,
+                BorderSizePixel = 0,
+                Position = UDim2.new(0.5, 0, 0, (index - 1) * 3.5 + 0.5),
+
+                Size = UDim2.fromOffset(index == 2 and 9 or 12, 1),
+                ZIndex = button.ZIndex + 2,
+            }) :: Frame
+        end
+    end
+    local barTransparency: number = dimmed and 0.74 or (active and 0.02 or 0.3)
+    for _, bar: Instance in ipairs(glyph:GetChildren()) do
+        if bar:IsA("Frame") then
+            bar.BackgroundTransparency = barTransparency
+        end
+    end
+end
+
+state.restyleButtons = function(isDefault: boolean): ()
+    for _, button: TextButton in ipairs(state.styledButtons) do
+        if button.Parent then
+            local role: any = button:GetAttribute("ThemeRole")
+            if role ~= "Navigation" and role ~= "Icon" then
+                local idleColor: Color3 = isDefault
+                    and Theme.button
+                    or DEFAULT_SURFACE_COLOR
+                button:SetAttribute("IdleColor", idleColor)
+                button:SetAttribute(
+                    "HoverColor",
+                    isDefault and Theme.buttonHover or Theme.surfaceHover
+                )
+                button:SetAttribute(
+                    "PressedColor",
+                    isDefault and Theme.buttonPressed or Theme.surfacePressed
+                )
+                if button:GetAttribute("Selected") ~= true then
+                    button.BackgroundColor3 = idleColor
+                end
+                button.TextColor3 = isDefault and Theme.text or Theme.text
+                local stroke: UIStroke? =
+                    button:FindFirstChild("StyleStroke") :: UIStroke?
+                if stroke then
+                    stroke.Enabled = true
+                    stroke.Color = isDefault and Theme.outline or Theme.outline
+                    stroke.Transparency = isDefault and 0.32 or 0.48
+                end
+                if role == "KeySlot" then
+                    button.BackgroundColor3 = Theme.surface
+                    button.BackgroundTransparency = 0.54
+                    button.TextColor3 = Theme.textMuted
+                    local keyStroke: UIStroke? =
+                        button:FindFirstChild("StyleStroke") :: UIStroke?
+                    if keyStroke then
+                        keyStroke.Color = Theme.outline
+                        keyStroke.Transparency = 0.78
+                    end
+                end
+            end
+        end
+    end
+end
+
+local KEY_DISPLAY_NAMES: {[string]: string} = {
+    RightShift = "RShift", LeftShift = "LShift",
+    RightControl = "RCtrl", LeftControl = "LCtrl",
+    RightAlt = "RAlt", LeftAlt = "LAlt",
+    Backspace = "Back", CapsLock = "Caps",
+    Return = "Enter", Escape = "Esc",
+    PageUp = "PgUp", PageDown = "PgDn",
+    Insert = "Ins", Delete = "Del",
+    RightMeta = "RMeta", LeftMeta = "LMeta",
+}
+state.keyDisplayName = function(name: any): string
+    local resolved: string = tostring(name or "")
+    return KEY_DISPLAY_NAMES[resolved] or resolved
+end
+
+local function setKeySlotCapture(button: TextButton, active: boolean): ()
+    local stroke: UIStroke? = button:FindFirstChild("StyleStroke") :: UIStroke?
+    TweenService:Create(
+        button,
+        TweenInfo.new(UI_MOTION.fast, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+        {
+            BackgroundColor3 = active
+                and Theme.buttonPressed
+                or Theme.surface,
+            TextColor3 = active
+                and Theme.text
+                or Theme.textMuted,
+        }
+    ):Play()
+    if stroke then
+        TweenService:Create(
+            stroke,
+            TweenInfo.new(UI_MOTION.fast, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+            {Transparency = active and 0.38 or 0.78}
+        ):Play()
+    end
+end
+
+local function beginKeyCapture(
+    button: TextButton,
+    callback: (Enum.KeyCode) -> ()
+): ()
+    if state.waitingForKey then
+        state.waitingForKey = false
+        if state.keybindButton then
+            state.keybindButton.Text = state.keyDisplayName(state.toggleKey.Name)
+            setKeySlotCapture(state.keybindButton, false)
+        end
+    end
+    if state.keyCaptureCancel then
+        state.keyCaptureCancel()
+    end
+    button.Text = "..."
+    setKeySlotCapture(button, true)
+    local cancelled: boolean = false
+    state.keyCaptureCancel = function(): ()
+        if cancelled then
+            return
+        end
+        cancelled = true
+        state.keyCaptureCallback = nil
+        state.keyCaptureCancel = nil
+        setKeySlotCapture(button, false)
+        if button.Parent and button:GetAttribute("CaptureIdleText") then
+            button.Text = tostring(button:GetAttribute("CaptureIdleText"))
+        end
+    end
+    state.keyCaptureCallback = function(keyCode: Enum.KeyCode): ()
+        if cancelled then
+            return
+        end
+        cancelled = true
+        state.keyCaptureCancel = nil
+        setKeySlotCapture(button, false)
+        callback(keyCode)
+    end
+end
+
+local function makeTextBox(parent: Instance, defaultText: any): TextBox
+    local isDefaultStyle: boolean = state.guiStyle == "Default"
+    local textBox: TextBox = (registerText(create("TextBox", {
+        Parent = parent,
+        BackgroundColor3 = isDefaultStyle
+            and Theme.buttonPressed
+            or Theme.surface,
+        BorderSizePixel = 0,
+        ClearTextOnFocus = false,
+
+        ClipsDescendants = true,
+        TextTruncate = Enum.TextTruncate.AtEnd,
+        FontFace = THIN_FONT,
+        PlaceholderColor3 = isDefaultStyle
+            and Theme.textMuted
+            or Theme.textMuted,
+        Text = tostring(defaultText),
+        TextColor3 = isDefaultStyle
+            and Theme.text
+            or Theme.text,
+        TextXAlignment = Enum.TextXAlignment.Center,
+    }), 13) :: any) :: TextBox
+    addRoundedStyle(textBox, 9, 0.5)
+    table.insert(state.styledTextBoxes, textBox)
+    trackUiConnection(textBox.Focused:Connect(function(): ()
+        TweenService:Create(
+            textBox,
+            TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quad),
+            {BackgroundColor3 = state.guiStyle == "Default"
+                and Theme.buttonHover
+                or Theme.surfaceRaised}
+        ):Play()
+    end))
+    trackUiConnection(textBox.FocusLost:Connect(function(): ()
+        TweenService:Create(
+            textBox,
+            TweenInfo.new(UI_MOTION.base, Enum.EasingStyle.Quad),
+            {BackgroundColor3 = state.guiStyle == "Default"
+                and Theme.buttonPressed
+                or Theme.surface}
+        ):Play()
+    end))
+    return textBox
+end
+
+state.restyleTextBoxes = function(isDefault: boolean): ()
+    for _, textBox: TextBox in ipairs(state.styledTextBoxes) do
+        if textBox.Parent then
+            textBox.BackgroundColor3 = isDefault
+                and Theme.buttonPressed
+                or Theme.surface
+            textBox.TextColor3 = isDefault and Theme.text or Theme.text
+            textBox.PlaceholderColor3 = isDefault
+                and Theme.textMuted
+                or Theme.textMuted
+            local stroke: UIStroke? =
+                textBox:FindFirstChild("StyleStroke") :: UIStroke?
+            if stroke then
+                stroke.Color = isDefault and Theme.outline or Theme.outline
+                stroke.Transparency = isDefault and 0.3 or 0.5
+            end
+        end
+    end
+end
+
+local ToastContainer: Frame = (create("Frame", {
+
+    Parent = ScreenGui,
+    Name = "ToastContainer",
+    AnchorPoint = Vector2.new(1, 1),
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    Position = UDim2.new(1, -12, 1, -12),
+    Size = UDim2.fromOffset(state.layout.compact and 220 or 300, 300),
+    ZIndex = 300,
+}) :: any) :: Frame
+
+state.onLayout(function(metrics: LayoutMetrics): ()
+    ToastContainer.Size = UDim2.fromOffset(metrics.compact and 220 or 300, 300)
+end)
+
+create("UIListLayout", {
+    Parent = ToastContainer,
+    FillDirection = Enum.FillDirection.Vertical,
+    HorizontalAlignment = Enum.HorizontalAlignment.Right,
+    Padding = UDim.new(0, 8),
+    SortOrder = Enum.SortOrder.LayoutOrder,
+    VerticalAlignment = Enum.VerticalAlignment.Bottom,
+})
+
+local toastSequence: number = 0
+
+local function notify(message: any): ()
+    local text: string = tostring(message)
+    print("[" .. PRODUCT.name .. "] " .. text)
+    toastSequence += 1
+
+    local toast: CanvasGroup = Instance.new("CanvasGroup")
+    toast.Name = "Toast"
+    toast.AutomaticSize = Enum.AutomaticSize.Y
+    toast.BackgroundColor3 = state.guiStyle == "Default"
+        and Theme.surface
+        or Theme.surfaceRaised
+    toast.BackgroundTransparency = state.guiStyle == "Default" and 0.12 or 0.04
+    toast.BorderSizePixel = 0
+    toast.GroupTransparency = 1
+    toast.LayoutOrder = toastSequence
+    toast.Size = UDim2.new(1, 0, 0, state.layout.compact and 46 or 50)
+    toast.ZIndex = 301
+    toast.Parent = ToastContainer
+
+    create("UICorner", {
+        Parent = toast,
+        CornerRadius = cornerRadius(UI_RADIUS.panel),
+    })
+    create("UIStroke", {
+        Parent = toast,
+        Color = state.guiStyle == "Default"
+            and Theme.outline
+            or Theme.outline,
+        Transparency = state.guiStyle == "Default" and 0.42 or 0.22,
+        Thickness = 1,
+    })
+    local _accent: Frame = (create("Frame", {
+        Parent = toast,
+        BackgroundColor3 = state.guiStyle == "Default"
+            and Theme.accent
+            or Theme.accent,
+        BorderSizePixel = 0,
+        Size = UDim2.new(0, 4, 1, 0),
+        ZIndex = 302,
+    }) :: any) :: Frame
+
+    local label: TextLabel = (makeTextLabel(toast, text, 14) :: any)
+        :: TextLabel
+    label.AutomaticSize = Enum.AutomaticSize.Y
+    label.Position = UDim2.fromOffset(16, 10)
+    label.Size = UDim2.new(1, -28, 0, 36)
+    label.TextColor3 = state.guiStyle == "Default"
+        and Theme.text
+        or Theme.text
+    label.TextWrapped = true
+    label.ZIndex = 303
+
+    TweenService:Create(
+        toast,
+        TweenInfo.new(0.22, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+        {GroupTransparency = 0}
+    ):Play()
+    task.delay(3.1, function(): ()
+        if not toast.Parent then
+            return
+        end
+        local tween: Tween = TweenService:Create(
+            toast,
+            TweenInfo.new(
+                0.2,
+                Enum.EasingStyle.Quad,
+                Enum.EasingDirection.In
+            ),
+            {GroupTransparency = 1}
+        )
+        tween:Play()
+        tween.Completed:Once(function(): ()
+            toast:Destroy()
+        end)
+    end)
+end
+
+local CardBin: Frame = (create("Frame", {
+    Parent = ScreenGui,
+    Name = "CardBin",
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    Size = UDim2.fromScale(1, 1),
+    Visible = false,
+}) :: any) :: Frame
+
+state.universalScroll = CardBin
+state.trsScroll = CardBin
+state.vdScroll = CardBin
+state.mvsdScroll = CardBin
+state.bedFightScroll = CardBin
+state.spoofScroll = CardBin
+
+print("[" .. PRODUCT.logPrefix .. ":Bootstrap] Base GUI visible; building universal features")
+
+local universalFeatures = {}
+local movementFeatures = {}
+
+state.movementFeatures = movementFeatures
+local mm2Features = {}
+state.trsFeatures = {}
+
+state.spoofFeatures = {}
+state.vdFeatures = {}
+state.bedFightFeatures = {}
+state.bedWarsFeatures = {}
+state.mvsdFeatures = {}
+local allFeatures: {any} = {}
+local featureConnections = {}
+
+state.invokeModuleSearch = function(query: string): boolean
+    local search: any = state.moduleSearch
+    if type(search) ~= "table" or type(search.Execute) ~= "function" then
+        return false
+    end
+    local result: any = search.Execute(query)
+    return type(result) == "table" and result.status == "success"
+end
+
+state.onLayout(function(): ()
+    for _, feature: any in ipairs(allFeatures) do
+        if type(feature.applyLayout) == "function" then
+            local ok: boolean, failure: any = pcall(feature.applyLayout)
+            if not ok then
+                warn("[" .. PRODUCT.name .. "] card layout: " .. tostring(failure))
+            end
+        end
+    end
+end)
+state.tooltipConnections = {} :: {RBXScriptConnection}
+local MobileMenuButton = create("TextButton", {
+    TextTruncate = Enum.TextTruncate.AtEnd,
+    ClipsDescendants = true,
+    Parent = ScreenGui,
+    Name = "MobileMenuButton",
+    AutoButtonColor = false,
+    BackgroundColor3 = Theme.surface,
+    BackgroundTransparency = 0.12,
+    BorderSizePixel = 0,
+    FontFace = CONTROL_FONT,
+    Position = UDim2.new(1, -18, 0, 18),
+    AnchorPoint = Vector2.new(1, 0),
+    Size = UDim2.fromOffset(52, 52),
+    Text = "≡",
+    TextColor3 = Theme.text,
+    TextSize = 20,
+    Visible = state.isMobile,
+    ZIndex = 190,
+}) :: TextButton
+create("UICorner", {
+    Parent = MobileMenuButton,
+    CornerRadius = UDim.new(1, 0),
+})
+create("UIStroke", {
+    Parent = MobileMenuButton,
+    Color = Theme.outline,
+    Transparency = 0.55,
+    Thickness = 1,
+})
+
+do
+    local dragInput: InputObject? = nil
+    local dragStart: Vector2 = Vector2.zero
+    local startPosition: UDim2 = MobileMenuButton.Position
+    local travelled: number = 0
+
+    local storedX: number? = tonumber(configData.ui.launcherX)
+    local storedY: number? = tonumber(configData.ui.launcherY)
+    if storedX and storedY then
+        MobileMenuButton.Position = UDim2.fromOffset(storedX, storedY)
+        MobileMenuButton.AnchorPoint = Vector2.new(0, 0)
+    end
+
+    local launcherScale: UIScale = create("UIScale", {
+        Parent = MobileMenuButton,
+        Name = "LauncherScale",
+        Scale = 1,
+    }) :: UIScale
+
+    local function pressLauncher(pressed: boolean): ()
+        if not state.animationsEnabled then
+            launcherScale.Scale = 1
+            return
+        end
+        TweenService:Create(
+            launcherScale,
+            TweenInfo.new(
+                pressed and UI_MOTION.fast or 0.34,
+                pressed and Enum.EasingStyle.Quart or Enum.EasingStyle.Back,
+                Enum.EasingDirection.Out
+            ),
+            {Scale = pressed and 0.9 or 1}
+        ):Play()
+    end
+
+    trackUiConnection(MobileMenuButton.InputBegan:Connect(function(
+        input: InputObject
+    ): ()
+        if input.UserInputType ~= Enum.UserInputType.MouseButton1
+            and input.UserInputType ~= Enum.UserInputType.Touch then
+            return
+        end
+        dragInput = input
+        dragStart = Vector2.new(input.Position.X, input.Position.Y)
+        startPosition = MobileMenuButton.Position
+        travelled = 0
+        pressLauncher(true)
+    end))
+
+    trackUiConnection(UserInputService.InputChanged:Connect(function(
+        input: InputObject
+    ): ()
+        if not dragInput then
+            return
+        end
+        if input.UserInputType ~= Enum.UserInputType.MouseMovement
+            and input.UserInputType ~= Enum.UserInputType.Touch then
+            return
+        end
+        local pointer: Vector2 = Vector2.new(input.Position.X, input.Position.Y)
+        local delta: Vector2 = pointer - dragStart
+        travelled = math.max(travelled, delta.Magnitude)
+        if travelled < 6 then
+
+            return
+        end
+
+        MobileMenuButton.AnchorPoint = Vector2.new(0, 0)
+        local viewport: Vector2 = ScreenGui.AbsoluteSize
+        local size: Vector2 = MobileMenuButton.AbsoluteSize
+        local baseX: number = startPosition.X.Scale * viewport.X + startPosition.X.Offset
+        local baseY: number = startPosition.Y.Scale * viewport.Y + startPosition.Y.Offset
+        MobileMenuButton.Position = UDim2.fromOffset(
+            math.clamp(math.round(baseX + delta.X), 0, math.max(viewport.X - size.X, 0)),
+            math.clamp(math.round(baseY + delta.Y), 0, math.max(viewport.Y - size.Y, 0))
+        )
+    end))
+
+    trackUiConnection(UserInputService.InputEnded:Connect(function(
+        input: InputObject
+    ): ()
+        if input ~= dragInput then
+            return
+        end
+        dragInput = nil
+        pressLauncher(false)
+        if travelled >= 6 then
+
+            local viewport: Vector2 = ScreenGui.AbsoluteSize
+            local size: Vector2 = MobileMenuButton.AbsoluteSize
+            local currentX: number = MobileMenuButton.Position.X.Offset
+            local currentY: number = MobileMenuButton.Position.Y.Offset
+            local margin: number = 14
+            local nearestX: number = currentX + size.X * 0.5 < viewport.X * 0.5
+                and margin
+                or math.max(margin, viewport.X - size.X - margin)
+            local restingY: number = math.clamp(
+                currentY,
+                margin,
+                math.max(margin, viewport.Y - size.Y - margin)
+            )
+            local resting: UDim2 = UDim2.fromOffset(
+                math.round(nearestX),
+                math.round(restingY)
+            )
+            if state.animationsEnabled then
+                TweenService:Create(
+                    MobileMenuButton,
+                    TweenInfo.new(0.42, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+                    {Position = resting}
+                ):Play()
+            else
+                MobileMenuButton.Position = resting
+            end
+            configData.ui.launcherX = resting.X.Offset
+            configData.ui.launcherY = resting.Y.Offset
+            queueConfigSave()
+        end
+    end))
+
+    trackUiConnection(MobileMenuButton.MouseButton1Click:Connect(function(): ()
+
+        if travelled >= 6 then
+            return
+        end
+        state.openMenuSurface()
+    end))
+end
+
+local function refreshLauncherVisibility(): ()
+
+    MobileMenuButton.Visible = state.isMobile
+        and state.pill == nil
+        and not state.visible
+end
+
+state.refreshLauncher = refreshLauncherVisibility
+refreshLauncherVisibility()
+state.addMenuVisibilityListener(function(): ()
+    refreshLauncherVisibility()
+end)
+
+type TaskHandle = {
+    Connected: boolean,
+    Disconnect: (self: TaskHandle) -> (),
+}
+
+type ScheduledTask = {
+    callback: (...any) -> (),
+    handle: TaskHandle,
+    failures: number,
+}
+
+local TaskManager = {
+    tasks = {} :: {[number]: ScheduledTask},
+    renderTasks = {} :: {[number]: ScheduledTask},
+    nextId = 0,
+    connection = nil :: RBXScriptConnection?,
+    renderConnection = nil :: RBXScriptConnection?,
+}
+
+function TaskManager:Connect(
+    callback: (...any) -> (),
+    phase: string?
+): TaskHandle
+    self.nextId += 1
+    local taskId: number = self.nextId
+    local bucket: {[number]: ScheduledTask} = phase == "render"
+        and self.renderTasks
+        or self.tasks
+    local handle: TaskHandle
+    handle = {
+        Connected = true,
+        Disconnect = function(selfHandle: TaskHandle): ()
+            if not selfHandle.Connected then
+                return
+            end
+            selfHandle.Connected = false
+            bucket[taskId] = nil
+        end,
+    }
+    bucket[taskId] = {
+        callback = callback,
+        handle = handle,
+        failures = 0,
+    }
+    return handle
+end
+
+function TaskManager:Destroy(): ()
+    for _, bucket: {[number]: ScheduledTask} in
+        ipairs({self.tasks, self.renderTasks})
+    do
+        for taskId: number, scheduled: ScheduledTask in pairs(bucket) do
+            scheduled.handle.Connected = false
+            bucket[taskId] = nil
+        end
+    end
+    if self.connection then
+        self.connection:Disconnect()
+        self.connection = nil
+    end
+    if self.renderConnection then
+        self.renderConnection:Disconnect()
+        self.renderConnection = nil
+    end
+end
+
+local function runBucket(
+    bucket: {[number]: ScheduledTask},
+    deltaTime: number
+): ()
+    for taskId: number, scheduled: ScheduledTask in pairs(bucket) do
+        if scheduled.handle.Connected then
+            local success: boolean, message: any = pcall(
+                scheduled.callback,
+                deltaTime
+            )
+            if success then
+                scheduled.failures = 0
+            else
+                scheduled.failures += 1
+                warn(
+                    "[" .. PRODUCT.name .. "] scheduled task "
+                        .. tostring(taskId)
+                        .. " failed: "
+                        .. tostring(message)
+                )
+
+                if scheduled.failures >= 3 then
+                    scheduled.handle:Disconnect()
+                end
+            end
+        end
+    end
+end
+
+TaskManager.connection = RunService.Heartbeat:Connect(function(
+    deltaTime: number
+): ()
+    runBucket(TaskManager.tasks, deltaTime)
+end)
+
+TaskManager.renderConnection = RunService.RenderStepped:Connect(function(
+    deltaTime: number
+): ()
+    runBucket(TaskManager.renderTasks, deltaTime)
+end)
+
+local function disconnectFeatureConnection(name)
+    local connection = featureConnections[name]
+    if connection then
+        connection:Disconnect()
+        featureConnections[name] = nil
+    end
+end
+
+local function getCharacterParts()
+    local character = LocalPlayer.Character
+    if not character then
+        return nil, nil, nil
+    end
+
+    return character,
+        character:FindFirstChildOfClass("Humanoid"),
+        character:FindFirstChild("HumanoidRootPart")
+end
+
+do
+
+local cachedControls: any = nil
+local controlsFetchedAt: number = -math.huge
+
+local function getControls(): any
+    if cachedControls ~= nil or os.clock() - controlsFetchedAt < 2 then
+        return cachedControls
+    end
+    controlsFetchedAt = os.clock()
+    local ok: boolean, controls: any = pcall(function(): any
+        local scripts: Instance? = LocalPlayer:FindFirstChildOfClass("PlayerScripts")
+        local playerModule: Instance? = scripts and scripts:FindFirstChild("PlayerModule")
+        if not playerModule then
+            return nil
+        end
+        return (state.requireModule(playerModule) :: any):GetControls()
+    end)
+    if ok and type(controls) == "table" then
+        cachedControls = controls
+    end
+    return cachedControls
+end
+
+state.getMoveInput = function(): (number, number)
+    local controls: any = getControls()
+    if controls then
+        local ok: boolean, move: any = pcall(controls.GetMoveVector, controls)
+        if ok and typeof(move) == "Vector3" and move.Magnitude > 0.001 then
+
+            return -move.Z, move.X
+        end
+    end
+
+    local _, humanoid: Humanoid? = getCharacterParts()
+    if humanoid and humanoid.MoveDirection.Magnitude > 0.001 then
+        local camera: Camera? = workspace.CurrentCamera
+        if camera then
+            local forward: Vector3 = camera.CFrame.LookVector
+            local right: Vector3 = camera.CFrame.RightVector
+            local flatForward: Vector3 = Vector3.new(forward.X, 0, forward.Z)
+            local flatRight: Vector3 = Vector3.new(right.X, 0, right.Z)
+            if flatForward.Magnitude > 0.001 and flatRight.Magnitude > 0.001 then
+                local direction: Vector3 = humanoid.MoveDirection
+                return direction:Dot(flatForward.Unit), direction:Dot(flatRight.Unit)
+            end
+        end
+    end
+
+    local forwardScalar: number = 0
+    local rightScalar: number = 0
+    if UserInputService.KeyboardEnabled then
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then
+            forwardScalar += 1
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then
+            forwardScalar -= 1
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then
+            rightScalar += 1
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then
+            rightScalar -= 1
+        end
+    end
+    return forwardScalar, rightScalar
+end
+
+local lastJumpRequestAt: number = -math.huge
+trackUiConnection(UserInputService.JumpRequest:Connect(function(): ()
+    lastJumpRequestAt = os.clock()
+end))
+
+state.onJumpRequest = function(callback: () -> ()): RBXScriptConnection
+    return UserInputService.JumpRequest:Connect(function(): ()
+        if state.keyCaptureCallback
+            or state.waitingForKey
+            or UserInputService:GetFocusedTextBox() then
+            return
+        end
+        callback()
+    end)
+end
+
+state.isJumpHeld = function(): boolean
+    if UserInputService:GetFocusedTextBox() then
+        return false
+    end
+    if UserInputService.KeyboardEnabled
+        and UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+        return true
+    end
+    if UserInputService.GamepadEnabled
+        and UserInputService:IsKeyDown(Enum.KeyCode.ButtonA) then
+        return true
+    end
+    local _, humanoid: Humanoid? = getCharacterParts()
+    if humanoid and humanoid.Jump then
+        return true
+    end
+
+    return os.clock() - lastJumpRequestAt < 0.2
+end
+
+state.getAimRay = function(): Ray?
+    local camera: Camera? = workspace.CurrentCamera
+    if not camera then
+        return nil
+    end
+    local pointer: Vector2
+    if UserInputService.MouseEnabled then
+        pointer = UserInputService:GetMouseLocation()
+    else
+        pointer = camera.ViewportSize / 2
+    end
+    return camera:ViewportPointToRay(pointer.X, pointer.Y)
+end
+end
+
+local function getFeatureCardParent(_container: Instance): Instance
+    return CardBin
+end
+
+local function applyFeaturePresentation(feature: any, isDefault: boolean): ()
+
+    if feature.kind == "hold" then
+        feature.enabled = feature.active == true
+    end
+    if state.applyCardSkin then
+        state.applyCardSkin(feature, false)
+    end
+    if feature.options then
+        feature.options.BackgroundTransparency = 1
+    end
+
+    if feature.shortcutButton then
+        feature.shortcutButton.BackgroundColor3 = isDefault
+            and Theme.surface
+            or Theme.surfaceRaised
+
+        local inertSlot: boolean = feature.kind == "group"
+        feature.shortcutButton.BackgroundTransparency = inertSlot
+            and 0.86
+            or (isDefault and 0.54 or 1)
+        feature.shortcutButton.TextTransparency = inertSlot and 1 or 0
+        feature.shortcutButton.TextColor3 = isDefault
+            and Theme.text
+            or Theme.text
+    end
+end
+state.restyleAllFeatures = function(isDefault: boolean): ()
+    for _, feature: any in ipairs(allFeatures) do
+        applyFeaturePresentation(feature, isDefault)
+    end
+end
+
+state.applyCardSkin = function(feature: any, hovered: boolean?): ()
+    local row: Frame? = feature.row
+    if not row then
+        return
+    end
+    local resolvedRow: Frame = row :: Frame
+    local isHovered: boolean = hovered == true
+    local isOn: boolean = feature.enabled == true
+
+    local surface: number
+    local titleTransparency: number = 0
+    local titleColor: Color3 = Theme.text
+
+    local fill: Color3 = Theme.surface
+
+    if feature.isCategory then
+
+        surface = isHovered and 0.3 or 0.5
+        titleColor = Theme.text
+        titleTransparency = 0
+    elseif feature.isAction then
+        surface = isHovered and 0.3 or 0.5
+    elseif feature.isHoldAction then
+
+        fill = isOn and Theme.enabled or Theme.surface
+        surface = isOn and 0 or (isHovered and 0.3 or 0.5)
+        titleColor = isOn and Theme.enabledText or Theme.text
+    else
+        fill = isOn and Theme.enabled or Theme.surface
+        surface = isOn and 0 or (isHovered and 0.3 or 0.5)
+        titleColor = isOn and Theme.enabledText or Theme.text
+    end
+
+    resolvedRow.BackgroundColor3 = fill
+    resolvedRow.BackgroundTransparency = surface
+
+    if feature.drawTitle then
+
+        feature.drawTitle(titleColor, titleTransparency)
+    elseif feature.title then
+        local titleLabel: TextLabel = feature.title :: TextLabel
+        titleLabel.TextColor3 = titleColor
+        titleLabel.TextTransparency = titleTransparency
+    end
+end
+
+ThemeEngine.OnChange(function(): ()
+    for _, feature: any in ipairs(allFeatures) do
+        if feature.row then
+            pcall(state.applyCardSkin, feature, false)
+        end
+    end
+end)
+
+local function refreshFeatureToggle(feature: any): ()
+    if feature.isCategory or feature.isAction then
+
+        state.applyCardSkin(feature, false)
+        if state.floatingUi then
+            state.floatingUi.refreshFeature(feature)
+        end
+        return
+    end
+
+    if feature.isHoldAction then
+        feature.enabled = feature.active == true
+    end
+    state.applyCardSkin(feature, false)
+    if state.floatingUi then
+        state.floatingUi.refreshFeature(feature)
+    end
+end
+
+local function runActionButton(
+    button: TextButton,
+    idleText: string,
+    callback: () -> (),
+    successMessage: string,
+    errorPrefix: string
+): ()
+    if button:GetAttribute("Running") == true then
+        return
+    end
+    button:SetAttribute("Running", true)
+    button:SetAttribute("Disabled", true)
+    button.Active = false
+    button.Text = "Running…"
+    button.BackgroundColor3 = state.guiStyle == "Default"
+        and Theme.buttonHover
+        or Theme.accentSoft
+
+    task.spawn(function(): ()
+        local running: boolean = true
+        task.spawn(function(): ()
+            local frames: {string} = {"Running·", "Running··", "Running···"}
+            local frameIndex: number = 1
+            while running and button.Parent do
+                button.Text = frames[frameIndex]
+                frameIndex = frameIndex % #frames + 1
+                task.wait(0.22)
+            end
+        end)
+
+        local success: boolean, errorMessage: any = pcall(callback)
+        running = false
+        if button.Parent then
+            button.Text = success and "Done" or "Failed"
+            button.BackgroundColor3 = success and Theme.accentSoft or Theme.negative
+        end
+        if success then
+            notify(successMessage)
+        else
+            warn(errorPrefix .. ": " .. tostring(errorMessage))
+            notify("Error in " .. errorPrefix)
+        end
+        task.wait(0.45)
+        if button.Parent then
+            button.Text = idleText
+            button.Active = true
+            button:SetAttribute("Disabled", false)
+            button:SetAttribute("Running", false)
+            button.BackgroundColor3 = idleText == "RUN"
+                and Theme.accentSoft
+                or Theme.surface
+        end
+    end)
+end
+
+local function compactShortcutLabel(label: string): string
+    local trimmed: string = string.upper(
+        (string.gsub(string.gsub(label, "%s+", " "), "^%s*(.-)%s*$", "%1"))
+    )
+    if trimmed == "" then
+        return "ACTION"
+    end
+    if #trimmed <= 18 then
+        return trimmed
+    end
+    local cut: string = string.sub(trimmed, 1, 18)
+    local lastSpace: number? = string.find(string.reverse(cut), " ")
+    if lastSpace and lastSpace < 8 then
+        cut = string.sub(cut, 1, 18 - lastSpace)
+    end
+    return cut
+end
+
+state.shortcutBindings = {} :: {[string]: any}
+
+local function shortcutSlotText(binding: any): string
+
+    if binding.key == Enum.KeyCode.Unknown then
+        return ""
+    end
+    return binding.key.Name
+end
+
+local function setShortcutPressed(binding: any, pressed: boolean): ()
+    if binding.pressed == pressed then
+        return
+    end
+    binding.pressed = pressed
+    if pressed then
+        if binding.onPress then
+            task.spawn(binding.onPress)
+        end
+    elseif binding.onRelease then
+        task.spawn(binding.onRelease)
+    end
+end
+
+local function bindActionShortcut(
+    button: TextButton?,
+    shortcutId: string,
+    label: string,
+    callback: () -> (),
+    options: any?
+): ()
+    local configuration: any = options or {}
+    local optionKey: string = "Shortcut." .. shortcutId:gsub("%W", "")
+    local binding: any = {
+        id = shortcutId,
+        button = button,
+        hold = configuration.hold == true,
+        key = Enum.KeyCode.Unknown,
+        pressed = false,
+        onPress = configuration.onPress or callback,
+        onRelease = configuration.onRelease,
+    }
+    local savedName: any = configData.values[optionKey]
+    if type(savedName) == "string" and savedName ~= "" then
+
+        local resolved: boolean, savedKey: any = pcall(function(): any
+            return (Enum.KeyCode :: any)[savedName]
+        end)
+        if resolved and savedKey then
+            binding.key = savedKey
+        end
+    end
+    state.shortcutBindings[shortcutId] = binding
+
+    local function refreshButtonText(): ()
+        if not button then
+            return
+        end
+        (button :: TextButton).Text = shortcutSlotText(binding);
+        (button :: TextButton):SetAttribute("CaptureIdleText", (button :: TextButton).Text)
+    end
+    binding.refresh = refreshButtonText
+    refreshButtonText()
+
+    binding.assign = function(keyCode: Enum.KeyCode): boolean
+        local cleared: boolean = keyCode == binding.key
+        binding.key = cleared and Enum.KeyCode.Unknown or keyCode
+        setShortcutPressed(binding, false)
+        configData.values[optionKey] = binding.key.Name
+        queueConfigSave()
+        refreshButtonText()
+        return not cleared
+    end
+
+    if state.isMobile then
+
+        if button and state.bindMobileActionPlacement then
+            state.bindMobileActionPlacement(
+                button,
+                "Shortcut" .. shortcutId:gsub("%W", ""),
+                compactShortcutLabel(label),
+                function(): ()
+                    if not binding.hold and binding.onPress then
+                        binding.onPress()
+                    end
+                end,
+                {
+                    isActive = function(): boolean
+                        return binding.hold == true
+                    end,
+                    onPress = function(): ()
+                        if binding.hold and binding.onPress then
+                            binding.onPress()
+                        end
+                    end,
+                    onRelease = function(): ()
+                        if binding.hold and binding.onRelease then
+                            binding.onRelease()
+                        end
+                    end,
+                }
+            )
+        end
+        return
+    end
+
+    if button then
+        trackUiConnection((button :: TextButton).MouseButton1Click:Connect(function(): ()
+            beginKeyCapture(button, function(keyCode: Enum.KeyCode): ()
+                binding.assign(keyCode)
+            end)
+        end))
+    end
+end
+
+state.bindFeatureActivationKey = function(
+    feature: any,
+    defaultKey: Enum.KeyCode?,
+    onPress: () -> (),
+    onRelease: (() -> ())?
+): ()
+    local binding: any = state.shortcutBindings[feature.configKey]
+    if not binding then
+        return
+    end
+    binding.onPress = onPress
+    binding.onRelease = onRelease
+    binding.hold = onRelease ~= nil
+    if binding.key == Enum.KeyCode.Unknown
+        and defaultKey ~= nil
+        and defaultKey ~= Enum.KeyCode.Unknown then
+        binding.key = defaultKey
+    end
+    if binding.refresh then
+        binding.refresh()
+    end
+end
+
+do
+local function shortcutInputAllowed(gameProcessed: boolean): boolean
+    return not gameProcessed
+        and not state.keyCaptureCallback
+        and not state.waitingForKey
+        and UserInputService:GetFocusedTextBox() == nil
+end
+
+state.globalShortcutBeganConnection = UserInputService.InputBegan:Connect(
+    function(input: InputObject, gameProcessed: boolean): ()
+        if input.UserInputType ~= Enum.UserInputType.Keyboard
+            or not shortcutInputAllowed(gameProcessed) then
+            return
+        end
+
+        if input.KeyCode == Enum.KeyCode.Unknown then
+            return
+        end
+        for _, binding: any in pairs(state.shortcutBindings) do
+            if binding.key == input.KeyCode then
+                if binding.hold then
+                    setShortcutPressed(binding, true)
+                elseif binding.onPress then
+                    task.spawn(binding.onPress)
+                end
+            end
+        end
+    end
+)
+
+state.globalShortcutEndedConnection = UserInputService.InputEnded:Connect(
+    function(input: InputObject): ()
+        if input.UserInputType ~= Enum.UserInputType.Keyboard
+            or input.KeyCode == Enum.KeyCode.Unknown then
+            return
+        end
+        for _, binding: any in pairs(state.shortcutBindings) do
+            if binding.hold and binding.key == input.KeyCode then
+                setShortcutPressed(binding, false)
+            end
+        end
+    end
+)
+
+trackUiConnection(UserInputService.WindowFocusReleased:Connect(function(): ()
+    for _, binding: any in pairs(state.shortcutBindings) do
+        if binding.hold then
+            setShortcutPressed(binding, false)
+        end
+    end
+end))
+end
+
+state.gameBridge = {
+    roleProvider = nil :: any,
+    extras = {} :: {any},
+    listeners = {} :: {(string, any) -> ()},
+}
+
+state.onGameBridge = function(listener: (string, any) -> ()): ()
+    table.insert(state.gameBridge.listeners, listener)
+
+    if state.gameBridge.roleProvider then
+        pcall(listener, "roles", state.gameBridge.roleProvider)
+    end
+    for _, extra: any in ipairs(state.gameBridge.extras) do
+        pcall(listener, "extra", extra)
+    end
+end
+
+state.registerRoleProvider = function(provider: any): ()
+    if type(provider) ~= "table" or type(provider.Get) ~= "function" then
+        return
+    end
+    state.gameBridge.roleProvider = provider
+    for _, listener: (string, any) -> () in ipairs(state.gameBridge.listeners) do
+        pcall(listener, "roles", provider)
+    end
+end
+
+state.registerEspExtra = function(extra: any): ()
+    if type(extra) ~= "table" or type(extra.Name) ~= "string" then
+        return
+    end
+    table.insert(state.gameBridge.extras, extra)
+    for _, listener: (string, any) -> () in ipairs(state.gameBridge.listeners) do
+        pcall(listener, "extra", extra)
+    end
+end
+
+state.playerRole = function(player: Player): string?
+    local provider: any = state.gameBridge.roleProvider
+    if not provider then
+        return nil
+    end
+    local ok: boolean, role: any = pcall(provider.Get, player)
+    if ok and type(role) == "string" and role ~= "" then
+        return role
+    end
+    return nil
+end
+
+state.featureTooltip = create("TextLabel", {
+    TextTruncate = Enum.TextTruncate.AtEnd,
+    ClipsDescendants = true,
+    Parent = PopupLayer,
+    Name = "FeatureTooltip",
+    Active = false,
+    AutomaticSize = Enum.AutomaticSize.None,
+    BackgroundColor3 = Theme.surface,
+    BackgroundTransparency = 0.04,
+    BorderColor3 = Color3.fromRGB(58, 58, 58),
+    BorderSizePixel = 1,
+    FontFace = THIN_FONT,
+    Size = UDim2.fromOffset(320, 30),
+    Text = "",
+    TextColor3 = Color3.fromRGB(205, 205, 205),
+    TextSize = 11,
+    TextWrapped = true,
+    Visible = false,
+    ZIndex = 250,
+}) :: TextLabel
+
+create("UIPadding", {
+    Parent = state.featureTooltip,
+    PaddingBottom = UDim.new(0, 5),
+    PaddingLeft = UDim.new(0, 8),
+    PaddingRight = UDim.new(0, 8),
+    PaddingTop = UDim.new(0, 5),
+})
+
+state.tooltipToken = 0
+
+local function showFeatureTooltip(row: Frame, text: string, pointer: Vector2?): ()
+    state.tooltipToken = state.tooltipToken + 1
+    state.featureTooltip.Text = text
+    state.featureTooltip.TextTransparency = 1
+
+    local bitmap: any = state.bitmapText
+    local innerLimit: number = 488
+
+    local wrapped: string, lineTotal: number = bitmap.wrap(text, innerLimit, 16)
+    local measured: number = bitmap.measure({{text = wrapped}}, 16)
+    local width: number = math.clamp(measured + 24, 210, 520)
+    local height: number = math.max(30, lineTotal * bitmap.lineHeight + 12)
+    state.featureTooltip.Size = UDim2.fromOffset(width, height)
+    bitmap.draw(state.featureTooltip, {
+        {text = wrapped, color = Color3.fromRGB(205, 205, 205)},
+    }, {
+        Name = "Glyphs",
+        TextSize = 16,
+        ZIndex = 251,
+        AnchorPoint = Vector2.new(0, 0.5),
+        Position = UDim2.new(0, 0, 0.5, 0),
+    })
+
+    local manager: any = state.windows
+    local viewport: Vector2
+    if manager and type(manager.LogicalViewport) == "function" then
+        viewport = manager.LogicalViewport()
+    else
+        local camera: Camera? = workspace.CurrentCamera
+        viewport = camera and camera.ViewportSize or Vector2.new(1280, 720)
+    end
+    local anchor: Vector2 = pointer
+        or Vector2.new(
+            row.AbsolutePosition.X + 16,
+            row.AbsolutePosition.Y + row.AbsoluteSize.Y * 0.5
+        )
+    if manager and type(manager.ScreenToLogical) == "function" then
+        anchor = manager.ScreenToLogical(anchor)
+    end
+    local x: number = math.clamp(anchor.X + 12, 8, math.max(8, viewport.X - width - 8))
+    local y: number = math.clamp(
+        anchor.Y - height - 8,
+        8,
+        math.max(8, viewport.Y - height - 8)
+    )
+
+    state.featureTooltip.Position = UDim2.fromOffset(x, y)
+    state.featureTooltip.Visible = true
+end
+
+local function hideFeatureTooltip(): ()
+    state.tooltipToken = state.tooltipToken + 1
+    state.featureTooltip.Visible = false
+end
+
+local COMPACT_FEATURE_CARDS: boolean = true
+local function addFeatureTooltip(feature: any, text: string): ()
+    if COMPACT_FEATURE_CARDS then
+        return
+    end
+    feature.tooltipText = text
+    if feature.tooltipBound then
+        return
+    end
+    feature.tooltipBound = true
+
+    local row: Frame = feature.row :: Frame
+    local heldInput: InputObject? = nil
+    local heldStart: Vector2? = nil
+
+    table.insert(state.tooltipConnections, row.MouseLeave:Connect(function(): ()
+        heldInput = nil
+        heldStart = nil
+        hideFeatureTooltip()
+    end))
+
+    table.insert(state.tooltipConnections, row.InputBegan:Connect(function(input: InputObject): ()
+        if input.UserInputType ~= Enum.UserInputType.Touch
+            and input.UserInputType ~= Enum.UserInputType.MouseButton1 then
+            return
+        end
+
+        heldInput = input
+        heldStart = Vector2.new(input.Position.X, input.Position.Y)
+        state.tooltipToken = state.tooltipToken + 1
+        local pressToken: number = state.tooltipToken
+        task.delay(0.42, function(): ()
+            if heldInput == input and state.tooltipToken == pressToken then
+                local pointer: Vector2 = input.UserInputType == Enum.UserInputType.Touch
+                    and Vector2.new(input.Position.X, input.Position.Y)
+                    or UserInputService:GetMouseLocation()
+                showFeatureTooltip(row, feature.tooltipText, pointer)
+            end
+        end)
+    end))
+
+    table.insert(state.tooltipConnections, row.InputChanged:Connect(function(input: InputObject): ()
+        if heldInput == input and heldStart then
+            local current: Vector2 = Vector2.new(input.Position.X, input.Position.Y)
+            if (current - heldStart).Magnitude > 12 then
+                heldInput = nil
+                heldStart = nil
+                hideFeatureTooltip()
+            end
+        end
+    end))
+
+    table.insert(state.tooltipConnections, row.InputEnded:Connect(function(input: InputObject): ()
+        if heldInput == input then
+            heldInput = nil
+            heldStart = nil
+            hideFeatureTooltip()
+        end
+    end))
+end
+
+type FlyRuntime = {
+    yLevel: number?,
+    burstAt: number,
+    platform: BasePart?,
+    walkSpeed: number?,
+}
+
+local findPlayerByText: (string) -> Player? = function(_text: string): Player?
+    return nil
+end
+local performFling: (Player) -> () = function(_target: Player): () end
+
+state.isProtectedTarget = function(_targetPlayer: Player): boolean
+    return false
+end
+
+local MM2Scroll: Frame = CardBin
+
+local cleanupMM2Runtime = function() end
+
+type GameModule = {
+    Name: string,
+    PlaceId: number,
+    Events: {[string]: any},
+    Initialized: boolean,
+    init: (runtime: any) -> any,
+    destroy: () -> (),
+}
+
+type ModuleDiagnostics = {
+    uiBindings: number,
+    taskBindings: number,
+}
+
+state.logBootstrap = function(message: string): ()
+    print("[" .. PRODUCT.logPrefix .. ":Bootstrap] " .. message)
+end
+
+print("[" .. PRODUCT.logPrefix .. "] build loader-v3 · " .. SOURCE_STAMP)
+
+state.logBootstrapError = function(message: string): ()
+    warn("[" .. PRODUCT.logPrefix .. ":Bootstrap] " .. message)
+end
+
+local widgetBuilders: any = nil
+
+local function createGameModuleEnvironment(
+    diagnostics: ModuleDiagnostics
+): any
+    local baseEnvironment: any = getfenv()
+    local function recordBinding(callback: (...any) -> any): (...any) -> any
+        return function(...: any): any
+            diagnostics.uiBindings += 1
+            return callback(...)
+        end
+    end
+    local environment: any = {
+        game = game,
+        workspace = workspace,
+
+        print = print,
+        warn = warn,
+        Players = Players,
+        UserInputService = UserInputService,
+        TweenService = TweenService,
+        Lighting = Lighting,
+        RunService = RunService,
+        HttpService = HttpService,
+        CollectionService = CollectionService,
+        Stats = Stats,
+        LocalPlayer = LocalPlayer,
+        PlayerGui = PlayerGui,
+        ScreenGui = ScreenGui,
+
+        PRODUCT = PRODUCT,
+        Theme = Theme,
+
+        ThemeEngine = ThemeEngine,
+
+        GAME_CHECK = GAME_CHECK,
+
+        CONTROL_FONT = CONTROL_FONT,
+        TITLE_FONT = TITLE_FONT,
+        THIN_FONT = THIN_FONT,
+        DEFAULT_HEADER_COLOR = DEFAULT_HEADER_COLOR,
+        DEFAULT_SURFACE_COLOR = DEFAULT_SURFACE_COLOR,
+        DEFAULT_BORDER_COLOR = DEFAULT_BORDER_COLOR,
+        state = state,
+
+        services = nil,
+        configData = configData,
+        queueConfigSave = queueConfigSave,
+        create = create,
+        makeTextLabel = makeTextLabel,
+        makeButton = makeButton,
+        makeTextBox = makeTextBox,
+        notify = notify,
+
+        isMenuOwned = function(instance: Instance): boolean
+            return instance:IsDescendantOf(ScreenGui)
+        end,
+        TaskManager = TaskManager,
+        featureConnections = featureConnections,
+        disconnectFeatureConnection = disconnectFeatureConnection,
+        getCharacterParts = getCharacterParts,
+
+        addFeatureTooltip = addFeatureTooltip,
+        cloneReference = cloneReference,
+
+        PopupLayer = PopupLayer,
+        UI_RADIUS = UI_RADIUS,
+        UI_MOTION = UI_MOTION,
+        cornerRadius = cornerRadius,
+        setKeySlotCapture = setKeySlotCapture,
+
+        SettingsPage = CardBin,
+        getFeatureCardParent = getFeatureCardParent,
+
+        REPOSITORY_RAW_BASE = REPOSITORY_RAW_BASE,
+        RUNTIME_SAFETY_SOURCE_URL = RUNTIME_SAFETY_SOURCE_URL,
+        RUNTIME_COMPATIBILITY_MARKER = RUNTIME_COMPATIBILITY_MARKER,
+        SOURCE_STAMP = SOURCE_STAMP,
+
+        TEXT_BASE_MULTIPLIER = TEXT_BASE_MULTIPLIER,
+        TEXT_SCALE_MINIMUM = TEXT_SCALE_MINIMUM,
+        TEXT_SCALE_MAXIMUM = TEXT_SCALE_MAXIMUM,
+        registeredText = registeredText,
+
+        initialViewport = initialViewport,
+
+        FEATURE_CATEGORIES = FEATURE_CATEGORIES,
+        DEFAULT_FEATURE_CATEGORY = DEFAULT_FEATURE_CATEGORY,
+
+        OFFICIAL_CATEGORIES = OFFICIAL_CATEGORIES,
+        normalizeFeatureCategory = normalizeFeatureCategory,
+        universalFeatures = universalFeatures,
+        movementFeatures = movementFeatures,
+        applyFeaturePresentation = applyFeaturePresentation,
+        refreshFeatureToggle = refreshFeatureToggle,
+        VALVE_FONT = VALVE_FONT,
+        trackUiConnection = trackUiConnection,
+        createToggleSwitch = createToggleSwitch,
+        setToggleSwitch = setToggleSwitch,
+        applyKeySlotStyle = applyKeySlotStyle,
+        beginKeyCapture = beginKeyCapture,
+        bindActionShortcut = bindActionShortcut,
+        runActionButton = runActionButton,
+        colorFromConfig = colorFromConfig,
+        colorToConfig = colorToConfig,
+
+        registerRoleProvider = state.registerRoleProvider,
+        registerEspExtra = state.registerEspExtra,
+        onGameBridge = state.onGameBridge,
+        playerRole = state.playerRole,
+        findPlayerByText = findPlayerByText,
+        performFling = performFling,
+        MM2Scroll = MM2Scroll,
+        mm2Features = mm2Features,
+        vdFeatures = state.vdFeatures,
+        bedFightFeatures = state.bedFightFeatures,
+        bedWarsFeatures = state.bedWarsFeatures,
+        mvsdFeatures = state.mvsdFeatures,
+        allFeatures = allFeatures,
+        cleanupMM2Runtime = cleanupMM2Runtime,
+    }
+
+    for builderName: string, builder: any in pairs(widgetBuilders or {}) do
+        environment[builderName] = recordBinding(builder)
+    end
+    return setmetatable(environment, {
+        __index = baseEnvironment,
+    })
+end
+
+local function loadGameModule(
+    placeId: number
+): (GameModule?, any, ModuleDiagnostics, string?)
+    local executorEnvironment: any = getfenv()
+    local diagnostics: ModuleDiagnostics = {
+        uiBindings = 0,
+        taskBindings = 0,
+    }
+    if type(executorEnvironment.loadstring) ~= "function"
+        or type(executorEnvironment.setfenv) ~= "function" then
+        return nil, nil, diagnostics, "The executor does not support loadstring/setfenv"
+    end
+
+    local moduleName: string = GAME_MODULES[placeId]
+        or ACTIVE_GAME_MODULE
+        or tostring(placeId)
+    local moduleUrl: string = REPOSITORY_RAW_BASE
+        .. "src/games/"
+        .. moduleName
+        .. ".lua?v="
+        .. SOURCE_STAMP
+    state.logBootstrap("Downloading module: " .. moduleUrl)
+    local downloadSuccess: boolean, source: any = false, nil
+    if type(state.fetchRepositorySource) == "function" then
+        local fetched: string?, fetchError: string? =
+            state.fetchRepositorySource("src/games/" .. moduleName .. ".lua")
+        if fetched then
+            source = fetched
+            downloadSuccess = true
+        else
+            source = fetchError
+        end
+    else
+        downloadSuccess, source = pcall(function(): string
+            return (game :: any):HttpGet(moduleUrl, true)
+        end)
+    end
+    if downloadSuccess and type(source) == "string" then
+        local candidate: string = string.lower(source)
+        if #source < 64
+            or string.find(candidate, "404: not found", 1, true)
+            or string.find(candidate, "<!doctype html", 1, true)
+            or string.find(candidate, "<html", 1, true) then
+            warn("[" .. PRODUCT.logPrefix .. ":Bootstrap] Invalid remote response for " .. moduleName)
+            downloadSuccess = false
+        end
+    end
+    if not downloadSuccess or type(source) ~= "string" then
+        local readFile: any = executorEnvironment.readfile
+        local isFile: any = executorEnvironment.isfile
+        local localPath: string = "Wurst/src/games/" .. moduleName .. ".lua"
+        if type(readFile) == "function"
+            and (type(isFile) ~= "function" or isFile(localPath)) then
+            local localSuccess: boolean, localSource: any = pcall(readFile, localPath)
+            if localSuccess and type(localSource) == "string" then
+                source = localSource
+                downloadSuccess = true
+                warn("[" .. PRODUCT.logPrefix .. ":Bootstrap] HTTP failed; using local fallback " .. localPath)
+            end
+        end
+    end
+    if not downloadSuccess or type(source) ~= "string" then
+        return nil, nil, diagnostics, "HTTP failure: " .. tostring(source)
+    end
+    local normalizedSource: string = string.lower(source)
+    if #source < 64
+        or string.find(normalizedSource, "404: not found", 1, true)
+        or string.find(normalizedSource, "<!doctype html", 1, true)
+        or string.find(normalizedSource, "<html", 1, true) then
+        return nil, nil, diagnostics, "Empty response, HTML or 404"
+    end
+    state.logBootstrap("Download succeeded (" .. tostring(#source) .. " bytes)")
+
+    local chunk: any, compileError: any =
+        executorEnvironment.loadstring(
+            source,
+            "@src/games/" .. moduleName .. ".lua"
+        )
+    if type(chunk) ~= "function" then
+        return nil, nil, diagnostics,
+            "Compilation error: " .. tostring(compileError)
+    end
+
+    local moduleEnvironment: any = createGameModuleEnvironment(diagnostics)
+    executorEnvironment.setfenv(chunk, moduleEnvironment)
+    local runSuccess: boolean, loadedModule: any = pcall(chunk)
+    if not runSuccess then
+        return nil, nil, diagnostics,
+            "Chunk execution error: " .. tostring(loadedModule)
+    end
+    if type(loadedModule) ~= "table"
+        or type(loadedModule.init) ~= "function"
+        or type(loadedModule.destroy) ~= "function" then
+        return nil, nil, diagnostics, "The module does not export init/destroy"
+    end
+    return loadedModule :: GameModule, moduleEnvironment, diagnostics, nil
+end
+
+local function registerPlaceModule(
+    tabName: string,
+    placeId: number
+): ()
+
+    if game.PlaceId ~= placeId
+        and ACTIVE_GAME_MODULE ~= GAME_MODULES[placeId] then
+        return
+    end
+
+    state.logBootstrap(
+        "Detected PlaceId: "
+            .. tostring(game.PlaceId)
+            .. " · module "
+            .. tostring(ACTIVE_GAME_MODULE)
+            .. " (" .. ACTIVE_GAME_SOURCE .. ")"
+    )
+    SectionManager.register(tabName, function(): ()
+        local loadedModule: GameModule?, _moduleEnvironment: any,
+            diagnostics: ModuleDiagnostics, loadError: string? =
+            loadGameModule(placeId)
+        if not loadedModule then
+            state.logBootstrapError(
+                "Could not load " .. tabName .. ": " .. tostring(loadError)
+            )
+            error(loadError or "Could not load the module")
+        end
+        local taskCountBefore: number = TaskManager.nextId
+        local featureCountBefore: number = #allFeatures
+        local connectionsBefore: {[string]: boolean} = {}
+        for connectionName: string in pairs(featureConnections) do
+            connectionsBefore[connectionName] = true
+        end
+        local runtime: any = {
+            Menu = {
+                Root = CardBin,
+                ScreenGui = ScreenGui,
+                Pages = {},
+                Components = state.components,
+                Notify = notify,
+            },
+            State = state,
+            Services = state.frameworkEnvironment.services,
+            TaskManager = TaskManager,
+            Diagnostics = diagnostics,
+        }
+        local initialized: boolean, initError: any = pcall(
+            loadedModule.init,
+            runtime
+        )
+        if not initialized then
+            loadedModule.Initialized = true
+            local rolledBack: boolean, rollbackError: any = pcall(
+                loadedModule.destroy
+            )
+            if not rolledBack then
+                state.logBootstrapError(
+                    tabName .. " rollback failed: " .. tostring(rollbackError)
+                )
+            end
+            for connectionName: string in pairs(featureConnections) do
+                if not connectionsBefore[connectionName] then
+                    disconnectFeatureConnection(connectionName)
+                end
+            end
+            for taskId: number, scheduled: ScheduledTask in pairs(TaskManager.tasks) do
+                if taskId > taskCountBefore then
+                    scheduled.handle:Disconnect()
+                end
+            end
+            for index: number = #allFeatures, featureCountBefore + 1, -1 do
+                local feature: any = allFeatures[index]
+                if feature.enabled then
+                    pcall(feature.onToggle, false)
+                end
+                if feature.registry then
+                    feature.registry[feature.name] = nil
+                end
+                if feature.row and feature.row.Parent then
+                    feature.row:Destroy()
+                end
+
+                if feature.settingsWindow then
+                    pcall(function(): ()
+                        feature.settingsWindow:Destroy()
+                    end)
+                    feature.settingsWindow = nil
+                end
+                table.remove(allFeatures, index)
+
+                if state.moduleSearch
+                    and type(state.moduleSearch.Unregister) == "function" then
+                    state.moduleSearch.Unregister(feature)
+                end
+
+                if feature.configKey and state.shortcutBindings then
+                    state.shortcutBindings[feature.configKey] = nil
+                end
+                if state.floatingUi and state.floatingUi.unregisterFeature then
+                    state.floatingUi.unregisterFeature(feature)
+                end
+            end
+            state.logBootstrapError(tabName .. " init failed: " .. tostring(initError))
+            error(initError)
+        end
+        diagnostics.taskBindings = TaskManager.nextId - taskCountBefore
+        state.activeGameModule = loadedModule
+        state.logBootstrap(
+            tabName
+                .. " active · UI callbacks="
+                .. tostring(diagnostics.uiBindings)
+                .. " · Task callbacks="
+                .. tostring(diagnostics.taskBindings)
+        )
+        local function destroyModule(): ()
+            local destroyed: boolean, destroyError: any = pcall(
+                loadedModule.destroy
+            )
+            if not destroyed then
+                state.logBootstrapError(
+                    tabName .. " destroy failed: " .. tostring(destroyError)
+                )
+            end
+        end
+        if tabName == "MM2" then
+            cleanupMM2Runtime = destroyModule
+        elseif tabName == "TRS" then
+            state.cleanupTRSRuntime = destroyModule
+        elseif tabName == "VD" then
+            state.cleanupVDRuntime = destroyModule
+        elseif tabName == "MVSD" then
+            state.cleanupMVSDRuntime = destroyModule
+        elseif tabName == "BedFight" then
+            state.cleanupBedFightRuntime = destroyModule
+        elseif tabName == "BedWars" then
+            state.cleanupBedWarsRuntime = destroyModule
+        end
+    end)
+end
+
+state.logBootstrap(
+    "Initializing PlaceId="
+        .. tostring(game.PlaceId)
+        .. " · module="
+        .. tostring(ACTIVE_GAME_MODULE or "Universal")
+)
+
+registerPlaceModule("MM2", GAME_CHECK.MM2)
+registerPlaceModule("TRS", GAME_CHECK.TRS)
+registerPlaceModule("VD", GAME_CHECK.VD)
+registerPlaceModule("MVSD", GAME_CHECK.MVSD)
+registerPlaceModule("BedFight", GAME_CHECK.BedFight)
+registerPlaceModule("BedWars", GAME_CHECK.BedWars)
+
+if PENDING_FINGERPRINT then
+    task.spawn(function(): ()
+        local attempts: number = 0
+        while attempts < 6 do
+            attempts += 1
+            task.wait(0.5)
+            local detected: string?, score: number = detectGameModuleByStructure()
+            if detected then
+                ACTIVE_GAME_MODULE = detected
+                ACTIVE_GAME_SOURCE = "fingerprint " .. tostring(score) .. " markers"
+                state.activeGameName = detected
+                GAME_CHECK.MM2Active = detected == "MM2"
+                GAME_CHECK.TRSActive = detected == "TRS"
+                GAME_CHECK.VDActive = detected == "VD"
+                GAME_CHECK.MVSDActive = detected == "MVSD"
+                GAME_CHECK.BedFightActive = detected == "BedFight"
+                GAME_CHECK.BedWarsActive = detected == "BedWars"
+                GAME_CHECK.source = ACTIVE_GAME_SOURCE
+                PENDING_FINGERPRINT = false
+                registerPlaceModule(detected, GAME_CHECK[detected] or 0)
+                SectionManager.initialize(detected)
+                break
+            end
+        end
+    end)
+end
+
+state.boot = {
+    stamp = SOURCE_STAMP,
+    bundle = nil :: {[string]: string}?,
+    sources = {} :: {[string]: string},
+    timing = {} :: {[string]: number},
+    started = BOOT_STARTED_AT,
+}
+
+state.boot.timing.gui = os.clock() - BOOT_STARTED_AT
+
+state.markBoot = function(phase: string, startedAt: number): ()
+    state.boot.timing[phase] = os.clock() - startedAt
+end
+
+state.summarizeBoot = function(): ()
+    local timing: any = state.boot.timing
+    local total: number = os.clock() - (state.boot.started or os.clock())
+    print(string.format(
+        "[" .. PRODUCT.logPrefix .. ":Timing] fingerprint %.2fs · gui %.2fs · bundle %.2fs · manifest %.2fs · widgets %.2fs · framework %.2fs · libraries %.2fs · modules %.2fs (%d/%d) · game module %.2fs · total %.2fs",
+        BOOT_FINGERPRINT_SECONDS,
+        tonumber(timing.gui) or 0,
+        tonumber(timing.bundle) or 0,
+        tonumber(timing.manifest) or 0,
+        tonumber(timing.widgets) or 0,
+        tonumber(timing.framework) or 0,
+        tonumber(timing.libraries) or 0,
+        tonumber(timing.modules) or 0,
+        tonumber(timing.moduleCount) or 0,
+        tonumber(timing.moduleTotal) or 0,
+        tonumber(timing.game) or 0,
+        total
+    ))
+end
+
+state.sourceLooksValid = function(source: any, minimum: number): boolean
+    if type(source) ~= "string" or #source < minimum then
+        return false
+    end
+    local head: string = string.lower(string.sub(source, 1, 512))
+    return string.find(head, "404: not found", 1, true) == nil
+        and string.find(head, "<!doctype html", 1, true) == nil
+        and string.find(head, "<html", 1, true) == nil
+end
+
+state.httpGetPath = function(path: string): (string?, string?)
+    local url: string = REPOSITORY_RAW_BASE .. path .. "?v=" .. SOURCE_STAMP
+    local ok: boolean, body: any = pcall(function(): string
+        return (game :: any):HttpGet(url, true)
+    end)
+    if ok and state.sourceLooksValid(body, 32) then
+        return body :: string, nil
+    end
+    return nil, tostring(body)
+end
+
+state.ensureSourceFolders = function(path: string): ()
+    local environment: any = getfenv()
+    if type(environment.makefolder) ~= "function" then
+        return
+    end
+    pcall(environment.makefolder, "Wurst")
+    local cursor: string = "Wurst"
+    for segment: string in string.gmatch(path, "([^/]+)/") do
+        cursor = cursor .. "/" .. segment
+        pcall(environment.makefolder, cursor)
+    end
+end
+
+state.readCachedSource = function(path: string): string?
+    local environment: any = getfenv()
+    local readFile: any = environment.readfile
+    local isFile: any = environment.isfile
+    if type(readFile) ~= "function" then
+        return nil
+    end
+    local stampFile: string = "Wurst/.stamp"
+    if type(isFile) == "function" then
+        local stampOk: boolean, stampExists: any = pcall(isFile, stampFile)
+        if not stampOk or not stampExists then
+            return nil
+        end
+    end
+    local stampOk: boolean, stampBody: any = pcall(readFile, stampFile)
+    if not stampOk or stampBody ~= SOURCE_STAMP then
+        return nil
+    end
+    local localPath: string = "Wurst/" .. path
+    if type(isFile) == "function" then
+        local fileOk: boolean, exists: any = pcall(isFile, localPath)
+        if not fileOk or not exists then
+            return nil
+        end
+    end
+    local readOk: boolean, source: any = pcall(readFile, localPath)
+    if readOk and state.sourceLooksValid(source, 32) then
+        return source :: string
+    end
+    return nil
+end
+
+state.writeCachedSource = function(path: string, source: string): ()
+    local environment: any = getfenv()
+    local writeFile: any = environment.writefile
+    if type(writeFile) ~= "function" then
+        return
+    end
+    state.ensureSourceFolders(path)
+    pcall(writeFile, "Wurst/" .. path, source)
+    pcall(writeFile, "Wurst/.stamp", SOURCE_STAMP)
+end
+
+state.sweepStaleSources = function(): number
+    local environment: any = getfenv()
+    local listFiles: any = environment.listfiles
+    local deleteFile: any = environment.delfile
+    local isFolder: any = environment.isfolder
+    if type(listFiles) ~= "function" or type(deleteFile) ~= "function" then
+        return 0
+    end
+    local bundle: any = state.boot.bundle
+    if type(bundle) ~= "table" or next(bundle) == nil then
+        return 0
+    end
+    local removed: number = 0
+    local function sweep(folder: string): ()
+        local listed: boolean, entries: any = pcall(listFiles, folder)
+        if not listed or type(entries) ~= "table" then
+            return
+        end
+        for _, path: any in ipairs(entries) do
+            local entry: string = tostring(path)
+            local isDirectory: boolean = false
+            if type(isFolder) == "function" then
+                local checked: boolean, verdict: any = pcall(isFolder, entry)
+                isDirectory = checked and verdict == true
+            end
+            if isDirectory then
+                sweep(entry)
+            else
+                local relative: string = entry:gsub("\\", "/")
+                    :gsub("^.-Wurst/", "")
+                if relative ~= ".stamp" and bundle[relative] == nil then
+                    if pcall(deleteFile, entry) then
+                        removed += 1
+                    end
+                end
+            end
+        end
+    end
+    sweep("Wurst")
+    return removed
+end
+
+state.fetchRepositorySource = function(path: string): (string?, string?)
+    local bundled: any = state.boot.bundle and state.boot.bundle[path]
+    if type(bundled) == "string" then
+        state.boot.sources[path] = bundled
+        return bundled, nil
+    end
+    local remembered: string? = state.boot.sources[path]
+    if remembered then
+        return remembered, nil
+    end
+    local cached: string? = state.readCachedSource(path)
+    if cached then
+        state.boot.sources[path] = cached
+        return cached, nil
+    end
+    local downloaded: string?, downloadError: string? = state.httpGetPath(path)
+    if downloaded then
+        state.boot.sources[path] = downloaded
+        state.writeCachedSource(path, downloaded)
+        return downloaded, nil
+    end
+    local environment: any = getfenv()
+    local readFile: any = environment.readfile
+    local isFile: any = environment.isfile
+    local localPath: string = "Wurst/" .. path
+    if type(readFile) == "function"
+        and (type(isFile) ~= "function" or isFile(localPath)) then
+        local readOk: boolean, localSource: any = pcall(readFile, localPath)
+        if readOk and state.sourceLooksValid(localSource, 32) then
+            state.boot.sources[path] = localSource
+            return localSource :: string, nil
+        end
+    end
+    return nil, downloadError or ("Download failed: " .. path)
+end
+
+state.compileRepositorySource = function(path: string, source: string): (any, string?)
+    local environment: any = getfenv()
+    if type(environment.loadstring) ~= "function" then
+        return nil, "The executor does not support loadstring"
+    end
+    local chunk: any, compileError: any = environment.loadstring(source, "@" .. path)
+    if type(chunk) ~= "function" then
+        return nil, "Compilation failed (" .. path .. "): " .. tostring(compileError)
+    end
+    if type(environment.setfenv) == "function" and state.frameworkEnvironment then
+        environment.setfenv(chunk, state.frameworkEnvironment)
+    end
+    local ran: boolean, result: any = pcall(chunk)
+    if not ran then
+        return nil, "Execution failed (" .. path .. "): " .. tostring(result)
+    end
+    return result, nil
+end
+
+state.fetchRepositoryChunk = function(path: string): (any, string?)
+    local source: string?, sourceError: string? = state.fetchRepositorySource(path)
+    if not source then
+        return nil, sourceError
+    end
+    return state.compileRepositorySource(path, source :: string)
+end
+
+state.downloadSourcesParallel = function(paths: {string}): ()
+    local pending: number = #paths
+    if pending == 0 then
+        return
+    end
+    local index: number = 0
+    local workers: number = math.min(8, pending)
+    local timedOut: boolean = false
+    for _ = 1, workers do
+        task.spawn(function(): ()
+            while not timedOut do
+                index += 1
+                local current: number = index
+                if current > #paths then
+                    return
+                end
+                local path: string = paths[current]
+                if not state.boot.sources[path] then
+
+                    local ok: boolean, source: any = pcall(
+                        state.fetchRepositorySource,
+                        path
+                    )
+                    if ok and type(source) == "string" then
+                        state.boot.sources[path] = source
+                    end
+                end
+                pending -= 1
+            end
+        end)
+    end
+    local deadline: number = os.clock() + 12
+    while pending > 0 and os.clock() < deadline do
+        task.wait(0.03)
+    end
+    if pending > 0 then
+        timedOut = true
+
+        for _, path: string in ipairs(paths) do
+            if not state.boot.sources[path] then
+                local source: string? = state.fetchRepositorySource(path)
+                if source then
+                    state.boot.sources[path] = source
+                end
+            end
+        end
+    end
+end
+
+do
+(function(): ()
+local diagnostics: ModuleDiagnostics = {uiBindings = 0, taskBindings = 0}
+state.frameworkEnvironment = createGameModuleEnvironment(diagnostics)
+
+type OwnershipService = {
+    set: (string, any?) -> (),
+    apply: (Instance?) -> (),
+}
+type ModuleServices = {
+    movementInput: any,
+    aim: any,
+    menu: any,
+    mobileActions: any,
+    protectedTargets: any,
+    fovOwnership: OwnershipService,
+    platformStandOwnership: OwnershipService,
+    activity: any,
+    spoofAvatar: any,
+    projectileCalibration: any,
+    gameBridge: any,
+    shortcuts: any,
+    registries: any,
+}
+
+local function makePropertyOwnership(propertyName: string): OwnershipService
+    local owners: {[string]: any} = {}
+    local baselines: any = setmetatable({}, {__mode = "k"})
+    local sequence: number = 0
+    local service: any = {}
+    function service.set(ownerId: string, value: any?): ()
+        if value == nil then
+            owners[ownerId] = nil
+            if next(owners) == nil then
+                for instance: any, baseline: any in pairs(baselines) do
+                    if instance.Parent then
+                        instance[propertyName] = baseline
+                    end
+                end
+                baselines = setmetatable({}, {__mode = "k"})
+            end
+            return
+        end
+        local owner: any = owners[ownerId]
+        if not owner then
+            sequence += 1
+            owner = {sequence = sequence, value = value}
+            owners[ownerId] = owner
+        else
+            owner.value = value
+        end
+    end
+    function service.apply(instance: Instance?): ()
+        if not instance then
+            return
+        end
+        local target: any = instance
+        if baselines[target] == nil then
+            baselines[target] = target[propertyName]
+        end
+        local selected: any = nil
+        for _, owner: any in pairs(owners) do
+            if not selected or owner.sequence > selected.sequence then
+                selected = owner
+            end
+        end
+        if selected then
+            target[propertyName] = selected.value
+        end
+    end
+    return service :: OwnershipService
+end
+
+local protectedTargetProvider: (Player?) -> boolean = function(player: Player?): boolean
+    return player == nil or player == LocalPlayer
+end
+local activityFlags: {[string]: boolean} = {}
+local spoofEmotes: {any} = {}
+local spoofDescription: HumanoidDescription? = nil
+local projectileCalibrationOwner: any = nil
+
+local SCREEN_CAPTURE_NAMES: {string} = {
+    "screenshot",
+    "captureScreenshot",
+    "capture_screenshot",
+    "getScreenshot",
+}
+local function findScreenCapture(): any
+    local environment: any = getfenv()
+    for _, name: string in ipairs(SCREEN_CAPTURE_NAMES) do
+        local candidate: any = environment[name]
+        if type(candidate) == "function" then
+            return candidate
+        end
+    end
+    return nil
+end
+local screenCaptureService: any = {
+    isAvailable = function(): boolean
+        return findScreenCapture() ~= nil
+    end,
+    capture = function(path: string): (boolean, string?)
+        local environment: any = getfenv()
+        local capture: any = findScreenCapture()
+        if type(capture) ~= "function" then
+            return false, "executor has no screen capture API"
+        end
+        local folder: string? = string.match(path, "^(.*)/[^/]+$")
+        local isFolder: any = environment.isfolder
+        local makeFolder: any = environment.makefolder
+        if folder and type(isFolder) == "function" and type(makeFolder) == "function" then
+            local parent: string? = string.match(folder :: string, "^(.*)/[^/]+$")
+            if parent and not isFolder(parent) then
+                pcall(makeFolder, parent)
+            end
+            if not isFolder(folder :: string) then
+                pcall(makeFolder, folder)
+            end
+        end
+
+        local ok: boolean, result: any = pcall(capture, path)
+        if not ok then
+            ok, result = pcall(capture)
+        end
+        if not ok then
+            return false, tostring(result)
+        end
+        if result == false then
+            return false, "screen capture API declined the request"
+        end
+
+        if type(result) == "string"
+            and result ~= ""
+            and type(environment.writefile) == "function" then
+            pcall(environment.writefile, path, result)
+        end
+        return true, nil
+    end,
+    writeText = function(path: string, contents: string): boolean
+        local environment: any = getfenv()
+        if type(environment.writefile) ~= "function" then
+            return false
+        end
+        return pcall(environment.writefile, path, contents) == true
+    end,
+}
+
+local moduleServices: ModuleServices = {
+    movementInput = {
+        getVector = state.getMoveInput,
+        isJumpHeld = state.isJumpHeld,
+        onJumpRequest = state.onJumpRequest,
+    },
+    aim = {getRay = state.getAimRay},
+    screenCapture = screenCaptureService,
+    menu = {
+        isVisible = function(): boolean return state.visible == true end,
+        isCapturingInput = function(): boolean
+            return state.keyCaptureCallback ~= nil or state.waitingForKey == true
+        end,
+        setVisible = function(visible: boolean): () state.setMenuVisible(visible) end,
+    },
+    mobileActions = {
+
+        bindPlacement = function(...: any): any
+            local bindPlacement: any = state.bindMobileActionPlacement
+            if type(bindPlacement) == "function" then
+                return bindPlacement(...)
+            end
+            return nil
+        end,
+    },
+    protectedTargets = {
+        isProtected = function(player: Player?): boolean
+            return protectedTargetProvider(player)
+        end,
+        setProvider = function(provider: ((Player?) -> boolean)?): ()
+            protectedTargetProvider = provider or function(player: Player?): boolean
+                return player == nil or player == LocalPlayer
+            end
+        end,
+    },
+    fovOwnership = makePropertyOwnership("FieldOfView"),
+    platformStandOwnership = makePropertyOwnership("PlatformStand"),
+    activity = {
+        set = function(name: string, active: boolean): () activityFlags[name] = active end,
+        isActive = function(name: string): boolean return activityFlags[name] == true end,
+    },
+    spoofAvatar = {
+        getEmotes = function(): {any} return spoofEmotes end,
+        setEmotes = function(emotes: {any}): () spoofEmotes = emotes end,
+        getDescription = function(): HumanoidDescription? return spoofDescription end,
+        setDescription = function(value: HumanoidDescription?): () spoofDescription = value end,
+    },
+    projectileCalibration = {
+        set = function(owner: any): () projectileCalibrationOwner = owner end,
+        get = function(): any return projectileCalibrationOwner end,
+    },
+    gameBridge = {
+        onEvent = state.onGameBridge,
+        playerRole = state.playerRole,
+    },
+    shortcuts = {bindActivation = state.bindFeatureActivationKey},
+    registries = {
+        wurstOptions = function(): any return state.wurstOptions end,
+        moduleSearch = function(): any return state.moduleSearch end,
+    },
+}
+state.frameworkEnvironment.services = moduleServices
+
+local fallbackManifest: any = {
+    version = 1,
+    widgets = "src/GUI's/Wurst/Code/Widgets.lua",
+    core = {"src/library/Framework.lua"},
+    libraries = {
+        "src/library/Entity.lua",
+        "src/library/Targeting.lua",
+        "src/library/Weapons.lua",
+        "src/library/Render.lua",
+        "src/GUI's/Wurst/Code/Cards.lua",
+        "src/GUI's/Wurst/Code/WindowManager.lua",
+        "src/GUI's/Wurst/Code/ClickGui.lua",
+        "src/GUI's/Wurst/Code/FloatingWindows.lua",
+        "src/GUI's/Wurst/Code/SettingsPage.lua",
+        "src/GUI's/Wurst/Code/MobileActions.lua",
+        "src/GUI's/Wurst/Code/Furniture.lua",
+    },
+    modules = {
+        {path = "src/Hacks/FriendList.lua", name = "Friend List", category = "Other"},
+        {path = "src/Hacks/ItemRender.lua", name = "ItemESP", category = "Render"},
+        {path = "src/Hacks/PlayerESP.lua", name = "PlayerESP", category = "Render"},
+        {path = "src/Hacks/Chams.lua", name = "Chams", category = "Render"},
+        {path = "src/Hacks/Arrows.lua", name = "Arrows", category = "Render"},
+        {path = "src/Hacks/NPCESP.lua", name = "NPCESP", category = "Render"},
+        {path = "src/Hacks/KillAura.lua", name = "Killaura", category = "Combat"},
+        {path = "src/Hacks/RemoteLogger.lua", name = "Remote Logger", category = "Other"},
+        {path = "src/Hacks/Learning.lua", name = "Learning", category = "Other"},
+        {path = "src/Hacks/ClickTeleport.lua", name = "Click Teleport", category = "Movement"},
+        {path = "src/Hacks/AutoClicker.lua", name = "Auto Clicker", category = "Combat"},
+        {path = "src/Hacks/TriggerBot.lua", name = "TriggerBot", category = "Combat"},
+        {path = "src/Hacks/AimAssist.lua", name = "Aim Assist", category = "Combat"},
+        {path = "src/Hacks/XRay.lua", name = "X-Ray", category = "Render"},
+        {path = "src/Hacks/HighJump.lua", name = "HighJump", category = "Movement"},
+        {path = "src/Hacks/Spider.lua", name = "Spider", category = "Movement"},
+        {path = "src/Hacks/WallHop.lua", name = "WallHop", category = "Movement"},
+        {path = "src/Hacks/SafeWalk.lua", name = "SafeWalk", category = "Movement"},
+        {path = "src/Hacks/RejoinServer.lua", name = "Rejoin Server", category = "Other"},
+        {path = "src/Hacks/ZoomUnlocker.lua", name = "Zoom", category = "Render"},
+        {path = "src/Hacks/InteractExtender.lua", name = "Interact Extender", category = "Other"},
+        {path = "src/Hacks/PhaseDash.lua", name = "Phase Dash", category = "Movement"},
+        {path = "src/Hacks/NoFall.lua", name = "NoFall", category = "Movement"},
+        {path = "src/Hacks/Fly.lua", name = "Flight", category = "Movement"},
+        {path = "src/Hacks/VehicleSpeed.lua", name = "Vehicle Speed", category = "Movement"},
+        {path = "src/Hacks/AntiVoid.lua", name = "Anti-Void", category = "Movement"},
+        {path = "src/Hacks/Gravity.lua", name = "Gravity", category = "Movement"},
+        {path = "src/Hacks/JumpPower.lua", name = "Jump Power", category = "Movement"},
+        {path = "src/Hacks/InfiniteJump.lua", name = "Infinite Jump", category = "Movement"},
+        {path = "src/Hacks/FieldOfView.lua", name = "FOV", category = "Render"},
+        {path = "src/Hacks/Noclip.lua", name = "Noclip", category = "Movement"},
+        {path = "src/Hacks/AntiAfk.lua", name = "AntiAFK", category = "Other"},
+        {path = "src/Hacks/AntiFling.lua", name = "Anti-Fling", category = "Other"},
+        {path = "src/Hacks/LagSwitch.lua", name = "Lag Switch", category = "Other"},
+        {path = "src/Hacks/Fling.lua", name = "Fling", category = "Other"},
+        {path = "src/Hacks/ImproveFps.lua", name = "Improve FPS", category = "Other"},
+        {path = "src/Hacks/Fullbright.lua", name = "Fullbright", category = "Render"},
+        {path = "src/Hacks/FreezeMovements.lua", name = "Freeze Movements", category = "Movement"},
+        {path = "src/Hacks/Speed.lua", name = "SpeedHack", category = "Movement"},
+        {path = "src/Hacks/Hitboxes.lua", name = "Hitboxes", category = "Combat"},
+        {path = "src/Hacks/ProjectileCalibration.lua", name = "Projectile Calibration", category = "Render"},
+        {path = "src/Hacks/SpinBot.lua", name = "SpinBot", category = "Fun"},
+        {path = "src/Hacks/Disguise.lua", name = "Disguise", category = "Fun"},
+        {path = "src/Hacks/AnimationChanger.lua", name = "Animation Changer", category = "Fun"},
+        {path = "src/Hacks/EmotePlayer.lua", name = "Emote Player", category = "Fun"},
+    },
+}
+
+local bundleAt: number = os.clock()
+local packed: any, packedError: string? = state.fetchRepositoryChunk("src/bundle.lua")
+if type(packed) == "table"
+    and packed.stamp == SOURCE_STAMP
+    and type(packed.files) == "table" then
+    state.boot.bundle = packed.files
+    state.logBootstrap("Bundle accepted · stamp=" .. SOURCE_STAMP)
+
+    task.spawn(function(): ()
+        local staleSources: number = state.sweepStaleSources()
+        local staleAssets: number = state.sweepStaleAssets()
+        if staleSources + staleAssets > 0 then
+            print("[" .. PRODUCT.logPrefix .. ":Cache] swept "
+                .. tostring(staleSources) .. " stale source(s), "
+                .. tostring(staleAssets) .. " stale asset(s)")
+        end
+    end)
+else
+    if packedError then
+        state.logBootstrapError("Bundle: " .. packedError)
+    elseif type(packed) == "table" then
+        state.logBootstrapError(
+            "Bundle stamp mismatch: got "
+                .. tostring(packed.stamp)
+                .. " expected "
+                .. SOURCE_STAMP
+        )
+    end
+    state.boot.bundle = nil
+end
+state.markBoot("bundle", bundleAt)
+
+local manifestAt: number = os.clock()
+local manifest: any, manifestError: string? =
+    state.fetchRepositoryChunk("src/library/Manifest.lua")
+if type(manifest) ~= "table" or type(manifest.modules) ~= "table" then
+    if manifestError then
+        state.logBootstrapError("Manifest: " .. manifestError)
+    end
+    manifest = fallbackManifest
+end
+state.markBoot("manifest", manifestAt)
+
+local loadList: {string} = {}
+table.insert(loadList, manifest.widgets or "src/GUI's/Wurst/Code/Widgets.lua")
+for _, path: string in ipairs(manifest.core or {}) do
+    table.insert(loadList, path)
+end
+for _, path: string in ipairs(manifest.libraries or {}) do
+    table.insert(loadList, path)
+end
+for _, entry: any in ipairs(manifest.modules or {}) do
+    table.insert(loadList, type(entry) == "table" and entry.path or tostring(entry))
+end
+if not state.boot.bundle then
+    state.downloadSourcesParallel(loadList)
+end
+
+local loaded: {any} = {}
+local function loadPiece(path: string): any?
+    local piece: any, failure: string? = state.fetchRepositoryChunk(path)
+    if type(piece) ~= "table" or type(piece.init) ~= "function" then
+        state.logBootstrapError(
+            "Invalid module: " .. path .. " · " .. tostring(failure)
+        )
+        return nil
+    end
+    return piece
+end
+
+local widgetsAt: number = os.clock()
+local widgetPath: string = manifest.widgets or "src/GUI's/Wurst/Code/Widgets.lua"
+local widgetPiece: any? = loadPiece(widgetPath)
+if widgetPiece then
+    local widgetOk: boolean, builders: any = pcall(
+        widgetPiece.init,
+        state.frameworkEnvironment
+    )
+    if widgetOk and type(builders) == "table" then
+        table.insert(loaded, widgetPiece)
+        widgetBuilders = builders
+        for builderName: string, builder: any in pairs(builders) do
+            state.frameworkEnvironment[builderName] = function(...: any): any
+                diagnostics.uiBindings += 1
+                return builder(...)
+            end
+        end
+    else
+        state.logBootstrapError("Widgets init failed: " .. tostring(builders))
+    end
+end
+state.markBoot("widgets", widgetsAt)
+if not widgetBuilders then
+    state.logBootstrapError(
+        "Widget library unavailable; modules cannot build their settings"
+    )
+    notify("Could not load the widget library")
+    state.summarizeBoot()
+    return
+end
+
+local frameworkAt: number = os.clock()
+local frameworkPiece: any? = loadPiece(manifest.core[1] or "src/library/Framework.lua")
+if not frameworkPiece then
+    state.logBootstrapError("Framework unavailable; external modules skipped")
+    state.summarizeBoot()
+    return
+end
+local frameworkOk: boolean, framework: any = pcall(
+    frameworkPiece.init,
+    state.frameworkEnvironment
+)
+if not frameworkOk or type(framework) ~= "table" then
+    state.logBootstrapError("Framework init failed: " .. tostring(framework))
+    state.summarizeBoot()
+    return
+end
+table.insert(loaded, frameworkPiece)
+state.framework = framework
+state.markBoot("framework", frameworkAt)
+
+local librariesAt: number = os.clock()
+local libraries: any = {}
+for _, path: string in ipairs(manifest.libraries or {}) do
+    local piece: any? = loadPiece(path)
+    if not piece then
+        continue
+    end
+    local startedOk: boolean, library: any = pcall(
+        piece.init,
+        state.frameworkEnvironment
+    )
+    if not startedOk or type(library) ~= "table" then
+        state.logBootstrapError(
+            "Library failed (" .. path .. "): " .. tostring(library)
+        )
+        continue
+    end
+    table.insert(loaded, piece)
+    local key: string = string.lower(
+        string.match(path, "([^/]+)%.lua$") or path
+    )
+    libraries[key] = library
+end
+
+local cardLibrary: any = libraries.cards
+if cardLibrary and type(cardLibrary.createUniversalFeature) == "function" then
+    widgetBuilders.createUniversalFeature = cardLibrary.createUniversalFeature
+    state.frameworkEnvironment.createUniversalFeature = function(...: any): any
+        diagnostics.uiBindings += 1
+        return cardLibrary.createUniversalFeature(...)
+    end
+else
+    state.logBootstrapError("Card factory unavailable; modules cannot create cards")
+    notify("Could not load the card factory")
+    return
+end
+
+local entityLibrary: any = libraries.entity
+state.weaponLibrary = libraries.weapons
+state.renderLibrary = libraries.render
+state.markBoot("libraries", librariesAt)
+
+local context: any = {
+    framework = framework,
+    entity = entityLibrary,
+    weapons = libraries.weapons,
+    render = libraries.render,
+    libraries = libraries,
+    host = state.frameworkEnvironment,
+    services = moduleServices,
+}
+local modulesAt: number = os.clock()
+local moduleCount: number = 0
+for _, entry: any in ipairs(manifest.modules) do
+    local path: string = type(entry) == "table" and entry.path or tostring(entry)
+    local piece: any? = loadPiece(path)
+    if piece then
+        local started: boolean, failure: any = pcall(piece.init, context)
+        if started then
+            table.insert(loaded, piece)
+            moduleCount += 1
+            state.logBootstrap("Module loaded: " .. path)
+        else
+            state.logBootstrapError(
+                "Module failed (" .. path .. "): " .. tostring(failure)
+            )
+        end
+    end
+end
+state.boot.timing.moduleCount = moduleCount
+state.boot.timing.moduleTotal = #manifest.modules
+state.markBoot("modules", modulesAt)
+
+if moduleCount < #manifest.modules then
+    local missing: number = #manifest.modules - moduleCount
+    state.logBootstrapError(
+        tostring(missing)
+            .. " de "
+            .. tostring(#manifest.modules)
+            .. " modules did not start; look for \"Module failed\" above"
+    )
+    notify(tostring(missing) .. " modules did not load — check the console")
+end
+
+state.cleanupFrameworkRuntime = function(): ()
+    for index: number = #loaded, 1, -1 do
+        local piece: any = loaded[index]
+        if type(piece.destroy) == "function" then
+            pcall(piece.destroy)
+        end
+    end
+    table.clear(loaded)
+    state.framework = nil
+    state.renderLibrary = nil
+end
+state.summarizeBoot()
+end)()
+end
+
+do
+    local savedFont: string = tostring(configData.values.interfaceFont or "")
+    if savedFont == "" or savedFont == "Menu default"
+
+        or savedFont == "Minecraft (Monocraft)"
+        or savedFont == "Candy Fruits" then
+        savedFont = "Code"
+    end
+    task.spawn(function(): ()
+        state.applyInterfaceFont(savedFont, false)
+    end)
+end
+
+do
+local function initializeWindowInput(): ()
+
+local function reflowForViewport(force: boolean?): ()
+    task.defer(function(): ()
+        if not ScreenGui.Parent then
+            return
+        end
+        state.refreshLayout(force)
+        if state.floatingUi and state.floatingUi.reclamp then
+            state.floatingUi.reclamp()
+        end
+    end)
+end
+
+local viewportConnection: RBXScriptConnection? = nil
+local function bindViewport(): ()
+    if viewportConnection then
+        viewportConnection:Disconnect()
+        viewportConnection = nil
+    end
+    local camera: Camera? = workspace.CurrentCamera
+    if not camera then
+        return
+    end
+    viewportConnection = trackUiConnection(
+        camera:GetPropertyChangedSignal("ViewportSize"):Connect(function(): ()
+            reflowForViewport(false)
+        end)
+    )
+end
+
+bindViewport()
+
+trackUiConnection(workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(
+    function(): ()
+        bindViewport()
+        reflowForViewport(true)
+    end
+))
+
+state.globalInputBeganConnection = UserInputService.InputBegan:Connect(function(input)
+    if state.keyCaptureCallback then
+        if input.UserInputType == Enum.UserInputType.Keyboard
+            and input.KeyCode ~= Enum.KeyCode.Unknown then
+            if input.KeyCode == Enum.KeyCode.Escape then
+                if state.keyCaptureCancel then
+                    state.keyCaptureCancel()
+                end
+                return
+            end
+            local callback = state.keyCaptureCallback
+            callback(input.KeyCode)
+            task.defer(function(): ()
+                if state.keyCaptureCallback == callback then
+                    state.keyCaptureCallback = nil
+                end
+            end)
+        end
+        return
+    end
+
+    if state.waitingForKey then
+        if input.UserInputType == Enum.UserInputType.Keyboard
+            and input.KeyCode ~= Enum.KeyCode.Unknown then
+            if input.KeyCode == Enum.KeyCode.Escape then
+                state.waitingForKey = false
+                if state.keybindButton then
+                    state.keybindButton.Text = state.keyDisplayName(state.toggleKey.Name)
+                    setKeySlotCapture(state.keybindButton, false)
+                end
+                return
+            end
+            state.toggleKey = input.KeyCode
+            if state.keybindButton then
+                state.keybindButton.Text = state.keyDisplayName(input.KeyCode.Name)
+                setKeySlotCapture(state.keybindButton, false)
+            end
+            configData.ui.toggleKey = input.KeyCode.Name
+            queueConfigSave()
+            notify("Menu key: " .. input.KeyCode.Name)
+            task.defer(function(): ()
+                state.waitingForKey = false
+            end)
+        end
+        return
+    end
+
+    if UserInputService:GetFocusedTextBox() then
+        return
+    end
+
+    if input.UserInputType == Enum.UserInputType.Keyboard
+        and input.KeyCode == state.toggleKey then
+        state.openMenuSurface()
+    end
+end)
+end
+initializeWindowInput()
+
+task.defer(function(): ()
+    state.refreshLayout(true)
+end)
+end
+
+local runtimeCleaned: boolean = false
+
+local function cleanupStep(label: string, step: () -> ()): ()
+    local ok: boolean, failure: any = pcall(step)
+    if not ok then
+        warn("[" .. PRODUCT.name .. "] destruct/" .. label .. ": " .. tostring(failure))
+    end
+end
+
+local function cleanupRuntime(): ()
+    if runtimeCleaned then
+        return
+    end
+    runtimeCleaned = true
+
+    cleanupStep("teleport persistence", function(): ()
+
+        if state.teleportPersist then
+            state.teleportPersist.enabled = false
+        end
+        local environment: any = getfenv()
+        local getGenv: any = environment.getgenv
+        if type(getGenv) == "function" then
+            local ok: boolean, genv: any = pcall(getGenv)
+            if ok and type(genv) == "table" then
+                genv.WURST_STOPPED = true
+            end
+        end
+    end)
+    cleanupStep("blur", function(): ()
+        if MenuBlur then
+            MenuBlur:Destroy()
+            MenuBlur = nil
+        end
+    end)
+    cleanupStep("cursor", function(): ()
+        setMenuCursorUnlocked(false)
+    end)
+    cleanupStep("session", function(): ()
+        if type(state.destroySessionTracking) == "function" then
+            state.destroySessionTracking()
+        end
+        state.sessionInfo = nil
+    end)
+
+    for _, feature in ipairs(allFeatures) do
+        if feature.enabled then
+            cleanupStep("feature " .. tostring(feature.name), function(): ()
+                feature.onToggle(false)
+            end)
+            feature.enabled = false
+        end
+    end
+
+    cleanupStep("held keybinds", function(): ()
+        for _, binding: any in pairs(state.shortcutBindings) do
+            if binding.hold and binding.pressed and binding.onRelease then
+                binding.pressed = false
+                binding.onRelease()
+            end
+        end
+        table.clear(state.shortcutBindings)
+    end)
+    cleanupStep("feature connections", function(): ()
+        for name in pairs(featureConnections) do
+            disconnectFeatureConnection(name)
+        end
+    end)
+    cleanupStep("tooltips", function(): ()
+        for _, connection: RBXScriptConnection in ipairs(state.tooltipConnections) do
+            connection:Disconnect()
+        end
+        table.clear(state.tooltipConnections)
+    end)
+    cleanupStep("ui connections", function(): ()
+        for _, connection: RBXScriptConnection in ipairs(state.uiConnections) do
+            connection:Disconnect()
+        end
+        table.clear(state.uiConnections)
+    end)
+    cleanupStep("projectile calibration", function(): ()
+        local services: any = state.frameworkEnvironment
+            and state.frameworkEnvironment.services
+        local registry: any = services and services.projectileCalibration
+        local calibration: any = registry and registry.get()
+        if calibration and type(calibration.destroy) == "function" then
+            calibration:destroy()
+        end
+        if registry then
+            registry.set(nil)
+        end
+    end)
+    cleanupStep("task manager", function(): ()
+        TaskManager:Destroy()
+    end)
+    cleanupStep("global input", function(): ()
+        for _, key: string in ipairs({
+            "globalInputChangedConnection",
+            "globalInputEndedConnection",
+            "globalInputBeganConnection",
+            "globalShortcutBeganConnection",
+            "globalShortcutEndedConnection",
+        }) do
+            local connection: any = state[key]
+            if connection then
+                connection:Disconnect()
+                state[key] = nil
+            end
+        end
+    end)
+    cleanupStep("colour picker", function(): ()
+
+        local picker: any = state.colorPicker
+        if not picker then
+            return
+        end
+        if picker.inputChanged then
+            picker.inputChanged:Disconnect()
+        end
+        if picker.inputEnded then
+            picker.inputEnded:Disconnect()
+        end
+    end)
+    cleanupStep("MM2 runtime", cleanupMM2Runtime)
+    for _, key: string in ipairs({
+        "cleanupFrameworkRuntime",
+        "cleanupTRSRuntime",
+        "cleanupVDRuntime",
+        "cleanupMVSDRuntime",
+        "cleanupBedFightRuntime",
+        "cleanupBedWarsRuntime",
+    }) do
+        local cleanup: any = state[key]
+        if type(cleanup) == "function" then
+            cleanupStep(key, cleanup)
+        end
+    end
+    cleanupStep("config", saveConfigNow)
+
+end
+
+state.destruct = function(): ()
+    cleanupStep("runtime", cleanupRuntime)
+    cleanupStep("screen gui", function(): ()
+        if ScreenGui.Parent then
+            ScreenGui:Destroy()
+        end
+    end)
+
+    cleanupStep("leftovers", function(): ()
+        local containers: {Instance} = {PlayerGui}
+        if type(gethui) == "function" then
+            local hiddenOk: boolean, hidden: any = pcall(gethui)
+            if hiddenOk and typeof(hidden) == "Instance" then
+                table.insert(containers, hidden)
+            end
+        end
+        local coreOk: boolean, coreGui: any = pcall(function(): Instance
+            return game:GetService("CoreGui")
+        end)
+        if coreOk and coreGui then
+            table.insert(containers, coreGui)
+        end
+        for _, container: Instance in ipairs(containers) do
+            for _, child: Instance in ipairs(container:GetChildren()) do
+                if child.Name == GUI_NAME then
+                    child:Destroy()
+                end
+            end
+        end
+        local lighting: Instance? = Lighting:FindFirstChild(BLUR_NAME)
+        if lighting then
+            lighting:Destroy()
+        end
+    end)
+    print("[" .. PRODUCT.name .. "] Destruct complete.")
+end
+
+ScreenGui.AncestryChanged:Connect(function(_: Instance, parent: Instance?): ()
+    if not parent then
+        cleanupRuntime()
+    end
+end)
+
+SectionManager.initializeAllAsync()
+task.defer(saveConfigNow)
+
+print(
+    PRODUCT.name
+        .. " v"
+        .. PRODUCT.version
+        .. " | Toggle key: "
+        .. state.toggleKey.Name
+)
+
+if not state.isMobile then
+    notify("Menu ready — press " .. state.toggleKey.Name)
+end
+end
+
+local initialized: boolean, bootstrapError: any = xpcall(bootstrap, function(message: any): string
+    local text: string = tostring(message)
+    if debug and type(debug.traceback) == "function" then
+        return debug.traceback("[" .. PRODUCT.logPrefix .. ":Bootstrap] " .. text, 2)
+    end
+    return "[" .. PRODUCT.logPrefix .. ":Bootstrap] " .. text
+end)
+
+if not initialized then
+
+    local reportFatal: any = (getfenv() :: any).warn
+    if type(reportFatal) == "function" then
+        reportFatal("[" .. PRODUCT.logPrefix .. ":Bootstrap] Initialization stopped:\n" .. tostring(bootstrapError))
+    end
+end

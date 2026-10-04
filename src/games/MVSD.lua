@@ -1,5 +1,3 @@
---!strict
-
 local Module = {
     Name = "MVSD",
     PlaceId = 135856908115931,
@@ -8,29 +6,6 @@ local Module = {
     Menu = nil :: any,
     Runtime = nil :: any,
 }
-
--- MVSD combat module (Murderers vs Sheriffs Duels).
---
--- Reverse-engineered from the live game (PlaceId 135856908115931):
---   * Real team values are attributes: player:GetAttribute("Team") returns
---     "TeamRed" / "TeamBlue" (or a non-team value in FFA). Same value = teammate.
---     player:GetAttribute("Game") is the running match id, player:GetAttribute("Died")
---     is a boolean, player:GetAttribute("Spectating") the match being watched.
---   * The client aims with MouseCast: Camera:ViewportPointToRay(mouse) ->
---     workspace:Raycast(cameraPos, dir * 500, params). The gun reuses this aim,
---     so redirecting camera-origin raycasts redirects the weapon.
---   * The server computes the final hit and echoes the beam via Remotes.Beam.
---
--- Silent aim avoids __namecall entirely: it hooks Ray.new (hookfunction on the
--- constructor) and hooks workspace.Raycast by replacing the instance method
--- closure with hookfunction. Both redirect the ray direction onto the predicted
--- target part. Wall check OFF swaps the params to an Include filter containing
--- only the target part, which makes the ray ignore every map wall.
---
--- The game client has no dedicated anticheat (no client-side detection/kick
--- scripts); the only Kick is inside the admin "conch" console. The module never
--- sets player attributes or fires fake remotes, so it does not feed the
--- server-side validation. Input is simulated with mouse1press/mouse1release.
 
 type AimSettings = {
     teamCheck: boolean,
@@ -105,10 +80,6 @@ type AimRuntime = {
 
 local moduleCleanup: () -> () = function(): () end
 
--- The universal Aim Assist is camera-only, but this legacy game adapter owns
--- process-wide ray hooks while its own Silent Aim card is on. Publish that
--- ownership so the universal camera module can stand down instead of competing
--- with it. This flag does not install, remove or hide a hook.
 local function setSilentAimActivity(active: boolean): ()
     local runtime: any = Module.Runtime
     local services: any = runtime and runtime.Services
@@ -177,7 +148,6 @@ local function buildMVSDFeatures(): ()
         return getRoot(character)
     end
 
-    -- Real game team/round/died logic. Same Team attribute string = teammate.
     local function isSameTeam(a: Player, b: Player): boolean
         local aTeam: any = a:GetAttribute("Team")
         local bTeam: any = b:GetAttribute("Team")
@@ -198,7 +168,6 @@ local function buildMVSDFeatures(): ()
         return playerGame == localGame
     end
 
-    -- Valid opponent for combat features (silent aim / auto shoot).
     local function isActiveOpponent(player: Player): boolean
         if player == LocalPlayer or player:GetAttribute("Died") == true then
             return false
@@ -284,9 +253,6 @@ local function buildMVSDFeatures(): ()
         return record
     end
 
-    -- Predicted impact point: pos + vel*leadTime + 0.5*acc*leadTime^2.
-    -- Lead time = (ping + travel time) * multiplier, scaled by target state
-    -- (airborne / sprint / direction change) like newvape's prediction library.
     local function projectTarget(
         part: BasePart,
         motion: MotionRecord,
@@ -356,8 +322,6 @@ local function buildMVSDFeatures(): ()
         return result == nil or result.Instance:IsDescendantOf(character)
     end
 
-    -- Selects the best valid opponent inside the FOV circle, updated every frame
-    -- on the single Heartbeat task so the silent-aim hook always has a fresh lock.
     local function selectTarget(
         camera: Camera,
         deltaTime: number,
@@ -429,7 +393,6 @@ local function buildMVSDFeatures(): ()
         return best
     end
 
-    -- Redirects a ray's direction onto the locked target. Follows newvape.
     local function redirectRay(
         origin: Vector3,
         direction: Vector3
@@ -445,21 +408,18 @@ local function buildMVSDFeatures(): ()
         if not camera then
             return nil
         end
-        -- Only camera-origin rays: those are the gun / mouse casts.
+
         if (origin - camera.CFrame.Position).Magnitude > 12 then
             return nil
         end
         if direction.Magnitude < 1 then
             return nil
         end
-        -- Plausibility: hit chance occasionally lets a real shot pass through
-        -- unredirected, so not every shot is a perfect hit.
+
         if (math.random() * 100) > settings.hitChance then
             return nil
         end
-        -- Plausibility: only redirect when the target is near the crosshair
-        -- direction. Redirecting to a target far off to the side is the classic
-        -- impossible-shot pattern the server validation flags.
+
         local toTarget: Vector3 = target.predictedPosition - origin
         local toUnit: Vector3 = toTarget.Unit
         local look: Vector3 = camera.CFrame.LookVector
@@ -468,8 +428,7 @@ local function buildMVSDFeatures(): ()
         if degrees > settings.maxAimAngle then
             return nil
         end
-        -- Headshot chance: downgrade to the root part occasionally so the hit
-        -- distribution stays plausible instead of 100% headshots.
+
         local aimPart: BasePart = target.part
         if settings.targetPart == "Head"
             and (math.random() * 100) > settings.headshotChance then
@@ -540,11 +499,6 @@ local function buildMVSDFeatures(): ()
         return true
     end
 
-    -- Hooks workspace.Raycast by replacing the instance method closure with
-    -- hookfunction (no __namecall / no getnamecallmethod). All
-    -- workspace:Raycast(...) calls from the game (including the weapon's
-    -- MouseCast) resolve through this closure, so a dot/colon call with
-    -- (self, origin, direction, params) reaches the redirect.
     local function installRaycastHook(): boolean
         if runtime.raycastHookInstalled then
             return true
@@ -639,7 +593,7 @@ local function buildMVSDFeatures(): ()
 
     local function createVisuals(): VisualRecord
         local root: Frame = Instance.new("Frame")
-        root.Name = "RTM_MVSD_AimOverlay"
+        root.Name = "Wurst_MVSD_AimOverlay"
         root.Active = false
         root.BackgroundTransparency = 1
         root.BorderSizePixel = 0
@@ -721,9 +675,6 @@ local function buildMVSDFeatures(): ()
         runtime.triggerEnteredAt = nil
     end
 
-    -- The game weapon exposes cooldown attributes on the equipped tool. Respecting
-    -- them stops auto shoot from firing faster than the game allows, which is a
-    -- detectable macro pattern.
     local function weaponCanFire(): boolean
         local character: Model? = LocalPlayer.Character
         local tool: Tool? = character and character:FindFirstChildWhichIsA("Tool") or nil
@@ -736,8 +687,6 @@ local function buildMVSDFeatures(): ()
         return true
     end
 
-    -- Instant triggerbot: holds/releases fire while a valid opponent is locked
-    -- in the FOV. Zero delay (default) toggles the click every frame for max RoF.
     local function releaseAutoShoot(): boolean
         if not runtime.autoShootHeld then
             runtime.autoShootNextAt = os.clock()
@@ -783,8 +732,7 @@ local function buildMVSDFeatures(): ()
                     if not releaseAutoShoot() then
                         return
                     end
-                    -- Humanize: small random jitter between bursts so the fire
-                    -- rate is not a constant machine-gun pattern.
+
                     local delay: number = math.max(settings.shotDelay, 0)
                         + math.random() * math.max(settings.humanizeDelay, 0)
                     runtime.autoShootNextAt = now + delay
@@ -919,13 +867,6 @@ local function buildMVSDFeatures(): ()
         featureConnections.MVSDAimCore = TaskManager:Connect(updateCore)
     end
 
-    -- No ESP card here.
-    --
-    -- This one drew boxes, names, health and distance over players — which is
-    -- the universal Player ESP, minus its corner boxes, skeletons, chams,
-    -- tracers and name plates. Two ESPs in one menu is one too many, so this
-    -- game contributes its team split to the shared one instead and the
-    -- duplicate is gone.
     registerRoleProvider({
         Name = "MVSD",
         Roles = {"Enemy", "Teammate"},
@@ -1057,10 +998,7 @@ local function buildMVSDFeatures(): ()
             runtime.visuals.root:Destroy()
             runtime.visuals = nil
         end
-        -- No local ESP left to destroy: MVSD's marks were folded into the
-        -- universal Player ESP, and the call to the function that drew them
-        -- outlived the function itself. It threw, and the teardown below it
-        -- never ran.
+
         runtime.selected = nil
         table.clear(runtime.motion)
     end

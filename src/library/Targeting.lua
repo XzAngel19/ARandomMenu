@@ -1,15 +1,3 @@
---!strict
---
--- Targeting library.
---
--- Target selection is deliberately pure from a module's point of view: it
--- reads the entity index and camera, applies the same team/friend/visibility
--- policy to every caller, and returns a player or NPC record. It never moves
--- the camera, fires a tool, edits a remote or installs a hook. Aim Assist uses
--- the result;
--- a future supported-game adapter can use the same result without sharing any
--- of the side effects.
-
 export type Query = {
     FOV: number?,
     MaxDistance: number?,

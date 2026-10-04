@@ -1,46 +1,3 @@
---!strict
---
--- BedFight (place 71480482338212).
---
--- Everything here is taken from the saved place in `reference/`, not guessed:
---
---   * beds live in `Workspace.BedsContainer`, each a Model with `Mattress`,
---     `BedHitbox` and a `BedLegs` folder;
---   * generators are Parts under `Workspace.<Map>.Generators.<Kind>Generators`,
---     each carrying a `ProgressGui.TimerLabel` with the countdown the game
---     itself draws;
---   * round state is in `ReplicatedStorage.GameInfo` — `Status`, `GameMode`,
---     `AllBedsBroken`, `Map`, and a `DeathBarrierInfo` configuration;
---   * the swing is `PlayerGui.MobileGui.ButtonsFrame.Sword`, whose
---     `MouseButton1Down`/`MouseButton1Click` the game listens on. There is no
---     Tool anywhere in this game.
---
--- The argument shapes below are not guesses either: they were captured live
--- with the Remote Logger and the logs are in `reference/remote-logs/`.
---
---   EquipTool           :FireServer("Wooden Sword")
---   PlaceBlock          :FireServer("Green Wool", 5, Vector3(-237, 60, 6))
---   SwordHit            :FireServer(«Model PlayersContainer.someone», "Wooden Sword")
---   PurchaseItemShopItem:FireServer(«Part …ItemShopPrompts.ItemShopPrompt», "Blocks", "Wool")
---   WearArmor           :FireServer("", "Pants")
---   MineBlock           :FireServer("Wooden Pickaxe", «Part …PlayersBlocksContainer.Wool.Blue Wool»,
---                                   Vector3(30, 69, 288), Vector3(30.93, 75.36, 287.98),
---                                   Vector3(-0.13, -0.98, -0.12))
---   DropItem            :FireServer("Blue Wool", "All")
---
--- `MineBlock` is the other one worth having: tool *name*, the block part, the
--- block's grid position, where the swing came from and the direction it went.
--- Every one of those is something the client chooses, so mining does not
--- require standing next to the block, holding the pickaxe, or pointing at it.
--- `PlaceBlock`'s second argument is not the constant it first looked like — it
--- came back as 5 and then as 3 — so it is exposed rather than hard-coded.
---
--- `SwordHit` is the interesting one: the client names the victim and the
--- weapon, and the server takes its word for it. Damage therefore does not
--- depend on where you are standing, which is what makes a server-side aura
--- possible at all — and why it is rate-limited here rather than fired every
--- frame.
-
 local Module = {
     Name = "BedFight",
     PlaceId = 71480482338212,
@@ -57,9 +14,6 @@ local runtimeState: any = {
     lastSafe = nil :: Vector3?,
 }
 
--- Beds and generators are placed when the map loads and then stay put, so the
--- world is swept on a timer rather than every frame; the marks themselves are
--- updated every frame from the cached list.
 local mapCache: any = {beds = {}, generators = {}, at = -1}
 
 local function clearMarks(store: {[Instance]: any}): ()
@@ -71,7 +25,6 @@ local function clearMarks(store: {[Instance]: any}): ()
     end
 end
 
--- Remote lookup, cached: these live in one folder and never move.
 local remoteCache: any = {}
 
 local function remote(path: string): Instance?
@@ -122,7 +75,6 @@ local function readValue(name: string): any
     return nil
 end
 
--- Beds: the container is fixed, the map folder is not, so both are swept.
 local function scanBeds(): {Model}
     local beds: {Model} = {}
     local container: Instance? = workspace:FindFirstChild("BedsContainer")
@@ -202,8 +154,7 @@ function Module.init(runtime: any): any
     local createUniversalFeature: any = host.createUniversalFeature
     local addToggleOption: any = host.addToggleOption
     local addNumberOption: any = host.addNumberOption
-    -- ESP for this game's own objects is contributed to the universal Player
-    -- ESP rather than shipped as cards of its own.
+
     local registerEspExtra: any = host.registerEspExtra
     local addTextOption: any = host.addTextOption
     local addInformationOption: any = host.addInformationOption
@@ -216,14 +167,8 @@ function Module.init(runtime: any): any
     local scroll: any = state.bedFightScroll
     local registry: any = state.bedFightFeatures
 
-    -- Declared before the helpers that read them: a closure naming a local
-    -- that is declared further down reads a global instead, and a global that
-    -- does not exist is nil at the first call.
     local auraSettings: any = {
-        -- 20 studs is a long sword and nothing more. The server accepts
-        -- whatever the client claims, which is exactly why a claim of forty
-        -- studs is the kind of thing ban waves are assembled from: the reach
-        -- band the game itself produces is roughly 15-28.
+
         range = 20,
         rate = 8,
         weapon = "",
@@ -238,12 +183,6 @@ function Module.init(runtime: any): any
         ahead = 1,
     }
 
-    -- The equipped weapon names itself: the client parents the view model of
-    -- whatever you are holding under the camera.
-    -- Names, not objects. Every one of these remotes takes the *name* of the
-    -- tool, so none of them needs the tool in your hands: the view model is
-    -- read as a convenience when you happen to be holding something, and the
-    -- typed name wins when you are not.
     local function equippedWeaponName(): string
         if auraSettings.weapon ~= "" then
             return auraSettings.weapon
@@ -260,8 +199,6 @@ function Module.init(runtime: any): any
         return "Wooden Sword"
     end
 
-    -- The victim argument is a character model, and this game keeps them in
-    -- Workspace.PlayersContainer.
     local function characterOf(player: Player): Model?
         local container: Instance? = workspace:FindFirstChild("PlayersContainer")
         local named: Instance? = container and container:FindFirstChild(player.Name)
@@ -279,7 +216,6 @@ function Module.init(runtime: any): any
         maxDistance = 2000,
     }
 
-    -- Bed ESP ---------------------------------------------------------------
     local function clearBeds(): ()
         clearMarks(runtimeState.bedMarks)
     end
@@ -349,13 +285,6 @@ function Module.init(runtime: any): any
         end
     end
 
-    -- Bed ESP is an option of the universal Player ESP, not a card.
-    --
-    -- It draws through the same idea — a mark over a thing, through walls,
-    -- with its distance — so it belongs in the one ESP the player already
-    -- opened, and it only exists here because nothing universal can know what
-    -- a bed is. The implementation stays in this file; the bridge only carries
-    -- the switch, the colour and the two numbers it used to have as a card.
     local function setBedEsp(enabled: boolean): ()
         host.disconnectFeatureConnection("BedFightBeds")
         clearBeds()
@@ -405,9 +334,6 @@ function Module.init(runtime: any): any
         },
     })
 
-    -- Generator ESP ---------------------------------------------------------
-    -- Generator ESP, same story: an object only this game has, drawn by this
-    -- file, switched from inside the universal ESP.
     local function setGeneratorEsp(enabled: boolean): ()
         host.disconnectFeatureConnection("BedFightGenerators")
         local library: any = renderLibrary()
@@ -438,7 +364,7 @@ function Module.init(runtime: any): any
                     if not mark or not mark.Parent then
                         local billboard: BillboardGui = create("BillboardGui", {
                             Parent = generator,
-                            Name = "RTM_GeneratorMark",
+                            Name = "Wurst_GeneratorMark",
                             AlwaysOnTop = true,
                             LightInfluence = 0,
                             Size = UDim2.fromOffset(150, 20),
@@ -455,9 +381,7 @@ function Module.init(runtime: any): any
                     if not label then
                         continue
                     end
-                    -- The game already renders a countdown above every
-                    -- generator; reading it is more honest than timing it
-                    -- ourselves and being a second out.
+
                     local kind: string = generator.Parent
                         and generator.Parent.Name:gsub("Generators", "")
                         or "Generator"
@@ -511,7 +435,6 @@ function Module.init(runtime: any): any
         },
     })
 
-    -- Round info ------------------------------------------------------------
     local InfoFeature: any = createUniversalFeature(
         "Round Info",
         "Status, mode and whether every bed is gone",
@@ -579,7 +502,6 @@ function Module.init(runtime: any): any
         "Read from ReplicatedStorage.GameInfo, which the server keeps current."
     )
 
-    -- Auto swing ------------------------------------------------------------
     local swingSettings: any = {rate = 9}
     local SwingFeature: any = createUniversalFeature(
         "Auto Swing",
@@ -598,9 +520,7 @@ function Module.init(runtime: any): any
                         return
                     end
                     nextAt = now + 1 / math.max(swingSettings.rate, 0.5)
-                    -- This game has no Tool to activate: the swing is the
-                    -- touch button, and the weapon library knows how to press
-                    -- it exactly as a finger does.
+
                     local weapons: any = state.weaponLibrary
                     if weapons then
                         weapons:Swing()
@@ -624,14 +544,6 @@ function Module.init(runtime: any): any
         "Equip a weapon first; the button swings whatever is in the hotbar slot."
     )
 
-    -- Bed Nuker -------------------------------------------------------------
-    --
-    -- The bed is broken by hitting it, and hitting in this game is the touch
-    -- button plus the weapon's own contact events — the same pair Kill Aura
-    -- uses on players. `MineBlock` was captured as tool name, the block part,
-    -- its grid position, the swing origin and the swing direction; beds live
-    -- outside `PlayersBlocksContainer`, so the captured call is opt-in rather
-    -- than the default. The default path still presses the game's own swing.
     local nukerSettings: any = {
         range = 18,
         rate = 8,
@@ -686,11 +598,7 @@ function Module.init(runtime: any): any
                     if weapons then
                         weapons:Swing()
                     end
-                    -- The server-side path as well, when it is switched on:
-                    -- SwordHit names its victim, and a bed is a model like any
-                    -- other. Whether the server accepts one for this remote is
-                    -- something only the game can answer, so it is optional
-                    -- and off by default.
+
                     if nukerSettings.serverHit then
                         local owner: Instance? = (target :: BasePart)
                             :FindFirstAncestorOfClass("Model")
@@ -703,9 +611,7 @@ function Module.init(runtime: any): any
                         end
                     end
                     if nukerSettings.mine then
-                        -- The mining remote, aimed at the bed's own part. Beds
-                        -- may or may not be minable; the call costs nothing to
-                        -- try and the option is off by default.
+
                         local origin: BasePart? = character
                             and character:FindFirstChild("HumanoidRootPart") :: BasePart?
                         if origin then
@@ -729,8 +635,7 @@ function Module.init(runtime: any): any
                             )
                         end
                     end
-                    -- Contact as well as the swing: a pickaxe that damages on
-                    -- touch never registers from the button alone.
+
                     local fire: any = environment.firetouchinterest
                     if type(fire) ~= "function" then
                         return
@@ -780,17 +685,8 @@ function Module.init(runtime: any): any
             .. "may not accept either for a bed."
     )
 
-    -- Scaffold ----------------------------------------------------------------
-    --
-    -- Real blocks, not a local platform. `PlaceBlock` was captured as the
-    -- block's name, a hotbar slot (3 and 5 in the logs) and a world position,
-    -- so this sends that call under your feet when there is a gap. Equipping
-    -- the hotbar slot first is only so the view model matches what the remote
-    -- claims; the camera does not have to point anywhere.
     local scaffoldSettings: any = {rate = 6, reach = 6, variant = 3}
 
-    -- Both GUI lookups are cached for a second: they walk the PlayerGui, and
-    -- the scaffold asks several times a second.
     local guiCache: any = {at = -1, block = nil}
 
     local function blockSlot(): GuiButton?
@@ -801,8 +697,7 @@ function Module.init(runtime: any): any
         if not playerGui then
             return nil
         end
-        -- Hotbar slots are named after the item, and every building block in
-        -- this game is wool, planks, stone or their coloured variants.
+
         local blockWords: {string} = {"wool", "plank", "stone", "wood", "brick", "block"}
         for _, descendant: Instance in ipairs(playerGui:GetDescendants()) do
             if not descendant:IsA("GuiButton") then
@@ -865,8 +760,6 @@ function Module.init(runtime: any): any
                     local resolvedRoot: BasePart = root :: BasePart
                     local resolvedHumanoid: Humanoid = humanoid :: Humanoid
 
-                    -- Only over a gap: placing a block on solid ground is how
-                    -- you get a tower you did not ask for.
                     local parameters: RaycastParams = RaycastParams.new()
                     parameters.FilterType = Enum.RaycastFilterType.Exclude
                     parameters.IgnoreWater = true
@@ -889,7 +782,7 @@ function Module.init(runtime: any): any
                     local slot: GuiButton? = blockSlot()
                     local weapons: any = state.weaponLibrary
                     if slot and weapons then
-                        -- Equipping is a press of the slot, the same as a tap.
+
                         weapons:PressButton(slot :: GuiButton)
                     end
 
@@ -947,11 +840,6 @@ function Module.init(runtime: any): any
             .. "the same remote with tiles ahead and a typed block name."
     )
 
-    -- Void warning ------------------------------------------------------------
-    --
-    -- The death barrier is a Configuration in GameInfo with its height and
-    -- distance in it, so the warning is the game's own number rather than a
-    -- guess about where the map ends.
     local voidSettings: any = {margin = 25, rescue = true}
     local VoidFeature: any = createUniversalFeature(
         "Anti Void",
@@ -1005,8 +893,6 @@ function Module.init(runtime: any): any
                     local floor: number = (heightValue :: NumberValue).Value
                     local drop: number = resolvedRoot.Position.Y - floor
 
-                    -- Remember the last place the ground held: that is where a
-                    -- rescue puts you back, rather than somewhere arbitrary.
                     local parameters: RaycastParams = RaycastParams.new()
                     parameters.FilterType = Enum.RaycastFilterType.Exclude
                     parameters.IgnoreWater = true
@@ -1028,8 +914,7 @@ function Module.init(runtime: any): any
                     if not voidSettings.rescue or drop > voidSettings.margin then
                         return
                     end
-                    -- Past the margin with nothing under you: stop the fall and
-                    -- put the character back where the ground last was.
+
                     resolvedRoot.AssemblyLinearVelocity = Vector3.zero
                     if runtimeState.lastSafe then
                         resolvedRoot.CFrame =
@@ -1058,13 +943,6 @@ function Module.init(runtime: any): any
             .. "measured against the game's own plane."
     )
 
-    -- Server Aura --------------------------------------------------------------
-    --
-    -- `SwordHit` takes the victim's character model and the weapon's name, and
-    -- the server does the rest. No swing animation, no distance from the
-    -- client, no line of sight — which is exactly why this is capped by a
-    -- range you choose and a rate you choose rather than fired at everybody on
-    -- the server every frame.
     local ServerAuraFeature: any = createUniversalFeature(
         "Server Aura",
         "Reports hits straight to the server, no swing needed",
@@ -1154,17 +1032,11 @@ function Module.init(runtime: any): any
             .. "List is respected."
     )
 
-    -- Server Scaffold ------------------------------------------------------------
-    --
-    -- `PlaceBlock` takes the block's name, a constant the client always sent as
-    -- 5, and the world position of the block. So the blocks can be placed
-    -- without pointing the camera anywhere: pick the position, send it.
     local function equippedBlockName(): string
         if placeSettings.block ~= "" then
             return placeSettings.block
         end
-        -- Whatever wool the hotbar last equipped is a better guess than a
-        -- hard-coded colour, and the view model names it.
+
         local camera: Camera? = workspace.CurrentCamera
         local viewModel: Instance? = camera and camera:FindFirstChild("ViewModel")
         if viewModel then
@@ -1212,8 +1084,6 @@ function Module.init(runtime: any): any
                         return
                     end
 
-                    -- Only over a gap. Placing into solid ground is how you end
-                    -- up standing inside a tower you did not ask for.
                     local parameters: RaycastParams = RaycastParams.new()
                     parameters.FilterType = Enum.RaycastFilterType.Exclude
                     parameters.IgnoreWater = true
@@ -1234,8 +1104,6 @@ function Module.init(runtime: any): any
                     local base: Vector3 = resolvedRoot.Position
                         - Vector3.new(0, resolvedHumanoid.HipHeight + 1, 0)
 
-                    -- The tile you are standing over, then the ones you are
-                    -- walking into, so a run across a gap does not outpace it.
                     local heading: Vector3 = resolvedHumanoid.MoveDirection
                     if heading.Magnitude < 0.05 then
                         heading = resolvedRoot.CFrame.LookVector
@@ -1287,16 +1155,9 @@ function Module.init(runtime: any): any
             .. "nothing at all."
     )
 
-    -- Server Miner ---------------------------------------------------------------
-    --
-    -- `MineBlock` names the tool, so the pickaxe does not have to be equipped,
-    -- and it carries the block, its grid position, an origin and a direction —
-    -- all chosen by the client. Blocks players place live in
-    -- `Workspace.PlayersBlocksContainer`, sorted into folders by material.
     local minerSettings: any = {
         tool = "Wooden Pickaxe",
-        -- Same reasoning as the aura: a pickaxe reaches a few studs, so a
-        -- claim of forty is a claim nobody could make legitimately.
+
         range = 24,
         rate = 8,
         perTick = 2,
@@ -1340,9 +1201,7 @@ function Module.init(runtime: any): any
         else
             direction = Vector3.new(0, -1, 0)
         end
-        -- Third argument is the block's own grid position, fourth is where the
-        -- swing came from, fifth is the direction it travelled: exactly the
-        -- shape the client sends.
+
         fireRemote(
             "ItemsRemotes.MineBlock",
             minerSettings.tool,
@@ -1413,10 +1272,6 @@ function Module.init(runtime: any): any
             .. "easiest thing in the game to spot."
     )
 
-    -- Auto Buy ----------------------------------------------------------------
-    --
-    -- `PurchaseItemShopItem` takes the prompt part, a category and an item, so
-    -- the purchase is a call rather than a walk to the shop and a click.
     local buySettings: any = {category = "Blocks", item = "Wool", rate = 2, nearest = true}
 
     local function shopPrompt(): BasePart?
@@ -1491,7 +1346,6 @@ function Module.init(runtime: any): any
             .. "second looks like a person holding the button; twenty does not."
     )
 
-    -- Quick actions -------------------------------------------------------------
     local QuickFeature: any = createUniversalFeature(
         "Quick Actions",
         "One-shot calls with the arguments the game itself uses",
@@ -1529,8 +1383,7 @@ function Module.init(runtime: any): any
         quickSettings.drop = value
     end)
     host.addActionOption(QuickFeature, "Drop all of it", function(): ()
-        -- The client sends the item name and how much: "All" is what the drop
-        -- button itself sends.
+
         fireRemote("ItemsRemotes.DropItem", quickSettings.drop, "All")
     end)
     addInformationOption(

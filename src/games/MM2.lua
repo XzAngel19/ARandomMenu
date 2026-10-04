@@ -1,9 +1,3 @@
---!strict
---!nolint GlobalUsedAsLocal
---
--- `cleanupMM2Runtime` is assigned as a global on purpose: the shell reads the
--- teardown hook back out of this module's environment when it unloads the
--- game, so it cannot be a local of the builder that defines it.
 local Module = {
     Name = "MM2",
     PlaceId = 142823291,
@@ -80,8 +74,7 @@ local mm2Settings = {
     getGunKey = Enum.KeyCode.G,
     instantRoleNotify = false,
     roleEspAll = false,
-    -- Off by default: the round gate needs data the client does not always
-    -- have, and an ESP that silently shows nothing reads as a broken module.
+
     roleEspRoundOnly = false,
     roleEspInnocent = false,
     roleEspMurderer = false,
@@ -100,14 +93,12 @@ local mm2Settings = {
     coinTransparency = 0.8,
     trapColor = Color3.fromRGB(145, 25, 25),
     trapTransparency = 0.7,
-    -- Menu palette: the dropped gun reads as light grey chrome, not a
-    -- saturated purple that fights the rest of the interface.
+
     gunColor = Color3.fromRGB(226, 226, 232),
     gunTransparency = 0.55,
     autoPlayId = "",
 }
 
--- Friend protection is universal and arrives through Runtime.Services.
 local function isProtectedTarget(player: Player?): boolean
     local runtime: any = Module.Runtime
     local targets: any = runtime and runtime.Services and runtime.Services.protectedTargets
@@ -317,8 +308,6 @@ local function hasActiveRoundRoles(): boolean
     end
     requestRoleRefresh()
 
-    -- A table containing only Innocents can be residual countdown/lobby data.
-    -- Requiring a round-defining role keeps every cham off in the lobby.
     for key, data in pairs(mm2RoundData) do
         if playerFromRoundKey(key, data)
             and type(data) == "table"
@@ -348,16 +337,6 @@ local function findSheriff(): Player?
         or findPlayerByRoundRole("Hero")
 end
 
--- Locating the active map.
---
--- This used to require a child called `CoinContainer` *and* one called
--- `Spawns`. Current MM2 maps ship `CoinAreas` instead (a live map reads
--- `ResearchFacility > CoinAreas / Interactive / Base / Spawns`), so the lookup
--- always failed and everything built on it — Teleport to Map, Loop All
--- Interact, the trap sweep, the dropped-gun search — silently did nothing.
---
--- The map is now recognised by any of its coin containers, with the lobby
--- excluded explicitly because it also owns a `Spawns` model.
 local MM2_MAP_COIN_CONTAINERS: {string} = {
     "CoinContainer",
     "CoinAreas",
@@ -382,8 +361,7 @@ local function findMM2Map(): Instance?
             return object
         end
     end
-    -- Last resort: a model that holds coin spawn points is a map even if its
-    -- container was renamed again.
+
     for _, object: Instance in ipairs(workspace:GetChildren()) do
         if object:IsA("Model")
             and object.Name ~= "Lobby"
@@ -395,11 +373,6 @@ local function findMM2Map(): Instance?
     return nil
 end
 
--- The dropped sheriff gun.
---
--- It is normally a `GunDrop` model, but when the sheriff dies holding it the
--- gun can also be lying in the workspace as the plain `Gun` tool, so both are
--- accepted rather than reporting "no gun" while one is on the floor.
 local function findDroppedGun(): (Model | BasePart)?
     local map: Instance? = findMM2Map()
     local candidate: Instance? = (map and map:FindFirstChild("GunDrop", true))
@@ -413,8 +386,7 @@ local function findDroppedGun(): (Model | BasePart)?
         if object:IsA("Tool")
             and (object.Name == "Gun"
                 or CollectionService:HasTag(object, "Weapon_Gun")) then
-            -- A Tool is not a PVInstance: everything downstream pivots to and
-            -- highlights this, so hand back its handle rather than the tool.
+
             local handle: Instance? = object:FindFirstChild("Handle")
                 or object:FindFirstChildWhichIsA("BasePart")
             if handle and handle:IsA("BasePart") then
@@ -481,8 +453,6 @@ local function createMM2Marker(folder, adornee, labelText, color, transparency)
         stroke.Thickness = 1
         stroke.Parent = text
 
-        -- The role colour survives as a slim accent bar; the plate itself
-        -- stays the menu's dark grey so the world ESP matches the interface.
         local accent = Instance.new("Frame")
         accent.AnchorPoint = Vector2.new(0.5, 1)
         accent.BackgroundColor3 = color
@@ -499,7 +469,7 @@ end
 
 local function createMM2Cham(folder, adornee, color, transparency)
     local highlight = Instance.new("Highlight")
-    highlight.Name = "RTMCham"
+    highlight.Name = "WurstCham"
     highlight.Adornee = adornee
     highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
     highlight.FillColor = color
@@ -514,18 +484,6 @@ local function createMM2Cham(folder, adornee, color, transparency)
     reference.Parent = folder
 end
 
--- Roles, published instead of drawn.
---
--- MM2 used to draw its own player ESP: a Highlight per player, a colour per
--- role, its own round gate and its own rebuild loop — living next to the
--- universal Player ESP, which already drew boxes, skeletons, tracers, health
--- and name tags and knew nothing about roles. Two implementations of one idea.
---
--- The game module now publishes only the part that is genuinely MM2's: which
--- role a player is, and what colour each role should be. The universal ESP
--- does the drawing, so a murderer is red in the corner box, in the chams, on
--- the tracer and on the name tag at once, and every filter and style option
--- applies to it.
 local function registerMM2Roles(): ()
     registerRoleProvider({
         Name = "MM2",
@@ -788,7 +746,7 @@ end
 
 local function createCoinBillboard(adornee: BasePart): BillboardGui
     local billboard: BillboardGui = Instance.new("BillboardGui")
-    billboard.Name = "RTM_CoinMarker"
+    billboard.Name = "Wurst_CoinMarker"
     billboard.Adornee = adornee
     billboard.AlwaysOnTop = true
     billboard.LightInfluence = 0
@@ -834,7 +792,7 @@ local function addCoinBox(object: Instance): ()
     end
 
     local highlight: Highlight = Instance.new("Highlight")
-    highlight.Name = "RTM_CoinHighlight"
+    highlight.Name = "Wurst_CoinHighlight"
     highlight.Adornee = visual
     highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
     highlight.FillColor = mm2Settings.coinColor
@@ -992,7 +950,7 @@ end
 local function toggleInstantRoleNotify(enabled)
     mm2Settings.instantRoleNotify = enabled
     if enabled and findMurderer() and findSheriff() then
-        -- Do not repeat the alert when this option is enabled mid-round.
+
         roleNotificationSent = true
     end
 end
@@ -1129,7 +1087,7 @@ local function toggleMuteTrapSounds(enabled)
 end
 
 local AutoPlaySound = Instance.new("Sound")
-AutoPlaySound.Name = "RTM_MM2_AutoPlay"
+AutoPlaySound.Name = "Wurst_MM2_AutoPlay"
 AutoPlaySound.Looped = true
 AutoPlaySound.Volume = 0.6
 AutoPlaySound.Parent = game:GetService("SoundService")
@@ -1226,24 +1184,24 @@ local function clearSprintTrail(): ()
 end
 
 local function ensureSprintTrail(root: BasePart): Trail
-    local existing: Instance? = root:FindFirstChild("RTM_SprintTail")
+    local existing: Instance? = root:FindFirstChild("Wurst_SprintTail")
     if existing and existing:IsA("Trail") then
         return existing
     end
 
     clearSprintTrail()
     local left: Attachment = Instance.new("Attachment")
-    left.Name = "RTM_SprintLeft"
+    left.Name = "Wurst_SprintLeft"
     left.Position = Vector3.new(-0.8, -0.5, 0.75)
     left.Parent = root
 
     local right: Attachment = Instance.new("Attachment")
-    right.Name = "RTM_SprintRight"
+    right.Name = "Wurst_SprintRight"
     right.Position = Vector3.new(0.8, -0.5, 0.75)
     right.Parent = root
 
     local trail: Trail = Instance.new("Trail")
-    trail.Name = "RTM_SprintTail"
+    trail.Name = "Wurst_SprintTail"
     trail.Attachment0 = left
     trail.Attachment1 = right
     trail.Color = ColorSequence.new(
@@ -1263,12 +1221,6 @@ local function ensureSprintTrail(root: BasePart): Trail
     return trail
 end
 
--- Sprint.
---
--- The module is always running and can never be switched off — pressing its
--- key does not enable or disable anything and never announces itself. The key
--- (and only the key the player picked; there is no hard-coded LeftControl any
--- more) is a dead-man switch: hold it to run, release it to stop.
 local sprintActive: boolean = false
 local sprintBaseSpeed: number? = nil
 
@@ -1288,8 +1240,6 @@ local function applySprintSpeed(active: boolean): ()
     end
 end
 
--- Runtime: always connected while the module exists. It does nothing at all
--- until the key is held, so an idle Sprint costs one cheap check per frame.
 local function toggleSprint(enabled: boolean): ()
     disconnectFeatureConnection("MM2Sprint")
 
@@ -1307,14 +1257,12 @@ local function toggleSprint(enabled: boolean): ()
         end
         if not sprintActive then
             if sprintBaseSpeed ~= nil then
-                -- The key was released while the character was missing.
+
                 applySprintSpeed(false)
             end
             return
         end
 
-        -- Re-applied every frame: MM2 resets WalkSpeed on respawn, on round
-        -- start and whenever a weapon is equipped.
         if humanoid.WalkSpeed ~= MM2_SPRINT_SPEED then
             if sprintBaseSpeed == nil then
                 sprintBaseSpeed = humanoid.WalkSpeed
@@ -1325,7 +1273,6 @@ local function toggleSprint(enabled: boolean): ()
     end)
 end
 
--- Called by the card's key slot: pressed means run, released means stop.
 local function setSprintActive(active: boolean): ()
     if sprintActive == active then
         return
@@ -1336,7 +1283,7 @@ local function setSprintActive(active: boolean): ()
         local trail: Instance? = nil
         local _, _, root: BasePart? = getCharacterParts()
         if root then
-            trail = root:FindFirstChild("RTM_SprintTail")
+            trail = root:FindFirstChild("Wurst_SprintTail")
         end
         if trail and trail:IsA("Trail") then
             trail.Enabled = false
@@ -1344,13 +1291,6 @@ local function setSprintActive(active: boolean): ()
     end
 end
 
--- Improve FPS moved to the Universal section: stripping textures, particles,
--- shadows and materials are not MM2-specific. Improve FPS is the
--- shared implementation; nothing here owns it any more.
-
--- Round timer state. The remotes tell us when a round starts and ends; the
--- countdown itself is the game's own label (see below), so the menu draws no
--- timer window of its own.
 local timerEndsAt = nil
 local timerRemotes = game:GetService("ReplicatedStorage"):FindFirstChild("Remotes")
 local timerGameplay = timerRemotes and timerRemotes:FindFirstChild("Gameplay")
@@ -1389,25 +1329,10 @@ if timerRoundEnd and timerRoundEnd:IsA("RemoteEvent") then
     end)
 end
 
--- Always Show Timer.
---
--- MM2 already owns a round countdown: `MainGUI.Game.Timer` with its `XPText`
--- label. Its HUD script decides who sees it in one place — `RoundStart`'s
--- client handler shows the frame for every role *except* Innocent, and its
--- update loop only refreshes the text while your role is not Innocent (the
--- whole place has exactly one listener on that remote, so nothing else reacts
--- to it).
---
--- So instead of drawing a second timer in the menu's own style, the module
--- replays that client event locally with the local player marked as a
--- non-Innocent role. The game's HUD then brings up *its* timer and counts it
--- down itself: the display is the game's, not ours. Switching the module off
--- replays the real round data so the HUD goes back to what it was showing.
 local timerSpoofActive: boolean = false
 local revealedTimerObjects: {[Instance]: boolean} =
     setmetatable({}, {__mode = "k"}) :: any
 
--- Executors expose different names for "run this client event locally".
 local function fireClientSignal(signal: any, ...: any): boolean
     if type(getconnections) == "function" then
         local ok: boolean, connections: any = pcall(getconnections, signal)
@@ -1440,7 +1365,7 @@ local function findGameTimerFrame(): (GuiObject?, TextLabel?)
         return nil, nil
     end
     local mainGui: Instance? = playerGui:FindFirstChild("MainGUI")
-    -- Not named `game`: that would shadow the Roblox global inside this scope.
+
     local gameFrame: Instance? = mainGui and mainGui:FindFirstChild("Game")
     local frame: Instance? = gameFrame and gameFrame:FindFirstChild("Timer")
     if frame and frame:IsA("GuiObject") then
@@ -1450,8 +1375,6 @@ local function findGameTimerFrame(): (GuiObject?, TextLabel?)
     return nil, nil
 end
 
--- Replays RoundStart locally with our role rewritten, which is what makes the
--- game itself decide to show and drive its timer.
 local function spoofRoundTimerRole(remaining: number): boolean
     if not timerRoundStart or not timerRoundStart:IsA("RemoteEvent") then
         return false
@@ -1477,7 +1400,6 @@ local function spoofRoundTimerRole(remaining: number): boolean
     )
 end
 
--- Puts the HUD back the way the server described it.
 local function restoreRoundTimerRole(): ()
     if timerSpoofActive
         and timerRoundStart
@@ -1500,8 +1422,6 @@ local function restoreRoundTimerRole(): ()
     revealedTimerObjects = setmetatable({}, {__mode = "k"}) :: any
 end
 
--- Fallback for executors that cannot replay a client event: reveal the frame
--- and write the countdown in the game's own "1m 7s" format.
 local function formatRoundClock(remaining: number): string
     local minutes: number = math.floor(remaining / 60)
     local seconds: number = remaining - minutes * 60
@@ -1539,8 +1459,6 @@ local function toggleAlwaysShowTimer(enabled)
         return
     end
 
-    -- Ask the server for the remaining time so enabling mid-round does not
-    -- have to wait for the next RoundStart.
     local getTimer = timerRemotes and timerRemotes:FindFirstChild("GetTimer", true)
     if getTimer and getTimer:IsA("RemoteFunction") then
         task.spawn(function()
@@ -1573,12 +1491,10 @@ local function toggleAlwaysShowTimer(enabled)
 
         local frame: GuiObject? = findGameTimerFrame()
         if frame and frame.Visible then
-            -- The game is already showing its own timer: nothing to do.
+
             return
         end
 
-        -- Re-announce at most every two seconds: a new round, a respawn or the
-        -- HUD hiding itself all land here.
         if os.clock() - lastSpoofAt >= 2 then
             lastSpoofAt = os.clock()
             if spoofRoundTimerRole(remaining) then
@@ -1689,8 +1605,7 @@ end
 
 local function getGunLeadSeconds(): (number, number)
     local roundTripTime: number = getEstimatedLatency()
-    -- Schema 2 telemetry: 2,105 motion samples and 15 confirmed shots place
-    -- server acceptance about one render frame beyond the reported ping.
+
     local horizontalLead: number = math.clamp(
         roundTripTime * 0.98 + (1 / 60) + mm2Settings.gunLeadBias,
         0.025,
@@ -1715,9 +1630,6 @@ local function getGunOriginCFrame(character: Model, _gun: Tool?): CFrame?
     return nil
 end
 
--- Event-driven adaptation of MM2 Trajectory Extractor 0001. It observes only
--- local gun activations confirmed by WeaponService.GunFired and locally-owned
--- ThrowingKnife projectiles. It never rewrites a ray, CFrame, or remote payload.
 local function createTrajectoryCalibration(): any
     type TrajectoryPoint = {
         dt: number,
@@ -2439,7 +2351,7 @@ local function createTrajectoryCalibration(): any
         )
         if not decodeOk
             or type(decoded) ~= "table"
-            or decoded.placeId ~= game.PlaceId -- calibration is per server build
+            or decoded.placeId ~= game.PlaceId
             or decoded.schema ~= 2
             or decoded.kind ~= "mm2-trajectory-analytics" then
             if decodeOk
@@ -2933,9 +2845,7 @@ local function createTrajectoryCalibration(): any
         if runtime.active then
             return
         end
-        -- The runtime already decided this server is MM2 (by PlaceId or by
-        -- fingerprinting a clone); refusing here on PlaceId alone would leave
-        -- every copy of the game without calibration.
+
         if not (GAME_CHECK.MM2Active or game.PlaceId == Module.PlaceId) then
             warn(trajectoryLogPrefix .. " Inicio omitido fuera de MM2.")
             return
@@ -3256,9 +3166,7 @@ local function shootMurderer(): ()
 end
 
 local shootFeatureActive: boolean = false
--- The only WeaponService fact this module relies on: the module table itself,
--- whose GunFired event replicates every accepted shot back to clients. It is
--- one of the place fingerprints, so it is verified rather than assumed.
+
 local weaponServiceModule: any = nil
 type PendingShot = {
     target: Player,
@@ -3387,10 +3295,6 @@ state.mm2ShotFeedback.queue = function(
     }
     state.mm2ShotFeedback.pending = candidate
 
-    -- A queued shot is always a real FireServer now, so if no correlated
-    -- GunFired event arrives within a round trip the server never accepted
-    -- it: resolve the candidate as a miss rather than waiting for the
-    -- cleanup expiry below.
     task.delay(1.8, function(): ()
         if state.mm2ShotFeedback.pending == candidate then
             state.mm2ShotFeedback.pending = nil
@@ -3488,10 +3392,7 @@ state.mm2ShotFeedback.resolve = function(
         local currentHumanoid: Humanoid? = targetCharacter
             and targetCharacter:FindFirstChildOfClass("Humanoid")
             :: Humanoid?
-        -- `Players` is a cloneref handle here, so it never compares equal to
-        -- the service `Parent` returns: this used to be true on every shot
-        -- and confirmed every hit, including the misses. A player that left
-        -- the game simply has no parent.
+
         local hitConfirmed: boolean = directHit
             or candidate.target.Parent == nil
             or targetCharacter == nil
@@ -3781,9 +3682,6 @@ moduleCleanup = function(): ()
     end
 end
 
--- The shot observer, not a hook: WeaponService.GunFired replicates every
--- accepted shot back to clients, which is what lets the miss feedback tell
--- "the server took it" from "the server dropped it".
 local function disconnectGunFiredObserver(): ()
     disconnectFeatureConnection("MM2GunFired")
     state.mm2ShotFeedback.gunFiredConnected = false
@@ -3841,9 +3739,6 @@ local function processKnifeAura(): ()
             return
         end
 
-        -- Restore the game's normal stab payload. Aura only expands the local
-        -- acquisition distance; it never substitutes a predicted body part,
-        -- moves either character, or alters the thrown-knife CFrame.
         if handleTouched and handleTouched:IsA("RemoteEvent") then
             handleTouched:FireServer(currentRoot)
         elseif type(state.fireTouchInterest) == "function" then
@@ -3879,15 +3774,8 @@ local function toggleKnifeAura(enabled: boolean): ()
     refreshKnifeController()
 end
 
--- Manual shot.
---
--- One path, on every device: aim is solved here with CFrame maths and a
--- raycast, then the gun's own `Shoot` remote is fired with (origin, aim).
--- That needs no mouse, no `hookfunction` and no touch-specific weapon API,
--- which is why it behaves identically on PC, phone and console.
 local function triggerManualShot(): ()
-    -- The key slot fires the module, so the module has to be on for it to do
-    -- anything; otherwise a stray keypress would shoot with Shoot disabled.
+
     if not shootFeatureActive then
         notify("Enable Shoot first.")
         return
@@ -3906,9 +3794,6 @@ local function toggleShootMurderer(enabled: boolean): ()
         return
     end
 
-    -- Every shot this module makes is a FireServer with a solved aim, so the
-    -- only WeaponService contact needed is the GunFired observer that
-    -- confirms whether the server accepted each one.
     local weaponService: any = getWeaponServiceModule()
     if type(weaponService) == "table" then
         connectGunFiredSignal(weaponService)
@@ -3933,7 +3818,6 @@ local function toggleShootMurderer(enabled: boolean): ()
         end
     end)
 
-    -- No private key handler: the card's key slot owns the binding.
 end
 
 local function teleportToMap()
@@ -3991,11 +3875,6 @@ local _InstantRolesFeature = createUniversalFeature(
     }
 )
 
--- Roles and MM2's own objects are contributed to the universal Player ESP
--- instead of being a second ESP card: the role colours arrive as colour rows,
--- and coins, traps and the dropped gun arrive as toggles in its World section.
--- MM2 keeps its own implementations of those three — they are chams over
--- objects the universal module has no way to find.
 registerMM2Roles()
 registerEspExtra({
     Name = "Coins",
@@ -4037,12 +3916,6 @@ registerEspExtra({
     end,
 })
 
--- Redirect mode is gone the way the throw-redirect below went: it needed a
--- hook on the WeaponService aim accessor, no capture ever named one, and the
--- seven guesses usually matched nothing — at which point "Redirect" quietly
--- fired the same Manual FireServer and the option was a switch that lied.
--- Manual and Custom both fire the captured payload, (origin, aim), and
--- WeaponService.GunFired still confirms each shot for the miss feedback.
 local ShootFeature = createUniversalFeature(
     "Shoot",
     "Hitscan aim with filtered motion, RTT compensation, and miss feedback",
@@ -4073,8 +3946,7 @@ addCycleOption(
         refreshShootOptions()
     end
 )
--- The shot key lives in the card header like every other module: rebind it
--- there on desktop, or tap the slot on touch to drop a SHOOT button on screen.
+
 if state.bindFeatureActivationKey then
     state.bindFeatureActivationKey(
         ShootFeature,
@@ -4132,9 +4004,6 @@ addInformationOption(
     "Schema 2 records 30 Hz target windows only around your shots/throws. It stays isolated from Universal analytics and never changes weapon arguments."
 )
 
--- KnifeThrown was never captured, so a throw-redirect that rewrites aim
--- through hookfunction would be inventing the payload. Aura stays: it
--- fires HandleTouched with the target's root, which is the game's own stab.
 local KnifeFeature = createUniversalFeature(
     "Knife Aura",
     "Stabs the nearest valid target in range through the game's own HandleTouched",
@@ -4195,8 +4064,6 @@ autoPlayInput = addTextOption(AutoPlayFeature, "Play ID", mm2Settings.autoPlayId
     end
 end)
 
--- Always on, never toggled: pick a key in the card's slot (or tap the slot on
--- a phone to drop a SPRINT button) and hold it to run.
 createUniversalFeature(
     "Sprint",
     "Hold your key to run at 30 speed with a trail",
@@ -4313,11 +4180,7 @@ addActionOption(FlingGroup, "Fling All Innocents", function()
                 local target = playerFromRoundKey(key, data)
                 if target and target ~= LocalPlayer then
                     performFling(target)
-                    -- Wait for the fling to land before starting the next
-                    -- one. This used to read a bare `flingRunning`, a local
-                    -- of the shell it once sat inside; as a global it is nil,
-                    -- `not nil` is true, and the loop fell straight through —
-                    -- so every target was flung on top of the last.
+
                     repeat
                         task.wait(0.05)
                     until not Module.Runtime.Services.activity.isActive("fling")
@@ -4395,8 +4258,6 @@ createUniversalFeature(
     }
 )
 
--- Deliberately global: the shell calls `cleanupMM2Runtime` when it tears the
--- game module down, so it cannot be a local of this builder.
 cleanupMM2Runtime = function()
     if state.gameRoleProvider == mm2RoleProvider then
         state.gameRoleProvider = nil

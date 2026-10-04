@@ -1,4 +1,3 @@
---!strict
 local Module = {
     Name = "TRS",
     PlaceId = 14315258385,
@@ -173,7 +172,7 @@ local function buildTRSFeatures()
         end
         if not tackleBox then
             tackleBox = Instance.new("BoxHandleAdornment")
-            tackleBox.Name = "RTM_TRS_BallCarrier"
+            tackleBox.Name = "Wurst_TRS_BallCarrier"
             tackleBox.AlwaysOnTop = true
             tackleBox.ZIndex = 20
             tackleBox.Size = Vector3.new(4.5, 6, 2.5)
@@ -201,7 +200,7 @@ local function buildTRSFeatures()
         end
         if not dribbleBox then
             dribbleBox = Instance.new("BoxHandleAdornment")
-            dribbleBox.Name = "RTM_TRS_DribbleThreat"
+            dribbleBox.Name = "Wurst_TRS_DribbleThreat"
             dribbleBox.AlwaysOnTop = true
             dribbleBox.ZIndex = 21
             dribbleBox.Size = Vector3.new(4.5, 6, 2.5)
@@ -510,7 +509,7 @@ local function buildTRSFeatures()
             lastTackle = os.clock()
             action:FireServer("TackIe")
             local velocity = Instance.new("BodyVelocity")
-            velocity.Name = "RTM_TRS_TackleVelocity"
+            velocity.Name = "Wurst_TRS_TackleVelocity"
             velocity.MaxForce = Vector3.new(50000000, 0, 50000000)
             velocity.Velocity = (
                 distance > 0.1 and offset.Unit or root.CFrame.LookVector
@@ -908,10 +907,10 @@ local function buildTRSFeatures()
         end
 
         local folder = Instance.new("Folder")
-        folder.Name = "RTM_TRS_GoalVisual"
+        folder.Name = "Wurst_TRS_GoalVisual"
         folder.Parent = workspace
         local origin = Instance.new("Part")
-        origin.Name = "RTM_TRS_GoalVisualOrigin"
+        origin.Name = "Wurst_TRS_GoalVisualOrigin"
         origin.Anchored = true
         origin.CanCollide = false
         origin.CanQuery = false
@@ -928,7 +927,7 @@ local function buildTRSFeatures()
         local labels = {}
         for index = 1, 3 do
             local marker = Instance.new("Part")
-            marker.Name = "RTM_TRS_GoalEntry" .. index
+            marker.Name = "Wurst_TRS_GoalEntry" .. index
             marker.Anchored = true
             marker.CanCollide = false
             marker.CanQuery = false
@@ -963,7 +962,7 @@ local function buildTRSFeatures()
         end
 
         local beam = Instance.new("Beam")
-        beam.Name = "RTM_TRS_GoalAimLine"
+        beam.Name = "Wurst_TRS_GoalAimLine"
         beam.Attachment0 = originAttachment
         beam.Attachment1 = attachments[2]
         beam.FaceCamera = true
@@ -1301,7 +1300,7 @@ local function buildTRSFeatures()
             return trajectoryParts[index]
         end
         local part = Instance.new("Part")
-        part.Name = "RTM_TRS_Trajectory"
+        part.Name = "Wurst_TRS_Trajectory"
         part.Anchored = true
         part.CanCollide = false
         part.CanQuery = false
@@ -1394,7 +1393,7 @@ local function buildTRSFeatures()
 
                 if not landingMarker then
                     landingMarker = Instance.new("Part")
-                    landingMarker.Name = "RTM_TRS_LandingPoint"
+                    landingMarker.Name = "Wurst_TRS_LandingPoint"
                     landingMarker.Anchored = true
                     landingMarker.CanCollide = false
                     landingMarker.CanQuery = false

@@ -1,18 +1,3 @@
---!strict
---
--- Entity library.
---
--- Every visual and combat module needs the same three answers: who is alive,
--- where are their parts, and which of them is under the crosshair. Written per
--- module that becomes four slightly different `Players:GetPlayers()` loops with
--- four slightly different bugs — the ESP that kept drawing dead players, the
--- aim helper that happily targeted teammates. Vape solves it with one entity
--- library; this is the same idea with this menu's conventions.
---
--- The cache is rebuilt from Roblox signals (PlayerAdded / CharacterAdded /
--- AncestryChanged) rather than polled, and `refresh` only recomputes the cheap
--- per-frame numbers (health, distance).
-
 export type Entity = {
     Player: Player?,
     Character: Model,
@@ -40,7 +25,7 @@ export type RangeQuery = {
 }
 
 export type EntityQuery = {
-    -- Maximum angular distance from the ray, in pixels of screen space.
+
     Radius: number?,
     MaxDistance: number?,
     IgnoreTeam: boolean?,
@@ -84,8 +69,6 @@ local Module = {
     Initialized = false,
 }
 
--- Bone pairs for both official rigs. R15 is listed first because a missing
--- lookup falls through to R6, and R6 characters have none of these parts.
 local R15_BONES: {{string}} = {
     {"Head", "UpperTorso"},
     {"UpperTorso", "LowerTorso"},
@@ -126,9 +109,7 @@ function Module.init(context: any): EntityLibrary
         ByModel = {},
         LocalEntity = nil,
         Connections = {},
-        -- Four modules can each ask for a refresh in the same frame. Doing the
-        -- work once per frame instead of four times is the single biggest
-        -- saving in the whole visual stack.
+
         lastRefresh = -1,
         pool = setmetatable({}, {__mode = "k"}),
         npcPool = setmetatable({}, {__mode = "k"}),
@@ -153,11 +134,6 @@ function Module.init(context: any): EntityLibrary
         return root
     end
 
-    -- Experiences do not agree on how an NPC declares its faction. Prefer
-    -- explicit attributes, then Team/TeamColor-like properties, and compare a
-    -- normalized name or value with the local player. Missing metadata is
-    -- neutral rather than friendly: an unlabelled training dummy must not make
-    -- every NPC disappear when Team check is enabled.
     local TEAM_ATTRIBUTE_NAMES: {string} = {
         "Team",
         "TeamId",
@@ -245,7 +221,7 @@ function Module.init(context: any): EntityLibrary
         if not player or player == localPlayer then
             return false
         end
-        -- Neutral players are deliberately not assigned to a team.
+
         if player.Neutral == true or localPlayer.Neutral == true then
             return false
         end
@@ -343,9 +319,7 @@ function Module.init(context: any): EntityLibrary
     end
 
     function library:Refresh(force: boolean?): {Entity}
-        -- Coalesced: repeated calls inside one frame return the list that was
-        -- already built. ESP, Kill Aura and TriggerBot all ask on the same
-        -- frame, and rebuilding the world three times shows up as frame time.
+
         local now: number = os.clock()
         if not force and now - library.lastRefresh < 0.015 then
             return library.List
@@ -367,9 +341,7 @@ function Module.init(context: any): EntityLibrary
             if humanoid.Health <= 0 then
                 continue
             end
-            -- One table per player, reused every frame: an ESP that allocates
-            -- a fresh table per player per frame is an ESP that keeps the
-            -- collector busy for as long as it is on.
+
             local entity: any = library.pool[player]
             if not entity then
                 entity = {}
@@ -445,9 +417,6 @@ function Module.init(context: any): EntityLibrary
         return result == nil
     end
 
-    -- Bones are resolved once per character and kept: a rig does not change
-    -- shape between frames, and fourteen FindFirstChild pairs per player per
-    -- frame is pure waste.
     function library:Rig(entity: Entity): {{BasePart}}
         local character: Model = entity.Character
         local cached: any = library.rigs[character]
@@ -468,8 +437,6 @@ function Module.init(context: any): EntityLibrary
         return bones
     end
 
-    -- The friend list is universal and may not be loaded yet, so the question
-    -- is asked through `state` rather than captured at init.
     function library:IsProtected(player: Player?): boolean
         if not player then
             return false
@@ -481,8 +448,6 @@ function Module.init(context: any): EntityLibrary
         return false
     end
 
-    -- Everything a melee module needs in one query: who is close enough, in
-    -- front of you, not a friend, not behind a wall — already sorted.
     function library:InRange(query: RangeQuery): {Entity}
         local origin: BasePart? = localRoot()
         if not origin then
@@ -535,8 +500,7 @@ function Module.init(context: any): EntityLibrary
                 return first.Health < second.Health
             end
             if sortMode == "Threat" then
-                -- Whoever is closest to looking at you first: the one most
-                -- likely to be shooting back.
+
                 return first.Distance / math.max(first.Health, 1)
                     > second.Distance / math.max(second.Health, 1)
             end
@@ -582,8 +546,7 @@ function Module.init(context: any): EntityLibrary
             if along <= 0 then
                 return
             end
-            -- Perpendicular distance from the ray, which is the same ordering
-            -- a screen-space check gives without needing the camera.
+
             local perpendicular: number = (offset - unit * along).Magnitude
             if perpendicular < bestScore
                 and (options.IgnoreWalls or library:VisibleFrom(entity)) then
@@ -636,10 +599,6 @@ function Module.init(context: any): EntityLibrary
         end
     end
 
-    -- NPCs are indexed from workspace signals as well. Their entities stay
-    -- outside `List`, so ESP that is explicitly player-only keeps its existing
-    -- contract, while combat queries can opt in without a full descendant scan
-    -- each frame.
     for _, descendant: Instance in ipairs(currentWorkspace:GetDescendants()) do
         indexNpc(descendant)
     end
@@ -652,9 +611,6 @@ function Module.init(context: any): EntityLibrary
         currentWorkspace.DescendantRemoving:Connect(unindexNpc)
     )
 
-    -- Signal-driven invalidation. `Refresh` is cheap enough to call per frame,
-    -- but a spawn or a leave should be reflected immediately rather than on
-    -- whatever frame a consumer happens to ask next.
     table.insert(
         library.Connections,
         players.PlayerAdded:Connect(function(player: Player): ()
