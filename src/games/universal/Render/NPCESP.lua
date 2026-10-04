@@ -26,41 +26,14 @@ function Module.init(context: Runtime): any
     local layer: Frame = render:Layer("NpcEspLayer")
     local candidates: {[Model]: boolean} = {}
     local lastRender: number = -math.huge
-    local collectionService: CollectionService = game:GetService("CollectionService")
-    local npcTags: {string} = {"NPC", "Npc", "npc", "Enemy", "Mob", "Bot", "Dummy"}
-
-    local function hasNpcIdentity(model: Model): boolean
-        for _, tag: string in ipairs(npcTags) do
-            if collectionService:HasTag(model, tag) then return true end
-        end
-        for _, attribute: string in ipairs({"NPC", "Npc", "IsNPC", "Bot", "Enemy", "Mob"}) do
-            local value: any = model:GetAttribute(attribute)
-            if value == true or type(value) == "number" or type(value) == "string" then
-                return true
-            end
-        end
-        local normalized: string = string.lower(model.Name):gsub("[^%w]+", " ")
-        for token: string in string.gmatch(normalized, "%w+") do
-            if token == "npc" or token == "bot" or token == "enemy"
-                or token == "mob" or token == "dummy" then return true end
-        end
-        return false
-    end
-
     local function isRigModel(model: Model): boolean
-        if model:FindFirstChildOfClass("Humanoid")
-            or model:FindFirstChildOfClass("AnimationController") then return true end
+        if model:FindFirstChildOfClass("Humanoid") then return true end
         local head: Instance? = model:FindFirstChild("Head")
         local torso: Instance? = model:FindFirstChild("Torso")
             or model:FindFirstChild("UpperTorso")
             or model:FindFirstChild("LowerTorso")
-        if head and head:IsA("BasePart") and torso and torso:IsA("BasePart") then
-            return true
-        end
-        if hasNpcIdentity(model) then
-            return model:FindFirstChildWhichIsA("BasePart", true) ~= nil
-        end
-        return false
+        return head ~= nil and head:IsA("BasePart")
+            and torso ~= nil and torso:IsA("BasePart")
     end
 
     local function npcModel(instance: Instance): Model?
@@ -80,7 +53,7 @@ function Module.init(context: Runtime): any
 
     local function classify(instance: Instance): ()
         if not (instance:IsA("Model") or instance:IsA("Humanoid")
-            or instance:IsA("AnimationController") or instance:IsA("BasePart")) then return end
+            or instance:IsA("BasePart")) then return end
         local model: Model? = npcModel(instance)
         if model then candidates[model] = true end
     end
@@ -110,7 +83,7 @@ function Module.init(context: Runtime): any
         Category = "Render",
         ConfigKey = "Universal.NPCESP",
         Order = 4,
-        Tooltip = "Boxes and highlights for non-player humanoid models.",
+        Tooltip = "Boxes and highlights for every non-player character rig.",
         Function = function(enabled: boolean): ()
             layer.Visible = enabled
             if not enabled then
@@ -128,9 +101,9 @@ function Module.init(context: Runtime): any
                 local camera: Camera? = currentWorkspace.CurrentCamera
                 local _character: Model?, _humanoid: Humanoid?, localRoot: BasePart? =
                     getCharacterParts()
-                if not camera or not localRoot then
-                    return
-                end
+                if not camera then return end
+                local originPosition: Vector3 = localRoot and localRoot.Position
+                    or camera.CFrame.Position
                 local visibleCount: number = 0
                 for model: Model in pairs(candidates) do
                     local humanoid: Humanoid? = model:FindFirstChildOfClass("Humanoid") :: Humanoid?
@@ -153,7 +126,7 @@ function Module.init(context: Runtime): any
                         or model:FindFirstChildWhichIsA("BasePart", true) :: BasePart?
                     local drawing: any = render:Set(layer, model)
                     if not root or (humanoid and humanoid.Health <= 0)
-                        or (root.Position - localRoot.Position).Magnitude
+                        or (root.Position - originPosition).Magnitude
                             > card.Options["Max distance"].Value then
                         drawing:Show(false)
                         continue
@@ -171,7 +144,7 @@ function Module.init(context: Runtime): any
                         colour
                     )
                     if card.Options["Name"].Value then
-                        local text: string = model.Name
+                        local text: string = "BOT"
                         if card.Options["Health"].Value then
                             text ..= humanoid and (" [" .. tostring(math.round(humanoid.Health)) .. "]") or ""
                         end
