@@ -205,7 +205,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "fcab963aa2dee37b"
+local SOURCE_STAMP: string = "a896bcccc6f3c1b3"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -1217,7 +1217,7 @@ local AssetManager: any = {
 
         valveFont = {
             url = REPOSITORY_RAW_BASE
-                .. "src/GUI's/Wurst/Assets/Typography/ValveBD.otf",
+                .. "src/guis/Wurst/Assets/Typography/ValveBD.otf",
             fileName = "valve-bd-v1.otf",
             fallback = "",
             version = 1,
@@ -1225,7 +1225,7 @@ local AssetManager: any = {
         },
 
         wurstLogo = {
-            url = REPOSITORY_RAW_BASE .. "src/GUI's/Wurst/Assets/Wurst/wurst_128.png",
+            url = REPOSITORY_RAW_BASE .. "src/guis/Wurst/Assets/Wurst/wurst_128.png",
             fileName = "wurst-logo-v1.png",
             fallback = "",
             version = 1,
@@ -1233,7 +1233,7 @@ local AssetManager: any = {
         },
 
         bitmapFontAtlas = {
-            url = REPOSITORY_RAW_BASE .. "src/GUI's/Wurst/Assets/Font/monocraft-16.png",
+            url = REPOSITORY_RAW_BASE .. "src/guis/Wurst/Assets/Font/monocraft-16.png",
             fileName = "monocraft-16-v1.png",
             fallback = "",
             version = 1,
@@ -1241,21 +1241,21 @@ local AssetManager: any = {
         },
 
         bitmapFontAtlas8 = {
-            url = REPOSITORY_RAW_BASE .. "src/GUI's/Wurst/Assets/Font/monocraft-8.png",
+            url = REPOSITORY_RAW_BASE .. "src/guis/Wurst/Assets/Font/monocraft-8.png",
             fileName = "monocraft-8-v1.png",
             fallback = "",
             version = 1,
             assetType = "image/png",
         },
         bitmapFontAtlas24 = {
-            url = REPOSITORY_RAW_BASE .. "src/GUI's/Wurst/Assets/Font/monocraft-24.png",
+            url = REPOSITORY_RAW_BASE .. "src/guis/Wurst/Assets/Font/monocraft-24.png",
             fileName = "monocraft-24-v1.png",
             fallback = "",
             version = 1,
             assetType = "image/png",
         },
         bitmapFontAtlas32 = {
-            url = REPOSITORY_RAW_BASE .. "src/GUI's/Wurst/Assets/Font/monocraft-32.png",
+            url = REPOSITORY_RAW_BASE .. "src/guis/Wurst/Assets/Font/monocraft-32.png",
             fileName = "monocraft-32-v1.png",
             fallback = "",
             version = 1,
@@ -5238,20 +5238,20 @@ state.frameworkEnvironment.services = moduleServices
 
 local fallbackManifest: any = {
     version = 1,
-    widgets = "src/GUI's/Wurst/Code/Widgets.lua",
+    widgets = "src/guis/Wurst/Code/Widgets.lua",
     core = {"src/libraries/Framework.lua"},
     libraries = {
         "src/libraries/Entity.lua",
         "src/libraries/Targeting.lua",
         "src/libraries/Weapons.lua",
         "src/libraries/Render.lua",
-        "src/GUI's/Wurst/Code/Cards.lua",
-        "src/GUI's/Wurst/Code/WindowManager.lua",
-        "src/GUI's/Wurst/Code/ClickGui.lua",
-        "src/GUI's/Wurst/Code/FloatingWindows.lua",
-        "src/GUI's/Wurst/Code/SettingsPage.lua",
-        "src/GUI's/Wurst/Code/MobileActions.lua",
-        "src/GUI's/Wurst/Code/Furniture.lua",
+        "src/guis/Wurst/Code/Cards.lua",
+        "src/guis/Wurst/Code/WindowManager.lua",
+        "src/guis/Wurst/Code/ClickGui.lua",
+        "src/guis/Wurst/Code/FloatingWindows.lua",
+        "src/guis/Wurst/Code/SettingsPage.lua",
+        "src/guis/Wurst/Code/MobileActions.lua",
+        "src/guis/Wurst/Code/Furniture.lua",
     },
     modules = {
         {path = "src/games/universal/Utility/FriendList.lua", name = "Friend List", category = "Other"},
@@ -5346,7 +5346,7 @@ end
 state.markBoot("manifest", manifestAt)
 
 local loadList: {string} = {}
-table.insert(loadList, manifest.widgets or "src/GUI's/Wurst/Code/Widgets.lua")
+table.insert(loadList, manifest.widgets or "src/guis/Wurst/Code/Widgets.lua")
 for _, path: string in ipairs(manifest.core or {}) do
     table.insert(loadList, path)
 end
@@ -5373,7 +5373,7 @@ local function loadPiece(path: string): any?
 end
 
 local widgetsAt: number = os.clock()
-local widgetPath: string = manifest.widgets or "src/GUI's/Wurst/Code/Widgets.lua"
+local widgetPath: string = manifest.widgets or "src/guis/Wurst/Code/Widgets.lua"
 local widgetPiece: any? = loadPiece(widgetPath)
 if widgetPiece then
     local widgetOk: boolean, builders: any = pcall(

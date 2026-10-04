@@ -1,5 +1,5 @@
 return {
-    stamp = "fcab963aa2dee37b",
+    stamp = "a896bcccc6f3c1b3",
     files = {
         ["src/libraries/Manifest.lua"] = [=[export type ModuleEntry = {
     path: string,
@@ -18,7 +18,7 @@ export type Manifest = {
 local Manifest: Manifest = {
     version = 1,
 
-    widgets = "src/GUI's/Wurst/Code/Widgets.lua",
+    widgets = "src/guis/Wurst/Code/Widgets.lua",
     core = {
         "src/libraries/Framework.lua",
     },
@@ -28,19 +28,19 @@ local Manifest: Manifest = {
         "src/libraries/Weapons.lua",
         "src/libraries/Render.lua",
 
-        "src/GUI's/Wurst/Code/Cards.lua",
+        "src/guis/Wurst/Code/Cards.lua",
 
-        "src/GUI's/Wurst/Code/WindowManager.lua",
+        "src/guis/Wurst/Code/WindowManager.lua",
 
-        "src/GUI's/Wurst/Code/ClickGui.lua",
+        "src/guis/Wurst/Code/ClickGui.lua",
 
-        "src/GUI's/Wurst/Code/FloatingWindows.lua",
+        "src/guis/Wurst/Code/FloatingWindows.lua",
 
-        "src/GUI's/Wurst/Code/SettingsPage.lua",
+        "src/guis/Wurst/Code/SettingsPage.lua",
 
-        "src/GUI's/Wurst/Code/MobileActions.lua",
+        "src/guis/Wurst/Code/MobileActions.lua",
 
-        "src/GUI's/Wurst/Code/Furniture.lua",
+        "src/guis/Wurst/Code/Furniture.lua",
     },
     modules = {
 
@@ -275,7 +275,7 @@ local Manifest: Manifest = {
 
 return Manifest
 ]=],
-        ["src/GUI's/Wurst/Code/Widgets.lua"] = [=[export type OptionDefinition = {
+        ["src/guis/Wurst/Code/Widgets.lua"] = [=[export type OptionDefinition = {
     kind: string,
     label: string,
     default: any?,
@@ -5460,7 +5460,7 @@ end
 
 return Module
 ]=],
-        ["src/GUI's/Wurst/Code/Cards.lua"] = [=[local Module = {
+        ["src/guis/Wurst/Code/Cards.lua"] = [=[local Module = {
     Name = "Cards",
     PlaceId = 0,
     Events = {} :: {[string]: any},
@@ -6335,7 +6335,7 @@ end
 
 return Module
 ]=],
-        ["src/GUI's/Wurst/Code/WindowManager.lua"] = [=[export type WindowDefinition = {
+        ["src/guis/Wurst/Code/WindowManager.lua"] = [=[export type WindowDefinition = {
     id: string,
     title: string?,
     size: Vector2,
@@ -7469,7 +7469,7 @@ end
 
 return Module
 ]=],
-        ["src/GUI's/Wurst/Code/ClickGui.lua"] = [=[export type CategoryWindow = {
+        ["src/guis/Wurst/Code/ClickGui.lua"] = [=[export type CategoryWindow = {
     name: string,
     window: any,
     layout: UIListLayout,
@@ -7851,7 +7851,7 @@ end
 
 return Module
 ]=],
-        ["src/GUI's/Wurst/Code/FloatingWindows.lua"] = [=[export type FloatingWindowRecord = {
+        ["src/guis/Wurst/Code/FloatingWindows.lua"] = [=[export type FloatingWindowRecord = {
     id: string,
     root: Frame,
     body: Frame,
@@ -9375,7 +9375,7 @@ end
 
 return Module
 ]=],
-        ["src/GUI's/Wurst/Code/SettingsPage.lua"] = [=[local Module = {
+        ["src/guis/Wurst/Code/SettingsPage.lua"] = [=[local Module = {
     Name = "SettingsPage",
     PlaceId = 0,
     Events = {} :: {[string]: any},
@@ -10994,7 +10994,7 @@ end
 
 return Module
 ]=],
-        ["src/GUI's/Wurst/Code/MobileActions.lua"] = [=[export type MobileHoldCallbacks = {
+        ["src/guis/Wurst/Code/MobileActions.lua"] = [=[export type MobileHoldCallbacks = {
 
     isActive: (() -> boolean)?,
     onPress: (() -> ())?,
@@ -11707,7 +11707,7 @@ end
 
 return Module
 ]=],
-        ["src/GUI's/Wurst/Code/Furniture.lua"] = [=[local Module = {
+        ["src/guis/Wurst/Code/Furniture.lua"] = [=[local Module = {
     Name = "Furniture",
     PlaceId = 0,
     Events = {} :: {[string]: any},

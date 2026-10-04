@@ -15,7 +15,7 @@ export type Manifest = {
 local Manifest: Manifest = {
     version = 1,
 
-    widgets = "src/GUI's/Wurst/Code/Widgets.lua",
+    widgets = "src/guis/Wurst/Code/Widgets.lua",
     core = {
         "src/libraries/Framework.lua",
     },
@@ -25,19 +25,19 @@ local Manifest: Manifest = {
         "src/libraries/Weapons.lua",
         "src/libraries/Render.lua",
 
-        "src/GUI's/Wurst/Code/Cards.lua",
+        "src/guis/Wurst/Code/Cards.lua",
 
-        "src/GUI's/Wurst/Code/WindowManager.lua",
+        "src/guis/Wurst/Code/WindowManager.lua",
 
-        "src/GUI's/Wurst/Code/ClickGui.lua",
+        "src/guis/Wurst/Code/ClickGui.lua",
 
-        "src/GUI's/Wurst/Code/FloatingWindows.lua",
+        "src/guis/Wurst/Code/FloatingWindows.lua",
 
-        "src/GUI's/Wurst/Code/SettingsPage.lua",
+        "src/guis/Wurst/Code/SettingsPage.lua",
 
-        "src/GUI's/Wurst/Code/MobileActions.lua",
+        "src/guis/Wurst/Code/MobileActions.lua",
 
-        "src/GUI's/Wurst/Code/Furniture.lua",
+        "src/guis/Wurst/Code/Furniture.lua",
     },
     modules = {
 
