@@ -304,7 +304,7 @@ function Module.init(context: any): any
             if not visible and record.window.pinned then
                 continue
             end
-            record.window:SetVisible(visible)
+            record.window:SetVisible(visible and record.window.userVisible ~= false)
         end
     end
 

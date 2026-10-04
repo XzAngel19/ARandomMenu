@@ -1042,6 +1042,37 @@ function Module.init(context: any): any
         raiseOpen(keybindsRecord)
     end
 
+    local windowsRecord: any = nil
+    local windowsPanel: any = nil
+    local windowOptions: {[string]: boolean} = {}
+
+    local function openWindows(): ()
+        local clickGui: any = state.clickGui
+        if not windowsRecord then
+            local screen: Vector2 = viewport()
+            windowsRecord = configWindow("Windows", "Windows", {
+                position = Vector2.new(screen.X - WINDOW_WIDTH * 3 - 44, 140),
+                anchor = uiRecord and uiRecord.window,
+                settingsSized = true,
+                packRows = {{"Combat", "ON", 20}},
+            })
+            windowsPanel = panelFor(windowsRecord, "ClickGUI.Windows")
+        end
+        if clickGui and windowsPanel then
+            for _, name: string in ipairs(clickGui.order or {}) do
+                if not windowOptions[name] then
+                    windowOptions[name] = true
+                    local category: any = clickGui.categories[name]
+                    addToggleOption(windowsPanel, name, category.window.userVisible ~= false, function(value: boolean): ()
+                        category.window.userVisible = value
+                        category.window:SetVisible(value and state.visible == true)
+                    end)
+                end
+            end
+        end
+        raiseOpen(windowsRecord)
+    end
+
     local optionsRecord: any = nil
 
     local actionEntries: {any} = {}
@@ -1338,6 +1369,7 @@ function Module.init(context: any): any
         or "Universal only"
 
     state.wurstOptions.RegisterAction("Keybinds", "Keybinds", openKeybinds)
+    state.wurstOptions.RegisterAction("Windows", "Windows", openWindows)
     reinjectHandle = state.wurstOptions.RegisterAction(
         "Reinject", "Reinject latest", runReinject
     )
@@ -1372,6 +1404,7 @@ function Module.init(context: any): any
         packRows = {
             {"HackList", nil, 26},
             {"Keybinds", nil, 26},
+            {"Windows", nil, 26},
             {"WurstOptions", nil, 26},
             {"Background", "#404040"},
             {"Accent", "#101010"},
@@ -1383,11 +1416,12 @@ function Module.init(context: any): any
 
     actionRow(uiRecord, 1, "HackList", openHackList)
     actionRow(uiRecord, 2, "Keybinds", openKeybinds)
-    actionRow(uiRecord, 3, "WurstOptions", openWurstOptions)
+    actionRow(uiRecord, 3, "Windows", openWindows)
+    actionRow(uiRecord, 4, "WurstOptions", openWurstOptions)
 
     local uiPanel: any = panelFor(uiRecord, "ClickGUI")
 
-    uiPanel.optionCount = 3
+    uiPanel.optionCount = 4
 
     local uiSettingsValues: {[string]: any} = {}
     state.uiSettings = uiSettingsValues
