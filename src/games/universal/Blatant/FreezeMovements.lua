@@ -86,7 +86,7 @@ function Module.init(context: Runtime): any
         1,
         toggleFreezeMovements,
         {
-            categoryName = "Movement",
+            categoryName = "Blatant",
             configKey = "Movement.FreezeMovements",
         }
     )

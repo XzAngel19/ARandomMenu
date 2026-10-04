@@ -44,9 +44,9 @@ function Module.init(context: Runtime): any
     end
 
     local card: any
-    card = framework.Categories.Movement:CreateModule({
+    card = framework.Categories.Blatant:CreateModule({
         Name = "WallHop",
-        Category = "Movement",
+        Category = "Blatant",
         ConfigKey = "Universal.WallHop",
         Order = 31,
         Tooltip = "Uses nearby wall edges to perform a consistent wall hop.",

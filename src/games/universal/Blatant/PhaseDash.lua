@@ -136,9 +136,9 @@ function Module.init(context: Runtime): any
     end
 
     local phaseDash: any
-    phaseDash = framework.Categories.Movement:CreateModule({
+    phaseDash = framework.Categories.Blatant:CreateModule({
         Name = "Phase Dash",
-        Category = "Movement",
+        Category = "Blatant",
         Tooltip = "Directional dash: collision-aware blink or a velocity slide. "
             .. "The card's key slot is the dash key.",
         Function = function(enabled: boolean): ()

@@ -370,9 +370,9 @@ function Module.init(context: Runtime): any
     end
 
     local fly: any
-    fly = framework.Categories.Movement:CreateModule({
+    fly = framework.Categories.Blatant:CreateModule({
         Name = "Flight",
-        Category = "Movement",
+        Category = "Blatant",
         ConfigKey = "Universal.Fly",
         Tooltip = "Use WASD to move, Space to rise and LeftControl to descend. "
             .. "Method picks how you travel sideways and Float picks what "

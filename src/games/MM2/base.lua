@@ -1,5 +1,5 @@
 local Module = {
-    Name = "MM2 Traps",
+    Name = "MM2",
     PlaceId = 142823291,
     Events = {} :: {[string]: any},
     Initialized = false,
@@ -10,57 +10,6 @@ local Module = {
 local moduleCleanup: () -> () = function(): () end
 
 local function buildMM2Features()
-    local selectedFeature: string = 'Traps'
-    local rawCreateFeature: any = createUniversalFeature
-    local rawRegisterEsp: any = registerEspExtra
-    local featureConnections: {[string]: RBXScriptConnection} = {}
-    local function disconnectFeatureConnection(connectionName: string): ()
-        local connection: RBXScriptConnection? = featureConnections[connectionName]
-        if connection then connection:Disconnect() featureConnections[connectionName] = nil end
-    end
-    local function createUniversalFeature(featureName: string, ...: any): any
-        if featureName ~= selectedFeature then return {__skip = true, row = {Visible = false}} end
-        return rawCreateFeature(featureName, ...)
-    end
-    local function registerEspExtra(definition: any): any
-        if definition.Name ~= selectedFeature then return nil end
-        return rawRegisterEsp(definition)
-    end
-    local raw_addToggleOption: any = addToggleOption
-    local function addToggleOption(feature: any, ...: any): any
-        if feature.__skip then return nil end
-        return raw_addToggleOption(feature, ...)
-    end
-    local raw_addNumberOption: any = addNumberOption
-    local function addNumberOption(feature: any, ...: any): any
-        if feature.__skip then return nil end
-        return raw_addNumberOption(feature, ...)
-    end
-    local raw_addCycleOption: any = addCycleOption
-    local function addCycleOption(feature: any, ...: any): any
-        if feature.__skip then return nil end
-        return raw_addCycleOption(feature, ...)
-    end
-    local raw_addTextOption: any = addTextOption
-    local function addTextOption(feature: any, ...: any): any
-        if feature.__skip then return nil end
-        return raw_addTextOption(feature, ...)
-    end
-    local raw_addKeyOption: any = addKeyOption
-    local function addKeyOption(feature: any, ...: any): any
-        if feature.__skip then return nil end
-        return raw_addKeyOption(feature, ...)
-    end
-    local raw_addActionOption: any = addActionOption
-    local function addActionOption(feature: any, ...: any): any
-        if feature.__skip then return nil end
-        return raw_addActionOption(feature, ...)
-    end
-    local raw_addInformationOption: any = addInformationOption
-    local function addInformationOption(feature: any, ...: any): any
-        if feature.__skip then return nil end
-        return raw_addInformationOption(feature, ...)
-    end
 local host: any = getfenv()
 local trajectoryLogPrefix: string = "[" .. tostring(host.PRODUCT.logPrefix)
     .. ":MM2:Trajectory]"

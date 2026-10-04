@@ -252,7 +252,7 @@ function Module.init(context: Runtime): any
                 notify("no matching player")
             end
         end,
-        {action = true, categoryName = "Other"}
+        {action = true, categoryName = "Blatant"}
     )
     addTextOption(FlingFeature, "Target player", universalFlingSettings.target, function(value)
         universalFlingSettings.target = value

@@ -7,6 +7,7 @@ local DEFAULT_FEATURE_CATEGORY: string = "Other"
 
 local OFFICIAL_CATEGORIES: {string} = {
     "Combat",
+    "Blatant",
     "Render",
     "Blocks",
     "Movement",
@@ -35,17 +36,17 @@ end
 
 local FEATURE_CATEGORIES: {[string]: string} = {
 
-    ["Click Teleport"] = "Movement",
-    ["Fly"] = "Movement",
-    ["Freeze Movements"] = "Movement",
-    ["High Jump"] = "Movement",
-    ["Infinite Jump"] = "Movement",
-    ["Jump Power"] = "Movement",
-    ["Noclip"] = "Movement",
-    ["Phase Dash"] = "Movement",
-    ["Speed"] = "Movement",
-    ["Spider"] = "Movement",
-    ["Walk Speed"] = "Movement",
+    ["Click Teleport"] = "Blatant",
+    ["Fly"] = "Blatant",
+    ["Freeze Movements"] = "Blatant",
+    ["High Jump"] = "Blatant",
+    ["Infinite Jump"] = "Blatant",
+    ["Jump Power"] = "Blatant",
+    ["Noclip"] = "Blatant",
+    ["Phase Dash"] = "Blatant",
+    ["Speed"] = "Blatant",
+    ["Spider"] = "Blatant",
+    ["Walk Speed"] = "Blatant",
 
     ["Hitboxes"] = "Combat",
     ["Projectile Calibration"] = "Combat",
@@ -56,10 +57,10 @@ local FEATURE_CATEGORIES: {[string]: string} = {
     ["X-Ray"] = "Render",
     ["Zoom Unlocker"] = "Render",
 
-    ["Anti-Fling"] = "Other",
-    ["Anti-Void"] = "Movement",
+    ["Anti-Fling"] = "Blatant",
+    ["Anti-Void"] = "Blatant",
     ["Safe Walk"] = "Movement",
-    ["No Fall"] = "Movement",
+    ["No Fall"] = "Blatant",
 
     ["Anti-AFK"] = "Other",
     ["Fling"] = "Other",
@@ -205,7 +206,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "a896bcccc6f3c1b3"
+local SOURCE_STAMP: string = "1929f5e00a3fe414"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -4473,50 +4474,13 @@ local function loadGameModule(
         "src/games/MVSD/Combat/AutoShoot.lua",
         "src/games/MVSD/Combat/TriggerOpportunity.lua",
     } elseif moduleName == "MM2" then {
-        "src/games/MM2/Blatant/Sprint.lua",
-        "src/games/MM2/Combat/KnifeAura.lua",
-        "src/games/MM2/Combat/Shoot.lua",
-        "src/games/MM2/Render/AlwaysShowTimer.lua",
-        "src/games/MM2/Render/CoinESP.lua",
-        "src/games/MM2/Render/SheriffGunESP.lua",
-        "src/games/MM2/Render/TrajectoryCalibration.lua",
-        "src/games/MM2/Render/TrapESP.lua",
-        "src/games/MM2/Utility/AutoPlayID.lua",
-        "src/games/MM2/Utility/HideNames.lua",
-        "src/games/MM2/Utility/InstantRoleNotify.lua",
-        "src/games/MM2/Utility/RoleFling.lua",
-        "src/games/MM2/Utility/Silence.lua",
-        "src/games/MM2/Utility/Teleport.lua",
-        "src/games/MM2/World/LoopAllInteract.lua",
+        "src/games/MM2/base.lua",
     } elseif moduleName == "VD" then {
-        "src/games/VD/Blatant/CooldownModifier.lua",
-        "src/games/VD/Blatant/DamageBoost.lua",
-        "src/games/VD/Blatant/FastVault.lua",
-        "src/games/VD/Blatant/SelectiveNoclip.lua",
-        "src/games/VD/Blatant/WalkSpeed.lua",
-        "src/games/VD/Combat/AutoParry.lua",
-        "src/games/VD/Combat/KillerHitAura.lua",
-        "src/games/VD/Render/GeneratorESP.lua",
-        "src/games/VD/Render/KillerPowerCooldowns.lua",
-        "src/games/VD/Render/KillerProximity.lua",
-        "src/games/VD/Render/LineOfSightESP.lua",
-        "src/games/VD/Render/LockerDetector.lua",
-        "src/games/VD/Utility/BlindProtection.lua",
-        "src/games/VD/Utility/SilentSteps.lua",
-        "src/games/VD/World/AutoGenerator.lua",
+        "src/games/VD/base.lua",
     } elseif moduleName == "BedFight" then {
-        "src/games/BedFight/Blatant/AntiVoid.lua",
-        "src/games/BedFight/Blatant/BedNuker.lua",
-        "src/games/BedFight/Blatant/Scaffold.lua",
-        "src/games/BedFight/Blatant/ServerScaffold.lua",
+        "src/games/BedFight/base.lua",
         "src/games/BedFight/Combat/AutoSwing.lua",
-        "src/games/BedFight/Combat/ServerAura.lua",
-        "src/games/BedFight/Render/BedESP.lua",
-        "src/games/BedFight/Render/GeneratorESP.lua",
         "src/games/BedFight/Render/RoundInfo.lua",
-        "src/games/BedFight/Utility/AutoBuy.lua",
-        "src/games/BedFight/Utility/QuickActions.lua",
-        "src/games/BedFight/World/ServerMiner.lua",
     } elseif moduleName == "BedWars" and placeId ~= 6872265039 then {
         "src/games/BedWars/6872274481 - game/base.lua",
         "src/games/BedWars/6872274481 - game/World/FastPlace.lua",

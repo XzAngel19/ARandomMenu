@@ -116,7 +116,7 @@ function Module.init(context: Runtime): any
         "Climb a wall automatically while moving into it",
         20,
         toggleSpider,
-        {categoryName = "Movement"}
+        {categoryName = "Blatant"}
     )
     addCycleOption(
         SpiderFeature,

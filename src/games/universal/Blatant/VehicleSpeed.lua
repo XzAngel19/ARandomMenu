@@ -185,9 +185,9 @@ function Module.init(context: Runtime): any
     end
 
     local vehicleSpeed: any
-    vehicleSpeed = framework.Categories.Movement:CreateModule({
+    vehicleSpeed = framework.Categories.Blatant:CreateModule({
         Name = "Vehicle Speed",
-        Category = "Movement",
+        Category = "Blatant",
         Tooltip = "Multiplies the speed of the vehicle you are driving. Try "
             .. "Multiplier first, then Motors, Velocity and Seat.",
         Function = function(enabled: boolean): ()

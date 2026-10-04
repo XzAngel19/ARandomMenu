@@ -94,9 +94,9 @@ function Module.init(context: Runtime): any
     end
 
     local speed: any
-    speed = framework.Categories.Movement:CreateModule({
+    speed = framework.Categories.Blatant:CreateModule({
         Name = "SpeedHack",
-        Category = "Movement",
+        Category = "Blatant",
         ConfigKey = "Universal.Speed",
         Order = 1,
         Tooltip = "Move faster, by whichever of five methods this game lets "

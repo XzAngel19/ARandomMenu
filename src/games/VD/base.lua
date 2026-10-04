@@ -1,5 +1,5 @@
 local Module = {
-    Name = "VD Line of Sight ESP",
+    Name = "VD",
     PlaceId = 93978595733734,
     Events = {} :: {[string]: any},
     Initialized = false,
@@ -24,37 +24,6 @@ type CollisionState = {
 local moduleCleanup: () -> () = function(): () end
 
 local function buildVDFeatures(): ()
-    local selectedFeature: string = 'Line of Sight ESP'
-    local rawCreateFeature: any = createUniversalFeature
-    local rawRegisterEsp: any = registerEspExtra
-    local rawAddToggle: any = addToggleOption
-    local rawAddNumber: any = addNumberOption
-    local rawAddCycle: any = addCycleOption
-    local featureConnections: {[string]: RBXScriptConnection} = {}
-    local function disconnectFeatureConnection(connectionName: string): ()
-        local connection: RBXScriptConnection? = featureConnections[connectionName]
-        if connection then connection:Disconnect() featureConnections[connectionName] = nil end
-    end
-    local function createUniversalFeature(featureName: string, ...: any): any
-        if featureName ~= selectedFeature then return {__skip = true, row = {Visible = false}} end
-        return rawCreateFeature(featureName, ...)
-    end
-    local function registerEspExtra(definition: any): any
-        if definition.Name ~= selectedFeature then return nil end
-        return rawRegisterEsp(definition)
-    end
-    local function addToggleOption(feature: any, ...: any): any
-        if feature.__skip then return nil end
-        return rawAddToggle(feature, ...)
-    end
-    local function addNumberOption(feature: any, ...: any): any
-        if feature.__skip then return nil end
-        return rawAddNumber(feature, ...)
-    end
-    local function addCycleOption(feature: any, ...: any): any
-        if feature.__skip then return nil end
-        return rawAddCycle(feature, ...)
-    end
 
     local VD_KILLER_COLOR: Color3 = Color3.fromRGB(166, 110, 255)
     local VD_ALERT_COLOR: Color3 = Color3.fromRGB(255, 190, 88)

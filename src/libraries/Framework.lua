@@ -116,6 +116,7 @@ local Module = {
 
 local KNOWN_CATEGORIES: {string} = {
     "Combat",
+    "Blatant",
     "Render",
     "Blocks",
     "Movement",

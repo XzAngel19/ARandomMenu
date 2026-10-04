@@ -1,5 +1,5 @@
 return {
-    stamp = "a896bcccc6f3c1b3",
+    stamp = "1929f5e00a3fe414",
     files = {
         ["src/libraries/Manifest.lua"] = [=[export type ModuleEntry = {
     path: string,
@@ -2718,6 +2718,7 @@ local Module = {
 
 local KNOWN_CATEGORIES: {string} = {
     "Combat",
+    "Blatant",
     "Render",
     "Blocks",
     "Movement",
@@ -16115,9 +16116,9 @@ function Module.init(context: Runtime): any
     }
 
     local teleport: any
-    teleport = framework.Categories.Movement:CreateModule({
+    teleport = framework.Categories.Blatant:CreateModule({
         Name = "Click Teleport",
-        Category = "Movement",
+        Category = "Blatant",
         Order = 1,
 
         Kind = "action",
@@ -17574,7 +17575,7 @@ function Module.init(context: Runtime): any
             action = true,
             silentAction = true,
             configKey = "Universal.HighJump",
-            categoryName = "Movement",
+            categoryName = "Blatant",
         }
     )
     addNumberOption(
@@ -17723,7 +17724,7 @@ function Module.init(context: Runtime): any
         "Climb a wall automatically while moving into it",
         20,
         toggleSpider,
-        {categoryName = "Movement"}
+        {categoryName = "Blatant"}
     )
     addCycleOption(
         SpiderFeature,
@@ -17829,9 +17830,9 @@ function Module.init(context: Runtime): any
     end
 
     local card: any
-    card = framework.Categories.Movement:CreateModule({
+    card = framework.Categories.Blatant:CreateModule({
         Name = "WallHop",
-        Category = "Movement",
+        Category = "Blatant",
         ConfigKey = "Universal.WallHop",
         Order = 31,
         Tooltip = "Uses nearby wall edges to perform a consistent wall hop.",
@@ -18674,9 +18675,9 @@ function Module.init(context: Runtime): any
     end
 
     local phaseDash: any
-    phaseDash = framework.Categories.Movement:CreateModule({
+    phaseDash = framework.Categories.Blatant:CreateModule({
         Name = "Phase Dash",
-        Category = "Movement",
+        Category = "Blatant",
         Tooltip = "Directional dash: collision-aware blink or a velocity slide. "
             .. "The card's key slot is the dash key.",
         Function = function(enabled: boolean): ()
@@ -18825,7 +18826,7 @@ function Module.init(context: Runtime): any
     local noFall: any
     noFall = framework.Categories.Protection:CreateModule({
         Name = "NoFall",
-        Category = "Movement",
+        Category = "Blatant",
         ConfigKey = "Universal.NoFall",
         Tooltip = "Fall damage is written by the game, on this client: this "
             .. "hands its formula a landing it considers safe instead of "
@@ -19334,9 +19335,9 @@ function Module.init(context: Runtime): any
     end
 
     local fly: any
-    fly = framework.Categories.Movement:CreateModule({
+    fly = framework.Categories.Blatant:CreateModule({
         Name = "Flight",
-        Category = "Movement",
+        Category = "Blatant",
         ConfigKey = "Universal.Fly",
         Tooltip = "Use WASD to move, Space to rise and LeftControl to descend. "
             .. "Method picks how you travel sideways and Float picks what "
@@ -19786,9 +19787,9 @@ function Module.init(context: Runtime): any
     end
 
     local vehicleSpeed: any
-    vehicleSpeed = framework.Categories.Movement:CreateModule({
+    vehicleSpeed = framework.Categories.Blatant:CreateModule({
         Name = "Vehicle Speed",
-        Category = "Movement",
+        Category = "Blatant",
         Tooltip = "Multiplies the speed of the vehicle you are driving. Try "
             .. "Multiplier first, then Motors, Velocity and Seat.",
         Function = function(enabled: boolean): ()
@@ -19991,7 +19992,7 @@ function Module.init(context: Runtime): any
         "Create an invisible rescue platform only when death is imminent",
         4,
         toggleAntiVoid,
-        {noOptions = true, categoryName = "Movement"}
+        {noOptions = true, categoryName = "Blatant"}
     )
     addFeatureTooltip(
         AntiVoidFeature,
@@ -20166,7 +20167,7 @@ function Module.init(context: Runtime): any
         "Keep character jump power at a custom value",
         6,
         toggleJumpPower,
-        {categoryName = "Movement"}
+        {categoryName = "Blatant"}
     )
     addNumberOption(JumpPowerFeature, "Power", jumpPowerSettings.value, 0, 500, function(value)
         jumpPowerSettings.value = value
@@ -20279,9 +20280,9 @@ function Module.init(context: Runtime): any
     end
 
     local jump: any
-    jump = framework.Categories.Movement:CreateModule({
+    jump = framework.Categories.Blatant:CreateModule({
         Name = "Infinite Jump",
-        Category = "Movement",
+        Category = "Blatant",
         Tooltip = "Jump again in mid-air, as a fixed height, a force, a "
             .. "climbing stack, a hold that rises, or a fall cancel.",
         Function = function(enabled: boolean): ()
@@ -20531,7 +20532,7 @@ function Module.init(context: Runtime): any
         "Disable character collisions",
         11,
         toggleNoclip,
-        {noOptions = true, categoryName = "Movement"}
+        {noOptions = true, categoryName = "Blatant"}
     )
     addFeatureTooltip(NoclipFeature, "Disables collisions for every local character part. "
         .. "Original collision states are restored when turned off.")
@@ -20711,7 +20712,7 @@ function Module.init(context: Runtime): any
         "Stop extreme local velocity and return to safety",
         14,
         toggleAntiFling,
-        {categoryName = "Other"}
+        {categoryName = "Blatant"}
     )
     addNumberOption(
         AntiFlingFeature,
@@ -21092,7 +21093,7 @@ function Module.init(context: Runtime): any
                 notify("no matching player")
             end
         end,
-        {action = true, categoryName = "Other"}
+        {action = true, categoryName = "Blatant"}
     )
     addTextOption(FlingFeature, "Target player", universalFlingSettings.target, function(value)
         universalFlingSettings.target = value
@@ -21522,7 +21523,7 @@ function Module.init(context: Runtime): any
         1,
         toggleFreezeMovements,
         {
-            categoryName = "Movement",
+            categoryName = "Blatant",
             configKey = "Movement.FreezeMovements",
         }
     )
@@ -21657,9 +21658,9 @@ function Module.init(context: Runtime): any
     end
 
     local speed: any
-    speed = framework.Categories.Movement:CreateModule({
+    speed = framework.Categories.Blatant:CreateModule({
         Name = "SpeedHack",
-        Category = "Movement",
+        Category = "Blatant",
         ConfigKey = "Universal.Speed",
         Order = 1,
         Tooltip = "Move faster, by whichever of five methods this game lets "

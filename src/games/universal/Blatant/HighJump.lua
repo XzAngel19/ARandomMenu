@@ -46,7 +46,7 @@ function Module.init(context: Runtime): any
             action = true,
             silentAction = true,
             configKey = "Universal.HighJump",
-            categoryName = "Movement",
+            categoryName = "Blatant",
         }
     )
     addNumberOption(

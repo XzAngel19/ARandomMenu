@@ -84,9 +84,9 @@ function Module.init(context: Runtime): any
     end
 
     local jump: any
-    jump = framework.Categories.Movement:CreateModule({
+    jump = framework.Categories.Blatant:CreateModule({
         Name = "Infinite Jump",
-        Category = "Movement",
+        Category = "Blatant",
         Tooltip = "Jump again in mid-air, as a fixed height, a force, a "
             .. "climbing stack, a hold that rises, or a fall cancel.",
         Function = function(enabled: boolean): ()

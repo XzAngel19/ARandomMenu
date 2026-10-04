@@ -70,7 +70,7 @@ function Module.init(context: Runtime): any
         "Keep character jump power at a custom value",
         6,
         toggleJumpPower,
-        {categoryName = "Movement"}
+        {categoryName = "Blatant"}
     )
     addNumberOption(JumpPowerFeature, "Power", jumpPowerSettings.value, 0, 500, function(value)
         jumpPowerSettings.value = value

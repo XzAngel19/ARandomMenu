@@ -65,7 +65,7 @@ function Module.init(context: Runtime): any
         "Disable character collisions",
         11,
         toggleNoclip,
-        {noOptions = true, categoryName = "Movement"}
+        {noOptions = true, categoryName = "Blatant"}
     )
     addFeatureTooltip(NoclipFeature, "Disables collisions for every local character part. "
         .. "Original collision states are restored when turned off.")
