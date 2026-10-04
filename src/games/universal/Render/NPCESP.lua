@@ -26,14 +26,65 @@ function Module.init(context: Runtime): any
     local layer: Frame = render:Layer("NpcEspLayer")
     local candidates: {[Model]: boolean} = {}
     local lastRender: number = -math.huge
+    local bodyNames: {[string]: boolean} = {
+        head = true,
+        torso = true,
+        uppertorso = true,
+        lowertorso = true,
+        humanoidrootpart = true,
+        ["left arm"] = true,
+        ["right arm"] = true,
+        ["left leg"] = true,
+        ["right leg"] = true,
+        leftupperarm = true,
+        rightupperarm = true,
+        leftlowerarm = true,
+        rightlowerarm = true,
+        leftupperleg = true,
+        rightupperleg = true,
+        leftlowerleg = true,
+        rightlowerleg = true,
+        lefthand = true,
+        righthand = true,
+        leftfoot = true,
+        rightfoot = true,
+    }
+
     local function isRigModel(model: Model): boolean
-        if model:FindFirstChildOfClass("Humanoid") then return true end
-        local head: Instance? = model:FindFirstChild("Head")
-        local torso: Instance? = model:FindFirstChild("Torso")
-            or model:FindFirstChild("UpperTorso")
-            or model:FindFirstChild("LowerTorso")
-        return head ~= nil and head:IsA("BasePart")
-            and torso ~= nil and torso:IsA("BasePart")
+        for _, player: Player in ipairs(players:GetPlayers()) do
+            local character: Model? = player.Character
+            if character and character ~= model and character:IsDescendantOf(model) then
+                return false
+            end
+        end
+        if model:FindFirstChildWhichIsA("Humanoid", true) then return true end
+        local found: {[string]: boolean} = {}
+        local count: number = 0
+        for _, descendant: Instance in ipairs(model:GetDescendants()) do
+            if descendant:IsA("BasePart") then
+                local name: string = string.lower(descendant.Name)
+                if bodyNames[name] and not found[name] then
+                    found[name] = true
+                    count += 1
+                end
+            end
+        end
+        local hasHead: boolean = found.head == true
+        local hasTorso: boolean = found.torso == true
+            or found.uppertorso == true
+            or found.lowertorso == true
+        return (hasHead and hasTorso and count >= 3) or count >= 6
+    end
+
+    local function addCandidate(model: Model): ()
+        for existing: Model in pairs(candidates) do
+            if existing:IsDescendantOf(model) then return end
+            if model:IsDescendantOf(existing) then
+                candidates[existing] = nil
+                render:Release(layer, existing)
+            end
+        end
+        candidates[model] = true
     end
 
     local function npcModel(instance: Instance): Model?
@@ -55,7 +106,7 @@ function Module.init(context: Runtime): any
         if not (instance:IsA("Model") or instance:IsA("Humanoid")
             or instance:IsA("BasePart")) then return end
         local model: Model? = npcModel(instance)
-        if model then candidates[model] = true end
+        if model then addCandidate(model) end
     end
 
     local function forget(instance: Instance): ()
