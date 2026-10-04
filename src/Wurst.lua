@@ -205,7 +205,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "6f4f145a4188d07b"
+local SOURCE_STAMP: string = "fcab963aa2dee37b"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -4472,6 +4472,22 @@ local function loadGameModule(
         "src/games/MVSD/Blatant/SilentAim.lua",
         "src/games/MVSD/Combat/AutoShoot.lua",
         "src/games/MVSD/Combat/TriggerOpportunity.lua",
+    } elseif moduleName == "MM2" then {
+        "src/games/MM2/Blatant/Sprint.lua",
+        "src/games/MM2/Combat/KnifeAura.lua",
+        "src/games/MM2/Combat/Shoot.lua",
+        "src/games/MM2/Render/AlwaysShowTimer.lua",
+        "src/games/MM2/Render/CoinESP.lua",
+        "src/games/MM2/Render/SheriffGunESP.lua",
+        "src/games/MM2/Render/TrajectoryCalibration.lua",
+        "src/games/MM2/Render/TrapESP.lua",
+        "src/games/MM2/Utility/AutoPlayID.lua",
+        "src/games/MM2/Utility/HideNames.lua",
+        "src/games/MM2/Utility/InstantRoleNotify.lua",
+        "src/games/MM2/Utility/RoleFling.lua",
+        "src/games/MM2/Utility/Silence.lua",
+        "src/games/MM2/Utility/Teleport.lua",
+        "src/games/MM2/World/LoopAllInteract.lua",
     } elseif moduleName == "VD" then {
         "src/games/VD/Blatant/CooldownModifier.lua",
         "src/games/VD/Blatant/DamageBoost.lua",
