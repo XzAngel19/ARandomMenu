@@ -1,5 +1,5 @@
 return {
-    stamp = "dea5c1548605f641",
+    stamp = "d5de029d847e0a2d",
     files = {
         ["src/libraries/Manifest.lua"] = [=[export type ModuleEntry = {
     path: string,
@@ -3584,12 +3584,22 @@ function Module.init(context: any): EntityLibrary
     local function characterParts(player: Player): (Model?, Humanoid?, BasePart?)
         local character: Model? = player.Character
         if not character or not character.Parent then
+            for _, containerName: string in ipairs({"PlayersContainer", "Characters", "Live", "Players"}) do
+                local container: Instance? = currentWorkspace:FindFirstChild(containerName)
+                local candidate: Instance? = container and container:FindFirstChild(player.Name)
+                if candidate and candidate:IsA("Model") then
+                    character = candidate :: Model
+                    break
+                end
+            end
+        end
+        if not character or not character.Parent then
             return nil, nil, nil
         end
-        local humanoid: Humanoid? =
-            character:FindFirstChildOfClass("Humanoid") :: Humanoid?
-        local root: BasePart? =
-            character:FindFirstChild("HumanoidRootPart") :: BasePart?
+        local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+        local root: BasePart? = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+            or character.PrimaryPart
+            or character:FindFirstChildWhichIsA("BasePart") :: BasePart?
         return character, humanoid, root
     end
 
@@ -3659,20 +3669,30 @@ function Module.init(context: any): EntityLibrary
             end
         end
 
-        local direct: any = (instance :: any).Team
-        local normalizedDirect: string? = normalizeTeamValue(direct)
-        if normalizedDirect then
-            return normalizedDirect
+        local directOk: boolean, direct: any = pcall(function(): any
+            return (instance :: any).Team
+        end)
+        if directOk then
+            local normalizedDirect: string? = normalizeTeamValue(direct)
+            if normalizedDirect then
+                return normalizedDirect
+            end
         end
-        local colour: any = (instance :: any).TeamColor
-        local normalizedColour: string? = normalizeTeamValue(colour)
-        if normalizedColour then
-            return normalizedColour
+        local colourOk: boolean, colour: any = pcall(function(): any
+            return (instance :: any).TeamColor
+        end)
+        if colourOk then
+            local normalizedColour: string? = normalizeTeamValue(colour)
+            if normalizedColour then
+                return normalizedColour
+            end
         end
         local child: Instance? = instance:FindFirstChild("Team")
         if child then
-            local childValue: any = (child :: any).Value
-            return normalizeTeamValue(childValue or child.Name)
+            local valueOk: boolean, childValue: any = pcall(function(): any
+                return (child :: any).Value
+            end)
+            return normalizeTeamValue(valueOk and childValue or child.Name)
         end
         return nil
     end
@@ -5283,6 +5303,9 @@ function Module.init(context: any): RenderLibrary
 
         function set:Show(visible: boolean): ()
             root.Visible = visible
+            if set.highlight then
+                (set.highlight :: Highlight).Enabled = visible
+            end
         end
 
         function set:Highlight(
@@ -5310,6 +5333,7 @@ function Module.init(context: any): RenderLibrary
             local resolved: Highlight = highlight :: Highlight
             resolved.Adornee = adornee
             resolved.Parent = adornee
+            resolved.Enabled = root.Visible
             resolved.DepthMode = mode == "Occluded"
                     and Enum.HighlightDepthMode.Occluded
                 or Enum.HighlightDepthMode.AlwaysOnTop
@@ -14099,7 +14123,7 @@ function Module.init(context: Runtime): any
 
     esp:CreateColor({
         Name = "Colour",
-        Default = Color3.fromRGB(236, 236, 240),
+        Default = Color3.fromRGB(255, 214, 64),
         Tooltip = "Used for every target the game gives no colour of its own.",
     })
     esp:CreateToggle({
@@ -14593,9 +14617,9 @@ function Module.init(context: Runtime): any
         end,
     })
 
-    card:CreateColor({Name = "Fill colour", Default = Color3.fromRGB(0, 204, 255)})
-    card:CreateColor({Name = "Outline colour", Default = Color3.fromRGB(255, 255, 255)})
-    card:CreateSlider({Name = "Fill transparency", Min = 0, Max = 1, Step = 0.05, Default = 0.5})
+    card:CreateColor({Name = "Fill colour", Default = Color3.fromRGB(255, 214, 64)})
+    card:CreateColor({Name = "Outline colour", Default = Color3.fromRGB(255, 246, 196)})
+    card:CreateSlider({Name = "Fill transparency", Min = 0, Max = 1, Step = 0.05, Default = 0.68})
     card:CreateSlider({Name = "Outline transparency", Min = 0, Max = 1, Step = 0.05, Default = 0})
     card:CreateToggle({Name = "Through walls", Default = true})
     card:CreateToggle({Name = "Teammates", Default = false})
@@ -14929,7 +14953,7 @@ function Module.init(context: Runtime): any
         Default = true,
         Tooltip = "Skip NPCs whose Team, Faction or team attribute matches yours.",
     })
-    card:CreateColor({Name = "Colour", Default = Color3.fromRGB(255, 170, 0)})
+    card:CreateColor({Name = "Colour", Default = Color3.fromRGB(255, 214, 64)})
     card:CreateSlider({Name = "Max distance", Min = 25, Max = 2000, Step = 25, Default = 500})
 
     activeCard = card

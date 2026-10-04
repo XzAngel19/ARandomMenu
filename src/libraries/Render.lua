@@ -334,6 +334,9 @@ function Module.init(context: any): RenderLibrary
 
         function set:Show(visible: boolean): ()
             root.Visible = visible
+            if set.highlight then
+                (set.highlight :: Highlight).Enabled = visible
+            end
         end
 
         function set:Highlight(
@@ -361,6 +364,7 @@ function Module.init(context: any): RenderLibrary
             local resolved: Highlight = highlight :: Highlight
             resolved.Adornee = adornee
             resolved.Parent = adornee
+            resolved.Enabled = root.Visible
             resolved.DepthMode = mode == "Occluded"
                     and Enum.HighlightDepthMode.Occluded
                 or Enum.HighlightDepthMode.AlwaysOnTop

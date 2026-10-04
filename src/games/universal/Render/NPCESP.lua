@@ -172,7 +172,7 @@ function Module.init(context: Runtime): any
         Default = true,
         Tooltip = "Skip NPCs whose Team, Faction or team attribute matches yours.",
     })
-    card:CreateColor({Name = "Colour", Default = Color3.fromRGB(255, 170, 0)})
+    card:CreateColor({Name = "Colour", Default = Color3.fromRGB(255, 214, 64)})
     card:CreateSlider({Name = "Max distance", Min = 25, Max = 2000, Step = 25, Default = 500})
 
     activeCard = card

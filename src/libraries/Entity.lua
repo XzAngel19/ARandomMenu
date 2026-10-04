@@ -120,12 +120,22 @@ function Module.init(context: any): EntityLibrary
     local function characterParts(player: Player): (Model?, Humanoid?, BasePart?)
         local character: Model? = player.Character
         if not character or not character.Parent then
+            for _, containerName: string in ipairs({"PlayersContainer", "Characters", "Live", "Players"}) do
+                local container: Instance? = currentWorkspace:FindFirstChild(containerName)
+                local candidate: Instance? = container and container:FindFirstChild(player.Name)
+                if candidate and candidate:IsA("Model") then
+                    character = candidate :: Model
+                    break
+                end
+            end
+        end
+        if not character or not character.Parent then
             return nil, nil, nil
         end
-        local humanoid: Humanoid? =
-            character:FindFirstChildOfClass("Humanoid") :: Humanoid?
-        local root: BasePart? =
-            character:FindFirstChild("HumanoidRootPart") :: BasePart?
+        local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+        local root: BasePart? = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+            or character.PrimaryPart
+            or character:FindFirstChildWhichIsA("BasePart") :: BasePart?
         return character, humanoid, root
     end
 
@@ -195,20 +205,30 @@ function Module.init(context: any): EntityLibrary
             end
         end
 
-        local direct: any = (instance :: any).Team
-        local normalizedDirect: string? = normalizeTeamValue(direct)
-        if normalizedDirect then
-            return normalizedDirect
+        local directOk: boolean, direct: any = pcall(function(): any
+            return (instance :: any).Team
+        end)
+        if directOk then
+            local normalizedDirect: string? = normalizeTeamValue(direct)
+            if normalizedDirect then
+                return normalizedDirect
+            end
         end
-        local colour: any = (instance :: any).TeamColor
-        local normalizedColour: string? = normalizeTeamValue(colour)
-        if normalizedColour then
-            return normalizedColour
+        local colourOk: boolean, colour: any = pcall(function(): any
+            return (instance :: any).TeamColor
+        end)
+        if colourOk then
+            local normalizedColour: string? = normalizeTeamValue(colour)
+            if normalizedColour then
+                return normalizedColour
+            end
         end
         local child: Instance? = instance:FindFirstChild("Team")
         if child then
-            local childValue: any = (child :: any).Value
-            return normalizeTeamValue(childValue or child.Name)
+            local valueOk: boolean, childValue: any = pcall(function(): any
+                return (child :: any).Value
+            end)
+            return normalizeTeamValue(valueOk and childValue or child.Name)
         end
         return nil
     end

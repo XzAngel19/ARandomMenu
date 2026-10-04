@@ -103,9 +103,9 @@ function Module.init(context: Runtime): any
         end,
     })
 
-    card:CreateColor({Name = "Fill colour", Default = Color3.fromRGB(0, 204, 255)})
-    card:CreateColor({Name = "Outline colour", Default = Color3.fromRGB(255, 255, 255)})
-    card:CreateSlider({Name = "Fill transparency", Min = 0, Max = 1, Step = 0.05, Default = 0.5})
+    card:CreateColor({Name = "Fill colour", Default = Color3.fromRGB(255, 214, 64)})
+    card:CreateColor({Name = "Outline colour", Default = Color3.fromRGB(255, 246, 196)})
+    card:CreateSlider({Name = "Fill transparency", Min = 0, Max = 1, Step = 0.05, Default = 0.68})
     card:CreateSlider({Name = "Outline transparency", Min = 0, Max = 1, Step = 0.05, Default = 0})
     card:CreateToggle({Name = "Through walls", Default = true})
     card:CreateToggle({Name = "Teammates", Default = false})
