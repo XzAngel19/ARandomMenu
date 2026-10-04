@@ -66,6 +66,7 @@ end)
 local mm2Settings = {
     autoGetGunDelay = 0.25,
     shootMode = "Manual",
+    shootWallCheck = true,
     shootKey = Enum.KeyCode.Q,
     shootTarget = "",
     showMissCooldown = true,
@@ -3069,7 +3070,9 @@ local function computeGunAim(
                         predicted - origin.Position,
                         raycastParams
                     )
-                    if not result or result.Instance:IsDescendantOf(character) then
+                    if not mm2Settings.shootWallCheck
+                        or not result
+                        or result.Instance:IsDescendantOf(character) then
                         local confidence: number = math.clamp(
                             stability
                                 * (1 - math.min(acceleration.Magnitude / 240, 0.45)),
@@ -3954,6 +3957,15 @@ if state.bindFeatureActivationKey then
         triggerManualShot
     )
 end
+addCycleOption(
+    ShootFeature,
+    "Wall check",
+    {"Disabled", "WallCheck"},
+    2,
+    function(value: string): ()
+        mm2Settings.shootWallCheck = value == "WallCheck"
+    end
+)
 ShootTargetBox = addTextOption(ShootFeature, "Target player", "", function(
     value: string
 ): ()

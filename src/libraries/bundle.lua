@@ -1,5 +1,5 @@
 return {
-    stamp = "d5de029d847e0a2d",
+    stamp = "1195e9621dc7514b",
     files = {
         ["src/libraries/Manifest.lua"] = [=[export type ModuleEntry = {
     path: string,
@@ -5403,52 +5403,81 @@ function Module.init(context: any): RenderLibrary
     end
 
     function library:ModelRect(camera: Camera, model: Model): Rect?
-        local ok: boolean, boundsCFrame: any, boundsSize: any = pcall(function(): (CFrame, Vector3)
-            return model:GetBoundingBox()
-        end)
-        if not ok then
-            return nil
-        end
-        local half: Vector3 = (boundsSize :: Vector3) * 0.5
-        local minimumX: number, minimumY: number = math.huge, math.huge
-        local maximumX: number, maximumY: number = -math.huge, -math.huge
-        local anyVisible: boolean = false
-
-        for index: number = 0, 7 do
-            local corner: Vector3 = (boundsCFrame :: CFrame) * Vector3.new(
-                (index % 2 == 0) and -half.X or half.X,
-                (math.floor(index / 2) % 2 == 0) and -half.Y or half.Y,
-                (math.floor(index / 4) % 2 == 0) and -half.Z or half.Z
-            )
-            local point: Vector3, onScreen: boolean =
-                camera:WorldToViewportPoint(corner)
-            if point.Z <= 0 then
+        local humanoid: Humanoid? = model:FindFirstChildOfClass("Humanoid") :: Humanoid?
+        local root: BasePart? = model:FindFirstChild("HumanoidRootPart") :: BasePart?
+            or model.PrimaryPart
+        local head: BasePart? = model:FindFirstChild("Head") :: BasePart?
+        if humanoid and root then
+            local topPosition: Vector3 = head
+                and (head.Position + Vector3.new(0, head.Size.Y * 0.65, 0))
+                or (root.Position + Vector3.new(0, 3.5, 0))
+            local bottomPosition: Vector3 = root.Position
+                - Vector3.new(0, math.max(humanoid.HipHeight + root.Size.Y * 0.5, 2.5), 0)
+            local topPoint: Vector3, topVisible: boolean = camera:WorldToViewportPoint(topPosition)
+            local bottomPoint: Vector3, bottomVisible: boolean = camera:WorldToViewportPoint(bottomPosition)
+            if topPoint.Z <= 0 or bottomPoint.Z <= 0 or not (topVisible or bottomVisible) then
                 return nil
             end
-            anyVisible = anyVisible or onScreen
-            minimumX = math.min(minimumX, point.X)
-            minimumY = math.min(minimumY, point.Y)
-            maximumX = math.max(maximumX, point.X)
-            maximumY = math.max(maximumY, point.Y)
-        end
-        if not anyVisible then
-            return nil
+            local height: number = math.abs(bottomPoint.Y - topPoint.Y)
+            if height < 4 then return nil end
+            height = math.min(height, camera.ViewportSize.Y * 1.35)
+            local width: number = math.clamp(height * 0.52, 4, camera.ViewportSize.X * 0.7)
+            local centreX: number = (topPoint.X + bottomPoint.X) * 0.5
+            local centreY: number = (topPoint.Y + bottomPoint.Y) * 0.5
+            return {
+                left = centreX - width * 0.5,
+                right = centreX + width * 0.5,
+                top = centreY - height * 0.5,
+                bottom = centreY + height * 0.5,
+                width = width,
+                height = height,
+                centreX = centreX,
+                centreY = centreY,
+            }
         end
 
-        local padding: number = 2
-        local left: number = minimumX - padding
-        local right: number = maximumX + padding
-        local top: number = minimumY - padding
-        local bottom: number = maximumY + padding
+        local minimumX: number, minimumY: number = math.huge, math.huge
+        local maximumX: number, maximumY: number = -math.huge, -math.huge
+        local points: number = 0
+        for _, descendant: Instance in ipairs(model:GetDescendants()) do
+            if not descendant:IsA("BasePart")
+                or descendant:FindFirstAncestorOfClass("Accessory")
+                or descendant:FindFirstAncestorOfClass("Tool") then
+                continue
+            end
+            local part: BasePart = descendant :: BasePart
+            local half: Vector3 = part.Size * 0.5
+            for index: number = 0, 7 do
+                local corner: Vector3 = part.CFrame * Vector3.new(
+                    index % 2 == 0 and -half.X or half.X,
+                    math.floor(index / 2) % 2 == 0 and -half.Y or half.Y,
+                    math.floor(index / 4) % 2 == 0 and -half.Z or half.Z
+                )
+                local point: Vector3, visible: boolean = camera:WorldToViewportPoint(corner)
+                if point.Z > 0 and visible then
+                    minimumX = math.min(minimumX, point.X)
+                    minimumY = math.min(minimumY, point.Y)
+                    maximumX = math.max(maximumX, point.X)
+                    maximumY = math.max(maximumY, point.Y)
+                    points += 1
+                end
+            end
+        end
+        if points < 2 then return nil end
+        local width: number = maximumX - minimumX
+        local height: number = maximumY - minimumY
+        if width < 2 or height < 2
+            or width > camera.ViewportSize.X * 0.8
+            or height > camera.ViewportSize.Y * 1.35 then return nil end
         return {
-            left = left,
-            right = right,
-            top = top,
-            bottom = bottom,
-            width = math.max(right - left, 4),
-            height = math.max(bottom - top, 6),
-            centreX = (left + right) * 0.5,
-            centreY = (top + bottom) * 0.5,
+            left = minimumX - 2,
+            right = maximumX + 2,
+            top = minimumY - 2,
+            bottom = maximumY + 2,
+            width = width + 4,
+            height = height + 4,
+            centreX = (minimumX + maximumX) * 0.5,
+            centreY = (minimumY + maximumY) * 0.5,
         }
     end
 
