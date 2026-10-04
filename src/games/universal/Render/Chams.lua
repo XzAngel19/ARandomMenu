@@ -62,7 +62,7 @@ function Module.init(context: Runtime): any
             card:SetStatus("0")
             card:Render(function(): ()
                 local now: number = os.clock()
-                if now - lastUpdate < 1 / 30 then return end
+                if now - lastUpdate < 0.2 then return end
                 lastUpdate = now
                 local seen: {[Player]: boolean} = {}
                 local count: number = 0
@@ -85,19 +85,24 @@ function Module.init(context: Runtime): any
                             highlights[player] = highlight
                         end
                         local resolved: Highlight = highlight :: Highlight
-                        resolved.Adornee = target.Character
                         local roleColour: Color3? = nil
                         local gameBridge: any = context.services.gameBridge
                         if type(gameBridge.playerRoleColor) == "function" then
                             roleColour = gameBridge.playerRoleColor(player)
                         end
-                        resolved.FillColor = roleColour or card.Options["Fill colour"].Value
-                        resolved.OutlineColor = roleColour or card.Options["Outline colour"].Value
-                        resolved.FillTransparency = card.Options["Fill transparency"].Value
-                        resolved.OutlineTransparency = card.Options["Outline transparency"].Value
-                        resolved.DepthMode = card.Options["Through walls"].Value
+                        local fillColour: Color3 = roleColour or card.Options["Fill colour"].Value
+                        local outlineColour: Color3 = roleColour or card.Options["Outline colour"].Value
+                        local fillTransparency: number = card.Options["Fill transparency"].Value
+                        local outlineTransparency: number = card.Options["Outline transparency"].Value
+                        local depthMode: Enum.HighlightDepthMode = card.Options["Through walls"].Value
                                 and Enum.HighlightDepthMode.AlwaysOnTop
                             or Enum.HighlightDepthMode.Occluded
+                        if resolved.Adornee ~= target.Character then resolved.Adornee = target.Character end
+                        if resolved.FillColor ~= fillColour then resolved.FillColor = fillColour end
+                        if resolved.OutlineColor ~= outlineColour then resolved.OutlineColor = outlineColour end
+                        if resolved.FillTransparency ~= fillTransparency then resolved.FillTransparency = fillTransparency end
+                        if resolved.OutlineTransparency ~= outlineTransparency then resolved.OutlineTransparency = outlineTransparency end
+                        if resolved.DepthMode ~= depthMode then resolved.DepthMode = depthMode end
                     end
                 end
                 for player: Player, highlight: Highlight in pairs(highlights) do

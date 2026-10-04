@@ -1,5 +1,5 @@
 return {
-    stamp = "c75029be4b3680c8",
+    stamp = "de81c81d5981c3fb",
     files = {
         ["src/libraries/Manifest.lua"] = [=[export type ModuleEntry = {
     path: string,
@@ -14605,7 +14605,7 @@ function Module.init(context: Runtime): any
             card:SetStatus("0")
             card:Render(function(): ()
                 local now: number = os.clock()
-                if now - lastUpdate < 1 / 30 then return end
+                if now - lastUpdate < 0.2 then return end
                 lastUpdate = now
                 local seen: {[Player]: boolean} = {}
                 local count: number = 0
@@ -14628,19 +14628,24 @@ function Module.init(context: Runtime): any
                             highlights[player] = highlight
                         end
                         local resolved: Highlight = highlight :: Highlight
-                        resolved.Adornee = target.Character
                         local roleColour: Color3? = nil
                         local gameBridge: any = context.services.gameBridge
                         if type(gameBridge.playerRoleColor) == "function" then
                             roleColour = gameBridge.playerRoleColor(player)
                         end
-                        resolved.FillColor = roleColour or card.Options["Fill colour"].Value
-                        resolved.OutlineColor = roleColour or card.Options["Outline colour"].Value
-                        resolved.FillTransparency = card.Options["Fill transparency"].Value
-                        resolved.OutlineTransparency = card.Options["Outline transparency"].Value
-                        resolved.DepthMode = card.Options["Through walls"].Value
+                        local fillColour: Color3 = roleColour or card.Options["Fill colour"].Value
+                        local outlineColour: Color3 = roleColour or card.Options["Outline colour"].Value
+                        local fillTransparency: number = card.Options["Fill transparency"].Value
+                        local outlineTransparency: number = card.Options["Outline transparency"].Value
+                        local depthMode: Enum.HighlightDepthMode = card.Options["Through walls"].Value
                                 and Enum.HighlightDepthMode.AlwaysOnTop
                             or Enum.HighlightDepthMode.Occluded
+                        if resolved.Adornee ~= target.Character then resolved.Adornee = target.Character end
+                        if resolved.FillColor ~= fillColour then resolved.FillColor = fillColour end
+                        if resolved.OutlineColor ~= outlineColour then resolved.OutlineColor = outlineColour end
+                        if resolved.FillTransparency ~= fillTransparency then resolved.FillTransparency = fillTransparency end
+                        if resolved.OutlineTransparency ~= outlineTransparency then resolved.OutlineTransparency = outlineTransparency end
+                        if resolved.DepthMode ~= depthMode then resolved.DepthMode = depthMode end
                     end
                 end
                 for player: Player, highlight: Highlight in pairs(highlights) do
@@ -14845,45 +14850,75 @@ function Module.init(context: Runtime): any
     local layer: Frame = render:Layer("NpcEspLayer")
     local candidates: {[Model]: boolean} = {}
     local lastRender: number = -math.huge
+    local collectionService: CollectionService = game:GetService("CollectionService")
+    local npcTags: {string} = {"NPC", "Npc", "npc", "Enemy", "Mob", "Bot", "Dummy"}
+
+    local function hasNpcIdentity(model: Model): boolean
+        for _, tag: string in ipairs(npcTags) do
+            if collectionService:HasTag(model, tag) then return true end
+        end
+        for _, attribute: string in ipairs({"NPC", "Npc", "IsNPC", "Bot", "Enemy", "Mob"}) do
+            local value: any = model:GetAttribute(attribute)
+            if value == true or type(value) == "number" or type(value) == "string" then
+                return true
+            end
+        end
+        local normalized: string = string.lower(model.Name):gsub("[^%w]+", " ")
+        for token: string in string.gmatch(normalized, "%w+") do
+            if token == "npc" or token == "bot" or token == "enemy"
+                or token == "mob" or token == "dummy" then return true end
+        end
+        return false
+    end
+
+    local function isRigModel(model: Model): boolean
+        if model:FindFirstChildOfClass("Humanoid")
+            or model:FindFirstChildOfClass("AnimationController") then return true end
+        local head: Instance? = model:FindFirstChild("Head")
+        local torso: Instance? = model:FindFirstChild("Torso")
+            or model:FindFirstChild("UpperTorso")
+            or model:FindFirstChild("LowerTorso")
+        if head and head:IsA("BasePart") and torso and torso:IsA("BasePart") then
+            return true
+        end
+        if hasNpcIdentity(model) then
+            return model:FindFirstChildWhichIsA("BasePart", true) ~= nil
+        end
+        return false
+    end
 
     local function npcModel(instance: Instance): Model?
         local model: Model? = instance:IsA("Model") and instance :: Model
             or instance:FindFirstAncestorOfClass("Model") :: Model?
-        if not model or not model:IsDescendantOf(currentWorkspace)
-            or players:GetPlayerFromCharacter(model) ~= nil
-            or model == host.LocalPlayer.Character then return nil end
-        local humanoid: Humanoid? = model:FindFirstChildOfClass("Humanoid") :: Humanoid?
-        local controller: AnimationController? = model:FindFirstChildOfClass("AnimationController") :: AnimationController?
-        local name: string = string.lower(model.Name)
-        local marked: boolean = model:GetAttribute("NPC") == true
-            or model:GetAttribute("Bot") == true
-            or model:GetAttribute("Enemy") == true
-            or string.find(name, "npc", 1, true) ~= nil
-            or string.find(name, "bot", 1, true) ~= nil
-            or string.find(name, "enemy", 1, true) ~= nil
-        local root: BasePart? = model.PrimaryPart
-            or model:FindFirstChild("HumanoidRootPart") :: BasePart?
-            or model:FindFirstChildWhichIsA("BasePart", true) :: BasePart?
-        return root and (humanoid or controller or marked) and model or nil
+        while model and model ~= currentWorkspace do
+            if model:IsDescendantOf(currentWorkspace)
+                and model ~= host.LocalPlayer.Character
+                and players:GetPlayerFromCharacter(model) == nil
+                and isRigModel(model) then return model end
+            local parent: Instance? = model.Parent
+            model = parent and (parent:IsA("Model") and parent :: Model
+                or parent:FindFirstAncestorOfClass("Model") :: Model?) or nil
+        end
+        return nil
     end
 
     local function classify(instance: Instance): ()
+        if not (instance:IsA("Model") or instance:IsA("Humanoid")
+            or instance:IsA("AnimationController") or instance:IsA("BasePart")) then return end
         local model: Model? = npcModel(instance)
         if model then candidates[model] = true end
     end
 
     local function forget(instance: Instance): ()
-        local model: Model? = instance:IsA("Model") and instance :: Model
-            or instance:FindFirstAncestorOfClass("Model") :: Model?
-        if model and candidates[model] and (instance == model or not model.Parent) then
-            candidates[model] = nil
-            render:Release(layer, model)
+        if instance:IsA("Model") and candidates[instance :: Model] then
+            candidates[instance :: Model] = nil
+            render:Release(layer, instance)
         end
     end
 
     local function scan(): ()
         for _, descendant: Instance in ipairs(currentWorkspace:GetDescendants()) do
-            classify(descendant)
+            if descendant:IsA("Model") then classify(descendant) end
         end
     end
 
