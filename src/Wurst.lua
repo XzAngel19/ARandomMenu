@@ -205,7 +205,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "6def222cfc8c0df2"
+local SOURCE_STAMP: string = "20aa1ddfbdcc6864"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -4465,86 +4465,65 @@ local function loadGameModule(
     local moduleName: string = GAME_MODULES[placeId]
         or ACTIVE_GAME_MODULE
         or tostring(placeId)
-    local moduleUrl: string = REPOSITORY_RAW_BASE
-        .. "src/games/"
-        .. moduleName
-        .. "/base.lua?v="
-        .. SOURCE_STAMP
-    state.logBootstrap("Downloading module: " .. moduleUrl)
-    local downloadSuccess: boolean, source: any = false, nil
-    if type(state.fetchRepositorySource) == "function" then
-        local fetched: string?, fetchError: string? =
-            state.fetchRepositorySource("src/games/" .. moduleName .. "/base.lua")
-        if fetched then
-            source = fetched
-            downloadSuccess = true
+    local paths: {string} = if moduleName == "MVSD" then {
+        "src/games/MVSD/Blatant/SilentAim.lua",
+        "src/games/MVSD/Combat/AutoShoot.lua",
+        "src/games/MVSD/Combat/TriggerOpportunity.lua",
+    } else {"src/games/" .. moduleName .. "/base.lua"}
+    local moduleEnvironment: any = createGameModuleEnvironment(diagnostics)
+    local loadedModules: {GameModule} = {}
+    for _, path: string in paths do
+        local source: any = nil
+        local failure: any = nil
+        if type(state.fetchRepositorySource) == "function" then
+            source, failure = state.fetchRepositorySource(path)
         else
-            source = fetchError
+            local ok: boolean
+            ok, source = pcall(function(): string
+                return (game :: any):HttpGet(REPOSITORY_RAW_BASE .. path .. "?v=" .. SOURCE_STAMP, true)
+            end)
+            if not ok then failure = source source = nil end
         end
-    else
-        downloadSuccess, source = pcall(function(): string
-            return (game :: any):HttpGet(moduleUrl, true)
-        end)
-    end
-    if downloadSuccess and type(source) == "string" then
-        local candidate: string = string.lower(source)
-        if #source < 64
-            or string.find(candidate, "404: not found", 1, true)
-            or string.find(candidate, "<!doctype html", 1, true)
-            or string.find(candidate, "<html", 1, true) then
-            warn("[" .. PRODUCT.logPrefix .. ":Bootstrap] Invalid remote response for " .. moduleName)
-            downloadSuccess = false
-        end
-    end
-    if not downloadSuccess or type(source) ~= "string" then
-        local readFile: any = executorEnvironment.readfile
-        local isFile: any = executorEnvironment.isfile
-        local localPath: string = "Wurst/src/games/" .. moduleName .. "/base.lua"
-        if type(readFile) == "function"
-            and (type(isFile) ~= "function" or isFile(localPath)) then
-            local localSuccess: boolean, localSource: any = pcall(readFile, localPath)
-            if localSuccess and type(localSource) == "string" then
-                source = localSource
-                downloadSuccess = true
-                warn("[" .. PRODUCT.logPrefix .. ":Bootstrap] HTTP failed; using local fallback " .. localPath)
+        if type(source) ~= "string" or #source < 64 then
+            local readFile: any = executorEnvironment.readfile
+            local localPath: string = "Wurst/" .. path
+            local ok: boolean = false
+            if type(readFile) == "function" then ok, source = pcall(readFile, localPath) end
+            if not ok or type(source) ~= "string" then
+                return nil, nil, diagnostics, "Could not load " .. path .. ": " .. tostring(failure)
             end
         end
+        local chunk: any, compileError: any = executorEnvironment.loadstring(source, "@" .. path)
+        if type(chunk) ~= "function" then
+            return nil, nil, diagnostics, "Compilation error in " .. path .. ": " .. tostring(compileError)
+        end
+        executorEnvironment.setfenv(chunk, moduleEnvironment)
+        local ok: boolean, loaded: any = pcall(chunk)
+        if not ok or type(loaded) ~= "table" or type(loaded.init) ~= "function" or type(loaded.destroy) ~= "function" then
+            return nil, nil, diagnostics, "Invalid module " .. path .. ": " .. tostring(loaded)
+        end
+        table.insert(loadedModules, loaded)
     end
-    if not downloadSuccess or type(source) ~= "string" then
-        return nil, nil, diagnostics, "HTTP failure: " .. tostring(source)
+    local composite: any = {Name = moduleName, Initialized = false}
+    function composite.init(runtime: any): any
+        for _, loaded: GameModule in loadedModules do
+            local ok: boolean, failure: any = pcall(loaded.init, runtime)
+            if not ok then
+                for _, started: GameModule in loadedModules do
+                    if started == loaded then break end
+                    pcall(started.destroy)
+                end
+                error(failure)
+            end
+        end
+        composite.Initialized = true
+        return composite
     end
-    local normalizedSource: string = string.lower(source)
-    if #source < 64
-        or string.find(normalizedSource, "404: not found", 1, true)
-        or string.find(normalizedSource, "<!doctype html", 1, true)
-        or string.find(normalizedSource, "<html", 1, true) then
-        return nil, nil, diagnostics, "Empty response, HTML or 404"
+    function composite.destroy(): ()
+        for index: number = #loadedModules, 1, -1 do pcall(loadedModules[index].destroy) end
+        composite.Initialized = false
     end
-    state.logBootstrap("Download succeeded (" .. tostring(#source) .. " bytes)")
-
-    local chunk: any, compileError: any =
-        executorEnvironment.loadstring(
-            source,
-            "@src/games/" .. moduleName .. "/base.lua"
-        )
-    if type(chunk) ~= "function" then
-        return nil, nil, diagnostics,
-            "Compilation error: " .. tostring(compileError)
-    end
-
-    local moduleEnvironment: any = createGameModuleEnvironment(diagnostics)
-    executorEnvironment.setfenv(chunk, moduleEnvironment)
-    local runSuccess: boolean, loadedModule: any = pcall(chunk)
-    if not runSuccess then
-        return nil, nil, diagnostics,
-            "Chunk execution error: " .. tostring(loadedModule)
-    end
-    if type(loadedModule) ~= "table"
-        or type(loadedModule.init) ~= "function"
-        or type(loadedModule.destroy) ~= "function" then
-        return nil, nil, diagnostics, "The module does not export init/destroy"
-    end
-    return loadedModule :: GameModule, moduleEnvironment, diagnostics, nil
+    return composite :: GameModule, moduleEnvironment, diagnostics, nil
 end
 
 local function registerPlaceModule(

@@ -1,5 +1,5 @@
 local Module = {
-    Name = "MVSD",
+    Name = "MVSD Silent Aim",
     PlaceId = 135856908115931,
     Events = {} :: {[string]: any},
     Initialized = false,
@@ -834,8 +834,6 @@ local function buildMVSDFeatures(): ()
 
     local function anyFeatureEnabled(): boolean
         return settings.aimEnabled
-            or settings.autoShootEnabled
-            or settings.triggerCueEnabled
     end
 
     local function syncCoreTask(): ()
@@ -944,50 +942,6 @@ local function buildMVSDFeatures(): ()
         SilentAimFeature,
         "Hooks Ray.new and workspace:Raycast. Hit/headshot chance and max aim angle keep shots plausible."
     )
-
-    local AutoShootFeature: any = createUniversalFeature(
-        "Auto Shoot",
-        "Instant triggerbot: fires the weapon the moment a valid enemy enters the FOV",
-        3,
-        function(enabled: boolean): ()
-            settings.autoShootEnabled = enabled
-            if not enabled then
-                releaseAutoShoot()
-            end
-            syncCoreTask()
-        end,
-        {parent = state.mvsdScroll, registry = state.mvsdFeatures}
-    )
-    addToggleOption(AutoShootFeature, "Team check", true, function(value: boolean): ()
-        settings.teamCheck = value
-    end)
-    addNumberOption(AutoShootFeature, "Shot delay", 0, 0, 1, function(value: number): ()
-        settings.shotDelay = math.clamp(value, 0, 2)
-    end)
-    addNumberOption(AutoShootFeature, "Humanize delay", 0.04, 0, 0.2, function(value: number): ()
-        settings.humanizeDelay = math.clamp(value, 0, 0.5)
-    end)
-    addInformationOption(
-        AutoShootFeature,
-        "Simulates mouse clicks. Combine with Silent Aim for guaranteed redirect hits."
-    )
-
-    local TriggerFeature: any = createUniversalFeature(
-        "Trigger Opportunity",
-        "Show a SHOT WINDOW cue when a visible opponent overlaps the center reticle",
-        4,
-        function(enabled: boolean): ()
-            settings.triggerCueEnabled = enabled
-            syncCoreTask()
-        end,
-        {parent = state.mvsdScroll, registry = state.mvsdFeatures}
-    )
-    addNumberOption(TriggerFeature, "Reticle tolerance", 11, 2, 40, function(value: number): ()
-        settings.triggerTolerance = math.clamp(value, 1, 100)
-    end)
-    addNumberOption(TriggerFeature, "Cue delay", 0, 0, 0.5, function(value: number): ()
-        settings.triggerDelay = math.clamp(value, 0, 2)
-    end)
 
     state.cleanupMVSDRuntime = function(): ()
         setSilentAimActivity(false)
