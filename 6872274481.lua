@@ -1,5 +1,5 @@
 local vape = shared.vape
-local ScriptRevision: string = "2026-10-03-r25"
+local ScriptRevision: string = "2026-10-04-r26"
 getgenv().ARandomMenuBedwarsRevision = ScriptRevision
 local loadstring = function(...)
     local Chunk, Message = loadstring(...)
@@ -1693,29 +1693,39 @@ Run(function()
     OldWallcheck = Entity.Wallcheck
     local WallcheckParams: RaycastParams = RaycastParams.new()
     WallcheckParams.FilterType = Enum.RaycastFilterType.Exclude
+    WallcheckParams.RespectCanCollide = true
+    WallcheckParams.IgnoreWater = true
     local WallcheckFilter: {Instance} = {}
 
     Entity.Wallcheck = function(Origin: Vector3, Position: Vector3, IgnoreObject, Ent)
         local Character = Ent and Ent.Character
         local SelfCharacter = LocalPlayer.Character
-        local SelfRoot = SelfCharacter and SelfCharacter.PrimaryPart
-        local TargetRoot = Character and Character.PrimaryPart
-        if not SelfRoot or not TargetRoot then
+        local SelfRoot = Entity.character and Entity.character.RootPart or SelfCharacter and SelfCharacter.PrimaryPart
+        local TargetRoot = Ent and Ent.RootPart or Character and Character.PrimaryPart
+        if not SelfCharacter or not Character or not SelfRoot or not TargetRoot then
             return OldWallcheck(Origin, Position, IgnoreObject)
+        end
+
+        local function GetBodyPoints(Root: BasePart, Humanoid: Humanoid?)
+            local Scale = Humanoid and Humanoid:FindFirstChild("BodyHeightScale")
+            local Feet: Vector3 = Root.Position - Vector3.new(0, (Humanoid and Humanoid.HipHeight or 0) + (Root.Size.Y / 2), 0)
+            local Head: Vector3 = Feet + Vector3.new(0, 5 * (Scale and Scale.Value or 1), 0)
+            return Feet, (Feet + Head) / 2, Head
         end
 
         local Humanoid: Humanoid? = SelfCharacter:FindFirstChildWhichIsA("Humanoid")
         local TargetHumanoid: Humanoid? = Character:FindFirstChildWhichIsA("Humanoid")
-        local Scale = Humanoid and Humanoid:FindFirstChild("BodyHeightScale")
-        local Height: Vector3 = Vector3.new(0, 5 * (Scale and Scale.Value or 1), 0)
-        local SelfFeet: Vector3 = SelfRoot.Position - Vector3.new(0, (Humanoid and Humanoid.HipHeight or 0) + (SelfRoot.Size.Y / 2), 0)
-        local TargetFeet: Vector3 = TargetRoot.Position - Vector3.new(0, (TargetHumanoid and TargetHumanoid.HipHeight or 0) + (TargetRoot.Size.Y / 2), 0)
-        local SelfHead, TargetHead = SelfFeet + Height, TargetFeet + Height
-        local SelfMiddle, TargetMiddle = (SelfFeet + SelfHead) / 2, (TargetFeet + TargetHead) / 2
+        local SelfFeet, SelfMiddle, SelfHead = GetBodyPoints(SelfRoot, Humanoid)
+        local TargetFeet, TargetMiddle, TargetHead = GetBodyPoints(TargetRoot, TargetHumanoid)
 
         table.clear(WallcheckFilter)
+        table.insert(WallcheckFilter, Camera)
         table.insert(WallcheckFilter, SelfCharacter)
-        table.insert(WallcheckFilter, Character)
+        for _, v: any in Entity.List do
+            if v.Character then
+                table.insert(WallcheckFilter, v.Character)
+            end
+        end
         for _, v: Instance in CollectionService:GetTagged("DontBlockSwordRaycast") do
             table.insert(WallcheckFilter, v)
         end
@@ -1723,11 +1733,29 @@ Run(function()
             for _, v: Instance in IgnoreObject do
                 table.insert(WallcheckFilter, v)
             end
+        elseif typeof(IgnoreObject) == "Instance" then
+            table.insert(WallcheckFilter, IgnoreObject)
         end
-        WallcheckParams.FilterDescendantsInstances = WallcheckFilter
-        table.clear(WallcheckFilter)
+        WallcheckParams.FilterDescendantsInstances = table.clone(WallcheckFilter)
 
-        return (Entity.Raycast(SelfFeet, TargetFeet - SelfFeet, WallcheckParams) or Entity.Raycast(TargetFeet, SelfFeet - TargetFeet, WallcheckParams)) and (Entity.Raycast(SelfHead, TargetHead - SelfHead, WallcheckParams) or Entity.Raycast(TargetHead, SelfHead - TargetHead, WallcheckParams)) and (Entity.Raycast(SelfMiddle, TargetMiddle - SelfMiddle, WallcheckParams) or Entity.Raycast(TargetMiddle, SelfMiddle - TargetMiddle, WallcheckParams)) or nil
+        local function BlockedBothWays(From: Vector3, To: Vector3)
+            local Direction: Vector3 = To - From
+            if Direction.Magnitude <= 0.001 then
+                return nil
+            end
+            local Forward = Entity.Raycast(From, Direction, WallcheckParams)
+            if not Forward then
+                return nil
+            end
+            return Entity.Raycast(To, -Direction, WallcheckParams) and Forward or nil
+        end
+
+        -- A target is hidden only when world geometry covers feet, torso and
+        -- head in both ray directions. One real body opening remains hittable.
+        return BlockedBothWays(SelfFeet, TargetFeet)
+            and BlockedBothWays(SelfMiddle, TargetMiddle)
+            and BlockedBothWays(SelfHead, TargetHead)
+            or nil
     end
 
     local function ClearStaleHooks()
@@ -2374,7 +2402,16 @@ Run(function()
         UpdateKits(bedwars.Store:getState().Bedwars.kit)
     end))
 
-    for _, v: string in {"MatchEndEvent", "EntityDeathEvent", "BedwarsBedBreak", "BalloonPopped", "AngelProgress", "GrapplingHookFunctions"} do
+    -- Universal Killaura publishes game-neutral state. Mirror it into the
+    -- BedWars store so AimAssist, combat movement and kit helpers use the same
+    -- actual in-range target instead of behaving as though aura were idle.
+    vape:Clean(RunService.Heartbeat:Connect(function()
+        local AuraState = vape.Libraries.killaura
+        Store.KillauraTarget = AuraState and AuraState.Target or nil
+        Store.attacking = AuraState and AuraState.Attacking or false
+    end))
+
+    for _, v: string in {"MatchEndEvent", "EntityDeathEvent", "BedwarsBedBreak", "BalloonPopped", "GrapplingHookFunctions"} do
         if not vape.Connections then
             return
         end
