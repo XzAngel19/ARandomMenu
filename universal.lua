@@ -1,4 +1,6 @@
 local vape = shared.vape
+local UniversalRevision: string = "2026-10-04-r27"
+getgenv().ARandomMenuUniversalRevision = UniversalRevision
 local loadstring = function(...)
     local Chunk, Error = loadstring(...)
     if Error and vape then
@@ -2620,67 +2622,143 @@ Run(function()
 	local Overlay: OverlapParams = OverlapParams.new()
 	Overlay.FilterType = Enum.RaycastFilterType.Include
 	local Particles, Boxes, AttackDelay = {}, {}, tick()
+	local LastTool: Tool?
+	local CachedInterest: TouchTransmitter?
+	local AuraState = vape.Libraries.killaura or {}
+	table.clear(AuraState)
+	AuraState.Attacking = false
+	vape.Libraries.killaura = AuraState
+
+	local function GetAttackData()
+	    if Mouse.Enabled and not UserInputService:IsMouseButtonPressed(0) then
+	        return nil, nil
+	    end
+
+	    local Tool: Tool? = GetTool()
+	    if Tool ~= LastTool or not CachedInterest or not CachedInterest.Parent then
+	        LastTool = Tool
+	        CachedInterest = Tool and Tool:FindFirstChildWhichIsA("TouchTransmitter", true) or nil
+	    end
+	    return CachedInterest, Tool
+	end
+
+	local function ClearAuraState()
+	    AuraState.Target = nil
+	    AuraState.Targets = nil
+	    AuraState.Attacking = false
+	end
 	
 	Killaura = vape.Categories.Blatant:CreateModule({
 	    Name = "Killaura",
 	    Function = function(Callback: boolean)
 	        if Callback then
+	            AttackDelay = tick()
 	            repeat
-	                local Interest, Tool
-	                if not Mouse.Enabled or UserInputService:IsMouseButtonPressed(0) then
-	                    Tool = GetTool()
-	                    Interest = Tool and Tool:FindFirstChildWhichIsA("TouchTransmitter", true) or nil
-	                end
-	                local Attacked = {}
-	                if Interest then
+	                local Interest, Tool = GetAttackData()
+	                local Attacked, Attackable = {}, {}
+	                if Interest and Tool then
+	                    -- Swing and attack ranges are independent. Querying only
+	                    -- SwingRange silently capped AttackRange whenever the two
+	                    -- sliders differed.
 	                    local Entities = Entity.AllPosition({
-	                        Range = SwingRange.Value,
-	                        Wallcheck = Targets.Walls.Enabled or nil,
+	                        Range = math.max(SwingRange.Value, AttackRange.Value),
 	                        Part = "RootPart",
 	                        Players = Targets.Players.Enabled,
 	                        NPCs = Targets.NPCs.Enabled,
 	                        Priority = Targets.Priority.Value,
-	                        Limit = Max.Value
+	                        Sort = Targets.Priority.Value
 	                    })
 	
-	                    if #Entities > 0 then
-	                        local SelfPosition: Vector3 = Entity.character.RootPart.Position
-	                        local LocalFacing: Vector3 = Entity.character.RootPart.CFrame.LookVector * Vector3.new(1, 0, 1)
+	                    local SelfRoot: BasePart? = Entity.character and Entity.character.RootPart
+	                    if #Entities > 0 and SelfRoot and SelfRoot.Parent then
+	                        local SelfPosition: Vector3 = SelfRoot.Position
+	                        local LocalFacing: Vector3 = SelfRoot.CFrame.LookVector * Vector3.new(1, 0, 1)
+	                        local FacingMagnitude: number = LocalFacing.Magnitude
+	                        local Candidates = {}
 	
 	                        for _, v: any in Entities do
-	                            local Delta: Vector3 = (v.RootPart.Position - SelfPosition)
-	                            local Angle: number = math.acos(LocalFacing:Dot((Delta * Vector3.new(1, 0, 1)).Unit))
-	                            if Angle > (math.rad(AngleSlider.Value) / 2) then
+	                            local Root: BasePart? = v.RootPart
+	                            if not Root or not Root.Parent or not v.Character or not v.Character.Parent then
+	                                continue
+	                            end
+	                            local Delta: Vector3 = Root.Position - SelfPosition
+	                            local FlatDelta: Vector3 = Delta * Vector3.new(1, 0, 1)
+	                            if FlatDelta.Magnitude > 0.001 and FacingMagnitude > 0.001 then
+	                                local Dot: number = math.clamp(LocalFacing.Unit:Dot(FlatDelta.Unit), -1, 1)
+	                                if math.acos(Dot) > (math.rad(AngleSlider.Value) / 2) then
+	                                    continue
+	                                end
+	                            end
+	                            -- Pass the entity as optional context. Generic
+	                            -- wallchecks ignore it; game adapters can inspect
+	                            -- the complete character instead of one root ray.
+	                            if Targets.Walls.Enabled and Entity.Wallcheck(SelfPosition, Root.Position, true, v) then
 	                                continue
 	                            end
 	
-	                            table.insert(Attacked, {
+	                            table.insert(Candidates, {
 	                                Entity = v,
-	                                Check = Delta.Magnitude > AttackRange.Value and BoxSwingColor or BoxAttackColor
+	                                Distance = Delta.Magnitude,
+	                                Attack = Delta.Magnitude <= AttackRange.Value
 	                            })
-	                            TargetInfo.Targets[v] = tick() + 1
+	                        end
 	
-	                            if AttackDelay < tick() then
-	                                AttackDelay = tick() + (1 / CPS.GetRandomValue())
-	                                Tool:Activate()
+	                        -- Fill limited slots with targets that can actually be
+	                        -- hit before swing-only targets. FOV/wall rejected
+	                        -- entries therefore cannot consume Max targets.
+	                        local function AddCandidates(Attack: boolean): boolean
+	                            for _, Candidate in Candidates do
+	                                if Candidate.Attack ~= Attack then
+	                                    continue
+	                                end
+	                                table.insert(Attacked, {
+	                                    Entity = Candidate.Entity,
+	                                    Check = Attack and BoxAttackColor or BoxSwingColor
+	                                })
+	                                if Attack then
+	                                    table.insert(Attackable, Candidate)
+	                                end
+	                                TargetInfo.Targets[Candidate.Entity] = tick() + 1
+	                                if #Attacked >= Max.Value then
+	                                    return true
+	                                end
 	                            end
+	                            return false
+	                        end
+	                        if not AddCandidates(true) then
+	                            AddCandidates(false)
+	                        end
 	
-	                            if Lunge.Enabled and Tool.GripUp.X == 0 then
-	                                break
-	                            end
-	                            if Delta.Magnitude > AttackRange.Value then
-	                                continue
-	                            end
+	                        if #Attacked > 0 and AttackDelay <= tick() then
+	                            AttackDelay = tick() + (1 / CPS.GetRandomValue())
+	                            Tool:Activate()
+	                        end
 	
-	                            Overlay.FilterDescendantsInstances = {v.Character}
-	                            for _, Part: BasePart in workspace:GetPartBoundsInBox(v.RootPart.CFrame, Vector3.new(4, 4, 4), Overlay) do
-	                                firetouchinterest(Interest.Parent, Part, 1)
-	                                firetouchinterest(Interest.Parent, Part, 0)
+	                        local CanTouch: boolean = not Lunge.Enabled or Tool.GripUp.X ~= 0
+	                        if CanTouch then
+	                            for _, Candidate in Attackable do
+	                                local v = Candidate.Entity
+	                                local Root: BasePart? = v.RootPart
+	                                if not Root or not Root.Parent or not v.Character or not v.Character.Parent then
+	                                    continue
+	                                end
+	                                Overlay.FilterDescendantsInstances = {v.Character}
+	                                for _, Part: BasePart in workspace:GetPartBoundsInBox(Root.CFrame, Vector3.new(4, 4, 4), Overlay) do
+	                                    firetouchinterest(Interest.Parent, Part, 1)
+	                                    firetouchinterest(Interest.Parent, Part, 0)
+	                                end
 	                            end
 	                        end
+	                        AuraState.Attacking = CanTouch and #Attackable > 0
 	                    end
 	                end
 	
+	                AuraState.Target = Attackable[1] and Attackable[1].Entity or Attacked[1] and Attacked[1].Entity or nil
+	                AuraState.Targets = Attacked
+	                if #Attacked == 0 then
+	                    AuraState.Attacking = false
+	                end
+
 	                for i: number, v: BoxHandleAdornment in Boxes do
 	                    v.Adornee = Attacked[i] and Attacked[i].Entity.RootPart or nil
 	                    if v.Adornee then
@@ -2702,6 +2780,9 @@ Run(function()
 	                task.wait()
 	            until not Killaura.Enabled
 	        else
+	            LastTool = nil
+	            CachedInterest = nil
+	            ClearAuraState()
 	            for _, v: BoxHandleAdornment in Boxes do
 	                v.Adornee = nil
 	            end
