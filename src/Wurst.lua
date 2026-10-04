@@ -205,7 +205,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "47879ecd5a52d1d4"
+local SOURCE_STAMP: string = "2125093a3e759c40"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -4472,6 +4472,10 @@ local function loadGameModule(
         "src/games/MVSD/Blatant/SilentAim.lua",
         "src/games/MVSD/Combat/AutoShoot.lua",
         "src/games/MVSD/Combat/TriggerOpportunity.lua",
+    } elseif moduleName == "BedFight" then {
+        "src/games/BedFight/base.lua",
+        "src/games/BedFight/Combat/AutoSwing.lua",
+        "src/games/BedFight/Render/RoundInfo.lua",
     } elseif moduleName == "BedWars" and placeId ~= 6872265039 then {
         "src/games/BedWars/6872274481 - game/base.lua",
         "src/games/BedWars/6872274481 - game/World/FastPlace.lua",
