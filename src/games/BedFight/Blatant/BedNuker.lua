@@ -1,5 +1,5 @@
 local Module = {
-    Name = "BedFight",
+    Name = "BedFight Bed Nuker",
     PlaceId = 71480482338212,
     Events = {} :: {[string]: any},
     Initialized = false,
@@ -163,6 +163,42 @@ function Module.init(runtime: any): any
     local TaskManager: any = host.TaskManager
     local state: any = host.state
     local LocalPlayer: Player = host.LocalPlayer
+    local selectedFeature: string = 'Bed Nuker'
+    local rawCreateFeature: any = createUniversalFeature
+    local rawRegisterEsp: any = registerEspExtra
+    local rawAddToggle: any = addToggleOption
+    local rawAddNumber: any = addNumberOption
+    local rawAddText: any = addTextOption
+    local rawAddInformation: any = addInformationOption
+    local rawAddAction: any = host.addActionOption
+    createUniversalFeature = function(featureName: string, ...: any): any
+        if featureName ~= selectedFeature then return {__skip = true} end
+        return rawCreateFeature(featureName, ...)
+    end
+    registerEspExtra = function(definition: any): any
+        if definition.Name ~= selectedFeature then return nil end
+        return rawRegisterEsp(definition)
+    end
+    addToggleOption = function(feature: any, ...: any): any
+        if feature.__skip then return nil end
+        return rawAddToggle(feature, ...)
+    end
+    addNumberOption = function(feature: any, ...: any): any
+        if feature.__skip then return nil end
+        return rawAddNumber(feature, ...)
+    end
+    addTextOption = function(feature: any, ...: any): any
+        if feature.__skip then return nil end
+        return rawAddText(feature, ...)
+    end
+    addInformationOption = function(feature: any, ...: any): any
+        if feature.__skip then return nil end
+        return rawAddInformation(feature, ...)
+    end
+    host.addActionOption = function(feature: any, ...: any): any
+        if feature.__skip then return nil end
+        return rawAddAction(feature, ...)
+    end
 
     local scroll: any = state.bedFightScroll
     local registry: any = state.bedFightFeatures
@@ -1284,6 +1320,7 @@ function Module.init(runtime: any): any
             .. "slot, which the client sent as (\"\", \"Pants\")."
     )
 
+    host.addActionOption = rawAddAction
     Module.Initialized = true
     return Module
 end
