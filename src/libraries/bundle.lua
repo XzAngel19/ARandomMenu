@@ -1,7 +1,7 @@
 return {
-    stamp = "19bd8c03e2379123",
+    stamp = "c67ed5216b9d92e3",
     files = {
-        ["src/library/Manifest.lua"] = [=[export type ModuleEntry = {
+        ["src/libraries/Manifest.lua"] = [=[export type ModuleEntry = {
     path: string,
     name: string,
     category: string,
@@ -20,13 +20,13 @@ local Manifest: Manifest = {
 
     widgets = "src/GUI's/Wurst/Code/Widgets.lua",
     core = {
-        "src/library/Framework.lua",
+        "src/libraries/Framework.lua",
     },
     libraries = {
-        "src/library/Entity.lua",
-        "src/library/Targeting.lua",
-        "src/library/Weapons.lua",
-        "src/library/Render.lua",
+        "src/libraries/Entity.lua",
+        "src/libraries/Targeting.lua",
+        "src/libraries/Weapons.lua",
+        "src/libraries/Render.lua",
 
         "src/GUI's/Wurst/Code/Cards.lua",
 
@@ -45,228 +45,228 @@ local Manifest: Manifest = {
     modules = {
 
         {
-            path = "src/Hacks/FriendList.lua",
+            path = "src/games/universal/FriendList.lua",
             name = "Friend List",
             category = "Other",
         },
         {
-            path = "src/Hacks/ItemRender.lua",
+            path = "src/games/universal/ItemRender.lua",
             name = "ItemESP",
             category = "Render",
         },
         {
-            path = "src/Hacks/PlayerESP.lua",
+            path = "src/games/universal/PlayerESP.lua",
             name = "PlayerESP",
             category = "Render",
         },
         {
-            path = "src/Hacks/Chams.lua",
+            path = "src/games/universal/Chams.lua",
             name = "Chams",
             category = "Render",
         },
         {
-            path = "src/Hacks/Arrows.lua",
+            path = "src/games/universal/Arrows.lua",
             name = "Arrows",
             category = "Render",
         },
         {
-            path = "src/Hacks/NPCESP.lua",
+            path = "src/games/universal/NPCESP.lua",
             name = "NPCESP",
             category = "Render",
         },
         {
-            path = "src/Hacks/KillAura.lua",
+            path = "src/games/universal/KillAura.lua",
             name = "Killaura",
             category = "Combat",
         },
         {
-            path = "src/Hacks/RemoteLogger.lua",
+            path = "src/games/universal/RemoteLogger.lua",
             name = "Remote Logger",
             category = "Other",
         },
         {
-            path = "src/Hacks/Learning.lua",
+            path = "src/games/universal/Learning.lua",
             name = "Learning",
             category = "Other",
         },
         {
-            path = "src/Hacks/ClickTeleport.lua",
+            path = "src/games/universal/ClickTeleport.lua",
             name = "Click Teleport",
             category = "Movement",
         },
         {
-            path = "src/Hacks/AutoClicker.lua",
+            path = "src/games/universal/AutoClicker.lua",
             name = "Auto Clicker",
             category = "Combat",
         },
         {
-            path = "src/Hacks/TriggerBot.lua",
+            path = "src/games/universal/TriggerBot.lua",
             name = "TriggerBot",
             category = "Combat",
         },
         {
-            path = "src/Hacks/AimAssist.lua",
+            path = "src/games/universal/AimAssist.lua",
             name = "Aim Assist",
             category = "Combat",
         },
 
         {
-            path = "src/Hacks/XRay.lua",
+            path = "src/games/universal/XRay.lua",
             name = "X-Ray",
             category = "Render",
         },
         {
-            path = "src/Hacks/HighJump.lua",
+            path = "src/games/universal/HighJump.lua",
             name = "HighJump",
             category = "Movement",
         },
         {
-            path = "src/Hacks/Spider.lua",
+            path = "src/games/universal/Spider.lua",
             name = "Spider",
             category = "Movement",
         },
         {
-            path = "src/Hacks/WallHop.lua",
+            path = "src/games/universal/WallHop.lua",
             name = "WallHop",
             category = "Movement",
         },
         {
-            path = "src/Hacks/SafeWalk.lua",
+            path = "src/games/universal/SafeWalk.lua",
             name = "SafeWalk",
             category = "Movement",
         },
         {
-            path = "src/Hacks/RejoinServer.lua",
+            path = "src/games/universal/RejoinServer.lua",
             name = "Rejoin Server",
             category = "Other",
         },
         {
-            path = "src/Hacks/ZoomUnlocker.lua",
+            path = "src/games/universal/ZoomUnlocker.lua",
             name = "Zoom",
             category = "Render",
         },
         {
-            path = "src/Hacks/InteractExtender.lua",
+            path = "src/games/universal/InteractExtender.lua",
             name = "Interact Extender",
             category = "Other",
         },
         {
-            path = "src/Hacks/PhaseDash.lua",
+            path = "src/games/universal/PhaseDash.lua",
             name = "Phase Dash",
             category = "Movement",
         },
         {
-            path = "src/Hacks/NoFall.lua",
+            path = "src/games/universal/NoFall.lua",
             name = "NoFall",
             category = "Movement",
         },
         {
-            path = "src/Hacks/Fly.lua",
+            path = "src/games/universal/Fly.lua",
             name = "Flight",
             category = "Movement",
         },
         {
-            path = "src/Hacks/VehicleSpeed.lua",
+            path = "src/games/universal/VehicleSpeed.lua",
             name = "Vehicle Speed",
             category = "Movement",
         },
         {
-            path = "src/Hacks/AntiVoid.lua",
+            path = "src/games/universal/AntiVoid.lua",
             name = "Anti-Void",
             category = "Movement",
         },
         {
-            path = "src/Hacks/Gravity.lua",
+            path = "src/games/universal/Gravity.lua",
             name = "Gravity",
             category = "Movement",
         },
         {
-            path = "src/Hacks/JumpPower.lua",
+            path = "src/games/universal/JumpPower.lua",
             name = "Jump Power",
             category = "Movement",
         },
         {
-            path = "src/Hacks/InfiniteJump.lua",
+            path = "src/games/universal/InfiniteJump.lua",
             name = "Infinite Jump",
             category = "Movement",
         },
         {
-            path = "src/Hacks/FieldOfView.lua",
+            path = "src/games/universal/FieldOfView.lua",
             name = "FOV",
             category = "Render",
         },
         {
-            path = "src/Hacks/Noclip.lua",
+            path = "src/games/universal/Noclip.lua",
             name = "Noclip",
             category = "Movement",
         },
         {
-            path = "src/Hacks/AntiAfk.lua",
+            path = "src/games/universal/AntiAfk.lua",
             name = "AntiAFK",
             category = "Other",
         },
         {
-            path = "src/Hacks/AntiFling.lua",
+            path = "src/games/universal/AntiFling.lua",
             name = "Anti-Fling",
             category = "Other",
         },
         {
-            path = "src/Hacks/LagSwitch.lua",
+            path = "src/games/universal/LagSwitch.lua",
             name = "Lag Switch",
             category = "Other",
         },
         {
-            path = "src/Hacks/Fling.lua",
+            path = "src/games/universal/Fling.lua",
             name = "Fling",
             category = "Other",
         },
         {
-            path = "src/Hacks/ImproveFps.lua",
+            path = "src/games/universal/ImproveFps.lua",
             name = "Improve FPS",
             category = "Other",
         },
         {
-            path = "src/Hacks/Fullbright.lua",
+            path = "src/games/universal/Fullbright.lua",
             name = "Fullbright",
             category = "Render",
         },
         {
-            path = "src/Hacks/FreezeMovements.lua",
+            path = "src/games/universal/FreezeMovements.lua",
             name = "Freeze Movements",
             category = "Movement",
         },
         {
-            path = "src/Hacks/Speed.lua",
+            path = "src/games/universal/Speed.lua",
             name = "SpeedHack",
             category = "Movement",
         },
         {
-            path = "src/Hacks/Hitboxes.lua",
+            path = "src/games/universal/Hitboxes.lua",
             name = "Hitboxes",
             category = "Combat",
         },
         {
-            path = "src/Hacks/ProjectileCalibration.lua",
+            path = "src/games/universal/ProjectileCalibration.lua",
             name = "Projectile Calibration",
             category = "Render",
         },
         {
-            path = "src/Hacks/SpinBot.lua",
+            path = "src/games/universal/SpinBot.lua",
             name = "SpinBot",
             category = "Fun",
         },
         {
-            path = "src/Hacks/Disguise.lua",
+            path = "src/games/universal/Disguise.lua",
             name = "Disguise",
             category = "Fun",
         },
         {
-            path = "src/Hacks/AnimationChanger.lua",
+            path = "src/games/universal/AnimationChanger.lua",
             name = "Animation Changer",
             category = "Fun",
         },
         {
-            path = "src/Hacks/EmotePlayer.lua",
+            path = "src/games/universal/EmotePlayer.lua",
             name = "Emote Player",
             category = "Fun",
         },
@@ -2600,7 +2600,7 @@ end
 
 return Module
 ]=],
-        ["src/library/Framework.lua"] = [=[export type CleanupItem = any
+        ["src/libraries/Framework.lua"] = [=[export type CleanupItem = any
 
 export type MovementInputService = {
     getVector: () -> (number, number),
@@ -3461,7 +3461,7 @@ end
 
 return Module
 ]=],
-        ["src/library/Entity.lua"] = [=[export type Entity = {
+        ["src/libraries/Entity.lua"] = [=[export type Entity = {
     Player: Player?,
     Character: Model,
     Humanoid: Humanoid,
@@ -4119,7 +4119,7 @@ end
 
 return Module
 ]=],
-        ["src/library/Targeting.lua"] = [=[export type Query = {
+        ["src/libraries/Targeting.lua"] = [=[export type Query = {
     FOV: number?,
     MaxDistance: number?,
     TargetPart: string?,
@@ -4385,7 +4385,7 @@ end
 
 return Module
 ]=],
-        ["src/library/Weapons.lua"] = [=[export type Candidate = {
+        ["src/libraries/Weapons.lua"] = [=[export type Candidate = {
     id: string,
     label: string,
     kind: string,
@@ -4946,7 +4946,7 @@ end
 
 return Module
 ]=],
-        ["src/library/Render.lua"] = [=[export type Rect = {
+        ["src/libraries/Render.lua"] = [=[export type Rect = {
     left: number,
     right: number,
     top: number,
@@ -13249,7 +13249,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/FriendList.lua"] = [=[export type Runtime = {
+        ["src/games/universal/FriendList.lua"] = [=[export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -13469,7 +13469,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/ItemRender.lua"] = [=[export type Runtime = {
+        ["src/games/universal/ItemRender.lua"] = [=[export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -13913,7 +13913,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/PlayerESP.lua"] = [=[export type Runtime = {
+        ["src/games/universal/PlayerESP.lua"] = [=[export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -14453,7 +14453,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/Chams.lua"] = [=[export type Runtime = {
+        ["src/games/universal/Chams.lua"] = [=[export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -14580,7 +14580,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/Arrows.lua"] = [=[export type Runtime = {
+        ["src/games/universal/Arrows.lua"] = [=[export type Runtime = {
     framework: any,
     entity: any,
     render: any,
@@ -14720,7 +14720,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/NPCESP.lua"] = [=[export type Runtime = {
+        ["src/games/universal/NPCESP.lua"] = [=[export type Runtime = {
     framework: any,
     entity: any,
     render: any,
@@ -14912,7 +14912,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/KillAura.lua"] = [=[export type Runtime = {
+        ["src/games/universal/KillAura.lua"] = [=[export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -15510,7 +15510,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/RemoteLogger.lua"] = [=[export type Runtime = {
+        ["src/games/universal/RemoteLogger.lua"] = [=[export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -15944,7 +15944,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/Learning.lua"] = [=[export type Runtime = {
+        ["src/games/universal/Learning.lua"] = [=[export type Runtime = {
     framework: any,
     host: any,
     services: any,
@@ -16076,7 +16076,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/ClickTeleport.lua"] = [=[export type Runtime = {
+        ["src/games/universal/ClickTeleport.lua"] = [=[export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -16517,7 +16517,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/AutoClicker.lua"] = [=[export type Runtime = {
+        ["src/games/universal/AutoClicker.lua"] = [=[export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -16854,7 +16854,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/TriggerBot.lua"] = [=[export type Runtime = {
+        ["src/games/universal/TriggerBot.lua"] = [=[export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -17150,7 +17150,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/AimAssist.lua"] = [=[export type Runtime = {
+        ["src/games/universal/AimAssist.lua"] = [=[export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -17420,7 +17420,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/XRay.lua"] = [=[export type Runtime = {
+        ["src/games/universal/XRay.lua"] = [=[export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -17526,7 +17526,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/HighJump.lua"] = [=[export type Runtime = {
+        ["src/games/universal/HighJump.lua"] = [=[export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -17605,7 +17605,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/Spider.lua"] = [=[export type Runtime = {
+        ["src/games/universal/Spider.lua"] = [=[export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -17783,7 +17783,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/WallHop.lua"] = [=[export type Runtime = {
+        ["src/games/universal/WallHop.lua"] = [=[export type Runtime = {
     framework: any,
     host: any,
     services: any,
@@ -17969,7 +17969,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/SafeWalk.lua"] = [=[export type Runtime = {
+        ["src/games/universal/SafeWalk.lua"] = [=[export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -18060,7 +18060,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/RejoinServer.lua"] = [=[export type Runtime = {
+        ["src/games/universal/RejoinServer.lua"] = [=[export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -18176,7 +18176,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/ZoomUnlocker.lua"] = [=[export type Runtime = {
+        ["src/games/universal/ZoomUnlocker.lua"] = [=[export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -18312,7 +18312,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/InteractExtender.lua"] = [=[export type Runtime = {
+        ["src/games/universal/InteractExtender.lua"] = [=[export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -18536,7 +18536,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/PhaseDash.lua"] = [=[export type Runtime = {
+        ["src/games/universal/PhaseDash.lua"] = [=[export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -18791,7 +18791,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/NoFall.lua"] = [=[export type Runtime = {
+        ["src/games/universal/NoFall.lua"] = [=[export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -18962,7 +18962,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/Fly.lua"] = [=[export type Runtime = {
+        ["src/games/universal/Fly.lua"] = [=[export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -19599,7 +19599,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/VehicleSpeed.lua"] = [=[export type Runtime = {
+        ["src/games/universal/VehicleSpeed.lua"] = [=[export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -19879,7 +19879,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/AntiVoid.lua"] = [=[export type Runtime = {
+        ["src/games/universal/AntiVoid.lua"] = [=[export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -20016,7 +20016,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/Gravity.lua"] = [=[export type Runtime = {
+        ["src/games/universal/Gravity.lua"] = [=[export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -20094,7 +20094,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/JumpPower.lua"] = [=[export type Runtime = {
+        ["src/games/universal/JumpPower.lua"] = [=[export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -20193,7 +20193,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/InfiniteJump.lua"] = [=[export type Runtime = {
+        ["src/games/universal/InfiniteJump.lua"] = [=[export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -20389,7 +20389,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/FieldOfView.lua"] = [=[export type Runtime = {
+        ["src/games/universal/FieldOfView.lua"] = [=[export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -20464,7 +20464,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/Noclip.lua"] = [=[export type Runtime = {
+        ["src/games/universal/Noclip.lua"] = [=[export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -20554,7 +20554,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/AntiAfk.lua"] = [=[export type Runtime = {
+        ["src/games/universal/AntiAfk.lua"] = [=[export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -20626,7 +20626,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/AntiFling.lua"] = [=[export type Runtime = {
+        ["src/games/universal/AntiFling.lua"] = [=[export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -20741,7 +20741,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/LagSwitch.lua"] = [=[export type Runtime = {
+        ["src/games/universal/LagSwitch.lua"] = [=[export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -20838,7 +20838,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/Fling.lua"] = [=[export type Runtime = {
+        ["src/games/universal/Fling.lua"] = [=[export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -21148,7 +21148,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/ImproveFps.lua"] = [=[export type Runtime = {
+        ["src/games/universal/ImproveFps.lua"] = [=[export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -21325,7 +21325,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/Fullbright.lua"] = [=[export type Runtime = {
+        ["src/games/universal/Fullbright.lua"] = [=[export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -21434,7 +21434,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/FreezeMovements.lua"] = [=[export type Runtime = {
+        ["src/games/universal/FreezeMovements.lua"] = [=[export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -21561,7 +21561,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/Speed.lua"] = [=[export type Runtime = {
+        ["src/games/universal/Speed.lua"] = [=[export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -21841,7 +21841,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/Hitboxes.lua"] = [=[export type Runtime = {
+        ["src/games/universal/Hitboxes.lua"] = [=[export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -22166,7 +22166,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/ProjectileCalibration.lua"] = [=[export type Runtime = {
+        ["src/games/universal/ProjectileCalibration.lua"] = [=[export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -22939,7 +22939,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/SpinBot.lua"] = [=[export type Runtime = {
+        ["src/games/universal/SpinBot.lua"] = [=[export type Runtime = {
     framework: any,
     host: any,
     services: any,
@@ -23088,7 +23088,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/Disguise.lua"] = [=[export type Runtime = {
+        ["src/games/universal/Disguise.lua"] = [=[export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -23374,7 +23374,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/AnimationChanger.lua"] = [=[export type Runtime = {
+        ["src/games/universal/AnimationChanger.lua"] = [=[export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -23919,7 +23919,7 @@ end
 
 return Module
 ]=],
-        ["src/Hacks/EmotePlayer.lua"] = [=[export type Runtime = {
+        ["src/games/universal/EmotePlayer.lua"] = [=[export type Runtime = {
     framework: any,
     entity: any,
     host: any,
