@@ -205,7 +205,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "cf3515ea7572b7fd"
+local SOURCE_STAMP: string = "f67bc93f6969e117"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -287,7 +287,10 @@ local CONFIG_FILE = CONFIG_PROFILE_FOLDER
 local REPOSITORY_RAW_BASE = RUNTIME_RAW_BASE
 
 local GAME_MODULES: {[number]: string} = {
+    [6872265039] = "BedWars",
+    [6872274481] = "BedWars",
     [8444591321] = "BedWars",
+    [8560631822] = "BedWars",
     [71480482338212] = "BedFight",
     [142823291] = "MM2",
     [14315258385] = "TRS",
@@ -4469,13 +4472,13 @@ local function loadGameModule(
         "src/games/MVSD/Blatant/SilentAim.lua",
         "src/games/MVSD/Combat/AutoShoot.lua",
         "src/games/MVSD/Combat/TriggerOpportunity.lua",
-    } elseif moduleName == "BedWars" then {
-        "src/games/BedWars/base.lua",
-        "src/games/BedWars/World/FastPlace.lua",
-        "src/games/BedWars/Blatant/Nuker.lua",
-        "src/games/BedWars/World/ChestSteal.lua",
-        "src/games/BedWars/World/AutoTool.lua",
-    } else {"src/games/" .. moduleName .. "/base.lua"}
+    } elseif moduleName == "BedWars" and placeId == 8444591321 then {
+        "src/games/BedWars/8444591321 - mega/base.lua",
+        "src/games/BedWars/8444591321 - mega/World/FastPlace.lua",
+        "src/games/BedWars/8444591321 - mega/Blatant/Nuker.lua",
+        "src/games/BedWars/8444591321 - mega/World/ChestSteal.lua",
+        "src/games/BedWars/8444591321 - mega/World/AutoTool.lua",
+    } elseif moduleName == "BedWars" then {} else {"src/games/" .. moduleName .. "/base.lua"}
     local moduleEnvironment: any = createGameModuleEnvironment(diagnostics)
     local loadedModules: {GameModule} = {}
     for _, path: string in paths do
@@ -4552,7 +4555,7 @@ local function registerPlaceModule(
     SectionManager.register(tabName, function(): ()
         local loadedModule: GameModule?, _moduleEnvironment: any,
             diagnostics: ModuleDiagnostics, loadError: string? =
-            loadGameModule(placeId)
+            loadGameModule(GAME_MODULES[game.PlaceId] and game.PlaceId or placeId)
         if not loadedModule then
             state.logBootstrapError(
                 "Could not load " .. tabName .. ": " .. tostring(loadError)
