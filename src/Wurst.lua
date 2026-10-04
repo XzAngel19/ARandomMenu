@@ -205,7 +205,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "66de5ae48f500223"
+local SOURCE_STAMP: string = "cf3515ea7572b7fd"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -4473,6 +4473,8 @@ local function loadGameModule(
         "src/games/BedWars/base.lua",
         "src/games/BedWars/World/FastPlace.lua",
         "src/games/BedWars/Blatant/Nuker.lua",
+        "src/games/BedWars/World/ChestSteal.lua",
+        "src/games/BedWars/World/AutoTool.lua",
     } else {"src/games/" .. moduleName .. "/base.lua"}
     local moduleEnvironment: any = createGameModuleEnvironment(diagnostics)
     local loadedModules: {GameModule} = {}

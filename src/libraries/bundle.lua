@@ -1,5 +1,5 @@
 return {
-    stamp = "66de5ae48f500223",
+    stamp = "cf3515ea7572b7fd",
     files = {
         ["src/libraries/Manifest.lua"] = [=[export type ModuleEntry = {
     path: string,
