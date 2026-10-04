@@ -205,7 +205,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "4f179bd141b59ce9"
+local SOURCE_STAMP: string = "6f4f145a4188d07b"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -4472,6 +4472,22 @@ local function loadGameModule(
         "src/games/MVSD/Blatant/SilentAim.lua",
         "src/games/MVSD/Combat/AutoShoot.lua",
         "src/games/MVSD/Combat/TriggerOpportunity.lua",
+    } elseif moduleName == "VD" then {
+        "src/games/VD/Blatant/CooldownModifier.lua",
+        "src/games/VD/Blatant/DamageBoost.lua",
+        "src/games/VD/Blatant/FastVault.lua",
+        "src/games/VD/Blatant/SelectiveNoclip.lua",
+        "src/games/VD/Blatant/WalkSpeed.lua",
+        "src/games/VD/Combat/AutoParry.lua",
+        "src/games/VD/Combat/KillerHitAura.lua",
+        "src/games/VD/Render/GeneratorESP.lua",
+        "src/games/VD/Render/KillerPowerCooldowns.lua",
+        "src/games/VD/Render/KillerProximity.lua",
+        "src/games/VD/Render/LineOfSightESP.lua",
+        "src/games/VD/Render/LockerDetector.lua",
+        "src/games/VD/Utility/BlindProtection.lua",
+        "src/games/VD/Utility/SilentSteps.lua",
+        "src/games/VD/World/AutoGenerator.lua",
     } elseif moduleName == "BedFight" then {
         "src/games/BedFight/Blatant/AntiVoid.lua",
         "src/games/BedFight/Blatant/BedNuker.lua",
