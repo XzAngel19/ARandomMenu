@@ -149,7 +149,7 @@ function Module.init(context: Runtime): any
 
     esp:CreateColor({
         Name = "Colour",
-        Default = Color3.fromRGB(255, 214, 64),
+        Default = Color3.fromRGB(255, 255, 255),
         Tooltip = "Used for every target the game gives no colour of its own.",
     })
     esp:CreateToggle({

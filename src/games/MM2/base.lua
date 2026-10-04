@@ -67,6 +67,7 @@ local mm2Settings = {
     autoGetGunDelay = 0.25,
     shootMode = "Manual",
     shootWallCheck = true,
+    silentAim = false,
     shootKey = Enum.KeyCode.Q,
     shootTarget = "",
     showMissCooldown = true,
@@ -497,6 +498,13 @@ local function registerMM2Roles(): ()
         },
         Get = function(player: Player): string?
             return getPlayerRole(player)
+        end,
+        GetColor = function(roleName: string): Color3?
+            if roleName == "Murderer" then return mm2Settings.murdererColor end
+            if roleName == "Sheriff" then return mm2Settings.sheriffColor end
+            if roleName == "Hero" then return mm2Settings.heroColor end
+            if roleName == "Innocent" then return mm2Settings.innocentColor end
+            return nil
         end,
         SetColor = function(roleName: string, colour: Color3): ()
             if roleName == "Murderer" then
@@ -3160,6 +3168,17 @@ local function fireGunAtTarget(target: Player?): boolean
     end
 
     state.mm2ShotFeedback.queue(target, gun, origin, aim, prediction)
+    if mm2Settings.silentAim then
+        local targetRoot: BasePart? = target.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+            or target.Character.PrimaryPart
+        if targetRoot then
+            remote:FireServer(
+                CFrame.new(targetRoot.Position + Vector3.new(0, 1, 0)),
+                CFrame.new(targetRoot.Position)
+            )
+            return true
+        end
+    end
     remote:FireServer(origin, aim)
     return true
 end
@@ -3957,13 +3976,20 @@ if state.bindFeatureActivationKey then
         triggerManualShot
     )
 end
-addCycleOption(
+addToggleOption(
     ShootFeature,
-    "Wall check",
-    {"Disabled", "WallCheck"},
-    2,
-    function(value: string): ()
-        mm2Settings.shootWallCheck = value == "WallCheck"
+    "WallCheck",
+    mm2Settings.shootWallCheck,
+    function(value: boolean): ()
+        mm2Settings.shootWallCheck = value
+    end
+)
+addToggleOption(
+    ShootFeature,
+    "SilentAIM",
+    mm2Settings.silentAim,
+    function(value: boolean): ()
+        mm2Settings.silentAim = value
     end
 )
 ShootTargetBox = addTextOption(ShootFeature, "Target player", "", function(

@@ -341,7 +341,7 @@ function Module.init(context: any): EntityLibrary
     function library:Refresh(force: boolean?): {Entity}
 
         local now: number = os.clock()
-        if not force and now - library.lastRefresh < 0.015 then
+        if not force and now - library.lastRefresh < 1 / 30 then
             return library.List
         end
         library.lastRefresh = now

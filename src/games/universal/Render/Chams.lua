@@ -21,6 +21,7 @@ function Module.init(context: Runtime): any
     local protectedTargets: any = context.services.protectedTargets
     local currentWorkspace: Workspace = host.workspace or workspace
     local highlights: {[Player]: Highlight} = {}
+    local lastUpdate: number = -math.huge
 
     local store: any = host.configData
     if store and store.values and store.states then
@@ -60,6 +61,9 @@ function Module.init(context: Runtime): any
             end
             card:SetStatus("0")
             card:Render(function(): ()
+                local now: number = os.clock()
+                if now - lastUpdate < 1 / 30 then return end
+                lastUpdate = now
                 local seen: {[Player]: boolean} = {}
                 local count: number = 0
                 for _, target: any in ipairs(entity:Refresh()) do
@@ -82,8 +86,13 @@ function Module.init(context: Runtime): any
                         end
                         local resolved: Highlight = highlight :: Highlight
                         resolved.Adornee = target.Character
-                        resolved.FillColor = card.Options["Fill colour"].Value
-                        resolved.OutlineColor = card.Options["Outline colour"].Value
+                        local roleColour: Color3? = nil
+                        local gameBridge: any = context.services.gameBridge
+                        if type(gameBridge.playerRoleColor) == "function" then
+                            roleColour = gameBridge.playerRoleColor(player)
+                        end
+                        resolved.FillColor = roleColour or card.Options["Fill colour"].Value
+                        resolved.OutlineColor = roleColour or card.Options["Outline colour"].Value
                         resolved.FillTransparency = card.Options["Fill transparency"].Value
                         resolved.OutlineTransparency = card.Options["Outline transparency"].Value
                         resolved.DepthMode = card.Options["Through walls"].Value
@@ -103,8 +112,8 @@ function Module.init(context: Runtime): any
         end,
     })
 
-    card:CreateColor({Name = "Fill colour", Default = Color3.fromRGB(255, 214, 64)})
-    card:CreateColor({Name = "Outline colour", Default = Color3.fromRGB(255, 246, 196)})
+    card:CreateColor({Name = "Fill colour", Default = Color3.fromRGB(255, 255, 255)})
+    card:CreateColor({Name = "Outline colour", Default = Color3.fromRGB(255, 255, 255)})
     card:CreateSlider({Name = "Fill transparency", Min = 0, Max = 1, Step = 0.05, Default = 0.68})
     card:CreateSlider({Name = "Outline transparency", Min = 0, Max = 1, Step = 0.05, Default = 0})
     card:CreateToggle({Name = "Through walls", Default = true})

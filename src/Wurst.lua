@@ -206,7 +206,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "1195e9621dc7514b"
+local SOURCE_STAMP: string = "c75029be4b3680c8"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -4132,6 +4132,19 @@ state.playerRole = function(player: Player): string?
     return nil
 end
 
+state.playerRoleColor = function(player: Player): Color3?
+    local provider: any = state.gameBridge.roleProvider
+    local role: string? = state.playerRole(player)
+    if not provider or not role then return nil end
+    if type(provider.GetColor) == "function" then
+        local ok: boolean, colour: any = pcall(provider.GetColor, role)
+        if ok and typeof(colour) == "Color3" then return colour end
+    end
+    local colour: any = provider.Colors and provider.Colors[role]
+    return typeof(colour) == "Color3" and colour or nil
+end
+
+
 state.featureTooltip = create("TextLabel", {
     TextTruncate = Enum.TextTruncate.AtEnd,
     ClipsDescendants = true,
@@ -5191,6 +5204,7 @@ local moduleServices: ModuleServices = {
     gameBridge = {
         onEvent = state.onGameBridge,
         playerRole = state.playerRole,
+        playerRoleColor = state.playerRoleColor,
     },
     shortcuts = {bindActivation = state.bindFeatureActivationKey},
     registries = {

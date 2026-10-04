@@ -24,33 +24,41 @@ function Module.init(context: Runtime): any
     local currentWorkspace: Workspace = host.workspace or workspace
     local getCharacterParts: any = host.getCharacterParts
     local layer: Frame = render:Layer("NpcEspLayer")
-    local candidates: {[Model]: Humanoid} = {}
+    local candidates: {[Model]: boolean} = {}
+    local lastRender: number = -math.huge
+
+    local function npcModel(instance: Instance): Model?
+        local model: Model? = instance:IsA("Model") and instance :: Model
+            or instance:FindFirstAncestorOfClass("Model") :: Model?
+        if not model or not model:IsDescendantOf(currentWorkspace)
+            or players:GetPlayerFromCharacter(model) ~= nil
+            or model == host.LocalPlayer.Character then return nil end
+        local humanoid: Humanoid? = model:FindFirstChildOfClass("Humanoid") :: Humanoid?
+        local controller: AnimationController? = model:FindFirstChildOfClass("AnimationController") :: AnimationController?
+        local name: string = string.lower(model.Name)
+        local marked: boolean = model:GetAttribute("NPC") == true
+            or model:GetAttribute("Bot") == true
+            or model:GetAttribute("Enemy") == true
+            or string.find(name, "npc", 1, true) ~= nil
+            or string.find(name, "bot", 1, true) ~= nil
+            or string.find(name, "enemy", 1, true) ~= nil
+        local root: BasePart? = model.PrimaryPart
+            or model:FindFirstChild("HumanoidRootPart") :: BasePart?
+            or model:FindFirstChildWhichIsA("BasePart", true) :: BasePart?
+        return root and (humanoid or controller or marked) and model or nil
+    end
 
     local function classify(instance: Instance): ()
-        if not instance:IsA("Humanoid") then
-            return
-        end
-        local humanoid: Humanoid = instance :: Humanoid
-        local model: Model? = humanoid.Parent :: Model?
-        if not model or not model:IsA("Model")
-            or not model:IsDescendantOf(currentWorkspace)
-            or players:GetPlayerFromCharacter(model) ~= nil
-            or model == host.LocalPlayer.Character then
-            return
-        end
-        candidates[model] = humanoid
+        local model: Model? = npcModel(instance)
+        if model then candidates[model] = true end
     end
 
     local function forget(instance: Instance): ()
-        if instance:IsA("Humanoid") then
-            local model: Model? = instance.Parent :: Model?
-            if model and candidates[model] == instance then
-                candidates[model] = nil
-                render:Release(layer, model)
-            end
-        elseif instance:IsA("Model") and candidates[instance :: Model] then
-            candidates[instance :: Model] = nil
-            render:Release(layer, instance)
+        local model: Model? = instance:IsA("Model") and instance :: Model
+            or instance:FindFirstAncestorOfClass("Model") :: Model?
+        if model and candidates[model] and (instance == model or not model.Parent) then
+            candidates[model] = nil
+            render:Release(layer, model)
         end
     end
 
@@ -84,6 +92,9 @@ function Module.init(context: Runtime): any
             card:Event(currentWorkspace.DescendantAdded, classify)
             card:Event(currentWorkspace.DescendantRemoving, forget)
             card:Render(function(): ()
+                local now: number = os.clock()
+                if now - lastRender < 1 / 20 then return end
+                lastRender = now
                 local camera: Camera? = currentWorkspace.CurrentCamera
                 local _character: Model?, _humanoid: Humanoid?, localRoot: BasePart? =
                     getCharacterParts()
@@ -91,8 +102,9 @@ function Module.init(context: Runtime): any
                     return
                 end
                 local visibleCount: number = 0
-                for model: Model, humanoid: Humanoid in pairs(candidates) do
-                    if not model:IsDescendantOf(currentWorkspace)
+                for model: Model in pairs(candidates) do
+                    local humanoid: Humanoid? = model:FindFirstChildOfClass("Humanoid") :: Humanoid?
+                    if not npcModel(model)
                         or players:GetPlayerFromCharacter(model) ~= nil
                         or model == host.LocalPlayer.Character then
                         candidates[model] = nil
@@ -108,9 +120,9 @@ function Module.init(context: Runtime): any
                     end
                     local root: BasePart? = model:FindFirstChild("HumanoidRootPart") :: BasePart?
                         or model.PrimaryPart
-                        or model:FindFirstChildWhichIsA("BasePart") :: BasePart?
+                        or model:FindFirstChildWhichIsA("BasePart", true) :: BasePart?
                     local drawing: any = render:Set(layer, model)
-                    if not root or humanoid.Health <= 0
+                    if not root or (humanoid and humanoid.Health <= 0)
                         or (root.Position - localRoot.Position).Magnitude
                             > card.Options["Max distance"].Value then
                         drawing:Show(false)
@@ -131,7 +143,7 @@ function Module.init(context: Runtime): any
                     if card.Options["Name"].Value then
                         local text: string = model.Name
                         if card.Options["Health"].Value then
-                            text ..= " [" .. tostring(math.round(humanoid.Health)) .. "]"
+                            text ..= humanoid and (" [" .. tostring(math.round(humanoid.Health)) .. "]") or ""
                         end
                         drawing:Label(
                             "NameTag",
@@ -169,10 +181,10 @@ function Module.init(context: Runtime): any
     card:CreateToggle({Name = "Health", Default = true, Show = {Option = "Name"}})
     card:CreateToggle({
         Name = "Team check",
-        Default = true,
+        Default = false,
         Tooltip = "Skip NPCs whose Team, Faction or team attribute matches yours.",
     })
-    card:CreateColor({Name = "Colour", Default = Color3.fromRGB(255, 214, 64)})
+    card:CreateColor({Name = "Colour", Default = Color3.fromRGB(255, 255, 255)})
     card:CreateSlider({Name = "Max distance", Min = 25, Max = 2000, Step = 25, Default = 500})
 
     activeCard = card
