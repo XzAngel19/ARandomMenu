@@ -1599,7 +1599,7 @@ local AssetManager: any = {
         -- square, built to be a repository avatar, and it renders as a black
         -- brick anywhere with a background behind it.
         wurstLogo = {
-            url = REPOSITORY_RAW_BASE .. "assets/wurst/wurst_128.png",
+            url = REPOSITORY_RAW_BASE .. "src/assets/wurst/wurst_128.png",
             fileName = "wurst-logo-v1.png",
             fallback = "",
             version = 1,
@@ -1609,7 +1609,7 @@ local AssetManager: any = {
         -- rasterised into a fixed-cell grid by tools/make_font_atlas.py.
         -- OFL; the licence ships beside the OTF it was rendered from.
         bitmapFontAtlas = {
-            url = REPOSITORY_RAW_BASE .. "assets/font/monocraft-16.png",
+            url = REPOSITORY_RAW_BASE .. "src/assets/font/monocraft-16.png",
             fileName = "monocraft-16-v1.png",
             fallback = "",
             version = 1,
@@ -1622,21 +1622,21 @@ local AssetManager: any = {
         -- build time by tools/make_font_atlas.py and mirrored in the
         -- contract's atlas family below.
         bitmapFontAtlas8 = {
-            url = REPOSITORY_RAW_BASE .. "assets/font/monocraft-8.png",
+            url = REPOSITORY_RAW_BASE .. "src/assets/font/monocraft-8.png",
             fileName = "monocraft-8-v1.png",
             fallback = "",
             version = 1,
             assetType = "image/png",
         },
         bitmapFontAtlas24 = {
-            url = REPOSITORY_RAW_BASE .. "assets/font/monocraft-24.png",
+            url = REPOSITORY_RAW_BASE .. "src/assets/font/monocraft-24.png",
             fileName = "monocraft-24-v1.png",
             fallback = "",
             version = 1,
             assetType = "image/png",
         },
         bitmapFontAtlas32 = {
-            url = REPOSITORY_RAW_BASE .. "assets/font/monocraft-32.png",
+            url = REPOSITORY_RAW_BASE .. "src/assets/font/monocraft-32.png",
             fileName = "monocraft-32-v1.png",
             fallback = "",
             version = 1,
@@ -6284,7 +6284,7 @@ local fallbackManifest: any = {
 }
 
 local bundleAt: number = os.clock()
-local packed: any, packedError: string? = state.fetchRepositoryChunk("runtime/bundle.luau")
+local packed: any, packedError: string? = state.fetchRepositoryChunk("src/bundle.luau")
 if type(packed) == "table"
     and packed.stamp == SOURCE_STAMP
     and type(packed.files) == "table" then
