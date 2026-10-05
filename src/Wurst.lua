@@ -206,7 +206,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "ca6c9240a4460599"
+local SOURCE_STAMP: string = "32a8d11efdd39a26"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -248,43 +248,6 @@ local warn = function(...: any): ()
     end
 end
 
--- Destruct writes a persistent stop marker so autoexec does not bring the
--- menu back on the next join. getgenv().WURST_FORCE = true (or deleting
--- "<workspace folder>/Wurst/Stopped.flag") clears it and loads the menu again.
-do
-    local environment: any = executorGlobals
-    local stopMarker: string = PRODUCT.storageFolder .. "/Stopped.flag"
-    local function markerExists(): boolean
-        if type(environment.isfile) ~= "function" then
-            return false
-        end
-        local ok: boolean, exists: any = pcall(environment.isfile, stopMarker)
-        return ok and exists == true
-    end
-    if markerExists() then
-        local forced: boolean = false
-        local getGenv: any = environment.getgenv
-        if type(getGenv) == "function" then
-            local ok: boolean, genv: any = pcall(getGenv)
-            forced = ok and type(genv) == "table" and genv.WURST_FORCE == true
-        end
-        if not forced then
-            realPrint(
-                "["
-                    .. PRODUCT.logPrefix
-                    .. "] Destruct was used here, so the menu stays off. "
-                    .. "Run getgenv().WURST_FORCE = true before executing to "
-                    .. "use it again."
-            )
-            return
-        end
-        if type(environment.delfile) == "function" then
-            pcall(environment.delfile, stopMarker)
-        end
-        realPrint("[" .. PRODUCT.logPrefix .. "] Forced start — stop marker cleared.")
-    end
-end
-
 local function cloneReference(instance: any): any
     if type(executorGlobals.cloneref) == "function" then
         local success: boolean, cloned: any = pcall(executorGlobals.cloneref, instance)
@@ -318,9 +281,12 @@ local GUI_NAME = PRODUCT.guiName
 local BLUR_NAME = PRODUCT.blurName
 local CONFIG_FOLDER = PRODUCT.storageFolder
 local CONFIG_PROFILE_FOLDER = CONFIG_FOLDER .. "/Profiles"
+local CONFIG_GAME_ID: string = tostring(game.GameId > 0 and game.GameId or game.PlaceId)
+local CONFIG_FILE_LUA = CONFIG_PROFILE_FOLDER .. "/Game_" .. CONFIG_GAME_ID .. ".lua"
+local CONFIG_FILE_BAK = CONFIG_FILE_LUA .. ".bak"
 local CONFIG_FILE = CONFIG_PROFILE_FOLDER
     .. "/Game_"
-    .. tostring(game.GameId > 0 and game.GameId or game.PlaceId)
+    .. CONFIG_GAME_ID
     .. ".Config"
 local REPOSITORY_RAW_BASE = RUNTIME_RAW_BASE
 
@@ -686,23 +652,112 @@ local configData: any = {
 }
 local configSaveQueued = false
 
+-- Durable per-game config: "Profiles/Game_<id>.lua". The file is plain Lua
+-- (return {...}), a ".lua.bak" keeps the previous good copy, and the loader
+-- falls back to it before ever resetting to defaults. The old JSON config
+-- is migrated on first boot after the switch.
+local function serializeLuaValue(value: any, depth: number): string
+    local kind: string = typeof(value)
+    if kind == "string" then
+        return string.format("%q", value)
+    elseif kind == "number" then
+        if value ~= value or value == math.huge or value == -math.huge then
+            return "0"
+        end
+        return string.format("%.14g", value)
+    elseif kind == "boolean" then
+        return value and "true" or "false"
+    elseif kind == "table" and depth < 6 then
+        local parts: {string} = {}
+        local length: number = #value
+        for index: number = 1, length do
+            table.insert(parts, serializeLuaValue(value[index], depth + 1))
+        end
+        for key: any, entry: any in pairs(value) do
+            local keyType: string = typeof(key)
+            local keyText: string? = nil
+            if keyType == "string" then
+                keyText = "[" .. string.format("%q", key) .. "]"
+            elseif keyType == "number" then
+                if key % 1 ~= 0 or key < 1 or key > length then
+                    keyText = "[" .. string.format("%.14g", key) .. "]"
+                end
+            elseif keyType == "boolean" then
+                keyText = "[" .. tostring(key) .. "]"
+            end
+            if keyText then
+                table.insert(
+                    parts,
+                    keyText .. " = " .. serializeLuaValue(entry, depth + 1)
+                )
+            end
+        end
+        if #parts == 0 then
+            return "{}"
+        end
+        return "{" .. table.concat(parts, ", ") .. "}"
+    end
+    return "nil"
+end
+
+local function decodeLuaConfig(source: string): any
+    local compiler: any = (getfenv() :: any).loadstring
+    if type(compiler) ~= "function" or type(source) ~= "string" then
+        return nil
+    end
+    local built: boolean, chunk: any = pcall(compiler, source, "@WurstConfig")
+    if not built or type(chunk) ~= "function" then
+        return nil
+    end
+    local ran: boolean, result: any = pcall(chunk)
+    if not ran or type(result) ~= "table" then
+        return nil
+    end
+    return result
+end
+
+local function applyLoadedConfig(loaded: any): boolean
+    if type(loaded) ~= "table" then
+        return false
+    end
+    configData.version = type(loaded.version) == "number" and loaded.version or 1
+    configData.states = type(loaded.states) == "table" and loaded.states or {}
+    configData.values = type(loaded.values) == "table" and loaded.values or {}
+    configData.ui = type(loaded.ui) == "table" and loaded.ui or {}
+    return true
+end
+
 local function loadConfig()
     if type(isfile) ~= "function" or type(readfile) ~= "function" then
         return
     end
 
-    local success, loaded = pcall(function()
-        if not isfile(CONFIG_FILE) then
+    local function readLuaConfig(path: string): any
+        local existsOk: boolean, exists: any = pcall(isfile, path)
+        if not existsOk or exists ~= true then
             return nil
         end
-        return HttpService:JSONDecode(readfile(CONFIG_FILE))
-    end)
+        local readOk: boolean, source: any = pcall(readfile, path)
+        if not readOk or type(source) ~= "string" then
+            return nil
+        end
+        return decodeLuaConfig(source)
+    end
 
-    if success and type(loaded) == "table" then
-        configData.version = loaded.version or 1
-        configData.states = type(loaded.states) == "table" and loaded.states or {}
-        configData.values = type(loaded.values) == "table" and loaded.values or {}
-        configData.ui = type(loaded.ui) == "table" and loaded.ui or {}
+    -- 1. the durable Lua file, 2. its previous good copy, 3. legacy JSON.
+    local loaded: any = readLuaConfig(CONFIG_FILE_LUA)
+    if not applyLoadedConfig(loaded) then
+        loaded = readLuaConfig(CONFIG_FILE_BAK)
+    end
+    if not applyLoadedConfig(loaded) then
+        pcall(function()
+            if isfile(CONFIG_FILE) then
+                local decoded: any = HttpService:JSONDecode(readfile(CONFIG_FILE))
+                if applyLoadedConfig(decoded) then
+                    loaded = decoded
+                end
+            end
+        end)
     end
 
     configData.ui.windowPosition = nil
@@ -725,7 +780,36 @@ local function saveConfigNow()
             and not isfolder(CONFIG_PROFILE_FOLDER) then
             makefolder(CONFIG_PROFILE_FOLDER)
         end
-        writefile(CONFIG_FILE, HttpService:JSONEncode(configData))
+        local payload: string = "-- Wurst config for game "
+            .. CONFIG_GAME_ID
+            .. " · modules, options, keybinds and UI.\n"
+            .. "return {\n"
+            .. "    version = "
+            .. serializeLuaValue(configData.version, 0)
+            .. ",\n"
+            .. "    states = "
+            .. serializeLuaValue(configData.states, 0)
+            .. ",\n"
+            .. "    values = "
+            .. serializeLuaValue(configData.values, 0)
+            .. ",\n"
+            .. "    ui = "
+            .. serializeLuaValue(configData.ui, 0)
+            .. ",\n"
+            .. "}\n"
+        -- Rotate the previous good copy to .bak before overwriting, so a
+        -- crash mid-write can never wipe the whole config.
+        if type(isfile) == "function" and type(readfile) == "function" then
+            local existsOk: boolean, exists: any = pcall(isfile, CONFIG_FILE_LUA)
+            if existsOk and exists == true then
+                local readOk: boolean, previous: any =
+                    pcall(readfile, CONFIG_FILE_LUA)
+                if readOk and type(previous) == "string" and #previous > 0 then
+                    writefile(CONFIG_FILE_BAK, previous)
+                end
+            end
+        end
+        writefile(CONFIG_FILE_LUA, payload)
     end)
 end
 
@@ -4935,7 +5019,11 @@ state.sweepStaleSources = function(): number
             else
                 local relative: string = entry:gsub("\\", "/")
                     :gsub("^.-Wurst/", "")
-                if relative ~= ".stamp" and bundle[relative] == nil then
+                -- Only cached bundle sources live under src/. Never touch
+                -- anything else (Profiles holds the saved configs).
+                if relative ~= ".stamp"
+                    and string.sub(relative, 1, 4) == "src/"
+                    and bundle[relative] == nil then
                     if pcall(deleteFile, entry) then
                         removed += 1
                     end
@@ -5811,10 +5899,9 @@ end
 
 state.destruct = function(): ()
     cleanupStep("runtime", cleanupRuntime)
-    -- Persistent kill switch: after Destruct, autoexec/teleport reinjects
-    -- must not bring the menu back. Bypass with getgenv().WURST_FORCE = true
-    -- or by deleting "<workspace folder>/Wurst/Stopped.flag".
-    cleanupStep("stop marker", function(): ()
+    -- De-inject: kill the queued teleport reinject for the rest of this
+    -- session so the menu only comes back when the loader runs again.
+    cleanupStep("session kill switch", function(): ()
         local environment: any = getfenv()
         local getGenv: any = environment.getgenv
         if type(getGenv) == "function" then
@@ -5823,20 +5910,6 @@ state.destruct = function(): ()
                 genv.WURST_STOPPED = true
             end
         end
-        if type(environment.writefile) ~= "function" then
-            return
-        end
-        pcall(function(): ()
-            if type(environment.isfolder) == "function"
-                and type(environment.makefolder) == "function"
-                and not environment.isfolder(CONFIG_FOLDER) then
-                environment.makefolder(CONFIG_FOLDER)
-            end
-            environment.writefile(
-                CONFIG_FOLDER .. "/Stopped.flag",
-                "destructed at " .. tostring(os.time())
-            )
-        end)
     end)
     cleanupStep("screen gui", function(): ()
         if ScreenGui.Parent then

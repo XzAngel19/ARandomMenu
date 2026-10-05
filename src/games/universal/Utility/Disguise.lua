@@ -128,6 +128,69 @@ function Module.init(context: Runtime): any
         end
     end
 
+    -- Chat spoof: TextChatService lets the client rewrite how an incoming
+    -- message is displayed, so your own messages show the disguise's name
+    -- (only on your screen).
+    local chatSpoofed: boolean = false
+
+    local function patternEscape(text: string): string
+        return (string.gsub(text, "%W", "%%%1"))
+    end
+
+    local function installChatSpoof(targetName: string): ()
+        local ok: boolean, service: any = pcall(function(): any
+            return game:GetService("TextChatService")
+        end)
+        if not ok or typeof(service) ~= "Instance" then
+            return
+        end
+        chatSpoofed = true
+        local myName: string = localPlayer.Name
+        local myDisplay: string = localPlayer.DisplayName
+        local safeTarget: string = (string.gsub(targetName, "%%", "%%%%"))
+        pcall(function(): ()
+            (service :: any).OnIncomingMessage = function(message: any): any
+                local source: any = (message :: any).TextSource
+                if not source or source.UserId ~= localPlayer.UserId then
+                    return nil
+                end
+                local prefix: string = tostring((message :: any).PrefixText or "")
+                local replaced: string? = nil
+                if string.find(prefix, myDisplay, 1, true) then
+                    replaced = string.gsub(
+                        prefix,
+                        patternEscape(myDisplay),
+                        safeTarget,
+                        1
+                    )
+                elseif string.find(prefix, myName, 1, true) then
+                    replaced = string.gsub(prefix, patternEscape(myName), safeTarget, 1)
+                end
+                if not replaced then
+                    return nil
+                end
+                local properties: any = Instance.new("TextChatMessageProperties")
+                properties.PrefixText = replaced
+                return properties
+            end
+        end)
+    end
+
+    local function removeChatSpoof(): ()
+        if not chatSpoofed then
+            return
+        end
+        chatSpoofed = false
+        local ok: boolean, service: any = pcall(function(): any
+            return game:GetService("TextChatService")
+        end)
+        if ok and typeof(service) == "Instance" then
+            pcall(function(): ()
+                (service :: any).OnIncomingMessage = nil
+            end)
+        end
+    end
+
     -- Capture the real avatar once: display name, emote wheel and animation
     -- ids, so everything can be restored exactly on disable.
     local function rememberOriginals(humanoid: Humanoid): ()
@@ -279,14 +342,27 @@ function Module.init(context: Runtime): any
         -- scenery instead of a second character standing on top of you.
         puppet:SetAttribute("WurstDisguise", true)
         local puppetHumanoid: Humanoid? = puppet:FindFirstChildOfClass("Humanoid")
+        local animator: Animator? = nil
         if puppetHumanoid then
-            local resolvedPuppetHumanoid: Humanoid = puppetHumanoid :: Humanoid
-            -- None hides both the name and the health bar over the double.
-            resolvedPuppetHumanoid.DisplayDistanceType =
-                Enum.HumanoidDisplayDistanceType.None
-            pcall(function(): ()
-                resolvedPuppetHumanoid.EvaluateStateMachine = false
-            end)
+            -- A second Humanoid beside your own makes your humanoid apply
+            -- its special humanoid-vs-humanoid collisions against the
+            -- double's root, which launches your character into the air.
+            -- An AnimationController drives identical animation tracks with
+            -- no humanoid physics at all, so the double stays harmless.
+            local controller: AnimationController =
+                Instance.new("AnimationController")
+            controller.Name = "WurstDisguiseController"
+            controller.Parent = puppet
+            local oldHumanoid: Humanoid = puppetHumanoid :: Humanoid
+            animator = oldHumanoid:FindFirstChildOfClass("Animator") :: Animator?
+            if animator then
+                (animator :: Animator).Parent = controller
+            else
+                local made: Animator = Instance.new("Animator")
+                made.Parent = controller
+                animator = made
+            end
+            oldHumanoid:Destroy()
         end
         for _, descendant: Instance in ipairs(puppet:GetDescendants()) do
             if descendant:IsA("BasePart") then
@@ -304,15 +380,8 @@ function Module.init(context: Runtime): any
         puppet:PivotTo((character :: Model):GetPivot())
         puppet.Parent = currentWorkspace
 
-        local animator: Animator? = puppetHumanoid
-            and (puppetHumanoid :: Humanoid):FindFirstChildOfClass("Animator") :: Animator?
         if not animator then
-            local made: boolean, createdAnimator: any = pcall(function(): any
-                local instance: Animator = Instance.new("Animator")
-                instance.Parent = puppetHumanoid
-                return instance
-            end)
-            animator = made and createdAnimator or nil
+            disguise:Notify("the disguise rig has no animator")
         end
         if animator then
             local source: HumanoidDescription =
@@ -387,6 +456,13 @@ function Module.init(context: Runtime): any
             end)
         end
 
+        -- Chat messages: show the disguise's name on your own messages.
+        if disguise.Options["Show name in chat"].Value then
+            installChatSpoof(target.name)
+        else
+            removeChatSpoof()
+        end
+
         -- Emote wheel: swap the character's HumanoidDescription emotes.
         if disguise.Options["Take emotes"].Value then
             local wheel: HumanoidDescription? = characterDescription(humanoid :: Humanoid)
@@ -446,6 +522,7 @@ function Module.init(context: Runtime): any
         teardownPuppet()
         showCharacter()
         restoreOriginals()
+        removeChatSpoof()
         spoofAvatar.setDescription(nil)
         spoofAvatar.setEmotes({})
         runtime.applied = false
@@ -633,6 +710,19 @@ function Module.init(context: Runtime): any
         end,
     })
     disguise:CreateToggle({
+        Name = "Show name in chat",
+        Default = true,
+        Tooltip = "When you send a chat message, you see the disguise's "
+            .. "nickname on it instead of yours.",
+        Function = function(_value: any): ()
+            if disguise.Enabled and runtime.target then
+                task.spawn(function(): ()
+                    applyToCharacter(runtime.target)
+                end)
+            end
+        end,
+    })
+    disguise:CreateToggle({
         Name = "Take emotes",
         Default = true,
         Tooltip = "Fill your emote wheel and the Emote Player list with the "
@@ -668,10 +758,11 @@ function Module.init(context: Runtime): any
         end,
     })
     disguise:CreateNote(
-        "Client sided only: the server, other players, the player list and "
-            .. "the chat still show the real you. Emotes played from the "
-            .. "Emote Player appear on the double; the wheel plays on the "
-            .. "hidden real body."
+        "Client sided only: the server, other players and the player list "
+            .. "still see the real you. Chat and the name above your head "
+            .. "show the disguise on your screen only. Emotes played from "
+            .. "the Emote Player appear on the double; the wheel plays on "
+            .. "the hidden real body."
     )
 
     activeCleanup = function(): ()

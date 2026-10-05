@@ -25,6 +25,41 @@ local function trimmed(text: string): string
     return (string.gsub(text, "^%s*(.-)%s*$", "%1"))
 end
 
+-- A catalog emote's page id is usually NOT the id of the animation behind
+-- it: pasting the shop id into an Animation fails to load. InsertService can
+-- pull the marketplace asset locally, and the Animation instance inside it
+-- carries the real animation id.
+local function resolveCatalogEmoteId(assetId: number): number?
+    local loaded: boolean, model: any = pcall(function(): any
+        return game:GetService("InsertService"):LoadAsset(assetId)
+    end)
+    if not loaded or typeof(model) ~= "Instance" then
+        return nil
+    end
+    local found: number? = nil
+    pcall(function(): ()
+        local candidates: {Instance} = {model :: Instance}
+        for _, descendant: Instance in ipairs((model :: Instance):GetDescendants()) do
+            table.insert(candidates, descendant)
+        end
+        for _, instance: Instance in ipairs(candidates) do
+            if instance:IsA("Animation") then
+                local id: number = tonumber(
+                    string.match((instance :: Animation).AnimationId or "", "%d+")
+                ) or 0
+                if id > 0 then
+                    found = id
+                    break
+                end
+            end
+        end
+    end)
+    pcall(function(): ()
+        (model :: Instance):Destroy()
+    end)
+    return found
+end
+
 function Module.init(context: Runtime): any
     local host: any = context.host
     local framework: any = context.framework
@@ -41,25 +76,26 @@ function Module.init(context: Runtime): any
     }
 
     -- While Disguise is wearing a body double, the real body is invisible:
-    -- emotes must play on the double to be seen at all.
+    -- emotes must play on the double to be seen at all. The double runs on
+    -- an AnimationController (no Humanoid), so search the whole rig.
     local function puppetAnimator(): Animator?
         local rig: Model? = spoofAvatar.getRig and spoofAvatar.getRig() or nil
         if not rig then
             return nil
         end
-        local humanoid: Humanoid? =
-            (rig :: Model):FindFirstChildOfClass("Humanoid") :: Humanoid?
-        if not humanoid then
-            return nil
-        end
         local existing: Animator? =
-            (humanoid :: Humanoid):FindFirstChildOfClass("Animator") :: Animator?
+            (rig :: Model):FindFirstChildWhichIsA("Animator", true) :: Animator?
         if existing then
             return existing
         end
+        local controller: AnimationController? =
+            (rig :: Model):FindFirstChildOfClass("AnimationController") :: AnimationController?
+        if not controller then
+            return nil
+        end
         local created: boolean, made: any = pcall(function(): any
             local instance: Animator = Instance.new("Animator")
-            instance.Parent = humanoid
+            instance.Parent = controller
             return instance
         end)
         return created and made or nil
@@ -208,43 +244,22 @@ function Module.init(context: Runtime): any
         Name = "Custom ID",
         Default = "",
         Tooltip = "Optional: overrides the pick above when filled in. Any "
-            .. "emote animation id, Roblox or UGC.",
+            .. "emote id, Roblox or UGC - catalog page ids work too.",
     })
     emotes:CreateButton({
-        Name = "Save ID",
-        Tooltip = "Keeps the id from Custom ID in the Emote list, so it "
-            .. "survives rejoins and reinjects.",
+        Name = "Play",
+        Tooltip = "Play the picked emote, or the custom id.",
         Function = function(): ()
-            local typed: number? = tonumber(
-                tostring(emotes.Options["Custom ID"].Value or "")
-            )
-            if not typed or typed <= 0 then
-                emotes:Notify("put an emote id in Custom ID first")
-                return
-            end
-            local store: any = host.configData
-            if not store then
-                return
-            end
-            local saved: string = type(store.values[SAVED_KEY]) == "string"
-                and store.values[SAVED_KEY]
-                or ""
-            for idText: string in string.gmatch(saved, "[^,]+") do
-                if tonumber(idText) == typed then
-                    emotes:Notify(tostring(typed) .. " is already saved")
-                    return
-                end
-            end
-            store.values[SAVED_KEY] = saved == ""
-                and tostring(typed)
-                or (saved .. "," .. tostring(typed))
-            if type(host.queueConfigSave) == "function" then
-                host.queueConfigSave()
-            end
-            pcall(function(): ()
-                emotes.Options["Emote"]:Refresh()
+            task.spawn(function(): ()
+                Module.play(context, emotes, runtime, animator, stop)
             end)
-            emotes:Notify("saved " .. tostring(typed))
+        end,
+    })
+    emotes:CreateButton({
+        Name = "Stop",
+        Tooltip = "Stop whatever is playing.",
+        Function = function(): ()
+            stop()
         end,
     })
     emotes:CreateSlider({
@@ -278,32 +293,10 @@ function Module.init(context: Runtime): any
             end
         end,
     })
-    emotes:CreateButton({
-        Name = "Play",
-        Tooltip = "Play the picked emote, or the custom id.",
-        Function = function(): ()
-            task.spawn(function(): ()
-                Module.play(context, emotes, runtime, animator, stop)
-            end)
-        end,
-    })
-    emotes:CreateButton({
-        Name = "Stop",
-        Tooltip = "Stop whatever is playing.",
-        Function = function(): ()
-            stop()
-        end,
-    })
     emotes:CreateTextBox({
         Name = "Search",
         Default = "",
-        Tooltip = "A name to look for in the catalog. Leave Roblox only off "
-            .. "to include UGC emotes.",
-    })
-    emotes:CreateToggle({
-        Name = "Roblox only",
-        Default = false,
-        Tooltip = "Restrict the search to emotes Roblox published itself.",
+        Tooltip = "A name to look for in the catalog.",
     })
     emotes:CreateButton({
         Name = "Find emotes",
@@ -315,10 +308,6 @@ function Module.init(context: Runtime): any
             end)
         end,
     })
-    emotes:CreateNote(
-        "An emote is a real animation on your character, so other players "
-            .. "see it. While Disguise is on, it plays on the body double."
-    )
 
     activeCleanup = function(): ()
         stop()
@@ -349,11 +338,6 @@ function Module.search(context: Runtime, emotes: any, runtime: any): ()
         pcall(function(): ()
             params.AssetTypes = {Enum.AvatarAssetType.EmoteAnimation}
         end)
-        if emotes.Options["Roblox only"].Value then
-            pcall(function(): ()
-                params.CreatorName = "Roblox"
-            end)
-        end
         local pages: any = service:SearchCatalog(params)
         for _ = 1, 2 do
             for _, item: any in ipairs(pages:GetCurrentPage()) do
@@ -410,65 +394,91 @@ function Module.play(
         return
     end
 
-    stop()
-    local animation: Animation = Instance.new("Animation")
-    animation.Name = "WurstEmote"
-    animation.AnimationId = "rbxassetid://" .. tostring(assetId)
-    -- Keep it in the data model while it loads; destroying (or leaving
-    -- limbo) early can silently cancel the fetch.
-    animation.Parent = (target :: Animator).Parent or (target :: Animator)
-    local loaded: boolean, track: any = pcall(function(): any
-        return (target :: Animator):LoadAnimation(animation)
-    end)
-    if not loaded or typeof(track) ~= "Instance" then
+    local function attempt(id: number): (Animation?, AnimationTrack?)
+        local animation: Animation = Instance.new("Animation")
+        animation.Name = "WurstEmote"
+        animation.AnimationId = "rbxassetid://" .. tostring(id)
+        -- Keep it in the data model while it loads; destroying (or leaving
+        -- limbo) early can silently cancel the fetch.
+        animation.Parent = (target :: Animator).Parent or (target :: Animator)
+        local loaded: boolean, track: any = pcall(function(): any
+            return (target :: Animator):LoadAnimation(animation)
+        end)
+        if loaded and typeof(track) == "Instance" then
+            return animation, track
+        end
         animation:Destroy()
-        emotes:Notify("that id is not an animation you can play")
-        return
+        return nil, nil
     end
 
-    local resolved: AnimationTrack = track :: AnimationTrack
-    local playing: any = {track = resolved, animation = animation}
-    runtime.current = playing
-    resolved.Priority = EMOTE_PRIORITY
-    resolved.Looped = emotes.Options["Loop"].Value == true
-    pcall(function(): ()
-        resolved:Play(0.1)
-        resolved:AdjustSpeed(emotes.Options["Speed"].Value)
-    end)
-
-    resolved.Stopped:Once(function(): ()
-        if runtime.current == playing then
-            runtime.current = nil
-        end
+    local function start(animation: Animation, track: AnimationTrack): any
+        stop()
+        local playing: any = {track = track, animation = animation}
+        runtime.current = playing
+        track.Priority = EMOTE_PRIORITY
+        track.Looped = emotes.Options["Loop"].Value == true
         pcall(function(): ()
-            resolved:Destroy()
+            track:Play(0.1)
+            track:AdjustSpeed(emotes.Options["Speed"].Value)
         end)
-        pcall(function(): ()
-            animation:Destroy()
+        track.Stopped:Once(function(): ()
+            if runtime.current == playing then
+                runtime.current = nil
+            end
+            pcall(function(): ()
+                track:Destroy()
+            end)
+            pcall(function(): ()
+                animation:Destroy()
+            end)
         end)
-    end)
+        return playing
+    end
 
-    -- The Animation instance has to outlive the load: destroying it early
-    -- silently cancels the fetch and nothing plays. Wait for the data, and
-    -- only report failure if it never arrives.
-    task.spawn(function(): ()
-        local deadline: number = os.clock() + LOAD_TIMEOUT
+    local function loadedInTime(playing: any, seconds: number): boolean
+        local deadline: number = os.clock() + seconds
         while
             runtime.current == playing
-            and not resolved.IsLoaded
+            and not (playing.track :: AnimationTrack).IsLoaded
             and os.clock() < deadline
         do
             task.wait(0.05)
         end
-        if runtime.current == playing and not resolved.IsLoaded then
-            emotes:Notify("that id would not load as an animation")
-            if runtime.current == playing then
-                stop()
-            end
-        end
-    end)
+        return runtime.current == playing
+            and (playing.track :: AnimationTrack).IsLoaded
+    end
 
-    emotes:Notify("playing " .. tostring(assetId))
+    -- 1) Direct load: works when the id already is an animation id.
+    local animation: Animation?, track: AnimationTrack? = attempt(assetId)
+    if track and animation then
+        local playing: any = start(animation :: Animation, track :: AnimationTrack)
+        if loadedInTime(playing, 3) then
+            emotes:Notify("playing " .. tostring(assetId))
+            return
+        end
+        -- The track never received its data: probably a catalog page id.
+    end
+
+    -- 2) Resolve the emote through the marketplace and retry.
+    local resolved: number? = resolveCatalogEmoteId(assetId)
+    if not resolved or resolved <= 0 or resolved == assetId then
+        stop()
+        emotes:Notify("that id would not load as an emote")
+        return
+    end
+    animation, track = attempt(resolved)
+    if not track or not animation then
+        stop()
+        emotes:Notify("that id would not load as an emote")
+        return
+    end
+    local playing: any = start(animation :: Animation, track :: AnimationTrack)
+    if loadedInTime(playing, LOAD_TIMEOUT) then
+        emotes:Notify("playing " .. tostring(resolved))
+    else
+        emotes:Notify("that id would not load as an emote")
+        stop()
+    end
 end
 
 function Module.destroy(): ()
