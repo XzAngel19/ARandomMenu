@@ -52,8 +52,6 @@ function Module.init(context: Runtime): any
         diedWatch = nil :: RBXScriptConnection?,
         originals = nil :: any?,
         applied = false,
-        mode = nil :: string?,
-        bodyRejected = false,
     }
 
     local disguise: any
@@ -193,83 +191,6 @@ function Module.init(context: Runtime): any
         end
     end
 
-    -- The character's own Animate script drives its movement animations.
-    -- Swapping the animation ids inside it and restarting it makes your body
-    -- move with the disguise's animation package (same technique the
-    -- Animation Changer module uses).
-    local ANIMATE_SLOTS: {[string]: {string}} = {
-        IdleAnimation = {"idle"},
-        WalkAnimation = {"walk"},
-        RunAnimation = {"run"},
-        JumpAnimation = {"jump"},
-        FallAnimation = {"fall"},
-        ClimbAnimation = {"climb"},
-        SwimAnimation = {"swim", "swimidle"},
-    }
-
-    local function patchAnimate(character: Model, ids: {[string]: number}): boolean
-        local animate: Instance? = character:FindFirstChild("Animate")
-        if not animate then
-            return false
-        end
-        local touched: boolean = false
-        for field: string, assetId: number in pairs(ids) do
-            for _, containerName: string in ipairs(ANIMATE_SLOTS[field] or {}) do
-                local container: Instance? =
-                    (animate :: Instance):FindFirstChild(containerName)
-                if not container then
-                    continue
-                end
-                for _, child: Instance in ipairs((container :: Instance):GetChildren()) do
-                    if child:IsA("Animation") then
-                        (child :: Animation).AnimationId =
-                            "rbxassetid://" .. tostring(assetId)
-                        touched = true
-                    end
-                end
-            end
-        end
-        if not touched then
-            return false
-        end
-        local humanoid: Humanoid? =
-            (character :: Model):FindFirstChildOfClass("Humanoid") :: Humanoid?
-        local animator: Animator? = humanoid
-            and (humanoid :: Humanoid):FindFirstChildOfClass("Animator") :: Animator?
-        if animator then
-            pcall(function(): ()
-                for _, track: AnimationTrack in
-                    ipairs((animator :: Animator):GetPlayingAnimationTracks())
-                do
-                    track:Stop(0)
-                end
-            end)
-        end
-        if (animate :: Instance):IsA("LocalScript") then
-            pcall(function(): ()
-                local script: LocalScript = animate :: LocalScript
-                script.Disabled = true
-                task.wait()
-                script.Disabled = false
-            end)
-        end
-        return true
-    end
-
-    local function animationIdsFrom(description: any): {[string]: number}
-        local ids: {[string]: number} = {}
-        if typeof(description) ~= "Instance" then
-            return ids
-        end
-        for field: string in pairs(ANIMATE_SLOTS) do
-            local assetId: number = tonumber((description :: any)[field]) or 0
-            if assetId > 0 then
-                ids[field] = assetId
-            end
-        end
-        return ids
-    end
-
     -- Capture the real avatar once: display name, emote wheel and animation
     -- ids, so everything can be restored exactly on disable.
     local function rememberOriginals(humanoid: Humanoid): ()
@@ -339,80 +260,6 @@ function Module.init(context: Runtime): any
         end
     end
 
-    -- Primary disguise: rebuild YOUR OWN avatar from their description,
-    -- client-side. The engine renders it exactly like a real avatar (bundles,
-    -- layered clothing, face, scales - full quality) and your own body keeps
-    -- moving and emoting, so everything matches. Only your client sees it.
-    local function tryApplyToOwnBody(target: any, humanoid: Humanoid): boolean
-        local applied: boolean = pcall(function(): ()
-            (humanoid :: Humanoid):ApplyDescription(
-                target.description :: HumanoidDescription
-            )
-        end)
-        if not applied then
-            return false
-        end
-        -- Some games or clients refuse the client-side apply; make sure the
-        -- look actually changed before trusting it.
-        local checked: boolean, after: any = pcall(function(): any
-            return (humanoid :: Humanoid):GetAppliedDescription()
-        end)
-        if
-            checked
-            and typeof(after) == "Instance"
-            and runtime.originals
-            and typeof(runtime.originals.myDescription) == "Instance"
-        then
-            local originals: any = runtime.originals.myDescription
-            for _, field: string in ipairs({
-                "Face",
-                "Shirt",
-                "Pants",
-                "GraphicTShirt",
-                "Head",
-            }) do
-                local mine: any = originals[field]
-                local theirs: any = (target.description :: any)[field]
-                if theirs ~= mine then
-                    if (after :: any)[field] == mine then
-                        return false
-                    end
-                    break
-                end
-            end
-        end
-        return true
-    end
-
-    local function restoreOwnBody(): ()
-        local character: Model? = currentCharacter()
-        local humanoid: Humanoid? = currentHumanoid()
-        if not character or not humanoid then
-            return
-        end
-        local originals: any = runtime.originals
-            and runtime.originals.myDescription
-        if typeof(originals) ~= "Instance" then
-            -- The local capture failed earlier; ask the server for the real
-            -- avatar instead of leaving the disguise glued on.
-            local ok: boolean, fetched: any = pcall(function(): any
-                return (host.Players :: Players):GetHumanoidDescriptionFromUserId(
-                    localPlayer.UserId
-                )
-            end)
-            if not ok or typeof(fetched) ~= "Instance" then
-                return
-            end
-            originals = fetched
-        end
-        pcall(function(): ()
-            (humanoid :: Humanoid):ApplyDescription(originals)
-        end)
-        pcall(function(): ()
-            patchAnimate(character :: Model, animationIdsFrom(originals))
-        end)
-    end
-
     local function teardownPuppet(): ()
         local puppet: Model? = runtime.puppet
         runtime.puppet = nil
@@ -456,9 +303,11 @@ function Module.init(context: Runtime): any
         end
     end
 
-    -- Builds the local body double. Humanoid:ApplyDescription is server-only
-    -- for replicated characters, so the disguise is a client-created rig from
-    -- CreateHumanoidModelFromDescription that mirrors the hidden real one.
+    -- Builds the local body double: a fully local rig from
+    -- CreateHumanoidModelFromDescription that mirrors the real body. Your
+    -- own avatar is never touched, so no game can reject or flag the swap,
+    -- and the double carries no Humanoid, so the engine cannot apply the
+    -- second-humanoid forces that fling characters.
     local function buildPuppet(target: any): ()
         local character: Model? = currentCharacter()
         local humanoid: Humanoid? = character
@@ -534,6 +383,31 @@ function Module.init(context: Runtime): any
                 table.insert(runtime.puppetParts, part)
             end
         end
+
+        -- Anti-fling armour. The double carries no Humanoid (an
+        -- AnimationController drives it instead), so the engine cannot
+        -- apply the second-humanoid forces that launch characters. On top
+        -- of that, every part is moved into a collision group that never
+        -- collides with any registered group - even a game that forces
+        -- CanCollide back on cannot make the double touch anything.
+        pcall(function(): ()
+            local physics: PhysicsService = game:GetService("PhysicsService")
+            local groupName: string = "WurstDisguise"
+            if not physics:IsCollisionGroupRegistered(groupName) then
+                physics:RegisterCollisionGroup(groupName)
+            end
+            for _, group: any in ipairs(physics:GetRegisteredCollisionGroups()) do
+                physics:CollisionGroupSetCollidable(
+                    groupName,
+                    tostring(group.name),
+                    false
+                )
+            end
+            for _, part: BasePart in ipairs(runtime.puppetParts) do
+                part.CollisionGroup = groupName
+            end
+        end)
+
         puppet:PivotTo((character :: Model):GetPivot())
         puppet.Parent = currentWorkspace
 
@@ -602,40 +476,13 @@ function Module.init(context: Runtime): any
         end
         rememberOriginals(humanoid :: Humanoid)
 
-        -- Body. Preferred mode: rebuild your own avatar from their
-        -- description client-side (full quality, your real movement and
-        -- emotes). Fallback: a local body double mirroring you.
-        local bodyApplied: boolean = false
-        if runtime.bodyRejected ~= true then
-            bodyApplied = tryApplyToOwnBody(target, humanoid :: Humanoid)
-            if bodyApplied then
-                runtime.mode = "body"
-                teardownPuppet()
-                showCharacter()
-                spoofAvatar.setRig(nil)
-                if disguise.Options["Take animations"].Value then
-                    pcall(function(): ()
-                        patchAnimate(
-                            character :: Model,
-                            animationIdsFrom(target.description)
-                        )
-                    end)
-                end
-            else
-                runtime.bodyRejected = true
-            end
+        if disguise.Options["Hide my real body"].Value then
+            hideCharacter(character :: Model)
+        else
+            showCharacter()
         end
-
-        if not bodyApplied then
-            runtime.mode = "puppet"
-            if disguise.Options["Hide my real body"].Value then
-                hideCharacter(character :: Model)
-            else
-                showCharacter()
-            end
-            buildPuppet(target)
-            spoofAvatar.setDescription(target.description)
-        end
+        buildPuppet(target)
+        spoofAvatar.setDescription(target.description)
 
         -- Name above your head, for your eyes only.
         if disguise.Options["Take name"].Value then
@@ -706,9 +553,6 @@ function Module.init(context: Runtime): any
     end
 
     local function restoreEverything(): ()
-        if runtime.mode == "body" then
-            restoreOwnBody()
-        end
         teardownPuppet()
         showCharacter()
         restoreOriginals()
@@ -716,7 +560,6 @@ function Module.init(context: Runtime): any
         spoofAvatar.setDescription(nil)
         spoofAvatar.setEmotes({})
         runtime.applied = false
-        runtime.mode = nil
         disguise:SetStatus(nil)
     end
 
@@ -745,16 +588,14 @@ function Module.init(context: Runtime): any
         Category = "Fun",
         Order = 1,
         ConfigKey = "Universal.Disguise",
-        Tooltip = "Wear another user's avatar locally: body, animations, "
-            .. "name, chat name and emote wheel. Only your screen shows it.",
+        Tooltip = "Wear another user's avatar locally: a body double mirrors "
+            .. "you with their look, name above your head, chat name and "
+            .. "emote wheel. Only your screen shows it.",
         Function = function(enabled: boolean): ()
             if not enabled then
                 restoreEverything()
                 return
             end
-            -- Give the direct body swap a fresh chance every time the module
-            -- is switched on.
-            runtime.bodyRejected = false
             disguise:Event(localPlayer.CharacterAdded, onCharacterAdded)
             disguise:Render(function(): ()
                 local puppet: Model? = runtime.puppet
@@ -806,19 +647,51 @@ function Module.init(context: Runtime): any
                 elseif state == Enum.HumanoidStateType.Freefall then
                     playPuppetTrack("fall", 0.2)
                 elseif horizontal > 0.75 then
-                    local walkSpeed: number = math.max(resolvedHumanoid.WalkSpeed, 0.1)
-                    local key: string = horizontal > walkSpeed * 0.75 and "run" or "walk"
-                    local track: AnimationTrack? = runtime.puppetTracks[key]
-                        or runtime.puppetTracks["walk"]
-                    if track then
-                        playPuppetTrack(key, 0.2)
-                        pcall(function(): ()
-                            (track :: AnimationTrack):AdjustSpeed(
-                                math.max(horizontal / walkSpeed, 0.25)
-                            )
-                        end)
-                    else
+                    -- Mirror Roblox's own Animate script: while moving, the
+                    -- walk track is the base and plays at speed / 16, while
+                    -- the run track fades in on top of it, its weight
+                    -- growing as the speed approaches 16.
+                    local tracks: any = runtime.puppetTracks
+                    local walk: AnimationTrack? = tracks["walk"]
+                    local run: AnimationTrack? = tracks["run"]
+                    if not walk and not run then
                         playPuppetTrack("idle", 0.2)
+                    else
+                        for key: string, other: AnimationTrack in pairs(tracks) do
+                            if key ~= "walk" and key ~= "run" and other.IsPlaying then
+                                pcall(function(): ()
+                                    other:Stop(0.2)
+                                end)
+                            end
+                        end
+                        local runWeight: number = math.clamp(horizontal / 16, 0, 1)
+                        if walk then
+                            if not (walk :: AnimationTrack).IsPlaying then
+                                (walk :: AnimationTrack):Play(0.2, 1 - runWeight)
+                            else
+                                pcall(function(): ()
+                                    (walk :: AnimationTrack):AdjustWeight(
+                                        1 - runWeight,
+                                        0.2
+                                    )
+                                end)
+                            end
+                            pcall(function(): ()
+                                (walk :: AnimationTrack):AdjustSpeed(horizontal / 16)
+                            end)
+                        end
+                        if run then
+                            if not (run :: AnimationTrack).IsPlaying then
+                                (run :: AnimationTrack):Play(0.2, runWeight)
+                            else
+                                pcall(function(): ()
+                                    (run :: AnimationTrack):AdjustWeight(
+                                        runWeight,
+                                        0.2
+                                    )
+                                end)
+                            end
+                        end
                     end
                 else
                     playPuppetTrack("idle", 0.3)
@@ -881,8 +754,10 @@ function Module.init(context: Runtime): any
     disguise:CreateToggle({
         Name = "Take animations",
         Default = true,
-        Tooltip = "Move like their animation package: walk, run, idle, "
-            .. "jump, climb and swim.",
+        Tooltip = "Walk, run, idle, jump, fall, climb and swim like their "
+            .. "animation package, blending walk and run the way Roblox's "
+            .. "own Animate script does. Off keeps your own animation set "
+            .. "on the double.",
         Function = function(_value: any): ()
             if disguise.Enabled and runtime.target then
                 task.spawn(function(): ()
@@ -932,9 +807,8 @@ function Module.init(context: Runtime): any
     disguise:CreateToggle({
         Name = "Hide my real body",
         Default = true,
-        Tooltip = "Fallback mode only: when a game refuses the direct "
-            .. "avatar swap, a body double is used instead and this hides "
-            .. "your real body on your screen.",
+        Tooltip = "The disguise is a local body double; this hides the real "
+            .. "one on your screen. Tools stay attached to the hidden body.",
         Function = function(_value: any): ()
             if disguise.Enabled and runtime.target then
                 task.spawn(function(): ()
@@ -953,11 +827,11 @@ function Module.init(context: Runtime): any
         end,
     })
     disguise:CreateNote(
-        "Client sided only: the server, other players and the player "
-            .. "list still see the real you. Your own body is rebuilt to "
-            .. "look exactly like them - bundles, face, layered clothing - "
-            .. "so movement and emotes play on it normally. If this game "
-            .. "refuses the swap, a body double is used instead."
+        "Client sided only: the server, other players and the player list "
+            .. "still see the real you. Chat and the name above your head "
+            .. "show the disguise on your screen only. Emotes played from "
+            .. "the Emote Player appear on the double; the wheel plays on "
+            .. "the hidden real body."
     )
 
     activeCleanup = function(): ()

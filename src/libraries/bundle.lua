@@ -1,5 +1,5 @@
 return {
-    stamp = "5d47cf76d3d82800",
+    stamp = "6411829036e0fd2e",
     files = {
         ["src/libraries/Manifest.lua"] = [[export type ModuleEntry = {
     path: string,
@@ -23858,8 +23858,6 @@ function Module.init(context: Runtime): any
         diedWatch = nil :: RBXScriptConnection?,
         originals = nil :: any?,
         applied = false,
-        mode = nil :: string?,
-        bodyRejected = false,
     }
 
     local disguise: any
@@ -23999,83 +23997,6 @@ function Module.init(context: Runtime): any
         end
     end
 
-    -- The character's own Animate script drives its movement animations.
-    -- Swapping the animation ids inside it and restarting it makes your body
-    -- move with the disguise's animation package (same technique the
-    -- Animation Changer module uses).
-    local ANIMATE_SLOTS: {[string]: {string}} = {
-        IdleAnimation = {"idle"},
-        WalkAnimation = {"walk"},
-        RunAnimation = {"run"},
-        JumpAnimation = {"jump"},
-        FallAnimation = {"fall"},
-        ClimbAnimation = {"climb"},
-        SwimAnimation = {"swim", "swimidle"},
-    }
-
-    local function patchAnimate(character: Model, ids: {[string]: number}): boolean
-        local animate: Instance? = character:FindFirstChild("Animate")
-        if not animate then
-            return false
-        end
-        local touched: boolean = false
-        for field: string, assetId: number in pairs(ids) do
-            for _, containerName: string in ipairs(ANIMATE_SLOTS[field] or {}) do
-                local container: Instance? =
-                    (animate :: Instance):FindFirstChild(containerName)
-                if not container then
-                    continue
-                end
-                for _, child: Instance in ipairs((container :: Instance):GetChildren()) do
-                    if child:IsA("Animation") then
-                        (child :: Animation).AnimationId =
-                            "rbxassetid://" .. tostring(assetId)
-                        touched = true
-                    end
-                end
-            end
-        end
-        if not touched then
-            return false
-        end
-        local humanoid: Humanoid? =
-            (character :: Model):FindFirstChildOfClass("Humanoid") :: Humanoid?
-        local animator: Animator? = humanoid
-            and (humanoid :: Humanoid):FindFirstChildOfClass("Animator") :: Animator?
-        if animator then
-            pcall(function(): ()
-                for _, track: AnimationTrack in
-                    ipairs((animator :: Animator):GetPlayingAnimationTracks())
-                do
-                    track:Stop(0)
-                end
-            end)
-        end
-        if (animate :: Instance):IsA("LocalScript") then
-            pcall(function(): ()
-                local script: LocalScript = animate :: LocalScript
-                script.Disabled = true
-                task.wait()
-                script.Disabled = false
-            end)
-        end
-        return true
-    end
-
-    local function animationIdsFrom(description: any): {[string]: number}
-        local ids: {[string]: number} = {}
-        if typeof(description) ~= "Instance" then
-            return ids
-        end
-        for field: string in pairs(ANIMATE_SLOTS) do
-            local assetId: number = tonumber((description :: any)[field]) or 0
-            if assetId > 0 then
-                ids[field] = assetId
-            end
-        end
-        return ids
-    end
-
     -- Capture the real avatar once: display name, emote wheel and animation
     -- ids, so everything can be restored exactly on disable.
     local function rememberOriginals(humanoid: Humanoid): ()
@@ -24145,80 +24066,6 @@ function Module.init(context: Runtime): any
         end
     end
 
-    -- Primary disguise: rebuild YOUR OWN avatar from their description,
-    -- client-side. The engine renders it exactly like a real avatar (bundles,
-    -- layered clothing, face, scales - full quality) and your own body keeps
-    -- moving and emoting, so everything matches. Only your client sees it.
-    local function tryApplyToOwnBody(target: any, humanoid: Humanoid): boolean
-        local applied: boolean = pcall(function(): ()
-            (humanoid :: Humanoid):ApplyDescription(
-                target.description :: HumanoidDescription
-            )
-        end)
-        if not applied then
-            return false
-        end
-        -- Some games or clients refuse the client-side apply; make sure the
-        -- look actually changed before trusting it.
-        local checked: boolean, after: any = pcall(function(): any
-            return (humanoid :: Humanoid):GetAppliedDescription()
-        end)
-        if
-            checked
-            and typeof(after) == "Instance"
-            and runtime.originals
-            and typeof(runtime.originals.myDescription) == "Instance"
-        then
-            local originals: any = runtime.originals.myDescription
-            for _, field: string in ipairs({
-                "Face",
-                "Shirt",
-                "Pants",
-                "GraphicTShirt",
-                "Head",
-            }) do
-                local mine: any = originals[field]
-                local theirs: any = (target.description :: any)[field]
-                if theirs ~= mine then
-                    if (after :: any)[field] == mine then
-                        return false
-                    end
-                    break
-                end
-            end
-        end
-        return true
-    end
-
-    local function restoreOwnBody(): ()
-        local character: Model? = currentCharacter()
-        local humanoid: Humanoid? = currentHumanoid()
-        if not character or not humanoid then
-            return
-        end
-        local originals: any = runtime.originals
-            and runtime.originals.myDescription
-        if typeof(originals) ~= "Instance" then
-            -- The local capture failed earlier; ask the server for the real
-            -- avatar instead of leaving the disguise glued on.
-            local ok: boolean, fetched: any = pcall(function(): any
-                return (host.Players :: Players):GetHumanoidDescriptionFromUserId(
-                    localPlayer.UserId
-                )
-            end)
-            if not ok or typeof(fetched) ~= "Instance" then
-                return
-            end
-            originals = fetched
-        end
-        pcall(function(): ()
-            (humanoid :: Humanoid):ApplyDescription(originals)
-        end)
-        pcall(function(): ()
-            patchAnimate(character :: Model, animationIdsFrom(originals))
-        end)
-    end
-
     local function teardownPuppet(): ()
         local puppet: Model? = runtime.puppet
         runtime.puppet = nil
@@ -24262,9 +24109,11 @@ function Module.init(context: Runtime): any
         end
     end
 
-    -- Builds the local body double. Humanoid:ApplyDescription is server-only
-    -- for replicated characters, so the disguise is a client-created rig from
-    -- CreateHumanoidModelFromDescription that mirrors the hidden real one.
+    -- Builds the local body double: a fully local rig from
+    -- CreateHumanoidModelFromDescription that mirrors the real body. Your
+    -- own avatar is never touched, so no game can reject or flag the swap,
+    -- and the double carries no Humanoid, so the engine cannot apply the
+    -- second-humanoid forces that fling characters.
     local function buildPuppet(target: any): ()
         local character: Model? = currentCharacter()
         local humanoid: Humanoid? = character
@@ -24340,6 +24189,31 @@ function Module.init(context: Runtime): any
                 table.insert(runtime.puppetParts, part)
             end
         end
+
+        -- Anti-fling armour. The double carries no Humanoid (an
+        -- AnimationController drives it instead), so the engine cannot
+        -- apply the second-humanoid forces that launch characters. On top
+        -- of that, every part is moved into a collision group that never
+        -- collides with any registered group - even a game that forces
+        -- CanCollide back on cannot make the double touch anything.
+        pcall(function(): ()
+            local physics: PhysicsService = game:GetService("PhysicsService")
+            local groupName: string = "WurstDisguise"
+            if not physics:IsCollisionGroupRegistered(groupName) then
+                physics:RegisterCollisionGroup(groupName)
+            end
+            for _, group: any in ipairs(physics:GetRegisteredCollisionGroups()) do
+                physics:CollisionGroupSetCollidable(
+                    groupName,
+                    tostring(group.name),
+                    false
+                )
+            end
+            for _, part: BasePart in ipairs(runtime.puppetParts) do
+                part.CollisionGroup = groupName
+            end
+        end)
+
         puppet:PivotTo((character :: Model):GetPivot())
         puppet.Parent = currentWorkspace
 
@@ -24408,40 +24282,13 @@ function Module.init(context: Runtime): any
         end
         rememberOriginals(humanoid :: Humanoid)
 
-        -- Body. Preferred mode: rebuild your own avatar from their
-        -- description client-side (full quality, your real movement and
-        -- emotes). Fallback: a local body double mirroring you.
-        local bodyApplied: boolean = false
-        if runtime.bodyRejected ~= true then
-            bodyApplied = tryApplyToOwnBody(target, humanoid :: Humanoid)
-            if bodyApplied then
-                runtime.mode = "body"
-                teardownPuppet()
-                showCharacter()
-                spoofAvatar.setRig(nil)
-                if disguise.Options["Take animations"].Value then
-                    pcall(function(): ()
-                        patchAnimate(
-                            character :: Model,
-                            animationIdsFrom(target.description)
-                        )
-                    end)
-                end
-            else
-                runtime.bodyRejected = true
-            end
+        if disguise.Options["Hide my real body"].Value then
+            hideCharacter(character :: Model)
+        else
+            showCharacter()
         end
-
-        if not bodyApplied then
-            runtime.mode = "puppet"
-            if disguise.Options["Hide my real body"].Value then
-                hideCharacter(character :: Model)
-            else
-                showCharacter()
-            end
-            buildPuppet(target)
-            spoofAvatar.setDescription(target.description)
-        end
+        buildPuppet(target)
+        spoofAvatar.setDescription(target.description)
 
         -- Name above your head, for your eyes only.
         if disguise.Options["Take name"].Value then
@@ -24512,9 +24359,6 @@ function Module.init(context: Runtime): any
     end
 
     local function restoreEverything(): ()
-        if runtime.mode == "body" then
-            restoreOwnBody()
-        end
         teardownPuppet()
         showCharacter()
         restoreOriginals()
@@ -24522,7 +24366,6 @@ function Module.init(context: Runtime): any
         spoofAvatar.setDescription(nil)
         spoofAvatar.setEmotes({})
         runtime.applied = false
-        runtime.mode = nil
         disguise:SetStatus(nil)
     end
 
@@ -24551,16 +24394,14 @@ function Module.init(context: Runtime): any
         Category = "Fun",
         Order = 1,
         ConfigKey = "Universal.Disguise",
-        Tooltip = "Wear another user's avatar locally: body, animations, "
-            .. "name, chat name and emote wheel. Only your screen shows it.",
+        Tooltip = "Wear another user's avatar locally: a body double mirrors "
+            .. "you with their look, name above your head, chat name and "
+            .. "emote wheel. Only your screen shows it.",
         Function = function(enabled: boolean): ()
             if not enabled then
                 restoreEverything()
                 return
             end
-            -- Give the direct body swap a fresh chance every time the module
-            -- is switched on.
-            runtime.bodyRejected = false
             disguise:Event(localPlayer.CharacterAdded, onCharacterAdded)
             disguise:Render(function(): ()
                 local puppet: Model? = runtime.puppet
@@ -24612,19 +24453,51 @@ function Module.init(context: Runtime): any
                 elseif state == Enum.HumanoidStateType.Freefall then
                     playPuppetTrack("fall", 0.2)
                 elseif horizontal > 0.75 then
-                    local walkSpeed: number = math.max(resolvedHumanoid.WalkSpeed, 0.1)
-                    local key: string = horizontal > walkSpeed * 0.75 and "run" or "walk"
-                    local track: AnimationTrack? = runtime.puppetTracks[key]
-                        or runtime.puppetTracks["walk"]
-                    if track then
-                        playPuppetTrack(key, 0.2)
-                        pcall(function(): ()
-                            (track :: AnimationTrack):AdjustSpeed(
-                                math.max(horizontal / walkSpeed, 0.25)
-                            )
-                        end)
-                    else
+                    -- Mirror Roblox's own Animate script: while moving, the
+                    -- walk track is the base and plays at speed / 16, while
+                    -- the run track fades in on top of it, its weight
+                    -- growing as the speed approaches 16.
+                    local tracks: any = runtime.puppetTracks
+                    local walk: AnimationTrack? = tracks["walk"]
+                    local run: AnimationTrack? = tracks["run"]
+                    if not walk and not run then
                         playPuppetTrack("idle", 0.2)
+                    else
+                        for key: string, other: AnimationTrack in pairs(tracks) do
+                            if key ~= "walk" and key ~= "run" and other.IsPlaying then
+                                pcall(function(): ()
+                                    other:Stop(0.2)
+                                end)
+                            end
+                        end
+                        local runWeight: number = math.clamp(horizontal / 16, 0, 1)
+                        if walk then
+                            if not (walk :: AnimationTrack).IsPlaying then
+                                (walk :: AnimationTrack):Play(0.2, 1 - runWeight)
+                            else
+                                pcall(function(): ()
+                                    (walk :: AnimationTrack):AdjustWeight(
+                                        1 - runWeight,
+                                        0.2
+                                    )
+                                end)
+                            end
+                            pcall(function(): ()
+                                (walk :: AnimationTrack):AdjustSpeed(horizontal / 16)
+                            end)
+                        end
+                        if run then
+                            if not (run :: AnimationTrack).IsPlaying then
+                                (run :: AnimationTrack):Play(0.2, runWeight)
+                            else
+                                pcall(function(): ()
+                                    (run :: AnimationTrack):AdjustWeight(
+                                        runWeight,
+                                        0.2
+                                    )
+                                end)
+                            end
+                        end
                     end
                 else
                     playPuppetTrack("idle", 0.3)
@@ -24687,8 +24560,10 @@ function Module.init(context: Runtime): any
     disguise:CreateToggle({
         Name = "Take animations",
         Default = true,
-        Tooltip = "Move like their animation package: walk, run, idle, "
-            .. "jump, climb and swim.",
+        Tooltip = "Walk, run, idle, jump, fall, climb and swim like their "
+            .. "animation package, blending walk and run the way Roblox's "
+            .. "own Animate script does. Off keeps your own animation set "
+            .. "on the double.",
         Function = function(_value: any): ()
             if disguise.Enabled and runtime.target then
                 task.spawn(function(): ()
@@ -24738,9 +24613,8 @@ function Module.init(context: Runtime): any
     disguise:CreateToggle({
         Name = "Hide my real body",
         Default = true,
-        Tooltip = "Fallback mode only: when a game refuses the direct "
-            .. "avatar swap, a body double is used instead and this hides "
-            .. "your real body on your screen.",
+        Tooltip = "The disguise is a local body double; this hides the real "
+            .. "one on your screen. Tools stay attached to the hidden body.",
         Function = function(_value: any): ()
             if disguise.Enabled and runtime.target then
                 task.spawn(function(): ()
@@ -24759,11 +24633,11 @@ function Module.init(context: Runtime): any
         end,
     })
     disguise:CreateNote(
-        "Client sided only: the server, other players and the player "
-            .. "list still see the real you. Your own body is rebuilt to "
-            .. "look exactly like them - bundles, face, layered clothing - "
-            .. "so movement and emotes play on it normally. If this game "
-            .. "refuses the swap, a body double is used instead."
+        "Client sided only: the server, other players and the player list "
+            .. "still see the real you. Chat and the name above your head "
+            .. "show the disguise on your screen only. Emotes played from "
+            .. "the Emote Player appear on the double; the wheel plays on "
+            .. "the hidden real body."
     )
 
     activeCleanup = function(): ()
@@ -25418,8 +25292,9 @@ local Module = {
 
 local activeCleanup: (() -> ())? = nil
 
--- An emote must stay a real animation for other players to see it; this
--- priority sits above the animations games usually force onto characters.
+-- Emotes play through the character's (or the Disguise double's) own
+-- Animator; this priority sits above the movement animations games force
+-- onto characters, so idle/walk tracks do not stomp the emote.
 local EMOTE_PRIORITY: Enum.AnimationPriority = Enum.AnimationPriority.Action2
 
 -- How long to wait for the animation data to arrive before giving up.
@@ -25652,7 +25527,10 @@ function Module.init(context: Runtime): any
     })
     emotes:CreateButton({
         Name = "Play",
-        Tooltip = "Play the picked emote, or the custom id.",
+        Tooltip = "Play the picked emote, or the custom id. The id is "
+            .. "verified first: it must exist on the marketplace, be an "
+            .. "animation or emote asset, and really deliver its animation "
+            .. "data - otherwise you get the exact reason it failed.",
         Function = function(): ()
             task.spawn(function(): ()
                 Module.play(context, emotes, runtime, animator, stop)
@@ -25664,6 +25542,9 @@ function Module.init(context: Runtime): any
         Tooltip = "Stop whatever is playing.",
         Function = function(): ()
             stop()
+            if emotes.Enabled then
+                emotes:SetStatus(nil)
+            end
         end,
     })
     emotes:CreateSlider({
@@ -25712,6 +25593,14 @@ function Module.init(context: Runtime): any
             end)
         end,
     })
+
+    emotes:CreateNote(
+        "Ids are verified for real: the marketplace must know the id, it "
+            .. "must be an animation or emote asset, and its animation data "
+            .. "must actually arrive before anything is announced as "
+            .. "playing. Emotes are client sided - only your screen shows "
+            .. "them."
+    )
 
     activeCleanup = function(): ()
         stop()
@@ -25791,11 +25680,66 @@ function Module.play(
         emotes:Notify("pick an emote or fill in Custom ID")
         return
     end
+    -- Asset ids are integers; anything else (67676757576767676867, text,
+    -- decimals) is rejected before a single request is made.
+    if assetId ~= math.floor(assetId) or assetId > 2 ^ 53 then
+        emotes:Notify(tostring(assetId) .. " is not a valid asset id")
+        return
+    end
 
     local target: Animator? = animator()
     if not target then
         emotes:Notify("no character to animate")
         return
+    end
+
+    -- Communication point #1: ask the marketplace what this id actually
+    -- is. This is what turns a blind "Playing Emote" into a real answer -
+    -- an id that does not exist, or that is a shirt instead of an
+    -- animation, is rejected with its exact reason.
+    local ok: boolean, info: any = pcall(function(): any
+        return game:GetService("MarketplaceService"):GetProductInfo(
+            assetId,
+            Enum.InfoType.Asset
+        )
+    end)
+    if not ok or type(info) ~= "table" then
+        emotes:Notify(
+            "id " .. tostring(assetId) .. " does not exist on the marketplace"
+        )
+        return
+    end
+    local typeId: number = tonumber(info.AssetTypeId) or -1
+    if
+        typeId ~= Enum.AssetType.Animation.Value
+        and typeId ~= Enum.AssetType.EmoteAnimation.Value
+    then
+        local typeName: string = "different asset"
+        for _, item: EnumItem in ipairs(Enum.AssetType:GetEnumItems()) do
+            if item.Value == typeId then
+                typeName = item.Name
+                break
+            end
+        end
+        emotes:Notify(
+            "id " .. tostring(assetId) .. " is a " .. typeName .. ", not an emote"
+        )
+        return
+    end
+    local label: string = tostring(info.Name or assetId)
+
+    local animationId: number = assetId
+    if typeId == Enum.AssetType.EmoteAnimation.Value then
+        -- A catalog emote's page id is not the animation id behind it:
+        -- unpack the real animation from the marketplace item.
+        emotes:SetStatus("resolving")
+        local resolved: number? = resolveCatalogEmoteId(assetId)
+        if not resolved or resolved <= 0 then
+            emotes:SetStatus(nil)
+            emotes:Notify("could not unpack the emote " .. label .. " locally")
+            return
+        end
+        animationId = resolved
     end
 
     local function attempt(id: number): (Animation?, AnimationTrack?)
@@ -25839,50 +25783,43 @@ function Module.play(
         return playing
     end
 
-    local function loadedInTime(playing: any, seconds: number): boolean
-        local deadline: number = os.clock() + seconds
-        while
-            runtime.current == playing
-            and not (playing.track :: AnimationTrack).IsLoaded
-            and os.clock() < deadline
-        do
-            task.wait(0.05)
-        end
-        return runtime.current == playing
-            and (playing.track :: AnimationTrack).IsLoaded
-    end
-
-    -- 1) Direct load: works when the id already is an animation id.
-    local animation: Animation?, track: AnimationTrack? = attempt(assetId)
-    if track and animation then
-        local playing: any = start(animation :: Animation, track :: AnimationTrack)
-        if loadedInTime(playing, 3) then
-            emotes:Notify("playing " .. tostring(assetId))
-            return
-        end
-        -- The track never received its data: probably a catalog page id.
-    end
-
-    -- 2) Resolve the emote through the marketplace and retry.
-    local resolved: number? = resolveCatalogEmoteId(assetId)
-    if not resolved or resolved <= 0 or resolved == assetId then
-        stop()
-        emotes:Notify("that id would not load as an emote")
-        return
-    end
-    animation, track = attempt(resolved)
+    emotes:SetStatus("loading")
+    local animation: Animation?, track: AnimationTrack? = attempt(animationId)
     if not track or not animation then
-        stop()
-        emotes:Notify("that id would not load as an emote")
+        emotes:SetStatus(nil)
+        emotes:Notify("the rig refused to load id " .. tostring(animationId))
         return
     end
+
+    -- Communication point #2: the official loaded check. A track only has
+    -- a Length once its animation data has arrived (IsLoaded is not a real
+    -- AnimationTrack member); no data in time means the id is genuinely
+    -- broken - deleted, private, or not playable here - and it is reported
+    -- as a failure instead of a fake success.
     local playing: any = start(animation :: Animation, track :: AnimationTrack)
-    if loadedInTime(playing, LOAD_TIMEOUT) then
-        emotes:Notify("playing " .. tostring(resolved))
-    else
-        emotes:Notify("that id would not load as an emote")
-        stop()
+    local deadline: number = os.clock() + LOAD_TIMEOUT
+    while
+        runtime.current == playing
+        and (playing.track :: AnimationTrack).Length <= 0
+        and os.clock() < deadline
+    do
+        task.wait(0.1)
     end
+    if runtime.current ~= playing then
+        -- Stopped or replaced while loading; nothing to report.
+        return
+    end
+    if (playing.track :: AnimationTrack).Length <= 0 then
+        stop()
+        emotes:Notify(
+            "id "
+                .. tostring(animationId)
+                .. " never delivered its animation data"
+        )
+        return
+    end
+    emotes:Notify("playing " .. label .. " - only your screen shows it")
+    emotes:SetStatus(string.sub(label, 1, 15))
 end
 
 function Module.destroy(): ()

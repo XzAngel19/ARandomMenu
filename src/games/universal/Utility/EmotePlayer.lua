@@ -14,8 +14,9 @@ local Module = {
 
 local activeCleanup: (() -> ())? = nil
 
--- An emote must stay a real animation for other players to see it; this
--- priority sits above the animations games usually force onto characters.
+-- Emotes play through the character's (or the Disguise double's) own
+-- Animator; this priority sits above the movement animations games force
+-- onto characters, so idle/walk tracks do not stomp the emote.
 local EMOTE_PRIORITY: Enum.AnimationPriority = Enum.AnimationPriority.Action2
 
 -- How long to wait for the animation data to arrive before giving up.
@@ -248,7 +249,10 @@ function Module.init(context: Runtime): any
     })
     emotes:CreateButton({
         Name = "Play",
-        Tooltip = "Play the picked emote, or the custom id.",
+        Tooltip = "Play the picked emote, or the custom id. The id is "
+            .. "verified first: it must exist on the marketplace, be an "
+            .. "animation or emote asset, and really deliver its animation "
+            .. "data - otherwise you get the exact reason it failed.",
         Function = function(): ()
             task.spawn(function(): ()
                 Module.play(context, emotes, runtime, animator, stop)
@@ -260,6 +264,9 @@ function Module.init(context: Runtime): any
         Tooltip = "Stop whatever is playing.",
         Function = function(): ()
             stop()
+            if emotes.Enabled then
+                emotes:SetStatus(nil)
+            end
         end,
     })
     emotes:CreateSlider({
@@ -308,6 +315,14 @@ function Module.init(context: Runtime): any
             end)
         end,
     })
+
+    emotes:CreateNote(
+        "Ids are verified for real: the marketplace must know the id, it "
+            .. "must be an animation or emote asset, and its animation data "
+            .. "must actually arrive before anything is announced as "
+            .. "playing. Emotes are client sided - only your screen shows "
+            .. "them."
+    )
 
     activeCleanup = function(): ()
         stop()
@@ -387,11 +402,66 @@ function Module.play(
         emotes:Notify("pick an emote or fill in Custom ID")
         return
     end
+    -- Asset ids are integers; anything else (67676757576767676867, text,
+    -- decimals) is rejected before a single request is made.
+    if assetId ~= math.floor(assetId) or assetId > 2 ^ 53 then
+        emotes:Notify(tostring(assetId) .. " is not a valid asset id")
+        return
+    end
 
     local target: Animator? = animator()
     if not target then
         emotes:Notify("no character to animate")
         return
+    end
+
+    -- Communication point #1: ask the marketplace what this id actually
+    -- is. This is what turns a blind "Playing Emote" into a real answer -
+    -- an id that does not exist, or that is a shirt instead of an
+    -- animation, is rejected with its exact reason.
+    local ok: boolean, info: any = pcall(function(): any
+        return game:GetService("MarketplaceService"):GetProductInfo(
+            assetId,
+            Enum.InfoType.Asset
+        )
+    end)
+    if not ok or type(info) ~= "table" then
+        emotes:Notify(
+            "id " .. tostring(assetId) .. " does not exist on the marketplace"
+        )
+        return
+    end
+    local typeId: number = tonumber(info.AssetTypeId) or -1
+    if
+        typeId ~= Enum.AssetType.Animation.Value
+        and typeId ~= Enum.AssetType.EmoteAnimation.Value
+    then
+        local typeName: string = "different asset"
+        for _, item: EnumItem in ipairs(Enum.AssetType:GetEnumItems()) do
+            if item.Value == typeId then
+                typeName = item.Name
+                break
+            end
+        end
+        emotes:Notify(
+            "id " .. tostring(assetId) .. " is a " .. typeName .. ", not an emote"
+        )
+        return
+    end
+    local label: string = tostring(info.Name or assetId)
+
+    local animationId: number = assetId
+    if typeId == Enum.AssetType.EmoteAnimation.Value then
+        -- A catalog emote's page id is not the animation id behind it:
+        -- unpack the real animation from the marketplace item.
+        emotes:SetStatus("resolving")
+        local resolved: number? = resolveCatalogEmoteId(assetId)
+        if not resolved or resolved <= 0 then
+            emotes:SetStatus(nil)
+            emotes:Notify("could not unpack the emote " .. label .. " locally")
+            return
+        end
+        animationId = resolved
     end
 
     local function attempt(id: number): (Animation?, AnimationTrack?)
@@ -435,50 +505,43 @@ function Module.play(
         return playing
     end
 
-    local function loadedInTime(playing: any, seconds: number): boolean
-        local deadline: number = os.clock() + seconds
-        while
-            runtime.current == playing
-            and not (playing.track :: AnimationTrack).IsLoaded
-            and os.clock() < deadline
-        do
-            task.wait(0.05)
-        end
-        return runtime.current == playing
-            and (playing.track :: AnimationTrack).IsLoaded
-    end
-
-    -- 1) Direct load: works when the id already is an animation id.
-    local animation: Animation?, track: AnimationTrack? = attempt(assetId)
-    if track and animation then
-        local playing: any = start(animation :: Animation, track :: AnimationTrack)
-        if loadedInTime(playing, 3) then
-            emotes:Notify("playing " .. tostring(assetId))
-            return
-        end
-        -- The track never received its data: probably a catalog page id.
-    end
-
-    -- 2) Resolve the emote through the marketplace and retry.
-    local resolved: number? = resolveCatalogEmoteId(assetId)
-    if not resolved or resolved <= 0 or resolved == assetId then
-        stop()
-        emotes:Notify("that id would not load as an emote")
-        return
-    end
-    animation, track = attempt(resolved)
+    emotes:SetStatus("loading")
+    local animation: Animation?, track: AnimationTrack? = attempt(animationId)
     if not track or not animation then
-        stop()
-        emotes:Notify("that id would not load as an emote")
+        emotes:SetStatus(nil)
+        emotes:Notify("the rig refused to load id " .. tostring(animationId))
         return
     end
+
+    -- Communication point #2: the official loaded check. A track only has
+    -- a Length once its animation data has arrived (IsLoaded is not a real
+    -- AnimationTrack member); no data in time means the id is genuinely
+    -- broken - deleted, private, or not playable here - and it is reported
+    -- as a failure instead of a fake success.
     local playing: any = start(animation :: Animation, track :: AnimationTrack)
-    if loadedInTime(playing, LOAD_TIMEOUT) then
-        emotes:Notify("playing " .. tostring(resolved))
-    else
-        emotes:Notify("that id would not load as an emote")
-        stop()
+    local deadline: number = os.clock() + LOAD_TIMEOUT
+    while
+        runtime.current == playing
+        and (playing.track :: AnimationTrack).Length <= 0
+        and os.clock() < deadline
+    do
+        task.wait(0.1)
     end
+    if runtime.current ~= playing then
+        -- Stopped or replaced while loading; nothing to report.
+        return
+    end
+    if (playing.track :: AnimationTrack).Length <= 0 then
+        stop()
+        emotes:Notify(
+            "id "
+                .. tostring(animationId)
+                .. " never delivered its animation data"
+        )
+        return
+    end
+    emotes:Notify("playing " .. label .. " - only your screen shows it")
+    emotes:SetStatus(string.sub(label, 1, 15))
 end
 
 function Module.destroy(): ()
