@@ -206,7 +206,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "c37f91b8b1970e71"
+local SOURCE_STAMP: string = "19d9cc95ac2a2b6a"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
