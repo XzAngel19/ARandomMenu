@@ -334,13 +334,20 @@ function Module.render(
         end
 
         local rect: any = render:ModelRect(resolvedCamera, entity.Character)
-        if not rect then
-            continue
-        end
 
+        -- Mark the player as seen before the rect check: a target that is
+        -- momentarily behind the camera or off-screen must keep its pooled
+        -- drawing (hidden) instead of being released and rebuilt every frame.
         seen[player] = true
         pool[player] = true
         local drawings: any = render:Set(container, player)
+
+        if not rect then
+            -- Behind the camera or fully outside the viewport: hide instead
+            -- of leaving the previous frame's box frozen on screen.
+            drawings:Show(false)
+            continue
+        end
 
         local visible: boolean = true
         if options["Visibility check"].Value then
@@ -381,22 +388,12 @@ function Module.render(
         end
 
         local left: number = rect.left
-        local right: number = rect.right
         local top: number = rect.top
         local bottom: number = rect.bottom
-        local width: number = rect.width
         local height: number = rect.height
         local centreX: number = rect.centreX
 
         drawings:Show(true)
-        if right < 0 or left > viewport.X or bottom < 0 or top > viewport.Y then
-            drawings:Show(false)
-            continue
-        end
-        if width > viewport.X * 2.5 or height > viewport.Y * 2.5 then
-            drawings:Show(false)
-            continue
-        end
 
         local thickness: number = math.round(options["Box thickness"].Value)
         local boxMode: string = options["Boxes"].Value

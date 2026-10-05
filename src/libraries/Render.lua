@@ -425,91 +425,133 @@ function Module.init(context: any): RenderLibrary
     end
 
     function library:Project(camera: Camera, position: Vector3): Vector2?
-        local point: Vector3, onScreen: boolean =
-            camera:WorldToViewportPoint(position)
-        if not onScreen or point.Z <= 0 then
+        -- The host ScreenGui ignores the GUI inset, so drawings live in raw
+        -- screen space and WorldToScreenPoint is the matching projection.
+        -- Points merely outside the viewport still project so skeleton lines
+        -- keep their bearings at the screen edge; only points behind the
+        -- camera are rejected.
+        local point: Vector3 = camera:WorldToScreenPoint(position)
+        if point.Z <= 0 then
             return nil
         end
         return Vector2.new(point.X, point.Y)
     end
 
+    -- Builds a screen rectangle from world sample points. Points behind the
+    -- camera are dropped, the rest contribute to the bounds, and the final
+    -- rectangle is clamped to the viewport so a target that is merely close
+    -- can never produce a box larger than the screen. Models that are fully
+    -- off-screen return nil so callers can hide their drawings cleanly.
+    local function rectFromPoints(
+        camera: Camera,
+        viewport: Vector2,
+        points: {Vector3},
+        minimumAspect: number?
+    ): Rect?
+        local minimumX: number, minimumY: number = math.huge, math.huge
+        local maximumX: number, maximumY: number = -math.huge, -math.huge
+        local inFront: number = 0
+        for _, position: Vector3 in ipairs(points) do
+            local point: Vector3 = camera:WorldToScreenPoint(position)
+            if point.Z > 0 then
+                inFront += 1
+                if point.X < minimumX then minimumX = point.X end
+                if point.Y < minimumY then minimumY = point.Y end
+                if point.X > maximumX then maximumX = point.X end
+                if point.Y > maximumY then maximumY = point.Y end
+            end
+        end
+        if inFront < 2 then
+            return nil
+        end
+        minimumX -= 2
+        maximumX += 2
+        minimumY -= 2
+        maximumY += 2
+        local width: number = maximumX - minimumX
+        local height: number = maximumY - minimumY
+        if minimumAspect and height > 0 and height * minimumAspect > width then
+            width = height * minimumAspect
+            local centreX: number = (minimumX + maximumX) * 0.5
+            minimumX = centreX - width * 0.5
+            maximumX = centreX + width * 0.5
+        end
+        if maximumX < 0 or minimumX > viewport.X
+            or maximumY < 0 or minimumY > viewport.Y then
+            return nil
+        end
+        local left: number = math.max(minimumX, 0)
+        local right: number = math.min(maximumX, viewport.X)
+        local top: number = math.max(minimumY, 0)
+        local bottom: number = math.min(maximumY, viewport.Y)
+        if right - left < 1 or bottom - top < 1 then
+            return nil
+        end
+        return {
+            left = left,
+            right = right,
+            top = top,
+            bottom = bottom,
+            width = right - left,
+            height = bottom - top,
+            centreX = (left + right) * 0.5,
+            centreY = (top + bottom) * 0.5,
+        }
+    end
+
     function library:ModelRect(camera: Camera, model: Model): Rect?
+        if not model.Parent then
+            return nil
+        end
+        local viewport: Vector2 = camera.ViewportSize
         local humanoid: Humanoid? = model:FindFirstChildOfClass("Humanoid") :: Humanoid?
         local root: BasePart? = model:FindFirstChild("HumanoidRootPart") :: BasePart?
             or model.PrimaryPart
-        local head: BasePart? = model:FindFirstChild("Head") :: BasePart?
         if humanoid and root then
+            -- Character rig: measure a handful of body landmarks instead of
+            -- walking every part. The head and feet anchor the height, the
+            -- four torso landmarks anchor the width at any rotation, and any
+            -- landmark that falls behind the camera is simply dropped so the
+            -- box degrades gracefully instead of flipping or vanishing.
+            local head: BasePart? = model:FindFirstChild("Head") :: BasePart?
+            local rootPosition: Vector3 = root.Position
             local topPosition: Vector3 = head
-                and (head.Position + Vector3.new(0, head.Size.Y * 0.65, 0))
-                or (root.Position + Vector3.new(0, 3.5, 0))
-            local bottomPosition: Vector3 = root.Position
+                and (head.Position + Vector3.new(0, head.Size.Y * 0.5 + 0.35, 0))
+                or (rootPosition + Vector3.new(0, 3, 0))
+            local bottomPosition: Vector3 = rootPosition
                 - Vector3.new(0, math.max(humanoid.HipHeight + root.Size.Y * 0.5, 2.5), 0)
-            local topPoint: Vector3, topVisible: boolean = camera:WorldToViewportPoint(topPosition)
-            local bottomPoint: Vector3, bottomVisible: boolean = camera:WorldToViewportPoint(bottomPosition)
-            if topPoint.Z <= 0 or bottomPoint.Z <= 0 or not (topVisible or bottomVisible) then
-                return nil
-            end
-            local height: number = math.abs(bottomPoint.Y - topPoint.Y)
-            if height < 4 then return nil end
-            height = math.min(height, camera.ViewportSize.Y * 1.35)
-            local width: number = math.clamp(height * 0.52, 4, camera.ViewportSize.X * 0.7)
-            local centreX: number = (topPoint.X + bottomPoint.X) * 0.5
-            local centreY: number = (topPoint.Y + bottomPoint.Y) * 0.5
-            return {
-                left = centreX - width * 0.5,
-                right = centreX + width * 0.5,
-                top = centreY - height * 0.5,
-                bottom = centreY + height * 0.5,
-                width = width,
-                height = height,
-                centreX = centreX,
-                centreY = centreY,
-            }
+            local rootCFrame: CFrame = root.CFrame
+            return rectFromPoints(camera, viewport, {
+                topPosition,
+                bottomPosition,
+                rootPosition,
+                rootCFrame * Vector3.new(1.35, 0, 0),
+                rootCFrame * Vector3.new(-1.35, 0, 0),
+                rootCFrame * Vector3.new(0, 0, 0.75),
+                rootCFrame * Vector3.new(0, 0, -0.75),
+            }, 0.38)
         end
 
-        local minimumX: number, minimumY: number = math.huge, math.huge
-        local maximumX: number, maximumY: number = -math.huge, -math.huge
-        local points: number = 0
-        for _, descendant: Instance in ipairs(model:GetDescendants()) do
-            if not descendant:IsA("BasePart")
-                or descendant:FindFirstAncestorOfClass("Accessory")
-                or descendant:FindFirstAncestorOfClass("Tool") then
-                continue
-            end
-            local part: BasePart = descendant :: BasePart
-            local half: Vector3 = part.Size * 0.5
-            for index: number = 0, 7 do
-                local corner: Vector3 = part.CFrame * Vector3.new(
-                    index % 2 == 0 and -half.X or half.X,
-                    math.floor(index / 2) % 2 == 0 and -half.Y or half.Y,
-                    math.floor(index / 4) % 2 == 0 and -half.Z or half.Z
-                )
-                local point: Vector3, visible: boolean = camera:WorldToViewportPoint(corner)
-                if point.Z > 0 and visible then
-                    minimumX = math.min(minimumX, point.X)
-                    minimumY = math.min(minimumY, point.Y)
-                    maximumX = math.max(maximumX, point.X)
-                    maximumY = math.max(maximumY, point.Y)
-                    points += 1
-                end
-            end
+        -- Anything without a live humanoid rig: take the engine-side bounding
+        -- box and project its eight corners. One engine call and eight
+        -- projections, instead of walking and projecting every descendant
+        -- part each frame.
+        local boundsOk: boolean, boundsCFrame: any, boundsSize: any =
+            pcall(model.GetBoundingBox, model)
+        if not boundsOk or typeof(boundsSize) ~= "Vector3" or boundsSize.Magnitude <= 0 then
+            return nil
         end
-        if points < 2 then return nil end
-        local width: number = maximumX - minimumX
-        local height: number = maximumY - minimumY
-        if width < 2 or height < 2
-            or width > camera.ViewportSize.X * 0.8
-            or height > camera.ViewportSize.Y * 1.35 then return nil end
-        return {
-            left = minimumX - 2,
-            right = maximumX + 2,
-            top = minimumY - 2,
-            bottom = maximumY + 2,
-            width = width + 4,
-            height = height + 4,
-            centreX = (minimumX + maximumX) * 0.5,
-            centreY = (minimumY + maximumY) * 0.5,
-        }
+        local half: Vector3 = boundsSize * 0.5
+        return rectFromPoints(camera, viewport, {
+            boundsCFrame * Vector3.new(half.X, half.Y, half.Z),
+            boundsCFrame * Vector3.new(-half.X, half.Y, half.Z),
+            boundsCFrame * Vector3.new(half.X, -half.Y, half.Z),
+            boundsCFrame * Vector3.new(-half.X, -half.Y, half.Z),
+            boundsCFrame * Vector3.new(half.X, half.Y, -half.Z),
+            boundsCFrame * Vector3.new(-half.X, half.Y, -half.Z),
+            boundsCFrame * Vector3.new(half.X, -half.Y, -half.Z),
+            boundsCFrame * Vector3.new(-half.X, -half.Y, -half.Z),
+        })
     end
 
     function library:Destroy(): ()
