@@ -1086,6 +1086,40 @@ function Module.init(context: any): any
         raiseOpen(windowsRecord)
     end
 
+    -- Hidden windows must stay hidden on the next join too: the saved
+    -- "ClickGUI.Windows.<name>" states have to be re-applied at boot,
+    -- without opening the Windows panel first.
+    local function applySavedWindowVisibility(): boolean
+        local clickGui: any = state.clickGui
+        if not clickGui or type(clickGui.order) ~= "table" then
+            return false
+        end
+        for _, name: string in ipairs(clickGui.order) do
+            local category: any = clickGui.categories
+                and clickGui.categories[name]
+            if category and category.window then
+                local optionKey: string = "ClickGUI.Windows."
+                    .. tostring(name):gsub("%W", "")
+                if configData.states[optionKey] == false then
+                    category.window.userVisible = false
+                    pcall(function(): ()
+                        category.window:SetVisible(false)
+                    end)
+                end
+            end
+        end
+        return true
+    end
+
+    task.spawn(function(): ()
+        -- Category windows appear as modules register, so keep re-applying
+        -- the saved visibility for a while; it is idempotent and cheap.
+        for _ = 1, 15 do
+            applySavedWindowVisibility()
+            task.wait(1)
+        end
+    end)
+
     local optionsRecord: any = nil
 
     local actionEntries: {any} = {}
