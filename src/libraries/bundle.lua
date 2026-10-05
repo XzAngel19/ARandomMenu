@@ -1,5 +1,5 @@
 return {
-    stamp = "3afb7c145a91c1ac",
+    stamp = "ca6c9240a4460599",
     files = {
         ["src/libraries/Manifest.lua"] = [=[export type ModuleEntry = {
     path: string,
@@ -5575,6 +5575,7 @@ function Module.init(context: any): any
     local state: any = host.state
     local configData: any = host.configData
     local queueConfigSave: any = host.queueConfigSave
+    local flushConfigSave: any = host.flushConfigSave or queueConfigSave
     local create: any = host.create
     local makeButton: any = host.makeButton
     local makeTextLabel: any = host.makeTextLabel
@@ -5966,7 +5967,7 @@ function Module.init(context: any): any
                     feature.enabledAt = os.clock()
                 end
                 configData.states[feature.configKey] = requestedState
-                queueConfigSave()
+                flushConfigSave()
                 notify(name .. (requestedState and " enabled" or " disabled"))
             else
                 warn("[Random Testing Menu] " .. name .. ": " .. tostring(errorMessage))
@@ -9800,6 +9801,7 @@ function Module.init(context: any): any
             anchor = uiRecord and uiRecord.window,
             settingsSized = true,
             packRows = {
+                {"Show", nil, 30},
                 {"Mode", "Hidden", 26},
                 {"Position", "Right", 26},
                 {"Color", "#FFFFFF"},
@@ -9811,6 +9813,18 @@ function Module.init(context: any): any
             },
         })
         local panel: any = panelFor(hackListRecord, "HackList")
+        addToggleOption(
+            panel,
+            "Show",
+            false,
+            function(value: boolean): ()
+                state.hudListAlways = value
+                if state.hudList and type(state.hudList.SetAlways) == "function" then
+                    state.hudList.SetAlways(value)
+                end
+            end,
+            "Keep the hack list on screen even while the menu is closed"
+        )
         local modes: {string} = {"Auto", "Count", "Hidden"}
         addCycleOption(
             panel,
@@ -10846,8 +10860,9 @@ function Module.init(context: any): any
         or GAME_CHECK.MVSDActive and "MVSD"
         or "Universal only"
 
-    state.wurstOptions.RegisterAction("Keybinds", "Keybinds", openKeybinds)
-    state.wurstOptions.RegisterAction("Windows", "Windows", openWindows)
+    -- Keybinds and Windows live as rows inside UI Settings only; registering
+    -- them here as well duplicated the whole UI Settings window inside
+    -- Wurst Options.
     reinjectHandle = state.wurstOptions.RegisterAction(
         "Reinject", "Reinject latest", runReinject
     )
@@ -11029,14 +11044,6 @@ function Module.init(context: any): any
     state.uiMaxSettingsHeight = MAX_SETTINGS_HEIGHT
 
     uiSettingsValues["Menu style"] = "Wurst"
-
-    addToggleOption(uiPanel, "Show HackList", true, function(value: boolean): ()
-        uiSettingsValues["Show HackList"] = value
-        state.uiShowHackList = value
-        if state.hudList and type(state.hudList.SetVisible) == "function" then
-            state.hudList.SetVisible(value)
-        end
-    end)
 
     addToggleOption(uiPanel, "Keep after teleport", true, function(value: boolean): ()
         uiSettingsValues["Keep after teleport"] = value
@@ -12419,7 +12426,11 @@ function Module.init(context: any): any
     local hudSignature: string = ""
     local hudElapsed: number = 0
 
-    local hudVisible: boolean = state.uiShowHackList ~= false
+    -- By default the hack list is only visible while the menu is open; the
+    -- "Show" toggle in the HackList window keeps it on screen permanently.
+    local hudAlways: boolean = configData.states["HackList.Show"] == true
+        or configData.states["ClickGUI.ShowHackList"] == true
+    local hudVisible: boolean = hudAlways or state.visible == true
 
     local function refreshHudList(): ()
         if not hudVisible then
@@ -12566,10 +12577,25 @@ function Module.init(context: any): any
     end
     Furniture.SetHackListVisible = setHackListVisible
 
+    local function applyHudVisibility(): ()
+        setHackListVisible(hudAlways or state.visible == true)
+    end
+    if type(state.addMenuVisibilityListener) == "function" then
+        state.addMenuVisibilityListener(function(visible: boolean): ()
+            if not hudAlways then
+                setHackListVisible(visible == true)
+            end
+        end)
+    end
+
     state.hudList = {
         frame = hudFrame,
         refresh = refreshHudList,
         SetVisible = setHackListVisible,
+        SetAlways = function(value: boolean): ()
+            hudAlways = value == true
+            applyHudVisibility()
+        end,
 
         SetMode = function(value: string): ()
             hudMode = value
@@ -18233,13 +18259,11 @@ return Module
     services: any,
 }
 
-type PendingHop = {
-    root: BasePart,
-    humanoid: Humanoid,
+type WallSighting = {
+    part: BasePart,
     normal: Vector3,
-    lateral: Vector3,
-    startedAt: number,
-    stage: number,
+    direction: Vector3,
+    distance: number,
 }
 
 local Module = {
@@ -18251,6 +18275,10 @@ local Module = {
 
 local activeCard: any = nil
 
+local SCAN_DIRECTIONS: number = 8
+local SCAN_HEIGHTS: {number} = {-2.35, 0.2, 1.2}
+local ARROWS: {string} = {"↑", "↗", "→", "↘", "↓", "↙", "←", "↖"}
+
 function Module.init(context: Runtime): any
     local framework: any = context.framework
     local host: any = context.host
@@ -18258,30 +18286,111 @@ function Module.init(context: Runtime): any
     local getCharacterParts: any = host.getCharacterParts
     local currentWorkspace: Workspace = host.workspace or workspace
     local lastHopAt: number = -math.huge
-    local pending: PendingHop? = nil
+    local lastScanAt: number = -math.huge
+    local nearestWall: WallSighting? = nil
+    local highlight: Highlight? = nil
 
-    local function cast(
-        origin: Vector3,
-        direction: Vector3,
-        parameters: RaycastParams
-    ): RaycastResult?
-        local hit: RaycastResult? = currentWorkspace:Raycast(origin, direction, parameters)
-        if hit and math.abs(hit.Normal.Y) <= 0.28 then
-            return hit
+    local function destroyHighlight(): ()
+        if highlight then
+            highlight:Destroy()
+            highlight = nil
         end
-        return nil
+    end
+
+    local function findWall(
+        character: Model,
+        humanoid: Humanoid,
+        root: BasePart,
+        range: number
+    ): WallSighting?
+        local parameters: RaycastParams = RaycastParams.new()
+        parameters.FilterType = Enum.RaycastFilterType.Exclude
+        parameters.FilterDescendantsInstances = {character}
+        parameters.IgnoreWater = true
+        parameters.RespectCanCollide = true
+
+        local best: WallSighting? = nil
+        for directionIndex: number = 0, SCAN_DIRECTIONS - 1 do
+            local angle: number = (directionIndex / SCAN_DIRECTIONS) * math.pi * 2
+            local direction: Vector3 = Vector3.new(
+                math.sin(angle),
+                0,
+                math.cos(angle)
+            )
+            for _, height: number in ipairs(SCAN_HEIGHTS) do
+                local origin: Vector3 = root.Position + Vector3.new(0, height, 0)
+                local hit: RaycastResult? = currentWorkspace:Raycast(
+                    origin,
+                    direction * range,
+                    parameters
+                )
+                if hit
+                    and hit.Instance
+                    and hit.Instance:IsA("BasePart")
+                    and math.abs(hit.Normal.Y) <= 0.35 then
+                    if best == nil or hit.Distance < best.distance then
+                        best = {
+                            part = hit.Instance,
+                            normal = Vector3.new(
+                                hit.Normal.X,
+                                0,
+                                hit.Normal.Z
+                            ),
+                            direction = direction,
+                            distance = hit.Distance,
+                        }
+                    end
+                    break
+                end
+            end
+        end
+        if best and best.normal.Magnitude > 0.01 then
+            best.normal = best.normal.Unit
+        else
+            best = nil
+        end
+        return best
+    end
+
+    local function wallArrow(root: BasePart, sighting: WallSighting): string
+        local flatLook: Vector3 = Vector3.new(
+            root.CFrame.LookVector.X,
+            0,
+            root.CFrame.LookVector.Z
+        )
+        if flatLook.Magnitude < 0.01 then
+            return "↑"
+        end
+        flatLook = flatLook.Unit
+        local flatDirection: Vector3 = sighting.direction
+        local angle: number = math.atan2(
+            flatLook:Cross(flatDirection).Y,
+            flatLook:Dot(flatDirection)
+        )
+        local index: number = math.floor(
+            (angle / (math.pi * 2)) * SCAN_DIRECTIONS + 0.5
+        ) % SCAN_DIRECTIONS
+        -- Arrows are listed clockwise starting at forward; atan2 grows
+        -- counter-clockwise, so mirror the index.
+        index = (SCAN_DIRECTIONS - index) % SCAN_DIRECTIONS + 1
+        return ARROWS[index]
     end
 
     local card: any
+    local function clearVisuals(): ()
+        nearestWall = nil
+        destroyHighlight()
+    end
+
     card = framework.Categories.Blatant:CreateModule({
         Name = "WallHop",
         Category = "Blatant",
         ConfigKey = "Universal.WallHop",
         Order = 31,
-        Tooltip = "Uses nearby wall edges to perform a consistent wall hop.",
+        Tooltip = "Detect walls and thin ledges around you and wall hop off "
+            .. "them with one realistic jump.",
         Function = function(enabled: boolean): ()
-            pending = nil
-
+            clearVisuals()
             lastHopAt = -math.huge
             if not enabled then
                 card:SetStatus(nil)
@@ -18291,111 +18400,113 @@ function Module.init(context: Runtime): any
 
             card:Clean(movementInput.onJumpRequest(function(): ()
                 local now: number = os.clock()
-                if now - lastHopAt < 0.22 or pending ~= nil then
+                if now - lastHopAt < 0.3 then
                     return
                 end
                 local character: Model?, humanoid: Humanoid?, root: BasePart? =
                     getCharacterParts()
-                if not character or not humanoid or not root or humanoid.Health <= 0 then
+                if not character or not humanoid or not root
+                    or humanoid.Health <= 0
+                    or humanoid.FloorMaterial == Enum.Material.Air then
                     return
                 end
 
-                local parameters: RaycastParams = RaycastParams.new()
-                parameters.FilterType = Enum.RaycastFilterType.Exclude
-                parameters.FilterDescendantsInstances = {character}
-                parameters.IgnoreWater = true
-                parameters.RespectCanCollide = true
-
-                local forward: Vector3 = root.CFrame.LookVector
-                local right: Vector3 = root.CFrame.RightVector
-                local origin: Vector3 = root.Position + Vector3.new(0, 0.35, 0)
-                local centre: RaycastResult? = cast(origin, forward * 2.65, parameters)
-                if not centre then
-                    return
-                end
-
-                local leftHit: RaycastResult? = cast(
-                    origin - right * 0.7,
-                    forward * 2.65,
-                    parameters
-                )
-                local rightHit: RaycastResult? = cast(
-                    origin + right * 0.7,
-                    forward * 2.65,
-                    parameters
-                )
-                local topHit: RaycastResult? = cast(
-                    origin + Vector3.new(0, 2.6, 0),
-                    forward * 2.4,
-                    parameters
-                )
-
-                local lateral: Vector3 = Vector3.zero
-                if not leftHit then
-                    lateral = right * -1
-                elseif not rightHit then
-                    lateral = right
-                elseif not topHit then
-                    lateral = humanoid.MoveDirection.Magnitude > 0.05
-                            and humanoid.MoveDirection.Unit
-                        or right
-                else
-                    card:SetStatus("blocked")
+                local range: number = tonumber(card.Options["Wall range"].Value) or 2.6
+                local kick: number = tonumber(card.Options["Kick strength"].Value) or 14
+                local sighting: WallSighting? = findWall(character, humanoid, root, range)
+                if not sighting then
                     return
                 end
 
                 lastHopAt = now
-                pending = {
-                    root = root,
-                    humanoid = humanoid,
-                    normal = centre.Normal,
-                    lateral = lateral,
-                    startedAt = now,
-                    stage = 0,
-                }
+                local jumpVelocity: number = 50
+                if humanoid.UseJumpPower then
+                    jumpVelocity = math.max(humanoid.JumpPower, 16)
+                elseif humanoid.JumpHeight > 0 then
+                    jumpVelocity = math.sqrt(
+                        2 * currentWorkspace.Gravity * humanoid.JumpHeight
+                    )
+                end
+                local velocity: Vector3 = root.AssemblyLinearVelocity
+                -- One clean impulse: kick away from the wall plus a natural
+                -- jump arc. No teleports, no chained boosts.
+                root.AssemblyLinearVelocity = Vector3.new(
+                    velocity.X * 0.35 + sighting.normal.X * kick,
+                    math.max(velocity.Y, jumpVelocity + 3),
+                    velocity.Z * 0.35 + sighting.normal.Z * kick
+                )
+                humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
                 card:SetStatus("hop")
             end))
 
             card:Loop(function(): ()
-                local hop: PendingHop? = pending
-                if not hop then
+                local now: number = os.clock()
+                if now - lastScanAt < 0.07 then
+                    return
+                end
+                lastScanAt = now
+
+                local character: Model?, humanoid: Humanoid?, root: BasePart? =
+                    getCharacterParts()
+                if not character or not humanoid or not root
+                    or humanoid.Health <= 0 then
+                    clearVisuals()
                     return
                 end
 
-                local _character: Model?, humanoid: Humanoid?, root: BasePart? =
-                    getCharacterParts()
-                if not hop.root.Parent
-                    or hop.humanoid.Health <= 0
-                    or root ~= hop.root
-                    or humanoid ~= hop.humanoid then
-                    pending = nil
-                    card:SetStatus("ready")
+                local range: number = tonumber(card.Options["Wall range"].Value) or 2.6
+                local sighting: WallSighting? = findWall(character, humanoid, root, range)
+                nearestWall = sighting
+
+                local grounded: boolean = humanoid.FloorMaterial ~= Enum.Material.Air
+                if not sighting or not grounded then
+                    destroyHighlight()
+                    card:SetStatus(grounded and "ready" or nil)
                     return
                 end
-                local elapsed: number = os.clock() - hop.startedAt
-                if hop.stage == 0 then
-                    hop.stage = 1
-                    hop.root.CFrame += hop.normal * 0.35
-                        + hop.lateral * 0.45
-                        + Vector3.new(0, 0.3, 0)
-                elseif hop.stage == 1 and elapsed >= 0.035 then
-                    hop.stage = 2
-                    hop.root.CFrame += hop.normal * 0.5
-                        + hop.lateral * 0.7
-                        + Vector3.new(0, 0.55, 0)
-                elseif hop.stage == 2 and elapsed >= 0.07 then
-                    local velocity: Vector3 = hop.root.AssemblyLinearVelocity
-                    hop.root.AssemblyLinearVelocity = Vector3.new(
-                        velocity.X + hop.normal.X * 18 + hop.lateral.X * 12,
-                        math.max(velocity.Y, 52),
-                        velocity.Z + hop.normal.Z * 18 + hop.lateral.Z * 12
-                    )
-                    hop.humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-                    pending = nil
-                    card:SetStatus("ready")
+
+                card:SetStatus(wallArrow(root, sighting))
+                if card.Options["Highlight walls"].Value ~= true then
+                    destroyHighlight()
+                    return
+                end
+                if not highlight or not highlight.Parent then
+                    highlight = Instance.new("Highlight")
+                    highlight.Name = "Wurst_WallHop"
+                    highlight.FillColor = Color3.fromRGB(64, 255, 140)
+                    highlight.FillTransparency = 0.82
+                    highlight.OutlineColor = Color3.fromRGB(64, 255, 140)
+                    highlight.OutlineTransparency = 0.1
+                    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                    highlight.Parent = currentWorkspace
+                end
+                if (highlight :: Highlight).Adornee ~= sighting.part then
+                    (highlight :: Highlight).Adornee = sighting.part
                 end
             end)
         end,
+    })
+
+    card:CreateSlider({
+        Name = "Wall range",
+        Min = 1.5,
+        Max = 5,
+        Default = 2.6,
+        Step = 0.1,
+        Tooltip = "How far from a wall you can be to wall hop.",
+    })
+    card:CreateSlider({
+        Name = "Kick strength",
+        Min = 8,
+        Max = 26,
+        Default = 14,
+        Step = 1,
+        Tooltip = "Horizontal push away from the wall on each hop.",
+    })
+    card:CreateToggle({
+        Name = "Highlight walls",
+        Default = true,
+        Tooltip = "Outline the wall you can currently wall hop off.",
     })
 
     activeCard = card
@@ -18405,7 +18516,7 @@ end
 
 function Module.destroy(): ()
     if activeCard and activeCard.Enabled then
-        activeCard:Toggle(false)
+        pcall(activeCard.Toggle, false)
     end
     activeCard = nil
     Module.Initialized = false
@@ -18436,39 +18547,147 @@ function Module.init(context: Runtime): any
     local getCharacterParts: any = host.getCharacterParts
     local createUniversalFeature: any = host.createUniversalFeature
     local addNumberOption: any = host.addNumberOption
-    local safeWalkSettings: {lookAhead: number} = {lookAhead = 2.8}
+    local currentWorkspace: Workspace = host.workspace or workspace
+
+    local safeWalkSettings: {
+        lookAhead: number,
+        barrierHeight: number,
+    } = {
+        lookAhead = 2.8,
+        barrierHeight = 4.5,
+    }
+
+    local barrierFolder: Folder? = nil
+    local barrier: BasePart? = nil
+    local SafeWalkFeature: any = nil
+
+    local function ensureBarrier(): BasePart
+        local existing: BasePart? = barrier
+        if existing and existing.Parent then
+            return existing
+        end
+        if not barrierFolder or not barrierFolder.Parent then
+            barrierFolder = Instance.new("Folder")
+            barrierFolder.Name = "WurstSafeWalk"
+            barrierFolder.Parent = currentWorkspace
+        end
+        local part: BasePart = Instance.new("Part")
+        part.Name = "SafeWalkBarrier"
+        part.Anchored = true
+        part.CanCollide = true
+        part.CanQuery = false
+        part.CanTouch = false
+        part.Massless = true
+        part.CastShadow = false
+        part.Transparency = 1
+        part.Material = Enum.Material.SmoothPlastic
+        part.Size = Vector3.new(7, safeWalkSettings.barrierHeight, 0.35)
+        part:SetAttribute("WurstSafeWalk", true)
+        part.Parent = barrierFolder
+        barrier = part
+        return part
+    end
+
+    local function hideBarrier(): ()
+        if barrierFolder then
+            barrierFolder:Destroy()
+        end
+        barrierFolder = nil
+        barrier = nil
+    end
+
     local function toggleSafeWalk(enabled: boolean): ()
         disconnectFeatureConnection("SafeWalk")
+        hideBarrier()
         if not enabled then
+            if SafeWalkFeature then
+                SafeWalkFeature:SetStatus(nil)
+            end
             return
         end
+
         featureConnections.SafeWalk = TaskManager:Connect(function(): ()
             local character: Model?, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
             if not character or not humanoid or not root
-                or humanoid.MoveDirection.Magnitude < 0.05
-                or humanoid.FloorMaterial == Enum.Material.Air then
+                or humanoid.Health <= 0 then
+                hideBarrier()
                 return
             end
-            local params: RaycastParams = RaycastParams.new()
-            params.FilterType = Enum.RaycastFilterType.Exclude
-            params.FilterDescendantsInstances = {character}
-            local probeOrigin: Vector3 = root.Position
-                + humanoid.MoveDirection.Unit * safeWalkSettings.lookAhead
-            local ground: RaycastResult? = workspace:Raycast(
-                probeOrigin,
-                Vector3.new(0, -5.2, 0),
-                params
+            -- While airborne or standing still the last barrier stays in place
+            -- so momentum cannot carry you over an edge mid-jump.
+            if humanoid.MoveDirection.Magnitude < 0.05 then
+                return
+            end
+            if humanoid.FloorMaterial == Enum.Material.Air then
+                return
+            end
+
+            local moveDirection: Vector3 = humanoid.MoveDirection.Unit
+            local parameters: RaycastParams = RaycastParams.new()
+            parameters.FilterType = Enum.RaycastFilterType.Exclude
+            parameters.FilterDescendantsInstances = {character}
+            parameters.IgnoreWater = true
+
+            -- Sample the ground along the movement direction to find where the
+            -- floor ends. The barrier is placed just before that edge.
+            local stepCount: number = 7
+            local reach: number = 1.0 + safeWalkSettings.lookAhead + 0.8
+            local step: number = (reach - 1.0) / (stepCount - 1)
+            local lastGrounded: number? = nil
+            local firstGap: number? = nil
+            for index: number = 1, stepCount do
+                local distance: number = 1.0 + step * (index - 1)
+                local probeOrigin: Vector3 = root.Position + moveDirection * distance
+                local ground: RaycastResult? = currentWorkspace:Raycast(
+                    probeOrigin,
+                    Vector3.new(0, -6, 0),
+                    parameters
+                )
+                if ground then
+                    lastGrounded = distance
+                elseif lastGrounded ~= nil then
+                    firstGap = distance
+                    break
+                end
+            end
+
+            if lastGrounded == nil then
+                -- The edge is already under the feet: block right ahead.
+                lastGrounded = 0.4
+                firstGap = 1.0
+            end
+            if firstGap == nil then
+                -- Solid floor ahead: nothing to block.
+                hideBarrier()
+                if SafeWalkFeature then
+                    SafeWalkFeature:SetStatus(nil)
+                end
+                return
+            end
+
+            local edgeDistance: number = (lastGrounded + firstGap) * 0.5
+            local feetHeight: number = root.Size.Y * 0.5 + humanoid.HipHeight
+            local barrierHeight: number = math.max(safeWalkSettings.barrierHeight, 3)
+            local part: BasePart = ensureBarrier()
+            part.Size = Vector3.new(7, barrierHeight, 0.35)
+            local feetY: number = root.Position.Y - feetHeight
+            local position: Vector3 = root.Position + moveDirection * edgeDistance
+            -- Thin axis (Z) points along the movement direction, so the wide
+            -- face of the part faces the player like a wall.
+            part.CFrame = CFrame.lookAt(
+                Vector3.new(position.X, feetY + barrierHeight * 0.5, position.Z),
+                Vector3.new(position.X, feetY + barrierHeight * 0.5, position.Z)
+                    + moveDirection
             )
-            if not ground then
-                local velocity: Vector3 = root.AssemblyLinearVelocity
-                root.AssemblyLinearVelocity = Vector3.new(0, velocity.Y, 0)
+            if SafeWalkFeature then
+                SafeWalkFeature:SetStatus("edge")
             end
         end)
     end
 
-    local SafeWalkFeature = createUniversalFeature(
+    SafeWalkFeature = createUniversalFeature(
         "SafeWalk",
-        "Stop horizontal movement before walking over an edge",
+        "Place an invisible barrier at edges so you cannot walk off ledges",
         21,
         toggleSafeWalk,
         {
@@ -18486,9 +18705,20 @@ function Module.init(context: Runtime): any
             safeWalkSettings.lookAhead = value
         end
     )
+    addNumberOption(
+        SafeWalkFeature,
+        "Barrier height",
+        safeWalkSettings.barrierHeight,
+        3,
+        10,
+        function(value: number): ()
+            safeWalkSettings.barrierHeight = value
+        end
+    )
 
     activeCleanup = function(): ()
         disconnectFeatureConnection("SafeWalk")
+        hideBarrier()
     end
     Module.Initialized = true
     return SafeWalkFeature
@@ -18741,6 +18971,14 @@ function Module.init(context: Runtime): any
 
     activeCleanup = function(): ()
         disconnectFeatureConnection("ZoomUnlocker")
+        if originalZoomState then
+            pcall(function(): ()
+                LocalPlayer.CameraMinZoomDistance = originalZoomState.minDistance
+                LocalPlayer.CameraMaxZoomDistance = originalZoomState.maxDistance
+                LocalPlayer.CameraMode = originalZoomState.cameraMode
+            end)
+            originalZoomState = nil
+        end
     end
     Module.Initialized = true
     return ZoomFeature

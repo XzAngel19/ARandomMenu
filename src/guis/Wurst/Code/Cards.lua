@@ -12,6 +12,7 @@ function Module.init(context: any): any
     local state: any = host.state
     local configData: any = host.configData
     local queueConfigSave: any = host.queueConfigSave
+    local flushConfigSave: any = host.flushConfigSave or queueConfigSave
     local create: any = host.create
     local makeButton: any = host.makeButton
     local makeTextLabel: any = host.makeTextLabel
@@ -403,7 +404,7 @@ function Module.init(context: any): any
                     feature.enabledAt = os.clock()
                 end
                 configData.states[feature.configKey] = requestedState
-                queueConfigSave()
+                flushConfigSave()
                 notify(name .. (requestedState and " enabled" or " disabled"))
             else
                 warn("[Random Testing Menu] " .. name .. ": " .. tostring(errorMessage))

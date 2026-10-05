@@ -206,7 +206,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "3afb7c145a91c1ac"
+local SOURCE_STAMP: string = "ca6c9240a4460599"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -245,6 +245,43 @@ end
 local warn = function(...: any): ()
     if DEBUG_LOGS then
         realWarn(...)
+    end
+end
+
+-- Destruct writes a persistent stop marker so autoexec does not bring the
+-- menu back on the next join. getgenv().WURST_FORCE = true (or deleting
+-- "<workspace folder>/Wurst/Stopped.flag") clears it and loads the menu again.
+do
+    local environment: any = executorGlobals
+    local stopMarker: string = PRODUCT.storageFolder .. "/Stopped.flag"
+    local function markerExists(): boolean
+        if type(environment.isfile) ~= "function" then
+            return false
+        end
+        local ok: boolean, exists: any = pcall(environment.isfile, stopMarker)
+        return ok and exists == true
+    end
+    if markerExists() then
+        local forced: boolean = false
+        local getGenv: any = environment.getgenv
+        if type(getGenv) == "function" then
+            local ok: boolean, genv: any = pcall(getGenv)
+            forced = ok and type(genv) == "table" and genv.WURST_FORCE == true
+        end
+        if not forced then
+            realPrint(
+                "["
+                    .. PRODUCT.logPrefix
+                    .. "] Destruct was used here, so the menu stays off. "
+                    .. "Run getgenv().WURST_FORCE = true before executing to "
+                    .. "use it again."
+            )
+            return
+        end
+        if type(environment.delfile) == "function" then
+            pcall(environment.delfile, stopMarker)
+        end
+        realPrint("[" .. PRODUCT.logPrefix .. "] Forced start — stop marker cleared.")
     end
 end
 
@@ -692,16 +729,34 @@ local function saveConfigNow()
     end)
 end
 
+local configSaveGeneration: number = 0
 local function queueConfigSave()
     if configSaveQueued then
         return
     end
     configSaveQueued = true
+    local generation: number = configSaveGeneration + 1
+    configSaveGeneration = generation
     task.delay(0.35, function()
+        if configSaveGeneration ~= generation then
+            return
+        end
         configSaveQueued = false
         saveConfigNow()
     end)
 end
+
+local function flushConfigSave()
+    configSaveGeneration += 1
+    configSaveQueued = false
+    saveConfigNow()
+end
+
+pcall(function(): ()
+    (game :: any):BindToClose(function(): ()
+        saveConfigNow()
+    end)
+end)
 
 local function colorFromConfig(value, fallback)
     if type(value) == "table" then
@@ -4384,6 +4439,7 @@ local function createGameModuleEnvironment(
         services = nil,
         configData = configData,
         queueConfigSave = queueConfigSave,
+        flushConfigSave = flushConfigSave,
         create = create,
         makeTextLabel = makeTextLabel,
         makeButton = makeButton,
@@ -5637,17 +5693,8 @@ local function cleanupRuntime(): ()
     runtimeCleaned = true
 
     cleanupStep("teleport persistence", function(): ()
-
         if state.teleportPersist then
             state.teleportPersist.enabled = false
-        end
-        local environment: any = getfenv()
-        local getGenv: any = environment.getgenv
-        if type(getGenv) == "function" then
-            local ok: boolean, genv: any = pcall(getGenv)
-            if ok and type(genv) == "table" then
-                genv.WURST_STOPPED = true
-            end
         end
     end)
     cleanupStep("blur", function(): ()
@@ -5764,6 +5811,33 @@ end
 
 state.destruct = function(): ()
     cleanupStep("runtime", cleanupRuntime)
+    -- Persistent kill switch: after Destruct, autoexec/teleport reinjects
+    -- must not bring the menu back. Bypass with getgenv().WURST_FORCE = true
+    -- or by deleting "<workspace folder>/Wurst/Stopped.flag".
+    cleanupStep("stop marker", function(): ()
+        local environment: any = getfenv()
+        local getGenv: any = environment.getgenv
+        if type(getGenv) == "function" then
+            local ok: boolean, genv: any = pcall(getGenv)
+            if ok and type(genv) == "table" then
+                genv.WURST_STOPPED = true
+            end
+        end
+        if type(environment.writefile) ~= "function" then
+            return
+        end
+        pcall(function(): ()
+            if type(environment.isfolder) == "function"
+                and type(environment.makefolder) == "function"
+                and not environment.isfolder(CONFIG_FOLDER) then
+                environment.makefolder(CONFIG_FOLDER)
+            end
+            environment.writefile(
+                CONFIG_FOLDER .. "/Stopped.flag",
+                "destructed at " .. tostring(os.time())
+            )
+        end)
+    end)
     cleanupStep("screen gui", function(): ()
         if ScreenGui.Parent then
             ScreenGui:Destroy()

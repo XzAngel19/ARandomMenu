@@ -4,13 +4,11 @@ export type Runtime = {
     services: any,
 }
 
-type PendingHop = {
-    root: BasePart,
-    humanoid: Humanoid,
+type WallSighting = {
+    part: BasePart,
     normal: Vector3,
-    lateral: Vector3,
-    startedAt: number,
-    stage: number,
+    direction: Vector3,
+    distance: number,
 }
 
 local Module = {
@@ -22,6 +20,10 @@ local Module = {
 
 local activeCard: any = nil
 
+local SCAN_DIRECTIONS: number = 8
+local SCAN_HEIGHTS: {number} = {-2.35, 0.2, 1.2}
+local ARROWS: {string} = {"↑", "↗", "→", "↘", "↓", "↙", "←", "↖"}
+
 function Module.init(context: Runtime): any
     local framework: any = context.framework
     local host: any = context.host
@@ -29,30 +31,111 @@ function Module.init(context: Runtime): any
     local getCharacterParts: any = host.getCharacterParts
     local currentWorkspace: Workspace = host.workspace or workspace
     local lastHopAt: number = -math.huge
-    local pending: PendingHop? = nil
+    local lastScanAt: number = -math.huge
+    local nearestWall: WallSighting? = nil
+    local highlight: Highlight? = nil
 
-    local function cast(
-        origin: Vector3,
-        direction: Vector3,
-        parameters: RaycastParams
-    ): RaycastResult?
-        local hit: RaycastResult? = currentWorkspace:Raycast(origin, direction, parameters)
-        if hit and math.abs(hit.Normal.Y) <= 0.28 then
-            return hit
+    local function destroyHighlight(): ()
+        if highlight then
+            highlight:Destroy()
+            highlight = nil
         end
-        return nil
+    end
+
+    local function findWall(
+        character: Model,
+        humanoid: Humanoid,
+        root: BasePart,
+        range: number
+    ): WallSighting?
+        local parameters: RaycastParams = RaycastParams.new()
+        parameters.FilterType = Enum.RaycastFilterType.Exclude
+        parameters.FilterDescendantsInstances = {character}
+        parameters.IgnoreWater = true
+        parameters.RespectCanCollide = true
+
+        local best: WallSighting? = nil
+        for directionIndex: number = 0, SCAN_DIRECTIONS - 1 do
+            local angle: number = (directionIndex / SCAN_DIRECTIONS) * math.pi * 2
+            local direction: Vector3 = Vector3.new(
+                math.sin(angle),
+                0,
+                math.cos(angle)
+            )
+            for _, height: number in ipairs(SCAN_HEIGHTS) do
+                local origin: Vector3 = root.Position + Vector3.new(0, height, 0)
+                local hit: RaycastResult? = currentWorkspace:Raycast(
+                    origin,
+                    direction * range,
+                    parameters
+                )
+                if hit
+                    and hit.Instance
+                    and hit.Instance:IsA("BasePart")
+                    and math.abs(hit.Normal.Y) <= 0.35 then
+                    if best == nil or hit.Distance < best.distance then
+                        best = {
+                            part = hit.Instance,
+                            normal = Vector3.new(
+                                hit.Normal.X,
+                                0,
+                                hit.Normal.Z
+                            ),
+                            direction = direction,
+                            distance = hit.Distance,
+                        }
+                    end
+                    break
+                end
+            end
+        end
+        if best and best.normal.Magnitude > 0.01 then
+            best.normal = best.normal.Unit
+        else
+            best = nil
+        end
+        return best
+    end
+
+    local function wallArrow(root: BasePart, sighting: WallSighting): string
+        local flatLook: Vector3 = Vector3.new(
+            root.CFrame.LookVector.X,
+            0,
+            root.CFrame.LookVector.Z
+        )
+        if flatLook.Magnitude < 0.01 then
+            return "↑"
+        end
+        flatLook = flatLook.Unit
+        local flatDirection: Vector3 = sighting.direction
+        local angle: number = math.atan2(
+            flatLook:Cross(flatDirection).Y,
+            flatLook:Dot(flatDirection)
+        )
+        local index: number = math.floor(
+            (angle / (math.pi * 2)) * SCAN_DIRECTIONS + 0.5
+        ) % SCAN_DIRECTIONS
+        -- Arrows are listed clockwise starting at forward; atan2 grows
+        -- counter-clockwise, so mirror the index.
+        index = (SCAN_DIRECTIONS - index) % SCAN_DIRECTIONS + 1
+        return ARROWS[index]
     end
 
     local card: any
+    local function clearVisuals(): ()
+        nearestWall = nil
+        destroyHighlight()
+    end
+
     card = framework.Categories.Blatant:CreateModule({
         Name = "WallHop",
         Category = "Blatant",
         ConfigKey = "Universal.WallHop",
         Order = 31,
-        Tooltip = "Uses nearby wall edges to perform a consistent wall hop.",
+        Tooltip = "Detect walls and thin ledges around you and wall hop off "
+            .. "them with one realistic jump.",
         Function = function(enabled: boolean): ()
-            pending = nil
-
+            clearVisuals()
             lastHopAt = -math.huge
             if not enabled then
                 card:SetStatus(nil)
@@ -62,111 +145,113 @@ function Module.init(context: Runtime): any
 
             card:Clean(movementInput.onJumpRequest(function(): ()
                 local now: number = os.clock()
-                if now - lastHopAt < 0.22 or pending ~= nil then
+                if now - lastHopAt < 0.3 then
                     return
                 end
                 local character: Model?, humanoid: Humanoid?, root: BasePart? =
                     getCharacterParts()
-                if not character or not humanoid or not root or humanoid.Health <= 0 then
+                if not character or not humanoid or not root
+                    or humanoid.Health <= 0
+                    or humanoid.FloorMaterial == Enum.Material.Air then
                     return
                 end
 
-                local parameters: RaycastParams = RaycastParams.new()
-                parameters.FilterType = Enum.RaycastFilterType.Exclude
-                parameters.FilterDescendantsInstances = {character}
-                parameters.IgnoreWater = true
-                parameters.RespectCanCollide = true
-
-                local forward: Vector3 = root.CFrame.LookVector
-                local right: Vector3 = root.CFrame.RightVector
-                local origin: Vector3 = root.Position + Vector3.new(0, 0.35, 0)
-                local centre: RaycastResult? = cast(origin, forward * 2.65, parameters)
-                if not centre then
-                    return
-                end
-
-                local leftHit: RaycastResult? = cast(
-                    origin - right * 0.7,
-                    forward * 2.65,
-                    parameters
-                )
-                local rightHit: RaycastResult? = cast(
-                    origin + right * 0.7,
-                    forward * 2.65,
-                    parameters
-                )
-                local topHit: RaycastResult? = cast(
-                    origin + Vector3.new(0, 2.6, 0),
-                    forward * 2.4,
-                    parameters
-                )
-
-                local lateral: Vector3 = Vector3.zero
-                if not leftHit then
-                    lateral = right * -1
-                elseif not rightHit then
-                    lateral = right
-                elseif not topHit then
-                    lateral = humanoid.MoveDirection.Magnitude > 0.05
-                            and humanoid.MoveDirection.Unit
-                        or right
-                else
-                    card:SetStatus("blocked")
+                local range: number = tonumber(card.Options["Wall range"].Value) or 2.6
+                local kick: number = tonumber(card.Options["Kick strength"].Value) or 14
+                local sighting: WallSighting? = findWall(character, humanoid, root, range)
+                if not sighting then
                     return
                 end
 
                 lastHopAt = now
-                pending = {
-                    root = root,
-                    humanoid = humanoid,
-                    normal = centre.Normal,
-                    lateral = lateral,
-                    startedAt = now,
-                    stage = 0,
-                }
+                local jumpVelocity: number = 50
+                if humanoid.UseJumpPower then
+                    jumpVelocity = math.max(humanoid.JumpPower, 16)
+                elseif humanoid.JumpHeight > 0 then
+                    jumpVelocity = math.sqrt(
+                        2 * currentWorkspace.Gravity * humanoid.JumpHeight
+                    )
+                end
+                local velocity: Vector3 = root.AssemblyLinearVelocity
+                -- One clean impulse: kick away from the wall plus a natural
+                -- jump arc. No teleports, no chained boosts.
+                root.AssemblyLinearVelocity = Vector3.new(
+                    velocity.X * 0.35 + sighting.normal.X * kick,
+                    math.max(velocity.Y, jumpVelocity + 3),
+                    velocity.Z * 0.35 + sighting.normal.Z * kick
+                )
+                humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
                 card:SetStatus("hop")
             end))
 
             card:Loop(function(): ()
-                local hop: PendingHop? = pending
-                if not hop then
+                local now: number = os.clock()
+                if now - lastScanAt < 0.07 then
+                    return
+                end
+                lastScanAt = now
+
+                local character: Model?, humanoid: Humanoid?, root: BasePart? =
+                    getCharacterParts()
+                if not character or not humanoid or not root
+                    or humanoid.Health <= 0 then
+                    clearVisuals()
                     return
                 end
 
-                local _character: Model?, humanoid: Humanoid?, root: BasePart? =
-                    getCharacterParts()
-                if not hop.root.Parent
-                    or hop.humanoid.Health <= 0
-                    or root ~= hop.root
-                    or humanoid ~= hop.humanoid then
-                    pending = nil
-                    card:SetStatus("ready")
+                local range: number = tonumber(card.Options["Wall range"].Value) or 2.6
+                local sighting: WallSighting? = findWall(character, humanoid, root, range)
+                nearestWall = sighting
+
+                local grounded: boolean = humanoid.FloorMaterial ~= Enum.Material.Air
+                if not sighting or not grounded then
+                    destroyHighlight()
+                    card:SetStatus(grounded and "ready" or nil)
                     return
                 end
-                local elapsed: number = os.clock() - hop.startedAt
-                if hop.stage == 0 then
-                    hop.stage = 1
-                    hop.root.CFrame += hop.normal * 0.35
-                        + hop.lateral * 0.45
-                        + Vector3.new(0, 0.3, 0)
-                elseif hop.stage == 1 and elapsed >= 0.035 then
-                    hop.stage = 2
-                    hop.root.CFrame += hop.normal * 0.5
-                        + hop.lateral * 0.7
-                        + Vector3.new(0, 0.55, 0)
-                elseif hop.stage == 2 and elapsed >= 0.07 then
-                    local velocity: Vector3 = hop.root.AssemblyLinearVelocity
-                    hop.root.AssemblyLinearVelocity = Vector3.new(
-                        velocity.X + hop.normal.X * 18 + hop.lateral.X * 12,
-                        math.max(velocity.Y, 52),
-                        velocity.Z + hop.normal.Z * 18 + hop.lateral.Z * 12
-                    )
-                    hop.humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-                    pending = nil
-                    card:SetStatus("ready")
+
+                card:SetStatus(wallArrow(root, sighting))
+                if card.Options["Highlight walls"].Value ~= true then
+                    destroyHighlight()
+                    return
+                end
+                if not highlight or not highlight.Parent then
+                    highlight = Instance.new("Highlight")
+                    highlight.Name = "Wurst_WallHop"
+                    highlight.FillColor = Color3.fromRGB(64, 255, 140)
+                    highlight.FillTransparency = 0.82
+                    highlight.OutlineColor = Color3.fromRGB(64, 255, 140)
+                    highlight.OutlineTransparency = 0.1
+                    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                    highlight.Parent = currentWorkspace
+                end
+                if (highlight :: Highlight).Adornee ~= sighting.part then
+                    (highlight :: Highlight).Adornee = sighting.part
                 end
             end)
         end,
+    })
+
+    card:CreateSlider({
+        Name = "Wall range",
+        Min = 1.5,
+        Max = 5,
+        Default = 2.6,
+        Step = 0.1,
+        Tooltip = "How far from a wall you can be to wall hop.",
+    })
+    card:CreateSlider({
+        Name = "Kick strength",
+        Min = 8,
+        Max = 26,
+        Default = 14,
+        Step = 1,
+        Tooltip = "Horizontal push away from the wall on each hop.",
+    })
+    card:CreateToggle({
+        Name = "Highlight walls",
+        Default = true,
+        Tooltip = "Outline the wall you can currently wall hop off.",
     })
 
     activeCard = card
@@ -176,7 +261,7 @@ end
 
 function Module.destroy(): ()
     if activeCard and activeCard.Enabled then
-        activeCard:Toggle(false)
+        pcall(activeCard.Toggle, false)
     end
     activeCard = nil
     Module.Initialized = false

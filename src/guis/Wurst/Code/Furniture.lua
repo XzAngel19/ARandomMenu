@@ -575,7 +575,11 @@ function Module.init(context: any): any
     local hudSignature: string = ""
     local hudElapsed: number = 0
 
-    local hudVisible: boolean = state.uiShowHackList ~= false
+    -- By default the hack list is only visible while the menu is open; the
+    -- "Show" toggle in the HackList window keeps it on screen permanently.
+    local hudAlways: boolean = configData.states["HackList.Show"] == true
+        or configData.states["ClickGUI.ShowHackList"] == true
+    local hudVisible: boolean = hudAlways or state.visible == true
 
     local function refreshHudList(): ()
         if not hudVisible then
@@ -722,10 +726,25 @@ function Module.init(context: any): any
     end
     Furniture.SetHackListVisible = setHackListVisible
 
+    local function applyHudVisibility(): ()
+        setHackListVisible(hudAlways or state.visible == true)
+    end
+    if type(state.addMenuVisibilityListener) == "function" then
+        state.addMenuVisibilityListener(function(visible: boolean): ()
+            if not hudAlways then
+                setHackListVisible(visible == true)
+            end
+        end)
+    end
+
     state.hudList = {
         frame = hudFrame,
         refresh = refreshHudList,
         SetVisible = setHackListVisible,
+        SetAlways = function(value: boolean): ()
+            hudAlways = value == true
+            applyHudVisibility()
+        end,
 
         SetMode = function(value: string): ()
             hudMode = value

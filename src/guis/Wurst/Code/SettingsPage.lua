@@ -322,6 +322,7 @@ function Module.init(context: any): any
             anchor = uiRecord and uiRecord.window,
             settingsSized = true,
             packRows = {
+                {"Show", nil, 30},
                 {"Mode", "Hidden", 26},
                 {"Position", "Right", 26},
                 {"Color", "#FFFFFF"},
@@ -333,6 +334,18 @@ function Module.init(context: any): any
             },
         })
         local panel: any = panelFor(hackListRecord, "HackList")
+        addToggleOption(
+            panel,
+            "Show",
+            false,
+            function(value: boolean): ()
+                state.hudListAlways = value
+                if state.hudList and type(state.hudList.SetAlways) == "function" then
+                    state.hudList.SetAlways(value)
+                end
+            end,
+            "Keep the hack list on screen even while the menu is closed"
+        )
         local modes: {string} = {"Auto", "Count", "Hidden"}
         addCycleOption(
             panel,
@@ -1368,8 +1381,9 @@ function Module.init(context: any): any
         or GAME_CHECK.MVSDActive and "MVSD"
         or "Universal only"
 
-    state.wurstOptions.RegisterAction("Keybinds", "Keybinds", openKeybinds)
-    state.wurstOptions.RegisterAction("Windows", "Windows", openWindows)
+    -- Keybinds and Windows live as rows inside UI Settings only; registering
+    -- them here as well duplicated the whole UI Settings window inside
+    -- Wurst Options.
     reinjectHandle = state.wurstOptions.RegisterAction(
         "Reinject", "Reinject latest", runReinject
     )
@@ -1551,14 +1565,6 @@ function Module.init(context: any): any
     state.uiMaxSettingsHeight = MAX_SETTINGS_HEIGHT
 
     uiSettingsValues["Menu style"] = "Wurst"
-
-    addToggleOption(uiPanel, "Show HackList", true, function(value: boolean): ()
-        uiSettingsValues["Show HackList"] = value
-        state.uiShowHackList = value
-        if state.hudList and type(state.hudList.SetVisible) == "function" then
-            state.hudList.SetVisible(value)
-        end
-    end)
 
     addToggleOption(uiPanel, "Keep after teleport", true, function(value: boolean): ()
         uiSettingsValues["Keep after teleport"] = value

@@ -119,6 +119,14 @@ function Module.init(context: Runtime): any
 
     activeCleanup = function(): ()
         disconnectFeatureConnection("ZoomUnlocker")
+        if originalZoomState then
+            pcall(function(): ()
+                LocalPlayer.CameraMinZoomDistance = originalZoomState.minDistance
+                LocalPlayer.CameraMaxZoomDistance = originalZoomState.maxDistance
+                LocalPlayer.CameraMode = originalZoomState.cameraMode
+            end)
+            originalZoomState = nil
+        end
     end
     Module.Initialized = true
     return ZoomFeature
