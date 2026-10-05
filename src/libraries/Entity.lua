@@ -276,6 +276,11 @@ function Module.init(context: any): EntityLibrary
         if players:GetPlayerFromCharacter(model) ~= nil then
             return false
         end
+        -- The local Disguise body double is the local player's own stand-in,
+        -- never an NPC to target.
+        if model:GetAttribute("WurstDisguise") == true then
+            return false
+        end
         local humanoid: Humanoid?, root: BasePart? = npcParts(model)
         return humanoid ~= nil and root ~= nil
     end

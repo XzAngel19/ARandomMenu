@@ -14,6 +14,13 @@ local Module = {
 
 local activeCleanup: (() -> ())? = nil
 
+-- An emote must stay a real animation for other players to see it; this
+-- priority sits above the animations games usually force onto characters.
+local EMOTE_PRIORITY: Enum.AnimationPriority = Enum.AnimationPriority.Action2
+
+-- How long to wait for the animation data to arrive before giving up.
+local LOAD_TIMEOUT: number = 5
+
 local function trimmed(text: string): string
     return (string.gsub(text, "^%s*(.-)%s*$", "%1"))
 end
@@ -25,8 +32,7 @@ function Module.init(context: Runtime): any
     local spoofAvatar: any = context.services.spoofAvatar
 
     local runtime: any = {
-        track = nil :: AnimationTrack?,
-        tracks = {} :: {[AnimationTrack]: boolean},
+        current = nil :: any?,
         catalog = {} :: {any},
         byLabel = {} :: {[string]: number},
         searching = false,
@@ -34,20 +40,59 @@ function Module.init(context: Runtime): any
         selected = nil :: string?,
     }
 
-    local function animator(): Animator?
-        local character: Model? = localPlayer.Character
-        local humanoid: Humanoid? = character
-            and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+    -- While Disguise is wearing a body double, the real body is invisible:
+    -- emotes must play on the double to be seen at all.
+    local function puppetAnimator(): Animator?
+        local rig: Model? = spoofAvatar.getRig and spoofAvatar.getRig() or nil
+        if not rig then
+            return nil
+        end
+        local humanoid: Humanoid? =
+            (rig :: Model):FindFirstChildOfClass("Humanoid") :: Humanoid?
         if not humanoid then
             return nil
         end
         local existing: Animator? =
-            humanoid:FindFirstChildOfClass("Animator") :: Animator?
+            (humanoid :: Humanoid):FindFirstChildOfClass("Animator") :: Animator?
         if existing then
             return existing
         end
-
         local created: boolean, made: any = pcall(function(): any
+            local instance: Animator = Instance.new("Animator")
+            instance.Parent = humanoid
+            return instance
+        end)
+        return created and made or nil
+    end
+
+    local function animator(): Animator?
+        local preferred: Animator? = puppetAnimator()
+        if preferred then
+            return preferred
+        end
+        local character: Model? = localPlayer.Character
+        if not character or not (character :: Model).Parent then
+            return nil
+        end
+        local humanoid: Humanoid? =
+            (character :: Model):FindFirstChildOfClass("Humanoid") :: Humanoid?
+        if humanoid then
+            local existing: Animator? =
+                (humanoid :: Humanoid):FindFirstChildOfClass("Animator") :: Animator?
+            if existing then
+                return existing
+            end
+        end
+        -- Some games parent the Animator elsewhere (the root part, say).
+        local anywhere: Animator? =
+            (character :: Model):FindFirstChildWhichIsA("Animator", true) :: Animator?
+        if anywhere then
+            return anywhere
+        end
+        local created: boolean, made: any = pcall(function(): any
+            if not humanoid then
+                return nil
+            end
             local instance: Animator = Instance.new("Animator")
             instance.Parent = humanoid
             return instance
@@ -85,33 +130,21 @@ function Module.init(context: Runtime): any
         return rows
     end
 
-    local function destroyTrack(track: AnimationTrack, stopFirst: boolean): ()
-        runtime.tracks[track] = nil
-        if runtime.track == track then
-            runtime.track = nil
-        end
-        if stopFirst then
-            pcall(function(): ()
-                track:Stop(0.15)
-            end)
+    local function stop(): ()
+        local current: any? = runtime.current
+        runtime.current = nil
+        if not current then
+            return
         end
         pcall(function(): ()
-            track:Destroy()
+            (current :: any).track:Stop(0.15)
         end)
-    end
-
-    local function stop(): ()
-        local track: AnimationTrack? = runtime.track
-        if track then
-            destroyTrack(track :: AnimationTrack, true)
-        end
-    end
-
-    local function destroyAllTracks(): ()
-        for track: AnimationTrack in pairs(runtime.tracks) do
-            destroyTrack(track, true)
-        end
-        runtime.track = nil
+        pcall(function(): ()
+            (current :: any).track:Destroy()
+        end)
+        pcall(function(): ()
+            (current :: any).animation:Destroy()
+        end)
     end
 
     local emotes: any
@@ -120,27 +153,28 @@ function Module.init(context: Runtime): any
         Category = "Fun",
         Order = 3,
         ConfigKey = "Universal.EmotePlayer",
-        Tooltip = "Play any emote by id — Roblox's own or UGC.",
+        Tooltip = "Play any emote by id - Roblox's own or UGC - with live "
+            .. "speed and loop control.",
         Function = function(enabled: boolean): ()
             if not enabled then
                 emotes:SetStatus(nil)
-                destroyAllTracks()
+                stop()
                 return
             end
             emotes:SetStatus(
                 runtime.selected and string.sub(runtime.selected, 1, 15) or "custom"
             )
-
             emotes:Event(localPlayer.CharacterAdded, function(): ()
-                destroyAllTracks()
+                stop()
             end)
-            emotes:Clean(destroyAllTracks)
+            emotes:Clean(stop)
         end,
     })
 
     emotes:CreateList({
         Name = "Emote",
         Items = labels,
+        EmptyText = "nothing yet - search or wear a disguise",
         Tooltip = "Pick what to play: emotes from the avatar you are "
             .. "wearing, plus whatever the last search returned.",
         Function = function(_selected: any, names: {string}): ()
@@ -215,22 +249,41 @@ function Module.init(context: Runtime): any
     })
     emotes:CreateSlider({
         Name = "Speed",
-        Min = 0.25,
-        Max = 2,
+        Min = 0.1,
+        Max = 5,
+        Step = 0.05,
         Default = 1,
-        Tooltip = "Playback rate.",
+        Tooltip = "Playback rate. Changes apply to the emote that is "
+            .. "playing right now.",
+        Function = function(value: number): ()
+            local current: any? = runtime.current
+            if current then
+                pcall(function(): ()
+                    (current :: any).track:AdjustSpeed(value)
+                end)
+            end
+        end,
     })
     emotes:CreateToggle({
         Name = "Loop",
         Default = false,
-        Tooltip = "Keep the emote running until you stop it.",
+        Tooltip = "Keep the emote running until you stop it. Toggling it "
+            .. "mid-emote applies immediately.",
+        Function = function(value: boolean): ()
+            local current: any? = runtime.current
+            if current then
+                pcall(function(): ()
+                    (current :: any).track.Looped = value
+                end)
+            end
+        end,
     })
     emotes:CreateButton({
         Name = "Play",
         Tooltip = "Play the picked emote, or the custom id.",
         Function = function(): ()
             task.spawn(function(): ()
-                Module.play(context, emotes, runtime, animator, stop, destroyTrack)
+                Module.play(context, emotes, runtime, animator, stop)
             end)
         end,
     })
@@ -263,13 +316,12 @@ function Module.init(context: Runtime): any
         end,
     })
     emotes:CreateNote(
-        "An emote is a real animation on your character, so other players see "
-            .. "it. Games that lock the humanoid's state, or R6 characters, "
-            .. "will refuse some of them."
+        "An emote is a real animation on your character, so other players "
+            .. "see it. While Disguise is on, it plays on the body double."
     )
 
     activeCleanup = function(): ()
-        destroyAllTracks()
+        stop()
         runtime.catalog = {}
         runtime.byLabel = {}
         runtime.selected = nil
@@ -338,8 +390,7 @@ function Module.play(
     emotes: any,
     runtime: any,
     animator: () -> Animator?,
-    stop: () -> (),
-    destroyTrack: (AnimationTrack, boolean) -> ()
+    stop: () -> ()
 ): ()
     local typed: number? = tonumber(
         trimmed(tostring(emotes.Options["Custom ID"].Value or ""))
@@ -361,7 +412,11 @@ function Module.play(
 
     stop()
     local animation: Animation = Instance.new("Animation")
+    animation.Name = "WurstEmote"
     animation.AnimationId = "rbxassetid://" .. tostring(assetId)
+    -- Keep it in the data model while it loads; destroying (or leaving
+    -- limbo) early can silently cancel the fetch.
+    animation.Parent = (target :: Animator).Parent or (target :: Animator)
     local loaded: boolean, track: any = pcall(function(): any
         return (target :: Animator):LoadAnimation(animation)
     end)
@@ -372,26 +427,47 @@ function Module.play(
     end
 
     local resolved: AnimationTrack = track :: AnimationTrack
-    resolved.Priority = Enum.AnimationPriority.Action
+    local playing: any = {track = resolved, animation = animation}
+    runtime.current = playing
+    resolved.Priority = EMOTE_PRIORITY
     resolved.Looped = emotes.Options["Loop"].Value == true
-    runtime.tracks[resolved] = true
-    runtime.track = resolved
-    local ok: boolean = pcall(function(): ()
+    pcall(function(): ()
         resolved:Play(0.1)
         resolved:AdjustSpeed(emotes.Options["Speed"].Value)
     end)
-    animation:Destroy()
-    if not ok then
-        destroyTrack(resolved, false)
-        emotes:Notify("the game refused to play it")
-        return
-    end
-    if not resolved.Looped then
 
-        resolved.Stopped:Once(function(): ()
-            destroyTrack(resolved, false)
+    resolved.Stopped:Once(function(): ()
+        if runtime.current == playing then
+            runtime.current = nil
+        end
+        pcall(function(): ()
+            resolved:Destroy()
         end)
-    end
+        pcall(function(): ()
+            animation:Destroy()
+        end)
+    end)
+
+    -- The Animation instance has to outlive the load: destroying it early
+    -- silently cancels the fetch and nothing plays. Wait for the data, and
+    -- only report failure if it never arrives.
+    task.spawn(function(): ()
+        local deadline: number = os.clock() + LOAD_TIMEOUT
+        while
+            runtime.current == playing
+            and not resolved.IsLoaded
+            and os.clock() < deadline
+        do
+            task.wait(0.05)
+        end
+        if runtime.current == playing and not resolved.IsLoaded then
+            emotes:Notify("that id would not load as an animation")
+            if runtime.current == playing then
+                stop()
+            end
+        end
+    end)
+
     emotes:Notify("playing " .. tostring(assetId))
 end
 

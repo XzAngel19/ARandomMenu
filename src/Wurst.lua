@@ -206,7 +206,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "0b63e99271a7f967"
+local SOURCE_STAMP: string = "3afb7c145a91c1ac"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -5082,6 +5082,7 @@ end
 local activityFlags: {[string]: boolean} = {}
 local spoofEmotes: {any} = {}
 local spoofDescription: HumanoidDescription? = nil
+local spoofRig: Model? = nil
 local projectileCalibrationOwner: any = nil
 
 local SCREEN_CAPTURE_NAMES: {string} = {
@@ -5196,6 +5197,8 @@ local moduleServices: ModuleServices = {
         setEmotes = function(emotes: {any}): () spoofEmotes = emotes end,
         getDescription = function(): HumanoidDescription? return spoofDescription end,
         setDescription = function(value: HumanoidDescription?): () spoofDescription = value end,
+        getRig = function(): Model? return spoofRig end,
+        setRig = function(value: Model?): () spoofRig = value end,
     },
     projectileCalibration = {
         set = function(owner: any): () projectileCalibrationOwner = owner end,

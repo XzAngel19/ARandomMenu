@@ -106,6 +106,10 @@ function Module.init(context: Runtime): any
     -- Classification only inspects direct children, which is what a character
     -- rig is made of, so even huge models cost one GetChildren call.
     local function classify(model: Model): string
+        -- The local Disguise body double is scenery, not an NPC.
+        if model:GetAttribute("WurstDisguise") == true then
+            return "reject"
+        end
         if matchesForcedName(model) then
             return "rig"
         end
