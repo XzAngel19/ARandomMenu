@@ -70,18 +70,22 @@ local FEATURE_CATEGORIES: {[string]: string} = {
     ["Lag Switch"] = "Other",
     ["Rejoin Server"] = "Other",
 
-    ["Instant Role Notify"] = "Other",
-    ["Shoot"] = "Combat",
+    -- MM2: one file per card under src/games/MM2/<Window>/, and these entries
+    -- mirror that folder layout exactly.
+    ["Instant Role Notify"] = "Chat",
+    ["Blurt Roles"] = "Chat",
+    ["Shoot"] = "Blatant",
+    ["Knife Aura"] = "Blatant",
+    ["Role Fling"] = "Blatant",
     ["Trajectory Calibration"] = "Combat",
-    ["Knife"] = "Combat",
+    ["Role Tags"] = "Render",
+    ["Always Show Timer"] = "Render",
+    ["Hide Names"] = "Render",
+    ["Sprint"] = "Movement",
+    ["Teleport"] = "Movement",
     ["Loop All Interact"] = "Other",
     ["Silence"] = "Other",
     ["Auto Play ID"] = "Other",
-    ["Sprint"] = "Movement",
-    ["Always Show Timer"] = "Render",
-    ["Teleport"] = "Movement",
-    ["Role Fling"] = "Other",
-    ["Hide Names"] = "Movement",
 
     ["Auto Tackle"] = "Combat",
     ["Auto Dribble"] = "Combat",
@@ -206,7 +210,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "4e601068028b9a9e"
+local SOURCE_STAMP: string = "9be865bc11783de5"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -4627,7 +4631,25 @@ local function loadGameModule(
         "src/games/MVSD/Combat/AutoShoot.lua",
         "src/games/MVSD/Combat/TriggerOpportunity.lua",
     } elseif moduleName == "MM2" then {
+        -- base.lua is the shared core (round data, roles, prediction, weapon
+        -- service). It has to come first: every feature below reads
+        -- state.mm2Core. The rest mirrors the menu windows one file per card.
         "src/games/MM2/base.lua",
+        "src/games/MM2/Blatant/Shoot.lua",
+        "src/games/MM2/Blatant/KnifeAura.lua",
+        "src/games/MM2/Blatant/RoleFling.lua",
+        "src/games/MM2/Combat/TrajectoryCalibration.lua",
+        "src/games/MM2/Render/RoleTags.lua",
+        "src/games/MM2/Render/RoundEsp.lua",
+        "src/games/MM2/Render/AlwaysShowTimer.lua",
+        "src/games/MM2/Render/HideNames.lua",
+        "src/games/MM2/Chat/InstantRoleNotify.lua",
+        "src/games/MM2/Chat/BlurtRoles.lua",
+        "src/games/MM2/Movement/Sprint.lua",
+        "src/games/MM2/Movement/Teleport.lua",
+        "src/games/MM2/Other/LoopAllInteract.lua",
+        "src/games/MM2/Other/Silence.lua",
+        "src/games/MM2/Other/AutoPlayId.lua",
     } elseif moduleName == "VD" then {
         "src/games/VD/base.lua",
     } elseif moduleName == "BedFight" then {
