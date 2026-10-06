@@ -90,8 +90,29 @@ function Module.init(context: Runtime): any
                         if type(gameBridge.playerRoleColor) == "function" then
                             roleColour = gameBridge.playerRoleColor(player)
                         end
-                        local fillColour: Color3 = roleColour or card.Options["Fill colour"].Value
-                        local outlineColour: Color3 = roleColour or card.Options["Outline colour"].Value
+                        -- Without a role the chams used to fall straight back
+                        -- to white, which is exactly what made an undetected
+                        -- MM2 innocent look like "no cham at all". Team colour
+                        -- is a far better guess than white.
+                        local teamColour: Color3? = nil
+                        local teamOption: any = card.Options["Team colours"]
+                        if not roleColour
+                            and teamOption ~= nil
+                            and teamOption.Value == true
+                            and target.Team then
+                            local ok: boolean, resolved: any = pcall(function(): any
+                                return target.Team.TeamColor.Color
+                            end)
+                            if ok and typeof(resolved) == "Color3" then
+                                teamColour = resolved
+                            end
+                        end
+                        local fillColour: Color3 = roleColour
+                            or teamColour
+                            or card.Options["Fill colour"].Value
+                        local outlineColour: Color3 = roleColour
+                            or teamColour
+                            or card.Options["Outline colour"].Value
                         local fillTransparency: number = card.Options["Fill transparency"].Value
                         local outlineTransparency: number = card.Options["Outline transparency"].Value
                         local depthMode: Enum.HighlightDepthMode = card.Options["Through walls"].Value
@@ -117,12 +138,13 @@ function Module.init(context: Runtime): any
         end,
     })
 
-    card:CreateColor({Name = "Fill colour", Default = Color3.fromRGB(255, 255, 255)})
-    card:CreateColor({Name = "Outline colour", Default = Color3.fromRGB(255, 255, 255)})
-    card:CreateSlider({Name = "Fill transparency", Min = 0, Max = 1, Step = 0.05, Default = 0.68})
+    card:CreateColor({Name = "Fill colour", Default = Color3.fromRGB(150, 230, 255)})
+    card:CreateColor({Name = "Outline colour", Default = Color3.fromRGB(235, 250, 255)})
+    card:CreateSlider({Name = "Fill transparency", Min = 0, Max = 1, Step = 0.05, Default = 0.55})
     card:CreateSlider({Name = "Outline transparency", Min = 0, Max = 1, Step = 0.05, Default = 0})
     card:CreateToggle({Name = "Through walls", Default = true})
     card:CreateToggle({Name = "Teammates", Default = false})
+    card:CreateToggle({Name = "Team colours", Default = true})
 
     activeCard = card
     Module.Initialized = true

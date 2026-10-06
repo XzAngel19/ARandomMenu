@@ -73,6 +73,7 @@ local mm2Settings = {
     showMissCooldown = true,
     predictionRtt = 0.08,
     gunLeadBias = 0,
+    silentSweep = 3,
     getGunKey = Enum.KeyCode.G,
     instantRoleNotify = false,
     roleEspAll = false,
@@ -81,16 +82,22 @@ local mm2Settings = {
     roleEspInnocent = false,
     roleEspMurderer = false,
     roleEspSheriff = false,
-    innocentColor = Color3.fromRGB(35, 120, 60),
+    -- Bright, saturated role palette: the dark greens/reds were nearly
+    -- invisible through walls and indistinguishable from the default white
+    -- fallback.
+    innocentColor = Color3.fromRGB(0, 255, 8),
     innocentTransparency = 0.62,
-    deadColor = Color3.fromRGB(105, 105, 105),
-    deadTransparency = 0.58,
-    murdererColor = Color3.fromRGB(145, 25, 25),
-    murdererTransparency = 0.55,
-    sheriffColor = Color3.fromRGB(45, 65, 155),
-    sheriffTransparency = 0.55,
-    heroColor = Color3.fromRGB(180, 145, 25),
-    heroTransparency = 0.55,
+    deadColor = Color3.fromRGB(170, 170, 180),
+    deadTransparency = 0.72,
+    murdererColor = Color3.fromRGB(255, 0, 4),
+    murdererTransparency = 0.5,
+    sheriffColor = Color3.fromRGB(0, 153, 255),
+    sheriffTransparency = 0.5,
+    heroColor = Color3.fromRGB(255, 196, 0),
+    heroTransparency = 0.5,
+    roleTagsAll = false,
+    blurtDelay = 1.5,
+    blurtRepeat = false,
     coinColor = Color3.fromRGB(230, 220, 65),
     coinTransparency = 0.8,
     trapColor = Color3.fromRGB(145, 25, 25),
@@ -204,9 +211,12 @@ local function playerFromRoundKey(key: any, data: any): Player?
         if data.Name then
             local namedFromData: Instance? =
                 Players:FindFirstChild(tostring(data.Name))
-            player = namedFromData and namedFromData:IsA("Player")
-                and namedFromData
-                or nil
+            -- Only upgrade the match: when the payload carries a stale or
+            -- renamed entry we must keep whatever the key already resolved to,
+            -- otherwise the role is lost and the ESP falls back to white.
+            if namedFromData and namedFromData:IsA("Player") then
+                player = namedFromData :: Player
+            end
         end
         if not player and data.UserId then
             local userId = tonumber(data.UserId)
@@ -277,7 +287,49 @@ local function hasMurdererCollisionGroup(player: Player): boolean
     return false
 end
 
-local function getPlayerRole(player: Player): string?
+-- True once the round has handed out weapons or the server data exposes a
+-- special role. Innocents are never announced reliably, so this is the gate
+-- that lets us infer them instead of leaving them colourless.
+local roundRolesKnownCache: {value: boolean, at: number} = {
+    value = false,
+    at = -math.huge,
+}
+local roleCache: {[Player]: {role: string?, at: number}} =
+    setmetatable({}, {__mode = "k"}) :: any
+
+local function computeRoundRolesKnown(): boolean
+    if roundLifecycleActive == false then
+        return false
+    end
+    if findMM2Role("Knife") or findMM2Role("Gun") then
+        return true
+    end
+    requestRoleRefresh()
+    for key: any, data: any in pairs(mm2RoundData) do
+        if type(data) == "table"
+            and (data.Role == "Murderer"
+                or data.Role == "Sheriff"
+                or data.Role == "Hero")
+            and playerFromRoundKey(key, data) then
+            return true
+        end
+    end
+    return false
+end
+
+-- Cached: the ESP, the chams and the role tags all ask for this several times
+-- per frame and the underlying scan walks every backpack in the server.
+local function roundRolesKnown(): boolean
+    local now: number = os.clock()
+    if now - roundRolesKnownCache.at < 0.5 then
+        return roundRolesKnownCache.value
+    end
+    roundRolesKnownCache.at = now
+    roundRolesKnownCache.value = computeRoundRolesKnown()
+    return roundRolesKnownCache.value
+end
+
+local function computePlayerRole(player: Player): string?
     local roundRole: string? = getRoundRole(player)
     if hasMurdererCollisionGroup(player) or getPlayerWeapon(player, "Knife") then
         return "Murderer"
@@ -285,7 +337,35 @@ local function getPlayerRole(player: Player): string?
     if getPlayerWeapon(player, "Gun") then
         return roundRole == "Hero" and "Hero" or "Sheriff"
     end
-    return roundRole
+    if roundRole and roundRole ~= "Innocent" then
+        return roundRole
+    end
+    if not roundRolesKnown() then
+        -- Lobby or pre-assignment: no role at all is the honest answer.
+        return roundRole
+    end
+    if not isPlayerAlive(player) then
+        return "Dead"
+    end
+    -- Live round, alive, no knife, no gun, no special role in the server
+    -- payload: by elimination this player is an innocent.
+    return "Innocent"
+end
+
+local function invalidateRoleCaches(): ()
+    roundRolesKnownCache.at = -math.huge
+    table.clear(roleCache :: any)
+end
+
+local function getPlayerRole(player: Player): string?
+    local now: number = os.clock()
+    local cached: any = roleCache[player]
+    if cached and now - cached.at < 0.25 then
+        return cached.role
+    end
+    local role: string? = computePlayerRole(player)
+    roleCache[player] = {role = role, at = now}
+    return role
 end
 
 local function findPlayerByRoundRole(role: string): Player?
@@ -301,25 +381,11 @@ local function findPlayerByRoundRole(role: string): Player?
 end
 
 local function hasActiveRoundRoles(): boolean
-    if roundLifecycleActive == false then
-        return false
-    end
     if findMM2Role("Knife") or findMM2Role("Gun") then
         roundLifecycleActive = true
         return true
     end
-    requestRoleRefresh()
-
-    for key, data in pairs(mm2RoundData) do
-        if playerFromRoundKey(key, data)
-            and type(data) == "table"
-            and (data.Role == "Murderer"
-                or data.Role == "Sheriff"
-                or data.Role == "Hero") then
-            return true
-        end
-    end
-    return false
+    return roundRolesKnown()
 end
 
 local function findMurderer(): Player?
@@ -489,12 +555,13 @@ end
 local function registerMM2Roles(): ()
     registerRoleProvider({
         Name = "MM2",
-        Roles = {"Murderer", "Sheriff", "Hero", "Innocent"},
+        Roles = {"Murderer", "Sheriff", "Hero", "Innocent", "Dead"},
         Colors = {
             Murderer = mm2Settings.murdererColor,
             Sheriff = mm2Settings.sheriffColor,
             Hero = mm2Settings.heroColor,
             Innocent = mm2Settings.innocentColor,
+            Dead = mm2Settings.deadColor,
         },
         Get = function(player: Player): string?
             return getPlayerRole(player)
@@ -504,6 +571,7 @@ local function registerMM2Roles(): ()
             if roleName == "Sheriff" then return mm2Settings.sheriffColor end
             if roleName == "Hero" then return mm2Settings.heroColor end
             if roleName == "Innocent" then return mm2Settings.innocentColor end
+            if roleName == "Dead" then return mm2Settings.deadColor end
             return nil
         end,
         SetColor = function(roleName: string, colour: Color3): ()
@@ -515,25 +583,36 @@ local function registerMM2Roles(): ()
                 mm2Settings.heroColor = colour
             elseif roleName == "Innocent" then
                 mm2Settings.innocentColor = colour
+            elseif roleName == "Dead" then
+                mm2Settings.deadColor = colour
             end
         end,
     })
 end
 
 local roleNotificationSent = false
+local onRoundRolesChanged: (boolean) -> () = function(_active: boolean): () end
 
 if mm2GameplayRemotes then
     local playerDataChanged = mm2GameplayRemotes:FindFirstChild("PlayerDataChanged")
     if playerDataChanged and playerDataChanged:IsA("RemoteEvent") then
         featureConnections.MM2PlayerDataChanged = playerDataChanged.OnClientEvent:Connect(function(newData)
-            if type(newData) == "table" and roundLifecycleActive ~= false then
-                mm2RoundData = newData
-                lastRoleRefreshAt = os.clock()
-            else
+            invalidateRoleCaches()
+            if type(newData) ~= "table" or roundLifecycleActive == false then
                 mm2RoundData = {}
+            else
+                -- MM2 pushes partial payloads (often a single player's entry).
+                -- Replacing the table wholesale erased every other role and
+                -- left the ESP/Chams colourless, so merge instead. The table is
+                -- cleared on RoundStart/RoundEndFade, never left stale.
+                for key: any, value: any in pairs(newData) do
+                    mm2RoundData[key] = value
+                end
+                lastRoleRefreshAt = os.clock()
             end
 
             local roundActive = hasActiveRoundRoles()
+            pcall(onRoundRolesChanged, roundActive)
             if not roundActive then
                 roleNotificationSent = false
             elseif mm2Settings.instantRoleNotify and not roleNotificationSent then
@@ -551,6 +630,315 @@ if mm2GameplayRemotes then
             end
         end)
     end
+end
+
+-- ---------------------------------------------------------------------------
+-- Role nametags: a coloured label floating over each player's head. The
+-- murderer is the loud one (red), everything else is opt-in.
+-- ---------------------------------------------------------------------------
+local RoleTagEffects = create("Folder", {
+    Parent = MM2Effects,
+    Name = "RoleTags",
+})
+
+local ROLE_TAG_TEXT: {[string]: string} = {
+    Murderer = "MURDERER",
+    Sheriff = "SHERIFF",
+    Hero = "HERO",
+    Innocent = "INNOCENT",
+    Dead = "DEAD",
+}
+
+local function colourForRole(role: string?): Color3
+    if role == "Murderer" then return mm2Settings.murdererColor end
+    if role == "Sheriff" then return mm2Settings.sheriffColor end
+    if role == "Hero" then return mm2Settings.heroColor end
+    if role == "Innocent" then return mm2Settings.innocentColor end
+    if role == "Dead" then return mm2Settings.deadColor end
+    return Color3.fromRGB(235, 235, 240)
+end
+
+type RoleTagRecord = {
+    billboard: BillboardGui,
+    label: TextLabel,
+    stroke: UIStroke,
+    reference: ObjectValue,
+    head: BasePart?,
+    role: string?,
+}
+
+local roleTags: {[Player]: RoleTagRecord} = {}
+
+local function destroyRoleTag(player: Player): ()
+    local record: RoleTagRecord? = roleTags[player]
+    if record then
+        roleTags[player] = nil
+        record.billboard:Destroy()
+        record.reference:Destroy()
+    end
+end
+
+local function clearRoleTags(): ()
+    for player: Player, _record: RoleTagRecord in pairs(roleTags) do
+        destroyRoleTag(player)
+    end
+end
+
+local function createRoleTag(head: BasePart): RoleTagRecord
+    local billboard: BillboardGui = Instance.new("BillboardGui")
+    billboard.Name = "Wurst_RoleTag"
+    billboard.AlwaysOnTop = true
+    billboard.LightInfluence = 0
+    billboard.Size = UDim2.fromOffset(170, 24)
+    billboard.StudsOffset = Vector3.new(0, 2.7, 0)
+    billboard.MaxDistance = 1500
+    billboard.Adornee = head
+    -- A BillboardGui nested inside a ScreenGui never renders (nested layer
+    -- collectors are skipped), so it lives on the part like the rest of the
+    -- MM2 markers and the folder only keeps a reference for cleanup.
+    billboard.Parent = head
+
+    local reference: ObjectValue = Instance.new("ObjectValue")
+    reference.Name = "RoleTagReference"
+    reference.Value = billboard
+    reference.Parent = RoleTagEffects
+
+    local label: TextLabel = Instance.new("TextLabel")
+    label.Name = "Role"
+    label.BackgroundTransparency = 1
+    label.Size = UDim2.fromScale(1, 1)
+    label.FontFace = CONTROL_FONT
+    label.TextSize = 15
+    label.TextScaled = false
+    label.TextStrokeTransparency = 1
+    label.Text = ""
+    label.Parent = billboard
+
+    local stroke: UIStroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(0, 0, 0)
+    stroke.Thickness = 2
+    stroke.Transparency = 0.15
+    stroke.Parent = label
+
+    return {
+        billboard = billboard,
+        label = label,
+        stroke = stroke,
+        reference = reference,
+        head = head,
+        role = nil,
+    }
+end
+
+local function refreshRoleTags(): ()
+    local seen: {[Player]: boolean} = {}
+    for _, player: Player in ipairs(Players:GetPlayers()) do
+        local character: Model? = player.Character
+        local head: BasePart? = character
+            and (character:FindFirstChild("Head")
+                or character:FindFirstChild("HumanoidRootPart"))
+            :: BasePart?
+        local role: string? = character and getPlayerRole(player) or nil
+        local wanted: boolean = head ~= nil
+            and role ~= nil
+            and role ~= "Dead"
+            and player ~= LocalPlayer
+            and (mm2Settings.roleTagsAll or role == "Murderer")
+            and not isProtectedTarget(player)
+
+        if wanted then
+            seen[player] = true
+            local record: RoleTagRecord? = roleTags[player]
+            if record and (not record.billboard.Parent or record.head ~= head) then
+                destroyRoleTag(player)
+                record = nil
+            end
+            if not record then
+                record = createRoleTag(head :: BasePart)
+                roleTags[player] = record
+            end
+            local resolved: RoleTagRecord = record :: RoleTagRecord
+            local colour: Color3 = colourForRole(role)
+            if resolved.role ~= role then
+                resolved.role = role
+                resolved.label.Text = ROLE_TAG_TEXT[role :: string]
+                    or string.upper(role :: string)
+            end
+            -- Re-applied every pass so the live colour pickers take effect
+            -- without waiting for a role change.
+            if resolved.label.TextColor3 ~= colour then
+                resolved.label.TextColor3 = colour
+                resolved.stroke.Color = Color3.new(
+                    colour.R * 0.12,
+                    colour.G * 0.12,
+                    colour.B * 0.12
+                )
+            end
+        end
+    end
+    for player: Player, _record: RoleTagRecord in pairs(roleTags) do
+        if not seen[player] then
+            destroyRoleTag(player)
+        end
+    end
+end
+
+local function toggleRoleTags(enabled: boolean): ()
+    disconnectFeatureConnection("MM2RoleTags")
+    clearRoleTags()
+    if not enabled then
+        return
+    end
+    local elapsed: number = 1
+    featureConnections.MM2RoleTags = TaskManager:Connect(function(deltaTime: number): ()
+        elapsed += deltaTime
+        if elapsed < 0.35 then
+            return
+        end
+        elapsed = 0
+        refreshRoleTags()
+    end)
+end
+
+-- ---------------------------------------------------------------------------
+-- Blurt Roles: announce the round's murderer and sheriff in the public chat.
+-- ---------------------------------------------------------------------------
+local blurtEnabled: boolean = false
+local blurtSignature: string = ""
+local blurtPending: boolean = false
+local lastBlurtAt: number = -math.huge
+
+local function sendPublicChat(message: string): boolean
+    local sent: boolean = false
+
+    local textChatOk: boolean = pcall(function(): ()
+        local textChatService: TextChatService =
+            game:GetService("TextChatService")
+        if textChatService.ChatVersion ~= Enum.ChatVersion.TextChatService then
+            return
+        end
+        local channels: Instance? = textChatService:FindFirstChild("TextChannels")
+        local channel: Instance? = channels
+            and (channels:FindFirstChild("RBXGeneral")
+                or channels:FindFirstChildWhichIsA("TextChannel"))
+        if channel and channel:IsA("TextChannel") then
+            (channel :: TextChannel):SendAsync(message)
+            sent = true
+        end
+    end)
+
+    if sent then
+        return true
+    end
+
+    local legacyOk: boolean = pcall(function(): ()
+        local events: Instance? = game:GetService("ReplicatedStorage")
+            :FindFirstChild("DefaultChatSystemChatEvents")
+        local say: Instance? = events
+            and events:FindFirstChild("SayMessageRequest")
+        if say and say:IsA("RemoteEvent") then
+            (say :: RemoteEvent):FireServer(message, "All")
+            sent = true
+        end
+    end)
+
+    return sent and (textChatOk or legacyOk)
+end
+
+local function buildBlurtMessage(): (string?, string?)
+    if not hasActiveRoundRoles() then
+        return nil, nil
+    end
+    local murderer: Player? = findMurderer()
+    local sheriff: Player? = findSheriff()
+    if not murderer and not sheriff then
+        return nil, nil
+    end
+    local murdererName: string = murderer and murderer.Name or "?"
+    local sheriffName: string = sheriff and sheriff.Name or "?"
+    local message: string = string.format(
+        'Murder; "%s" Sheriff; "%s" | Wurst',
+        murdererName,
+        sheriffName
+    )
+    return message, murdererName .. "/" .. sheriffName
+end
+
+local function blurtRoles(manual: boolean): ()
+    local message: string?, signature: string? = buildBlurtMessage()
+    if not message then
+        if manual then
+            notify("MM2 · no roles to blurt yet.")
+        end
+        return
+    end
+    if not manual then
+        if signature == blurtSignature and not mm2Settings.blurtRepeat then
+            return
+        end
+        if os.clock() - lastBlurtAt < 2.5 then
+            return
+        end
+    end
+    blurtSignature = signature :: string
+    lastBlurtAt = os.clock()
+    task.spawn(function(): ()
+        if sendPublicChat(message :: string) then
+            notify("MM2 · blurted: " .. (message :: string))
+        else
+            notify("MM2 · the chat refused the message (filtered or disabled).")
+        end
+    end)
+end
+
+local function scheduleBlurt(): ()
+    if not blurtEnabled or blurtPending then
+        return
+    end
+    local message: string?, signature: string? = buildBlurtMessage()
+    if not message then
+        return
+    end
+    if signature == blurtSignature and not mm2Settings.blurtRepeat then
+        return
+    end
+    blurtPending = true
+    task.delay(math.max(mm2Settings.blurtDelay, 0), function(): ()
+        blurtPending = false
+        if blurtEnabled then
+            blurtRoles(false)
+        end
+    end)
+end
+
+onRoundRolesChanged = function(active: boolean): ()
+    if not active then
+        blurtSignature = ""
+        return
+    end
+    scheduleBlurt()
+end
+
+local function toggleBlurtRoles(enabled: boolean): ()
+    blurtEnabled = enabled
+    disconnectFeatureConnection("MM2BlurtRoles")
+    if not enabled then
+        return
+    end
+    blurtSignature = ""
+    local elapsed: number = 0
+    featureConnections.MM2BlurtRoles = TaskManager:Connect(function(deltaTime: number): ()
+        elapsed += deltaTime
+        if elapsed < 1 then
+            return
+        end
+        elapsed = 0
+        if not hasActiveRoundRoles() then
+            blurtSignature = ""
+            return
+        end
+        scheduleBlurt()
+    end)
 end
 
 local function toggleGunEsp(enabled)
@@ -1313,6 +1701,7 @@ if timerRoundStart and timerRoundStart:IsA("RemoteEvent") then
             duration = tonumber(duration)
             timerEndsAt = duration and os.clock() + duration or nil
             mm2RoundData = {}
+            invalidateRoleCaches()
             roundLifecycleActive = duration ~= nil and duration > 0
             if not duration or duration <= 0 then
                 sessionRoundActive = false
@@ -1333,6 +1722,7 @@ if timerRoundEnd and timerRoundEnd:IsA("RemoteEvent") then
         timerEndsAt = nil
         sessionRoundActive = false
         roundLifecycleActive = false
+        invalidateRoleCaches()
         roleRefreshGeneration += 1
         mm2RoundData = {}
     end)
@@ -1628,7 +2018,7 @@ local function getGunLeadSeconds(): (number, number)
     return horizontalLead, verticalLead
 end
 
-local function getGunOriginCFrame(character: Model, _gun: Tool?): CFrame?
+local function getGunOriginCFrame(character: Model, gun: Tool?): CFrame?
     local root: BasePart? = character:FindFirstChild("HumanoidRootPart") :: BasePart?
     local attachment: Attachment? = root
         and root:FindFirstChild("GunRaycastAttachment")
@@ -1636,7 +2026,30 @@ local function getGunOriginCFrame(character: Model, _gun: Tool?): CFrame?
     if attachment and attachment:IsA("Attachment") then
         return attachment.WorldCFrame
     end
-    return nil
+
+    -- The attachment only exists while the gun is fully replicated. Without a
+    -- fallback the whole shot aborted with "unavailable or obstructed", so walk
+    -- the same chain the real client would: muzzle, hand, head, camera.
+    if gun then
+        for _, partName: string in ipairs({"Muzzle", "Handle"}) do
+            local part: Instance? = gun:FindFirstChild(partName)
+            if part and part:IsA("BasePart") then
+                return part.CFrame
+            end
+        end
+    end
+    for _, partName: string in ipairs({"RightHand", "Right Arm", "Head"}) do
+        local part: Instance? = character:FindFirstChild(partName)
+        if part and part:IsA("BasePart") then
+            return part.CFrame
+        end
+    end
+    local camera: Camera? = workspace.CurrentCamera
+    if camera and root then
+        return CFrame.new(root.Position + Vector3.new(0, 1.5, 0))
+            * (camera.CFrame - camera.CFrame.Position)
+    end
+    return root and root.CFrame or nil
 end
 
 local function createTrajectoryCalibration(): any
@@ -2961,10 +3374,22 @@ type GunPrediction = {
     confidence: number,
 }
 
+type GunAimOptions = {
+    -- Silent aim does not travel through the world: the shot is authored at
+    -- the target, so line of sight is irrelevant and must not veto the
+    -- solution (that is why silent aim used to fall back to a raw,
+    -- unpredicted position).
+    ignoreVisibility: boolean?,
+    leadScale: number?,
+}
+
 local function computeGunAim(
     target: Player,
-    origin: CFrame
+    origin: CFrame,
+    options: GunAimOptions?
 ): (CFrame?, GunPrediction?)
+    local resolvedOptions: GunAimOptions = options or {}
+    local ignoreVisibility: boolean = resolvedOptions.ignoreVisibility == true
     local character: Model? = target.Character
     local humanoid: Humanoid? = character
         and character:FindFirstChildOfClass("Humanoid")
@@ -2984,6 +3409,9 @@ local function computeGunAim(
     local horizontalVelocity: Vector3 = Vector3.new(velocity.X, 0, velocity.Z)
     local leadSeconds: number, verticalLeadSeconds: number =
         getGunLeadSeconds()
+    local leadScale: number = resolvedOptions.leadScale or 1
+    leadSeconds *= leadScale
+    verticalLeadSeconds *= leadScale
     if horizontalVelocity.Magnitude < 1.5 and math.abs(velocity.Y) < 1.5 then
         leadSeconds = math.min(leadSeconds, 0.04)
         verticalLeadSeconds = math.min(verticalLeadSeconds, 0.04)
@@ -3012,7 +3440,7 @@ local function computeGunAim(
     local localHead: BasePart? = LocalPlayer.Character
         and LocalPlayer.Character:FindFirstChild("Head")
         :: BasePart?
-    if localHead and localHead:IsA("BasePart") then
+    if localHead and localHead:IsA("BasePart") and not ignoreVisibility then
         local muzzleBlocked: RaycastResult? = workspace:Raycast(
             localHead.Position,
             origin.Position - localHead.Position,
@@ -3029,7 +3457,11 @@ local function computeGunAim(
         "HumanoidRootPart",
         "Head",
     }
-    local leadScales: {number} = {1, 0.82, 0.6, 0.35, 0}
+    -- With no visibility constraint there is nothing to degrade towards: the
+    -- full prediction is always the best answer.
+    local leadScales: {number} = ignoreVisibility
+        and {1}
+        or {1, 0.82, 0.6, 0.35, 0}
     for _, leadScale: number in ipairs(leadScales) do
         local scaledLead: number = leadSeconds * leadScale
         local scaledVerticalLead: number =
@@ -3073,12 +3505,16 @@ local function computeGunAim(
                 if delta.Magnitude > 0.05 then
                     local direction: Vector3 = delta.Unit
                     local endpoint: Vector3 = predicted
-                    local result: RaycastResult? = workspace:Raycast(
-                        origin.Position,
-                        predicted - origin.Position,
-                        raycastParams
-                    )
-                    if not mm2Settings.shootWallCheck
+                    local result: RaycastResult? = nil
+                    if not ignoreVisibility and mm2Settings.shootWallCheck then
+                        result = workspace:Raycast(
+                            origin.Position,
+                            predicted - origin.Position,
+                            raycastParams
+                        )
+                    end
+                    if ignoreVisibility
+                        or not mm2Settings.shootWallCheck
                         or not result
                         or result.Instance:IsDescendantOf(character) then
                         local confidence: number = math.clamp(
@@ -3127,6 +3563,74 @@ local function getSelectedShootTarget(): Player?
     return target
 end
 
+-- Is somebody else's body sitting on the silent-aim segment? Hitting the
+-- wrong player as sheriff is an instant loss, so the sweep collapses to a
+-- point rather than risking it.
+local function bystanderOnSegment(
+    target: Player,
+    startPoint: Vector3,
+    endPoint: Vector3
+): boolean
+    local parameters: RaycastParams = RaycastParams.new()
+    parameters.FilterType = Enum.RaycastFilterType.Include
+    parameters.IgnoreWater = true
+    local bodies: {Instance} = {}
+    for _, player: Player in ipairs(Players:GetPlayers()) do
+        if player ~= target
+            and player ~= LocalPlayer
+            and player.Character
+            and isPlayerAlive(player) then
+            table.insert(bodies, player.Character)
+        end
+    end
+    if #bodies == 0 then
+        return false
+    end
+    parameters.FilterDescendantsInstances = bodies
+    return workspace:Raycast(startPoint, endPoint - startPoint, parameters) ~= nil
+end
+
+-- Silent aim authors the shot at the target instead of at the muzzle, so the
+-- only thing that decides a hit is how close the authored point is to where
+-- the server believes the target is. That is exactly what the Shoot solver
+-- already computes, so silent aim now consumes the same prediction instead of
+-- the raw, one-frame-old root position it used before.
+local function buildSilentShot(
+    target: Player,
+    prediction: GunPrediction
+): (CFrame, CFrame)
+    local predicted: Vector3 = prediction.targetPosition
+    local velocity: Vector3 = prediction.velocity
+    local horizontal: Vector3 = Vector3.new(velocity.X, 0, velocity.Z)
+
+    local direction: Vector3 = Vector3.new(0, -1, 0)
+    local sweep: number = 0
+    if horizontal.Magnitude > 1.5 and mm2Settings.silentSweep > 0 then
+        direction = horizontal.Unit
+        -- Residual lead error scales with speed and latency. Laying the
+        -- segment along the movement axis keeps the body on the ray even when
+        -- the estimate lands slightly early or late.
+        sweep = math.clamp(
+            horizontal.Magnitude * prediction.leadSeconds * 0.9,
+            0.75,
+            mm2Settings.silentSweep
+        )
+    end
+
+    local lift: Vector3 = Vector3.new(0, 1.6, 0)
+    local startPoint: Vector3 = predicted - direction * sweep + lift
+    -- Only a small overshoot: the endpoint has to stay on the body in case the
+    -- server scores the hit from the endpoint rather than from the ray.
+    local endPoint: Vector3 = predicted + direction * (sweep * 0.35)
+
+    if sweep > 0 and bystanderOnSegment(target, startPoint, endPoint) then
+        startPoint = predicted + lift
+        endPoint = predicted
+    end
+
+    return CFrame.lookAt(startPoint, endPoint), CFrame.new(endPoint)
+end
+
 local function fireGunAtTarget(target: Player?): boolean
     local character, humanoid = getCharacterParts()
     if not target or not target.Character then
@@ -3153,33 +3657,46 @@ local function fireGunAtTarget(target: Player?): boolean
     local remote: Instance? = gun and gun:FindFirstChild("Shoot")
     local origin: CFrame? = getGunOriginCFrame(character, gun)
 
+    local silent: boolean = mm2Settings.silentAim
     local aim: CFrame? = nil
     local prediction: GunPrediction? = nil
     if origin then
-        aim, prediction = computeGunAim(target, origin)
+        aim, prediction = computeGunAim(
+            target,
+            origin,
+            silent and {ignoreVisibility = true} or nil
+        )
     end
 
     if not remote
         or not remote:IsA("RemoteEvent")
         or not origin
         or not aim then
-        notify("The murderer is unavailable or obstructed.")
+        notify(
+            silent
+                and "The murderer has no usable body to aim at."
+                or "The murderer is unavailable or obstructed."
+        )
         return false
     end
 
     state.mm2ShotFeedback.queue(target, gun, origin, aim, prediction)
-    if mm2Settings.silentAim then
-        local targetRoot: BasePart? = target.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
-            or target.Character.PrimaryPart
-        if targetRoot then
-            remote:FireServer(
-                CFrame.new(targetRoot.Position + Vector3.new(0, 1, 0)),
-                CFrame.new(targetRoot.Position)
-            )
-            return true
-        end
+
+    if silent and prediction then
+        local shotOrigin: CFrame, shotEnd: CFrame =
+            buildSilentShot(target, prediction :: GunPrediction)
+        remote:FireServer(shotOrigin, shotEnd)
+        return true
     end
-    remote:FireServer(origin, aim)
+
+    -- Match the real client's argument shape: a rotated origin that looks at
+    -- the impact point, and a plain position for the endpoint (the vanilla gun
+    -- never sends a rotated second CFrame).
+    local endpoint: Vector3 = prediction and prediction.endpoint or aim.Position
+    remote:FireServer(
+        CFrame.lookAt(origin.Position, endpoint),
+        CFrame.new(endpoint)
+    )
     return true
 end
 
@@ -3897,6 +4414,67 @@ local _InstantRolesFeature = createUniversalFeature(
     }
 )
 
+local RoleTagsFeature = createUniversalFeature(
+    "Role Tags",
+    "Floating role label over every head - the murderer in red",
+    2,
+    toggleRoleTags,
+    {
+        parent = MM2Scroll,
+        registry = mm2Features,
+    }
+)
+addToggleOption(
+    RoleTagsFeature,
+    "All roles",
+    mm2Settings.roleTagsAll,
+    function(value: boolean): ()
+        mm2Settings.roleTagsAll = value
+        clearRoleTags()
+    end,
+    "Off: only the murderer is tagged. On: sheriff, hero and innocents too."
+)
+
+local BlurtFeature = createUniversalFeature(
+    "Blurt Roles",
+    "Announces the murderer and sheriff in the public chat once per round",
+    3,
+    toggleBlurtRoles,
+    {
+        parent = MM2Scroll,
+        registry = mm2Features,
+    }
+)
+addNumberOption(
+    BlurtFeature,
+    "Delay",
+    mm2Settings.blurtDelay,
+    0,
+    15,
+    function(value: number): ()
+        mm2Settings.blurtDelay = value
+    end,
+    "Seconds to wait after the roles are known before typing.",
+    0.5
+)
+addToggleOption(
+    BlurtFeature,
+    "Repeat on change",
+    mm2Settings.blurtRepeat,
+    function(value: boolean): ()
+        mm2Settings.blurtRepeat = value
+    end,
+    "Blurt again when the sheriff dies and the gun changes hands."
+)
+addActionOption(BlurtFeature, "Blurt now", function(): ()
+    blurtRoles(true)
+end)
+addInformationOption(
+    BlurtFeature,
+    "This types in the real public chat: everyone reads it and you will be"
+        .. " reported. Roblox also rate-limits and filters messages."
+)
+
 registerMM2Roles()
 registerEspExtra({
     Name = "Coins",
@@ -3990,7 +4568,20 @@ addToggleOption(
     mm2Settings.silentAim,
     function(value: boolean): ()
         mm2Settings.silentAim = value
-    end
+    end,
+    "Authors the shot at the target: same prediction as Shoot, ignores walls."
+)
+addNumberOption(
+    ShootFeature,
+    "Silent sweep",
+    mm2Settings.silentSweep,
+    0,
+    8,
+    function(value: number): ()
+        mm2Settings.silentSweep = value
+    end,
+    "Studs of tolerance laid along the target's movement. 0 = single point.",
+    0.5
 )
 ShootTargetBox = addTextOption(ShootFeature, "Target player", "", function(
     value: string
