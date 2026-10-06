@@ -34,15 +34,22 @@ function Module.init(runtime: any): any
             return
         end
 
-        local elapsed = 1
-        featureConnections.MM2GunESP = TaskManager:Connect(function(deltaTime)
-            elapsed = elapsed + deltaTime
-            if elapsed < 0.5 then
+        local elapsed: number = 1
+        -- Rebuilding the billboard twice a second churned instances (and made
+        -- the marker visibly blink). Only touch it when the gun changes.
+        local markedGun: Instance? = nil
+        featureConnections.MM2GunESP = TaskManager:Connect(function(deltaTime: number): ()
+            elapsed += deltaTime
+            if elapsed < 0.4 then
                 return
             end
             elapsed = 0
+            local gun: any = findDroppedGun()
+            if gun == markedGun and (gun == nil or gun.Parent ~= nil) then
+                return
+            end
+            markedGun = gun
             clearEffects(GunEffects)
-            local gun = findDroppedGun()
             if gun then
                 createMM2Marker(
                     GunEffects,

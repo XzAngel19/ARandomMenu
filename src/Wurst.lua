@@ -210,7 +210,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "addfa67525e347aa"
+local SOURCE_STAMP: string = "72991ce83c974b34"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -4248,6 +4248,9 @@ state.registerRoleProvider = function(provider: any): ()
         return
     end
     state.gameBridge.roleProvider = provider
+    if type(state.clearRoleMemo) == "function" then
+        state.clearRoleMemo()
+    end
     for _, listener: (string, any) -> () in ipairs(state.gameBridge.listeners) do
         pcall(listener, "roles", provider)
     end
@@ -4263,29 +4266,72 @@ state.registerEspExtra = function(extra: any): ()
     end
 end
 
+-- The ESP, the chams and any game-specific tag all ask for the same player's
+-- role (and colour) on the same frame. Each lookup is a pcall into the game
+-- module, so without this memo a 12 player server paid ~50 provider round
+-- trips per frame. One frame of staleness is invisible; the lag was not.
+local roleMemo: {[Player]: {role: string?, at: number}} =
+    setmetatable({}, {__mode = "k"}) :: any
+local roleColorMemo: {[Player]: {colour: Color3?, at: number}} =
+    setmetatable({}, {__mode = "k"}) :: any
+local ROLE_MEMO_SECONDS: number = 1 / 30
+
 state.playerRole = function(player: Player): string?
     local provider: any = state.gameBridge.roleProvider
     if not provider then
         return nil
     end
+    local now: number = os.clock()
+    local cached: any = roleMemo[player]
+    if cached and now - cached.at < ROLE_MEMO_SECONDS then
+        return cached.role
+    end
+    local resolved: string? = nil
     local ok: boolean, role: any = pcall(provider.Get, player)
     if ok and type(role) == "string" and role ~= "" then
-        return role
+        resolved = role
     end
-    return nil
+    roleMemo[player] = {role = resolved, at = now}
+    return resolved
 end
 
 state.playerRoleColor = function(player: Player): Color3?
     local provider: any = state.gameBridge.roleProvider
-    local role: string? = state.playerRole(player)
-    if not provider or not role then return nil end
-    if type(provider.GetColor) == "function" then
-        local ok: boolean, colour: any = pcall(provider.GetColor, role)
-        if ok and typeof(colour) == "Color3" then return colour end
+    if not provider then
+        return nil
     end
-    local colour: any = provider.Colors and provider.Colors[role]
-    return typeof(colour) == "Color3" and colour or nil
+    local now: number = os.clock()
+    local cached: any = roleColorMemo[player]
+    if cached and now - cached.at < ROLE_MEMO_SECONDS then
+        return cached.colour
+    end
+    local role: string? = state.playerRole(player)
+    local resolved: Color3? = nil
+    if role then
+        if type(provider.GetColor) == "function" then
+            local ok: boolean, colour: any = pcall(provider.GetColor, role)
+            if ok and typeof(colour) == "Color3" then
+                resolved = colour
+            end
+        end
+        if not resolved then
+            local colour: any = provider.Colors and provider.Colors[role]
+            if typeof(colour) == "Color3" then
+                resolved = colour
+            end
+        end
+    end
+    roleColorMemo[player] = {colour = resolved, at = now}
+    return resolved
 end
+
+-- Dropped whenever a module registers/changes a provider so a game switch or a
+-- colour change is never served from the memo.
+local function clearRoleMemo(): ()
+    table.clear(roleMemo :: any)
+    table.clear(roleColorMemo :: any)
+end
+state.clearRoleMemo = clearRoleMemo
 
 
 state.featureTooltip = create("TextLabel", {

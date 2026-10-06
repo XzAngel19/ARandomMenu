@@ -249,10 +249,14 @@ local function getRoundRole(player: Player): string?
     return nil
 end
 
-local function requestRoleRefresh(): ()
+-- Forward declared: requestRoleRefresh invalidates the index when fresh
+-- server data lands, and the index is defined below it.
+local invalidateRoleCaches: () -> ()
+
+local function requestRoleRefresh(force: boolean?): ()
     if not mm2RoleRemote
         or roleRefreshRunning
-        or os.clock() - lastRoleRefreshAt < 0.8 then
+        or (not force and os.clock() - lastRoleRefreshAt < 0.8) then
         return
     end
 
@@ -270,12 +274,38 @@ local function requestRoleRefresh(): ()
             and roundLifecycleActive ~= false
             and type(result) == "table" then
             mm2RoundData = result
+            invalidateRoleCaches()
         end
     end)
 end
 
-local function hasMurdererCollisionGroup(player: Player): boolean
-    local character: Model? = player.Character
+-- ---------------------------------------------------------------------------
+-- Role index
+--
+-- Every visual (ESP, Chams, Role Tags) asks for roles once per player per
+-- frame. Resolving a role used to walk that player's character and backpack,
+-- and `roundRolesKnown` walked *every* player's backpack on top of that, so a
+-- 12 player server cost hundreds of Instance traversals per frame and the game
+-- crawled. Now a single pass fills this index, and it is only rebuilt when
+-- something that can change a role actually happens: a tool appears or leaves
+-- a backpack/character, a character spawns or dies, or the server pushes new
+-- round data. Reads are plain table lookups.
+-- ---------------------------------------------------------------------------
+local roleIndex: {
+    roles: {[Player]: string?},
+    murderer: Player?,
+    sheriff: Player?,
+    rolesKnown: boolean,
+} = {roles = {}, murderer = nil, sheriff = nil, rolesKnown = false}
+local roleIndexDirty: boolean = true
+local roleIndexAt: number = -math.huge
+local roleWatchers: {[Player]: {RBXScriptConnection}} = {}
+
+function invalidateRoleCaches(): ()
+    roleIndexDirty = true
+end
+
+local function hasMurdererCollisionGroup(character: Model?): boolean
     if not character then
         return false
     end
@@ -287,85 +317,197 @@ local function hasMurdererCollisionGroup(player: Player): boolean
     return false
 end
 
--- True once the round has handed out weapons or the server data exposes a
--- special role. Innocents are never announced reliably, so this is the gate
--- that lets us infer them instead of leaving them colourless.
-local roundRolesKnownCache: {value: boolean, at: number} = {
-    value = false,
-    at = -math.huge,
-}
-local roleCache: {[Player]: {role: string?, at: number}} =
-    setmetatable({}, {__mode = "k"}) :: any
-
-local function computeRoundRolesKnown(): boolean
-    if roundLifecycleActive == false then
-        return false
-    end
-    if findMM2Role("Knife") or findMM2Role("Gun") then
-        return true
-    end
-    requestRoleRefresh()
+-- One pass over the round payload so the per-player loop below does not have
+-- to re-scan it (and re-resolve names to Players) for every single player.
+local function buildRoundRoleMap(): {[Player]: string}
+    local map: {[Player]: string} = {}
     for key: any, data: any in pairs(mm2RoundData) do
-        if type(data) == "table"
-            and (data.Role == "Murderer"
-                or data.Role == "Sheriff"
-                or data.Role == "Hero")
-            and playerFromRoundKey(key, data) then
-            return true
+        if type(data) == "table" then
+            local role: any = data.Role
+            if role == "Murderer"
+                or role == "Sheriff"
+                or role == "Hero"
+                or role == "Innocent" then
+                local player: Player? = playerFromRoundKey(key, data)
+                if player then
+                    map[player] = role
+                end
+            end
         end
     end
-    return false
+    return map
 end
 
--- Cached: the ESP, the chams and the role tags all ask for this several times
--- per frame and the underlying scan walks every backpack in the server.
+local function rebuildRoleIndex(): ()
+    roleIndexDirty = false
+    roleIndexAt = os.clock()
+
+    local roles: {[Player]: string?} = {}
+    local roundRoleByPlayer: {[Player]: string} = buildRoundRoleMap()
+    local murderer: Player? = nil
+    local sheriff: Player? = nil
+    local alive: {[Player]: boolean} = {}
+    local special: {[Player]: string} = {}
+
+    for _, player: Player in ipairs(Players:GetPlayers()) do
+        local character: Model? = player.Character
+        local humanoid: Humanoid? = character
+            and character:FindFirstChildOfClass("Humanoid")
+        local isAlive: boolean = humanoid ~= nil and humanoid.Health > 0
+        alive[player] = isAlive
+
+        local roundRole: string? = roundRoleByPlayer[player]
+        local resolved: string? = nil
+        if hasMurdererCollisionGroup(character)
+            or getPlayerWeapon(player, "Knife") then
+            resolved = "Murderer"
+        elseif getPlayerWeapon(player, "Gun") then
+            resolved = roundRole == "Hero" and "Hero" or "Sheriff"
+        elseif roundRole and roundRole ~= "Innocent" then
+            resolved = roundRole
+        end
+
+        if resolved then
+            special[player] = resolved
+            -- Prefer a living candidate, but keep a dead one rather than none
+            -- (a corpse still tells the ESP who the murderer was).
+            if resolved == "Murderer" then
+                if not murderer or (isAlive and not alive[murderer]) then
+                    murderer = player
+                end
+            elseif resolved == "Sheriff" or resolved == "Hero" then
+                if not sheriff or (isAlive and not alive[sheriff]) then
+                    sheriff = player
+                end
+            end
+        end
+    end
+
+    -- "Roles are known" means the round actually handed something out. Only
+    -- then can an unarmed, living player be called an innocent by elimination.
+    local rolesKnown: boolean = next(special) ~= nil
+    if roundLifecycleActive == false then
+        rolesKnown = false
+    end
+
+    for _, player: Player in ipairs(Players:GetPlayers()) do
+        local resolved: string? = special[player]
+        if not resolved and rolesKnown then
+            resolved = alive[player] and "Innocent" or "Dead"
+        end
+        roles[player] = resolved
+    end
+
+    roleIndex.roles = roles
+    roleIndex.murderer = murderer
+    roleIndex.sheriff = sheriff
+    roleIndex.rolesKnown = rolesKnown
+
+    -- Round is live but nothing has been handed out yet: ask the server once
+    -- rather than spinning on backpack scans every frame.
+    if not rolesKnown and roundLifecycleActive ~= false then
+        requestRoleRefresh()
+    end
+end
+
+local function ensureRoleIndex(): ()
+    -- The 1s sweep is only a safety net for changes with no signal attached
+    -- (collision group swaps, for instance); the dirty flag does the real work.
+    if roleIndexDirty or os.clock() - roleIndexAt > 1 then
+        rebuildRoleIndex()
+    end
+end
+
+local function unwatchPlayer(player: Player): ()
+    local connections: {RBXScriptConnection}? = roleWatchers[player]
+    if not connections then
+        return
+    end
+    roleWatchers[player] = nil
+    for _, connection: RBXScriptConnection in ipairs(connections) do
+        pcall(function(): ()
+            connection:Disconnect()
+        end)
+    end
+end
+
+-- Cheap signals instead of polling: the index is marked dirty the instant a
+-- knife or gun is handed out, which is what makes the ESP colour correctly on
+-- the very first frame of the round instead of up to a second later.
+local function watchPlayer(player: Player): ()
+    unwatchPlayer(player)
+    local connections: {RBXScriptConnection} = {}
+
+    local function watchContainer(container: Instance?): ()
+        if not container then
+            return
+        end
+        table.insert(connections, container.ChildAdded:Connect(invalidateRoleCaches))
+        table.insert(connections, container.ChildRemoved:Connect(invalidateRoleCaches))
+    end
+
+    local function watchCharacter(character: Model): ()
+        invalidateRoleCaches()
+        watchContainer(character)
+        local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            table.insert(
+                connections,
+                humanoid.Died:Connect(invalidateRoleCaches)
+            )
+        end
+    end
+
+    table.insert(connections, player.CharacterAdded:Connect(watchCharacter))
+    table.insert(connections, player.CharacterRemoving:Connect(invalidateRoleCaches))
+    table.insert(
+        connections,
+        player.ChildAdded:Connect(function(child: Instance): ()
+            if child:IsA("Backpack") then
+                watchContainer(child)
+                invalidateRoleCaches()
+            end
+        end)
+    )
+    watchContainer(player:FindFirstChildOfClass("Backpack"))
+    if player.Character then
+        watchCharacter(player.Character)
+    end
+    roleWatchers[player] = connections
+end
+
+for _, player: Player in ipairs(Players:GetPlayers()) do
+    watchPlayer(player)
+end
+featureConnections.MM2RoleWatchAdded = Players.PlayerAdded:Connect(function(player: Player): ()
+    watchPlayer(player)
+    invalidateRoleCaches()
+end)
+featureConnections.MM2RoleWatchRemoving = Players.PlayerRemoving:Connect(function(player: Player): ()
+    unwatchPlayer(player)
+    invalidateRoleCaches()
+end)
+
 local function roundRolesKnown(): boolean
-    local now: number = os.clock()
-    if now - roundRolesKnownCache.at < 0.5 then
-        return roundRolesKnownCache.value
-    end
-    roundRolesKnownCache.at = now
-    roundRolesKnownCache.value = computeRoundRolesKnown()
-    return roundRolesKnownCache.value
-end
-
-local function computePlayerRole(player: Player): string?
-    local roundRole: string? = getRoundRole(player)
-    if hasMurdererCollisionGroup(player) or getPlayerWeapon(player, "Knife") then
-        return "Murderer"
-    end
-    if getPlayerWeapon(player, "Gun") then
-        return roundRole == "Hero" and "Hero" or "Sheriff"
-    end
-    if roundRole and roundRole ~= "Innocent" then
-        return roundRole
-    end
-    if not roundRolesKnown() then
-        -- Lobby or pre-assignment: no role at all is the honest answer.
-        return roundRole
-    end
-    if not isPlayerAlive(player) then
-        return "Dead"
-    end
-    -- Live round, alive, no knife, no gun, no special role in the server
-    -- payload: by elimination this player is an innocent.
-    return "Innocent"
-end
-
-local function invalidateRoleCaches(): ()
-    roundRolesKnownCache.at = -math.huge
-    table.clear(roleCache :: any)
+    ensureRoleIndex()
+    return roleIndex.rolesKnown
 end
 
 local function getPlayerRole(player: Player): string?
-    local now: number = os.clock()
-    local cached: any = roleCache[player]
-    if cached and now - cached.at < 0.25 then
-        return cached.role
+    ensureRoleIndex()
+    return roleIndex.roles[player]
+end
+
+local function findMM2Role(toolName: string, excludedPlayer: Player?): Player?
+    ensureRoleIndex()
+    local wanted: string = toolName == "Knife" and "Murderer" or "Sheriff"
+    for player: Player, role: string? in pairs(roleIndex.roles) do
+        if player ~= excludedPlayer
+            and (role == wanted or (wanted == "Sheriff" and role == "Hero")) then
+            return player
+        end
     end
-    local role: string? = computePlayerRole(player)
-    roleCache[player] = {role = role, at = now}
-    return role
+    return nil
 end
 
 local function findPlayerByRoundRole(role: string): Player?
@@ -381,29 +523,21 @@ local function findPlayerByRoundRole(role: string): Player?
 end
 
 local function hasActiveRoundRoles(): boolean
-    if findMM2Role("Knife") or findMM2Role("Gun") then
-        roundLifecycleActive = true
-        return true
-    end
     return roundRolesKnown()
 end
 
 local function findMurderer(): Player?
-    requestRoleRefresh()
-    for _, player: Player in ipairs(Players:GetPlayers()) do
-        if isPlayerAlive(player) and hasMurdererCollisionGroup(player) then
-            return player
-        end
-    end
-    return findMM2Role("Knife") or findPlayerByRoundRole("Murderer")
+    ensureRoleIndex()
+    return roleIndex.murderer or findPlayerByRoundRole("Murderer")
 end
 
 local function findSheriff(): Player?
-    requestRoleRefresh()
-    return findMM2Role("Gun")
+    ensureRoleIndex()
+    return roleIndex.sheriff
         or findPlayerByRoundRole("Sheriff")
         or findPlayerByRoundRole("Hero")
 end
+
 
 local MM2_MAP_COIN_CONTAINERS: {string} = {
     "CoinContainer",
@@ -423,7 +557,13 @@ local function isMM2MapModel(object: Instance): boolean
     return false
 end
 
-local function findMM2Map(): Instance?
+-- The fallback scan below calls FindFirstChild("CoinSpawn", true) on every
+-- top level model, which walks most of the map. Gun ESP, Auto Get Gun, Loop
+-- Interact and Silence all ask for the map several times a second, so the
+-- answer is cached until the model it points at goes away.
+local mm2MapCache: {map: Instance?, at: number} = {map = nil, at = -math.huge}
+
+local function findMM2MapUncached(): Instance?
     for _, object: Instance in ipairs(workspace:GetChildren()) do
         if isMM2MapModel(object) then
             return object
@@ -441,28 +581,110 @@ local function findMM2Map(): Instance?
     return nil
 end
 
-local function findDroppedGun(): (Model | BasePart)?
+local function findMM2Map(): Instance?
+    local cached: Instance? = mm2MapCache.map
+    if cached and cached.Parent == workspace then
+        return cached
+    end
+    if os.clock() - mm2MapCache.at < 1 then
+        return cached
+    end
+    mm2MapCache.at = os.clock()
+    mm2MapCache.map = findMM2MapUncached()
+    return mm2MapCache.map
+end
+
+-- Full workspace:GetDescendants() every half second was the single most
+-- expensive thing the MM2 module did; on a loaded map that is tens of
+-- thousands of instances. Cheap lookups first, the exhaustive sweep at most
+-- once every three seconds, and the answer cached while it stays valid.
+local droppedGunCache: {gun: (Model | BasePart)?, at: number} =
+    {gun = nil, at = -math.huge}
+local lastGunSweepAt: number = -math.huge
+
+local function isLooseGun(object: Instance): boolean
+    if not object:IsA("Tool") then
+        return false
+    end
+    if object.Name ~= "Gun" and not CollectionService:HasTag(object, "Weapon_Gun") then
+        return false
+    end
+    -- A gun inside a character or a backpack is owned, not dropped.
+    return object:IsDescendantOf(workspace)
+        and not object:FindFirstAncestorOfClass("Backpack")
+        and (object.Parent == workspace or object.Parent == findMM2Map()
+            or object.Parent ~= nil and not object.Parent:FindFirstChildOfClass("Humanoid"))
+end
+
+local function resolveGunPart(object: Instance): (Model | BasePart)?
+    if object:IsA("Model") or object:IsA("BasePart") then
+        return object :: any
+    end
+    local handle: Instance? = object:FindFirstChild("Handle")
+        or object:FindFirstChildWhichIsA("BasePart")
+    return (handle and handle:IsA("BasePart")) and handle or nil
+end
+
+local function findDroppedGunUncached(): (Model | BasePart)?
     local map: Instance? = findMM2Map()
-    local candidate: Instance? = (map and map:FindFirstChild("GunDrop", true))
-        or workspace:FindFirstChild("GunDrop", true)
-    if candidate
-        and (candidate:IsA("Model") or candidate:IsA("BasePart")) then
-        return candidate
+    local candidate: Instance? = map and map:FindFirstChild("GunDrop")
+    if not candidate then
+        candidate = workspace:FindFirstChild("GunDrop")
+    end
+    if candidate and (candidate:IsA("Model") or candidate:IsA("BasePart")) then
+        return candidate :: any
     end
 
-    for _, object: Instance in ipairs(workspace:GetDescendants()) do
-        if object:IsA("Tool")
-            and (object.Name == "Gun"
-                or CollectionService:HasTag(object, "Weapon_Gun")) then
+    for _, object: Instance in ipairs(CollectionService:GetTagged("Weapon_Gun")) do
+        if isLooseGun(object) then
+            local part: (Model | BasePart)? = resolveGunPart(object)
+            if part then
+                return part
+            end
+        end
+    end
 
-            local handle: Instance? = object:FindFirstChild("Handle")
-                or object:FindFirstChildWhichIsA("BasePart")
-            if handle and handle:IsA("BasePart") then
-                return handle
+    for _, object: Instance in ipairs(workspace:GetChildren()) do
+        if isLooseGun(object) then
+            local part: (Model | BasePart)? = resolveGunPart(object)
+            if part then
+                return part
+            end
+        end
+    end
+
+    if os.clock() - lastGunSweepAt < 3 then
+        return nil
+    end
+    lastGunSweepAt = os.clock()
+    local deepCandidate: Instance? = (map and map:FindFirstChild("GunDrop", true))
+        or workspace:FindFirstChild("GunDrop", true)
+    if deepCandidate
+        and (deepCandidate:IsA("Model") or deepCandidate:IsA("BasePart")) then
+        return deepCandidate :: any
+    end
+    for _, object: Instance in ipairs(workspace:GetDescendants()) do
+        if isLooseGun(object) then
+            local part: (Model | BasePart)? = resolveGunPart(object)
+            if part then
+                return part
             end
         end
     end
     return nil
+end
+
+local function findDroppedGun(): (Model | BasePart)?
+    local cached: (Model | BasePart)? = droppedGunCache.gun
+    if cached and cached.Parent and cached:IsDescendantOf(workspace) then
+        return cached
+    end
+    if os.clock() - droppedGunCache.at < 0.4 then
+        return nil
+    end
+    droppedGunCache.at = os.clock()
+    droppedGunCache.gun = findDroppedGunUncached()
+    return droppedGunCache.gun
 end
 
 local function createMM2Marker(folder, adornee, labelText, color, transparency)
@@ -648,6 +870,23 @@ if timerRoundStart and timerRoundStart:IsA("RemoteEvent") then
                 sessionRoundActive = false
             end
             roleRefreshGeneration += 1
+            if duration and duration > 0 then
+                -- Roles are handed out at the top of the round. Ask for them
+                -- right now (and again a few times while they are missing)
+                -- instead of waiting for the first PlayerDataChanged push.
+                requestRoleRefresh(true)
+                task.spawn(function(): ()
+                    local generation: number = roleRefreshGeneration
+                    for _, delay: number in ipairs({0.15, 0.4, 0.8, 1.5}) do
+                        task.wait(delay)
+                        if generation ~= roleRefreshGeneration
+                            or roundRolesKnown() then
+                            break
+                        end
+                        requestRoleRefresh(true)
+                    end
+                end)
+            end
             if duration and duration > 0
                 and not sessionRoundActive
                 and state.sessionInfo
@@ -2648,10 +2887,16 @@ cleanupMM2Runtime = function()
     trajectoryCalibration:destroy()
     disconnectGunFiredObserver()
     state.mm2ShotFeedback.hide()
+    for player: Player, _ in pairs(roleWatchers) do
+        unwatchPlayer(player)
+    end
+    table.clear(roleIndex.roles)
     for _, connectionName: string in ipairs({
         "MM2PlayerDataChanged",
         "MM2TimerTrackerStart",
         "MM2TimerTrackerEnd",
+        "MM2RoleWatchAdded",
+        "MM2RoleWatchRemoving",
     }) do
         disconnectFeatureConnection(connectionName)
     end
