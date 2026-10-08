@@ -300,31 +300,61 @@ function Module.init(runtime: any): any
         return CFrame.lookAt(startPoint, endPoint), CFrame.new(endPoint)
     end
 
+    -- Options for one trigger pull. `silent` authors the shot at the target
+    -- (through walls, any distance); `maxError` is an optional accuracy gate the
+    -- auto-fire uses so it only takes high-probability shots; `quiet` suppresses
+    -- the toast notifications the manual key press relies on (and, with it, the
+    -- one yielding call, so the auto-fire never yields inside a frame callback).
+    type FireOptions = {
+        silent: boolean?,
+        maxError: number?,
+        quiet: boolean?,
+    }
+
     -- Fire one packet at the solved point.
     --
     -- The remote takes two CFrames: a rotated frame that looks from the muzzle at
     -- the impact point, and the impact point itself as a plain position. That is
     -- the shape the legitimate client sends, so the packet is indistinguishable at
     -- any ping; the only thing the solver changes is where the point sits.
-    local function fireGunAtTarget(target: Player?): boolean
-        local character, humanoid = getCharacterParts()
-        if not target or not target.Character then
-            notify("No selected shoot target was found.")
+    local function fireGunAtTarget(
+        target: Player?,
+        options: FireOptions?
+    ): boolean
+        local opts: FireOptions = options or {}
+        local silent: boolean = mm2Settings.silentAim
+        if opts.silent ~= nil then
+            silent = opts.silent
+        end
+        local quiet: boolean = opts.quiet == true
+        local function reject(reason: string, message: string): boolean
+            runtime.lastRejectReason = reason
+            if not quiet then
+                notify(message)
+            end
             return false
         end
+
+        local character, humanoid = getCharacterParts()
+        if not target or not target.Character then
+            return reject("no target", "No selected shoot target was found.")
+        end
         if not character or not humanoid then
-            notify("Your character is not available.")
-            return false
+            return reject("no character", "Your character is not available.")
         end
 
         local gun: Tool? = getPlayerWeapon(LocalPlayer, "Gun")
         local backpack: Backpack? = LocalPlayer:FindFirstChildOfClass("Backpack")
         if not gun and backpack then
-            notify("You do not have the sheriff gun.")
-            return false
+            return reject("no gun", "You do not have the sheriff gun.")
         end
         if gun and gun.Parent == backpack and humanoid:IsA("Humanoid") then
             humanoid:EquipTool(gun)
+            if quiet then
+                -- Auto-fire runs inside a frame callback that must not yield; let
+                -- the equip settle and try again on the next tick.
+                return reject("equipping", "Equipping the sheriff gun.")
+            end
             task.wait()
         end
 
@@ -332,7 +362,6 @@ function Module.init(runtime: any): any
         local remote: Instance? = gun and gun:FindFirstChild("Shoot")
         local origin: CFrame? = getGunOriginCFrame(character, gun)
 
-        local silent: boolean = mm2Settings.silentAim
         local aim: CFrame?, prediction: GunPrediction?, reason: string? = nil
         if origin then
             aim, prediction, reason = computeGunAim(
@@ -347,20 +376,22 @@ function Module.init(runtime: any): any
             or not origin
             or not aim
             or not prediction then
-            runtime.lastRejectReason = reason
-                or (origin and "no solution" or "no gun origin")
-            notify(
+            return reject(
+                reason or (origin and "no solution" or "no gun origin"),
                 silent
                     and "The murderer has no usable body to aim at."
                     or "The murderer is unavailable or obstructed."
             )
-            return false
+        end
+
+        local resolved: GunPrediction = prediction :: GunPrediction
+        if opts.maxError and resolved.errorRadius > opts.maxError then
+            return reject("low accuracy", "Shot accuracy is too low to fire.")
         end
         runtime.lastRejectReason = nil
 
-        state.mm2ShotFeedback.queue(target, gun, origin, aim, prediction)
+        state.mm2ShotFeedback.queue(target, gun, origin, aim, resolved)
 
-        local resolved: GunPrediction = prediction :: GunPrediction
         if silent then
             local shotOrigin: CFrame, shotEnd: CFrame =
                 buildSilentShot(target, resolved)
@@ -388,9 +419,46 @@ function Module.init(runtime: any): any
     end
 
     local shootFeatureActive: boolean = false
-    local function setShootActive(value: boolean): ()
-        shootFeatureActive = value
-        state.mm2ShotFeedback.shootActive = value
+    local autoShootActive: boolean = false
+
+    -- Shared motion sampling + gun-fired observer. Both the manual Shoot and
+    -- Auto Shoot need live filtered velocities, so the sampler stays alive while
+    -- either is on and is torn down only when both are off.
+    local function refreshShootInfrastructure(): ()
+        local wantActive: boolean = shootFeatureActive or autoShootActive
+        state.mm2ShotFeedback.shootActive = wantActive
+        if wantActive then
+            if not featureConnections.MM2MotionTracker then
+                local weaponService: any = getWeaponServiceModule()
+                if type(weaponService) == "table" then
+                    connectGunFiredSignal(weaponService)
+                end
+                local motionElapsed: number = 0
+                featureConnections.MM2MotionTracker = TaskManager:Connect(function(
+                    deltaTime: number
+                ): ()
+                    motionElapsed += deltaTime
+                    if motionElapsed < 1 / 30 then
+                        return
+                    end
+                    motionElapsed = 0
+                    for _, player: Player in ipairs(Players:GetPlayers()) do
+                        local root: BasePart? = player.Character
+                            and player.Character:FindFirstChild("HumanoidRootPart")
+                            :: BasePart?
+                        if root and isPlayerAlive(player) then
+                            getFilteredVelocity(player, root)
+                        end
+                    end
+                end)
+            end
+            return
+        end
+        disconnectFeatureConnection("MM2MotionTracker")
+        disconnectGunFiredObserver()
+        state.mm2ShotFeedback.pending = nil
+        state.mm2ShotFeedback.lastAccepted = nil
+        state.mm2ShotFeedback.hide()
     end
 
     local function triggerManualShot(): ()
@@ -400,42 +468,63 @@ function Module.init(runtime: any): any
         end
         fireGunAtTarget(getSelectedShootTarget())
     end
-    local function toggleShootMurderer(enabled: boolean): ()
-        disconnectFeatureConnection("MM2MotionTracker")
-        setShootActive(enabled)
 
-        if not enabled then
-            state.mm2ShotFeedback.pending = nil
-            state.mm2ShotFeedback.lastAccepted = nil
-            state.mm2ShotFeedback.hide()
-            disconnectGunFiredObserver()
+    local function toggleShootMurderer(enabled: boolean): ()
+        shootFeatureActive = enabled
+        refreshShootInfrastructure()
+    end
+
+    -- ----- Auto Shoot -----
+    -- Fires on its own the moment a high-probability solution exists. Normal mode
+    -- shoots from the muzzle and respects the wall check, so it holds fire until
+    -- the murderer peeks out from cover (that is the peek detection); Silent mode
+    -- authors the shot at the target and fires from any distance, through walls.
+    local autoSettings = {
+        mode = "Normal" :: string,
+        maxError = 0.6,
+        fireDelay = 0.5,
+    }
+    local lastAutoShot: number = -math.huge
+
+    local function autoShootTick(): ()
+        -- Hold the fire rate, then look for a shot every tick once it is off
+        -- cooldown so a peek is answered immediately.
+        if os.clock() - lastAutoShot < autoSettings.fireDelay then
             return
         end
-
-        local weaponService: any = getWeaponServiceModule()
-        if type(weaponService) == "table" then
-            connectGunFiredSignal(weaponService)
+        local target: Player? = getSelectedShootTarget()
+        if not target then
+            return
         end
-        local motionElapsed: number = 0
-        featureConnections.MM2MotionTracker = TaskManager:Connect(function(
+        local fired: boolean = fireGunAtTarget(target, {
+            silent = autoSettings.mode == "Silent",
+            maxError = autoSettings.maxError,
+            quiet = true,
+        })
+        if fired then
+            lastAutoShot = os.clock()
+        end
+    end
+
+    local function toggleAutoShoot(enabled: boolean): ()
+        autoShootActive = enabled
+        disconnectFeatureConnection("MM2AutoShoot")
+        refreshShootInfrastructure()
+        if not enabled then
+            return
+        end
+        lastAutoShot = -math.huge
+        local autoElapsed: number = 0
+        featureConnections.MM2AutoShoot = TaskManager:Connect(function(
             deltaTime: number
         ): ()
-            motionElapsed += deltaTime
-            if motionElapsed < 1 / 30 then
+            autoElapsed += deltaTime
+            if autoElapsed < 1 / 30 then
                 return
             end
-            motionElapsed = 0
-
-            for _, player: Player in ipairs(Players:GetPlayers()) do
-                local root: BasePart? = player.Character
-                    and player.Character:FindFirstChild("HumanoidRootPart")
-                    :: BasePart?
-                if root and isPlayerAlive(player) then
-                    getFilteredVelocity(player, root)
-                end
-            end
+            autoElapsed = 0
+            autoShootTick()
         end)
-
     end
 
     local ShootFeature = createUniversalFeature(
@@ -526,9 +615,58 @@ function Module.init(runtime: any): any
     )
     refreshShootOptions()
 
+    local AutoShootFeature = createUniversalFeature(
+        "Auto Shoot",
+        "Fires by itself when a high-probability shot exists. Normal holds for line"
+            .. " of sight and answers peeks; Silent shoots the murderer from any"
+            .. " distance, through walls.",
+        5,
+        toggleAutoShoot,
+        {
+            categoryName = "Blatant",
+            parent = MM2Scroll,
+            registry = mm2Features,
+        }
+    )
+    addCycleOption(
+        AutoShootFeature,
+        "Mode",
+        {"Normal", "Silent"},
+        1,
+        function(value: string): ()
+            autoSettings.mode = value
+        end
+    )
+    addNumberOption(
+        AutoShootFeature,
+        "Max error",
+        autoSettings.maxError,
+        0.1,
+        1,
+        function(value: number): ()
+            autoSettings.maxError = value
+        end,
+        "Only fire when the predicted error is within this many studs. Lower is"
+            .. " stricter, so it waits for a cleaner shot.",
+        0.05
+    )
+    addNumberOption(
+        AutoShootFeature,
+        "Fire delay",
+        autoSettings.fireDelay,
+        0.1,
+        2,
+        function(value: number): ()
+            autoSettings.fireDelay = value
+        end,
+        "Seconds between automatic shots.",
+        0.05
+    )
+
     activeCleanup = function(): ()
         toggleShootMurderer(false)
-                state.mm2ShotFeedback.hide()
+        toggleAutoShoot(false)
+        state.mm2ShotFeedback.hide()
     end
     Module.Events = featureConnections
     Module.Initialized = true
