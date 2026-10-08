@@ -1768,24 +1768,6 @@ local function createTrajectoryCalibration(): any
         }
     end
 
-    local function restoreStats(value: any): RunningStats
-        local restored: RunningStats = newStats()
-        if type(value) ~= "table" then
-            return restored
-        end
-        local count: number = math.max(0, math.floor(tonumber(value.count) or 0))
-        local mean: number = tonumber(value.mean) or 0
-        local m2: number = math.max(0, tonumber(value.m2) or 0)
-        if count > 0 and finite(mean) and finite(m2) then
-            restored.count = count
-            restored.mean = mean
-            restored.m2 = m2
-            restored.minimum = tonumber(value.minimum) or mean
-            restored.maximum = tonumber(value.maximum) or mean
-        end
-        return restored
-    end
-
     local function getPingMilliseconds(): number
         local pingMs: number = 0
         pcall(function(): ()
@@ -2156,97 +2138,6 @@ local function createTrajectoryCalibration(): any
                 .. " bytes)"
         )
         return true
-    end
-
-    local function loadSnapshot(): ()
-        if type(environment.readfile) ~= "function" then
-            return
-        end
-        if type(environment.isfile) == "function" then
-            local existsOk: boolean, exists: any = pcall(environment.isfile, OUTPUT_PATH)
-            if not existsOk or exists ~= true then
-                return
-            end
-        end
-        local readOk: boolean, encoded: any = pcall(environment.readfile, OUTPUT_PATH)
-        if not readOk or type(encoded) ~= "string" or encoded == "" then
-            return
-        end
-        local decodeOk: boolean, decoded: any = pcall(
-            HttpService.JSONDecode,
-            HttpService,
-            encoded
-        )
-        if not decodeOk
-            or type(decoded) ~= "table"
-            or decoded.placeId ~= game.PlaceId
-            or decoded.schema ~= 2
-            or decoded.kind ~= "mm2-trajectory-analytics" then
-            if decodeOk
-                and type(decoded) == "table"
-                and decoded.placeId == game.PlaceId
-                and decoded.schema == 1
-                and type(environment.writefile) == "function" then
-                pcall(
-                    environment.writefile,
-                    OUTPUT_FOLDER
-                        .. "/MM2_Trajectory_Calibration.schema1.backup.json",
-                    encoded
-                )
-            end
-            warn(
-                trajectoryLogPrefix .. " Cache schema 1 ignored; schema 2 starts clean."
-            )
-            return
-        end
-        local aggregate: any = decoded.aggregate
-        if type(aggregate) == "table" then
-            runtime.gunAcceptance = restoreStats(aggregate.gunAcceptanceMs)
-            runtime.knifeSpeed = restoreStats(aggregate.knifeSpeedStudsPerSecond)
-            runtime.knifeSpawnDelay = restoreStats(aggregate.knifeSpawnDelayMs)
-        end
-        local analytics: any = decoded.analytics
-        if type(analytics) == "table"
-            and type(analytics.motionModel) == "table" then
-            for key: string, bucket: any in pairs(analytics.motionModel) do
-                local count: number = math.max(0, tonumber(bucket.count) or 0)
-                local residual: any = bucket.meanConstantVelocityResidual
-                local errors: any = bucket.meanModelError
-                runtime.motionBuckets[key] = {
-                    count = count,
-                    horizontalLeadSum = (tonumber(bucket.meanHorizontalLeadSeconds) or 0)
-                        * count,
-                    horizontalLeadCount = bucket.meanHorizontalLeadSeconds ~= nil
-                            and count
-                        or 0,
-                    verticalLeadSum = (tonumber(bucket.meanVerticalLeadSeconds) or 0)
-                        * count,
-                    verticalLeadCount = bucket.meanVerticalLeadSeconds ~= nil
-                            and count
-                        or 0,
-                    residualXSum = type(residual) == "table"
-                            and (tonumber(residual[1]) or 0) * count
-                        or 0,
-                    residualYSum = type(residual) == "table"
-                            and (tonumber(residual[2]) or 0) * count
-                        or 0,
-                    residualZSum = type(residual) == "table"
-                            and (tonumber(residual[3]) or 0) * count
-                        or 0,
-                    durationSum = (tonumber(bucket.meanDurationSeconds) or 0) * count,
-                    constantVelocityErrorSum = type(errors) == "table"
-                            and (tonumber(errors.constantVelocity) or 0) * count
-                        or 0,
-                    observedAccelerationErrorSum = type(errors) == "table"
-                            and (tonumber(errors.observedAcceleration) or 0) * count
-                        or 0,
-                    airborneBallisticErrorSum = type(errors) == "table"
-                            and (tonumber(errors.airborneBallistic) or 0) * count
-                        or 0,
-                }
-            end
-        end
-        print(trajectoryLogPrefix .. " Perfil acumulativo restaurado.")
     end
 
     local function normalizeGun(value: any): Tool?
@@ -2680,7 +2571,6 @@ local function createTrajectoryCalibration(): any
         end
         runtime.active = true
         runtime.startedAt = os.clock()
-        loadSnapshot()
         observeContainer(LocalPlayer:FindFirstChildOfClass("Backpack"))
         observeContainer(LocalPlayer.Character)
         trackConnection(LocalPlayer.CharacterAdded:Connect(function(
@@ -2697,11 +2587,10 @@ local function createTrajectoryCalibration(): any
         print(trajectoryLogPrefix .. " Passive calibration started in the background.")
     end
 
-    function controller:save(reason: string?): boolean
-        return saveSnapshot(reason or "manual")
-    end
-
-    function controller:reset(): ()
+    -- Drop the working history so the next capture starts clean. Shared by the
+    -- manual save (snapshot then clear) and the explicit reset (clear then
+    -- snapshot an empty file).
+    local function clearHistory(): ()
         runtime.gunAcceptance = newStats()
         runtime.knifeSpeed = newStats()
         runtime.knifeSpawnDelay = newStats()
@@ -2711,6 +2600,22 @@ local function createTrajectoryCalibration(): any
         runtime.sessionGunConfirmed = 0
         runtime.sessionKnifeAttempts = 0
         runtime.sessionKnifeConfirmed = 0
+    end
+
+    function controller:save(reason: string?): boolean
+        local saved: boolean = saveSnapshot(reason or "manual")
+        if saved then
+            -- The snapshot is on disk; clear the working history so the next
+            -- save is a fresh capture instead of re-appending everything that
+            -- was already saved before.
+            clearHistory()
+            runtime.dirty = false
+        end
+        return saved
+    end
+
+    function controller:reset(): ()
+        clearHistory()
         runtime.dirty = true
         saveSnapshot("reset")
     end

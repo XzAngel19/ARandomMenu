@@ -8,6 +8,9 @@ local Module = {
 
 local activeCleanup: () -> () = function(): () end
 
+-- The alias every label showing the local player's name is rewritten to.
+local ALIAS = "John Doe"
+
 function Module.init(runtime: any): any
     if Module.Initialized then
         return Module
@@ -16,12 +19,14 @@ function Module.init(runtime: any): any
     assert(type(core) == "table", "MM2 Hide Names requires the MM2 core module")
     Module.Runtime = runtime
 
+    -- label -> the text it had before we rewrote it, so disabling restores it.
     local hiddenNameLabels = setmetatable({}, {__mode = "k"})
+
     local function toggleHideNames(enabled)
         disconnectFeatureConnection("MM2HideNames")
         if not enabled then
             for label, originalText in pairs(hiddenNameLabels) do
-                if label and label.Parent and label.Text == "Anon" then
+                if label and label.Parent and label.Text == ALIAS then
                     label.Text = originalText
                 end
             end
@@ -37,24 +42,36 @@ function Module.init(runtime: any): any
             end
             elapsed = 0
 
+            -- Only the local player's own identity is masked. Every string form
+            -- the UIs use for a player is covered: bare name, display name, the
+            -- @handle, and the "Display (@user)" form the player list and chat
+            -- headers render.
             local names = {}
-            for _, player in ipairs(Players:GetPlayers()) do
-                names[player.Name] = true
-                names[player.DisplayName] = true
-                names["@" .. player.Name] = true
-                names[player.DisplayName .. " (@" .. player.Name .. ")"] = true
-            end
+            names[LocalPlayer.Name] = true
+            names[LocalPlayer.DisplayName] = true
+            names["@" .. LocalPlayer.Name] = true
+            names[LocalPlayer.DisplayName .. " (@" .. LocalPlayer.Name .. ")"] = true
+
+            -- Where the name can appear:
+            --   * PlayerGui  -> the MM2 scoreboard and any in-game panel
+            --   * RobloxGui.PlayerList -> the default player list
+            --   * ExperienceChat -> the chat window (sender labels)
             local roots = {}
             local playerGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
             if playerGui then
                 table.insert(roots, playerGui)
             end
             pcall(function()
-                local robloxGui = game:GetService("CoreGui"):FindFirstChild("RobloxGui")
+                local coreGui = game:GetService("CoreGui")
+                local robloxGui = coreGui:FindFirstChild("RobloxGui")
                 local playerList = robloxGui
                     and robloxGui:FindFirstChild("PlayerList", true)
                 if playerList then
                     table.insert(roots, playerList)
+                end
+                local chat = coreGui:FindFirstChild("ExperienceChat")
+                if chat then
+                    table.insert(roots, chat)
                 end
             end)
 
@@ -65,7 +82,7 @@ function Module.init(runtime: any): any
                         if hiddenNameLabels[object] == nil then
                             hiddenNameLabels[object] = object.Text
                         end
-                        object.Text = "Anon"
+                        object.Text = ALIAS
                     end
                 end
             end
@@ -74,7 +91,8 @@ function Module.init(runtime: any): any
 
     createUniversalFeature(
         "Hide Names",
-        "Replace player names in local UI and leaderboards with Anon",
+        "Replace your own name with " .. ALIAS
+            .. " in the MM2 scoreboard, chat and player list",
         18,
         toggleHideNames,
         {
