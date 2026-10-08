@@ -1,0 +1,324 @@
+export type Runtime = {
+    framework: any,
+    entity: any,
+    host: any,
+}
+
+local Module = {
+    Name = "Hitboxes",
+    PlaceId = 0,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local activeCleanup: (() -> ())? = nil
+
+function Module.init(context: Runtime): any
+    local host: any = context.host
+    local framework: any = context.framework
+    local entityLibrary: any = context.entity
+    local Players: any = host.Players
+    local LocalPlayer: any = host.LocalPlayer
+
+    type HitboxSettings = {
+        part: string,
+        expand: number,
+        reveal: boolean,
+        transparency: number,
+        teamCheck: boolean,
+        includeNpcs: boolean,
+        noCollision: boolean,
+    }
+
+    type HitboxWritten = {
+        size: Vector3,
+        transparency: number,
+        canCollide: boolean,
+        massless: boolean,
+    }
+
+    type OriginalHitboxState = {
+        size: Vector3,
+        transparency: number,
+        canCollide: boolean,
+        massless: boolean,
+
+        written: HitboxWritten,
+    }
+
+    local hitboxSettings: HitboxSettings = {
+        part = "Root",
+        expand = 6,
+        reveal = false,
+        transparency = 60,
+        teamCheck = true,
+        includeNpcs = false,
+        noCollision = true,
+    }
+    local originalHitboxes: {[BasePart]: OriginalHitboxState} =
+        setmetatable({}, {__mode = "k"}) :: any
+
+    local function restoreHitboxPart(part: BasePart): ()
+        local original: OriginalHitboxState? = originalHitboxes[part]
+        if not original then
+            return
+        end
+        if part.Parent then
+            part.Size = (original :: OriginalHitboxState).size
+            part.Transparency = (original :: OriginalHitboxState).transparency
+            part.CanCollide = (original :: OriginalHitboxState).canCollide
+            part.Massless = (original :: OriginalHitboxState).massless
+        end
+        originalHitboxes[part] = nil
+    end
+
+    local function restoreHitboxes(): ()
+        for part: BasePart in pairs(originalHitboxes) do
+            restoreHitboxPart(part)
+        end
+        originalHitboxes = setmetatable({}, {__mode = "k"}) :: any
+    end
+
+    local function applyHitboxToPart(part: BasePart): ()
+        local original: OriginalHitboxState? = originalHitboxes[part]
+        if not original then
+            original = {
+                size = part.Size,
+                transparency = part.Transparency,
+                canCollide = part.CanCollide,
+                massless = part.Massless,
+                written = {
+                    size = part.Size,
+                    transparency = part.Transparency,
+                    canCollide = part.CanCollide,
+                    massless = part.Massless,
+                },
+            }
+            originalHitboxes[part] = original
+        end
+        local resolved: OriginalHitboxState = original :: OriginalHitboxState
+        local last: HitboxWritten = resolved.written
+
+        if part.Size ~= last.size then
+            resolved.size = part.Size
+        end
+        if part.Transparency ~= last.transparency then
+            resolved.transparency = part.Transparency
+        end
+        if part.CanCollide ~= last.canCollide then
+            resolved.canCollide = part.CanCollide
+        end
+        if part.Massless ~= last.massless then
+            resolved.massless = part.Massless
+        end
+
+        local expand: number = hitboxSettings.expand
+        local nextSize: Vector3 = resolved.size + Vector3.new(expand, expand, expand)
+        local nextTransparency: number = hitboxSettings.reveal
+            and math.clamp(hitboxSettings.transparency / 100, 0, 1)
+            or resolved.transparency
+        local nextCanCollide: boolean = not hitboxSettings.noCollision and resolved.canCollide
+
+        if part.Size ~= nextSize then
+            part.Size = nextSize
+        end
+        if part.Transparency ~= nextTransparency then
+            part.Transparency = nextTransparency
+        end
+        if part.CanCollide ~= nextCanCollide then
+            part.CanCollide = nextCanCollide
+        end
+        if not part.Massless then
+            part.Massless = true
+        end
+        last.size = nextSize
+        last.transparency = nextTransparency
+        last.canCollide = nextCanCollide
+        last.massless = true
+    end
+
+    local function applyHitboxCharacter(character: Model): ()
+        local wanted: {string} = hitboxSettings.part == "Head"
+            and {"Head"}
+            or (hitboxSettings.part == "Both" and {"HumanoidRootPart", "Head"})
+            or {"HumanoidRootPart"}
+        for _, child: Instance in ipairs(character:GetChildren()) do
+            if not child:IsA("BasePart") then
+                continue
+            end
+            local part: BasePart = child :: BasePart
+            if table.find(wanted, part.Name) then
+                applyHitboxToPart(part)
+            else
+                restoreHitboxPart(part)
+            end
+        end
+    end
+
+    local function hitboxTargets(): {Model}
+        local targets: {Model} = {}
+        entityLibrary:Refresh()
+        for _, player: Player in ipairs(Players:GetPlayers()) do
+            if player == LocalPlayer then
+                continue
+            end
+            if hitboxSettings.teamCheck and entityLibrary:IsFriendly(player) then
+                continue
+            end
+            if entityLibrary:IsProtected(player) then
+                continue
+            end
+            local character: Model? = player.Character
+            local humanoid: Humanoid? = character
+                and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+            if character and humanoid and humanoid.Health > 0 then
+                table.insert(targets, character :: Model)
+            end
+        end
+        if hitboxSettings.includeNpcs then
+            for _, npc: any in ipairs(entityLibrary.NPCList or {}) do
+                if (not hitboxSettings.teamCheck or not npc.IsFriendly)
+                    and npc.Character
+                    and npc.Humanoid
+                    and npc.Humanoid.Health > 0 then
+                    table.insert(targets, npc.Character)
+                end
+            end
+        end
+        return targets
+    end
+
+    local function sweepHitboxes(): ()
+        local alive: {[BasePart]: boolean} = {}
+        for _, character: Model in ipairs(hitboxTargets()) do
+            applyHitboxCharacter(character)
+            for _, child: Instance in ipairs(character:GetChildren()) do
+                if child:IsA("BasePart") and originalHitboxes[child :: BasePart] then
+                    alive[child :: BasePart] = true
+                end
+            end
+        end
+
+        for part: BasePart in pairs(originalHitboxes) do
+            if not alive[part] then
+                restoreHitboxPart(part)
+            end
+        end
+    end
+
+    local hitboxes: any
+    hitboxes = framework.Categories.Combat:CreateModule({
+        Name = "Hitboxes",
+        Category = "Combat",
+        Order = 3,
+        Tooltip = "Expand the part enemies are hit on, in studs. Teammates and "
+            .. "friends are left alone, and every part is restored exactly when "
+            .. "it stops being a target.",
+        Function = function(enabled: boolean): ()
+            restoreHitboxes()
+            if not enabled then
+                hitboxes:SetStatus(nil)
+                return
+            end
+            hitboxes:SetStatus(
+                hitboxSettings.part .. " +" .. tostring(math.round(hitboxSettings.expand))
+            )
+            hitboxes:Clean(restoreHitboxes)
+
+            hitboxes:Loop(function(): ()
+                sweepHitboxes()
+            end)
+        end,
+    })
+    hitboxes:CreateDropdown({
+        Name = "Part",
+        List = {"Root", "Head", "Both"},
+        Index = 1,
+        Function = function(value: string): ()
+            hitboxSettings.part = value
+            if hitboxes.Enabled then
+                hitboxes:SetStatus(
+                    value .. " +" .. tostring(math.round(hitboxSettings.expand))
+                )
+            end
+        end,
+        Tooltip = "Which part of the character is expanded. Parts the new "
+            .. "mode no longer owns are restored on the next sweep.",
+    })
+    hitboxes:CreateSlider({
+        Name = "Expand",
+        Min = 0,
+        Max = 30,
+        Default = hitboxSettings.expand,
+        Function = function(value: number): ()
+            hitboxSettings.expand = value
+            if hitboxes.Enabled then
+                hitboxes:SetStatus(
+                    hitboxSettings.part .. " +" .. tostring(math.round(value))
+                )
+            end
+        end,
+        Tooltip = "Studs added to the target part. Past roughly 10 the box is "
+            .. "wider than the character is tall and anyone watching can see "
+            .. "hits landing on nothing.",
+    })
+    hitboxes:CreateToggle({
+        Name = "Team check",
+        Default = hitboxSettings.teamCheck,
+        Function = function(value: boolean): ()
+            hitboxSettings.teamCheck = value
+        end,
+        Tooltip = "Leave teammates at their real size.",
+    })
+    hitboxes:CreateToggle({
+        Name = "Include NPCs",
+        Default = hitboxSettings.includeNpcs,
+        Function = function(value: boolean): ()
+            hitboxSettings.includeNpcs = value
+        end,
+    })
+    hitboxes:CreateToggle({
+        Name = "Show hitbox",
+        Default = hitboxSettings.reveal,
+        Function = function(value: boolean): ()
+            hitboxSettings.reveal = value
+        end,
+        Tooltip = "Draw the expanded part so you can see what you are actually "
+            .. "aiming at.",
+    })
+    hitboxes:CreateSlider({
+        Name = "Show transparency %",
+        Show = {Option = "Show hitbox"},
+        Min = 0,
+        Max = 95,
+        Default = hitboxSettings.transparency,
+        Function = function(value: number): ()
+            hitboxSettings.transparency = value
+        end,
+    })
+    hitboxes:CreateToggle({
+        Name = "No collision",
+        Default = hitboxSettings.noCollision,
+        Function = function(value: boolean): ()
+            hitboxSettings.noCollision = value
+        end,
+        Tooltip = "An expanded part that still collides pushes its owner "
+            .. "around the map, which everyone in the server can see.",
+    })
+
+    activeCleanup = function(): ()
+        restoreHitboxes()
+    end
+    Module.Initialized = true
+    return hitboxes
+end
+
+function Module.destroy(): ()
+    if activeCleanup then
+        pcall(activeCleanup)
+    end
+    activeCleanup = nil
+    Module.Initialized = false
+end
+
+return Module

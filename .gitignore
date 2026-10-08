@@ -1,8 +1,3 @@
-*.log
-*.tmp
-Thumbs.db
-.DS_Store
-runtime-config/
-local-profiles/
-/compile-*.txt
-/register-stats.json
+loadstring.lua
+* - dev
+* - dev.lua

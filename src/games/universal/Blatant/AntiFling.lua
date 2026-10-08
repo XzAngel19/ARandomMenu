@@ -1,0 +1,114 @@
+export type Runtime = {
+    framework: any,
+    entity: any,
+    host: any,
+    services: any,
+}
+
+local Module = {
+    Name = "AntiFling",
+    PlaceId = 0,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local activeCleanup: (() -> ())? = nil
+
+function Module.init(context: Runtime): any
+    local host: any = context.host
+    local TaskManager: any = host.TaskManager
+    local featureConnections: any = host.featureConnections
+    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
+    local getCharacterParts: any = host.getCharacterParts
+    local activity: any = context.services.activity
+    local createUniversalFeature: any = host.createUniversalFeature
+    local addNumberOption: any = host.addNumberOption
+    local antiFlingSettings = {velocityLimit = 120}
+    local antiFlingSafeCFrame = nil
+    local AntiFlingFeature: any = nil
+    local antiFlingStatus: string? = nil
+
+    local function setAntiFlingStatus(status: string?): ()
+        if antiFlingStatus == status then
+            return
+        end
+        antiFlingStatus = status
+        if AntiFlingFeature then
+            AntiFlingFeature:SetStatus(status)
+        end
+    end
+
+    local function toggleAntiFling(enabled)
+        disconnectFeatureConnection("AntiFling")
+        antiFlingSafeCFrame = nil
+
+        if not enabled then
+            setAntiFlingStatus(nil)
+            return
+        end
+
+        setAntiFlingStatus("standing by")
+        featureConnections.AntiFling = TaskManager:Connect(function()
+
+            if activity.isActive("fling") then
+                return
+            end
+
+            local _, humanoid, root = getCharacterParts()
+            if not humanoid or not root then
+                return
+            end
+
+            local linearSpeed = root.AssemblyLinearVelocity.Magnitude
+            local angularSpeed = root.AssemblyAngularVelocity.Magnitude
+
+            if linearSpeed > antiFlingSettings.velocityLimit
+                or angularSpeed > antiFlingSettings.velocityLimit then
+                setAntiFlingStatus("blocking")
+                root.AssemblyLinearVelocity = Vector3.zero
+                root.AssemblyAngularVelocity = Vector3.zero
+                if antiFlingSafeCFrame then
+                    root.CFrame = antiFlingSafeCFrame
+                end
+            elseif humanoid.FloorMaterial ~= Enum.Material.Air
+                and linearSpeed < antiFlingSettings.velocityLimit * 0.45 then
+                setAntiFlingStatus("standing by")
+                antiFlingSafeCFrame = root.CFrame
+            end
+        end)
+    end
+
+    AntiFlingFeature = createUniversalFeature(
+        "Anti-Fling",
+        "Stop extreme local velocity and return to safety",
+        14,
+        toggleAntiFling,
+        {categoryName = "Blatant"}
+    )
+    addNumberOption(
+        AntiFlingFeature,
+        "Velocity limit",
+        antiFlingSettings.velocityLimit,
+        40,
+        1000,
+        function(value)
+            antiFlingSettings.velocityLimit = value
+        end
+    )
+
+    activeCleanup = function(): ()
+        disconnectFeatureConnection("AntiFling")
+    end
+    Module.Initialized = true
+    return AntiFlingFeature
+end
+
+function Module.destroy(): ()
+    if activeCleanup then
+        pcall(activeCleanup)
+    end
+    activeCleanup = nil
+    Module.Initialized = false
+end
+
+return Module
