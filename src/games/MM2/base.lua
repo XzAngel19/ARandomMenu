@@ -1335,22 +1335,22 @@ end
 -- Shot lead
 --
 -- MM2's gun is a hitscan: the server scores the ray we hand it against the
--- target's position at the instant it processes the shot. So the only question
--- is how far ahead of the copy we can see the target will be by then, and every
--- term of that answer is a real, nameable delay:
+-- target's position at the instant it processes the shot. The lead time is the
+-- real time that elapses between the target frame we can see and the target
+-- frame the server scores, and every term is a nameable delay:
 --
---   HORIZON = staleness + oneWayLatency + serverStep + sampleAge
+--   HORIZON = roundTrip + staleness + serverStep
 --
---   staleness    how old the replicated copy of the target is. Roblox streams
---                character transforms on a fixed heartbeat, so on average the
---                copy we read is half a replication interval old.
---   oneWayLatency half the measured round trip: the shot still has to travel to
---                the server. The round trip is *not* the right number here, and
---                using it doubled the lead at every ping above ~40 ms.
---   serverStep   the server scores the ray on its next frame, up to one frame
---                away. Half a frame is the expected value.
---   sampleAge    our own motion sampler runs at 30 Hz, so the velocity it
---                reports is half a sample old on average.
+--   roundTrip  the FULL measured round trip. The copy we aim from is already one
+--              network hop old (the server sent it rtt/2 ago), and our shot
+--              spends another rtt/2 reaching the server, so the target keeps
+--              moving for the whole round trip in between. An earlier version
+--              used rtt/2 here and under-led by rtt/2: invisible at 20 ms, but a
+--              visible miss behind the target at 100 ms+.
+--   staleness  on top of network latency, the replicated copy we read is half a
+--              replication interval old on average.
+--   serverStep the server scores the ray on its next frame, up to one frame
+--              away. Half a frame is the expected value.
 --
 -- `gunLeadBias` stays as the single calibration knob: the telemetry module can
 -- measure a constant residual and fold it in here instead of anyone inventing a
@@ -1363,7 +1363,6 @@ end
 local GUN_LEAD = {
     replicationRate = 20,
     serverFrame = 1 / 60,
-    sampleRate = 30,
     minimumHorizon = 0.02,
     maximumHorizon = 0.45,
     -- How fast the target can change direction, in radians per second. It is
@@ -1380,11 +1379,9 @@ local GUN_LEAD = {
 local function getGunHorizonSeconds(): number
     local roundTripTime: number = getEstimatedLatency()
     local staleness: number = 1 / (2 * GUN_LEAD.replicationRate)
-    local sampleAge: number = 1 / (2 * GUN_LEAD.sampleRate)
-    local horizon: number = staleness
-        + roundTripTime * 0.5
+    local horizon: number = roundTripTime
+        + staleness
         + GUN_LEAD.serverFrame * 0.5
-        + sampleAge
         + mm2Settings.gunLeadBias
     return math.clamp(
         horizon,
