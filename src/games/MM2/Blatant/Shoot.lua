@@ -371,8 +371,14 @@ function Module.init(runtime: any): any
             return true
         end
 
+        -- The server scores the shot as a ray from arg1's origin along its look
+        -- vector, so arg1 must sit at the muzzle and look at the target. `aim` is
+        -- deliberately positioned at the target (the feedback module reads
+        -- aim.Position as the aim point), so firing `aim` directly would start the
+        -- server's ray ON the target pointing away and miss. Build the real shot
+        -- frame from the muzzle instead - this is what the vanilla client sends.
         remote:FireServer(
-            aim :: CFrame,
+            CFrame.lookAt(origin.Position, resolved.endpoint),
             CFrame.new(resolved.endpoint)
         )
         runtime.lastShotClock = os.clock()
