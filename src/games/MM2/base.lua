@@ -1114,7 +1114,9 @@ primeRoundState = function(): ()
     local generation: number = roleRefreshGeneration
     requestRoleRefresh(true)
     task.spawn(function(): ()
-        for _, delay: number in ipairs({0.15, 0.4, 0.8, 1.5}) do
+        -- Two retries cover the rounds where the server hands the payload out a
+        -- beat after the teleport; more is belt-and-suspenders (YAGNI).
+        for _, delay: number in ipairs({0.2, 0.6}) do
             task.wait(delay)
             if generation ~= roleRefreshGeneration or roundRolesKnown() then
                 break
@@ -1356,16 +1358,9 @@ end
 -- half second of extrapolation; past that point the turn discount below is what
 -- keeps the shot honest, not the cap.
 -- ---------------------------------------------------------------------------
-local GUN_LEAD: {
-    replicationRate: number,
-    serverFrame: number,
-    sampleRate: number,
-    minimumHorizon: number,
-    maximumHorizon: number,
-    defaultTurnRate: number,
-    maxTurnRate: number,
-    turnRatePerInstability: number,
-} = {
+-- Luau infers the field types from the literals; the explicit annotation was
+-- redundant (KISS).
+local GUN_LEAD = {
     replicationRate = 20,
     serverFrame = 1 / 60,
     sampleRate = 30,

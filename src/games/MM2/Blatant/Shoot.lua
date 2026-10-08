@@ -39,17 +39,14 @@ function Module.init(runtime: any): any
     -- GUN_LEAD in base.lua). There is no per-ping special case and no ladder of
     -- fallback leads: the same expression runs at 20 ms and at 350 ms, and the
     -- only thing that changes with ping is the horizon itself.
+    -- Only the fields a caller actually reads. The solver computes more than
+    -- this internally (horizon, turn rate/discount), but those stay local: a
+    -- field nobody consumes is just dead weight (KISS/YAGNI).
     type GunPrediction = {
-        aimPart: BasePart,
         targetPosition: Vector3,
         endpoint: Vector3,
         velocity: Vector3,
-        leadSeconds: number,
-        horizonSeconds: number,
-        turnRate: number,
-        turnDiscount: number,
         errorRadius: number,
-        confidence: number,
     }
 
     type GunAimOptions = {
@@ -203,23 +200,12 @@ function Module.init(runtime: any): any
             return nil, nil, "turning too hard"
         end
 
-        local confidence: number = math.clamp(
-            1 - errorRadius / BODY_HALF_WIDTH,
-            0,
-            1
-        )
         local direction: Vector3 = delta.Unit
         return CFrame.lookAt(predicted, predicted + direction), {
-            aimPart = part :: BasePart,
             targetPosition = predicted,
             endpoint = predicted,
             velocity = velocity,
-            leadSeconds = lead,
-            horizonSeconds = horizon,
-            turnRate = turnRate,
-            turnDiscount = discount,
             errorRadius = errorRadius,
-            confidence = confidence,
         }, nil
     end
 
@@ -288,12 +274,14 @@ function Module.init(runtime: any): any
         local sweep: number = 0
         if horizontal.Magnitude > 1.5 and mm2Settings.silentSweep > 0 then
             direction = horizontal.Unit
-            -- Residual lead error scales with speed and latency. Laying the
-            -- segment along the movement axis keeps the body on the ray even when
-            -- the estimate lands slightly early or late.
+            -- Lay the authored segment along the movement axis, extended by the
+            -- solver's own error budget. This replaces the old speed*lead guess
+            -- with the one number that already accounts for turn uncertainty and
+            -- latency, so the sweep widens exactly when the prediction is least
+            -- certain instead of on a separate ad-hoc scale.
             sweep = math.clamp(
-                horizontal.Magnitude * prediction.leadSeconds * 0.9,
-                0.75,
+                prediction.errorRadius,
+                0.5,
                 mm2Settings.silentSweep
             )
         end
