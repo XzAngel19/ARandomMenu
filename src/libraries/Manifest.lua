@@ -248,6 +248,11 @@ local Manifest: Manifest = {
             category = "Other",
         },
         {
+            path = "src/games/universal/Utility/GameLearning.lua",
+            name = "Game Learning",
+            category = "Other",
+        },
+        {
             path = "src/games/universal/Utility/SpinBot.lua",
             name = "SpinBot",
             category = "Fun",
