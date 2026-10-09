@@ -71,6 +71,10 @@ local mm2Settings = {
     gunLeadBias = 0,
     autoTuneLead = true,
     silentSweep = 3,
+    -- Where the silent bullet is authored: "Front" (shooter's side of the
+    -- torso), "Through" (pierces the torso), "Top" (old, 1.6 above), "Behind"
+    -- (far side). The Spawn A/B status measures which actually scores.
+    silentSpawn = "Front",
     getGunKey = Enum.KeyCode.G,
     instantRoleNotify = false,
     roleEspAll = false,
@@ -2794,6 +2798,9 @@ type PendingShot = {
     horizon: number?,
     velocity: Vector3?,
     trajectory: {{t: number, p: Vector3}}?,
+    -- Silent spawn A/B: which authored geometry this shot used (Front,
+    -- Through, Top or Behind); nil for normal-mode shots.
+    silentSpawn: string?,
 }
 -- Structural shape of the Shoot solver's prediction; only the fields the
 -- feedback UI and the lead tuner read are named here.
@@ -2810,6 +2817,10 @@ state.mm2ShotFeedback = {
     shootActive = false,
     pending = nil :: PendingShot?,
     lastAccepted = nil :: PendingShot?,
+    -- Per silent-spawn-variant scorecard (Front/Through/Top/Behind): the only
+    -- way to settle which authored geometry actually scores is to count real
+    -- shots. Accumulates for the session; surfaced by the Spawn A/B action.
+    spawnStats = {} :: {[string]: {shots: number, hits: number, misses: number}},
     token = 0,
     defaultDuration = 5,
     gunFiredConnected = false,
@@ -3155,6 +3166,21 @@ state.mm2ShotFeedback.resolve = function(
         if hitConfirmed then
             tuneFromConfirmedShot(candidate)
             state.mm2ShotFeedback.hide()
+        end
+
+        -- Silent spawn A/B: count confirmed hits and misses per authored
+        -- geometry so the user can compare variants with real shots.
+        local variant: string? = candidate.silentSpawn
+        if variant then
+            local stats: any = state.mm2ShotFeedback.spawnStats[variant]
+                or {shots = 0, hits = 0, misses = 0}
+            stats.shots += 1
+            if hitConfirmed then
+                stats.hits += 1
+            else
+                stats.misses += 1
+            end
+            state.mm2ShotFeedback.spawnStats[variant] = stats
         end
 
         if not hitConfirmed and mm2Settings.showMissCooldown then

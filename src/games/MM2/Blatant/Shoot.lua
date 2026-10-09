@@ -264,17 +264,32 @@ function Module.init(runtime: any): any
     -- the raw, one-frame-old root position it used before.
     --
     -- The bullet appears where arg1 sits, so arg1 is the visual spawn point.
-    -- It is placed in front of the torso, on the shooter's side, at torso
-    -- height: a straight-on shot then travels straight and level. The old
-    -- version lifted the origin 1.6 studs above the impact point, which is why
-    -- silent bullets visibly fell from above onto the target.
+    -- Four authored geometries are offered as a live A/B (the menu cannot
+    -- assert which one scores best - the server's hit test is inferred, not
+    -- known), and every shot is tagged with its variant so the Spawn A/B
+    -- status and the Game Learning log can count real hits per geometry:
+    --
+    --   Front   in front of the torso, shooter's side, at torso height.
+    --           Straight-on shots travel straight and level.
+    --   Through the whole segment pierces the torso (front to far side):
+    --           the longest possible segment inside the body, so a predicted
+    --           point off by up to ~1 stud still leaves the segment crossing
+    --           the capsule.
+    --   Top     the old geometry: 1.6 studs above the impact point. The
+    --           vertical segment through the body axis crosses more of the
+    --           capsule than Front does, which is why it may have scored more.
+    --   Behind  authored on the far side of the torso; the bullet visibly
+    --           travels toward the shooter.
     local SILENT_ORIGIN_STUDS: number = 2.5
+    local SILENT_PIERCE_STUDS: number = 1.0
+    local SILENT_LIFT_STUDS: number = 1.6
 
     local function buildSilentShot(
         target: Player,
         prediction: GunPrediction,
-        muzzleOrigin: CFrame?
-    ): (CFrame, CFrame)
+        muzzleOrigin: CFrame?,
+        variant: string
+    ): (CFrame, CFrame, number)
         local predicted: Vector3 = prediction.targetPosition
         local velocity: Vector3 = prediction.velocity
         local horizontal: Vector3 = Vector3.new(velocity.X, 0, velocity.Z)
@@ -294,6 +309,8 @@ function Module.init(runtime: any): any
                 mm2Settings.silentSweep
             )
         end
+        local sweepEnd: Vector3 =
+            direction and direction * (sweep * 0.35) or Vector3.zero
 
         -- Horizontal direction from the shooter to the predicted point: the
         -- bullet appears on the shooter's side of the torso. The offset is
@@ -314,31 +331,48 @@ function Module.init(runtime: any): any
         end
 
         local startPoint: Vector3
-        if approach then
+        local endPoint: Vector3
+        if variant == "Through" and approach then
+            -- Front to far side: the segment crosses the full body.
             startPoint = predicted - approach * approachOffset
                 - (direction and direction * sweep or Vector3.zero)
+            endPoint = predicted + approach * SILENT_PIERCE_STUDS + sweepEnd
+        elseif variant == "Top" then
+            startPoint = predicted + Vector3.new(0, SILENT_LIFT_STUDS, 0)
+                + (direction and direction * sweep or Vector3.zero)
+            endPoint = predicted + sweepEnd
+        elseif variant == "Behind" and approach then
+            startPoint = predicted + approach * approachOffset
+                + (direction and direction * sweep or Vector3.zero)
+            endPoint = predicted + sweepEnd
+        elseif approach then
+            -- "Front" (default) and the fallback for Behind without approach.
+            startPoint = predicted - approach * approachOffset
+                - (direction and direction * sweep or Vector3.zero)
+            endPoint = predicted + sweepEnd
         elseif direction then
             startPoint = predicted - direction * sweep
+            endPoint = predicted + sweepEnd
         else
             -- Shooter directly above the target with no movement axis to lean
-            -- on: keep the old lifted origin as the last resort.
-            startPoint = predicted + Vector3.new(0, 1.6, 0)
+            -- on: the old lifted origin is the only usable geometry.
+            startPoint = predicted + Vector3.new(0, SILENT_LIFT_STUDS, 0)
+            endPoint = predicted
         end
-        -- Only a small overshoot: the endpoint has to stay on the body in case
-        -- the server scores the hit from the endpoint rather than from the ray.
-        local endPoint: Vector3 = predicted
-            + (direction and direction * (sweep * 0.35) or Vector3.zero)
 
         if sweep > 0 and bystanderOnSegment(target, startPoint, endPoint) then
-            if approach then
+            -- Collapse to a point on the body: hitting the wrong player as
+            -- sheriff is an instant loss.
+            if variant ~= "Top" and approach then
                 startPoint = predicted - approach * approachOffset
             else
-                startPoint = predicted + Vector3.new(0, 1.6, 0)
+                startPoint = predicted + Vector3.new(0, SILENT_LIFT_STUDS, 0)
             end
             endPoint = predicted
         end
 
-        return CFrame.lookAt(startPoint, endPoint), CFrame.new(endPoint)
+        return CFrame.lookAt(startPoint, endPoint), CFrame.new(endPoint),
+            approachOffset
     end
 
     -- Options for one trigger pull. `silent` authors the shot at the target
@@ -457,9 +491,20 @@ function Module.init(runtime: any): any
         if silent then
             -- The silent packet is authored at the target, so the feedback must
             -- expect the GunFired origin there, not at the muzzle.
-            local shotOrigin: CFrame, shotEnd: CFrame =
-                buildSilentShot(target, resolved, origin)
+            local variant: string = mm2Settings.silentSpawn
+            local shotOrigin: CFrame, shotEnd: CFrame, offset: number =
+                buildSilentShot(target, resolved, origin, variant)
             state.mm2ShotFeedback.queue(target, gun, shotOrigin, aim, resolved)
+            if state.mm2ShotFeedback.pending then
+                state.mm2ShotFeedback.pending.silentSpawn = variant
+            end
+            -- Published through the game bridge so the passive Game Learning
+            -- log can tag this shot with its authored geometry.
+            state.lastSilentShotInfo = {
+                variant = variant,
+                at = os.clock(),
+                offset = math.floor(offset * 10) / 10,
+            }
             remote:FireServer(shotOrigin, shotEnd)
             return true
         end
@@ -696,6 +741,52 @@ function Module.init(runtime: any): any
             .. "targets.",
         0.5
     )
+    local silentSpawnValues: {string} = {"Front", "Through", "Top", "Behind"}
+    local silentSpawnIndex: number = 1
+    for valueIndex: number, value: string in ipairs(silentSpawnValues) do
+        if value == mm2Settings.silentSpawn then
+            silentSpawnIndex = valueIndex
+        end
+    end
+    addCycleOption(
+        ShootFeature,
+        "Silent spawn",
+        silentSpawnValues,
+        silentSpawnIndex,
+        function(value: string): ()
+            mm2Settings.silentSpawn = value
+        end,
+        "Where the silent bullet is authored: Front = in front of the torso "
+            .. "at torso height; Through = pierces the torso; Top = the old "
+            .. "geometry (1.6 studs above); Behind = far side. Check Spawn A/B "
+            .. "status to see which variant actually scores."
+    )
+    local function spawnStatsText(): string
+        local stats: any = state.mm2ShotFeedback and
+            state.mm2ShotFeedback.spawnStats or {}
+        local parts: {string} = {}
+        for _, variant: string in ipairs({"Front", "Through", "Top", "Behind"}) do
+            local s: any = stats[variant]
+            if s and s.shots > 0 then
+                table.insert(
+                    parts,
+                    string.format(
+                        "%s %d/%d",
+                        variant,
+                        s.hits,
+                        s.shots
+                    )
+                )
+            end
+        end
+        if #parts == 0 then
+            return "Spawn A/B: no silent shots counted yet."
+        end
+        return "Spawn A/B (hits/shots): " .. table.concat(parts, " · ")
+    end
+    addActionOption(ShootFeature, "Spawn A/B status", function(): ()
+        notify(spawnStatsText())
+    end)
     addToggleOption(
         ShootFeature,
         "Auto tune lead",

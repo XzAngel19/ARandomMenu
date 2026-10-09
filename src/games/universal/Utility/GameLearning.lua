@@ -28,6 +28,10 @@ function Module.init(context: Runtime): any
     local PlayersService: any = host.Players or Players
     local Stats: any = host.Stats
     local httpService: any = host.HttpService or HttpService
+    -- Games that author shots (MM2's SilentAIM) publish the last authored
+    -- geometry here; nil everywhere else, so this stays a no-op.
+    local gameBridge: any = context.services and
+        context.services.gameBridge
 
     -- ---------------------------------------------------------------------------
     -- Game Learning: a passive log of what the server actually accepts.
@@ -61,6 +65,7 @@ function Module.init(context: Runtime): any
             aim: {number},
             scene: {SceneEntry},
             outcome: {[string]: any}?,
+            silentSpawn: {variant: string, offset: number}?,
         }
         type MovementRecord = {
             t: number,
@@ -107,6 +112,8 @@ function Module.init(context: Runtime): any
                 farthestKill = 0,
             },
             shotCounter = 0,
+            spawnShots = {} :: {[string]: number},
+            spawnKills = {} :: {[string]: number},
             connections = {} :: {RBXScriptConnection},
             observedTools = setmetatable({}, {__mode = "k"}) :: {[Tool]: boolean},
             watchedPlayers = setmetatable({}, {__mode = "k"}) :: {[Player]: boolean},
@@ -270,7 +277,24 @@ function Module.init(context: Runtime): any
                 aim = vectorArray(aim),
                 scene = scene,
                 outcome = nil,
+                silentSpawn = nil,
             }
+            -- Tag silent-authored shots with their spawn variant so the log
+            -- can compare hit rates per geometry (Front/Through/Top/Behind).
+            if gameBridge and type(gameBridge.silentShot) == "function" then
+                local okInfo: boolean, info: any = pcall(gameBridge.silentShot)
+                if okInfo
+                    and type(info) == "table"
+                    and info.variant ~= nil
+                    and os.clock() - (tonumber(info.at) or 0) < 2 then
+                    shot.silentSpawn = {
+                        variant = info.variant,
+                        offset = tonumber(info.offset) or 0,
+                    }
+                    local variant: string = info.variant
+                    runtime.spawnShots[variant] = (runtime.spawnShots[variant] or 0) + 1
+                end
+            end
             table.insert(runtime.shots, shot)
             clampTrim(runtime.shots, tuning.maxEvents)
             runtime.aggregates.shots += 1
@@ -333,6 +357,11 @@ function Module.init(context: Runtime): any
                     if entry.dist > runtime.aggregates.farthestKill then
                         runtime.aggregates.farthestKill = entry.dist
                     end
+                    if shot.silentSpawn then
+                        local variant: string = shot.silentSpawn.variant
+                        runtime.spawnKills[variant] =
+                            (runtime.spawnKills[variant] or 0) + 1
+                    end
                     table.insert(runtime.hits, {
                         t = os.time(),
                         killed = player.Name,
@@ -342,6 +371,7 @@ function Module.init(context: Runtime): any
                         lineOfSight = entry.los,
                         headOffset = entry.headOffset,
                         torso = entry.torso,
+                        silentSpawn = shot.silentSpawn,
                     })
                     clampTrim(runtime.hits, tuning.maxEvents)
                     attributed = true
@@ -613,6 +643,31 @@ function Module.init(context: Runtime): any
                         .. " abnormal hitbox geometry sample(s) observed on other players."
                 )
             end
+            local spawnTotal: number = 0
+            local spawnParts: {string} = {}
+            for _, variant: string in ipairs({"Front", "Through", "Top", "Behind"}) do
+                local shotsTaken: number = runtime.spawnShots[variant] or 0
+                if shotsTaken > 0 then
+                    spawnTotal += shotsTaken
+                    table.insert(
+                        spawnParts,
+                        string.format(
+                            "%s %d/%d",
+                            variant,
+                            runtime.spawnKills[variant] or 0,
+                            shotsTaken
+                        )
+                    )
+                end
+            end
+            if spawnTotal > 0 then
+                table.insert(
+                    insights,
+                    "Silent spawn A/B (kills/shots): "
+                        .. table.concat(spawnParts, " · ")
+                        .. ". Compare variants before changing the default."
+                )
+            end
             if #insights == 0 then
                 table.insert(
                     insights,
@@ -654,6 +709,16 @@ function Module.init(context: Runtime): any
                 aggregates[key] = (tonumber(aggregates[key]) or 0)
                     + (base :: number)
             end
+            local spawnShots: any = merged.spawnShots or {}
+            for key: string, base: number in pairs(runtime.spawnShots) do
+                spawnShots[key] = (tonumber(spawnShots[key]) or 0)
+                    + (base :: number)
+            end
+            local spawnKills: any = merged.spawnKills or {}
+            for key: string, base: number in pairs(runtime.spawnKills) do
+                spawnKills[key] = (tonumber(spawnKills[key]) or 0)
+                    + (base :: number)
+            end
             local payload: {[string]: any} = {
                 schema = 1,
                 kind = "game-learning-log",
@@ -667,6 +732,8 @@ function Module.init(context: Runtime): any
                 aggregates = aggregates,
                 insights = buildInsights(),
                 previousInsights = mergedInsights,
+                spawnShots = runtime.spawnShots,
+                spawnKills = runtime.spawnKills,
                 shots = runtime.shots,
                 movements = runtime.movements,
                 hits = runtime.hits,
@@ -691,7 +758,7 @@ function Module.init(context: Runtime): any
 
         local function status(): string
             local agg: any = runtime.aggregates
-            return string.format(
+            local base: string = string.format(
                 "Game Learning · shots %d · kills %d (wall %d · far %d) · misses %d · teleports %d · speed %d · anomalies %d",
                 agg.shots,
                 agg.kills,
@@ -702,6 +769,25 @@ function Module.init(context: Runtime): any
                 agg.speedSpikes,
                 agg.hitboxAnomalies
             )
+            local spawnParts: {string} = {}
+            for _, variant: string in ipairs({"Front", "Through", "Top", "Behind"}) do
+                local shotsTaken: number = runtime.spawnShots[variant] or 0
+                if shotsTaken > 0 then
+                    table.insert(
+                        spawnParts,
+                        string.format(
+                            "%s %d/%d",
+                            variant,
+                            runtime.spawnKills[variant] or 0,
+                            shotsTaken
+                        )
+                    )
+                end
+            end
+            if #spawnParts > 0 then
+                base = base .. " · spawn " .. table.concat(spawnParts, " ")
+            end
+            return base
         end
 
         local function deleteLogs(): boolean

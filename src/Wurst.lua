@@ -210,7 +210,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "audit-20261008-2"
+local SOURCE_STAMP: string = "audit-20261008-3"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -5463,6 +5463,11 @@ local moduleServices: ModuleServices = {
         onEvent = state.onGameBridge,
         playerRole = state.playerRole,
         playerRoleColor = state.playerRoleColor,
+        -- Games expose their last authored-shot geometry (variant, offset) so
+        -- passive loggers can tag each shot without game-specific coupling.
+        silentShot = function(): any
+            return state.lastSilentShotInfo
+        end,
     },
     shortcuts = {bindActivation = state.bindFeatureActivationKey},
     registries = {
