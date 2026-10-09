@@ -197,7 +197,8 @@ function Module.init(runtime: any): any
             MINIMUM_ERROR_RADIUS,
             turnError + jitter
         )
-        if errorRadius > BODY_HALF_WIDTH then
+        local allowedErrorBudget: number = ignoreVisibility and (BODY_HALF_WIDTH * 1.75) or BODY_HALF_WIDTH
+        if errorRadius > allowedErrorBudget then
             return nil, nil, "turning too hard"
         end
 

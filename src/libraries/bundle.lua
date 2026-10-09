@@ -1,5 +1,5 @@
 return {
-    stamp = "audit-20261009-4",
+    stamp = "audit-20261009-5",
     files = {
         ["src/libraries/Manifest.lua"] = [=[
 export type ModuleEntry = {
@@ -125,6 +125,11 @@ local Manifest: Manifest = {
             path = "src/games/universal/Blatant/WallHop.lua",
             name = "WallHop",
             category = "Movement",
+        },
+        {
+            path = "src/games/universal/Blatant/Invisible.lua",
+            name = "Invisible",
+            category = "Blatant",
         },
         {
             path = "src/games/universal/World/SafeWalk.lua",
@@ -13623,22 +13628,98 @@ function Module.init(context: Runtime): any
         objectList:Set(name, true)
     end
 
+    local function findBestMatchingName(query: string): string?
+        local lowered: string = string.lower(query)
+        local candidates: {string} = {}
+        for _, descendant: Instance in ipairs(currentWorkspace:GetDescendants()) do
+            if descendant:IsA("BasePart") or descendant:IsA("Model") or descendant:IsA("Tool") then
+                local dName: string = descendant.Name
+                local dLower: string = string.lower(dName)
+                if dLower == lowered then
+                    return dName
+                end
+                if string.find(dLower, lowered, 1, true) then
+                    table.insert(candidates, dName)
+                end
+            end
+        end
+        for _, c: string in ipairs(candidates) do
+            if string.find(string.lower(c), "^" .. lowered) then
+                return c
+            end
+        end
+        if #candidates > 0 then
+            return candidates[1]
+        end
+        return nil
+    end
+
+    local pendingInput: string = ""
     local addBox: any
+
+    local function commitAddByName(rawText: string?): ()
+        local text: string = rawText or pendingInput
+        local trimmed: string = string.match(text, "^%s*(.-)%s*$") or text
+        if trimmed == "" or #trimmed < 2 then
+            return
+        end
+        local best: string = findBestMatchingName(trimmed) or trimmed
+        learn(best)
+        render:Notify("Added: " .. best)
+        pendingInput = ""
+        if addBox and addBox.Object and typeof(addBox.Object) == "Instance" and addBox.Object:IsA("TextBox") then
+            addBox.Object.Text = ""
+        end
+    end
+
     addBox = render:CreateTextBox({
         Name = "Add by name",
         Default = "",
-        Tooltip = "Type a name and it joins the list, ticked. Partial names "
-            .. "match, so chest catches GoldChest.",
+        Tooltip = "Type a name and press Enter (or click Add Object). Finds closest matching items.",
         Function = function(value: string): ()
-            local trimmed: string = string.match(value, "^%s*(.-)%s*$") or value
-            if trimmed == "" then
-                return
-            end
-            learn(trimmed)
-
-            addBox:Set("")
+            pendingInput = value
         end,
     })
+
+    if addBox and addBox.Object and typeof(addBox.Object) == "Instance" and addBox.Object:IsA("TextBox") then
+        local box: TextBox = addBox.Object
+        box.FocusLost:Connect(function(enterPressed: boolean)
+            if enterPressed then
+                commitAddByName(box.Text)
+            end
+        end)
+    end
+
+    render:CreateButton({
+        Name = "Add object",
+        Tooltip = "Adds the name typed above to the list.",
+        Function = function(): ()
+            local text: string = (addBox.Object and addBox.Object.Text) or pendingInput
+            commitAddByName(text)
+        end,
+    })
+
+    local function resolveItemInstance(part: BasePart): Instance
+        local tool: Tool? = part:FindFirstAncestorOfClass("Tool")
+        if tool then
+            return tool
+        end
+        local parent: Instance? = part.Parent
+        if parent and parent:IsA("Model") and parent ~= currentWorkspace then
+            local parentNameLower: string = string.lower(parent.Name)
+            local isGenericMap: boolean = parentNameLower == "map"
+                or parentNameLower == "workspace"
+                or parentNameLower == "geometry"
+                or parentNameLower == "spawns"
+                or parentNameLower == "terrain"
+                or parentNameLower == "baseplate"
+            local childCount: number = #parent:GetChildren()
+            if not isGenericMap and childCount <= 15 then
+                return parent
+            end
+        end
+        return part
+    end
 
     render:CreateButton({
         Name = "Touch part",
@@ -13733,8 +13814,13 @@ function Module.init(context: Runtime): any
             picking = false
 
             local hit: Instance = (result :: RaycastResult).Instance
-            local model: Instance? = hit:FindFirstAncestorOfClass("Model")
-            local name: string = model and model.Name or hit.Name
+            if not hit:IsA("BasePart") then
+                render:Notify("invalid part tapped")
+                menu.setVisible(true)
+                return
+            end
+            local targetItem: Instance = resolveItemInstance(hit :: BasePart)
+            local name: string = targetItem.Name
             learn(name)
             menu.setVisible(true)
             render:Notify(name .. " added")
@@ -18162,11 +18248,13 @@ function Module.init(context: Runtime): any
         mode: string,
         speed: number,
         climbState: boolean,
+        realistic: boolean,
     }
     local spiderSettings: SpiderSettings = {
         mode = "Velocity",
         speed = 30,
         climbState = true,
+        realistic = false,
     }
     local SpiderFeature: any = nil
     local function toggleSpider(enabled: boolean): ()
@@ -18215,15 +18303,44 @@ function Module.init(context: Runtime): any
             local velocity: Vector3 = root.AssemblyLinearVelocity
             if not wall or math.abs((wall :: RaycastResult).Normal.Y) >= 0.35 then
                 if climbing then
-
                     root.AssemblyLinearVelocity =
                         Vector3.new(velocity.X, 0, velocity.Z)
                     climbing = false
+                end
+                if spiderSettings.realistic and math.abs(root.CFrame.UpVector.Y - 1) > 0.05 then
+                    local currentPos: Vector3 = root.Position
+                    local flatForward: Vector3 = Vector3.new(root.CFrame.LookVector.X, 0, root.CFrame.LookVector.Z)
+                    if flatForward.Magnitude > 0.01 then
+                        local upright: CFrame = CFrame.lookAt(currentPos, currentPos + flatForward.Unit, Vector3.new(0, 1, 0))
+                        root.CFrame = root.CFrame:Lerp(upright, math.clamp(deltaTime * 12, 0, 1))
+                    end
                 end
                 return
             end
 
             climbing = true
+            local wallNormal: Vector3 = (wall :: RaycastResult).Normal
+
+            if spiderSettings.realistic then
+                local forward: Vector3 = (root.CFrame.LookVector - wallNormal * root.CFrame.LookVector:Dot(wallNormal))
+                if forward.Magnitude > 0.01 then
+                    forward = forward.Unit
+                else
+                    forward = root.CFrame.LookVector
+                end
+                local targetCF: CFrame = CFrame.lookAt(root.Position, root.Position + forward, wallNormal)
+                root.CFrame = root.CFrame:Lerp(targetCF, math.clamp(deltaTime * 10, 0, 1))
+
+                local moveTangent: Vector3 = (direction - wallNormal * direction:Dot(wallNormal))
+                if moveTangent.Magnitude > 0.05 then
+                    moveTangent = moveTangent.Unit
+                else
+                    moveTangent = forward
+                end
+                root.AssemblyLinearVelocity = moveTangent * spiderSettings.speed - wallNormal * 8
+                return
+            end
+
             if spiderSettings.climbState then
                 humanoid:ChangeState(Enum.HumanoidStateType.Climbing)
             end
@@ -18283,6 +18400,15 @@ function Module.init(context: Runtime): any
         end,
         "Puts the humanoid in its climbing state, so the animation matches and "
             .. "games that read the state see a climb instead of a jump."
+    )
+    addToggleOption(
+        SpiderFeature,
+        "Realistic",
+        spiderSettings.realistic,
+        function(value: boolean): ()
+            spiderSettings.realistic = value
+        end,
+        "Defies gravity to walk on walls like ground, aligning your character to the wall surface."
     )
     addFeatureTooltip(
         SpiderFeature,
@@ -26120,9 +26246,19 @@ local GUN_LEAD = {
 }
 
 local function getGunHorizonSeconds(): number
-    local roundTripTime: number = getEstimatedLatency()
+    local measuredAcceptance: number? = nil
+    if trajectoryCalibration and type(trajectoryCalibration.getEstimates) == "function" then
+        local okEst, est = pcall(function()
+            return trajectoryCalibration:getEstimates()
+        end)
+        if okEst and type(est) == "table" and est.gunAcceptanceMs and est.confirmedShots and est.confirmedShots >= 2 then
+            measuredAcceptance = (est.gunAcceptanceMs :: number) / 1000
+        end
+    end
+    -- Use empirically measured server rewind/acceptance latency from calibration when available
+    local latencyTime: number = measuredAcceptance or getEstimatedLatency()
     local staleness: number = 1 / (2 * GUN_LEAD.replicationRate)
-    local horizon: number = roundTripTime
+    local horizon: number = latencyTime
         + staleness
         + GUN_LEAD.serverFrame * 0.5
         + mm2Settings.gunLeadBias
@@ -28741,7 +28877,8 @@ function Module.init(runtime: any): any
             MINIMUM_ERROR_RADIUS,
             turnError + jitter
         )
-        if errorRadius > BODY_HALF_WIDTH then
+        local allowedErrorBudget: number = ignoreVisibility and (BODY_HALF_WIDTH * 1.75) or BODY_HALF_WIDTH
+        if errorRadius > allowedErrorBudget then
             return nil, nil, "turning too hard"
         end
 
@@ -31224,6 +31361,258 @@ function Module.destroy(): ()
     activeCleanup = function(): () end
     Module.Events = {}
     Module.Runtime = nil
+end
+
+return Module
+
+]=],
+        ["src/games/universal/Blatant/Invisible.lua"] = [=[
+export type Runtime = {
+    framework: any,
+    entity: any,
+    host: any,
+    services: any,
+}
+
+local Module = {
+    Name = "Invisible",
+    PlaceId = 0,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local activeCleanup: (() -> ())? = nil
+
+function Module.init(context: Runtime): any
+    local host: any = context.host
+    local framework: any = context.framework
+    local LocalPlayer: any = host.LocalPlayer
+    local RunService: RunService = host.RunService or (game :: any):GetService("RunService")
+    local currentWorkspace: Workspace = host.workspace or workspace
+
+    type InvisibleSettings = {
+        voidDepth: number,
+        ghostTransparency: number,
+        cameraFollowGhost: boolean,
+    }
+
+    local invisibleSettings: InvisibleSettings = {
+        voidDepth = 200,
+        ghostTransparency = 0.5,
+        cameraFollowGhost = true,
+    }
+
+    local invisibleRuntime = {
+        active = false,
+        ghostModel = nil :: Model?,
+        surfacePosition = nil :: CFrame?,
+        connections = {} :: {RBXScriptConnection},
+        originalParts = {} :: {[BasePart]: boolean},
+    }
+
+    local function destroyGhost(): ()
+        if invisibleRuntime.ghostModel then
+            pcall(function()
+                invisibleRuntime.ghostModel:Destroy()
+            end)
+            invisibleRuntime.ghostModel = nil
+        end
+    end
+
+    local function createGhost(character: Model): Model?
+        character.Archivable = true
+        local clone: Instance? = character:Clone()
+        character.Archivable = false
+        if not clone or not clone:IsA("Model") then
+            return nil
+        end
+        local ghost: Model = clone :: Model
+        ghost.Name = "Wurst_Ghost"
+
+        -- Remove server scripts and physics constraints from ghost
+        for _, desc: Instance in ipairs(ghost:GetDescendants()) do
+            if desc:IsA("Script") or desc:IsA("LocalScript") then
+                desc:Destroy()
+            elseif desc:IsA("BasePart") then
+                desc.CanCollide = false
+                desc.CanTouch = false
+                desc.CanQuery = false
+                desc.Anchored = true
+                desc.Transparency = math.clamp(invisibleSettings.ghostTransparency, 0.1, 0.9)
+                desc.CastShadow = false
+            end
+        end
+
+        local highlight: Highlight = Instance.new("Highlight")
+        highlight.Name = "GhostHighlight"
+        highlight.FillColor = Color3.fromRGB(130, 200, 255)
+        highlight.OutlineColor = Color3.fromRGB(200, 240, 255)
+        highlight.FillTransparency = 0.65
+        highlight.OutlineTransparency = 0.2
+        highlight.Adornee = ghost
+        highlight.Parent = ghost
+
+        local camera: Camera? = currentWorkspace.CurrentCamera
+        ghost.Parent = camera or currentWorkspace
+        return ghost
+    end
+
+    local function toggleInvisible(enabled: boolean): ()
+        for _, c: RBXScriptConnection in ipairs(invisibleRuntime.connections) do
+            pcall(function()
+                c:Disconnect()
+            end)
+        end
+        table.clear(invisibleRuntime.connections)
+
+        local character: Model? = LocalPlayer.Character
+        local root: BasePart? = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+        local humanoid: Humanoid? = character and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+
+        if not enabled then
+            if invisibleRuntime.active and root and invisibleRuntime.surfacePosition then
+                -- Restore real character to surface position where the ghost walked
+                root.CFrame = invisibleRuntime.surfacePosition
+                root.AssemblyLinearVelocity = Vector3.zero
+            end
+            destroyGhost()
+            invisibleRuntime.active = false
+            invisibleRuntime.surfacePosition = nil
+            return
+        end
+
+        if not character or not root or not humanoid or humanoid.Health <= 0 then
+            destroyGhost()
+            return
+        end
+
+        invisibleRuntime.active = true
+        invisibleRuntime.surfacePosition = root.CFrame
+
+        local ghost: Model? = createGhost(character)
+        invisibleRuntime.ghostModel = ghost
+
+        local ghostRoot: BasePart? = ghost and ghost:FindFirstChild("HumanoidRootPart") :: BasePart?
+        if ghostRoot and invisibleRuntime.surfacePosition then
+            ghostRoot.CFrame = invisibleRuntime.surfacePosition
+        end
+
+        -- Render loop: drive ghost visually on the ground while keeping the real character in the void
+        table.insert(
+            invisibleRuntime.connections,
+            RunService.RenderStepped:Connect(function(deltaTime: number): ()
+                if not invisibleRuntime.active then
+                    return
+                end
+                local currentCharacter: Model? = LocalPlayer.Character
+                local currentRoot: BasePart? = currentCharacter and currentCharacter:FindFirstChild("HumanoidRootPart") :: BasePart?
+                local currentHumanoid: Humanoid? = currentCharacter and currentCharacter:FindFirstChildOfClass("Humanoid") :: Humanoid?
+                if not currentCharacter or not currentRoot or not currentHumanoid or currentHumanoid.Health <= 0 then
+                    return
+                end
+
+                local activeGhost: Model? = invisibleRuntime.ghostModel
+                if not activeGhost or not activeGhost.Parent then
+                    activeGhost = createGhost(currentCharacter)
+                    invisibleRuntime.ghostModel = activeGhost
+                end
+                local activeGhostRoot: BasePart? = activeGhost and activeGhost:FindFirstChild("HumanoidRootPart") :: BasePart?
+
+                -- Update surface position with humanoid move direction
+                local moveDir: Vector3 = currentHumanoid.MoveDirection
+                local walkSpeed: number = currentHumanoid.WalkSpeed
+                local surfaceCF: CFrame = invisibleRuntime.surfacePosition or currentRoot.CFrame
+
+                if moveDir.Magnitude > 0.05 then
+                    local newPos: Vector3 = surfaceCF.Position + (moveDir.Unit * (walkSpeed * deltaTime))
+                    -- Raycast down to keep ghost on ground
+                    local rayDown: RaycastResult? = currentWorkspace:Raycast(
+                        newPos + Vector3.new(0, 3, 0),
+                        Vector3.new(0, -10, 0)
+                    )
+                    if rayDown then
+                        newPos = Vector3.new(newPos.X, rayDown.Position.Y + (currentHumanoid.HipHeight or 2), newPos.Z)
+                    end
+                    local targetLook: Vector3 = newPos + moveDir
+                    surfaceCF = CFrame.lookAt(newPos, targetLook)
+                    invisibleRuntime.surfacePosition = surfaceCF
+                end
+
+                -- Sync ghost parts to surface
+                if activeGhostRoot and surfaceCF then
+                    activeGhostRoot.CFrame = surfaceCF
+                    -- Sync limbs relative to root
+                    for _, child: Instance in ipairs(currentCharacter:GetChildren()) do
+                        if child:IsA("BasePart") and child.Name ~= "HumanoidRootPart" then
+                            local ghostPart: Instance? = activeGhost:FindFirstChild(child.Name)
+                            if ghostPart and ghostPart:IsA("BasePart") then
+                                local relCF: CFrame = currentRoot.CFrame:ToObjectSpace(child.CFrame)
+                                local ghostBasePart: BasePart = ghostPart :: BasePart
+                                ghostBasePart.CFrame = surfaceCF:ToWorldSpace(relCF)
+                            end
+                        end
+                    end
+                end
+
+                -- Keep real character offset downward in the void so server/others cannot see or hit it
+                local voidPos: Vector3 = surfaceCF.Position - Vector3.new(0, invisibleSettings.voidDepth, 0)
+                currentRoot.CFrame = CFrame.new(voidPos)
+                currentRoot.AssemblyLinearVelocity = Vector3.zero
+            end)
+        )
+    end
+
+    local invisibleCard: any = framework.Categories.Blatant:CreateModule({
+        Name = "Invisible",
+        Category = "Blatant",
+        Order = 8,
+        Tooltip = "Makes your character a ghost on the map while your real character is in the void so nobody can see you.",
+        Function = toggleInvisible,
+    })
+
+    invisibleCard:CreateSlider({
+        Name = "Void depth",
+        Min = 50,
+        Max = 500,
+        Default = invisibleSettings.voidDepth,
+        Function = function(value: number): ()
+            invisibleSettings.voidDepth = value
+        end,
+        Tooltip = "How far below the surface your real character is placed.",
+    })
+
+    invisibleCard:CreateSlider({
+        Name = "Ghost transparency",
+        Min = 0.1,
+        Max = 0.9,
+        Step = 0.05,
+        Default = invisibleSettings.ghostTransparency,
+        Function = function(value: number): ()
+            invisibleSettings.ghostTransparency = value
+            if invisibleRuntime.ghostModel then
+                for _, desc: Instance in ipairs(invisibleRuntime.ghostModel:GetDescendants()) do
+                    if desc:IsA("BasePart") then
+                        desc.Transparency = value
+                    end
+                end
+            end
+        end,
+        Tooltip = "Transparency of your local ghost representation.",
+    })
+
+    activeCleanup = function(): ()
+        toggleInvisible(false)
+    end
+    Module.Initialized = true
+    return invisibleCard
+end
+
+function Module.destroy(): ()
+    if activeCleanup then
+        pcall(activeCleanup)
+    end
+    activeCleanup = nil
+    Module.Initialized = false
 end
 
 return Module

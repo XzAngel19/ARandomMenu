@@ -175,22 +175,98 @@ function Module.init(context: Runtime): any
         objectList:Set(name, true)
     end
 
+    local function findBestMatchingName(query: string): string?
+        local lowered: string = string.lower(query)
+        local candidates: {string} = {}
+        for _, descendant: Instance in ipairs(currentWorkspace:GetDescendants()) do
+            if descendant:IsA("BasePart") or descendant:IsA("Model") or descendant:IsA("Tool") then
+                local dName: string = descendant.Name
+                local dLower: string = string.lower(dName)
+                if dLower == lowered then
+                    return dName
+                end
+                if string.find(dLower, lowered, 1, true) then
+                    table.insert(candidates, dName)
+                end
+            end
+        end
+        for _, c: string in ipairs(candidates) do
+            if string.find(string.lower(c), "^" .. lowered) then
+                return c
+            end
+        end
+        if #candidates > 0 then
+            return candidates[1]
+        end
+        return nil
+    end
+
+    local pendingInput: string = ""
     local addBox: any
+
+    local function commitAddByName(rawText: string?): ()
+        local text: string = rawText or pendingInput
+        local trimmed: string = string.match(text, "^%s*(.-)%s*$") or text
+        if trimmed == "" or #trimmed < 2 then
+            return
+        end
+        local best: string = findBestMatchingName(trimmed) or trimmed
+        learn(best)
+        render:Notify("Added: " .. best)
+        pendingInput = ""
+        if addBox and addBox.Object and typeof(addBox.Object) == "Instance" and addBox.Object:IsA("TextBox") then
+            addBox.Object.Text = ""
+        end
+    end
+
     addBox = render:CreateTextBox({
         Name = "Add by name",
         Default = "",
-        Tooltip = "Type a name and it joins the list, ticked. Partial names "
-            .. "match, so chest catches GoldChest.",
+        Tooltip = "Type a name and press Enter (or click Add Object). Finds closest matching items.",
         Function = function(value: string): ()
-            local trimmed: string = string.match(value, "^%s*(.-)%s*$") or value
-            if trimmed == "" then
-                return
-            end
-            learn(trimmed)
-
-            addBox:Set("")
+            pendingInput = value
         end,
     })
+
+    if addBox and addBox.Object and typeof(addBox.Object) == "Instance" and addBox.Object:IsA("TextBox") then
+        local box: TextBox = addBox.Object
+        box.FocusLost:Connect(function(enterPressed: boolean)
+            if enterPressed then
+                commitAddByName(box.Text)
+            end
+        end)
+    end
+
+    render:CreateButton({
+        Name = "Add object",
+        Tooltip = "Adds the name typed above to the list.",
+        Function = function(): ()
+            local text: string = (addBox.Object and addBox.Object.Text) or pendingInput
+            commitAddByName(text)
+        end,
+    })
+
+    local function resolveItemInstance(part: BasePart): Instance
+        local tool: Tool? = part:FindFirstAncestorOfClass("Tool")
+        if tool then
+            return tool
+        end
+        local parent: Instance? = part.Parent
+        if parent and parent:IsA("Model") and parent ~= currentWorkspace then
+            local parentNameLower: string = string.lower(parent.Name)
+            local isGenericMap: boolean = parentNameLower == "map"
+                or parentNameLower == "workspace"
+                or parentNameLower == "geometry"
+                or parentNameLower == "spawns"
+                or parentNameLower == "terrain"
+                or parentNameLower == "baseplate"
+            local childCount: number = #parent:GetChildren()
+            if not isGenericMap and childCount <= 15 then
+                return parent
+            end
+        end
+        return part
+    end
 
     render:CreateButton({
         Name = "Touch part",
@@ -285,8 +361,13 @@ function Module.init(context: Runtime): any
             picking = false
 
             local hit: Instance = (result :: RaycastResult).Instance
-            local model: Instance? = hit:FindFirstAncestorOfClass("Model")
-            local name: string = model and model.Name or hit.Name
+            if not hit:IsA("BasePart") then
+                render:Notify("invalid part tapped")
+                menu.setVisible(true)
+                return
+            end
+            local targetItem: Instance = resolveItemInstance(hit :: BasePart)
+            local name: string = targetItem.Name
             learn(name)
             menu.setVisible(true)
             render:Notify(name .. " added")

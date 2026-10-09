@@ -44,6 +44,7 @@ local FEATURE_CATEGORIES: {[string]: string} = {
     ["Spider"] = "Blatant",
     ["Walk Speed"] = "Blatant",
     ["Hitboxes"] = "Blatant",
+    ["Invisible"] = "Blatant",
 
     ["Click Teleport"] = "Movement",
     ["Freeze Movements"] = "Movement",
@@ -215,7 +216,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "audit-20261009-4"
+local SOURCE_STAMP: string = "audit-20261009-5"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -1299,6 +1300,14 @@ local function enforceMenuCursor(): ()
     if menuCursorState.applying then
         return
     end
+    -- Allow free camera movement when holding right click even with menu open
+    local rightClicking: boolean = false
+    pcall(function(): ()
+        rightClicking = UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
+    end)
+    if rightClicking then
+        return
+    end
     if state.visible == true
         and menuCursorState.owned
         and (UserInputService.MouseBehavior ~= Enum.MouseBehavior.Default
@@ -1309,6 +1318,15 @@ end
 pcall(function(): ()
     trackUiConnection(UserInputService:GetPropertyChangedSignal("MouseBehavior"):Connect(enforceMenuCursor))
     trackUiConnection(UserInputService:GetPropertyChangedSignal("MouseIconEnabled"):Connect(enforceMenuCursor))
+    trackUiConnection(UserInputService.InputEnded:Connect(function(input: InputObject): ()
+        if input.UserInputType == Enum.UserInputType.MouseButton2 and state.visible then
+            task.defer(function(): ()
+                if state.visible and not UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
+                    setMenuCursorUnlocked(true)
+                end
+            end)
+        end
+    end))
 end)
 
 local menuVisibilityListeners: {(boolean) -> ()} = {}

@@ -1490,9 +1490,19 @@ local GUN_LEAD = {
 }
 
 local function getGunHorizonSeconds(): number
-    local roundTripTime: number = getEstimatedLatency()
+    local measuredAcceptance: number? = nil
+    if trajectoryCalibration and type(trajectoryCalibration.getEstimates) == "function" then
+        local okEst, est = pcall(function()
+            return trajectoryCalibration:getEstimates()
+        end)
+        if okEst and type(est) == "table" and est.gunAcceptanceMs and est.confirmedShots and est.confirmedShots >= 2 then
+            measuredAcceptance = (est.gunAcceptanceMs :: number) / 1000
+        end
+    end
+    -- Use empirically measured server rewind/acceptance latency from calibration when available
+    local latencyTime: number = measuredAcceptance or getEstimatedLatency()
     local staleness: number = 1 / (2 * GUN_LEAD.replicationRate)
-    local horizon: number = roundTripTime
+    local horizon: number = latencyTime
         + staleness
         + GUN_LEAD.serverFrame * 0.5
         + mm2Settings.gunLeadBias

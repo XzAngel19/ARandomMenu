@@ -123,6 +123,11 @@ local Manifest: Manifest = {
             category = "Movement",
         },
         {
+            path = "src/games/universal/Blatant/Invisible.lua",
+            name = "Invisible",
+            category = "Blatant",
+        },
+        {
             path = "src/games/universal/World/SafeWalk.lua",
             name = "SafeWalk",
             category = "Movement",

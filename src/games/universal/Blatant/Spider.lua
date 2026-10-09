@@ -31,11 +31,13 @@ function Module.init(context: Runtime): any
         mode: string,
         speed: number,
         climbState: boolean,
+        realistic: boolean,
     }
     local spiderSettings: SpiderSettings = {
         mode = "Velocity",
         speed = 30,
         climbState = true,
+        realistic = false,
     }
     local SpiderFeature: any = nil
     local function toggleSpider(enabled: boolean): ()
@@ -84,15 +86,44 @@ function Module.init(context: Runtime): any
             local velocity: Vector3 = root.AssemblyLinearVelocity
             if not wall or math.abs((wall :: RaycastResult).Normal.Y) >= 0.35 then
                 if climbing then
-
                     root.AssemblyLinearVelocity =
                         Vector3.new(velocity.X, 0, velocity.Z)
                     climbing = false
+                end
+                if spiderSettings.realistic and math.abs(root.CFrame.UpVector.Y - 1) > 0.05 then
+                    local currentPos: Vector3 = root.Position
+                    local flatForward: Vector3 = Vector3.new(root.CFrame.LookVector.X, 0, root.CFrame.LookVector.Z)
+                    if flatForward.Magnitude > 0.01 then
+                        local upright: CFrame = CFrame.lookAt(currentPos, currentPos + flatForward.Unit, Vector3.new(0, 1, 0))
+                        root.CFrame = root.CFrame:Lerp(upright, math.clamp(deltaTime * 12, 0, 1))
+                    end
                 end
                 return
             end
 
             climbing = true
+            local wallNormal: Vector3 = (wall :: RaycastResult).Normal
+
+            if spiderSettings.realistic then
+                local forward: Vector3 = (root.CFrame.LookVector - wallNormal * root.CFrame.LookVector:Dot(wallNormal))
+                if forward.Magnitude > 0.01 then
+                    forward = forward.Unit
+                else
+                    forward = root.CFrame.LookVector
+                end
+                local targetCF: CFrame = CFrame.lookAt(root.Position, root.Position + forward, wallNormal)
+                root.CFrame = root.CFrame:Lerp(targetCF, math.clamp(deltaTime * 10, 0, 1))
+
+                local moveTangent: Vector3 = (direction - wallNormal * direction:Dot(wallNormal))
+                if moveTangent.Magnitude > 0.05 then
+                    moveTangent = moveTangent.Unit
+                else
+                    moveTangent = forward
+                end
+                root.AssemblyLinearVelocity = moveTangent * spiderSettings.speed - wallNormal * 8
+                return
+            end
+
             if spiderSettings.climbState then
                 humanoid:ChangeState(Enum.HumanoidStateType.Climbing)
             end
@@ -152,6 +183,15 @@ function Module.init(context: Runtime): any
         end,
         "Puts the humanoid in its climbing state, so the animation matches and "
             .. "games that read the state see a climb instead of a jump."
+    )
+    addToggleOption(
+        SpiderFeature,
+        "Realistic",
+        spiderSettings.realistic,
+        function(value: boolean): ()
+            spiderSettings.realistic = value
+        end,
+        "Defies gravity to walk on walls like ground, aligning your character to the wall surface."
     )
     addFeatureTooltip(
         SpiderFeature,
