@@ -25,9 +25,9 @@ function Module.init(context: Runtime): any
     local addInformationOption: any = host.addInformationOption
     local TaskManager: any = host.TaskManager
     local LocalPlayer: any = host.LocalPlayer
-    local PlayersService: any = host.Players or Players
-    local Stats: any = host.Stats
-    local httpService: any = host.HttpService or HttpService
+    local PlayersService: any = host.Players or (game :: any):GetService("Players")
+    local Stats: any = host.Stats or (game :: any):GetService("Stats")
+    local httpService: any = host.HttpService or (game :: any):GetService("HttpService")
     -- Games that author shots (MM2's SilentAIM) publish the last authored
     -- geometry here; nil everywhere else, so this stays a no-op.
     local gameBridge: any = context.services and
@@ -250,7 +250,7 @@ function Module.init(context: Runtime): any
                                     and round2(
                                         (head.Position
                                             - targetRoot.Position)
-                                            :Magnitude
+                                            .Magnitude
                                     )
                                     or nil,
                                 torso = torso
@@ -501,7 +501,7 @@ function Module.init(context: Runtime): any
                 if lastPosition and lastAt > 0 then
                     local elapsed: number = now - lastAt
                     if elapsed >= 0.02 then
-                        local jumped: number = (position - lastPosition):Magnitude
+                        local jumped: number = (position - lastPosition).Magnitude
                         if jumped > 25 and elapsed < 0.15 then
                             recordMovement("teleport", jumped, {
                                 from = vectorArray(lastPosition),
@@ -575,7 +575,7 @@ function Module.init(context: Runtime): any
                         local magnitude: number = 0
                         if root and head then
                             local offset: number =
-                                (head.Position - root.Position):Magnitude
+                                (head.Position - root.Position).Magnitude
                             if offset > 3.2 or offset < 0.9 then
                                 anomaly = "headOffset"
                                 magnitude = round2(offset)
@@ -695,7 +695,8 @@ function Module.init(context: Runtime): any
                 )
                 if okRead and type(existingRaw) == "string" then
                     local okDecode: boolean, existing: any = pcall(
-                        httpService:JSONDecode,
+                        httpService.JSONDecode,
+                        httpService,
                         existingRaw
                     )
                     if okDecode and type(existing) == "table" then
@@ -739,7 +740,8 @@ function Module.init(context: Runtime): any
                 hits = runtime.hits,
             }
             local okEncode: boolean, encoded: any = pcall(
-                httpService:JSONEncode,
+                httpService.JSONEncode,
+                httpService,
                 payload
             )
             if not okEncode or type(encoded) ~= "string" then

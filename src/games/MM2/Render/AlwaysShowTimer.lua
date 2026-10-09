@@ -152,7 +152,7 @@ function Module.init(runtime: any): any
             TextColor3 = Color3.fromRGB(255, 255, 255),
             TextStrokeColor3 = Color3.fromRGB(0, 0, 0),
             TextStrokeTransparency = 0.4,
-        }) :: any
+        })
         local label: TextLabel = create("TextLabel", {
             Parent = gui,
             Name = "Clock",

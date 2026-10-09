@@ -1,7 +1,7 @@
 local RUNTIME_COMPATIBILITY_MARKER: string =
     "Initialization error — check executor console"
 local RUNTIME_SAFETY_SOURCE_URL: string =
-    "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/arena/d2b159d3-arandommenu/src/Wurst.lua"
+    "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/arena/2daf1a78-arandommenu/src/Wurst.lua"
 
 local DEFAULT_FEATURE_CATEGORY: string = "Other"
 
@@ -49,6 +49,7 @@ local FEATURE_CATEGORIES: {[string]: string} = {
 
     ["Hitboxes"] = "Combat",
     ["Projectile Calibration"] = "Other",
+    ["Game Learning"] = "Other",
 
     ["FOV"] = "Render",
     ["Fullbright"] = "Render",
@@ -198,9 +199,22 @@ local function computeLayoutMetrics(
     }
 end
 
-local RUNTIME_BRANCH: string = "arena/d2b159d3-arandommenu"
+local RUNTIME_BRANCH: string = "arena/2daf1a78-arandommenu"
 do
-    local override: any = (getfenv() :: any).WURST_BRANCH
+    local override: any = nil
+    local okGenv, genv = pcall(function()
+        return (getgenv :: any)()
+    end)
+    if okGenv and type(genv) == "table" and type(genv.WURST_BRANCH) == "string" and genv.WURST_BRANCH ~= "" then
+        override = genv.WURST_BRANCH
+    elseif type(_G) == "table" and type((_G :: any).WURST_BRANCH) == "string" and (_G :: any).WURST_BRANCH ~= "" then
+        override = (_G :: any).WURST_BRANCH
+    else
+        local fenv: any = (getfenv() :: any)
+        if type(fenv) == "table" and type(fenv.WURST_BRANCH) == "string" and fenv.WURST_BRANCH ~= "" then
+            override = fenv.WURST_BRANCH
+        end
+    end
     if type(override) == "string" and override ~= "" then
         RUNTIME_BRANCH = (override:gsub("^refs/heads/", ""))
     end
@@ -210,7 +224,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "audit-20261008-6"
+local SOURCE_STAMP: string = "audit-20261009-1"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0

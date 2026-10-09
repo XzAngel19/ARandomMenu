@@ -1,7 +1,8 @@
 return {
-    stamp = "c3b79b32e60bd74c",
+    stamp = "audit-20261009-1",
     files = {
-        ["src/libraries/Manifest.lua"] = [[export type ModuleEntry = {
+        ["src/libraries/Manifest.lua"] = [=[
+export type ModuleEntry = {
     path: string,
     name: string,
     category: string,
@@ -251,6 +252,11 @@ local Manifest: Manifest = {
             category = "Other",
         },
         {
+            path = "src/games/universal/Utility/GameLearning.lua",
+            name = "Game Learning",
+            category = "Other",
+        },
+        {
             path = "src/games/universal/Utility/SpinBot.lua",
             name = "SpinBot",
             category = "Fun",
@@ -274,8 +280,9 @@ local Manifest: Manifest = {
 }
 
 return Manifest
-]],
-        ["src/guis/Wurst/Code/Widgets.lua"] = [[export type OptionDefinition = {
+]=],
+        ["src/guis/Wurst/Code/Widgets.lua"] = [=[
+export type OptionDefinition = {
     kind: string,
     label: string,
     default: any?,
@@ -2599,8 +2606,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/libraries/Framework.lua"] = [[export type CleanupItem = any
+]=],
+        ["src/libraries/Framework.lua"] = [=[
+export type CleanupItem = any
 
 export type MovementInputService = {
     getVector: () -> (number, number),
@@ -3460,8 +3468,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/libraries/Entity.lua"] = [[export type Entity = {
+]=],
+        ["src/libraries/Entity.lua"] = [=[
+export type Entity = {
     Player: Player?,
     Character: Model,
     Humanoid: Humanoid,
@@ -4143,8 +4152,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/libraries/Targeting.lua"] = [[export type Query = {
+]=],
+        ["src/libraries/Targeting.lua"] = [=[
+export type Query = {
     FOV: number?,
     MaxDistance: number?,
     TargetPart: string?,
@@ -4409,8 +4419,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/libraries/Weapons.lua"] = [[export type Candidate = {
+]=],
+        ["src/libraries/Weapons.lua"] = [=[
+export type Candidate = {
     id: string,
     label: string,
     kind: string,
@@ -4970,8 +4981,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/libraries/Render.lua"] = [[export type Rect = {
+]=],
+        ["src/libraries/Render.lua"] = [=[
+export type Rect = {
     left: number,
     right: number,
     top: number,
@@ -5559,8 +5571,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/guis/Wurst/Code/Cards.lua"] = [[local Module = {
+]=],
+        ["src/guis/Wurst/Code/Cards.lua"] = [=[
+local Module = {
     Name = "Cards",
     PlaceId = 0,
     Events = {} :: {[string]: any},
@@ -6435,8 +6448,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/guis/Wurst/Code/WindowManager.lua"] = [[export type WindowDefinition = {
+]=],
+        ["src/guis/Wurst/Code/WindowManager.lua"] = [=[
+export type WindowDefinition = {
     id: string,
     title: string?,
     size: Vector2,
@@ -7569,8 +7583,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/guis/Wurst/Code/ClickGui.lua"] = [[export type CategoryWindow = {
+]=],
+        ["src/guis/Wurst/Code/ClickGui.lua"] = [=[
+export type CategoryWindow = {
     name: string,
     window: any,
     layout: UIListLayout,
@@ -7950,8 +7965,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/guis/Wurst/Code/FloatingWindows.lua"] = [[export type FloatingWindowRecord = {
+]=],
+        ["src/guis/Wurst/Code/FloatingWindows.lua"] = [=[
+export type FloatingWindowRecord = {
     id: string,
     root: Frame,
     body: Frame,
@@ -9474,8 +9490,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/guis/Wurst/Code/SettingsPage.lua"] = [[local Module = {
+]=],
+        ["src/guis/Wurst/Code/SettingsPage.lua"] = [=[
+local Module = {
     Name = "SettingsPage",
     PlaceId = 0,
     Events = {} :: {[string]: any},
@@ -11167,8 +11184,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/guis/Wurst/Code/MobileActions.lua"] = [[export type MobileHoldCallbacks = {
+]=],
+        ["src/guis/Wurst/Code/MobileActions.lua"] = [=[
+export type MobileHoldCallbacks = {
 
     isActive: (() -> boolean)?,
     onPress: (() -> ())?,
@@ -11880,8 +11898,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/guis/Wurst/Code/Furniture.lua"] = [[local Module = {
+]=],
+        ["src/guis/Wurst/Code/Furniture.lua"] = [=[
+local Module = {
     Name = "Furniture",
     PlaceId = 0,
     Events = {} :: {[string]: any},
@@ -13441,8 +13460,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/Utility/FriendList.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/Utility/FriendList.lua"] = [=[
+export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -13661,8 +13681,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/Render/ItemRender.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/Render/ItemRender.lua"] = [=[
+export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -14105,8 +14126,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/Render/PlayerESP.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/Render/PlayerESP.lua"] = [=[
+export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -14642,8 +14664,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/Render/Chams.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/Render/Chams.lua"] = [=[
+export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -14823,8 +14846,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/Render/Arrows.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/Render/Arrows.lua"] = [=[
+export type Runtime = {
     framework: any,
     entity: any,
     render: any,
@@ -14963,8 +14987,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/Render/NPCESP.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/Render/NPCESP.lua"] = [=[
+export type Runtime = {
     framework: any,
     entity: any,
     render: any,
@@ -15453,8 +15478,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/Combat/KillAura.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/Combat/KillAura.lua"] = [=[
+export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -16051,8 +16077,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/Utility/RemoteLogger.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/Utility/RemoteLogger.lua"] = [=[
+export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -16485,8 +16512,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/Utility/Learning.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/Utility/Learning.lua"] = [=[
+export type Runtime = {
     framework: any,
     host: any,
     services: any,
@@ -16617,8 +16645,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/Blatant/ClickTeleport.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/Blatant/ClickTeleport.lua"] = [=[
+export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -17058,8 +17087,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/Combat/AutoClicker.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/Combat/AutoClicker.lua"] = [=[
+export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -17395,8 +17425,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/Combat/TriggerBot.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/Combat/TriggerBot.lua"] = [=[
+export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -17691,8 +17722,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/Combat/AimAssist.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/Combat/AimAssist.lua"] = [=[
+export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -17961,8 +17993,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/Render/XRay.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/Render/XRay.lua"] = [=[
+export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -18067,8 +18100,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/Blatant/HighJump.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/Blatant/HighJump.lua"] = [=[
+export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -18146,8 +18180,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/Blatant/Spider.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/Blatant/Spider.lua"] = [=[
+export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -18324,8 +18359,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/Blatant/WallHop.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/Blatant/WallHop.lua"] = [=[
+export type Runtime = {
     framework: any,
     host: any,
     services: any,
@@ -18595,8 +18631,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/World/SafeWalk.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/World/SafeWalk.lua"] = [=[
+export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -18805,8 +18842,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/World/RejoinServer.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/World/RejoinServer.lua"] = [=[
+export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -18921,8 +18959,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/Render/ZoomUnlocker.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/Render/ZoomUnlocker.lua"] = [=[
+export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -19065,8 +19104,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/World/InteractExtender.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/World/InteractExtender.lua"] = [=[
+export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -19289,8 +19329,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/Blatant/PhaseDash.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/Blatant/PhaseDash.lua"] = [=[
+export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -19544,8 +19585,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/Blatant/NoFall.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/Blatant/NoFall.lua"] = [=[
+export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -19715,8 +19757,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/Blatant/Fly.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/Blatant/Fly.lua"] = [=[
+export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -20352,8 +20395,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/Blatant/VehicleSpeed.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/Blatant/VehicleSpeed.lua"] = [=[
+export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -20632,8 +20676,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/Blatant/AntiVoid.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/Blatant/AntiVoid.lua"] = [=[
+export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -20769,8 +20814,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/World/Gravity.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/World/Gravity.lua"] = [=[
+export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -20847,8 +20893,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/Blatant/JumpPower.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/Blatant/JumpPower.lua"] = [=[
+export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -20946,8 +20993,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/Blatant/InfiniteJump.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/Blatant/InfiniteJump.lua"] = [=[
+export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -21142,8 +21190,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/Render/FieldOfView.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/Render/FieldOfView.lua"] = [=[
+export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -21217,8 +21266,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/Blatant/Noclip.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/Blatant/Noclip.lua"] = [=[
+export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -21307,8 +21357,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/World/AntiAfk.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/World/AntiAfk.lua"] = [=[
+export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -21379,8 +21430,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/Blatant/AntiFling.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/Blatant/AntiFling.lua"] = [=[
+export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -21494,8 +21546,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/Utility/LagSwitch.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/Utility/LagSwitch.lua"] = [=[
+export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -21591,8 +21644,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/Blatant/Fling.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/Blatant/Fling.lua"] = [=[
+export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -21901,8 +21955,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/Utility/ImproveFps.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/Utility/ImproveFps.lua"] = [=[
+export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -22078,8 +22133,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/Render/Fullbright.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/Render/Fullbright.lua"] = [=[
+export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -22187,8 +22243,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/Blatant/FreezeMovements.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/Blatant/FreezeMovements.lua"] = [=[
+export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -22314,8 +22371,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/Blatant/Speed.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/Blatant/Speed.lua"] = [=[
+export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -22594,8 +22652,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/Combat/Hitboxes.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/Combat/Hitboxes.lua"] = [=[
+export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -22919,8 +22978,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/Render/ProjectileCalibration.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/Render/ProjectileCalibration.lua"] = [=[
+export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -23692,8 +23752,971 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/Utility/SpinBot.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/Utility/GameLearning.lua"] = [=[
+export type Runtime = {
+    framework: any,
+    entity: any,
+    host: any,
+    services: any,
+}
+
+local Module = {
+    Name = "GameLearning",
+    PlaceId = 0,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local activeController: any = nil
+
+function Module.init(context: Runtime): any
+    local host: any = context.host
+    local product: any = host.PRODUCT
+    local notify: any = host.notify
+    local createUniversalFeature: any = host.createUniversalFeature
+    local addNumberOption: any = host.addNumberOption
+    local addToggleOption: any = host.addToggleOption
+    local addActionOption: any = host.addActionOption
+    local addInformationOption: any = host.addInformationOption
+    local TaskManager: any = host.TaskManager
+    local LocalPlayer: any = host.LocalPlayer
+    local PlayersService: any = host.Players or (game :: any):GetService("Players")
+    local Stats: any = host.Stats or (game :: any):GetService("Stats")
+    local httpService: any = host.HttpService or (game :: any):GetService("HttpService")
+    -- Games that author shots (MM2's SilentAIM) publish the last authored
+    -- geometry here; nil everywhere else, so this stays a no-op.
+    local gameBridge: any = context.services and
+        context.services.gameBridge
+
+    -- ---------------------------------------------------------------------------
+    -- Game Learning: a passive log of what the server actually accepts.
+    --
+    -- Every tool activation snapshots the scene (every other player's distance,
+    -- angle to the aim, line of sight, and the hitbox geometry at that instant).
+    -- Every death is then matched back against the last few shots: a kill whose
+    -- line of sight was blocked is a wallshot the server did not validate, a
+    -- kill past 80 studs is a range the server did not cap, and a local
+    -- teleport that is neither kicked nor snapped back is movement the server
+    -- tolerated. Nothing is sent anywhere: the log lives in memory and can be
+    -- saved next to the Projectile Calibration data for offline reading.
+    -- ---------------------------------------------------------------------------
+    local controllerFactory = (function(): any
+        type SceneEntry = {
+            player: string,
+            dist: number,
+            angleDeg: number,
+            los: string,
+            root: {number},
+            headOffset: number?,
+            torso: {number}?,
+        }
+        type ShotRecord = {
+            id: number,
+            t: number,
+            clockAt: number,
+            pingMs: number,
+            tool: string,
+            origin: {number},
+            aim: {number},
+            scene: {SceneEntry},
+            outcome: {[string]: any}?,
+            silentSpawn: {variant: string, offset: number}?,
+        }
+        type MovementRecord = {
+            t: number,
+            kind: string,
+            magnitude: number,
+            detail: {[string]: any}?,
+        }
+
+        local tuning: any = {
+            logShots = true,
+            logMovement = true,
+            logHitboxes = true,
+            killWindowSeconds = 4,
+            sceneRadius = 80,
+            maxEvents = 300,
+        }
+
+        local executorEnvironment: {[string]: any} = getfenv() :: any
+        local mouse: Mouse = LocalPlayer:GetMouse()
+        local outputRoot: string = product.storageFolder
+        local outputTelemetry: string = outputRoot .. "/Telemetry"
+        local outputFolder: string = outputTelemetry .. "/Universal"
+        local outputPath: string = outputFolder
+            .. "/Place_"
+            .. tostring(game.PlaceId)
+            .. "_Game_Learning.json"
+        local runtime: any = {
+            enabled = false,
+            shots = {} :: {ShotRecord},
+            movements = {} :: {MovementRecord},
+            hits = {} :: {{[string]: any}},
+            aggregates = {
+                shots = 0,
+                kills = 0,
+                cleanKills = 0,
+                wallshotKills = 0,
+                longrangeKills = 0,
+                misses = 0,
+                unattributedDeaths = 0,
+                teleports = 0,
+                speedSpikes = 0,
+                longAirtime = 0,
+                hitboxAnomalies = 0,
+                farthestKill = 0,
+            },
+            shotCounter = 0,
+            spawnShots = {} :: {[string]: number},
+            spawnKills = {} :: {[string]: number},
+            connections = {} :: {RBXScriptConnection},
+            observedTools = setmetatable({}, {__mode = "k"}) :: {[Tool]: boolean},
+            watchedPlayers = setmetatable({}, {__mode = "k"}) :: {[Player]: boolean},
+            anomalyCooldown = setmetatable({}, {__mode = "k"}) :: {[Player]: number},
+            movementTask = nil :: any,
+            hitboxTask = nil :: any,
+        }
+        local controller: any
+        local saveSnapshot: (reason: string) -> boolean
+
+        -- Assigned before any method is defined on it: `function
+        -- controller:foo()` is sugar for controller.foo = function(...).
+        controller = {} :: any
+        controller.tuning = tuning
+
+        local function vectorArray(value: Vector3): {number}
+            return {value.X, value.Y, value.Z}
+        end
+
+        local function round1(value: number): number
+            return math.floor(value * 10 + 0.5) / 10
+        end
+
+        local function round2(value: number): number
+            return math.floor(value * 100 + 0.5) / 100
+        end
+
+        local function clampTrim(list: {any}, cap: number): ()
+            while #list > cap do
+                table.remove(list, 1)
+            end
+        end
+
+        local function getPingMilliseconds(): number
+            local pingMs: number = 0
+            pcall(function(): ()
+                local network: Instance? = Stats:FindFirstChild("Network")
+                local serverItems: Instance? = network
+                    and network:FindFirstChild("ServerStatsItem")
+                local pingItem: any = serverItems
+                    and serverItems:FindFirstChild("Data Ping")
+                if pingItem and type(pingItem.GetValue) == "function" then
+                    pingMs = tonumber(pingItem:GetValue()) or 0
+                end
+            end)
+            return pingMs
+        end
+
+        local function findSceneEntry(
+            shot: ShotRecord,
+            player: Player
+        ): SceneEntry?
+            for _, entry: SceneEntry in ipairs(shot.scene) do
+                if entry.player == player.Name then
+                    return entry
+                end
+            end
+            return nil
+        end
+
+        local function recordShot(tool: Tool): ()
+            local character: Model? = LocalPlayer.Character
+            local root: BasePart? = character
+                and character:FindFirstChild("HumanoidRootPart")
+                :: BasePart?
+            local origin: Vector3? = root and root.Position or nil
+            if not origin then
+                return
+            end
+            local handle: BasePart? = tool:FindFirstChild("Handle") :: BasePart?
+            local shotOrigin: Vector3 = handle and handle.Position or origin
+            local aim: Vector3 = Vector3.zero
+            pcall(function(): ()
+                aim = mouse.Hit.Position
+            end)
+            local aimDelta: Vector3 = aim - shotOrigin
+            local aimDir: Vector3? = aimDelta.Magnitude > 0.01 and aimDelta.Unit or nil
+
+            local scene: {SceneEntry} = {}
+            local raycastParams: RaycastParams = RaycastParams.new()
+            raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+            raycastParams.IgnoreWater = true
+            raycastParams.FilterDescendantsInstances = {character :: Instance}
+            for _, player: Player in ipairs(PlayersService:GetPlayers()) do
+                if player ~= LocalPlayer then
+                    local targetCharacter: Model? = player.Character
+                    local targetRoot: BasePart? = targetCharacter
+                        and targetCharacter:FindFirstChild("HumanoidRootPart")
+                        :: BasePart?
+                    local humanoid: Humanoid? = targetCharacter
+                        and targetCharacter:FindFirstChildOfClass("Humanoid")
+                        :: Humanoid?
+                    if targetRoot
+                        and humanoid
+                        and humanoid.Health > 0 then
+                        local toPlayer: Vector3 = targetRoot.Position - shotOrigin
+                        local dist: number = toPlayer.Magnitude
+                        if dist <= tuning.sceneRadius and dist > 0.01 then
+                            local angleDeg: number = 0
+                            if aimDir then
+                                angleDeg = math.deg(
+                                    math.acs(math.clamp(
+                                        toPlayer.Unit:Dot(aimDir),
+                                        -1,
+                                        1
+                                    ))
+                                )
+                            end
+                            local hit: RaycastResult? = workspace:Raycast(
+                                shotOrigin,
+                                toPlayer,
+                                raycastParams
+                            )
+                            local los: string = "clear"
+                            if hit
+                                and not hit.Instance:IsDescendantOf(
+                                    targetCharacter :: Instance
+                                ) then
+                                los = "blocked"
+                            end
+                            local head: BasePart? = targetCharacter
+                                and targetCharacter:FindFirstChild("Head")
+                                :: BasePart?
+                            local torso: BasePart? = targetCharacter
+                                and targetCharacter:FindFirstChild("UpperTorso")
+                                :: BasePart?
+                            table.insert(scene, {
+                                player = player.Name,
+                                dist = round1(dist),
+                                angleDeg = aimDir and round1(angleDeg) or nil,
+                                los = los,
+                                root = vectorArray(targetRoot.Position),
+                                headOffset = head
+                                    and round2(
+                                        (head.Position
+                                            - targetRoot.Position)
+                                            .Magnitude
+                                    )
+                                    or nil,
+                                torso = torso
+                                    and {
+                                        round2(torso.Size.X),
+                                        round2(torso.Size.Y),
+                                        round2(torso.Size.Z),
+                                    }
+                                    or nil,
+                            })
+                        end
+                    end
+                end
+            end
+
+            runtime.shotCounter += 1
+            local shot: ShotRecord = {
+                id = runtime.shotCounter,
+                t = os.time(),
+                clockAt = os.clock(),
+                pingMs = getPingMilliseconds(),
+                tool = tool.Name,
+                origin = vectorArray(shotOrigin),
+                aim = vectorArray(aim),
+                scene = scene,
+                outcome = nil,
+                silentSpawn = nil,
+            }
+            -- Tag silent-authored shots with their spawn variant so the log
+            -- can compare hit rates per geometry (Front/Through/Top/Behind).
+            if gameBridge and type(gameBridge.silentShot) == "function" then
+                local okInfo: boolean, info: any = pcall(gameBridge.silentShot)
+                if okInfo
+                    and type(info) == "table"
+                    and info.variant ~= nil
+                    and os.clock() - (tonumber(info.at) or 0) < 2 then
+                    shot.silentSpawn = {
+                        variant = info.variant,
+                        offset = tonumber(info.offset) or 0,
+                    }
+                    local variant: string = info.variant
+                    runtime.spawnShots[variant] = (runtime.spawnShots[variant] or 0) + 1
+                end
+            end
+            table.insert(runtime.shots, shot)
+            clampTrim(runtime.shots, tuning.maxEvents)
+            runtime.aggregates.shots += 1
+
+            -- A few seconds later the shot either produced a kill (handled by
+            -- the death watcher) or it missed the only plausible target it had.
+            task.delay(tuning.killWindowSeconds + 0.5, function(): ()
+                if shot.outcome ~= nil then
+                    return
+                end
+                local candidate: SceneEntry? = nil
+                for _, entry: SceneEntry in ipairs(shot.scene) do
+                    if entry.dist <= 60
+                        and (entry.angleDeg == nil or entry.angleDeg <= 30) then
+                        candidate = entry
+                    end
+                end
+                if candidate then
+                    shot.outcome = {verdict = "miss"}
+                    runtime.aggregates.misses += 1
+                end
+            end)
+        end
+
+        local function recordDeath(player: Player): ()
+            local attributed: boolean = false
+            for index: number = #runtime.shots, 1, -1 do
+                local shot: ShotRecord = runtime.shots[index]
+                if os.clock() - shot.clockAt > tuning.killWindowSeconds then
+                    break
+                end
+                if shot.outcome ~= nil then
+                    continue
+                end
+                local entry: SceneEntry? = findSceneEntry(shot, player)
+                if entry
+                    and entry.dist <= 60
+                    and (entry.angleDeg == nil or entry.angleDeg <= 30) then
+                    local verdict: string = "clean"
+                    if entry.los == "blocked" then
+                        verdict = "wallshot"
+                    elseif entry.dist > 80 then
+                        verdict = "longrange"
+                    end
+                    shot.outcome = {
+                        killed = player.Name,
+                        delayMs = math.floor((os.clock() - shot.clockAt) * 1000),
+                        verdict = verdict,
+                        distance = entry.dist,
+                        lineOfSight = entry.los,
+                    }
+                    runtime.aggregates.kills += 1
+                    if verdict == "wallshot" then
+                        runtime.aggregates.wallshotKills += 1
+                    elseif verdict == "longrange" then
+                        runtime.aggregates.longrangeKills += 1
+                    else
+                        runtime.aggregates.cleanKills += 1
+                    end
+                    if entry.dist > runtime.aggregates.farthestKill then
+                        runtime.aggregates.farthestKill = entry.dist
+                    end
+                    if shot.silentSpawn then
+                        local variant: string = shot.silentSpawn.variant
+                        runtime.spawnKills[variant] =
+                            (runtime.spawnKills[variant] or 0) + 1
+                    end
+                    table.insert(runtime.hits, {
+                        t = os.time(),
+                        killed = player.Name,
+                        tool = shot.tool,
+                        verdict = verdict,
+                        distance = entry.dist,
+                        lineOfSight = entry.los,
+                        headOffset = entry.headOffset,
+                        torso = entry.torso,
+                        silentSpawn = shot.silentSpawn,
+                    })
+                    clampTrim(runtime.hits, tuning.maxEvents)
+                    attributed = true
+                    break
+                end
+            end
+            if not attributed then
+                runtime.aggregates.unattributedDeaths += 1
+            end
+        end
+
+        local function watchPlayer(player: Player): ()
+            if runtime.watchedPlayers[player] then
+                return
+            end
+            runtime.watchedPlayers[player] = true
+            local function watchCharacter(character: Model): ()
+                local humanoid: Humanoid? = character:FindFirstChildOfClass(
+                    "Humanoid"
+                ) :: Humanoid?
+                if humanoid then
+                    table.insert(
+                        runtime.connections,
+                        humanoid.Died:Connect(function(): ()
+                            if runtime.enabled then
+                                recordDeath(player)
+                            end
+                        end)
+                    )
+                end
+            end
+            if player.Character then
+                watchCharacter(player.Character)
+            end
+            table.insert(
+                runtime.connections,
+                player.CharacterAdded:Connect(watchCharacter)
+            )
+        end
+
+        local function recordMovement(
+            kind: string,
+            magnitude: number,
+            detail: {[string]: any}?
+        ): ()
+            table.insert(runtime.movements, {
+                t = os.time(),
+                kind = kind,
+                magnitude = round1(magnitude),
+                detail = detail,
+            } :: MovementRecord)
+            clampTrim(runtime.movements, tuning.maxEvents)
+        end
+
+        local function observeTool(tool: Tool): ()
+            if runtime.observedTools[tool] then
+                return
+            end
+            runtime.observedTools[tool] = true
+            table.insert(
+                runtime.connections,
+                tool.Activated:Connect(function(): ()
+                    if runtime.enabled and tuning.logShots then
+                        recordShot(tool)
+                    end
+                end)
+            )
+        end
+
+        local function observeContainer(container: Instance?): ()
+            if not container then
+                return
+            end
+            for _, child: Instance in ipairs(container:GetChildren()) do
+                if child:IsA("Tool") then
+                    observeTool(child :: Tool)
+                end
+            end
+            table.insert(
+                runtime.connections,
+                container.ChildAdded:Connect(function(child: Instance): ()
+                    if child:IsA("Tool") then
+                        observeTool(child :: Tool)
+                    end
+                end)
+            )
+        end
+
+        local function startMovementProbe(): ()
+            if runtime.movementTask then
+                return
+            end
+            local lastPosition: Vector3? = nil
+            local lastAt: number = 0
+            local speedSince: number? = nil
+            local airSince: number? = nil
+            local airConsumed: boolean = false
+            local movementElapsed: number = 0
+            runtime.movementTask = TaskManager:Connect(function(deltaTime: number): ()
+                movementElapsed += deltaTime
+                if movementElapsed < 0.05 then
+                    return
+                end
+                movementElapsed = 0
+                if not (runtime.enabled and tuning.logMovement) then
+                    lastPosition = nil
+                    lastAt = 0
+                    speedSince = nil
+                    airSince = nil
+                    airConsumed = false
+                    return
+                end
+                local character: Model? = LocalPlayer.Character
+                local root: BasePart? = character
+                    and character:FindFirstChild("HumanoidRootPart")
+                    :: BasePart?
+                local humanoid: Humanoid? = character
+                    and character:FindFirstChildOfClass("Humanoid")
+                    :: Humanoid?
+                if not root or not humanoid then
+                    lastPosition = nil
+                    lastAt = 0
+                    return
+                end
+                local now: number = os.clock()
+                local position: Vector3 = root.Position
+                if lastPosition and lastAt > 0 then
+                    local elapsed: number = now - lastAt
+                    if elapsed >= 0.02 then
+                        local jumped: number = (position - lastPosition).Magnitude
+                        if jumped > 25 and elapsed < 0.15 then
+                            recordMovement("teleport", jumped, {
+                                from = vectorArray(lastPosition),
+                                to = vectorArray(position),
+                            })
+                            runtime.aggregates.teleports += 1
+                        end
+                        local speed: number =
+                            root.AssemblyLinearVelocity.Magnitude
+                        if speed > 90 then
+                            if speedSince == nil then
+                                speedSince = now
+                            elseif now - speedSince > 0.3 then
+                                recordMovement("speed", speed)
+                                runtime.aggregates.speedSpikes += 1
+                                speedSince = nil
+                            end
+                        else
+                            speedSince = nil
+                        end
+                    end
+                end
+                if humanoid.FloorMaterial == Enum.Material.Air then
+                    if airSince == nil then
+                        airSince = now
+                    end
+                    if not airConsumed and now - airSince > 2.5 then
+                        recordMovement(
+                            "airtime",
+                            math.floor((now - airSince) * 10) / 10
+                        )
+                        runtime.aggregates.longAirtime += 1
+                        airConsumed = true
+                    end
+                else
+                    airSince = nil
+                    airConsumed = false
+                end
+                lastPosition = position
+                lastAt = now
+            end)
+        end
+
+        local function startHitboxProbe(): ()
+            if runtime.hitboxTask then
+                return
+            end
+            local hitboxElapsed: number = 0
+            runtime.hitboxTask = TaskManager:Connect(function(deltaTime: number): ()
+                hitboxElapsed += deltaTime
+                if hitboxElapsed < 1 then
+                    return
+                end
+                hitboxElapsed = 0
+                if not (runtime.enabled and tuning.logHitboxes) then
+                    return
+                end
+                for _, player: Player in ipairs(PlayersService:GetPlayers()) do
+                    if player ~= LocalPlayer then
+                        local character: Model? = player.Character
+                        local root: BasePart? = character
+                            and character:FindFirstChild("HumanoidRootPart")
+                            :: BasePart?
+                        local head: BasePart? = character
+                            and character:FindFirstChild("Head")
+                            :: BasePart?
+                        local torso: BasePart? = character
+                            and character:FindFirstChild("UpperTorso")
+                            :: BasePart?
+                        local anomaly: string? = nil
+                        local magnitude: number = 0
+                        if root and head then
+                            local offset: number =
+                                (head.Position - root.Position).Magnitude
+                            if offset > 3.2 or offset < 0.9 then
+                                anomaly = "headOffset"
+                                magnitude = round2(offset)
+                            end
+                        end
+                        if not anomaly and root and torso then
+                            local torsoY: number = torso.Size.Y
+                            if torsoY > 2.6 or torsoY < 0.7 then
+                                anomaly = "torsoSize"
+                                magnitude = round2(torsoY)
+                            end
+                        end
+                        if anomaly then
+                            local lastFlag: number? = runtime.anomalyCooldown[player]
+                            if not lastFlag or os.clock() - lastFlag > 2 then
+                                runtime.anomalyCooldown[player] = os.clock()
+                                recordMovement(anomaly, magnitude, {
+                                    player = player.Name,
+                                })
+                                runtime.aggregates.hitboxAnomalies += 1
+                            end
+                        end
+                    end
+                end
+            end)
+        end
+
+        local function buildInsights(): {string}
+            local insights: {string} = {}
+            local agg: any = runtime.aggregates
+            if agg.wallshotKills > 0 then
+                table.insert(
+                    insights,
+                    "Server accepted "
+                        .. tostring(agg.wallshotKills)
+                        .. " kill(s) through a blocked line of sight: wallshots are not validated."
+                )
+            end
+            if agg.longrangeKills > 0 then
+                table.insert(
+                    insights,
+                    "Server accepted "
+                        .. tostring(agg.longrangeKills)
+                        .. " kill(s) beyond 80 studs: no range cap observed."
+                )
+            end
+            if agg.teleports > 0 then
+                table.insert(
+                    insights,
+                    tostring(agg.teleports)
+                        .. " local teleport(s) were tolerated (no kick, no snapback)."
+                )
+            end
+            if agg.speedSpikes > 0 then
+                table.insert(
+                    insights,
+                    tostring(agg.speedSpikes)
+                        .. " sustained speed spike(s) above 90 studs/s were tolerated."
+                )
+            end
+            if agg.hitboxAnomalies > 0 then
+                table.insert(
+                    insights,
+                    tostring(agg.hitboxAnomalies)
+                        .. " abnormal hitbox geometry sample(s) observed on other players."
+                )
+            end
+            local spawnTotal: number = 0
+            local spawnParts: {string} = {}
+            for _, variant: string in ipairs({"Front", "Through", "Top", "Behind"}) do
+                local shotsTaken: number = runtime.spawnShots[variant] or 0
+                if shotsTaken > 0 then
+                    spawnTotal += shotsTaken
+                    table.insert(
+                        spawnParts,
+                        string.format(
+                            "%s %d/%d",
+                            variant,
+                            runtime.spawnKills[variant] or 0,
+                            shotsTaken
+                        )
+                    )
+                end
+            end
+            if spawnTotal > 0 then
+                table.insert(
+                    insights,
+                    "Silent spawn A/B (kills/shots): "
+                        .. table.concat(spawnParts, " · ")
+                        .. ". Compare variants before changing the default."
+                )
+            end
+            if #insights == 0 then
+                table.insert(
+                    insights,
+                    "No server-tolerance anomalies recorded yet this session."
+                )
+            end
+            return insights
+        end
+
+        saveSnapshot = function(reason: string?): boolean
+            if type(executorEnvironment.writefile) ~= "function" then
+                return false
+            end
+            if type(executorEnvironment.makefolder) == "function" then
+                pcall(executorEnvironment.makefolder, outputRoot)
+                pcall(executorEnvironment.makefolder, outputTelemetry)
+                pcall(executorEnvironment.makefolder, outputFolder)
+            end
+            local merged: {[string]: any} = {}
+            local mergedInsights: {string} = {}
+            if type(executorEnvironment.readfile) == "function" then
+                local okRead: boolean, existingRaw: any = pcall(
+                    executorEnvironment.readfile,
+                    outputPath
+                )
+                if okRead and type(existingRaw) == "string" then
+                    local okDecode: boolean, existing: any = pcall(
+                        httpService.JSONDecode,
+                        httpService,
+                        existingRaw
+                    )
+                    if okDecode and type(existing) == "table" then
+                        merged = existing
+                        mergedInsights = existing.insights or {}
+                    end
+                end
+            end
+            local aggregates: any = merged.aggregates or {}
+            for key: string, base: number in pairs(runtime.aggregates) do
+                aggregates[key] = (tonumber(aggregates[key]) or 0)
+                    + (base :: number)
+            end
+            local spawnShots: any = merged.spawnShots or {}
+            for key: string, base: number in pairs(runtime.spawnShots) do
+                spawnShots[key] = (tonumber(spawnShots[key]) or 0)
+                    + (base :: number)
+            end
+            local spawnKills: any = merged.spawnKills or {}
+            for key: string, base: number in pairs(runtime.spawnKills) do
+                spawnKills[key] = (tonumber(spawnKills[key]) or 0)
+                    + (base :: number)
+            end
+            local payload: {[string]: any} = {
+                schema = 1,
+                kind = "game-learning-log",
+                placeId = game.PlaceId,
+                savedAt = os.time(),
+                savedReason = reason or "manual",
+                session = {
+                    startedAt = os.time(),
+                    uptimeSeconds = math.floor(os.clock()),
+                },
+                aggregates = aggregates,
+                insights = buildInsights(),
+                previousInsights = mergedInsights,
+                spawnShots = runtime.spawnShots,
+                spawnKills = runtime.spawnKills,
+                shots = runtime.shots,
+                movements = runtime.movements,
+                hits = runtime.hits,
+            }
+            local okEncode: boolean, encoded: any = pcall(
+                httpService.JSONEncode,
+                httpService,
+                payload
+            )
+            if not okEncode or type(encoded) ~= "string" then
+                return false
+            end
+            local okWrite: boolean = pcall(
+                executorEnvironment.writefile,
+                outputPath,
+                encoded
+            )
+            if okWrite then
+                notify("Game Learning: saved " .. outputPath)
+            end
+            return okWrite
+        end
+
+        local function status(): string
+            local agg: any = runtime.aggregates
+            local base: string = string.format(
+                "Game Learning · shots %d · kills %d (wall %d · far %d) · misses %d · teleports %d · speed %d · anomalies %d",
+                agg.shots,
+                agg.kills,
+                agg.wallshotKills,
+                agg.longrangeKills,
+                agg.misses,
+                agg.teleports,
+                agg.speedSpikes,
+                agg.hitboxAnomalies
+            )
+            local spawnParts: {string} = {}
+            for _, variant: string in ipairs({"Front", "Through", "Top", "Behind"}) do
+                local shotsTaken: number = runtime.spawnShots[variant] or 0
+                if shotsTaken > 0 then
+                    table.insert(
+                        spawnParts,
+                        string.format(
+                            "%s %d/%d",
+                            variant,
+                            runtime.spawnKills[variant] or 0,
+                            shotsTaken
+                        )
+                    )
+                end
+            end
+            if #spawnParts > 0 then
+                base = base .. " · spawn " .. table.concat(spawnParts, " ")
+            end
+            return base
+        end
+
+        local function deleteLogs(): boolean
+            local deleteFile: any = executorEnvironment.delfile
+            local isFile: any = executorEnvironment.isfile
+            if type(deleteFile) ~= "function" then
+                return false
+            end
+            local exists: boolean = true
+            local okCheck: boolean, result: any = pcall(isFile, outputPath)
+            if not okCheck then
+                exists = false
+            else
+                exists = result == true
+            end
+            if not exists then
+                return true
+            end
+            local okDelete: boolean = pcall(deleteFile, outputPath)
+            if okDelete then
+                notify("Game Learning: log deleted")
+            end
+            return okDelete
+        end
+
+        function controller:setEnabled(enabled: boolean): ()
+            if runtime.enabled == enabled then
+                return
+            end
+            if not enabled then
+                runtime.enabled = false
+                for _, connection: RBXScriptConnection in ipairs(
+                    runtime.connections
+                ) do
+                    connection:Disconnect()
+                end
+                table.clear(runtime.connections)
+                runtime.observedTools = setmetatable({}, {__mode = "k"})
+                -- Without this, re-enabling would skip re-watching players whose
+                -- connections were just disconnected.
+                runtime.watchedPlayers = setmetatable({}, {__mode = "k"})
+                if runtime.movementTask then
+                    runtime.movementTask:Disconnect()
+                    runtime.movementTask = nil
+                end
+                if runtime.hitboxTask then
+                    runtime.hitboxTask:Disconnect()
+                    runtime.hitboxTask = nil
+                end
+                return
+            end
+            runtime.enabled = true
+            startMovementProbe()
+            startHitboxProbe()
+            observeContainer(LocalPlayer:FindFirstChildOfClass("Backpack"))
+            observeContainer(LocalPlayer.Character)
+            table.insert(
+                runtime.connections,
+                LocalPlayer.CharacterAdded:Connect(function(character: Model): ()
+                    observeContainer(character)
+                end)
+            )
+            for _, player: Player in ipairs(PlayersService:GetPlayers()) do
+                watchPlayer(player)
+            end
+            table.insert(
+                runtime.connections,
+                PlayersService.PlayerAdded:Connect(watchPlayer)
+            )
+        end
+
+        controller.save = function(_reason: string?): boolean
+            return saveSnapshot("manual")
+        end
+        controller.delete = function(): boolean
+            return deleteLogs()
+        end
+        controller.status = status
+        return controller
+    end)()
+
+    local gameLearning: any = controllerFactory
+
+    local GameLearningFeature: any = createUniversalFeature(
+        "Game Learning",
+        "Passive log of shots, hitboxes and movement: learns what the server "
+            .. "accepts or allows by accident (wallshots, range, teleports).",
+        16,
+        function(_enabled: boolean): () end,
+        {category = true, categoryName = "Other"}
+    )
+    addToggleOption(
+        GameLearningFeature,
+        "Log shots",
+        gameLearning.tuning.logShots,
+        function(value: boolean): ()
+            gameLearning.tuning.logShots = value
+        end,
+        "Snapshots every player's distance, angle, line of sight and hitbox "
+            .. "geometry on each shot you fire."
+    )
+    addToggleOption(
+        GameLearningFeature,
+        "Log movement",
+        gameLearning.tuning.logMovement,
+        function(value: boolean): ()
+            gameLearning.tuning.logMovement = value
+        end,
+        "Tracks teleports, sustained speed spikes and long airtime on your "
+            .. "character: movement the server tolerates."
+    )
+    addToggleOption(
+        GameLearningFeature,
+        "Log hitboxes",
+        gameLearning.tuning.logHitboxes,
+        function(value: boolean): ()
+            gameLearning.tuning.logHitboxes = value
+        end,
+        "Samples other players' head offset and torso size once a second and "
+            .. "flags abnormal geometry."
+    )
+    addNumberOption(
+        GameLearningFeature,
+        "Kill window",
+        gameLearning.tuning.killWindowSeconds,
+        1,
+        10,
+        function(value: number): ()
+            gameLearning.tuning.killWindowSeconds = value
+        end,
+        "Seconds after a shot a death still counts as this shot's result.",
+        0.5
+    )
+    addActionOption(GameLearningFeature, "Show status", function(): ()
+        notify(gameLearning:status())
+    end)
+    addActionOption(GameLearningFeature, "Save logs", function(): ()
+        gameLearning:save()
+    end)
+    addActionOption(GameLearningFeature, "Delete logs", function(): ()
+        gameLearning:delete()
+    end)
+    addInformationOption(
+        GameLearningFeature,
+        "Local only: nothing is uploaded. Saved next to the Projectile "
+            .. "Calibration file as _Game_Learning.json."
+    )
+
+    activeController = gameLearning
+    gameLearning:setEnabled(true)
+
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    if activeController then
+        activeController:setEnabled(false)
+    end
+    activeController = nil
+    Module.Events = {}
+end
+
+return Module
+]=],
+        ["src/games/universal/Utility/SpinBot.lua"] = [=[
+export type Runtime = {
     framework: any,
     host: any,
     services: any,
@@ -23841,8 +24864,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/Utility/Disguise.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/Utility/Disguise.lua"] = [=[
+export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -24768,8 +25792,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/Utility/AnimationChanger.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/Utility/AnimationChanger.lua"] = [=[
+export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -25313,8 +26338,9 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
-        ["src/games/universal/Utility/EmotePlayer.lua"] = [[export type Runtime = {
+]=],
+        ["src/games/universal/Utility/EmotePlayer.lua"] = [=[
+export type Runtime = {
     framework: any,
     entity: any,
     host: any,
@@ -25869,6 +26895,7489 @@ function Module.destroy(): ()
 end
 
 return Module
-]],
+]=],
+        ["src/games/MM2/base.lua"] = [=[
+local Module = {
+    Name = "MM2",
+    PlaceId = 142823291,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Menu = nil :: any,
+    Runtime = nil :: any,
+}
+
+local moduleCleanup: () -> () = function(): () end
+
+local function buildMM2Features()
+local host: any = getfenv()
+local trajectoryLogPrefix: string = "[" .. tostring(host.PRODUCT.logPrefix)
+    .. ":MM2:Trajectory]"
+local MM2Effects = create("Folder", {
+    Parent = ScreenGui,
+    Name = "MM2Effects",
+})
+local GunEffects = create("Folder", {
+    Parent = MM2Effects,
+    Name = "GunESP",
+})
+local TrapEffects = create("Folder", {
+    Parent = MM2Effects,
+    Name = "TrapESP",
+})
+local CoinEffects = create("Folder", {
+    Parent = MM2Effects,
+    Name = "CoinChams",
+})
+
+local mm2RoundData: {[any]: any} = {}
+local mm2GameplayRemotes: Instance? = nil
+local mm2RoleRemote: RemoteFunction? = nil
+local roleRefreshRunning: boolean = false
+local lastRoleRefreshAt: number = -math.huge
+local roundLifecycleActive: boolean? = nil
+local roleRefreshGeneration: number = 0
+
+pcall(function()
+    local replicatedStorage: ReplicatedStorage =
+        game:GetService("ReplicatedStorage")
+    local remotes: Instance? = replicatedStorage:WaitForChild("Remotes", 5)
+    local gameplay: Instance? = remotes and remotes:WaitForChild("Gameplay", 5)
+    if not gameplay then
+        return
+    end
+    mm2GameplayRemotes = gameplay
+    local getCurrentPlayerData: Instance? = gameplay:FindFirstChild(
+        "GetCurrentPlayerData"
+    )
+    if getCurrentPlayerData and getCurrentPlayerData:IsA("RemoteFunction") then
+        -- Do not InvokeServer while the module is still wiring its listeners.
+        -- A yielding server response used to leave RoundStart disconnected long
+        -- enough to miss the event that should prime the ESP. The first fetch is
+        -- queued after every role/lifecycle signal below is ready.
+        mm2RoleRemote = getCurrentPlayerData
+    end
+end)
+
+local mm2Settings = {
+    autoGetGunDelay = 0.25,
+    shootMode = "Manual",
+    shootWallCheck = true,
+    silentAim = false,
+    shootKey = Enum.KeyCode.Q,
+    shootTarget = "",
+    showMissCooldown = true,
+    predictionRtt = 0.08,
+    gunLeadBias = 0,
+    autoTuneLead = true,
+    silentSweep = 3,
+    -- Where the silent bullet is authored: "Front" (shooter's side of the
+    -- torso), "Through" (pierces the torso), "Top" (old, 1.6 above), "Behind"
+    -- (far side). The Spawn A/B status measures which actually scores.
+    silentSpawn = "Front",
+    getGunKey = Enum.KeyCode.G,
+    instantRoleNotify = false,
+    roleEspAll = false,
+
+    roleEspRoundOnly = false,
+    roleEspInnocent = false,
+    roleEspMurderer = false,
+    roleEspSheriff = false,
+    -- Bright, saturated role palette: the dark greens/reds were nearly
+    -- invisible through walls and indistinguishable from the default white
+    -- fallback.
+    innocentColor = Color3.fromRGB(0, 255, 8),
+    innocentTransparency = 0.62,
+    deadColor = Color3.fromRGB(170, 170, 180),
+    deadTransparency = 0.72,
+    murdererColor = Color3.fromRGB(255, 0, 4),
+    murdererTransparency = 0.5,
+    sheriffColor = Color3.fromRGB(0, 153, 255),
+    sheriffTransparency = 0.5,
+    heroColor = Color3.fromRGB(255, 196, 0),
+    heroTransparency = 0.5,
+    roleTagsAll = false,
+    blurtDelay = 1.5,
+    blurtRepeat = false,
+    coinColor = Color3.fromRGB(230, 220, 65),
+    coinTransparency = 0.8,
+    trapColor = Color3.fromRGB(145, 25, 25),
+    trapTransparency = 0.7,
+
+    gunColor = Color3.fromRGB(226, 226, 232),
+    gunTransparency = 0.55,
+    autoPlayId = "",
+}
+
+local function isProtectedTarget(player: Player?): boolean
+    local runtime: any = Module.Runtime
+    local targets: any = runtime and runtime.Services and runtime.Services.protectedTargets
+    return targets ~= nil and targets.isProtected(player) == true
+end
+
+local function clearEffects(folder)
+    for _, child in ipairs(folder:GetChildren()) do
+        if child:IsA("ObjectValue") and child.Value then
+            child.Value:Destroy()
+        end
+        child:Destroy()
+    end
+end
+
+local function getWeaponFromContainer(
+    container: Instance?,
+    weaponName: string,
+    weaponTag: string
+): Tool?
+    if not container then
+        return nil
+    end
+
+    for _, child: Instance in ipairs(container:GetChildren()) do
+        if child:IsA("Tool") then
+            if CollectionService:HasTag(child, weaponTag) then
+                return child
+            end
+
+            if child.Name == weaponName then
+                if weaponName == "Gun" then
+                    local shootRemote: Instance? = child:FindFirstChild("Shoot")
+                    if shootRemote and shootRemote:IsA("RemoteEvent") then
+                        return child
+                    end
+                elseif weaponName == "Knife" then
+                    local events: Instance? = child:FindFirstChild("Events")
+                    local knifeThrown: Instance? = events
+                        and events:FindFirstChild("KnifeThrown")
+                    local knifeStabbed: Instance? = events
+                        and events:FindFirstChild("KnifeStabbed")
+                    if knifeThrown and knifeThrown:IsA("RemoteEvent")
+                        and knifeStabbed and knifeStabbed:IsA("RemoteEvent") then
+                        return child
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function getPlayerWeapon(
+    player: Player,
+    weaponName: string,
+    equippedOnly: boolean?
+): Tool?
+    local tag: string = "Weapon_" .. weaponName
+    local equipped: Tool? = getWeaponFromContainer(player.Character, weaponName, tag)
+    if equipped or equippedOnly then
+        return equipped
+    end
+    return getWeaponFromContainer(
+        player:FindFirstChildOfClass("Backpack"),
+        weaponName,
+        tag
+    )
+end
+
+local function isPlayerAlive(player: Player): boolean
+    local humanoid: Humanoid? = player.Character
+        and player.Character:FindFirstChildOfClass("Humanoid")
+        :: Humanoid?
+    return humanoid ~= nil and humanoid.Health > 0
+end
+
+local function findMM2Role(toolName: string, excludedPlayer: Player?): Player?
+    for _, player: Player in ipairs(Players:GetPlayers()) do
+        if player ~= excludedPlayer
+            and isPlayerAlive(player)
+            and getPlayerWeapon(player, toolName) then
+            return player
+        end
+    end
+    return nil
+end
+
+local function playerFromRoundKey(key: any, data: any): Player?
+    if typeof(key) == "Instance" and key:IsA("Player") then
+        return key
+    end
+
+    local player: Player? = nil
+    local namedPlayer: Instance? = Players:FindFirstChild(tostring(key))
+    if namedPlayer and namedPlayer:IsA("Player") then
+        player = namedPlayer
+    end
+
+    if type(data) == "table" then
+        if data.Name then
+            local namedFromData: Instance? =
+                Players:FindFirstChild(tostring(data.Name))
+            -- Only upgrade the match: when the payload carries a stale or
+            -- renamed entry we must keep whatever the key already resolved to,
+            -- otherwise the role is lost and the ESP falls back to white.
+            if namedFromData and namedFromData:IsA("Player") then
+                player = namedFromData :: Player
+            end
+        end
+        if not player and data.UserId then
+            local userId = tonumber(data.UserId)
+            if userId then
+                local success, resolvedPlayer = pcall(
+                    Players.GetPlayerByUserId,
+                    Players,
+                    userId
+                )
+                player = success and resolvedPlayer or nil
+            end
+        end
+    end
+
+    return player
+end
+
+local function getRoundRole(player: Player): string?
+    for key: any, data: any in pairs(mm2RoundData) do
+        if playerFromRoundKey(key, data) == player and type(data) == "table" then
+            local role: any = data.Role
+            if role == "Murderer"
+                or role == "Sheriff"
+                or role == "Hero"
+                or role == "Innocent" then
+                return role
+            end
+        end
+    end
+    return nil
+end
+
+-- Feature modules (Blurt Roles, Instant Role Notify, Role Tags, ...) subscribe
+-- to one event instead of polling role data on their own.
+local roundRolesListeners: {(boolean) -> ()} = {}
+local publishedRoundRolesActive: boolean = false
+local function emitRoundRoles(active: boolean): ()
+    publishedRoundRolesActive = active
+    for _, listener: (boolean) -> () in ipairs(roundRolesListeners) do
+        pcall(listener, active)
+    end
+end
+local function onRoundRoles(listener: (boolean) -> ()): () -> ()
+    table.insert(roundRolesListeners, listener)
+    -- A role snapshot may have arrived while the loader was still downloading
+    -- this feature file. Replay the latest state instead of waiting for another
+    -- server event.
+    task.defer(function(): ()
+        if table.find(roundRolesListeners, listener) then
+            pcall(listener, publishedRoundRolesActive)
+        end
+    end)
+    return function(): ()
+        local index: number? = table.find(roundRolesListeners, listener)
+        if index then
+            table.remove(roundRolesListeners, index)
+        end
+    end
+end
+
+-- Forward declared: role refreshes invalidate the index when fresh server data
+-- lands, and the index itself is defined below requestRoleRefresh.
+local invalidateRoleCaches: () -> ()
+local rebuildRoleIndex: () -> ()
+
+local function requestRoleRefresh(force: boolean?): ()
+    if not mm2RoleRemote
+        or roleRefreshRunning
+        or (not force and os.clock() - lastRoleRefreshAt < 0.8) then
+        return
+    end
+
+    roleRefreshRunning = true
+    local generation: number = roleRefreshGeneration
+    task.spawn(function(): ()
+        local success: boolean, result: any = pcall(
+            mm2RoleRemote.InvokeServer,
+            mm2RoleRemote
+        )
+        roleRefreshRunning = false
+        lastRoleRefreshAt = os.clock()
+        if success
+            and generation == roleRefreshGeneration
+            and roundLifecycleActive ~= false
+            and type(result) == "table" then
+            mm2RoundData = result
+            invalidateRoleCaches()
+        end
+    end)
+end
+
+-- ---------------------------------------------------------------------------
+-- Role index
+--
+-- Every visual (ESP, Chams, Role Tags) asks for roles once per player per
+-- frame. Resolving a role used to walk that player's character and backpack,
+-- and `roundRolesKnown` walked *every* player's backpack on top of that, so a
+-- 12 player server cost hundreds of Instance traversals per frame and the game
+-- crawled. Now a single pass fills this index, and it is only rebuilt when
+-- something that can change a role actually happens: a tool appears or leaves
+-- a backpack/character, a character spawns or dies, or the server pushes new
+-- round data. Reads are plain table lookups.
+-- ---------------------------------------------------------------------------
+local roleIndex: {
+    roles: {[Player]: string?},
+    murderer: Player?,
+    sheriff: Player?,
+    rolesKnown: boolean,
+} = {roles = {}, murderer = nil, sheriff = nil, rolesKnown = false}
+local roleIndexDirty: boolean = true
+local roleIndexAt: number = -math.huge
+local roleIndexRefreshQueued: boolean = false
+local roleWatchers: {[Player]: {RBXScriptConnection}} = {}
+
+function invalidateRoleCaches(): ()
+    roleIndexDirty = true
+    -- The generic Player ESP renders every frame, but Wurst memoises its role
+    -- bridge for one frame. Drop that memo on the actual MM2 signal so even
+    -- that single stale frame disappears.
+    if type(state.clearRoleMemo) == "function" then
+        state.clearRoleMemo()
+    end
+
+    -- Coalesce the burst of ChildAdded/CollisionGroup events produced while a
+    -- character is assembled, then publish the complete index before the next
+    -- rendered frame. Consumers no longer wait for their own polling interval.
+    if roleIndexRefreshQueued then
+        return
+    end
+    roleIndexRefreshQueued = true
+    task.defer(function(): ()
+        roleIndexRefreshQueued = false
+        if roleIndexDirty and rebuildRoleIndex then
+            rebuildRoleIndex()
+        end
+    end)
+end
+
+local function hasMurdererCollisionGroup(character: Model?): boolean
+    if not character then
+        return false
+    end
+    for _, child: Instance in ipairs(character:GetChildren()) do
+        if child:IsA("BasePart") and child.CollisionGroup == "Murderer" then
+            return true
+        end
+    end
+    return false
+end
+
+-- One pass over the round payload so the per-player loop below does not have
+-- to re-scan it (and re-resolve names to Players) for every single player.
+local function buildRoundRoleMap(): {[Player]: string}
+    local map: {[Player]: string} = {}
+    for key: any, data: any in pairs(mm2RoundData) do
+        if type(data) == "table" then
+            local role: any = data.Role
+            if role == "Murderer"
+                or role == "Sheriff"
+                or role == "Hero"
+                or role == "Innocent" then
+                local player: Player? = playerFromRoundKey(key, data)
+                if player then
+                    map[player] = role
+                end
+            end
+        end
+    end
+    return map
+end
+
+rebuildRoleIndex = function(): ()
+    roleIndexDirty = false
+    roleIndexAt = os.clock()
+
+    local roles: {[Player]: string?} = {}
+    local roundRoleByPlayer: {[Player]: string} = buildRoundRoleMap()
+    local murderer: Player? = nil
+    local sheriff: Player? = nil
+    local alive: {[Player]: boolean} = {}
+    local special: {[Player]: string} = {}
+
+    for _, player: Player in ipairs(Players:GetPlayers()) do
+        local character: Model? = player.Character
+        local humanoid: Humanoid? = character
+            and character:FindFirstChildOfClass("Humanoid")
+        local isAlive: boolean = humanoid ~= nil and humanoid.Health > 0
+        alive[player] = isAlive
+
+        local roundRole: string? = roundRoleByPlayer[player]
+        local resolved: string? = nil
+        if hasMurdererCollisionGroup(character)
+            or getPlayerWeapon(player, "Knife") then
+            resolved = "Murderer"
+        elseif getPlayerWeapon(player, "Gun") then
+            resolved = roundRole == "Hero" and "Hero" or "Sheriff"
+        elseif roundRole and roundRole ~= "Innocent" then
+            resolved = roundRole
+        end
+
+        if resolved then
+            special[player] = resolved
+            -- Prefer a living candidate, but keep a dead one rather than none
+            -- (a corpse still tells the ESP who the murderer was).
+            if resolved == "Murderer" then
+                if not murderer or (isAlive and not alive[murderer]) then
+                    murderer = player
+                end
+            elseif resolved == "Sheriff" or resolved == "Hero" then
+                if not sheriff or (isAlive and not alive[sheriff]) then
+                    sheriff = player
+                end
+            end
+        end
+    end
+
+    -- "Roles are known" means the round actually handed something out. Only
+    -- then can an unarmed, living player be called an innocent by elimination.
+    local rolesKnown: boolean = next(special) ~= nil
+    if roundLifecycleActive == false then
+        rolesKnown = false
+    end
+
+    for _, player: Player in ipairs(Players:GetPlayers()) do
+        local resolved: string? = special[player]
+        if not resolved and rolesKnown then
+            resolved = alive[player] and "Innocent" or "Dead"
+        end
+        roles[player] = resolved
+    end
+
+    local rolesChanged: boolean = roleIndex.rolesKnown ~= rolesKnown
+        or roleIndex.murderer ~= murderer
+        or roleIndex.sheriff ~= sheriff
+    if not rolesChanged then
+        for player: Player, role: string? in pairs(roles) do
+            if roleIndex.roles[player] ~= role then
+                rolesChanged = true
+                break
+            end
+        end
+    end
+    if not rolesChanged then
+        for player: Player in pairs(roleIndex.roles) do
+            if roles[player] == nil and roleIndex.roles[player] ~= nil then
+                rolesChanged = true
+                break
+            end
+        end
+    end
+
+    roleIndex.roles = roles
+    roleIndex.murderer = murderer
+    roleIndex.sheriff = sheriff
+    roleIndex.rolesKnown = rolesKnown
+
+    if rolesChanged then
+        -- Player ESP sees the new palette on its next render; throttled visual
+        -- consumers receive roleUpdate and can bypass their normal interval.
+        if type(state.invalidateGameRoles) == "function" then
+            state.invalidateGameRoles()
+        elseif type(state.clearRoleMemo) == "function" then
+            state.clearRoleMemo()
+        end
+        emitRoundRoles(rolesKnown)
+    end
+
+    -- Round is live but nothing has been handed out yet: ask the server once
+    -- rather than spinning on backpack scans every frame.
+    if not rolesKnown and roundLifecycleActive ~= false then
+        requestRoleRefresh()
+    end
+end
+
+local function ensureRoleIndex(): ()
+    -- The 1s sweep is only a safety net for changes with no signal attached
+    -- (collision group swaps, for instance); the dirty flag does the real work.
+    if roleIndexDirty or os.clock() - roleIndexAt > 1 then
+        rebuildRoleIndex()
+    end
+end
+
+local function unwatchPlayer(player: Player): ()
+    local connections: {RBXScriptConnection}? = roleWatchers[player]
+    if not connections then
+        return
+    end
+    roleWatchers[player] = nil
+    for _, connection: RBXScriptConnection in ipairs(connections) do
+        pcall(function(): ()
+            connection:Disconnect()
+        end)
+    end
+end
+
+-- Cheap signals instead of polling: the index is marked dirty the instant a
+-- knife or gun is handed out, which is what makes the ESP colour correctly on
+-- the very first frame of the round instead of up to a second later.
+local function watchPlayer(player: Player): ()
+    unwatchPlayer(player)
+    local connections: {RBXScriptConnection} = {}
+    local watchedTools: {[Tool]: boolean} = setmetatable({}, {__mode = "k"}) :: any
+
+    local function watchTool(tool: Tool): ()
+        if watchedTools[tool] then
+            return
+        end
+        watchedTools[tool] = true
+        -- Roblox can parent a Tool before its Shoot/Events descendants finish
+        -- replicating. Observe that assembly too; otherwise the first scan can
+        -- reject the weapon and the ESP waits for the 1 s safety sweep.
+        table.insert(
+            connections,
+            tool.DescendantAdded:Connect(invalidateRoleCaches)
+        )
+        table.insert(
+            connections,
+            tool.DescendantRemoving:Connect(invalidateRoleCaches)
+        )
+    end
+
+    local function watchContainer(container: Instance?): ()
+        if not container then
+            return
+        end
+        for _, child: Instance in ipairs(container:GetChildren()) do
+            if child:IsA("Tool") then
+                watchTool(child)
+            end
+        end
+        table.insert(
+            connections,
+            container.ChildAdded:Connect(function(child: Instance): ()
+                if child:IsA("Tool") then
+                    watchTool(child)
+                end
+                invalidateRoleCaches()
+            end)
+        )
+        table.insert(connections, container.ChildRemoved:Connect(invalidateRoleCaches))
+    end
+
+    local function watchCharacter(character: Model): ()
+        invalidateRoleCaches()
+        watchContainer(character)
+
+        local function watchCollisionPart(part: BasePart): ()
+            table.insert(
+                connections,
+                part:GetPropertyChangedSignal("CollisionGroup")
+                    :Connect(invalidateRoleCaches)
+            )
+        end
+        for _, child: Instance in ipairs(character:GetChildren()) do
+            if child:IsA("BasePart") then
+                watchCollisionPart(child)
+            end
+        end
+        table.insert(
+            connections,
+            character.ChildAdded:Connect(function(child: Instance): ()
+                if child:IsA("BasePart") then
+                    watchCollisionPart(child)
+                end
+            end)
+        )
+
+        local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            table.insert(
+                connections,
+                humanoid.Died:Connect(invalidateRoleCaches)
+            )
+        end
+    end
+
+    table.insert(connections, player.CharacterAdded:Connect(watchCharacter))
+    table.insert(connections, player.CharacterRemoving:Connect(invalidateRoleCaches))
+    table.insert(
+        connections,
+        player.ChildAdded:Connect(function(child: Instance): ()
+            if child:IsA("Backpack") then
+                watchContainer(child)
+                invalidateRoleCaches()
+            end
+        end)
+    )
+    watchContainer(player:FindFirstChildOfClass("Backpack"))
+    if player.Character then
+        watchCharacter(player.Character)
+    end
+    roleWatchers[player] = connections
+end
+
+for _, player: Player in ipairs(Players:GetPlayers()) do
+    watchPlayer(player)
+end
+featureConnections.MM2RoleWatchAdded = Players.PlayerAdded:Connect(function(player: Player): ()
+    watchPlayer(player)
+    invalidateRoleCaches()
+end)
+featureConnections.MM2RoleWatchRemoving = Players.PlayerRemoving:Connect(function(player: Player): ()
+    unwatchPlayer(player)
+    invalidateRoleCaches()
+end)
+for _, weaponTag: string in ipairs({"Weapon_Knife", "Weapon_Gun"}) do
+    featureConnections["MM2RoleTagAdded" .. weaponTag] = CollectionService
+        :GetInstanceAddedSignal(weaponTag)
+        :Connect(invalidateRoleCaches)
+    featureConnections["MM2RoleTagRemoved" .. weaponTag] = CollectionService
+        :GetInstanceRemovedSignal(weaponTag)
+        :Connect(invalidateRoleCaches)
+end
+
+local function roundRolesKnown(): boolean
+    ensureRoleIndex()
+    return roleIndex.rolesKnown
+end
+
+local function getPlayerRole(player: Player): string?
+    ensureRoleIndex()
+    return roleIndex.roles[player]
+end
+
+local function findMM2Role(toolName: string, excludedPlayer: Player?): Player?
+    ensureRoleIndex()
+    local wanted: string = toolName == "Knife" and "Murderer" or "Sheriff"
+    for player: Player, role: string? in pairs(roleIndex.roles) do
+        if player ~= excludedPlayer
+            and (role == wanted or (wanted == "Sheriff" and role == "Hero")) then
+            return player
+        end
+    end
+    return nil
+end
+
+local function findPlayerByRoundRole(role: string): Player?
+    for key, data in pairs(mm2RoundData) do
+        if type(data) == "table" and data.Role == role then
+            local player: Player? = playerFromRoundKey(key, data)
+            if player and isPlayerAlive(player) then
+                return player
+            end
+        end
+    end
+    return nil
+end
+
+local function hasActiveRoundRoles(): boolean
+    return roundRolesKnown()
+end
+
+local function findMurderer(): Player?
+    ensureRoleIndex()
+    return roleIndex.murderer or findPlayerByRoundRole("Murderer")
+end
+
+local function findSheriff(): Player?
+    ensureRoleIndex()
+    return roleIndex.sheriff
+        or findPlayerByRoundRole("Sheriff")
+        or findPlayerByRoundRole("Hero")
+end
+
+
+local MM2_MAP_COIN_CONTAINERS: {string} = {
+    "CoinContainer",
+    "CoinAreas",
+    "Coins",
+}
+
+-- The current map parents its lobby under "MainLobby"/"RegularLobby"; the
+-- older "Lobby" name is kept for the places that still use it.
+local LOBBY_MODEL_NAMES: {string} = {
+    "Lobby",
+    "MainLobby",
+    "RegularLobby",
+}
+
+local function isLobbyName(name: string): boolean
+    for _, candidate: string in ipairs(LOBBY_MODEL_NAMES) do
+        if name == candidate then
+            return true
+        end
+    end
+    return false
+end
+
+local function isMM2MapModel(object: Instance): boolean
+    if not object:IsA("Model") or isLobbyName(object.Name) then
+        return false
+    end
+    for _, containerName: string in ipairs(MM2_MAP_COIN_CONTAINERS) do
+        if object:FindFirstChild(containerName) then
+            return true
+        end
+    end
+    return false
+end
+
+-- Gun ESP, Auto Get Gun, Loop Interact and Silence all ask for the map
+-- several times a second, so the answer is cached until the model it points
+-- at goes away. The first scan only touches top level children; the fallback
+-- still walks the map subtree once for CoinSpawn on old maps, but on the
+-- current map (no CoinSpawn anywhere) it stops at the top level "Spawns"
+-- check.
+local mm2MapCache: {map: Instance?, at: number} = {map = nil, at = -math.huge}
+
+local function findMM2MapUncached(): Instance?
+    for _, object: Instance in ipairs(workspace:GetChildren()) do
+        if isMM2MapModel(object) then
+            return object
+        end
+    end
+
+    -- The current map no longer ships CoinSpawn (or any coin container), so a
+    -- direct "Spawns" child is the map marker that still survives (old maps
+    -- had it too, alongside CoinSpawn). detectRoundPhase re-checks the
+    -- player's actual parentage before trusting this, so a map model that
+    -- lingers in the lobby cannot flip the phase.
+    for _, object: Instance in ipairs(workspace:GetChildren()) do
+        if object:IsA("Model")
+            and not isLobbyName(object.Name)
+            and object:FindFirstChild("Spawns") then
+            return object
+        end
+    end
+    return nil
+end
+
+local function findMM2Map(): Instance?
+    local cached: Instance? = mm2MapCache.map
+    if cached and cached.Parent == workspace then
+        return cached
+    end
+    if os.clock() - mm2MapCache.at < 1 then
+        return cached
+    end
+    mm2MapCache.at = os.clock()
+    mm2MapCache.map = findMM2MapUncached()
+    return mm2MapCache.map
+end
+
+-- Full workspace:GetDescendants() every half second was the single most
+-- expensive thing the MM2 module did; on a loaded map that is tens of
+-- thousands of instances. Cheap lookups first, the exhaustive sweep at most
+-- once every three seconds, and the answer cached while it stays valid.
+local droppedGunCache: {gun: (Model | BasePart)?, at: number} =
+    {gun = nil, at = -math.huge}
+local lastGunSweepAt: number = -math.huge
+
+local function isLooseGun(object: Instance): boolean
+    if not object:IsA("Tool") then
+        return false
+    end
+    if object.Name ~= "Gun" and not CollectionService:HasTag(object, "Weapon_Gun") then
+        return false
+    end
+    -- A gun inside a character or a backpack is owned, not dropped.
+    return object:IsDescendantOf(workspace)
+        and not object:FindFirstAncestorOfClass("Backpack")
+        and (object.Parent == workspace or object.Parent == findMM2Map()
+            or object.Parent ~= nil and not object.Parent:FindFirstChildOfClass("Humanoid"))
+end
+
+local function resolveGunPart(object: Instance): (Model | BasePart)?
+    if object:IsA("Model") or object:IsA("BasePart") then
+        return object :: any
+    end
+    local handle: Instance? = object:FindFirstChild("Handle")
+        or object:FindFirstChildWhichIsA("BasePart")
+    return (handle and handle:IsA("BasePart")) and handle or nil
+end
+
+local function findDroppedGunUncached(): (Model | BasePart)?
+    local map: Instance? = findMM2Map()
+    local candidate: Instance? = map and map:FindFirstChild("GunDrop")
+    if not candidate then
+        candidate = workspace:FindFirstChild("GunDrop")
+    end
+    if candidate and (candidate:IsA("Model") or candidate:IsA("BasePart")) then
+        return candidate :: any
+    end
+
+    for _, object: Instance in ipairs(CollectionService:GetTagged("Weapon_Gun")) do
+        if isLooseGun(object) then
+            local part: (Model | BasePart)? = resolveGunPart(object)
+            if part then
+                return part
+            end
+        end
+    end
+
+    for _, object: Instance in ipairs(workspace:GetChildren()) do
+        if isLooseGun(object) then
+            local part: (Model | BasePart)? = resolveGunPart(object)
+            if part then
+                return part
+            end
+        end
+    end
+
+    if os.clock() - lastGunSweepAt < 3 then
+        return nil
+    end
+    lastGunSweepAt = os.clock()
+    local deepCandidate: Instance? = (map and map:FindFirstChild("GunDrop", true))
+        or workspace:FindFirstChild("GunDrop", true)
+    if deepCandidate
+        and (deepCandidate:IsA("Model") or deepCandidate:IsA("BasePart")) then
+        return deepCandidate :: any
+    end
+    for _, object: Instance in ipairs(workspace:GetDescendants()) do
+        if isLooseGun(object) then
+            local part: (Model | BasePart)? = resolveGunPart(object)
+            if part then
+                return part
+            end
+        end
+    end
+    return nil
+end
+
+local function findDroppedGun(): (Model | BasePart)?
+    local cached: (Model | BasePart)? = droppedGunCache.gun
+    if cached and cached.Parent and cached:IsDescendantOf(workspace) then
+        return cached
+    end
+    if os.clock() - droppedGunCache.at < 0.4 then
+        return nil
+    end
+    droppedGunCache.at = os.clock()
+    droppedGunCache.gun = findDroppedGunUncached()
+    return droppedGunCache.gun
+end
+
+local function createMM2Marker(folder, adornee, labelText, color, transparency)
+    local highlight = Instance.new("Highlight")
+    highlight.Name = labelText .. "Highlight"
+    highlight.Adornee = adornee
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.FillColor = color
+    highlight.FillTransparency = transparency or 0.68
+    highlight.OutlineColor = color
+    highlight.OutlineTransparency = 0
+    highlight.Parent = adornee
+
+    local highlightReference = Instance.new("ObjectValue")
+    highlightReference.Name = labelText .. "HighlightReference"
+    highlightReference.Value = highlight
+    highlightReference.Parent = folder
+
+    local head = adornee:IsA("Model")
+        and (adornee:FindFirstChild("Head")
+            or adornee:FindFirstChild("HumanoidRootPart"))
+        or adornee
+
+    if head and head:IsA("BasePart") then
+        local billboard = Instance.new("BillboardGui")
+        billboard.Name = labelText .. "Label"
+        billboard.Adornee = head
+        billboard.AlwaysOnTop = true
+        billboard.Size = UDim2.fromOffset(130, 28)
+        billboard.StudsOffset = Vector3.new(0, 3, 0)
+        billboard.Parent = head
+
+        local billboardReference = Instance.new("ObjectValue")
+        billboardReference.Name = labelText .. "LabelReference"
+        billboardReference.Value = billboard
+        billboardReference.Parent = folder
+
+        local text = Instance.new("TextLabel")
+        text.BackgroundColor3 = Theme.background
+        text.BackgroundTransparency = 0.28
+        text.BorderSizePixel = 0
+        text.FontFace = CONTROL_FONT
+        text.Size = UDim2.fromScale(1, 1)
+        text.Text = labelText
+        text.TextColor3 = Theme.text
+        text.TextSize = 12
+        text.Parent = billboard
+
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 6)
+        corner.Parent = text
+
+        local stroke = Instance.new("UIStroke")
+        stroke.Color = Theme.outline
+        stroke.Transparency = 0.55
+        stroke.Thickness = 1
+        stroke.Parent = text
+
+        local accent = Instance.new("Frame")
+        accent.AnchorPoint = Vector2.new(0.5, 1)
+        accent.BackgroundColor3 = color
+        accent.BorderSizePixel = 0
+        accent.Position = UDim2.new(0.5, 0, 1, -3)
+        accent.Size = UDim2.new(0.55, 0, 0, 2)
+        accent.Parent = text
+
+        local accentCorner = Instance.new("UICorner")
+        accentCorner.CornerRadius = UDim.new(1, 0)
+        accentCorner.Parent = accent
+    end
+end
+
+local function createMM2Cham(folder, adornee, color, transparency)
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "WurstCham"
+    highlight.Adornee = adornee
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.FillColor = color
+    highlight.FillTransparency = transparency
+    highlight.OutlineColor = color
+    highlight.OutlineTransparency = math.clamp(transparency + 0.15, 0, 1)
+    highlight.Parent = adornee
+
+    local reference = Instance.new("ObjectValue")
+    reference.Name = "ChamReference"
+    reference.Value = highlight
+    reference.Parent = folder
+end
+
+local function registerMM2Roles(): ()
+    registerRoleProvider({
+        Name = "MM2",
+        Roles = {"Murderer", "Sheriff", "Hero", "Innocent", "Dead"},
+        Colors = {
+            Murderer = mm2Settings.murdererColor,
+            Sheriff = mm2Settings.sheriffColor,
+            Hero = mm2Settings.heroColor,
+            Innocent = mm2Settings.innocentColor,
+            Dead = mm2Settings.deadColor,
+        },
+        Get = function(player: Player): string?
+            return getPlayerRole(player)
+        end,
+        GetColor = function(roleName: string): Color3?
+            if roleName == "Murderer" then return mm2Settings.murdererColor end
+            if roleName == "Sheriff" then return mm2Settings.sheriffColor end
+            if roleName == "Hero" then return mm2Settings.heroColor end
+            if roleName == "Innocent" then return mm2Settings.innocentColor end
+            if roleName == "Dead" then return mm2Settings.deadColor end
+            return nil
+        end,
+        SetColor = function(roleName: string, colour: Color3): ()
+            if roleName == "Murderer" then
+                mm2Settings.murdererColor = colour
+            elseif roleName == "Sheriff" then
+                mm2Settings.sheriffColor = colour
+            elseif roleName == "Hero" then
+                mm2Settings.heroColor = colour
+            elseif roleName == "Innocent" then
+                mm2Settings.innocentColor = colour
+            elseif roleName == "Dead" then
+                mm2Settings.deadColor = colour
+            end
+        end,
+    })
+end
+
+if mm2GameplayRemotes then
+    local playerDataChanged = mm2GameplayRemotes:FindFirstChild("PlayerDataChanged")
+    if playerDataChanged and playerDataChanged:IsA("RemoteEvent") then
+        featureConnections.MM2PlayerDataChanged = playerDataChanged.OnClientEvent:Connect(function(newData)
+            invalidateRoleCaches()
+            if type(newData) ~= "table" or roundLifecycleActive == false then
+                mm2RoundData = {}
+            else
+                -- MM2 pushes partial payloads (often a single player's entry).
+                -- Replacing the table wholesale erased every other role and
+                -- left the ESP/Chams colourless, so merge instead. The table is
+                -- cleared on RoundStart/RoundEndFade, never left stale.
+                for key: any, value: any in pairs(newData) do
+                    mm2RoundData[key] = value
+                end
+                lastRoleRefreshAt = os.clock()
+            end
+
+        end)
+    end
+end
+
+-- Forward declared: the round phase machine below assigns these, and the
+-- lifecycle handlers here already need them.
+local primeRoundState: () -> ()
+local setRoundPhase: (string, string) -> ()
+local lastPhase: string = "unknown"
+
+local roundTimer: {endsAt: number?} = {endsAt = nil}
+local timerRemotes = game:GetService("ReplicatedStorage"):FindFirstChild("Remotes")
+local timerGameplay = timerRemotes and timerRemotes:FindFirstChild("Gameplay")
+local timerRoundStart = timerGameplay and timerGameplay:FindFirstChild("RoundStart")
+local timerRoundEnd = timerGameplay and timerGameplay:FindFirstChild("RoundEndFade")
+local sessionRoundActive = false
+
+if timerRoundStart and timerRoundStart:IsA("RemoteEvent") then
+    featureConnections.MM2TimerTrackerStart = timerRoundStart.OnClientEvent:Connect(
+        function(duration)
+            duration = tonumber(duration)
+            roundTimer.endsAt = duration and os.clock() + duration or nil
+            mm2RoundData = {}
+            invalidateRoleCaches()
+            roundLifecycleActive = duration ~= nil and duration > 0
+            if not duration or duration <= 0 then
+                sessionRoundActive = false
+            end
+            roleRefreshGeneration += 1
+            if duration and duration > 0 then
+                -- Roles are handed out at the top of the round. Ask for them
+                -- right now (and again a few times while they are missing)
+                -- instead of waiting for the first PlayerDataChanged push.
+                primeRoundState()
+                lastPhase = "map"
+                setRoundPhase("map", "RoundStart")
+            end
+            if duration and duration > 0
+                and not sessionRoundActive
+                and state.sessionInfo
+                and state.sessionInfo.addRound then
+                sessionRoundActive = true
+                state.sessionInfo.addRound()
+            end
+        end
+    )
+end
+if timerRoundEnd and timerRoundEnd:IsA("RemoteEvent") then
+    featureConnections.MM2TimerTrackerEnd = timerRoundEnd.OnClientEvent:Connect(function()
+        roundTimer.endsAt = nil
+        sessionRoundActive = false
+        roundLifecycleActive = false
+        invalidateRoleCaches()
+        roleRefreshGeneration += 1
+        mm2RoundData = {}
+        setRoundPhase("lobby", "RoundEndFade")
+    end)
+end
+
+-- ---------------------------------------------------------------------------
+-- Round phase
+--
+-- RoundStart/RoundEndFade are the only lifecycle signals the game sends, and
+-- both are missed when Wurst finishes booting after they fired (a mid-round
+-- join, or a teleport into a round that was already running). Everything that
+-- depends on "are we in a round" then sat on a stale answer: the ESP had no
+-- roles, the timer had no countdown, and nothing re-asked until the next
+-- RoundStart.
+--
+-- The map model is the ground truth the teleport actually changes: MM2 parents
+-- the round map while you are playing and leaves only the Lobby otherwise. So
+-- the phase is derived from where your character stands, debounced, and every
+-- transition re-primes the round state on the spot.
+-- ---------------------------------------------------------------------------
+local roundPhase: string = "unknown"
+local roundPhaseListeners: {(string, string) -> ()} = {}
+
+local function emitRoundPhase(phase: string, reason: string): ()
+    for _, listener: (string, string) -> () in ipairs(roundPhaseListeners) do
+        pcall(listener, phase, reason)
+    end
+end
+
+setRoundPhase = function(phase: string, reason: string): ()
+    if roundPhase == phase then
+        return
+    end
+    roundPhase = phase
+    emitRoundPhase(phase, reason)
+end
+
+local function onRoundPhase(listener: (string, string) -> ()): () -> ()
+    table.insert(roundPhaseListeners, listener)
+    task.defer(function(): ()
+        if table.find(roundPhaseListeners, listener) then
+            pcall(listener, roundPhase, "subscribe")
+        end
+    end)
+    return function(): ()
+        local index: number? = table.find(roundPhaseListeners, listener)
+        if index then
+            table.remove(roundPhaseListeners, index)
+        end
+    end
+end
+
+local function findLobbyModel(): Instance?
+    for _, object: Instance in ipairs(workspace:GetChildren()) do
+        if isLobbyName(object.Name) then
+            return object
+        end
+    end
+    return nil
+end
+
+local function detectRoundPhase(): string
+    local character: Model? = LocalPlayer.Character
+    if not character then
+        return "lobby"
+    end
+    local root: BasePart? = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+    if not root then
+        return "lobby"
+    end
+    -- Check the lobby by the player's actual parentage first: a round map model
+    -- can linger in workspace after a round, and trusting its presence over the
+    -- player's location would report "map" while standing in the lobby.
+    local lobby: Instance? = findLobbyModel()
+    if lobby and root:IsDescendantOf(lobby) then
+        return "lobby"
+    end
+    if findMM2Map() then
+        return "map"
+    end
+    -- Standing in neither (mid-teleport): trust the last known phase, not flap.
+    return roundPhase == "map" and "map" or "lobby"
+end
+
+-- One fresh role fetch per transition, plus a short retry ladder for the rounds
+-- where the server hands the payload out a beat after the teleport.
+primeRoundState = function(): ()
+    roleRefreshGeneration += 1
+    local generation: number = roleRefreshGeneration
+    requestRoleRefresh(true)
+    task.spawn(function(): ()
+        -- Two retries cover the rounds where the server hands the payload out a
+        -- beat after the teleport; more is belt-and-suspenders (YAGNI).
+        for _, delay: number in ipairs({0.2, 0.6}) do
+            task.wait(delay)
+            if generation ~= roleRefreshGeneration or roundRolesKnown() then
+                break
+            end
+            requestRoleRefresh(true)
+        end
+    end)
+end
+
+local phaseElapsed: number = 0
+lastPhase = detectRoundPhase()
+featureConnections.MM2RoundPhase = TaskManager:Connect(function(deltaTime: number): ()
+    phaseElapsed += deltaTime
+    if phaseElapsed < 0.2 then
+        return
+    end
+    phaseElapsed = 0
+    local phase: string = detectRoundPhase()
+    if phase == lastPhase then
+        return
+    end
+    lastPhase = phase
+    if phase == "map" then
+        -- Teleported into a round: the round payload from the previous map is
+        -- worthless and RoundStart may never fire for us, so treat the round as
+        -- live now and pull the roles immediately.
+        mm2RoundData = {}
+        roundLifecycleActive = true
+        invalidateRoleCaches()
+        primeRoundState("map")
+        setRoundPhase("map", "teleport")
+    else
+        mm2RoundData = {}
+        roundLifecycleActive = false
+        roundTimer.endsAt = nil
+        invalidateRoleCaches()
+        roleRefreshGeneration += 1
+        setRoundPhase("lobby", "teleport")
+    end
+end)
+setRoundPhase(lastPhase, "boot")
+
+-- ---------------------------------------------------------------------------
+-- Round clock
+--
+-- The live countdown used to be published on workspace.RoundTimerPart as a
+-- "Time" attribute, but the current map no longer ships that part at all, so
+-- a mid-round join (RoundStart missed) left the clock with no source. The
+-- game still draws the exact same number in its own HUD label
+-- (PlayerGui.MainGUI.Game.Timer), which is the fallback authority here: read,
+-- parsed, and re-anchored from the text the player is already seeing. Source
+-- priority: RoundTimerPart attribute (when a map still has it) > HUD label >
+-- the one-shot RoundStart anchor.
+-- ---------------------------------------------------------------------------
+local roundTimerPartCache: {part: Instance?, at: number} =
+    {part = nil, at = -math.huge}
+
+local function findRoundTimerPart(): Instance?
+    local cached: Instance? = roundTimerPartCache.part
+    if cached and cached.Parent then
+        return cached
+    end
+    if os.clock() - roundTimerPartCache.at < 1 then
+        return cached
+    end
+    roundTimerPartCache.at = os.clock()
+    local found: Instance? = workspace:FindFirstChild("RoundTimerPart")
+    roundTimerPartCache.part = found
+    return found
+end
+
+local function readRoundTimerPartSeconds(): number?
+    local part: Instance? = findRoundTimerPart()
+    if not part then
+        return nil
+    end
+    local remaining: number? = tonumber(part:GetAttribute("Time") :: any)
+    if not remaining or remaining <= 0 or remaining > 600 then
+        return nil
+    end
+    return remaining
+end
+
+local hudTimerCache: {frame: Instance?, label: Instance?, at: number} =
+    {frame = nil, label = nil, at = -math.huge}
+
+local function findHudTimerLabel(): Instance?
+    local cached: Instance? = hudTimerCache.label
+    if cached and cached.Parent then
+        return cached
+    end
+    if os.clock() - hudTimerCache.at < 1 then
+        return cached
+    end
+    hudTimerCache.at = os.clock()
+    local playerGui: PlayerGui? = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    local mainGui: Instance? = playerGui and playerGui:FindFirstChild("MainGUI")
+    local gameFrame: Instance? = mainGui and mainGui:FindFirstChild("Game")
+    local frame: Instance? = gameFrame and gameFrame:FindFirstChild("Timer")
+    -- If the expected path was restructured, fall back to a "Timer" frame
+    -- anywhere under MainGUI (still bounded, and only runs once a second).
+    if not frame then
+        frame = mainGui and mainGui:FindFirstChild("Timer", true)
+    end
+    hudTimerCache.frame = (frame and frame:IsA("GuiObject")) and frame or nil
+    -- MM2 has renamed this label across updates, so take the first TextLabel
+    -- in the frame instead of trusting a single name.
+    local label: Instance? = frame
+        and (frame:FindFirstChild("XPText")
+            or frame:FindFirstChild("Timer")
+            or frame:FindFirstChildWhichIsA("TextLabel", true))
+    hudTimerCache.label = (label and label:IsA("TextLabel")) and label or nil
+    return hudTimerCache.label
+end
+
+-- Accepts the formats MM2 has used for the HUD countdown: "1:32", "1:32s",
+-- plain seconds "32" / "32s", with optional surrounding whitespace.
+local function parseHudTimerSeconds(text: string?): number?
+    if type(text) ~= "string" or text == "" then
+        return nil
+    end
+    local minutes: string?, seconds: string? = text:match("^%s*(%d+):(%d%d)s?%s*$")
+    if minutes and seconds then
+        return tonumber(minutes) * 60 + tonumber(seconds)
+    end
+    local whole: string? = text:match("^%s*(%d%d?)s?%s*$")
+    if whole then
+        return tonumber(whole)
+    end
+    return nil
+end
+
+local function isHudTimerVisible(label: Instance): boolean
+    -- In the lobby the game hides its timer frame; a hidden frame still
+    -- holding last round's text would resurrect a finished round, so the
+    -- game's own visibility doubles as the "round is live" check.
+    local ancestor: Instance? = label
+    while ancestor do
+        if ancestor:IsA("GuiObject") and ancestor.Visible == false then
+            return false
+        end
+        ancestor = ancestor.Parent
+    end
+    return true
+end
+
+local function readHudTimerSeconds(): number?
+    local label: Instance? = findHudTimerLabel()
+    if not label then
+        return nil
+    end
+    if not isHudTimerVisible(label) then
+        return nil
+    end
+    local remaining: number? = parseHudTimerSeconds((label :: any).Text)
+    if not remaining or remaining <= 0 or remaining > 600 then
+        return nil
+    end
+    return remaining
+end
+
+local lastAttributeRemaining: number? = nil
+local lastAttributeChangeAt: number = -math.huge
+local clockElapsed: number = 0
+featureConnections.MM2RoundClock = TaskManager:Connect(function(deltaTime: number): ()
+    clockElapsed += deltaTime
+    if clockElapsed < 0.25 then
+        return
+    end
+    clockElapsed = 0
+    local remaining: number? = readRoundTimerPartSeconds()
+        or readHudTimerSeconds()
+    if not remaining or roundPhase == "lobby" then
+        -- In the lobby the part (or last round's label text) is usually still
+        -- holding a positive number; believing it would resurrect a finished
+        -- round.
+        lastAttributeRemaining = nil
+        return
+    end
+    -- A frozen source must not pin the clock: only treat it as the authority
+    -- while it is actually counting down. The HUD label ticks every second,
+    -- the part attribute ticks continuously - both pass this gate while live.
+    if lastAttributeRemaining == nil
+        or math.abs(remaining - lastAttributeRemaining) > 0.01 then
+        lastAttributeChangeAt = os.clock()
+    end
+    lastAttributeRemaining = remaining
+    if os.clock() - lastAttributeChangeAt > 3 then
+        return
+    end
+    roundTimer.endsAt = os.clock() + remaining
+    if roundLifecycleActive == nil then
+        roundLifecycleActive = true
+    end
+end)
+
+-- All server pushes and lifecycle events are connected before this asynchronous
+-- snapshot starts. Loading Wurst during an active round now paints ESP as soon
+-- as GetCurrentPlayerData answers without ever blocking or missing RoundStart.
+requestRoleRefresh(true)
+
+type MotionSample = {
+    character: Model?,
+    position: Vector3,
+    sampledAt: number,
+    velocity: Vector3,
+    acceleration: Vector3,
+    stability: number,
+    grounded: boolean,
+}
+
+local motionSamples: {[Player]: MotionSample} =
+    setmetatable({}, {__mode = "k"}) :: any
+
+local function getFilteredVelocity(player: Player, root: BasePart): Vector3
+    local now: number = os.clock()
+    local velocity: Vector3 = root.AssemblyLinearVelocity
+    if velocity.Magnitude > 110 then
+        velocity = velocity.Unit * 110
+    end
+    local sample: MotionSample? = motionSamples[player]
+    local acceleration: Vector3 = Vector3.zero
+    local stability: number = 1
+    local character: Model? = player.Character
+    local humanoid: Humanoid? = character
+        and character:FindFirstChildOfClass("Humanoid")
+        :: Humanoid?
+    local grounded: boolean = humanoid ~= nil
+        and humanoid.FloorMaterial ~= Enum.Material.Air
+
+    if sample and sample.character == character then
+        local deltaTime: number = now - sample.sampledAt
+        if deltaTime < 0.012 then
+            return velocity
+        end
+        if deltaTime < 0.5 then
+            acceleration = (velocity - sample.velocity) / deltaTime
+            if acceleration.Magnitude > 250 then
+                acceleration = acceleration.Unit * 250
+            end
+
+            local previousHorizontal: Vector3 = Vector3.new(
+                sample.velocity.X,
+                0,
+                sample.velocity.Z
+            )
+            local currentHorizontal: Vector3 = Vector3.new(
+                velocity.X,
+                0,
+                velocity.Z
+            )
+            if previousHorizontal.Magnitude > 1
+                and currentHorizontal.Magnitude > 1 then
+                stability = math.clamp(
+                    previousHorizontal.Unit:Dot(currentHorizontal.Unit),
+                    0,
+                    1
+                )
+            end
+        end
+    end
+
+    motionSamples[player] = {
+        character = character,
+        position = root.Position,
+        sampledAt = now,
+        velocity = velocity,
+        acceleration = acceleration,
+        stability = stability,
+        grounded = grounded,
+    }
+    return velocity
+end
+
+local function getEstimatedLatency(): number
+    local measuredRtt: number = mm2Settings.predictionRtt
+    pcall(function(): ()
+        local network: Instance? = Stats:FindFirstChild("Network")
+        local serverItems: Instance? = network
+            and network:FindFirstChild("ServerStatsItem")
+        local pingItem: any = serverItems and serverItems:FindFirstChild("Data Ping")
+        if pingItem and type(pingItem.GetValue) == "function" then
+            local pingMilliseconds: number? = tonumber(pingItem:GetValue())
+            if pingMilliseconds then
+                measuredRtt = pingMilliseconds / 1000
+            end
+        end
+    end)
+    mm2Settings.predictionRtt +=
+        (measuredRtt - mm2Settings.predictionRtt) * 0.18
+
+    return math.clamp(
+        mm2Settings.predictionRtt,
+        0.03,
+        0.3
+    )
+end
+
+-- ---------------------------------------------------------------------------
+-- Shot lead
+--
+-- MM2's gun is a hitscan: the server scores the ray we hand it against the
+-- target's position at the instant it processes the shot. The lead time is the
+-- real time that elapses between the target frame we can see and the target
+-- frame the server scores, and every term is a nameable delay:
+--
+--   HORIZON = roundTrip + staleness + serverStep
+--
+--   roundTrip  the FULL measured round trip. The copy we aim from is already one
+--              network hop old (the server sent it rtt/2 ago), and our shot
+--              spends another rtt/2 reaching the server, so the target keeps
+--              moving for the whole round trip in between. An earlier version
+--              used rtt/2 here and under-led by rtt/2: invisible at 20 ms, but a
+--              visible miss behind the target at 100 ms+.
+--   staleness  on top of network latency, the replicated copy we read is half a
+--              replication interval old on average.
+--   serverStep the server scores the ray on its next frame, up to one frame
+--              away. Half a frame is the expected value.
+--
+-- `gunLeadBias` stays as the single calibration knob: the telemetry module can
+-- measure a constant residual and fold it in here instead of anyone inventing a
+-- second formula. The horizon is capped so a 900 ms round trip cannot ask for a
+-- half second of extrapolation; past that point the turn discount below is what
+-- keeps the shot honest, not the cap.
+-- ---------------------------------------------------------------------------
+-- Luau infers the field types from the literals; the explicit annotation was
+-- redundant (KISS).
+local GUN_LEAD = {
+    replicationRate = 20,
+    serverFrame = 1 / 60,
+    minimumHorizon = 0.02,
+    maximumHorizon = 0.45,
+    -- How fast the target can change direction, in radians per second. It is
+    -- measured, not assumed: the motion sampler already reports how well the
+    -- last heading predicts the current one, and a player running straight
+    -- scores ~1 there. `defaultTurnRate` is what we assume when there is no
+    -- reading yet (first frame after a teleport, dead sampler), which is a
+    -- brisk 90 deg/s turn.
+    defaultTurnRate = math.pi * 0.5,
+    maxTurnRate = math.pi * 1.5,
+    turnRatePerInstability = 6,
+}
+
+local function getGunHorizonSeconds(): number
+    local roundTripTime: number = getEstimatedLatency()
+    local staleness: number = 1 / (2 * GUN_LEAD.replicationRate)
+    local horizon: number = roundTripTime
+        + staleness
+        + GUN_LEAD.serverFrame * 0.5
+        + mm2Settings.gunLeadBias
+    return math.clamp(
+        horizon,
+        GUN_LEAD.minimumHorizon,
+        GUN_LEAD.maximumHorizon
+    )
+end
+
+-- Fraction of the constant-velocity lead that is still worth believing after
+-- `horizon` seconds. A target can turn, and the expected projection of a turn
+-- of theta onto the heading we measured is cos(theta / 2), so the lead shrinks
+-- with the horizon at a rate set by how unstable the target's motion actually
+-- is. The companion error term (see the Shoot solver) is the part of that turn
+-- the discount does not pay for.
+local function getGunTurnRate(stability: number?): number
+    if type(stability) ~= "number" then
+        return GUN_LEAD.defaultTurnRate
+    end
+    return math.clamp(
+        (1 - math.clamp(stability, 0, 1)) * GUN_LEAD.turnRatePerInstability,
+        0,
+        GUN_LEAD.maxTurnRate
+    )
+end
+
+local function getGunTurnDiscount(horizon: number, turnRate: number?): number
+    -- `turnRate` is already a rate in radians/second (see getGunTurnRate); do not
+    -- convert it again. Nil means "no reading", which falls back to the default.
+    local rate: number = turnRate or GUN_LEAD.defaultTurnRate
+    return math.clamp(
+        math.cos(math.min(horizon * rate * 0.5, math.pi * 0.5)),
+        0.25,
+        1
+    )
+end
+
+local function getGunOriginCFrame(character: Model, gun: Tool?): CFrame?
+    local root: BasePart? = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+    local attachment: Attachment? = root
+        and root:FindFirstChild("GunRaycastAttachment")
+        :: Attachment?
+    if attachment and attachment:IsA("Attachment") then
+        return attachment.WorldCFrame
+    end
+
+    -- The attachment only exists while the gun is fully replicated. Without a
+    -- fallback the whole shot aborted with "unavailable or obstructed", so walk
+    -- the same chain the real client would: muzzle, hand, head, camera.
+    if gun then
+        for _, partName: string in ipairs({"Muzzle", "Handle"}) do
+            local part: Instance? = gun:FindFirstChild(partName)
+            if part and part:IsA("BasePart") then
+                return part.CFrame
+            end
+        end
+    end
+    for _, partName: string in ipairs({"RightHand", "Right Arm", "Head"}) do
+        local part: Instance? = character:FindFirstChild(partName)
+        if part and part:IsA("BasePart") then
+            return part.CFrame
+        end
+    end
+    local camera: Camera? = workspace.CurrentCamera
+    if camera and root then
+        return CFrame.new(root.Position + Vector3.new(0, 1.5, 0))
+            * (camera.CFrame - camera.CFrame.Position)
+    end
+    return root and root.CFrame or nil
+end
+
+local function createTrajectoryCalibration(): any
+    type TrajectoryPoint = {
+        dt: number,
+        serverTime: number,
+        pingMs: number,
+        position: {number},
+        velocity: {number},
+        moveDirection: {number},
+        humanoidState: string,
+        grounded: boolean,
+        jumping: boolean,
+    }
+    type RunningStats = {
+        count: number,
+        mean: number,
+        m2: number,
+        minimum: number,
+        maximum: number,
+    }
+    type PendingGun = {
+        tool: Tool,
+        activatedAt: number,
+        origin: Vector3?,
+        requestedAim: Vector3?,
+        pingMs: number,
+        targetUserId: number?,
+        targetName: string?,
+        targetTrajectory: {TrajectoryPoint},
+        lastTrajectorySampleAt: number,
+        confirmedAt: number?,
+        latencyMs: number?,
+        confirmedEndpoint: Vector3?,
+        confirmedHitTarget: boolean?,
+    }
+    type PendingKnife = {
+        tool: Tool,
+        activatedAt: number,
+        origin: Vector3?,
+        requestedAim: Vector3?,
+        pingMs: number,
+        targetUserId: number?,
+        targetName: string?,
+        targetTrajectory: {TrajectoryPoint},
+        lastTrajectorySampleAt: number,
+    }
+    type KnifeTrack = {
+        startedAt: number,
+        previousAt: number?,
+        previousPosition: Vector3?,
+        speeds: {number},
+        rawSpeed: number?,
+        spawnDelayMs: number,
+        pingMs: number,
+        targetUserId: number?,
+        targetName: string?,
+        targetTrajectory: {TrajectoryPoint},
+        lastTrajectorySampleAt: number,
+        destroyConnection: RBXScriptConnection?,
+    }
+    type CalibrationEvent = {
+        kind: string,
+        serverTime: number,
+        pingMs: number,
+        latencyMs: number?,
+        speed: number?,
+        rawSpeed: number?,
+        samples: number?,
+        reason: string?,
+        targetUserId: number?,
+        targetName: string?,
+        targetState: string?,
+        targetJumped: boolean?,
+        targetTrajectory: {TrajectoryPoint}?,
+        observedDisplacement: {number}?,
+        constantVelocityResidual: {number}?,
+        horizontalLeadSeconds: number?,
+        verticalLeadSeconds: number?,
+        endpoint: {number}?,
+        hitTarget: boolean?,
+        pingBucket: string?,
+        bestMotionModel: string?,
+        motionModelErrors: {[string]: number}?,
+        evaluationSeconds: number?,
+    }
+    type Estimates = {
+        gunAcceptanceMs: number?,
+        knifeSpeed: number?,
+        confirmedShots: number,
+        confirmedThrows: number,
+    }
+    type Controller = {
+        start: (self: Controller) -> (),
+        save: (self: Controller, reason: string?) -> boolean,
+        reset: (self: Controller) -> (),
+        destroy: (self: Controller) -> (),
+        status: (self: Controller) -> string,
+        getEstimates: (self: Controller) -> Estimates,
+    }
+
+    local OUTPUT_ROOT: string = host.PRODUCT.storageFolder
+    local OUTPUT_FOLDER: string = OUTPUT_ROOT .. "/Telemetry"
+    local OUTPUT_PATH: string = OUTPUT_FOLDER
+        .. "/MM2_Trajectory_Calibration.json"
+    local MAX_EVENTS: number = 240
+    local MAX_PENDING_AGE: number = 2.5
+    local environment: {[string]: any} = getfenv() :: any
+    local playerMouse: Mouse = LocalPlayer:GetMouse()
+    local runtime: any = {
+        active = false,
+        dirty = false,
+        saveScheduled = false,
+        startedAt = os.clock(),
+        sessionGunAttempts = 0,
+        sessionGunConfirmed = 0,
+        sessionKnifeAttempts = 0,
+        sessionKnifeConfirmed = 0,
+        pendingGuns = {} :: {PendingGun},
+        pendingKnives = {} :: {PendingKnife},
+        tracks = {} :: {[Instance]: KnifeTrack},
+        observedTools = setmetatable({}, {__mode = "k"}) :: {[Tool]: boolean},
+        connections = {} :: {RBXScriptConnection},
+        events = {} :: {CalibrationEvent},
+        gunAcceptance = nil :: RunningStats?,
+        knifeSpeed = nil :: RunningStats?,
+        knifeSpawnDelay = nil :: RunningStats?,
+        motionBuckets = {} :: {[string]: any},
+        trajectorySampler = nil :: any,
+    }
+    local controller: Controller
+    local saveSnapshot: (reason: string) -> boolean
+    local compactPending: (queue: {any}, now: number) -> ()
+    local finalizeGunCapture: (pending: PendingGun) -> ()
+
+    local function newStats(): RunningStats
+        return {
+            count = 0,
+            mean = 0,
+            m2 = 0,
+            minimum = math.huge,
+            maximum = -math.huge,
+        }
+    end
+
+    runtime.gunAcceptance = newStats()
+    runtime.knifeSpeed = newStats()
+    runtime.knifeSpawnDelay = newStats()
+
+    local function finite(value: number): boolean
+        return value == value and value > -math.huge and value < math.huge
+    end
+
+    local function vectorArray(value: Vector3): {number}
+        return {value.X, value.Y, value.Z}
+    end
+
+    local function pingBucketKey(pingMs: number): string
+        if pingMs > 250 then
+            return "250+"
+        end
+        local lower: number = math.clamp(math.floor(pingMs / 5) * 5, 0, 245)
+        return string.format("%03d-%03d", lower, lower + 5)
+    end
+
+    local function getTargetRoot(player: Player?): BasePart?
+        return player
+            and player.Character
+            and player.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+    end
+
+    local function getTargetHumanoid(player: Player?): Humanoid?
+        return player
+            and player.Character
+            and player.Character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+    end
+
+    local function captureTrajectoryPoint(
+        player: Player,
+        activatedAt: number,
+        pingMs: number
+    ): TrajectoryPoint?
+        local root: BasePart? = getTargetRoot(player)
+        local humanoid: Humanoid? = getTargetHumanoid(player)
+        if not root or not humanoid or humanoid.Health <= 0 then
+            return nil
+        end
+        local stateName: string = humanoid:GetState().Name
+        local grounded: boolean = humanoid.FloorMaterial ~= Enum.Material.Air
+        local jumping: boolean = stateName == "Jumping"
+            or stateName == "Freefall"
+            or not grounded
+        return {
+            dt = os.clock() - activatedAt,
+            serverTime = workspace:GetServerTimeNow(),
+            pingMs = pingMs,
+            position = vectorArray(root.Position),
+            velocity = vectorArray(root.AssemblyLinearVelocity),
+            moveDirection = vectorArray(humanoid.MoveDirection),
+            humanoidState = stateName,
+            grounded = grounded,
+            jumping = jumping,
+        }
+    end
+
+    local function findKnifeAnalysisTarget(aimPosition: Vector3?): Player?
+        local selected: Player? = nil
+        local selectedScore: number = math.huge
+        for _, player: Player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer
+                and isPlayerAlive(player)
+                and getPlayerRole(player) ~= "Murderer"
+                and not isProtectedTarget(player) then
+                local root: BasePart? = getTargetRoot(player)
+                if root then
+                    local score: number = aimPosition
+                            and (root.Position - aimPosition).Magnitude
+                        or (root.Position - (LocalPlayer.Character
+                                and LocalPlayer.Character:GetPivot().Position
+                            or Vector3.zero)).Magnitude
+                    if score < selectedScore then
+                        selected = player
+                        selectedScore = score
+                    end
+                end
+            end
+        end
+        return selected
+    end
+
+    local function getRequestedAim(): Vector3?
+        local aim: Vector3? = nil
+        pcall(function(): ()
+            aim = playerMouse.Hit.Position
+        end)
+        return aim
+    end
+
+    local function samplePendingTrajectories(): ()
+        local now: number = os.clock()
+        local function sampleQueue(queue: {any}): ()
+            for _, pending: any in ipairs(queue) do
+                if pending.targetUserId
+                    and now - pending.lastTrajectorySampleAt >= 1 / 30 then
+                    local target: Player? = Players:GetPlayerByUserId(
+                        pending.targetUserId
+                    )
+                    local point: TrajectoryPoint? = target
+                        and captureTrajectoryPoint(
+                            target,
+                            pending.activatedAt,
+                            pending.pingMs
+                        )
+                        or nil
+                    if point and #pending.targetTrajectory < 120 then
+                        table.insert(pending.targetTrajectory, point)
+                    end
+                    pending.lastTrajectorySampleAt = now
+                end
+            end
+        end
+        sampleQueue(runtime.pendingGuns)
+        sampleQueue(runtime.pendingKnives)
+        for index: number = #runtime.pendingGuns, 1, -1 do
+            local pending: PendingGun = runtime.pendingGuns[index]
+            if pending.confirmedAt and now - pending.confirmedAt >= 0.5 then
+                table.remove(runtime.pendingGuns, index)
+                finalizeGunCapture(pending)
+            end
+        end
+        if #runtime.pendingGuns == 0 and #runtime.pendingKnives == 0
+            and runtime.trajectorySampler then
+            runtime.trajectorySampler:Disconnect()
+            runtime.trajectorySampler = nil
+        end
+    end
+
+    local function ensureTrajectorySampler(): ()
+        if runtime.trajectorySampler then
+            return
+        end
+        runtime.trajectorySampler = TaskManager:Connect(function(
+            _deltaTime: number
+        ): ()
+            compactPending(runtime.pendingGuns, os.clock())
+            compactPending(runtime.pendingKnives, os.clock())
+            samplePendingTrajectories()
+        end)
+    end
+
+    local function addSample(stats: RunningStats, value: number): ()
+        if not finite(value) then
+            return
+        end
+        stats.count += 1
+        local delta: number = value - stats.mean
+        stats.mean += delta / stats.count
+        stats.m2 += delta * (value - stats.mean)
+        stats.minimum = math.min(stats.minimum, value)
+        stats.maximum = math.max(stats.maximum, value)
+    end
+
+    local function statsPayload(stats: RunningStats): {[string]: number}
+        return {
+            count = stats.count,
+            mean = stats.mean,
+            m2 = stats.m2,
+            minimum = stats.count > 0 and stats.minimum or 0,
+            maximum = stats.count > 0 and stats.maximum or 0,
+        }
+    end
+
+    local function getPingMilliseconds(): number
+        local pingMs: number = 0
+        pcall(function(): ()
+            local network: Instance? = Stats:FindFirstChild("Network")
+            local serverItems: Instance? = network
+                and network:FindFirstChild("ServerStatsItem")
+            local pingItem: any = serverItems
+                and serverItems:FindFirstChild("Data Ping")
+            if pingItem and type(pingItem.GetValue) == "function" then
+                pingMs = tonumber(pingItem:GetValue()) or 0
+            end
+        end)
+        return math.max(0, pingMs)
+    end
+
+    local function worldPosition(value: any): Vector3?
+        if typeof(value) == "Vector3" then
+            return value
+        elseif typeof(value) == "CFrame" then
+            return value.Position
+        elseif typeof(value) == "Instance" then
+            if value:IsA("Attachment") then
+                return value.WorldPosition
+            elseif value:IsA("BasePart") then
+                return value.Position
+            elseif value:IsA("Model") then
+                return value:GetPivot().Position
+            end
+        end
+        return nil
+    end
+
+    local function projectilePosition(projectile: Instance): Vector3?
+        local visual: Instance? = projectile:FindFirstChild("KnifeVisual", true)
+        if visual and visual:IsA("BasePart") then
+            return visual.Position
+        end
+        local blade: Instance? = projectile:FindFirstChild("BladePosition", true)
+        local bladePosition: Vector3? = worldPosition(blade)
+        if bladePosition then
+            return bladePosition
+        end
+        return worldPosition(projectile)
+    end
+
+    local function toolOrigin(tool: Tool): Vector3?
+        local handle: Instance? = tool:FindFirstChild("Handle")
+        return worldPosition(handle)
+    end
+
+    local function appendEvent(record: CalibrationEvent): ()
+        if #runtime.events >= MAX_EVENTS then
+            table.remove(runtime.events, 1)
+        end
+        table.insert(runtime.events, record)
+        runtime.dirty = true
+        if runtime.saveScheduled then
+            return
+        end
+        runtime.saveScheduled = true
+        task.delay(0.8, function(): ()
+            runtime.saveScheduled = false
+            if runtime.active and runtime.dirty then
+                saveSnapshot("autosave")
+            end
+        end)
+    end
+
+    local function trackConnection(connection: RBXScriptConnection): ()
+        table.insert(runtime.connections, connection)
+    end
+
+    compactPending = function(queue: {any}, now: number): ()
+        while #queue > 0 and now - queue[1].activatedAt > MAX_PENDING_AGE do
+            table.remove(queue, 1)
+        end
+        while #queue > 12 do
+            table.remove(queue, 1)
+        end
+    end
+
+    local function vectorFromArray(value: {number}): Vector3
+        return Vector3.new(value[1] or 0, value[2] or 0, value[3] or 0)
+    end
+
+    local function analyzeTargetTrajectory(
+        trajectory: {TrajectoryPoint},
+        pingMs: number,
+        eventKind: string,
+        evaluationSeconds: number?
+    ): {[string]: any}
+        if #trajectory < 2 then
+            return {
+                pingBucket = pingBucketKey(pingMs),
+                sampleCount = #trajectory,
+            }
+        end
+        local first: TrajectoryPoint = trajectory[1]
+        local last: TrajectoryPoint = trajectory[#trajectory]
+        if evaluationSeconds then
+            local desiredDt: number = first.dt + evaluationSeconds
+            local closestDistance: number = math.huge
+            for _, point: TrajectoryPoint in ipairs(trajectory) do
+                local distance: number = math.abs(point.dt - desiredDt)
+                if distance < closestDistance then
+                    last = point
+                    closestDistance = distance
+                end
+            end
+        end
+        local initialPosition: Vector3 = vectorFromArray(first.position)
+        local finalPosition: Vector3 = vectorFromArray(last.position)
+        local initialVelocity: Vector3 = vectorFromArray(first.velocity)
+        local duration: number = math.max(0.0001, last.dt - first.dt)
+        local displacement: Vector3 = finalPosition - initialPosition
+        local residual: Vector3 = displacement - initialVelocity * duration
+        local constantVelocityPrediction: Vector3 = initialPosition
+            + initialVelocity * duration
+        local observedAcceleration: Vector3 = Vector3.zero
+        if #trajectory >= 3 then
+            local second: TrajectoryPoint = trajectory[2]
+            local accelerationDelta: number = math.max(
+                1 / 240,
+                second.dt - first.dt
+            )
+            observedAcceleration = (
+                vectorFromArray(second.velocity) - initialVelocity
+            ) / accelerationDelta
+            if observedAcceleration.Magnitude > 500 then
+                observedAcceleration = observedAcceleration.Unit * 500
+            end
+        end
+        local accelerationPrediction: Vector3 = initialPosition
+            + initialVelocity * duration
+            + observedAcceleration * (0.5 * duration * duration)
+        local ballisticPrediction: Vector3 = initialPosition
+            + initialVelocity * duration
+            + Vector3.new(0, -workspace.Gravity, 0)
+                * (0.5 * duration * duration)
+        local modelErrors: {[string]: number} = {
+            constantVelocity = (constantVelocityPrediction - finalPosition).Magnitude,
+            observedAcceleration = (accelerationPrediction - finalPosition).Magnitude,
+            airborneBallistic = (ballisticPrediction - finalPosition).Magnitude,
+        }
+        local bestMotionModel: string = "constantVelocity"
+        local bestMotionError: number = modelErrors.constantVelocity
+        for modelName: string, modelError: number in pairs(modelErrors) do
+            if modelError < bestMotionError then
+                bestMotionModel = modelName
+                bestMotionError = modelError
+            end
+        end
+        local horizontalVelocity: Vector3 = Vector3.new(
+            initialVelocity.X,
+            0,
+            initialVelocity.Z
+        )
+        local horizontalDisplacement: Vector3 = Vector3.new(
+            displacement.X,
+            0,
+            displacement.Z
+        )
+        local horizontalLead: number? = nil
+        if horizontalVelocity.Magnitude > 0.75 then
+            horizontalLead = math.clamp(
+                horizontalDisplacement:Dot(horizontalVelocity)
+                    / horizontalVelocity:Dot(horizontalVelocity),
+                -0.15,
+                0.6
+            )
+        end
+        local verticalLead: number? = nil
+        if math.abs(initialVelocity.Y) > 0.75 then
+            verticalLead = math.clamp(
+                displacement.Y / initialVelocity.Y,
+                -0.15,
+                0.6
+            )
+        end
+        local jumped: boolean = false
+        for _, point: TrajectoryPoint in ipairs(trajectory) do
+            if point.jumping then
+                jumped = true
+                break
+            end
+        end
+        local stateName: string = jumped and "Airborne" or "Grounded"
+        local bucketKey: string = eventKind
+            .. ":"
+            .. pingBucketKey(pingMs)
+            .. ":"
+            .. stateName
+        local bucket: any = runtime.motionBuckets[bucketKey]
+        if type(bucket) ~= "table" then
+            bucket = {
+                count = 0,
+                horizontalLeadSum = 0,
+                horizontalLeadCount = 0,
+                verticalLeadSum = 0,
+                verticalLeadCount = 0,
+                residualXSum = 0,
+                residualYSum = 0,
+                residualZSum = 0,
+                durationSum = 0,
+                constantVelocityErrorSum = 0,
+                observedAccelerationErrorSum = 0,
+                airborneBallisticErrorSum = 0,
+            }
+            runtime.motionBuckets[bucketKey] = bucket
+        end
+        bucket.count += 1
+        bucket.durationSum += duration
+        bucket.residualXSum += residual.X
+        bucket.residualYSum += residual.Y
+        bucket.residualZSum += residual.Z
+        bucket.constantVelocityErrorSum += modelErrors.constantVelocity
+        bucket.observedAccelerationErrorSum += modelErrors.observedAcceleration
+        bucket.airborneBallisticErrorSum += modelErrors.airborneBallistic
+        if horizontalLead then
+            bucket.horizontalLeadSum += horizontalLead
+            bucket.horizontalLeadCount += 1
+        end
+        if verticalLead then
+            bucket.verticalLeadSum += verticalLead
+            bucket.verticalLeadCount += 1
+        end
+        return {
+            pingBucket = pingBucketKey(pingMs),
+            sampleCount = #trajectory,
+            initialState = first.humanoidState,
+            finalState = last.humanoidState,
+            jumped = jumped,
+            durationSeconds = duration,
+            evaluationSeconds = evaluationSeconds or duration,
+            displacement = vectorArray(displacement),
+            constantVelocityResidual = vectorArray(residual),
+            horizontalLeadSeconds = horizontalLead,
+            verticalLeadSeconds = verticalLead,
+            bestMotionModel = bestMotionModel,
+            motionModelErrors = modelErrors,
+        }
+    end
+
+    local function motionModelPayload(): {[string]: any}
+        local payload: {[string]: any} = {}
+        for key: string, bucket: any in pairs(runtime.motionBuckets) do
+            local count: number = math.max(1, tonumber(bucket.count) or 1)
+            local horizontalCount: number = math.max(
+                1,
+                tonumber(bucket.horizontalLeadCount) or 0
+            )
+            local verticalCount: number = math.max(
+                1,
+                tonumber(bucket.verticalLeadCount) or 0
+            )
+            payload[key] = {
+                count = bucket.count,
+                meanDurationSeconds = bucket.durationSum / count,
+                meanHorizontalLeadSeconds = bucket.horizontalLeadCount > 0
+                        and bucket.horizontalLeadSum / horizontalCount
+                    or nil,
+                meanVerticalLeadSeconds = bucket.verticalLeadCount > 0
+                        and bucket.verticalLeadSum / verticalCount
+                    or nil,
+                meanConstantVelocityResidual = {
+                    bucket.residualXSum / count,
+                    bucket.residualYSum / count,
+                    bucket.residualZSum / count,
+                },
+                meanModelError = {
+                    constantVelocity = bucket.constantVelocityErrorSum / count,
+                    observedAcceleration = bucket.observedAccelerationErrorSum / count,
+                    airborneBallistic = bucket.airborneBallisticErrorSum / count,
+                },
+            }
+        end
+        return payload
+    end
+
+    local function median(values: {number}): number?
+        if #values == 0 then
+            return nil
+        end
+        local sorted: {number} = table.clone(values)
+        table.sort(sorted)
+        local middle: number = math.floor((#sorted + 1) / 2)
+        if #sorted % 2 == 1 then
+            return sorted[middle]
+        end
+        return (sorted[middle] + sorted[middle + 1]) * 0.5
+    end
+
+    local function estimates(): Estimates
+        local gunStats: RunningStats = runtime.gunAcceptance
+        local speedStats: RunningStats = runtime.knifeSpeed
+        return {
+            gunAcceptanceMs = gunStats.count > 0 and gunStats.mean or nil,
+            knifeSpeed = speedStats.count > 0 and speedStats.mean or nil,
+            confirmedShots = gunStats.count,
+            confirmedThrows = speedStats.count,
+        }
+    end
+
+    saveSnapshot = function(reason: string): boolean
+        if type(environment.writefile) ~= "function" then
+            warn(trajectoryLogPrefix .. " writefile is unavailable; data was not saved.")
+            return false
+        end
+        local payload: {[string]: any} = {
+            schema = 2,
+            kind = "mm2-trajectory-analytics",
+            placeId = game.PlaceId,
+            savedAt = DateTime.now():ToIsoDate(),
+            reason = reason,
+            aggregate = {
+                gunAcceptanceMs = statsPayload(runtime.gunAcceptance),
+                knifeSpeedStudsPerSecond = statsPayload(runtime.knifeSpeed),
+                knifeSpawnDelayMs = statsPayload(runtime.knifeSpawnDelay),
+            },
+            estimator = estimates(),
+            analytics = {
+                bucketSpec = {
+                    metric = "Data Ping",
+                    widthMs = 5,
+                    minimumMs = 0,
+                    maximumMs = 250,
+                    states = {"Grounded", "Airborne"},
+                },
+                motionModel = motionModelPayload(),
+            },
+            session = {
+                elapsedSeconds = os.clock() - runtime.startedAt,
+                gunAttempts = runtime.sessionGunAttempts,
+                gunConfirmed = runtime.sessionGunConfirmed,
+                knifeAttempts = runtime.sessionKnifeAttempts,
+                knifeConfirmed = runtime.sessionKnifeConfirmed,
+                events = runtime.events,
+            },
+        }
+        local encodedOk: boolean, encoded: any = pcall(
+            HttpService.JSONEncode,
+            HttpService,
+            payload
+        )
+        if not encodedOk or type(encoded) ~= "string" then
+            warn(trajectoryLogPrefix .. " JSONEncode failed: " .. tostring(encoded))
+            return false
+        end
+        if type(environment.makefolder) == "function" then
+            pcall(environment.makefolder, OUTPUT_ROOT)
+            pcall(environment.makefolder, OUTPUT_FOLDER)
+        end
+        local writeOk: boolean, writeError: any = pcall(
+            environment.writefile,
+            OUTPUT_PATH,
+            encoded
+        )
+        if not writeOk then
+            warn(trajectoryLogPrefix .. " writefile failed: " .. tostring(writeError))
+            return false
+        end
+        runtime.dirty = false
+        print(
+            trajectoryLogPrefix .. " Saved "
+                .. OUTPUT_PATH
+                .. " ("
+                .. tostring(#encoded)
+                .. " bytes)"
+        )
+        return true
+    end
+
+    local function normalizeGun(value: any): Tool?
+        if typeof(value) ~= "Instance" then
+            return nil
+        end
+        if value:IsA("Tool") then
+            return value
+        end
+        return value:FindFirstAncestorOfClass("Tool")
+    end
+
+    finalizeGunCapture = function(pending: PendingGun): ()
+        local analysis: {[string]: any} = analyzeTargetTrajectory(
+            pending.targetTrajectory,
+            pending.pingMs,
+            "gun",
+            (pending.latencyMs or 0) / 1000
+        )
+        appendEvent({
+            kind = "gun",
+            serverTime = workspace:GetServerTimeNow(),
+            pingMs = pending.pingMs,
+            latencyMs = pending.latencyMs,
+            targetUserId = pending.targetUserId,
+            targetName = pending.targetName,
+            targetState = analysis.initialState,
+            targetJumped = analysis.jumped,
+            targetTrajectory = pending.targetTrajectory,
+            observedDisplacement = analysis.displacement,
+            constantVelocityResidual = analysis.constantVelocityResidual,
+            horizontalLeadSeconds = analysis.horizontalLeadSeconds,
+            verticalLeadSeconds = analysis.verticalLeadSeconds,
+            endpoint = pending.confirmedEndpoint
+                    and vectorArray(pending.confirmedEndpoint)
+                or nil,
+            hitTarget = pending.confirmedHitTarget,
+            pingBucket = analysis.pingBucket,
+            bestMotionModel = analysis.bestMotionModel,
+            motionModelErrors = analysis.motionModelErrors,
+            evaluationSeconds = analysis.evaluationSeconds,
+        })
+    end
+
+    local function handleGunFired(
+        eventGun: any,
+        eventOriginValue: any,
+        endpointValue: any,
+        hitPartValue: any
+    ): ()
+        if not runtime.active then
+            return
+        end
+        local now: number = os.clock()
+        compactPending(runtime.pendingGuns, now)
+        local eventTool: Tool? = normalizeGun(eventGun)
+        local eventOrigin: Vector3? = worldPosition(eventOriginValue)
+        local selectedIndex: number? = nil
+        for index: number = #runtime.pendingGuns, 1, -1 do
+            local pending: PendingGun = runtime.pendingGuns[index]
+            local toolMatches: boolean = not pending.confirmedAt
+                and eventTool == pending.tool
+            local originMatches: boolean = eventOrigin ~= nil
+                and pending.origin ~= nil
+                and (eventOrigin - pending.origin).Magnitude <= 8
+            if not pending.confirmedAt
+                and (toolMatches or (eventTool == nil and originMatches)) then
+                selectedIndex = index
+                break
+            end
+        end
+        if not selectedIndex then
+            return
+        end
+        local pending: PendingGun = runtime.pendingGuns[selectedIndex]
+        local latencyMs: number = math.max(0, (now - pending.activatedAt) * 1000)
+        local target: Player? = pending.targetUserId
+            and Players:GetPlayerByUserId(pending.targetUserId)
+            or nil
+        if target then
+            local finalPoint: TrajectoryPoint? = captureTrajectoryPoint(
+                target,
+                pending.activatedAt,
+                pending.pingMs
+            )
+            if finalPoint then
+                table.insert(pending.targetTrajectory, finalPoint)
+            end
+        end
+        local endpoint: Vector3? = worldPosition(endpointValue)
+        local targetCharacter: Model? = target and target.Character
+        local hitTarget: boolean = typeof(hitPartValue) == "Instance"
+            and targetCharacter ~= nil
+            and hitPartValue:IsDescendantOf(targetCharacter)
+        addSample(runtime.gunAcceptance, latencyMs)
+        runtime.sessionGunConfirmed += 1
+        pending.confirmedAt = now
+        pending.latencyMs = latencyMs
+        pending.confirmedEndpoint = endpoint
+        pending.confirmedHitTarget = hitTarget
+        ensureTrajectorySampler()
+    end
+
+    local finishKnifeTrack: (projectile: Instance, reason: string) -> ()
+    local function stopKnifeSamplerIfIdle(): ()
+        if next(runtime.tracks) == nil then
+            disconnectFeatureConnection("MM2TrajectorySampler")
+        end
+    end
+
+    finishKnifeTrack = function(projectile: Instance, reason: string): ()
+        local track: KnifeTrack? = runtime.tracks[projectile]
+        if not track then
+            return
+        end
+        runtime.tracks[projectile] = nil
+        if track.destroyConnection then
+            track.destroyConnection:Disconnect()
+            track.destroyConnection = nil
+        end
+        local measuredSpeed: number? = median(track.speeds)
+        local resolvedSpeed: number? = track.rawSpeed or measuredSpeed
+        if resolvedSpeed and resolvedSpeed >= 24 and resolvedSpeed <= 300 then
+            local analysis: {[string]: any} = analyzeTargetTrajectory(
+                track.targetTrajectory,
+                track.pingMs,
+                "knife",
+                nil
+            )
+            addSample(runtime.knifeSpeed, resolvedSpeed)
+            runtime.sessionKnifeConfirmed += 1
+            appendEvent({
+                kind = "knife",
+                serverTime = workspace:GetServerTimeNow(),
+                pingMs = track.pingMs,
+                latencyMs = track.spawnDelayMs,
+                speed = resolvedSpeed,
+                rawSpeed = track.rawSpeed,
+                samples = #track.speeds,
+                reason = reason,
+                targetUserId = track.targetUserId,
+                targetName = track.targetName,
+                targetState = analysis.initialState,
+                targetJumped = analysis.jumped,
+                targetTrajectory = track.targetTrajectory,
+                observedDisplacement = analysis.displacement,
+                constantVelocityResidual = analysis.constantVelocityResidual,
+                horizontalLeadSeconds = analysis.horizontalLeadSeconds,
+                verticalLeadSeconds = analysis.verticalLeadSeconds,
+                pingBucket = analysis.pingBucket,
+                bestMotionModel = analysis.bestMotionModel,
+                motionModelErrors = analysis.motionModelErrors,
+                evaluationSeconds = analysis.evaluationSeconds,
+            })
+        end
+        stopKnifeSamplerIfIdle()
+    end
+
+    local function ensureKnifeSampler(): ()
+        if featureConnections.MM2TrajectorySampler then
+            return
+        end
+        featureConnections.MM2TrajectorySampler = TaskManager:Connect(function(
+            _deltaTime: number
+        ): ()
+            local now: number = os.clock()
+            local completed: {Instance} = {}
+            for projectile: Instance, track: KnifeTrack in pairs(runtime.tracks) do
+                if not projectile.Parent or now - track.startedAt >= 1.25 then
+                    table.insert(completed, projectile)
+                    continue
+                end
+                local position: Vector3? = projectilePosition(projectile)
+                if position and track.previousPosition and track.previousAt then
+                    local sampleDelta: number = now - track.previousAt
+                    local displacement: number = (position - track.previousPosition).Magnitude
+                    if sampleDelta >= 1 / 240 and displacement >= 0.01 then
+                        local speed: number = displacement / sampleDelta
+                        if speed >= 24 and speed <= 300 then
+                            table.insert(track.speeds, speed)
+                        end
+                    end
+                end
+                if position then
+                    track.previousPosition = position
+                    track.previousAt = now
+                end
+                if track.targetUserId
+                    and now - track.lastTrajectorySampleAt >= 1 / 30 then
+                    local target: Player? = Players:GetPlayerByUserId(
+                        track.targetUserId
+                    )
+                    local point: TrajectoryPoint? = target
+                        and captureTrajectoryPoint(
+                            target,
+                            track.startedAt - track.spawnDelayMs / 1000,
+                            track.pingMs
+                        )
+                        or nil
+                    if point and #track.targetTrajectory < 120 then
+                        table.insert(track.targetTrajectory, point)
+                    end
+                    track.lastTrajectorySampleAt = now
+                end
+            end
+            for _, projectile: Instance in ipairs(completed) do
+                finishKnifeTrack(projectile, "sample-window-complete")
+            end
+        end)
+    end
+
+    local function resolveKnifeProjectile(projectile: Instance): ()
+        task.spawn(function(): ()
+            local linkedHandle: Instance? = nil
+            for _attempt: number = 1, 20 do
+                if not runtime.active or not projectile.Parent then
+                    return
+                end
+                local handleLink: Instance? = projectile:FindFirstChild(
+                    "HandleLink",
+                    true
+                )
+                if handleLink and handleLink:IsA("ObjectValue") and handleLink.Value then
+                    linkedHandle = handleLink.Value
+                    break
+                end
+                task.wait(0.05)
+            end
+            if not linkedHandle then
+                return
+            end
+            local now: number = os.clock()
+            compactPending(runtime.pendingKnives, now)
+            local selectedIndex: number? = nil
+            for index: number = #runtime.pendingKnives, 1, -1 do
+                local pending: PendingKnife = runtime.pendingKnives[index]
+                local handle: Instance? = pending.tool:FindFirstChild("Handle")
+                if linkedHandle == handle
+                    or linkedHandle:IsDescendantOf(pending.tool) then
+                    selectedIndex = index
+                    break
+                end
+            end
+            if not selectedIndex or runtime.tracks[projectile] then
+                return
+            end
+            local pending: PendingKnife = table.remove(
+                runtime.pendingKnives,
+                selectedIndex
+            )
+            local spawnDelayMs: number = math.max(
+                0,
+                (now - pending.activatedAt) * 1000
+            )
+            addSample(runtime.knifeSpawnDelay, spawnDelayMs)
+            local rawSpeed: number? = tonumber(projectile:GetAttribute("ThrowSpeed"))
+            if rawSpeed and (rawSpeed < 24 or rawSpeed > 300) then
+                rawSpeed = nil
+            end
+            local track: KnifeTrack = {
+                startedAt = now,
+                previousAt = now,
+                previousPosition = projectilePosition(projectile),
+                speeds = {},
+                rawSpeed = rawSpeed,
+                spawnDelayMs = spawnDelayMs,
+                pingMs = pending.pingMs,
+                targetUserId = pending.targetUserId,
+                targetName = pending.targetName,
+                targetTrajectory = pending.targetTrajectory,
+                lastTrajectorySampleAt = now,
+                destroyConnection = nil,
+            }
+            runtime.tracks[projectile] = track
+            track.destroyConnection = projectile.Destroying:Connect(function(): ()
+                finishKnifeTrack(projectile, "destroyed")
+            end)
+            ensureKnifeSampler()
+        end)
+    end
+
+    local function isGun(tool: Tool): boolean
+        return tool.Name == "Gun"
+            or CollectionService:HasTag(tool, "Weapon_Gun")
+            or tool:FindFirstChild("Shoot") ~= nil
+    end
+
+    local function isKnife(tool: Tool): boolean
+        return tool.Name == "Knife"
+            or CollectionService:HasTag(tool, "Weapon_Knife")
+            or tool:FindFirstChild("Events") ~= nil
+    end
+
+    local function observeTool(tool: Tool): ()
+        if runtime.observedTools[tool] then
+            return
+        end
+        local gun: boolean = isGun(tool)
+        local knife: boolean = isKnife(tool)
+        if not gun and not knife then
+            return
+        end
+        runtime.observedTools[tool] = true
+        trackConnection(tool.Activated:Connect(function(): ()
+            if not runtime.active then
+                return
+            end
+            local now: number = os.clock()
+            local requestedAim: Vector3? = getRequestedAim()
+            local pingMs: number = getPingMilliseconds()
+            local target: Player? = gun
+                    and findMurderer()
+                or findKnifeAnalysisTarget(requestedAim)
+            local targetTrajectory: {TrajectoryPoint} = {}
+            if target then
+                local initialPoint: TrajectoryPoint? = captureTrajectoryPoint(
+                    target,
+                    now,
+                    pingMs
+                )
+                if initialPoint then
+                    table.insert(targetTrajectory, initialPoint)
+                end
+            end
+            if gun then
+                runtime.sessionGunAttempts += 1
+                table.insert(runtime.pendingGuns, {
+                    tool = tool,
+                    activatedAt = now,
+                    origin = toolOrigin(tool),
+                    requestedAim = requestedAim,
+                    pingMs = pingMs,
+                    targetUserId = target and target.UserId or nil,
+                    targetName = target and target.Name or nil,
+                    targetTrajectory = targetTrajectory,
+                    lastTrajectorySampleAt = now,
+                })
+                compactPending(runtime.pendingGuns, now)
+            elseif knife then
+                runtime.sessionKnifeAttempts += 1
+                table.insert(runtime.pendingKnives, {
+                    tool = tool,
+                    activatedAt = now,
+                    origin = toolOrigin(tool),
+                    requestedAim = requestedAim,
+                    pingMs = pingMs,
+                    targetUserId = target and target.UserId or nil,
+                    targetName = target and target.Name or nil,
+                    targetTrajectory = targetTrajectory,
+                    lastTrajectorySampleAt = now,
+                })
+                compactPending(runtime.pendingKnives, now)
+            end
+            ensureTrajectorySampler()
+        end))
+    end
+
+    local function observeContainer(container: Instance?): ()
+        if not container then
+            return
+        end
+        for _, child: Instance in ipairs(container:GetChildren()) do
+            if child:IsA("Tool") then
+                observeTool(child)
+            end
+        end
+        trackConnection(container.ChildAdded:Connect(function(child: Instance): ()
+            if child:IsA("Tool") then
+                observeTool(child)
+            end
+        end))
+    end
+
+    local function installGunConfirmation(): ()
+        task.spawn(function(): ()
+            local clientServices: Instance? = nil
+            local weaponModule: Instance? = nil
+            for _attempt: number = 1, 20 do
+                if not runtime.active then
+                    return
+                end
+                clientServices = game:GetService("ReplicatedStorage")
+                    :FindFirstChild("ClientServices")
+                weaponModule = clientServices
+                    and clientServices:FindFirstChild("WeaponService")
+                if weaponModule then
+                    break
+                end
+                task.wait(0.25)
+            end
+            if not weaponModule then
+                warn(trajectoryLogPrefix .. " WeaponService did not appear; Knife remains active.")
+                return
+            end
+            local loaded: boolean, weaponService: any = pcall(
+                state.requireModule,
+                weaponModule
+            )
+            if not loaded or type(weaponService) ~= "table" then
+                warn(
+                    trajectoryLogPrefix .. " Could not observe WeaponService: "
+                        .. tostring(weaponService)
+                )
+                return
+            end
+            local connected: boolean, connection: any = pcall(function(): any
+                return weaponService.GunFired.OnClientEvent:Connect(handleGunFired)
+            end)
+            if connected and connection then
+                trackConnection(connection :: RBXScriptConnection)
+                print(trajectoryLogPrefix .. " GunFired confirmation connected.")
+            else
+                warn(
+                    trajectoryLogPrefix .. " GunFired no es compatible: "
+                        .. tostring(connection)
+                )
+            end
+        end)
+    end
+
+    controller = {} :: Controller
+
+    function controller:start(): ()
+        if runtime.active then
+            return
+        end
+
+        if not (GAME_CHECK.MM2Active or game.PlaceId == Module.PlaceId) then
+            warn(trajectoryLogPrefix .. " Inicio omitido fuera de MM2.")
+            return
+        end
+        runtime.active = true
+        runtime.startedAt = os.clock()
+        observeContainer(LocalPlayer:FindFirstChildOfClass("Backpack"))
+        observeContainer(LocalPlayer.Character)
+        trackConnection(LocalPlayer.CharacterAdded:Connect(function(
+            character: Model
+        ): ()
+            observeContainer(character)
+        end))
+        trackConnection(
+            CollectionService:GetInstanceAddedSignal("ThrowingKnife"):Connect(
+                resolveKnifeProjectile
+            )
+        )
+        installGunConfirmation()
+        print(trajectoryLogPrefix .. " Passive calibration started in the background.")
+    end
+
+    -- Drop the working history so the next capture starts clean. Shared by the
+    -- manual save (snapshot then clear) and the explicit reset (clear then
+    -- snapshot an empty file).
+    local function clearHistory(): ()
+        runtime.gunAcceptance = newStats()
+        runtime.knifeSpeed = newStats()
+        runtime.knifeSpawnDelay = newStats()
+        runtime.motionBuckets = {}
+        runtime.events = {}
+        runtime.sessionGunAttempts = 0
+        runtime.sessionGunConfirmed = 0
+        runtime.sessionKnifeAttempts = 0
+        runtime.sessionKnifeConfirmed = 0
+    end
+
+    function controller:save(reason: string?): boolean
+        local saved: boolean = saveSnapshot(reason or "manual")
+        if saved then
+            -- The snapshot is on disk; clear the working history so the next
+            -- save is a fresh capture instead of re-appending everything that
+            -- was already saved before.
+            clearHistory()
+            runtime.dirty = false
+        end
+        return saved
+    end
+
+    function controller:reset(): ()
+        clearHistory()
+        runtime.dirty = true
+        saveSnapshot("reset")
+    end
+
+    function controller:getEstimates(): Estimates
+        return estimates()
+    end
+
+    function controller:status(): string
+        local current: Estimates = estimates()
+        local knifeText: string = current.knifeSpeed
+                and string.format("%.2f studs/s", current.knifeSpeed)
+            or "learning"
+        local bucketCount: number = 0
+        for _key: string in pairs(runtime.motionBuckets) do
+            bucketCount += 1
+        end
+        return string.format(
+            "MM2 analytics · shots %d · throws %d · motion buckets %d · knife %s",
+            current.confirmedShots,
+            current.confirmedThrows,
+            bucketCount,
+            knifeText
+        )
+    end
+
+    function controller:destroy(): ()
+        if not runtime.active then
+            return
+        end
+        if runtime.dirty then
+            saveSnapshot("module-destroy")
+        end
+        runtime.active = false
+        disconnectFeatureConnection("MM2TrajectorySampler")
+        if runtime.trajectorySampler then
+            runtime.trajectorySampler:Disconnect()
+            runtime.trajectorySampler = nil
+        end
+        for projectile: Instance, track: KnifeTrack in pairs(runtime.tracks) do
+            if track.destroyConnection then
+                track.destroyConnection:Disconnect()
+            end
+            runtime.tracks[projectile] = nil
+        end
+        for _, connection: RBXScriptConnection in ipairs(runtime.connections) do
+            connection:Disconnect()
+        end
+        table.clear(runtime.connections)
+        table.clear(runtime.pendingGuns)
+        table.clear(runtime.pendingKnives)
+    end
+
+    return controller
+end
+
+local trajectoryCalibration: any = createTrajectoryCalibration()
+state.mm2TrajectoryCalibration = trajectoryCalibration
+trajectoryCalibration:start()
+
+local weaponServiceModule: any = nil
+type PendingShot = {
+    target: Player,
+    targetCharacter: Model?,
+    gun: Tool,
+    origin: Vector3,
+    aimPosition: Vector3?,
+    healthBefore: number,
+    targetedMurderer: boolean,
+    queuedAt: number,
+    -- Lead tuner bookkeeping (see the tuner below the feedback UI): the
+    -- horizon the shot was fired with, the velocity it was fired against, and
+    -- the 30 Hz root samples taken while the shot was pending.
+    horizon: number?,
+    velocity: Vector3?,
+    trajectory: {{t: number, p: Vector3}}?,
+    -- Silent spawn A/B: which authored geometry this shot used (Front,
+    -- Through, Top or Behind); nil for normal-mode shots.
+    silentSpawn: string?,
+}
+-- Structural shape of the Shoot solver's prediction; only the fields the
+-- feedback UI and the lead tuner read are named here.
+type GunPrediction = {
+    targetPosition: Vector3?,
+    endpoint: Vector3?,
+    velocity: Vector3?,
+    errorRadius: number?,
+}
+
+state.mm2ShotFeedback = {
+    -- Flipped by the Shoot module; the feedback UI is core-owned because the
+    -- target provider reads the pending shot too.
+    shootActive = false,
+    pending = nil :: PendingShot?,
+    lastAccepted = nil :: PendingShot?,
+    -- Per silent-spawn-variant scorecard (Front/Through/Top/Behind): the only
+    -- way to settle which authored geometry actually scores is to count real
+    -- shots. Accumulates for the session; surfaced by the Spawn A/B action.
+    spawnStats = {} :: {[string]: {shots: number, hits: number, misses: number}},
+    token = 0,
+    defaultDuration = 5,
+    gunFiredConnected = false,
+    theme = {
+        Background = Color3.fromRGB(14, 14, 18),
+        Accent = Color3.fromRGB(205, 82, 42),
+        Outline = Color3.fromRGB(220, 115, 58),
+        Text = Color3.fromRGB(255, 232, 208),
+    },
+    resolve = function(_candidate: PendingShot, _directHit: boolean): () end,
+    showMiss = function(_gun: Tool, _candidate: PendingShot): () end,
+}
+state.mm2ShotFeedback.root = create("Frame", {
+    Parent = ScreenGui,
+    Name = "MM2ShotCooldown",
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    BackgroundColor3 = state.mm2ShotFeedback.theme.Background,
+    BackgroundTransparency = 0.38,
+    BorderSizePixel = 0,
+    ClipsDescendants = true,
+    Position = UDim2.fromScale(0.5, 0.62),
+    Size = UDim2.fromOffset(320, 36),
+    Visible = false,
+    ZIndex = 240,
+}) :: Frame
+create("UICorner", {
+    Parent = state.mm2ShotFeedback.root,
+    CornerRadius = UDim.new(0, 7),
+})
+create("UIStroke", {
+    Parent = state.mm2ShotFeedback.root,
+    Color = state.mm2ShotFeedback.theme.Outline,
+    Transparency = 0.35,
+    Thickness = 1,
+})
+state.mm2ShotFeedback.fill = create("Frame", {
+    Parent = state.mm2ShotFeedback.root,
+    Name = "Fill",
+    BackgroundColor3 = state.mm2ShotFeedback.theme.Accent,
+    BackgroundTransparency = 0.46,
+    BorderSizePixel = 0,
+    Size = UDim2.fromScale(0, 1),
+    ZIndex = 241,
+}) :: Frame
+create("UICorner", {
+    Parent = state.mm2ShotFeedback.fill,
+    CornerRadius = UDim.new(0, 7),
+})
+state.mm2ShotFeedback.text = create("TextLabel", {
+    TextTruncate = Enum.TextTruncate.AtEnd,
+    ClipsDescendants = true,
+    Parent = state.mm2ShotFeedback.root,
+    Name = "Countdown",
+    BackgroundTransparency = 1,
+    Font = Enum.Font.GothamBold,
+    Size = UDim2.fromScale(1, 1),
+    Text = "",
+    TextColor3 = state.mm2ShotFeedback.theme.Text,
+    TextSize = 13,
+    ZIndex = 242,
+}) :: TextLabel
+
+state.mm2ShotFeedback.hide = function(): ()
+    disconnectFeatureConnection("MM2ShootCooldown")
+    state.mm2ShotFeedback.token += 1
+    state.mm2ShotFeedback.root.Visible = false
+    state.mm2ShotFeedback.fill.Size = UDim2.fromScale(0, 1)
+    state.mm2ShotFeedback.text.Text = ""
+end
+
+state.mm2ShotFeedback.getDuration = function(gun: Tool?): number
+    if gun then
+        for _, attributeName: string in ipairs({
+            "Cooldown",
+            "ReloadTime",
+            "ShotCooldown",
+        }) do
+            local value: number? = tonumber(gun:GetAttribute(attributeName))
+            if value and value >= 0.5 and value <= 15 then
+                return value
+            end
+        end
+    end
+    return state.mm2ShotFeedback.defaultDuration
+end
+
+-- ---------------------------------------------------------------------------
+-- Lead tuner
+--
+-- The horizon model is right in expectation but not in fact: the server's
+-- exact scoring instant, the replication cadence and our RTT estimator all
+-- carry a small, slowly drifting offset. Every confirmed shot measures it for
+-- free. While the shot is pending we sample the target's root at 30 Hz; on a
+-- confirmed hit the moment the target crossed the aimed point IS the lead the
+-- server actually needed. We drift gunLeadBias toward that reading - slowly
+-- (25 % of one residual) and bounded (+-0.03 s per shot, +-0.25 s total) - so
+-- one noisy shot can never wreck the calibration. Noisy windows (a turn mid
+-- flight, a stopped target, a late read) are rejected instead of applied.
+-- ---------------------------------------------------------------------------
+local leadTracking: PendingShot? = nil
+
+local function stopLeadTracking(): ()
+    leadTracking = nil
+    disconnectFeatureConnection("MM2LeadTuner")
+end
+
+local function startLeadTracking(candidate: PendingShot): ()
+    if not mm2Settings.autoTuneLead then
+        return
+    end
+    local root: BasePart? = candidate.targetCharacter
+        and candidate.targetCharacter:FindFirstChild("HumanoidRootPart")
+        :: BasePart?
+    if not root or candidate.velocity == nil then
+        return
+    end
+    stopLeadTracking()
+    leadTracking = candidate
+    local samples: {{t: number, p: Vector3}} = {}
+    candidate.trajectory = samples
+    local elapsed: number = 0
+    featureConnections.MM2LeadTuner = TaskManager:Connect(function(
+        deltaTime: number
+    ): ()
+        if leadTracking ~= candidate then
+            return
+        end
+        if state.mm2ShotFeedback.pending ~= candidate
+            and state.mm2ShotFeedback.lastAccepted ~= candidate then
+            stopLeadTracking()
+            return
+        end
+        elapsed += deltaTime
+        if elapsed < 1 / 30 then
+            return
+        end
+        elapsed = 0
+        table.insert(samples, {t = os.clock(), p = root.Position})
+        if #samples > 64 then
+            table.remove(samples, 1)
+        end
+    end)
+end
+
+local function tuneFromConfirmedShot(candidate: PendingShot): ()
+    if not mm2Settings.autoTuneLead or not candidate.aimPosition then
+        return
+    end
+    local samples: {{t: number, p: Vector3}}? = candidate.trajectory
+    local velocity: Vector3? = candidate.velocity
+    local horizon: number? = candidate.horizon
+    if not samples or #samples < 6 or velocity == nil or horizon == nil then
+        return
+    end
+    local horizontal: Vector3 = Vector3.new(velocity.X, 0, velocity.Z)
+    if horizontal.Magnitude < 8 then
+        return
+    end
+    local closestDistance: number = math.huge
+    local crossedAt: number? = nil
+    for _, sample: {t: number, p: Vector3} in ipairs(samples) do
+        local distance: number =
+            (sample.p - (candidate.aimPosition :: Vector3)).Magnitude
+        if distance < closestDistance then
+            closestDistance = distance
+            crossedAt = sample.t
+        end
+    end
+    if crossedAt == nil then
+        return
+    end
+    local leadMeasured: number = crossedAt - candidate.queuedAt
+    if leadMeasured < 0.03 or leadMeasured > 1.2 then
+        return
+    end
+    -- A target that changed heading mid-window corrupts the reading: reject it.
+    local firstSample: {t: number, p: Vector3} = samples[1]
+    local lastSample: {t: number, p: Vector3} = samples[#samples]
+    local span: number = lastSample.t - firstSample.t
+    if span < 0.05 then
+        return
+    end
+    local sampledVelocity: Vector3 = (lastSample.p - firstSample.p) / span
+    local sampledHorizontal: Vector3 = Vector3.new(
+        sampledVelocity.X,
+        0,
+        sampledVelocity.Z
+    )
+    if sampledHorizontal.Magnitude < 8 then
+        return
+    end
+    if sampledHorizontal.Unit:Dot(horizontal.Unit) < 0.75 then
+        return
+    end
+    local delta: number = (leadMeasured - horizon) * 0.25
+    mm2Settings.gunLeadBias = math.clamp(
+        mm2Settings.gunLeadBias + math.clamp(delta, -0.03, 0.03),
+        -0.25,
+        0.25
+    )
+end
+
+state.mm2ShotFeedback.queue = function(
+    target: Player?,
+    gun: Tool?,
+    origin: CFrame?,
+    aim: CFrame?,
+    prediction: GunPrediction?
+): ()
+    if not target or not gun or not origin then
+        return
+    end
+
+    local targetCharacter: Model? = target.Character
+    local targetHumanoid: Humanoid? = targetCharacter
+        and targetCharacter:FindFirstChildOfClass("Humanoid")
+        :: Humanoid?
+    local candidate: PendingShot = {
+        target = target,
+        targetCharacter = targetCharacter,
+        gun = gun,
+        origin = origin.Position,
+        aimPosition = aim and aim.Position,
+        healthBefore = targetHumanoid and targetHumanoid.Health or 0,
+        targetedMurderer = getPlayerRole(target) == "Murderer",
+        queuedAt = os.clock(),
+        horizon = getGunHorizonSeconds(),
+        velocity = prediction and prediction.velocity or nil,
+    }
+    state.mm2ShotFeedback.pending = candidate
+    startLeadTracking(candidate)
+
+    task.delay(1.8, function(): ()
+        if state.mm2ShotFeedback.pending == candidate then
+            state.mm2ShotFeedback.pending = nil
+        end
+    end)
+    if not state.mm2ShotFeedback.gunFiredConnected then
+        task.delay(math.max(0.35, mm2Settings.predictionRtt + 0.18), function(): ()
+            if state.mm2ShotFeedback.pending ~= candidate
+                or state.mm2ShotFeedback.gunFiredConnected then
+                return
+            end
+            state.mm2ShotFeedback.pending = nil
+            state.mm2ShotFeedback.resolve(candidate, false)
+        end)
+    end
+end
+
+state.mm2ShotFeedback.showMiss = function(
+    gun: Tool,
+    candidate: PendingShot
+): ()
+    state.mm2ShotFeedback.hide()
+    local duration: number = state.mm2ShotFeedback.getDuration(gun)
+    local cooldownEndsAt: number = candidate.queuedAt + duration
+    local initialRemaining: number = cooldownEndsAt - os.clock()
+    if initialRemaining <= 0 then
+        return
+    end
+
+    disconnectFeatureConnection("MM2ShootCooldown")
+    state.mm2ShotFeedback.token += 1
+    local token: number = state.mm2ShotFeedback.token
+    state.mm2ShotFeedback.root.Visible = true
+
+    local function updateCountdown(): ()
+        if token ~= state.mm2ShotFeedback.token then
+            disconnectFeatureConnection("MM2ShootCooldown")
+            state.mm2ShotFeedback.root.Visible = false
+            return
+        end
+
+        local remaining: number = math.max(0, cooldownEndsAt - os.clock())
+        if remaining <= 0 then
+            state.mm2ShotFeedback.hide()
+            return
+        end
+
+        local progress: number = math.clamp(remaining / duration, 0, 1)
+        state.mm2ShotFeedback.fill.Size = UDim2.fromScale(progress, 1)
+        state.mm2ShotFeedback.text.Text =
+            string.format("Miss cooldown - %.1fs", remaining)
+    end
+
+    updateCountdown()
+    featureConnections.MM2ShootCooldown =
+        TaskManager:Connect(updateCountdown)
+end
+
+state.mm2ShotFeedback.toPosition = function(value: any): Vector3?
+    if typeof(value) == "Vector3" then
+        return value
+    end
+    if typeof(value) == "CFrame" then
+        return value.Position
+    end
+    if typeof(value) == "Instance" then
+        if value:IsA("Attachment") then
+            return value.WorldPosition
+        end
+        if value:IsA("BasePart") then
+            return value.Position
+        end
+    end
+    return nil
+end
+
+state.mm2ShotFeedback.resolve = function(
+    candidate: PendingShot,
+    directHit: boolean
+): ()
+    state.mm2ShotFeedback.hide()
+    state.mm2ShotFeedback.lastAccepted = candidate
+    local confirmationDelay: number = math.clamp(
+        math.max(0.18, mm2Settings.predictionRtt + 0.12),
+        0.18,
+        0.55
+    )
+    task.delay(confirmationDelay, function(): ()
+        if state.mm2ShotFeedback.lastAccepted ~= candidate then
+            return
+        end
+        state.mm2ShotFeedback.lastAccepted = nil
+
+        local targetCharacter: Model? = candidate.targetCharacter
+        local currentHumanoid: Humanoid? = targetCharacter
+            and targetCharacter:FindFirstChildOfClass("Humanoid")
+            :: Humanoid?
+
+        local hitConfirmed: boolean = directHit
+            or candidate.target.Parent == nil
+            or targetCharacter == nil
+            or targetCharacter.Parent == nil
+            or currentHumanoid == nil
+            or currentHumanoid.Health <= 0
+            or currentHumanoid.Health < candidate.healthBefore
+            or (
+                candidate.targetedMurderer
+                and getPlayerRole(candidate.target) ~= "Murderer"
+            )
+
+        if hitConfirmed then
+            tuneFromConfirmedShot(candidate)
+            state.mm2ShotFeedback.hide()
+        end
+
+        -- Silent spawn A/B: count confirmed hits and misses per authored
+        -- geometry so the user can compare variants with real shots.
+        local variant: string? = candidate.silentSpawn
+        if variant then
+            local stats: any = state.mm2ShotFeedback.spawnStats[variant]
+                or {shots = 0, hits = 0, misses = 0}
+            stats.shots += 1
+            if hitConfirmed then
+                stats.hits += 1
+            else
+                stats.misses += 1
+            end
+            state.mm2ShotFeedback.spawnStats[variant] = stats
+        end
+
+        if not hitConfirmed and mm2Settings.showMissCooldown then
+            state.mm2ShotFeedback.showMiss(candidate.gun, candidate)
+        end
+    end)
+end
+
+state.mm2ShotFeedback.handleGunFired = function(
+    firedGun: any,
+    eventOrigin: any,
+    endpoint: any,
+    hitPart: any
+): ()
+    if not state.mm2ShotFeedback.shootActive then
+        return
+    end
+
+    local candidate: PendingShot? = state.mm2ShotFeedback.pending
+    if not candidate then
+        return
+    end
+    if os.clock() - candidate.queuedAt > 1.6 then
+        state.mm2ShotFeedback.pending = nil
+        return
+    end
+
+    local eventObject: Instance? = typeof(firedGun) == "Instance"
+        and firedGun
+        or nil
+    local eventTool: Tool? = nil
+    if eventObject then
+        if eventObject:IsA("Tool") then
+            eventTool = eventObject
+        else
+            eventTool = eventObject:FindFirstAncestorOfClass("Tool")
+        end
+    end
+    local weaponMatches: boolean = eventTool == candidate.gun
+        or eventObject == candidate.gun
+        or (
+            eventObject ~= nil
+            and eventObject:IsDescendantOf(candidate.gun)
+        )
+    local eventOriginPosition: Vector3? =
+        state.mm2ShotFeedback.toPosition(eventOrigin)
+    local originMatches: boolean = eventOriginPosition ~= nil
+        and (eventOriginPosition - candidate.origin).Magnitude <= 3.5
+    local endpointPosition: Vector3? =
+        state.mm2ShotFeedback.toPosition(endpoint)
+    local directionMatches: boolean = true
+    if eventOriginPosition and endpointPosition and candidate.aimPosition then
+        local eventDelta: Vector3 = endpointPosition - eventOriginPosition
+        local expectedDelta: Vector3 =
+            candidate.aimPosition - candidate.origin
+        if eventDelta.Magnitude > 0.05 and expectedDelta.Magnitude > 0.05 then
+            directionMatches = eventDelta.Unit:Dot(expectedDelta.Unit) >= 0.965
+        end
+    end
+    if eventTool then
+        if not weaponMatches then
+            return
+        end
+    elseif not weaponMatches and (not originMatches or not directionMatches) then
+        return
+    end
+
+    state.mm2ShotFeedback.pending = nil
+    local targetCharacter: Model? = candidate.targetCharacter
+    local hitTarget: boolean = typeof(hitPart) == "Instance"
+        and targetCharacter ~= nil
+        and hitPart:IsDescendantOf(targetCharacter)
+    state.mm2ShotFeedback.resolve(candidate, hitTarget)
+end
+
+type KnifeSettings = {
+    aura: boolean,
+    auraRange: number,
+}
+
+local function getWeaponServiceModule(): any
+    if type(weaponServiceModule) == "table" then
+        return weaponServiceModule
+    end
+
+    local loaded: boolean, result: any = pcall(function(): any
+        return state.requireModule(
+            game:GetService("ReplicatedStorage")
+                :WaitForChild("ClientServices")
+                :WaitForChild("WeaponService")
+        )
+    end)
+    if loaded and type(result) == "table" then
+        weaponServiceModule = result
+        return result
+    end
+    return nil
+end
+
+local function connectGunFiredSignal(weaponService: any): boolean
+    if featureConnections.MM2GunFired then
+        state.mm2ShotFeedback.gunFiredConnected = true
+        return true
+    end
+
+    local gunFired: any = weaponService.GunFired
+    local connected: boolean, connection: any = pcall(function(): any
+        return gunFired.OnClientEvent:Connect(
+            state.mm2ShotFeedback.handleGunFired
+        )
+    end)
+    if connected and connection then
+        featureConnections.MM2GunFired = connection
+        state.mm2ShotFeedback.gunFiredConnected = true
+        return true
+    end
+    state.mm2ShotFeedback.gunFiredConnected = false
+    return false
+end
+
+local function mm2RoleProvider(player: Player): string?
+    if roundLifecycleActive == false then
+        return nil
+    end
+    return getPlayerRole(player)
+end
+
+local function mm2TargetProvider(): any
+    if not hasActiveRoundRoles() then
+        return nil
+    end
+    local localRole: string? = getPlayerRole(LocalPlayer)
+    local target: Player? = nil
+    local source: string = "MM2 role priority"
+    if localRole == "Sheriff" or localRole == "Hero" then
+        target = findMurderer()
+        source = "Sheriff priority · Murderer"
+    elseif localRole == "Murderer" then
+        target = findSheriff()
+        source = target and "Murderer priority · Sheriff/Hero" or "Murderer priority"
+        if not target then
+            for _, player: Player in ipairs(Players:GetPlayers()) do
+                if player ~= LocalPlayer
+                    and isPlayerAlive(player)
+                    and not isProtectedTarget(player) then
+                    target = player
+                    break
+                end
+            end
+        end
+    else
+        target = findMurderer()
+        source = "Threat priority · Murderer"
+    end
+    if state.mm2ShotFeedback then
+        local pending: any = state.mm2ShotFeedback.pending
+            or state.mm2ShotFeedback.lastAccepted
+        local pendingRole: string? = pending and pending.target
+            and getPlayerRole(pending.target)
+            or nil
+        local preservesRolePriority: boolean = localRole ~= "Sheriff"
+            and localRole ~= "Hero"
+            or pendingRole == "Murderer"
+        local selectedRole: string? = target and getPlayerRole(target) or nil
+        if localRole == "Murderer"
+            and (selectedRole == "Sheriff" or selectedRole == "Hero") then
+            preservesRolePriority = pendingRole == "Sheriff" or pendingRole == "Hero"
+        end
+        if pending
+            and pending.target
+            and isPlayerAlive(pending.target)
+            and preservesRolePriority then
+            target = pending.target
+            source = "Recent shot target"
+        end
+    end
+    if not target then
+        return nil
+    end
+    local role: string? = getPlayerRole(target)
+    return {
+        player = target,
+        role = role,
+        source = source,
+        accent = role == "Murderer"
+            and Theme.negative
+            or ((role == "Sheriff" or role == "Hero")
+                and Theme.accent
+                or Theme.positive),
+    }
+end
+
+state.gameRoleProvider = mm2RoleProvider
+state.gameTargetProvider = mm2TargetProvider
+moduleCleanup = function(): ()
+    if state.gameRoleProvider == mm2RoleProvider then
+        state.gameRoleProvider = nil
+    end
+    if state.gameTargetProvider == mm2TargetProvider then
+        state.gameTargetProvider = nil
+    end
+end
+
+local function disconnectGunFiredObserver(): ()
+    disconnectFeatureConnection("MM2GunFired")
+    state.mm2ShotFeedback.gunFiredConnected = false
+end
+
+registerMM2Roles()
+-- ---------------------------------------------------------------------------
+-- Everything the per-feature MM2 modules are allowed to reach for. The files
+-- under Blatant/, Render/, Movement/, Fun/ and Other/ share this one
+-- table instead of duplicating the round, weapon and prediction plumbing.
+-- ---------------------------------------------------------------------------
+state.mm2Core = {
+    settings = mm2Settings,
+    mm2Settings = mm2Settings,
+
+    MM2Effects = MM2Effects,
+    GunEffects = GunEffects,
+    TrapEffects = TrapEffects,
+    CoinEffects = CoinEffects,
+    clearEffects = clearEffects,
+    createMM2Marker = createMM2Marker,
+    createMM2Cham = createMM2Cham,
+
+    mm2GameplayRemotes = mm2GameplayRemotes,
+    getRoundData = function(): {[any]: any}
+        return mm2RoundData
+    end,
+    isRoundLifecycleActive = function(): boolean?
+        return roundLifecycleActive
+    end,
+    onRoundRoles = onRoundRoles,
+    onRoundPhase = onRoundPhase,
+    getRoundPhase = function(): string
+        return roundPhase
+    end,
+    roundTimer = roundTimer,
+    findRoundTimerPart = findRoundTimerPart,
+    readRoundTimerPartSeconds = readRoundTimerPartSeconds,
+
+    getPlayerWeapon = getPlayerWeapon,
+    isPlayerAlive = isPlayerAlive,
+    findMM2Role = findMM2Role,
+    playerFromRoundKey = playerFromRoundKey,
+    getRoundRole = getRoundRole,
+    getPlayerRole = getPlayerRole,
+    invalidateRoleCaches = invalidateRoleCaches,
+    roundRolesKnown = roundRolesKnown,
+    hasActiveRoundRoles = hasActiveRoundRoles,
+    findMurderer = findMurderer,
+    findSheriff = findSheriff,
+    isProtectedTarget = isProtectedTarget,
+
+    findMM2Map = findMM2Map,
+    findDroppedGun = findDroppedGun,
+
+    motionSamples = motionSamples,
+    getFilteredVelocity = getFilteredVelocity,
+    getEstimatedLatency = getEstimatedLatency,
+    getGunHorizonSeconds = getGunHorizonSeconds,
+    getGunTurnDiscount = getGunTurnDiscount,
+    getGunTurnRate = getGunTurnRate,
+    getGunOriginCFrame = getGunOriginCFrame,
+    trajectoryCalibration = trajectoryCalibration,
+
+    getWeaponServiceModule = getWeaponServiceModule,
+    connectGunFiredSignal = connectGunFiredSignal,
+    disconnectGunFiredObserver = disconnectGunFiredObserver,
+}
+
+cleanupMM2Runtime = function()
+    -- Only the core's own state: every feature module tears itself down in its
+    -- own Module.destroy, which the loader calls in reverse order.
+    if state.gameRoleProvider == mm2RoleProvider then
+        state.gameRoleProvider = nil
+    end
+    if state.gameTargetProvider == mm2TargetProvider then
+        state.gameTargetProvider = nil
+    end
+    trajectoryCalibration:destroy()
+    stopLeadTracking()
+    disconnectGunFiredObserver()
+    state.mm2ShotFeedback.hide()
+    for player: Player, _ in pairs(roleWatchers) do
+        unwatchPlayer(player)
+    end
+    table.clear(roleIndex.roles)
+    for _, connectionName: string in ipairs({
+        "MM2PlayerDataChanged",
+        "MM2TimerTrackerStart",
+        "MM2TimerTrackerEnd",
+        "MM2RoundPhase",
+        "MM2RoundClock",
+        "MM2RoleWatchAdded",
+        "MM2RoleWatchRemoving",
+        "MM2RoleTagAddedWeapon_Knife",
+        "MM2RoleTagRemovedWeapon_Knife",
+        "MM2RoleTagAddedWeapon_Gun",
+        "MM2RoleTagRemovedWeapon_Gun",
+    }) do
+        disconnectFeatureConnection(connectionName)
+    end
+    state.isProtectedTarget = function(player: Player?): boolean
+        return player == nil or player == LocalPlayer
+    end
+    table.clear(roundRolesListeners)
+    table.clear(roundPhaseListeners)
+    state.mm2Core = nil
+end
+end
+
+function Module.init(runtime: any): any
+    assert(type(runtime) == "table", "MM2 requires a Runtime table")
+    assert(type(runtime.Menu) == "table", "MM2 requires Runtime.Menu")
+    assert(runtime.TaskManager ~= nil, "MM2 requires Runtime.TaskManager")
+    if Module.Initialized then
+        return Module
+    end
+
+    Module.Menu = runtime.Menu
+    Module.Runtime = runtime
+    local success: boolean, buildError: any = pcall(buildMM2Features)
+    if not success then
+        moduleCleanup()
+        error(buildError, 0)
+    end
+    local environment: any = getfenv()
+    if type(environment.cleanupMM2Runtime) == "function" then
+        moduleCleanup = environment.cleanupMM2Runtime
+    end
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    moduleCleanup()
+    Module.Events = {}
+    Module.Menu = nil
+    Module.Runtime = nil
+end
+
+return Module
+]=],
+        ["src/games/MM2/Blatant/Shoot.lua"] = [=[
+local Module = {
+    Name = "MM2 Shoot",
+    PlaceId = 142823291,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Runtime = nil :: any,
+}
+
+local activeCleanup: () -> () = function(): () end
+
+function Module.init(runtime: any): any
+    if Module.Initialized then
+        return Module
+    end
+    local core: any = state.mm2Core
+    assert(type(core) == "table", "MM2 Shoot requires the MM2 core module")
+    Module.Runtime = runtime
+    local connectGunFiredSignal: any = core.connectGunFiredSignal
+    local disconnectGunFiredObserver: any = core.disconnectGunFiredObserver
+    local findMurderer: any = core.findMurderer
+    local getFilteredVelocity: any = core.getFilteredVelocity
+    local getGunHorizonSeconds: any = core.getGunHorizonSeconds
+    local getGunTurnDiscount: any = core.getGunTurnDiscount
+    local getGunTurnRate: any = core.getGunTurnRate
+    local getGunOriginCFrame: any = core.getGunOriginCFrame
+    local getPlayerRole: any = core.getPlayerRole
+    local getPlayerWeapon: any = core.getPlayerWeapon
+    local getWeaponServiceModule: any = core.getWeaponServiceModule
+    local isPlayerAlive: any = core.isPlayerAlive
+    local isProtectedTarget: any = core.isProtectedTarget
+    local mm2Settings: any = core.mm2Settings
+    local motionSamples: any = core.motionSamples
+
+    -- One motion model, one lead time, one error budget.
+    --
+    -- Everything the solver needs is a measured quantity: the target's filtered
+    -- velocity and acceleration from the core's motion sampler, whether it is on
+    -- the ground, and the shot horizon the core derives from the round trip (see
+    -- GUN_LEAD in base.lua). There is no per-ping special case and no ladder of
+    -- fallback leads: the same expression runs at 20 ms and at 350 ms, and the
+    -- only thing that changes with ping is the horizon itself.
+    -- Only the fields a caller actually reads. The solver computes more than
+    -- this internally (horizon, turn rate/discount), but those stay local: a
+    -- field nobody consumes is just dead weight (KISS/YAGNI).
+    type GunPrediction = {
+        targetPosition: Vector3,
+        endpoint: Vector3,
+        velocity: Vector3,
+        errorRadius: number,
+    }
+
+    type GunAimOptions = {
+        -- Silent aim does not travel through the world: the shot is authored at
+        -- the target, so line of sight is irrelevant and must not veto the
+        -- solution.
+        ignoreVisibility: boolean?,
+    }
+
+    -- Half width of the capsule the server will score the ray against. Used to
+    -- turn the prediction error into a yes/no answer instead of a guess.
+    local BODY_HALF_WIDTH: number = 1.0
+    -- Floor for the error budget: even a perfect model does not know where a
+    -- strafing player will be, so never claim better than this.
+    local MINIMUM_ERROR_RADIUS: number = 0.35
+
+    local AIM_PARTS: {string} = {
+        "UpperTorso",
+        "Torso",
+        "HumanoidRootPart",
+        "Head",
+    }
+
+    local function findAimPart(character: Model): BasePart?
+        for _, partName: string in ipairs(AIM_PARTS) do
+            local part: BasePart? = character:FindFirstChild(partName) :: BasePart?
+            if part and part:IsA("BasePart") then
+                return part
+            end
+        end
+        return nil
+    end
+
+    -- Where the target will be when the server scores the shot, plus how much
+    -- that answer is worth. Returns nil when there is nothing to shoot at or the
+    -- prediction is worse than the body is wide.
+    local function computeGunAim(
+        target: Player,
+        origin: CFrame,
+        options: GunAimOptions?
+    ): (CFrame?, GunPrediction?, string?)
+        local resolvedOptions: GunAimOptions = options or {}
+        local ignoreVisibility: boolean = resolvedOptions.ignoreVisibility == true
+        local character: Model? = target.Character
+        local humanoid: Humanoid? = character
+            and character:FindFirstChildOfClass("Humanoid")
+            :: Humanoid?
+        local root: BasePart? = character
+            and character:FindFirstChild("HumanoidRootPart")
+            :: BasePart?
+        if not character or not humanoid or humanoid.Health <= 0 or not root then
+            return nil, nil, "no body"
+        end
+
+        local part: BasePart? = findAimPart(character :: Model)
+        if not part then
+            return nil, nil, "no body"
+        end
+
+        local velocity: Vector3 = getFilteredVelocity(target, root :: BasePart)
+        local sample: MotionSample? = motionSamples[target]
+        local acceleration: Vector3 = sample and sample.acceleration or Vector3.zero
+        local grounded: boolean = sample and sample.grounded
+            or humanoid.FloorMaterial ~= Enum.Material.Air
+        -- How well the target's heading from one sample ago predicts this one.
+        -- Straight running scores ~1, a hard turn scores ~0. Without a reading
+        -- (first frame after a teleport, dead sampler) we assume a brisk turn.
+        local turnRate: number = getGunTurnRate(
+            sample and sample.character == character and sample.stability or nil
+        )
+
+        -- A player who has not moved for a frame is standing still: use the
+        -- Humanoid's intent so the first shot after a stop is not led at all,
+        -- and the first shot after a start is led at walking speed.
+        local moveDirection: Vector3 = humanoid.MoveDirection
+        local horizontalVelocity: Vector3 = Vector3.new(velocity.X, 0, velocity.Z)
+        if horizontalVelocity.Magnitude < 1.5
+            and moveDirection.Magnitude > 0.05 then
+            local desired: Vector3 = moveDirection.Unit * humanoid.WalkSpeed
+            velocity = Vector3.new(desired.X, velocity.Y, desired.Z)
+            horizontalVelocity = Vector3.new(desired.X, 0, desired.Z)
+        end
+
+        local horizon: number = getGunHorizonSeconds()
+        local discount: number = getGunTurnDiscount(horizon, turnRate)
+        local lead: number = horizon * discount
+
+        local horizontalAcceleration: Vector3 = Vector3.new(
+            acceleration.X,
+            0,
+            acceleration.Z
+        )
+        local displacement: Vector3 = Vector3.new(
+            velocity.X * lead,
+            0,
+            velocity.Z * lead
+        ) + horizontalAcceleration * (0.25 * lead * lead)
+
+        if grounded then
+            -- On the ground there is no flight to integrate: the only vertical
+            -- error is the noise in the sampled velocity.
+            displacement = Vector3.new(
+                displacement.X,
+                math.clamp(velocity.Y, -2.5, 2.5) * lead,
+                displacement.Z
+            )
+        else
+            displacement = Vector3.new(
+                displacement.X,
+                velocity.Y * lead - 0.5 * workspace.Gravity * lead * lead,
+                displacement.Z
+            )
+        end
+
+        local predicted: Vector3 = part.Position + displacement
+        local delta: Vector3 = predicted - origin.Position
+        if delta.Magnitude <= 0.05 then
+            return nil, nil, "too close"
+        end
+
+        if not ignoreVisibility and mm2Settings.shootWallCheck then
+            local raycastParams: RaycastParams = RaycastParams.new()
+            raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+            raycastParams.IgnoreWater = true
+            raycastParams.FilterDescendantsInstances = {
+                LocalPlayer.Character :: Instance,
+            }
+            local result: RaycastResult? = workspace:Raycast(
+                origin.Position,
+                predicted - origin.Position,
+                raycastParams
+            )
+            if result and not result.Instance:IsDescendantOf(character :: Model) then
+                return nil, nil, "obstructed"
+            end
+        end
+
+        -- Error budget: the sideways distance a turn of the measured rate puts
+        -- between the target and the point we solved for, plus the sampler's own
+        -- uncertainty, floored so a straight-line runner is never treated as a
+        -- guaranteed hit. This is the number that decides the shot, and it is
+        -- reported verbatim so a miss can be read back off the telemetry.
+        local turnError: number = displacement.Magnitude
+            * math.sin(math.min(horizon * turnRate * 0.5, math.pi * 0.5))
+        local jitter: number = math.min(acceleration.Magnitude / 240, 0.45)
+        local errorRadius: number = math.max(
+            MINIMUM_ERROR_RADIUS,
+            turnError + jitter
+        )
+        if errorRadius > BODY_HALF_WIDTH then
+            return nil, nil, "turning too hard"
+        end
+
+        local direction: Vector3 = delta.Unit
+        return CFrame.lookAt(predicted, predicted + direction), {
+            targetPosition = predicted,
+            endpoint = predicted,
+            velocity = velocity,
+            errorRadius = errorRadius,
+        }, nil
+    end
+
+    local function getSelectedShootTarget(): Player?
+        local target
+        if mm2Settings.shootMode == "Custom"
+            and mm2Settings.shootTarget ~= "" then
+            target = findPlayerByText(mm2Settings.shootTarget)
+        else
+            target = findMurderer()
+        end
+        if not target
+            or target == LocalPlayer
+            or not isPlayerAlive(target)
+            or isProtectedTarget(target) then
+            return nil
+        end
+        if mm2Settings.shootMode ~= "Custom"
+            and getPlayerRole(target) ~= "Murderer" then
+            return nil
+        end
+        return target
+    end
+
+    -- Is somebody else's body sitting on the silent-aim segment? Hitting the
+    -- wrong player as sheriff is an instant loss, so the sweep collapses to a
+    -- point rather than risking it.
+    local function bystanderOnSegment(
+        target: Player,
+        startPoint: Vector3,
+        endPoint: Vector3
+    ): boolean
+        local parameters: RaycastParams = RaycastParams.new()
+        parameters.FilterType = Enum.RaycastFilterType.Include
+        parameters.IgnoreWater = true
+        local bodies: {Instance} = {}
+        for _, player: Player in ipairs(Players:GetPlayers()) do
+            if player ~= target
+                and player ~= LocalPlayer
+                and player.Character
+                and isPlayerAlive(player) then
+                table.insert(bodies, player.Character)
+            end
+        end
+        if #bodies == 0 then
+            return false
+        end
+        parameters.FilterDescendantsInstances = bodies
+        return workspace:Raycast(startPoint, endPoint - startPoint, parameters) ~= nil
+    end
+
+    -- Silent aim authors the shot at the target instead of at the muzzle, so the
+    -- only thing that decides a hit is how close the authored point is to where
+    -- the server believes the target is. That is exactly what the Shoot solver
+    -- already computes, so silent aim now consumes the same prediction instead of
+    -- the raw, one-frame-old root position it used before.
+    --
+    -- The bullet appears where arg1 sits, so arg1 is the visual spawn point.
+    -- Four authored geometries are offered as a live A/B (the menu cannot
+    -- assert which one scores best - the server's hit test is inferred, not
+    -- known), and every shot is tagged with its variant so the Spawn A/B
+    -- status and the Game Learning log can count real hits per geometry:
+    --
+    --   Front   in front of the torso, shooter's side, at torso height.
+    --           Straight-on shots travel straight and level.
+    --   Through the whole segment pierces the torso (front to far side):
+    --           the longest possible segment inside the body, so a predicted
+    --           point off by up to ~1 stud still leaves the segment crossing
+    --           the capsule.
+    --   Top     the old geometry: 1.6 studs above the impact point. The
+    --           vertical segment through the body axis crosses more of the
+    --           capsule than Front does, which is why it may have scored more.
+    --   Behind  authored on the far side of the torso; the bullet visibly
+    --           travels toward the shooter.
+    local SILENT_ORIGIN_STUDS: number = 2.5
+    local SILENT_PIERCE_STUDS: number = 1.0
+    local SILENT_LIFT_STUDS: number = 1.6
+
+    local function buildSilentShot(
+        target: Player,
+        prediction: GunPrediction,
+        muzzleOrigin: CFrame?,
+        variant: string
+    ): (CFrame, CFrame, number)
+        local predicted: Vector3 = prediction.targetPosition
+        local velocity: Vector3 = prediction.velocity
+        local horizontal: Vector3 = Vector3.new(velocity.X, 0, velocity.Z)
+
+        local direction: Vector3? = nil
+        local sweep: number = 0
+        if horizontal.Magnitude > 1.5 and mm2Settings.silentSweep > 0 then
+            direction = horizontal.Unit
+            -- Lay the authored segment along the movement axis, extended by the
+            -- solver's own error budget. This replaces the old speed*lead guess
+            -- with the one number that already accounts for turn uncertainty and
+            -- latency, so the sweep widens exactly when the prediction is least
+            -- certain instead of on a separate ad-hoc scale.
+            sweep = math.clamp(
+                prediction.errorRadius,
+                0.5,
+                mm2Settings.silentSweep
+            )
+        end
+        local sweepEnd: Vector3 =
+            direction and direction * (sweep * 0.35) or Vector3.zero
+
+        -- Horizontal direction from the shooter to the predicted point: the
+        -- bullet appears on the shooter's side of the torso. The offset is
+        -- clamped to 60 % of the flat distance so at point blank the origin
+        -- never lands past the body.
+        local approach: Vector3? = nil
+        local approachOffset: number = SILENT_ORIGIN_STUDS
+        if muzzleOrigin then
+            local toTarget: Vector3 = predicted - muzzleOrigin.Position
+            local flat: Vector3 = Vector3.new(toTarget.X, 0, toTarget.Z)
+            if flat.Magnitude > 0.05 then
+                approach = flat.Unit
+                approachOffset = math.min(
+                    SILENT_ORIGIN_STUDS,
+                    math.max(1.0, flat.Magnitude * 0.6)
+                )
+            end
+        end
+
+        local startPoint: Vector3
+        local endPoint: Vector3
+        if variant == "Through" and approach then
+            -- Front to far side: the segment crosses the full body.
+            startPoint = predicted - approach * approachOffset
+                - (direction and direction * sweep or Vector3.zero)
+            endPoint = predicted + approach * SILENT_PIERCE_STUDS + sweepEnd
+        elseif variant == "Top" then
+            startPoint = predicted + Vector3.new(0, SILENT_LIFT_STUDS, 0)
+                + (direction and direction * sweep or Vector3.zero)
+            endPoint = predicted + sweepEnd
+        elseif variant == "Behind" and approach then
+            startPoint = predicted + approach * approachOffset
+                + (direction and direction * sweep or Vector3.zero)
+            endPoint = predicted + sweepEnd
+        elseif approach then
+            -- "Front" (default) and the fallback for Behind without approach.
+            startPoint = predicted - approach * approachOffset
+                - (direction and direction * sweep or Vector3.zero)
+            endPoint = predicted + sweepEnd
+        elseif direction then
+            startPoint = predicted - direction * sweep
+            endPoint = predicted + sweepEnd
+        else
+            -- Shooter directly above the target with no movement axis to lean
+            -- on: the old lifted origin is the only usable geometry.
+            startPoint = predicted + Vector3.new(0, SILENT_LIFT_STUDS, 0)
+            endPoint = predicted
+        end
+
+        if sweep > 0 and bystanderOnSegment(target, startPoint, endPoint) then
+            -- Collapse to a point on the body: hitting the wrong player as
+            -- sheriff is an instant loss.
+            if variant ~= "Top" and approach then
+                startPoint = predicted - approach * approachOffset
+            else
+                startPoint = predicted + Vector3.new(0, SILENT_LIFT_STUDS, 0)
+            end
+            endPoint = predicted
+        end
+
+        return CFrame.lookAt(startPoint, endPoint), CFrame.new(endPoint),
+            approachOffset
+    end
+
+    -- Options for one trigger pull. `silent` authors the shot at the target
+    -- (through walls, any distance); `maxError` is an optional accuracy gate the
+    -- auto-fire uses so it only takes high-probability shots; `quiet` suppresses
+    -- the toast notifications the manual key press relies on (and, with it, the
+    -- one yielding call, so the auto-fire never yields inside a frame callback).
+    type FireOptions = {
+        silent: boolean?,
+        maxError: number?,
+        quiet: boolean?,
+    }
+
+    -- Set by the most recent reject() call so the auto-shoot loop can surface
+    -- the reason once per change even when quiet mode suppresses the toast.
+    -- Declared before fireGunAtTarget so reject() captures it as an upvalue.
+    local lastRejectReason: string = ""
+
+    -- Fire one packet at the solved point.
+    --
+    -- The remote takes two CFrames: a rotated frame that looks from the muzzle at
+    -- the impact point, and the impact point itself as a plain position. That is
+    -- the shape the legitimate client sends, so the packet is indistinguishable at
+    -- any ping; the only thing the solver changes is where the point sits.
+    local function fireGunAtTarget(
+        target: Player?,
+        options: FireOptions?
+    ): boolean
+        local opts: FireOptions = options or {}
+        local silent: boolean = mm2Settings.silentAim
+        if opts.silent ~= nil then
+            silent = opts.silent
+        end
+        local quiet: boolean = opts.quiet == true
+        local function reject(message: string): boolean
+            lastRejectReason = message
+            if not quiet then
+                notify(message)
+            end
+            return false
+        end
+
+        local character, humanoid = getCharacterParts()
+        if not target or not target.Character then
+            return reject("No selected shoot target was found.")
+        end
+        if not character or not humanoid then
+            return reject("Your character is not available.")
+        end
+
+        local gun: Tool? = getPlayerWeapon(LocalPlayer, "Gun")
+        local backpack: Backpack? = LocalPlayer:FindFirstChildOfClass("Backpack")
+        if not gun and backpack then
+            return reject("You do not have the sheriff gun.")
+        end
+        if gun and gun.Parent == backpack and humanoid:IsA("Humanoid") then
+            humanoid:EquipTool(gun)
+            if quiet then
+                -- Auto-fire runs inside a frame callback that must not yield; let
+                -- the equip settle and try again on the next tick.
+                return reject("Equipping the sheriff gun.")
+            end
+            task.wait()
+        end
+
+        gun = getPlayerWeapon(LocalPlayer, "Gun", true) or gun
+        local remote: Instance? = gun and gun:FindFirstChild("Shoot")
+        local origin: CFrame? = getGunOriginCFrame(character, gun)
+
+        local aim: CFrame?, prediction: GunPrediction?, reason: string? = nil
+        if origin then
+            aim, prediction, reason = computeGunAim(
+                target,
+                origin :: CFrame,
+                silent and {ignoreVisibility = true} or nil
+            )
+        end
+
+        local rejectMessages: {[string]: string} = {
+            ["no body"] = "The murderer has no usable body to aim at.",
+            ["too close"] = "The murderer is too close to shoot cleanly.",
+            ["obstructed"] = "A wall blocks the shot.",
+            ["turning too hard"] = "The murderer is turning too hard to lead.",
+        }
+        if not remote
+            or not remote:IsA("RemoteEvent")
+            or not origin
+            or not aim
+            or not prediction then
+            local message: string = rejectMessages[reason or ""]
+                or (
+                    not origin
+                        and "The gun has no usable origin."
+                        or (silent
+                            and "The murderer has no usable body to aim at."
+                            or "The murderer is unavailable or obstructed.")
+                )
+            return reject(message)
+        end
+
+        local resolved: GunPrediction = prediction :: GunPrediction
+        if opts.maxError then
+            -- In silent mode the sweep segment already covers the solver's
+            -- error budget up to the sweep cap, so the cap is the effective
+            -- accuracy gate: otherwise a moving target could fail "Max error"
+            -- even though the authored segment fully covers the uncertainty.
+            local limit: number = opts.maxError
+            if silent and mm2Settings.silentSweep > 0 then
+                limit = math.max(limit, mm2Settings.silentSweep)
+            end
+            if resolved.errorRadius > limit then
+                return reject("Shot accuracy is too low to fire.")
+            end
+        end
+
+        if silent then
+            -- The silent packet is authored at the target, so the feedback must
+            -- expect the GunFired origin there, not at the muzzle.
+            local variant: string = mm2Settings.silentSpawn
+            local shotOrigin: CFrame, shotEnd: CFrame, offset: number =
+                buildSilentShot(target, resolved, origin, variant)
+            state.mm2ShotFeedback.queue(target, gun, shotOrigin, aim, resolved)
+            if state.mm2ShotFeedback.pending then
+                state.mm2ShotFeedback.pending.silentSpawn = variant
+            end
+            -- Published through the game bridge so the passive Game Learning
+            -- log can tag this shot with its authored geometry.
+            state.lastSilentShotInfo = {
+                variant = variant,
+                at = os.clock(),
+                offset = math.floor(offset * 10) / 10,
+            }
+            remote:FireServer(shotOrigin, shotEnd)
+            return true
+        end
+
+        -- arg1 must sit at the muzzle. Captured vanilla packets show the server
+        -- ignoring arg1's rotation entirely (muzzle frames up to 176 deg away
+        -- from the endpoint still register), so the hit geometry comes from the
+        -- two positions: a segment that starts and ends on the target is zero
+        -- long and never registers. `aim` is deliberately positioned at the
+        -- target (the feedback module reads aim.Position as the aim point), so
+        -- the shot frame is built from the muzzle - this is what the vanilla
+        -- client sends.
+        state.mm2ShotFeedback.queue(target, gun, origin, aim, resolved)
+        remote:FireServer(
+            CFrame.lookAt(origin.Position, resolved.endpoint),
+            CFrame.new(resolved.endpoint)
+        )
+        return true
+    end
+
+    local shootFeatureActive: boolean = false
+    local autoShootActive: boolean = false
+
+    -- Shared motion sampling + gun-fired observer. Both the manual Shoot and
+    -- Auto Shoot need live filtered velocities, so the sampler stays alive while
+    -- either is on and is torn down only when both are off.
+    local function refreshShootInfrastructure(): ()
+        local wantActive: boolean = shootFeatureActive or autoShootActive
+        state.mm2ShotFeedback.shootActive = wantActive
+        if wantActive then
+            if not featureConnections.MM2MotionTracker then
+                local weaponService: any = getWeaponServiceModule()
+                if type(weaponService) == "table" then
+                    connectGunFiredSignal(weaponService)
+                end
+                local motionElapsed: number = 0
+                featureConnections.MM2MotionTracker = TaskManager:Connect(function(
+                    deltaTime: number
+                ): ()
+                    motionElapsed += deltaTime
+                    if motionElapsed < 1 / 30 then
+                        return
+                    end
+                    motionElapsed = 0
+                    for _, player: Player in ipairs(Players:GetPlayers()) do
+                        local root: BasePart? = player.Character
+                            and player.Character:FindFirstChild("HumanoidRootPart")
+                            :: BasePart?
+                        if root and isPlayerAlive(player) then
+                            getFilteredVelocity(player, root)
+                        end
+                    end
+                end)
+            end
+            return
+        end
+        disconnectFeatureConnection("MM2MotionTracker")
+        disconnectGunFiredObserver()
+        state.mm2ShotFeedback.pending = nil
+        state.mm2ShotFeedback.lastAccepted = nil
+        state.mm2ShotFeedback.hide()
+    end
+
+    local function triggerManualShot(): ()
+        if not shootFeatureActive then
+            notify("Enable Shoot first.")
+            return
+        end
+        fireGunAtTarget(getSelectedShootTarget())
+    end
+
+    local function toggleShootMurderer(enabled: boolean): ()
+        shootFeatureActive = enabled
+        refreshShootInfrastructure()
+    end
+
+    -- ----- Auto Shoot -----
+    -- Fires on its own the moment a high-probability solution exists. Normal mode
+    -- shoots from the muzzle and respects the wall check, so it holds fire until
+    -- the murderer peeks out from cover (that is the peek detection); Silent mode
+    -- authors the shot at the target and fires from any distance, through walls.
+    local autoSettings = {
+        mode = "Normal" :: string,
+        maxError = 0.6,
+        fireDelay = 0.5,
+    }
+    local lastAutoShot: number = -math.huge
+    local lastGunCheck: number = -math.huge
+    local lastAutoReject: {message: string, at: number}? = nil
+
+    -- Keep the sheriff gun in hand the moment it is available (round start,
+    -- role handout, picking the dropped gun), not only when a target shows up:
+    -- otherwise the first auto shot is delayed by the equip animation.
+    local function equipSheriffGun(): ()
+        local backpack: Backpack? = LocalPlayer:FindFirstChildOfClass("Backpack")
+        if not backpack then
+            return
+        end
+        local gun: Tool? = getPlayerWeapon(LocalPlayer, "Gun")
+        if gun and gun.Parent == backpack then
+            local humanoid: Humanoid? = LocalPlayer.Character
+                and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+                :: Humanoid?
+            if humanoid then
+                humanoid:EquipTool(gun)
+            end
+        end
+    end
+
+    local function autoShootTick(): ()
+        if os.clock() - lastGunCheck >= 0.5 then
+            lastGunCheck = os.clock()
+            equipSheriffGun()
+        end
+        -- Hold the fire rate, then look for a shot every tick once it is off
+        -- cooldown so a peek is answered immediately.
+        if os.clock() - lastAutoShot < autoSettings.fireDelay then
+            return
+        end
+        local target: Player? = getSelectedShootTarget()
+        if not target then
+            return
+        end
+        lastRejectReason = ""
+        local fired: boolean = fireGunAtTarget(target, {
+            silent = autoSettings.mode == "Silent",
+            maxError = autoSettings.maxError,
+            quiet = true,
+        })
+        if fired then
+            lastAutoShot = os.clock()
+            lastAutoReject = nil
+        elseif lastRejectReason ~= "" then
+            -- Quiet mode swallows the reject reason; surface it once per reason
+            -- change so a waiting auto shooter is not a mystery.
+            if lastAutoReject == nil or lastAutoReject.message ~= lastRejectReason then
+                lastAutoReject = {message = lastRejectReason, at = os.clock()}
+                notify("Auto Shoot waiting: " .. lastRejectReason)
+            end
+        end
+    end
+
+    local function toggleAutoShoot(enabled: boolean): ()
+        autoShootActive = enabled
+        disconnectFeatureConnection("MM2AutoShoot")
+        refreshShootInfrastructure()
+        if not enabled then
+            return
+        end
+        lastAutoShot = -math.huge
+        local autoElapsed: number = 0
+        featureConnections.MM2AutoShoot = TaskManager:Connect(function(
+            deltaTime: number
+        ): ()
+            autoElapsed += deltaTime
+            if autoElapsed < 1 / 30 then
+                return
+            end
+            autoElapsed = 0
+            autoShootTick()
+        end)
+    end
+
+    local ShootFeature = createUniversalFeature(
+        "Shoot",
+        "Hitscan aim with filtered motion, RTT compensation, and miss feedback",
+        4,
+        toggleShootMurderer,
+        {
+            categoryName = "Blatant",
+            parent = MM2Scroll,
+            registry = mm2Features,
+        }
+    )
+    local ShootTargetBox
+    local function refreshShootOptions(): ()
+        if ShootTargetBox then
+            setOptionVisible(
+                ShootFeature,
+                ShootTargetBox.Parent :: GuiObject,
+                mm2Settings.shootMode == "Custom"
+            )
+        end
+    end
+    addCycleOption(
+        ShootFeature,
+        "Mode",
+        {"Manual", "Custom"},
+        1,
+        function(value: string): ()
+            mm2Settings.shootMode = value
+            refreshShootOptions()
+        end
+    )
+
+    if state.bindFeatureActivationKey then
+        state.bindFeatureActivationKey(
+            ShootFeature,
+            mm2Settings.shootKey,
+            triggerManualShot
+        )
+    end
+    addToggleOption(
+        ShootFeature,
+        "WallCheck",
+        mm2Settings.shootWallCheck,
+        function(value: boolean): ()
+            mm2Settings.shootWallCheck = value
+        end,
+        "Holds fire while a wall blocks the muzzle. SilentAIM skips it: it "
+            .. "authors the shot at the target."
+    )
+    addToggleOption(
+        ShootFeature,
+        "SilentAIM",
+        mm2Settings.silentAim,
+        function(value: boolean): ()
+            mm2Settings.silentAim = value
+        end,
+        "Authors the shot at the target: same prediction as Shoot, ignores walls."
+    )
+    addNumberOption(
+        ShootFeature,
+        "Silent sweep",
+        mm2Settings.silentSweep,
+        0,
+        8,
+        function(value: number): ()
+            mm2Settings.silentSweep = value
+        end,
+        "Cap for the tolerance segment laid along the target's movement "
+            .. "(0 = single point). The solver's error budget usually sets a "
+            .. "shorter length, so a bigger cap only helps fast, turning "
+            .. "targets.",
+        0.5
+    )
+    local silentSpawnValues: {string} = {"Front", "Through", "Top", "Behind"}
+    local silentSpawnIndex: number = 1
+    for valueIndex: number, value: string in ipairs(silentSpawnValues) do
+        if value == mm2Settings.silentSpawn then
+            silentSpawnIndex = valueIndex
+        end
+    end
+    addCycleOption(
+        ShootFeature,
+        "Silent spawn",
+        silentSpawnValues,
+        silentSpawnIndex,
+        function(value: string): ()
+            mm2Settings.silentSpawn = value
+        end,
+        "Where the silent bullet is authored: Front = in front of the torso "
+            .. "at torso height; Through = pierces the torso; Top = the old "
+            .. "geometry (1.6 studs above); Behind = far side. Check Spawn A/B "
+            .. "status to see which variant actually scores."
+    )
+    local function spawnStatsText(): string
+        local stats: any = state.mm2ShotFeedback and
+            state.mm2ShotFeedback.spawnStats or {}
+        local parts: {string} = {}
+        for _, variant: string in ipairs({"Front", "Through", "Top", "Behind"}) do
+            local s: any = stats[variant]
+            if s and s.shots > 0 then
+                table.insert(
+                    parts,
+                    string.format(
+                        "%s %d/%d",
+                        variant,
+                        s.hits,
+                        s.shots
+                    )
+                )
+            end
+        end
+        if #parts == 0 then
+            return "Spawn A/B: no silent shots counted yet."
+        end
+        return "Spawn A/B (hits/shots): " .. table.concat(parts, " · ")
+    end
+    addActionOption(ShootFeature, "Spawn A/B status", function(): ()
+        notify(spawnStatsText())
+    end)
+    addToggleOption(
+        ShootFeature,
+        "Auto tune lead",
+        mm2Settings.autoTuneLead,
+        function(value: boolean): ()
+            mm2Settings.autoTuneLead = value
+        end,
+        "Measures the lead each confirmed shot actually needed and drifts Lead "
+            .. "bias toward it. Turn off to keep a manual value."
+    )
+    addNumberOption(
+        ShootFeature,
+        "Lead bias",
+        mm2Settings.gunLeadBias,
+        -0.25,
+        0.25,
+        function(value: number): ()
+            mm2Settings.gunLeadBias = value
+        end,
+        "Extra seconds added to the shot lead (positive = aim further ahead). "
+            .. "Auto tune drifts this value as shots confirm, so the slider "
+            .. "may lag the live value.",
+        0.01
+    )
+    ShootTargetBox = addTextOption(ShootFeature, "Target player", "", function(
+        value: string
+    ): ()
+        mm2Settings.shootTarget = value
+    end, false)
+    addToggleOption(
+        ShootFeature,
+        "Miss cooldown",
+        mm2Settings.showMissCooldown,
+        function(value: boolean): ()
+            mm2Settings.showMissCooldown = value
+            if not value then
+                state.mm2ShotFeedback.pending = nil
+                state.mm2ShotFeedback.lastAccepted = nil
+                state.mm2ShotFeedback.hide()
+            end
+        end
+    )
+    refreshShootOptions()
+
+    local AutoShootFeature = createUniversalFeature(
+        "Auto Shoot",
+        "Fires by itself when a high-probability shot exists. Normal holds for line"
+            .. " of sight and answers peeks; Silent shoots the murderer from any"
+            .. " distance, through walls.",
+        5,
+        toggleAutoShoot,
+        {
+            categoryName = "Blatant",
+            parent = MM2Scroll,
+            registry = mm2Features,
+        }
+    )
+    addCycleOption(
+        AutoShootFeature,
+        "Mode",
+        {"Normal", "Silent"},
+        1,
+        function(value: string): ()
+            autoSettings.mode = value
+        end
+    )
+    addNumberOption(
+        AutoShootFeature,
+        "Max error",
+        autoSettings.maxError,
+        0.1,
+        1,
+        function(value: number): ()
+            autoSettings.maxError = value
+        end,
+        "Only fire when the predicted error is within this many studs. In "
+            .. "Silent mode the sweep cap relaxes it: the authored segment "
+            .. "already covers the error up to its length.",
+        0.05
+    )
+    addNumberOption(
+        AutoShootFeature,
+        "Fire delay",
+        autoSettings.fireDelay,
+        0.1,
+        2,
+        function(value: number): ()
+            autoSettings.fireDelay = value
+        end,
+        "Seconds between automatic shots.",
+        0.05
+    )
+
+    activeCleanup = function(): ()
+        toggleShootMurderer(false)
+        toggleAutoShoot(false)
+        state.mm2ShotFeedback.hide()
+    end
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    pcall(activeCleanup)
+    activeCleanup = function(): () end
+    Module.Events = {}
+    Module.Runtime = nil
+end
+
+return Module
+]=],
+        ["src/games/MM2/Blatant/KnifeAura.lua"] = [=[
+local Module = {
+    Name = "MM2 Knife Aura",
+    PlaceId = 142823291,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Runtime = nil :: any,
+}
+
+local activeCleanup: () -> () = function(): () end
+
+function Module.init(runtime: any): any
+    if Module.Initialized then
+        return Module
+    end
+    local core: any = state.mm2Core
+    assert(type(core) == "table", "MM2 Knife Aura requires the MM2 core module")
+    Module.Runtime = runtime
+    local getPlayerRole: any = core.getPlayerRole
+    local getPlayerWeapon: any = core.getPlayerWeapon
+    local isPlayerAlive: any = core.isPlayerAlive
+    local isProtectedTarget: any = core.isProtectedTarget
+
+    type KnifeRuntimeState = {
+        lastAuraSwing: number,
+    }
+
+    local knifeSettings: KnifeSettings = {
+        aura = false,
+        auraRange = 14,
+    }
+    state.mm2KnifeRuntime = {
+        lastAuraSwing = -math.huge,
+    } :: KnifeRuntimeState
+
+    local function getEquippedWeapon(name: string, _tag: string): Tool?
+        return getPlayerWeapon(LocalPlayer, name, true)
+    end
+
+    local function canUseEquippedKnife(): (Tool?, BasePart?)
+        local character: Model? = LocalPlayer.Character
+        local humanoid: Humanoid? = character
+            and character:FindFirstChildOfClass("Humanoid")
+            :: Humanoid?
+        local root: BasePart? = character
+            and character:FindFirstChild("HumanoidRootPart")
+            :: BasePart?
+        local knife: Tool? = getEquippedWeapon("Knife", "Weapon_Knife")
+        if not character
+            or not humanoid
+            or humanoid.Health <= 0
+            or not root
+            or not knife
+            or knife:GetAttribute("Disabled") == true
+            or getPlayerRole(LocalPlayer) ~= "Murderer" then
+            return nil, nil
+        end
+        return knife, root
+    end
+
+    local function isValidKnifeTarget(player: Player): boolean
+        if player == LocalPlayer
+            or isProtectedTarget(player)
+            or not isPlayerAlive(player)
+            or getPlayerRole(player) == "Murderer" then
+            return false
+        end
+        return player.Character ~= nil
+            and player.Character:FindFirstChild("HumanoidRootPart") ~= nil
+    end
+
+    local function findKnifeAuraTarget(
+        localRoot: BasePart,
+        maxDistance: number
+    ): Player?
+        local closest: Player? = nil
+        local closestDistance: number = maxDistance
+        for _, player: Player in ipairs(Players:GetPlayers()) do
+            if isValidKnifeTarget(player) then
+                local targetRoot: BasePart? = player.Character
+                    and player.Character:FindFirstChild("HumanoidRootPart")
+                    :: BasePart?
+                if targetRoot then
+                    local distance: number =
+                        (targetRoot.Position - localRoot.Position).Magnitude
+                    if distance <= closestDistance then
+                        closest = player
+                        closestDistance = distance
+                    end
+                end
+            end
+        end
+        return closest
+    end
+
+    local function processKnifeAura(): ()
+        local knife: Tool?, localRoot: BasePart? = canUseEquippedKnife()
+        if not knife or not localRoot then
+            return
+        end
+
+        local target: Player? =
+            findKnifeAuraTarget(localRoot, knifeSettings.auraRange)
+        local targetCharacter: Model? = target and target.Character
+        local targetRoot: BasePart? = targetCharacter
+            and targetCharacter:FindFirstChild("HumanoidRootPart")
+            :: BasePart?
+        if not target
+            or not targetCharacter
+            or not targetRoot
+            or (targetRoot.Position - localRoot.Position).Magnitude
+                > knifeSettings.auraRange
+            or os.clock() - state.mm2KnifeRuntime.lastAuraSwing < 0.86 then
+            return
+        end
+
+        local handle: BasePart? = knife:FindFirstChild("Handle") :: BasePart?
+        if not handle or not handle:IsA("BasePart") then
+            return
+        end
+
+        state.mm2KnifeRuntime.lastAuraSwing = os.clock()
+        local events: Instance? = knife:FindFirstChild("Events")
+        local handleTouched: Instance? = events
+            and events:FindFirstChild("HandleTouched")
+        knife:Activate()
+        task.delay(0.025, function(): ()
+            local currentKnife: Tool?, currentLocalRoot: BasePart? =
+                canUseEquippedKnife()
+            local currentCharacter: Model? = target.Character
+            local currentRoot: BasePart? = currentCharacter
+                and currentCharacter:FindFirstChild("HumanoidRootPart")
+                :: BasePart?
+            local currentHandle: BasePart? =
+                knife:FindFirstChild("Handle") :: BasePart?
+            if not knifeSettings.aura
+                or currentKnife ~= knife
+                or not currentLocalRoot
+                or not currentCharacter
+                or not currentRoot
+                or not currentHandle
+                or not currentHandle:IsA("BasePart")
+                or (currentRoot.Position - currentLocalRoot.Position).Magnitude
+                    > knifeSettings.auraRange then
+                return
+            end
+
+            if handleTouched and handleTouched:IsA("RemoteEvent") then
+                handleTouched:FireServer(currentRoot)
+            elseif type(state.fireTouchInterest) == "function" then
+                pcall(state.fireTouchInterest, currentHandle, currentRoot, 0)
+                pcall(state.fireTouchInterest, currentHandle, currentRoot, 1)
+            end
+        end)
+    end
+
+    local function refreshKnifeController(): ()
+        disconnectFeatureConnection("MM2KnifeVirtualHitbox")
+        disconnectFeatureConnection("MM2KnifeAura")
+        disconnectFeatureConnection("MM2KnifeController")
+        if not knifeSettings.aura then
+            return
+        end
+
+        local elapsed: number = 0
+        featureConnections.MM2KnifeController =
+            TaskManager:Connect(function(deltaTime: number): ()
+                elapsed += deltaTime
+                if elapsed < 0.05 then
+                    return
+                end
+                elapsed %= 0.05
+                processKnifeAura()
+            end)
+    end
+
+    local function toggleKnifeAura(enabled: boolean): ()
+        knifeSettings.aura = enabled
+        state.mm2KnifeRuntime.lastAuraSwing = -math.huge
+        refreshKnifeController()
+    end
+
+    local KnifeFeature = createUniversalFeature(
+        "Knife Aura",
+        "Stabs the nearest valid target in range through the game's own HandleTouched",
+        6,
+        toggleKnifeAura,
+        {
+            categoryName = "Blatant",
+            parent = MM2Scroll,
+            registry = mm2Features,
+        }
+    )
+    addNumberOption(KnifeFeature, "Range", 14, 7, 30, function(
+        value: number
+    ): ()
+        knifeSettings.auraRange = value
+    end)
+
+    activeCleanup = function(): ()
+        toggleKnifeAura(false)
+    end
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    pcall(activeCleanup)
+    activeCleanup = function(): () end
+    Module.Events = {}
+    Module.Runtime = nil
+end
+
+return Module
+]=],
+        ["src/games/MM2/Blatant/KnifeThrow.lua"] = [=[
+local Module = {
+    Name = "MM2 Knife Throw",
+    PlaceId = 142823291,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Runtime = nil :: any,
+}
+
+local activeCleanup: () -> () = function(): () end
+
+--[[
+    MM2 Knife Throw
+
+    Automatically throws the knife at the nearest valid target — the murderer's
+    counterpart to the gun's Auto Shoot.
+
+    Normal throws from the murderer's hand and leads the target by the blade's
+    flight time (distance / throw speed), so the target has to be roughly in the
+    open. Silent authors the throw so the blade spawns right beside the target
+    (origin placed next to them, aim at them): the server spawns the projectile
+    at that origin, so it connects at any distance or through walls — the same
+    trick the gun's silent shot uses, and reliable because the knife's hitbox is
+    long.
+
+    Remote (confirmed against YARHM's "knife throw to closest"):
+      KnifeThrown:FireServer(CFrame.new(origin), CFrame.new(aim))
+]]
+function Module.init(runtime: any): any
+    if Module.Initialized then
+        return Module
+    end
+    local core: any = state.mm2Core
+    assert(type(core) == "table", "MM2 Knife Throw requires the MM2 core module")
+    Module.Runtime = runtime
+    local findMurderer: any = core.findMurderer
+    local getPlayerRole: any = core.getPlayerRole
+    local getPlayerWeapon: any = core.getPlayerWeapon
+    local isPlayerAlive: any = core.isPlayerAlive
+    local isProtectedTarget: any = core.isProtectedTarget
+    local getFilteredVelocity: any = core.getFilteredVelocity
+    local trajectoryCalibration: any = core.trajectoryCalibration
+
+    local knifeThrowSettings = {
+        enabled = false,
+        mode = "Normal",
+        fireDelay = 1,
+        range = 120,
+        spawnOffset = 5,
+    }
+    local lastThrow = -math.huge
+
+    local function isValidTarget(player: Player): boolean
+        if player == LocalPlayer
+            or isProtectedTarget(player)
+            or not isPlayerAlive(player)
+            or getPlayerRole(player) == "Murderer" then
+            return false
+        end
+        return player.Character ~= nil
+            and player.Character:FindFirstChild("HumanoidRootPart") ~= nil
+    end
+
+    local function findNearestTarget(maxDistance: number): Player?
+        local localRoot: BasePart? = LocalPlayer.Character
+            and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+        if not localRoot then
+            return nil
+        end
+        local closest: Player? = nil
+        local closestDistance: number = maxDistance
+        for _, player: Player in ipairs(Players:GetPlayers()) do
+            if isValidTarget(player) then
+                local targetRoot: BasePart? = player.Character
+                    and player.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+                if targetRoot then
+                    local distance: number =
+                        (targetRoot.Position - localRoot.Position).Magnitude
+                    if distance <= closestDistance then
+                        closest = player
+                        closestDistance = distance
+                    end
+                end
+            end
+        end
+        return closest
+    end
+
+    -- The murderer role is required, and the knife must be equipped and off its
+    -- post-throw cooldown (the tool flags itself Disabled while it respawns).
+    local function getReadyKnife(): Tool?
+        if findMurderer() ~= LocalPlayer then
+            return nil
+        end
+        local character: Model? = LocalPlayer.Character
+        if not character then
+            return nil
+        end
+        -- Search backpack too: an unequipped knife must be equipped before the
+        -- next tick, exactly like Shoot does with the gun.
+        local knife: Tool? = getPlayerWeapon(LocalPlayer, "Knife")
+        if not knife or knife:GetAttribute("Disabled") == true then
+            return nil
+        end
+        if knife.Parent ~= character then
+            local humanoid: Humanoid? =
+                character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+            if humanoid then
+                humanoid:EquipTool(knife)
+            end
+            return nil
+        end
+        return knife
+    end
+
+    -- Lead the target by the blade's flight time so a moving target is still
+    -- where the knife arrives. Uses the calibrated throw speed when available.
+    local function predictAim(target: Player, originPos: Vector3): Vector3
+        local root: BasePart =
+            target.Character:FindFirstChild("HumanoidRootPart") :: BasePart
+        local knifeSpeed: number = 96
+        local estimates: any = trajectoryCalibration
+            and trajectoryCalibration.getEstimates
+            and trajectoryCalibration.getEstimates()
+        if estimates and estimates.knifeSpeed and estimates.knifeSpeed > 1 then
+            knifeSpeed = estimates.knifeSpeed
+        end
+        local flightTime: number =
+            (root.Position - originPos).Magnitude / knifeSpeed
+        local velocity: Vector3 = getFilteredVelocity(target, root)
+        return root.Position + velocity * flightTime
+    end
+
+    local function throwKnife(): ()
+        if os.clock() - lastThrow < knifeThrowSettings.fireDelay then
+            return
+        end
+        local silent: boolean = knifeThrowSettings.mode == "Silent"
+        local knife: Tool? = getReadyKnife()
+        if not knife then
+            return
+        end
+        local events: Instance? = knife:FindFirstChild("Events")
+        local remote: Instance? = events and events:FindFirstChild("KnifeThrown")
+        if not remote or not remote:IsA("RemoteEvent") then
+            return
+        end
+        local character: Model? = LocalPlayer.Character
+        local throwerPart: BasePart? = character
+            and (character:FindFirstChild("RightHand")
+                or character:FindFirstChild("HumanoidRootPart")) :: BasePart?
+        if not throwerPart then
+            return
+        end
+
+        -- Silent ignores range: the whole point is to reach a target anywhere.
+        local target: Player? =
+            findNearestTarget(silent and 100000 or knifeThrowSettings.range)
+        if not target then
+            return
+        end
+        local targetRoot: BasePart =
+            target.Character:FindFirstChild("HumanoidRootPart") :: BasePart
+
+        local originPos: Vector3
+        if silent then
+            -- Spawn the blade just beside the target, on the thrower's side, so
+            -- it travels a few studs into them and connects regardless of walls.
+            local toThrower: Vector3 = throwerPart.Position - targetRoot.Position
+            if toThrower.Magnitude > 0.1 then
+                toThrower = toThrower.Unit
+            else
+                toThrower = Vector3.new(0, 0, 1)
+            end
+            originPos = targetRoot.Position + toThrower * knifeThrowSettings.spawnOffset
+        else
+            originPos = throwerPart.Position
+        end
+
+        local aimPos: Vector3 = predictAim(target, originPos)
+        remote:FireServer(CFrame.new(originPos), CFrame.new(aimPos))
+        lastThrow = os.clock()
+    end
+
+    local function toggleKnifeThrow(enabled: boolean): ()
+        knifeThrowSettings.enabled = enabled
+        disconnectFeatureConnection("MM2KnifeThrow")
+        if not enabled then
+            return
+        end
+        lastThrow = -math.huge
+        local elapsed: number = 0
+        featureConnections.MM2KnifeThrow =
+            TaskManager:Connect(function(deltaTime: number): ()
+                elapsed += deltaTime
+                if elapsed < 1 / 30 then
+                    return
+                end
+                elapsed = 0
+                throwKnife()
+            end)
+    end
+
+    local KnifeThrowFeature = createUniversalFeature(
+        "Knife Throw",
+        "Auto-throws the knife at the nearest target. Silent spawns the blade"
+            .. " beside the target so it connects at any distance or through walls.",
+        7,
+        toggleKnifeThrow,
+        {
+            categoryName = "Blatant",
+            parent = MM2Scroll,
+            registry = mm2Features,
+        }
+    )
+    addCycleOption(
+        KnifeThrowFeature,
+        "Mode",
+        {"Normal", "Silent"},
+        1,
+        function(value: string): ()
+            knifeThrowSettings.mode = value
+        end
+    )
+    addNumberOption(
+        KnifeThrowFeature,
+        "Fire delay",
+        knifeThrowSettings.fireDelay,
+        0.2,
+        3,
+        function(value: number): ()
+            knifeThrowSettings.fireDelay = value
+        end,
+        "Seconds between automatic throws.",
+        0.1
+    )
+    addNumberOption(
+        KnifeThrowFeature,
+        "Range",
+        knifeThrowSettings.range,
+        10,
+        400,
+        function(value: number): ()
+            knifeThrowSettings.range = value
+        end,
+        "Maximum target distance for normal throws. Silent ignores this.",
+        5
+    )
+    addNumberOption(
+        KnifeThrowFeature,
+        "Spawn offset",
+        knifeThrowSettings.spawnOffset,
+        1,
+        15,
+        function(value: number): ()
+            knifeThrowSettings.spawnOffset = value
+        end,
+        "Silent only: how far beside the target the blade spawns.",
+        1
+    )
+
+    activeCleanup = function(): ()
+        toggleKnifeThrow(false)
+    end
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    pcall(activeCleanup)
+    activeCleanup = function(): () end
+    Module.Events = {}
+    Module.Runtime = nil
+end
+
+return Module
+]=],
+        ["src/games/MM2/Render/RoleTags.lua"] = [=[
+local Module = {
+    Name = "MM2 Role Tags",
+    PlaceId = 142823291,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Runtime = nil :: any,
+}
+
+local activeCleanup: () -> () = function(): () end
+
+function Module.init(runtime: any): any
+    if Module.Initialized then
+        return Module
+    end
+    local core: any = state.mm2Core
+    assert(type(core) == "table", "MM2 Role Tags requires the MM2 core module")
+    Module.Runtime = runtime
+    local MM2Effects: any = core.MM2Effects
+    local getPlayerRole: any = core.getPlayerRole
+    local isProtectedTarget: any = core.isProtectedTarget
+    local mm2Settings: any = core.mm2Settings
+
+    -- ---------------------------------------------------------------------------
+    -- Role nametags: a coloured label floating over each player's head. The
+    -- murderer is the loud one (red), everything else is opt-in.
+    -- ---------------------------------------------------------------------------
+    local RoleTagEffects = create("Folder", {
+        Parent = MM2Effects,
+        Name = "RoleTags",
+    })
+
+    local ROLE_TAG_TEXT: {[string]: string} = {
+        Murderer = "MURDERER",
+        Sheriff = "SHERIFF",
+        Hero = "HERO",
+        Innocent = "INNOCENT",
+        Dead = "DEAD",
+    }
+
+    local function colourForRole(role: string?): Color3
+        if role == "Murderer" then return mm2Settings.murdererColor end
+        if role == "Sheriff" then return mm2Settings.sheriffColor end
+        if role == "Hero" then return mm2Settings.heroColor end
+        if role == "Innocent" then return mm2Settings.innocentColor end
+        if role == "Dead" then return mm2Settings.deadColor end
+        return Color3.fromRGB(235, 235, 240)
+    end
+
+    type RoleTagRecord = {
+        billboard: BillboardGui,
+        label: TextLabel,
+        stroke: UIStroke,
+        reference: ObjectValue,
+        head: BasePart?,
+        role: string?,
+    }
+
+    local roleTags: {[Player]: RoleTagRecord} = {}
+    local roleTagsEnabled: boolean = false
+
+    local function destroyRoleTag(player: Player): ()
+        local record: RoleTagRecord? = roleTags[player]
+        if record then
+            roleTags[player] = nil
+            record.billboard:Destroy()
+            record.reference:Destroy()
+        end
+    end
+
+    local function clearRoleTags(): ()
+        for player: Player, _record: RoleTagRecord in pairs(roleTags) do
+            destroyRoleTag(player)
+        end
+    end
+
+    local function createRoleTag(head: BasePart): RoleTagRecord
+        local billboard: BillboardGui = Instance.new("BillboardGui")
+        billboard.Name = "Wurst_RoleTag"
+        billboard.AlwaysOnTop = true
+        billboard.LightInfluence = 0
+        billboard.Size = UDim2.fromOffset(170, 24)
+        billboard.StudsOffset = Vector3.new(0, 2.7, 0)
+        billboard.MaxDistance = 1500
+        billboard.Adornee = head
+        -- A BillboardGui nested inside a ScreenGui never renders (nested layer
+        -- collectors are skipped), so it lives on the part like the rest of the
+        -- MM2 markers and the folder only keeps a reference for cleanup.
+        billboard.Parent = head
+
+        local reference: ObjectValue = Instance.new("ObjectValue")
+        reference.Name = "RoleTagReference"
+        reference.Value = billboard
+        reference.Parent = RoleTagEffects
+
+        local label: TextLabel = Instance.new("TextLabel")
+        label.Name = "Role"
+        label.BackgroundTransparency = 1
+        label.Size = UDim2.fromScale(1, 1)
+        label.FontFace = CONTROL_FONT
+        label.TextSize = 15
+        label.TextScaled = false
+        label.TextStrokeTransparency = 1
+        label.Text = ""
+        label.Parent = billboard
+
+        local stroke: UIStroke = Instance.new("UIStroke")
+        stroke.Color = Color3.fromRGB(0, 0, 0)
+        stroke.Thickness = 2
+        stroke.Transparency = 0.15
+        stroke.Parent = label
+
+        return {
+            billboard = billboard,
+            label = label,
+            stroke = stroke,
+            reference = reference,
+            head = head,
+            role = nil,
+        }
+    end
+
+    local function refreshRoleTags(): ()
+        local seen: {[Player]: boolean} = {}
+        for _, player: Player in ipairs(Players:GetPlayers()) do
+            local character: Model? = player.Character
+            local head: BasePart? = character
+                and (character:FindFirstChild("Head")
+                    or character:FindFirstChild("HumanoidRootPart"))
+                :: BasePart?
+            local role: string? = character and getPlayerRole(player) or nil
+            local wanted: boolean = head ~= nil
+                and role ~= nil
+                and role ~= "Dead"
+                and player ~= LocalPlayer
+                and (mm2Settings.roleTagsAll or role == "Murderer")
+                and not isProtectedTarget(player)
+
+            if wanted then
+                seen[player] = true
+                local record: RoleTagRecord? = roleTags[player]
+                if record and (not record.billboard.Parent or record.head ~= head) then
+                    destroyRoleTag(player)
+                    record = nil
+                end
+                if not record then
+                    record = createRoleTag(head :: BasePart)
+                    roleTags[player] = record
+                end
+                local resolved: RoleTagRecord = record :: RoleTagRecord
+                local colour: Color3 = colourForRole(role)
+                if resolved.role ~= role then
+                    resolved.role = role
+                    resolved.label.Text = ROLE_TAG_TEXT[role :: string]
+                        or string.upper(role :: string)
+                end
+                -- Re-applied every pass so the live colour pickers take effect
+                -- without waiting for a role change.
+                if resolved.label.TextColor3 ~= colour then
+                    resolved.label.TextColor3 = colour
+                    resolved.stroke.Color = Color3.new(
+                        colour.R * 0.12,
+                        colour.G * 0.12,
+                        colour.B * 0.12
+                    )
+                end
+            end
+        end
+        for player: Player, _record: RoleTagRecord in pairs(roleTags) do
+            if not seen[player] then
+                destroyRoleTag(player)
+            end
+        end
+    end
+
+    local unsubscribeRoles: () -> () = core.onRoundRoles(function(): ()
+        if roleTagsEnabled then
+            -- Server role pushes and tool/collision changes bypass the normal
+            -- 0.35 s housekeeping interval.
+            refreshRoleTags()
+        end
+    end)
+
+    local function toggleRoleTags(enabled: boolean): ()
+        roleTagsEnabled = enabled
+        disconnectFeatureConnection("MM2RoleTags")
+        clearRoleTags()
+        if not enabled then
+            return
+        end
+        local elapsed: number = 1
+        featureConnections.MM2RoleTags = TaskManager:Connect(function(deltaTime: number): ()
+            elapsed += deltaTime
+            if elapsed < 0.35 then
+                return
+            end
+            elapsed = 0
+            refreshRoleTags()
+        end)
+    end
+
+    local RoleTagsFeature = createUniversalFeature(
+        "Role Tags",
+        "Floating role label over every head - the murderer in red",
+        2,
+        toggleRoleTags,
+        {
+            categoryName = "Render",
+            parent = MM2Scroll,
+            registry = mm2Features,
+        }
+    )
+    addToggleOption(
+        RoleTagsFeature,
+        "All roles",
+        mm2Settings.roleTagsAll,
+        function(value: boolean): ()
+            mm2Settings.roleTagsAll = value
+            clearRoleTags()
+        end,
+        "Off: only the murderer is tagged. On: sheriff, hero and innocents too."
+    )
+
+    activeCleanup = function(): ()
+        pcall(unsubscribeRoles)
+        toggleRoleTags(false)
+    end
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    pcall(activeCleanup)
+    activeCleanup = function(): () end
+    Module.Events = {}
+    Module.Runtime = nil
+end
+
+return Module
+]=],
+        ["src/games/MM2/Render/RoundEsp.lua"] = [=[
+local Module = {
+    Name = "MM2 Round ESP",
+    PlaceId = 142823291,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Runtime = nil :: any,
+}
+
+local activeCleanup: () -> () = function(): () end
+
+function Module.init(runtime: any): any
+    if Module.Initialized then
+        return Module
+    end
+    local core: any = state.mm2Core
+    assert(type(core) == "table", "MM2 Round ESP requires the MM2 core module")
+    Module.Runtime = runtime
+    local CoinEffects: any = core.CoinEffects
+    local GunEffects: any = core.GunEffects
+    local TrapEffects: any = core.TrapEffects
+    local clearEffects: any = core.clearEffects
+    local createMM2Cham: any = core.createMM2Cham
+    local createMM2Marker: any = core.createMM2Marker
+    local findDroppedGun: any = core.findDroppedGun
+    local findMM2Map: any = core.findMM2Map
+    local mm2GameplayRemotes: any = core.mm2GameplayRemotes
+    local mm2Settings: any = core.mm2Settings
+
+    local function toggleGunEsp(enabled)
+        disconnectFeatureConnection("MM2GunESP")
+        clearEffects(GunEffects)
+
+        if not enabled then
+            return
+        end
+
+        local elapsed: number = 1
+        -- Rebuilding the billboard twice a second churned instances (and made
+        -- the marker visibly blink). Only touch it when the gun changes.
+        local markedGun: Instance? = nil
+        featureConnections.MM2GunESP = TaskManager:Connect(function(deltaTime: number): ()
+            elapsed += deltaTime
+            if elapsed < 0.4 then
+                return
+            end
+            elapsed = 0
+            local gun: any = findDroppedGun()
+            if gun == markedGun and (gun == nil or gun.Parent ~= nil) then
+                return
+            end
+            markedGun = gun
+            clearEffects(GunEffects)
+            if gun then
+                createMM2Marker(
+                    GunEffects,
+                    gun,
+                    "Gun",
+                    mm2Settings.gunColor,
+                    mm2Settings.gunTransparency
+                )
+            end
+        end)
+    end
+
+    local function toggleTrapEsp(enabled)
+        disconnectFeatureConnection("MM2TrapAdded")
+        clearEffects(TrapEffects)
+
+        if not enabled then
+            return
+        end
+
+        local marked = setmetatable({}, {__mode = "k"})
+        local function addTrap(object)
+            if marked[object] then
+                return
+            end
+            if (object.Name == "TrapVisual" or object.Name == "Trap")
+                and (object:IsA("Model") or object:IsA("BasePart")) then
+                marked[object] = true
+                createMM2Cham(
+                    TrapEffects,
+                    object,
+                    mm2Settings.trapColor,
+                    mm2Settings.trapTransparency
+                )
+            end
+        end
+
+        local map = findMM2Map()
+        for _, object in ipairs((map or workspace):GetDescendants()) do
+            addTrap(object)
+        end
+        featureConnections.MM2TrapAdded = workspace.DescendantAdded:Connect(addTrap)
+    end
+
+    local coinChamsEnabled: boolean = false
+
+    type CoinChamRecord = {
+        highlight: Highlight,
+        billboard: BillboardGui,
+        connections: {RBXScriptConnection},
+    }
+
+    local coinBoxes: {[BasePart]: CoinChamRecord} =
+        setmetatable({}, {__mode = "k"}) :: any
+
+    local function normalizedCoinName(object: Instance): string
+        return string.gsub(string.lower(object.Name), "[^%w]", "")
+    end
+
+    local function hasCoinName(object: Instance): boolean
+        return string.find(normalizedCoinName(object), "coin", 1, true) ~= nil
+    end
+
+    local function isCoinServerName(object: Instance): boolean
+        return string.find(
+            normalizedCoinName(object),
+            "coinserver",
+            1,
+            true
+        ) ~= nil
+    end
+
+    local function isLiveCoin(coin: BasePart): boolean
+        return coin:IsDescendantOf(workspace)
+            and coin:GetAttribute("Delete") ~= true
+            and coin:GetAttribute("Collected") ~= true
+    end
+
+    local function findCoinPartInContainer(container: Instance): BasePart?
+        for _, descendant: Instance in ipairs(container:GetDescendants()) do
+            if descendant:IsA("BasePart") and isCoinServerName(descendant) then
+                return descendant
+            end
+        end
+
+        if container:IsA("Model") and container.PrimaryPart then
+            return container.PrimaryPart
+        end
+        for _, preferredName: string in ipairs({
+            "CoinVisual",
+            "MainCoin",
+            "Coin",
+        }) do
+            local preferred: Instance? =
+                container:FindFirstChild(preferredName, true)
+            if preferred and preferred:IsA("BasePart") then
+                return preferred
+            end
+        end
+        return container:FindFirstChildWhichIsA("BasePart", true)
+    end
+
+    local function getCoinServer(object: Instance?): BasePart?
+        if not object or object:GetAttribute("Delete") == true then
+            return nil
+        end
+
+        local coinContainer: Instance? = nil
+        local cursor: Instance? = object
+        for _index: number = 1, 10 do
+            if not cursor or cursor == workspace then
+                break
+            end
+            if cursor:IsA("BasePart") and isCoinServerName(cursor) then
+                return isLiveCoin(cursor) and cursor or nil
+            end
+            if (cursor:IsA("Model") or cursor:IsA("Folder"))
+                and hasCoinName(cursor) then
+                coinContainer = cursor
+            end
+            cursor = cursor.Parent
+        end
+
+        if coinContainer then
+            local containerPart: BasePart? =
+                findCoinPartInContainer(coinContainer)
+            if containerPart and isLiveCoin(containerPart) then
+                return containerPart
+            end
+        end
+
+        if object:IsA("BasePart") and hasCoinName(object) then
+            return isLiveCoin(object) and object or nil
+        end
+
+        if object:IsA("TouchTransmitter") or object.Name == "TouchInterest" then
+            local parent: Instance? = object.Parent
+            if parent and parent:IsA("BasePart") then
+                local ancestor: Instance? = parent
+                while ancestor and ancestor ~= workspace do
+                    if hasCoinName(ancestor) then
+                        return isLiveCoin(parent) and parent or nil
+                    end
+                    ancestor = ancestor.Parent
+                end
+            end
+        end
+        return nil
+    end
+
+    local function getCoinVisual(coin: BasePart): BasePart
+        local mainCoin: Instance? = coin:FindFirstChild("MainCoin", true)
+        if mainCoin and mainCoin:IsA("BasePart") then
+            return mainCoin
+        end
+        local coinVisual: Instance? = coin:FindFirstChild("CoinVisual", true)
+        if coinVisual and coinVisual:IsA("BasePart") then
+            return coinVisual
+        end
+        return coin
+    end
+
+    local function removeCoinBox(coin: BasePart): ()
+        local record: CoinChamRecord? = coinBoxes[coin]
+        if not record then
+            return
+        end
+        coinBoxes[coin] = nil
+        for _, connection: RBXScriptConnection in ipairs(record.connections) do
+            connection:Disconnect()
+        end
+        record.highlight:Destroy()
+        record.billboard:Destroy()
+    end
+
+    local function clearCoinBoxes(): ()
+        for coin: BasePart in pairs(coinBoxes) do
+            removeCoinBox(coin)
+        end
+        clearEffects(CoinEffects)
+        coinBoxes = setmetatable({}, {__mode = "k"}) :: any
+    end
+
+    local function createCoinBillboard(adornee: BasePart): BillboardGui
+        local billboard: BillboardGui = Instance.new("BillboardGui")
+        billboard.Name = "Wurst_CoinMarker"
+        billboard.Adornee = adornee
+        billboard.AlwaysOnTop = true
+        billboard.LightInfluence = 0
+        billboard.Size = UDim2.fromOffset(36, 36)
+        billboard.StudsOffsetWorldSpace = Vector3.new(0, 0.25, 0)
+        billboard.Parent = CoinEffects
+
+        local marker: Frame = Instance.new("Frame")
+        marker.Name = "Marker"
+        marker.AnchorPoint = Vector2.new(0.5, 0.5)
+        marker.BackgroundColor3 = mm2Settings.coinColor
+        marker.BackgroundTransparency = 0.18
+        marker.BorderSizePixel = 0
+        marker.Position = UDim2.fromScale(0.5, 0.5)
+        marker.Rotation = 45
+        marker.Size = UDim2.fromOffset(20, 20)
+        marker.Parent = billboard
+
+        local corner: UICorner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 2)
+        corner.Parent = marker
+
+        local stroke: UIStroke = Instance.new("UIStroke")
+        stroke.Color = Color3.fromRGB(255, 248, 170)
+        stroke.Thickness = 2
+        stroke.Transparency = 0.08
+        stroke.Parent = marker
+        return billboard
+    end
+
+    local function addCoinBox(object: Instance): ()
+        local coin: BasePart? = getCoinServer(object)
+        if not coin then
+            return
+        end
+
+        local visual: BasePart = getCoinVisual(coin)
+        local existing: CoinChamRecord? = coinBoxes[coin]
+        if existing then
+            existing.highlight.Adornee = visual
+            existing.billboard.Adornee = visual
+            return
+        end
+
+        local highlight: Highlight = Instance.new("Highlight")
+        highlight.Name = "Wurst_CoinHighlight"
+        highlight.Adornee = visual
+        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        highlight.FillColor = mm2Settings.coinColor
+        highlight.FillTransparency = math.clamp(
+            mm2Settings.coinTransparency * 0.65,
+            0.15,
+            0.62
+        )
+        highlight.OutlineColor = Color3.fromRGB(255, 246, 135)
+        highlight.OutlineTransparency = 0.04
+        highlight.Parent = coin
+
+        local record: CoinChamRecord = {
+            highlight = highlight,
+            billboard = createCoinBillboard(visual),
+            connections = {},
+        }
+        coinBoxes[coin] = record
+        table.insert(record.connections, coin.AncestryChanged:Connect(function(): ()
+            if not isLiveCoin(coin) then
+                removeCoinBox(coin)
+            end
+        end))
+        for _, attributeName: string in ipairs({"Collected", "Delete"}) do
+            table.insert(
+                record.connections,
+                coin:GetAttributeChangedSignal(attributeName):Connect(function(): ()
+                    if not isLiveCoin(coin) then
+                        removeCoinBox(coin)
+                    end
+                end)
+            )
+        end
+    end
+
+    local function isPotentialCoinObject(object: Instance): boolean
+        return hasCoinName(object)
+            or object:IsA("TouchTransmitter")
+            or object.Name == "TouchInterest"
+            or CollectionService:HasTag(object, "CoinVisual")
+    end
+
+    local function scanCoins(container: Instance): ()
+        if isPotentialCoinObject(container) then
+            addCoinBox(container)
+        end
+        for _, object: Instance in ipairs(container:GetDescendants()) do
+            if isPotentialCoinObject(object) then
+                addCoinBox(object)
+            end
+        end
+    end
+
+    local function toggleCoinChams(enabled: boolean): ()
+        coinChamsEnabled = enabled
+        disconnectFeatureConnection("MM2CoinAdded")
+        disconnectFeatureConnection("MM2CoinTagged")
+        disconnectFeatureConnection("MM2CoinCollected")
+        disconnectFeatureConnection("MM2CoinMapAdded")
+        clearCoinBoxes()
+
+        if not enabled then
+            return
+        end
+
+        scanCoins(workspace)
+        for _, object: Instance in ipairs(
+            CollectionService:GetTagged("CoinVisual")
+        ) do
+            addCoinBox(object)
+        end
+
+        featureConnections.MM2CoinTagged = CollectionService
+            :GetInstanceAddedSignal("CoinVisual")
+            :Connect(addCoinBox)
+        featureConnections.MM2CoinAdded = workspace.DescendantAdded:Connect(function(
+            object: Instance
+        ): ()
+            if isPotentialCoinObject(object) then
+                addCoinBox(object)
+            end
+        end)
+        featureConnections.MM2CoinMapAdded = workspace.ChildAdded:Connect(function(
+            object: Instance
+        ): ()
+            task.defer(function(): ()
+                if coinChamsEnabled then
+                    scanCoins(object)
+                end
+            end)
+        end)
+
+        for _, rescanDelay: number in ipairs({0.5, 1.5, 3}) do
+            task.delay(rescanDelay, function(): ()
+                if coinChamsEnabled then
+                    scanCoins(workspace)
+                end
+            end)
+        end
+
+        local coinCollected: Instance? = mm2GameplayRemotes
+            and mm2GameplayRemotes:FindFirstChild("CoinCollected")
+        if coinCollected and coinCollected:IsA("RemoteEvent") then
+            featureConnections.MM2CoinCollected = coinCollected.OnClientEvent:Connect(
+                function(coinId: any): ()
+                    for coin: BasePart in pairs(coinBoxes) do
+                        if coin:GetAttribute("CoinID") == coinId then
+                            removeCoinBox(coin)
+                        end
+                    end
+                end
+            )
+        end
+    end
+
+    registerEspExtra({
+        Name = "Coins",
+        Default = false,
+        Color = mm2Settings.coinColor,
+        Tooltip = "Every coin on the map, through walls.",
+        Toggle = function(enabled: boolean): ()
+            toggleCoinChams(enabled)
+        end,
+        SetColor = function(colour: Color3): ()
+            mm2Settings.coinColor = colour
+            if coinChamsEnabled then
+                toggleCoinChams(true)
+            end
+        end,
+    })
+    registerEspExtra({
+        Name = "Traps",
+        Default = false,
+        Color = mm2Settings.trapColor,
+        Tooltip = "The murderer's placed traps.",
+        Toggle = function(enabled: boolean): ()
+            toggleTrapEsp(enabled)
+        end,
+        SetColor = function(colour: Color3): ()
+            mm2Settings.trapColor = colour
+        end,
+    })
+    registerEspExtra({
+        Name = "Sheriff gun",
+        Default = false,
+        Color = mm2Settings.gunColor,
+        Tooltip = "The gun on the floor after the sheriff dies.",
+        Toggle = function(enabled: boolean): ()
+            toggleGunEsp(enabled)
+        end,
+        SetColor = function(colour: Color3): ()
+            mm2Settings.gunColor = colour
+        end,
+    })
+
+    activeCleanup = function(): ()
+        toggleGunEsp(false)
+                toggleTrapEsp(false)
+                toggleCoinChams(false)
+    end
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    pcall(activeCleanup)
+    activeCleanup = function(): () end
+    Module.Events = {}
+    Module.Runtime = nil
+end
+
+return Module
+]=],
+        ["src/games/MM2/Render/AlwaysShowTimer.lua"] = [=[
+local Module = {
+    Name = "MM2 Always Show Timer",
+    PlaceId = 142823291,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Runtime = nil :: any,
+}
+
+local activeCleanup: () -> () = function(): () end
+
+function Module.init(runtime: any): any
+    if Module.Initialized then
+        return Module
+    end
+    local core: any = state.mm2Core
+    assert(type(core) == "table", "MM2 Always Show Timer requires the MM2 core module")
+    Module.Runtime = runtime
+    local roundTimer: any = core.roundTimer
+    local getRoundPhase: any = core.getRoundPhase
+
+    -- The core keeps roundTimer.endsAt locked to whatever live source the
+    -- current map still publishes (see the "Round clock" section of base.lua):
+    -- the workspace.RoundTimerPart attribute on older maps, the game's own HUD
+    -- countdown label on the current map, and the one-shot RoundStart anchor as
+    -- a last resort. The number painted here is the game's own number - this
+    -- module only decides where to paint it.
+    local revealedTimerObjects: {[Instance]: boolean} =
+        setmetatable({}, {__mode = "k"}) :: any
+    local fallbackGui: ScreenGui? = nil
+    local fallbackLabel: TextLabel? = nil
+    local gameCaption: TextLabel? = nil
+    local lastPaintedText: string = ""
+
+    -- The recursive FindFirstChildWhichIsA below is the only expensive part of
+    -- this lookup, so the answer is cached and rescanned at most once a second
+    -- (or immediately once the cached frame/label is destroyed).
+    local timerFrameCache: {frame: Instance?, label: Instance?, at: number} =
+        {frame = nil, label = nil, at = -math.huge}
+
+    local function findGameTimerFrame(): (GuiObject?, TextLabel?)
+        local cachedFrame: Instance? = timerFrameCache.frame
+        if cachedFrame and cachedFrame.Parent
+            and (not timerFrameCache.label or timerFrameCache.label.Parent) then
+            return cachedFrame, timerFrameCache.label
+        end
+        if os.clock() - timerFrameCache.at < 1 then
+            return nil, nil
+        end
+        timerFrameCache.at = os.clock()
+        local playerGui: PlayerGui? = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+        local mainGui: Instance? = playerGui and playerGui:FindFirstChild("MainGUI")
+        local gameFrame: Instance? = mainGui and mainGui:FindFirstChild("Game")
+        local frame: Instance? = gameFrame and gameFrame:FindFirstChild("Timer")
+        local validFrame: Instance? = (frame and frame:IsA("GuiObject")) and frame or nil
+        timerFrameCache.frame = validFrame
+        timerFrameCache.label = nil
+        if not validFrame then
+            return nil, nil
+        end
+        -- MM2 has renamed this label across updates, so take the first TextLabel
+        -- in the frame instead of trusting a single name.
+        local label: Instance? = validFrame:FindFirstChild("XPText")
+            or validFrame:FindFirstChild("Timer")
+            or validFrame:FindFirstChildWhichIsA("TextLabel", true)
+        local validLabel: Instance? = (label and label:IsA("TextLabel")) and label or nil
+        timerFrameCache.label = validLabel
+        return validFrame, validLabel
+    end
+
+    local function destroyGameCaption(): ()
+        if gameCaption then
+            pcall(function(): ()
+                (gameCaption :: any):Destroy()
+            end)
+            gameCaption = nil
+        end
+    end
+
+    -- The white "Timer" caption that sits above the borrowed game label.
+    local function ensureGameCaption(frame: GuiObject): ()
+        if gameCaption and gameCaption.Parent then
+            if gameCaption.Parent ~= frame then
+                destroyGameCaption()
+            else
+                return
+            end
+        end
+        gameCaption = create("TextLabel", {
+            Parent = frame,
+            Name = "WurstTimerCaption",
+            BackgroundTransparency = 1,
+            AnchorPoint = Vector2.new(0.5, 1),
+            Position = UDim2.fromScale(0.5, 0),
+            Size = UDim2.fromOffset(80, 16),
+            Font = CONTROL_FONT,
+            Text = "Timer",
+            TextSize = 12,
+            TextColor3 = Color3.fromRGB(255, 255, 255),
+            TextStrokeColor3 = Color3.fromRGB(0, 0, 0),
+            TextStrokeTransparency = 0.4,
+        }) :: any
+    end
+
+    local function formatRoundClock(remaining: number): string
+        local whole: number = math.max(0, math.ceil(remaining))
+        local minutes: number = math.floor(whole / 60)
+        local seconds: number = whole - minutes * 60
+        if minutes > 0 then
+            return string.format("%d:%02d", minutes, seconds)
+        end
+        return tostring(seconds) .. "s"
+    end
+
+    local function destroyFallback(): ()
+        if fallbackGui then
+            pcall(function(): ()
+                (fallbackGui :: any):Destroy()
+            end)
+        end
+        fallbackGui = nil
+        fallbackLabel = nil
+    end
+
+    -- Last resort: MM2's own Timer frame is gone or has no label to borrow. Draw
+    -- ours so the feature still does what its name says.
+    local function ensureFallbackLabel(): TextLabel?
+        if fallbackLabel and fallbackLabel.Parent then
+            return fallbackLabel
+        end
+        destroyFallback()
+        local playerGui: PlayerGui? = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+        if not playerGui then
+            return nil
+        end
+        local gui: ScreenGui = create("ScreenGui", {
+            Parent = playerGui,
+            Name = "WurstRoundTimer",
+            ResetOnSpawn = false,
+            IgnoreGuiInset = true,
+            DisplayOrder = 50,
+        }) :: any
+        create("TextLabel", {
+            Parent = gui,
+            Name = "Caption",
+            BackgroundTransparency = 1,
+            AnchorPoint = Vector2.new(0.5, 0),
+            Position = UDim2.new(0.5, 0, 0, 6),
+            Size = UDim2.new(0, 96, 0, 14),
+            Font = CONTROL_FONT,
+            Text = "Timer",
+            TextSize = 11,
+            TextColor3 = Color3.fromRGB(255, 255, 255),
+            TextStrokeColor3 = Color3.fromRGB(0, 0, 0),
+            TextStrokeTransparency = 0.4,
+        })
+        local label: TextLabel = create("TextLabel", {
+            Parent = gui,
+            Name = "Clock",
+            BackgroundTransparency = 0.35,
+            BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+            AnchorPoint = Vector2.new(0.5, 0),
+            Position = UDim2.new(0.5, 0, 0, 20),
+            Size = UDim2.new(0, 96, 0, 26),
+            Font = CONTROL_FONT,
+            TextSize = 18,
+            TextColor3 = Color3.fromRGB(255, 255, 255),
+            Text = "",
+        }) :: any
+        create("UICorner", {Parent = label, CornerRadius = UDim.new(0, 6)})
+        fallbackGui = gui
+        fallbackLabel = label
+        return label
+    end
+
+    local function hideRevealedObjects(): ()
+        for object: Instance, _ in pairs(revealedTimerObjects) do
+            if object and object.Parent then
+                local guiObject: any = object
+                pcall(function(): ()
+                    guiObject.Visible = false
+                end)
+            end
+        end
+        revealedTimerObjects = setmetatable({}, {__mode = "k"}) :: any
+        destroyGameCaption()
+        destroyFallback()
+        lastPaintedText = ""
+    end
+
+    local function paintClock(label: TextLabel, remaining: number): ()
+        local text: string = formatRoundClock(remaining)
+        if text == lastPaintedText and label.Text == text then
+            return
+        end
+        lastPaintedText = text
+        label.Text = text
+        label.TextColor3 = remaining <= 30
+            and Color3.fromRGB(255, 70, 70)
+            or Color3.fromRGB(255, 255, 255)
+    end
+
+    -- Prefer the game's own frame (so the countdown sits where a player expects
+    -- it), and fall back to ours only when there is nothing to borrow.
+    local function paintRoundClock(remaining: number): ()
+        local frame: GuiObject?, label: TextLabel? = findGameTimerFrame()
+        if frame then
+            if not frame.Visible then
+                revealedTimerObjects[frame] = true
+                frame.Visible = true
+            end
+            if label then
+                ensureGameCaption(frame)
+                paintClock(label, remaining)
+                return
+            end
+        end
+        destroyGameCaption()
+        local fallback: TextLabel? = ensureFallbackLabel()
+        if fallback then
+            paintClock(fallback, remaining)
+        end
+    end
+
+    local function toggleAlwaysShowTimer(enabled: boolean): ()
+        disconnectFeatureConnection("MM2AlwaysTimer")
+
+        if not enabled then
+            hideRevealedObjects()
+            return
+        end
+
+        featureConnections.MM2AlwaysTimer = TaskManager:Connect(function(): ()
+            local remaining: number? = roundTimer.endsAt
+                and math.max(0, roundTimer.endsAt - os.clock())
+            -- No live clock: either the round is over or the server has not
+            -- published one yet. Put back whatever we forced on screen and let
+            -- the game's own GUI do its thing.
+            if not remaining or remaining <= 0 or getRoundPhase() == "lobby" then
+                if next(revealedTimerObjects) ~= nil or fallbackLabel then
+                    hideRevealedObjects()
+                end
+                return
+            end
+            paintRoundClock(remaining :: number)
+        end)
+    end
+
+    createUniversalFeature(
+        "Always Show Timer",
+        "Show the round countdown from the game's own timer (HUD label or "
+            .. "RoundTimerPart), murderer or not",
+        13,
+        toggleAlwaysShowTimer,
+        {
+            noOptions = true,
+            categoryName = "Render",
+            parent = MM2Scroll,
+            registry = mm2Features,
+        }
+    )
+
+    activeCleanup = function(): ()
+        toggleAlwaysShowTimer(false)
+        destroyFallback()
+    end
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    pcall(activeCleanup)
+    activeCleanup = function(): () end
+    Module.Events = {}
+    Module.Runtime = nil
+end
+
+return Module
+]=],
+        ["src/games/MM2/Render/MurderTag.lua"] = [=[
+local Module = {
+    Name = "MM2 Murder Tag",
+    PlaceId = 142823291,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Runtime = nil :: any,
+}
+
+local activeCleanup: () -> () = function(): () end
+
+function Module.init(runtime: any): any
+    if Module.Initialized then
+        return Module
+    end
+    local core: any = state.mm2Core
+    assert(type(core) == "table", "MM2 Murder Tag requires the MM2 core module")
+    Module.Runtime = runtime
+    local findMurderer: any = core.findMurderer
+    local mm2Settings: any = core.mm2Settings
+
+    -- ---------------------------------------------------------------------------
+    -- Murder tag: a single "Murder" billboard over the current murderer's head.
+    -- Deliberately independent from Role Tags so it can stay on without
+    -- enabling the full per-player nametag set.
+    -- ---------------------------------------------------------------------------
+    local MurderTagEffects = create("Folder", {
+        Parent = core.MM2Effects,
+        Name = "MurderTag",
+    })
+
+    type MurderTagRecord = {
+        billboard: BillboardGui,
+        label: TextLabel,
+        reference: ObjectValue,
+        head: BasePart?,
+    }
+
+    local tag: MurderTagRecord? = nil
+
+    local function destroyTag(): ()
+        if tag then
+            tag.billboard:Destroy()
+            tag.reference:Destroy()
+            tag = nil
+        end
+    end
+
+    local function createTag(head: BasePart): MurderTagRecord
+        local billboard: BillboardGui = Instance.new("BillboardGui")
+        billboard.Name = "Wurst_MurderTag"
+        billboard.AlwaysOnTop = true
+        billboard.LightInfluence = 0
+        billboard.Size = UDim2.fromOffset(150, 22)
+        -- Role Tags sit at 2.7 studs when enabled; sit higher so the two do
+        -- not overlap.
+        billboard.StudsOffset = Vector3.new(0, 3.5, 0)
+        billboard.MaxDistance = 1500
+        billboard.Adornee = head
+        -- A BillboardGui nested inside a ScreenGui never renders (nested layer
+        -- collectors are skipped), so it lives on the part like the rest of the
+        -- MM2 markers and the folder only keeps a reference for cleanup.
+        billboard.Parent = head
+
+        local reference: ObjectValue = Instance.new("ObjectValue")
+        reference.Name = "MurderTagReference"
+        reference.Value = billboard
+        reference.Parent = MurderTagEffects
+
+        local label: TextLabel = Instance.new("TextLabel")
+        label.Name = "Murder"
+        label.BackgroundTransparency = 1
+        label.Size = UDim2.fromScale(1, 1)
+        label.FontFace = CONTROL_FONT
+        label.TextSize = 14
+        label.TextScaled = false
+        label.Text = "Murder"
+        label.TextColor3 = mm2Settings.murdererColor
+        label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+        label.TextStrokeTransparency = 0.3
+        label.Parent = billboard
+
+        return {
+            billboard = billboard,
+            label = label,
+            reference = reference,
+            head = head,
+        }
+    end
+
+    local function refreshTag(): ()
+        local murderer: Player? = findMurderer()
+        local character: Model? = murderer and murderer.Character or nil
+        local head: BasePart? = character
+            and (character:FindFirstChild("Head")
+                or character:FindFirstChild("HumanoidRootPart"))
+            :: BasePart?
+        if not head then
+            destroyTag()
+            return
+        end
+        -- Head dies with the character (and the round hands the knife to
+        -- someone else), so a dead adornee means a full rebuild.
+        if tag and (not tag.billboard.Parent or tag.head ~= head) then
+            destroyTag()
+        end
+        if not tag then
+            tag = createTag(head :: BasePart)
+        end
+        -- Re-applied every pass so the live colour picker takes effect without
+        -- waiting for a rebuild.
+        local colour: Color3 = mm2Settings.murdererColor
+        if tag.label.TextColor3 ~= colour then
+            tag.label.TextColor3 = colour
+        end
+    end
+
+    local murderTagEnabled: boolean = false
+
+    local function toggleMurderTag(enabled: boolean): ()
+        murderTagEnabled = enabled
+        disconnectFeatureConnection("MM2MurderTag")
+        destroyTag()
+        if not enabled then
+            return
+        end
+        local elapsed: number = 1
+        featureConnections.MM2MurderTag = TaskManager:Connect(function(deltaTime: number): ()
+            elapsed += deltaTime
+            if elapsed < 0.2 then
+                return
+            end
+            elapsed = 0
+            refreshTag()
+        end)
+    end
+
+    local unsubscribeRoles: () -> () = core.onRoundRoles(function(): ()
+        if murderTagEnabled then
+            refreshTag()
+        end
+    end)
+
+    -- Default on: the point of the card is that the tag shows without hunting
+    -- for a second toggle. A stored user choice still wins over the default.
+    if type(configData) == "table" and type(configData.states) == "table"
+        and configData.states["MM2.MurderTag"] == nil then
+        configData.states["MM2.MurderTag"] = true
+        queueConfigSave()
+    end
+
+    createUniversalFeature(
+        "Murder Tag",
+        "A 'Murder' tag floating above the murderer's head, always visible",
+        14,
+        toggleMurderTag,
+        {
+            noOptions = true,
+            categoryName = "Render",
+            parent = MM2Scroll,
+            registry = mm2Features,
+        }
+    )
+
+    activeCleanup = function(): ()
+        pcall(unsubscribeRoles)
+        toggleMurderTag(false)
+    end
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    pcall(activeCleanup)
+    activeCleanup = function(): () end
+    Module.Events = {}
+    Module.Runtime = nil
+end
+
+return Module
+]=],
+        ["src/games/MM2/Render/HideNames.lua"] = [=[
+local Module = {
+    Name = "MM2 Hide Names",
+    PlaceId = 142823291,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Runtime = nil :: any,
+}
+
+local activeCleanup: () -> () = function(): () end
+
+-- The alias every label showing the local player's name is rewritten to.
+local ALIAS = "John Doe"
+
+function Module.init(runtime: any): any
+    if Module.Initialized then
+        return Module
+    end
+    local core: any = state.mm2Core
+    assert(type(core) == "table", "MM2 Hide Names requires the MM2 core module")
+    Module.Runtime = runtime
+
+    -- label -> the text it had before we rewrote it, so disabling restores it.
+    local hiddenNameLabels = setmetatable({}, {__mode = "k"})
+
+    local function toggleHideNames(enabled)
+        disconnectFeatureConnection("MM2HideNames")
+        if not enabled then
+            for label, originalText in pairs(hiddenNameLabels) do
+                if label and label.Parent and label.Text == ALIAS then
+                    label.Text = originalText
+                end
+            end
+            hiddenNameLabels = setmetatable({}, {__mode = "k"})
+            return
+        end
+
+        local elapsed = 1
+        featureConnections.MM2HideNames = TaskManager:Connect(function(deltaTime)
+            elapsed = elapsed + deltaTime
+            if elapsed < 0.25 then
+                return
+            end
+            elapsed = 0
+
+            -- Only the local player's own identity is masked. Every string form
+            -- the UIs use for a player is covered: bare name, display name, the
+            -- @handle, and the "Display (@user)" form the player list and chat
+            -- headers render.
+            local names = {}
+            names[LocalPlayer.Name] = true
+            names[LocalPlayer.DisplayName] = true
+            names["@" .. LocalPlayer.Name] = true
+            names[LocalPlayer.DisplayName .. " (@" .. LocalPlayer.Name .. ")"] = true
+
+            -- Where the name can appear:
+            --   * PlayerGui  -> the MM2 scoreboard and any in-game panel
+            --   * RobloxGui.PlayerList -> the default player list
+            --   * ExperienceChat -> the chat window (sender labels)
+            local roots = {}
+            local playerGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+            if playerGui then
+                table.insert(roots, playerGui)
+            end
+            pcall(function()
+                local coreGui = game:GetService("CoreGui")
+                local robloxGui = coreGui:FindFirstChild("RobloxGui")
+                local playerList = robloxGui
+                    and robloxGui:FindFirstChild("PlayerList", true)
+                if playerList then
+                    table.insert(roots, playerList)
+                end
+                local chat = coreGui:FindFirstChild("ExperienceChat")
+                if chat then
+                    table.insert(roots, chat)
+                end
+            end)
+
+            for _, root in ipairs(roots) do
+                for _, object in ipairs(root:GetDescendants()) do
+                    if (object:IsA("TextLabel") or object:IsA("TextButton"))
+                        and names[object.Text] then
+                        if hiddenNameLabels[object] == nil then
+                            hiddenNameLabels[object] = object.Text
+                        end
+                        object.Text = ALIAS
+                    end
+                end
+            end
+        end)
+    end
+
+    createUniversalFeature(
+        "Hide Names",
+        "Replace your own name with " .. ALIAS
+            .. " in the MM2 scoreboard, chat and player list",
+        18,
+        toggleHideNames,
+        {
+            noOptions = true,
+            categoryName = "Render",
+            parent = MM2Scroll,
+            registry = mm2Features,
+        }
+    )
+
+    activeCleanup = function(): ()
+        toggleHideNames(false)
+    end
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    pcall(activeCleanup)
+    activeCleanup = function(): () end
+    Module.Events = {}
+    Module.Runtime = nil
+end
+
+return Module
+]=],
+        ["src/games/MM2/Movement/Sprint.lua"] = [=[
+local Module = {
+    Name = "MM2 Sprint",
+    PlaceId = 142823291,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Runtime = nil :: any,
+}
+
+local activeCleanup: () -> () = function(): () end
+
+function Module.init(runtime: any): any
+    if Module.Initialized then
+        return Module
+    end
+    local core: any = state.mm2Core
+    assert(type(core) == "table", "MM2 Sprint requires the MM2 core module")
+    Module.Runtime = runtime
+
+    local sprintTrailObjects: {Instance} = {}
+
+    local MM2_SPRINT_SPEED: number = 30
+
+    local function clearSprintTrail(): ()
+        for _, object: Instance in ipairs(sprintTrailObjects) do
+            if object.Parent then
+                object:Destroy()
+            end
+        end
+        table.clear(sprintTrailObjects)
+    end
+
+    local function ensureSprintTrail(root: BasePart): Trail
+        local existing: Instance? = root:FindFirstChild("Wurst_SprintTail")
+        if existing and existing:IsA("Trail") then
+            return existing
+        end
+
+        clearSprintTrail()
+        local left: Attachment = Instance.new("Attachment")
+        left.Name = "Wurst_SprintLeft"
+        left.Position = Vector3.new(-0.8, -0.5, 0.75)
+        left.Parent = root
+
+        local right: Attachment = Instance.new("Attachment")
+        right.Name = "Wurst_SprintRight"
+        right.Position = Vector3.new(0.8, -0.5, 0.75)
+        right.Parent = root
+
+        local trail: Trail = Instance.new("Trail")
+        trail.Name = "Wurst_SprintTail"
+        trail.Attachment0 = left
+        trail.Attachment1 = right
+        trail.Color = ColorSequence.new(
+            Color3.fromRGB(255, 220, 55),
+            Color3.fromRGB(175, 115, 20)
+        )
+        trail.Lifetime = 0.38
+        trail.LightEmission = 0.25
+        trail.FaceCamera = true
+        trail.Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 0.2),
+            NumberSequenceKeypoint.new(1, 1),
+        })
+        trail.Enabled = false
+        trail.Parent = root
+        sprintTrailObjects = {trail, left, right}
+        return trail
+    end
+
+    local sprintActive: boolean = false
+    local sprintBaseSpeed: number? = nil
+
+    local function applySprintSpeed(active: boolean): ()
+        local _, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
+        if not humanoid or not root then
+            return
+        end
+        if active then
+            if sprintBaseSpeed == nil and humanoid.WalkSpeed ~= MM2_SPRINT_SPEED then
+                sprintBaseSpeed = humanoid.WalkSpeed
+            end
+            humanoid.WalkSpeed = MM2_SPRINT_SPEED
+        else
+            humanoid.WalkSpeed = sprintBaseSpeed or 16
+            sprintBaseSpeed = nil
+        end
+    end
+
+    local function toggleSprint(enabled: boolean): ()
+        disconnectFeatureConnection("MM2Sprint")
+
+        if not enabled then
+            sprintActive = false
+            clearSprintTrail()
+            applySprintSpeed(false)
+            return
+        end
+
+        featureConnections.MM2Sprint = TaskManager:Connect(function(): ()
+            local _, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
+            if not humanoid or not root then
+                return
+            end
+            if not sprintActive then
+                if sprintBaseSpeed ~= nil then
+
+                    applySprintSpeed(false)
+                end
+                return
+            end
+
+            if humanoid.WalkSpeed ~= MM2_SPRINT_SPEED then
+                if sprintBaseSpeed == nil then
+                    sprintBaseSpeed = humanoid.WalkSpeed
+                end
+                humanoid.WalkSpeed = MM2_SPRINT_SPEED
+            end
+            ensureSprintTrail(root).Enabled = humanoid.MoveDirection.Magnitude > 0.05
+        end)
+    end
+
+    local function setSprintActive(active: boolean): ()
+        if sprintActive == active then
+            return
+        end
+        sprintActive = active
+        applySprintSpeed(active)
+        if not active then
+            local trail: Instance? = nil
+            local _, _, root: BasePart? = getCharacterParts()
+            if root then
+                trail = root:FindFirstChild("Wurst_SprintTail")
+            end
+            if trail and trail:IsA("Trail") then
+                trail.Enabled = false
+            end
+        end
+    end
+
+    createUniversalFeature(
+        "Sprint",
+        "Hold your key to run at 30 speed with a trail",
+        10,
+        toggleSprint,
+        {
+            kind = "hold",
+            onHold = setSprintActive,
+            noOptions = true,
+            categoryName = "Movement",
+            parent = MM2Scroll,
+            registry = mm2Features,
+        }
+    )
+
+    activeCleanup = function(): ()
+        toggleSprint(false)
+    end
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    pcall(activeCleanup)
+    activeCleanup = function(): () end
+    Module.Events = {}
+    Module.Runtime = nil
+end
+
+return Module
+]=],
+        ["src/games/MM2/Movement/Teleport.lua"] = [=[
+local Module = {
+    Name = "MM2 Teleport",
+    PlaceId = 142823291,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Runtime = nil :: any,
+}
+
+local activeCleanup: () -> () = function(): () end
+
+function Module.init(runtime: any): any
+    if Module.Initialized then
+        return Module
+    end
+    local core: any = state.mm2Core
+    assert(type(core) == "table", "MM2 Teleport requires the MM2 core module")
+    Module.Runtime = runtime
+    local findDroppedGun: any = core.findDroppedGun
+    local findMM2Map: any = core.findMM2Map
+    local mm2Settings: any = core.mm2Settings
+
+    local autoGetGunBusy = false
+
+    local function toggleAutoGetGun(enabled)
+        disconnectFeatureConnection("MM2AutoGetGun")
+        autoGetGunBusy = false
+
+        if not enabled then
+            return
+        end
+
+        local elapsed = 0
+        featureConnections.MM2AutoGetGun = TaskManager:Connect(function(deltaTime)
+            elapsed = elapsed + deltaTime
+            if elapsed < 0.5 or autoGetGunBusy then
+                return
+            end
+            elapsed = 0
+
+            local character = LocalPlayer.Character
+            local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
+            local gunDrop = findDroppedGun()
+            if not character or not gunDrop
+                or (backpack and backpack:FindFirstChild("Gun"))
+                or character:FindFirstChild("Gun") then
+                return
+            end
+
+            autoGetGunBusy = true
+            task.spawn(function()
+                local savedCFrame = character:GetPivot()
+                character:PivotTo(gunDrop:GetPivot() + Vector3.new(0, 2, 0))
+                task.wait(mm2Settings.autoGetGunDelay)
+                if character.Parent then
+                    character:PivotTo(savedCFrame)
+                end
+                autoGetGunBusy = false
+            end)
+        end)
+    end
+
+    local function teleportToMap()
+        local map = findMM2Map()
+        local spawns = map and map:FindFirstChild("Spawns")
+        local character = LocalPlayer.Character
+        if not spawns or not character then
+            notify("No active MM2 map was found.")
+            return
+        end
+
+        local spawnList = spawns:GetChildren()
+        local target = spawnList[math.random(1, math.max(1, #spawnList))]
+        if target and target:IsA("BasePart") then
+            character:PivotTo(target.CFrame + Vector3.new(0, 3, 0))
+        end
+    end
+
+    local function teleportToLobby()
+        local lobby = workspace:FindFirstChild("Lobby")
+        local spawns = lobby and lobby:FindFirstChild("Spawns")
+        local spawn = spawns and spawns:FindFirstChildWhichIsA("SpawnLocation")
+        local character = LocalPlayer.Character
+        if spawn and character then
+            character:PivotTo(spawn.CFrame + Vector3.new(0, 3, 0))
+        else
+            notify("The MM2 lobby spawn was not found.")
+        end
+    end
+
+    local function teleportToDroppedGun()
+        local gunDrop = findDroppedGun()
+        local character = LocalPlayer.Character
+        if gunDrop and character then
+            local savedCFrame = character:GetPivot()
+            character:PivotTo(gunDrop:GetPivot() + Vector3.new(0, 2, 0))
+            task.wait(mm2Settings.autoGetGunDelay)
+            if character.Parent then
+                character:PivotTo(savedCFrame)
+            end
+        else
+            notify("No dropped gun was found.")
+        end
+    end
+
+    local TeleportFeature = createUniversalFeature(
+        "Teleport",
+        "Map, lobby, and temporary gun pickup",
+        14,
+        function() end,
+        {
+            category = true,
+            categoryName = "Movement",
+            parent = MM2Scroll,
+            registry = mm2Features,
+        }
+    )
+    addActionOption(TeleportFeature, "Teleport to Map", teleportToMap)
+    addActionOption(TeleportFeature, "Teleport to Lobby", teleportToLobby)
+    addActionOption(TeleportFeature, "Get Gun", teleportToDroppedGun)
+    local GetGunKeyButton: TextButton = addKeyOption(
+        TeleportFeature,
+        "Get Gun key",
+        mm2Settings.getGunKey,
+        function(value: Enum.KeyCode): ()
+            mm2Settings.getGunKey = value
+        end
+    )
+    if state.bindMobileActionPlacement then
+        state.bindMobileActionPlacement(
+            GetGunKeyButton,
+            "MM2GetGun",
+            "GUN",
+            teleportToDroppedGun
+        )
+    end
+    featureConnections.MM2GetGunKey = UserInputService.InputBegan:Connect(
+        function(input, gameProcessed)
+            if gameProcessed
+                or state.keyCaptureCallback
+                or state.waitingForKey
+                or UserInputService:GetFocusedTextBox() then
+                return
+            end
+            if input.UserInputType == Enum.UserInputType.Keyboard
+                and input.KeyCode == mm2Settings.getGunKey then
+                task.spawn(teleportToDroppedGun)
+            end
+        end
+    )
+    addToggleOption(TeleportFeature, "Auto Get Gun", false, toggleAutoGetGun)
+    addNumberOption(
+        TeleportFeature,
+        "Gun pickup delay",
+        mm2Settings.autoGetGunDelay,
+        0.05,
+        2,
+        function(value)
+            mm2Settings.autoGetGunDelay = value
+        end
+    )
+
+    activeCleanup = function(): ()
+        toggleAutoGetGun(false)
+                disconnectFeatureConnection("MM2GetGunKey")
+    end
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    pcall(activeCleanup)
+    activeCleanup = function(): () end
+    Module.Events = {}
+    Module.Runtime = nil
+end
+
+return Module
+]=],
+        ["src/games/MM2/Fun/InstantRoleNotify.lua"] = [=[
+local Module = {
+    Name = "MM2 Instant Role Notify",
+    PlaceId = 142823291,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Runtime = nil :: any,
+}
+
+local activeCleanup: () -> () = function(): () end
+
+function Module.init(runtime: any): any
+    if Module.Initialized then
+        return Module
+    end
+    local core: any = state.mm2Core
+    assert(type(core) == "table", "MM2 Instant Role Notify requires the MM2 core module")
+    Module.Runtime = runtime
+    local findMurderer: any = core.findMurderer
+    local findSheriff: any = core.findSheriff
+    local mm2Settings: any = core.mm2Settings
+
+    -- The latch lives here now: the core only reports "the round has roles",
+    -- every announcement feature decides on its own what to do with that.
+    local roleNotificationSent: boolean = false
+
+    local function announceRoles(): ()
+        local murderer: Player? = findMurderer()
+        local sheriff: Player? = findSheriff()
+        if not murderer or not sheriff then
+            return
+        end
+        roleNotificationSent = true
+        notify(
+            "Roles ready - Murderer: "
+                .. murderer.Name
+                .. " | Sheriff/Hero: "
+                .. sheriff.Name
+        )
+    end
+
+    local unsubscribe: () -> () = core.onRoundRoles(function(roundActive: boolean): ()
+        if not roundActive then
+            roleNotificationSent = false
+            return
+        end
+        if mm2Settings.instantRoleNotify and not roleNotificationSent then
+            announceRoles()
+        end
+    end)
+
+    local function toggleInstantRoleNotify(enabled: boolean): ()
+        mm2Settings.instantRoleNotify = enabled
+        if not enabled then
+            return
+        end
+        -- Enabled mid-round: say it once right away instead of waiting for the
+        -- next PlayerDataChanged push.
+        if not roleNotificationSent and findMurderer() and findSheriff() then
+            announceRoles()
+        end
+    end
+
+    createUniversalFeature(
+        "Instant Role Notify",
+        "Notify roles once at the beginning of each round",
+        1,
+        toggleInstantRoleNotify,
+        {
+            noOptions = true,
+            categoryName = "Fun",
+            parent = MM2Scroll,
+            registry = mm2Features,
+        }
+    )
+
+    activeCleanup = function(): ()
+        pcall(unsubscribe)
+        mm2Settings.instantRoleNotify = false
+    end
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    pcall(activeCleanup)
+    activeCleanup = function(): () end
+    Module.Events = {}
+    Module.Runtime = nil
+end
+
+return Module
+]=],
+        ["src/games/MM2/Fun/BlurtRoles.lua"] = [=[
+local Module = {
+    Name = "MM2 Blurt Roles",
+    PlaceId = 142823291,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Runtime = nil :: any,
+}
+
+local activeCleanup: () -> () = function(): () end
+
+function Module.init(runtime: any): any
+    if Module.Initialized then
+        return Module
+    end
+    local core: any = state.mm2Core
+    assert(type(core) == "table", "MM2 Blurt Roles requires the MM2 core module")
+    Module.Runtime = runtime
+    local findMurderer: any = core.findMurderer
+    local findSheriff: any = core.findSheriff
+    local hasActiveRoundRoles: any = core.hasActiveRoundRoles
+    local mm2Settings: any = core.mm2Settings
+
+    -- ---------------------------------------------------------------------------
+    -- Blurt Roles: announce the round's murderer and sheriff in the public chat.
+    -- ---------------------------------------------------------------------------
+    local blurtEnabled: boolean = false
+    local blurtSignature: string = ""
+    local blurtPending: boolean = false
+    local lastBlurtAt: number = -math.huge
+
+    local function sendPublicChat(message: string): boolean
+        local sent: boolean = false
+
+        local textChatOk: boolean = pcall(function(): ()
+            local textChatService: TextChatService =
+                game:GetService("TextChatService")
+            if textChatService.ChatVersion ~= Enum.ChatVersion.TextChatService then
+                return
+            end
+            local channels: Instance? = textChatService:FindFirstChild("TextChannels")
+            local channel: Instance? = channels
+                and (channels:FindFirstChild("RBXGeneral")
+                    or channels:FindFirstChildWhichIsA("TextChannel"))
+            if channel and channel:IsA("TextChannel") then
+                (channel :: TextChannel):SendAsync(message)
+                sent = true
+            end
+        end)
+
+        if sent then
+            return true
+        end
+
+        local legacyOk: boolean = pcall(function(): ()
+            local events: Instance? = game:GetService("ReplicatedStorage")
+                :FindFirstChild("DefaultChatSystemChatEvents")
+            local say: Instance? = events
+                and events:FindFirstChild("SayMessageRequest")
+            if say and say:IsA("RemoteEvent") then
+                (say :: RemoteEvent):FireServer(message, "All")
+                sent = true
+            end
+        end)
+
+        return sent and (textChatOk or legacyOk)
+    end
+
+    local function buildBlurtMessage(): (string?, string?)
+        if not hasActiveRoundRoles() then
+            return nil, nil
+        end
+        local murderer: Player? = findMurderer()
+        local sheriff: Player? = findSheriff()
+        if not murderer and not sheriff then
+            return nil, nil
+        end
+        local murdererName: string = murderer and murderer.Name or "?"
+        local sheriffName: string = sheriff and sheriff.Name or "?"
+        local message: string = string.format(
+            'Murder; "%s" Sheriff; "%s" | Wurst',
+            murdererName,
+            sheriffName
+        )
+        return message, murdererName .. "/" .. sheriffName
+    end
+
+    local function blurtRoles(manual: boolean): ()
+        local message: string?, signature: string? = buildBlurtMessage()
+        if not message then
+            if manual then
+                notify("MM2 · no roles to blurt yet.")
+            end
+            return
+        end
+        if not manual then
+            if signature == blurtSignature and not mm2Settings.blurtRepeat then
+                return
+            end
+            if os.clock() - lastBlurtAt < 2.5 then
+                return
+            end
+        end
+        blurtSignature = signature :: string
+        lastBlurtAt = os.clock()
+        task.spawn(function(): ()
+            if sendPublicChat(message :: string) then
+                notify("MM2 · blurted: " .. (message :: string))
+            else
+                notify("MM2 · the chat refused the message (filtered or disabled).")
+            end
+        end)
+    end
+
+    local function scheduleBlurt(): ()
+        if not blurtEnabled or blurtPending then
+            return
+        end
+        local message: string?, signature: string? = buildBlurtMessage()
+        if not message then
+            return
+        end
+        if signature == blurtSignature and not mm2Settings.blurtRepeat then
+            return
+        end
+        blurtPending = true
+        task.delay(math.max(mm2Settings.blurtDelay, 0), function(): ()
+            blurtPending = false
+            if blurtEnabled then
+                blurtRoles(false)
+            end
+        end)
+    end
+
+    local unsubscribe: () -> () = core.onRoundRoles(function(active: boolean): ()
+        if not active then
+            blurtSignature = ""
+            return
+        end
+        scheduleBlurt()
+    end)
+
+    local function toggleBlurtRoles(enabled: boolean): ()
+        blurtEnabled = enabled
+        disconnectFeatureConnection("MM2BlurtRoles")
+        if not enabled then
+            return
+        end
+        blurtSignature = ""
+        local elapsed: number = 0
+        featureConnections.MM2BlurtRoles = TaskManager:Connect(function(deltaTime: number): ()
+            elapsed += deltaTime
+            if elapsed < 1 then
+                return
+            end
+            elapsed = 0
+            if not hasActiveRoundRoles() then
+                blurtSignature = ""
+                return
+            end
+            scheduleBlurt()
+        end)
+    end
+
+    local BlurtFeature = createUniversalFeature(
+        "Blurt Roles",
+        "Announces the murderer and sheriff in the public chat once per round",
+        3,
+        toggleBlurtRoles,
+        {
+            categoryName = "Fun",
+            parent = MM2Scroll,
+            registry = mm2Features,
+        }
+    )
+    addNumberOption(
+        BlurtFeature,
+        "Delay",
+        mm2Settings.blurtDelay,
+        0,
+        15,
+        function(value: number): ()
+            mm2Settings.blurtDelay = value
+        end,
+        "Seconds to wait after the roles are known before typing.",
+        0.5
+    )
+    addToggleOption(
+        BlurtFeature,
+        "Repeat on change",
+        mm2Settings.blurtRepeat,
+        function(value: boolean): ()
+            mm2Settings.blurtRepeat = value
+        end,
+        "Blurt again when the sheriff dies and the gun changes hands."
+    )
+    addActionOption(BlurtFeature, "Blurt now", function(): ()
+        blurtRoles(true)
+    end)
+    addInformationOption(
+        BlurtFeature,
+        "This types in the real public chat: everyone reads it and you will be"
+            .. " reported. Roblox also rate-limits and filters messages."
+    )
+
+    activeCleanup = function(): ()
+        pcall(unsubscribe)
+        toggleBlurtRoles(false)
+    end
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    pcall(activeCleanup)
+    activeCleanup = function(): () end
+    Module.Events = {}
+    Module.Runtime = nil
+end
+
+return Module
+]=],
+        ["src/games/MM2/Fun/RoleFling.lua"] = [=[
+local Module = {
+    Name = "MM2 Role Fling",
+    PlaceId = 142823291,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Runtime = nil :: any,
+}
+
+local activeCleanup: () -> () = function(): () end
+
+function Module.init(runtime: any): any
+    if Module.Initialized then
+        return Module
+    end
+    local core: any = state.mm2Core
+    assert(type(core) == "table", "MM2 Role Fling requires the MM2 core module")
+    Module.Runtime = runtime
+    local findMurderer: any = core.findMurderer
+    local findSheriff: any = core.findSheriff
+    local playerFromRoundKey: any = core.playerFromRoundKey
+    local getRoundData: any = core.getRoundData
+
+    local FlingGroup = createUniversalFeature(
+        "Role Fling",
+        "Role-based fling actions",
+        15,
+        function() end,
+        {
+            category = true,
+            categoryName = "Fun",
+            parent = MM2Scroll,
+            registry = mm2Features,
+        }
+    )
+    addActionOption(FlingGroup, "Fling Murderer", function()
+        local target = findMurderer()
+        if target then
+            performFling(target)
+        else
+            notify("No murderer was found.")
+        end
+    end)
+    addActionOption(FlingGroup, "Fling Sheriff", function()
+        local target = findSheriff()
+        if target then
+            performFling(target)
+        else
+            notify("No sheriff or hero was found.")
+        end
+    end)
+    addActionOption(FlingGroup, "Fling All Innocents", function()
+        task.spawn(function()
+            for key, data in pairs(getRoundData()) do
+                if type(data) == "table" and data.Role == "Innocent" then
+                    local target = playerFromRoundKey(key, data)
+                    if target and target ~= LocalPlayer then
+                        performFling(target)
+
+                        repeat
+                            task.wait(0.05)
+                        until not Module.Runtime.Services.activity.isActive("fling")
+                    end
+                end
+            end
+        end)
+    end)
+
+    activeCleanup = function(): ()
+        -- nothing persistent to undo
+    end
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    pcall(activeCleanup)
+    activeCleanup = function(): () end
+    Module.Events = {}
+    Module.Runtime = nil
+end
+
+return Module
+]=],
+        ["src/games/MM2/Fun/AutoPlayId.lua"] = [=[
+local Module = {
+    Name = "MM2 Auto Play ID",
+    PlaceId = 142823291,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Runtime = nil :: any,
+}
+
+local activeCleanup: () -> () = function(): () end
+
+function Module.init(runtime: any): any
+    if Module.Initialized then
+        return Module
+    end
+    local core: any = state.mm2Core
+    assert(type(core) == "table", "MM2 Auto Play ID requires the MM2 core module")
+    Module.Runtime = runtime
+    local mm2Settings: any = core.mm2Settings
+
+    local AutoPlaySound = Instance.new("Sound")
+    AutoPlaySound.Name = "Wurst_MM2_AutoPlay"
+    AutoPlaySound.Looped = true
+    AutoPlaySound.Volume = 0.6
+    AutoPlaySound.Parent = game:GetService("SoundService")
+    local autoPlayLoadConnection: RBXScriptConnection? = nil
+    local autoPlayGeneration: number = 0
+    local autoPlayInput: TextBox? = nil
+    local autoPlayConfigKey = "MM2.AutoPlayID.PlayID"
+    local autoPlayStateKey = "MM2.AutoPlayID"
+
+    local function stopAutoPlaySound(): ()
+        autoPlayGeneration += 1
+        if autoPlayLoadConnection then
+            autoPlayLoadConnection:Disconnect()
+            autoPlayLoadConnection = nil
+        end
+        AutoPlaySound:Stop()
+        AutoPlaySound.SoundId = ""
+    end
+
+    local function clearAutoPlaySetting(message: string): ()
+        stopAutoPlaySound()
+        mm2Settings.autoPlayId = ""
+        if type(configData) == "table" then
+            if type(configData.values) == "table" then
+                configData.values[autoPlayConfigKey] = nil
+            end
+            if type(configData.states) == "table" then
+                configData.states[autoPlayStateKey] = false
+            end
+        end
+        if autoPlayInput and autoPlayInput.Parent then
+            autoPlayInput.Text = ""
+        end
+        queueConfigSave()
+        notify(message)
+    end
+
+    local function playConfiguredSound(): ()
+        stopAutoPlaySound()
+        local numericId = string.match(mm2Settings.autoPlayId, "%d+")
+        if not numericId then
+            clearAutoPlaySetting("Invalid audio ID; playback disabled")
+            return
+        end
+
+        AutoPlaySound.SoundId = "rbxassetid://" .. numericId
+        local generation: number = autoPlayGeneration
+        local function playWhenLoaded(): ()
+            if generation ~= autoPlayGeneration or not AutoPlaySound.Parent then
+                return
+            end
+            if not AutoPlaySound.IsLoaded then
+                return
+            end
+            if autoPlayLoadConnection then
+                autoPlayLoadConnection:Disconnect()
+                autoPlayLoadConnection = nil
+            end
+            pcall(AutoPlaySound.Play, AutoPlaySound)
+        end
+
+        if AutoPlaySound.IsLoaded then
+            playWhenLoaded()
+            return
+        end
+
+        autoPlayLoadConnection = AutoPlaySound.Loaded:Connect(playWhenLoaded)
+        task.delay(4, function(): ()
+            if generation == autoPlayGeneration and not AutoPlaySound.IsLoaded then
+                clearAutoPlaySetting("Audio ID is not authorized or unavailable")
+            end
+        end)
+    end
+
+    local function toggleAutoPlayId(enabled: boolean): ()
+        if not enabled then
+            stopAutoPlaySound()
+            return
+        end
+        playConfiguredSound()
+    end
+
+    local AutoPlayFeature = createUniversalFeature(
+        "Auto Play ID",
+        "Loop a local Roblox audio asset",
+        9,
+        toggleAutoPlayId,
+        {
+            categoryName = "Fun",
+            parent = MM2Scroll,
+            registry = mm2Features,
+            restore = false,
+        }
+    )
+    autoPlayInput = addTextOption(AutoPlayFeature, "Play ID", mm2Settings.autoPlayId, function(value)
+        mm2Settings.autoPlayId = value
+        if AutoPlaySound.Playing then
+            playConfiguredSound()
+        end
+    end)
+
+    activeCleanup = function(): ()
+        toggleAutoPlayId(false)
+                if AutoPlaySound then
+                    stopAutoPlaySound()
+                    AutoPlaySound:Destroy()
+                end
+    end
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    pcall(activeCleanup)
+    activeCleanup = function(): () end
+    Module.Events = {}
+    Module.Runtime = nil
+end
+
+return Module
+]=],
+        ["src/games/MM2/Other/TrajectoryCalibration.lua"] = [=[
+local Module = {
+    Name = "MM2 Trajectory Calibration",
+    PlaceId = 142823291,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Runtime = nil :: any,
+}
+
+local activeCleanup: () -> () = function(): () end
+
+function Module.init(runtime: any): any
+    if Module.Initialized then
+        return Module
+    end
+    local core: any = state.mm2Core
+    assert(type(core) == "table", "MM2 Trajectory Calibration requires the MM2 core module")
+    Module.Runtime = runtime
+    local trajectoryCalibration: any = core.trajectoryCalibration
+
+    local TrajectoryFeature: any = createUniversalFeature(
+        "Trajectory Calibration",
+        "MM2-only target motion, jump, ping, endpoint and knife-flight analytics",
+        5,
+        function(): () end,
+        {
+            category = true,
+            categoryName = "Other",
+            parent = MM2Scroll,
+            registry = mm2Features,
+        }
+    )
+    addActionOption(TrajectoryFeature, "Show learned profile", function(): ()
+        notify(trajectoryCalibration:status())
+    end)
+    addActionOption(TrajectoryFeature, "Save calibration", function(): ()
+        if trajectoryCalibration:save("manual") then
+            notify("Trajectory calibration saved in the executor workspace.")
+        else
+            notify("Trajectory calibration could not be saved; check F9.")
+        end
+    end)
+    addActionOption(TrajectoryFeature, "Reset calibration", function(): ()
+        trajectoryCalibration:reset()
+        notify("Trajectory calibration was reset.")
+    end)
+    addInformationOption(
+        TrajectoryFeature,
+        "Schema 2 records 30 Hz target windows only around your shots/throws. It stays isolated from Universal analytics and never changes weapon arguments."
+    )
+
+    activeCleanup = function(): ()
+        -- nothing persistent to undo
+    end
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    pcall(activeCleanup)
+    activeCleanup = function(): () end
+    Module.Events = {}
+    Module.Runtime = nil
+end
+
+return Module
+]=],
+        ["src/games/MM2/Other/LoopAllInteract.lua"] = [=[
+local Module = {
+    Name = "MM2 Loop All Interact",
+    PlaceId = 142823291,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Runtime = nil :: any,
+}
+
+local activeCleanup: () -> () = function(): () end
+
+function Module.init(runtime: any): any
+    if Module.Initialized then
+        return Module
+    end
+    local core: any = state.mm2Core
+    assert(type(core) == "table", "MM2 Loop All Interact requires the MM2 core module")
+    Module.Runtime = runtime
+    local findMM2Map: any = core.findMM2Map
+
+    local function toggleLoopAllInteract(enabled)
+        disconnectFeatureConnection("MM2LoopInteract")
+        if not enabled then
+            return
+        end
+
+        local activeMap = nil
+        local interactables = {}
+        local elapsed = 0
+        featureConnections.MM2LoopInteract = TaskManager:Connect(function(deltaTime)
+            elapsed = elapsed + deltaTime
+            if elapsed < 0.5 then
+                return
+            end
+            elapsed = 0
+
+            local map = findMM2Map()
+            if map ~= activeMap then
+                activeMap = map
+                interactables = {}
+                if map then
+                    for _, object in ipairs(map:GetDescendants()) do
+                        if object:IsA("ProximityPrompt")
+                            or object:IsA("ClickDetector") then
+                            table.insert(interactables, object)
+                        end
+                    end
+                end
+            end
+
+            for _, object in ipairs(interactables) do
+                if object:IsDescendantOf(activeMap) then
+                    if object:IsA("ProximityPrompt")
+                        and object.Enabled
+                        and type(fireproximityprompt) == "function" then
+                        pcall(fireproximityprompt, object)
+                    elseif object:IsA("ClickDetector")
+                        and type(fireclickdetector) == "function" then
+                        pcall(fireclickdetector, object)
+                    end
+                end
+            end
+        end)
+    end
+
+    createUniversalFeature(
+        "Loop All Interact",
+        "Continuously activate prompts and click detectors",
+        7,
+        toggleLoopAllInteract,
+        {
+            noOptions = true,
+            categoryName = "Other",
+            parent = MM2Scroll,
+            registry = mm2Features,
+        }
+    )
+
+    activeCleanup = function(): ()
+        toggleLoopAllInteract(false)
+    end
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    pcall(activeCleanup)
+    activeCleanup = function(): () end
+    Module.Events = {}
+    Module.Runtime = nil
+end
+
+return Module
+]=],
+        ["src/games/MM2/Other/Silence.lua"] = [=[
+local Module = {
+    Name = "MM2 Silence",
+    PlaceId = 142823291,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Runtime = nil :: any,
+}
+
+local activeCleanup: () -> () = function(): () end
+
+function Module.init(runtime: any): any
+    if Module.Initialized then
+        return Module
+    end
+    local core: any = state.mm2Core
+    assert(type(core) == "table", "MM2 Silence requires the MM2 core module")
+    Module.Runtime = runtime
+    local findMM2Map: any = core.findMM2Map
+
+    local mutedRadioSounds = setmetatable({}, {__mode = "k"})
+    local mutedTrapSounds = setmetatable({}, {__mode = "k"})
+
+    local function restoreMutedSounds(cache)
+        for sound, volume in pairs(cache) do
+            if sound and sound.Parent then
+                sound.Volume = volume
+            end
+        end
+    end
+
+    local function toggleMuteOtherRadios(enabled)
+        disconnectFeatureConnection("MM2MuteRadios")
+        restoreMutedSounds(mutedRadioSounds)
+        mutedRadioSounds = setmetatable({}, {__mode = "k"})
+
+        if not enabled then
+            return
+        end
+
+        local function muteRadio(sound)
+            if not sound:IsA("Sound") then
+                return
+            end
+            local owner = nil
+            local ancestor = sound.Parent
+            while ancestor and not owner do
+                owner = Players:GetPlayerFromCharacter(ancestor)
+                ancestor = ancestor.Parent
+            end
+            if not owner or owner == LocalPlayer then
+                return
+            end
+            local lowerName = string.lower(sound.Name)
+            local parentName = sound.Parent and string.lower(sound.Parent.Name) or ""
+            if string.find(lowerName, "radio", 1, true)
+                or string.find(lowerName, "music", 1, true)
+                or string.find(parentName, "radio", 1, true) then
+                if mutedRadioSounds[sound] == nil then
+                    mutedRadioSounds[sound] = sound.Volume
+                end
+                sound.Volume = 0
+            end
+        end
+
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer and player.Character then
+                for _, object in ipairs(player.Character:GetDescendants()) do
+                    muteRadio(object)
+                end
+            end
+        end
+        featureConnections.MM2MuteRadios = workspace.DescendantAdded:Connect(muteRadio)
+    end
+
+    local function toggleMuteTrapSounds(enabled)
+        disconnectFeatureConnection("MM2MuteTraps")
+        restoreMutedSounds(mutedTrapSounds)
+        mutedTrapSounds = setmetatable({}, {__mode = "k"})
+
+        if not enabled then
+            return
+        end
+
+        local function muteTrap(sound)
+            if not sound:IsA("Sound") then
+                return
+            end
+            local ancestor = sound:FindFirstAncestor("Trap")
+                or sound:FindFirstAncestor("TrapVisual")
+            local parentName = sound.Parent and string.lower(sound.Parent.Name) or ""
+            if ancestor or string.find(parentName, "trap", 1, true) then
+                if mutedTrapSounds[sound] == nil then
+                    mutedTrapSounds[sound] = sound.Volume
+                end
+                sound.Volume = 0
+            end
+        end
+
+        local map = findMM2Map()
+        for _, object in ipairs((map or workspace):GetDescendants()) do
+            muteTrap(object)
+        end
+        featureConnections.MM2MuteTraps = workspace.DescendantAdded:Connect(muteTrap)
+    end
+
+    local SilenceFeature = createUniversalFeature(
+        "Silence",
+        "Radio and trap audio controls",
+        8,
+        function() end,
+        {
+            category = true,
+            categoryName = "Other",
+            parent = MM2Scroll,
+            registry = mm2Features,
+        }
+    )
+    addToggleOption(SilenceFeature, "Other radios", false, toggleMuteOtherRadios)
+    addToggleOption(SilenceFeature, "Trap sounds", false, toggleMuteTrapSounds)
+
+    activeCleanup = function(): ()
+        toggleMuteOtherRadios(false)
+                toggleMuteTrapSounds(false)
+    end
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    pcall(activeCleanup)
+    activeCleanup = function(): () end
+    Module.Events = {}
+    Module.Runtime = nil
+end
+
+return Module
+]=],
     },
 }
