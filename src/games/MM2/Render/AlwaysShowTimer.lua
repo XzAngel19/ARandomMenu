@@ -18,36 +18,87 @@ function Module.init(runtime: any): any
     local roundTimer: any = core.roundTimer
     local getRoundPhase: any = core.getRoundPhase
 
-    -- MM2 itself publishes the live countdown as an attribute on
-    -- workspace.RoundTimerPart, and the core keeps roundTimer.endsAt locked to
-    -- it (see the "Round clock" section of base.lua). So the number painted here
-    -- is the game's own number, refreshed every frame from the same source the
-    -- game's Timer label reads - not a countdown rebuilt from the single
-    -- RoundStart payload, which drifts and is lost entirely when RoundStart was
-    -- missed.
+    -- The core keeps roundTimer.endsAt locked to whatever live source the
+    -- current map still publishes (see the "Round clock" section of base.lua):
+    -- the workspace.RoundTimerPart attribute on older maps, the game's own HUD
+    -- countdown label on the current map, and the one-shot RoundStart anchor as
+    -- a last resort. The number painted here is the game's own number - this
+    -- module only decides where to paint it.
     local revealedTimerObjects: {[Instance]: boolean} =
         setmetatable({}, {__mode = "k"}) :: any
     local fallbackGui: ScreenGui? = nil
     local fallbackLabel: TextLabel? = nil
+    local gameCaption: TextLabel? = nil
     local lastPaintedText: string = ""
 
+    -- The recursive FindFirstChildWhichIsA below is the only expensive part of
+    -- this lookup, so the answer is cached and rescanned at most once a second
+    -- (or immediately once the cached frame/label is destroyed).
+    local timerFrameCache: {frame: Instance?, label: Instance?, at: number} =
+        {frame = nil, label = nil, at = -math.huge}
+
     local function findGameTimerFrame(): (GuiObject?, TextLabel?)
-        local playerGui: PlayerGui? = LocalPlayer:FindFirstChildOfClass("PlayerGui")
-        if not playerGui then
+        local cachedFrame: Instance? = timerFrameCache.frame
+        if cachedFrame and cachedFrame.Parent
+            and (not timerFrameCache.label or timerFrameCache.label.Parent) then
+            return cachedFrame, timerFrameCache.label
+        end
+        if os.clock() - timerFrameCache.at < 1 then
             return nil, nil
         end
-        local mainGui: Instance? = playerGui:FindFirstChild("MainGUI")
+        timerFrameCache.at = os.clock()
+        local playerGui: PlayerGui? = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+        local mainGui: Instance? = playerGui and playerGui:FindFirstChild("MainGUI")
         local gameFrame: Instance? = mainGui and mainGui:FindFirstChild("Game")
         local frame: Instance? = gameFrame and gameFrame:FindFirstChild("Timer")
-        if not (frame and frame:IsA("GuiObject")) then
+        local validFrame: Instance? = (frame and frame:IsA("GuiObject")) and frame or nil
+        timerFrameCache.frame = validFrame
+        timerFrameCache.label = nil
+        if not validFrame then
             return nil, nil
         end
         -- MM2 has renamed this label across updates, so take the first TextLabel
         -- in the frame instead of trusting a single name.
-        local label: Instance? = frame:FindFirstChild("XPText")
-            or frame:FindFirstChild("Timer")
-            or frame:FindFirstChildWhichIsA("TextLabel", true)
-        return frame, (label and label:IsA("TextLabel")) and label or nil
+        local label: Instance? = validFrame:FindFirstChild("XPText")
+            or validFrame:FindFirstChild("Timer")
+            or validFrame:FindFirstChildWhichIsA("TextLabel", true)
+        local validLabel: Instance? = (label and label:IsA("TextLabel")) and label or nil
+        timerFrameCache.label = validLabel
+        return validFrame, validLabel
+    end
+
+    local function destroyGameCaption(): ()
+        if gameCaption then
+            pcall(function(): ()
+                (gameCaption :: any):Destroy()
+            end)
+            gameCaption = nil
+        end
+    end
+
+    -- The white "Timer" caption that sits above the borrowed game label.
+    local function ensureGameCaption(frame: GuiObject): ()
+        if gameCaption and gameCaption.Parent then
+            if gameCaption.Parent ~= frame then
+                destroyGameCaption()
+            else
+                return
+            end
+        end
+        gameCaption = create("TextLabel", {
+            Parent = frame,
+            Name = "WurstTimerCaption",
+            BackgroundTransparency = 1,
+            AnchorPoint = Vector2.new(0.5, 1),
+            Position = UDim2.fromScale(0.5, 0),
+            Size = UDim2.fromOffset(80, 16),
+            Font = CONTROL_FONT,
+            Text = "Timer",
+            TextSize = 12,
+            TextColor3 = Color3.fromRGB(255, 255, 255),
+            TextStrokeColor3 = Color3.fromRGB(0, 0, 0),
+            TextStrokeTransparency = 0.4,
+        }) :: any
     end
 
     local function formatRoundClock(remaining: number): string
@@ -88,13 +139,27 @@ function Module.init(runtime: any): any
             IgnoreGuiInset = true,
             DisplayOrder = 50,
         }) :: any
+        create("TextLabel", {
+            Parent = gui,
+            Name = "Caption",
+            BackgroundTransparency = 1,
+            AnchorPoint = Vector2.new(0.5, 0),
+            Position = UDim2.new(0.5, 0, 0, 6),
+            Size = UDim2.new(0, 96, 0, 14),
+            Font = CONTROL_FONT,
+            Text = "Timer",
+            TextSize = 11,
+            TextColor3 = Color3.fromRGB(255, 255, 255),
+            TextStrokeColor3 = Color3.fromRGB(0, 0, 0),
+            TextStrokeTransparency = 0.4,
+        }) :: any
         local label: TextLabel = create("TextLabel", {
             Parent = gui,
             Name = "Clock",
             BackgroundTransparency = 0.35,
             BackgroundColor3 = Color3.fromRGB(0, 0, 0),
             AnchorPoint = Vector2.new(0.5, 0),
-            Position = UDim2.new(0.5, 0, 0, 6),
+            Position = UDim2.new(0.5, 0, 0, 20),
             Size = UDim2.new(0, 96, 0, 26),
             Font = CONTROL_FONT,
             TextSize = 18,
@@ -117,6 +182,7 @@ function Module.init(runtime: any): any
             end
         end
         revealedTimerObjects = setmetatable({}, {__mode = "k"}) :: any
+        destroyGameCaption()
         destroyFallback()
         lastPaintedText = ""
     end
@@ -143,10 +209,12 @@ function Module.init(runtime: any): any
                 frame.Visible = true
             end
             if label then
+                ensureGameCaption(frame)
                 paintClock(label, remaining)
                 return
             end
         end
+        destroyGameCaption()
         local fallback: TextLabel? = ensureFallbackLabel()
         if fallback then
             paintClock(fallback, remaining)
@@ -179,7 +247,8 @@ function Module.init(runtime: any): any
 
     createUniversalFeature(
         "Always Show Timer",
-        "Show the round countdown from the game's own RoundTimerPart, murderer or not",
+        "Show the round countdown from the game's own timer (HUD label or "
+            .. "RoundTimerPart), murderer or not",
         13,
         toggleAlwaysShowTimer,
         {

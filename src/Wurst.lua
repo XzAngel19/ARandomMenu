@@ -210,7 +210,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "c3b79b32e60bd74c"
+local SOURCE_STAMP: string = "audit-20261008-1"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -4728,6 +4728,7 @@ local function loadGameModule(
         "src/games/MM2/Render/RoleTags.lua",
         "src/games/MM2/Render/RoundEsp.lua",
         "src/games/MM2/Render/AlwaysShowTimer.lua",
+        "src/games/MM2/Render/MurderTag.lua",
         "src/games/MM2/Render/HideNames.lua",
         "src/games/MM2/Movement/Sprint.lua",
         "src/games/MM2/Movement/Teleport.lua",

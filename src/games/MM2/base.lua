@@ -685,8 +685,25 @@ local MM2_MAP_COIN_CONTAINERS: {string} = {
     "Coins",
 }
 
+-- The current map parents its lobby under "MainLobby"/"RegularLobby"; the
+-- older "Lobby" name is kept for the places that still use it.
+local LOBBY_MODEL_NAMES: {string} = {
+    "Lobby",
+    "MainLobby",
+    "RegularLobby",
+}
+
+local function isLobbyName(name: string): boolean
+    for _, candidate: string in ipairs(LOBBY_MODEL_NAMES) do
+        if name == candidate then
+            return true
+        end
+    end
+    return false
+end
+
 local function isMM2MapModel(object: Instance): boolean
-    if not object:IsA("Model") or object.Name == "Lobby" then
+    if not object:IsA("Model") or isLobbyName(object.Name) then
         return false
     end
     for _, containerName: string in ipairs(MM2_MAP_COIN_CONTAINERS) do
@@ -697,10 +714,12 @@ local function isMM2MapModel(object: Instance): boolean
     return false
 end
 
--- The fallback scan below calls FindFirstChild("CoinSpawn", true) on every
--- top level model, which walks most of the map. Gun ESP, Auto Get Gun, Loop
--- Interact and Silence all ask for the map several times a second, so the
--- answer is cached until the model it points at goes away.
+-- Gun ESP, Auto Get Gun, Loop Interact and Silence all ask for the map
+-- several times a second, so the answer is cached until the model it points
+-- at goes away. The first scan only touches top level children; the fallback
+-- still walks the map subtree once for CoinSpawn on old maps, but on the
+-- current map (no CoinSpawn anywhere) it stops at the top level "Spawns"
+-- check.
 local mm2MapCache: {map: Instance?, at: number} = {map = nil, at = -math.huge}
 
 local function findMM2MapUncached(): Instance?
@@ -710,11 +729,15 @@ local function findMM2MapUncached(): Instance?
         end
     end
 
+    -- The current map no longer ships CoinSpawn (or any coin container), so a
+    -- direct "Spawns" child is the map marker that still survives (old maps
+    -- had it too, alongside CoinSpawn). detectRoundPhase re-checks the
+    -- player's actual parentage before trusting this, so a map model that
+    -- lingers in the lobby cannot flip the phase.
     for _, object: Instance in ipairs(workspace:GetChildren()) do
         if object:IsA("Model")
-            and object.Name ~= "Lobby"
-            and object:FindFirstChild("Spawns")
-            and object:FindFirstChild("CoinSpawn", true) then
+            and not isLobbyName(object.Name)
+            and object:FindFirstChild("Spawns") then
             return object
         end
     end
@@ -1078,7 +1101,7 @@ end
 
 local function findLobbyModel(): Instance?
     for _, object: Instance in ipairs(workspace:GetChildren()) do
-        if object.Name == "Lobby" then
+        if isLobbyName(object.Name) then
             return object
         end
     end
@@ -1163,11 +1186,14 @@ setRoundPhase(lastPhase, "boot")
 -- ---------------------------------------------------------------------------
 -- Round clock
 --
--- MM2 publishes the live countdown on workspace.RoundTimerPart as a "Time"
--- attribute that ticks on its own, which is far more reliable than rebuilding
--- a countdown from the single RoundStart payload (and works when RoundStart was
--- missed entirely). It is the authority whenever it is present and moving; the
--- RoundStart derived clock is the fallback.
+-- The live countdown used to be published on workspace.RoundTimerPart as a
+-- "Time" attribute, but the current map no longer ships that part at all, so
+-- a mid-round join (RoundStart missed) left the clock with no source. The
+-- game still draws the exact same number in its own HUD label
+-- (PlayerGui.MainGUI.Game.Timer), which is the fallback authority here: read,
+-- parsed, and re-anchored from the text the player is already seeing. Source
+-- priority: RoundTimerPart attribute (when a map still has it) > HUD label >
+-- the one-shot RoundStart anchor.
 -- ---------------------------------------------------------------------------
 local roundTimerPartCache: {part: Instance?, at: number} =
     {part = nil, at = -math.huge}
@@ -1198,6 +1224,84 @@ local function readRoundTimerPartSeconds(): number?
     return remaining
 end
 
+local hudTimerCache: {frame: Instance?, label: Instance?, at: number} =
+    {frame = nil, label = nil, at = -math.huge}
+
+local function findHudTimerLabel(): Instance?
+    local cached: Instance? = hudTimerCache.label
+    if cached and cached.Parent then
+        return cached
+    end
+    if os.clock() - hudTimerCache.at < 1 then
+        return cached
+    end
+    hudTimerCache.at = os.clock()
+    local playerGui: PlayerGui? = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    local mainGui: Instance? = playerGui and playerGui:FindFirstChild("MainGUI")
+    local gameFrame: Instance? = mainGui and mainGui:FindFirstChild("Game")
+    local frame: Instance? = gameFrame and gameFrame:FindFirstChild("Timer")
+    -- If the expected path was restructured, fall back to a "Timer" frame
+    -- anywhere under MainGUI (still bounded, and only runs once a second).
+    if not frame then
+        frame = mainGui and mainGui:FindFirstChild("Timer", true)
+    end
+    hudTimerCache.frame = (frame and frame:IsA("GuiObject")) and frame or nil
+    -- MM2 has renamed this label across updates, so take the first TextLabel
+    -- in the frame instead of trusting a single name.
+    local label: Instance? = frame
+        and (frame:FindFirstChild("XPText")
+            or frame:FindFirstChild("Timer")
+            or frame:FindFirstChildWhichIsA("TextLabel", true))
+    hudTimerCache.label = (label and label:IsA("TextLabel")) and label or nil
+    return hudTimerCache.label
+end
+
+-- Accepts the formats MM2 has used for the HUD countdown: "1:32", "1:32s",
+-- plain seconds "32" / "32s", with optional surrounding whitespace.
+local function parseHudTimerSeconds(text: string?): number?
+    if type(text) ~= "string" or text == "" then
+        return nil
+    end
+    local minutes: string?, seconds: string? = text:match("^%s*(%d+):(%d%d)s?%s*$")
+    if minutes and seconds then
+        return tonumber(minutes) * 60 + tonumber(seconds)
+    end
+    local whole: string? = text:match("^%s*(%d%d?)s?%s*$")
+    if whole then
+        return tonumber(whole)
+    end
+    return nil
+end
+
+local function isHudTimerVisible(label: Instance): boolean
+    -- In the lobby the game hides its timer frame; a hidden frame still
+    -- holding last round's text would resurrect a finished round, so the
+    -- game's own visibility doubles as the "round is live" check.
+    local ancestor: Instance? = label
+    while ancestor do
+        if ancestor:IsA("GuiObject") and ancestor.Visible == false then
+            return false
+        end
+        ancestor = ancestor.Parent
+    end
+    return true
+end
+
+local function readHudTimerSeconds(): number?
+    local label: Instance? = findHudTimerLabel()
+    if not label then
+        return nil
+    end
+    if not isHudTimerVisible(label) then
+        return nil
+    end
+    local remaining: number? = parseHudTimerSeconds((label :: any).Text)
+    if not remaining or remaining <= 0 or remaining > 600 then
+        return nil
+    end
+    return remaining
+end
+
 local lastAttributeRemaining: number? = nil
 local lastAttributeChangeAt: number = -math.huge
 local clockElapsed: number = 0
@@ -1208,14 +1312,17 @@ featureConnections.MM2RoundClock = TaskManager:Connect(function(deltaTime: numbe
     end
     clockElapsed = 0
     local remaining: number? = readRoundTimerPartSeconds()
+        or readHudTimerSeconds()
     if not remaining or roundPhase == "lobby" then
-        -- In the lobby the part is usually last round's corpse still holding a
-        -- positive number; believing it would resurrect a finished round.
+        -- In the lobby the part (or last round's label text) is usually still
+        -- holding a positive number; believing it would resurrect a finished
+        -- round.
         lastAttributeRemaining = nil
         return
     end
-    -- A frozen attribute must not pin the clock: only treat the part as the
-    -- authority while it is actually counting down.
+    -- A frozen source must not pin the clock: only treat it as the authority
+    -- while it is actually counting down. The HUD label ticks every second,
+    -- the part attribute ticks continuously - both pass this gate while live.
     if lastAttributeRemaining == nil
         or math.abs(remaining - lastAttributeRemaining) > 0.01 then
         lastAttributeChangeAt = os.clock()
