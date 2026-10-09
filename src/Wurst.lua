@@ -4505,7 +4505,31 @@ type FlyRuntime = {
     walkSpeed: number?,
 }
 
-local findPlayerByText: (string) -> Player? = function(_text: string): Player?
+-- Shared by every module that accepts a player by name (Shoot's Custom mode,
+-- fling targets...). Exact name/display-name first, then prefix, then
+-- substring, so a partial copy still finds the right player.
+local findPlayerByText: (string) -> Player? = function(text: string): Player?
+    local query: string = string.lower(text)
+    if query == "" then
+        return nil
+    end
+    local players: {Player} = Players:GetPlayers()
+    for pass: number = 1, 3 do
+        for _, player: Player in ipairs(players) do
+            local name: string = string.lower(player.Name)
+            local displayName: string = string.lower(player.DisplayName)
+            local matched: boolean = pass == 1
+                and (name == query or displayName == query)
+                or pass == 2
+                and (name:sub(1, #query) == query
+                    or displayName:sub(1, #query) == query)
+                or (name:find(query, 1, true) ~= nil
+                    or displayName:find(query, 1, true) ~= nil)
+            if matched then
+                return player
+            end
+        end
+    end
     return nil
 end
 local performFling: (Player) -> () = function(_target: Player): () end

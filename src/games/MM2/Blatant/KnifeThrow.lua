@@ -95,7 +95,9 @@ function Module.init(runtime: any): any
         if not character then
             return nil
         end
-        local knife: Tool? = getPlayerWeapon(LocalPlayer, "Knife", true)
+        -- Search backpack too: an unequipped knife must be equipped before the
+        -- next tick, exactly like Shoot does with the gun.
+        local knife: Tool? = getPlayerWeapon(LocalPlayer, "Knife")
         if not knife or knife:GetAttribute("Disabled") == true then
             return nil
         end

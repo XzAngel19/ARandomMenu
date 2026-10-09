@@ -327,8 +327,7 @@ function Module.init(runtime: any): any
             silent = opts.silent
         end
         local quiet: boolean = opts.quiet == true
-        local function reject(reason: string, message: string): boolean
-            runtime.lastRejectReason = reason
+        local function reject(message: string): boolean
             if not quiet then
                 notify(message)
             end
@@ -337,23 +336,23 @@ function Module.init(runtime: any): any
 
         local character, humanoid = getCharacterParts()
         if not target or not target.Character then
-            return reject("no target", "No selected shoot target was found.")
+            return reject("No selected shoot target was found.")
         end
         if not character or not humanoid then
-            return reject("no character", "Your character is not available.")
+            return reject("Your character is not available.")
         end
 
         local gun: Tool? = getPlayerWeapon(LocalPlayer, "Gun")
         local backpack: Backpack? = LocalPlayer:FindFirstChildOfClass("Backpack")
         if not gun and backpack then
-            return reject("no gun", "You do not have the sheriff gun.")
+            return reject("You do not have the sheriff gun.")
         end
         if gun and gun.Parent == backpack and humanoid:IsA("Humanoid") then
             humanoid:EquipTool(gun)
             if quiet then
                 -- Auto-fire runs inside a frame callback that must not yield; let
                 -- the equip settle and try again on the next tick.
-                return reject("equipping", "Equipping the sheriff gun.")
+                return reject("Equipping the sheriff gun.")
             end
             task.wait()
         end
@@ -371,50 +370,56 @@ function Module.init(runtime: any): any
             )
         end
 
+        local rejectMessages: {[string]: string} = {
+            ["no body"] = "The murderer has no usable body to aim at.",
+            ["too close"] = "The murderer is too close to shoot cleanly.",
+            ["obstructed"] = "A wall blocks the shot.",
+            ["turning too hard"] = "The murderer is turning too hard to lead.",
+        }
         if not remote
             or not remote:IsA("RemoteEvent")
             or not origin
             or not aim
             or not prediction then
-            return reject(
-                reason or (origin and "no solution" or "no gun origin"),
-                silent
-                    and "The murderer has no usable body to aim at."
-                    or "The murderer is unavailable or obstructed."
-            )
+            local message: string = rejectMessages[reason or ""]
+                or (
+                    not origin
+                        and "The gun has no usable origin."
+                        or (silent
+                            and "The murderer has no usable body to aim at."
+                            or "The murderer is unavailable or obstructed.")
+                )
+            return reject(message)
         end
 
         local resolved: GunPrediction = prediction :: GunPrediction
         if opts.maxError and resolved.errorRadius > opts.maxError then
-            return reject("low accuracy", "Shot accuracy is too low to fire.")
+            return reject("Shot accuracy is too low to fire.")
         end
-        runtime.lastRejectReason = nil
-
-        state.mm2ShotFeedback.queue(target, gun, origin, aim, resolved)
 
         if silent then
+            -- The silent packet is authored at the target, so the feedback must
+            -- expect the GunFired origin there, not at the muzzle.
             local shotOrigin: CFrame, shotEnd: CFrame =
                 buildSilentShot(target, resolved)
+            state.mm2ShotFeedback.queue(target, gun, shotOrigin, aim, resolved)
             remote:FireServer(shotOrigin, shotEnd)
-            runtime.lastShotClock = os.clock()
-            runtime.shotTarget = target
-            runtime.shotTargetClock = os.clock()
             return true
         end
 
-        -- The server scores the shot as a ray from arg1's origin along its look
-        -- vector, so arg1 must sit at the muzzle and look at the target. `aim` is
-        -- deliberately positioned at the target (the feedback module reads
-        -- aim.Position as the aim point), so firing `aim` directly would start the
-        -- server's ray ON the target pointing away and miss. Build the real shot
-        -- frame from the muzzle instead - this is what the vanilla client sends.
+        -- arg1 must sit at the muzzle. Captured vanilla packets show the server
+        -- ignoring arg1's rotation entirely (muzzle frames up to 176 deg away
+        -- from the endpoint still register), so the hit geometry comes from the
+        -- two positions: a segment that starts and ends on the target is zero
+        -- long and never registers. `aim` is deliberately positioned at the
+        -- target (the feedback module reads aim.Position as the aim point), so
+        -- the shot frame is built from the muzzle - this is what the vanilla
+        -- client sends.
+        state.mm2ShotFeedback.queue(target, gun, origin, aim, resolved)
         remote:FireServer(
             CFrame.lookAt(origin.Position, resolved.endpoint),
             CFrame.new(resolved.endpoint)
         )
-        runtime.lastShotClock = os.clock()
-        runtime.shotTarget = target
-        runtime.shotTargetClock = os.clock()
         return true
     end
 
@@ -572,7 +577,9 @@ function Module.init(runtime: any): any
         mm2Settings.shootWallCheck,
         function(value: boolean): ()
             mm2Settings.shootWallCheck = value
-        end
+        end,
+        "Holds fire while a wall blocks the muzzle. SilentAIM skips it: it "
+            .. "authors the shot at the target."
     )
     addToggleOption(
         ShootFeature,
@@ -592,8 +599,35 @@ function Module.init(runtime: any): any
         function(value: number): ()
             mm2Settings.silentSweep = value
         end,
-        "Studs of tolerance laid along the target's movement. 0 = single point.",
+        "Cap for the tolerance segment laid along the target's movement "
+            .. "(0 = single point). The solver's error budget usually sets a "
+            .. "shorter length, so a bigger cap only helps fast, turning "
+            .. "targets.",
         0.5
+    )
+    addToggleOption(
+        ShootFeature,
+        "Auto tune lead",
+        mm2Settings.autoTuneLead,
+        function(value: boolean): ()
+            mm2Settings.autoTuneLead = value
+        end,
+        "Measures the lead each confirmed shot actually needed and drifts Lead "
+            .. "bias toward it. Turn off to keep a manual value."
+    )
+    addNumberOption(
+        ShootFeature,
+        "Lead bias",
+        mm2Settings.gunLeadBias,
+        -0.25,
+        0.25,
+        function(value: number): ()
+            mm2Settings.gunLeadBias = value
+        end,
+        "Extra seconds added to the shot lead (positive = aim further ahead). "
+            .. "Auto tune drifts this value as shots confirm, so the slider "
+            .. "may lag the live value.",
+        0.01
     )
     ShootTargetBox = addTextOption(ShootFeature, "Target player", "", function(
         value: string

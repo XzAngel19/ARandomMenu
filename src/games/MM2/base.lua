@@ -69,6 +69,7 @@ local mm2Settings = {
     showMissCooldown = true,
     predictionRtt = 0.08,
     gunLeadBias = 0,
+    autoTuneLead = true,
     silentSweep = 3,
     getGunKey = Enum.KeyCode.G,
     instantRoleNotify = false,
@@ -1418,12 +1419,6 @@ local function getGunTurnDiscount(horizon: number, turnRate: number?): number
     )
 end
 
-local function getGunLeadSeconds(turnRate: number?): (number, number)
-    local horizon: number = getGunHorizonSeconds()
-    local discount: number = getGunTurnDiscount(horizon, turnRate)
-    return horizon * discount, horizon * discount
-end
-
 local function getGunOriginCFrame(character: Model, gun: Tool?): CFrame?
     local root: BasePart? = character:FindFirstChild("HumanoidRootPart") :: BasePart?
     local attachment: Attachment? = root
@@ -2686,6 +2681,20 @@ type PendingShot = {
     healthBefore: number,
     targetedMurderer: boolean,
     queuedAt: number,
+    -- Lead tuner bookkeeping (see the tuner below the feedback UI): the
+    -- horizon the shot was fired with, the velocity it was fired against, and
+    -- the 30 Hz root samples taken while the shot was pending.
+    horizon: number?,
+    velocity: Vector3?,
+    trajectory: {{t: number, p: Vector3}}?,
+}
+-- Structural shape of the Shoot solver's prediction; only the fields the
+-- feedback UI and the lead tuner read are named here.
+type GunPrediction = {
+    targetPosition: Vector3?,
+    endpoint: Vector3?,
+    velocity: Vector3?,
+    errorRadius: number?,
 }
 
 state.mm2ShotFeedback = {
@@ -2780,12 +2789,128 @@ state.mm2ShotFeedback.getDuration = function(gun: Tool?): number
     return state.mm2ShotFeedback.defaultDuration
 end
 
+-- ---------------------------------------------------------------------------
+-- Lead tuner
+--
+-- The horizon model is right in expectation but not in fact: the server's
+-- exact scoring instant, the replication cadence and our RTT estimator all
+-- carry a small, slowly drifting offset. Every confirmed shot measures it for
+-- free. While the shot is pending we sample the target's root at 30 Hz; on a
+-- confirmed hit the moment the target crossed the aimed point IS the lead the
+-- server actually needed. We drift gunLeadBias toward that reading - slowly
+-- (25 % of one residual) and bounded (+-0.03 s per shot, +-0.25 s total) - so
+-- one noisy shot can never wreck the calibration. Noisy windows (a turn mid
+-- flight, a stopped target, a late read) are rejected instead of applied.
+-- ---------------------------------------------------------------------------
+local leadTracking: PendingShot? = nil
+
+local function stopLeadTracking(): ()
+    leadTracking = nil
+    disconnectFeatureConnection("MM2LeadTuner")
+end
+
+local function startLeadTracking(candidate: PendingShot): ()
+    if not mm2Settings.autoTuneLead then
+        return
+    end
+    local root: BasePart? = candidate.targetCharacter
+        and candidate.targetCharacter:FindFirstChild("HumanoidRootPart")
+        :: BasePart?
+    if not root or candidate.velocity == nil then
+        return
+    end
+    stopLeadTracking()
+    leadTracking = candidate
+    local samples: {{t: number, p: Vector3}} = {}
+    candidate.trajectory = samples
+    local elapsed: number = 0
+    featureConnections.MM2LeadTuner = TaskManager:Connect(function(
+        deltaTime: number
+    ): ()
+        if leadTracking ~= candidate then
+            return
+        end
+        if state.mm2ShotFeedback.pending ~= candidate
+            and state.mm2ShotFeedback.lastAccepted ~= candidate then
+            stopLeadTracking()
+            return
+        end
+        elapsed += deltaTime
+        if elapsed < 1 / 30 then
+            return
+        end
+        elapsed = 0
+        table.insert(samples, {t = os.clock(), p = root.Position})
+        if #samples > 64 then
+            table.remove(samples, 1)
+        end
+    end)
+end
+
+local function tuneFromConfirmedShot(candidate: PendingShot): ()
+    if not mm2Settings.autoTuneLead or not candidate.aimPosition then
+        return
+    end
+    local samples: {{t: number, p: Vector3}}? = candidate.trajectory
+    local velocity: Vector3? = candidate.velocity
+    local horizon: number? = candidate.horizon
+    if not samples or #samples < 6 or velocity == nil or horizon == nil then
+        return
+    end
+    local horizontal: Vector3 = Vector3.new(velocity.X, 0, velocity.Z)
+    if horizontal.Magnitude < 8 then
+        return
+    end
+    local closestDistance: number = math.huge
+    local crossedAt: number? = nil
+    for _, sample: {t: number, p: Vector3} in ipairs(samples) do
+        local distance: number =
+            (sample.p - (candidate.aimPosition :: Vector3)).Magnitude
+        if distance < closestDistance then
+            closestDistance = distance
+            crossedAt = sample.t
+        end
+    end
+    if crossedAt == nil then
+        return
+    end
+    local leadMeasured: number = crossedAt - candidate.queuedAt
+    if leadMeasured < 0.03 or leadMeasured > 1.2 then
+        return
+    end
+    -- A target that changed heading mid-window corrupts the reading: reject it.
+    local firstSample: {t: number, p: Vector3} = samples[1]
+    local lastSample: {t: number, p: Vector3} = samples[#samples]
+    local span: number = lastSample.t - firstSample.t
+    if span < 0.05 then
+        return
+    end
+    local sampledVelocity: Vector3 = (lastSample.p - firstSample.p) / span
+    local sampledHorizontal: Vector3 = Vector3.new(
+        sampledVelocity.X,
+        0,
+        sampledVelocity.Z
+    )
+    if sampledHorizontal.Magnitude < 8 then
+        return
+    end
+    if sampledHorizontal.Unit:Dot(horizontal.Unit) < 0.75 then
+        return
+    end
+    local delta: number = (leadMeasured - horizon) * 0.25
+    mm2Settings.gunLeadBias = math.clamp(
+        mm2Settings.gunLeadBias + math.clamp(delta, -0.03, 0.03),
+        -0.25,
+        0.25
+    )
+end
+
 state.mm2ShotFeedback.queue = function(
     target: Player?,
     gun: Tool?,
     origin: CFrame?,
     aim: CFrame?,
-    _prediction: GunPrediction?
+    prediction: GunPrediction?
 ): ()
     if not target or not gun or not origin then
         return
@@ -2804,8 +2929,11 @@ state.mm2ShotFeedback.queue = function(
         healthBefore = targetHumanoid and targetHumanoid.Health or 0,
         targetedMurderer = getPlayerRole(target) == "Murderer",
         queuedAt = os.clock(),
+        horizon = getGunHorizonSeconds(),
+        velocity = prediction and prediction.velocity or nil,
     }
     state.mm2ShotFeedback.pending = candidate
+    startLeadTracking(candidate)
 
     task.delay(1.8, function(): ()
         if state.mm2ShotFeedback.pending == candidate then
@@ -2918,6 +3046,7 @@ state.mm2ShotFeedback.resolve = function(
             )
 
         if hitConfirmed then
+            tuneFromConfirmedShot(candidate)
             state.mm2ShotFeedback.hide()
         end
 
@@ -3180,11 +3309,9 @@ state.mm2Core = {
     motionSamples = motionSamples,
     getFilteredVelocity = getFilteredVelocity,
     getEstimatedLatency = getEstimatedLatency,
-    getGunLeadSeconds = getGunLeadSeconds,
     getGunHorizonSeconds = getGunHorizonSeconds,
     getGunTurnDiscount = getGunTurnDiscount,
     getGunTurnRate = getGunTurnRate,
-    gunLeadModel = GUN_LEAD,
     getGunOriginCFrame = getGunOriginCFrame,
     trajectoryCalibration = trajectoryCalibration,
 
@@ -3203,6 +3330,7 @@ cleanupMM2Runtime = function()
         state.gameTargetProvider = nil
     end
     trajectoryCalibration:destroy()
+    stopLeadTracking()
     disconnectGunFiredObserver()
     state.mm2ShotFeedback.hide()
     for player: Player, _ in pairs(roleWatchers) do
