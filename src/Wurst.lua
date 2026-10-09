@@ -210,7 +210,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "audit-20261008-4"
+local SOURCE_STAMP: string = "audit-20261008-5"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -6078,10 +6078,21 @@ print(
         .. PRODUCT.version
         .. " | Toggle key: "
         .. state.toggleKey.Name
+        .. " | build "
+        .. SOURCE_STAMP
+        .. " | branch "
+        .. RUNTIME_BRANCH
 )
 
 if not state.isMobile then
-    notify("Menu ready — press " .. state.toggleKey.Name)
+    notify(
+        "Menu ready — build "
+            .. SOURCE_STAMP
+            .. " · "
+            .. RUNTIME_BRANCH
+            .. " · press "
+            .. state.toggleKey.Name
+    )
 end
 end
 
