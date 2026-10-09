@@ -1,8 +1,15 @@
---!nocheck
+local Module = {
+    Name = "MM2 Knife Throw",
+    PlaceId = 142823291,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Runtime = nil :: any,
+}
+
+local activeCleanup: () -> () = function(): () end
 
 --[[
     MM2 Knife Throw
-    Place ID: 142823291
 
     Automatically throws the knife at the nearest valid target — the murderer's
     counterpart to the gun's Auto Shoot.
@@ -18,40 +25,20 @@
     Remote (confirmed against YARHM's "knife throw to closest"):
       KnifeThrown:FireServer(CFrame.new(origin), CFrame.new(aim))
 ]]
-
-local Module = {
-    Name = "MM2 Knife Throw",
-    PlaceId = 142823291,
-    Version = "1.0.0",
-    Description = "Automatic and silent knife throwing.",
-}
-
-function Module.init(runtime: any)
-    local state: any = runtime.state
-    local createUniversalFeature: any = state.createUniversalFeature
-    local addCycleOption: any = state.addCycleOption
-    local addNumberOption: any = state.addNumberOption
-    local disconnectFeatureConnection: any = state.disconnectFeatureConnection
-    local featureConnections: any = state.featureConnections
-    local mm2Features: any = state.mm2Features
-    local MM2Scroll: any = state.MM2Scroll
-    local TaskManager: any = state.TaskManager
-
-    local Players = game:GetService("Players")
-    local LocalPlayer = Players.LocalPlayer
-
-    local core: any = state.mm2Core
-    if not core then
-        warn("MM2 Knife Throw could not find the shared MM2 core.")
-        return
+function Module.init(runtime: any): any
+    if Module.Initialized then
+        return Module
     end
-    local findMurderer = core.findMurderer
-    local getPlayerRole = core.getPlayerRole
-    local getPlayerWeapon = core.getPlayerWeapon
-    local isPlayerAlive = core.isPlayerAlive
-    local isProtectedTarget = core.isProtectedTarget
-    local getFilteredVelocity = core.getFilteredVelocity
-    local trajectoryCalibration = core.trajectoryCalibration
+    local core: any = state.mm2Core
+    assert(type(core) == "table", "MM2 Knife Throw requires the MM2 core module")
+    Module.Runtime = runtime
+    local findMurderer: any = core.findMurderer
+    local getPlayerRole: any = core.getPlayerRole
+    local getPlayerWeapon: any = core.getPlayerWeapon
+    local isPlayerAlive: any = core.isPlayerAlive
+    local isProtectedTarget: any = core.isProtectedTarget
+    local getFilteredVelocity: any = core.getFilteredVelocity
+    local trajectoryCalibration: any = core.trajectoryCalibration
 
     local knifeThrowSettings = {
         enabled = false,
@@ -62,29 +49,36 @@ function Module.init(runtime: any)
     }
     local lastThrow = -math.huge
 
-    local function isValidTarget(player)
-        return player ~= LocalPlayer
-            and not isProtectedTarget(player)
-            and isPlayerAlive(player)
-            and getPlayerRole(player) ~= "Murderer"
-            and player.Character ~= nil
+    local function isValidTarget(player: Player): boolean
+        if player == LocalPlayer
+            or isProtectedTarget(player)
+            or not isPlayerAlive(player)
+            or getPlayerRole(player) == "Murderer" then
+            return false
+        end
+        return player.Character ~= nil
             and player.Character:FindFirstChild("HumanoidRootPart") ~= nil
     end
 
-    local function findNearestTarget(maxDistance: number)
-        local localRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    local function findNearestTarget(maxDistance: number): Player?
+        local localRoot: BasePart? = LocalPlayer.Character
+            and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
         if not localRoot then
             return nil
         end
-        local closest = nil
-        local closestDistance = maxDistance
-        for _, player in ipairs(Players:GetPlayers()) do
+        local closest: Player? = nil
+        local closestDistance: number = maxDistance
+        for _, player: Player in ipairs(Players:GetPlayers()) do
             if isValidTarget(player) then
-                local root = player.Character:FindFirstChild("HumanoidRootPart")
-                local distance = (root.Position - localRoot.Position).Magnitude
-                if distance <= closestDistance then
-                    closest = player
-                    closestDistance = distance
+                local targetRoot: BasePart? = player.Character
+                    and player.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+                if targetRoot then
+                    local distance: number =
+                        (targetRoot.Position - localRoot.Position).Magnitude
+                    if distance <= closestDistance then
+                        closest = player
+                        closestDistance = distance
+                    end
                 end
             end
         end
@@ -93,20 +87,21 @@ function Module.init(runtime: any)
 
     -- The murderer role is required, and the knife must be equipped and off its
     -- post-throw cooldown (the tool flags itself Disabled while it respawns).
-    local function getReadyKnife()
+    local function getReadyKnife(): Tool?
         if findMurderer() ~= LocalPlayer then
             return nil
         end
-        local character = LocalPlayer.Character
+        local character: Model? = LocalPlayer.Character
         if not character then
             return nil
         end
-        local knife = getPlayerWeapon(LocalPlayer, "Knife", true)
+        local knife: Tool? = getPlayerWeapon(LocalPlayer, "Knife", true)
         if not knife or knife:GetAttribute("Disabled") == true then
             return nil
         end
         if knife.Parent ~= character then
-            local humanoid = character:FindFirstChildOfClass("Humanoid")
+            local humanoid: Humanoid? =
+                character:FindFirstChildOfClass("Humanoid") :: Humanoid?
             if humanoid then
                 humanoid:EquipTool(knife)
             end
@@ -117,50 +112,58 @@ function Module.init(runtime: any)
 
     -- Lead the target by the blade's flight time so a moving target is still
     -- where the knife arrives. Uses the calibrated throw speed when available.
-    local function predictAim(target, originPos: Vector3): Vector3
-        local root = target.Character:FindFirstChild("HumanoidRootPart")
-        local knifeSpeed = 96
-        local estimates = trajectoryCalibration and trajectoryCalibration.getEstimates and trajectoryCalibration.getEstimates()
+    local function predictAim(target: Player, originPos: Vector3): Vector3
+        local root: BasePart =
+            target.Character:FindFirstChild("HumanoidRootPart") :: BasePart
+        local knifeSpeed: number = 96
+        local estimates: any = trajectoryCalibration
+            and trajectoryCalibration.getEstimates
+            and trajectoryCalibration.getEstimates()
         if estimates and estimates.knifeSpeed and estimates.knifeSpeed > 1 then
             knifeSpeed = estimates.knifeSpeed
         end
-        local flightTime = (root.Position - originPos).Magnitude / knifeSpeed
-        local velocity = getFilteredVelocity(target, root)
+        local flightTime: number =
+            (root.Position - originPos).Magnitude / knifeSpeed
+        local velocity: Vector3 = getFilteredVelocity(target, root)
         return root.Position + velocity * flightTime
     end
 
-    local function throwKnife()
+    local function throwKnife(): ()
         if os.clock() - lastThrow < knifeThrowSettings.fireDelay then
             return
         end
-        local silent = knifeThrowSettings.mode == "Silent"
-        local knife = getReadyKnife()
+        local silent: boolean = knifeThrowSettings.mode == "Silent"
+        local knife: Tool? = getReadyKnife()
         if not knife then
             return
         end
-        local events = knife:FindFirstChild("Events")
-        local remote = events and events:FindFirstChild("KnifeThrown")
+        local events: Instance? = knife:FindFirstChild("Events")
+        local remote: Instance? = events and events:FindFirstChild("KnifeThrown")
         if not remote or not remote:IsA("RemoteEvent") then
             return
         end
-        local character = LocalPlayer.Character
-        local throwerPart = character and (character:FindFirstChild("RightHand") or character:FindFirstChild("HumanoidRootPart"))
+        local character: Model? = LocalPlayer.Character
+        local throwerPart: BasePart? = character
+            and (character:FindFirstChild("RightHand")
+                or character:FindFirstChild("HumanoidRootPart")) :: BasePart?
         if not throwerPart then
             return
         end
 
         -- Silent ignores range: the whole point is to reach a target anywhere.
-        local target = findNearestTarget(silent and 100000 or knifeThrowSettings.range)
+        local target: Player? =
+            findNearestTarget(silent and 100000 or knifeThrowSettings.range)
         if not target then
             return
         end
-        local targetRoot = target.Character:FindFirstChild("HumanoidRootPart")
+        local targetRoot: BasePart =
+            target.Character:FindFirstChild("HumanoidRootPart") :: BasePart
 
         local originPos: Vector3
         if silent then
             -- Spawn the blade just beside the target, on the thrower's side, so
             -- it travels a few studs into them and connects regardless of walls.
-            local toThrower = throwerPart.Position - targetRoot.Position
+            local toThrower: Vector3 = throwerPart.Position - targetRoot.Position
             if toThrower.Magnitude > 0.1 then
                 toThrower = toThrower.Unit
             else
@@ -171,59 +174,105 @@ function Module.init(runtime: any)
             originPos = throwerPart.Position
         end
 
-        local aimPos = predictAim(target, originPos)
+        local aimPos: Vector3 = predictAim(target, originPos)
         remote:FireServer(CFrame.new(originPos), CFrame.new(aimPos))
         lastThrow = os.clock()
     end
 
-    local function toggle(enabled: boolean)
+    local function toggleKnifeThrow(enabled: boolean): ()
         knifeThrowSettings.enabled = enabled
         disconnectFeatureConnection("MM2KnifeThrow")
         if not enabled then
             return
         end
         lastThrow = -math.huge
-        local elapsed = 0
-        featureConnections.MM2KnifeThrow = TaskManager:Connect(function(deltaTime: number)
-            elapsed += deltaTime
-            if elapsed < 1 / 30 then
-                return
-            end
-            elapsed = 0
-            throwKnife()
-        end)
+        local elapsed: number = 0
+        featureConnections.MM2KnifeThrow =
+            TaskManager:Connect(function(deltaTime: number): ()
+                elapsed += deltaTime
+                if elapsed < 1 / 30 then
+                    return
+                end
+                elapsed = 0
+                throwKnife()
+            end)
     end
 
     local KnifeThrowFeature = createUniversalFeature(
         "Knife Throw",
-        "Auto-throws the knife at the nearest target. Silent spawns the blade beside the target so it connects at any distance or through walls.",
+        "Auto-throws the knife at the nearest target. Silent spawns the blade"
+            .. " beside the target so it connects at any distance or through walls.",
         7,
-        toggle,
+        toggleKnifeThrow,
         {
             categoryName = "Blatant",
             parent = MM2Scroll,
             registry = mm2Features,
         }
     )
-    addCycleOption(KnifeThrowFeature, "Mode", { "Normal", "Silent" }, 1, function(value: string)
-        knifeThrowSettings.mode = value
-    end)
-    addNumberOption(KnifeThrowFeature, "Fire delay", "Seconds between automatic throws", 1, 0.2, 3, function(value: number)
-        knifeThrowSettings.fireDelay = value
-    end, 0.1, "s")
-    addNumberOption(KnifeThrowFeature, "Range", "Maximum target distance for normal throws", 120, 10, 400, function(value: number)
-        knifeThrowSettings.range = value
-    end, 5, " studs")
-    addNumberOption(KnifeThrowFeature, "Spawn offset", "Silent only: how far beside the target the blade spawns", 5, 1, 15, function(value: number)
-        knifeThrowSettings.spawnOffset = value
-    end, 1, " studs")
+    addCycleOption(
+        KnifeThrowFeature,
+        "Mode",
+        {"Normal", "Silent"},
+        1,
+        function(value: string): ()
+            knifeThrowSettings.mode = value
+        end
+    )
+    addNumberOption(
+        KnifeThrowFeature,
+        "Fire delay",
+        knifeThrowSettings.fireDelay,
+        0.2,
+        3,
+        function(value: number): ()
+            knifeThrowSettings.fireDelay = value
+        end,
+        "Seconds between automatic throws.",
+        0.1
+    )
+    addNumberOption(
+        KnifeThrowFeature,
+        "Range",
+        knifeThrowSettings.range,
+        10,
+        400,
+        function(value: number): ()
+            knifeThrowSettings.range = value
+        end,
+        "Maximum target distance for normal throws. Silent ignores this.",
+        5
+    )
+    addNumberOption(
+        KnifeThrowFeature,
+        "Spawn offset",
+        knifeThrowSettings.spawnOffset,
+        1,
+        15,
+        function(value: number): ()
+            knifeThrowSettings.spawnOffset = value
+        end,
+        "Silent only: how far beside the target the blade spawns.",
+        1
+    )
 
-    mm2Features["Knife Throw"] = KnifeThrowFeature
+    activeCleanup = function(): ()
+        toggleKnifeThrow(false)
+    end
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
 
-    table.insert(state.activeCleanup, function()
-        knifeThrowSettings.enabled = false
-        disconnectFeatureConnection("MM2KnifeThrow")
-    end)
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    pcall(activeCleanup)
+    activeCleanup = function(): () end
+    Module.Events = {}
+    Module.Runtime = nil
 end
 
 return Module
