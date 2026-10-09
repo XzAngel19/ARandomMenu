@@ -1786,6 +1786,61 @@ local function createTrajectoryCalibration(): any
             or -math.huge
     end
 
+    local function loadSavedHistory(): ()
+        if type(environment.readfile) ~= "function" then
+            return
+        end
+        local okRead: boolean, rawData: any = pcall(
+            environment.readfile,
+            OUTPUT_PATH
+        )
+        if not okRead or type(rawData) ~= "string" or #rawData < 10 then
+            return
+        end
+        local okDecode: boolean, decoded: any = pcall(function(): any
+            return HttpService:JSONDecode(rawData)
+        end)
+        if not okDecode or type(decoded) ~= "table" then
+            return
+        end
+        local aggregate: any = decoded.aggregate or {}
+        if type(aggregate.gunAcceptanceMs) == "table" then
+            applyStatsPayload(runtime.gunAcceptance, aggregate.gunAcceptanceMs)
+        end
+        if type(aggregate.knifeSpeedStudsPerSecond) == "table" then
+            applyStatsPayload(runtime.knifeSpeed, aggregate.knifeSpeedStudsPerSecond)
+        end
+        if type(aggregate.knifeSpawnDelayMs) == "table" then
+            applyStatsPayload(runtime.knifeSpawnDelay, aggregate.knifeSpawnDelayMs)
+        end
+        if type(decoded.analytics) == "table" and type(decoded.analytics.motionModel) == "table" then
+            for key: string, bucket: any in pairs(decoded.analytics.motionModel) do
+                if type(bucket) == "table" then
+                    runtime.motionBuckets[key] = table.clone(bucket)
+                end
+            end
+        end
+        if type(decoded.session) == "table" then
+            runtime.sessionGunAttempts = tonumber(decoded.session.gunAttempts) or 0
+            runtime.sessionGunConfirmed = tonumber(decoded.session.gunConfirmed) or 0
+            runtime.sessionKnifeAttempts = tonumber(decoded.session.knifeAttempts) or 0
+            runtime.sessionKnifeConfirmed = tonumber(decoded.session.knifeConfirmed) or 0
+            if type(decoded.session.events) == "table" then
+                runtime.events = {}
+                for _, ev: any in ipairs(decoded.session.events) do
+                    table.insert(runtime.events, ev)
+                end
+            end
+        end
+        print(string.format(
+            "%s Loaded history from disk: gun %d confirmed · knife %d confirmed · %d events",
+            trajectoryLogPrefix,
+            runtime.sessionGunConfirmed,
+            runtime.sessionKnifeConfirmed,
+            #runtime.events
+        ))
+    end
+
     local function vectorArray(value: Vector3): {number}
         return {value.X, value.Y, value.Z}
     end
@@ -2265,10 +2320,9 @@ local function createTrajectoryCalibration(): any
                 OUTPUT_PATH
             )
             if okRead and type(existingRaw) == "string" then
-                local okDecode: boolean, decoded: any = pcall(
-                    HttpService.JSONDecode,
-                    existingRaw
-                )
+                local okDecode: boolean, decoded: any = pcall(function(): any
+                    return HttpService:JSONDecode(existingRaw)
+                end)
                 if okDecode and type(decoded) == "table" then
                     stored = decoded
                 end
@@ -2485,6 +2539,48 @@ local function createTrajectoryCalibration(): any
             end
         end
         if not selectedIndex then
+            local character: Model? = LocalPlayer.Character
+            local root: BasePart? = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+            local isLocalShooter: boolean = false
+            if eventTool and eventTool.Parent == character then
+                isLocalShooter = true
+            elseif root and eventOrigin and (eventOrigin - root.Position).Magnitude <= 20 then
+                isLocalShooter = true
+            end
+            if isLocalShooter then
+                local pingMs: number = getPingMilliseconds()
+                local target: Player? = findMurderer()
+                local endpoint: Vector3? = worldPosition(endpointValue)
+                local targetCharacter: Model? = target and target.Character
+                local hitTarget: boolean = typeof(hitPartValue) == "Instance"
+                    and targetCharacter ~= nil
+                    and hitPartValue:IsDescendantOf(targetCharacter)
+                addSample(runtime.gunAcceptance, pingMs)
+                addSample(runtime.gunAcceptanceDelta, pingMs)
+                runtime.sessionGunAttempts += 1
+                runtime.sessionGunConfirmed += 1
+                appendEvent({
+                    kind = "gun",
+                    serverTime = workspace:GetServerTimeNow(),
+                    pingMs = pingMs,
+                    latencyMs = pingMs,
+                    targetUserId = target and target.UserId or nil,
+                    targetName = target and target.Name or nil,
+                    endpoint = endpoint and vectorArray(endpoint) or nil,
+                    hitTarget = hitTarget,
+                })
+                if type(state.emitGameBridgeEvent) == "function" then
+                    state.emitGameBridgeEvent("authoringShot", {
+                        kind = "gun",
+                        toolName = eventTool and eventTool.Name or "Gun",
+                        originPos = eventOrigin or (root and root.Position),
+                        aimPos = endpoint or Vector3.zero,
+                        targetName = target and target.Name or nil,
+                        silent = false,
+                    })
+                end
+                scheduleAutosave()
+            end
             return
         end
         local pending: PendingGun = runtime.pendingGuns[selectedIndex]
@@ -2849,6 +2945,7 @@ local function createTrajectoryCalibration(): any
         end
         runtime.active = true
         runtime.startedAt = os.clock()
+        loadSavedHistory()
         observeContainer(LocalPlayer:FindFirstChildOfClass("Backpack"))
         observeContainer(LocalPlayer.Character)
         trackConnection(LocalPlayer.CharacterAdded:Connect(function(
@@ -2887,10 +2984,6 @@ local function createTrajectoryCalibration(): any
     function controller:save(reason: string?): boolean
         local saved: boolean = saveSnapshot(reason or "manual")
         if saved then
-            -- The snapshot is on disk; clear the working history so the next
-            -- save is a fresh capture instead of re-appending everything that
-            -- was already saved before.
-            clearHistory()
             runtime.dirty = false
         end
         return saved
@@ -2898,8 +2991,13 @@ local function createTrajectoryCalibration(): any
 
     function controller:reset(): ()
         clearHistory()
-        runtime.dirty = true
-        saveSnapshot("reset")
+        runtime.dirty = false
+        if type(environment.delfile) == "function" then
+            pcall(environment.delfile, OUTPUT_PATH)
+        elseif type(environment.writefile) == "function" then
+            pcall(environment.writefile, OUTPUT_PATH, "{}")
+        end
+        print(trajectoryLogPrefix .. " History cleared.")
     end
 
     function controller:getEstimates(): Estimates

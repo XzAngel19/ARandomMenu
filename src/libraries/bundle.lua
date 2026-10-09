@@ -1,5 +1,5 @@
 return {
-    stamp = "audit-20261009-2",
+    stamp = "audit-20261009-3",
     files = {
         ["src/libraries/Manifest.lua"] = [=[
 export type ModuleEntry = {
@@ -250,6 +250,7 @@ local Manifest: Manifest = {
 }
 
 return Manifest
+
 ]=],
         ["src/guis/Wurst/Code/Widgets.lua"] = [=[
 export type OptionDefinition = {
@@ -2576,6 +2577,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/libraries/Framework.lua"] = [=[
 export type CleanupItem = any
@@ -3438,6 +3440,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/libraries/Entity.lua"] = [=[
 export type Entity = {
@@ -4122,6 +4125,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/libraries/Targeting.lua"] = [=[
 export type Query = {
@@ -4389,6 +4393,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/libraries/Weapons.lua"] = [=[
 export type Candidate = {
@@ -4951,6 +4956,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/libraries/Render.lua"] = [=[
 export type Rect = {
@@ -5541,6 +5547,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/guis/Wurst/Code/Cards.lua"] = [=[
 local Module = {
@@ -6418,6 +6425,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/guis/Wurst/Code/WindowManager.lua"] = [=[
 export type WindowDefinition = {
@@ -7553,6 +7561,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/guis/Wurst/Code/ClickGui.lua"] = [=[
 export type CategoryWindow = {
@@ -7935,6 +7944,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/guis/Wurst/Code/FloatingWindows.lua"] = [=[
 export type FloatingWindowRecord = {
@@ -9460,6 +9470,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/guis/Wurst/Code/SettingsPage.lua"] = [=[
 local Module = {
@@ -11154,6 +11165,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/guis/Wurst/Code/MobileActions.lua"] = [=[
 export type MobileHoldCallbacks = {
@@ -11868,6 +11880,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/guis/Wurst/Code/Furniture.lua"] = [=[
 local Module = {
@@ -13430,6 +13443,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Render/ItemRender.lua"] = [=[
 export type Runtime = {
@@ -13875,6 +13889,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Render/PlayerESP.lua"] = [=[
 export type Runtime = {
@@ -14413,6 +14428,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Render/Chams.lua"] = [=[
 export type Runtime = {
@@ -14680,6 +14696,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Render/Arrows.lua"] = [=[
 export type Runtime = {
@@ -14821,6 +14838,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Render/NPCESP.lua"] = [=[
 export type Runtime = {
@@ -15312,6 +15330,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Combat/KillAura.lua"] = [=[
 export type Runtime = {
@@ -15911,6 +15930,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Utility/RemoteLogger.lua"] = [=[
 export type Runtime = {
@@ -16346,6 +16366,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Utility/Learning.lua"] = [=[
 export type Runtime = {
@@ -16479,6 +16500,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Blatant/ClickTeleport.lua"] = [=[
 export type Runtime = {
@@ -16921,6 +16943,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Combat/AutoClicker.lua"] = [=[
 export type Runtime = {
@@ -17259,6 +17282,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Combat/TriggerBot.lua"] = [=[
 export type Runtime = {
@@ -17556,6 +17580,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Combat/AimAssist.lua"] = [=[
 export type Runtime = {
@@ -17827,6 +17852,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Render/XRay.lua"] = [=[
 export type Runtime = {
@@ -17934,6 +17960,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Blatant/HighJump.lua"] = [=[
 export type Runtime = {
@@ -18014,6 +18041,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Blatant/Spider.lua"] = [=[
 export type Runtime = {
@@ -18193,6 +18221,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Blatant/WallHop.lua"] = [=[
 export type Runtime = {
@@ -18465,6 +18494,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/World/SafeWalk.lua"] = [=[
 export type Runtime = {
@@ -18676,6 +18706,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/World/RejoinServer.lua"] = [=[
 export type Runtime = {
@@ -18793,6 +18824,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Render/ZoomUnlocker.lua"] = [=[
 export type Runtime = {
@@ -18938,6 +18970,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/World/InteractExtender.lua"] = [=[
 export type Runtime = {
@@ -19163,6 +19196,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Blatant/Fly.lua"] = [=[
 export type Runtime = {
@@ -19801,6 +19835,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Blatant/VehicleSpeed.lua"] = [=[
 export type Runtime = {
@@ -20082,6 +20117,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Blatant/AntiVoid.lua"] = [=[
 export type Runtime = {
@@ -20220,6 +20256,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/World/Gravity.lua"] = [=[
 export type Runtime = {
@@ -20299,6 +20336,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Blatant/JumpPower.lua"] = [=[
 export type Runtime = {
@@ -20399,6 +20437,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Blatant/InfiniteJump.lua"] = [=[
 export type Runtime = {
@@ -20596,6 +20635,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Render/FieldOfView.lua"] = [=[
 export type Runtime = {
@@ -20672,6 +20712,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Blatant/Noclip.lua"] = [=[
 export type Runtime = {
@@ -20763,6 +20804,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/World/AntiAfk.lua"] = [=[
 export type Runtime = {
@@ -20836,6 +20878,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Blatant/AntiFling.lua"] = [=[
 export type Runtime = {
@@ -20952,6 +20995,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Utility/LagSwitch.lua"] = [=[
 export type Runtime = {
@@ -21050,6 +21094,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Blatant/Fling.lua"] = [=[
 export type Runtime = {
@@ -21336,6 +21381,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Utility/ImproveFps.lua"] = [=[
 export type Runtime = {
@@ -21514,6 +21560,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Render/Fullbright.lua"] = [=[
 export type Runtime = {
@@ -21624,6 +21671,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Blatant/FreezeMovements.lua"] = [=[
 export type Runtime = {
@@ -21752,6 +21800,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Blatant/Speed.lua"] = [=[
 export type Runtime = {
@@ -22033,6 +22082,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Combat/Hitboxes.lua"] = [=[
 export type Runtime = {
@@ -22359,6 +22409,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Render/ProjectileCalibration.lua"] = [=[
 export type Runtime = {
@@ -22937,6 +22988,56 @@ function Module.init(context: Runtime): any
             end))
         end
 
+        local function loadSavedAnalytics(): ()
+            if type(executorEnvironment.readfile) ~= "function" then
+                return
+            end
+            local okRead: boolean, rawData: any = pcall(
+                executorEnvironment.readfile,
+                outputPath
+            )
+            if not okRead or type(rawData) ~= "string" or #rawData < 10 then
+                return
+            end
+            local okDecode: boolean, decoded: any = pcall(function(): any
+                return HttpService:JSONDecode(rawData)
+            end)
+            if not okDecode or type(decoded) ~= "table" then
+                return
+            end
+            if type(decoded.summary) == "table" then
+                runtime.totalActivations = tonumber(decoded.summary.totalActivations)
+                    or tonumber(decoded.summary.activations)
+                    or 0
+                runtime.totalProjectiles = tonumber(decoded.summary.totalProjectiles)
+                    or tonumber(decoded.summary.projectiles)
+                    or 0
+                runtime.rejectedCandidates = tonumber(decoded.summary.rejectedCandidates) or 0
+            end
+            if type(decoded.pingBuckets) == "table" then
+                for key: string, bData: any in pairs(decoded.pingBuckets) do
+                    if type(bData) == "table" then
+                        local c: number = tonumber(bData.count) or 0
+                        local speed: number = tonumber(bData.meanSpeed) or 0
+                        local delay: number = tonumber(bData.meanLaunchDelayMs) or 0
+                        if c > 0 then
+                            local bucket: BucketRecord = ensureBucket(key)
+                            bucket.count = c
+                            bucket.speedSum = speed * c
+                            bucket.speedSquaredSum = (speed * speed) * c
+                            bucket.delaySum = delay * c
+                        end
+                    end
+                end
+            end
+            if type(decoded.projectiles) == "table" then
+                runtime.events = {}
+                for _, p: any in ipairs(decoded.projectiles) do
+                    table.insert(runtime.events, p)
+                end
+            end
+        end
+
         controller = {} :: Controller
         controller.tuning = tuning
 
@@ -22951,6 +23052,7 @@ function Module.init(context: Runtime): any
             end
             runtime.enabled = true
             runtime.startedAt = os.clock()
+            loadSavedAnalytics()
             observeContainer(LocalPlayer:FindFirstChildOfClass("Backpack"))
             observeContainer(LocalPlayer.Character)
             table.insert(runtime.connections, LocalPlayer.CharacterAdded:Connect(function(
@@ -22968,29 +23070,20 @@ function Module.init(context: Runtime): any
         end
 
         function controller:delete(): boolean
-            local deleteFile: any = executorEnvironment.delfile
-            local isFile: any = executorEnvironment.isfile
-            if type(deleteFile) ~= "function" then
-                return false
-            end
-            local exists: boolean = true
-            if type(isFile) == "function" then
-                local checked: boolean, result: any = pcall(isFile, outputPath)
-                exists = checked and result == true
-            end
-            if exists then
-                local deleted: boolean = pcall(deleteFile, outputPath)
-                if not deleted then
-                    return false
-                end
-            end
             runtime.events = {}
             runtime.buckets = {}
             runtime.totalActivations = 0
             runtime.totalProjectiles = 0
             runtime.rejectedCandidates = 0
             runtime.dirty = false
-            return true
+            local deleteFile: any = executorEnvironment.delfile
+            local okDelete: boolean = false
+            if type(deleteFile) == "function" then
+                okDelete = pcall(deleteFile, outputPath)
+            elseif type(executorEnvironment.writefile) == "function" then
+                okDelete = pcall(executorEnvironment.writefile, outputPath, "{}")
+            end
+            return okDelete
         end
 
         function controller:status(): string
@@ -23101,11 +23194,11 @@ function Module.init(context: Runtime): any
             notify("save failed; check F9")
         end
     end)
-    addActionOption(ProjectileCalibrationFeature, "Delete analytics", function(): ()
+    addActionOption(ProjectileCalibrationFeature, "Clear History", function(): ()
         if calibration:delete() then
-            notify("analytics deleted")
+            notify("calibration history cleared")
         else
-            notify("delete failed; check F9")
+            notify("clear history failed; check F9")
         end
     end)
     addInformationOption(
@@ -23133,6 +23226,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Utility/GameLearning.lua"] = [=[
 export type Runtime = {
@@ -23165,6 +23259,7 @@ function Module.init(context: Runtime): any
     local PlayersService: any = host.Players or (game :: any):GetService("Players")
     local Stats: any = host.Stats or (game :: any):GetService("Stats")
     local httpService: any = host.HttpService or (game :: any):GetService("HttpService")
+    local UserInputService: any = host.UserInputService or (game :: any):GetService("UserInputService")
     -- Games that author shots (MM2's SilentAIM) publish the last authored
     -- geometry here; nil everywhere else, so this stays a no-op.
     local gameBridge: any = context.services and
@@ -23892,25 +23987,60 @@ function Module.init(context: Runtime): any
             return insights
         end
 
-        -- Consecutive accumulation: counters merge as before, and the raw
-        -- event lists append to whatever previous sessions already stored
-        -- (capped), so the log grows across games instead of resetting on
-        -- every save or every exit.
         local MAX_STORED_EVENTS: number = 3000
-        local function mergeEventList(existing: any, current: {any}): {any}
-            local merged: {any} = {}
-            if type(existing) == "table" then
-                for _, entry: any in ipairs(existing) do
-                    table.insert(merged, entry)
+
+        local function loadStoredLogs(): ()
+            if type(executorEnvironment.readfile) ~= "function" then
+                return
+            end
+            local okRead: boolean, existingRaw: any = pcall(
+                executorEnvironment.readfile,
+                outputPath
+            )
+            if not okRead or type(existingRaw) ~= "string" or #existingRaw < 10 then
+                return
+            end
+            local okDecode: boolean, existing: any = pcall(function(): any
+                return httpService:JSONDecode(existingRaw)
+            end)
+            if not okDecode or type(existing) ~= "table" then
+                return
+            end
+            if type(existing.aggregates) == "table" then
+                for key: string, val: any in pairs(existing.aggregates) do
+                    if runtime.aggregates[key] ~= nil and type(val) == "number" then
+                        runtime.aggregates[key] = val
+                    end
                 end
             end
-            for _, entry: any in ipairs(current) do
-                table.insert(merged, entry)
+            if type(existing.spawnShots) == "table" then
+                for key: string, val: any in pairs(existing.spawnShots) do
+                    runtime.spawnShots[key] = tonumber(val) or 0
+                end
             end
-            while #merged > MAX_STORED_EVENTS do
-                table.remove(merged, 1)
+            if type(existing.spawnKills) == "table" then
+                for key: string, val: any in pairs(existing.spawnKills) do
+                    runtime.spawnKills[key] = tonumber(val) or 0
+                end
             end
-            return merged
+            if type(existing.shots) == "table" then
+                runtime.shots = {}
+                for _, s: any in ipairs(existing.shots) do
+                    table.insert(runtime.shots, s)
+                end
+            end
+            if type(existing.movements) == "table" then
+                runtime.movements = {}
+                for _, m: any in ipairs(existing.movements) do
+                    table.insert(runtime.movements, m)
+                end
+            end
+            if type(existing.hits) == "table" then
+                runtime.hits = {}
+                for _, h: any in ipairs(existing.hits) do
+                    table.insert(runtime.hits, h)
+                end
+            end
         end
 
         saveSnapshot = function(reason: string?, silent: boolean?): boolean
@@ -23922,39 +24052,14 @@ function Module.init(context: Runtime): any
                 pcall(executorEnvironment.makefolder, outputTelemetry)
                 pcall(executorEnvironment.makefolder, outputFolder)
             end
-            local merged: {[string]: any} = {}
-            local mergedInsights: {string} = {}
-            if type(executorEnvironment.readfile) == "function" then
-                local okRead: boolean, existingRaw: any = pcall(
-                    executorEnvironment.readfile,
-                    outputPath
-                )
-                if okRead and type(existingRaw) == "string" then
-                    local okDecode: boolean, existing: any = pcall(
-                        httpService.JSONDecode,
-                        httpService,
-                        existingRaw
-                    )
-                    if okDecode and type(existing) == "table" then
-                        merged = existing
-                        mergedInsights = existing.insights or {}
-                    end
-                end
+            while #runtime.shots > MAX_STORED_EVENTS do
+                table.remove(runtime.shots, 1)
             end
-            local aggregates: any = merged.aggregates or {}
-            for key: string, base: number in pairs(runtime.aggregates) do
-                aggregates[key] = (tonumber(aggregates[key]) or 0)
-                    + (base :: number)
+            while #runtime.movements > MAX_STORED_EVENTS do
+                table.remove(runtime.movements, 1)
             end
-            local spawnShots: any = merged.spawnShots or {}
-            for key: string, base: number in pairs(runtime.spawnShots) do
-                spawnShots[key] = (tonumber(spawnShots[key]) or 0)
-                    + (base :: number)
-            end
-            local spawnKills: any = merged.spawnKills or {}
-            for key: string, base: number in pairs(runtime.spawnKills) do
-                spawnKills[key] = (tonumber(spawnKills[key]) or 0)
-                    + (base :: number)
+            while #runtime.hits > MAX_STORED_EVENTS do
+                table.remove(runtime.hits, 1)
             end
             local payload: {[string]: any} = {
                 schema = 1,
@@ -23966,14 +24071,13 @@ function Module.init(context: Runtime): any
                     startedAt = os.time(),
                     uptimeSeconds = math.floor(os.clock()),
                 },
-                aggregates = aggregates,
+                aggregates = runtime.aggregates,
                 insights = buildInsights(),
-                previousInsights = mergedInsights,
-                spawnShots = spawnShots,
-                spawnKills = spawnKills,
-                shots = mergeEventList(merged.shots, runtime.shots),
-                movements = mergeEventList(merged.movements, runtime.movements),
-                hits = mergeEventList(merged.hits, runtime.hits),
+                spawnShots = runtime.spawnShots,
+                spawnKills = runtime.spawnKills,
+                shots = runtime.shots,
+                movements = runtime.movements,
+                hits = runtime.hits,
             }
             local okEncode: boolean, encoded: any = pcall(
                 httpService.JSONEncode,
@@ -24031,25 +24135,31 @@ function Module.init(context: Runtime): any
         end
 
         local function deleteLogs(): boolean
+            runtime.aggregates = {
+                shots = 0,
+                kills = 0,
+                wallshotKills = 0,
+                longrangeKills = 0,
+                misses = 0,
+                teleports = 0,
+                speedSpikes = 0,
+                hitboxAnomalies = 0,
+            }
+            runtime.spawnShots = {}
+            runtime.spawnKills = {}
+            runtime.shots = {}
+            runtime.hits = {}
+            runtime.movements = {}
+            runtime.shotCounter = 0
+            runtime.saveDirty = false
             local deleteFile: any = executorEnvironment.delfile
-            local isFile: any = executorEnvironment.isfile
-            if type(deleteFile) ~= "function" then
-                return false
+            local okDelete: boolean = false
+            if type(deleteFile) == "function" then
+                okDelete = pcall(deleteFile, outputPath)
+            elseif type(executorEnvironment.writefile) == "function" then
+                okDelete = pcall(executorEnvironment.writefile, outputPath, "{}")
             end
-            local exists: boolean = true
-            local okCheck: boolean, result: any = pcall(isFile, outputPath)
-            if not okCheck then
-                exists = false
-            else
-                exists = result == true
-            end
-            if not exists then
-                return true
-            end
-            local okDelete: boolean = pcall(deleteFile, outputPath)
-            if okDelete then
-                notify("Game Learning: log deleted")
-            end
+            notify("Game Learning: history cleared")
             return okDelete
         end
 
@@ -24089,6 +24199,7 @@ function Module.init(context: Runtime): any
                 return
             end
             runtime.enabled = true
+            loadStoredLogs()
             startMovementProbe()
             startHitboxProbe()
             if not runtime.autosaveTask then
@@ -24112,6 +24223,31 @@ function Module.init(context: Runtime): any
                     observeContainer(character)
                 end)
             )
+            table.insert(
+                runtime.connections,
+                UserInputService.InputBegan:Connect(function(input: InputObject, gameProcessed: boolean): ()
+                    if gameProcessed then
+                        return
+                    end
+                    if input.UserInputType ~= Enum.UserInputType.MouseButton1
+                        and input.UserInputType ~= Enum.UserInputType.Touch then
+                        return
+                    end
+                    if not (runtime.enabled and tuning.logShots) then
+                        return
+                    end
+                    local character: Model? = LocalPlayer.Character
+                    local equippedTool: Tool? = character and character:FindFirstChildOfClass("Tool")
+                    if not equippedTool then
+                        return
+                    end
+                    if os.clock() - runtime.lastAuthoredAt < 0.35 then
+                        return
+                    end
+                    runtime.lastAuthoredAt = os.clock()
+                    recordShot(equippedTool)
+                end)
+            )
             for _, player: Player in ipairs(PlayersService:GetPlayers()) do
                 watchPlayer(player)
             end
@@ -24130,8 +24266,9 @@ function Module.init(context: Runtime): any
             end
             return saveSnapshot("close")
         end
-        controller.noteAuthoringShot = function(info: any): ()
-            if runtime.enabled and tuning.logShots then
+        controller.noteAuthoringShot = function(selfOrInfo: any, maybeInfo: any): ()
+            local info: any = if type(maybeInfo) == "table" then maybeInfo else selfOrInfo
+            if runtime.enabled and tuning.logShots and type(info) == "table" then
                 recordAuthoredShot(info)
             end
         end
@@ -24222,7 +24359,7 @@ function Module.init(context: Runtime): any
     addActionOption(GameLearningFeature, "Save logs", function(): ()
         gameLearning:save()
     end)
-    addActionOption(GameLearningFeature, "Delete logs", function(): ()
+    addActionOption(GameLearningFeature, "Clear History", function(): ()
         gameLearning:delete()
     end)
     addInformationOption(
@@ -24251,6 +24388,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/universal/Utility/SpinBot.lua"] = [=[
 export type Runtime = {
@@ -24401,6 +24539,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/MM2/base.lua"] = [=[
 local Module = {
@@ -26191,6 +26330,61 @@ local function createTrajectoryCalibration(): any
             or -math.huge
     end
 
+    local function loadSavedHistory(): ()
+        if type(environment.readfile) ~= "function" then
+            return
+        end
+        local okRead: boolean, rawData: any = pcall(
+            environment.readfile,
+            OUTPUT_PATH
+        )
+        if not okRead or type(rawData) ~= "string" or #rawData < 10 then
+            return
+        end
+        local okDecode: boolean, decoded: any = pcall(function(): any
+            return HttpService:JSONDecode(rawData)
+        end)
+        if not okDecode or type(decoded) ~= "table" then
+            return
+        end
+        local aggregate: any = decoded.aggregate or {}
+        if type(aggregate.gunAcceptanceMs) == "table" then
+            applyStatsPayload(runtime.gunAcceptance, aggregate.gunAcceptanceMs)
+        end
+        if type(aggregate.knifeSpeedStudsPerSecond) == "table" then
+            applyStatsPayload(runtime.knifeSpeed, aggregate.knifeSpeedStudsPerSecond)
+        end
+        if type(aggregate.knifeSpawnDelayMs) == "table" then
+            applyStatsPayload(runtime.knifeSpawnDelay, aggregate.knifeSpawnDelayMs)
+        end
+        if type(decoded.analytics) == "table" and type(decoded.analytics.motionModel) == "table" then
+            for key: string, bucket: any in pairs(decoded.analytics.motionModel) do
+                if type(bucket) == "table" then
+                    runtime.motionBuckets[key] = table.clone(bucket)
+                end
+            end
+        end
+        if type(decoded.session) == "table" then
+            runtime.sessionGunAttempts = tonumber(decoded.session.gunAttempts) or 0
+            runtime.sessionGunConfirmed = tonumber(decoded.session.gunConfirmed) or 0
+            runtime.sessionKnifeAttempts = tonumber(decoded.session.knifeAttempts) or 0
+            runtime.sessionKnifeConfirmed = tonumber(decoded.session.knifeConfirmed) or 0
+            if type(decoded.session.events) == "table" then
+                runtime.events = {}
+                for _, ev: any in ipairs(decoded.session.events) do
+                    table.insert(runtime.events, ev)
+                end
+            end
+        end
+        print(string.format(
+            "%s Loaded history from disk: gun %d confirmed · knife %d confirmed · %d events",
+            trajectoryLogPrefix,
+            runtime.sessionGunConfirmed,
+            runtime.sessionKnifeConfirmed,
+            #runtime.events
+        ))
+    end
+
     local function vectorArray(value: Vector3): {number}
         return {value.X, value.Y, value.Z}
     end
@@ -26670,10 +26864,9 @@ local function createTrajectoryCalibration(): any
                 OUTPUT_PATH
             )
             if okRead and type(existingRaw) == "string" then
-                local okDecode: boolean, decoded: any = pcall(
-                    HttpService.JSONDecode,
-                    existingRaw
-                )
+                local okDecode: boolean, decoded: any = pcall(function(): any
+                    return HttpService:JSONDecode(existingRaw)
+                end)
                 if okDecode and type(decoded) == "table" then
                     stored = decoded
                 end
@@ -26890,6 +27083,48 @@ local function createTrajectoryCalibration(): any
             end
         end
         if not selectedIndex then
+            local character: Model? = LocalPlayer.Character
+            local root: BasePart? = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+            local isLocalShooter: boolean = false
+            if eventTool and eventTool.Parent == character then
+                isLocalShooter = true
+            elseif root and eventOrigin and (eventOrigin - root.Position).Magnitude <= 20 then
+                isLocalShooter = true
+            end
+            if isLocalShooter then
+                local pingMs: number = getPingMilliseconds()
+                local target: Player? = findMurderer()
+                local endpoint: Vector3? = worldPosition(endpointValue)
+                local targetCharacter: Model? = target and target.Character
+                local hitTarget: boolean = typeof(hitPartValue) == "Instance"
+                    and targetCharacter ~= nil
+                    and hitPartValue:IsDescendantOf(targetCharacter)
+                addSample(runtime.gunAcceptance, pingMs)
+                addSample(runtime.gunAcceptanceDelta, pingMs)
+                runtime.sessionGunAttempts += 1
+                runtime.sessionGunConfirmed += 1
+                appendEvent({
+                    kind = "gun",
+                    serverTime = workspace:GetServerTimeNow(),
+                    pingMs = pingMs,
+                    latencyMs = pingMs,
+                    targetUserId = target and target.UserId or nil,
+                    targetName = target and target.Name or nil,
+                    endpoint = endpoint and vectorArray(endpoint) or nil,
+                    hitTarget = hitTarget,
+                })
+                if type(state.emitGameBridgeEvent) == "function" then
+                    state.emitGameBridgeEvent("authoringShot", {
+                        kind = "gun",
+                        toolName = eventTool and eventTool.Name or "Gun",
+                        originPos = eventOrigin or (root and root.Position),
+                        aimPos = endpoint or Vector3.zero,
+                        targetName = target and target.Name or nil,
+                        silent = false,
+                    })
+                end
+                scheduleAutosave()
+            end
             return
         end
         local pending: PendingGun = runtime.pendingGuns[selectedIndex]
@@ -27254,6 +27489,7 @@ local function createTrajectoryCalibration(): any
         end
         runtime.active = true
         runtime.startedAt = os.clock()
+        loadSavedHistory()
         observeContainer(LocalPlayer:FindFirstChildOfClass("Backpack"))
         observeContainer(LocalPlayer.Character)
         trackConnection(LocalPlayer.CharacterAdded:Connect(function(
@@ -27292,10 +27528,6 @@ local function createTrajectoryCalibration(): any
     function controller:save(reason: string?): boolean
         local saved: boolean = saveSnapshot(reason or "manual")
         if saved then
-            -- The snapshot is on disk; clear the working history so the next
-            -- save is a fresh capture instead of re-appending everything that
-            -- was already saved before.
-            clearHistory()
             runtime.dirty = false
         end
         return saved
@@ -27303,8 +27535,13 @@ local function createTrajectoryCalibration(): any
 
     function controller:reset(): ()
         clearHistory()
-        runtime.dirty = true
-        saveSnapshot("reset")
+        runtime.dirty = false
+        if type(environment.delfile) == "function" then
+            pcall(environment.delfile, OUTPUT_PATH)
+        elseif type(environment.writefile) == "function" then
+            pcall(environment.writefile, OUTPUT_PATH, "{}")
+        end
+        print(trajectoryLogPrefix .. " History cleared.")
     end
 
     function controller:getEstimates(): Estimates
@@ -28216,6 +28453,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/MM2/Blatant/Shoot.lua"] = [=[
 local Module = {
@@ -29144,6 +29382,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/MM2/Blatant/KnifeAura.lua"] = [=[
 local Module = {
@@ -29372,6 +29611,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/MM2/Blatant/KnifeThrow.lua"] = [=[
 local Module = {
@@ -29663,6 +29903,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/MM2/Render/RoleTags.lua"] = [=[
 local Module = {
@@ -29908,6 +30149,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/MM2/Render/RoundEsp.lua"] = [=[
 local Module = {
@@ -30371,6 +30613,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/MM2/Render/AlwaysShowTimer.lua"] = [=[
 local Module = {
@@ -30655,6 +30898,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/MM2/Movement/Sprint.lua"] = [=[
 local Module = {
@@ -30831,6 +31075,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/MM2/Movement/Teleport.lua"] = [=[
 local Module = {
@@ -31015,6 +31260,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/MM2/Fun/InstantRoleNotify.lua"] = [=[
 local Module = {
@@ -31113,6 +31359,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/MM2/Fun/BlurtRoles.lua"] = [=[
 local Module = {
@@ -31365,6 +31612,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
         ["src/games/MM2/Other/TrajectoryCalibration.lua"] = [=[
 local Module = {
@@ -31408,9 +31656,9 @@ function Module.init(runtime: any): any
             notify("Trajectory calibration could not be saved; check F9.")
         end
     end)
-    addActionOption(TrajectoryFeature, "Reset calibration", function(): ()
+    addActionOption(TrajectoryFeature, "Clear History", function(): ()
         trajectoryCalibration:reset()
-        notify("Trajectory calibration was reset.")
+        notify("Trajectory calibration history cleared.")
     end)
     addInformationOption(
         TrajectoryFeature,
@@ -31437,6 +31685,7 @@ function Module.destroy(): ()
 end
 
 return Module
+
 ]=],
     },
 }

@@ -28,6 +28,7 @@ function Module.init(context: Runtime): any
     local PlayersService: any = host.Players or (game :: any):GetService("Players")
     local Stats: any = host.Stats or (game :: any):GetService("Stats")
     local httpService: any = host.HttpService or (game :: any):GetService("HttpService")
+    local UserInputService: any = host.UserInputService or (game :: any):GetService("UserInputService")
     -- Games that author shots (MM2's SilentAIM) publish the last authored
     -- geometry here; nil everywhere else, so this stays a no-op.
     local gameBridge: any = context.services and
@@ -755,25 +756,60 @@ function Module.init(context: Runtime): any
             return insights
         end
 
-        -- Consecutive accumulation: counters merge as before, and the raw
-        -- event lists append to whatever previous sessions already stored
-        -- (capped), so the log grows across games instead of resetting on
-        -- every save or every exit.
         local MAX_STORED_EVENTS: number = 3000
-        local function mergeEventList(existing: any, current: {any}): {any}
-            local merged: {any} = {}
-            if type(existing) == "table" then
-                for _, entry: any in ipairs(existing) do
-                    table.insert(merged, entry)
+
+        local function loadStoredLogs(): ()
+            if type(executorEnvironment.readfile) ~= "function" then
+                return
+            end
+            local okRead: boolean, existingRaw: any = pcall(
+                executorEnvironment.readfile,
+                outputPath
+            )
+            if not okRead or type(existingRaw) ~= "string" or #existingRaw < 10 then
+                return
+            end
+            local okDecode: boolean, existing: any = pcall(function(): any
+                return httpService:JSONDecode(existingRaw)
+            end)
+            if not okDecode or type(existing) ~= "table" then
+                return
+            end
+            if type(existing.aggregates) == "table" then
+                for key: string, val: any in pairs(existing.aggregates) do
+                    if runtime.aggregates[key] ~= nil and type(val) == "number" then
+                        runtime.aggregates[key] = val
+                    end
                 end
             end
-            for _, entry: any in ipairs(current) do
-                table.insert(merged, entry)
+            if type(existing.spawnShots) == "table" then
+                for key: string, val: any in pairs(existing.spawnShots) do
+                    runtime.spawnShots[key] = tonumber(val) or 0
+                end
             end
-            while #merged > MAX_STORED_EVENTS do
-                table.remove(merged, 1)
+            if type(existing.spawnKills) == "table" then
+                for key: string, val: any in pairs(existing.spawnKills) do
+                    runtime.spawnKills[key] = tonumber(val) or 0
+                end
             end
-            return merged
+            if type(existing.shots) == "table" then
+                runtime.shots = {}
+                for _, s: any in ipairs(existing.shots) do
+                    table.insert(runtime.shots, s)
+                end
+            end
+            if type(existing.movements) == "table" then
+                runtime.movements = {}
+                for _, m: any in ipairs(existing.movements) do
+                    table.insert(runtime.movements, m)
+                end
+            end
+            if type(existing.hits) == "table" then
+                runtime.hits = {}
+                for _, h: any in ipairs(existing.hits) do
+                    table.insert(runtime.hits, h)
+                end
+            end
         end
 
         saveSnapshot = function(reason: string?, silent: boolean?): boolean
@@ -785,39 +821,14 @@ function Module.init(context: Runtime): any
                 pcall(executorEnvironment.makefolder, outputTelemetry)
                 pcall(executorEnvironment.makefolder, outputFolder)
             end
-            local merged: {[string]: any} = {}
-            local mergedInsights: {string} = {}
-            if type(executorEnvironment.readfile) == "function" then
-                local okRead: boolean, existingRaw: any = pcall(
-                    executorEnvironment.readfile,
-                    outputPath
-                )
-                if okRead and type(existingRaw) == "string" then
-                    local okDecode: boolean, existing: any = pcall(
-                        httpService.JSONDecode,
-                        httpService,
-                        existingRaw
-                    )
-                    if okDecode and type(existing) == "table" then
-                        merged = existing
-                        mergedInsights = existing.insights or {}
-                    end
-                end
+            while #runtime.shots > MAX_STORED_EVENTS do
+                table.remove(runtime.shots, 1)
             end
-            local aggregates: any = merged.aggregates or {}
-            for key: string, base: number in pairs(runtime.aggregates) do
-                aggregates[key] = (tonumber(aggregates[key]) or 0)
-                    + (base :: number)
+            while #runtime.movements > MAX_STORED_EVENTS do
+                table.remove(runtime.movements, 1)
             end
-            local spawnShots: any = merged.spawnShots or {}
-            for key: string, base: number in pairs(runtime.spawnShots) do
-                spawnShots[key] = (tonumber(spawnShots[key]) or 0)
-                    + (base :: number)
-            end
-            local spawnKills: any = merged.spawnKills or {}
-            for key: string, base: number in pairs(runtime.spawnKills) do
-                spawnKills[key] = (tonumber(spawnKills[key]) or 0)
-                    + (base :: number)
+            while #runtime.hits > MAX_STORED_EVENTS do
+                table.remove(runtime.hits, 1)
             end
             local payload: {[string]: any} = {
                 schema = 1,
@@ -829,14 +840,13 @@ function Module.init(context: Runtime): any
                     startedAt = os.time(),
                     uptimeSeconds = math.floor(os.clock()),
                 },
-                aggregates = aggregates,
+                aggregates = runtime.aggregates,
                 insights = buildInsights(),
-                previousInsights = mergedInsights,
-                spawnShots = spawnShots,
-                spawnKills = spawnKills,
-                shots = mergeEventList(merged.shots, runtime.shots),
-                movements = mergeEventList(merged.movements, runtime.movements),
-                hits = mergeEventList(merged.hits, runtime.hits),
+                spawnShots = runtime.spawnShots,
+                spawnKills = runtime.spawnKills,
+                shots = runtime.shots,
+                movements = runtime.movements,
+                hits = runtime.hits,
             }
             local okEncode: boolean, encoded: any = pcall(
                 httpService.JSONEncode,
@@ -894,25 +904,31 @@ function Module.init(context: Runtime): any
         end
 
         local function deleteLogs(): boolean
+            runtime.aggregates = {
+                shots = 0,
+                kills = 0,
+                wallshotKills = 0,
+                longrangeKills = 0,
+                misses = 0,
+                teleports = 0,
+                speedSpikes = 0,
+                hitboxAnomalies = 0,
+            }
+            runtime.spawnShots = {}
+            runtime.spawnKills = {}
+            runtime.shots = {}
+            runtime.hits = {}
+            runtime.movements = {}
+            runtime.shotCounter = 0
+            runtime.saveDirty = false
             local deleteFile: any = executorEnvironment.delfile
-            local isFile: any = executorEnvironment.isfile
-            if type(deleteFile) ~= "function" then
-                return false
+            local okDelete: boolean = false
+            if type(deleteFile) == "function" then
+                okDelete = pcall(deleteFile, outputPath)
+            elseif type(executorEnvironment.writefile) == "function" then
+                okDelete = pcall(executorEnvironment.writefile, outputPath, "{}")
             end
-            local exists: boolean = true
-            local okCheck: boolean, result: any = pcall(isFile, outputPath)
-            if not okCheck then
-                exists = false
-            else
-                exists = result == true
-            end
-            if not exists then
-                return true
-            end
-            local okDelete: boolean = pcall(deleteFile, outputPath)
-            if okDelete then
-                notify("Game Learning: log deleted")
-            end
+            notify("Game Learning: history cleared")
             return okDelete
         end
 
@@ -952,6 +968,7 @@ function Module.init(context: Runtime): any
                 return
             end
             runtime.enabled = true
+            loadStoredLogs()
             startMovementProbe()
             startHitboxProbe()
             if not runtime.autosaveTask then
@@ -975,6 +992,31 @@ function Module.init(context: Runtime): any
                     observeContainer(character)
                 end)
             )
+            table.insert(
+                runtime.connections,
+                UserInputService.InputBegan:Connect(function(input: InputObject, gameProcessed: boolean): ()
+                    if gameProcessed then
+                        return
+                    end
+                    if input.UserInputType ~= Enum.UserInputType.MouseButton1
+                        and input.UserInputType ~= Enum.UserInputType.Touch then
+                        return
+                    end
+                    if not (runtime.enabled and tuning.logShots) then
+                        return
+                    end
+                    local character: Model? = LocalPlayer.Character
+                    local equippedTool: Tool? = character and character:FindFirstChildOfClass("Tool")
+                    if not equippedTool then
+                        return
+                    end
+                    if os.clock() - runtime.lastAuthoredAt < 0.35 then
+                        return
+                    end
+                    runtime.lastAuthoredAt = os.clock()
+                    recordShot(equippedTool)
+                end)
+            )
             for _, player: Player in ipairs(PlayersService:GetPlayers()) do
                 watchPlayer(player)
             end
@@ -993,8 +1035,9 @@ function Module.init(context: Runtime): any
             end
             return saveSnapshot("close")
         end
-        controller.noteAuthoringShot = function(info: any): ()
-            if runtime.enabled and tuning.logShots then
+        controller.noteAuthoringShot = function(selfOrInfo: any, maybeInfo: any): ()
+            local info: any = if type(maybeInfo) == "table" then maybeInfo else selfOrInfo
+            if runtime.enabled and tuning.logShots and type(info) == "table" then
                 recordAuthoredShot(info)
             end
         end
@@ -1085,7 +1128,7 @@ function Module.init(context: Runtime): any
     addActionOption(GameLearningFeature, "Save logs", function(): ()
         gameLearning:save()
     end)
-    addActionOption(GameLearningFeature, "Delete logs", function(): ()
+    addActionOption(GameLearningFeature, "Clear History", function(): ()
         gameLearning:delete()
     end)
     addInformationOption(

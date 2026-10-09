@@ -574,6 +574,56 @@ function Module.init(context: Runtime): any
             end))
         end
 
+        local function loadSavedAnalytics(): ()
+            if type(executorEnvironment.readfile) ~= "function" then
+                return
+            end
+            local okRead: boolean, rawData: any = pcall(
+                executorEnvironment.readfile,
+                outputPath
+            )
+            if not okRead or type(rawData) ~= "string" or #rawData < 10 then
+                return
+            end
+            local okDecode: boolean, decoded: any = pcall(function(): any
+                return HttpService:JSONDecode(rawData)
+            end)
+            if not okDecode or type(decoded) ~= "table" then
+                return
+            end
+            if type(decoded.summary) == "table" then
+                runtime.totalActivations = tonumber(decoded.summary.totalActivations)
+                    or tonumber(decoded.summary.activations)
+                    or 0
+                runtime.totalProjectiles = tonumber(decoded.summary.totalProjectiles)
+                    or tonumber(decoded.summary.projectiles)
+                    or 0
+                runtime.rejectedCandidates = tonumber(decoded.summary.rejectedCandidates) or 0
+            end
+            if type(decoded.pingBuckets) == "table" then
+                for key: string, bData: any in pairs(decoded.pingBuckets) do
+                    if type(bData) == "table" then
+                        local c: number = tonumber(bData.count) or 0
+                        local speed: number = tonumber(bData.meanSpeed) or 0
+                        local delay: number = tonumber(bData.meanLaunchDelayMs) or 0
+                        if c > 0 then
+                            local bucket: BucketRecord = ensureBucket(key)
+                            bucket.count = c
+                            bucket.speedSum = speed * c
+                            bucket.speedSquaredSum = (speed * speed) * c
+                            bucket.delaySum = delay * c
+                        end
+                    end
+                end
+            end
+            if type(decoded.projectiles) == "table" then
+                runtime.events = {}
+                for _, p: any in ipairs(decoded.projectiles) do
+                    table.insert(runtime.events, p)
+                end
+            end
+        end
+
         controller = {} :: Controller
         controller.tuning = tuning
 
@@ -588,6 +638,7 @@ function Module.init(context: Runtime): any
             end
             runtime.enabled = true
             runtime.startedAt = os.clock()
+            loadSavedAnalytics()
             observeContainer(LocalPlayer:FindFirstChildOfClass("Backpack"))
             observeContainer(LocalPlayer.Character)
             table.insert(runtime.connections, LocalPlayer.CharacterAdded:Connect(function(
@@ -605,29 +656,20 @@ function Module.init(context: Runtime): any
         end
 
         function controller:delete(): boolean
-            local deleteFile: any = executorEnvironment.delfile
-            local isFile: any = executorEnvironment.isfile
-            if type(deleteFile) ~= "function" then
-                return false
-            end
-            local exists: boolean = true
-            if type(isFile) == "function" then
-                local checked: boolean, result: any = pcall(isFile, outputPath)
-                exists = checked and result == true
-            end
-            if exists then
-                local deleted: boolean = pcall(deleteFile, outputPath)
-                if not deleted then
-                    return false
-                end
-            end
             runtime.events = {}
             runtime.buckets = {}
             runtime.totalActivations = 0
             runtime.totalProjectiles = 0
             runtime.rejectedCandidates = 0
             runtime.dirty = false
-            return true
+            local deleteFile: any = executorEnvironment.delfile
+            local okDelete: boolean = false
+            if type(deleteFile) == "function" then
+                okDelete = pcall(deleteFile, outputPath)
+            elseif type(executorEnvironment.writefile) == "function" then
+                okDelete = pcall(executorEnvironment.writefile, outputPath, "{}")
+            end
+            return okDelete
         end
 
         function controller:status(): string
@@ -738,11 +780,11 @@ function Module.init(context: Runtime): any
             notify("save failed; check F9")
         end
     end)
-    addActionOption(ProjectileCalibrationFeature, "Delete analytics", function(): ()
+    addActionOption(ProjectileCalibrationFeature, "Clear History", function(): ()
         if calibration:delete() then
-            notify("analytics deleted")
+            notify("calibration history cleared")
         else
-            notify("delete failed; check F9")
+            notify("clear history failed; check F9")
         end
     end)
     addInformationOption(

@@ -39,9 +39,9 @@ function Module.init(runtime: any): any
             notify("Trajectory calibration could not be saved; check F9.")
         end
     end)
-    addActionOption(TrajectoryFeature, "Reset calibration", function(): ()
+    addActionOption(TrajectoryFeature, "Clear History", function(): ()
         trajectoryCalibration:reset()
-        notify("Trajectory calibration was reset.")
+        notify("Trajectory calibration history cleared.")
     end)
     addInformationOption(
         TrajectoryFeature,
