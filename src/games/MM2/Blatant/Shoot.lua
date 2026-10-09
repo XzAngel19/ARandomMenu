@@ -262,15 +262,24 @@ function Module.init(runtime: any): any
     -- the server believes the target is. That is exactly what the Shoot solver
     -- already computes, so silent aim now consumes the same prediction instead of
     -- the raw, one-frame-old root position it used before.
+    --
+    -- The bullet appears where arg1 sits, so arg1 is the visual spawn point.
+    -- It is placed in front of the torso, on the shooter's side, at torso
+    -- height: a straight-on shot then travels straight and level. The old
+    -- version lifted the origin 1.6 studs above the impact point, which is why
+    -- silent bullets visibly fell from above onto the target.
+    local SILENT_ORIGIN_STUDS: number = 2.5
+
     local function buildSilentShot(
         target: Player,
-        prediction: GunPrediction
+        prediction: GunPrediction,
+        muzzleOrigin: CFrame?
     ): (CFrame, CFrame)
         local predicted: Vector3 = prediction.targetPosition
         local velocity: Vector3 = prediction.velocity
         local horizontal: Vector3 = Vector3.new(velocity.X, 0, velocity.Z)
 
-        local direction: Vector3 = Vector3.new(0, -1, 0)
+        local direction: Vector3? = nil
         local sweep: number = 0
         if horizontal.Magnitude > 1.5 and mm2Settings.silentSweep > 0 then
             direction = horizontal.Unit
@@ -286,14 +295,46 @@ function Module.init(runtime: any): any
             )
         end
 
-        local lift: Vector3 = Vector3.new(0, 1.6, 0)
-        local startPoint: Vector3 = predicted - direction * sweep + lift
-        -- Only a small overshoot: the endpoint has to stay on the body in case the
-        -- server scores the hit from the endpoint rather than from the ray.
-        local endPoint: Vector3 = predicted + direction * (sweep * 0.35)
+        -- Horizontal direction from the shooter to the predicted point: the
+        -- bullet appears on the shooter's side of the torso. The offset is
+        -- clamped to 60 % of the flat distance so at point blank the origin
+        -- never lands past the body.
+        local approach: Vector3? = nil
+        local approachOffset: number = SILENT_ORIGIN_STUDS
+        if muzzleOrigin then
+            local toTarget: Vector3 = predicted - muzzleOrigin.Position
+            local flat: Vector3 = Vector3.new(toTarget.X, 0, toTarget.Z)
+            if flat.Magnitude > 0.05 then
+                approach = flat.Unit
+                approachOffset = math.min(
+                    SILENT_ORIGIN_STUDS,
+                    math.max(1.0, flat.Magnitude * 0.6)
+                )
+            end
+        end
+
+        local startPoint: Vector3
+        if approach then
+            startPoint = predicted - approach * approachOffset
+                - (direction and direction * sweep or Vector3.zero)
+        elseif direction then
+            startPoint = predicted - direction * sweep
+        else
+            -- Shooter directly above the target with no movement axis to lean
+            -- on: keep the old lifted origin as the last resort.
+            startPoint = predicted + Vector3.new(0, 1.6, 0)
+        end
+        -- Only a small overshoot: the endpoint has to stay on the body in case
+        -- the server scores the hit from the endpoint rather than from the ray.
+        local endPoint: Vector3 = predicted
+            + (direction and direction * (sweep * 0.35) or Vector3.zero)
 
         if sweep > 0 and bystanderOnSegment(target, startPoint, endPoint) then
-            startPoint = predicted + lift
+            if approach then
+                startPoint = predicted - approach * approachOffset
+            else
+                startPoint = predicted + Vector3.new(0, 1.6, 0)
+            end
             endPoint = predicted
         end
 
@@ -310,6 +351,11 @@ function Module.init(runtime: any): any
         maxError: number?,
         quiet: boolean?,
     }
+
+    -- Set by the most recent reject() call so the auto-shoot loop can surface
+    -- the reason once per change even when quiet mode suppresses the toast.
+    -- Declared before fireGunAtTarget so reject() captures it as an upvalue.
+    local lastRejectReason: string = ""
 
     -- Fire one packet at the solved point.
     --
@@ -328,6 +374,7 @@ function Module.init(runtime: any): any
         end
         local quiet: boolean = opts.quiet == true
         local function reject(message: string): boolean
+            lastRejectReason = message
             if not quiet then
                 notify(message)
             end
@@ -393,15 +440,25 @@ function Module.init(runtime: any): any
         end
 
         local resolved: GunPrediction = prediction :: GunPrediction
-        if opts.maxError and resolved.errorRadius > opts.maxError then
-            return reject("Shot accuracy is too low to fire.")
+        if opts.maxError then
+            -- In silent mode the sweep segment already covers the solver's
+            -- error budget up to the sweep cap, so the cap is the effective
+            -- accuracy gate: otherwise a moving target could fail "Max error"
+            -- even though the authored segment fully covers the uncertainty.
+            local limit: number = opts.maxError
+            if silent and mm2Settings.silentSweep > 0 then
+                limit = math.max(limit, mm2Settings.silentSweep)
+            end
+            if resolved.errorRadius > limit then
+                return reject("Shot accuracy is too low to fire.")
+            end
         end
 
         if silent then
             -- The silent packet is authored at the target, so the feedback must
             -- expect the GunFired origin there, not at the muzzle.
             local shotOrigin: CFrame, shotEnd: CFrame =
-                buildSilentShot(target, resolved)
+                buildSilentShot(target, resolved, origin)
             state.mm2ShotFeedback.queue(target, gun, shotOrigin, aim, resolved)
             remote:FireServer(shotOrigin, shotEnd)
             return true
@@ -490,8 +547,33 @@ function Module.init(runtime: any): any
         fireDelay = 0.5,
     }
     local lastAutoShot: number = -math.huge
+    local lastGunCheck: number = -math.huge
+    local lastAutoReject: {message: string, at: number}? = nil
+
+    -- Keep the sheriff gun in hand the moment it is available (round start,
+    -- role handout, picking the dropped gun), not only when a target shows up:
+    -- otherwise the first auto shot is delayed by the equip animation.
+    local function equipSheriffGun(): ()
+        local backpack: Backpack? = LocalPlayer:FindFirstChildOfClass("Backpack")
+        if not backpack then
+            return
+        end
+        local gun: Tool? = getPlayerWeapon(LocalPlayer, "Gun")
+        if gun and gun.Parent == backpack then
+            local humanoid: Humanoid? = LocalPlayer.Character
+                and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+                :: Humanoid?
+            if humanoid then
+                humanoid:EquipTool(gun)
+            end
+        end
+    end
 
     local function autoShootTick(): ()
+        if os.clock() - lastGunCheck >= 0.5 then
+            lastGunCheck = os.clock()
+            equipSheriffGun()
+        end
         -- Hold the fire rate, then look for a shot every tick once it is off
         -- cooldown so a peek is answered immediately.
         if os.clock() - lastAutoShot < autoSettings.fireDelay then
@@ -501,6 +583,7 @@ function Module.init(runtime: any): any
         if not target then
             return
         end
+        lastRejectReason = ""
         local fired: boolean = fireGunAtTarget(target, {
             silent = autoSettings.mode == "Silent",
             maxError = autoSettings.maxError,
@@ -508,6 +591,14 @@ function Module.init(runtime: any): any
         })
         if fired then
             lastAutoShot = os.clock()
+            lastAutoReject = nil
+        elseif lastRejectReason ~= "" then
+            -- Quiet mode swallows the reject reason; surface it once per reason
+            -- change so a waiting auto shooter is not a mystery.
+            if lastAutoReject == nil or lastAutoReject.message ~= lastRejectReason then
+                lastAutoReject = {message = lastRejectReason, at = os.clock()}
+                notify("Auto Shoot waiting: " .. lastRejectReason)
+            end
         end
     end
 
@@ -680,8 +771,9 @@ function Module.init(runtime: any): any
         function(value: number): ()
             autoSettings.maxError = value
         end,
-        "Only fire when the predicted error is within this many studs. Lower is"
-            .. " stricter, so it waits for a cleaner shot.",
+        "Only fire when the predicted error is within this many studs. In "
+            .. "Silent mode the sweep cap relaxes it: the authored segment "
+            .. "already covers the error up to its length.",
         0.05
     )
     addNumberOption(

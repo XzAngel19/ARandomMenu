@@ -5531,6 +5531,7 @@ local fallbackManifest: any = {
         {path = "src/games/universal/Blatant/Speed.lua", name = "SpeedHack", category = "Movement"},
         {path = "src/games/universal/Combat/Hitboxes.lua", name = "Hitboxes", category = "Combat"},
         {path = "src/games/universal/Render/ProjectileCalibration.lua", name = "Projectile Calibration", category = "Other"},
+        {path = "src/games/universal/Utility/GameLearning.lua", name = "Game Learning", category = "Other"},
         {path = "src/games/universal/Utility/SpinBot.lua", name = "SpinBot", category = "Fun"},
         {path = "src/games/universal/Utility/Disguise.lua", name = "Disguise", category = "Fun"},
         {path = "src/games/universal/Utility/AnimationChanger.lua", name = "Animation Changer", category = "Fun"},
