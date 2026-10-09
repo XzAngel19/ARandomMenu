@@ -22,12 +22,11 @@ function Module.init(context: Runtime): any
     local notify: any = host.notify
     local activity: any = context.services.activity
     local protectedTargets: any = context.services.protectedTargets
+    local gameBridge: any = context.services.gameBridge
     local createUniversalFeature: any = host.createUniversalFeature
-    local addToggleOption: any = host.addToggleOption
-    local addNumberOption: any = host.addNumberOption
-    local addFeatureTooltip: any = host.addFeatureTooltip
+    local addActionOption: any = host.addActionOption
+    local addInformationOption: any = host.addInformationOption
 
-    local addTextOption: any = host.addTextOption
     local workspace: any = host.workspace
     local RunService: any = host.RunService
 
@@ -37,60 +36,14 @@ function Module.init(context: Runtime): any
         flingRunning = running
         activity.set("fling", running)
     end
-    local findPlayerByText: (string) -> Player?
+
     local performFling: (Player) -> ()
 
-    type UniversalFlingSettings = {
-        target: string,
-        duration: number,
-        power: number,
-        returnToStart: boolean,
-    }
-
-    local universalFlingSettings: UniversalFlingSettings = {
-        target = "",
-        duration = 6,
-        power = 1,
-        returnToStart = true,
-    }
-
-    findPlayerByText = function(text: string): Player?
-        local query: string = string.lower(text)
-        if query == "" then
-            local _, _, localRoot = getCharacterParts()
-            local nearest: Player? = nil
-            local nearestDistance: number = math.huge
-
-            if localRoot then
-                for _, player: Player in ipairs(Players:GetPlayers()) do
-                    local root: BasePart? = player.Character
-                        and player.Character:FindFirstChild("HumanoidRootPart")
-                        :: BasePart?
-                    if player ~= LocalPlayer and root then
-                        local distance: number = (root.Position - localRoot.Position).Magnitude
-                        if distance < nearestDistance then
-                            nearest = player
-                            nearestDistance = distance
-                        end
-                    end
-                end
-            end
-            return nearest
-        end
-
-        for _, player: Player in ipairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer then
-                local username: string = string.lower(player.Name)
-                local displayName: string = string.lower(player.DisplayName)
-                if string.sub(username, 1, #query) == query
-                    or string.sub(displayName, 1, #query) == query then
-                    return player
-                end
-            end
-        end
-
-        return nil
-    end
+    -- Fixed flight profile: the old per-user Duration/Power options were
+    -- replaced by the role actions; 6 s at power 1 matches what the old
+    -- defaults produced.
+    local FLING_DURATION: number = 6
+    local FLING_POWER: number = 1
 
     performFling = function(targetPlayer: Player): ()
         if protectedTargets.isProtected(targetPlayer) then
@@ -119,8 +72,8 @@ function Module.init(context: Runtime): any
             local touchedTarget: boolean = false
             local reason: string = "timeout"
 
-            local power: number = 9e4 * math.clamp(universalFlingSettings.power, 0.25, 4)
-            local duration: number = math.clamp(universalFlingSettings.duration, 1, 20)
+            local power: number = 9e4 * math.clamp(FLING_POWER, 0.25, 4)
+            local duration: number = math.clamp(FLING_DURATION, 1, 20)
 
             local success: boolean, errorMessage: any = pcall(function(): ()
                 local startedAt: number = os.clock()
@@ -206,9 +159,7 @@ function Module.init(context: Runtime): any
             if finalRoot and finalRoot.Parent then
                 finalRoot.AssemblyLinearVelocity = Vector3.zero
                 finalRoot.AssemblyAngularVelocity = Vector3.zero
-                if universalFlingSettings.returnToStart then
-                    finalRoot.CFrame = savedCFrame + Vector3.new(0, 2, 0)
-                end
+                finalRoot.CFrame = savedCFrame + Vector3.new(0, 2, 0)
             end
             if finalHumanoid then
                 finalHumanoid.AutoRotate = savedAutoRotate
@@ -233,62 +184,86 @@ function Module.init(context: Runtime): any
             else
                 notify(
                     "Fling stopped after "
-                        .. string.format("%.0f", universalFlingSettings.duration)
-                        .. "s. Raise Duration or Power for tougher targets."
+                        .. string.format("%.0f", FLING_DURATION)
+                        .. "s of flight."
                 )
             end
         end)
     end
 
-    local FlingFeature = createUniversalFeature(
-        "Fling",
-        "Fling a player, or the nearest player when blank",
-        2,
-        function()
-            local target = findPlayerByText(universalFlingSettings.target)
-            if target then
-                performFling(target)
-            else
-                notify("no matching player")
+    -- Role lookup goes through the game bridge, so these actions only exist
+    -- where the game exposes roles (MM2). In other games the provider is
+    -- nil and every action reports that no roles were found.
+    local function findPlayerByRole(match: (string) -> boolean): Player?
+        if type(gameBridge.playerRole) ~= "function" then
+            return nil
+        end
+        for _, player: Player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer then
+                local ok: boolean, role: any = pcall(gameBridge.playerRole, player)
+                if ok and type(role) == "string" and match(role) then
+                    local alive: boolean = player.Character
+                        and player.Character:FindFirstChildOfClass("Humanoid")
+                            and (player.Character:FindFirstChildOfClass("Humanoid") :: Humanoid).Health > 0
+                    if alive then
+                        return player
+                    end
+                end
             end
-        end,
-        {action = true, categoryName = "Blatant"}
-    )
-    addTextOption(FlingFeature, "Target player", universalFlingSettings.target, function(value)
-        universalFlingSettings.target = value
-    end, false)
+        end
+        return nil
+    end
 
-    addNumberOption(
-        FlingFeature,
-        "Duration (s)",
-        universalFlingSettings.duration,
-        1,
-        20,
-        function(value: number): ()
-            universalFlingSettings.duration = value
-        end
+    local FlingFeature: any = createUniversalFeature(
+        "Fling",
+        "Role-based fling actions (murderer, sheriff, all innocents)",
+        2,
+        function() end,
+        {category = true, categoryName = "Blatant"}
     )
-    addNumberOption(
-        FlingFeature,
-        "Power",
-        universalFlingSettings.power,
-        0.25,
-        4,
-        function(value: number): ()
-            universalFlingSettings.power = value
+    addActionOption(FlingFeature, "Fling Murderer", function(): ()
+        local target: Player? = findPlayerByRole(function(role: string): boolean
+            return role == "Murderer"
+        end)
+        if target then
+            performFling(target)
+        else
+            notify("No murderer was found.")
         end
-    )
-    addToggleOption(
-        FlingFeature,
-        "Return to start",
-        universalFlingSettings.returnToStart,
-        function(value: boolean): ()
-            universalFlingSettings.returnToStart = value
+    end)
+    addActionOption(FlingFeature, "Fling Sheriff", function(): ()
+        local target: Player? = findPlayerByRole(function(role: string): boolean
+            return role == "Sheriff" or role == "Hero"
+        end)
+        if target then
+            performFling(target)
+        else
+            notify("No sheriff or hero was found.")
         end
-    )
-    addFeatureTooltip(
+    end)
+    addActionOption(FlingFeature, "Fling All Innocents", function(): ()
+        if type(gameBridge.playerRole) ~= "function" then
+            notify("No roles available in this game.")
+            return
+        end
+        task.spawn(function(): ()
+            for _, player: Player in ipairs(Players:GetPlayers()) do
+                if player ~= LocalPlayer then
+                    local ok: boolean, role: any = pcall(gameBridge.playerRole, player)
+                    if ok and role == "Innocent" then
+                        performFling(player)
+                        repeat
+                            task.wait(0.05)
+                        until not activity.isActive("fling")
+                    end
+                end
+            end
+        end)
+    end)
+    addInformationOption(
         FlingFeature,
-        "Runs until the target goes down or the duration expires, then puts you back."
+        "Role names come from the game (MM2: Murderer / Sheriff / Innocent). "
+            .. "The card replaced the old text-target Fling and Role Fling."
     )
 
     activeCleanup = function(): ()

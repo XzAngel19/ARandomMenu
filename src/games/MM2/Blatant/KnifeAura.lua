@@ -19,6 +19,7 @@ function Module.init(runtime: any): any
     local getPlayerWeapon: any = core.getPlayerWeapon
     local isPlayerAlive: any = core.isPlayerAlive
     local isProtectedTarget: any = core.isProtectedTarget
+    local trajectoryCalibration: any = core.trajectoryCalibration
 
     type KnifeRuntimeState = {
         lastAuraSwing: number,
@@ -150,6 +151,13 @@ function Module.init(runtime: any): any
                 pcall(state.fireTouchInterest, currentHandle, currentRoot, 0)
                 pcall(state.fireTouchInterest, currentHandle, currentRoot, 1)
             end
+            pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
+                kind = "stab",
+                toolName = "Knife",
+                originPos = currentLocalRoot.Position,
+                aimPos = currentRoot.Position,
+                target = target,
+            })
         end)
     end
 

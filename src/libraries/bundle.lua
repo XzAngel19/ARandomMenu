@@ -1,5 +1,5 @@
 return {
-    stamp = "audit-20261009-1",
+    stamp = "audit-20261009-2",
     files = {
         ["src/libraries/Manifest.lua"] = [=[
 export type ModuleEntry = {
@@ -45,12 +45,7 @@ local Manifest: Manifest = {
     },
     modules = {
 
-        {
-            path = "src/games/universal/Utility/FriendList.lua",
-            name = "Friend List",
-            category = "Other",
-        },
-        {
+                {
             path = "src/games/universal/Render/ItemRender.lua",
             name = "ItemESP",
             category = "Render",
@@ -151,17 +146,7 @@ local Manifest: Manifest = {
             name = "Interact Extender",
             category = "Other",
         },
-        {
-            path = "src/games/universal/Blatant/PhaseDash.lua",
-            name = "Phase Dash",
-            category = "Movement",
-        },
-        {
-            path = "src/games/universal/Blatant/NoFall.lua",
-            name = "NoFall",
-            category = "Movement",
-        },
-        {
+                        {
             path = "src/games/universal/Blatant/Fly.lua",
             name = "Flight",
             category = "Movement",
@@ -261,22 +246,7 @@ local Manifest: Manifest = {
             name = "SpinBot",
             category = "Fun",
         },
-        {
-            path = "src/games/universal/Utility/Disguise.lua",
-            name = "Disguise",
-            category = "Fun",
-        },
-        {
-            path = "src/games/universal/Utility/AnimationChanger.lua",
-            name = "Animation Changer",
-            category = "Fun",
-        },
-        {
-            path = "src/games/universal/Utility/EmotePlayer.lua",
-            name = "Emote Player",
-            category = "Fun",
-        },
-    },
+                            },
 }
 
 return Manifest
@@ -13461,227 +13431,6 @@ end
 
 return Module
 ]=],
-        ["src/games/universal/Utility/FriendList.lua"] = [=[
-export type Runtime = {
-    framework: any,
-    entity: any,
-    host: any,
-    services: any,
-}
-
-local Module = {
-    Name = "FriendList",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCleanup: (() -> ())? = nil
-
-local function splitNames(text: string): {[string]: boolean}
-    local names: {[string]: boolean} = {}
-    for name: string in string.gmatch(string.lower(text), "[^,%s]+") do
-        names[name] = true
-    end
-    return names
-end
-
-local function countKeys(map: {[string]: boolean}): number
-    local total: number = 0
-    for _ in pairs(map) do
-        total += 1
-    end
-    return total
-end
-
-function Module.init(context: Runtime): any
-    local host: any = context.host
-    local framework: any = context.framework
-    local players: Players = host.Players
-    local localPlayer: Player = host.LocalPlayer
-    local protectedTargets: any = context.services.protectedTargets
-
-    local list: any = {
-        names = {} :: {[string]: boolean},
-        userIds = {} :: {[number]: boolean},
-        protectRobloxFriends = true,
-        protectTeam = false,
-    }
-
-    function list.isProtected(player: Player?): boolean
-        if not player then
-            return true
-        end
-        if player == localPlayer then
-            return true
-        end
-        if list.userIds[player.UserId] then
-            return true
-        end
-        if list.protectTeam
-            and player.Team ~= nil
-            and player.Team == localPlayer.Team
-            and not player.Neutral then
-            return true
-        end
-        return list.names[string.lower(player.Name)] == true
-            or list.names[string.lower(player.DisplayName)] == true
-    end
-
-    function list.count(): number
-        return countKeys(list.names) + countKeys(list.userIds :: any)
-    end
-
-    function list.refreshRobloxFriends(): ()
-        list.userIds = {}
-        if not list.protectRobloxFriends then
-            return
-        end
-        for _, player: Player in ipairs(players:GetPlayers()) do
-            if player == localPlayer then
-                continue
-            end
-            local ok: boolean, isFriend: any = pcall(
-                localPlayer.IsFriendsWithAsync,
-                localPlayer,
-                player.UserId
-            )
-            if ok and isFriend then
-                list.userIds[player.UserId] = true
-            end
-        end
-    end
-
-    protectedTargets.setProvider(list.isProtected)
-
-    local friends: any
-    friends = framework.Categories.Utility:CreateModule({
-        Name = "Friend List",
-        Category = "Other",
-        Order = 1,
-        Kind = "group",
-        Tooltip = "Players listed here are never targeted by Kill Aura, "
-            .. "TriggerBot, Fling or any game module.",
-        Function = function(): () end,
-    })
-
-    local namesBox: any
-    local statusNote: any
-
-    local function publish(): ()
-        if statusNote then
-            statusNote.Value = list.count()
-        end
-        if host.notify and list.count() > 0 then
-
-        end
-    end
-
-    namesBox = friends:CreateTextBox({
-        Name = "Protected names",
-        Default = "",
-        Tooltip = "Comma-separated. Matches display names too.",
-        Function = function(value: string): ()
-            list.names = splitNames(value)
-            publish()
-        end,
-    })
-
-    friends:CreateToggle({
-        Name = "Protect Roblox friends",
-        Default = false,
-        Tooltip = "Everyone in the server you are actually friends with.",
-        Function = function(value: boolean): ()
-            list.protectRobloxFriends = value
-            task.spawn(list.refreshRobloxFriends)
-        end,
-    })
-
-    friends:CreateToggle({
-        Name = "Protect team-mates",
-        Default = false,
-        Tooltip = "Adds everyone sharing your team, on top of the list.",
-        Function = function(value: boolean): ()
-            list.protectTeam = value
-        end,
-    })
-
-    friends:CreateButton({
-        Name = "Add nearest player",
-        Tooltip = "Puts whoever is closest to you on the list.",
-        Function = function(): ()
-            local entityLibrary: any = context.entity
-            if not entityLibrary then
-                return
-            end
-            entityLibrary:Refresh()
-            local closest: any = nil
-            local closestDistance: number = math.huge
-            for _, entity: any in ipairs(entityLibrary.List) do
-                if entity.Distance < closestDistance then
-                    closest = entity
-                    closestDistance = entity.Distance
-                end
-            end
-            if not closest then
-                friends:Notify("nobody nearby")
-                return
-            end
-            list.names[string.lower(closest.Player.Name)] = true
-            if namesBox and namesBox.Object then
-                local current: string = tostring(namesBox.Value or "")
-                namesBox.Value = current == ""
-                    and closest.Player.Name
-                    or (current .. ", " .. closest.Player.Name)
-                namesBox:Set(namesBox.Value)
-            end
-            friends:Notify(closest.Player.Name .. " protected")
-            publish()
-        end,
-    })
-
-    friends:CreateButton({
-        Name = "Clear list",
-        Function = function(): ()
-            list.names = {}
-            if namesBox and namesBox.Object then
-                namesBox.Value = ""
-                namesBox:Set("")
-            end
-            friends:Notify("list cleared")
-            publish()
-        end,
-    })
-
-    friends:CreateNote(
-        "Protection is checked by every targeting module, in every game."
-    )
-
-    local connection: RBXScriptConnection = players.PlayerAdded:Connect(function(): ()
-        task.defer(list.refreshRobloxFriends)
-    end)
-    task.spawn(list.refreshRobloxFriends)
-
-    activeCleanup = function(): ()
-        pcall(function(): ()
-            connection:Disconnect()
-        end)
-        protectedTargets.setProvider(nil)
-    end
-    Module.Initialized = true
-    return friends
-end
-
-function Module.destroy(): ()
-    if activeCleanup then
-        pcall(activeCleanup)
-    end
-    activeCleanup = nil
-    Module.Initialized = false
-end
-
-return Module
-]=],
         ["src/games/universal/Render/ItemRender.lua"] = [=[
 export type Runtime = {
     framework: any,
@@ -14690,7 +14439,15 @@ function Module.init(context: Runtime): any
     local protectedTargets: any = context.services.protectedTargets
     local currentWorkspace: Workspace = host.workspace or workspace
     local highlights: {[Player]: Highlight} = {}
+    local murderTag: BillboardGui? = nil
     local lastUpdate: number = -math.huge
+
+    local function destroyMurderTag(): ()
+        if murderTag then
+            pcall(murderTag.Destroy, murderTag)
+            murderTag = nil
+        end
+    end
     local gameBridge: any = context.services.gameBridge
     if activeBridgeCleanup then
         pcall(activeBridgeCleanup)
@@ -14728,6 +14485,7 @@ function Module.init(context: Runtime): any
             highlights[player] = nil
             highlight:Destroy()
         end
+        destroyMurderTag()
     end
 
     card = framework.Categories.Visuals:CreateModule({
@@ -14814,6 +14572,81 @@ function Module.init(context: Runtime): any
                         highlight:Destroy()
                     end
                 end
+                -- Murder tag: the old standalone MM2 card is now an option
+                -- here. The role lookup goes through the game bridge, so the
+                -- tag only appears where the game exposes roles.
+                local tagTarget: Player? = nil
+                if card.Options["Murder tag"].Value == true
+                    and type(gameBridge.playerRole) == "function" then
+                    for _, target: any in ipairs(entity:Refresh()) do
+                        local okRole: boolean, role: any = pcall(
+                            gameBridge.playerRole,
+                            target.Player
+                        )
+                        if okRole
+                            and role == "Murderer"
+                            and target.Character
+                            and target.Humanoid
+                            and target.Humanoid.Health > 0 then
+                            tagTarget = target.Player
+                            break
+                        end
+                    end
+                end
+                if not tagTarget then
+                    destroyMurderTag()
+                else
+                    local tagCharacter: Model? = tagTarget.Character
+                    local tagHead: BasePart? = tagCharacter
+                        and (tagCharacter:FindFirstChild("Head")
+                            or tagCharacter:FindFirstChild("HumanoidRootPart"))
+                        :: BasePart?
+                    if not tagHead then
+                        destroyMurderTag()
+                    else
+                        if not murderTag
+                            or not murderTag.Parent
+                            or murderTag.Adornee ~= tagHead then
+                            destroyMurderTag()
+                            local billboard: BillboardGui = Instance.new("BillboardGui")
+                            billboard.Name = "Wurst_MurderTag"
+                            billboard.AlwaysOnTop = true
+                            billboard.LightInfluence = 0
+                            billboard.Size = UDim2.fromOffset(150, 22)
+                            -- Sits above the head where the standalone card
+                            -- used to place it.
+                            billboard.StudsOffset = Vector3.new(0, 3.5, 0)
+                            billboard.MaxDistance = 1500
+                            billboard.Adornee = tagHead
+                            billboard.Parent = tagHead
+                            local label: TextLabel = Instance.new("TextLabel")
+                            label.Name = "Murder"
+                            label.BackgroundTransparency = 1
+                            label.Size = UDim2.fromScale(1, 1)
+                            label.Font = Enum.Font.GothamBold
+                            label.TextSize = 14
+                            label.TextScaled = false
+                            label.Text = "Murder"
+                            label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+                            label.TextStrokeTransparency = 0.3
+                            label.Parent = billboard
+                            murderTag = billboard
+                        end
+                        if type(gameBridge.playerRoleColor) == "function" then
+                            local okColour: boolean, colour: any = pcall(
+                                gameBridge.playerRoleColor,
+                                tagTarget
+                            )
+                            if okColour and typeof(colour) == "Color3" then
+                                local label: any =
+                                    murderTag and murderTag:FindFirstChild("Murder")
+                                if label and label.TextColor3 ~= colour then
+                                    label.TextColor3 = colour
+                                end
+                            end
+                        end
+                    end
+                end
                 card:SetStatus(tostring(count))
             end)
             card:Clean(clear)
@@ -14827,6 +14660,7 @@ function Module.init(context: Runtime): any
     card:CreateToggle({Name = "Through walls", Default = true})
     card:CreateToggle({Name = "Teammates", Default = false})
     card:CreateToggle({Name = "Team colours", Default = true})
+    card:CreateToggle({Name = "Murder tag", Default = true})
 
     activeCard = card
     Module.Initialized = true
@@ -19330,434 +19164,6 @@ end
 
 return Module
 ]=],
-        ["src/games/universal/Blatant/PhaseDash.lua"] = [=[
-export type Runtime = {
-    framework: any,
-    entity: any,
-    host: any,
-    services: any,
-}
-
-local Module = {
-    Name = "PhaseDash",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCleanup: (() -> ())? = nil
-
-function Module.init(context: Runtime): any
-    local host: any = context.host
-    local framework: any = context.framework
-    local getCharacterParts: any = host.getCharacterParts
-    local shortcuts: any = context.services.shortcuts
-    type PhaseDashSettings = {
-        mode: string,
-        distance: number,
-        cooldown: number,
-        exitSpeed: number,
-        slideSpeed: number,
-        collisionPadding: number,
-        flashDuration: number,
-        preserveVelocity: boolean,
-    }
-    local phaseDashSettings: PhaseDashSettings = {
-        mode = "Blink",
-        distance = 20,
-        cooldown = 0.8,
-        exitSpeed = 42,
-        slideSpeed = 60,
-        collisionPadding = 2.25,
-        flashDuration = 0.28,
-        preserveVelocity = true,
-    }
-    local lastPhaseDash: number = -math.huge
-    local phaseDashEnabled: boolean = false
-
-    local function createPhaseFlash(character: Model): ()
-        local oldFlash: Instance? = character:FindFirstChild("Wurst_PhaseDashFlash")
-        if oldFlash then
-            oldFlash:Destroy()
-        end
-        local flash: Highlight = Instance.new("Highlight")
-        flash.Name = "Wurst_PhaseDashFlash"
-        flash.Adornee = character
-        flash.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-        flash.FillColor = Theme.accentDim
-        flash.FillTransparency = 0.42
-        flash.OutlineColor = Theme.accent
-        flash.OutlineTransparency = 0.05
-        flash.Parent = character
-        local fade: Tween = TweenService:Create(
-            flash,
-            TweenInfo.new(
-                math.clamp(phaseDashSettings.flashDuration, 0.05, 1.2),
-                Enum.EasingStyle.Quad,
-                Enum.EasingDirection.Out
-            ),
-            {FillTransparency = 1, OutlineTransparency = 1}
-        )
-        fade:Play()
-        fade.Completed:Once(function(): ()
-            if flash.Parent then
-                flash:Destroy()
-            end
-        end)
-    end
-
-    local function performPhaseDash(): ()
-        if not phaseDashEnabled then
-            return
-        end
-        local now: number = os.clock()
-        if now - lastPhaseDash < phaseDashSettings.cooldown then
-            return
-        end
-        local character: Model?, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
-        local camera: Camera? = workspace.CurrentCamera
-        if not character or not humanoid or not root or not camera then
-            return
-        end
-        local direction: Vector3 = humanoid.MoveDirection
-        if direction.Magnitude < 0.05 then
-            direction = Vector3.new(
-                camera.CFrame.LookVector.X,
-                0,
-                camera.CFrame.LookVector.Z
-            )
-        end
-        if direction.Magnitude < 0.05 then
-            return
-        end
-        direction = direction.Unit
-        lastPhaseDash = now
-        local previousVelocity: Vector3 = root.AssemblyLinearVelocity
-        local padding: number = math.clamp(
-            phaseDashSettings.collisionPadding,
-            0,
-            8
-        )
-        if phaseDashSettings.mode == "Slide" then
-
-            root.AssemblyLinearVelocity = direction * phaseDashSettings.slideSpeed
-                + Vector3.new(0, previousVelocity.Y, 0)
-            createPhaseFlash(character)
-            return
-        end
-
-        local params: RaycastParams = RaycastParams.new()
-        params.FilterType = Enum.RaycastFilterType.Exclude
-        params.FilterDescendantsInstances = {character}
-        local collision: RaycastResult? = workspace:Raycast(
-            root.Position,
-            direction * phaseDashSettings.distance,
-            params
-        )
-        local safeDistance: number = collision
-                and math.max(0, collision.Distance - padding)
-            or phaseDashSettings.distance
-        if safeDistance <= 0.1 then
-            return
-        end
-        root.CFrame = root.CFrame + direction * safeDistance
-        if not phaseDashSettings.preserveVelocity then
-            root.AssemblyLinearVelocity = direction * phaseDashSettings.exitSpeed
-                + Vector3.new(0, previousVelocity.Y, 0)
-        end
-        createPhaseFlash(character)
-    end
-
-    local phaseDash: any
-    phaseDash = framework.Categories.Blatant:CreateModule({
-        Name = "Phase Dash",
-        Category = "Blatant",
-        Tooltip = "Directional dash: collision-aware blink or a velocity slide. "
-            .. "The card's key slot is the dash key.",
-        Function = function(enabled: boolean): ()
-            phaseDashEnabled = enabled
-            phaseDash:SetStatus(enabled and phaseDashSettings.mode or nil)
-
-        end,
-    })
-    phaseDash:CreateDropdown({
-        Name = "Mode",
-        List = {"Blink", "Slide"},
-        Index = 1,
-        Function = function(value: string): ()
-            phaseDashSettings.mode = value
-            if phaseDash.Enabled then
-                phaseDash:SetStatus(value)
-            end
-        end,
-    })
-    phaseDash:CreateSlider({
-        Name = "Dash distance",
-        Show = {Option = "Mode", Values = {"Blink"}},
-        Min = 4,
-        Max = 80,
-        Default = phaseDashSettings.distance,
-        Function = function(value: number): ()
-            phaseDashSettings.distance = value
-        end,
-        Tooltip = "How far a blink tries to move before the wall check "
-            .. "shortens it.",
-    })
-    phaseDash:CreateSlider({
-        Name = "Exit speed",
-        Show = {Option = "Mode", Values = {"Blink"}},
-        Min = 0,
-        Max = 180,
-        Default = phaseDashSettings.exitSpeed,
-        Function = function(value: number): ()
-            phaseDashSettings.exitSpeed = value
-        end,
-        Tooltip = "The velocity a blink leaves you with when Preserve "
-            .. "velocity is off.",
-    })
-    phaseDash:CreateSlider({
-        Name = "Slide speed",
-        Show = {Option = "Mode", Values = {"Slide"}},
-        Min = 20,
-        Max = 250,
-        Default = phaseDashSettings.slideSpeed,
-        Function = function(value: number): ()
-            phaseDashSettings.slideSpeed = value
-        end,
-    })
-    phaseDash:CreateSlider({
-        Name = "Collision padding",
-        Show = {Option = "Mode", Values = {"Blink"}},
-        Min = 0,
-        Max = 8,
-        Default = phaseDashSettings.collisionPadding,
-        Function = function(value: number): ()
-            phaseDashSettings.collisionPadding = value
-        end,
-        Tooltip = "Studs of clearance kept between you and whatever the blink "
-            .. "stopped at.",
-    })
-    phaseDash:CreateSlider({
-        Name = "Flash duration (s)",
-        Min = 0.05,
-        Max = 1.2,
-        Default = phaseDashSettings.flashDuration,
-        Function = function(value: number): ()
-            phaseDashSettings.flashDuration = value
-        end,
-    })
-    phaseDash:CreateToggle({
-        Name = "Preserve velocity",
-        Show = {Option = "Mode", Values = {"Blink"}},
-        Default = phaseDashSettings.preserveVelocity,
-        Function = function(value: boolean): ()
-            phaseDashSettings.preserveVelocity = value
-        end,
-        Tooltip = "Keep the velocity you had before the blink instead of "
-            .. "replacing it with Exit speed.",
-    })
-
-    phaseDash:CreateSlider({
-        Name = "Cooldown",
-        Min = 0.1,
-        Max = 5,
-        Default = phaseDashSettings.cooldown,
-        Function = function(value: number): ()
-            phaseDashSettings.cooldown = value
-        end,
-    })
-
-    shortcuts.bindActivation(phaseDash.Feature, nil, performPhaseDash)
-
-    activeCleanup = function(): ()
-        phaseDashEnabled = false
-    end
-    Module.Initialized = true
-    return phaseDash
-end
-
-function Module.destroy(): ()
-    if activeCleanup then
-        pcall(activeCleanup)
-    end
-    activeCleanup = nil
-    Module.Initialized = false
-end
-
-return Module
-]=],
-        ["src/games/universal/Blatant/NoFall.lua"] = [=[
-export type Runtime = {
-    framework: any,
-    entity: any,
-    host: any,
-}
-
-local Module = {
-    Name = "NoFall",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-function Module.init(context: Runtime): any
-    local host: any = context.host
-    local framework: any = context.framework
-    local getCharacterParts: any = host.getCharacterParts
-
-    type NoFallSettings = {
-        mode: string,
-        safeSpeed: number,
-        scanDistance: number,
-        resetRecord: boolean,
-    }
-    local noFallSettings: NoFallSettings = {
-        mode = "Both",
-        safeSpeed = 30,
-        scanDistance = 14,
-        resetRecord = true,
-    }
-
-    local noFall: any
-    noFall = framework.Categories.Protection:CreateModule({
-        Name = "NoFall",
-        Category = "Blatant",
-        ConfigKey = "Universal.NoFall",
-        Tooltip = "Fall damage is written by the game, on this client: this "
-            .. "hands its formula a landing it considers safe instead of "
-            .. "blocking anything.",
-        Function = function(enabled: boolean): ()
-            if not enabled then
-                noFall:SetStatus(nil)
-                return
-            end
-            noFall:SetStatus(noFallSettings.mode)
-            local nextRecordResetAt: number = 0
-            local landedThisFall: boolean = false
-            noFall:Loop(function(): ()
-                local character: Model?, humanoidOrNil: Humanoid?, rootOrNil: BasePart? =
-                    getCharacterParts()
-                if not character or not humanoidOrNil or not rootOrNil then
-                    return
-                end
-                local humanoid: Humanoid = humanoidOrNil :: Humanoid
-                local root: BasePart = rootOrNil :: BasePart
-                if humanoid.SeatPart or humanoid.Health <= 0 then
-                    return
-                end
-
-                local velocity: Vector3 = root.AssemblyLinearVelocity
-                local airborne: boolean = humanoid.FloorMaterial == Enum.Material.Air
-                if not airborne or velocity.Y >= -1 then
-                    landedThisFall = false
-                    nextRecordResetAt = 0
-                    return
-                end
-
-                local now: number = os.clock()
-                if noFallSettings.resetRecord
-                    and noFallSettings.mode ~= "Impact"
-                    and now >= nextRecordResetAt then
-                    nextRecordResetAt = now + 0.35
-                    humanoid:ChangeState(Enum.HumanoidStateType.Landed)
-                end
-
-                local probe: number = math.max(
-                    noFallSettings.scanDistance,
-                    math.abs(velocity.Y) * 0.16
-                )
-                local params: RaycastParams = RaycastParams.new()
-                params.FilterType = Enum.RaycastFilterType.Exclude
-                params.FilterDescendantsInstances = {character :: Instance}
-                local ground: RaycastResult? = workspace:Raycast(
-                    root.Position,
-                    Vector3.new(0, -probe, 0),
-                    params
-                )
-                if not ground then
-                    return
-                end
-
-                if noFallSettings.mode ~= "State"
-                    and velocity.Y < -noFallSettings.safeSpeed then
-                    root.AssemblyLinearVelocity = Vector3.new(
-                        velocity.X,
-                        -noFallSettings.safeSpeed,
-                        velocity.Z
-                    )
-                end
-                if noFallSettings.mode ~= "Impact" and not landedThisFall then
-
-                    landedThisFall = true
-                    humanoid:ChangeState(Enum.HumanoidStateType.Landed)
-                end
-            end)
-        end,
-    })
-    noFall:CreateDropdown({
-        Name = "Mode",
-        List = {"Both", "Impact", "State"},
-        Index = 1,
-        Function = function(value: string): ()
-            noFallSettings.mode = value
-            if noFall.Enabled then
-                noFall:SetStatus(value)
-            end
-        end,
-        Tooltip = "Impact brakes the fall just above the ground, for games "
-            .. "that read your landing speed. State closes the humanoid's "
-            .. "fall measurement early, for games that count the drop "
-            .. "between Freefall and Landed. Both covers either, and is "
-            .. "what you want unless one of them fights the game.",
-    })
-    noFall:CreateSlider({
-        Name = "Safe landing speed",
-        Show = {Option = "Mode", Values = {"Both", "Impact"}},
-        Min = 5,
-        Max = 80,
-        Default = noFallSettings.safeSpeed,
-        Function = function(value: number): ()
-            noFallSettings.safeSpeed = value
-        end,
-        Tooltip = "The vertical speed the landing is allowed to have. Most "
-            .. "games start hurting somewhere above 50.",
-    })
-    noFall:CreateToggle({
-        Name = "Reset fall record",
-        Show = {Option = "Mode", Values = {"Both", "State"}},
-        Default = noFallSettings.resetRecord,
-        Function = function(value: boolean): ()
-            noFallSettings.resetRecord = value
-        end,
-        Tooltip = "Closes the humanoid's fall measurement every third of a "
-            .. "second while you are in the air, so a game that measures the "
-            .. "drop never sees more than a short one. Costs a little "
-            .. "animation flicker on long falls.",
-    })
-    noFall:CreateSlider({
-        Name = "Ground scan",
-        Min = 4,
-        Max = 40,
-        Default = noFallSettings.scanDistance,
-        Function = function(value: number): ()
-            noFallSettings.scanDistance = value
-        end,
-        Tooltip = "How many studs above the floor the brake starts. Higher is "
-            .. "safer and more visible; the module already scales this with "
-            .. "your fall speed.",
-    })
-
-    Module.Initialized = true
-    return noFall
-end
-
-function Module.destroy(): ()
-
-    Module.Initialized = false
-end
-
-return Module
-]=],
         ["src/games/universal/Blatant/Fly.lua"] = [=[
 export type Runtime = {
     framework: any,
@@ -21670,12 +21076,11 @@ function Module.init(context: Runtime): any
     local notify: any = host.notify
     local activity: any = context.services.activity
     local protectedTargets: any = context.services.protectedTargets
+    local gameBridge: any = context.services.gameBridge
     local createUniversalFeature: any = host.createUniversalFeature
-    local addToggleOption: any = host.addToggleOption
-    local addNumberOption: any = host.addNumberOption
-    local addFeatureTooltip: any = host.addFeatureTooltip
+    local addActionOption: any = host.addActionOption
+    local addInformationOption: any = host.addInformationOption
 
-    local addTextOption: any = host.addTextOption
     local workspace: any = host.workspace
     local RunService: any = host.RunService
 
@@ -21685,60 +21090,14 @@ function Module.init(context: Runtime): any
         flingRunning = running
         activity.set("fling", running)
     end
-    local findPlayerByText: (string) -> Player?
+
     local performFling: (Player) -> ()
 
-    type UniversalFlingSettings = {
-        target: string,
-        duration: number,
-        power: number,
-        returnToStart: boolean,
-    }
-
-    local universalFlingSettings: UniversalFlingSettings = {
-        target = "",
-        duration = 6,
-        power = 1,
-        returnToStart = true,
-    }
-
-    findPlayerByText = function(text: string): Player?
-        local query: string = string.lower(text)
-        if query == "" then
-            local _, _, localRoot = getCharacterParts()
-            local nearest: Player? = nil
-            local nearestDistance: number = math.huge
-
-            if localRoot then
-                for _, player: Player in ipairs(Players:GetPlayers()) do
-                    local root: BasePart? = player.Character
-                        and player.Character:FindFirstChild("HumanoidRootPart")
-                        :: BasePart?
-                    if player ~= LocalPlayer and root then
-                        local distance: number = (root.Position - localRoot.Position).Magnitude
-                        if distance < nearestDistance then
-                            nearest = player
-                            nearestDistance = distance
-                        end
-                    end
-                end
-            end
-            return nearest
-        end
-
-        for _, player: Player in ipairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer then
-                local username: string = string.lower(player.Name)
-                local displayName: string = string.lower(player.DisplayName)
-                if string.sub(username, 1, #query) == query
-                    or string.sub(displayName, 1, #query) == query then
-                    return player
-                end
-            end
-        end
-
-        return nil
-    end
+    -- Fixed flight profile: the old per-user Duration/Power options were
+    -- replaced by the role actions; 6 s at power 1 matches what the old
+    -- defaults produced.
+    local FLING_DURATION: number = 6
+    local FLING_POWER: number = 1
 
     performFling = function(targetPlayer: Player): ()
         if protectedTargets.isProtected(targetPlayer) then
@@ -21767,8 +21126,8 @@ function Module.init(context: Runtime): any
             local touchedTarget: boolean = false
             local reason: string = "timeout"
 
-            local power: number = 9e4 * math.clamp(universalFlingSettings.power, 0.25, 4)
-            local duration: number = math.clamp(universalFlingSettings.duration, 1, 20)
+            local power: number = 9e4 * math.clamp(FLING_POWER, 0.25, 4)
+            local duration: number = math.clamp(FLING_DURATION, 1, 20)
 
             local success: boolean, errorMessage: any = pcall(function(): ()
                 local startedAt: number = os.clock()
@@ -21854,9 +21213,7 @@ function Module.init(context: Runtime): any
             if finalRoot and finalRoot.Parent then
                 finalRoot.AssemblyLinearVelocity = Vector3.zero
                 finalRoot.AssemblyAngularVelocity = Vector3.zero
-                if universalFlingSettings.returnToStart then
-                    finalRoot.CFrame = savedCFrame + Vector3.new(0, 2, 0)
-                end
+                finalRoot.CFrame = savedCFrame + Vector3.new(0, 2, 0)
             end
             if finalHumanoid then
                 finalHumanoid.AutoRotate = savedAutoRotate
@@ -21881,62 +21238,86 @@ function Module.init(context: Runtime): any
             else
                 notify(
                     "Fling stopped after "
-                        .. string.format("%.0f", universalFlingSettings.duration)
-                        .. "s. Raise Duration or Power for tougher targets."
+                        .. string.format("%.0f", FLING_DURATION)
+                        .. "s of flight."
                 )
             end
         end)
     end
 
-    local FlingFeature = createUniversalFeature(
-        "Fling",
-        "Fling a player, or the nearest player when blank",
-        2,
-        function()
-            local target = findPlayerByText(universalFlingSettings.target)
-            if target then
-                performFling(target)
-            else
-                notify("no matching player")
+    -- Role lookup goes through the game bridge, so these actions only exist
+    -- where the game exposes roles (MM2). In other games the provider is
+    -- nil and every action reports that no roles were found.
+    local function findPlayerByRole(match: (string) -> boolean): Player?
+        if type(gameBridge.playerRole) ~= "function" then
+            return nil
+        end
+        for _, player: Player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer then
+                local ok: boolean, role: any = pcall(gameBridge.playerRole, player)
+                if ok and type(role) == "string" and match(role) then
+                    local alive: boolean = player.Character
+                        and player.Character:FindFirstChildOfClass("Humanoid")
+                            and (player.Character:FindFirstChildOfClass("Humanoid") :: Humanoid).Health > 0
+                    if alive then
+                        return player
+                    end
+                end
             end
-        end,
-        {action = true, categoryName = "Blatant"}
-    )
-    addTextOption(FlingFeature, "Target player", universalFlingSettings.target, function(value)
-        universalFlingSettings.target = value
-    end, false)
+        end
+        return nil
+    end
 
-    addNumberOption(
-        FlingFeature,
-        "Duration (s)",
-        universalFlingSettings.duration,
-        1,
-        20,
-        function(value: number): ()
-            universalFlingSettings.duration = value
-        end
+    local FlingFeature: any = createUniversalFeature(
+        "Fling",
+        "Role-based fling actions (murderer, sheriff, all innocents)",
+        2,
+        function() end,
+        {category = true, categoryName = "Blatant"}
     )
-    addNumberOption(
-        FlingFeature,
-        "Power",
-        universalFlingSettings.power,
-        0.25,
-        4,
-        function(value: number): ()
-            universalFlingSettings.power = value
+    addActionOption(FlingFeature, "Fling Murderer", function(): ()
+        local target: Player? = findPlayerByRole(function(role: string): boolean
+            return role == "Murderer"
+        end)
+        if target then
+            performFling(target)
+        else
+            notify("No murderer was found.")
         end
-    )
-    addToggleOption(
-        FlingFeature,
-        "Return to start",
-        universalFlingSettings.returnToStart,
-        function(value: boolean): ()
-            universalFlingSettings.returnToStart = value
+    end)
+    addActionOption(FlingFeature, "Fling Sheriff", function(): ()
+        local target: Player? = findPlayerByRole(function(role: string): boolean
+            return role == "Sheriff" or role == "Hero"
+        end)
+        if target then
+            performFling(target)
+        else
+            notify("No sheriff or hero was found.")
         end
-    )
-    addFeatureTooltip(
+    end)
+    addActionOption(FlingFeature, "Fling All Innocents", function(): ()
+        if type(gameBridge.playerRole) ~= "function" then
+            notify("No roles available in this game.")
+            return
+        end
+        task.spawn(function(): ()
+            for _, player: Player in ipairs(Players:GetPlayers()) do
+                if player ~= LocalPlayer then
+                    local ok: boolean, role: any = pcall(gameBridge.playerRole, player)
+                    if ok and role == "Innocent" then
+                        performFling(player)
+                        repeat
+                            task.wait(0.05)
+                        until not activity.isActive("fling")
+                    end
+                end
+            end
+        end)
+    end)
+    addInformationOption(
         FlingFeature,
-        "Runs until the target goes down or the duration expires, then puts you back."
+        "Role names come from the game (MM2: Murderer / Sheriff / Innocent). "
+            .. "The card replaced the old text-target Fling and Role Fling."
     )
 
     activeCleanup = function(): ()
@@ -23817,6 +23198,7 @@ function Module.init(context: Runtime): any
             clockAt: number,
             pingMs: number,
             tool: string,
+            kind: string?,
             origin: {number},
             aim: {number},
             scene: {SceneEntry},
@@ -23870,12 +23252,15 @@ function Module.init(context: Runtime): any
             shotCounter = 0,
             spawnShots = {} :: {[string]: number},
             spawnKills = {} :: {[string]: number},
+            lastAuthoredAt = 0,
+            saveDirty = false,
             connections = {} :: {RBXScriptConnection},
             observedTools = setmetatable({}, {__mode = "k"}) :: {[Tool]: boolean},
             watchedPlayers = setmetatable({}, {__mode = "k"}) :: {[Player]: boolean},
             anomalyCooldown = setmetatable({}, {__mode = "k"}) :: {[Player]: number},
             movementTask = nil :: any,
             hitboxTask = nil :: any,
+            autosaveTask = nil :: any,
         }
         local controller: any
         local saveSnapshot: (reason: string) -> boolean
@@ -23930,25 +23315,12 @@ function Module.init(context: Runtime): any
             return nil
         end
 
-        local function recordShot(tool: Tool): ()
-            local character: Model? = LocalPlayer.Character
-            local root: BasePart? = character
-                and character:FindFirstChild("HumanoidRootPart")
-                :: BasePart?
-            local origin: Vector3? = root and root.Position or nil
-            if not origin then
-                return
-            end
-            local handle: BasePart? = tool:FindFirstChild("Handle") :: BasePart?
-            local shotOrigin: Vector3 = handle and handle.Position or origin
-            local aim: Vector3 = Vector3.zero
-            pcall(function(): ()
-                aim = mouse.Hit.Position
-            end)
-            local aimDelta: Vector3 = aim - shotOrigin
-            local aimDir: Vector3? = aimDelta.Magnitude > 0.01 and aimDelta.Unit or nil
-
+        local function buildScene(
+            shotOrigin: Vector3,
+            aimDir: Vector3?
+        ): {SceneEntry}
             local scene: {SceneEntry} = {}
+            local character: Model? = LocalPlayer.Character
             local raycastParams: RaycastParams = RaycastParams.new()
             raycastParams.FilterType = Enum.RaycastFilterType.Exclude
             raycastParams.IgnoreWater = true
@@ -24021,39 +23393,37 @@ function Module.init(context: Runtime): any
                     end
                 end
             end
+            return scene
+        end
 
-            runtime.shotCounter += 1
-            local shot: ShotRecord = {
-                id = runtime.shotCounter,
-                t = os.time(),
-                clockAt = os.clock(),
-                pingMs = getPingMilliseconds(),
-                tool = tool.Name,
-                origin = vectorArray(shotOrigin),
-                aim = vectorArray(aim),
-                scene = scene,
-                outcome = nil,
-                silentSpawn = nil,
-            }
+        local function finalizeShot(
+            shot: ShotRecord,
+            explicitVariant: string?
+        ): ()
             -- Tag silent-authored shots with their spawn variant so the log
             -- can compare hit rates per geometry (Front/Through/Top/Behind).
-            if gameBridge and type(gameBridge.silentShot) == "function" then
+            local variant: string? = explicitVariant
+            local variantOffset: number = 0
+            if not variant
+                and gameBridge
+                and type(gameBridge.silentShot) == "function" then
                 local okInfo: boolean, info: any = pcall(gameBridge.silentShot)
                 if okInfo
                     and type(info) == "table"
                     and info.variant ~= nil
                     and os.clock() - (tonumber(info.at) or 0) < 2 then
-                    shot.silentSpawn = {
-                        variant = info.variant,
-                        offset = tonumber(info.offset) or 0,
-                    }
-                    local variant: string = info.variant
-                    runtime.spawnShots[variant] = (runtime.spawnShots[variant] or 0) + 1
+                    variant = info.variant
+                    variantOffset = tonumber(info.offset) or 0
                 end
+            end
+            if variant then
+                shot.silentSpawn = {variant = variant, offset = variantOffset}
+                runtime.spawnShots[variant] = (runtime.spawnShots[variant] or 0) + 1
             end
             table.insert(runtime.shots, shot)
             clampTrim(runtime.shots, tuning.maxEvents)
             runtime.aggregates.shots += 1
+            runtime.saveDirty = true
 
             -- A few seconds later the shot either produced a kill (handled by
             -- the death watcher) or it missed the only plausible target it had.
@@ -24071,8 +23441,88 @@ function Module.init(context: Runtime): any
                 if candidate then
                     shot.outcome = {verdict = "miss"}
                     runtime.aggregates.misses += 1
+                    runtime.saveDirty = true
                 end
             end)
+        end
+
+        local function recordShot(tool: Tool): ()
+            local character: Model? = LocalPlayer.Character
+            local root: BasePart? = character
+                and character:FindFirstChild("HumanoidRootPart")
+                :: BasePart?
+            local origin: Vector3? = root and root.Position or nil
+            if not origin then
+                return
+            end
+            local handle: BasePart? = tool:FindFirstChild("Handle") :: BasePart?
+            local shotOrigin: Vector3 = handle and handle.Position or origin
+            local aim: Vector3 = Vector3.zero
+            pcall(function(): ()
+                aim = mouse.Hit.Position
+            end)
+            local aimDelta: Vector3 = aim - shotOrigin
+            local aimDir: Vector3? = aimDelta.Magnitude > 0.01 and aimDelta.Unit or nil
+            runtime.shotCounter += 1
+            local shot: ShotRecord = {
+                id = runtime.shotCounter,
+                t = os.time(),
+                clockAt = os.clock(),
+                pingMs = getPingMilliseconds(),
+                tool = tool.Name,
+                origin = vectorArray(shotOrigin),
+                aim = vectorArray(aim),
+                scene = buildScene(shotOrigin, aimDir),
+                outcome = nil,
+                silentSpawn = nil,
+            }
+            finalizeShot(shot, nil)
+        end
+
+        -- Shots authored by the menu (silent or manual module fires) publish
+        -- an "authoringShot" bridge event at the FireServer moment; they never
+        -- trigger tool.Activated, which is exactly why the collector used to
+        -- see nothing while the user shot with Silent Aim.
+        local function recordAuthoredShot(info: any): ()
+            if type(info) ~= "table" then
+                return
+            end
+            local character: Model? = LocalPlayer.Character
+            local root: BasePart? = character
+                and character:FindFirstChild("HumanoidRootPart")
+                :: BasePart?
+            local shotOrigin: Vector3? =
+                typeof(info.originPos) == "Vector3" and info.originPos or root
+                    and root.Position
+                    or nil
+            if not shotOrigin then
+                return
+            end
+            local aim: Vector3 =
+                typeof(info.aimPos) == "Vector3" and info.aimPos or Vector3.zero
+            if aim == Vector3.zero then
+                pcall(function(): ()
+                    aim = mouse.Hit.Position
+                end)
+            end
+            local aimDelta: Vector3 = aim - shotOrigin
+            local aimDir: Vector3? = aimDelta.Magnitude > 0.01 and aimDelta.Unit or nil
+            runtime.lastAuthoredAt = os.clock()
+            runtime.shotCounter += 1
+            local shot: ShotRecord = {
+                id = runtime.shotCounter,
+                t = os.time(),
+                clockAt = os.clock(),
+                pingMs = getPingMilliseconds(),
+                tool = tostring(info.toolName or "Unknown"),
+                kind = info.kind,
+                origin = vectorArray(shotOrigin),
+                aim = vectorArray(aim),
+                scene = buildScene(shotOrigin, aimDir),
+                outcome = nil,
+                silentSpawn = nil,
+            }
+            finalizeShot(shot, info.variant)
         end
 
         local function recordDeath(player: Player): ()
@@ -24137,6 +23587,7 @@ function Module.init(context: Runtime): any
             if not attributed then
                 runtime.aggregates.unattributedDeaths += 1
             end
+            runtime.saveDirty = true
         end
 
         local function watchPlayer(player: Player): ()
@@ -24180,6 +23631,7 @@ function Module.init(context: Runtime): any
                 detail = detail,
             } :: MovementRecord)
             clampTrim(runtime.movements, tuning.maxEvents)
+            runtime.saveDirty = true
         end
 
         local function observeTool(tool: Tool): ()
@@ -24190,9 +23642,16 @@ function Module.init(context: Runtime): any
             table.insert(
                 runtime.connections,
                 tool.Activated:Connect(function(): ()
-                    if runtime.enabled and tuning.logShots then
-                        recordShot(tool)
+                    if not (runtime.enabled and tuning.logShots) then
+                        return
                     end
+                    -- The menu's authored fires (silent or module) publish a
+                    -- bridge event milliseconds earlier; don't double count
+                    -- the same physical shot from both collectors.
+                    if os.clock() - runtime.lastAuthoredAt < 0.35 then
+                        return
+                    end
+                    recordShot(tool)
                 end)
             )
         end
@@ -24433,7 +23892,28 @@ function Module.init(context: Runtime): any
             return insights
         end
 
-        saveSnapshot = function(reason: string?): boolean
+        -- Consecutive accumulation: counters merge as before, and the raw
+        -- event lists append to whatever previous sessions already stored
+        -- (capped), so the log grows across games instead of resetting on
+        -- every save or every exit.
+        local MAX_STORED_EVENTS: number = 3000
+        local function mergeEventList(existing: any, current: {any}): {any}
+            local merged: {any} = {}
+            if type(existing) == "table" then
+                for _, entry: any in ipairs(existing) do
+                    table.insert(merged, entry)
+                end
+            end
+            for _, entry: any in ipairs(current) do
+                table.insert(merged, entry)
+            end
+            while #merged > MAX_STORED_EVENTS do
+                table.remove(merged, 1)
+            end
+            return merged
+        end
+
+        saveSnapshot = function(reason: string?, silent: boolean?): boolean
             if type(executorEnvironment.writefile) ~= "function" then
                 return false
             end
@@ -24489,11 +23969,11 @@ function Module.init(context: Runtime): any
                 aggregates = aggregates,
                 insights = buildInsights(),
                 previousInsights = mergedInsights,
-                spawnShots = runtime.spawnShots,
-                spawnKills = runtime.spawnKills,
-                shots = runtime.shots,
-                movements = runtime.movements,
-                hits = runtime.hits,
+                spawnShots = spawnShots,
+                spawnKills = spawnKills,
+                shots = mergeEventList(merged.shots, runtime.shots),
+                movements = mergeEventList(merged.movements, runtime.movements),
+                hits = mergeEventList(merged.hits, runtime.hits),
             }
             local okEncode: boolean, encoded: any = pcall(
                 httpService.JSONEncode,
@@ -24509,11 +23989,13 @@ function Module.init(context: Runtime): any
                 encoded
             )
             if okWrite then
-                notify("Game Learning: saved " .. outputPath)
+                runtime.saveDirty = false
+                if not silent then
+                    notify("Game Learning: saved " .. outputPath)
+                end
             end
             return okWrite
         end
-
         local function status(): string
             local agg: any = runtime.aggregates
             local base: string = string.format(
@@ -24595,11 +24077,33 @@ function Module.init(context: Runtime): any
                     runtime.hitboxTask:Disconnect()
                     runtime.hitboxTask = nil
                 end
+                if runtime.autosaveTask then
+                    runtime.autosaveTask:Disconnect()
+                    runtime.autosaveTask = nil
+                end
+                if runtime.saveDirty then
+                    -- Turning it off archives the session so the data is
+                    -- never stranded in memory.
+                    saveSnapshot("disabled")
+                end
                 return
             end
             runtime.enabled = true
             startMovementProbe()
             startHitboxProbe()
+            if not runtime.autosaveTask then
+                local elapsed: number = 0
+                runtime.autosaveTask = TaskManager:Connect(function(deltaTime: number): ()
+                    elapsed += deltaTime
+                    if elapsed < 15 then
+                        return
+                    end
+                    elapsed = 0
+                    if runtime.enabled and runtime.saveDirty then
+                        saveSnapshot("autosave", true)
+                    end
+                end)
+            end
             observeContainer(LocalPlayer:FindFirstChildOfClass("Backpack"))
             observeContainer(LocalPlayer.Character)
             table.insert(
@@ -24620,6 +24124,17 @@ function Module.init(context: Runtime): any
         controller.save = function(_reason: string?): boolean
             return saveSnapshot("manual")
         end
+        controller.flush = function(): boolean
+            if not runtime.enabled then
+                return false
+            end
+            return saveSnapshot("close")
+        end
+        controller.noteAuthoringShot = function(info: any): ()
+            if runtime.enabled and tuning.logShots then
+                recordAuthoredShot(info)
+            end
+        end
         controller.delete = function(): boolean
             return deleteLogs()
         end
@@ -24628,6 +24143,28 @@ function Module.init(context: Runtime): any
     end)()
 
     local gameLearning: any = controllerFactory
+
+    -- The game publishes "authoringShot" at the exact FireServer moment for
+    -- every menu-authored shot (silent gun, knife throw, stab). Those never
+    -- trigger tool.Activated, which is exactly why the collector used to
+    -- record nothing while the user shot with Silent Aim.
+    if gameBridge and type(gameBridge.onEvent) == "function" then
+        gameBridge.onEvent(function(eventType: string, payload: any): ()
+            if eventType == "authoringShot" then
+                gameLearning:noteAuthoringShot(payload)
+            end
+        end)
+    end
+
+    -- Consecutive saving: flush to disk when the game closes so no session
+    -- is lost to a disconnect or an abrupt exit.
+    pcall(function(): ()
+        if type((game :: any).BindToClose) == "function" then
+            game:BindToClose(function(): ()
+                pcall(gameLearning.flush, gameLearning)
+            end)
+        end
+    end)
 
     local GameLearningFeature: any = createUniversalFeature(
         "Game Learning",
@@ -24865,2037 +24402,6 @@ end
 
 return Module
 ]=],
-        ["src/games/universal/Utility/Disguise.lua"] = [=[
-export type Runtime = {
-    framework: any,
-    entity: any,
-    host: any,
-    services: any,
-}
-
-local Module = {
-    Name = "Disguise",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCleanup: (() -> ())? = nil
-
-local function looksNumeric(text: string): boolean
-    return string.match(text, "^%s*%d+%s*$") ~= nil
-end
-
-local function trimmed(text: string): string
-    return (string.gsub(text, "^%s*(.-)%s*$", "%1"))
-end
-
--- Miniature Animate script for the local body double. The real character
--- keeps its own animations; the double copies the pose through these tracks.
-local PUPPET_ANIMATIONS: {{key: string, field: string, priority: any}} = {
-    {key = "idle", field = "IdleAnimation", priority = Enum.AnimationPriority.Idle},
-    {key = "walk", field = "WalkAnimation", priority = Enum.AnimationPriority.Movement},
-    {key = "run", field = "RunAnimation", priority = Enum.AnimationPriority.Movement},
-    {key = "jump", field = "JumpAnimation", priority = Enum.AnimationPriority.Movement},
-    {key = "fall", field = "FallAnimation", priority = Enum.AnimationPriority.Movement},
-    {key = "climb", field = "ClimbAnimation", priority = Enum.AnimationPriority.Movement},
-    {key = "swim", field = "SwimAnimation", priority = Enum.AnimationPriority.Movement},
-}
-
-function Module.init(context: Runtime): any
-    local host: any = context.host
-    local framework: any = context.framework
-    local localPlayer: Player = host.LocalPlayer
-    local spoofAvatar: any = context.services.spoofAvatar
-    local currentWorkspace: Workspace = host.workspace or workspace
-
-    local runtime: any = {
-        busy = false,
-        generation = 0,
-        target = nil :: any?,
-        puppet = nil :: Model?,
-        puppetParts = {} :: {BasePart},
-        puppetTracks = {} :: {[string]: AnimationTrack},
-        puppetHidden = false,
-        diedWatch = nil :: RBXScriptConnection?,
-        originals = nil :: any?,
-        applied = false,
-    }
-
-    local disguise: any
-
-    local function currentCharacter(): Model?
-        local character: Model? = localPlayer.Character
-        if character and character.Parent then
-            return character
-        end
-        return nil
-    end
-
-    local function currentHumanoid(): Humanoid?
-        local character: Model? = currentCharacter()
-        if not character then
-            return nil
-        end
-        return (character :: Model):FindFirstChildOfClass("Humanoid") :: Humanoid?
-    end
-
-    local function characterDescription(humanoid: Humanoid): HumanoidDescription?
-        local existing: Instance? = humanoid:FindFirstChild("HumanoidDescription")
-        if existing and existing:IsA("HumanoidDescription") then
-            return existing :: HumanoidDescription
-        end
-        local ok: boolean, found: any = pcall(function(): any
-            return (humanoid :: any).HumanoidDescription
-        end)
-        if ok and typeof(found) == "Instance" then
-            return found :: HumanoidDescription
-        end
-        return nil
-    end
-
-    -- Client-side transparency: only this client stops seeing the real body.
-    local hidingConnection: RBXScriptConnection? = nil
-
-    local function hidePart(part: BasePart): ()
-        if part.LocalTransparencyModifier ~= 1 then
-            part.LocalTransparencyModifier = 1
-        end
-    end
-
-    local function hideCharacter(character: Model): ()
-        for _, descendant: Instance in ipairs(character:GetDescendants()) do
-            if descendant:IsA("BasePart") then
-                hidePart(descendant :: BasePart)
-            end
-        end
-        if hidingConnection then
-            return
-        end
-        hidingConnection = character.DescendantAdded:Connect(function(descendant: Instance): ()
-            if descendant:IsA("BasePart") then
-                hidePart(descendant :: BasePart)
-            end
-        end)
-    end
-
-    local function showCharacter(): ()
-        if hidingConnection then
-            pcall(function(): ()
-                (hidingConnection :: RBXScriptConnection):Disconnect()
-            end)
-            hidingConnection = nil
-        end
-        local character: Model? = currentCharacter()
-        if character then
-            for _, descendant: Instance in ipairs((character :: Model):GetDescendants()) do
-                if descendant:IsA("BasePart") then
-                    (descendant :: BasePart).LocalTransparencyModifier = 0
-                end
-            end
-        end
-    end
-
-    -- Chat spoof: TextChatService lets the client rewrite how an incoming
-    -- message is displayed, so your own messages show the disguise's name
-    -- (only on your screen).
-    local chatSpoofed: boolean = false
-
-    local function patternEscape(text: string): string
-        return (string.gsub(text, "%W", "%%%1"))
-    end
-
-    local function installChatSpoof(targetName: string): ()
-        local ok: boolean, service: any = pcall(function(): any
-            return game:GetService("TextChatService")
-        end)
-        if not ok or typeof(service) ~= "Instance" then
-            return
-        end
-        chatSpoofed = true
-        local myName: string = localPlayer.Name
-        local myDisplay: string = localPlayer.DisplayName
-        local safeTarget: string = (string.gsub(targetName, "%%", "%%%%"))
-        pcall(function(): ()
-            (service :: any).OnIncomingMessage = function(message: any): any
-                local source: any = (message :: any).TextSource
-                if not source or source.UserId ~= localPlayer.UserId then
-                    return nil
-                end
-                local prefix: string = tostring((message :: any).PrefixText or "")
-                local replaced: string? = nil
-                if string.find(prefix, myDisplay, 1, true) then
-                    replaced = string.gsub(
-                        prefix,
-                        patternEscape(myDisplay),
-                        safeTarget,
-                        1
-                    )
-                elseif string.find(prefix, myName, 1, true) then
-                    replaced = string.gsub(prefix, patternEscape(myName), safeTarget, 1)
-                end
-                if not replaced then
-                    return nil
-                end
-                local properties: any = Instance.new("TextChatMessageProperties")
-                properties.PrefixText = replaced
-                return properties
-            end
-        end)
-    end
-
-    local function removeChatSpoof(): ()
-        if not chatSpoofed then
-            return
-        end
-        chatSpoofed = false
-        local ok: boolean, service: any = pcall(function(): any
-            return game:GetService("TextChatService")
-        end)
-        if ok and typeof(service) == "Instance" then
-            pcall(function(): ()
-                (service :: any).OnIncomingMessage = nil
-            end)
-        end
-    end
-
-    -- Capture the real avatar once: display name, emote wheel and animation
-    -- ids, so everything can be restored exactly on disable.
-    local function rememberOriginals(humanoid: Humanoid): ()
-        if runtime.originals then
-            return
-        end
-        local description: HumanoidDescription? = nil
-        local ok: boolean, applied: any = pcall(function(): any
-            return humanoid:GetAppliedDescription()
-        end)
-        if ok and typeof(applied) == "Instance" then
-            description = applied :: HumanoidDescription
-        end
-        local emotes: any = {}
-        local equippedNames: {string} = {}
-        local wheel: HumanoidDescription? = characterDescription(humanoid)
-        if wheel then
-            local emotesOk: boolean, current: any = pcall(function(): any
-                return (wheel :: HumanoidDescription):GetEmotes()
-            end)
-            if emotesOk and type(current) == "table" then
-                emotes = current
-            end
-            local equippedOk: boolean, equipped: any = pcall(function(): any
-                return (wheel :: HumanoidDescription):GetEquippedEmotes()
-            end)
-            if equippedOk and type(equipped) == "table" then
-                for _, entry: any in ipairs(equipped) do
-                    local name: string = tostring(
-                        type(entry) == "table"
-                            and (entry.name or entry.Name)
-                            or entry
-                    )
-                    if name ~= "" and name ~= "nil" then
-                        table.insert(equippedNames, name)
-                    end
-                end
-            end
-        end
-        runtime.originals = {
-            displayName = humanoid.DisplayName,
-            emotes = emotes,
-            equippedNames = equippedNames,
-            myDescription = description,
-        }
-    end
-
-    local function restoreOriginals(): ()
-        local originals: any = runtime.originals
-        if not originals then
-            return
-        end
-        local humanoid: Humanoid? = currentHumanoid()
-        if humanoid then
-            pcall(function(): ()
-                (humanoid :: Humanoid).DisplayName = originals.displayName
-            end)
-            local wheel: HumanoidDescription? = characterDescription(humanoid :: Humanoid)
-            if wheel then
-                pcall(function(): ()
-                    (wheel :: HumanoidDescription):SetEmotes(originals.emotes)
-                    if #originals.equippedNames > 0 then
-                        (wheel :: HumanoidDescription):SetEquippedEmotes(originals.equippedNames)
-                    end
-                end)
-            end
-        end
-    end
-
-    local function teardownPuppet(): ()
-        local puppet: Model? = runtime.puppet
-        runtime.puppet = nil
-        runtime.puppetTracks = {}
-        runtime.puppetParts = {}
-        runtime.puppetHidden = false
-        spoofAvatar.setRig(nil)
-        if puppet then
-            pcall(function(): ()
-                (puppet :: Model):Destroy()
-            end)
-        end
-    end
-
-    local function setPuppetHidden(hidden: boolean): ()
-        if runtime.puppetHidden == hidden then
-            return
-        end
-        runtime.puppetHidden = hidden
-        for _, part: BasePart in ipairs(runtime.puppetParts) do
-            part.LocalTransparencyModifier = hidden and 1 or 0
-        end
-    end
-
-    local function playPuppetTrack(key: string, fade: number): ()
-        local track: AnimationTrack? = runtime.puppetTracks[key]
-        if not track then
-            return
-        end
-        for otherKey: string, other: AnimationTrack in pairs(runtime.puppetTracks) do
-            if otherKey ~= key and other.IsPlaying then
-                pcall(function(): ()
-                    other:Stop(fade)
-                end)
-            end
-        end
-        if not (track :: AnimationTrack).IsPlaying then
-            pcall(function(): ()
-                (track :: AnimationTrack):Play(fade)
-            end)
-        end
-    end
-
-    -- Builds the local body double: a fully local rig from
-    -- CreateHumanoidModelFromDescription that mirrors the real body. Your
-    -- own avatar is never touched, so no game can reject or flag the swap,
-    -- and the double carries no Humanoid, so the engine cannot apply the
-    -- second-humanoid forces that fling characters.
-    local function buildPuppet(target: any): ()
-        local character: Model? = currentCharacter()
-        local humanoid: Humanoid? = character
-            and (character :: Model):FindFirstChildOfClass("Humanoid") :: Humanoid?
-        if not character or not humanoid then
-            return
-        end
-        rememberOriginals(humanoid :: Humanoid)
-        teardownPuppet()
-
-        runtime.generation += 1
-        local generation: number = runtime.generation
-        local rigType: Enum.HumanoidRigType = (humanoid :: Humanoid).RigType
-        local description: HumanoidDescription = target.description
-
-        local created: boolean, rig: any = pcall(function(): any
-            return (host.Players :: Players):CreateHumanoidModelFromDescription(
-                description,
-                rigType
-            )
-        end)
-        if generation ~= runtime.generation then
-            if created and typeof(rig) == "Instance" then
-                pcall(function(): ()
-                    (rig :: Model):Destroy()
-                end)
-            end
-            return
-        end
-        if not created or typeof(rig) ~= "Instance" then
-            disguise:Notify("could not build the disguise body")
-            return
-        end
-
-        local puppet: Model = rig :: Model
-        puppet.Name = "WurstDisguise"
-        -- Marked so NPC detection, targeting and ESP treat the double as
-        -- scenery instead of a second character standing on top of you.
-        puppet:SetAttribute("WurstDisguise", true)
-        local puppetHumanoid: Humanoid? = puppet:FindFirstChildOfClass("Humanoid")
-        local animator: Animator? = nil
-        if puppetHumanoid then
-            -- A second Humanoid beside your own makes your humanoid apply
-            -- its special humanoid-vs-humanoid collisions against the
-            -- double's root, which launches your character into the air.
-            -- An AnimationController drives identical animation tracks with
-            -- no humanoid physics at all, so the double stays harmless.
-            local controller: AnimationController =
-                Instance.new("AnimationController")
-            controller.Name = "WurstDisguiseController"
-            controller.Parent = puppet
-            local oldHumanoid: Humanoid = puppetHumanoid :: Humanoid
-            animator = oldHumanoid:FindFirstChildOfClass("Animator") :: Animator?
-            if animator then
-                (animator :: Animator).Parent = controller
-            else
-                local made: Animator = Instance.new("Animator")
-                made.Parent = controller
-                animator = made
-            end
-            oldHumanoid:Destroy()
-        end
-        for _, descendant: Instance in ipairs(puppet:GetDescendants()) do
-            if descendant:IsA("BasePart") then
-                local part: BasePart = descendant :: BasePart
-                part.CanCollide = false
-                part.CanQuery = false
-                part.CanTouch = false
-                part.Massless = true
-                if part.Name == "HumanoidRootPart" then
-                    part.Anchored = true
-                end
-                table.insert(runtime.puppetParts, part)
-            end
-        end
-
-        -- Anti-fling armour. The double carries no Humanoid (an
-        -- AnimationController drives it instead), so the engine cannot
-        -- apply the second-humanoid forces that launch characters. On top
-        -- of that, every part is moved into a collision group that never
-        -- collides with any registered group - even a game that forces
-        -- CanCollide back on cannot make the double touch anything.
-        pcall(function(): ()
-            local physics: PhysicsService = game:GetService("PhysicsService")
-            local groupName: string = "WurstDisguise"
-            if not physics:IsCollisionGroupRegistered(groupName) then
-                physics:RegisterCollisionGroup(groupName)
-            end
-            for _, group: any in ipairs(physics:GetRegisteredCollisionGroups()) do
-                physics:CollisionGroupSetCollidable(
-                    groupName,
-                    tostring(group.name),
-                    false
-                )
-            end
-            for _, part: BasePart in ipairs(runtime.puppetParts) do
-                part.CollisionGroup = groupName
-            end
-        end)
-
-        puppet:PivotTo((character :: Model):GetPivot())
-        puppet.Parent = currentWorkspace
-
-        if not animator then
-            disguise:Notify("the disguise rig has no animator")
-        end
-        if animator then
-            local source: HumanoidDescription =
-                (not disguise.Options["Take animations"].Value and runtime.originals
-                    and runtime.originals.myDescription)
-                or description
-            for _, definition: any in ipairs(PUPPET_ANIMATIONS) do
-                local animationId: number = tonumber((source :: any)[definition.field]) or 0
-                if animationId > 0 then
-                    local animation: Animation = Instance.new("Animation")
-                    animation.Name = "WurstDisguise" .. definition.key
-                    animation.AnimationId = "rbxassetid://" .. tostring(animationId)
-                    animation.Parent = puppet
-                    local loaded: boolean, track: any = pcall(function(): any
-                        return (animator :: Animator):LoadAnimation(animation)
-                    end)
-                    if loaded and typeof(track) == "Instance" then
-                        (track :: AnimationTrack).Priority = definition.priority
-                        runtime.puppetTracks[definition.key] = track :: AnimationTrack
-                    else
-                        animation:Destroy()
-                    end
-                end
-            end
-        end
-
-        runtime.puppet = puppet
-        spoofAvatar.setRig(puppet)
-        runtime.applied = true
-    end
-
-    local function publishEmotes(target: any): ()
-        if not disguise.Options["Take emotes"].Value then
-            spoofAvatar.setEmotes({})
-            return
-        end
-        local collected: {any} = {}
-        local ok: boolean, emotes: any = pcall(function(): any
-            return (target.description :: HumanoidDescription):GetEmotes()
-        end)
-        if ok and type(emotes) == "table" then
-            for name: string, ids: any in pairs(emotes) do
-                if type(ids) == "table" and type(ids[1]) == "number" then
-                    table.insert(collected, {name = name, id = ids[1]})
-                end
-            end
-        end
-        table.sort(collected, function(left: any, right: any): boolean
-            return left.name < right.name
-        end)
-        spoofAvatar.setEmotes(collected)
-    end
-
-    local function applyToCharacter(target: any): ()
-        local character: Model? = currentCharacter()
-        local humanoid: Humanoid? = character
-            and (character :: Model):FindFirstChildOfClass("Humanoid") :: Humanoid?
-        if not character or not humanoid then
-            publishEmotes(target)
-            return
-        end
-        rememberOriginals(humanoid :: Humanoid)
-
-        if disguise.Options["Hide my real body"].Value then
-            hideCharacter(character :: Model)
-        else
-            showCharacter()
-        end
-        buildPuppet(target)
-        spoofAvatar.setDescription(target.description)
-
-        -- Name above your head, for your eyes only.
-        if disguise.Options["Take name"].Value then
-            pcall(function(): ()
-                (humanoid :: Humanoid).DisplayName = target.name
-            end)
-        elseif runtime.originals then
-            pcall(function(): ()
-                (humanoid :: Humanoid).DisplayName = runtime.originals.displayName
-            end)
-        end
-
-        -- Chat messages: show the disguise's name on your own messages.
-        if disguise.Options["Show name in chat"].Value then
-            installChatSpoof(target.name)
-        else
-            removeChatSpoof()
-        end
-
-        -- Emote wheel: swap the character's HumanoidDescription emotes.
-        if disguise.Options["Take emotes"].Value then
-            local wheel: HumanoidDescription? = characterDescription(humanoid :: Humanoid)
-            if wheel then
-                local emotesOk: boolean, emotes: any = pcall(function(): any
-                    return (target.description :: HumanoidDescription):GetEmotes()
-                end)
-                local equippedOk: boolean, equipped: any = pcall(function(): any
-                    return (target.description :: HumanoidDescription):GetEquippedEmotes()
-                end)
-                if emotesOk and type(emotes) == "table" then
-                    local names: {string} = {}
-                    if equippedOk and type(equipped) == "table" then
-                        for _, entry: any in ipairs(equipped) do
-                            local name: string = tostring(
-                                type(entry) == "table"
-                                    and (entry.name or entry.Name)
-                                    or entry
-                            )
-                            if name ~= "" and name ~= "nil" then
-                                table.insert(names, name)
-                            end
-                        end
-                    end
-                    pcall(function(): ()
-                        (wheel :: HumanoidDescription):SetEmotes(emotes)
-                        if #names > 0 then
-                            (wheel :: HumanoidDescription):SetEquippedEmotes(names)
-                        end
-                    end)
-                end
-            end
-        elseif runtime.originals then
-            local wheel: HumanoidDescription? = characterDescription(humanoid :: Humanoid)
-            if wheel then
-                pcall(function(): ()
-                    (wheel :: HumanoidDescription):SetEmotes(runtime.originals.emotes)
-                    if #runtime.originals.equippedNames > 0 then
-                        (wheel :: HumanoidDescription):SetEquippedEmotes(
-                            runtime.originals.equippedNames
-                        )
-                    end
-                end)
-            end
-        end
-
-        publishEmotes(target)
-        disguise:SetStatus(target.name .. " · " .. tostring(target.userId))
-    end
-
-    local function restoreEverything(): ()
-        teardownPuppet()
-        showCharacter()
-        restoreOriginals()
-        removeChatSpoof()
-        spoofAvatar.setDescription(nil)
-        spoofAvatar.setEmotes({})
-        runtime.applied = false
-        disguise:SetStatus(nil)
-    end
-
-    local function onCharacterAdded(): ()
-        -- The previous body and its double are gone; start the new one clean.
-        teardownPuppet()
-        hidingConnection = nil
-        runtime.diedWatch = nil
-        if not disguise.Enabled or not runtime.target then
-            return
-        end
-        if runtime.applied and not disguise.Options["Keep on respawn"].Value then
-            return
-        end
-        local target: any = runtime.target
-        task.spawn(function(): ()
-            task.wait(0.5)
-            if disguise.Enabled and runtime.target == target then
-                applyToCharacter(target)
-            end
-        end)
-    end
-
-    disguise = framework.Categories.Utility:CreateModule({
-        Name = "Disguise",
-        Category = "Fun",
-        Order = 1,
-        ConfigKey = "Universal.Disguise",
-        Tooltip = "Wear another user's avatar locally: a body double mirrors "
-            .. "you with their look, name above your head, chat name and "
-            .. "emote wheel. Only your screen shows it.",
-        Function = function(enabled: boolean): ()
-            if not enabled then
-                restoreEverything()
-                return
-            end
-            disguise:Event(localPlayer.CharacterAdded, onCharacterAdded)
-            disguise:Render(function(): ()
-                local puppet: Model? = runtime.puppet
-                local character: Model? = currentCharacter()
-                if not puppet or not character then
-                    return
-                end
-                local humanoid: Humanoid? =
-                    (character :: Model):FindFirstChildOfClass("Humanoid") :: Humanoid?
-                local root: BasePart? =
-                    (character :: Model):FindFirstChild("HumanoidRootPart") :: BasePart?
-                    or (character :: Model).PrimaryPart
-                if not humanoid or not root then
-                    return
-                end
-
-                -- Reveal the real ragdoll the moment the body dies.
-                local watch: RBXScriptConnection? = runtime.diedWatch
-                if not watch or not watch.Connected then
-                    runtime.diedWatch = (humanoid :: Humanoid).Died:Once(function(): ()
-                        teardownPuppet()
-                        showCharacter()
-                    end)
-                end
-
-                local pivot: CFrame = (character :: Model):GetPivot()
-                local resolvedPuppet: Model = puppet :: Model
-                resolvedPuppet:PivotTo(pivot)
-
-                -- Do not block the view when the camera dives into the double.
-                local camera: Camera? = currentWorkspace.CurrentCamera
-                if camera then
-                    local distance: number =
-                        ((camera :: Camera).CFrame.Position - pivot.Position).Magnitude
-                    setPuppetHidden(distance < 3)
-                end
-
-                -- Copy the real body's motion state onto the double.
-                local resolvedHumanoid: Humanoid = humanoid :: Humanoid
-                local state: Enum.HumanoidStateType = resolvedHumanoid:GetState()
-                local velocity: Vector3 = (root :: BasePart).AssemblyLinearVelocity
-                local horizontal: number = Vector3.new(velocity.X, 0, velocity.Z).Magnitude
-                if state == Enum.HumanoidStateType.Climbing then
-                    playPuppetTrack("climb", 0.2)
-                elseif state == Enum.HumanoidStateType.Swimming then
-                    playPuppetTrack("swim", 0.2)
-                elseif state == Enum.HumanoidStateType.Jumping then
-                    playPuppetTrack("jump", 0.1)
-                elseif state == Enum.HumanoidStateType.Freefall then
-                    playPuppetTrack("fall", 0.2)
-                elseif horizontal > 0.75 then
-                    -- Mirror Roblox's own Animate script: while moving, the
-                    -- walk track is the base and plays at speed / 16, while
-                    -- the run track fades in on top of it, its weight
-                    -- growing as the speed approaches 16.
-                    local tracks: any = runtime.puppetTracks
-                    local walk: AnimationTrack? = tracks["walk"]
-                    local run: AnimationTrack? = tracks["run"]
-                    if not walk and not run then
-                        playPuppetTrack("idle", 0.2)
-                    else
-                        for key: string, other: AnimationTrack in pairs(tracks) do
-                            if key ~= "walk" and key ~= "run" and other.IsPlaying then
-                                pcall(function(): ()
-                                    other:Stop(0.2)
-                                end)
-                            end
-                        end
-                        local runWeight: number = math.clamp(horizontal / 16, 0, 1)
-                        if walk then
-                            if not (walk :: AnimationTrack).IsPlaying then
-                                (walk :: AnimationTrack):Play(0.2, 1 - runWeight)
-                            else
-                                pcall(function(): ()
-                                    (walk :: AnimationTrack):AdjustWeight(
-                                        1 - runWeight,
-                                        0.2
-                                    )
-                                end)
-                            end
-                            pcall(function(): ()
-                                (walk :: AnimationTrack):AdjustSpeed(horizontal / 16)
-                            end)
-                        end
-                        if run then
-                            if not (run :: AnimationTrack).IsPlaying then
-                                (run :: AnimationTrack):Play(0.2, runWeight)
-                            else
-                                pcall(function(): ()
-                                    (run :: AnimationTrack):AdjustWeight(
-                                        runWeight,
-                                        0.2
-                                    )
-                                end)
-                            end
-                        end
-                    end
-                else
-                    playPuppetTrack("idle", 0.3)
-                end
-            end)
-
-            if runtime.target then
-                -- Module toggled back on: put the last disguise back on.
-                task.spawn(function(): ()
-                    applyToCharacter(runtime.target)
-                end)
-                return
-            end
-            local remembered: string = trimmed(
-                tostring(disguise.Options["User ID or name"].Value or "")
-            )
-            if remembered ~= "" then
-                task.spawn(function(): ()
-                    Module.wear(context, disguise, runtime, applyToCharacter)
-                end)
-                return
-            end
-            disguise:SetStatus("waiting")
-            disguise:Notify("type a user id or name, then press Apply")
-        end,
-    })
-
-    disguise:CreateTextBox({
-        Name = "User ID or name",
-        Default = "",
-        Tooltip = "Whose avatar to wear. With the module on, pressing enter "
-            .. "puts it on immediately.",
-        Function = function(value: string): ()
-            if not disguise.Enabled or trimmed(value) == "" then
-                return
-            end
-            task.spawn(function(): ()
-                Module.wear(context, disguise, runtime, applyToCharacter)
-            end)
-        end,
-    })
-    disguise:CreateButton({
-        Name = "Apply",
-        Tooltip = "Fetch the avatar in the box and wear it now.",
-        Function = function(): ()
-            if not disguise.Enabled then
-                disguise:Notify("switch the module on first")
-                return
-            end
-            task.spawn(function(): ()
-                Module.wear(context, disguise, runtime, applyToCharacter)
-            end)
-        end,
-    })
-    disguise:CreateToggle({
-        Name = "Keep on respawn",
-        Default = true,
-        Tooltip = "Put the disguise back on every time you respawn.",
-    })
-    disguise:CreateToggle({
-        Name = "Take animations",
-        Default = true,
-        Tooltip = "Walk, run, idle, jump, fall, climb and swim like their "
-            .. "animation package, blending walk and run the way Roblox's "
-            .. "own Animate script does. Off keeps your own animation set "
-            .. "on the double.",
-        Function = function(_value: any): ()
-            if disguise.Enabled and runtime.target then
-                task.spawn(function(): ()
-                    applyToCharacter(runtime.target)
-                end)
-            end
-        end,
-    })
-    disguise:CreateToggle({
-        Name = "Take name",
-        Default = true,
-        Tooltip = "Show their name above your head instead of yours.",
-        Function = function(_value: any): ()
-            if disguise.Enabled and runtime.target then
-                task.spawn(function(): ()
-                    applyToCharacter(runtime.target)
-                end)
-            end
-        end,
-    })
-    disguise:CreateToggle({
-        Name = "Show name in chat",
-        Default = true,
-        Tooltip = "When you send a chat message, you see the disguise's "
-            .. "nickname on it instead of yours.",
-        Function = function(_value: any): ()
-            if disguise.Enabled and runtime.target then
-                task.spawn(function(): ()
-                    applyToCharacter(runtime.target)
-                end)
-            end
-        end,
-    })
-    disguise:CreateToggle({
-        Name = "Take emotes",
-        Default = true,
-        Tooltip = "Fill your emote wheel and the Emote Player list with the "
-            .. "emotes they have equipped.",
-        Function = function(_value: any): ()
-            if disguise.Enabled and runtime.target then
-                task.spawn(function(): ()
-                    applyToCharacter(runtime.target)
-                end)
-            end
-        end,
-    })
-    disguise:CreateToggle({
-        Name = "Hide my real body",
-        Default = true,
-        Tooltip = "The disguise is a local body double; this hides the real "
-            .. "one on your screen. Tools stay attached to the hidden body.",
-        Function = function(_value: any): ()
-            if disguise.Enabled and runtime.target then
-                task.spawn(function(): ()
-                    applyToCharacter(runtime.target)
-                end)
-            end
-        end,
-    })
-    disguise:CreateButton({
-        Name = "Reset to my avatar",
-        Tooltip = "Take the disguise off without switching the module off.",
-        Function = function(): ()
-            runtime.target = nil
-            restoreEverything()
-            disguise:Notify("back to your own avatar")
-        end,
-    })
-    disguise:CreateNote(
-        "Client sided only: the server, other players and the player list "
-            .. "still see the real you. Chat and the name above your head "
-            .. "show the disguise on your screen only. Emotes played from "
-            .. "the Emote Player appear on the double; the wheel plays on "
-            .. "the hidden real body."
-    )
-
-    activeCleanup = function(): ()
-        restoreEverything()
-    end
-    Module.Initialized = true
-    return disguise
-end
-
-function Module.wear(
-    context: Runtime,
-    disguise: any,
-    runtime: any,
-    applyToCharacter: (any) -> ()
-): ()
-    if runtime.busy then
-        return
-    end
-    local players: Players = context.host.Players
-    local text: string = trimmed(
-        tostring(disguise.Options["User ID or name"].Value or "")
-    )
-    if text == "" then
-        disguise:Notify("type a user id or name first")
-        return
-    end
-
-    runtime.busy = true
-    local userId: number = 0
-    if looksNumeric(text) then
-        userId = tonumber(text) or 0
-    else
-        local resolved: boolean, id: any = pcall(function(): number
-            return players:GetUserIdFromNameAsync(text)
-        end)
-        if resolved and type(id) == "number" then
-            userId = id
-        end
-    end
-    if userId <= 0 then
-        runtime.busy = false
-        disguise:Notify("no such user")
-        return
-    end
-
-    local fetched: boolean, description: any = pcall(function(): any
-        return players:GetHumanoidDescriptionFromUserId(userId)
-    end)
-    if not fetched or typeof(description) ~= "Instance" then
-        runtime.busy = false
-        disguise:Notify("could not read that avatar")
-        return
-    end
-
-    -- Resolve a friendly label: display name when reachable, username else.
-    local name: string = tostring(userId)
-    local named: boolean, username: any = pcall(function(): string
-        return players:GetNameFromUserIdAsync(userId)
-    end)
-    if named and type(username) == "string" and username ~= "" then
-        name = username
-    end
-    local displayed: boolean, display: any = pcall(function(): string
-        local body: string = (game :: any):HttpGet(
-            "https://users.roblox.com/v1/users/" .. tostring(userId)
-        )
-        local decoded: any = game:GetService("HttpService"):JSONDecode(body)
-        return tostring(decoded.displayName)
-    end)
-    if displayed and type(display) == "string" and display ~= "" then
-        name = display
-    end
-
-    runtime.busy = false
-    runtime.target = {
-        description = description,
-        name = name,
-        userId = userId,
-    }
-    applyToCharacter(runtime.target)
-    disguise:Notify("disguised as " .. name .. " - only you can see it")
-end
-
-function Module.destroy(): ()
-    if activeCleanup then
-        pcall(activeCleanup)
-    end
-    activeCleanup = nil
-    Module.Initialized = false
-end
-
-return Module
-]=],
-        ["src/games/universal/Utility/AnimationChanger.lua"] = [=[
-export type Runtime = {
-    framework: any,
-    entity: any,
-    host: any,
-}
-
-local Module = {
-    Name = "AnimationChanger",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-
-    builtinPacks = nil :: any,
-}
-
-local activeCleanup: (() -> ())? = nil
-
-local SLOTS: {{field: string, keys: {string}}} = {
-    {field = "SwimAnimation", keys = {"swim"}},
-    {field = "ClimbAnimation", keys = {"climb"}},
-    {field = "RunAnimation", keys = {"run"}},
-    {field = "WalkAnimation", keys = {"walk"}},
-    {field = "JumpAnimation", keys = {"jump"}},
-    {field = "FallAnimation", keys = {"fall"}},
-    {field = "MoodAnimation", keys = {"mood"}},
-    {field = "IdleAnimation", keys = {"idle"}},
-}
-
-local ANIMATE_SLOTS: {[string]: {string}} = {
-    IdleAnimation = {"idle"},
-    WalkAnimation = {"walk"},
-    RunAnimation = {"run"},
-    JumpAnimation = {"jump"},
-    FallAnimation = {"fall"},
-    ClimbAnimation = {"climb"},
-    SwimAnimation = {"swim", "swimidle"},
-    MoodAnimation = {"mood"},
-}
-
-local BUILTIN_PACKS: {{name: string, ids: {[string]: number}}} = {
-    {name = "Astronaut", ids = {IdleAnimation = 1090133099, WalkAnimation = 1090131576, RunAnimation = 1090130630, JumpAnimation = 1090132507, FallAnimation = 1090132063, SwimAnimation = 1090133583, ClimbAnimation = 1090134016}},
-    {name = "Bubbly", ids = {IdleAnimation = 1018553897, WalkAnimation = 1018549681, RunAnimation = 1018548665, JumpAnimation = 1018553240, FallAnimation = 1018552770, SwimAnimation = 1018554245, ClimbAnimation = 1018554668}},
-    {name = "Cartoony", ids = {IdleAnimation = 837011741, WalkAnimation = 837010234, RunAnimation = 837009922, JumpAnimation = 837011171, FallAnimation = 837010685, SwimAnimation = 837012509, ClimbAnimation = 837013990}},
-    {name = "Elder", ids = {IdleAnimation = 892268340, WalkAnimation = 892267099, RunAnimation = 892265784, JumpAnimation = 892267917, FallAnimation = 892267521, SwimAnimation = 892268710, ClimbAnimation = 892269341}},
-    {name = "Knight", ids = {IdleAnimation = 734327140, WalkAnimation = 734326330, RunAnimation = 734325948, JumpAnimation = 734326930, FallAnimation = 734326679, SwimAnimation = 734327363, ClimbAnimation = 734329002}},
-    {name = "Levitation", ids = {IdleAnimation = 619542203, WalkAnimation = 619544080, RunAnimation = 619543231, JumpAnimation = 619542888, FallAnimation = 619541867, SwimAnimation = 619543721, ClimbAnimation = 619541458}},
-    {name = "Mage", ids = {IdleAnimation = 754637456, WalkAnimation = 754636298, RunAnimation = 754635032, JumpAnimation = 754637084, FallAnimation = 754636589, SwimAnimation = 754638471, ClimbAnimation = 754639239}},
-    {name = "Ninja", ids = {IdleAnimation = 658832408, WalkAnimation = 658831143, RunAnimation = 658830056, JumpAnimation = 658832070, FallAnimation = 658831500, SwimAnimation = 658832807, ClimbAnimation = 658833139}},
-    {name = "Pirate", ids = {IdleAnimation = 837024662, WalkAnimation = 837023892, RunAnimation = 837023444, JumpAnimation = 837024350, FallAnimation = 837024147, SwimAnimation = 837025054, ClimbAnimation = 837025325}},
-    {name = "Robot", ids = {IdleAnimation = 619521748, WalkAnimation = 619522849, RunAnimation = 619522386, JumpAnimation = 619522088, FallAnimation = 619521521, SwimAnimation = 619522642, ClimbAnimation = 619521311}},
-    {name = "Stylish", ids = {IdleAnimation = 619511648, WalkAnimation = 619512767, RunAnimation = 619512153, JumpAnimation = 619511974, FallAnimation = 619511417, SwimAnimation = 619512450, ClimbAnimation = 619509955}},
-    {name = "Superhero", ids = {IdleAnimation = 619528125, WalkAnimation = 619529601, RunAnimation = 619528716, JumpAnimation = 619528412, FallAnimation = 619527817, SwimAnimation = 619529095, ClimbAnimation = 619527470}},
-    {name = "Toy", ids = {IdleAnimation = 973771666, WalkAnimation = 973767371, RunAnimation = 973766674, JumpAnimation = 973770652, FallAnimation = 973768058, SwimAnimation = 973772659, ClimbAnimation = 973773170}},
-    {name = "Vampire", ids = {IdleAnimation = 1113742618, WalkAnimation = 1113741192, RunAnimation = 1113740510, JumpAnimation = 1113742359, FallAnimation = 1113742092, SwimAnimation = 1113742944, ClimbAnimation = 1113743239}},
-    {name = "Werewolf", ids = {IdleAnimation = 1113752682, WalkAnimation = 1113751657, RunAnimation = 1113750642, JumpAnimation = 1113752285, FallAnimation = 1113751889, SwimAnimation = 1113752975, ClimbAnimation = 1113754738}},
-    {name = "Zombie", ids = {IdleAnimation = 619535834, WalkAnimation = 619537468, RunAnimation = 619536621, JumpAnimation = 619536283, FallAnimation = 619535616, SwimAnimation = 619537096, ClimbAnimation = 619535091}},
-}
-Module.builtinPacks = BUILTIN_PACKS
-
-local function slotForName(name: string): string?
-    local lowered: string = string.lower(name)
-    for _, slot: {field: string, keys: {string}} in ipairs(SLOTS) do
-        for _, key: string in ipairs(slot.keys) do
-            if string.find(lowered, key, 1, true) then
-                return slot.field
-            end
-        end
-    end
-    return nil
-end
-
-function Module.init(context: Runtime): any
-    local host: any = context.host
-    local framework: any = context.framework
-    local localPlayer: Player = host.LocalPlayer
-
-    local runtime: any = {
-        packs = {} :: {any},
-        byLabel = {} :: {[string]: any},
-        selected = nil :: string?,
-        original = nil :: {[string]: number}?,
-        settingSelection = false,
-    }
-
-    local SAVED_KEY: string = "Universal.AnimationChanger.SavedIDs"
-    local function reloadPacks(): ()
-        runtime.packs = {}
-        runtime.byLabel = {}
-        for _, pack: any in ipairs(BUILTIN_PACKS) do
-            local entry: any = {label = pack.name, ids = pack.ids}
-            table.insert(runtime.packs, entry)
-            runtime.byLabel[entry.label] = entry
-        end
-        local saved: any = host.configData
-            and host.configData.values[SAVED_KEY]
-        if type(saved) == "string" and saved ~= "" then
-            for idText: string in string.gmatch(saved, "[^,]+") do
-                local id: number? = tonumber(idText)
-                if id then
-                    local entry: any = {
-                        label = "Saved " .. tostring(id),
-                        id = id,
-                    }
-                    table.insert(runtime.packs, entry)
-                    runtime.byLabel[entry.label] = entry
-                end
-            end
-        end
-    end
-    reloadPacks()
-
-    local function avatarEditor(): any?
-        local ok: boolean, service: any = pcall(function(): any
-            return game:GetService("AvatarEditorService")
-        end)
-        return ok and service or nil
-    end
-
-    local function currentHumanoid(): Humanoid?
-        local character: Model? = localPlayer.Character
-        if not character then
-            return nil
-        end
-        return character:FindFirstChildOfClass("Humanoid") :: Humanoid?
-    end
-
-    local function rememberOriginal(): ()
-        if runtime.original then
-            return
-        end
-        local humanoid: Humanoid? = currentHumanoid()
-        if not humanoid then
-            return
-        end
-        local ok: boolean, description: any = pcall(function(): any
-            return (humanoid :: Humanoid):GetAppliedDescription()
-        end)
-        if not ok or typeof(description) ~= "Instance" then
-            return
-        end
-        local saved: {[string]: number} = {}
-        for _, slot: {field: string, keys: {string}} in ipairs(SLOTS) do
-            local read: boolean, value: any = pcall(function(): any
-                return (description :: any)[slot.field]
-            end)
-            saved[slot.field] = (read and type(value) == "number") and value or 0
-        end
-        runtime.original = saved
-    end
-
-    local animations: any
-    animations = framework.Categories.Utility:CreateModule({
-        Name = "Animation Changer",
-        Category = "Fun",
-        Order = 2,
-        ConfigKey = "Universal.AnimationChanger",
-        Tooltip = "Wear a Roblox animation pack: idle, walk, run, jump, fall, "
-            .. "climb and swim.",
-        Function = function(enabled: boolean): ()
-            if not enabled then
-                animations:SetStatus(nil)
-                Module.restore(context, runtime)
-                return
-            end
-            animations:SetStatus(
-                runtime.selected and string.sub(runtime.selected, 1, 15) or "custom"
-            )
-            rememberOriginal()
-
-            animations:Event(localPlayer.CharacterAdded, function(): ()
-                task.spawn(function(): ()
-                    task.wait(0.4)
-                    if animations.Enabled then
-                        Module.apply(context, animations, runtime, true)
-                    end
-                end)
-            end)
-            task.spawn(function(): ()
-                Module.apply(context, animations, runtime, true)
-            end)
-        end,
-    })
-
-    animations:CreateList({
-        Name = "Pack",
-        Items = function(): {string}
-            local labels: {string} = {}
-            for _, pack: any in ipairs(runtime.packs) do
-                table.insert(labels, pack.label)
-            end
-            return labels
-        end,
-        Tooltip = "Animation bundles published by Roblox. UGC is filtered out "
-            .. "by the search itself.",
-        Function = function(_selected: any, names: {string}): ()
-            if runtime.settingSelection then
-                return
-            end
-            local chosen: string? = nil
-            for _, name: string in ipairs(names) do
-                if name ~= runtime.selected then
-                    chosen = name
-                    break
-                end
-            end
-            chosen = chosen or names[1]
-            runtime.settingSelection = true
-            for _, name: string in ipairs(names) do
-                if name ~= chosen then
-                    pcall(function(): ()
-                        animations.Options["Pack"]:Set(name, false)
-                    end)
-                end
-            end
-            runtime.settingSelection = false
-            runtime.selected = chosen
-            if animations.Enabled then
-                animations:SetStatus(chosen and string.sub(chosen, 1, 15) or "custom")
-            end
-        end,
-    })
-    animations:CreateTextBox({
-        Name = "Custom ID",
-        Default = "",
-        Tooltip = "Optional: a bundle id, worn instead of the pick above "
-            .. "when filled in. Useful for a pack the search misses.",
-    })
-    animations:CreateButton({
-        Name = "Apply",
-        Tooltip = "Wear the selected pack now.",
-        Function = function(): ()
-            task.spawn(function(): ()
-                Module.apply(context, animations, runtime, false)
-            end)
-        end,
-    })
-    animations:CreateButton({
-        Name = "Reset",
-        Tooltip = "Put the animations the character arrived with back.",
-        Function = function(): ()
-            task.spawn(function(): ()
-                Module.restore(context, runtime)
-                animations:Notify("animations restored")
-            end)
-        end,
-    })
-    animations:CreateButton({
-        Name = "Save ID",
-        Tooltip = "Keeps the bundle id from Custom ID in the Pack list, so "
-            .. "it survives rejoins and reinjects.",
-        Function = function(): ()
-            local typed: number? = tonumber(
-                tostring(animations.Options["Custom ID"].Value or "")
-            )
-            if not typed or typed <= 0 then
-                animations:Notify("put a bundle id in Custom ID first")
-                return
-            end
-            local store: any = host.configData
-            if not store then
-                return
-            end
-            local saved: string = type(store.values[SAVED_KEY]) == "string"
-                and store.values[SAVED_KEY]
-                or ""
-            for idText: string in string.gmatch(saved, "[^,]+") do
-                if tonumber(idText) == typed then
-                    animations:Notify(tostring(typed) .. " is already saved")
-                    return
-                end
-            end
-            store.values[SAVED_KEY] = saved == ""
-                and tostring(typed)
-                or (saved .. "," .. tostring(typed))
-            if type(host.queueConfigSave) == "function" then
-                host.queueConfigSave()
-            end
-            reloadPacks()
-            pcall(function(): ()
-                animations.Options["Pack"]:Refresh()
-            end)
-            animations:Notify("saved " .. tostring(typed))
-        end,
-    })
-    animations:CreateNote(
-        "R15 only — an R6 character has no animation fields to swap. A game "
-            .. "that ships its own animation script overrides both paths."
-    )
-
-    activeCleanup = function(): ()
-        Module.restore(context, runtime)
-        runtime.packs = {}
-        runtime.byLabel = {}
-        runtime.selected = nil
-        runtime.original = nil
-    end
-    Module.Initialized = true
-    return animations
-end
-
-function Module.resolveClipId(assetId: number): number?
-    local loaded: {Instance} = {}
-    local ok: boolean = pcall(function(): ()
-        loaded = game:GetObjects("rbxassetid://" .. tostring(assetId))
-    end)
-    if not ok then
-        return nil
-    end
-
-    local resolved: number? = nil
-    for _, root: Instance in ipairs(loaded) do
-        if root:IsA("KeyframeSequence") then
-            resolved = assetId
-        end
-        local candidates: {Instance} = {root}
-        for _, descendant: Instance in ipairs(root:GetDescendants()) do
-            table.insert(candidates, descendant)
-        end
-        for _, candidate: Instance in ipairs(candidates) do
-            if candidate:IsA("Animation") then
-                local id: number? = tonumber(
-                    string.match((candidate :: Animation).AnimationId, "%d+")
-                )
-                if id and id > 0 then
-                    resolved = id
-                    break
-                end
-            end
-        end
-        root:Destroy()
-        if resolved then
-            break
-        end
-    end
-
-    for _, root: Instance in ipairs(loaded) do
-        pcall(function(): ()
-            root:Destroy()
-        end)
-    end
-    return resolved
-end
-
-function Module.resolveBundle(bundleId: number): {[string]: number}
-    local ids: {[string]: number} = {}
-    pcall(function(): ()
-        local service: any = game:GetService("AvatarEditorService")
-        local details: any = service:GetItemDetails(
-            bundleId,
-            Enum.AvatarItemType.Bundle
-        )
-        local items: any = details
-            and (details.BundledItems or details.bundledItems or details.Items)
-        if type(items) ~= "table" then
-            return
-        end
-        for _, item: any in ipairs(items) do
-            local name: string = tostring(item.Name or item.name or "")
-            local id: number? = tonumber(item.Id or item.id)
-            local slot: string? = slotForName(name)
-            if id and slot and not ids[slot] then
-                local clipId: number? = Module.resolveClipId(id)
-                if clipId then
-                    ids[slot] = clipId
-                end
-            end
-        end
-    end)
-    return ids
-end
-
-function Module.patchAnimateScript(
-    character: Model,
-    ids: {[string]: number}
-): boolean
-    local animate: Instance? = character:FindFirstChild("Animate")
-    if not animate then
-        return false
-    end
-    local touched: boolean = false
-    for field: string, assetId: number in pairs(ids) do
-        for _, containerName: string in ipairs(ANIMATE_SLOTS[field] or {}) do
-            local container: Instance? = (animate :: Instance):FindFirstChild(
-                containerName
-            )
-            if not container then
-                continue
-            end
-            for _, child: Instance in ipairs((container :: Instance):GetChildren()) do
-                if child:IsA("Animation") then
-                    (child :: Animation).AnimationId =
-                        "rbxassetid://" .. tostring(assetId)
-                    touched = true
-                end
-            end
-        end
-    end
-    if not touched then
-        return false
-    end
-    local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
-    local animator: Animator? = humanoid
-        and humanoid:FindFirstChildOfClass("Animator") :: Animator?
-    if animator then
-        pcall(function(): ()
-            for _, track: AnimationTrack in
-                ipairs((animator :: Animator):GetPlayingAnimationTracks())
-            do
-                track:Stop(0)
-            end
-        end)
-    end
-
-    if animate:IsA("LocalScript") then
-        pcall(function(): ()
-            local script: LocalScript = animate :: LocalScript
-            script.Disabled = true
-            task.wait()
-            script.Disabled = false
-        end)
-    end
-    return true
-end
-
-function Module.apply(
-    context: Runtime,
-    animations: any,
-    runtime: any,
-    quiet: boolean
-): ()
-    local host: any = context.host
-    local localPlayer: Player = host.LocalPlayer
-    local character: Model? = localPlayer.Character
-    local humanoid: Humanoid? = character
-        and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
-    if not character or not humanoid then
-        if not quiet then
-            animations:Notify("no character yet")
-        end
-        return
-    end
-
-    local typed: number? = tonumber(animations.Options["Custom ID"].Value)
-    local pack: any = runtime.selected and runtime.byLabel[runtime.selected]
-    local wearing: string = ""
-    local descriptionIds: {[string]: number} = {}
-    if typed and typed > 0 then
-        descriptionIds = Module.resolveBundle(typed)
-        wearing = "bundle " .. tostring(typed)
-    elseif pack and pack.ids then
-        descriptionIds = pack.ids
-        wearing = tostring(pack.label)
-    elseif pack and pack.id then
-        descriptionIds = Module.resolveBundle(pack.id)
-        wearing = tostring(pack.label)
-    else
-        if not quiet then
-            animations:Notify("pick a pack first")
-        end
-        return
-    end
-    if next(descriptionIds) == nil then
-        if not quiet then
-            animations:Notify("that bundle has no animations")
-        end
-        return
-    end
-
-    local applied: boolean = false
-    local ok: boolean, description: any = pcall(function(): any
-        return (humanoid :: Humanoid):GetAppliedDescription()
-    end)
-    if ok and typeof(description) == "Instance" then
-        for field: string, assetId: number in pairs(descriptionIds) do
-            pcall(function(): ()
-                (description :: any)[field] = assetId
-            end)
-        end
-        applied = pcall(function(): ()
-            (humanoid :: Humanoid):ApplyDescription(
-                description :: HumanoidDescription
-            )
-        end)
-    end
-
-    local animateIds: {[string]: number} = {}
-    for field: string, assetId: number in pairs(descriptionIds) do
-        local clip: number? = nil
-        pcall(function(): ()
-            clip = Module.resolveClipId(assetId)
-        end)
-        animateIds[field] = clip or assetId
-    end
-    applied = Module.patchAnimateScript(character :: Model, animateIds) or applied
-
-    if not quiet then
-        animations:Notify(
-            applied
-                and ("wearing " .. wearing)
-                or "nothing accepted the swap"
-        )
-    end
-end
-
-function Module.restore(context: Runtime, runtime: any): ()
-    local saved: {[string]: number}? = runtime.original
-    if not saved then
-        return
-    end
-    local host: any = context.host
-    local localPlayer: Player = host.LocalPlayer
-    local character: Model? = localPlayer.Character
-    local humanoid: Humanoid? = character
-        and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
-    if not character or not humanoid then
-        return
-    end
-    local ok: boolean, description: any = pcall(function(): any
-        return (humanoid :: Humanoid):GetAppliedDescription()
-    end)
-    if ok and typeof(description) == "Instance" then
-        for field: string, assetId: number in pairs(saved :: {[string]: number}) do
-            pcall(function(): ()
-                (description :: any)[field] = assetId
-            end)
-        end
-        pcall(function(): ()
-            (humanoid :: Humanoid):ApplyDescription(
-                description :: HumanoidDescription
-            )
-        end)
-    end
-    Module.patchAnimateScript(character :: Model, saved :: {[string]: number})
-end
-
-function Module.destroy(): ()
-    if activeCleanup then
-        pcall(activeCleanup)
-    end
-    activeCleanup = nil
-    Module.Initialized = false
-end
-
-return Module
-]=],
-        ["src/games/universal/Utility/EmotePlayer.lua"] = [=[
-export type Runtime = {
-    framework: any,
-    entity: any,
-    host: any,
-    services: any,
-}
-
-local Module = {
-    Name = "EmotePlayer",
-    PlaceId = 0,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-}
-
-local activeCleanup: (() -> ())? = nil
-
--- Emotes play through the character's (or the Disguise double's) own
--- Animator; this priority sits above the movement animations games force
--- onto characters, so idle/walk tracks do not stomp the emote.
-local EMOTE_PRIORITY: Enum.AnimationPriority = Enum.AnimationPriority.Action2
-
--- How long to wait for the animation data to arrive before giving up.
-local LOAD_TIMEOUT: number = 5
-
-local function trimmed(text: string): string
-    return (string.gsub(text, "^%s*(.-)%s*$", "%1"))
-end
-
--- A catalog emote's page id is usually NOT the id of the animation behind
--- it: pasting the shop id into an Animation fails to load. InsertService can
--- pull the marketplace asset locally, and the Animation instance inside it
--- carries the real animation id.
-local function resolveCatalogEmoteId(assetId: number): number?
-    local loaded: boolean, model: any = pcall(function(): any
-        return game:GetService("InsertService"):LoadAsset(assetId)
-    end)
-    if not loaded or typeof(model) ~= "Instance" then
-        return nil
-    end
-    local found: number? = nil
-    pcall(function(): ()
-        local candidates: {Instance} = {model :: Instance}
-        for _, descendant: Instance in ipairs((model :: Instance):GetDescendants()) do
-            table.insert(candidates, descendant)
-        end
-        for _, instance: Instance in ipairs(candidates) do
-            if instance:IsA("Animation") then
-                local id: number = tonumber(
-                    string.match((instance :: Animation).AnimationId or "", "%d+")
-                ) or 0
-                if id > 0 then
-                    found = id
-                    break
-                end
-            end
-        end
-    end)
-    pcall(function(): ()
-        (model :: Instance):Destroy()
-    end)
-    return found
-end
-
-function Module.init(context: Runtime): any
-    local host: any = context.host
-    local framework: any = context.framework
-    local localPlayer: Player = host.LocalPlayer
-    local spoofAvatar: any = context.services.spoofAvatar
-
-    local runtime: any = {
-        current = nil :: any?,
-        catalog = {} :: {any},
-        byLabel = {} :: {[string]: number},
-        searching = false,
-        settingSelection = false,
-        selected = nil :: string?,
-    }
-
-    -- While Disguise is wearing a body double, the real body is invisible:
-    -- emotes must play on the double to be seen at all. The double runs on
-    -- an AnimationController (no Humanoid), so search the whole rig.
-    local function puppetAnimator(): Animator?
-        local rig: Model? = spoofAvatar.getRig and spoofAvatar.getRig() or nil
-        if not rig then
-            return nil
-        end
-        local existing: Animator? =
-            (rig :: Model):FindFirstChildWhichIsA("Animator", true) :: Animator?
-        if existing then
-            return existing
-        end
-        local controller: AnimationController? =
-            (rig :: Model):FindFirstChildOfClass("AnimationController") :: AnimationController?
-        if not controller then
-            return nil
-        end
-        local created: boolean, made: any = pcall(function(): any
-            local instance: Animator = Instance.new("Animator")
-            instance.Parent = controller
-            return instance
-        end)
-        return created and made or nil
-    end
-
-    local function animator(): Animator?
-        local preferred: Animator? = puppetAnimator()
-        if preferred then
-            return preferred
-        end
-        local character: Model? = localPlayer.Character
-        if not character or not (character :: Model).Parent then
-            return nil
-        end
-        local humanoid: Humanoid? =
-            (character :: Model):FindFirstChildOfClass("Humanoid") :: Humanoid?
-        if humanoid then
-            local existing: Animator? =
-                (humanoid :: Humanoid):FindFirstChildOfClass("Animator") :: Animator?
-            if existing then
-                return existing
-            end
-        end
-        -- Some games parent the Animator elsewhere (the root part, say).
-        local anywhere: Animator? =
-            (character :: Model):FindFirstChildWhichIsA("Animator", true) :: Animator?
-        if anywhere then
-            return anywhere
-        end
-        local created: boolean, made: any = pcall(function(): any
-            if not humanoid then
-                return nil
-            end
-            local instance: Animator = Instance.new("Animator")
-            instance.Parent = humanoid
-            return instance
-        end)
-        return created and made or nil
-    end
-
-    local SAVED_KEY: string = "Universal.EmotePlayer.SavedIDs"
-    local function labels(): {string}
-        local rows: {string} = {}
-        runtime.byLabel = {}
-        for _, emote: any in ipairs(spoofAvatar.getEmotes()) do
-            if type(emote) == "table" and type(emote.id) == "number" then
-                local label: string = tostring(emote.name) .. "  ·  avatar"
-                runtime.byLabel[label] = emote.id
-                table.insert(rows, label)
-            end
-        end
-        for _, item: any in ipairs(runtime.catalog) do
-            runtime.byLabel[item.label] = item.id
-            table.insert(rows, item.label)
-        end
-        local saved: any = host.configData
-            and host.configData.values[SAVED_KEY]
-        if type(saved) == "string" and saved ~= "" then
-            for idText: string in string.gmatch(saved, "[^,]+") do
-                local id: number? = tonumber(idText)
-                if id then
-                    local label: string = "Saved " .. tostring(id)
-                    runtime.byLabel[label] = id
-                    table.insert(rows, label)
-                end
-            end
-        end
-        return rows
-    end
-
-    local function stop(): ()
-        local current: any? = runtime.current
-        runtime.current = nil
-        if not current then
-            return
-        end
-        pcall(function(): ()
-            (current :: any).track:Stop(0.15)
-        end)
-        pcall(function(): ()
-            (current :: any).track:Destroy()
-        end)
-        pcall(function(): ()
-            (current :: any).animation:Destroy()
-        end)
-    end
-
-    local emotes: any
-    emotes = framework.Categories.Utility:CreateModule({
-        Name = "Emote Player",
-        Category = "Fun",
-        Order = 3,
-        ConfigKey = "Universal.EmotePlayer",
-        Tooltip = "Play any emote by id - Roblox's own or UGC - with live "
-            .. "speed and loop control.",
-        Function = function(enabled: boolean): ()
-            if not enabled then
-                emotes:SetStatus(nil)
-                stop()
-                return
-            end
-            emotes:SetStatus(
-                runtime.selected and string.sub(runtime.selected, 1, 15) or "custom"
-            )
-            emotes:Event(localPlayer.CharacterAdded, function(): ()
-                stop()
-            end)
-            emotes:Clean(stop)
-        end,
-    })
-
-    emotes:CreateList({
-        Name = "Emote",
-        Items = labels,
-        EmptyText = "nothing yet - search or wear a disguise",
-        Tooltip = "Pick what to play: emotes from the avatar you are "
-            .. "wearing, plus whatever the last search returned.",
-        Function = function(_selected: any, names: {string}): ()
-            if runtime.settingSelection then
-                return
-            end
-            local chosen: string? = nil
-            for _, name: string in ipairs(names) do
-                if name ~= runtime.selected then
-                    chosen = name
-                    break
-                end
-            end
-            chosen = chosen or names[1]
-            runtime.settingSelection = true
-            for _, name: string in ipairs(names) do
-                if name ~= chosen then
-                    pcall(function(): ()
-                        emotes.Options["Emote"]:Set(name, false)
-                    end)
-                end
-            end
-            runtime.settingSelection = false
-            runtime.selected = chosen
-            if emotes.Enabled then
-                emotes:SetStatus(chosen and string.sub(chosen, 1, 15) or "custom")
-            end
-        end,
-    })
-    emotes:CreateTextBox({
-        Name = "Custom ID",
-        Default = "",
-        Tooltip = "Optional: overrides the pick above when filled in. Any "
-            .. "emote id, Roblox or UGC - catalog page ids work too.",
-    })
-    emotes:CreateButton({
-        Name = "Play",
-        Tooltip = "Play the picked emote, or the custom id. The id is "
-            .. "verified first: it must exist on the marketplace, be an "
-            .. "animation or emote asset, and really deliver its animation "
-            .. "data - otherwise you get the exact reason it failed.",
-        Function = function(): ()
-            task.spawn(function(): ()
-                Module.play(context, emotes, runtime, animator, stop)
-            end)
-        end,
-    })
-    emotes:CreateButton({
-        Name = "Stop",
-        Tooltip = "Stop whatever is playing.",
-        Function = function(): ()
-            stop()
-            if emotes.Enabled then
-                emotes:SetStatus(nil)
-            end
-        end,
-    })
-    emotes:CreateSlider({
-        Name = "Speed",
-        Min = 0.1,
-        Max = 5,
-        Step = 0.05,
-        Default = 1,
-        Tooltip = "Playback rate. Changes apply to the emote that is "
-            .. "playing right now.",
-        Function = function(value: number): ()
-            local current: any? = runtime.current
-            if current then
-                pcall(function(): ()
-                    (current :: any).track:AdjustSpeed(value)
-                end)
-            end
-        end,
-    })
-    emotes:CreateToggle({
-        Name = "Loop",
-        Default = false,
-        Tooltip = "Keep the emote running until you stop it. Toggling it "
-            .. "mid-emote applies immediately.",
-        Function = function(value: boolean): ()
-            local current: any? = runtime.current
-            if current then
-                pcall(function(): ()
-                    (current :: any).track.Looped = value
-                end)
-            end
-        end,
-    })
-    emotes:CreateTextBox({
-        Name = "Search",
-        Default = "",
-        Tooltip = "A name to look for in the catalog.",
-    })
-    emotes:CreateButton({
-        Name = "Find emotes",
-        Tooltip = "Search the catalog for the name above; results land in "
-            .. "the Emote list.",
-        Function = function(): ()
-            task.spawn(function(): ()
-                Module.search(context, emotes, runtime)
-            end)
-        end,
-    })
-
-    emotes:CreateNote(
-        "Ids are verified for real: the marketplace must know the id, it "
-            .. "must be an animation or emote asset, and its animation data "
-            .. "must actually arrive before anything is announced as "
-            .. "playing. Emotes are client sided - only your screen shows "
-            .. "them."
-    )
-
-    activeCleanup = function(): ()
-        stop()
-        runtime.catalog = {}
-        runtime.byLabel = {}
-        runtime.selected = nil
-    end
-    Module.Initialized = true
-    return emotes
-end
-
-function Module.search(context: Runtime, emotes: any, runtime: any): ()
-    if runtime.searching then
-        return
-    end
-    local keyword: string = trimmed(tostring(emotes.Options["Search"].Value or ""))
-    if keyword == "" then
-        emotes:Notify("type something to look for")
-        return
-    end
-    runtime.searching = true
-    local found: {any} = {}
-
-    local ok: boolean = pcall(function(): ()
-        local service: any = game:GetService("AvatarEditorService")
-        local params: any = CatalogSearchParams.new()
-        params.SearchKeyword = keyword
-        pcall(function(): ()
-            params.AssetTypes = {Enum.AvatarAssetType.EmoteAnimation}
-        end)
-        local pages: any = service:SearchCatalog(params)
-        for _ = 1, 2 do
-            for _, item: any in ipairs(pages:GetCurrentPage()) do
-                local id: number? = tonumber(item.Id or item.id)
-                local name: string = tostring(item.Name or item.name or "Emote")
-                if id then
-                    table.insert(found, {
-                        id = id,
-                        label = name .. "  ·  " .. tostring(id),
-                    })
-                end
-            end
-            if pages.IsFinished then
-                break
-            end
-            pages:AdvanceToNextPageAsync()
-        end
-    end)
-
-    runtime.searching = false
-    if not ok then
-        emotes:Notify("the catalog refused the search")
-        return
-    end
-    runtime.catalog = found
-    pcall(function(): ()
-        emotes.Options["Emote"]:Refresh()
-    end)
-    emotes:Notify(tostring(#found) .. " emotes found")
-end
-
-function Module.play(
-    context: Runtime,
-    emotes: any,
-    runtime: any,
-    animator: () -> Animator?,
-    stop: () -> ()
-): ()
-    local typed: number? = tonumber(
-        trimmed(tostring(emotes.Options["Custom ID"].Value or ""))
-    )
-    local assetId: number = typed or 0
-    if assetId <= 0 and runtime.selected then
-        assetId = runtime.byLabel[runtime.selected] or 0
-    end
-    if assetId <= 0 then
-        emotes:Notify("pick an emote or fill in Custom ID")
-        return
-    end
-    -- Asset ids are integers; anything else (67676757576767676867, text,
-    -- decimals) is rejected before a single request is made.
-    if assetId ~= math.floor(assetId) or assetId > 2 ^ 53 then
-        emotes:Notify(tostring(assetId) .. " is not a valid asset id")
-        return
-    end
-
-    local target: Animator? = animator()
-    if not target then
-        emotes:Notify("no character to animate")
-        return
-    end
-
-    -- Communication point #1: ask the marketplace what this id actually
-    -- is. This is what turns a blind "Playing Emote" into a real answer -
-    -- an id that does not exist, or that is a shirt instead of an
-    -- animation, is rejected with its exact reason.
-    local ok: boolean, info: any = pcall(function(): any
-        return game:GetService("MarketplaceService"):GetProductInfo(
-            assetId,
-            Enum.InfoType.Asset
-        )
-    end)
-    if not ok or type(info) ~= "table" then
-        emotes:Notify(
-            "id " .. tostring(assetId) .. " does not exist on the marketplace"
-        )
-        return
-    end
-    local typeId: number = tonumber(info.AssetTypeId) or -1
-    if
-        typeId ~= Enum.AssetType.Animation.Value
-        and typeId ~= Enum.AssetType.EmoteAnimation.Value
-    then
-        local typeName: string = "different asset"
-        for _, item: EnumItem in ipairs(Enum.AssetType:GetEnumItems()) do
-            if item.Value == typeId then
-                typeName = item.Name
-                break
-            end
-        end
-        emotes:Notify(
-            "id " .. tostring(assetId) .. " is a " .. typeName .. ", not an emote"
-        )
-        return
-    end
-    local label: string = tostring(info.Name or assetId)
-
-    local animationId: number = assetId
-    if typeId == Enum.AssetType.EmoteAnimation.Value then
-        -- A catalog emote's page id is not the animation id behind it:
-        -- unpack the real animation from the marketplace item.
-        emotes:SetStatus("resolving")
-        local resolved: number? = resolveCatalogEmoteId(assetId)
-        if not resolved or resolved <= 0 then
-            emotes:SetStatus(nil)
-            emotes:Notify("could not unpack the emote " .. label .. " locally")
-            return
-        end
-        animationId = resolved
-    end
-
-    local function attempt(id: number): (Animation?, AnimationTrack?)
-        local animation: Animation = Instance.new("Animation")
-        animation.Name = "WurstEmote"
-        animation.AnimationId = "rbxassetid://" .. tostring(id)
-        -- Keep it in the data model while it loads; destroying (or leaving
-        -- limbo) early can silently cancel the fetch.
-        animation.Parent = (target :: Animator).Parent or (target :: Animator)
-        local loaded: boolean, track: any = pcall(function(): any
-            return (target :: Animator):LoadAnimation(animation)
-        end)
-        if loaded and typeof(track) == "Instance" then
-            return animation, track
-        end
-        animation:Destroy()
-        return nil, nil
-    end
-
-    local function start(animation: Animation, track: AnimationTrack): any
-        stop()
-        local playing: any = {track = track, animation = animation}
-        runtime.current = playing
-        track.Priority = EMOTE_PRIORITY
-        track.Looped = emotes.Options["Loop"].Value == true
-        pcall(function(): ()
-            track:Play(0.1)
-            track:AdjustSpeed(emotes.Options["Speed"].Value)
-        end)
-        track.Stopped:Once(function(): ()
-            if runtime.current == playing then
-                runtime.current = nil
-            end
-            pcall(function(): ()
-                track:Destroy()
-            end)
-            pcall(function(): ()
-                animation:Destroy()
-            end)
-        end)
-        return playing
-    end
-
-    emotes:SetStatus("loading")
-    local animation: Animation?, track: AnimationTrack? = attempt(animationId)
-    if not track or not animation then
-        emotes:SetStatus(nil)
-        emotes:Notify("the rig refused to load id " .. tostring(animationId))
-        return
-    end
-
-    -- Communication point #2: the official loaded check. A track only has
-    -- a Length once its animation data has arrived (IsLoaded is not a real
-    -- AnimationTrack member); no data in time means the id is genuinely
-    -- broken - deleted, private, or not playable here - and it is reported
-    -- as a failure instead of a fake success.
-    local playing: any = start(animation :: Animation, track :: AnimationTrack)
-    local deadline: number = os.clock() + LOAD_TIMEOUT
-    while
-        runtime.current == playing
-        and (playing.track :: AnimationTrack).Length <= 0
-        and os.clock() < deadline
-    do
-        task.wait(0.1)
-    end
-    if runtime.current ~= playing then
-        -- Stopped or replaced while loading; nothing to report.
-        return
-    end
-    if (playing.track :: AnimationTrack).Length <= 0 then
-        stop()
-        emotes:Notify(
-            "id "
-                .. tostring(animationId)
-                .. " never delivered its animation data"
-        )
-        return
-    end
-    emotes:Notify("playing " .. label .. " - only your screen shows it")
-    emotes:SetStatus(string.sub(label, 1, 15))
-end
-
-function Module.destroy(): ()
-    if activeCleanup then
-        pcall(activeCleanup)
-    end
-    activeCleanup = nil
-    Module.Initialized = false
-end
-
-return Module
-]=],
         ["src/games/MM2/base.lua"] = [=[
 local Module = {
     Name = "MM2",
@@ -26998,6 +24504,7 @@ local mm2Settings = {
     roleTagsAll = false,
     blurtDelay = 1.5,
     blurtRepeat = false,
+    blurtFake = false,
     coinColor = Color3.fromRGB(230, 220, 65),
     coinTransparency = 0.8,
     trapColor = Color3.fromRGB(145, 25, 25),
@@ -28527,6 +26034,7 @@ local function createTrajectoryCalibration(): any
         serverTime: number,
         pingMs: number,
         latencyMs: number?,
+        distance: number?,
         speed: number?,
         rawSpeed: number?,
         samples: number?,
@@ -28560,6 +26068,7 @@ local function createTrajectoryCalibration(): any
         destroy: (self: Controller) -> (),
         status: (self: Controller) -> string,
         getEstimates: (self: Controller) -> Estimates,
+        noteAuthoredShot: (self: Controller, info: any) -> (),
     }
 
     local OUTPUT_ROOT: string = host.PRODUCT.storageFolder
@@ -28585,9 +26094,13 @@ local function createTrajectoryCalibration(): any
         observedTools = setmetatable({}, {__mode = "k"}) :: {[Tool]: boolean},
         connections = {} :: {RBXScriptConnection},
         events = {} :: {CalibrationEvent},
+        eventsNew = {} :: {CalibrationEvent},
         gunAcceptance = nil :: RunningStats?,
         knifeSpeed = nil :: RunningStats?,
         knifeSpawnDelay = nil :: RunningStats?,
+        gunAcceptanceDelta = nil :: RunningStats?,
+        knifeSpeedDelta = nil :: RunningStats?,
+        knifeSpawnDelayDelta = nil :: RunningStats?,
         motionBuckets = {} :: {[string]: any},
         trajectorySampler = nil :: any,
     }
@@ -28609,9 +26122,73 @@ local function createTrajectoryCalibration(): any
     runtime.gunAcceptance = newStats()
     runtime.knifeSpeed = newStats()
     runtime.knifeSpawnDelay = newStats()
+    runtime.gunAcceptanceDelta = newStats()
+    runtime.knifeSpeedDelta = newStats()
+    runtime.knifeSpawnDelayDelta = newStats()
 
     local function finite(value: number): boolean
         return value == value and value > -math.huge and value < math.huge
+    end
+
+    -- Welford merge: fold `stored` (the on-disk aggregate from previous
+    -- saves/sessions) into `current`. Enables consecutive accumulation:
+    -- leaving the game and coming back extends the statistics instead of
+    -- replacing them.
+    local function mergeStatsPayload(
+        current: {[string]: number},
+        stored: any
+    ): {[string]: number}
+        if type(stored) ~= "table" then
+            return current
+        end
+        local storedCount: number = tonumber(stored.count) or 0
+        if storedCount <= 0 then
+            return current
+        end
+        local currentCount: number = tonumber(current.count) or 0
+        if currentCount <= 0 then
+            return {
+                count = storedCount,
+                mean = tonumber(stored.mean) or 0,
+                m2 = tonumber(stored.m2) or 0,
+                minimum = tonumber(stored.minimum) or 0,
+                maximum = tonumber(stored.maximum) or 0,
+            }
+        end
+        local storedMean: number = tonumber(stored.mean) or 0
+        local currentMean: number = tonumber(current.mean) or 0
+        local total: number = currentCount + storedCount
+        local delta: number = storedMean - currentMean
+        return {
+            count = total,
+            mean = currentMean + delta * (storedCount / total),
+            m2 = (tonumber(current.m2) or 0)
+                + (tonumber(stored.m2) or 0)
+                + delta * delta * currentCount * storedCount / total,
+            minimum = math.min(
+                tonumber(current.minimum) or 0,
+                tonumber(stored.minimum) or 0
+            ),
+            maximum = math.max(
+                tonumber(current.maximum) or 0,
+                tonumber(stored.maximum) or 0
+            ),
+        }
+    end
+
+    local function applyStatsPayload(
+        stats: RunningStats,
+        payload: {[string]: number}
+    ): ()
+        stats.count = tonumber(payload.count) or 0
+        stats.mean = tonumber(payload.mean) or 0
+        stats.m2 = tonumber(payload.m2) or 0
+        stats.minimum = stats.count > 0
+            and (tonumber(payload.minimum) or 0)
+            or math.huge
+        stats.maximum = stats.count > 0
+            and (tonumber(payload.maximum) or 0)
+            or -math.huge
     end
 
     local function vectorArray(value: Vector3): {number}
@@ -28828,6 +26405,7 @@ local function createTrajectoryCalibration(): any
             table.remove(runtime.events, 1)
         end
         table.insert(runtime.events, record)
+        table.insert(runtime.eventsNew, record)
         runtime.dirty = true
         if runtime.saveScheduled then
             return
@@ -29016,9 +26594,9 @@ local function createTrajectoryCalibration(): any
         }
     end
 
-    local function motionModelPayload(): {[string]: any}
+    local function motionModelPayload(buckets: {[string]: any}): {[string]: any}
         local payload: {[string]: any} = {}
-        for key: string, bucket: any in pairs(runtime.motionBuckets) do
+        for key: string, bucket: any in pairs(buckets) do
             local count: number = math.max(1, tonumber(bucket.count) or 1)
             local horizontalCount: number = math.max(
                 1,
@@ -29081,6 +26659,79 @@ local function createTrajectoryCalibration(): any
             warn(trajectoryLogPrefix .. " writefile is unavailable; data was not saved.")
             return false
         end
+        -- Consecutive accumulation: fold only this save's NEW samples and
+        -- events into whatever previous sessions already wrote, then adopt
+        -- the merged totals as the running history. Leaving the game (or the
+        -- 0.8 s autosave) therefore extends the file instead of resetting it.
+        local stored: any = nil
+        if type(environment.readfile) == "function" then
+            local okRead: boolean, existingRaw: any = pcall(
+                environment.readfile,
+                OUTPUT_PATH
+            )
+            if okRead and type(existingRaw) == "string" then
+                local okDecode: boolean, decoded: any = pcall(
+                    HttpService.JSONDecode,
+                    existingRaw
+                )
+                if okDecode and type(decoded) == "table" then
+                    stored = decoded
+                end
+            end
+        end
+        local storedAgg: any =
+            type(stored) == "table" and stored.aggregate or {}
+        local mergedGun: {[string]: number} = mergeStatsPayload(
+            statsPayload(runtime.gunAcceptanceDelta),
+            storedAgg.gunAcceptanceMs
+        )
+        local mergedKnife: {[string]: number} = mergeStatsPayload(
+            statsPayload(runtime.knifeSpeedDelta),
+            storedAgg.knifeSpeedStudsPerSecond
+        )
+        local mergedDelay: {[string]: number} = mergeStatsPayload(
+            statsPayload(runtime.knifeSpawnDelayDelta),
+            storedAgg.knifeSpawnDelayMs
+        )
+        local storedBuckets: any =
+            type(stored) == "table"
+            and stored.analytics
+            and stored.analytics.motionModel
+            or {}
+        local mergedBuckets: {[string]: any} = {}
+        for key: string, bucket: any in pairs(runtime.motionBuckets) do
+            mergedBuckets[key] = table.clone(bucket)
+        end
+        if type(storedBuckets) == "table" then
+            for key: string, storedBucket: any in pairs(storedBuckets) do
+                local target: any = mergedBuckets[key]
+                if not target or type(target) ~= "table" then
+                    mergedBuckets[key] = table.clone(storedBucket)
+                else
+                    for field: string, value: any in pairs(storedBucket) do
+                        if type(value) == "number" and type(target[field]) == "number" then
+                            target[field] = target[field] + value
+                        end
+                    end
+                end
+            end
+        end
+        local mergedEvents: {CalibrationEvent} = {}
+        if type(stored) == "table"
+            and type(stored.session) == "table"
+            and type(stored.session.events) == "table" then
+            for _, event: any in ipairs(stored.session.events) do
+                table.insert(mergedEvents, event)
+            end
+        end
+        for _, event: CalibrationEvent in ipairs(runtime.eventsNew) do
+            table.insert(mergedEvents, event)
+        end
+        while #mergedEvents > 2400 do
+            table.remove(mergedEvents, 1)
+        end
+        local storedSession: any =
+            type(stored) == "table" and stored.session or {}
         local payload: {[string]: any} = {
             schema = 2,
             kind = "mm2-trajectory-analytics",
@@ -29088,11 +26739,16 @@ local function createTrajectoryCalibration(): any
             savedAt = DateTime.now():ToIsoDate(),
             reason = reason,
             aggregate = {
-                gunAcceptanceMs = statsPayload(runtime.gunAcceptance),
-                knifeSpeedStudsPerSecond = statsPayload(runtime.knifeSpeed),
-                knifeSpawnDelayMs = statsPayload(runtime.knifeSpawnDelay),
+                gunAcceptanceMs = mergedGun,
+                knifeSpeedStudsPerSecond = mergedKnife,
+                knifeSpawnDelayMs = mergedDelay,
             },
-            estimator = estimates(),
+            estimator = {
+                gunAcceptanceMs = mergedGun.count > 0 and mergedGun.mean or nil,
+                knifeSpeed = mergedKnife.count > 0 and mergedKnife.mean or nil,
+                confirmedShots = mergedGun.count,
+                confirmedThrows = mergedKnife.count,
+            },
             analytics = {
                 bucketSpec = {
                     metric = "Data Ping",
@@ -29101,15 +26757,19 @@ local function createTrajectoryCalibration(): any
                     maximumMs = 250,
                     states = {"Grounded", "Airborne"},
                 },
-                motionModel = motionModelPayload(),
+                motionModel = motionModelPayload(mergedBuckets),
             },
             session = {
                 elapsedSeconds = os.clock() - runtime.startedAt,
-                gunAttempts = runtime.sessionGunAttempts,
-                gunConfirmed = runtime.sessionGunConfirmed,
-                knifeAttempts = runtime.sessionKnifeAttempts,
-                knifeConfirmed = runtime.sessionKnifeConfirmed,
-                events = runtime.events,
+                gunAttempts = (tonumber(storedSession.gunAttempts) or 0)
+                    + runtime.sessionGunAttempts,
+                gunConfirmed = (tonumber(storedSession.gunConfirmed) or 0)
+                    + runtime.sessionGunConfirmed,
+                knifeAttempts = (tonumber(storedSession.knifeAttempts) or 0)
+                    + runtime.sessionKnifeAttempts,
+                knifeConfirmed = (tonumber(storedSession.knifeConfirmed) or 0)
+                    + runtime.sessionKnifeConfirmed,
+                events = mergedEvents,
             },
         }
         local encodedOk: boolean, encoded: any = pcall(
@@ -29134,6 +26794,21 @@ local function createTrajectoryCalibration(): any
             warn(trajectoryLogPrefix .. " writefile failed: " .. tostring(writeError))
             return false
         end
+        -- Adopt the merged totals as the running history and start a fresh
+        -- delta, so the next save only folds in genuinely new samples.
+        applyStatsPayload(runtime.gunAcceptance, mergedGun)
+        applyStatsPayload(runtime.knifeSpeed, mergedKnife)
+        applyStatsPayload(runtime.knifeSpawnDelay, mergedDelay)
+        runtime.motionBuckets = mergedBuckets
+        runtime.events = mergedEvents
+        runtime.gunAcceptanceDelta = newStats()
+        runtime.knifeSpeedDelta = newStats()
+        runtime.knifeSpawnDelayDelta = newStats()
+        runtime.eventsNew = {}
+        runtime.sessionGunAttempts = payload.session.gunAttempts
+        runtime.sessionGunConfirmed = payload.session.gunConfirmed
+        runtime.sessionKnifeAttempts = payload.session.knifeAttempts
+        runtime.sessionKnifeConfirmed = payload.session.knifeConfirmed
         runtime.dirty = false
         print(
             trajectoryLogPrefix .. " Saved "
@@ -29238,6 +26913,7 @@ local function createTrajectoryCalibration(): any
             and targetCharacter ~= nil
             and hitPartValue:IsDescendantOf(targetCharacter)
         addSample(runtime.gunAcceptance, latencyMs)
+        addSample(runtime.gunAcceptanceDelta, latencyMs)
         runtime.sessionGunConfirmed += 1
         pending.confirmedAt = now
         pending.latencyMs = latencyMs
@@ -29273,6 +26949,7 @@ local function createTrajectoryCalibration(): any
                 nil
             )
             addSample(runtime.knifeSpeed, resolvedSpeed)
+            addSample(runtime.knifeSpeedDelta, resolvedSpeed)
             runtime.sessionKnifeConfirmed += 1
             appendEvent({
                 kind = "knife",
@@ -29398,6 +27075,7 @@ local function createTrajectoryCalibration(): any
                 (now - pending.activatedAt) * 1000
             )
             addSample(runtime.knifeSpawnDelay, spawnDelayMs)
+            addSample(runtime.knifeSpawnDelayDelta, spawnDelayMs)
             local rawSpeed: number? = tonumber(projectile:GetAttribute("ThrowSpeed"))
             if rawSpeed and (rawSpeed < 24 or rawSpeed > 300) then
                 rawSpeed = nil
@@ -29599,8 +27277,12 @@ local function createTrajectoryCalibration(): any
         runtime.gunAcceptance = newStats()
         runtime.knifeSpeed = newStats()
         runtime.knifeSpawnDelay = newStats()
+        runtime.gunAcceptanceDelta = newStats()
+        runtime.knifeSpeedDelta = newStats()
+        runtime.knifeSpawnDelayDelta = newStats()
         runtime.motionBuckets = {}
         runtime.events = {}
+        runtime.eventsNew = {}
         runtime.sessionGunAttempts = 0
         runtime.sessionGunConfirmed = 0
         runtime.sessionKnifeAttempts = 0
@@ -29627,6 +27309,99 @@ local function createTrajectoryCalibration(): any
 
     function controller:getEstimates(): Estimates
         return estimates()
+    end
+
+    -- Called by the module-shot authors (Shoot silent/manual, KnifeThrow,
+    -- KnifeAura stabs) at the exact FireServer moment. Those shots never
+    -- trigger tool.Activated, so without this the calibration would never see
+    -- them and gun-acceptance / knife-speed / stab ranges would stay empty.
+    function controller:noteAuthoredShot(info: any): ()
+        if not runtime.active or type(info) ~= "table" then
+            return
+        end
+        local kind: string = tostring(info.kind or "gun")
+        local now: number = os.clock()
+        local pingMs: number = getPingMilliseconds()
+        local target: Player? =
+            info.target and info.target.Character ~= nil and info.target or nil
+        local targetTrajectory: {TrajectoryPoint} = {}
+        if target then
+            local initialPoint: TrajectoryPoint? = captureTrajectoryPoint(
+                target,
+                now,
+                pingMs
+            )
+            if initialPoint then
+                table.insert(targetTrajectory, initialPoint)
+            end
+        end
+        if kind == "stab" then
+            local targetRoot: BasePart? = getTargetRoot(target)
+            local localRoot: BasePart? =
+                LocalPlayer.Character
+                and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                :: BasePart?
+            local distance: number? = targetRoot
+                and localRoot
+                and (targetRoot.Position - localRoot.Position).Magnitude
+            appendEvent({
+                kind = "stab",
+                serverTime = workspace:GetServerTimeNow(),
+                pingMs = pingMs,
+                distance = distance and math.floor(distance * 10 + 0.5) / 10 or nil,
+                targetUserId = target and target.UserId or nil,
+                targetName = target and target.Name or nil,
+                targetState = targetTrajectory[1]
+                    and targetTrajectory[1].humanoidState
+                    or nil,
+                targetTrajectory = #targetTrajectory > 0 and targetTrajectory or nil,
+            })
+        else
+            local isGun: boolean = kind ~= "knife"
+            local authoredTool: Tool? = nil
+            if typeof(info.tool) == "Instance" and info.tool:IsA("Tool") then
+                authoredTool = info.tool :: Tool
+            end
+            -- Knife matching indexes pending.tool directly (HandleLink), so a
+            -- knife pending without a tool is both useless and a crash; a gun
+            -- pending works without a tool (the origin match covers it).
+            if isGun or authoredTool ~= nil then
+                if isGun then
+                    runtime.sessionGunAttempts += 1
+                else
+                    runtime.sessionKnifeAttempts += 1
+                end
+                local queue: {any} =
+                    isGun and runtime.pendingGuns or runtime.pendingKnives
+                table.insert(queue, {
+                    tool = authoredTool,
+                    activatedAt = now,
+                    origin = info.originPos,
+                    requestedAim = info.aimPos,
+                    pingMs = pingMs,
+                    targetUserId = target and target.UserId or nil,
+                    targetName = target and target.Name or nil,
+                    targetTrajectory = targetTrajectory,
+                    lastTrajectorySampleAt = now,
+                })
+                compactPending(queue, now)
+                ensureTrajectorySampler()
+            end
+        end
+        -- Publish through the game bridge so the universal Game Learning log
+        -- records the same authored shot (silent shots are otherwise
+        -- invisible to any tool.Activated-based collector).
+        if type(state.emitGameBridgeEvent) == "function" then
+            state.emitGameBridgeEvent("authoringShot", {
+                kind = kind,
+                toolName = tostring(info.toolName or (kind == "knife" and "Knife" or "Gun")),
+                originPos = info.originPos,
+                aimPos = info.aimPos,
+                targetName = target and target.Name or nil,
+                silent = info.silent == true,
+                variant = info.variant,
+            })
+        end
     end
 
     function controller:status(): string
@@ -29680,6 +27455,18 @@ end
 local trajectoryCalibration: any = createTrajectoryCalibration()
 state.mm2TrajectoryCalibration = trajectoryCalibration
 trajectoryCalibration:start()
+
+-- Consecutive saving: flush the accumulated calibration to disk the moment
+-- the player leaves the game, so no session is ever lost to a disconnect.
+pcall(function(): ()
+    if type((game :: any).BindToClose) == "function" then
+        game:BindToClose(function(): ()
+            if type(trajectoryCalibration.save) == "function" then
+                pcall(trajectoryCalibration.save, trajectoryCalibration, "close")
+            end
+        end)
+    end
+end)
 
 local weaponServiceModule: any = nil
 type PendingShot = {
@@ -30446,6 +28233,7 @@ function Module.init(runtime: any): any
         return Module
     end
     local core: any = state.mm2Core
+    local trajectoryCalibration: any = core.trajectoryCalibration
     assert(type(core) == "table", "MM2 Shoot requires the MM2 core module")
     Module.Runtime = runtime
     local connectGunFiredSignal: any = core.connectGunFiredSignal
@@ -30939,6 +28727,18 @@ function Module.init(runtime: any): any
                 offset = math.floor(offset * 10) / 10,
             }
             remote:FireServer(shotOrigin, shotEnd)
+            -- The silent packet never triggers tool.Activated, so feed the
+            -- authored geometry to the calibration + passive loggers directly.
+            pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
+                kind = "gun",
+                tool = gun,
+                toolName = gun and gun.Name or "Gun",
+                originPos = shotOrigin.Position,
+                aimPos = shotEnd.Position,
+                target = target,
+                silent = true,
+                variant = variant,
+            })
             return true
         end
 
@@ -30955,6 +28755,15 @@ function Module.init(runtime: any): any
             CFrame.lookAt(origin.Position, resolved.endpoint),
             CFrame.new(resolved.endpoint)
         )
+        pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
+            kind = "gun",
+            tool = gun,
+            toolName = gun and gun.Name or "Gun",
+            originPos = origin.Position,
+            aimPos = resolved.endpoint,
+            target = target,
+            silent = false,
+        })
         return true
     end
 
@@ -31358,6 +29167,7 @@ function Module.init(runtime: any): any
     local getPlayerWeapon: any = core.getPlayerWeapon
     local isPlayerAlive: any = core.isPlayerAlive
     local isProtectedTarget: any = core.isProtectedTarget
+    local trajectoryCalibration: any = core.trajectoryCalibration
 
     type KnifeRuntimeState = {
         lastAuraSwing: number,
@@ -31489,6 +29299,13 @@ function Module.init(runtime: any): any
                 pcall(state.fireTouchInterest, currentHandle, currentRoot, 0)
                 pcall(state.fireTouchInterest, currentHandle, currentRoot, 1)
             end
+            pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
+                kind = "stab",
+                toolName = "Knife",
+                originPos = currentLocalRoot.Position,
+                aimPos = currentRoot.Position,
+                target = target,
+            })
         end)
     end
 
@@ -31738,6 +29555,15 @@ function Module.init(runtime: any): any
         local aimPos: Vector3 = predictAim(target, originPos)
         remote:FireServer(CFrame.new(originPos), CFrame.new(aimPos))
         lastThrow = os.clock()
+        pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
+            kind = "knife",
+            tool = knife,
+            toolName = knife.Name,
+            originPos = originPos,
+            aimPos = aimPos,
+            target = target,
+            silent = silent,
+        })
     end
 
     local function toggleKnifeThrow(enabled: boolean): ()
@@ -32830,319 +30656,6 @@ end
 
 return Module
 ]=],
-        ["src/games/MM2/Render/MurderTag.lua"] = [=[
-local Module = {
-    Name = "MM2 Murder Tag",
-    PlaceId = 142823291,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-    Runtime = nil :: any,
-}
-
-local activeCleanup: () -> () = function(): () end
-
-function Module.init(runtime: any): any
-    if Module.Initialized then
-        return Module
-    end
-    local core: any = state.mm2Core
-    assert(type(core) == "table", "MM2 Murder Tag requires the MM2 core module")
-    Module.Runtime = runtime
-    local findMurderer: any = core.findMurderer
-    local mm2Settings: any = core.mm2Settings
-
-    -- ---------------------------------------------------------------------------
-    -- Murder tag: a single "Murder" billboard over the current murderer's head.
-    -- Deliberately independent from Role Tags so it can stay on without
-    -- enabling the full per-player nametag set.
-    -- ---------------------------------------------------------------------------
-    local MurderTagEffects = create("Folder", {
-        Parent = core.MM2Effects,
-        Name = "MurderTag",
-    })
-
-    type MurderTagRecord = {
-        billboard: BillboardGui,
-        label: TextLabel,
-        reference: ObjectValue,
-        head: BasePart?,
-    }
-
-    local tag: MurderTagRecord? = nil
-
-    local function destroyTag(): ()
-        if tag then
-            tag.billboard:Destroy()
-            tag.reference:Destroy()
-            tag = nil
-        end
-    end
-
-    local function createTag(head: BasePart): MurderTagRecord
-        local billboard: BillboardGui = Instance.new("BillboardGui")
-        billboard.Name = "Wurst_MurderTag"
-        billboard.AlwaysOnTop = true
-        billboard.LightInfluence = 0
-        billboard.Size = UDim2.fromOffset(150, 22)
-        -- Role Tags sit at 2.7 studs when enabled; sit higher so the two do
-        -- not overlap.
-        billboard.StudsOffset = Vector3.new(0, 3.5, 0)
-        billboard.MaxDistance = 1500
-        billboard.Adornee = head
-        -- A BillboardGui nested inside a ScreenGui never renders (nested layer
-        -- collectors are skipped), so it lives on the part like the rest of the
-        -- MM2 markers and the folder only keeps a reference for cleanup.
-        billboard.Parent = head
-
-        local reference: ObjectValue = Instance.new("ObjectValue")
-        reference.Name = "MurderTagReference"
-        reference.Value = billboard
-        reference.Parent = MurderTagEffects
-
-        local label: TextLabel = Instance.new("TextLabel")
-        label.Name = "Murder"
-        label.BackgroundTransparency = 1
-        label.Size = UDim2.fromScale(1, 1)
-        label.FontFace = CONTROL_FONT
-        label.TextSize = 14
-        label.TextScaled = false
-        label.Text = "Murder"
-        label.TextColor3 = mm2Settings.murdererColor
-        label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-        label.TextStrokeTransparency = 0.3
-        label.Parent = billboard
-
-        return {
-            billboard = billboard,
-            label = label,
-            reference = reference,
-            head = head,
-        }
-    end
-
-    local function refreshTag(): ()
-        local murderer: Player? = findMurderer()
-        local character: Model? = murderer and murderer.Character or nil
-        local head: BasePart? = character
-            and (character:FindFirstChild("Head")
-                or character:FindFirstChild("HumanoidRootPart"))
-            :: BasePart?
-        if not head then
-            destroyTag()
-            return
-        end
-        -- Head dies with the character (and the round hands the knife to
-        -- someone else), so a dead adornee means a full rebuild.
-        if tag and (not tag.billboard.Parent or tag.head ~= head) then
-            destroyTag()
-        end
-        if not tag then
-            tag = createTag(head :: BasePart)
-        end
-        -- Re-applied every pass so the live colour picker takes effect without
-        -- waiting for a rebuild.
-        local colour: Color3 = mm2Settings.murdererColor
-        if tag.label.TextColor3 ~= colour then
-            tag.label.TextColor3 = colour
-        end
-    end
-
-    local murderTagEnabled: boolean = false
-
-    local function toggleMurderTag(enabled: boolean): ()
-        murderTagEnabled = enabled
-        disconnectFeatureConnection("MM2MurderTag")
-        destroyTag()
-        if not enabled then
-            return
-        end
-        local elapsed: number = 1
-        featureConnections.MM2MurderTag = TaskManager:Connect(function(deltaTime: number): ()
-            elapsed += deltaTime
-            if elapsed < 0.2 then
-                return
-            end
-            elapsed = 0
-            refreshTag()
-        end)
-    end
-
-    local unsubscribeRoles: () -> () = core.onRoundRoles(function(): ()
-        if murderTagEnabled then
-            refreshTag()
-        end
-    end)
-
-    -- Default on: the point of the card is that the tag shows without hunting
-    -- for a second toggle. A stored user choice still wins over the default.
-    if type(configData) == "table" and type(configData.states) == "table"
-        and configData.states["MM2.MurderTag"] == nil then
-        configData.states["MM2.MurderTag"] = true
-        queueConfigSave()
-    end
-
-    createUniversalFeature(
-        "Murder Tag",
-        "A 'Murder' tag floating above the murderer's head, always visible",
-        14,
-        toggleMurderTag,
-        {
-            noOptions = true,
-            categoryName = "Render",
-            parent = MM2Scroll,
-            registry = mm2Features,
-        }
-    )
-
-    activeCleanup = function(): ()
-        pcall(unsubscribeRoles)
-        toggleMurderTag(false)
-    end
-    Module.Events = featureConnections
-    Module.Initialized = true
-    return Module
-end
-
-function Module.destroy(): ()
-    if not Module.Initialized then
-        return
-    end
-    Module.Initialized = false
-    pcall(activeCleanup)
-    activeCleanup = function(): () end
-    Module.Events = {}
-    Module.Runtime = nil
-end
-
-return Module
-]=],
-        ["src/games/MM2/Render/HideNames.lua"] = [=[
-local Module = {
-    Name = "MM2 Hide Names",
-    PlaceId = 142823291,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-    Runtime = nil :: any,
-}
-
-local activeCleanup: () -> () = function(): () end
-
--- The alias every label showing the local player's name is rewritten to.
-local ALIAS = "John Doe"
-
-function Module.init(runtime: any): any
-    if Module.Initialized then
-        return Module
-    end
-    local core: any = state.mm2Core
-    assert(type(core) == "table", "MM2 Hide Names requires the MM2 core module")
-    Module.Runtime = runtime
-
-    -- label -> the text it had before we rewrote it, so disabling restores it.
-    local hiddenNameLabels = setmetatable({}, {__mode = "k"})
-
-    local function toggleHideNames(enabled)
-        disconnectFeatureConnection("MM2HideNames")
-        if not enabled then
-            for label, originalText in pairs(hiddenNameLabels) do
-                if label and label.Parent and label.Text == ALIAS then
-                    label.Text = originalText
-                end
-            end
-            hiddenNameLabels = setmetatable({}, {__mode = "k"})
-            return
-        end
-
-        local elapsed = 1
-        featureConnections.MM2HideNames = TaskManager:Connect(function(deltaTime)
-            elapsed = elapsed + deltaTime
-            if elapsed < 0.25 then
-                return
-            end
-            elapsed = 0
-
-            -- Only the local player's own identity is masked. Every string form
-            -- the UIs use for a player is covered: bare name, display name, the
-            -- @handle, and the "Display (@user)" form the player list and chat
-            -- headers render.
-            local names = {}
-            names[LocalPlayer.Name] = true
-            names[LocalPlayer.DisplayName] = true
-            names["@" .. LocalPlayer.Name] = true
-            names[LocalPlayer.DisplayName .. " (@" .. LocalPlayer.Name .. ")"] = true
-
-            -- Where the name can appear:
-            --   * PlayerGui  -> the MM2 scoreboard and any in-game panel
-            --   * RobloxGui.PlayerList -> the default player list
-            --   * ExperienceChat -> the chat window (sender labels)
-            local roots = {}
-            local playerGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
-            if playerGui then
-                table.insert(roots, playerGui)
-            end
-            pcall(function()
-                local coreGui = game:GetService("CoreGui")
-                local robloxGui = coreGui:FindFirstChild("RobloxGui")
-                local playerList = robloxGui
-                    and robloxGui:FindFirstChild("PlayerList", true)
-                if playerList then
-                    table.insert(roots, playerList)
-                end
-                local chat = coreGui:FindFirstChild("ExperienceChat")
-                if chat then
-                    table.insert(roots, chat)
-                end
-            end)
-
-            for _, root in ipairs(roots) do
-                for _, object in ipairs(root:GetDescendants()) do
-                    if (object:IsA("TextLabel") or object:IsA("TextButton"))
-                        and names[object.Text] then
-                        if hiddenNameLabels[object] == nil then
-                            hiddenNameLabels[object] = object.Text
-                        end
-                        object.Text = ALIAS
-                    end
-                end
-            end
-        end)
-    end
-
-    createUniversalFeature(
-        "Hide Names",
-        "Replace your own name with " .. ALIAS
-            .. " in the MM2 scoreboard, chat and player list",
-        18,
-        toggleHideNames,
-        {
-            noOptions = true,
-            categoryName = "Render",
-            parent = MM2Scroll,
-            registry = mm2Features,
-        }
-    )
-
-    activeCleanup = function(): ()
-        toggleHideNames(false)
-    end
-    Module.Events = featureConnections
-    Module.Initialized = true
-    return Module
-end
-
-function Module.destroy(): ()
-    if not Module.Initialized then
-        return
-    end
-    Module.Initialized = false
-    pcall(activeCleanup)
-    activeCleanup = function(): () end
-    Module.Events = {}
-    Module.Runtime = nil
-end
-
-return Module
-]=],
         ["src/games/MM2/Movement/Sprint.lua"] = [=[
 local Module = {
     Name = "MM2 Sprint",
@@ -33680,12 +31193,27 @@ function Module.init(runtime: any): any
         end
         local murdererName: string = murderer and murderer.Name or "?"
         local sheriffName: string = sheriff and sheriff.Name or "?"
-        local message: string = string.format(
-            'Murder; "%s" Sheriff; "%s" | Wurst',
-            murdererName,
-            sheriffName
-        )
-        return message, murdererName .. "/" .. sheriffName
+        local message: string
+        local signature: string
+        if mm2Settings.blurtFake then
+            -- Deception mode: announce the roles swapped and drop the Wurst
+            -- signature so the line looks organic. The wrong names send the
+            -- crew (and the sheriff's suspicion) at the wrong player.
+            message = string.format(
+                'Murder; "%s" Sheriff; "%s"',
+                sheriffName,
+                murdererName
+            )
+            signature = "fake/" .. sheriffName .. "/" .. murdererName
+        else
+            message = string.format(
+                'Murder; "%s" Sheriff; "%s" | Wurst',
+                murdererName,
+                sheriffName
+            )
+            signature = murdererName .. "/" .. sheriffName
+        end
+        return message, signature
     end
 
     local function blurtRoles(manual: boolean): ()
@@ -33797,6 +31325,16 @@ function Module.init(runtime: any): any
         end,
         "Blurt again when the sheriff dies and the gun changes hands."
     )
+    addToggleOption(
+        BlurtFeature,
+        "Fake Blurt Roles",
+        mm2Settings.blurtFake,
+        function(value: boolean): ()
+            mm2Settings.blurtFake = value
+        end,
+        "Announces the roles SWAPPED (and without the Wurst tag) so the chat "
+            .. "lies about who the murderer and sheriff are."
+    )
     addActionOption(BlurtFeature, "Blurt now", function(): ()
         blurtRoles(true)
     end)
@@ -33809,243 +31347,6 @@ function Module.init(runtime: any): any
     activeCleanup = function(): ()
         pcall(unsubscribe)
         toggleBlurtRoles(false)
-    end
-    Module.Events = featureConnections
-    Module.Initialized = true
-    return Module
-end
-
-function Module.destroy(): ()
-    if not Module.Initialized then
-        return
-    end
-    Module.Initialized = false
-    pcall(activeCleanup)
-    activeCleanup = function(): () end
-    Module.Events = {}
-    Module.Runtime = nil
-end
-
-return Module
-]=],
-        ["src/games/MM2/Fun/RoleFling.lua"] = [=[
-local Module = {
-    Name = "MM2 Role Fling",
-    PlaceId = 142823291,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-    Runtime = nil :: any,
-}
-
-local activeCleanup: () -> () = function(): () end
-
-function Module.init(runtime: any): any
-    if Module.Initialized then
-        return Module
-    end
-    local core: any = state.mm2Core
-    assert(type(core) == "table", "MM2 Role Fling requires the MM2 core module")
-    Module.Runtime = runtime
-    local findMurderer: any = core.findMurderer
-    local findSheriff: any = core.findSheriff
-    local playerFromRoundKey: any = core.playerFromRoundKey
-    local getRoundData: any = core.getRoundData
-
-    local FlingGroup = createUniversalFeature(
-        "Role Fling",
-        "Role-based fling actions",
-        15,
-        function() end,
-        {
-            category = true,
-            categoryName = "Fun",
-            parent = MM2Scroll,
-            registry = mm2Features,
-        }
-    )
-    addActionOption(FlingGroup, "Fling Murderer", function()
-        local target = findMurderer()
-        if target then
-            performFling(target)
-        else
-            notify("No murderer was found.")
-        end
-    end)
-    addActionOption(FlingGroup, "Fling Sheriff", function()
-        local target = findSheriff()
-        if target then
-            performFling(target)
-        else
-            notify("No sheriff or hero was found.")
-        end
-    end)
-    addActionOption(FlingGroup, "Fling All Innocents", function()
-        task.spawn(function()
-            for key, data in pairs(getRoundData()) do
-                if type(data) == "table" and data.Role == "Innocent" then
-                    local target = playerFromRoundKey(key, data)
-                    if target and target ~= LocalPlayer then
-                        performFling(target)
-
-                        repeat
-                            task.wait(0.05)
-                        until not Module.Runtime.Services.activity.isActive("fling")
-                    end
-                end
-            end
-        end)
-    end)
-
-    activeCleanup = function(): ()
-        -- nothing persistent to undo
-    end
-    Module.Events = featureConnections
-    Module.Initialized = true
-    return Module
-end
-
-function Module.destroy(): ()
-    if not Module.Initialized then
-        return
-    end
-    Module.Initialized = false
-    pcall(activeCleanup)
-    activeCleanup = function(): () end
-    Module.Events = {}
-    Module.Runtime = nil
-end
-
-return Module
-]=],
-        ["src/games/MM2/Fun/AutoPlayId.lua"] = [=[
-local Module = {
-    Name = "MM2 Auto Play ID",
-    PlaceId = 142823291,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-    Runtime = nil :: any,
-}
-
-local activeCleanup: () -> () = function(): () end
-
-function Module.init(runtime: any): any
-    if Module.Initialized then
-        return Module
-    end
-    local core: any = state.mm2Core
-    assert(type(core) == "table", "MM2 Auto Play ID requires the MM2 core module")
-    Module.Runtime = runtime
-    local mm2Settings: any = core.mm2Settings
-
-    local AutoPlaySound = Instance.new("Sound")
-    AutoPlaySound.Name = "Wurst_MM2_AutoPlay"
-    AutoPlaySound.Looped = true
-    AutoPlaySound.Volume = 0.6
-    AutoPlaySound.Parent = game:GetService("SoundService")
-    local autoPlayLoadConnection: RBXScriptConnection? = nil
-    local autoPlayGeneration: number = 0
-    local autoPlayInput: TextBox? = nil
-    local autoPlayConfigKey = "MM2.AutoPlayID.PlayID"
-    local autoPlayStateKey = "MM2.AutoPlayID"
-
-    local function stopAutoPlaySound(): ()
-        autoPlayGeneration += 1
-        if autoPlayLoadConnection then
-            autoPlayLoadConnection:Disconnect()
-            autoPlayLoadConnection = nil
-        end
-        AutoPlaySound:Stop()
-        AutoPlaySound.SoundId = ""
-    end
-
-    local function clearAutoPlaySetting(message: string): ()
-        stopAutoPlaySound()
-        mm2Settings.autoPlayId = ""
-        if type(configData) == "table" then
-            if type(configData.values) == "table" then
-                configData.values[autoPlayConfigKey] = nil
-            end
-            if type(configData.states) == "table" then
-                configData.states[autoPlayStateKey] = false
-            end
-        end
-        if autoPlayInput and autoPlayInput.Parent then
-            autoPlayInput.Text = ""
-        end
-        queueConfigSave()
-        notify(message)
-    end
-
-    local function playConfiguredSound(): ()
-        stopAutoPlaySound()
-        local numericId = string.match(mm2Settings.autoPlayId, "%d+")
-        if not numericId then
-            clearAutoPlaySetting("Invalid audio ID; playback disabled")
-            return
-        end
-
-        AutoPlaySound.SoundId = "rbxassetid://" .. numericId
-        local generation: number = autoPlayGeneration
-        local function playWhenLoaded(): ()
-            if generation ~= autoPlayGeneration or not AutoPlaySound.Parent then
-                return
-            end
-            if not AutoPlaySound.IsLoaded then
-                return
-            end
-            if autoPlayLoadConnection then
-                autoPlayLoadConnection:Disconnect()
-                autoPlayLoadConnection = nil
-            end
-            pcall(AutoPlaySound.Play, AutoPlaySound)
-        end
-
-        if AutoPlaySound.IsLoaded then
-            playWhenLoaded()
-            return
-        end
-
-        autoPlayLoadConnection = AutoPlaySound.Loaded:Connect(playWhenLoaded)
-        task.delay(4, function(): ()
-            if generation == autoPlayGeneration and not AutoPlaySound.IsLoaded then
-                clearAutoPlaySetting("Audio ID is not authorized or unavailable")
-            end
-        end)
-    end
-
-    local function toggleAutoPlayId(enabled: boolean): ()
-        if not enabled then
-            stopAutoPlaySound()
-            return
-        end
-        playConfiguredSound()
-    end
-
-    local AutoPlayFeature = createUniversalFeature(
-        "Auto Play ID",
-        "Loop a local Roblox audio asset",
-        9,
-        toggleAutoPlayId,
-        {
-            categoryName = "Fun",
-            parent = MM2Scroll,
-            registry = mm2Features,
-            restore = false,
-        }
-    )
-    autoPlayInput = addTextOption(AutoPlayFeature, "Play ID", mm2Settings.autoPlayId, function(value)
-        mm2Settings.autoPlayId = value
-        if AutoPlaySound.Playing then
-            playConfiguredSound()
-        end
-    end)
-
-    activeCleanup = function(): ()
-        toggleAutoPlayId(false)
-                if AutoPlaySound then
-                    stopAutoPlaySound()
-                    AutoPlaySound:Destroy()
-                end
     end
     Module.Events = featureConnections
     Module.Initialized = true
@@ -34118,248 +31419,6 @@ function Module.init(runtime: any): any
 
     activeCleanup = function(): ()
         -- nothing persistent to undo
-    end
-    Module.Events = featureConnections
-    Module.Initialized = true
-    return Module
-end
-
-function Module.destroy(): ()
-    if not Module.Initialized then
-        return
-    end
-    Module.Initialized = false
-    pcall(activeCleanup)
-    activeCleanup = function(): () end
-    Module.Events = {}
-    Module.Runtime = nil
-end
-
-return Module
-]=],
-        ["src/games/MM2/Other/LoopAllInteract.lua"] = [=[
-local Module = {
-    Name = "MM2 Loop All Interact",
-    PlaceId = 142823291,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-    Runtime = nil :: any,
-}
-
-local activeCleanup: () -> () = function(): () end
-
-function Module.init(runtime: any): any
-    if Module.Initialized then
-        return Module
-    end
-    local core: any = state.mm2Core
-    assert(type(core) == "table", "MM2 Loop All Interact requires the MM2 core module")
-    Module.Runtime = runtime
-    local findMM2Map: any = core.findMM2Map
-
-    local function toggleLoopAllInteract(enabled)
-        disconnectFeatureConnection("MM2LoopInteract")
-        if not enabled then
-            return
-        end
-
-        local activeMap = nil
-        local interactables = {}
-        local elapsed = 0
-        featureConnections.MM2LoopInteract = TaskManager:Connect(function(deltaTime)
-            elapsed = elapsed + deltaTime
-            if elapsed < 0.5 then
-                return
-            end
-            elapsed = 0
-
-            local map = findMM2Map()
-            if map ~= activeMap then
-                activeMap = map
-                interactables = {}
-                if map then
-                    for _, object in ipairs(map:GetDescendants()) do
-                        if object:IsA("ProximityPrompt")
-                            or object:IsA("ClickDetector") then
-                            table.insert(interactables, object)
-                        end
-                    end
-                end
-            end
-
-            for _, object in ipairs(interactables) do
-                if object:IsDescendantOf(activeMap) then
-                    if object:IsA("ProximityPrompt")
-                        and object.Enabled
-                        and type(fireproximityprompt) == "function" then
-                        pcall(fireproximityprompt, object)
-                    elseif object:IsA("ClickDetector")
-                        and type(fireclickdetector) == "function" then
-                        pcall(fireclickdetector, object)
-                    end
-                end
-            end
-        end)
-    end
-
-    createUniversalFeature(
-        "Loop All Interact",
-        "Continuously activate prompts and click detectors",
-        7,
-        toggleLoopAllInteract,
-        {
-            noOptions = true,
-            categoryName = "Other",
-            parent = MM2Scroll,
-            registry = mm2Features,
-        }
-    )
-
-    activeCleanup = function(): ()
-        toggleLoopAllInteract(false)
-    end
-    Module.Events = featureConnections
-    Module.Initialized = true
-    return Module
-end
-
-function Module.destroy(): ()
-    if not Module.Initialized then
-        return
-    end
-    Module.Initialized = false
-    pcall(activeCleanup)
-    activeCleanup = function(): () end
-    Module.Events = {}
-    Module.Runtime = nil
-end
-
-return Module
-]=],
-        ["src/games/MM2/Other/Silence.lua"] = [=[
-local Module = {
-    Name = "MM2 Silence",
-    PlaceId = 142823291,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-    Runtime = nil :: any,
-}
-
-local activeCleanup: () -> () = function(): () end
-
-function Module.init(runtime: any): any
-    if Module.Initialized then
-        return Module
-    end
-    local core: any = state.mm2Core
-    assert(type(core) == "table", "MM2 Silence requires the MM2 core module")
-    Module.Runtime = runtime
-    local findMM2Map: any = core.findMM2Map
-
-    local mutedRadioSounds = setmetatable({}, {__mode = "k"})
-    local mutedTrapSounds = setmetatable({}, {__mode = "k"})
-
-    local function restoreMutedSounds(cache)
-        for sound, volume in pairs(cache) do
-            if sound and sound.Parent then
-                sound.Volume = volume
-            end
-        end
-    end
-
-    local function toggleMuteOtherRadios(enabled)
-        disconnectFeatureConnection("MM2MuteRadios")
-        restoreMutedSounds(mutedRadioSounds)
-        mutedRadioSounds = setmetatable({}, {__mode = "k"})
-
-        if not enabled then
-            return
-        end
-
-        local function muteRadio(sound)
-            if not sound:IsA("Sound") then
-                return
-            end
-            local owner = nil
-            local ancestor = sound.Parent
-            while ancestor and not owner do
-                owner = Players:GetPlayerFromCharacter(ancestor)
-                ancestor = ancestor.Parent
-            end
-            if not owner or owner == LocalPlayer then
-                return
-            end
-            local lowerName = string.lower(sound.Name)
-            local parentName = sound.Parent and string.lower(sound.Parent.Name) or ""
-            if string.find(lowerName, "radio", 1, true)
-                or string.find(lowerName, "music", 1, true)
-                or string.find(parentName, "radio", 1, true) then
-                if mutedRadioSounds[sound] == nil then
-                    mutedRadioSounds[sound] = sound.Volume
-                end
-                sound.Volume = 0
-            end
-        end
-
-        for _, player in ipairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer and player.Character then
-                for _, object in ipairs(player.Character:GetDescendants()) do
-                    muteRadio(object)
-                end
-            end
-        end
-        featureConnections.MM2MuteRadios = workspace.DescendantAdded:Connect(muteRadio)
-    end
-
-    local function toggleMuteTrapSounds(enabled)
-        disconnectFeatureConnection("MM2MuteTraps")
-        restoreMutedSounds(mutedTrapSounds)
-        mutedTrapSounds = setmetatable({}, {__mode = "k"})
-
-        if not enabled then
-            return
-        end
-
-        local function muteTrap(sound)
-            if not sound:IsA("Sound") then
-                return
-            end
-            local ancestor = sound:FindFirstAncestor("Trap")
-                or sound:FindFirstAncestor("TrapVisual")
-            local parentName = sound.Parent and string.lower(sound.Parent.Name) or ""
-            if ancestor or string.find(parentName, "trap", 1, true) then
-                if mutedTrapSounds[sound] == nil then
-                    mutedTrapSounds[sound] = sound.Volume
-                end
-                sound.Volume = 0
-            end
-        end
-
-        local map = findMM2Map()
-        for _, object in ipairs((map or workspace):GetDescendants()) do
-            muteTrap(object)
-        end
-        featureConnections.MM2MuteTraps = workspace.DescendantAdded:Connect(muteTrap)
-    end
-
-    local SilenceFeature = createUniversalFeature(
-        "Silence",
-        "Radio and trap audio controls",
-        8,
-        function() end,
-        {
-            category = true,
-            categoryName = "Other",
-            parent = MM2Scroll,
-            registry = mm2Features,
-        }
-    )
-    addToggleOption(SilenceFeature, "Other radios", false, toggleMuteOtherRadios)
-    addToggleOption(SilenceFeature, "Trap sounds", false, toggleMuteTrapSounds)
-
-    activeCleanup = function(): ()
-        toggleMuteOtherRadios(false)
-                toggleMuteTrapSounds(false)
     end
     Module.Events = featureConnections
     Module.Initialized = true

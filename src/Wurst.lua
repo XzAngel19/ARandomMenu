@@ -42,7 +42,6 @@ local FEATURE_CATEGORIES: {[string]: string} = {
     ["Infinite Jump"] = "Blatant",
     ["Jump Power"] = "Blatant",
     ["Noclip"] = "Blatant",
-    ["Phase Dash"] = "Blatant",
     ["Speed"] = "Blatant",
     ["Spider"] = "Blatant",
     ["Walk Speed"] = "Blatant",
@@ -60,7 +59,6 @@ local FEATURE_CATEGORIES: {[string]: string} = {
     ["Anti-Fling"] = "Blatant",
     ["Anti-Void"] = "Blatant",
     ["Safe Walk"] = "Movement",
-    ["No Fall"] = "Blatant",
 
     ["Anti-AFK"] = "Other",
     ["Fling"] = "Other",
@@ -77,16 +75,11 @@ local FEATURE_CATEGORIES: {[string]: string} = {
     ["Shoot"] = "Blatant",
     ["Knife Aura"] = "Blatant",
     ["Knife Throw"] = "Blatant",
-    ["Role Fling"] = "Fun",
     ["Trajectory Calibration"] = "Other",
     ["Role Tags"] = "Render",
     ["Always Show Timer"] = "Render",
-    ["Hide Names"] = "Render",
     ["Sprint"] = "Movement",
     ["Teleport"] = "Movement",
-    ["Loop All Interact"] = "Other",
-    ["Silence"] = "Other",
-    ["Auto Play ID"] = "Fun",
 
     ["Auto Tackle"] = "Combat",
     ["Auto Dribble"] = "Combat",
@@ -224,7 +217,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "audit-20261009-1"
+local SOURCE_STAMP: string = "audit-20261009-2"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -4364,6 +4357,15 @@ state.invalidateGameRoles = function(): ()
     end
 end
 
+-- Game modules publish typed events to universal listeners (e.g. MM2 emits
+-- "authoringShot" for every gun/knife/stab the menu authors, silent or not,
+-- so passive loggers see shots the player never clicked a tool to fire).
+state.emitGameBridgeEvent = function(eventType: string, payload: any): ()
+    for _, listener: (string, any) -> () in ipairs(state.gameBridge.listeners) do
+        pcall(listener, eventType, payload)
+    end
+end
+
 
 state.featureTooltip = create("TextLabel", {
     TextTruncate = Enum.TextTruncate.AtEnd,
@@ -4742,17 +4744,11 @@ local function loadGameModule(
         "src/games/MM2/Render/RoleTags.lua",
         "src/games/MM2/Render/RoundEsp.lua",
         "src/games/MM2/Render/AlwaysShowTimer.lua",
-        "src/games/MM2/Render/MurderTag.lua",
-        "src/games/MM2/Render/HideNames.lua",
         "src/games/MM2/Movement/Sprint.lua",
         "src/games/MM2/Movement/Teleport.lua",
         "src/games/MM2/Fun/InstantRoleNotify.lua",
         "src/games/MM2/Fun/BlurtRoles.lua",
-        "src/games/MM2/Fun/RoleFling.lua",
-        "src/games/MM2/Fun/AutoPlayId.lua",
         "src/games/MM2/Other/TrajectoryCalibration.lua",
-        "src/games/MM2/Other/LoopAllInteract.lua",
-        "src/games/MM2/Other/Silence.lua",
     } elseif moduleName == "VD" then {
         "src/games/VD/base.lua",
     } elseif moduleName == "BedFight" then {
@@ -5509,7 +5505,6 @@ local fallbackManifest: any = {
         "src/guis/Wurst/Code/Furniture.lua",
     },
     modules = {
-        {path = "src/games/universal/Utility/FriendList.lua", name = "Friend List", category = "Other"},
         {path = "src/games/universal/Render/ItemRender.lua", name = "ItemESP", category = "Render"},
         {path = "src/games/universal/Render/PlayerESP.lua", name = "PlayerESP", category = "Render"},
         {path = "src/games/universal/Render/Chams.lua", name = "Chams", category = "Render"},
@@ -5530,8 +5525,6 @@ local fallbackManifest: any = {
         {path = "src/games/universal/World/RejoinServer.lua", name = "Rejoin Server", category = "Other"},
         {path = "src/games/universal/Render/ZoomUnlocker.lua", name = "Zoom", category = "Render"},
         {path = "src/games/universal/World/InteractExtender.lua", name = "Interact Extender", category = "Other"},
-        {path = "src/games/universal/Blatant/PhaseDash.lua", name = "Phase Dash", category = "Movement"},
-        {path = "src/games/universal/Blatant/NoFall.lua", name = "NoFall", category = "Movement"},
         {path = "src/games/universal/Blatant/Fly.lua", name = "Flight", category = "Movement"},
         {path = "src/games/universal/Blatant/VehicleSpeed.lua", name = "Vehicle Speed", category = "Movement"},
         {path = "src/games/universal/Blatant/AntiVoid.lua", name = "Anti-Void", category = "Movement"},
@@ -5552,9 +5545,6 @@ local fallbackManifest: any = {
         {path = "src/games/universal/Render/ProjectileCalibration.lua", name = "Projectile Calibration", category = "Other"},
         {path = "src/games/universal/Utility/GameLearning.lua", name = "Game Learning", category = "Other"},
         {path = "src/games/universal/Utility/SpinBot.lua", name = "SpinBot", category = "Fun"},
-        {path = "src/games/universal/Utility/Disguise.lua", name = "Disguise", category = "Fun"},
-        {path = "src/games/universal/Utility/AnimationChanger.lua", name = "Animation Changer", category = "Fun"},
-        {path = "src/games/universal/Utility/EmotePlayer.lua", name = "Emote Player", category = "Fun"},
     },
 }
 

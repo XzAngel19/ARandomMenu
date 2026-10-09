@@ -41,12 +41,7 @@ local Manifest: Manifest = {
     },
     modules = {
 
-        {
-            path = "src/games/universal/Utility/FriendList.lua",
-            name = "Friend List",
-            category = "Other",
-        },
-        {
+                {
             path = "src/games/universal/Render/ItemRender.lua",
             name = "ItemESP",
             category = "Render",
@@ -147,17 +142,7 @@ local Manifest: Manifest = {
             name = "Interact Extender",
             category = "Other",
         },
-        {
-            path = "src/games/universal/Blatant/PhaseDash.lua",
-            name = "Phase Dash",
-            category = "Movement",
-        },
-        {
-            path = "src/games/universal/Blatant/NoFall.lua",
-            name = "NoFall",
-            category = "Movement",
-        },
-        {
+                        {
             path = "src/games/universal/Blatant/Fly.lua",
             name = "Flight",
             category = "Movement",
@@ -257,22 +242,7 @@ local Manifest: Manifest = {
             name = "SpinBot",
             category = "Fun",
         },
-        {
-            path = "src/games/universal/Utility/Disguise.lua",
-            name = "Disguise",
-            category = "Fun",
-        },
-        {
-            path = "src/games/universal/Utility/AnimationChanger.lua",
-            name = "Animation Changer",
-            category = "Fun",
-        },
-        {
-            path = "src/games/universal/Utility/EmotePlayer.lua",
-            name = "Emote Player",
-            category = "Fun",
-        },
-    },
+                            },
 }
 
 return Manifest

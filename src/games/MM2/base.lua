@@ -99,6 +99,7 @@ local mm2Settings = {
     roleTagsAll = false,
     blurtDelay = 1.5,
     blurtRepeat = false,
+    blurtFake = false,
     coinColor = Color3.fromRGB(230, 220, 65),
     coinTransparency = 0.8,
     trapColor = Color3.fromRGB(145, 25, 25),
@@ -1628,6 +1629,7 @@ local function createTrajectoryCalibration(): any
         serverTime: number,
         pingMs: number,
         latencyMs: number?,
+        distance: number?,
         speed: number?,
         rawSpeed: number?,
         samples: number?,
@@ -1661,6 +1663,7 @@ local function createTrajectoryCalibration(): any
         destroy: (self: Controller) -> (),
         status: (self: Controller) -> string,
         getEstimates: (self: Controller) -> Estimates,
+        noteAuthoredShot: (self: Controller, info: any) -> (),
     }
 
     local OUTPUT_ROOT: string = host.PRODUCT.storageFolder
@@ -1686,9 +1689,13 @@ local function createTrajectoryCalibration(): any
         observedTools = setmetatable({}, {__mode = "k"}) :: {[Tool]: boolean},
         connections = {} :: {RBXScriptConnection},
         events = {} :: {CalibrationEvent},
+        eventsNew = {} :: {CalibrationEvent},
         gunAcceptance = nil :: RunningStats?,
         knifeSpeed = nil :: RunningStats?,
         knifeSpawnDelay = nil :: RunningStats?,
+        gunAcceptanceDelta = nil :: RunningStats?,
+        knifeSpeedDelta = nil :: RunningStats?,
+        knifeSpawnDelayDelta = nil :: RunningStats?,
         motionBuckets = {} :: {[string]: any},
         trajectorySampler = nil :: any,
     }
@@ -1710,9 +1717,73 @@ local function createTrajectoryCalibration(): any
     runtime.gunAcceptance = newStats()
     runtime.knifeSpeed = newStats()
     runtime.knifeSpawnDelay = newStats()
+    runtime.gunAcceptanceDelta = newStats()
+    runtime.knifeSpeedDelta = newStats()
+    runtime.knifeSpawnDelayDelta = newStats()
 
     local function finite(value: number): boolean
         return value == value and value > -math.huge and value < math.huge
+    end
+
+    -- Welford merge: fold `stored` (the on-disk aggregate from previous
+    -- saves/sessions) into `current`. Enables consecutive accumulation:
+    -- leaving the game and coming back extends the statistics instead of
+    -- replacing them.
+    local function mergeStatsPayload(
+        current: {[string]: number},
+        stored: any
+    ): {[string]: number}
+        if type(stored) ~= "table" then
+            return current
+        end
+        local storedCount: number = tonumber(stored.count) or 0
+        if storedCount <= 0 then
+            return current
+        end
+        local currentCount: number = tonumber(current.count) or 0
+        if currentCount <= 0 then
+            return {
+                count = storedCount,
+                mean = tonumber(stored.mean) or 0,
+                m2 = tonumber(stored.m2) or 0,
+                minimum = tonumber(stored.minimum) or 0,
+                maximum = tonumber(stored.maximum) or 0,
+            }
+        end
+        local storedMean: number = tonumber(stored.mean) or 0
+        local currentMean: number = tonumber(current.mean) or 0
+        local total: number = currentCount + storedCount
+        local delta: number = storedMean - currentMean
+        return {
+            count = total,
+            mean = currentMean + delta * (storedCount / total),
+            m2 = (tonumber(current.m2) or 0)
+                + (tonumber(stored.m2) or 0)
+                + delta * delta * currentCount * storedCount / total,
+            minimum = math.min(
+                tonumber(current.minimum) or 0,
+                tonumber(stored.minimum) or 0
+            ),
+            maximum = math.max(
+                tonumber(current.maximum) or 0,
+                tonumber(stored.maximum) or 0
+            ),
+        }
+    end
+
+    local function applyStatsPayload(
+        stats: RunningStats,
+        payload: {[string]: number}
+    ): ()
+        stats.count = tonumber(payload.count) or 0
+        stats.mean = tonumber(payload.mean) or 0
+        stats.m2 = tonumber(payload.m2) or 0
+        stats.minimum = stats.count > 0
+            and (tonumber(payload.minimum) or 0)
+            or math.huge
+        stats.maximum = stats.count > 0
+            and (tonumber(payload.maximum) or 0)
+            or -math.huge
     end
 
     local function vectorArray(value: Vector3): {number}
@@ -1929,6 +2000,7 @@ local function createTrajectoryCalibration(): any
             table.remove(runtime.events, 1)
         end
         table.insert(runtime.events, record)
+        table.insert(runtime.eventsNew, record)
         runtime.dirty = true
         if runtime.saveScheduled then
             return
@@ -2117,9 +2189,9 @@ local function createTrajectoryCalibration(): any
         }
     end
 
-    local function motionModelPayload(): {[string]: any}
+    local function motionModelPayload(buckets: {[string]: any}): {[string]: any}
         local payload: {[string]: any} = {}
-        for key: string, bucket: any in pairs(runtime.motionBuckets) do
+        for key: string, bucket: any in pairs(buckets) do
             local count: number = math.max(1, tonumber(bucket.count) or 1)
             local horizontalCount: number = math.max(
                 1,
@@ -2182,6 +2254,79 @@ local function createTrajectoryCalibration(): any
             warn(trajectoryLogPrefix .. " writefile is unavailable; data was not saved.")
             return false
         end
+        -- Consecutive accumulation: fold only this save's NEW samples and
+        -- events into whatever previous sessions already wrote, then adopt
+        -- the merged totals as the running history. Leaving the game (or the
+        -- 0.8 s autosave) therefore extends the file instead of resetting it.
+        local stored: any = nil
+        if type(environment.readfile) == "function" then
+            local okRead: boolean, existingRaw: any = pcall(
+                environment.readfile,
+                OUTPUT_PATH
+            )
+            if okRead and type(existingRaw) == "string" then
+                local okDecode: boolean, decoded: any = pcall(
+                    HttpService.JSONDecode,
+                    existingRaw
+                )
+                if okDecode and type(decoded) == "table" then
+                    stored = decoded
+                end
+            end
+        end
+        local storedAgg: any =
+            type(stored) == "table" and stored.aggregate or {}
+        local mergedGun: {[string]: number} = mergeStatsPayload(
+            statsPayload(runtime.gunAcceptanceDelta),
+            storedAgg.gunAcceptanceMs
+        )
+        local mergedKnife: {[string]: number} = mergeStatsPayload(
+            statsPayload(runtime.knifeSpeedDelta),
+            storedAgg.knifeSpeedStudsPerSecond
+        )
+        local mergedDelay: {[string]: number} = mergeStatsPayload(
+            statsPayload(runtime.knifeSpawnDelayDelta),
+            storedAgg.knifeSpawnDelayMs
+        )
+        local storedBuckets: any =
+            type(stored) == "table"
+            and stored.analytics
+            and stored.analytics.motionModel
+            or {}
+        local mergedBuckets: {[string]: any} = {}
+        for key: string, bucket: any in pairs(runtime.motionBuckets) do
+            mergedBuckets[key] = table.clone(bucket)
+        end
+        if type(storedBuckets) == "table" then
+            for key: string, storedBucket: any in pairs(storedBuckets) do
+                local target: any = mergedBuckets[key]
+                if not target or type(target) ~= "table" then
+                    mergedBuckets[key] = table.clone(storedBucket)
+                else
+                    for field: string, value: any in pairs(storedBucket) do
+                        if type(value) == "number" and type(target[field]) == "number" then
+                            target[field] = target[field] + value
+                        end
+                    end
+                end
+            end
+        end
+        local mergedEvents: {CalibrationEvent} = {}
+        if type(stored) == "table"
+            and type(stored.session) == "table"
+            and type(stored.session.events) == "table" then
+            for _, event: any in ipairs(stored.session.events) do
+                table.insert(mergedEvents, event)
+            end
+        end
+        for _, event: CalibrationEvent in ipairs(runtime.eventsNew) do
+            table.insert(mergedEvents, event)
+        end
+        while #mergedEvents > 2400 do
+            table.remove(mergedEvents, 1)
+        end
+        local storedSession: any =
+            type(stored) == "table" and stored.session or {}
         local payload: {[string]: any} = {
             schema = 2,
             kind = "mm2-trajectory-analytics",
@@ -2189,11 +2334,16 @@ local function createTrajectoryCalibration(): any
             savedAt = DateTime.now():ToIsoDate(),
             reason = reason,
             aggregate = {
-                gunAcceptanceMs = statsPayload(runtime.gunAcceptance),
-                knifeSpeedStudsPerSecond = statsPayload(runtime.knifeSpeed),
-                knifeSpawnDelayMs = statsPayload(runtime.knifeSpawnDelay),
+                gunAcceptanceMs = mergedGun,
+                knifeSpeedStudsPerSecond = mergedKnife,
+                knifeSpawnDelayMs = mergedDelay,
             },
-            estimator = estimates(),
+            estimator = {
+                gunAcceptanceMs = mergedGun.count > 0 and mergedGun.mean or nil,
+                knifeSpeed = mergedKnife.count > 0 and mergedKnife.mean or nil,
+                confirmedShots = mergedGun.count,
+                confirmedThrows = mergedKnife.count,
+            },
             analytics = {
                 bucketSpec = {
                     metric = "Data Ping",
@@ -2202,15 +2352,19 @@ local function createTrajectoryCalibration(): any
                     maximumMs = 250,
                     states = {"Grounded", "Airborne"},
                 },
-                motionModel = motionModelPayload(),
+                motionModel = motionModelPayload(mergedBuckets),
             },
             session = {
                 elapsedSeconds = os.clock() - runtime.startedAt,
-                gunAttempts = runtime.sessionGunAttempts,
-                gunConfirmed = runtime.sessionGunConfirmed,
-                knifeAttempts = runtime.sessionKnifeAttempts,
-                knifeConfirmed = runtime.sessionKnifeConfirmed,
-                events = runtime.events,
+                gunAttempts = (tonumber(storedSession.gunAttempts) or 0)
+                    + runtime.sessionGunAttempts,
+                gunConfirmed = (tonumber(storedSession.gunConfirmed) or 0)
+                    + runtime.sessionGunConfirmed,
+                knifeAttempts = (tonumber(storedSession.knifeAttempts) or 0)
+                    + runtime.sessionKnifeAttempts,
+                knifeConfirmed = (tonumber(storedSession.knifeConfirmed) or 0)
+                    + runtime.sessionKnifeConfirmed,
+                events = mergedEvents,
             },
         }
         local encodedOk: boolean, encoded: any = pcall(
@@ -2235,6 +2389,21 @@ local function createTrajectoryCalibration(): any
             warn(trajectoryLogPrefix .. " writefile failed: " .. tostring(writeError))
             return false
         end
+        -- Adopt the merged totals as the running history and start a fresh
+        -- delta, so the next save only folds in genuinely new samples.
+        applyStatsPayload(runtime.gunAcceptance, mergedGun)
+        applyStatsPayload(runtime.knifeSpeed, mergedKnife)
+        applyStatsPayload(runtime.knifeSpawnDelay, mergedDelay)
+        runtime.motionBuckets = mergedBuckets
+        runtime.events = mergedEvents
+        runtime.gunAcceptanceDelta = newStats()
+        runtime.knifeSpeedDelta = newStats()
+        runtime.knifeSpawnDelayDelta = newStats()
+        runtime.eventsNew = {}
+        runtime.sessionGunAttempts = payload.session.gunAttempts
+        runtime.sessionGunConfirmed = payload.session.gunConfirmed
+        runtime.sessionKnifeAttempts = payload.session.knifeAttempts
+        runtime.sessionKnifeConfirmed = payload.session.knifeConfirmed
         runtime.dirty = false
         print(
             trajectoryLogPrefix .. " Saved "
@@ -2339,6 +2508,7 @@ local function createTrajectoryCalibration(): any
             and targetCharacter ~= nil
             and hitPartValue:IsDescendantOf(targetCharacter)
         addSample(runtime.gunAcceptance, latencyMs)
+        addSample(runtime.gunAcceptanceDelta, latencyMs)
         runtime.sessionGunConfirmed += 1
         pending.confirmedAt = now
         pending.latencyMs = latencyMs
@@ -2374,6 +2544,7 @@ local function createTrajectoryCalibration(): any
                 nil
             )
             addSample(runtime.knifeSpeed, resolvedSpeed)
+            addSample(runtime.knifeSpeedDelta, resolvedSpeed)
             runtime.sessionKnifeConfirmed += 1
             appendEvent({
                 kind = "knife",
@@ -2499,6 +2670,7 @@ local function createTrajectoryCalibration(): any
                 (now - pending.activatedAt) * 1000
             )
             addSample(runtime.knifeSpawnDelay, spawnDelayMs)
+            addSample(runtime.knifeSpawnDelayDelta, spawnDelayMs)
             local rawSpeed: number? = tonumber(projectile:GetAttribute("ThrowSpeed"))
             if rawSpeed and (rawSpeed < 24 or rawSpeed > 300) then
                 rawSpeed = nil
@@ -2700,8 +2872,12 @@ local function createTrajectoryCalibration(): any
         runtime.gunAcceptance = newStats()
         runtime.knifeSpeed = newStats()
         runtime.knifeSpawnDelay = newStats()
+        runtime.gunAcceptanceDelta = newStats()
+        runtime.knifeSpeedDelta = newStats()
+        runtime.knifeSpawnDelayDelta = newStats()
         runtime.motionBuckets = {}
         runtime.events = {}
+        runtime.eventsNew = {}
         runtime.sessionGunAttempts = 0
         runtime.sessionGunConfirmed = 0
         runtime.sessionKnifeAttempts = 0
@@ -2728,6 +2904,99 @@ local function createTrajectoryCalibration(): any
 
     function controller:getEstimates(): Estimates
         return estimates()
+    end
+
+    -- Called by the module-shot authors (Shoot silent/manual, KnifeThrow,
+    -- KnifeAura stabs) at the exact FireServer moment. Those shots never
+    -- trigger tool.Activated, so without this the calibration would never see
+    -- them and gun-acceptance / knife-speed / stab ranges would stay empty.
+    function controller:noteAuthoredShot(info: any): ()
+        if not runtime.active or type(info) ~= "table" then
+            return
+        end
+        local kind: string = tostring(info.kind or "gun")
+        local now: number = os.clock()
+        local pingMs: number = getPingMilliseconds()
+        local target: Player? =
+            info.target and info.target.Character ~= nil and info.target or nil
+        local targetTrajectory: {TrajectoryPoint} = {}
+        if target then
+            local initialPoint: TrajectoryPoint? = captureTrajectoryPoint(
+                target,
+                now,
+                pingMs
+            )
+            if initialPoint then
+                table.insert(targetTrajectory, initialPoint)
+            end
+        end
+        if kind == "stab" then
+            local targetRoot: BasePart? = getTargetRoot(target)
+            local localRoot: BasePart? =
+                LocalPlayer.Character
+                and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                :: BasePart?
+            local distance: number? = targetRoot
+                and localRoot
+                and (targetRoot.Position - localRoot.Position).Magnitude
+            appendEvent({
+                kind = "stab",
+                serverTime = workspace:GetServerTimeNow(),
+                pingMs = pingMs,
+                distance = distance and math.floor(distance * 10 + 0.5) / 10 or nil,
+                targetUserId = target and target.UserId or nil,
+                targetName = target and target.Name or nil,
+                targetState = targetTrajectory[1]
+                    and targetTrajectory[1].humanoidState
+                    or nil,
+                targetTrajectory = #targetTrajectory > 0 and targetTrajectory or nil,
+            })
+        else
+            local isGun: boolean = kind ~= "knife"
+            local authoredTool: Tool? = nil
+            if typeof(info.tool) == "Instance" and info.tool:IsA("Tool") then
+                authoredTool = info.tool :: Tool
+            end
+            -- Knife matching indexes pending.tool directly (HandleLink), so a
+            -- knife pending without a tool is both useless and a crash; a gun
+            -- pending works without a tool (the origin match covers it).
+            if isGun or authoredTool ~= nil then
+                if isGun then
+                    runtime.sessionGunAttempts += 1
+                else
+                    runtime.sessionKnifeAttempts += 1
+                end
+                local queue: {any} =
+                    isGun and runtime.pendingGuns or runtime.pendingKnives
+                table.insert(queue, {
+                    tool = authoredTool,
+                    activatedAt = now,
+                    origin = info.originPos,
+                    requestedAim = info.aimPos,
+                    pingMs = pingMs,
+                    targetUserId = target and target.UserId or nil,
+                    targetName = target and target.Name or nil,
+                    targetTrajectory = targetTrajectory,
+                    lastTrajectorySampleAt = now,
+                })
+                compactPending(queue, now)
+                ensureTrajectorySampler()
+            end
+        end
+        -- Publish through the game bridge so the universal Game Learning log
+        -- records the same authored shot (silent shots are otherwise
+        -- invisible to any tool.Activated-based collector).
+        if type(state.emitGameBridgeEvent) == "function" then
+            state.emitGameBridgeEvent("authoringShot", {
+                kind = kind,
+                toolName = tostring(info.toolName or (kind == "knife" and "Knife" or "Gun")),
+                originPos = info.originPos,
+                aimPos = info.aimPos,
+                targetName = target and target.Name or nil,
+                silent = info.silent == true,
+                variant = info.variant,
+            })
+        end
     end
 
     function controller:status(): string
@@ -2781,6 +3050,18 @@ end
 local trajectoryCalibration: any = createTrajectoryCalibration()
 state.mm2TrajectoryCalibration = trajectoryCalibration
 trajectoryCalibration:start()
+
+-- Consecutive saving: flush the accumulated calibration to disk the moment
+-- the player leaves the game, so no session is ever lost to a disconnect.
+pcall(function(): ()
+    if type((game :: any).BindToClose) == "function" then
+        game:BindToClose(function(): ()
+            if type(trajectoryCalibration.save) == "function" then
+                pcall(trajectoryCalibration.save, trajectoryCalibration, "close")
+            end
+        end)
+    end
+end)
 
 local weaponServiceModule: any = nil
 type PendingShot = {

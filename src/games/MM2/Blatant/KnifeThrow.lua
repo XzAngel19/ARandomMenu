@@ -179,6 +179,15 @@ function Module.init(runtime: any): any
         local aimPos: Vector3 = predictAim(target, originPos)
         remote:FireServer(CFrame.new(originPos), CFrame.new(aimPos))
         lastThrow = os.clock()
+        pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
+            kind = "knife",
+            tool = knife,
+            toolName = knife.Name,
+            originPos = originPos,
+            aimPos = aimPos,
+            target = target,
+            silent = silent,
+        })
     end
 
     local function toggleKnifeThrow(enabled: boolean): ()

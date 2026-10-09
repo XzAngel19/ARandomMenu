@@ -76,12 +76,27 @@ function Module.init(runtime: any): any
         end
         local murdererName: string = murderer and murderer.Name or "?"
         local sheriffName: string = sheriff and sheriff.Name or "?"
-        local message: string = string.format(
-            'Murder; "%s" Sheriff; "%s" | Wurst',
-            murdererName,
-            sheriffName
-        )
-        return message, murdererName .. "/" .. sheriffName
+        local message: string
+        local signature: string
+        if mm2Settings.blurtFake then
+            -- Deception mode: announce the roles swapped and drop the Wurst
+            -- signature so the line looks organic. The wrong names send the
+            -- crew (and the sheriff's suspicion) at the wrong player.
+            message = string.format(
+                'Murder; "%s" Sheriff; "%s"',
+                sheriffName,
+                murdererName
+            )
+            signature = "fake/" .. sheriffName .. "/" .. murdererName
+        else
+            message = string.format(
+                'Murder; "%s" Sheriff; "%s" | Wurst',
+                murdererName,
+                sheriffName
+            )
+            signature = murdererName .. "/" .. sheriffName
+        end
+        return message, signature
     end
 
     local function blurtRoles(manual: boolean): ()
@@ -192,6 +207,16 @@ function Module.init(runtime: any): any
             mm2Settings.blurtRepeat = value
         end,
         "Blurt again when the sheriff dies and the gun changes hands."
+    )
+    addToggleOption(
+        BlurtFeature,
+        "Fake Blurt Roles",
+        mm2Settings.blurtFake,
+        function(value: boolean): ()
+            mm2Settings.blurtFake = value
+        end,
+        "Announces the roles SWAPPED (and without the Wurst tag) so the chat "
+            .. "lies about who the murderer and sheriff are."
     )
     addActionOption(BlurtFeature, "Blurt now", function(): ()
         blurtRoles(true)

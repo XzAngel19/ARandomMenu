@@ -61,6 +61,7 @@ function Module.init(context: Runtime): any
             clockAt: number,
             pingMs: number,
             tool: string,
+            kind: string?,
             origin: {number},
             aim: {number},
             scene: {SceneEntry},
@@ -114,12 +115,15 @@ function Module.init(context: Runtime): any
             shotCounter = 0,
             spawnShots = {} :: {[string]: number},
             spawnKills = {} :: {[string]: number},
+            lastAuthoredAt = 0,
+            saveDirty = false,
             connections = {} :: {RBXScriptConnection},
             observedTools = setmetatable({}, {__mode = "k"}) :: {[Tool]: boolean},
             watchedPlayers = setmetatable({}, {__mode = "k"}) :: {[Player]: boolean},
             anomalyCooldown = setmetatable({}, {__mode = "k"}) :: {[Player]: number},
             movementTask = nil :: any,
             hitboxTask = nil :: any,
+            autosaveTask = nil :: any,
         }
         local controller: any
         local saveSnapshot: (reason: string) -> boolean
@@ -174,25 +178,12 @@ function Module.init(context: Runtime): any
             return nil
         end
 
-        local function recordShot(tool: Tool): ()
-            local character: Model? = LocalPlayer.Character
-            local root: BasePart? = character
-                and character:FindFirstChild("HumanoidRootPart")
-                :: BasePart?
-            local origin: Vector3? = root and root.Position or nil
-            if not origin then
-                return
-            end
-            local handle: BasePart? = tool:FindFirstChild("Handle") :: BasePart?
-            local shotOrigin: Vector3 = handle and handle.Position or origin
-            local aim: Vector3 = Vector3.zero
-            pcall(function(): ()
-                aim = mouse.Hit.Position
-            end)
-            local aimDelta: Vector3 = aim - shotOrigin
-            local aimDir: Vector3? = aimDelta.Magnitude > 0.01 and aimDelta.Unit or nil
-
+        local function buildScene(
+            shotOrigin: Vector3,
+            aimDir: Vector3?
+        ): {SceneEntry}
             local scene: {SceneEntry} = {}
+            local character: Model? = LocalPlayer.Character
             local raycastParams: RaycastParams = RaycastParams.new()
             raycastParams.FilterType = Enum.RaycastFilterType.Exclude
             raycastParams.IgnoreWater = true
@@ -265,39 +256,37 @@ function Module.init(context: Runtime): any
                     end
                 end
             end
+            return scene
+        end
 
-            runtime.shotCounter += 1
-            local shot: ShotRecord = {
-                id = runtime.shotCounter,
-                t = os.time(),
-                clockAt = os.clock(),
-                pingMs = getPingMilliseconds(),
-                tool = tool.Name,
-                origin = vectorArray(shotOrigin),
-                aim = vectorArray(aim),
-                scene = scene,
-                outcome = nil,
-                silentSpawn = nil,
-            }
+        local function finalizeShot(
+            shot: ShotRecord,
+            explicitVariant: string?
+        ): ()
             -- Tag silent-authored shots with their spawn variant so the log
             -- can compare hit rates per geometry (Front/Through/Top/Behind).
-            if gameBridge and type(gameBridge.silentShot) == "function" then
+            local variant: string? = explicitVariant
+            local variantOffset: number = 0
+            if not variant
+                and gameBridge
+                and type(gameBridge.silentShot) == "function" then
                 local okInfo: boolean, info: any = pcall(gameBridge.silentShot)
                 if okInfo
                     and type(info) == "table"
                     and info.variant ~= nil
                     and os.clock() - (tonumber(info.at) or 0) < 2 then
-                    shot.silentSpawn = {
-                        variant = info.variant,
-                        offset = tonumber(info.offset) or 0,
-                    }
-                    local variant: string = info.variant
-                    runtime.spawnShots[variant] = (runtime.spawnShots[variant] or 0) + 1
+                    variant = info.variant
+                    variantOffset = tonumber(info.offset) or 0
                 end
+            end
+            if variant then
+                shot.silentSpawn = {variant = variant, offset = variantOffset}
+                runtime.spawnShots[variant] = (runtime.spawnShots[variant] or 0) + 1
             end
             table.insert(runtime.shots, shot)
             clampTrim(runtime.shots, tuning.maxEvents)
             runtime.aggregates.shots += 1
+            runtime.saveDirty = true
 
             -- A few seconds later the shot either produced a kill (handled by
             -- the death watcher) or it missed the only plausible target it had.
@@ -315,8 +304,88 @@ function Module.init(context: Runtime): any
                 if candidate then
                     shot.outcome = {verdict = "miss"}
                     runtime.aggregates.misses += 1
+                    runtime.saveDirty = true
                 end
             end)
+        end
+
+        local function recordShot(tool: Tool): ()
+            local character: Model? = LocalPlayer.Character
+            local root: BasePart? = character
+                and character:FindFirstChild("HumanoidRootPart")
+                :: BasePart?
+            local origin: Vector3? = root and root.Position or nil
+            if not origin then
+                return
+            end
+            local handle: BasePart? = tool:FindFirstChild("Handle") :: BasePart?
+            local shotOrigin: Vector3 = handle and handle.Position or origin
+            local aim: Vector3 = Vector3.zero
+            pcall(function(): ()
+                aim = mouse.Hit.Position
+            end)
+            local aimDelta: Vector3 = aim - shotOrigin
+            local aimDir: Vector3? = aimDelta.Magnitude > 0.01 and aimDelta.Unit or nil
+            runtime.shotCounter += 1
+            local shot: ShotRecord = {
+                id = runtime.shotCounter,
+                t = os.time(),
+                clockAt = os.clock(),
+                pingMs = getPingMilliseconds(),
+                tool = tool.Name,
+                origin = vectorArray(shotOrigin),
+                aim = vectorArray(aim),
+                scene = buildScene(shotOrigin, aimDir),
+                outcome = nil,
+                silentSpawn = nil,
+            }
+            finalizeShot(shot, nil)
+        end
+
+        -- Shots authored by the menu (silent or manual module fires) publish
+        -- an "authoringShot" bridge event at the FireServer moment; they never
+        -- trigger tool.Activated, which is exactly why the collector used to
+        -- see nothing while the user shot with Silent Aim.
+        local function recordAuthoredShot(info: any): ()
+            if type(info) ~= "table" then
+                return
+            end
+            local character: Model? = LocalPlayer.Character
+            local root: BasePart? = character
+                and character:FindFirstChild("HumanoidRootPart")
+                :: BasePart?
+            local shotOrigin: Vector3? =
+                typeof(info.originPos) == "Vector3" and info.originPos or root
+                    and root.Position
+                    or nil
+            if not shotOrigin then
+                return
+            end
+            local aim: Vector3 =
+                typeof(info.aimPos) == "Vector3" and info.aimPos or Vector3.zero
+            if aim == Vector3.zero then
+                pcall(function(): ()
+                    aim = mouse.Hit.Position
+                end)
+            end
+            local aimDelta: Vector3 = aim - shotOrigin
+            local aimDir: Vector3? = aimDelta.Magnitude > 0.01 and aimDelta.Unit or nil
+            runtime.lastAuthoredAt = os.clock()
+            runtime.shotCounter += 1
+            local shot: ShotRecord = {
+                id = runtime.shotCounter,
+                t = os.time(),
+                clockAt = os.clock(),
+                pingMs = getPingMilliseconds(),
+                tool = tostring(info.toolName or "Unknown"),
+                kind = info.kind,
+                origin = vectorArray(shotOrigin),
+                aim = vectorArray(aim),
+                scene = buildScene(shotOrigin, aimDir),
+                outcome = nil,
+                silentSpawn = nil,
+            }
+            finalizeShot(shot, info.variant)
         end
 
         local function recordDeath(player: Player): ()
@@ -381,6 +450,7 @@ function Module.init(context: Runtime): any
             if not attributed then
                 runtime.aggregates.unattributedDeaths += 1
             end
+            runtime.saveDirty = true
         end
 
         local function watchPlayer(player: Player): ()
@@ -424,6 +494,7 @@ function Module.init(context: Runtime): any
                 detail = detail,
             } :: MovementRecord)
             clampTrim(runtime.movements, tuning.maxEvents)
+            runtime.saveDirty = true
         end
 
         local function observeTool(tool: Tool): ()
@@ -434,9 +505,16 @@ function Module.init(context: Runtime): any
             table.insert(
                 runtime.connections,
                 tool.Activated:Connect(function(): ()
-                    if runtime.enabled and tuning.logShots then
-                        recordShot(tool)
+                    if not (runtime.enabled and tuning.logShots) then
+                        return
                     end
+                    -- The menu's authored fires (silent or module) publish a
+                    -- bridge event milliseconds earlier; don't double count
+                    -- the same physical shot from both collectors.
+                    if os.clock() - runtime.lastAuthoredAt < 0.35 then
+                        return
+                    end
+                    recordShot(tool)
                 end)
             )
         end
@@ -677,7 +755,28 @@ function Module.init(context: Runtime): any
             return insights
         end
 
-        saveSnapshot = function(reason: string?): boolean
+        -- Consecutive accumulation: counters merge as before, and the raw
+        -- event lists append to whatever previous sessions already stored
+        -- (capped), so the log grows across games instead of resetting on
+        -- every save or every exit.
+        local MAX_STORED_EVENTS: number = 3000
+        local function mergeEventList(existing: any, current: {any}): {any}
+            local merged: {any} = {}
+            if type(existing) == "table" then
+                for _, entry: any in ipairs(existing) do
+                    table.insert(merged, entry)
+                end
+            end
+            for _, entry: any in ipairs(current) do
+                table.insert(merged, entry)
+            end
+            while #merged > MAX_STORED_EVENTS do
+                table.remove(merged, 1)
+            end
+            return merged
+        end
+
+        saveSnapshot = function(reason: string?, silent: boolean?): boolean
             if type(executorEnvironment.writefile) ~= "function" then
                 return false
             end
@@ -733,11 +832,11 @@ function Module.init(context: Runtime): any
                 aggregates = aggregates,
                 insights = buildInsights(),
                 previousInsights = mergedInsights,
-                spawnShots = runtime.spawnShots,
-                spawnKills = runtime.spawnKills,
-                shots = runtime.shots,
-                movements = runtime.movements,
-                hits = runtime.hits,
+                spawnShots = spawnShots,
+                spawnKills = spawnKills,
+                shots = mergeEventList(merged.shots, runtime.shots),
+                movements = mergeEventList(merged.movements, runtime.movements),
+                hits = mergeEventList(merged.hits, runtime.hits),
             }
             local okEncode: boolean, encoded: any = pcall(
                 httpService.JSONEncode,
@@ -753,11 +852,13 @@ function Module.init(context: Runtime): any
                 encoded
             )
             if okWrite then
-                notify("Game Learning: saved " .. outputPath)
+                runtime.saveDirty = false
+                if not silent then
+                    notify("Game Learning: saved " .. outputPath)
+                end
             end
             return okWrite
         end
-
         local function status(): string
             local agg: any = runtime.aggregates
             local base: string = string.format(
@@ -839,11 +940,33 @@ function Module.init(context: Runtime): any
                     runtime.hitboxTask:Disconnect()
                     runtime.hitboxTask = nil
                 end
+                if runtime.autosaveTask then
+                    runtime.autosaveTask:Disconnect()
+                    runtime.autosaveTask = nil
+                end
+                if runtime.saveDirty then
+                    -- Turning it off archives the session so the data is
+                    -- never stranded in memory.
+                    saveSnapshot("disabled")
+                end
                 return
             end
             runtime.enabled = true
             startMovementProbe()
             startHitboxProbe()
+            if not runtime.autosaveTask then
+                local elapsed: number = 0
+                runtime.autosaveTask = TaskManager:Connect(function(deltaTime: number): ()
+                    elapsed += deltaTime
+                    if elapsed < 15 then
+                        return
+                    end
+                    elapsed = 0
+                    if runtime.enabled and runtime.saveDirty then
+                        saveSnapshot("autosave", true)
+                    end
+                end)
+            end
             observeContainer(LocalPlayer:FindFirstChildOfClass("Backpack"))
             observeContainer(LocalPlayer.Character)
             table.insert(
@@ -864,6 +987,17 @@ function Module.init(context: Runtime): any
         controller.save = function(_reason: string?): boolean
             return saveSnapshot("manual")
         end
+        controller.flush = function(): boolean
+            if not runtime.enabled then
+                return false
+            end
+            return saveSnapshot("close")
+        end
+        controller.noteAuthoringShot = function(info: any): ()
+            if runtime.enabled and tuning.logShots then
+                recordAuthoredShot(info)
+            end
+        end
         controller.delete = function(): boolean
             return deleteLogs()
         end
@@ -872,6 +1006,28 @@ function Module.init(context: Runtime): any
     end)()
 
     local gameLearning: any = controllerFactory
+
+    -- The game publishes "authoringShot" at the exact FireServer moment for
+    -- every menu-authored shot (silent gun, knife throw, stab). Those never
+    -- trigger tool.Activated, which is exactly why the collector used to
+    -- record nothing while the user shot with Silent Aim.
+    if gameBridge and type(gameBridge.onEvent) == "function" then
+        gameBridge.onEvent(function(eventType: string, payload: any): ()
+            if eventType == "authoringShot" then
+                gameLearning:noteAuthoringShot(payload)
+            end
+        end)
+    end
+
+    -- Consecutive saving: flush to disk when the game closes so no session
+    -- is lost to a disconnect or an abrupt exit.
+    pcall(function(): ()
+        if type((game :: any).BindToClose) == "function" then
+            game:BindToClose(function(): ()
+                pcall(gameLearning.flush, gameLearning)
+            end)
+        end
+    end)
 
     local GameLearningFeature: any = createUniversalFeature(
         "Game Learning",

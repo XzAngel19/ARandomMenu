@@ -13,6 +13,7 @@ function Module.init(runtime: any): any
         return Module
     end
     local core: any = state.mm2Core
+    local trajectoryCalibration: any = core.trajectoryCalibration
     assert(type(core) == "table", "MM2 Shoot requires the MM2 core module")
     Module.Runtime = runtime
     local connectGunFiredSignal: any = core.connectGunFiredSignal
@@ -506,6 +507,18 @@ function Module.init(runtime: any): any
                 offset = math.floor(offset * 10) / 10,
             }
             remote:FireServer(shotOrigin, shotEnd)
+            -- The silent packet never triggers tool.Activated, so feed the
+            -- authored geometry to the calibration + passive loggers directly.
+            pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
+                kind = "gun",
+                tool = gun,
+                toolName = gun and gun.Name or "Gun",
+                originPos = shotOrigin.Position,
+                aimPos = shotEnd.Position,
+                target = target,
+                silent = true,
+                variant = variant,
+            })
             return true
         end
 
@@ -522,6 +535,15 @@ function Module.init(runtime: any): any
             CFrame.lookAt(origin.Position, resolved.endpoint),
             CFrame.new(resolved.endpoint)
         )
+        pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
+            kind = "gun",
+            tool = gun,
+            toolName = gun and gun.Name or "Gun",
+            originPos = origin.Position,
+            aimPos = resolved.endpoint,
+            target = target,
+            silent = false,
+        })
         return true
     end
 

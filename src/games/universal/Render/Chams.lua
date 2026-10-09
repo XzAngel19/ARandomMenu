@@ -22,7 +22,15 @@ function Module.init(context: Runtime): any
     local protectedTargets: any = context.services.protectedTargets
     local currentWorkspace: Workspace = host.workspace or workspace
     local highlights: {[Player]: Highlight} = {}
+    local murderTag: BillboardGui? = nil
     local lastUpdate: number = -math.huge
+
+    local function destroyMurderTag(): ()
+        if murderTag then
+            pcall(murderTag.Destroy, murderTag)
+            murderTag = nil
+        end
+    end
     local gameBridge: any = context.services.gameBridge
     if activeBridgeCleanup then
         pcall(activeBridgeCleanup)
@@ -60,6 +68,7 @@ function Module.init(context: Runtime): any
             highlights[player] = nil
             highlight:Destroy()
         end
+        destroyMurderTag()
     end
 
     card = framework.Categories.Visuals:CreateModule({
@@ -146,6 +155,81 @@ function Module.init(context: Runtime): any
                         highlight:Destroy()
                     end
                 end
+                -- Murder tag: the old standalone MM2 card is now an option
+                -- here. The role lookup goes through the game bridge, so the
+                -- tag only appears where the game exposes roles.
+                local tagTarget: Player? = nil
+                if card.Options["Murder tag"].Value == true
+                    and type(gameBridge.playerRole) == "function" then
+                    for _, target: any in ipairs(entity:Refresh()) do
+                        local okRole: boolean, role: any = pcall(
+                            gameBridge.playerRole,
+                            target.Player
+                        )
+                        if okRole
+                            and role == "Murderer"
+                            and target.Character
+                            and target.Humanoid
+                            and target.Humanoid.Health > 0 then
+                            tagTarget = target.Player
+                            break
+                        end
+                    end
+                end
+                if not tagTarget then
+                    destroyMurderTag()
+                else
+                    local tagCharacter: Model? = tagTarget.Character
+                    local tagHead: BasePart? = tagCharacter
+                        and (tagCharacter:FindFirstChild("Head")
+                            or tagCharacter:FindFirstChild("HumanoidRootPart"))
+                        :: BasePart?
+                    if not tagHead then
+                        destroyMurderTag()
+                    else
+                        if not murderTag
+                            or not murderTag.Parent
+                            or murderTag.Adornee ~= tagHead then
+                            destroyMurderTag()
+                            local billboard: BillboardGui = Instance.new("BillboardGui")
+                            billboard.Name = "Wurst_MurderTag"
+                            billboard.AlwaysOnTop = true
+                            billboard.LightInfluence = 0
+                            billboard.Size = UDim2.fromOffset(150, 22)
+                            -- Sits above the head where the standalone card
+                            -- used to place it.
+                            billboard.StudsOffset = Vector3.new(0, 3.5, 0)
+                            billboard.MaxDistance = 1500
+                            billboard.Adornee = tagHead
+                            billboard.Parent = tagHead
+                            local label: TextLabel = Instance.new("TextLabel")
+                            label.Name = "Murder"
+                            label.BackgroundTransparency = 1
+                            label.Size = UDim2.fromScale(1, 1)
+                            label.Font = Enum.Font.GothamBold
+                            label.TextSize = 14
+                            label.TextScaled = false
+                            label.Text = "Murder"
+                            label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+                            label.TextStrokeTransparency = 0.3
+                            label.Parent = billboard
+                            murderTag = billboard
+                        end
+                        if type(gameBridge.playerRoleColor) == "function" then
+                            local okColour: boolean, colour: any = pcall(
+                                gameBridge.playerRoleColor,
+                                tagTarget
+                            )
+                            if okColour and typeof(colour) == "Color3" then
+                                local label: any =
+                                    murderTag and murderTag:FindFirstChild("Murder")
+                                if label and label.TextColor3 ~= colour then
+                                    label.TextColor3 = colour
+                                end
+                            end
+                        end
+                    end
+                end
                 card:SetStatus(tostring(count))
             end)
             card:Clean(clear)
@@ -159,6 +243,7 @@ function Module.init(context: Runtime): any
     card:CreateToggle({Name = "Through walls", Default = true})
     card:CreateToggle({Name = "Teammates", Default = false})
     card:CreateToggle({Name = "Team colours", Default = true})
+    card:CreateToggle({Name = "Murder tag", Default = true})
 
     activeCard = card
     Module.Initialized = true
