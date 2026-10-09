@@ -111,6 +111,7 @@ function Module.init(context: Runtime): any
                 speedSpikes = 0,
                 longAirtime = 0,
                 hitboxAnomalies = 0,
+                hitboxKills = 0,
                 farthestKill = 0,
             },
             shotCounter = 0,
@@ -429,6 +430,9 @@ function Module.init(context: Runtime): any
                     if dist > runtime.aggregates.farthestKill then
                         runtime.aggregates.farthestKill = dist
                     end
+                    if entry and ((dist > 5 and string.find(string.lower(shot.tool), "knife") ~= nil) or (entry.headOffset and entry.headOffset > 2.5)) then
+                        runtime.aggregates.hitboxKills = (runtime.aggregates.hitboxKills or 0) + 1
+                    end
                     if shot.silentSpawn then
                         local variant: string = shot.silentSpawn.variant
                         runtime.spawnKills[variant] =
@@ -714,6 +718,14 @@ function Module.init(context: Runtime): any
                     insights,
                     tostring(agg.speedSpikes)
                         .. " sustained speed spike(s) above 90 studs/s were tolerated."
+                )
+            end
+            if (agg.hitboxKills or 0) > 0 then
+                table.insert(
+                    insights,
+                    "Server accepted "
+                        .. tostring(agg.hitboxKills)
+                        .. " kill(s) through expanded hitbox boundaries: client collision manipulation (Touched / GetPartsInPart) verified effective."
                 )
             end
             if agg.hitboxAnomalies > 0 then

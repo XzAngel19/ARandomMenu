@@ -2306,11 +2306,20 @@ local function createTrajectoryCalibration(): any
     local function estimates(): Estimates
         local gunStats: RunningStats = runtime.gunAcceptance
         local speedStats: RunningStats = runtime.knifeSpeed
+        local maxStab: number? = nil
+        for _, ev in ipairs(runtime.events) do
+            if ev.kind == "stab" and ev.distance and type(ev.distance) == "number" then
+                if not maxStab or ev.distance > maxStab then
+                    maxStab = ev.distance
+                end
+            end
+        end
         return {
             gunAcceptanceMs = gunStats.count > 0 and gunStats.mean or nil,
             knifeSpeed = speedStats.count > 0 and speedStats.mean or nil,
             confirmedShots = gunStats.count,
             confirmedThrows = speedStats.count,
+            maxStabDistance = maxStab,
         }
     end
 

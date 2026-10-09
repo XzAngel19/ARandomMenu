@@ -25,13 +25,24 @@ function Module.init(runtime: any): any
         lastAuraSwing: number,
     }
 
-    local knifeSettings: KnifeSettings = {
+    local knifeSettings: any = {
         aura = false,
         auraRange = 14,
+        autoRange = false,
     }
     state.mm2KnifeRuntime = {
         lastAuraSwing = -math.huge,
     } :: KnifeRuntimeState
+
+    local function getEffectiveRange(): number
+        if knifeSettings.autoRange and trajectoryCalibration and type(trajectoryCalibration.getEstimates) == "function" then
+            local okEst, est = pcall(function() return trajectoryCalibration:getEstimates() end)
+            if okEst and type(est) == "table" and est.maxStabDistance and est.maxStabDistance >= 8 then
+                return math.clamp(math.floor(est.maxStabDistance), 8, 28)
+            end
+        end
+        return knifeSettings.auraRange or 14
+    end
 
     local function getEquippedWeapon(name: string, _tag: string): Tool?
         return getPlayerWeapon(LocalPlayer, name, true)
@@ -99,8 +110,9 @@ function Module.init(runtime: any): any
             return
         end
 
+        local currentRange: number = getEffectiveRange()
         local target: Player? =
-            findKnifeAuraTarget(localRoot, knifeSettings.auraRange)
+            findKnifeAuraTarget(localRoot, currentRange)
         local targetCharacter: Model? = target and target.Character
         local targetRoot: BasePart? = targetCharacter
             and targetCharacter:FindFirstChild("HumanoidRootPart")
@@ -109,7 +121,7 @@ function Module.init(runtime: any): any
             or not targetCharacter
             or not targetRoot
             or (targetRoot.Position - localRoot.Position).Magnitude
-                > knifeSettings.auraRange
+                > currentRange
             or os.clock() - state.mm2KnifeRuntime.lastAuraSwing < 0.86 then
             return
         end
@@ -203,6 +215,15 @@ function Module.init(runtime: any): any
     ): ()
         knifeSettings.auraRange = value
     end)
+    addToggleOption(
+        KnifeFeature,
+        "Auto Range",
+        knifeSettings.autoRange,
+        function(value: boolean): ()
+            knifeSettings.autoRange = value
+        end,
+        "Automatically adjusts stab reach to the maximum distance verified by calibration telemetry."
+    )
 
     activeCleanup = function(): ()
         toggleKnifeAura(false)

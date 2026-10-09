@@ -1,5 +1,5 @@
 return {
-    stamp = "audit-20261009-5",
+    stamp = "audit-20261009-6",
     files = {
         ["src/libraries/Manifest.lua"] = [=[
 export type ModuleEntry = {
@@ -23553,6 +23553,7 @@ function Module.init(context: Runtime): any
                 speedSpikes = 0,
                 longAirtime = 0,
                 hitboxAnomalies = 0,
+                hitboxKills = 0,
                 farthestKill = 0,
             },
             shotCounter = 0,
@@ -23871,6 +23872,9 @@ function Module.init(context: Runtime): any
                     if dist > runtime.aggregates.farthestKill then
                         runtime.aggregates.farthestKill = dist
                     end
+                    if entry and ((dist > 5 and string.find(string.lower(shot.tool), "knife") ~= nil) or (entry.headOffset and entry.headOffset > 2.5)) then
+                        runtime.aggregates.hitboxKills = (runtime.aggregates.hitboxKills or 0) + 1
+                    end
                     if shot.silentSpawn then
                         local variant: string = shot.silentSpawn.variant
                         runtime.spawnKills[variant] =
@@ -24156,6 +24160,14 @@ function Module.init(context: Runtime): any
                     insights,
                     tostring(agg.speedSpikes)
                         .. " sustained speed spike(s) above 90 studs/s were tolerated."
+                )
+            end
+            if (agg.hitboxKills or 0) > 0 then
+                table.insert(
+                    insights,
+                    "Server accepted "
+                        .. tostring(agg.hitboxKills)
+                        .. " kill(s) through expanded hitbox boundaries: client collision manipulation (Touched / GetPartsInPart) verified effective."
                 )
             end
             if agg.hitboxAnomalies > 0 then
@@ -27062,11 +27074,20 @@ local function createTrajectoryCalibration(): any
     local function estimates(): Estimates
         local gunStats: RunningStats = runtime.gunAcceptance
         local speedStats: RunningStats = runtime.knifeSpeed
+        local maxStab: number? = nil
+        for _, ev in ipairs(runtime.events) do
+            if ev.kind == "stab" and ev.distance and type(ev.distance) == "number" then
+                if not maxStab or ev.distance > maxStab then
+                    maxStab = ev.distance
+                end
+            end
+        end
         return {
             gunAcceptanceMs = gunStats.count > 0 and gunStats.mean or nil,
             knifeSpeed = speedStats.count > 0 and speedStats.mean or nil,
             confirmedShots = gunStats.count,
             confirmedThrows = speedStats.count,
+            maxStabDistance = maxStab,
         }
     end
 
@@ -29622,13 +29643,24 @@ function Module.init(runtime: any): any
         lastAuraSwing: number,
     }
 
-    local knifeSettings: KnifeSettings = {
+    local knifeSettings: any = {
         aura = false,
         auraRange = 14,
+        autoRange = false,
     }
     state.mm2KnifeRuntime = {
         lastAuraSwing = -math.huge,
     } :: KnifeRuntimeState
+
+    local function getEffectiveRange(): number
+        if knifeSettings.autoRange and trajectoryCalibration and type(trajectoryCalibration.getEstimates) == "function" then
+            local okEst, est = pcall(function() return trajectoryCalibration:getEstimates() end)
+            if okEst and type(est) == "table" and est.maxStabDistance and est.maxStabDistance >= 8 then
+                return math.clamp(math.floor(est.maxStabDistance), 8, 28)
+            end
+        end
+        return knifeSettings.auraRange or 14
+    end
 
     local function getEquippedWeapon(name: string, _tag: string): Tool?
         return getPlayerWeapon(LocalPlayer, name, true)
@@ -29696,8 +29728,9 @@ function Module.init(runtime: any): any
             return
         end
 
+        local currentRange: number = getEffectiveRange()
         local target: Player? =
-            findKnifeAuraTarget(localRoot, knifeSettings.auraRange)
+            findKnifeAuraTarget(localRoot, currentRange)
         local targetCharacter: Model? = target and target.Character
         local targetRoot: BasePart? = targetCharacter
             and targetCharacter:FindFirstChild("HumanoidRootPart")
@@ -29706,7 +29739,7 @@ function Module.init(runtime: any): any
             or not targetCharacter
             or not targetRoot
             or (targetRoot.Position - localRoot.Position).Magnitude
-                > knifeSettings.auraRange
+                > currentRange
             or os.clock() - state.mm2KnifeRuntime.lastAuraSwing < 0.86 then
             return
         end
@@ -29800,6 +29833,15 @@ function Module.init(runtime: any): any
     ): ()
         knifeSettings.auraRange = value
     end)
+    addToggleOption(
+        KnifeFeature,
+        "Auto Range",
+        knifeSettings.autoRange,
+        function(value: boolean): ()
+            knifeSettings.autoRange = value
+        end,
+        "Automatically adjusts stab reach to the maximum distance verified by calibration telemetry."
+    )
 
     activeCleanup = function(): ()
         toggleKnifeAura(false)
@@ -31387,19 +31429,22 @@ function Module.init(context: Runtime): any
     local host: any = context.host
     local framework: any = context.framework
     local LocalPlayer: any = host.LocalPlayer
+    local UserInputService: any = host.UserInputService or (game :: any):GetService("UserInputService")
     local RunService: RunService = host.RunService or (game :: any):GetService("RunService")
     local currentWorkspace: Workspace = host.workspace or workspace
 
     type InvisibleSettings = {
         voidDepth: number,
         ghostTransparency: number,
-        cameraFollowGhost: boolean,
+        fly: boolean,
+        flySpeed: number,
     }
 
     local invisibleSettings: InvisibleSettings = {
-        voidDepth = 200,
+        voidDepth = 120,
         ghostTransparency = 0.5,
-        cameraFollowGhost = true,
+        fly = true,
+        flySpeed = 55,
     }
 
     local invisibleRuntime = {
@@ -31407,7 +31452,6 @@ function Module.init(context: Runtime): any
         ghostModel = nil :: Model?,
         surfacePosition = nil :: CFrame?,
         connections = {} :: {RBXScriptConnection},
-        originalParts = {} :: {[BasePart]: boolean},
     }
 
     local function destroyGhost(): ()
@@ -31429,7 +31473,13 @@ function Module.init(context: Runtime): any
         local ghost: Model = clone :: Model
         ghost.Name = "Wurst_Ghost"
 
-        -- Remove server scripts and physics constraints from ghost
+        local ghostHumanoid: Humanoid? = ghost:FindFirstChildOfClass("Humanoid")
+        if ghostHumanoid then
+            ghostHumanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+            ghostHumanoid.NameDisplayDistance = 0
+            ghostHumanoid.HealthDisplayDistance = 0
+        end
+
         for _, desc: Instance in ipairs(ghost:GetDescendants()) do
             if desc:IsA("Script") or desc:IsA("LocalScript") then
                 desc:Destroy()
@@ -31445,15 +31495,14 @@ function Module.init(context: Runtime): any
 
         local highlight: Highlight = Instance.new("Highlight")
         highlight.Name = "GhostHighlight"
-        highlight.FillColor = Color3.fromRGB(130, 200, 255)
-        highlight.OutlineColor = Color3.fromRGB(200, 240, 255)
-        highlight.FillTransparency = 0.65
-        highlight.OutlineTransparency = 0.2
+        highlight.FillColor = Color3.fromRGB(120, 210, 255)
+        highlight.OutlineColor = Color3.fromRGB(220, 245, 255)
+        highlight.FillTransparency = 0.6
+        highlight.OutlineTransparency = 0.15
         highlight.Adornee = ghost
         highlight.Parent = ghost
 
-        local camera: Camera? = currentWorkspace.CurrentCamera
-        ghost.Parent = camera or currentWorkspace
+        ghost.Parent = currentWorkspace
         return ghost
     end
 
@@ -31468,12 +31517,18 @@ function Module.init(context: Runtime): any
         local character: Model? = LocalPlayer.Character
         local root: BasePart? = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
         local humanoid: Humanoid? = character and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+        local camera: Camera? = currentWorkspace.CurrentCamera
 
         if not enabled then
             if invisibleRuntime.active and root and invisibleRuntime.surfacePosition then
-                -- Restore real character to surface position where the ghost walked
+                -- Teleport real character to the exact position of the ghost on the map
                 root.CFrame = invisibleRuntime.surfacePosition
                 root.AssemblyLinearVelocity = Vector3.zero
+            end
+            if camera and humanoid then
+                pcall(function()
+                    camera.CameraSubject = humanoid
+                end)
             end
             destroyGhost()
             invisibleRuntime.active = false
@@ -31493,11 +31548,19 @@ function Module.init(context: Runtime): any
         invisibleRuntime.ghostModel = ghost
 
         local ghostRoot: BasePart? = ghost and ghost:FindFirstChild("HumanoidRootPart") :: BasePart?
+        local ghostHumanoid: Humanoid? = ghost and ghost:FindFirstChildOfClass("Humanoid") :: Humanoid?
         if ghostRoot and invisibleRuntime.surfacePosition then
             ghostRoot.CFrame = invisibleRuntime.surfacePosition
         end
 
-        -- Render loop: drive ghost visually on the ground while keeping the real character in the void
+        -- Focus the camera onto the ghost so the user stays on the map!
+        if camera and ghostHumanoid then
+            pcall(function()
+                camera.CameraSubject = ghostHumanoid
+            end)
+        end
+
+        -- RenderStepped loop: controls the ghost on the surface while keeping the real character in the void
         table.insert(
             invisibleRuntime.connections,
             RunService.RenderStepped:Connect(function(deltaTime: number): ()
@@ -31515,30 +31578,73 @@ function Module.init(context: Runtime): any
                 if not activeGhost or not activeGhost.Parent then
                     activeGhost = createGhost(currentCharacter)
                     invisibleRuntime.ghostModel = activeGhost
+                    if camera and activeGhost then
+                        local newGhostHumanoid: Humanoid? = activeGhost:FindFirstChildOfClass("Humanoid")
+                        if newGhostHumanoid then
+                            camera.CameraSubject = newGhostHumanoid
+                        end
+                    end
                 end
                 local activeGhostRoot: BasePart? = activeGhost and activeGhost:FindFirstChild("HumanoidRootPart") :: BasePart?
+                local activeCam: Camera? = currentWorkspace.CurrentCamera
 
-                -- Update surface position with humanoid move direction
-                local moveDir: Vector3 = currentHumanoid.MoveDirection
-                local walkSpeed: number = currentHumanoid.WalkSpeed
                 local surfaceCF: CFrame = invisibleRuntime.surfacePosition or currentRoot.CFrame
 
-                if moveDir.Magnitude > 0.05 then
-                    local newPos: Vector3 = surfaceCF.Position + (moveDir.Unit * (walkSpeed * deltaTime))
-                    -- Raycast down to keep ghost on ground
-                    local rayDown: RaycastResult? = currentWorkspace:Raycast(
-                        newPos + Vector3.new(0, 3, 0),
-                        Vector3.new(0, -10, 0)
-                    )
-                    if rayDown then
-                        newPos = Vector3.new(newPos.X, rayDown.Position.Y + (currentHumanoid.HipHeight or 2), newPos.Z)
+                if invisibleSettings.fly and activeCam then
+                    -- Fly mode: Move freely in 3D through the air with camera look
+                    local flyVelocity: Vector3 = Vector3.zero
+                    local camCF: CFrame = activeCam.CFrame
+                    local look: Vector3 = camCF.LookVector
+                    local right: Vector3 = camCF.RightVector
+
+                    if UserInputService:IsKeyDown(Enum.KeyCode.W) then
+                        flyVelocity += look
                     end
-                    local targetLook: Vector3 = newPos + moveDir
-                    surfaceCF = CFrame.lookAt(newPos, targetLook)
-                    invisibleRuntime.surfacePosition = surfaceCF
+                    if UserInputService:IsKeyDown(Enum.KeyCode.S) then
+                        flyVelocity -= look
+                    end
+                    if UserInputService:IsKeyDown(Enum.KeyCode.D) then
+                        flyVelocity += right
+                    end
+                    if UserInputService:IsKeyDown(Enum.KeyCode.A) then
+                        flyVelocity -= right
+                    end
+                    if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+                        flyVelocity += Vector3.new(0, 1, 0)
+                    end
+                    if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) or UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
+                        flyVelocity -= Vector3.new(0, 1, 0)
+                    end
+
+                    if flyVelocity.Magnitude > 0.05 then
+                        local nextPos: Vector3 = surfaceCF.Position + (flyVelocity.Unit * (invisibleSettings.flySpeed * deltaTime))
+                        local flatLook: Vector3 = Vector3.new(look.X, 0, look.Z)
+                        if flatLook.Magnitude > 0.01 then
+                            surfaceCF = CFrame.lookAt(nextPos, nextPos + flatLook.Unit)
+                        else
+                            surfaceCF = CFrame.new(nextPos) * surfaceCF.Rotation
+                        end
+                        invisibleRuntime.surfacePosition = surfaceCF
+                    end
+                else
+                    -- Walk mode: move on ground using humanoid MoveDirection
+                    local moveDir: Vector3 = currentHumanoid.MoveDirection
+                    local walkSpeed: number = currentHumanoid.WalkSpeed
+                    if moveDir.Magnitude > 0.05 then
+                        local newPos: Vector3 = surfaceCF.Position + (moveDir.Unit * (walkSpeed * deltaTime))
+                        local rayDown: RaycastResult? = currentWorkspace:Raycast(
+                            newPos + Vector3.new(0, 3, 0),
+                            Vector3.new(0, -12, 0)
+                        )
+                        if rayDown then
+                            newPos = Vector3.new(newPos.X, rayDown.Position.Y + (currentHumanoid.HipHeight or 2), newPos.Z)
+                        end
+                        surfaceCF = CFrame.lookAt(newPos, newPos + moveDir)
+                        invisibleRuntime.surfacePosition = surfaceCF
+                    end
                 end
 
-                -- Sync ghost parts to surface
+                -- Position ghost root
                 if activeGhostRoot and surfaceCF then
                     activeGhostRoot.CFrame = surfaceCF
                     -- Sync limbs relative to root
@@ -31554,7 +31660,7 @@ function Module.init(context: Runtime): any
                     end
                 end
 
-                -- Keep real character offset downward in the void so server/others cannot see or hit it
+                -- Keep real character safely hidden in the void below the ghost position
                 local voidPos: Vector3 = surfaceCF.Position - Vector3.new(0, invisibleSettings.voidDepth, 0)
                 currentRoot.CFrame = CFrame.new(voidPos)
                 currentRoot.AssemblyLinearVelocity = Vector3.zero
@@ -31566,19 +31672,39 @@ function Module.init(context: Runtime): any
         Name = "Invisible",
         Category = "Blatant",
         Order = 8,
-        Tooltip = "Makes your character a ghost on the map while your real character is in the void so nobody can see you.",
+        Tooltip = "Shows your ghost on the map while your real character is hidden in the void. Turning it off teleports your real character to the ghost.",
         Function = toggleInvisible,
+    })
+
+    invisibleCard:CreateToggle({
+        Name = "Ghost Fly",
+        Default = invisibleSettings.fly,
+        Function = function(value: boolean): ()
+            invisibleSettings.fly = value
+        end,
+        Tooltip = "Fly freely across the map as a ghost using WASD, Space and Shift/Ctrl.",
+    })
+
+    invisibleCard:CreateSlider({
+        Name = "Fly speed",
+        Min = 16,
+        Max = 200,
+        Default = invisibleSettings.flySpeed,
+        Function = function(value: number): ()
+            invisibleSettings.flySpeed = value
+        end,
+        Tooltip = "Speed of the ghost while flying.",
     })
 
     invisibleCard:CreateSlider({
         Name = "Void depth",
         Min = 50,
-        Max = 500,
+        Max = 350,
         Default = invisibleSettings.voidDepth,
         Function = function(value: number): ()
             invisibleSettings.voidDepth = value
         end,
-        Tooltip = "How far below the surface your real character is placed.",
+        Tooltip = "Studs below the ground your real character sits.",
     })
 
     invisibleCard:CreateSlider({
