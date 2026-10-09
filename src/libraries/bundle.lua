@@ -1,5 +1,5 @@
 return {
-    stamp = "audit-20261009-3",
+    stamp = "audit-20261009-4",
     files = {
         ["src/libraries/Manifest.lua"] = [=[
 export type ModuleEntry = {
@@ -86,7 +86,7 @@ local Manifest: Manifest = {
             category = "Other",
         },
         {
-            path = "src/games/universal/Blatant/ClickTeleport.lua",
+            path = "src/games/universal/Movement/ClickTeleport.lua",
             name = "Click Teleport",
             category = "Movement",
         },
@@ -157,7 +157,7 @@ local Manifest: Manifest = {
             category = "Movement",
         },
         {
-            path = "src/games/universal/Blatant/AntiVoid.lua",
+            path = "src/games/universal/Movement/AntiVoid.lua",
             name = "Anti-Void",
             category = "Movement",
         },
@@ -192,9 +192,9 @@ local Manifest: Manifest = {
             category = "Other",
         },
         {
-            path = "src/games/universal/Blatant/AntiFling.lua",
+            path = "src/games/universal/Movement/AntiFling.lua",
             name = "Anti-Fling",
-            category = "Other",
+            category = "Movement",
         },
         {
             path = "src/games/universal/Utility/LagSwitch.lua",
@@ -217,7 +217,7 @@ local Manifest: Manifest = {
             category = "Render",
         },
         {
-            path = "src/games/universal/Blatant/FreezeMovements.lua",
+            path = "src/games/universal/Movement/FreezeMovements.lua",
             name = "Freeze Movements",
             category = "Movement",
         },
@@ -227,9 +227,9 @@ local Manifest: Manifest = {
             category = "Movement",
         },
         {
-            path = "src/games/universal/Combat/Hitboxes.lua",
+            path = "src/games/universal/Blatant/Hitboxes.lua",
             name = "Hitboxes",
-            category = "Combat",
+            category = "Blatant",
         },
         {
             path = "src/games/universal/Render/ProjectileCalibration.lua",
@@ -14456,12 +14456,20 @@ function Module.init(context: Runtime): any
     local currentWorkspace: Workspace = host.workspace or workspace
     local highlights: {[Player]: Highlight} = {}
     local murderTag: BillboardGui? = nil
+    local roleTags: {[Player]: BillboardGui} = {}
     local lastUpdate: number = -math.huge
 
     local function destroyMurderTag(): ()
         if murderTag then
             pcall(murderTag.Destroy, murderTag)
             murderTag = nil
+        end
+    end
+
+    local function clearRoleTags(): ()
+        for player: Player, tag: BillboardGui in pairs(roleTags) do
+            roleTags[player] = nil
+            pcall(tag.Destroy, tag)
         end
     end
     local gameBridge: any = context.services.gameBridge
@@ -14502,6 +14510,7 @@ function Module.init(context: Runtime): any
             highlight:Destroy()
         end
         destroyMurderTag()
+        clearRoleTags()
     end
 
     card = framework.Categories.Visuals:CreateModule({
@@ -14663,6 +14672,81 @@ function Module.init(context: Runtime): any
                         end
                     end
                 end
+
+                -- Role tags: floating role labels over all known player heads
+                local roleTagsOption: any = card.Options["Role tags"]
+                if roleTagsOption and roleTagsOption.Value == true
+                    and type(gameBridge.playerRole) == "function" then
+                    local seenRoleTags: {[Player]: boolean} = {}
+                    for _, target: any in ipairs(entity:Refresh()) do
+                        local player: Player = target.Player
+                        if player ~= LocalPlayer
+                            and target.Character
+                            and target.Humanoid
+                            and target.Humanoid.Health > 0
+                            and not protectedTargets.isProtected(player) then
+                            local okRole: boolean, role: any = pcall(gameBridge.playerRole, player)
+                            if okRole and type(role) == "string" and role ~= "Dead" then
+                                local head: BasePart? = target.Character:FindFirstChild("Head")
+                                    or target.Character:FindFirstChild("HumanoidRootPart")
+                                if head then
+                                    seenRoleTags[player] = true
+                                    local tag: BillboardGui? = roleTags[player]
+                                    if not tag or not tag.Parent or tag.Adornee ~= head then
+                                        if tag then pcall(tag.Destroy, tag) end
+                                        local billboard: BillboardGui = Instance.new("BillboardGui")
+                                        billboard.Name = "Wurst_RoleTag"
+                                        billboard.AlwaysOnTop = true
+                                        billboard.LightInfluence = 0
+                                        billboard.Size = UDim2.fromOffset(170, 24)
+                                        billboard.StudsOffset = Vector3.new(0, 2.7, 0)
+                                        billboard.MaxDistance = 1500
+                                        billboard.Adornee = head
+                                        billboard.Parent = head
+
+                                        local label: TextLabel = Instance.new("TextLabel")
+                                        label.Name = "Role"
+                                        label.BackgroundTransparency = 1
+                                        label.Size = UDim2.fromScale(1, 1)
+                                        label.Font = Enum.Font.GothamBold
+                                        label.TextSize = 14
+                                        label.TextScaled = false
+                                        label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+                                        label.TextStrokeTransparency = 0.2
+                                        label.Parent = billboard
+
+                                        roleTags[player] = billboard
+                                        tag = billboard
+                                    end
+                                    local label: any = tag and tag:FindFirstChild("Role")
+                                    if label then
+                                        local roleUpper: string = string.upper(role)
+                                        if label.Text ~= roleUpper then
+                                            label.Text = roleUpper
+                                        end
+                                        if type(gameBridge.playerRoleColor) == "function" then
+                                            local okColor: boolean, color: any = pcall(gameBridge.playerRoleColor, player)
+                                            if okColor and typeof(color) == "Color3" then
+                                                if label.TextColor3 ~= color then
+                                                    label.TextColor3 = color
+                                                end
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                    for player: Player, tag: BillboardGui in pairs(roleTags) do
+                        if not seenRoleTags[player] then
+                            roleTags[player] = nil
+                            pcall(tag.Destroy, tag)
+                        end
+                    end
+                else
+                    clearRoleTags()
+                end
+
                 card:SetStatus(tostring(count))
             end)
             card:Clean(clear)
@@ -14677,6 +14761,7 @@ function Module.init(context: Runtime): any
     card:CreateToggle({Name = "Teammates", Default = false})
     card:CreateToggle({Name = "Team colours", Default = true})
     card:CreateToggle({Name = "Murder tag", Default = true})
+    card:CreateToggle({Name = "Role tags", Default = true})
 
     activeCard = card
     Module.Initialized = true
@@ -16502,7 +16587,7 @@ end
 return Module
 
 ]=],
-        ["src/games/universal/Blatant/ClickTeleport.lua"] = [=[
+        ["src/games/universal/Movement/ClickTeleport.lua"] = [=[
 export type Runtime = {
     framework: any,
     entity: any,
@@ -16542,9 +16627,9 @@ function Module.init(context: Runtime): any
     }
 
     local teleport: any
-    teleport = framework.Categories.Blatant:CreateModule({
+    teleport = framework.Categories.Movement:CreateModule({
         Name = "Click Teleport",
-        Category = "Blatant",
+        Category = "Movement",
         Order = 1,
 
         Kind = "action",
@@ -20119,7 +20204,7 @@ end
 return Module
 
 ]=],
-        ["src/games/universal/Blatant/AntiVoid.lua"] = [=[
+        ["src/games/universal/Movement/AntiVoid.lua"] = [=[
 export type Runtime = {
     framework: any,
     entity: any,
@@ -20232,7 +20317,7 @@ function Module.init(context: Runtime): any
         "Create an invisible rescue platform only when death is imminent",
         4,
         toggleAntiVoid,
-        {noOptions = true, categoryName = "Blatant"}
+        {noOptions = true, categoryName = "Movement"}
     )
     addFeatureTooltip(
         AntiVoidFeature,
@@ -20880,7 +20965,7 @@ end
 return Module
 
 ]=],
-        ["src/games/universal/Blatant/AntiFling.lua"] = [=[
+        ["src/games/universal/Movement/AntiFling.lua"] = [=[
 export type Runtime = {
     framework: any,
     entity: any,
@@ -20966,7 +21051,7 @@ function Module.init(context: Runtime): any
         "Stop extreme local velocity and return to safety",
         14,
         toggleAntiFling,
-        {categoryName = "Blatant"}
+        {categoryName = "Movement"}
     )
     addNumberOption(
         AntiFlingFeature,
@@ -21673,7 +21758,7 @@ end
 return Module
 
 ]=],
-        ["src/games/universal/Blatant/FreezeMovements.lua"] = [=[
+        ["src/games/universal/Movement/FreezeMovements.lua"] = [=[
 export type Runtime = {
     framework: any,
     entity: any,
@@ -21762,7 +21847,7 @@ function Module.init(context: Runtime): any
         1,
         toggleFreezeMovements,
         {
-            categoryName = "Blatant",
+            categoryName = "Movement",
             configKey = "Movement.FreezeMovements",
         }
     )
@@ -22084,7 +22169,7 @@ end
 return Module
 
 ]=],
-        ["src/games/universal/Combat/Hitboxes.lua"] = [=[
+        ["src/games/universal/Blatant/Hitboxes.lua"] = [=[
 export type Runtime = {
     framework: any,
     entity: any,
@@ -22294,9 +22379,9 @@ function Module.init(context: Runtime): any
     end
 
     local hitboxes: any
-    hitboxes = framework.Categories.Combat:CreateModule({
+    hitboxes = framework.Categories.Blatant:CreateModule({
         Name = "Hitboxes",
-        Category = "Combat",
+        Category = "Blatant",
         Order = 3,
         Tooltip = "Expand the part enemies are hit on, in studs. Teammates and "
             .. "friends are left alone, and every part is restored exactly when "
@@ -23312,7 +23397,7 @@ function Module.init(context: Runtime): any
             logMovement = true,
             logHitboxes = true,
             killWindowSeconds = 4,
-            sceneRadius = 80,
+            sceneRadius = 250,
             maxEvents = 300,
         }
 
@@ -23542,6 +23627,7 @@ function Module.init(context: Runtime): any
         end
 
         local function recordShot(tool: Tool): ()
+            runtime.lastAuthoredAt = os.clock()
             local character: Model? = LocalPlayer.Character
             local root: BasePart? = character
                 and character:FindFirstChild("HumanoidRootPart")
@@ -23631,21 +23717,22 @@ function Module.init(context: Runtime): any
                     continue
                 end
                 local entry: SceneEntry? = findSceneEntry(shot, player)
-                if entry
-                    and entry.dist <= 60
-                    and (entry.angleDeg == nil or entry.angleDeg <= 30) then
+                local isAuthoredTarget: boolean = (shot.target == player.Name) or (shot.silentSpawn ~= nil)
+                if entry or isAuthoredTarget then
+                    local dist: number = entry and entry.dist or 0
+                    local los: string = entry and entry.los or "clear"
                     local verdict: string = "clean"
-                    if entry.los == "blocked" then
+                    if los == "blocked" then
                         verdict = "wallshot"
-                    elseif entry.dist > 80 then
+                    elseif dist > 80 then
                         verdict = "longrange"
                     end
                     shot.outcome = {
                         killed = player.Name,
                         delayMs = math.floor((os.clock() - shot.clockAt) * 1000),
                         verdict = verdict,
-                        distance = entry.dist,
-                        lineOfSight = entry.los,
+                        distance = dist,
+                        lineOfSight = los,
                     }
                     runtime.aggregates.kills += 1
                     if verdict == "wallshot" then
@@ -23655,8 +23742,8 @@ function Module.init(context: Runtime): any
                     else
                         runtime.aggregates.cleanKills += 1
                     end
-                    if entry.dist > runtime.aggregates.farthestKill then
-                        runtime.aggregates.farthestKill = entry.dist
+                    if dist > runtime.aggregates.farthestKill then
+                        runtime.aggregates.farthestKill = dist
                     end
                     if shot.silentSpawn then
                         local variant: string = shot.silentSpawn.variant
@@ -23668,10 +23755,10 @@ function Module.init(context: Runtime): any
                         killed = player.Name,
                         tool = shot.tool,
                         verdict = verdict,
-                        distance = entry.dist,
-                        lineOfSight = entry.los,
-                        headOffset = entry.headOffset,
-                        torso = entry.torso,
+                        distance = dist,
+                        lineOfSight = los,
+                        headOffset = entry and entry.headOffset or nil,
+                        torso = entry and entry.torso or nil,
                         silentSpawn = shot.silentSpawn,
                     })
                     clampTrim(runtime.hits, tuning.maxEvents)
@@ -23812,7 +23899,8 @@ function Module.init(context: Runtime): any
                     local elapsed: number = now - lastAt
                     if elapsed >= 0.02 then
                         local jumped: number = (position - lastPosition).Magnitude
-                        if jumped > 25 and elapsed < 0.15 then
+                        -- Disregard massive jumps (> 3000 studs) that correspond to MM2 map loading/teleporting
+                        if jumped > 25 and elapsed < 0.15 and jumped < 3000 then
                             recordMovement("teleport", jumped, {
                                 from = vectorArray(lastPosition),
                                 to = vectorArray(position),
@@ -23900,12 +23988,10 @@ function Module.init(context: Runtime): any
                         end
                         if anomaly then
                             local lastFlag: number? = runtime.anomalyCooldown[player]
-                            if not lastFlag or os.clock() - lastFlag > 2 then
+                            if not lastFlag or os.clock() - lastFlag > 5 then
                                 runtime.anomalyCooldown[player] = os.clock()
-                                recordMovement(anomaly, magnitude, {
-                                    player = player.Name,
-                                })
                                 runtime.aggregates.hitboxAnomalies += 1
+                                runtime.saveDirty = true
                             end
                         end
                     end
@@ -24610,7 +24696,7 @@ local mm2Settings = {
     silentAim = false,
     shootKey = Enum.KeyCode.Q,
     shootTarget = "",
-    showMissCooldown = true,
+    showMissCooldown = false,
     predictionRtt = 0.08,
     gunLeadBias = 0,
     autoTuneLead = true,
@@ -29296,19 +29382,6 @@ function Module.init(runtime: any): any
     ): ()
         mm2Settings.shootTarget = value
     end, false)
-    addToggleOption(
-        ShootFeature,
-        "Miss cooldown",
-        mm2Settings.showMissCooldown,
-        function(value: boolean): ()
-            mm2Settings.showMissCooldown = value
-            if not value then
-                state.mm2ShotFeedback.pending = nil
-                state.mm2ShotFeedback.lastAccepted = nil
-                state.mm2ShotFeedback.hide()
-            end
-        end
-    )
     refreshShootOptions()
 
     local AutoShootFeature = createUniversalFeature(
@@ -29905,252 +29978,6 @@ end
 return Module
 
 ]=],
-        ["src/games/MM2/Render/RoleTags.lua"] = [=[
-local Module = {
-    Name = "MM2 Role Tags",
-    PlaceId = 142823291,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-    Runtime = nil :: any,
-}
-
-local activeCleanup: () -> () = function(): () end
-
-function Module.init(runtime: any): any
-    if Module.Initialized then
-        return Module
-    end
-    local core: any = state.mm2Core
-    assert(type(core) == "table", "MM2 Role Tags requires the MM2 core module")
-    Module.Runtime = runtime
-    local MM2Effects: any = core.MM2Effects
-    local getPlayerRole: any = core.getPlayerRole
-    local isProtectedTarget: any = core.isProtectedTarget
-    local mm2Settings: any = core.mm2Settings
-
-    -- ---------------------------------------------------------------------------
-    -- Role nametags: a coloured label floating over each player's head. The
-    -- murderer is the loud one (red), everything else is opt-in.
-    -- ---------------------------------------------------------------------------
-    local RoleTagEffects = create("Folder", {
-        Parent = MM2Effects,
-        Name = "RoleTags",
-    })
-
-    local ROLE_TAG_TEXT: {[string]: string} = {
-        Murderer = "MURDERER",
-        Sheriff = "SHERIFF",
-        Hero = "HERO",
-        Innocent = "INNOCENT",
-        Dead = "DEAD",
-    }
-
-    local function colourForRole(role: string?): Color3
-        if role == "Murderer" then return mm2Settings.murdererColor end
-        if role == "Sheriff" then return mm2Settings.sheriffColor end
-        if role == "Hero" then return mm2Settings.heroColor end
-        if role == "Innocent" then return mm2Settings.innocentColor end
-        if role == "Dead" then return mm2Settings.deadColor end
-        return Color3.fromRGB(235, 235, 240)
-    end
-
-    type RoleTagRecord = {
-        billboard: BillboardGui,
-        label: TextLabel,
-        stroke: UIStroke,
-        reference: ObjectValue,
-        head: BasePart?,
-        role: string?,
-    }
-
-    local roleTags: {[Player]: RoleTagRecord} = {}
-    local roleTagsEnabled: boolean = false
-
-    local function destroyRoleTag(player: Player): ()
-        local record: RoleTagRecord? = roleTags[player]
-        if record then
-            roleTags[player] = nil
-            record.billboard:Destroy()
-            record.reference:Destroy()
-        end
-    end
-
-    local function clearRoleTags(): ()
-        for player: Player, _record: RoleTagRecord in pairs(roleTags) do
-            destroyRoleTag(player)
-        end
-    end
-
-    local function createRoleTag(head: BasePart): RoleTagRecord
-        local billboard: BillboardGui = Instance.new("BillboardGui")
-        billboard.Name = "Wurst_RoleTag"
-        billboard.AlwaysOnTop = true
-        billboard.LightInfluence = 0
-        billboard.Size = UDim2.fromOffset(170, 24)
-        billboard.StudsOffset = Vector3.new(0, 2.7, 0)
-        billboard.MaxDistance = 1500
-        billboard.Adornee = head
-        -- A BillboardGui nested inside a ScreenGui never renders (nested layer
-        -- collectors are skipped), so it lives on the part like the rest of the
-        -- MM2 markers and the folder only keeps a reference for cleanup.
-        billboard.Parent = head
-
-        local reference: ObjectValue = Instance.new("ObjectValue")
-        reference.Name = "RoleTagReference"
-        reference.Value = billboard
-        reference.Parent = RoleTagEffects
-
-        local label: TextLabel = Instance.new("TextLabel")
-        label.Name = "Role"
-        label.BackgroundTransparency = 1
-        label.Size = UDim2.fromScale(1, 1)
-        label.FontFace = CONTROL_FONT
-        label.TextSize = 15
-        label.TextScaled = false
-        label.TextStrokeTransparency = 1
-        label.Text = ""
-        label.Parent = billboard
-
-        local stroke: UIStroke = Instance.new("UIStroke")
-        stroke.Color = Color3.fromRGB(0, 0, 0)
-        stroke.Thickness = 2
-        stroke.Transparency = 0.15
-        stroke.Parent = label
-
-        return {
-            billboard = billboard,
-            label = label,
-            stroke = stroke,
-            reference = reference,
-            head = head,
-            role = nil,
-        }
-    end
-
-    local function refreshRoleTags(): ()
-        local seen: {[Player]: boolean} = {}
-        for _, player: Player in ipairs(Players:GetPlayers()) do
-            local character: Model? = player.Character
-            local head: BasePart? = character
-                and (character:FindFirstChild("Head")
-                    or character:FindFirstChild("HumanoidRootPart"))
-                :: BasePart?
-            local role: string? = character and getPlayerRole(player) or nil
-            local wanted: boolean = head ~= nil
-                and role ~= nil
-                and role ~= "Dead"
-                and player ~= LocalPlayer
-                and (mm2Settings.roleTagsAll or role == "Murderer")
-                and not isProtectedTarget(player)
-
-            if wanted then
-                seen[player] = true
-                local record: RoleTagRecord? = roleTags[player]
-                if record and (not record.billboard.Parent or record.head ~= head) then
-                    destroyRoleTag(player)
-                    record = nil
-                end
-                if not record then
-                    record = createRoleTag(head :: BasePart)
-                    roleTags[player] = record
-                end
-                local resolved: RoleTagRecord = record :: RoleTagRecord
-                local colour: Color3 = colourForRole(role)
-                if resolved.role ~= role then
-                    resolved.role = role
-                    resolved.label.Text = ROLE_TAG_TEXT[role :: string]
-                        or string.upper(role :: string)
-                end
-                -- Re-applied every pass so the live colour pickers take effect
-                -- without waiting for a role change.
-                if resolved.label.TextColor3 ~= colour then
-                    resolved.label.TextColor3 = colour
-                    resolved.stroke.Color = Color3.new(
-                        colour.R * 0.12,
-                        colour.G * 0.12,
-                        colour.B * 0.12
-                    )
-                end
-            end
-        end
-        for player: Player, _record: RoleTagRecord in pairs(roleTags) do
-            if not seen[player] then
-                destroyRoleTag(player)
-            end
-        end
-    end
-
-    local unsubscribeRoles: () -> () = core.onRoundRoles(function(): ()
-        if roleTagsEnabled then
-            -- Server role pushes and tool/collision changes bypass the normal
-            -- 0.35 s housekeeping interval.
-            refreshRoleTags()
-        end
-    end)
-
-    local function toggleRoleTags(enabled: boolean): ()
-        roleTagsEnabled = enabled
-        disconnectFeatureConnection("MM2RoleTags")
-        clearRoleTags()
-        if not enabled then
-            return
-        end
-        local elapsed: number = 1
-        featureConnections.MM2RoleTags = TaskManager:Connect(function(deltaTime: number): ()
-            elapsed += deltaTime
-            if elapsed < 0.35 then
-                return
-            end
-            elapsed = 0
-            refreshRoleTags()
-        end)
-    end
-
-    local RoleTagsFeature = createUniversalFeature(
-        "Role Tags",
-        "Floating role label over every head - the murderer in red",
-        2,
-        toggleRoleTags,
-        {
-            categoryName = "Render",
-            parent = MM2Scroll,
-            registry = mm2Features,
-        }
-    )
-    addToggleOption(
-        RoleTagsFeature,
-        "All roles",
-        mm2Settings.roleTagsAll,
-        function(value: boolean): ()
-            mm2Settings.roleTagsAll = value
-            clearRoleTags()
-        end,
-        "Off: only the murderer is tagged. On: sheriff, hero and innocents too."
-    )
-
-    activeCleanup = function(): ()
-        pcall(unsubscribeRoles)
-        toggleRoleTags(false)
-    end
-    Module.Events = featureConnections
-    Module.Initialized = true
-    return Module
-end
-
-function Module.destroy(): ()
-    if not Module.Initialized then
-        return
-    end
-    Module.Initialized = false
-    pcall(activeCleanup)
-    activeCleanup = function(): () end
-    Module.Events = {}
-    Module.Runtime = nil
-end
-
-return Module
-
-]=],
         ["src/games/MM2/Render/RoundEsp.lua"] = [=[
 local Module = {
     Name = "MM2 Round ESP",
@@ -30595,291 +30422,6 @@ function Module.init(runtime: any): any
         toggleGunEsp(false)
                 toggleTrapEsp(false)
                 toggleCoinChams(false)
-    end
-    Module.Events = featureConnections
-    Module.Initialized = true
-    return Module
-end
-
-function Module.destroy(): ()
-    if not Module.Initialized then
-        return
-    end
-    Module.Initialized = false
-    pcall(activeCleanup)
-    activeCleanup = function(): () end
-    Module.Events = {}
-    Module.Runtime = nil
-end
-
-return Module
-
-]=],
-        ["src/games/MM2/Render/AlwaysShowTimer.lua"] = [=[
-local Module = {
-    Name = "MM2 Always Show Timer",
-    PlaceId = 142823291,
-    Events = {} :: {[string]: any},
-    Initialized = false,
-    Runtime = nil :: any,
-}
-
-local activeCleanup: () -> () = function(): () end
-
-function Module.init(runtime: any): any
-    if Module.Initialized then
-        return Module
-    end
-    local core: any = state.mm2Core
-    assert(type(core) == "table", "MM2 Always Show Timer requires the MM2 core module")
-    Module.Runtime = runtime
-    local roundTimer: any = core.roundTimer
-    local getRoundPhase: any = core.getRoundPhase
-
-    -- The core keeps roundTimer.endsAt locked to whatever live source the
-    -- current map still publishes (see the "Round clock" section of base.lua):
-    -- the workspace.RoundTimerPart attribute on older maps, the game's own HUD
-    -- countdown label on the current map, and the one-shot RoundStart anchor as
-    -- a last resort. The number painted here is the game's own number - this
-    -- module only decides where to paint it.
-    local revealedTimerObjects: {[Instance]: boolean} =
-        setmetatable({}, {__mode = "k"}) :: any
-    local fallbackGui: ScreenGui? = nil
-    local fallbackLabel: TextLabel? = nil
-    local gameCaption: TextLabel? = nil
-    local lastPaintedText: string = ""
-
-    -- The recursive FindFirstChildWhichIsA below is the only expensive part of
-    -- this lookup, so the answer is cached and rescanned at most once a second
-    -- (or immediately once the cached frame/label is destroyed).
-    local timerFrameCache: {frame: Instance?, label: Instance?, at: number} =
-        {frame = nil, label = nil, at = -math.huge}
-
-    local function findGameTimerFrame(): (GuiObject?, TextLabel?)
-        local cachedFrame: Instance? = timerFrameCache.frame
-        if cachedFrame and cachedFrame.Parent
-            and (not timerFrameCache.label or timerFrameCache.label.Parent) then
-            return cachedFrame, timerFrameCache.label
-        end
-        if os.clock() - timerFrameCache.at < 1 then
-            return nil, nil
-        end
-        timerFrameCache.at = os.clock()
-        local playerGui: PlayerGui? = LocalPlayer:FindFirstChildOfClass("PlayerGui")
-        local mainGui: Instance? = playerGui and playerGui:FindFirstChild("MainGUI")
-        local gameFrame: Instance? = mainGui and mainGui:FindFirstChild("Game")
-        local frame: Instance? = gameFrame and gameFrame:FindFirstChild("Timer")
-        local validFrame: Instance? = (frame and frame:IsA("GuiObject")) and frame or nil
-        timerFrameCache.frame = validFrame
-        timerFrameCache.label = nil
-        if not validFrame then
-            return nil, nil
-        end
-        -- MM2 has renamed this label across updates, so take the first TextLabel
-        -- in the frame instead of trusting a single name.
-        local label: Instance? = validFrame:FindFirstChild("XPText")
-            or validFrame:FindFirstChild("Timer")
-            or validFrame:FindFirstChildWhichIsA("TextLabel", true)
-        local validLabel: Instance? = (label and label:IsA("TextLabel")) and label or nil
-        timerFrameCache.label = validLabel
-        return validFrame, validLabel
-    end
-
-    local function destroyGameCaption(): ()
-        if gameCaption then
-            pcall(function(): ()
-                (gameCaption :: any):Destroy()
-            end)
-            gameCaption = nil
-        end
-    end
-
-    -- The white "Timer" caption that sits above the borrowed game label.
-    local function ensureGameCaption(frame: GuiObject): ()
-        if gameCaption and gameCaption.Parent then
-            if gameCaption.Parent ~= frame then
-                destroyGameCaption()
-            else
-                return
-            end
-        end
-        gameCaption = create("TextLabel", {
-            Parent = frame,
-            Name = "WurstTimerCaption",
-            BackgroundTransparency = 1,
-            AnchorPoint = Vector2.new(0.5, 1),
-            Position = UDim2.fromScale(0.5, 0),
-            Size = UDim2.fromOffset(80, 16),
-            Font = CONTROL_FONT,
-            Text = "Timer",
-            TextSize = 12,
-            TextColor3 = Color3.fromRGB(255, 255, 255),
-            TextStrokeColor3 = Color3.fromRGB(0, 0, 0),
-            TextStrokeTransparency = 0.4,
-        }) :: any
-    end
-
-    local function formatRoundClock(remaining: number): string
-        local whole: number = math.max(0, math.ceil(remaining))
-        local minutes: number = math.floor(whole / 60)
-        local seconds: number = whole - minutes * 60
-        if minutes > 0 then
-            return string.format("%d:%02d", minutes, seconds)
-        end
-        return tostring(seconds) .. "s"
-    end
-
-    local function destroyFallback(): ()
-        if fallbackGui then
-            pcall(function(): ()
-                (fallbackGui :: any):Destroy()
-            end)
-        end
-        fallbackGui = nil
-        fallbackLabel = nil
-    end
-
-    -- Last resort: MM2's own Timer frame is gone or has no label to borrow. Draw
-    -- ours so the feature still does what its name says.
-    local function ensureFallbackLabel(): TextLabel?
-        if fallbackLabel and fallbackLabel.Parent then
-            return fallbackLabel
-        end
-        destroyFallback()
-        local playerGui: PlayerGui? = LocalPlayer:FindFirstChildOfClass("PlayerGui")
-        if not playerGui then
-            return nil
-        end
-        local gui: ScreenGui = create("ScreenGui", {
-            Parent = playerGui,
-            Name = "WurstRoundTimer",
-            ResetOnSpawn = false,
-            IgnoreGuiInset = true,
-            DisplayOrder = 50,
-        }) :: any
-        create("TextLabel", {
-            Parent = gui,
-            Name = "Caption",
-            BackgroundTransparency = 1,
-            AnchorPoint = Vector2.new(0.5, 0),
-            Position = UDim2.new(0.5, 0, 0, 6),
-            Size = UDim2.new(0, 96, 0, 14),
-            Font = CONTROL_FONT,
-            Text = "Timer",
-            TextSize = 11,
-            TextColor3 = Color3.fromRGB(255, 255, 255),
-            TextStrokeColor3 = Color3.fromRGB(0, 0, 0),
-            TextStrokeTransparency = 0.4,
-        })
-        local label: TextLabel = create("TextLabel", {
-            Parent = gui,
-            Name = "Clock",
-            BackgroundTransparency = 0.35,
-            BackgroundColor3 = Color3.fromRGB(0, 0, 0),
-            AnchorPoint = Vector2.new(0.5, 0),
-            Position = UDim2.new(0.5, 0, 0, 20),
-            Size = UDim2.new(0, 96, 0, 26),
-            Font = CONTROL_FONT,
-            TextSize = 18,
-            TextColor3 = Color3.fromRGB(255, 255, 255),
-            Text = "",
-        }) :: any
-        create("UICorner", {Parent = label, CornerRadius = UDim.new(0, 6)})
-        fallbackGui = gui
-        fallbackLabel = label
-        return label
-    end
-
-    local function hideRevealedObjects(): ()
-        for object: Instance, _ in pairs(revealedTimerObjects) do
-            if object and object.Parent then
-                local guiObject: any = object
-                pcall(function(): ()
-                    guiObject.Visible = false
-                end)
-            end
-        end
-        revealedTimerObjects = setmetatable({}, {__mode = "k"}) :: any
-        destroyGameCaption()
-        destroyFallback()
-        lastPaintedText = ""
-    end
-
-    local function paintClock(label: TextLabel, remaining: number): ()
-        local text: string = formatRoundClock(remaining)
-        if text == lastPaintedText and label.Text == text then
-            return
-        end
-        lastPaintedText = text
-        label.Text = text
-        label.TextColor3 = remaining <= 30
-            and Color3.fromRGB(255, 70, 70)
-            or Color3.fromRGB(255, 255, 255)
-    end
-
-    -- Prefer the game's own frame (so the countdown sits where a player expects
-    -- it), and fall back to ours only when there is nothing to borrow.
-    local function paintRoundClock(remaining: number): ()
-        local frame: GuiObject?, label: TextLabel? = findGameTimerFrame()
-        if frame then
-            if not frame.Visible then
-                revealedTimerObjects[frame] = true
-                frame.Visible = true
-            end
-            if label then
-                ensureGameCaption(frame)
-                paintClock(label, remaining)
-                return
-            end
-        end
-        destroyGameCaption()
-        local fallback: TextLabel? = ensureFallbackLabel()
-        if fallback then
-            paintClock(fallback, remaining)
-        end
-    end
-
-    local function toggleAlwaysShowTimer(enabled: boolean): ()
-        disconnectFeatureConnection("MM2AlwaysTimer")
-
-        if not enabled then
-            hideRevealedObjects()
-            return
-        end
-
-        featureConnections.MM2AlwaysTimer = TaskManager:Connect(function(): ()
-            local remaining: number? = roundTimer.endsAt
-                and math.max(0, roundTimer.endsAt - os.clock())
-            -- No live clock: either the round is over or the server has not
-            -- published one yet. Put back whatever we forced on screen and let
-            -- the game's own GUI do its thing.
-            if not remaining or remaining <= 0 or getRoundPhase() == "lobby" then
-                if next(revealedTimerObjects) ~= nil or fallbackLabel then
-                    hideRevealedObjects()
-                end
-                return
-            end
-            paintRoundClock(remaining :: number)
-        end)
-    end
-
-    createUniversalFeature(
-        "Always Show Timer",
-        "Show the round countdown from the game's own timer (HUD label or "
-            .. "RoundTimerPart), murderer or not",
-        13,
-        toggleAlwaysShowTimer,
-        {
-            noOptions = true,
-            categoryName = "Render",
-            parent = MM2Scroll,
-            registry = mm2Features,
-        }
-    )
-
-    activeCleanup = function(): ()
-        toggleAlwaysShowTimer(false)
-        destroyFallback()
     end
     Module.Events = featureConnections
     Module.Initialized = true

@@ -35,9 +35,7 @@ end
 
 local FEATURE_CATEGORIES: {[string]: string} = {
 
-    ["Click Teleport"] = "Blatant",
     ["Fly"] = "Blatant",
-    ["Freeze Movements"] = "Blatant",
     ["High Jump"] = "Blatant",
     ["Infinite Jump"] = "Blatant",
     ["Jump Power"] = "Blatant",
@@ -45,8 +43,14 @@ local FEATURE_CATEGORIES: {[string]: string} = {
     ["Speed"] = "Blatant",
     ["Spider"] = "Blatant",
     ["Walk Speed"] = "Blatant",
+    ["Hitboxes"] = "Blatant",
 
-    ["Hitboxes"] = "Combat",
+    ["Click Teleport"] = "Movement",
+    ["Freeze Movements"] = "Movement",
+    ["Anti-Fling"] = "Movement",
+    ["Anti-Void"] = "Movement",
+    ["Safe Walk"] = "Movement",
+
     ["Projectile Calibration"] = "Other",
     ["Game Learning"] = "Other",
 
@@ -55,10 +59,6 @@ local FEATURE_CATEGORIES: {[string]: string} = {
     ["Player ESP"] = "Render",
     ["X-Ray"] = "Render",
     ["Zoom Unlocker"] = "Render",
-
-    ["Anti-Fling"] = "Blatant",
-    ["Anti-Void"] = "Blatant",
-    ["Safe Walk"] = "Movement",
 
     ["Anti-AFK"] = "Other",
     ["Fling"] = "Other",
@@ -76,8 +76,6 @@ local FEATURE_CATEGORIES: {[string]: string} = {
     ["Knife Aura"] = "Blatant",
     ["Knife Throw"] = "Blatant",
     ["Trajectory Calibration"] = "Other",
-    ["Role Tags"] = "Render",
-    ["Always Show Timer"] = "Render",
     ["Sprint"] = "Movement",
     ["Teleport"] = "Movement",
 
@@ -217,7 +215,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "audit-20261009-3"
+local SOURCE_STAMP: string = "audit-20261009-4"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -4741,9 +4739,7 @@ local function loadGameModule(
         "src/games/MM2/Blatant/Shoot.lua",
         "src/games/MM2/Blatant/KnifeAura.lua",
         "src/games/MM2/Blatant/KnifeThrow.lua",
-        "src/games/MM2/Render/RoleTags.lua",
         "src/games/MM2/Render/RoundEsp.lua",
-        "src/games/MM2/Render/AlwaysShowTimer.lua",
         "src/games/MM2/Movement/Sprint.lua",
         "src/games/MM2/Movement/Teleport.lua",
         "src/games/MM2/Fun/InstantRoleNotify.lua",

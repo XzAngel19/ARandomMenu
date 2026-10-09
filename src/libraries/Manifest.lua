@@ -82,7 +82,7 @@ local Manifest: Manifest = {
             category = "Other",
         },
         {
-            path = "src/games/universal/Blatant/ClickTeleport.lua",
+            path = "src/games/universal/Movement/ClickTeleport.lua",
             name = "Click Teleport",
             category = "Movement",
         },
@@ -153,7 +153,7 @@ local Manifest: Manifest = {
             category = "Movement",
         },
         {
-            path = "src/games/universal/Blatant/AntiVoid.lua",
+            path = "src/games/universal/Movement/AntiVoid.lua",
             name = "Anti-Void",
             category = "Movement",
         },
@@ -188,9 +188,9 @@ local Manifest: Manifest = {
             category = "Other",
         },
         {
-            path = "src/games/universal/Blatant/AntiFling.lua",
+            path = "src/games/universal/Movement/AntiFling.lua",
             name = "Anti-Fling",
-            category = "Other",
+            category = "Movement",
         },
         {
             path = "src/games/universal/Utility/LagSwitch.lua",
@@ -213,7 +213,7 @@ local Manifest: Manifest = {
             category = "Render",
         },
         {
-            path = "src/games/universal/Blatant/FreezeMovements.lua",
+            path = "src/games/universal/Movement/FreezeMovements.lua",
             name = "Freeze Movements",
             category = "Movement",
         },
@@ -223,9 +223,9 @@ local Manifest: Manifest = {
             category = "Movement",
         },
         {
-            path = "src/games/universal/Combat/Hitboxes.lua",
+            path = "src/games/universal/Blatant/Hitboxes.lua",
             name = "Hitboxes",
-            category = "Combat",
+            category = "Blatant",
         },
         {
             path = "src/games/universal/Render/ProjectileCalibration.lua",

@@ -23,12 +23,20 @@ function Module.init(context: Runtime): any
     local currentWorkspace: Workspace = host.workspace or workspace
     local highlights: {[Player]: Highlight} = {}
     local murderTag: BillboardGui? = nil
+    local roleTags: {[Player]: BillboardGui} = {}
     local lastUpdate: number = -math.huge
 
     local function destroyMurderTag(): ()
         if murderTag then
             pcall(murderTag.Destroy, murderTag)
             murderTag = nil
+        end
+    end
+
+    local function clearRoleTags(): ()
+        for player: Player, tag: BillboardGui in pairs(roleTags) do
+            roleTags[player] = nil
+            pcall(tag.Destroy, tag)
         end
     end
     local gameBridge: any = context.services.gameBridge
@@ -69,6 +77,7 @@ function Module.init(context: Runtime): any
             highlight:Destroy()
         end
         destroyMurderTag()
+        clearRoleTags()
     end
 
     card = framework.Categories.Visuals:CreateModule({
@@ -230,6 +239,81 @@ function Module.init(context: Runtime): any
                         end
                     end
                 end
+
+                -- Role tags: floating role labels over all known player heads
+                local roleTagsOption: any = card.Options["Role tags"]
+                if roleTagsOption and roleTagsOption.Value == true
+                    and type(gameBridge.playerRole) == "function" then
+                    local seenRoleTags: {[Player]: boolean} = {}
+                    for _, target: any in ipairs(entity:Refresh()) do
+                        local player: Player = target.Player
+                        if player ~= LocalPlayer
+                            and target.Character
+                            and target.Humanoid
+                            and target.Humanoid.Health > 0
+                            and not protectedTargets.isProtected(player) then
+                            local okRole: boolean, role: any = pcall(gameBridge.playerRole, player)
+                            if okRole and type(role) == "string" and role ~= "Dead" then
+                                local head: BasePart? = target.Character:FindFirstChild("Head")
+                                    or target.Character:FindFirstChild("HumanoidRootPart")
+                                if head then
+                                    seenRoleTags[player] = true
+                                    local tag: BillboardGui? = roleTags[player]
+                                    if not tag or not tag.Parent or tag.Adornee ~= head then
+                                        if tag then pcall(tag.Destroy, tag) end
+                                        local billboard: BillboardGui = Instance.new("BillboardGui")
+                                        billboard.Name = "Wurst_RoleTag"
+                                        billboard.AlwaysOnTop = true
+                                        billboard.LightInfluence = 0
+                                        billboard.Size = UDim2.fromOffset(170, 24)
+                                        billboard.StudsOffset = Vector3.new(0, 2.7, 0)
+                                        billboard.MaxDistance = 1500
+                                        billboard.Adornee = head
+                                        billboard.Parent = head
+
+                                        local label: TextLabel = Instance.new("TextLabel")
+                                        label.Name = "Role"
+                                        label.BackgroundTransparency = 1
+                                        label.Size = UDim2.fromScale(1, 1)
+                                        label.Font = Enum.Font.GothamBold
+                                        label.TextSize = 14
+                                        label.TextScaled = false
+                                        label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+                                        label.TextStrokeTransparency = 0.2
+                                        label.Parent = billboard
+
+                                        roleTags[player] = billboard
+                                        tag = billboard
+                                    end
+                                    local label: any = tag and tag:FindFirstChild("Role")
+                                    if label then
+                                        local roleUpper: string = string.upper(role)
+                                        if label.Text ~= roleUpper then
+                                            label.Text = roleUpper
+                                        end
+                                        if type(gameBridge.playerRoleColor) == "function" then
+                                            local okColor: boolean, color: any = pcall(gameBridge.playerRoleColor, player)
+                                            if okColor and typeof(color) == "Color3" then
+                                                if label.TextColor3 ~= color then
+                                                    label.TextColor3 = color
+                                                end
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                    for player: Player, tag: BillboardGui in pairs(roleTags) do
+                        if not seenRoleTags[player] then
+                            roleTags[player] = nil
+                            pcall(tag.Destroy, tag)
+                        end
+                    end
+                else
+                    clearRoleTags()
+                end
+
                 card:SetStatus(tostring(count))
             end)
             card:Clean(clear)
@@ -244,6 +328,7 @@ function Module.init(context: Runtime): any
     card:CreateToggle({Name = "Teammates", Default = false})
     card:CreateToggle({Name = "Team colours", Default = true})
     card:CreateToggle({Name = "Murder tag", Default = true})
+    card:CreateToggle({Name = "Role tags", Default = true})
 
     activeCard = card
     Module.Initialized = true

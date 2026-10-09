@@ -37,9 +37,9 @@ function Module.init(context: Runtime): any
     }
 
     local teleport: any
-    teleport = framework.Categories.Blatant:CreateModule({
+    teleport = framework.Categories.Movement:CreateModule({
         Name = "Click Teleport",
-        Category = "Blatant",
+        Category = "Movement",
         Order = 1,
 
         Kind = "action",

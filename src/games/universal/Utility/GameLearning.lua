@@ -81,7 +81,7 @@ function Module.init(context: Runtime): any
             logMovement = true,
             logHitboxes = true,
             killWindowSeconds = 4,
-            sceneRadius = 80,
+            sceneRadius = 250,
             maxEvents = 300,
         }
 
@@ -311,6 +311,7 @@ function Module.init(context: Runtime): any
         end
 
         local function recordShot(tool: Tool): ()
+            runtime.lastAuthoredAt = os.clock()
             local character: Model? = LocalPlayer.Character
             local root: BasePart? = character
                 and character:FindFirstChild("HumanoidRootPart")
@@ -400,21 +401,22 @@ function Module.init(context: Runtime): any
                     continue
                 end
                 local entry: SceneEntry? = findSceneEntry(shot, player)
-                if entry
-                    and entry.dist <= 60
-                    and (entry.angleDeg == nil or entry.angleDeg <= 30) then
+                local isAuthoredTarget: boolean = (shot.target == player.Name) or (shot.silentSpawn ~= nil)
+                if entry or isAuthoredTarget then
+                    local dist: number = entry and entry.dist or 0
+                    local los: string = entry and entry.los or "clear"
                     local verdict: string = "clean"
-                    if entry.los == "blocked" then
+                    if los == "blocked" then
                         verdict = "wallshot"
-                    elseif entry.dist > 80 then
+                    elseif dist > 80 then
                         verdict = "longrange"
                     end
                     shot.outcome = {
                         killed = player.Name,
                         delayMs = math.floor((os.clock() - shot.clockAt) * 1000),
                         verdict = verdict,
-                        distance = entry.dist,
-                        lineOfSight = entry.los,
+                        distance = dist,
+                        lineOfSight = los,
                     }
                     runtime.aggregates.kills += 1
                     if verdict == "wallshot" then
@@ -424,8 +426,8 @@ function Module.init(context: Runtime): any
                     else
                         runtime.aggregates.cleanKills += 1
                     end
-                    if entry.dist > runtime.aggregates.farthestKill then
-                        runtime.aggregates.farthestKill = entry.dist
+                    if dist > runtime.aggregates.farthestKill then
+                        runtime.aggregates.farthestKill = dist
                     end
                     if shot.silentSpawn then
                         local variant: string = shot.silentSpawn.variant
@@ -437,10 +439,10 @@ function Module.init(context: Runtime): any
                         killed = player.Name,
                         tool = shot.tool,
                         verdict = verdict,
-                        distance = entry.dist,
-                        lineOfSight = entry.los,
-                        headOffset = entry.headOffset,
-                        torso = entry.torso,
+                        distance = dist,
+                        lineOfSight = los,
+                        headOffset = entry and entry.headOffset or nil,
+                        torso = entry and entry.torso or nil,
                         silentSpawn = shot.silentSpawn,
                     })
                     clampTrim(runtime.hits, tuning.maxEvents)
@@ -581,7 +583,8 @@ function Module.init(context: Runtime): any
                     local elapsed: number = now - lastAt
                     if elapsed >= 0.02 then
                         local jumped: number = (position - lastPosition).Magnitude
-                        if jumped > 25 and elapsed < 0.15 then
+                        -- Disregard massive jumps (> 3000 studs) that correspond to MM2 map loading/teleporting
+                        if jumped > 25 and elapsed < 0.15 and jumped < 3000 then
                             recordMovement("teleport", jumped, {
                                 from = vectorArray(lastPosition),
                                 to = vectorArray(position),
@@ -669,12 +672,10 @@ function Module.init(context: Runtime): any
                         end
                         if anomaly then
                             local lastFlag: number? = runtime.anomalyCooldown[player]
-                            if not lastFlag or os.clock() - lastFlag > 2 then
+                            if not lastFlag or os.clock() - lastFlag > 5 then
                                 runtime.anomalyCooldown[player] = os.clock()
-                                recordMovement(anomaly, magnitude, {
-                                    player = player.Name,
-                                })
                                 runtime.aggregates.hitboxAnomalies += 1
+                                runtime.saveDirty = true
                             end
                         end
                     end

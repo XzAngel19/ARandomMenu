@@ -207,9 +207,9 @@ function Module.init(context: Runtime): any
     end
 
     local hitboxes: any
-    hitboxes = framework.Categories.Combat:CreateModule({
+    hitboxes = framework.Categories.Blatant:CreateModule({
         Name = "Hitboxes",
-        Category = "Combat",
+        Category = "Blatant",
         Order = 3,
         Tooltip = "Expand the part enemies are hit on, in studs. Teammates and "
             .. "friends are left alone, and every part is restored exactly when "

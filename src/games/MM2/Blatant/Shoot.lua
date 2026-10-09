@@ -838,19 +838,6 @@ function Module.init(runtime: any): any
     ): ()
         mm2Settings.shootTarget = value
     end, false)
-    addToggleOption(
-        ShootFeature,
-        "Miss cooldown",
-        mm2Settings.showMissCooldown,
-        function(value: boolean): ()
-            mm2Settings.showMissCooldown = value
-            if not value then
-                state.mm2ShotFeedback.pending = nil
-                state.mm2ShotFeedback.lastAccepted = nil
-                state.mm2ShotFeedback.hide()
-            end
-        end
-    )
     refreshShootOptions()
 
     local AutoShootFeature = createUniversalFeature(

@@ -110,7 +110,7 @@ function Module.init(context: Runtime): any
         "Create an invisible rescue platform only when death is imminent",
         4,
         toggleAntiVoid,
-        {noOptions = true, categoryName = "Blatant"}
+        {noOptions = true, categoryName = "Movement"}
     )
     addFeatureTooltip(
         AntiVoidFeature,
