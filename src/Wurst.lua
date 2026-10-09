@@ -210,7 +210,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "audit-20261008-5"
+local SOURCE_STAMP: string = "audit-20261008-6"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -6110,4 +6110,34 @@ if not initialized then
     if type(reportFatal) == "function" then
         reportFatal("[" .. PRODUCT.logPrefix .. ":Bootstrap] Initialization stopped:\n" .. tostring(bootstrapError))
     end
+    -- Executors without a console hide warn() — surface the failure on screen
+    -- so a dead bootstrap is never invisible.
+    pcall(function(): ()
+        local players: any = game:GetService("Players")
+        local playerGui: any = players.LocalPlayer:WaitForChild("PlayerGui")
+        local gui: any = Instance.new("ScreenGui")
+        gui.Name = "WurstBootError"
+        gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+        gui.DisplayOrder = 9999
+        gui.Parent = playerGui
+        local box: any = Instance.new("Frame")
+        box.BackgroundColor3 = Color3.fromRGB(26, 24, 30)
+        box.BorderSizePixel = 0
+        box.Size = UDim2.fromOffset(440, 150)
+        box.Position = UDim2.new(0.5, -220, 0.06, 0)
+        box.Parent = gui
+        Instance.new("UICorner", box).CornerRadius = UDim.new(0, 8)
+        local label: any = Instance.new("TextLabel")
+        label.BackgroundTransparency = 1
+        label.Size = UDim2.new(1, -28, 1, -16)
+        label.Position = UDim2.fromOffset(14, 8)
+        label.Font = Enum.Font.Gotham
+        label.TextSize = 13
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.TextYAlignment = Enum.TextYAlignment.Top
+        label.TextWrapped = true
+        label.TextColor3 = Color3.fromRGB(255, 122, 122)
+        label.Text = "[Wurst] no arranco:\n" .. tostring(bootstrapError):sub(1, 400)
+        label.Parent = box
+    end)
 end
