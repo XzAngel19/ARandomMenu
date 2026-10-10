@@ -885,11 +885,12 @@ function Module.init(context: Runtime): any
         local function status(): string
             local agg: any = runtime.aggregates
             local base: string = string.format(
-                "Game Learning · shots %d · kills %d (wall %d · far %d) · misses %d · teleports %d · speed %d · anomalies %d",
+                "Game Learning · shots %d · kills %d (wall %d · far %d · hitbox %d) · misses %d · teleports %d · speed %d · anomalies %d",
                 agg.shots,
                 agg.kills,
                 agg.wallshotKills,
                 agg.longrangeKills,
+                agg.hitboxKills or 0,
                 agg.misses,
                 agg.teleports,
                 agg.speedSpikes,
