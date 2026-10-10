@@ -26,6 +26,8 @@ type AppearanceSnapshot = {
     items: {AppearanceTemplate},
     meshParts: {MeshTemplate},
     animations: {AnimationTemplate},
+    emotes: any,
+    equippedEmotes: any,
     scales: {[string]: number},
 }
 
@@ -85,6 +87,10 @@ function Module.init(context: Runtime): any
     local filterConnection: RBXScriptConnection? = nil
     local generation: number = 0
     local restoring: boolean = false
+    local emotesAppliedToHumanoid: boolean = false
+    local animationBundleApplied: boolean = false
+    local targetEmotes: any = nil
+    local targetEquippedEmotes: any = nil
 
     local settings = {
         mode = "Character",
@@ -140,6 +146,8 @@ function Module.init(context: Runtime): any
     local function destroySnapshot(): ()
         local current: AppearanceSnapshot? = snapshot
         snapshot = nil
+        emotesAppliedToHumanoid = false
+        animationBundleApplied = false
         if current then
             for _, entry: AppearanceTemplate in ipairs(current.items) do
                 pcall(entry.object.Destroy, entry.object)
@@ -151,6 +159,14 @@ function Module.init(context: Runtime): any
         local child: HumanoidDescription? = humanoid:FindFirstChildOfClass(
             "HumanoidDescription"
         ) :: HumanoidDescription?
+        if not child then
+            local waitOk: boolean, waited: any = pcall(function()
+                return humanoid:WaitForChild("HumanoidDescription", 2)
+            end)
+            if waitOk and waited and waited:IsA("HumanoidDescription") then
+                child = waited :: HumanoidDescription
+            end
+        end
         if child then
             return child, false
         end
@@ -163,6 +179,92 @@ function Module.init(context: Runtime): any
         return nil, false
     end
 
+    local function cloneTable(value: any): any
+        if type(value) ~= "table" then
+            return value
+        end
+        local copy: any = {}
+        for key: any, entry: any in pairs(value) do
+            copy[key] = if type(entry) == "table" then table.clone(entry) else entry
+        end
+        return copy
+    end
+
+    local function readDescriptionEmotes(description: any): (any?, any?)
+        local ok: boolean, emotes: any, equipped: any = pcall(function()
+            return description:GetEmotes(), description:GetEquippedEmotes()
+        end)
+        if not ok or type(emotes) ~= "table" or type(equipped) ~= "table" then
+            return nil, nil
+        end
+        return cloneTable(emotes), cloneTable(equipped)
+    end
+
+    local function applyDescriptionToHumanoid(
+        humanoid: Humanoid,
+        description: any
+    ): (boolean, string?)
+        local humanoidObject: any = humanoid
+        local lastError: string = "ApplyDescription is unavailable."
+        for _, methodName: string in ipairs({
+            "ApplyDescriptionResetAsync",
+            "ApplyDescriptionAsync",
+            "ApplyDescriptionReset",
+            "ApplyDescription",
+        }) do
+            local method: any = humanoidObject[methodName]
+            if type(method) == "function" then
+                local ok: boolean, result: any = pcall(
+                    method,
+                    humanoidObject,
+                    description
+                )
+                if ok then
+                    return true, nil
+                end
+                lastError = tostring(result)
+            end
+        end
+        return false, lastError
+    end
+
+    local function setHumanoidEmotes(
+        humanoid: Humanoid,
+        emotes: any,
+        equippedEmotes: any
+    ): (boolean, string?)
+        if type(emotes) ~= "table" or type(equippedEmotes) ~= "table" then
+            return false, "The avatar description did not expose emote data."
+        end
+        local description: any, isTemporary: boolean = getAppliedDescription(humanoid)
+        if not description then
+            return false, "Could not read the current HumanoidDescription."
+        end
+        local setOk: boolean, setError: any = pcall(function()
+            description:SetEmotes(cloneTable(emotes))
+            description:SetEquippedEmotes(cloneTable(equippedEmotes))
+        end)
+        if not setOk then
+            if isTemporary then
+                pcall(description.Destroy, description)
+            end
+            return false, tostring(setError)
+        end
+        if not isTemporary then
+            -- The Humanoid's child HumanoidDescription is the live avatar
+            -- description, matching the original VapeV4 emote flow.
+            return true, nil
+        end
+
+        -- Some games do not keep a HumanoidDescription child. In that case
+        -- apply the edited copy to the local Humanoid so the emote wheel sees
+        -- the new equipped list, then let Disguise re-copy its visual items.
+        local applied: boolean, applyError: string? =
+            applyDescriptionToHumanoid(humanoid, description)
+        pcall(description.Destroy, description)
+        return applied, applyError
+    end
+
     local function captureSnapshot(
         character: Model,
         humanoid: Humanoid
@@ -171,6 +273,8 @@ function Module.init(context: Runtime): any
         local meshParts: {MeshTemplate} = {}
         local animations: {AnimationTemplate} = {}
         local scales: {[string]: number} = {}
+        local emotes: any = {}
+        local equippedEmotes: any = {}
 
         for _, obj: Instance in ipairs(character:GetDescendants()) do
             if isAppearanceItem(obj) then
@@ -211,6 +315,12 @@ function Module.init(context: Runtime): any
                     scales[field] = value
                 end
             end
+            local originalEmotes: any, originalEquipped: any =
+                readDescriptionEmotes(description)
+            if originalEmotes and originalEquipped then
+                emotes = originalEmotes
+                equippedEmotes = originalEquipped
+            end
             if isTemporary then
                 pcall(description.Destroy, description)
             end
@@ -221,6 +331,8 @@ function Module.init(context: Runtime): any
             items = items,
             meshParts = meshParts,
             animations = animations,
+            emotes = emotes,
+            equippedEmotes = equippedEmotes,
             scales = scales,
         }
     end
@@ -237,13 +349,97 @@ function Module.init(context: Runtime): any
         return snapshot
     end
 
-    local function restoreOriginalAppearance(character: Model): ()
+    local function restartAnimateScript(animate: Instance): ()
+        local scriptObject: any = animate
+        local enabledOk: boolean, wasEnabled: any = pcall(function()
+            return scriptObject.Enabled
+        end)
+        if enabledOk and type(wasEnabled) == "boolean" then
+            if not wasEnabled then
+                return
+            end
+            local disabledOk: boolean = pcall(function()
+                scriptObject.Enabled = false
+            end)
+            if disabledOk then
+                task.wait()
+                pcall(function()
+                    scriptObject.Enabled = wasEnabled
+                end)
+                task.wait()
+                return
+            end
+        end
+
+        -- Older clients expose Disabled instead of Enabled.
+        local disabledOk: boolean, wasDisabled: any = pcall(function()
+            return scriptObject.Disabled
+        end)
+        if disabledOk and type(wasDisabled) == "boolean" then
+            local pauseOk: boolean = pcall(function()
+                scriptObject.Disabled = true
+            end)
+            if pauseOk then
+                task.wait()
+                pcall(function()
+                    scriptObject.Disabled = wasDisabled
+                end)
+                task.wait()
+            end
+        end
+    end
+
+    local function refreshMeshPartSnapshot(
+        character: Model,
+        current: AppearanceSnapshot
+    ): ()
+        local originalByName: {[string]: {meshId: string, textureId: string}} = {}
+        for _, entry: MeshTemplate in ipairs(current.meshParts) do
+            originalByName[entry.part.Name] = {
+                meshId = entry.meshId,
+                textureId = entry.textureId,
+            }
+        end
+
+        local refreshed: {MeshTemplate} = {}
+        for _, obj: Instance in ipairs(character:GetDescendants()) do
+            if obj:IsA("MeshPart") and BODY_PARTS[obj.Name] then
+                local original: {meshId: string, textureId: string}? =
+                    originalByName[obj.Name]
+                table.insert(refreshed, {
+                    part = obj,
+                    meshId = original and original.meshId or obj.MeshId,
+                    textureId = original and original.textureId or obj.TextureID,
+                })
+            end
+        end
+        if #refreshed > 0 then
+            current.meshParts = refreshed
+        end
+    end
+
+    local function restoreOriginalAppearance(
+        character: Model,
+        humanoid: Humanoid?
+    ): ()
         local current: AppearanceSnapshot? = snapshot
         if not current or current.character ~= character then
             return
         end
 
         restoring = true
+        if emotesAppliedToHumanoid and humanoid then
+            local emotesRestored: boolean = setHumanoidEmotes(
+                humanoid,
+                current.emotes,
+                current.equippedEmotes
+            )
+            if emotesRestored then
+                emotesAppliedToHumanoid = false
+                refreshMeshPartSnapshot(character, current)
+            end
+        end
+
         local removals: {Instance} = {}
         table.clear(disguisedItems)
         table.clear(cloned)
@@ -272,6 +468,9 @@ function Module.init(context: Runtime): any
             end
         end
 
+        local restartRestoredAnimations: boolean = animationBundleApplied
+        animationBundleApplied = false
+
         for _, entry: AppearanceTemplate in ipairs(current.items) do
             local ok: boolean, copy: any = pcall(function()
                 return entry.object:Clone()
@@ -279,7 +478,12 @@ function Module.init(context: Runtime): any
             if ok and copy then
                 local parent: Instance = entry.parent or character
                 if parent ~= character and not isInsideCharacter(parent, character) then
-                    parent = character
+                    if (copy:IsA("Decal") or copy:IsA("Texture"))
+                        and string.lower(copy.Name) == "face" then
+                        parent = character:FindFirstChild("Head") or character
+                    else
+                        parent = character
+                    end
                 end
                 if copy:IsA("Accessory") then
                     rebindAccessory(character, copy)
@@ -290,6 +494,25 @@ function Module.init(context: Runtime): any
             end
         end
         restoring = false
+        if restartRestoredAnimations then
+            local animate: Instance? = character:FindFirstChild("Animate")
+            if animate then
+                if humanoid then
+                    local animator: Animator? = humanoid:FindFirstChildOfClass("Animator")
+                    if animator then
+                        local tracksOk: boolean, tracks: any = pcall(function()
+                            return animator:GetPlayingAnimationTracks()
+                        end)
+                        if tracksOk and type(tracks) == "table" then
+                            for _, track: AnimationTrack in ipairs(tracks) do
+                                pcall(track.Stop, track)
+                            end
+                        end
+                    end
+                end
+                restartAnimateScript(animate)
+            end
+        end
     end
 
     local function stopAppearanceFilter(): ()
@@ -397,34 +620,6 @@ function Module.init(context: Runtime): any
         end
     end
 
-    local function applyDescriptionToClone(
-        cloneHumanoid: Humanoid,
-        description: any
-    ): (boolean, string?)
-        local humanoidObject: any = cloneHumanoid
-        local lastError: string = "ApplyDescription is unavailable."
-        for _, methodName: string in ipairs({
-            "ApplyDescriptionResetAsync",
-            "ApplyDescriptionAsync",
-            "ApplyDescriptionReset",
-            "ApplyDescription",
-        }) do
-            local method: any = humanoidObject[methodName]
-            if type(method) == "function" then
-                local ok: boolean, result: any = pcall(
-                    method,
-                    humanoidObject,
-                    description
-                )
-                if ok then
-                    return true, nil
-                end
-                lastError = tostring(result)
-            end
-        end
-        return false, lastError
-    end
-
     local function copyCharacterAppearance(
         character: Model,
         clone: Model
@@ -486,7 +681,7 @@ function Module.init(context: Runtime): any
         end
 
         local current: AppearanceSnapshot = ensureSnapshot(character, humanoid)
-        restoreOriginalAppearance(character)
+        restoreOriginalAppearance(character, humanoid)
         setDescriptionScales(description, current)
 
         local oldArchivable: boolean = character.Archivable
@@ -521,7 +716,7 @@ function Module.init(context: Runtime): any
         end
 
         local applied: boolean, applyError: string? =
-            applyDescriptionToClone(cloneHumanoid, description)
+            applyDescriptionToHumanoid(cloneHumanoid, description)
         if not applied then
             destroyInstance(description)
             destroyInstance(clone)
@@ -529,6 +724,50 @@ function Module.init(context: Runtime): any
             return
         end
         if not stillCurrent(token, character) then
+            destroyInstance(description)
+            destroyInstance(clone)
+            return
+        end
+
+        targetEmotes, targetEquippedEmotes = readDescriptionEmotes(description)
+        local emoteWarning: string? = nil
+        if targetEmotes and targetEquippedEmotes then
+            local emotesApplied: boolean, emoteError: string? = setHumanoidEmotes(
+                humanoid,
+                targetEmotes,
+                targetEquippedEmotes
+            )
+            if emotesApplied then
+                emotesAppliedToHumanoid = true
+                refreshMeshPartSnapshot(character, current)
+            else
+                emoteWarning = tostring(emoteError)
+                -- SetEmotes may have succeeded before SetEquippedEmotes failed;
+                -- roll back a partial update using the captured local profile.
+                local rolledBack: boolean = setHumanoidEmotes(
+                    humanoid,
+                    current.emotes,
+                    current.equippedEmotes
+                )
+                if not rolledBack then
+                    emotesAppliedToHumanoid = true
+                    emoteWarning ..= " The original emotes could not be restored yet."
+                end
+            end
+        else
+            emoteWarning = "The target avatar description did not expose emotes."
+        end
+        if not stillCurrent(token, character) then
+            if emotesAppliedToHumanoid then
+                local rolledBack: boolean = setHumanoidEmotes(
+                    humanoid,
+                    current.emotes,
+                    current.equippedEmotes
+                )
+                if rolledBack then
+                    emotesAppliedToHumanoid = false
+                end
+            end
             destroyInstance(description)
             destroyInstance(clone)
             return
@@ -559,7 +798,22 @@ function Module.init(context: Runtime): any
         end
         if stillCurrent(token, character) then
             activeCard:SetStatus("Character")
-            notify("Avatar disguise applied; live body-part dimensions were left unchanged.")
+            local emoteCount: number = 0
+            if type(targetEmotes) == "table" then
+                for _ in pairs(targetEmotes) do
+                    emoteCount += 1
+                end
+            end
+            local message: string = "Avatar disguise applied; live body-part dimensions were left unchanged. "
+            if emoteWarning then
+                message ..= "Emotes could not be applied: " .. emoteWarning
+            elseif emoteCount > 0 then
+                message ..= tostring(emoteCount)
+                    .. " target emote(s) copied; open the Roblox emote menu."
+            else
+                message ..= "The target description returned no emotes."
+            end
+            notify(message)
         end
     end
 
@@ -688,7 +942,7 @@ function Module.init(context: Runtime): any
         end
 
         local current: AppearanceSnapshot = ensureSnapshot(character, humanoid)
-        restoreOriginalAppearance(character)
+        restoreOriginalAppearance(character, humanoid)
         stopAppearanceFilter()
 
         local animate: Instance? = character:FindFirstChild("Animate")
@@ -699,6 +953,9 @@ function Module.init(context: Runtime): any
 
         local changedCount: number = 0
         for _, item: any in ipairs(items) do
+            if not stillCurrent(token, character) then
+                return
+            end
             local itemName: string = tostring(item.Name or item.name or "")
             local itemId: number? = tonumber(item.Id or item.AssetId or item.id)
             local itemType: string = getAnimationType(itemName)
@@ -710,6 +967,12 @@ function Module.init(context: Runtime): any
                     )
                 end)
                 if objectsOk and type(objects) == "table" then
+                    if not stillCurrent(token, character) then
+                        for _, object: Instance in ipairs(objects) do
+                            destroyInstance(object)
+                        end
+                        return
+                    end
                     local sourceAnimation: Animation? = nil
                     for _, object: Instance in ipairs(objects) do
                         if object:IsA("Animation") then
@@ -735,8 +998,12 @@ function Module.init(context: Runtime): any
                             end
                         end
                         for _, animation: Animation in ipairs(targetAnimations) do
-                            animation.AnimationId = sourceAnimation.AnimationId
-                            changedCount += 1
+                            local changed: boolean = pcall(function()
+                                animation.AnimationId = sourceAnimation.AnimationId
+                            end)
+                            if changed then
+                                changedCount += 1
+                            end
                         end
                     end
                     for _, object: Instance in ipairs(objects) do
@@ -748,20 +1015,23 @@ function Module.init(context: Runtime): any
 
         if changedCount == 0 then
             -- Ensure a failed lookup doesn't leave a half-selected mode behind.
-            restoreOriginalAppearance(character)
+            restoreOriginalAppearance(character, humanoid)
             notify("No compatible animations were found in that bundle.")
             return
         end
 
+        animationBundleApplied = true
         local animator: Animator? = humanoid:FindFirstChildOfClass("Animator")
         if animator then
             for _, track: AnimationTrack in ipairs(animator:GetPlayingAnimationTracks()) do
                 pcall(track.Stop, track)
             end
         end
+        restartAnimateScript(animate)
         if current.character == character and stillCurrent(token, character) then
             activeCard:SetStatus("Animation")
-            notify("Animation bundle applied; original animation IDs are restored when disabled.")
+            notify("Animation bundle applied to " .. tostring(changedCount)
+                .. " slots; Animate restarted. Original IDs return when disabled.")
         end
     end
 
@@ -783,6 +1053,8 @@ function Module.init(context: Runtime): any
         end
 
         local selectedMode: string = settings.mode
+        targetEmotes = nil
+        targetEquippedEmotes = nil
         task.spawn(function(): ()
             if selectedMode == "Character" then
                 applyCharacterDisguise(
@@ -806,12 +1078,65 @@ function Module.init(context: Runtime): any
         generation += 1
         stopAppearanceFilter()
         local character: Model? = LocalPlayer.Character
+        local humanoid: Humanoid? = character
+            and character:FindFirstChildOfClass("Humanoid")
+            :: Humanoid?
         if character then
-            restoreOriginalAppearance(character)
+            restoreOriginalAppearance(character, humanoid)
         end
         destroySnapshot()
         table.clear(cloned)
         table.clear(disguisedItems)
+    end
+
+    local function sortedEmoteNames(data: any): {string}
+        local names: {string} = {}
+        if type(data) == "table" then
+            for name: any in pairs(data) do
+                if type(name) == "string" then
+                    table.insert(names, name)
+                end
+            end
+        end
+        table.sort(names)
+        return names
+    end
+
+    local function equippedEmoteNames(data: any): {string}
+        local names: {string} = {}
+        local seen: {[string]: boolean} = {}
+        if type(data) == "table" then
+            for key: any, entry: any in pairs(data) do
+                local name: any = nil
+                if type(entry) == "string" then
+                    name = entry
+                elseif entry == true and type(key) == "string" then
+                    name = key
+                elseif type(entry) == "table" then
+                    name = entry.Name or entry.name or entry[1]
+                end
+                if type(name) == "string" and not seen[name] then
+                    seen[name] = true
+                    table.insert(names, name)
+                end
+            end
+        end
+        table.sort(names)
+        return names
+    end
+
+    local function formatNameList(names: {string}): string
+        if #names == 0 then
+            return "none"
+        end
+        local shown: {string} = {}
+        for index: number = 1, math.min(#names, 12) do
+            table.insert(shown, names[index])
+        end
+        if #names > 12 then
+            table.insert(shown, "+" .. tostring(#names - 12) .. " more")
+        end
+        return table.concat(shown, ", ")
     end
 
     local card: any
@@ -820,7 +1145,7 @@ function Module.init(context: Runtime): any
         Category = "Other",
         ConfigKey = "Universal.Disguise",
         Order = 26,
-        Tooltip = "Copies avatar cosmetics or animation IDs without changing live body-part dimensions.",
+        Tooltip = "Copies avatar cosmetics, equipped emotes, or animation IDs without changing live body-part dimensions.",
         Function = function(enabled: boolean): ()
             if enabled then
                 card:SetStatus(settings.mode)
@@ -850,16 +1175,21 @@ function Module.init(context: Runtime): any
             card:SetStatus(value)
             if card.Enabled then
                 if value == "Animation" then
+                    targetEmotes = nil
+                    targetEquippedEmotes = nil
                     local character: Model? = LocalPlayer.Character
+                    local humanoid: Humanoid? = character
+                        and character:FindFirstChildOfClass("Humanoid")
+                        :: Humanoid?
                     if character then
-                        restoreOriginalAppearance(character)
+                        restoreOriginalAppearance(character, humanoid)
                     end
                     stopAppearanceFilter()
                 end
                 applyDisguise()
             end
         end,
-        Tooltip = "Character: avatar cosmetics. Animation: avatar-animation bundles only.",
+        Tooltip = "Character: cosmetics and equipped emotes from a user ID. Animation: avatar-animation bundles only.",
     })
 
     card:CreateTextBox({
@@ -881,6 +1211,26 @@ function Module.init(context: Runtime): any
         Tooltip = "Positive integer user ID (Character) or avatar-animation bundle ID (Animation).",
     })
 
+
+    card:CreateButton({
+        Name = "Show target emotes",
+        Function = function(): ()
+            if type(targetEmotes) ~= "table" then
+                notify("Load a user ID in Character mode before listing emotes.")
+                return
+            end
+            local names: {string} = sortedEmoteNames(targetEmotes)
+            local equipped: {string} = equippedEmoteNames(targetEquippedEmotes)
+            notify(string.format(
+                "Target emotes (%d): %s | Equipped (%d): %s",
+                #names,
+                formatNameList(names),
+                #equipped,
+                formatNameList(equipped)
+            ))
+        end,
+        Tooltip = "Lists the emotes and equipped emote slots returned for the target user ID.",
+    })
 
     activeCard = card
     Module.Initialized = true
