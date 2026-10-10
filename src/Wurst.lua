@@ -58,11 +58,13 @@ local FEATURE_CATEGORIES: {[string]: string} = {
 
     ["FOV"] = "Render",
     ["Fullbright"] = "Render",
+    ["Time Changer"] = "Render",
     ["Player ESP"] = "Render",
     ["X-Ray"] = "Render",
     ["Zoom Unlocker"] = "Render",
 
     ["Anti-AFK"] = "Other",
+    ["Disguise"] = "World",
     ["Fling"] = "Other",
     ["Gravity"] = "Other",
     ["Improve FPS"] = "Other",
@@ -217,7 +219,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "audit-20261009-10"
+local SOURCE_STAMP: string = "audit-20261009-11"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -1288,8 +1290,13 @@ local function setMenuCursorUnlocked(visible: boolean): ()
     end
     menuCursorState.applying = true
     pcall(function(): ()
-        UserInputService.MouseBehavior = menuCursorState.behavior
-        UserInputService.MouseIconEnabled = menuCursorState.iconEnabled
+        local targetBehavior: Enum.MouseBehavior = Enum.MouseBehavior.Default
+        -- Prevent cursor from locking in the center like shiftlock when closing the menu
+        if menuCursorState.behavior and menuCursorState.behavior ~= Enum.MouseBehavior.LockCenter then
+            targetBehavior = menuCursorState.behavior
+        end
+        UserInputService.MouseBehavior = targetBehavior
+        UserInputService.MouseIconEnabled = true
     end)
     menuCursorState.applying = false
     menuCursorState.behavior = nil
@@ -5556,6 +5563,8 @@ local fallbackManifest: any = {
         {path = "src/games/universal/Blatant/Fling.lua", name = "Fling", category = "Other"},
         {path = "src/games/universal/Utility/ImproveFps.lua", name = "Improve FPS", category = "Other"},
         {path = "src/games/universal/Render/Fullbright.lua", name = "Fullbright", category = "Render"},
+        {path = "src/games/universal/Render/TimeChanger.lua", name = "Time Changer", category = "Render"},
+        {path = "src/games/universal/World/Disguise.lua", name = "Disguise", category = "World"},
         {path = "src/games/universal/Blatant/FreezeMovements.lua", name = "Freeze Movements", category = "Movement"},
         {path = "src/games/universal/Blatant/Speed.lua", name = "SpeedHack", category = "Movement"},
         {path = "src/games/universal/Combat/Hitboxes.lua", name = "Hitboxes", category = "Combat"},

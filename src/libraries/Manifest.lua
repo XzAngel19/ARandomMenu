@@ -223,6 +223,16 @@ local Manifest: Manifest = {
             category = "Render",
         },
         {
+            path = "src/games/universal/Render/TimeChanger.lua",
+            name = "Time Changer",
+            category = "Render",
+        },
+        {
+            path = "src/games/universal/World/Disguise.lua",
+            name = "Disguise",
+            category = "World",
+        },
+        {
             path = "src/games/universal/Movement/FreezeMovements.lua",
             name = "Freeze Movements",
             category = "Movement",
