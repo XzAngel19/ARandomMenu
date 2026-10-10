@@ -2257,35 +2257,66 @@ local function createTrajectoryCalibration(): any
     local function motionModelPayload(buckets: {[string]: any}): {[string]: any}
         local payload: {[string]: any} = {}
         for key: string, bucket: any in pairs(buckets) do
-            local count: number = math.max(1, tonumber(bucket.count) or 1)
-            local horizontalCount: number = math.max(
-                1,
-                tonumber(bucket.horizontalLeadCount) or 0
-            )
-            local verticalCount: number = math.max(
-                1,
-                tonumber(bucket.verticalLeadCount) or 0
-            )
-            payload[key] = {
-                count = bucket.count,
-                meanDurationSeconds = bucket.durationSum / count,
-                meanHorizontalLeadSeconds = bucket.horizontalLeadCount > 0
-                        and bucket.horizontalLeadSum / horizontalCount
-                    or nil,
-                meanVerticalLeadSeconds = bucket.verticalLeadCount > 0
-                        and bucket.verticalLeadSum / verticalCount
-                    or nil,
-                meanConstantVelocityResidual = {
-                    bucket.residualXSum / count,
-                    bucket.residualYSum / count,
-                    bucket.residualZSum / count,
-                },
-                meanModelError = {
-                    constantVelocity = bucket.constantVelocityErrorSum / count,
-                    observedAcceleration = bucket.observedAccelerationErrorSum / count,
-                    airborneBallistic = bucket.airborneBallisticErrorSum / count,
-                },
-            }
+            if type(bucket) == "table" then
+                local count: number = math.max(1, tonumber(bucket.count) or 1)
+                local horizontalCount: number = math.max(
+                    1,
+                    tonumber(bucket.horizontalLeadCount) or 0
+                )
+                local verticalCount: number = math.max(
+                    1,
+                    tonumber(bucket.verticalLeadCount) or 0
+                )
+
+                local meanDuration: number = tonumber(bucket.meanDurationSeconds)
+                    or (bucket.durationSum and (bucket.durationSum / count))
+                    or 0
+
+                local meanHorizLead: number? = nil
+                if bucket.horizontalLeadSum and horizontalCount > 0 then
+                    meanHorizLead = bucket.horizontalLeadSum / horizontalCount
+                elseif bucket.meanHorizontalLeadSeconds then
+                    meanHorizLead = bucket.meanHorizontalLeadSeconds
+                end
+
+                local meanVertLead: number? = nil
+                if bucket.verticalLeadSum and verticalCount > 0 then
+                    meanVertLead = bucket.verticalLeadSum / verticalCount
+                elseif bucket.meanVerticalLeadSeconds then
+                    meanVertLead = bucket.meanVerticalLeadSeconds
+                end
+
+                local meanResidual: {number}
+                if type(bucket.meanConstantVelocityResidual) == "table" then
+                    meanResidual = bucket.meanConstantVelocityResidual
+                else
+                    meanResidual = {
+                        (tonumber(bucket.residualXSum) or 0) / count,
+                        (tonumber(bucket.residualYSum) or 0) / count,
+                        (tonumber(bucket.residualZSum) or 0) / count,
+                    }
+                end
+
+                local meanModelErr: {[string]: number}
+                if type(bucket.meanModelError) == "table" then
+                    meanModelErr = bucket.meanModelError
+                else
+                    meanModelErr = {
+                        constantVelocity = (tonumber(bucket.constantVelocityErrorSum) or 0) / count,
+                        observedAcceleration = (tonumber(bucket.observedAccelerationErrorSum) or 0) / count,
+                        airborneBallistic = (tonumber(bucket.airborneBallisticErrorSum) or 0) / count,
+                    }
+                end
+
+                payload[key] = {
+                    count = tonumber(bucket.count) or 0,
+                    meanDurationSeconds = meanDuration,
+                    meanHorizontalLeadSeconds = meanHorizLead,
+                    meanVerticalLeadSeconds = meanVertLead,
+                    meanConstantVelocityResidual = meanResidual,
+                    meanModelError = meanModelErr,
+                }
+            end
         end
         return payload
     end
@@ -2598,7 +2629,6 @@ local function createTrajectoryCalibration(): any
                         silent = false,
                     })
                 end
-                scheduleAutosave()
             end
             return
         end
