@@ -421,9 +421,12 @@ function Module.init(context: any): WidgetLibrary
             feature.configKey .. "." .. labelText:gsub("%W", "")
         local storedValue: number? = tonumber(configData.values[optionKey])
 
-        local value: number = isFiniteNumber(storedValue)
+        local initialValue: number = isFiniteNumber(storedValue)
             and (storedValue :: number)
             or defaultValue
+        local value: number = math.clamp(initialValue, minimum, maximum)
+        local persistClampedValue: boolean = storedValue ~= nil
+            and value ~= (storedValue :: number)
         local integerOnly: boolean = defaultValue % 1 == 0
             and minimum % 1 == 0
             and maximum % 1 == 0
@@ -594,7 +597,10 @@ function Module.init(context: any): WidgetLibrary
             if not isFiniteNumber(nextValue) then
                 return
             end
-            value = quantize(nextValue, _fromSlider)
+            value = quantize(
+                math.clamp(nextValue, minimum, maximum),
+                _fromSlider
+            )
             local alpha: number = maximum == minimum
                 and 0
                 or math.clamp((value - minimum) / (maximum - minimum), 0, 1)
@@ -663,7 +669,7 @@ function Module.init(context: any): WidgetLibrary
 
         task.defer(function(): ()
             if option.Parent then
-                setValue(value, false, false)
+                setValue(value, persistClampedValue, false)
             end
         end)
         return option

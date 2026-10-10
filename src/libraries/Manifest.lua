@@ -110,17 +110,17 @@ local Manifest: Manifest = {
         {
             path = "src/games/universal/Blatant/HighJump.lua",
             name = "HighJump",
-            category = "Movement",
+            category = "Blatant",
         },
         {
             path = "src/games/universal/Blatant/Spider.lua",
             name = "Spider",
-            category = "Movement",
+            category = "Blatant",
         },
         {
             path = "src/games/universal/Blatant/WallHop.lua",
             name = "WallHop",
-            category = "Movement",
+            category = "Blatant",
         },
         {
             path = "src/games/universal/Movement/HookPart.lua",
@@ -155,12 +155,12 @@ local Manifest: Manifest = {
                         {
             path = "src/games/universal/Blatant/Fly.lua",
             name = "Flight",
-            category = "Movement",
+            category = "Blatant",
         },
         {
             path = "src/games/universal/Blatant/VehicleSpeed.lua",
             name = "Vehicle Speed",
-            category = "Movement",
+            category = "Blatant",
         },
         {
             path = "src/games/universal/Movement/AntiVoid.lua",
@@ -175,12 +175,12 @@ local Manifest: Manifest = {
         {
             path = "src/games/universal/Blatant/JumpPower.lua",
             name = "Jump Power",
-            category = "Movement",
+            category = "Blatant",
         },
         {
             path = "src/games/universal/Blatant/InfiniteJump.lua",
             name = "Infinite Jump",
-            category = "Movement",
+            category = "Blatant",
         },
         {
             path = "src/games/universal/Render/FieldOfView.lua",
@@ -190,7 +190,7 @@ local Manifest: Manifest = {
         {
             path = "src/games/universal/Blatant/Noclip.lua",
             name = "Noclip",
-            category = "Movement",
+            category = "Blatant",
         },
         {
             path = "src/games/universal/World/AntiAfk.lua",
@@ -210,7 +210,7 @@ local Manifest: Manifest = {
         {
             path = "src/games/universal/Blatant/Fling.lua",
             name = "Fling",
-            category = "Other",
+            category = "Blatant",
         },
         {
             path = "src/games/universal/Utility/ImproveFps.lua",
@@ -230,7 +230,7 @@ local Manifest: Manifest = {
         {
             path = "src/games/universal/World/Disguise.lua",
             name = "Disguise",
-            category = "World",
+            category = "Other",
         },
         {
             path = "src/games/universal/Movement/FreezeMovements.lua",
@@ -240,7 +240,7 @@ local Manifest: Manifest = {
         {
             path = "src/games/universal/Blatant/Speed.lua",
             name = "SpeedHack",
-            category = "Movement",
+            category = "Blatant",
         },
         {
             path = "src/games/universal/Blatant/Hitboxes.lua",

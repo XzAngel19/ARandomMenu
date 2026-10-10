@@ -1,5 +1,5 @@
 return {
-    stamp = "audit-20261009-13",
+    stamp = "arena-20261010-01",
     files = {
         ["src/libraries/Manifest.lua"] = [=[
 export type ModuleEntry = {
@@ -114,17 +114,17 @@ local Manifest: Manifest = {
         {
             path = "src/games/universal/Blatant/HighJump.lua",
             name = "HighJump",
-            category = "Movement",
+            category = "Blatant",
         },
         {
             path = "src/games/universal/Blatant/Spider.lua",
             name = "Spider",
-            category = "Movement",
+            category = "Blatant",
         },
         {
             path = "src/games/universal/Blatant/WallHop.lua",
             name = "WallHop",
-            category = "Movement",
+            category = "Blatant",
         },
         {
             path = "src/games/universal/Movement/HookPart.lua",
@@ -159,12 +159,12 @@ local Manifest: Manifest = {
                         {
             path = "src/games/universal/Blatant/Fly.lua",
             name = "Flight",
-            category = "Movement",
+            category = "Blatant",
         },
         {
             path = "src/games/universal/Blatant/VehicleSpeed.lua",
             name = "Vehicle Speed",
-            category = "Movement",
+            category = "Blatant",
         },
         {
             path = "src/games/universal/Movement/AntiVoid.lua",
@@ -179,12 +179,12 @@ local Manifest: Manifest = {
         {
             path = "src/games/universal/Blatant/JumpPower.lua",
             name = "Jump Power",
-            category = "Movement",
+            category = "Blatant",
         },
         {
             path = "src/games/universal/Blatant/InfiniteJump.lua",
             name = "Infinite Jump",
-            category = "Movement",
+            category = "Blatant",
         },
         {
             path = "src/games/universal/Render/FieldOfView.lua",
@@ -194,7 +194,7 @@ local Manifest: Manifest = {
         {
             path = "src/games/universal/Blatant/Noclip.lua",
             name = "Noclip",
-            category = "Movement",
+            category = "Blatant",
         },
         {
             path = "src/games/universal/World/AntiAfk.lua",
@@ -214,7 +214,7 @@ local Manifest: Manifest = {
         {
             path = "src/games/universal/Blatant/Fling.lua",
             name = "Fling",
-            category = "Other",
+            category = "Blatant",
         },
         {
             path = "src/games/universal/Utility/ImproveFps.lua",
@@ -234,7 +234,7 @@ local Manifest: Manifest = {
         {
             path = "src/games/universal/World/Disguise.lua",
             name = "Disguise",
-            category = "World",
+            category = "Other",
         },
         {
             path = "src/games/universal/Movement/FreezeMovements.lua",
@@ -244,7 +244,7 @@ local Manifest: Manifest = {
         {
             path = "src/games/universal/Blatant/Speed.lua",
             name = "SpeedHack",
-            category = "Movement",
+            category = "Blatant",
         },
         {
             path = "src/games/universal/Blatant/Hitboxes.lua",
@@ -270,7 +270,6 @@ local Manifest: Manifest = {
 }
 
 return Manifest
-
 ]=],
         ["src/guis/Wurst/Code/Widgets.lua"] = [=[
 export type OptionDefinition = {
@@ -696,9 +695,12 @@ function Module.init(context: any): WidgetLibrary
             feature.configKey .. "." .. labelText:gsub("%W", "")
         local storedValue: number? = tonumber(configData.values[optionKey])
 
-        local value: number = isFiniteNumber(storedValue)
+        local initialValue: number = isFiniteNumber(storedValue)
             and (storedValue :: number)
             or defaultValue
+        local value: number = math.clamp(initialValue, minimum, maximum)
+        local persistClampedValue: boolean = storedValue ~= nil
+            and value ~= (storedValue :: number)
         local integerOnly: boolean = defaultValue % 1 == 0
             and minimum % 1 == 0
             and maximum % 1 == 0
@@ -869,7 +871,10 @@ function Module.init(context: any): WidgetLibrary
             if not isFiniteNumber(nextValue) then
                 return
             end
-            value = quantize(nextValue, _fromSlider)
+            value = quantize(
+                math.clamp(nextValue, minimum, maximum),
+                _fromSlider
+            )
             local alpha: number = maximum == minimum
                 and 0
                 or math.clamp((value - minimum) / (maximum - minimum), 0, 1)
@@ -938,7 +943,7 @@ function Module.init(context: any): WidgetLibrary
 
         task.defer(function(): ()
             if option.Parent then
-                setValue(value, false, false)
+                setValue(value, persistClampedValue, false)
             end
         end)
         return option
@@ -2597,7 +2602,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/libraries/Framework.lua"] = [=[
 export type CleanupItem = any
@@ -2737,6 +2741,7 @@ local CATEGORY_ALIASES: {[string]: string} = {
     ["Visuals"] = "Render",
     ["Protection"] = "Movement",
     ["Utility"] = "Other",
+    ["World"] = "Other",
     ["Spoof"] = "Fun",
     ["General"] = "Other",
     ["Player"] = "Movement",
@@ -3460,7 +3465,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/libraries/Entity.lua"] = [=[
 export type Entity = {
@@ -4145,7 +4149,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/libraries/Targeting.lua"] = [=[
 export type Query = {
@@ -4413,7 +4416,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/libraries/Weapons.lua"] = [=[
 export type Candidate = {
@@ -4976,7 +4978,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/libraries/Render.lua"] = [=[
 export type Rect = {
@@ -5567,7 +5568,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/guis/Wurst/Code/Cards.lua"] = [=[
 local Module = {
@@ -5718,6 +5718,7 @@ function Module.init(context: any): any
 
         row:SetAttribute("FeatureCategory", categoryName)
         row:SetAttribute("FeatureSortName", string.lower(name))
+        row:SetAttribute("FeatureSortOrder", layoutOrder)
 
         local bitmapText: any = state.bitmapText
         local title: TextLabel? = nil
@@ -6445,7 +6446,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/guis/Wurst/Code/WindowManager.lua"] = [=[
 export type WindowDefinition = {
@@ -7581,7 +7581,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/guis/Wurst/Code/ClickGui.lua"] = [=[
 export type CategoryWindow = {
@@ -7622,12 +7621,14 @@ local CATEGORY_ORDER: {string} = {
     "Fun",
     "Items",
     "Other",
+    "Blatant",
 }
 
 local CATEGORY_ALIASES: {[string]: string} = {
     ["Visuals"] = "Render",
     ["Protection"] = "Movement",
     ["Utility"] = "Other",
+    ["World"] = "Other",
     ["Spoof"] = "Fun",
     ["General"] = "Other",
     ["Player"] = "Movement",
@@ -7811,6 +7812,15 @@ function Module.init(context: any): any
             end
         end
         table.sort(rows, function(left: GuiObject, right: GuiObject): boolean
+            local leftOrder: number = tonumber(
+                left:GetAttribute("FeatureSortOrder")
+            ) or math.huge
+            local rightOrder: number = tonumber(
+                right:GetAttribute("FeatureSortOrder")
+            ) or math.huge
+            if leftOrder ~= rightOrder then
+                return leftOrder < rightOrder
+            end
             local leftKey: string = tostring(left:GetAttribute("FeatureSortName") or "")
             local rightKey: string = tostring(right:GetAttribute("FeatureSortName") or "")
             if leftKey == rightKey then
@@ -7964,7 +7974,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/guis/Wurst/Code/FloatingWindows.lua"] = [=[
 export type FloatingWindowRecord = {
@@ -9490,7 +9499,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/guis/Wurst/Code/SettingsPage.lua"] = [=[
 local Module = {
@@ -11185,7 +11193,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/guis/Wurst/Code/MobileActions.lua"] = [=[
 export type MobileHoldCallbacks = {
@@ -11900,7 +11907,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/guis/Wurst/Code/Furniture.lua"] = [=[
 local Module = {
@@ -13463,7 +13469,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Render/ItemRender.lua"] = [=[
 export type Runtime = {
@@ -13990,7 +13995,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Render/PlayerESP.lua"] = [=[
 export type Runtime = {
@@ -14529,7 +14533,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Render/Chams.lua"] = [=[
 export type Runtime = {
@@ -14882,7 +14885,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Render/Arrows.lua"] = [=[
 export type Runtime = {
@@ -15024,7 +15026,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Render/NPCESP.lua"] = [=[
 export type Runtime = {
@@ -15516,7 +15517,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Combat/KillAura.lua"] = [=[
 export type Runtime = {
@@ -16116,7 +16116,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Utility/RemoteLogger.lua"] = [=[
 export type Runtime = {
@@ -16430,7 +16429,7 @@ function Module.init(context: Runtime): any
         end
     end
 
-    logger = framework.Categories.Utility:CreateModule({
+    logger = framework.Categories.Other:CreateModule({
         Name = "Remote Logger",
         Category = "Other",
         Order = 2,
@@ -16552,7 +16551,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Utility/Learning.lua"] = [=[
 export type Runtime = {
@@ -16686,7 +16684,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Movement/ClickTeleport.lua"] = [=[
 export type Runtime = {
@@ -17129,7 +17126,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Combat/AutoClicker.lua"] = [=[
 export type Runtime = {
@@ -17468,7 +17464,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Combat/TriggerBot.lua"] = [=[
 export type Runtime = {
@@ -17766,7 +17761,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Combat/AimAssist.lua"] = [=[
 export type Runtime = {
@@ -18038,7 +18032,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Render/XRay.lua"] = [=[
 export type Runtime = {
@@ -18146,7 +18139,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Blatant/HighJump.lua"] = [=[
 export type Runtime = {
@@ -18227,7 +18219,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Blatant/Spider.lua"] = [=[
 export type Runtime = {
@@ -18551,7 +18542,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Blatant/WallHop.lua"] = [=[
 export type Runtime = {
@@ -18824,7 +18814,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/World/SafeWalk.lua"] = [=[
 export type Runtime = {
@@ -19036,7 +19025,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/World/RejoinServer.lua"] = [=[
 export type Runtime = {
@@ -19154,7 +19142,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Render/ZoomUnlocker.lua"] = [=[
 export type Runtime = {
@@ -19300,7 +19287,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/World/InteractExtender.lua"] = [=[
 export type Runtime = {
@@ -19526,7 +19512,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Blatant/Fly.lua"] = [=[
 export type Runtime = {
@@ -20165,7 +20150,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Blatant/VehicleSpeed.lua"] = [=[
 export type Runtime = {
@@ -20447,7 +20431,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Movement/AntiVoid.lua"] = [=[
 export type Runtime = {
@@ -20586,7 +20569,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/World/Gravity.lua"] = [=[
 export type Runtime = {
@@ -20666,7 +20648,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Blatant/JumpPower.lua"] = [=[
 export type Runtime = {
@@ -20767,7 +20748,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Blatant/InfiniteJump.lua"] = [=[
 export type Runtime = {
@@ -20965,7 +20945,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Render/FieldOfView.lua"] = [=[
 export type Runtime = {
@@ -21042,7 +21021,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Blatant/Noclip.lua"] = [=[
 export type Runtime = {
@@ -21134,7 +21112,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/World/AntiAfk.lua"] = [=[
 export type Runtime = {
@@ -21208,7 +21185,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Movement/AntiFling.lua"] = [=[
 export type Runtime = {
@@ -21325,7 +21301,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Utility/LagSwitch.lua"] = [=[
 export type Runtime = {
@@ -21424,7 +21399,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Blatant/Fling.lua"] = [=[
 export type Runtime = {
@@ -21711,7 +21685,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Utility/ImproveFps.lua"] = [=[
 export type Runtime = {
@@ -21890,7 +21863,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Render/Fullbright.lua"] = [=[
 export type Runtime = {
@@ -22001,7 +21973,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Movement/FreezeMovements.lua"] = [=[
 export type Runtime = {
@@ -22130,7 +22101,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Blatant/Speed.lua"] = [=[
 export type Runtime = {
@@ -22412,7 +22382,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Blatant/Hitboxes.lua"] = [=[
 export type Runtime = {
@@ -22739,7 +22708,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Render/ProjectileCalibration.lua"] = [=[
 export type Runtime = {
@@ -23556,7 +23524,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Utility/GameLearning.lua"] = [=[
 export type Runtime = {
@@ -24732,7 +24699,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Utility/SpinBot.lua"] = [=[
 export type Runtime = {
@@ -24883,7 +24849,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/MM2/base.lua"] = [=[
 local Module = {
@@ -24957,8 +24922,8 @@ local mm2Settings = {
     showMissCooldown = false,
     predictionRtt = 0.08,
     gunLeadBias = 0,
-    autoTuneLead = true,
-    silentSweep = 3,
+    autoTuneLead = false,
+    silentSweep = 0.5,
     -- Where the silent bullet is authored: "Front" (shooter's side of the
     -- torso), "Through" (pierces the torso), "Top" (old, 1.6 above), "Behind"
     -- (far side). The Spawn A/B status measures which actually scores.
@@ -26353,11 +26318,10 @@ end
 --   serverStep the server scores the ray on its next frame, up to one frame
 --              away. Half a frame is the expected value.
 --
--- `gunLeadBias` stays as the single calibration knob: the telemetry module can
--- measure a constant residual and fold it in here instead of anyone inventing a
--- second formula. The horizon is capped so a 900 ms round trip cannot ask for a
--- half second of extrapolation; past that point the turn discount below is what
--- keeps the shot honest, not the cap.
+-- `gunLeadBias` is the explicit manual time correction. Optional hit-confirmed
+-- calibration is kept in a separate, bounded runtime term so the slider never
+-- lies about its value. The horizon is capped so a 900 ms round trip cannot ask
+-- for a half second of extrapolation.
 -- ---------------------------------------------------------------------------
 -- Luau infers the field types from the literals; the explicit annotation was
 -- redundant (KISS).
@@ -26366,16 +26330,25 @@ local GUN_LEAD = {
     serverFrame = 1 / 60,
     minimumHorizon = 0.02,
     maximumHorizon = 0.45,
-    -- How fast the target can change direction, in radians per second. It is
-    -- measured, not assumed: the motion sampler already reports how well the
-    -- last heading predicts the current one, and a player running straight
-    -- scores ~1 there. `defaultTurnRate` is what we assume when there is no
-    -- reading yet (first frame after a teleport, dead sampler), which is a
-    -- brisk 90 deg/s turn.
+    maximumManualBias = 0.1,
+    maximumAutoCorrection = 0.1,
+    -- If no motion sample exists yet, assume a brisk 90 degree/second turn.
     defaultTurnRate = math.pi * 0.5,
     maxTurnRate = math.pi * 1.5,
     turnRatePerInstability = 6,
 }
+local autoLeadCorrection: number = 0
+
+-- The manual slider and the hit-confirmed calibration are separate terms. This
+-- keeps the visible setting truthful instead of silently rewriting the user's
+-- slider value after a hit.
+local function getActiveAutoLeadCorrection(): number
+    return mm2Settings.autoTuneLead and autoLeadCorrection or 0
+end
+
+local function resetAutoLeadCorrection(): ()
+    autoLeadCorrection = 0
+end
 
 local function getGunHorizonSeconds(): number
     local measuredAcceptance: number? = nil
@@ -26390,10 +26363,21 @@ local function getGunHorizonSeconds(): number
     -- Use empirically measured server rewind/acceptance latency from calibration when available (defaults to confirmed 200ms baseline)
     local latencyTime: number = measuredAcceptance or math.max(getEstimatedLatency(), 0.200)
     local staleness: number = 1 / (2 * GUN_LEAD.replicationRate)
+    local manualBias: number = math.clamp(
+        mm2Settings.gunLeadBias,
+        -GUN_LEAD.maximumManualBias,
+        GUN_LEAD.maximumManualBias
+    )
+    local autoCorrection: number = math.clamp(
+        getActiveAutoLeadCorrection(),
+        -GUN_LEAD.maximumAutoCorrection,
+        GUN_LEAD.maximumAutoCorrection
+    )
     local horizon: number = latencyTime
         + staleness
         + GUN_LEAD.serverFrame * 0.5
-        + mm2Settings.gunLeadBias
+        + manualBias
+        + autoCorrection
     return math.clamp(
         horizon,
         GUN_LEAD.minimumHorizon,
@@ -26427,6 +26411,35 @@ local function getGunTurnDiscount(horizon: number, turnRate: number?): number
         0.25,
         1
     )
+end
+
+local function getGunLeadSensitivity(horizon: number, turnRate: number?): number
+    -- Derivative of horizon * turnDiscount with respect to a time correction.
+    -- The tuner skips samples where the turn model has flattened or reversed.
+    local rate: number = turnRate or GUN_LEAD.defaultTurnRate
+    local angle: number = horizon * rate * 0.5
+    if angle >= math.pi * 0.5 then
+        return 0.25
+    end
+    local rawDiscount: number = math.cos(angle)
+    if rawDiscount <= 0.25 then
+        return 0.25
+    end
+    return rawDiscount - horizon * math.sin(angle) * rate * 0.5
+end
+
+local function getGunLeadStatus(): {[string]: any}
+    return {
+        manualBias = math.clamp(
+            mm2Settings.gunLeadBias,
+            -GUN_LEAD.maximumManualBias,
+            GUN_LEAD.maximumManualBias
+        ),
+        autoCorrection = getActiveAutoLeadCorrection(),
+        storedAutoCorrection = autoLeadCorrection,
+        autoTuneEnabled = mm2Settings.autoTuneLead,
+        horizon = getGunHorizonSeconds(),
+    }
 end
 
 local function getGunOriginCFrame(character: Model, gun: Tool?): CFrame?
@@ -28108,10 +28121,10 @@ type PendingShot = {
     healthBefore: number,
     targetedMurderer: boolean,
     queuedAt: number,
-    -- Lead tuner bookkeeping (see the tuner below the feedback UI): the
-    -- horizon the shot was fired with, the velocity it was fired against, and
-    -- the 30 Hz root samples taken while the shot was pending.
-    horizon: number?,
+    -- Lead tuner bookkeeping: the effective predicted lead (after the turn
+    -- discount), its sensitivity to time correction, and the 30 Hz root samples.
+    leadSeconds: number?,
+    leadSensitivity: number?,
     velocity: Vector3?,
     trajectory: {{t: number, p: Vector3}}?,
     -- Silent spawn A/B: which authored geometry this shot used (Front,
@@ -28125,6 +28138,8 @@ type GunPrediction = {
     endpoint: Vector3?,
     velocity: Vector3?,
     errorRadius: number?,
+    leadSeconds: number?,
+    leadSensitivity: number?,
 }
 
 state.mm2ShotFeedback = {
@@ -28231,10 +28246,10 @@ end
 -- carry a small, slowly drifting offset. Every confirmed shot measures it for
 -- free. While the shot is pending we sample the target's root at 30 Hz; on a
 -- confirmed hit the moment the target crossed the aimed point IS the lead the
--- server actually needed. We drift gunLeadBias toward that reading - slowly
--- (25 % of one residual) and bounded (+-0.03 s per shot, +-0.25 s total) - so
--- one noisy shot can never wreck the calibration. Noisy windows (a turn mid
--- flight, a stopped target, a late read) are rejected instead of applied.
+-- server actually needed. We drift a separate runtime correction toward that
+-- reading - slowly (25 % of one residual, at most 0.03 s per shot and 0.1 s
+-- total) - without rewriting the manual slider. Noisy windows, a stopped
+-- target, or a non-monotonic turn model are rejected instead of applied.
 -- ---------------------------------------------------------------------------
 local leadTracking: PendingShot? = nil
 
@@ -28287,8 +28302,14 @@ local function tuneFromConfirmedShot(candidate: PendingShot): ()
     end
     local samples: {{t: number, p: Vector3}}? = candidate.trajectory
     local velocity: Vector3? = candidate.velocity
-    local horizon: number? = candidate.horizon
-    if not samples or #samples < 6 or velocity == nil or horizon == nil then
+    local leadSeconds: number? = candidate.leadSeconds
+    local leadSensitivity: number? = candidate.leadSensitivity
+    if not samples
+        or #samples < 6
+        or velocity == nil
+        or leadSeconds == nil
+        or leadSensitivity == nil
+        or leadSensitivity < 0.15 then
         return
     end
     local horizontal: Vector3 = Vector3.new(velocity.X, 0, velocity.Z)
@@ -28331,11 +28352,12 @@ local function tuneFromConfirmedShot(candidate: PendingShot): ()
     if sampledHorizontal.Unit:Dot(horizontal.Unit) < 0.75 then
         return
     end
-    local delta: number = (leadMeasured - horizon) * 0.25
-    mm2Settings.gunLeadBias = math.clamp(
-        mm2Settings.gunLeadBias + math.clamp(delta, -0.03, 0.03),
-        -0.25,
-        0.25
+    local residual: number = (leadMeasured - leadSeconds) / leadSensitivity
+    local delta: number = residual * 0.25
+    autoLeadCorrection = math.clamp(
+        autoLeadCorrection + math.clamp(delta, -0.03, 0.03),
+        -GUN_LEAD.maximumAutoCorrection,
+        GUN_LEAD.maximumAutoCorrection
     )
 end
 
@@ -28363,7 +28385,8 @@ state.mm2ShotFeedback.queue = function(
         healthBefore = targetHumanoid and targetHumanoid.Health or 0,
         targetedMurderer = getPlayerRole(target) == "Murderer",
         queuedAt = os.clock(),
-        horizon = getGunHorizonSeconds(),
+        leadSeconds = prediction and prediction.leadSeconds or nil,
+        leadSensitivity = prediction and prediction.leadSensitivity or nil,
         velocity = prediction and prediction.velocity or nil,
     }
     state.mm2ShotFeedback.pending = candidate
@@ -28759,6 +28782,9 @@ state.mm2Core = {
     getFilteredVelocity = getFilteredVelocity,
     getEstimatedLatency = getEstimatedLatency,
     getGunHorizonSeconds = getGunHorizonSeconds,
+    getGunLeadStatus = getGunLeadStatus,
+    getGunLeadSensitivity = getGunLeadSensitivity,
+    resetAutoLeadCorrection = resetAutoLeadCorrection,
     getGunTurnDiscount = getGunTurnDiscount,
     getGunTurnRate = getGunTurnRate,
     getGunOriginCFrame = getGunOriginCFrame,
@@ -28846,7 +28872,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/MM2/Blatant/Shoot.lua"] = [=[
 local Module = {
@@ -28864,8 +28889,8 @@ function Module.init(runtime: any): any
         return Module
     end
     local core: any = state.mm2Core
-    local trajectoryCalibration: any = core.trajectoryCalibration
     assert(type(core) == "table", "MM2 Shoot requires the MM2 core module")
+    local trajectoryCalibration: any = core.trajectoryCalibration
     Module.Runtime = runtime
     local connectGunFiredSignal: any = core.connectGunFiredSignal
     local disconnectGunFiredObserver: any = core.disconnectGunFiredObserver
@@ -28874,6 +28899,9 @@ function Module.init(runtime: any): any
     local getGunHorizonSeconds: any = core.getGunHorizonSeconds
     local getGunTurnDiscount: any = core.getGunTurnDiscount
     local getGunTurnRate: any = core.getGunTurnRate
+    local getGunLeadSensitivity: any = core.getGunLeadSensitivity
+    local getGunLeadStatus: any = core.getGunLeadStatus
+    local resetAutoLeadCorrection: any = core.resetAutoLeadCorrection
     local getGunOriginCFrame: any = core.getGunOriginCFrame
     local getPlayerRole: any = core.getPlayerRole
     local getPlayerWeapon: any = core.getPlayerWeapon
@@ -28899,6 +28927,8 @@ function Module.init(runtime: any): any
         endpoint: Vector3,
         velocity: Vector3,
         errorRadius: number,
+        leadSeconds: number,
+        leadSensitivity: number,
     }
 
     type GunAimOptions = {
@@ -28985,6 +29015,9 @@ function Module.init(runtime: any): any
         local horizon: number = getGunHorizonSeconds()
         local discount: number = getGunTurnDiscount(horizon, turnRate)
         local lead: number = horizon * discount
+        local leadSensitivity: number = type(getGunLeadSensitivity) == "function"
+            and getGunLeadSensitivity(horizon, turnRate)
+            or discount
 
         local horizontalAcceleration: Vector3 = Vector3.new(
             acceleration.X,
@@ -29059,6 +29092,8 @@ function Module.init(runtime: any): any
             endpoint = predicted,
             velocity = velocity,
             errorRadius = errorRadius,
+            leadSeconds = lead,
+            leadSensitivity = leadSensitivity,
         }, nil
     end
 
@@ -29136,6 +29171,12 @@ function Module.init(runtime: any): any
     local SILENT_ORIGIN_STUDS: number = 2.5
     local SILENT_PIERCE_STUDS: number = 1.0
     local SILENT_LIFT_STUDS: number = 1.6
+    local MAX_SILENT_SWEEP: number = 1.5
+
+    local function getSilentSweepDistance(): number
+        local configured: number = tonumber(mm2Settings.silentSweep) or 0
+        return math.clamp(configured, 0, MAX_SILENT_SWEEP)
+    end
 
     local function buildSilentShot(
         target: Player,
@@ -29149,21 +29190,17 @@ function Module.init(runtime: any): any
 
         local direction: Vector3? = nil
         local sweep: number = 0
-        if horizontal.Magnitude > 1.5 and mm2Settings.silentSweep > 0 then
+        if horizontal.Magnitude > 1.5 then
             direction = horizontal.Unit
-            -- Lay the authored segment along the movement axis, extended by the
-            -- solver's own error budget. This replaces the old speed*lead guess
-            -- with the one number that already accounts for turn uncertainty and
-            -- latency, so the sweep widens exactly when the prediction is least
-            -- certain instead of on a separate ad-hoc scale.
-            sweep = math.clamp(
-                prediction.errorRadius,
-                0.5,
-                mm2Settings.silentSweep
-            )
+            -- This option is a literal geometric extension, not an invented
+            -- error value: each end of the authored ray moves by exactly the
+            -- configured distance along measured horizontal target movement.
+            sweep = getSilentSweepDistance()
         end
+        local sweepStart: Vector3 =
+            direction and -direction * sweep or Vector3.zero
         local sweepEnd: Vector3 =
-            direction and direction * (sweep * 0.35) or Vector3.zero
+            direction and direction * sweep or Vector3.zero
 
         -- Horizontal direction from the shooter to the predicted point: the
         -- bullet appears on the shooter's side of the torso. The offset is
@@ -29187,24 +29224,21 @@ function Module.init(runtime: any): any
         local endPoint: Vector3
         if variant == "Through" and approach then
             -- Front to far side: the segment crosses the full body.
-            startPoint = predicted - approach * approachOffset
-                - (direction and direction * sweep or Vector3.zero)
+            startPoint = predicted - approach * approachOffset + sweepStart
             endPoint = predicted + approach * SILENT_PIERCE_STUDS + sweepEnd
         elseif variant == "Top" then
             startPoint = predicted + Vector3.new(0, SILENT_LIFT_STUDS, 0)
-                + (direction and direction * sweep or Vector3.zero)
+                + sweepStart
             endPoint = predicted + sweepEnd
         elseif variant == "Behind" and approach then
-            startPoint = predicted + approach * approachOffset
-                + (direction and direction * sweep or Vector3.zero)
+            startPoint = predicted + approach * approachOffset + sweepStart
             endPoint = predicted + sweepEnd
         elseif approach then
             -- "Front" (default) and the fallback for Behind without approach.
-            startPoint = predicted - approach * approachOffset
-                - (direction and direction * sweep or Vector3.zero)
+            startPoint = predicted - approach * approachOffset + sweepStart
             endPoint = predicted + sweepEnd
         elseif direction then
-            startPoint = predicted - direction * sweep
+            startPoint = predicted + sweepStart
             endPoint = predicted + sweepEnd
         else
             -- Shooter directly above the target with no movement axis to lean
@@ -29327,18 +29361,12 @@ function Module.init(runtime: any): any
         end
 
         local resolved: GunPrediction = prediction :: GunPrediction
-        if opts.maxError then
-            -- In silent mode the sweep segment already covers the solver's
-            -- error budget up to the sweep cap, so the cap is the effective
-            -- accuracy gate: otherwise a moving target could fail "Max error"
-            -- even though the authored segment fully covers the uncertainty.
-            local limit: number = opts.maxError
-            if silent and mm2Settings.silentSweep > 0 then
-                limit = math.max(limit, mm2Settings.silentSweep)
-            end
-            if resolved.errorRadius > limit then
-                return reject("Shot accuracy is too low to fire.")
-            end
+        if opts.maxError
+            and resolved.errorRadius > opts.maxError then
+            -- A longer ray does not make the motion estimate more accurate.
+            -- Keep this gate tied to the solver's error budget, not the visual
+            -- sweep length, so changing sweep cannot force a speculative shot.
+            return reject("Shot accuracy is too low to fire.")
         end
 
         if silent then
@@ -29605,15 +29633,15 @@ function Module.init(runtime: any): any
         "Silent sweep",
         mm2Settings.silentSweep,
         0,
-        8,
+        MAX_SILENT_SWEEP,
         function(value: number): ()
-            mm2Settings.silentSweep = value
+            mm2Settings.silentSweep = math.clamp(value, 0, MAX_SILENT_SWEEP)
         end,
-        "Cap for the tolerance segment laid along the target's movement "
-            .. "(0 = single point). The solver's error budget usually sets a "
-            .. "shorter length, so a bigger cap only helps fast, turning "
-            .. "targets.",
-        0.5
+        "Exact extra distance in studs at each end of the silent shot ray, "
+            .. "along measured horizontal movement. 0 disables it; max 1.5. "
+            .. "No local physics change; a ray that would cross a bystander is "
+            .. "collapsed to a point.",
+        0.05
     )
     local silentSpawnValues: {string} = {"Front", "Through", "Top", "Behind"}
     local silentSpawnIndex: number = 1
@@ -29668,23 +29696,50 @@ function Module.init(runtime: any): any
         function(value: boolean): ()
             mm2Settings.autoTuneLead = value
         end,
-        "Measures the lead each confirmed shot actually needed and drifts Lead "
-            .. "bias toward it. Turn off to keep a manual value."
+        "Opt-in calibration from confirmed hits. It learns a separate runtime "
+            .. "correction and never rewrites the manual Lead bias slider."
     )
     addNumberOption(
         ShootFeature,
         "Lead bias",
         mm2Settings.gunLeadBias,
-        -0.25,
-        0.25,
+        -0.1,
+        0.1,
         function(value: number): ()
-            mm2Settings.gunLeadBias = value
+            mm2Settings.gunLeadBias = math.clamp(value, -0.1, 0.1)
         end,
-        "Extra seconds added to the shot lead (positive = aim further ahead). "
-            .. "Auto tune drifts this value as shots confirm, so the slider "
-            .. "may lag the live value.",
-        0.01
+        "Manual time correction in seconds (positive = lead further ahead). "
+            .. "It is added to the prediction horizon, bounded to +/-0.1s, and "
+            .. "does not change character physics.",
+        0.005
     )
+    addActionOption(ShootFeature, "Lead status", function(): ()
+        local status: any = type(getGunLeadStatus) == "function"
+            and getGunLeadStatus()
+            or nil
+        if type(status) ~= "table" then
+            notify(string.format(
+                "Manual lead bias: %+.3fs | horizon: %.3fs",
+                mm2Settings.gunLeadBias,
+                getGunHorizonSeconds()
+            ))
+            return
+        end
+        notify(string.format(
+            "Manual %+.3fs | adaptive %+.3fs (%s; stored %+.3fs) | horizon %.3fs",
+            status.manualBias or 0,
+            status.autoCorrection or 0,
+            status.autoTuneEnabled and "on" or "off",
+            status.storedAutoCorrection or 0,
+            status.horizon or getGunHorizonSeconds()
+        ))
+    end)
+    addActionOption(ShootFeature, "Reset auto lead correction", function(): ()
+        if type(resetAutoLeadCorrection) == "function" then
+            resetAutoLeadCorrection()
+        end
+        notify("Adaptive lead correction reset to zero.")
+    end)
     ShootTargetBox = addTextOption(ShootFeature, "Target player", "", function(
         value: string
     ): ()
@@ -29763,7 +29818,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/MM2/Blatant/KnifeAura.lua"] = [=[
 local Module = {
@@ -30013,7 +30067,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/MM2/Blatant/KnifeThrow.lua"] = [=[
 local Module = {
@@ -30305,7 +30358,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/MM2/Render/RoundEsp.lua"] = [=[
 local Module = {
@@ -30769,7 +30821,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/MM2/Movement/Sprint.lua"] = [=[
 local Module = {
@@ -30946,7 +30997,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/MM2/Movement/Teleport.lua"] = [=[
 local Module = {
@@ -31131,7 +31181,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/MM2/Fun/InstantRoleNotify.lua"] = [=[
 local Module = {
@@ -31230,7 +31279,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/MM2/Fun/BlurtRoles.lua"] = [=[
 local Module = {
@@ -31483,7 +31531,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/MM2/Other/TrajectoryCalibration.lua"] = [=[
 local Module = {
@@ -31556,7 +31603,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Blatant/Invisible.lua"] = [=[
 export type Runtime = {
@@ -31892,7 +31938,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Movement/HookPart.lua"] = [=[
 --!strict
@@ -32726,7 +32771,6 @@ function Module.destroy(): ()
 end
 
 return Module
-
 ]=],
         ["src/games/universal/Render/TimeChanger.lua"] = [=[
 --!strict
@@ -32745,18 +32789,35 @@ local Module = {
 
 local activeCard: any = nil
 
+local function normalizeHour(hour: number): number
+    return (hour % 24 + 24) % 24
+end
+
+local function formatTime(hour: number): string
+    local normalized: number = normalizeHour(hour)
+    local wholeHours: number = math.floor(normalized)
+    local minutes: number = math.floor((normalized - wholeHours) * 60 + 0.5)
+    if minutes >= 60 then
+        wholeHours = (wholeHours + 1) % 24
+        minutes = 0
+    end
+    return string.format("%02d:%02d", wholeHours, minutes)
+end
+
 function Module.init(context: Runtime): any
     local framework: any = context.framework
     local host: any = context.host
     local Lighting: Lighting = host.Lighting or (game :: any):GetService("Lighting")
 
-    local originalTime: string? = nil
+    local originalTime: number? = nil
     local customTime: number = 14
 
     local function applyTime(hour: number): ()
-        local timeString: string = string.format("%02d:00:00", math.floor(hour))
+        local safeHour: number = normalizeHour(hour)
         pcall(function()
-            Lighting.TimeOfDay = timeString
+            -- ClockTime accepts fractional hours, unlike a formatted string;
+            -- this also keeps a 24-hour slider value from producing "24:00:00".
+            Lighting.ClockTime = safeHour
         end)
     end
 
@@ -32766,23 +32827,29 @@ function Module.init(context: Runtime): any
         Category = "Render",
         ConfigKey = "Universal.TimeChanger",
         Order = 25,
-        Tooltip = "Changes the client time of day in the current world.",
+        Tooltip = "Changes the local visual time only; does not change game or character physics.",
         Function = function(enabled: boolean): ()
             if enabled then
-                originalTime = Lighting.TimeOfDay
+                originalTime = Lighting.ClockTime
                 applyTime(customTime)
-                card:SetStatus(string.format("%02d:00", customTime))
+                card:SetStatus(formatTime(customTime))
 
-                card:Loop(function(): ()
-                    if originalTime then
+                local elapsed: number = 0
+                card:Loop(function(deltaTime: number): ()
+                    if originalTime == nil or not card.Enabled then
+                        return
+                    end
+                    elapsed += deltaTime
+                    -- Some games keep writing Lighting from a day/night loop.
+                    -- Reassert at 4 Hz instead of mutating Lighting every frame.
+                    if elapsed >= 0.25 then
+                        elapsed = 0
                         applyTime(customTime)
                     end
                 end)
             else
-                if originalTime then
-                    pcall(function()
-                        Lighting.TimeOfDay = originalTime
-                    end)
+                if originalTime ~= nil then
+                    applyTime(originalTime)
                     originalTime = nil
                 end
                 card:SetStatus(nil)
@@ -32793,17 +32860,17 @@ function Module.init(context: Runtime): any
     card:CreateSlider({
         Name = "Time",
         Min = 0,
-        Max = 24,
+        Max = 23.75,
         Default = 14,
-        Step = 1,
+        Step = 0.25,
         Function = function(value: number): ()
-            customTime = value
+            customTime = normalizeHour(value)
             if card.Enabled then
-                applyTime(value)
-                card:SetStatus(string.format("%02d:00", value))
+                applyTime(customTime)
+                card:SetStatus(formatTime(customTime))
             end
         end,
-        Tooltip = "Hour of day (0 = midnight, 12 = noon, 18 = sunset).",
+        Tooltip = "Local visual hour (0 = midnight, 12 = noon, 18 = sunset); 15-minute steps.",
     })
 
     activeCard = card
@@ -32813,14 +32880,13 @@ end
 
 function Module.destroy(): ()
     if activeCard and activeCard.Enabled then
-        pcall(activeCard.Toggle, false)
+        pcall(activeCard.Toggle, activeCard, false)
     end
     activeCard = nil
     Module.Initialized = false
 end
 
 return Module
-
 ]=],
         ["src/games/universal/World/Disguise.lua"] = [=[
 --!strict
@@ -32828,6 +32894,30 @@ export type Runtime = {
     framework: any,
     host: any,
     services: any,
+}
+
+type AppearanceTemplate = {
+    object: Instance,
+    parent: Instance?,
+}
+
+type MeshTemplate = {
+    part: MeshPart,
+    meshId: string,
+    textureId: string,
+}
+
+type AnimationTemplate = {
+    animation: Animation,
+    animationId: string,
+}
+
+type AppearanceSnapshot = {
+    character: Model,
+    items: {AppearanceTemplate},
+    meshParts: {MeshTemplate},
+    animations: {AnimationTemplate},
+    scales: {[string]: number},
 }
 
 local Module = {
@@ -32839,199 +32929,804 @@ local Module = {
 
 local activeCard: any = nil
 
+local DEFAULT_USER_ID: number = 239702688
+local SCALE_FIELDS: {string} = {
+    "HeightScale",
+    "WidthScale",
+    "DepthScale",
+    "HeadScale",
+    "BodyTypeScale",
+    "ProportionScale",
+}
+local BODY_PARTS: {[string]: boolean} = {
+    Head = true,
+    Torso = true,
+    UpperTorso = true,
+    LowerTorso = true,
+    LeftArm = true,
+    RightArm = true,
+    LeftLeg = true,
+    RightLeg = true,
+    LeftUpperArm = true,
+    LeftLowerArm = true,
+    LeftHand = true,
+    RightUpperArm = true,
+    RightLowerArm = true,
+    RightHand = true,
+    LeftUpperLeg = true,
+    LeftLowerLeg = true,
+    LeftFoot = true,
+    RightUpperLeg = true,
+    RightLowerLeg = true,
+    RightFoot = true,
+}
+
 function Module.init(context: Runtime): any
     local framework: any = context.framework
     local host: any = context.host
     local Players: Players = host.Players or (game :: any):GetService("Players")
-    local MarketplaceService: MarketplaceService = host.MarketplaceService or (game :: any):GetService("MarketplaceService")
+    local MarketplaceService: MarketplaceService = host.MarketplaceService
+        or (game :: any):GetService("MarketplaceService")
     local LocalPlayer: Player = host.LocalPlayer or Players.LocalPlayer
 
     local cloned = setmetatable({}, {__mode = "k"}) :: {[Instance]: boolean}
-    local originalItems: {Instance} = {}
+    local disguisedItems = setmetatable({}, {__mode = "k"}) :: {[Instance]: boolean}
+    local snapshot: AppearanceSnapshot? = nil
+    local filteredCharacter: Model? = nil
+    local filterConnection: RBXScriptConnection? = nil
+    local generation: number = 0
+    local restoring: boolean = false
 
     local settings = {
         mode = "Character",
-        id = "239702688",
+        id = tostring(DEFAULT_USER_ID),
     }
 
-    local function itemAdded(obj: Instance, manual: boolean?): ()
-        if (obj:IsA("Accessory")
+    local function notify(message: string): ()
+        pcall(print, "[Wurst:Disguise] " .. message)
+        if activeCard then
+            pcall(activeCard.Notify, activeCard, message)
+        end
+    end
+
+    local function isAppearanceItem(obj: Instance): boolean
+        return obj:IsA("Accessory")
             or obj:IsA("ShirtGraphic")
             or obj:IsA("Shirt")
             or obj:IsA("Pants")
             or obj:IsA("BodyColors")
-            or manual) and not cloned[obj] then
-            obj:ClearAllChildren()
-            task.defer(function()
-                pcall(obj.Destroy, obj)
+            or ((obj:IsA("Decal") or obj:IsA("Texture"))
+                and string.lower(obj.Name) == "face")
+    end
+
+    local function isInsideCharacter(obj: Instance, character: Model): boolean
+        local ok: boolean, result: any = pcall(function()
+            return obj:IsDescendantOf(character)
+        end)
+        return ok and result == true
+    end
+
+    local function rebindAccessory(character: Model, accessory: Accessory): ()
+        for _, descendant: Instance in ipairs(accessory:GetDescendants()) do
+            if descendant:IsA("Weld") and descendant.Part1 then
+                local part: Instance? = character:FindFirstChild(
+                    descendant.Part1.Name
+                )
+                if part and part:IsA("BasePart") then
+                    descendant.Part1 = part
+                end
+            elseif descendant:IsA("RigidConstraint")
+                and descendant.Attachment1 then
+                local attachment: Instance? = character:FindFirstChild(
+                    descendant.Attachment1.Name,
+                    true
+                )
+                if attachment and attachment:IsA("Attachment") then
+                    descendant.Attachment1 = attachment
+                end
+            end
+        end
+    end
+
+    local function destroySnapshot(): ()
+        local current: AppearanceSnapshot? = snapshot
+        snapshot = nil
+        if current then
+            for _, entry: AppearanceTemplate in ipairs(current.items) do
+                pcall(entry.object.Destroy, entry.object)
+            end
+        end
+    end
+
+    local function getAppliedDescription(humanoid: Humanoid): (any?, boolean)
+        local child: HumanoidDescription? = humanoid:FindFirstChildOfClass(
+            "HumanoidDescription"
+        ) :: HumanoidDescription?
+        if child then
+            return child, false
+        end
+        local ok: boolean, result: any = pcall(function()
+            return humanoid:GetAppliedDescription()
+        end)
+        if ok and result then
+            return result, true
+        end
+        return nil, false
+    end
+
+    local function captureSnapshot(
+        character: Model,
+        humanoid: Humanoid
+    ): AppearanceSnapshot
+        local items: {AppearanceTemplate} = {}
+        local meshParts: {MeshTemplate} = {}
+        local animations: {AnimationTemplate} = {}
+        local scales: {[string]: number} = {}
+
+        for _, obj: Instance in ipairs(character:GetDescendants()) do
+            if isAppearanceItem(obj) then
+                local ok: boolean, copy: any = pcall(function()
+                    return obj:Clone()
+                end)
+                if ok and copy then
+                    copy.Parent = nil
+                    table.insert(items, {
+                        object = copy,
+                        parent = obj.Parent,
+                    })
+                end
+            elseif obj:IsA("MeshPart") and BODY_PARTS[obj.Name] then
+                table.insert(meshParts, {
+                    part = obj,
+                    meshId = obj.MeshId,
+                    textureId = obj.TextureID,
+                })
+            elseif obj:IsA("Animation") then
+                local animate: Instance? = character:FindFirstChild("Animate")
+                if animate and obj:IsDescendantOf(animate) then
+                    table.insert(animations, {
+                        animation = obj,
+                        animationId = obj.AnimationId,
+                    })
+                end
+            end
+        end
+
+        local description: any, isTemporary: boolean = getAppliedDescription(humanoid)
+        if description then
+            for _, field: string in ipairs(SCALE_FIELDS) do
+                local ok: boolean, value: any = pcall(function()
+                    return description[field]
+                end)
+                if ok and type(value) == "number" then
+                    scales[field] = value
+                end
+            end
+            if isTemporary then
+                pcall(description.Destroy, description)
+            end
+        end
+
+        return {
+            character = character,
+            items = items,
+            meshParts = meshParts,
+            animations = animations,
+            scales = scales,
+        }
+    end
+
+    local function ensureSnapshot(
+        character: Model,
+        humanoid: Humanoid
+    ): AppearanceSnapshot
+        if snapshot and snapshot.character == character then
+            return snapshot
+        end
+        destroySnapshot()
+        snapshot = captureSnapshot(character, humanoid)
+        return snapshot
+    end
+
+    local function restoreOriginalAppearance(character: Model): ()
+        local current: AppearanceSnapshot? = snapshot
+        if not current or current.character ~= character then
+            return
+        end
+
+        restoring = true
+        local removals: {Instance} = {}
+        table.clear(disguisedItems)
+        table.clear(cloned)
+        for _, obj: Instance in ipairs(character:GetDescendants()) do
+            if isAppearanceItem(obj) then
+                table.insert(removals, obj)
+            end
+        end
+        for _, obj: Instance in ipairs(removals) do
+            pcall(obj.Destroy, obj)
+        end
+
+        for _, entry: MeshTemplate in ipairs(current.meshParts) do
+            if isInsideCharacter(entry.part, character) then
+                pcall(function()
+                    entry.part.MeshId = entry.meshId
+                    entry.part.TextureID = entry.textureId
+                end)
+            end
+        end
+        for _, entry: AnimationTemplate in ipairs(current.animations) do
+            if isInsideCharacter(entry.animation, character) then
+                pcall(function()
+                    entry.animation.AnimationId = entry.animationId
+                end)
+            end
+        end
+
+        for _, entry: AppearanceTemplate in ipairs(current.items) do
+            local ok: boolean, copy: any = pcall(function()
+                return entry.object:Clone()
             end)
+            if ok and copy then
+                local parent: Instance = entry.parent or character
+                if parent ~= character and not isInsideCharacter(parent, character) then
+                    parent = character
+                end
+                if copy:IsA("Accessory") then
+                    rebindAccessory(character, copy)
+                end
+                pcall(function()
+                    copy.Parent = parent
+                end)
+            end
+        end
+        restoring = false
+    end
+
+    local function stopAppearanceFilter(): ()
+        if filterConnection then
+            pcall(filterConnection.Disconnect, filterConnection)
+            filterConnection = nil
+        end
+        filteredCharacter = nil
+    end
+
+    local function removeUnexpectedAppearance(obj: Instance): ()
+        if restoring
+            or not isAppearanceItem(obj)
+            or cloned[obj]
+            or disguisedItems[obj]
+            or not activeCard
+            or not activeCard.Enabled
+            or settings.mode ~= "Character" then
+            return
+        end
+        task.defer(function(): ()
+            if restoring
+                or not activeCard
+                or not activeCard.Enabled
+                or settings.mode ~= "Character"
+                or cloned[obj]
+                or disguisedItems[obj] then
+                return
+            end
+            pcall(obj.Destroy, obj)
+        end)
+    end
+
+    local function installAppearanceFilter(character: Model): ()
+        if filteredCharacter == character
+            and filterConnection
+            and filterConnection.Connected then
+            return
+        end
+        stopAppearanceFilter()
+        filteredCharacter = character
+        filterConnection = character.DescendantAdded:Connect(
+            removeUnexpectedAppearance
+        )
+        if activeCard then
+            activeCard:Clean(filterConnection)
+        end
+    end
+
+    local function parseId(): (number?, string?)
+        local trimmed: string = tostring(settings.id)
+            :gsub("^%s+", "")
+            :gsub("%s+$", "")
+        local value: number? = tonumber(trimmed)
+        if not value or value <= 0 or value % 1 ~= 0 then
+            return nil, "Enter a positive integer ID."
+        end
+        return value, nil
+    end
+
+    local function getUserDescription(userId: number): (any?, string?)
+        local playersObject: any = Players
+        local asyncGetter: any = playersObject.GetHumanoidDescriptionFromUserIdAsync
+        local syncGetter: any = playersObject.GetHumanoidDescriptionFromUserId
+        if type(asyncGetter) == "function" then
+            local ok: boolean, result: any = pcall(asyncGetter, playersObject, userId)
+            if ok and result then
+                return result, nil
+            end
+            if not ok then
+                local asyncError: string = tostring(result)
+                if type(syncGetter) ~= "function" then
+                    return nil, asyncError
+                end
+            end
+        end
+        if type(syncGetter) == "function" then
+            local ok: boolean, result: any = pcall(syncGetter, playersObject, userId)
+            if ok and result then
+                return result, nil
+            end
+            return nil, tostring(result)
+        end
+        return nil, "This client does not expose a HumanoidDescription lookup API."
+    end
+
+    local function stillCurrent(token: number, character: Model): boolean
+        return generation == token
+            and activeCard ~= nil
+            and activeCard.Enabled
+            and LocalPlayer.Character == character
+    end
+
+    local function setDescriptionScales(
+        description: any,
+        current: AppearanceSnapshot
+    ): ()
+        for _, field: string in ipairs(SCALE_FIELDS) do
+            local value: number? = current.scales[field]
+            if value ~= nil then
+                pcall(function()
+                    description[field] = value
+                end)
+            end
+        end
+    end
+
+    local function applyDescriptionToClone(
+        cloneHumanoid: Humanoid,
+        description: any
+    ): (boolean, string?)
+        local humanoidObject: any = cloneHumanoid
+        local lastError: string = "ApplyDescription is unavailable."
+        for _, methodName: string in ipairs({
+            "ApplyDescriptionResetAsync",
+            "ApplyDescriptionAsync",
+            "ApplyDescriptionReset",
+            "ApplyDescription",
+        }) do
+            local method: any = humanoidObject[methodName]
+            if type(method) == "function" then
+                local ok: boolean, result: any = pcall(
+                    method,
+                    humanoidObject,
+                    description
+                )
+                if ok then
+                    return true, nil
+                end
+                lastError = tostring(result)
+            end
+        end
+        return false, lastError
+    end
+
+    local function copyCharacterAppearance(
+        character: Model,
+        clone: Model
+    ): ()
+        local realHead: Instance? = character:FindFirstChild("Head")
+        for _, source: Instance in ipairs(clone:GetChildren()) do
+            if isAppearanceItem(source) then
+                cloned[source] = true
+                disguisedItems[source] = true
+                if source:IsA("Accessory") then
+                    rebindAccessory(character, source)
+                end
+                source.Parent = character
+            elseif BODY_PARTS[source.Name]
+                and source:IsA("MeshPart") then
+                local target: Instance? = character:FindFirstChild(source.Name)
+                if target and target:IsA("MeshPart") then
+                    -- Copy mesh identifiers only; retain live part dimensions,
+                    -- joint objects, and collision settings.
+                    pcall(function()
+                        target.MeshId = source.MeshId
+                        target.TextureID = source.TextureID
+                    end)
+                end
+            end
+        end
+
+        local targetFace: Instance? = clone:FindFirstChild("face", true)
+        if targetFace and isAppearanceItem(targetFace) and realHead then
+            cloned[targetFace] = true
+            disguisedItems[targetFace] = true
+            targetFace.Parent = realHead
+        end
+
+    end
+
+    local function destroyInstance(instance: Instance?): ()
+        if instance then
+            pcall(instance.Destroy, instance)
+        end
+    end
+
+    local function applyCharacterDisguise(
+        token: number,
+        character: Model,
+        humanoid: Humanoid,
+        userId: number
+    ): ()
+        local description: any, fetchError: string? = getUserDescription(userId)
+        if not description then
+            if stillCurrent(token, character) then
+                notify("Could not load that avatar: " .. tostring(fetchError))
+            end
+            return
+        end
+        if not stillCurrent(token, character) then
+            destroyInstance(description)
+            return
+        end
+
+        local current: AppearanceSnapshot = ensureSnapshot(character, humanoid)
+        restoreOriginalAppearance(character)
+        setDescriptionScales(description, current)
+
+        local oldArchivable: boolean = character.Archivable
+        character.Archivable = true
+        local cloneOk: boolean, cloneResult: any = pcall(function()
+            return character:Clone()
+        end)
+        character.Archivable = oldArchivable
+        if not cloneOk or not cloneResult then
+            destroyInstance(description)
+            notify("Could not stage the disguise character.")
+            return
+        end
+
+        local clone: Model = cloneResult :: Model
+        local parentOk: boolean = pcall(function()
+            clone.Parent = game
+        end)
+        if not parentOk then
+            destroyInstance(description)
+            destroyInstance(clone)
+            notify("Could not stage the disguise character in this client.")
+            return
+        end
+
+        local cloneHumanoid: Humanoid? = clone:FindFirstChildOfClass("Humanoid")
+        if not cloneHumanoid then
+            destroyInstance(description)
+            destroyInstance(clone)
+            notify("The staged character has no Humanoid.")
+            return
+        end
+
+        local applied: boolean, applyError: string? =
+            applyDescriptionToClone(cloneHumanoid, description)
+        if not applied then
+            destroyInstance(description)
+            destroyInstance(clone)
+            notify("Could not apply the avatar description: " .. tostring(applyError))
+            return
+        end
+        if not stillCurrent(token, character) then
+            destroyInstance(description)
+            destroyInstance(clone)
+            return
+        end
+
+        installAppearanceFilter(character)
+        restoring = true
+        local oldItems: {Instance} = {}
+        for _, obj: Instance in ipairs(character:GetDescendants()) do
+            if isAppearanceItem(obj) then
+                table.insert(oldItems, obj)
+            end
+        end
+        for _, obj: Instance in ipairs(oldItems) do
+            pcall(obj.Destroy, obj)
+        end
+        restoring = false
+
+        local copied: boolean, copyError: any = pcall(function()
+            copyCharacterAppearance(character, clone)
+        end)
+        destroyInstance(description)
+        destroyInstance(clone)
+        if not copied then
+            notify("The avatar was loaded, but some appearance parts could not be copied: "
+                .. tostring(copyError))
+            return
+        end
+        if stillCurrent(token, character) then
+            activeCard:SetStatus("Character")
+            notify("Avatar disguise applied; live body-part dimensions were left unchanged.")
+        end
+    end
+
+    local function getService(name: string): any
+        local supplied: any = host[name]
+        if supplied then
+            return supplied
+        end
+        local ok: boolean, result: any = pcall(function()
+            return (game :: any):GetService(name)
+        end)
+        return if ok then result else nil
+    end
+
+    local function getBundleItems(
+        bundleId: number,
+        productInfo: any
+    ): ({any}?, string?)
+        local directItems: any = productInfo.Items or productInfo.items
+        local hasDirectItems: boolean = type(directItems) == "table"
+            and #directItems > 0
+        local directType: string = tostring(productInfo.BundleType or "")
+        if hasDirectItems and directType ~= "" then
+            return directItems, directType
+        end
+
+        for _, serviceName: string in ipairs({"AssetService", "AvatarEditorService"}) do
+            local service: any = getService(serviceName)
+            local method: any = service and service.GetBundleDetailsAsync
+            if type(method) == "function" then
+                local ok: boolean, details: any = pcall(method, service, bundleId)
+                if ok and type(details) == "table" then
+                    local items: any = details.Items or details.items
+                    local bundleType: string = tostring(
+                        details.BundleType or directType
+                    )
+                    if bundleType ~= ""
+                        and type(items) == "table"
+                        and #items > 0 then
+                        return items, bundleType
+                    end
+                    if bundleType ~= "" and hasDirectItems then
+                        return directItems, bundleType
+                    end
+                end
+            end
+        end
+        if hasDirectItems then
+            return directItems, directType
+        end
+        return nil, nil
+    end
+
+    local function getAnimationType(itemName: string): string
+        local normalized: string = string.lower(itemName)
+            :gsub("%s*animations?%s*$", "")
+            :gsub("%s+", "")
+        local aliases: {[string]: string} = {
+            pose = "idle",
+            idling = "idle",
+            walking = "walk",
+            running = "run",
+            jumping = "jump",
+            falling = "fall",
+            climbing = "climb",
+            swimming = "swim",
+        }
+        return aliases[normalized] or normalized
+    end
+
+    local function applyAnimationBundle(
+        token: number,
+        character: Model,
+        humanoid: Humanoid,
+        bundleId: number
+    ): ()
+        local items: {any}?, rawBundleType: string? = getBundleItems(
+            bundleId,
+            {}
+        )
+        local productInfoError: string? = nil
+        if not items or rawBundleType == nil or rawBundleType == "" then
+            if not stillCurrent(token, character) then
+                return
+            end
+            local infoOk: boolean, productInfo: any = pcall(function()
+                return MarketplaceService:GetProductInfo(
+                    bundleId,
+                    Enum.InfoType.Bundle
+                )
+            end)
+            if not stillCurrent(token, character) then
+                return
+            end
+            if infoOk and type(productInfo) == "table" then
+                local fallbackItems: {any}?, fallbackBundleType: string? =
+                    getBundleItems(bundleId, productInfo)
+                if fallbackItems then
+                    items = fallbackItems
+                end
+                if fallbackBundleType and fallbackBundleType ~= "" then
+                    rawBundleType = fallbackBundleType
+                end
+            else
+                productInfoError = tostring(productInfo)
+            end
+        end
+        if not stillCurrent(token, character) then
+            return
+        end
+        if not items then
+            local detail: string = productInfoError
+                and (" " .. productInfoError)
+                or ""
+            notify("Could not read the bundle's animation items." .. detail)
+            return
+        end
+        local bundleType: string = string.lower(tostring(rawBundleType or ""))
+        if bundleType == "" then
+            notify("This client could not verify the bundle type.")
+            return
+        end
+        if not string.find(bundleType, "animation", 1, true) then
+            notify("That ID is not an avatar animation bundle.")
+            return
+        end
+
+        local current: AppearanceSnapshot = ensureSnapshot(character, humanoid)
+        restoreOriginalAppearance(character)
+        stopAppearanceFilter()
+
+        local animate: Instance? = character:FindFirstChild("Animate")
+        if not animate then
+            notify("This character has no Animate script to update.")
+            return
+        end
+
+        local changedCount: number = 0
+        for _, item: any in ipairs(items) do
+            local itemName: string = tostring(item.Name or item.name or "")
+            local itemId: number? = tonumber(item.Id or item.AssetId or item.id)
+            local itemType: string = getAnimationType(itemName)
+            local targetCategory: Instance? = animate:FindFirstChild(itemType)
+            if itemId and targetCategory then
+                local objectsOk: boolean, objects: any = pcall(function()
+                    return (game :: any):GetObjects(
+                        "rbxassetid://" .. tostring(itemId)
+                    )
+                end)
+                if objectsOk and type(objects) == "table" then
+                    local sourceAnimation: Animation? = nil
+                    for _, object: Instance in ipairs(objects) do
+                        if object:IsA("Animation") then
+                            sourceAnimation = object
+                            break
+                        end
+                        sourceAnimation = object:FindFirstChildWhichIsA(
+                            "Animation",
+                            true
+                        ) :: Animation?
+                        if sourceAnimation then
+                            break
+                        end
+                    end
+                    if sourceAnimation then
+                        local targetAnimations: {Animation} = {}
+                        if targetCategory:IsA("Animation") then
+                            table.insert(targetAnimations, targetCategory)
+                        end
+                        for _, object: Instance in ipairs(targetCategory:GetDescendants()) do
+                            if object:IsA("Animation") then
+                                table.insert(targetAnimations, object)
+                            end
+                        end
+                        for _, animation: Animation in ipairs(targetAnimations) do
+                            animation.AnimationId = sourceAnimation.AnimationId
+                            changedCount += 1
+                        end
+                    end
+                    for _, object: Instance in ipairs(objects) do
+                        destroyInstance(object)
+                    end
+                end
+            end
+        end
+
+        if changedCount == 0 then
+            -- Ensure a failed lookup doesn't leave a half-selected mode behind.
+            restoreOriginalAppearance(character)
+            notify("No compatible animations were found in that bundle.")
+            return
+        end
+
+        local animator: Animator? = humanoid:FindFirstChildOfClass("Animator")
+        if animator then
+            for _, track: AnimationTrack in ipairs(animator:GetPlayingAnimationTracks()) do
+                pcall(track.Stop, track)
+            end
+        end
+        if current.character == character and stillCurrent(token, character) then
+            activeCard:SetStatus("Animation")
+            notify("Animation bundle applied; original animation IDs are restored when disabled.")
         end
     end
 
     local function applyDisguise(): ()
-        table.clear(cloned)
+        generation += 1
+        local token: number = generation
         local character: Model? = LocalPlayer.Character
-        local humanoid: Humanoid? = character and character:FindFirstChildOfClass("Humanoid")
+        local humanoid: Humanoid? = character
+            and character:FindFirstChildOfClass("Humanoid")
+            :: Humanoid?
         if not character or not humanoid or humanoid.Health <= 0 then
+            notify("Your character is not ready yet.")
+            return
+        end
+        local numericId: number?, idError: string? = parseId()
+        if not numericId then
+            notify(tostring(idError))
             return
         end
 
-        local numericId: number = tonumber(settings.id) or (settings.mode == "Character" and 239702688 or 43)
-
-        if settings.mode == "Character" then
-            local success: boolean, description: any = pcall(function()
-                return Players:GetHumanoidDescriptionFromUserId(numericId)
-            end)
-
-            if success and description and activeCard and activeCard.Enabled then
-                character.Archivable = true
-                local clone: Model = character:Clone()
-                clone.Parent = game
-
-                local originalDesc: any = humanoid:FindFirstChildOfClass("HumanoidDescription")
-                if not originalDesc then
-                    originalDesc = {
-                        HeightScale = 1,
-                        SetEmotes = function() end,
-                        SetEquippedEmotes = function() end,
-                    }
-                end
-
-                pcall(function()
-                    originalDesc.JumpAnimation = description.JumpAnimation
-                    description.HeightScale = originalDesc.HeightScale
-                end)
-
-                local cloneHumanoid: Humanoid? = clone:FindFirstChildOfClass("Humanoid")
-                if cloneHumanoid then
-                    pcall(function()
-                        cloneHumanoid:ApplyDescriptionResetAsync(description)
-                    end)
-                end
-
-                -- Listen for clothing/accessory additions and clean old ones
-                activeCard:Clean(character.ChildAdded:Connect(function(child: Instance)
-                    itemAdded(child)
-                end))
-
-                for _, obj: Instance in ipairs(character:GetChildren()) do
-                    itemAdded(obj)
-                end
-
-                for _, obj: Instance in ipairs(clone:GetChildren()) do
-                    cloned[obj] = true
-                    if obj:IsA("Accessory") then
-                        for _, objd: Instance in ipairs(obj:GetDescendants()) do
-                            if objd:IsA("Weld") and objd.Part1 then
-                                objd.Part1 = character:FindFirstChild(objd.Part1.Name) :: BasePart?
-                            elseif objd:IsA("RigidConstraint") and objd.Attachment1 then
-                                objd.Attachment1 = character:FindFirstChild(objd.Attachment1.Name, true) :: Attachment?
-                            end
-                        end
-                        obj.Parent = character
-                    elseif obj:IsA("ShirtGraphic") or obj:IsA("Shirt") or obj:IsA("Pants") or obj:IsA("BodyColors") then
-                        obj.Parent = character
-                    elseif obj.Name == "Head" and obj:IsA("MeshPart") then
-                        local realHead: Instance? = character:FindFirstChild("Head")
-                        if realHead and realHead:IsA("MeshPart") and not realHead:FindFirstChild("FaceControls") then
-                            realHead.MeshId = obj.MeshId
-                        end
-                    end
-                end
-
-                local face: Instance? = character:FindFirstChild("face", true)
-                local cface: Instance? = clone:FindFirstChild("face", true)
-                if face then
-                    itemAdded(face, true)
-                end
-                if cface then
-                    local realHead: Instance? = character:FindFirstChild("Head")
-                    if realHead then
-                        cface.Parent = realHead
-                    end
-                end
-
-                -- Register emotes on HumanoidDescription so Roblox emote wheel replicates to server!
-                pcall(function()
-                    originalDesc:SetEmotes(description:GetEmotes())
-                    originalDesc:SetEquippedEmotes(description:GetEquippedEmotes())
-                end)
-
-                pcall(function()
-                    description:Destroy()
-                    clone:ClearAllChildren()
-                    clone:Destroy()
-                end)
+        local selectedMode: string = settings.mode
+        task.spawn(function(): ()
+            if selectedMode == "Character" then
+                applyCharacterDisguise(
+                    token,
+                    character :: Model,
+                    humanoid :: Humanoid,
+                    numericId :: number
+                )
+            else
+                applyAnimationBundle(
+                    token,
+                    character :: Model,
+                    humanoid :: Humanoid,
+                    numericId :: number
+                )
             end
+        end)
+    end
 
-        elseif settings.mode == "Animation" then
-            -- Animation bundle replacement (replicates across the server via Animator)
-            local success: boolean, data: any = pcall(function()
-                return MarketplaceService:GetProductInfo(numericId, Enum.InfoType.Bundle)
-            end)
-
-            if success and type(data) == "table" and activeCard and activeCard.Enabled then
-                local items: {any} = data.Items or {}
-                local animate: Instance? = character:FindFirstChild("Animate")
-                if not animate then
-                    return
-                end
-
-                for _, item: any in ipairs(items) do
-                    local itemName: string = tostring(item.Name or "")
-                    local parts: {string} = string.split(itemName, " ")
-                    local itemType: string = parts[2] and string.lower(parts[2]) or string.lower(itemName)
-
-                    if itemType ~= "animation" and item.Id then
-                        local sucObj: boolean, objects: any = pcall(function()
-                            return (game :: any):GetObjects("rbxassetid://" .. tostring(item.Id))
-                        end)
-
-                        if sucObj and type(objects) == "table" and objects[1] then
-                            local animAsset: Animation? = objects[1]:FindFirstChildWhichIsA("Animation", true) :: Animation?
-                            if animAsset then
-                                local targetCategory: Instance? = animate:FindFirstChild(itemType)
-                                local targetAnim: Animation? = targetCategory and targetCategory:FindFirstChildWhichIsA("Animation") :: Animation?
-                                if targetAnim then
-                                    targetAnim.AnimationId = animAsset.AnimationId
-                                end
-                            end
-                        end
-                    end
-                end
-
-                -- Stop old animation tracks so new bundle animations play and replicate immediately
-                local animator: Animator? = humanoid:FindFirstChildOfClass("Animator")
-                if animator then
-                    for _, track: AnimationTrack in ipairs(animator:GetPlayingAnimationTracks()) do
-                        pcall(function()
-                            track:Stop()
-                        end)
-                    end
-                end
-            end
+    local function restoreAndRelease(): ()
+        generation += 1
+        stopAppearanceFilter()
+        local character: Model? = LocalPlayer.Character
+        if character then
+            restoreOriginalAppearance(character)
         end
+        destroySnapshot()
+        table.clear(cloned)
+        table.clear(disguisedItems)
     end
 
     local card: any
-    card = framework.Categories.World:CreateModule({
+    card = framework.Categories.Other:CreateModule({
         Name = "Disguise",
-        Category = "World",
+        Category = "Other",
         ConfigKey = "Universal.Disguise",
         Order = 26,
-        Tooltip = "Changes your avatar or animation pack to a specific ID (replicates real emotes and animations).",
+        Tooltip = "Copies avatar cosmetics or animation IDs without changing live body-part dimensions.",
         Function = function(enabled: boolean): ()
             if enabled then
                 card:SetStatus(settings.mode)
-                applyDisguise()
-                activeCard:Clean(LocalPlayer.CharacterAdded:Connect(function()
+                card:Clean(LocalPlayer.CharacterAdded:Connect(function(): ()
+                    generation += 1
+                    stopAppearanceFilter()
+                    destroySnapshot()
                     task.wait(0.5)
                     if card.Enabled then
                         applyDisguise()
                     end
                 end))
+                applyDisguise()
             else
-                table.clear(cloned)
+                restoreAndRelease()
                 card:SetStatus(nil)
             end
         end,
@@ -33045,64 +33740,38 @@ function Module.init(context: Runtime): any
             settings.mode = value
             card:SetStatus(value)
             if card.Enabled then
+                if value == "Animation" then
+                    local character: Model? = LocalPlayer.Character
+                    if character then
+                        restoreOriginalAppearance(character)
+                    end
+                    stopAppearanceFilter()
+                end
                 applyDisguise()
             end
         end,
-        Tooltip = "Character: Copies player avatar, clothes, and emotes.\nAnimation: Loads real replicated animation pack (Ninja, Zombie, Mage, etc.).",
+        Tooltip = "Character: avatar cosmetics. Animation: avatar-animation bundles only.",
     })
 
     card:CreateTextBox({
         Name = "Target ID",
         Default = settings.id,
         Function = function(value: string): ()
-            if value and value ~= "" then
-                settings.id = value
-                if card.Enabled then
-                    applyDisguise()
-                end
+            local trimmed: string = tostring(value or "")
+                :gsub("^%s+", "")
+                :gsub("%s+$", "")
+            if trimmed == "" then
+                notify("Enter a user ID or animation bundle ID first.")
+                return
+            end
+            settings.id = trimmed
+            if card.Enabled then
+                applyDisguise()
             end
         end,
-        Tooltip = "User ID for Character mode, or Bundle ID (e.g. 43 = Ninja) for Animation mode.",
+        Tooltip = "Positive integer user ID (Character) or avatar-animation bundle ID (Animation).",
     })
 
-    card:CreateDropdown({
-        Name = "Animation Preset",
-        List = {
-            "Custom",
-            "Ninja (43)",
-            "Zombie (53)",
-            "Mage (84)",
-            "Levitation (54)",
-            "Superhero (44)",
-            "Toy (45)",
-            "Oldschool (46)",
-            "Vampire (55)",
-            "Elder (80)",
-        },
-        Index = 1,
-        Function = function(value: string): ()
-            local bundleIdMap: {[string]: string} = {
-                ["Ninja (43)"] = "43",
-                ["Zombie (53)"] = "53",
-                ["Mage (84)"] = "84",
-                ["Levitation (54)"] = "54",
-                ["Superhero (44)"] = "44",
-                ["Toy (45)"] = "45",
-                ["Oldschool (46)"] = "46",
-                ["Vampire (55)"] = "55",
-                ["Elder (80)"] = "80",
-            }
-            local foundId: string? = bundleIdMap[value]
-            if foundId then
-                settings.mode = "Animation"
-                settings.id = foundId
-                if card.Enabled then
-                    applyDisguise()
-                end
-            end
-        end,
-        Tooltip = "Quick presets for popular Roblox animation bundles.",
-    })
 
     activeCard = card
     Module.Initialized = true
@@ -33110,15 +33779,16 @@ function Module.init(context: Runtime): any
 end
 
 function Module.destroy(): ()
-    if activeCard and activeCard.Enabled then
-        pcall(activeCard.Toggle, false)
+    if activeCard then
+        if activeCard.Enabled then
+            pcall(activeCard.Toggle, activeCard, false)
+        end
+        activeCard = nil
     end
-    activeCard = nil
     Module.Initialized = false
 end
 
 return Module
-
 ]=],
     },
 }

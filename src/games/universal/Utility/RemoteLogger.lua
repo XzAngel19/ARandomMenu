@@ -309,7 +309,7 @@ function Module.init(context: Runtime): any
         end
     end
 
-    logger = framework.Categories.Utility:CreateModule({
+    logger = framework.Categories.Other:CreateModule({
         Name = "Remote Logger",
         Category = "Other",
         Order = 2,

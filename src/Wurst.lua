@@ -1,7 +1,7 @@
 local RUNTIME_COMPATIBILITY_MARKER: string =
     "Initialization error — check executor console"
 local RUNTIME_SAFETY_SOURCE_URL: string =
-    "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/arena/2daf1a78-arandommenu/src/Wurst.lua"
+    "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/arena/22608f3e-arandommenu/src/Wurst.lua"
 
 local DEFAULT_FEATURE_CATEGORY: string = "Other"
 
@@ -20,6 +20,7 @@ local CATEGORY_ALIASES: {[string]: string} = {
     ["Visuals"] = "Render",
     ["Protection"] = "Movement",
     ["Utility"] = "Other",
+    ["World"] = "Other",
     ["Spoof"] = "Fun",
     ["General"] = "Other",
     ["Player"] = "Movement",
@@ -37,11 +38,14 @@ local FEATURE_CATEGORIES: {[string]: string} = {
 
     ["Fly"] = "Blatant",
     ["High Jump"] = "Blatant",
+    ["HighJump"] = "Blatant",
     ["Infinite Jump"] = "Blatant",
     ["Jump Power"] = "Blatant",
     ["Noclip"] = "Blatant",
     ["Speed"] = "Blatant",
     ["Spider"] = "Blatant",
+    ["WallHop"] = "Blatant",
+    ["Flight"] = "Blatant",
     ["Walk Speed"] = "Blatant",
     ["Hitboxes"] = "Blatant",
     ["Invisible"] = "Blatant",
@@ -52,6 +56,7 @@ local FEATURE_CATEGORIES: {[string]: string} = {
     ["Anti-Fling"] = "Movement",
     ["Anti-Void"] = "Movement",
     ["Safe Walk"] = "Movement",
+    ["SafeWalk"] = "Movement",
 
     ["Projectile Calibration"] = "Other",
     ["Game Learning"] = "Other",
@@ -62,11 +67,12 @@ local FEATURE_CATEGORIES: {[string]: string} = {
     ["Player ESP"] = "Render",
     ["X-Ray"] = "Render",
     ["Zoom Unlocker"] = "Render",
+    ["Zoom"] = "Render",
 
     ["Anti-AFK"] = "Other",
-    ["Disguise"] = "World",
-    ["Fling"] = "Other",
-    ["Gravity"] = "Other",
+    ["Disguise"] = "Other",
+    ["Fling"] = "Blatant",
+    ["Gravity"] = "Movement",
     ["Improve FPS"] = "Other",
     ["Interact Extender"] = "Other",
     ["Lag Switch"] = "Other",
@@ -194,7 +200,7 @@ local function computeLayoutMetrics(
     }
 end
 
-local RUNTIME_BRANCH: string = "arena/2daf1a78-arandommenu"
+local RUNTIME_BRANCH: string = "arena/22608f3e-arandommenu"
 do
     local override: any = nil
     local okGenv, genv = pcall(function()
@@ -219,7 +225,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "audit-20261009-13"
+local SOURCE_STAMP: string = "arena-20261010-01"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -5535,39 +5541,39 @@ local fallbackManifest: any = {
         {path = "src/games/universal/Combat/KillAura.lua", name = "Killaura", category = "Combat"},
         {path = "src/games/universal/Utility/RemoteLogger.lua", name = "Remote Logger", category = "Other"},
         {path = "src/games/universal/Utility/Learning.lua", name = "Learning", category = "Other"},
-        {path = "src/games/universal/Blatant/ClickTeleport.lua", name = "Click Teleport", category = "Movement"},
+        {path = "src/games/universal/Movement/ClickTeleport.lua", name = "Click Teleport", category = "Movement"},
         {path = "src/games/universal/Combat/AutoClicker.lua", name = "Auto Clicker", category = "Combat"},
         {path = "src/games/universal/Combat/TriggerBot.lua", name = "TriggerBot", category = "Combat"},
         {path = "src/games/universal/Combat/AimAssist.lua", name = "Aim Assist", category = "Combat"},
         {path = "src/games/universal/Render/XRay.lua", name = "X-Ray", category = "Render"},
-        {path = "src/games/universal/Blatant/HighJump.lua", name = "HighJump", category = "Movement"},
-        {path = "src/games/universal/Blatant/Spider.lua", name = "Spider", category = "Movement"},
-        {path = "src/games/universal/Blatant/WallHop.lua", name = "WallHop", category = "Movement"},
+        {path = "src/games/universal/Blatant/HighJump.lua", name = "HighJump", category = "Blatant"},
+        {path = "src/games/universal/Blatant/Spider.lua", name = "Spider", category = "Blatant"},
+        {path = "src/games/universal/Blatant/WallHop.lua", name = "WallHop", category = "Blatant"},
         {path = "src/games/universal/Movement/HookPart.lua", name = "HookPart", category = "Movement"},
         {path = "src/games/universal/Blatant/Invisible.lua", name = "Invisible", category = "Blatant"},
         {path = "src/games/universal/World/SafeWalk.lua", name = "SafeWalk", category = "Movement"},
         {path = "src/games/universal/World/RejoinServer.lua", name = "Rejoin Server", category = "Other"},
         {path = "src/games/universal/Render/ZoomUnlocker.lua", name = "Zoom", category = "Render"},
         {path = "src/games/universal/World/InteractExtender.lua", name = "Interact Extender", category = "Other"},
-        {path = "src/games/universal/Blatant/Fly.lua", name = "Flight", category = "Movement"},
-        {path = "src/games/universal/Blatant/VehicleSpeed.lua", name = "Vehicle Speed", category = "Movement"},
-        {path = "src/games/universal/Blatant/AntiVoid.lua", name = "Anti-Void", category = "Movement"},
+        {path = "src/games/universal/Blatant/Fly.lua", name = "Flight", category = "Blatant"},
+        {path = "src/games/universal/Blatant/VehicleSpeed.lua", name = "Vehicle Speed", category = "Blatant"},
+        {path = "src/games/universal/Movement/AntiVoid.lua", name = "Anti-Void", category = "Movement"},
         {path = "src/games/universal/World/Gravity.lua", name = "Gravity", category = "Movement"},
-        {path = "src/games/universal/Blatant/JumpPower.lua", name = "Jump Power", category = "Movement"},
-        {path = "src/games/universal/Blatant/InfiniteJump.lua", name = "Infinite Jump", category = "Movement"},
+        {path = "src/games/universal/Blatant/JumpPower.lua", name = "Jump Power", category = "Blatant"},
+        {path = "src/games/universal/Blatant/InfiniteJump.lua", name = "Infinite Jump", category = "Blatant"},
         {path = "src/games/universal/Render/FieldOfView.lua", name = "FOV", category = "Render"},
-        {path = "src/games/universal/Blatant/Noclip.lua", name = "Noclip", category = "Movement"},
+        {path = "src/games/universal/Blatant/Noclip.lua", name = "Noclip", category = "Blatant"},
         {path = "src/games/universal/World/AntiAfk.lua", name = "AntiAFK", category = "Other"},
-        {path = "src/games/universal/Blatant/AntiFling.lua", name = "Anti-Fling", category = "Other"},
+        {path = "src/games/universal/Movement/AntiFling.lua", name = "Anti-Fling", category = "Movement"},
         {path = "src/games/universal/Utility/LagSwitch.lua", name = "Lag Switch", category = "Other"},
-        {path = "src/games/universal/Blatant/Fling.lua", name = "Fling", category = "Other"},
+        {path = "src/games/universal/Blatant/Fling.lua", name = "Fling", category = "Blatant"},
         {path = "src/games/universal/Utility/ImproveFps.lua", name = "Improve FPS", category = "Other"},
         {path = "src/games/universal/Render/Fullbright.lua", name = "Fullbright", category = "Render"},
         {path = "src/games/universal/Render/TimeChanger.lua", name = "Time Changer", category = "Render"},
-        {path = "src/games/universal/World/Disguise.lua", name = "Disguise", category = "World"},
-        {path = "src/games/universal/Blatant/FreezeMovements.lua", name = "Freeze Movements", category = "Movement"},
-        {path = "src/games/universal/Blatant/Speed.lua", name = "SpeedHack", category = "Movement"},
-        {path = "src/games/universal/Combat/Hitboxes.lua", name = "Hitboxes", category = "Combat"},
+        {path = "src/games/universal/World/Disguise.lua", name = "Disguise", category = "Other"},
+        {path = "src/games/universal/Movement/FreezeMovements.lua", name = "Freeze Movements", category = "Movement"},
+        {path = "src/games/universal/Blatant/Speed.lua", name = "SpeedHack", category = "Blatant"},
+        {path = "src/games/universal/Blatant/Hitboxes.lua", name = "Hitboxes", category = "Blatant"},
         {path = "src/games/universal/Render/ProjectileCalibration.lua", name = "Projectile Calibration", category = "Other"},
         {path = "src/games/universal/Utility/GameLearning.lua", name = "Game Learning", category = "Other"},
         {path = "src/games/universal/Utility/SpinBot.lua", name = "SpinBot", category = "Fun"},

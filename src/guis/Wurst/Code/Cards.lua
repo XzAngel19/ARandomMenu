@@ -146,6 +146,7 @@ function Module.init(context: any): any
 
         row:SetAttribute("FeatureCategory", categoryName)
         row:SetAttribute("FeatureSortName", string.lower(name))
+        row:SetAttribute("FeatureSortOrder", layoutOrder)
 
         local bitmapText: any = state.bitmapText
         local title: TextLabel? = nil

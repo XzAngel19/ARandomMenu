@@ -69,8 +69,8 @@ local mm2Settings = {
     showMissCooldown = false,
     predictionRtt = 0.08,
     gunLeadBias = 0,
-    autoTuneLead = true,
-    silentSweep = 3,
+    autoTuneLead = false,
+    silentSweep = 0.5,
     -- Where the silent bullet is authored: "Front" (shooter's side of the
     -- torso), "Through" (pierces the torso), "Top" (old, 1.6 above), "Behind"
     -- (far side). The Spawn A/B status measures which actually scores.
@@ -1465,11 +1465,10 @@ end
 --   serverStep the server scores the ray on its next frame, up to one frame
 --              away. Half a frame is the expected value.
 --
--- `gunLeadBias` stays as the single calibration knob: the telemetry module can
--- measure a constant residual and fold it in here instead of anyone inventing a
--- second formula. The horizon is capped so a 900 ms round trip cannot ask for a
--- half second of extrapolation; past that point the turn discount below is what
--- keeps the shot honest, not the cap.
+-- `gunLeadBias` is the explicit manual time correction. Optional hit-confirmed
+-- calibration is kept in a separate, bounded runtime term so the slider never
+-- lies about its value. The horizon is capped so a 900 ms round trip cannot ask
+-- for a half second of extrapolation.
 -- ---------------------------------------------------------------------------
 -- Luau infers the field types from the literals; the explicit annotation was
 -- redundant (KISS).
@@ -1478,16 +1477,25 @@ local GUN_LEAD = {
     serverFrame = 1 / 60,
     minimumHorizon = 0.02,
     maximumHorizon = 0.45,
-    -- How fast the target can change direction, in radians per second. It is
-    -- measured, not assumed: the motion sampler already reports how well the
-    -- last heading predicts the current one, and a player running straight
-    -- scores ~1 there. `defaultTurnRate` is what we assume when there is no
-    -- reading yet (first frame after a teleport, dead sampler), which is a
-    -- brisk 90 deg/s turn.
+    maximumManualBias = 0.1,
+    maximumAutoCorrection = 0.1,
+    -- If no motion sample exists yet, assume a brisk 90 degree/second turn.
     defaultTurnRate = math.pi * 0.5,
     maxTurnRate = math.pi * 1.5,
     turnRatePerInstability = 6,
 }
+local autoLeadCorrection: number = 0
+
+-- The manual slider and the hit-confirmed calibration are separate terms. This
+-- keeps the visible setting truthful instead of silently rewriting the user's
+-- slider value after a hit.
+local function getActiveAutoLeadCorrection(): number
+    return mm2Settings.autoTuneLead and autoLeadCorrection or 0
+end
+
+local function resetAutoLeadCorrection(): ()
+    autoLeadCorrection = 0
+end
 
 local function getGunHorizonSeconds(): number
     local measuredAcceptance: number? = nil
@@ -1502,10 +1510,21 @@ local function getGunHorizonSeconds(): number
     -- Use empirically measured server rewind/acceptance latency from calibration when available (defaults to confirmed 200ms baseline)
     local latencyTime: number = measuredAcceptance or math.max(getEstimatedLatency(), 0.200)
     local staleness: number = 1 / (2 * GUN_LEAD.replicationRate)
+    local manualBias: number = math.clamp(
+        mm2Settings.gunLeadBias,
+        -GUN_LEAD.maximumManualBias,
+        GUN_LEAD.maximumManualBias
+    )
+    local autoCorrection: number = math.clamp(
+        getActiveAutoLeadCorrection(),
+        -GUN_LEAD.maximumAutoCorrection,
+        GUN_LEAD.maximumAutoCorrection
+    )
     local horizon: number = latencyTime
         + staleness
         + GUN_LEAD.serverFrame * 0.5
-        + mm2Settings.gunLeadBias
+        + manualBias
+        + autoCorrection
     return math.clamp(
         horizon,
         GUN_LEAD.minimumHorizon,
@@ -1539,6 +1558,35 @@ local function getGunTurnDiscount(horizon: number, turnRate: number?): number
         0.25,
         1
     )
+end
+
+local function getGunLeadSensitivity(horizon: number, turnRate: number?): number
+    -- Derivative of horizon * turnDiscount with respect to a time correction.
+    -- The tuner skips samples where the turn model has flattened or reversed.
+    local rate: number = turnRate or GUN_LEAD.defaultTurnRate
+    local angle: number = horizon * rate * 0.5
+    if angle >= math.pi * 0.5 then
+        return 0.25
+    end
+    local rawDiscount: number = math.cos(angle)
+    if rawDiscount <= 0.25 then
+        return 0.25
+    end
+    return rawDiscount - horizon * math.sin(angle) * rate * 0.5
+end
+
+local function getGunLeadStatus(): {[string]: any}
+    return {
+        manualBias = math.clamp(
+            mm2Settings.gunLeadBias,
+            -GUN_LEAD.maximumManualBias,
+            GUN_LEAD.maximumManualBias
+        ),
+        autoCorrection = getActiveAutoLeadCorrection(),
+        storedAutoCorrection = autoLeadCorrection,
+        autoTuneEnabled = mm2Settings.autoTuneLead,
+        horizon = getGunHorizonSeconds(),
+    }
 end
 
 local function getGunOriginCFrame(character: Model, gun: Tool?): CFrame?
@@ -3220,10 +3268,10 @@ type PendingShot = {
     healthBefore: number,
     targetedMurderer: boolean,
     queuedAt: number,
-    -- Lead tuner bookkeeping (see the tuner below the feedback UI): the
-    -- horizon the shot was fired with, the velocity it was fired against, and
-    -- the 30 Hz root samples taken while the shot was pending.
-    horizon: number?,
+    -- Lead tuner bookkeeping: the effective predicted lead (after the turn
+    -- discount), its sensitivity to time correction, and the 30 Hz root samples.
+    leadSeconds: number?,
+    leadSensitivity: number?,
     velocity: Vector3?,
     trajectory: {{t: number, p: Vector3}}?,
     -- Silent spawn A/B: which authored geometry this shot used (Front,
@@ -3237,6 +3285,8 @@ type GunPrediction = {
     endpoint: Vector3?,
     velocity: Vector3?,
     errorRadius: number?,
+    leadSeconds: number?,
+    leadSensitivity: number?,
 }
 
 state.mm2ShotFeedback = {
@@ -3343,10 +3393,10 @@ end
 -- carry a small, slowly drifting offset. Every confirmed shot measures it for
 -- free. While the shot is pending we sample the target's root at 30 Hz; on a
 -- confirmed hit the moment the target crossed the aimed point IS the lead the
--- server actually needed. We drift gunLeadBias toward that reading - slowly
--- (25 % of one residual) and bounded (+-0.03 s per shot, +-0.25 s total) - so
--- one noisy shot can never wreck the calibration. Noisy windows (a turn mid
--- flight, a stopped target, a late read) are rejected instead of applied.
+-- server actually needed. We drift a separate runtime correction toward that
+-- reading - slowly (25 % of one residual, at most 0.03 s per shot and 0.1 s
+-- total) - without rewriting the manual slider. Noisy windows, a stopped
+-- target, or a non-monotonic turn model are rejected instead of applied.
 -- ---------------------------------------------------------------------------
 local leadTracking: PendingShot? = nil
 
@@ -3399,8 +3449,14 @@ local function tuneFromConfirmedShot(candidate: PendingShot): ()
     end
     local samples: {{t: number, p: Vector3}}? = candidate.trajectory
     local velocity: Vector3? = candidate.velocity
-    local horizon: number? = candidate.horizon
-    if not samples or #samples < 6 or velocity == nil or horizon == nil then
+    local leadSeconds: number? = candidate.leadSeconds
+    local leadSensitivity: number? = candidate.leadSensitivity
+    if not samples
+        or #samples < 6
+        or velocity == nil
+        or leadSeconds == nil
+        or leadSensitivity == nil
+        or leadSensitivity < 0.15 then
         return
     end
     local horizontal: Vector3 = Vector3.new(velocity.X, 0, velocity.Z)
@@ -3443,11 +3499,12 @@ local function tuneFromConfirmedShot(candidate: PendingShot): ()
     if sampledHorizontal.Unit:Dot(horizontal.Unit) < 0.75 then
         return
     end
-    local delta: number = (leadMeasured - horizon) * 0.25
-    mm2Settings.gunLeadBias = math.clamp(
-        mm2Settings.gunLeadBias + math.clamp(delta, -0.03, 0.03),
-        -0.25,
-        0.25
+    local residual: number = (leadMeasured - leadSeconds) / leadSensitivity
+    local delta: number = residual * 0.25
+    autoLeadCorrection = math.clamp(
+        autoLeadCorrection + math.clamp(delta, -0.03, 0.03),
+        -GUN_LEAD.maximumAutoCorrection,
+        GUN_LEAD.maximumAutoCorrection
     )
 end
 
@@ -3475,7 +3532,8 @@ state.mm2ShotFeedback.queue = function(
         healthBefore = targetHumanoid and targetHumanoid.Health or 0,
         targetedMurderer = getPlayerRole(target) == "Murderer",
         queuedAt = os.clock(),
-        horizon = getGunHorizonSeconds(),
+        leadSeconds = prediction and prediction.leadSeconds or nil,
+        leadSensitivity = prediction and prediction.leadSensitivity or nil,
         velocity = prediction and prediction.velocity or nil,
     }
     state.mm2ShotFeedback.pending = candidate
@@ -3871,6 +3929,9 @@ state.mm2Core = {
     getFilteredVelocity = getFilteredVelocity,
     getEstimatedLatency = getEstimatedLatency,
     getGunHorizonSeconds = getGunHorizonSeconds,
+    getGunLeadStatus = getGunLeadStatus,
+    getGunLeadSensitivity = getGunLeadSensitivity,
+    resetAutoLeadCorrection = resetAutoLeadCorrection,
     getGunTurnDiscount = getGunTurnDiscount,
     getGunTurnRate = getGunTurnRate,
     getGunOriginCFrame = getGunOriginCFrame,

@@ -135,6 +135,7 @@ local CATEGORY_ALIASES: {[string]: string} = {
     ["Visuals"] = "Render",
     ["Protection"] = "Movement",
     ["Utility"] = "Other",
+    ["World"] = "Other",
     ["Spoof"] = "Fun",
     ["General"] = "Other",
     ["Player"] = "Movement",
