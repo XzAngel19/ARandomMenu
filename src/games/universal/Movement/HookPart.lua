@@ -58,6 +58,8 @@ function Module.init(context: Runtime): any
         wallhopPower = 38,
         airborneWallhopOnly = true,
         requireStuckIntent = true,
+        allowDownwardBoost = true,
+        sliderAssist = true,
         directionMode = "Camera",
         detectionRange = 2.4,
         checkAllParts = true,
@@ -445,11 +447,28 @@ function Module.init(context: Runtime): any
 
             humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
 
+            local outwardNorm: Vector3 = sighting.normal
+            local isSlopeOrStairs: boolean = outwardNorm.Y > 0.15 and outwardNorm.Y < 0.92
+
+            local vertVel: number
+            if settings.allowDownwardBoost and launchDir.Y < -0.10 then
+                -- Downward slide / boost on stairs and sliders
+                vertVel = launchDir.Y * (settings.obstaclePower * 1.1)
+            elseif launchDir.Y > 0.10 then
+                vertVel = math.max(launchDir.Y * settings.obstaclePower, settings.obstaclePower * 0.60)
+            else
+                vertVel = math.max(currentVel.Y + 16, settings.obstaclePower * 0.55)
+            end
+
             if settings.selfFling then
                 local flingSpeed: number = settings.flingMultiplier
+                local vertFling: number = (settings.allowDownwardBoost and launchDir.Y < -0.10)
+                    and (launchDir.Y * flingSpeed * 0.55)
+                    or (flingSpeed * 0.40)
+
                 local flingVec: Vector3 = Vector3.new(
                     flatLaunchDir.X * flingSpeed,
-                    flingSpeed * 0.40,
+                    vertFling,
                     flatLaunchDir.Z * flingSpeed
                 )
                 root.AssemblyLinearVelocity = flingVec
@@ -459,8 +478,14 @@ function Module.init(context: Runtime): any
                 end
             else
                 local boostPower: number = settings.obstaclePower
-                local outwardNorm: Vector3 = sighting.normal
-                local combinedDir: Vector3 = (flatLaunchDir * 0.75 + Vector3.new(outwardNorm.X, 0, outwardNorm.Z) * 0.25)
+                local combinedDir: Vector3
+                if isSlopeOrStairs and settings.sliderAssist then
+                    -- Follow camera/move direction cleanly along the slope/stairs
+                    combinedDir = flatLaunchDir
+                else
+                    combinedDir = (flatLaunchDir * 0.75 + Vector3.new(outwardNorm.X, 0, outwardNorm.Z) * 0.25)
+                end
+
                 if combinedDir.Magnitude > 0.01 then
                     combinedDir = combinedDir.Unit
                 else
@@ -469,13 +494,13 @@ function Module.init(context: Runtime): any
 
                 local obstacleVel: Vector3 = Vector3.new(
                     combinedDir.X * boostPower,
-                    math.max(currentVel.Y + 22, boostPower * 0.70),
+                    vertVel,
                     combinedDir.Z * boostPower
                 )
                 root.AssemblyLinearVelocity = obstacleVel
                 applySustainedImpulse(root, obstacleVel, 0.06)
                 if activeCard then
-                    activeCard:SetStatus("Obstacle Boost!")
+                    activeCard:SetStatus(vertVel < -5 and "Slope Slide!" or "Obstacle Boost!")
                 end
             end
 
@@ -721,6 +746,24 @@ function Module.init(context: Runtime): any
             settings.airborneWallhopOnly = value
         end,
         Tooltip = "Only triggers wallhop when already in mid-air, preventing strange jumps on the ground next to fences.",
+    })
+
+    card:CreateToggle({
+        Name = "Allow Downward Boost",
+        Default = settings.allowDownwardBoost,
+        Function = function(value: boolean): ()
+            settings.allowDownwardBoost = value
+        end,
+        Tooltip = "Looking downward launches or slides you down stairs, slopes, and ramps instead of forcing an upward jump.",
+    })
+
+    card:CreateToggle({
+        Name = "Slider Assist",
+        Default = settings.sliderAssist,
+        Function = function(value: boolean): ()
+            settings.sliderAssist = value
+        end,
+        Tooltip = "Follows the slope of stairs and ramps smoothly in your camera/movement direction.",
     })
 
     card:CreateToggle({
