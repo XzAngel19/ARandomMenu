@@ -2365,7 +2365,7 @@ Run(function()
         local RouteCost = BreakMethod or BreakMethods.Health
         local Key: string = `{BlockPosition.X},{BlockPosition.Y},{BlockPosition.Z}|{BreakMethod == BreakMethods.Distance and 1 or 0}|{MaxRange}|{IgnoreOwnBlocks and 1 or 0}`
         if RouteCost == BreakMethods.Health then
-            Key ..= `|{(Store.tools.wool or {}).itemType or ""},{(Store.tools.wood or {}).itemType or ""},{(Store.tools.stone or {}).itemType or ""}`
+            Key ..= `|{(Store.tools.wool or {}).itemType or ""},{(Store.tools.wood or {}).itemType or ""},{(Store.tools.stone or {}).itemType or ""},{(Store.tools.obsidian or {}).itemType or ""}`
         end
 
         local Cached = StrategicCache[Key]
@@ -2485,9 +2485,16 @@ Run(function()
         -- Dijkstra from the bed makes the first exposed block on the cheapest
         -- complete corridor the strategic choice (tool-adjusted health or the
         -- selected distance mode), rather than merely the closest face.
+        -- Pops come out in ascending cost. Once one exposed face is known, nothing
+        -- costlier can beat it, and equal-cost ties are still expanded, so the
+        -- chosen route is unchanged while most of the 1500-node search is skipped.
+        local BestExposed: number? = nil
         for _ = 1, 1500 do
             local Node = PopQueue()
             if not Node then
+                break
+            end
+            if BestExposed and Node[1] > BestExposed then
                 break
             end
             local Position: Vector3 = Node[2]
@@ -2504,11 +2511,25 @@ Run(function()
 
                 local Block = GetCellBlock(Next)
                 if not Block then
-                    local Openings = Exposed[Position]
-                    if Openings then
-                        table.insert(Openings, Next)
-                    else
-                        Exposed[Position] = {Next}
+                    -- Air inside the defense becomes passable once the blocks around it
+                    -- are broken, so it keeps the same cost and the search continues.
+                    if GetCellBlock(Position) then
+                        if not BestExposed and Position ~= BlockPosition and (Position - Origin).Magnitude <= MaxRange and IsOpen(Next) then
+                            BestExposed = Node[1]
+                        end
+                        local Openings = Exposed[Position]
+                        if Openings then
+                            table.insert(Openings, Next)
+                        else
+                            Exposed[Position] = {Next}
+                        end
+                    end
+                    -- Open air is the goal, not a corridor: expanding it would flood the
+                    -- whole outside at the same cost without finding anything cheaper.
+                    if not IsOpen(Next) and Node[1] < (Distances[Next] or math.huge) then
+                        Distances[Next] = Node[1]
+                        BreakPath[Next] = Position
+                        PushQueue({Node[1], Next})
                     end
                     continue
                 end
