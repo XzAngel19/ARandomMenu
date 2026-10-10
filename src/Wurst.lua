@@ -48,6 +48,7 @@ local FEATURE_CATEGORIES: {[string]: string} = {
 
     ["Click Teleport"] = "Movement",
     ["Freeze Movements"] = "Movement",
+    ["HookPart"] = "Movement",
     ["Anti-Fling"] = "Movement",
     ["Anti-Void"] = "Movement",
     ["Safe Walk"] = "Movement",
@@ -216,7 +217,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "audit-20261009-6"
+local SOURCE_STAMP: string = "audit-20261009-7"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -5535,6 +5536,8 @@ local fallbackManifest: any = {
         {path = "src/games/universal/Blatant/HighJump.lua", name = "HighJump", category = "Movement"},
         {path = "src/games/universal/Blatant/Spider.lua", name = "Spider", category = "Movement"},
         {path = "src/games/universal/Blatant/WallHop.lua", name = "WallHop", category = "Movement"},
+        {path = "src/games/universal/Movement/HookPart.lua", name = "HookPart", category = "Movement"},
+        {path = "src/games/universal/Blatant/Invisible.lua", name = "Invisible", category = "Blatant"},
         {path = "src/games/universal/World/SafeWalk.lua", name = "SafeWalk", category = "Movement"},
         {path = "src/games/universal/World/RejoinServer.lua", name = "Rejoin Server", category = "Other"},
         {path = "src/games/universal/Render/ZoomUnlocker.lua", name = "Zoom", category = "Render"},
