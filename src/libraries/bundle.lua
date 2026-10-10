@@ -1,5 +1,5 @@
 return {
-    stamp = "audit-20261009-9",
+    stamp = "audit-20261009-10",
     files = {
         ["src/libraries/Manifest.lua"] = [=[
 export type ModuleEntry = {
@@ -18254,14 +18254,12 @@ function Module.init(context: Runtime): any
         mode: string,
         speed: number,
         climbState: boolean,
-        realistic: boolean,
         ceilingWalk: boolean,
     }
     local spiderSettings: SpiderSettings = {
-        mode = "Velocity",
+        mode = "Spiderman",
         speed = 32,
         climbState = false,
-        realistic = true,
         ceilingWalk = true,
     }
     local SpiderFeature: any = nil
@@ -18285,8 +18283,7 @@ function Module.init(context: Runtime): any
             return
         end
 
-        local statusText: string = spiderSettings.realistic and "Realistic" or spiderSettings.mode
-        SpiderFeature:SetStatus(statusText)
+        SpiderFeature:SetStatus(spiderSettings.mode)
 
         local onSurface: boolean = false
         local lastSurfaceNormal: Vector3 = Vector3.new(0, 1, 0)
@@ -18317,16 +18314,16 @@ function Module.init(context: Runtime): any
             local rootPos: Vector3 = root.Position
             local moveDir: Vector3 = humanoid.MoveDirection
 
-            -- Realistic Spider-Man mode: feet planted on wall/ceiling, walking with feet
-            if spiderSettings.realistic then
-                -- Scan 1: Below current feet (to maintain stick while walking along a surface)
+            -- Mode: Spiderman (realistic feet-on-wall & ceiling walking with running animations)
+            if spiderSettings.mode == "Spiderman" then
+                -- Scan 1: Below current feet
                 local feetRay: RaycastResult? = workspace:Raycast(
                     rootPos,
                     -root.CFrame.UpVector * (hipHeight + 1.8),
                     raycastParams
                 )
 
-                -- Scan 2: In front / move direction (to step onto an approaching wall)
+                -- Scan 2: In front / move direction
                 local frontRay: RaycastResult? = nil
                 if moveDir.Magnitude > 0.05 then
                     frontRay = workspace:Raycast(
@@ -18342,7 +18339,7 @@ function Module.init(context: Runtime): any
                     )
                 end
 
-                -- Scan 3: Ceiling (if ceiling walk is enabled and jumping near ceiling)
+                -- Scan 3: Ceiling
                 local ceilingRay: RaycastResult? = nil
                 if spiderSettings.ceilingWalk then
                     ceilingRay = workspace:Raycast(
@@ -18366,23 +18363,18 @@ function Module.init(context: Runtime): any
                     lastSurfaceNormal = surfNormal
                     onSurface = true
 
-                    -- Prevent humanoid falling / tripping on wall
+                    -- Keep running animation with feet planted
                     humanoid.PlatformStand = false
                     humanoid:ChangeState(Enum.HumanoidStateType.RunningNoPhysics)
 
-                    -- Compute surface tangent axes
                     local surfUp: Vector3 = surfNormal
                     local wallUpVector: Vector3 = Vector3.new(0, 1, 0) - surfNormal * surfNormal.Y
                     if wallUpVector.Magnitude > 0.01 then
                         wallUpVector = wallUpVector.Unit
                     else
-                        -- Ceiling or floor
                         wallUpVector = (root.CFrame.LookVector - surfNormal * root.CFrame.LookVector:Dot(surfNormal)).Unit
                     end
 
-                    local wallRightVector: Vector3 = wallUpVector:Cross(surfNormal).Unit
-
-                    -- Map movement input along the surface
                     local surfaceMove: Vector3 = Vector3.zero
                     if cam then
                         local camLook: Vector3 = cam.CFrame.LookVector
@@ -18392,10 +18384,8 @@ function Module.init(context: Runtime): any
                         else
                             projLook = wallUpVector
                         end
-                        local projRight: Vector3 = projLook:Cross(surfNormal).Unit
 
                         if moveDir.Magnitude > 0.05 then
-                            -- Project humanoid move direction onto surface
                             local projMove: Vector3 = moveDir - surfNormal * moveDir:Dot(surfNormal)
                             if projMove.Magnitude > 0.01 then
                                 surfaceMove = projMove.Unit
@@ -18405,12 +18395,12 @@ function Module.init(context: Runtime): any
                         end
                     end
 
-                    -- Rotate character so UpVector aligns with surface normal (feet on the surface!)
+                    -- Rotate character: feet planted on surface normal
                     local lookRef: Vector3 = surfaceMove.Magnitude > 0.05 and surfaceMove or wallUpVector
                     local targetCF: CFrame = CFrame.lookAt(rootPos, rootPos + lookRef, surfNormal)
                     root.CFrame = root.CFrame:Lerp(targetCF, math.clamp(deltaTime * 14, 0, 1))
 
-                    -- Apply velocity along surface + downward foot adhesion force towards the surface
+                    -- Velocity along surface + adhesion downforce
                     local adhesionForce: Vector3 = -surfNormal * 28
                     local walkVelocity: Vector3 = (surfaceMove.Magnitude > 0.05) and (surfaceMove * spiderSettings.speed) or Vector3.zero
 
@@ -18418,7 +18408,6 @@ function Module.init(context: Runtime): any
                     return
                 else
                     if onSurface then
-                        -- Stepped off the wall onto ground or into open air: smoothly restore upright
                         local curPos: Vector3 = root.Position
                         local flatForward: Vector3 = Vector3.new(root.CFrame.LookVector.X, 0, root.CFrame.LookVector.Z)
                         if flatForward.Magnitude > 0.01 then
@@ -18435,7 +18424,7 @@ function Module.init(context: Runtime): any
                 return
             end
 
-            -- Legacy / Classic Climb Mode (Velocity, Impulse, CFrame)
+            -- Classic Climb Modes (Velocity, Impulse, CFrame)
             if moveDir.Magnitude < 0.05 then
                 return
             end
@@ -18468,7 +18457,7 @@ function Module.init(context: Runtime): any
 
     SpiderFeature = createUniversalFeature(
         "Spider",
-        "Climb a wall automatically while moving into it",
+        "Climb or run on walls and ceilings like Spider-Man",
         20,
         toggleSpider,
         {categoryName = "Blatant"}
@@ -18476,15 +18465,15 @@ function Module.init(context: Runtime): any
     addCycleOption(
         SpiderFeature,
         "Mode",
-        {"Velocity", "Impulse", "CFrame"},
+        {"Spiderman", "Velocity", "Impulse", "CFrame"},
         1,
         function(value: string): ()
             spiderSettings.mode = value
-            if SpiderFeature.enabled and not spiderSettings.realistic then
+            if SpiderFeature.enabled then
                 SpiderFeature:SetStatus(value)
             end
         end,
-        "Classic climb mode when Realistic is disabled."
+        "Spiderman: Walks on walls/ceilings using your feet with realistic surface physics.\nVelocity/Impulse/CFrame: Classic upward vertical climbing modes."
     )
     addNumberOption(
         SpiderFeature,
@@ -18498,24 +18487,12 @@ function Module.init(context: Runtime): any
     )
     addToggleOption(
         SpiderFeature,
-        "Realistic",
-        spiderSettings.realistic,
-        function(value: boolean): ()
-            spiderSettings.realistic = value
-            if SpiderFeature.enabled then
-                SpiderFeature:SetStatus(value and "Realistic" or spiderSettings.mode)
-            end
-        end,
-        "Spiderman physics: Plants your feet on the wall or ceiling with full surface walking animations."
-    )
-    addToggleOption(
-        SpiderFeature,
         "Ceiling Walk",
         spiderSettings.ceilingWalk,
         function(value: boolean): ()
             spiderSettings.ceilingWalk = value
         end,
-        "Allows walking upside-down on ceilings with your feet when Realistic mode is enabled."
+        "Allows running upside-down on ceilings with your feet in Spiderman mode."
     )
     addToggleOption(
         SpiderFeature,
@@ -18524,11 +18501,11 @@ function Module.init(context: Runtime): any
         function(value: boolean): ()
             spiderSettings.climbState = value
         end,
-        "Uses climbing state in classic mode."
+        "Uses climbing state in classic modes (Velocity, Impulse, CFrame)."
     )
     addFeatureTooltip(
         SpiderFeature,
-        "Walk into walls or ceilings to run on them like Spider-Man using your feet, or use classic vertical climbing."
+        "Spiderman mode plants your feet on walls and ceilings to run like Spider-Man. Classic modes pull you vertically up walls."
     )
 
     activeCleanup = function(): ()
@@ -26383,8 +26360,8 @@ local function getGunHorizonSeconds(): number
             measuredAcceptance = (est.gunAcceptanceMs :: number) / 1000
         end
     end
-    -- Use empirically measured server rewind/acceptance latency from calibration when available
-    local latencyTime: number = measuredAcceptance or getEstimatedLatency()
+    -- Use empirically measured server rewind/acceptance latency from calibration when available (defaults to confirmed 200ms baseline)
+    local latencyTime: number = measuredAcceptance or math.max(getEstimatedLatency(), 0.200)
     local staleness: number = 1 / (2 * GUN_LEAD.replicationRate)
     local horizon: number = latencyTime
         + staleness

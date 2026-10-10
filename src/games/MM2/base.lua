@@ -1499,8 +1499,8 @@ local function getGunHorizonSeconds(): number
             measuredAcceptance = (est.gunAcceptanceMs :: number) / 1000
         end
     end
-    -- Use empirically measured server rewind/acceptance latency from calibration when available
-    local latencyTime: number = measuredAcceptance or getEstimatedLatency()
+    -- Use empirically measured server rewind/acceptance latency from calibration when available (defaults to confirmed 200ms baseline)
+    local latencyTime: number = measuredAcceptance or math.max(getEstimatedLatency(), 0.200)
     local staleness: number = 1 / (2 * GUN_LEAD.replicationRate)
     local horizon: number = latencyTime
         + staleness
