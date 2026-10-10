@@ -13,8 +13,8 @@ function Module.init(runtime: any): any
         return Module
     end
     local core: any = state.mm2Core
-    local trajectoryCalibration: any = core.trajectoryCalibration
     assert(type(core) == "table", "MM2 Shoot requires the MM2 core module")
+    local trajectoryCalibration: any = core.trajectoryCalibration
     Module.Runtime = runtime
     local connectGunFiredSignal: any = core.connectGunFiredSignal
     local disconnectGunFiredObserver: any = core.disconnectGunFiredObserver
@@ -23,6 +23,9 @@ function Module.init(runtime: any): any
     local getGunHorizonSeconds: any = core.getGunHorizonSeconds
     local getGunTurnDiscount: any = core.getGunTurnDiscount
     local getGunTurnRate: any = core.getGunTurnRate
+    local getGunLeadSensitivity: any = core.getGunLeadSensitivity
+    local getGunLeadStatus: any = core.getGunLeadStatus
+    local resetAutoLeadCorrection: any = core.resetAutoLeadCorrection
     local getGunOriginCFrame: any = core.getGunOriginCFrame
     local getPlayerRole: any = core.getPlayerRole
     local getPlayerWeapon: any = core.getPlayerWeapon
@@ -48,6 +51,8 @@ function Module.init(runtime: any): any
         endpoint: Vector3,
         velocity: Vector3,
         errorRadius: number,
+        leadSeconds: number,
+        leadSensitivity: number,
     }
 
     type GunAimOptions = {
@@ -134,6 +139,9 @@ function Module.init(runtime: any): any
         local horizon: number = getGunHorizonSeconds()
         local discount: number = getGunTurnDiscount(horizon, turnRate)
         local lead: number = horizon * discount
+        local leadSensitivity: number = type(getGunLeadSensitivity) == "function"
+            and getGunLeadSensitivity(horizon, turnRate)
+            or discount
 
         local horizontalAcceleration: Vector3 = Vector3.new(
             acceleration.X,
@@ -208,6 +216,8 @@ function Module.init(runtime: any): any
             endpoint = predicted,
             velocity = velocity,
             errorRadius = errorRadius,
+            leadSeconds = lead,
+            leadSensitivity = leadSensitivity,
         }, nil
     end
 
@@ -285,6 +295,12 @@ function Module.init(runtime: any): any
     local SILENT_ORIGIN_STUDS: number = 2.5
     local SILENT_PIERCE_STUDS: number = 1.0
     local SILENT_LIFT_STUDS: number = 1.6
+    local MAX_SILENT_SWEEP: number = 1.5
+
+    local function getSilentSweepDistance(): number
+        local configured: number = tonumber(mm2Settings.silentSweep) or 0
+        return math.clamp(configured, 0, MAX_SILENT_SWEEP)
+    end
 
     local function buildSilentShot(
         target: Player,
@@ -298,21 +314,17 @@ function Module.init(runtime: any): any
 
         local direction: Vector3? = nil
         local sweep: number = 0
-        if horizontal.Magnitude > 1.5 and mm2Settings.silentSweep > 0 then
+        if horizontal.Magnitude > 1.5 then
             direction = horizontal.Unit
-            -- Lay the authored segment along the movement axis, extended by the
-            -- solver's own error budget. This replaces the old speed*lead guess
-            -- with the one number that already accounts for turn uncertainty and
-            -- latency, so the sweep widens exactly when the prediction is least
-            -- certain instead of on a separate ad-hoc scale.
-            sweep = math.clamp(
-                prediction.errorRadius,
-                0.5,
-                mm2Settings.silentSweep
-            )
+            -- This option is a literal geometric extension, not an invented
+            -- error value: each end of the authored ray moves by exactly the
+            -- configured distance along measured horizontal target movement.
+            sweep = getSilentSweepDistance()
         end
+        local sweepStart: Vector3 =
+            direction and -direction * sweep or Vector3.zero
         local sweepEnd: Vector3 =
-            direction and direction * (sweep * 0.35) or Vector3.zero
+            direction and direction * sweep or Vector3.zero
 
         -- Horizontal direction from the shooter to the predicted point: the
         -- bullet appears on the shooter's side of the torso. The offset is
@@ -336,24 +348,21 @@ function Module.init(runtime: any): any
         local endPoint: Vector3
         if variant == "Through" and approach then
             -- Front to far side: the segment crosses the full body.
-            startPoint = predicted - approach * approachOffset
-                - (direction and direction * sweep or Vector3.zero)
+            startPoint = predicted - approach * approachOffset + sweepStart
             endPoint = predicted + approach * SILENT_PIERCE_STUDS + sweepEnd
         elseif variant == "Top" then
             startPoint = predicted + Vector3.new(0, SILENT_LIFT_STUDS, 0)
-                + (direction and direction * sweep or Vector3.zero)
+                + sweepStart
             endPoint = predicted + sweepEnd
         elseif variant == "Behind" and approach then
-            startPoint = predicted + approach * approachOffset
-                + (direction and direction * sweep or Vector3.zero)
+            startPoint = predicted + approach * approachOffset + sweepStart
             endPoint = predicted + sweepEnd
         elseif approach then
             -- "Front" (default) and the fallback for Behind without approach.
-            startPoint = predicted - approach * approachOffset
-                - (direction and direction * sweep or Vector3.zero)
+            startPoint = predicted - approach * approachOffset + sweepStart
             endPoint = predicted + sweepEnd
         elseif direction then
-            startPoint = predicted - direction * sweep
+            startPoint = predicted + sweepStart
             endPoint = predicted + sweepEnd
         else
             -- Shooter directly above the target with no movement axis to lean
@@ -476,18 +485,12 @@ function Module.init(runtime: any): any
         end
 
         local resolved: GunPrediction = prediction :: GunPrediction
-        if opts.maxError then
-            -- In silent mode the sweep segment already covers the solver's
-            -- error budget up to the sweep cap, so the cap is the effective
-            -- accuracy gate: otherwise a moving target could fail "Max error"
-            -- even though the authored segment fully covers the uncertainty.
-            local limit: number = opts.maxError
-            if silent and mm2Settings.silentSweep > 0 then
-                limit = math.max(limit, mm2Settings.silentSweep)
-            end
-            if resolved.errorRadius > limit then
-                return reject("Shot accuracy is too low to fire.")
-            end
+        if opts.maxError
+            and resolved.errorRadius > opts.maxError then
+            -- A longer ray does not make the motion estimate more accurate.
+            -- Keep this gate tied to the solver's error budget, not the visual
+            -- sweep length, so changing sweep cannot force a speculative shot.
+            return reject("Shot accuracy is too low to fire.")
         end
 
         if silent then
@@ -754,15 +757,15 @@ function Module.init(runtime: any): any
         "Silent sweep",
         mm2Settings.silentSweep,
         0,
-        8,
+        MAX_SILENT_SWEEP,
         function(value: number): ()
-            mm2Settings.silentSweep = value
+            mm2Settings.silentSweep = math.clamp(value, 0, MAX_SILENT_SWEEP)
         end,
-        "Cap for the tolerance segment laid along the target's movement "
-            .. "(0 = single point). The solver's error budget usually sets a "
-            .. "shorter length, so a bigger cap only helps fast, turning "
-            .. "targets.",
-        0.5
+        "Exact extra distance in studs at each end of the silent shot ray, "
+            .. "along measured horizontal movement. 0 disables it; max 1.5. "
+            .. "No local physics change; a ray that would cross a bystander is "
+            .. "collapsed to a point.",
+        0.05
     )
     local silentSpawnValues: {string} = {"Front", "Through", "Top", "Behind"}
     local silentSpawnIndex: number = 1
@@ -817,23 +820,50 @@ function Module.init(runtime: any): any
         function(value: boolean): ()
             mm2Settings.autoTuneLead = value
         end,
-        "Measures the lead each confirmed shot actually needed and drifts Lead "
-            .. "bias toward it. Turn off to keep a manual value."
+        "Opt-in calibration from confirmed hits. It learns a separate runtime "
+            .. "correction and never rewrites the manual Lead bias slider."
     )
     addNumberOption(
         ShootFeature,
         "Lead bias",
         mm2Settings.gunLeadBias,
-        -0.25,
-        0.25,
+        -0.1,
+        0.1,
         function(value: number): ()
-            mm2Settings.gunLeadBias = value
+            mm2Settings.gunLeadBias = math.clamp(value, -0.1, 0.1)
         end,
-        "Extra seconds added to the shot lead (positive = aim further ahead). "
-            .. "Auto tune drifts this value as shots confirm, so the slider "
-            .. "may lag the live value.",
-        0.01
+        "Manual time correction in seconds (positive = lead further ahead). "
+            .. "It is added to the prediction horizon, bounded to +/-0.1s, and "
+            .. "does not change character physics.",
+        0.005
     )
+    addActionOption(ShootFeature, "Lead status", function(): ()
+        local status: any = type(getGunLeadStatus) == "function"
+            and getGunLeadStatus()
+            or nil
+        if type(status) ~= "table" then
+            notify(string.format(
+                "Manual lead bias: %+.3fs | horizon: %.3fs",
+                mm2Settings.gunLeadBias,
+                getGunHorizonSeconds()
+            ))
+            return
+        end
+        notify(string.format(
+            "Manual %+.3fs | adaptive %+.3fs (%s; stored %+.3fs) | horizon %.3fs",
+            status.manualBias or 0,
+            status.autoCorrection or 0,
+            status.autoTuneEnabled and "on" or "off",
+            status.storedAutoCorrection or 0,
+            status.horizon or getGunHorizonSeconds()
+        ))
+    end)
+    addActionOption(ShootFeature, "Reset auto lead correction", function(): ()
+        if type(resetAutoLeadCorrection) == "function" then
+            resetAutoLeadCorrection()
+        end
+        notify("Adaptive lead correction reset to zero.")
+    end)
     ShootTargetBox = addTextOption(ShootFeature, "Target player", "", function(
         value: string
     ): ()
