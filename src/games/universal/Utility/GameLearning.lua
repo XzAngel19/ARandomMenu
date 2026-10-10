@@ -208,7 +208,7 @@ function Module.init(context: Runtime): any
                             local angleDeg: number = 0
                             if aimDir then
                                 angleDeg = math.deg(
-                                    math.acs(math.clamp(
+                                    math.acos(math.clamp(
                                         toPlayer.Unit:Dot(aimDir),
                                         -1,
                                         1
