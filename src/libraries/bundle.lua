@@ -1,5 +1,5 @@
 return {
-    stamp = "arena-20261010-02",
+    stamp = "arena-20261010-03",
     files = {
         ["src/libraries/Manifest.lua"] = [=[
 export type ModuleEntry = {
@@ -32962,6 +32962,17 @@ local BODY_PARTS: {[string]: boolean} = {
     RightLowerLeg = true,
     RightFoot = true,
 }
+local MOVEMENT_ANIMATIONS: {{descriptionField: string, scriptCategory: string}} = {
+    {descriptionField = "IdleAnimation", scriptCategory = "idle"},
+    {descriptionField = "WalkAnimation", scriptCategory = "walk"},
+    {descriptionField = "RunAnimation", scriptCategory = "run"},
+    {descriptionField = "JumpAnimation", scriptCategory = "jump"},
+    {descriptionField = "ClimbAnimation", scriptCategory = "climb"},
+    {descriptionField = "FallAnimation", scriptCategory = "fall"},
+    {descriptionField = "SwimAnimation", scriptCategory = "swim"},
+    {descriptionField = "SwimIdleAnimation", scriptCategory = "swimidle"},
+    {descriptionField = "MoodAnimation", scriptCategory = "mood"},
+}
 
 function Module.init(context: Runtime): any
     local framework: any = context.framework
@@ -32979,13 +32990,14 @@ function Module.init(context: Runtime): any
     local generation: number = 0
     local restoring: boolean = false
     local emotesAppliedToHumanoid: boolean = false
-    local animationBundleApplied: boolean = false
+    local animationOverrideApplied: boolean = false
     local targetEmotes: any = nil
     local targetEquippedEmotes: any = nil
 
     local settings = {
         mode = "Character",
         id = tostring(DEFAULT_USER_ID),
+        useTargetMovementAnimations = false,
     }
 
     local function notify(message: string): ()
@@ -33038,7 +33050,7 @@ function Module.init(context: Runtime): any
         local current: AppearanceSnapshot? = snapshot
         snapshot = nil
         emotesAppliedToHumanoid = false
-        animationBundleApplied = false
+        animationOverrideApplied = false
         if current then
             for _, entry: AppearanceTemplate in ipairs(current.items) do
                 pcall(entry.object.Destroy, entry.object)
@@ -33280,6 +33292,90 @@ function Module.init(context: Runtime): any
         end
     end
 
+    local function normalizeAnimationId(value: any): string?
+        if type(value) == "number" then
+            if value <= 0 or value % 1 ~= 0 then
+                return nil
+            end
+            return "rbxassetid://" .. string.format("%.0f", value)
+        end
+
+        local raw: string = tostring(value or "")
+        if raw == "" then
+            return nil
+        end
+        local assetId: string? = string.match(raw, "^rbxassetid://(%d+)$")
+        if assetId then
+            local numericId: number? = tonumber(assetId)
+            return if numericId and numericId > 0 then raw else nil
+        end
+        local numericId: number? = tonumber(raw)
+        if not numericId or numericId <= 0 or numericId % 1 ~= 0 then
+            return nil
+        end
+        return "rbxassetid://" .. string.format("%.0f", numericId)
+    end
+
+    local function copyTargetMovementAnimations(
+        character: Model,
+        humanoid: Humanoid,
+        description: any
+    ): number
+        local animate: Instance? = character:FindFirstChild("Animate")
+        if not animate then
+            return 0
+        end
+
+        local changedCount: number = 0
+        for _, mapping in ipairs(MOVEMENT_ANIMATIONS) do
+            local readOk: boolean, value: any = pcall(function()
+                return description[mapping.descriptionField]
+            end)
+            local animationId: string? = if readOk
+                then normalizeAnimationId(value)
+                else nil
+            local category: Instance? = animationId
+                and animate:FindFirstChild(mapping.scriptCategory)
+                or nil
+            if animationId and category then
+                local targets: {Animation} = {}
+                if category:IsA("Animation") then
+                    table.insert(targets, category)
+                end
+                for _, descendant: Instance in ipairs(category:GetDescendants()) do
+                    if descendant:IsA("Animation") then
+                        table.insert(targets, descendant)
+                    end
+                end
+                for _, animation: Animation in ipairs(targets) do
+                    local changed: boolean = pcall(function()
+                        animation.AnimationId = animationId
+                    end)
+                    if changed then
+                        changedCount += 1
+                    end
+                end
+            end
+        end
+
+        if changedCount > 0 then
+            animationOverrideApplied = true
+            local animator: Animator? = humanoid:FindFirstChildOfClass("Animator")
+            if animator then
+                local tracksOk: boolean, tracks: any = pcall(function()
+                    return animator:GetPlayingAnimationTracks()
+                end)
+                if tracksOk and type(tracks) == "table" then
+                    for _, track: AnimationTrack in ipairs(tracks) do
+                        pcall(track.Stop, track)
+                    end
+                end
+            end
+            restartAnimateScript(animate)
+        end
+        return changedCount
+    end
+
     local function refreshMeshPartSnapshot(
         character: Model,
         current: AppearanceSnapshot
@@ -33359,8 +33455,8 @@ function Module.init(context: Runtime): any
             end
         end
 
-        local restartRestoredAnimations: boolean = animationBundleApplied
-        animationBundleApplied = false
+        local restartRestoredAnimations: boolean = animationOverrideApplied
+        animationOverrideApplied = false
 
         for _, entry: AppearanceTemplate in ipairs(current.items) do
             local ok: boolean, copy: any = pcall(function()
@@ -33664,6 +33760,20 @@ function Module.init(context: Runtime): any
             return
         end
 
+        local movementAnimationCount: number = 0
+        if settings.useTargetMovementAnimations then
+            movementAnimationCount = copyTargetMovementAnimations(
+                character,
+                humanoid,
+                description
+            )
+            if not stillCurrent(token, character) then
+                destroyInstance(description)
+                destroyInstance(clone)
+                return
+            end
+        end
+
         installAppearanceFilter(character)
         restoring = true
         local oldItems: {Instance} = {}
@@ -33703,6 +33813,14 @@ function Module.init(context: Runtime): any
                     .. " target emote(s) copied; open the Roblox emote menu."
             else
                 message ..= "The target description returned no emotes."
+            end
+            if settings.useTargetMovementAnimations then
+                if movementAnimationCount > 0 then
+                    message ..= " Copied " .. tostring(movementAnimationCount)
+                        .. " target movement animation slot(s)."
+                else
+                    message ..= " No target movement animation IDs were available."
+                end
             end
             notify(message)
         end
@@ -33911,7 +34029,7 @@ function Module.init(context: Runtime): any
             return
         end
 
-        animationBundleApplied = true
+        animationOverrideApplied = true
         local animator: Animator? = humanoid:FindFirstChildOfClass("Animator")
         if animator then
             for _, track: AnimationTrack in ipairs(animator:GetPlayingAnimationTracks()) do
@@ -34021,7 +34139,7 @@ function Module.init(context: Runtime): any
             return "none"
         end
         local shown: {string} = {}
-        for index: number = 1, math.min(#names, 12) do
+        for index = 1, math.min(#names, 12) do
             table.insert(shown, names[index])
         end
         if #names > 12 then
@@ -34036,7 +34154,7 @@ function Module.init(context: Runtime): any
         Category = "Other",
         ConfigKey = "Universal.Disguise",
         Order = 26,
-        Tooltip = "Copies avatar cosmetics, equipped emotes, or animation IDs without changing live body-part dimensions.",
+        Tooltip = "Copies a target avatar's cosmetics and emotes; optionally copies its movement animations. Animation mode changes local motion IDs only, not the visible avatar.",
         Function = function(enabled: boolean): ()
             if enabled then
                 card:SetStatus(settings.mode)
@@ -34080,7 +34198,23 @@ function Module.init(context: Runtime): any
                 applyDisguise()
             end
         end,
-        Tooltip = "Character: cosmetics and equipped emotes from a user ID. Animation: avatar-animation bundles only.",
+        Tooltip = "Character: visible avatar cosmetics and emotes from a user ID. Animation: movement animation IDs from a bundle; it does not render the target character.",
+    })
+
+    card:CreateToggle({
+        Name = "Use target movement animations",
+        Default = settings.useTargetMovementAnimations,
+        Function = function(value: boolean): ()
+            settings.useTargetMovementAnimations = value
+            if card.Enabled then
+                if settings.mode == "Character" then
+                    applyDisguise()
+                else
+                    notify("Target movement animations are copied in Character mode; Animation mode expects a bundle ID.")
+                end
+            end
+        end,
+        Tooltip = "In Character mode, copy the target user's idle, walk, run, jump, climb, fall, and swim animations. Your original movement IDs are restored when the module is turned off.",
     })
 
     card:CreateTextBox({
